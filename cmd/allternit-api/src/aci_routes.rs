@@ -683,10 +683,18 @@ async fn aci_run(
         buffer_create(&run_id);
         PHONE_WEB_RUNS.lock().map(|mut m| m.insert(run_id.clone(), false)).ok();
         let (id, goal, db) = (run_id.clone(), decision.sanitized_goal.clone(), state.db.clone());
+        // The signed-in caller owns the run: its approval holds ask them.
+        let (data_dir, ctx) = (
+            state.data_dir.clone(),
+            crate::phone_guard::TaskCtx { owner: user.user_id.clone(), bot_id: body.bot_id.clone(), source: "api".into(), ..Default::default() },
+        );
         tokio::spawn(async move {
             let push_id = id.clone();
             let cancel_id = id.clone();
             let report = crate::phone_task::run_web_task_as(
+                &db,
+                Some(data_dir.as_path()),
+                &ctx,
                 id.clone(),
                 &serial,
                 &goal,

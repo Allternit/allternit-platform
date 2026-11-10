@@ -649,6 +649,8 @@ async fn main() {
             Arc::new(allternit_api::channel_transports::ChannelLaneTransport::new(state.clone(), Arc::new(allternit_api::gateway_runner::SubsTransport(state.clone())))),
         )),
     );
+    // Phone approval holds: loops without an AppState reach the DB through this.
+    allternit_api::phone_guard::install(state.db.clone(), state.data_dir.clone());
     allternit_api::channel_discord_app::init(state.db.clone());
     // Vendor bots' `post_message` start conversations through the same path as the app.
     allternit_api::channel_start::register_vendor_starter(&state);
@@ -1194,6 +1196,8 @@ async fn main() {
         .merge(allternit_api::phone_runs::router())
         .merge(allternit_api::phone_replay::router())
         .merge(allternit_api::phone_task::router())
+        // Phone approval holds: guard check, hold read, hold crop.
+        .merge(allternit_api::phone_guard::router())
         .merge(allternit_api::subscription_routes::router())
         .merge(allternit_api::computer_embed::api_router())
         .merge(allternit_api::bot_group_routes::router())

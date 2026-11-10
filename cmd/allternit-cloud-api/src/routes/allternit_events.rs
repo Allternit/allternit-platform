@@ -307,7 +307,7 @@ pub static REGISTRY: &[EventType] = &[
         agents: false,
         bot: false,
         filters: &[],
-        payload: &[("run_id", "Run id."), ("serial", "Phone serial, when one was named."), ("ok", "Whether it reached its goal (boolean)."), ("status", "Task: done, failed, max_steps or timeout. Skill: succeeded, diverged or failed."), ("skill", "Skill name, for a skill run."), ("source", "task, skill or routine."), ("steps", "Steps run (number)."), ("failed", "Steps that failed (number)."), ("model_calls", "Model calls made (number)."), ("duration_ms", "Milliseconds (number).")],
+        payload: &[("run_id", "Run id."), ("serial", "Phone serial, when one was named."), ("ok", "Whether it reached its goal (boolean)."), ("status", "Task: done, failed, max_steps or timeout. Skill: succeeded, diverged or failed. Either: denied, approval_timeout or phone_locked."), ("skill", "Skill name, for a skill run."), ("source", "task, skill or routine."), ("steps", "Steps run (number)."), ("failed", "Steps that failed (number)."), ("model_calls", "Model calls made (number)."), ("duration_ms", "Milliseconds, not counting time spent waiting on a hold (number)."), ("held_ms", "Milliseconds spent waiting on holds (number)."), ("holds", "The run's holds: [{approval_id, effect, state}].")],
         runtime_aliases: &["phone.run.completed"],
     },
     EventType {
@@ -320,6 +320,28 @@ pub static REGISTRY: &[EventType] = &[
         filters: &[],
         payload: &[("fleet_run_id", "Fleet run id (pfr_)."), ("kind", "task or skill."), ("runs", "Runs started (number)."), ("succeeded", "Runs that reached their goal (number)."), ("failed", "Runs that ended without it (number)."), ("not_started", "Phones whose run could not start (number).")],
         runtime_aliases: &[],
+    },
+    EventType {
+        name: "phone.approval.requested",
+        title: "Phone action needs approval",
+        description: "A sensitive action on one of your linked phones (pay, delete, send, call, a credential, a money app, a security setting) is held until the owner approves it in the Allternit app. API keys can't approve. Never carries screenshots or screen text.",
+        platform: true,
+        agents: false,
+        bot: false,
+        filters: &[],
+        payload: &[("approval_id", "The hold's approval id (hold_id on the retry)."), ("run_id", "The run the action belongs to, when there is one."), ("serial", "Phone serial."), ("effect", "pay, delete, send, call, credential, money_app or security_setting."), ("tool", "Phone tool, e.g. phone.tap."), ("state", "requested.")],
+        runtime_aliases: &["phone.approval.requested"],
+    },
+    EventType {
+        name: "phone.approval.resolved",
+        title: "Phone approval resolved",
+        description: "A held phone action was approved, denied, expired or changed (approved, but the screen no longer matched). Never carries screenshots or screen text.",
+        platform: true,
+        agents: false,
+        bot: false,
+        filters: &[],
+        payload: &[("approval_id", "The hold's approval id."), ("run_id", "The run the action belongs to, when there is one."), ("serial", "Phone serial."), ("effect", "The hold's effect."), ("tool", "Phone tool, e.g. phone.tap."), ("state", "approved, denied, expired or changed.")],
+        runtime_aliases: &["phone.approval.resolved"],
     },
     EventType {
         name: "mail.received",
@@ -339,7 +361,7 @@ pub static REGISTRY: &[EventType] = &[
 /// and `inbox.item.created` (from the project's hosted runtime, per account),
 /// `phone.*` (the project owner's own phones, from their Desktop), and
 /// `mail.received` (the project's mailboxes).
-pub const PLATFORM_EVENTS: [&str; 13] = ["approval.requested", "message.received", "message.status", "registration.updated", "call.started", "call.ended", "call.transcript.ready", "inbox.item.created", "usage.threshold", "phone.step", "phone.run.completed", "phone.fleet_run.completed", "mail.received"];
+pub const PLATFORM_EVENTS: [&str; 15] = ["approval.requested", "message.received", "message.status", "registration.updated", "call.started", "call.ended", "call.transcript.ready", "inbox.item.created", "usage.threshold", "phone.step", "phone.run.completed", "phone.fleet_run.completed", "phone.approval.requested", "phone.approval.resolved", "mail.received"];
 
 pub fn find(name: &str) -> Option<&'static EventType> {
     REGISTRY.iter().find(|e| e.name == name)
@@ -505,6 +527,8 @@ mod tests {
         assert_eq!(from_runtime("call.ended", &json!({})), Some("call.ended"));
         assert_eq!(from_runtime("phone.step", &json!({})), Some("phone.step"));
         assert_eq!(from_runtime("phone.run.completed", &json!({})), Some("phone.run.completed"));
+        assert_eq!(from_runtime("phone.approval.requested", &json!({})), Some("phone.approval.requested"));
+        assert_eq!(from_runtime("phone.approval.resolved", &json!({})), Some("phone.approval.resolved"));
         assert_eq!(from_runtime("inbox.changed", &json!({})), None);
         // Platform-only events can't be injected by a runtime.
         assert_eq!(from_runtime("message.status", &json!({})), None);

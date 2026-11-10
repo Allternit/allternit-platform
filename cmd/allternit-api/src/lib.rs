@@ -187,6 +187,7 @@ pub mod computer_history;
 pub mod phone_runs;
 pub mod phone_replay;
 pub mod phone_task;
+pub mod phone_guard;
 pub mod computer_transfer;
 pub mod computer_parallel;
 pub mod computer_subtask;

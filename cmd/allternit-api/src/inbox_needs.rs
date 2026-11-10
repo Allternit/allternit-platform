@@ -107,7 +107,7 @@ pub fn notify_keys(it: &Value) -> serde_json::Map<String, Value> {
 
 /// Text addressed to another person must not travel in plain pushes.
 pub fn is_private(it: &Value) -> bool {
-    it["full"]["to"].as_str().is_some_and(|t| !t.is_empty())
+    it["private"].as_bool() == Some(true) || it["full"]["to"].as_str().is_some_and(|t| !t.is_empty())
 }
 
 /// The inbox item an `approval.requested` ledger payload is about, if it is still open.
@@ -243,6 +243,20 @@ pub fn collect(conn: &Connection, user_id: &str, unanswered_min: i64) -> rusqlit
             let mut it = item(format!("approval:{id}"), "approval", if authority == "vendor" { "vendor" } else { "tool" }, &bot, &bot_name, Some(&thread), title.clone(), format!("{bot_name} needs approval: {}", snippet(&action, 120)), &at, ("approve", "Approve"), true);
             with_provenance(&mut it, &detail);
             approvable(&mut it, content_hash("approval", &[&id, &authority, &action, &detail.to_string()]), None, None, &action, true);
+            // A phone approval hold: Review only (the owner sees the screen crop first), never in push text.
+            if authority == "allternit" && action.starts_with("phone.") && detail["phone"].is_object() {
+                let p = &detail["phone"];
+                let who = if bot_name.is_empty() || p["botless"].as_bool() == Some(true) { "A phone task".to_string() } else { bot_name.clone() };
+                // A text or call reads as what it does; the message body stays in the detail.
+                let comms = p["to"].as_str().filter(|s| !s.is_empty()).map(|to| if action == "phone.call.dial" { format!("Call {to}") } else { format!("Send a text to {to}") });
+                let what = comms.as_deref().or(p["intent"].as_str().filter(|s| !s.is_empty())).unwrap_or(action.as_str());
+                let phone = p["phoneName"].as_str().filter(|s| !s.is_empty()).unwrap_or("your phone");
+                it["summary"] = json!(format!("{who} needs approval on {phone}: {}", snippet(what, 120)));
+                it["subkind"] = json!("phone_action");
+                it["detail"] = json!({ "phone": p });
+                it["approveInline"] = json!(false);
+                it["private"] = json!(true);
+            }
             out.push(it);
         }
     }
@@ -630,6 +644,11 @@ async fn approve(State(state): State<Arc<AppState>>, Extension(user): Extension<
         if it["contentHash"].as_str() != Some(h) {
             return (StatusCode::CONFLICT, Json(json!({ "error": "changed", "code": "CHANGED", "id": id, "contentHash": it["contentHash"] }))).into_response();
         }
+    }
+    // A phone hold is approved only where the owner sees the screen it is about:
+    // never from a notification, a Live Activity, a widget or Siri. Deny is always allowed.
+    if approve && it["subkind"] == "phone_action" && matches!(b.surface.as_deref(), Some("notification" | "live_activity" | "widget" | "control" | "intent" | "siri" | "shortcut")) {
+        return (StatusCode::CONFLICT, Json(json!({ "error": "review_required", "code": "REVIEW_REQUIRED", "id": id }))).into_response();
     }
     let result: Result<Value, Response> = match it["kind"].as_str().unwrap_or("") {
         "email_draft" => {
@@ -1128,6 +1147,61 @@ mod tests {
         assert_eq!(s, StatusCode::OK, "{v}");
         let state: String = c.query_row("SELECT state FROM gateway_approvals WHERE id = ?1", params![aid], |r| r.get(0)).unwrap();
         assert_eq!(state, "approved");
+    }
+
+    #[tokio::test]
+    async fn a_phone_hold_is_not_approved_from_a_notification() {
+        let st = setup().await;
+        let c = st.db.connect().unwrap();
+        let req: crate::phone_guard::CheckIn = serde_json::from_value(json!({
+            "serial": "link:1", "tool": "phone.tap", "app": "Shop", "run_id": "task-9", "step": 2, "intent": "tap Pay now",
+            "el": { "class": "Button", "label": "Pay now", "id": "btn_pay" },
+            "ctx": { "owner": "user-a", "bot_id": "bot-a", "source": "api" },
+        }))
+        .unwrap();
+        let aid = match crate::phone_guard::check(&st.db, None, &req).unwrap() {
+            crate::phone_guard::Decision::Hold { approval_id, .. } => approval_id,
+            other => panic!("expected a hold, got {other:?}"),
+        };
+        let id = format!("approval:{aid}");
+        let it = collect(&c, "user-a", 30).unwrap().into_iter().find(|i| i["id"] == id.as_str()).unwrap();
+        // Review only: no inline Approve, no text in the push, and a hash like every approvable item.
+        assert_eq!((it["subkind"].as_str(), it["approveInline"].as_bool(), is_private(&it)), (Some("phone_action"), Some(false), true));
+        assert_eq!(notify_keys(&it)["private"], true);
+        assert_eq!(it["contentHash"].as_str().map(str::len), Some(32));
+        let state = |c: &Connection| -> String { c.query_row("SELECT state FROM gateway_approvals WHERE id = ?1", params![aid], |r| r.get(0)).unwrap() };
+
+        let app = Router::new().merge(needs_router()).with_state(st.clone());
+        for surface in ["notification", "live_activity", "widget", "siri"] {
+            let (s, v) = call(&app, "user-a", &format!("/inbox/{id}/approve"), json!({ "surface": surface })).await;
+            assert_eq!((s, v["error"].as_str()), (StatusCode::CONFLICT, Some("review_required")), "{surface}");
+        }
+        assert_eq!(state(&c), "pending");
+        // Opened in the app (no such surface), the owner approves it.
+        let (s, v) = call(&app, "user-a", &format!("/inbox/{id}/approve"), json!({ "contentHash": it["contentHash"] })).await;
+        assert_eq!(s, StatusCode::OK, "{v}");
+        assert_eq!(state(&c), "approved");
+    }
+
+    #[tokio::test]
+    async fn a_phone_hold_is_denied_from_a_notification() {
+        let st = setup().await;
+        let c = st.db.connect().unwrap();
+        let req: crate::phone_guard::CheckIn = serde_json::from_value(json!({
+            "serial": "link:1", "tool": "phone.tap", "app": "Shop", "run_id": "task-8", "step": 1,
+            "el": { "class": "Button", "label": "Pay now", "id": "btn_pay" },
+            "ctx": { "owner": "user-a", "bot_id": "bot-a", "source": "api" },
+        }))
+        .unwrap();
+        let aid = match crate::phone_guard::check(&st.db, None, &req).unwrap() {
+            crate::phone_guard::Decision::Hold { approval_id, .. } => approval_id,
+            other => panic!("expected a hold, got {other:?}"),
+        };
+        let app = Router::new().merge(needs_router()).with_state(st.clone());
+        let (s, v) = call(&app, "user-a", &format!("/inbox/approval:{aid}/approve"), json!({ "decision": "deny", "surface": "notification" })).await;
+        assert_eq!(s, StatusCode::OK, "{v}");
+        let state: String = c.query_row("SELECT state FROM gateway_approvals WHERE id = ?1", params![aid], |r| r.get(0)).unwrap();
+        assert_eq!(state, "denied");
     }
 
     #[tokio::test]

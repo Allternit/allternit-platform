@@ -247,7 +247,7 @@ export type WebhookEndpoint = {
 export type Event = {
   id: string;
   object: "event";
-  type: "approval.requested" | "message.received" | "message.status" | "registration.updated" | "inbox.item.created" | "call.started" | "call.ended" | "call.transcript.ready" | "usage.threshold" | "phone.step" | "phone.run.completed" | "phone.fleet_run.completed" | "mail.received" | "webhook.test";
+  type: "approval.requested" | "message.received" | "message.status" | "registration.updated" | "inbox.item.created" | "call.started" | "call.ended" | "call.transcript.ready" | "usage.threshold" | "phone.step" | "phone.run.completed" | "phone.fleet_run.completed" | "phone.approval.requested" | "phone.approval.resolved" | "mail.received" | "webhook.test";
   /**
    * Unix seconds.
    */
@@ -581,7 +581,7 @@ export type PhoneFleetRun = {
     run_id?: string;
     serial?: (string | null);
     /**
-     * running, or the end status (done, failed, max_steps, timeout, succeeded, diverged).
+     * running, waiting_approval (a step waits on the owner's approval), or the end status (done, failed, max_steps, timeout, succeeded, diverged, denied, approval_timeout, phone_locked).
      */
     status?: string;
     ok?: (boolean | null);
@@ -614,6 +614,28 @@ export type PhoneToolResult = {
   error?: string;
   message?: string;
   [key: string]: unknown;
+};
+
+/**
+ * A held phone action (409). API keys can't approve: the project owner approves in the Allternit app, then the call is repeated with hold_id.
+ */
+export type PhoneApprovalRequired = {
+  /**
+   * The usual error object, type conflict_error, code approval_required.
+   */
+  error: Record<string, unknown>;
+  /**
+   * The hold; send it back as hold_id once approved.
+   */
+  approval_id?: string;
+  /**
+   * The owner's "Needs you" item.
+   */
+  inbox_id?: string;
+  /**
+   * The hold expires unanswered after this.
+   */
+  expires_at?: string;
 };
 
 export type ListAccountsQuery = {
@@ -1027,7 +1049,7 @@ export type ListWebhooksResponse = {
 
 export type CreateWebhookRequest = {
   url: string;
-  events: Array<"*" | "approval.requested" | "message.received" | "message.status" | "registration.updated" | "inbox.item.created" | "call.started" | "call.ended" | "call.transcript.ready" | "usage.threshold" | "phone.step" | "phone.run.completed" | "phone.fleet_run.completed" | "mail.received">;
+  events: Array<"*" | "approval.requested" | "message.received" | "message.status" | "registration.updated" | "inbox.item.created" | "call.started" | "call.ended" | "call.transcript.ready" | "usage.threshold" | "phone.step" | "phone.run.completed" | "phone.fleet_run.completed" | "phone.approval.requested" | "phone.approval.resolved" | "mail.received">;
   description?: string;
 };
 
@@ -1271,6 +1293,10 @@ export type CallPhoneToolRequest = {
    * Group several calls into one run in the history (default: a new api- run).
    */
   run_id?: string;
+  /**
+   * On the retry of a held call: the approval_id the owner approved. Sent to the phone as `_hold` in arguments.
+   */
+  hold_id?: string;
 };
 
 export type CallPhoneToolResponse = PhoneToolResult;

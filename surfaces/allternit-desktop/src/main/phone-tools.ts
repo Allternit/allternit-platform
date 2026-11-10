@@ -13,7 +13,8 @@
 import { createHash } from 'node:crypto';
 import type { PhoneLinkHealth } from './phone-link-health.js';
 import { appHints, catalogApp, catalogAppByName } from './phone-app-catalog.js';
-import { PhoneApiUnavailable, type PhoneApi, type PhoneRunRecorder } from './phone-runs.js';
+import { elementAt, parseUiText, PhoneApiUnavailable, type PhoneApi, type PhoneRunRecorder, type UiLine } from './phone-runs.js';
+import type { GuardAnswer, GuardCheckBody, GuardCtx, GuardElement, PhoneHoldClient } from './phone-hold-client.js';
 
 // ── Injected collaborators ──────────────────────────────────────────────────
 
@@ -97,6 +98,22 @@ export interface PhoneLinkBackend extends UsbPhoneBackend {
   readSms?(serial: string, sinceMs: number, from: string | null): Promise<{ ok: true; raw: string } | ToolResult>;
   /** A bot tool call started (+1) or ended (-1) on a linked phone; background account reads wait while it's busy. */
   noteActivity?(serial: string, delta: number): void;
+  /** One raw helper call (iCTRL JSON-RPC); the approval check reads the screen with it. Rejects on any failure. */
+  helperCall?(serial: string, method: string, params?: Record<string, unknown>, timeoutMs?: number): Promise<unknown>;
+}
+
+/** A hold the runtime just made, for the owner's dialog on this computer (phone-service.ts holdDialog). */
+export interface PhoneHoldNotice {
+  approvalId: string;
+  inboxId: string;
+  expiresAt: string;
+  effect: string;
+  serial: string;
+  tool: string;
+  phoneName?: string;
+  app?: string;
+  /** What will happen, in plain words ("Tap “Delete”", "Send a text to …"). */
+  summary: string;
 }
 
 export interface PhoneToolDeps {
@@ -131,6 +148,15 @@ export interface PhoneToolDeps {
   api?: () => PhoneApi | null;
   /** Environment for the ARTEMIS fallback (GEMINI_API_KEY). Defaults to process.env. */
   env?: () => Record<string, string | undefined>;
+  /**
+   * The runtime's approval guard (phone-hold-client.ts). Production always
+   * wires it: every acting call is checked, and a factory answer of null (no
+   * runtime, nobody signed in) refuses acting calls. Left out only by lane
+   * unit tests, where texts and calls use `gate` as before.
+   */
+  guard?: () => PhoneHoldClient | null;
+  /** A hold was made: show it to the owner. Never awaited; the tool call returns approval_required at once. */
+  onHold?: (notice: PhoneHoldNotice) => void;
 }
 
 // ── Result shapes ───────────────────────────────────────────────────────────
@@ -168,13 +194,24 @@ export type ToolErrorCode =
   // phone.web.* / phone.calendar.* ...: the Allternit app is not open on the iPhone
   | 'app_not_open'
   // phone.calendar/reminders/contacts: the person has not turned that type on, or iOS access is denied
-  | 'device_access_off';
+  | 'device_access_off'
+  // The runtime holds this action for the owner: retry with "_hold": approvalId once approved
+  | 'approval_required'
+  // The approval check could not run (no runtime, signed out, timeout): acting calls are refused
+  | 'guard_unavailable';
+
+export interface ToolFailExtra {
+  retryAfterSec?: number;
+  approvalId?: string;
+  inboxId?: string;
+  expiresAt?: string;
+}
 
 export type ToolResult =
   | { ok: true; [key: string]: unknown }
-  | { ok: false; error: ToolErrorCode; message: string; retryAfterSec?: number };
+  | ({ ok: false; error: ToolErrorCode; message: string } & ToolFailExtra);
 
-const fail = (error: ToolErrorCode, message: string, extra: { retryAfterSec?: number } = {}): ToolResult => ({
+const fail = (error: ToolErrorCode, message: string, extra: ToolFailExtra = {}): ToolResult => ({
   ok: false,
   error,
   message,
@@ -783,6 +820,10 @@ export class PhoneToolRunner {
   private readonly now: () => number;
   /** Each call's `_source`, keyed by its args: "api" means a Platform API key, which always asks before reading texts. */
   private readonly sources = new WeakMap<Record<string, unknown>, string>();
+  /** Each call's args as received (`_pass`, `_hold`, `_run_id` …), for the approval check. */
+  private readonly raws = new WeakMap<Record<string, unknown>, Record<string, unknown>>();
+  /** The latest phone.web.snapshot elements per app phone: a web click's ref → its label, without a new snapshot (that would stale the bot's refs). */
+  private readonly webEls = new Map<string, Array<Record<string, unknown>>>();
 
   constructor(private readonly deps: PhoneToolDeps) {
     this.now = deps.now ?? Date.now;
@@ -794,6 +835,7 @@ export class PhoneToolRunner {
     const a = Object.fromEntries(Object.entries(raw).filter(([k]) => !k.startsWith('_')));
     const started = this.now();
     if (typeof raw._source === 'string') this.sources.set(a, raw._source);
+    this.raws.set(a, raw);
     const result = await this.dispatch(name, a);
     const recorder = this.deps.recorder;
     if (recorder && name !== 'phone.devices' && name !== 'phone.skills' && name !== 'phone.save_skill') {
@@ -838,8 +880,17 @@ export class PhoneToolRunner {
 
     const serial = this.resolveSerial(a.serial, usb, links, apps);
     if (typeof serial !== 'string') return serial;
+    // Every acting call crosses here (task loop, replay, a bot's direct call, the gateway, MCP): the runtime decides, Desktop enforces.
+    if (GUARDED_TOOLS.has(name) && !(name.startsWith('phone.web.') && !apps?.has(serial))) {
+      const stop = await this.guardCheck(name, serial, a, { usb, links, apps });
+      if (stop) return stop;
+    }
     // iPhones with the Allternit app: the screen and the app's browser, nothing that taps.
-    if (apps?.has(serial)) return apps.call(name, serial, a);
+    if (apps?.has(serial)) {
+      const res = await apps.call(name, serial, a);
+      if (name === 'phone.web.snapshot' && res.ok && Array.isArray(res.elements)) this.webEls.set(serial, res.elements as Array<Record<string, unknown>>);
+      return res;
+    }
     if (name.startsWith('phone.web.') || name === 'phone.screen.request' || name.startsWith('phone.calendar.') || name.startsWith('phone.reminders.') || name.startsWith('phone.contacts.')) {
       return fail('not_supported', `${name} works on an iPhone connected with the Allternit app (serial "app:…"); calendar, reminders and contacts are not available on other phones. On this phone use phone.screenshot, phone.open_app, phone.tap and phone.type.`);
     }
@@ -1141,15 +1192,26 @@ export class PhoneToolRunner {
     limits: Limits,
     summary: string,
     payload: Record<string, unknown>,
+    a: Record<string, unknown>,
   ): Promise<ToolResult | null> {
     const rateKey = `${serial}:${kind}`;
     const rate = checkRate(this.deps.rates.load(rateKey), this.now(), limits);
     if (!rate.ok) {
       return fail('rate_limited', `Not sent: ${rate.reason}. Texts and calls are person-to-person only.`, { retryAfterSec: rate.retryAfterSec });
     }
-    const decision = await this.deps.gate.request({ kind, serial, summary, actionHash: canonicalHash({ kind, serial, ...payload }) });
-    if (decision === 'denied') return fail('approval_denied', 'The user declined.');
-    if (decision === 'timeout') return fail('approval_timeout', 'The user did not respond in time.');
+    const actionHash = canonicalHash({ kind, serial, ...payload });
+    if (this.deps.guard) {
+      // The same hold as every other sensitive action. The runtime ties the hold to the
+      // recipient and text (or number) it reads from the args, which go as received.
+      const tool = kind === 'sms' ? 'phone.sms.send' : 'phone.call.dial';
+      const label = kind === 'sms' ? `Text ${String(payload.to)}` : `Call ${String(payload.number)}`;
+      const stop = await this.guardCheck(tool, serial, a, NO_LANES, { el: { class: tool, label, id: '' }, summary });
+      if (stop) return stop;
+    } else {
+      const decision = await this.deps.gate.request({ kind, serial, summary, actionHash });
+      if (decision === 'denied') return fail('approval_denied', 'The user declined.');
+      if (decision === 'timeout') return fail('approval_timeout', 'The user did not respond in time.');
+    }
     // Count the attempt before sending: a failed send still used the quota.
     const history = this.deps.rates.load(rateKey).filter((t) => this.now() - t < 86_400_000);
     this.deps.rates.save(rateKey, [...history, this.now()]);
@@ -1176,7 +1238,7 @@ export class PhoneToolRunner {
       return fail('invalid_args', 'Could not tell which SIM to send from; pass subscription_id from phone.devices.');
     }
 
-    const blocked = await this.gated('sms', serial, SMS_LIMITS, `Send a text to ${to}:\n\n${a.text}`, { to, text: a.text, sub: sub ?? -1 });
+    const blocked = await this.gated('sms', serial, SMS_LIMITS, `Send a text to ${to}:\n\n${a.text}`, { to, text: a.text, sub: sub ?? -1 }, a);
     if (blocked) return blocked;
     if (send) return send(sub, to, a.text);
     if (sub === null) return fail('invalid_args', 'Could not tell which SIM to send from; pass subscription_id from phone.devices.');
@@ -1201,7 +1263,7 @@ export class PhoneToolRunner {
     }
     if (isEmergencyNumber(number)) return fail('blocked_number', 'Emergency numbers are not allowed.');
 
-    const blocked = await this.gated('dial', serial, DIAL_LIMITS, `Call ${number} from the phone`, { number, sub: a.subscription_id ?? -1 });
+    const blocked = await this.gated('dial', serial, DIAL_LIMITS, `Call ${number} from the phone`, { number, sub: a.subscription_id ?? -1 }, a);
     if (blocked) return blocked;
     if (dial) {
       const placed = await dial(number, (a.subscription_id as number | undefined) ?? null);
@@ -1231,6 +1293,178 @@ export class PhoneToolRunner {
   }
 
   /**
+   * The approval check for one acting call (the runtime decides, this enforces).
+   * - `_pass` in the args (a loop's one-time pass): sent with the args exactly as received, no screen read.
+   *   The runtime answers `allow` + `pass: true` only for a redeemed pass; on `bad_pass` (or an allow
+   *   without `pass: true`) the pass is dropped and the call is checked once like any direct call.
+   * - Otherwise Desktop reads the screen once for the guard: the element a tap lands on, the focused
+   *   field for typing, the foreground app. `_hold` is carried on a retry.
+   * `comms` = texts, calls and inbox reads: the element is built from the recipient, no screen read.
+   * Answers: allow → null (run it); hold → approval_required; denied → approval_denied; anything else → guard_unavailable.
+   */
+  private async guardCheck(
+    name: string,
+    serial: string,
+    a: Record<string, unknown>,
+    lanes: GuardLanes,
+    comms?: { el: GuardElement; summary: string },
+  ): Promise<ToolResult | null> {
+    if (!this.deps.guard) return null;
+    const client = this.deps.guard();
+    if (!client) {
+      return fail('guard_unavailable', 'Not done: actions that can change something on the phone need an approval check, and Allternit Desktop is not signed in or its local API is not running. Sign in to Allternit Desktop and try again. Reading the screen still works.');
+    }
+    const raw = this.raws.get(a) ?? a;
+    const pass = typeof raw._pass === 'string' && raw._pass ? raw._pass : undefined;
+    const holdId = typeof raw._hold === 'string' && raw._hold.trim() ? raw._hold.trim() : undefined;
+    const runId = typeof raw._run_id === 'string' && raw._run_id.trim() ? raw._run_id.trim() : undefined;
+    const body: GuardCheckBody = { serial, tool: name, args: raw, ctx: guardCtx(a, raw) };
+    const platform = phonePlatform(serial, lanes);
+    if (platform) body.platform = platform;
+    if (holdId) body.holdId = holdId;
+    if (runId) body.runId = runId;
+    let app: string | undefined;
+    // What the guard classifies a call by: the recipient for comms, else one screen read.
+    const facts = async (): Promise<ToolResult | null> => {
+      if (comms) {
+        body.el = comms.el;
+        return null;
+      }
+      const f = await this.screenFacts(name, serial, a, lanes);
+      if (f.locked) return f.locked;
+      body.tool = f.tool;
+      if (f.el) body.el = f.el;
+      if (f.app) body.app = app = f.app;
+      if (f.screenshot) body.screenshot = f.screenshot;
+      return null;
+    };
+    const ask = async (): Promise<GuardAnswer> => {
+      try {
+        return await client.check(body);
+      } catch (error) {
+        return { decision: 'unavailable', message: error instanceof Error ? error.message : String(error) };
+      }
+    };
+    if (pass) {
+      body.pass = pass;
+    } else {
+      const stop = await facts();
+      if (stop) return stop;
+    }
+    let answer = await ask();
+    if (pass && (answer.decision === 'bad_pass' || (answer.decision === 'allow' && answer.pass !== true))) {
+      // A wrong, used or expired pass: drop it and check the call like any direct one.
+      delete body.pass;
+      body.args = Object.fromEntries(Object.entries(raw).filter(([k]) => k !== '_pass'));
+      const stop = await facts();
+      if (stop) return stop;
+      answer = await ask();
+    }
+    switch (answer.decision) {
+      case 'allow':
+        return null;
+      case 'hold': {
+        const notice: PhoneHoldNotice = {
+          approvalId: answer.approvalId,
+          inboxId: answer.inboxId,
+          expiresAt: answer.expiresAt,
+          effect: answer.effect,
+          serial,
+          tool: name,
+          phoneName: await this.phoneName(serial),
+          ...(app ? { app } : {}),
+          summary: comms?.summary ?? actionText(name, a, body.el),
+        };
+        try {
+          this.deps.onHold?.(notice);
+        } catch {
+          // The dialog is a convenience; the hold is in "Needs you" either way.
+        }
+        return fail(
+          'approval_required',
+          `Waiting for the owner's approval (${answer.effect || 'sensitive action'}). They can approve it in Needs you or in the dialog on this computer. Once approved, call ${name} again with the same arguments plus "_hold": "${answer.approvalId}" within 10 minutes.`,
+          { approvalId: answer.approvalId, inboxId: answer.inboxId, expiresAt: answer.expiresAt },
+        );
+      }
+      case 'denied':
+        return fail('approval_denied', 'The owner denied this action. Do not try to reach the same result another way.', { approvalId: answer.approvalId });
+      default:
+        return fail('guard_unavailable', `Not done: the approval check could not run (${answer.decision === 'bad_pass' ? 'it refused the check twice' : answer.message}). Actions that can change something on the phone are refused until it works; reading the screen still works.`);
+    }
+  }
+
+  /**
+   * What the guard needs to classify a direct call, from one screen read.
+   * Android over adb: uiautomator dump (element, focused field, password flag) + the resumed activity.
+   * Phone Link: the helper's page_source (structured nodes and foreground_app on Android; the iPhone
+   * runner's text tree, with an app only if it reports one). USB-Agent iPhone: no element read and no
+   * foreground app; the mirror frame goes along as the owner's picture.
+   */
+  private async screenFacts(name: string, serial: string, a: Record<string, unknown>, lanes: GuardLanes): Promise<ScreenFacts> {
+    // The guard has its own rule for phone.find_and_tap (the element it looks for).
+    const tool = name;
+    if (name === 'phone.open_app') return { tool };
+    if (name === 'phone.web.click' || name === 'phone.web.type') {
+      const ref = typeof a.ref === 'string' ? a.ref : '';
+      const hit = ref ? this.webEls.get(serial)?.find((e) => e.ref === ref) : undefined;
+      return hit ? { tool, el: { class: asText(hit.role), label: asText(hit.name) || asText(hit.text), id: ref } } : { tool };
+    }
+    let els: ReadEl[] = [];
+    let app: string | undefined;
+    let screenshot: string | undefined;
+    try {
+      if (lanes.usb?.has(serial)) {
+        const shot = await lanes.usb.call('phone.screenshot', serial, {});
+        if (!shot.ok && shot.error === 'device_locked') return { tool, locked: shot };
+        if (shot.ok && typeof shot.dataBase64 === 'string') screenshot = `data:${typeof shot.mimeType === 'string' ? shot.mimeType : 'image/jpeg'};base64,${shot.dataBase64}`;
+      } else if (lanes.links?.has(serial)) {
+        if (lanes.links.helperCall) ({ els, app } = linkedScreen(await lanes.links.helperCall(serial, 'page_source', { format: 'text', structured: true, visible_only: true }, 5_000)));
+      } else if (!lanes.apps?.has(serial)) {
+        const xml = await this.uiDump(serial);
+        if (typeof xml === 'string') ({ els, app } = adbScreen(xml));
+        app = (await this.adbForeground(serial)) ?? app;
+      }
+    } catch {
+      // No screen read: the foreground app (if known) decides, as the contract says.
+    }
+    let picked: { className: string; label: string; id: string; secure?: boolean } | null = null;
+    if (name === 'phone.tap' && isInt(a.x) && isInt(a.y)) {
+      picked = elementAt(els, a.x as number, a.y as number);
+    } else if (name === 'phone.find_and_tap' && typeof a.element_id === 'string') {
+      const id = a.element_id.trim().toLowerCase();
+      const match = typeof a.match === 'string' ? a.match.toLowerCase() : undefined;
+      picked = els.find((e) => {
+        const eid = e.id.toLowerCase();
+        const byId = eid === id || eid.endsWith(`:${id}`) || eid.endsWith(`/${id}`) || e.label.toLowerCase() === id;
+        return byId && (!match || e.label.toLowerCase().includes(match));
+      }) ?? null;
+    } else if (name === 'phone.type' || name === 'phone.key') {
+      picked = els.find((e) => e.focused) ?? null;
+    }
+    const el: GuardElement | undefined = picked
+      ? { class: picked.secure ? `${picked.className} password` : picked.className, label: picked.label, id: picked.id }
+      : undefined;
+    return { tool, ...(el ? { el } : {}), ...(app ? { app } : {}), ...(screenshot ? { screenshot } : {}) };
+  }
+
+  /** The app in front on an adb phone (`dumpsys activity`, the resumed activity's package). */
+  private async adbForeground(serial: string): Promise<string | undefined> {
+    const res = await this.deps.adb(['shell', 'dumpsys activity activities | grep -E "topResumedActivity|mResumedActivity"'], { serial, timeoutMs: 5_000 });
+    return res.code === 0 ? parseForegroundPackage(res.stdout) ?? undefined : undefined;
+  }
+
+  /** A Phone-Linked phone's name for the hold dialog (only looked up when a hold is made). */
+  private async phoneName(serial: string): Promise<string | undefined> {
+    const links = this.deps.links?.() ?? null;
+    if (!links?.has(serial)) return undefined;
+    try {
+      return (await links.linkedDevices()).find((d) => d.serial === serial)?.name;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
    * Reading texts is approved once per bot and phone (remembered in the rate
    * store). A bot without an id, and any Platform API key, asks every time.
    */
@@ -1242,9 +1476,16 @@ export class PhoneToolRunner {
     if (remember && this.deps.rates.load(remember).length > 0) return null;
     const who = source === 'api' ? 'An API key' : bot ? `Bot ${bot}` : 'A bot';
     const summary = `${who} wants to read texts received on ${serial}${a.from !== undefined ? ` from ${String(a.from)}` : ''} (last ${a.since_s ?? 300} s, at most 20).${remember ? ' You will not be asked again for this bot on this phone.' : ''}`;
-    const decision = await this.deps.gate.request({ kind: 'sms_read', serial, summary, actionHash: canonicalHash({ kind: 'sms_read', serial, bot, source }) });
-    if (decision === 'denied') return fail('approval_denied', 'The user declined.');
-    if (decision === 'timeout') return fail('approval_timeout', 'The user did not respond in time.');
+    const actionHash = canonicalHash({ kind: 'sms_read', serial, bot, source });
+    if (this.deps.guard) {
+      // The runtime always holds a read (texts carry one-time codes); the once-per-bot memory stays here.
+      const stop = await this.guardCheck('phone.sms.read', serial, a, NO_LANES, { el: { class: 'phone.sms.read', label: `${who} reads texts`, id: actionHash }, summary });
+      if (stop) return stop;
+    } else {
+      const decision = await this.deps.gate.request({ kind: 'sms_read', serial, summary, actionHash });
+      if (decision === 'denied') return fail('approval_denied', 'The user declined.');
+      if (decision === 'timeout') return fail('approval_timeout', 'The user did not respond in time.');
+    }
     if (remember) this.deps.rates.save(remember, [this.now()]);
     return null;
   }
@@ -1292,6 +1533,134 @@ export class PhoneToolRunner {
       }
       await sleep(Math.min(3000, Math.max(0, deadline - this.now())));
     }
+  }
+}
+
+// ── Approval check helpers ──────────────────────────────────────────────────
+
+/**
+ * Acting tools the runtime guard can classify; dispatch checks them before
+ * any lane runs them. phone.sms.send, phone.call.dial and phone.sms.read are
+ * checked inside smsSend / callDial / smsRead, after validation and the rate
+ * limit. Not checked (the guard has no rule for them): screenshot, read_ui,
+ * screen_text, swipe, home, back, task (its loop checks every step), web.open,
+ * web.snapshot, web.scroll, web.back, web.wait, calendar/reminders/contacts,
+ * skills.
+ */
+export const GUARDED_TOOLS: ReadonlySet<string> = new Set([
+  'phone.tap',
+  'phone.find_and_tap',
+  'phone.type',
+  'phone.key',
+  'phone.open_app',
+  'phone.web.click',
+  'phone.web.type',
+]);
+
+interface GuardLanes {
+  usb: UsbPhoneBackend | null;
+  links: PhoneLinkBackend | null;
+  apps: AppPhoneLane | null;
+}
+
+const NO_LANES: GuardLanes = { usb: null, links: null, apps: null };
+
+interface ScreenFacts {
+  /** The tool name the guard classifies. */
+  tool: string;
+  el?: GuardElement;
+  app?: string;
+  screenshot?: string;
+  /** The phone is locked: return this as today. */
+  locked?: ToolResult;
+}
+
+type ReadEl = UiLine & { focused?: boolean; secure?: boolean };
+
+const asText = (v: unknown): string => (typeof v === 'string' ? v : '');
+
+function guardCtx(a: Record<string, unknown>, raw: Record<string, unknown>): GuardCtx {
+  const ctx: GuardCtx = {};
+  if (typeof a.bot_id === 'string' && a.bot_id.trim()) ctx.bot_id = a.bot_id.trim();
+  if (typeof raw._source === 'string' && raw._source) ctx.source = raw._source;
+  if (typeof raw._thread_id === 'string' && raw._thread_id) ctx.thread_id = raw._thread_id;
+  if (typeof raw._session_id === 'string' && raw._session_id) ctx.session_id = raw._session_id;
+  return ctx;
+}
+
+function phonePlatform(serial: string, lanes: GuardLanes): 'android' | 'ios' | undefined {
+  if (serial.startsWith('usb:') || serial.startsWith('app:')) return 'ios';
+  if (serial.startsWith('link:') || lanes.links?.has(serial)) return undefined;
+  return 'android';
+}
+
+/** `topResumedActivity=ActivityRecord{… u0 com.whatsapp/.HomeActivity t42}` → "com.whatsapp". */
+export function parseForegroundPackage(stdout: string): string | null {
+  const m = /(?:topResumedActivity|mResumedActivity)[^\n]*?\s([A-Za-z][\w]*(?:\.[\w]+)+)\/[\w.$]+/.exec(stdout);
+  return m ? m[1] : null;
+}
+
+/** uiautomator XML → elements with the focused and password flags, and the first node's package. */
+function adbScreen(xml: string): { els: ReadEl[]; app?: string } {
+  const els: ReadEl[] = [];
+  let app: string | undefined;
+  for (const tag of xml.matchAll(/<node\b[^>]*?>/g)) {
+    const attrs: Record<string, string> = {};
+    for (const m of tag[0].matchAll(/([\w:.-]+)="([^"]*)"/g)) attrs[m[1]] = unescapeXml(m[2]);
+    if (!app && attrs.package) app = attrs.package;
+    const b = /^\[(\d+),(\d+)\]\[(\d+),(\d+)\]$/.exec(attrs.bounds ?? '');
+    if (!attrs.class || !b) continue;
+    const [x1, y1, x2, y2] = [Number(b[1]), Number(b[2]), Number(b[3]), Number(b[4])];
+    els.push({
+      className: attrs.class,
+      label: attrs.text || attrs['content-desc'] || '',
+      id: attrs['resource-id'] || '',
+      rect: { x: x1, y: y1, w: x2 - x1, h: y2 - y1 },
+      focused: attrs.focused === 'true',
+      secure: attrs.password === 'true',
+    });
+  }
+  return { els, app };
+}
+
+/** The Phone Link helper's page_source → elements (structured nodes, else the text tree) and the foreground app. */
+function linkedScreen(r: unknown): { els: ReadEl[]; app?: string } {
+  const o = (r && typeof r === 'object' ? r : {}) as Record<string, unknown>;
+  const app = asText(o.foreground_app) || asText(o.bundle_id) || undefined;
+  if (Array.isArray(o.nodes)) {
+    const els = o.nodes.flatMap((n): ReadEl[] => {
+      if (!n || typeof n !== 'object') return [];
+      const v = n as Record<string, unknown>;
+      const b = (v.bounds && typeof v.bounds === 'object' ? v.bounds : {}) as Record<string, unknown>;
+      const num = (x: unknown) => (typeof x === 'number' ? x : Number.NaN);
+      const rect = { x: num(b.x), y: num(b.y), w: num(b.width), h: num(b.height) };
+      if (![rect.x, rect.y, rect.w, rect.h].every(Number.isFinite)) return [];
+      return [{ className: asText(v.class), label: asText(v.label) || asText(v.text) || asText(v.content_desc), id: asText(v.resource_id), rect, focused: v.focused === true, secure: v.password === true }];
+    });
+    return { els, app };
+  }
+  return { els: parseUiText(asText(o.source) || asText(o.text)), app };
+}
+
+/** The action in plain words, for the owner's dialog. Typed text is never shown, only its length. */
+function actionText(name: string, a: Record<string, unknown>, el: GuardElement | undefined): string {
+  const on = el?.label ? `“${el.label}”` : '';
+  switch (name) {
+    case 'phone.tap':
+      return on ? `Tap ${on}` : `Tap at ${String(a.x)}, ${String(a.y)}`;
+    case 'phone.find_and_tap':
+      return `Tap ${on || `“${String(a.element_id)}”`}`;
+    case 'phone.type':
+    case 'phone.web.type':
+      return `Type ${typeof a.text === 'string' ? a.text.length : 0} characters${on ? ` into ${on}` : ''}`;
+    case 'phone.key':
+      return `Press ${String(a.combo ?? a.key ?? 'a key')}${on ? ` in ${on}` : ''}`;
+    case 'phone.open_app':
+      return `Open ${String(a.app)}`;
+    case 'phone.web.click':
+      return `Tap ${on || 'an element'} in the Allternit app's browser`;
+    default:
+      return name;
   }
 }
 

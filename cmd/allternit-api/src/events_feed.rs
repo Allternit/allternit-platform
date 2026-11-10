@@ -73,6 +73,10 @@ pub enum Kind {
     PhoneStep,
     /// A phone task or skill replay ended (`phone_task`, `phone_replay`).
     PhoneRunCompleted,
+    /// The phone guard held an action for the owner (`phone_guard`).
+    PhoneApprovalRequested,
+    /// A phone hold was approved, denied, expired or changed (`phone_guard`).
+    PhoneApprovalResolved,
 }
 
 impl Kind {
@@ -107,6 +111,8 @@ impl Kind {
             Kind::AttentionResolved => Some("attention.resolved"),
             Kind::PhoneStep => Some("phone.step"),
             Kind::PhoneRunCompleted => Some("phone.run.completed"),
+            Kind::PhoneApprovalRequested => Some("phone.approval.requested"),
+            Kind::PhoneApprovalResolved => Some("phone.approval.resolved"),
         }
     }
 }
@@ -144,6 +150,8 @@ pub fn classify(event_type: &str, payload: &Value) -> Option<Kind> {
         "attention.resolved" => Some(Kind::AttentionResolved),
         "phone.step" => Some(Kind::PhoneStep),
         "phone.run.completed" => Some(Kind::PhoneRunCompleted),
+        "phone.approval.requested" => Some(Kind::PhoneApprovalRequested),
+        "phone.approval.resolved" => Some(Kind::PhoneApprovalResolved),
         _ => None,
     }
 }

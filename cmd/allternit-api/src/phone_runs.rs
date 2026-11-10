@@ -283,7 +283,9 @@ pub fn frame(data_dir: &FsPath, serial: &str, step: &str) -> Option<Vec<u8>> {
     std::fs::read(dir.join(format!("{step}.png"))).ok()
 }
 
-/// Runs, newest first: `{run_id, serial, started_at, ended_at, steps, failed, source, thumbnail}`.
+/// Runs, newest first: `{run_id, serial, started_at, ended_at, steps, failed, source, thumbnail}`,
+/// plus `status` (`running` | `waiting_approval`, with `approvalId` and `effect`
+/// while a hold waits) for a task or replay still in progress.
 pub fn runs(steps: &[Step]) -> Vec<Value> {
     let mut order: Vec<String> = Vec::new();
     let mut by: std::collections::HashMap<String, Vec<&Step>> = std::collections::HashMap::new();
@@ -297,7 +299,7 @@ pub fn runs(steps: &[Step]) -> Vec<Value> {
         .iter()
         .map(|id| {
             let list = &by[id];
-            json!({
+            let mut run = json!({
                 "run_id": id,
                 "serial": list[0].serial,
                 "started_at": list[0].at,
@@ -306,7 +308,15 @@ pub fn runs(steps: &[Step]) -> Vec<Value> {
                 "failed": list.iter().filter(|s| !s.ok).count(),
                 "source": list.iter().find_map(|s| s.source.clone()),
                 "thumbnail": list.iter().rev().find_map(|s| s.thumbnail.clone()),
-            })
+            });
+            if let Some(live) = live_of(id) {
+                for k in ["status", "approvalId", "effect"] {
+                    if let Some(v) = live.get(k).filter(|v| !v.is_null()) {
+                        run[k] = v.clone();
+                    }
+                }
+            }
+            run
         })
         .collect();
     out.reverse();
@@ -383,6 +393,11 @@ async fn redact_frame(image_base64: Option<String>, data_dir: &FsPath) -> Option
     crate::computer_safety::black_out(&png, &boxes).ok().map(|out| B64.encode(out))
 }
 
+/// A run's live status from the phone guard (`waiting_approval` while a hold waits).
+pub fn live_of(run_id: &str) -> Option<Value> {
+    crate::phone_guard::live_status(run_id)
+}
+
 // ─── Events (phone.step, phone.run.completed) ─────────────────────────────
 
 /// The owner ledger row of a recorded step: what `phone.step` webhooks carry.
@@ -416,12 +431,19 @@ pub fn run_event(report: &Value, source: &str) -> Value {
         "failed": steps.map(|s| s.iter().filter(|x| x.get("ok").and_then(Value::as_bool) == Some(false)).count()).unwrap_or(0),
         "model_calls": report.get("model_calls"),
         "duration_ms": report.get("duration_ms"),
+        // Time spent waiting on the owner (left out of `duration_ms`) and the
+        // holds the run met: `[{approvalId, effect, state}]`. Statuses add
+        // `denied`, `approval_timeout` and `phone_locked`.
+        "held_ms": report.get("held_ms").and_then(Value::as_u64).unwrap_or(0),
+        "holds": report.get("holds").cloned().unwrap_or_else(|| json!([])),
     })
 }
 
 /// Write a phone event to the owner ledger, which `runtime_events` forwards
 /// to the cloud (Platform API webhooks, MCP Events). Best effort and a no-op
 /// on an unpaired runtime: phone runs never wait on, or fail for, the cloud.
+/// Any type is kept: `phone.step`, `phone.run.completed`, and the guard's
+/// `phone.approval.requested` / `phone.approval.resolved`.
 pub fn record_event(db: &crate::db::DbHandle, event_type: &str, payload: Value, key: String) {
     let Some(owner) = crate::relay_auth::process_secret().paired_owner() else { return };
     let db = db.clone();
@@ -584,5 +606,26 @@ mod tests {
         assert_eq!(runs(&got)[0]["steps"], 2);
         assert!(ingest(tmp.path(), "s", StepIn { tool: "rm".into(), ..Default::default() }).is_err());
         assert!(frame(tmp.path(), "s", "../x").is_none());
+    }
+
+    #[test]
+    fn run_event_carries_holds_and_runs_show_a_waiting_hold() {
+        let report = json!({
+            "run_id": "skill-h1", "status": "approval_timeout", "held_ms": 300000,
+            "holds": [{ "approvalId": "a1", "effect": "pay", "state": "expired" }], "steps": [],
+        });
+        let ev = run_event(&report, "routine");
+        assert_eq!((ev["status"].as_str(), ev["held_ms"].as_u64()), (Some("approval_timeout"), Some(300000)));
+        assert_eq!(ev["holds"][0]["state"], "expired");
+        // An old report with no hold fields still makes a complete event.
+        assert_eq!((run_event(&json!({ "run_id": "x" }), "task")["held_ms"].as_u64(), run_event(&json!({}), "task")["holds"].clone()), (Some(0), json!([])));
+
+        let tmp = tempfile::tempdir().unwrap();
+        let step = ingest(tmp.path(), "link:w", StepIn { run_id: Some("task-live-h1".into()), tool: "phone.read_ui".into(), args: json!({}), ok: true, ..Default::default() }).unwrap();
+        crate::phone_guard::set_live("task-live-h1", Some(json!({ "status": "waiting_approval", "approvalId": "a2", "effect": "delete" })));
+        let waiting = runs(std::slice::from_ref(&step));
+        crate::phone_guard::set_live("task-live-h1", None);
+        assert_eq!((waiting[0]["status"].as_str(), waiting[0]["approvalId"].as_str()), (Some("waiting_approval"), Some("a2")));
+        assert!(runs(&[step])[0].get("status").is_none());
     }
 }

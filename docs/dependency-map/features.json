@@ -2225,6 +2225,10 @@
         {
           "on": "2026-11-03",
           "note": "Android Phone Link app ID moves to com.allternit.app (Eoj, 2026-11-03), so it can later host the Allternit app as a TWA. The Kotlin classes keep com.allternit.phonelink. Desktop reads the ID from the helper manifest (packageName; absent = old com.allternit.phonelink APK) and uninstalls the old app before installing the new one. Users relink once. 0.5.0 (same release key) makes the launcher the Allternit app: m.allternit.com as a Trusted Web Activity (androidbrowserhelper LauncherActivity, assetlinks in allternit-ai public/.well-known), sideloaded from allternit.com/android (websites _redirects); Phone Link status moves to the notification + icon shortcut. Docs: guides/android-app."
+        },
+        {
+          "on": "2026-11-10",
+          "note": "Phone approval holds (Eoj, 2026-11-10): a sensitive phone action (pay, delete, send, call, password or code, bank/wallet/broker app, security setting) waits for the owner as a gateway_approvals hold (inbox kind approval, subkind phone_action; Review only, no inline Approve). allternit-api phone_guard decides (label rules first; the model can only add a hold) and Desktop phone-tools dispatch() enforces on every route: the task loop, skill replay and routines, web tasks on app phones, a bot's direct tool call, /phones/:serial/tool and the MCP phone tools. Loops wait up to 5 minutes with the budget paused; direct and API callers get approval_required (cloud /v1/phones answers 409) and retry with the hold id. API keys cannot approve; there is no approve-by-text. Texts, calls and SMS reads moved from the Desktop dialog to the same hold. Held time is not billed as phone minutes. A routine that reaches a hold with nobody there stops with one item and Retry. The label rules are English only, so the guard does not catch every sensitive action."
         }
       ],
       "evidence": [
