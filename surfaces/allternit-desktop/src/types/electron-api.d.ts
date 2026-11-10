@@ -278,6 +278,8 @@ export interface MeshAPI {
 
 export interface ShellAPI {
   openExternal(url: string): Promise<void>;
+  openPrivacySettings(pane: 'fullDisk' | 'automation'): Promise<{ supported: false } | { supported: true; opened: boolean }>;
+  messagesAccessHint(): Promise<{ supported: false } | { supported: true; appName: string; appPath: string }>;
   openRemoteControl(): Promise<void>;
   openFabricSession(): Promise<void>;
   getOfficeHostStatus(): Promise<Record<'word' | 'excel' | 'powerpoint', {

@@ -126,7 +126,7 @@ pub static REGISTRY: &[EventType] = &[
     EventType {
         name: "agent.run.completed",
         title: "Finished agent runs",
-        description: "An agent run finished.",
+        description: "An agent run finished. Pushed by default only for a failed run or one that ran 2 minutes or longer.",
         platform: false,
         agents: true,
         bot: false,

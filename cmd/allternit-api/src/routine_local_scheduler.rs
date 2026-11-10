@@ -370,6 +370,12 @@ fn claim_due(db: &DbHandle, now: DateTime<Utc>) -> rusqlite::Result<Vec<LocalRou
             params![r.id, next, r.next_run_at],
         )?;
         if changed == 1 {
+            // Pause all bots: the claim above already moved it to its next slot,
+            // so it is skipped now and runs at that slot after resume (no burst).
+            if crate::bots_pause::is_paused(&conn, &r.user_id) {
+                record_paused_skip(&conn, &r, now);
+                continue;
+            }
             let mut r = r;
             if let Some(due_at) = r.next_run_at.as_deref().and_then(|t| DateTime::parse_from_rfc3339(t).ok()).map(|t| t.with_timezone(&Utc)) {
                 let late = now - due_at;
@@ -463,6 +469,10 @@ fn claim_due_loops(db: &DbHandle, now: DateTime<Utc>) -> rusqlite::Result<Vec<Lo
             params![r.id, next, r.next_run_at],
         )?;
         if changed == 1 {
+            // Pause all bots: skipped, and due again at its next slot after resume.
+            if crate::bots_pause::is_paused(&conn, &r.user_id) {
+                continue;
+            }
             claimed.push(with_runner(&conn, r));
         }
     }
@@ -481,6 +491,21 @@ fn prepare_loops(db: &DbHandle, now: DateTime<Utc>) -> Vec<LocalRoutine> {
         warn!(error = %e, "local loops: claim failed");
         Vec::new()
     })
+}
+
+/// A due routine skipped because its owner paused all bots: one `skipped` row
+/// (`outcome_reason = bots_paused`), so the run history says why it didn't run.
+fn record_paused_skip(conn: &rusqlite::Connection, r: &LocalRoutine, now: DateTime<Utc>) {
+    let at = r.next_run_at.clone().unwrap_or_else(|| now.to_rfc3339());
+    let wrote = conn.execute(
+        "INSERT INTO routine_runs (id, routine_id, status, scheduled_at, started_at, finished_at, duration_ms,
+             output, error, triggered_by, metadata, outcome_reason)
+         VALUES (?1, ?2, 'skipped', ?3, ?4, ?4, 0, 'bots paused', NULL, 'schedule', '{}', 'bots_paused')",
+        params![uuid::Uuid::new_v4().to_string(), r.id, at, now.to_rfc3339()],
+    );
+    if let Err(e) = wrote {
+        warn!(routine = %r.id, error = %e, "could not record a paused skip");
+    }
 }
 
 /// A scheduled run started later than its grace period. Every occurrence skipped
@@ -1542,6 +1567,10 @@ pub async fn run_startup<D: RoutineDriver>(db: &DbHandle, driver: &D) -> usize {
     .unwrap_or_default();
     let mut fired = 0;
     for r in routines {
+        // Pause all bots: a startup routine does not run on this boot.
+        if crate::bots_pause::is_paused_db(db, &r.user_id) {
+            continue;
+        }
         let Some(_guard) = FlightGuard::acquire(&r.id) else { continue };
         execute(db, driver, &r, Trigger::Startup).await;
         fired += 1;
@@ -1688,6 +1717,37 @@ mod tests {
             .unwrap()
             .execute("UPDATE routines SET next_run_at = ?2 WHERE id = ?1", params![id, (Utc::now() - chrono::Duration::minutes(2)).to_rfc3339()])
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_due_routine_is_skipped_while_paused_and_runs_at_its_next_slot() {
+        let state = setup("paused").await;
+        insert(&state, "r-p", "interval", "1h", json!({}), Some("bot-1"));
+        force_due(&state, "r-p");
+        crate::bots_pause::set(&state.db.connect().unwrap(), "user-a", true, Some("test")).unwrap();
+        let fake = Fake::default();
+        let now = Utc::now();
+        assert_eq!(run_due(&state.db, &fake, now).await, 0, "nothing starts while paused");
+        assert!(fake.turns.lock().unwrap().is_empty());
+        let (next, reason): (String, String) = state
+            .db
+            .connect()
+            .unwrap()
+            .query_row(
+                "SELECT r.next_run_at, x.outcome_reason FROM routines r JOIN routine_runs x ON x.routine_id = r.id WHERE r.id = 'r-p'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(reason, "bots_paused");
+        let next = DateTime::parse_from_rfc3339(&next).unwrap().with_timezone(&Utc);
+        assert!(next > now + chrono::Duration::minutes(59), "kept, moved to its next slot");
+        // Resume: no catch-up burst, and no "missed while offline" notice.
+        crate::bots_pause::set(&state.db.connect().unwrap(), "user-a", false, None).unwrap();
+        assert_eq!(run_due(&state.db, &fake, now + chrono::Duration::minutes(1)).await, 0, "not due again until its slot");
+        assert_eq!(run_due(&state.db, &fake, next).await, 1, "runs at its next slot after resume");
+        assert_eq!(fake.turns.lock().unwrap().len(), 1);
+        assert_eq!(runs(&state, "r-p"), ["skipped", "succeeded"]);
     }
 
     fn runs(state: &AppState, id: &str) -> Vec<String> {

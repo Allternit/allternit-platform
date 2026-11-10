@@ -60,6 +60,7 @@ final class RoutineStore: ObservableObject {
         loadError = nil
         do {
             routines = try await client.listRoutines()
+            await SpotlightIndexer.refresh()
         } catch is CancellationError {
             // View went away mid-flight — keep current state.
         } catch {

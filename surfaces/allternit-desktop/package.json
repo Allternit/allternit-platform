@@ -380,7 +380,7 @@
         }
       ],
       "extendInfo": {
-        "NSAppleEventsUsageDescription": "Allternit uses automation to carry out computer-use actions you approve.",
+        "NSAppleEventsUsageDescription": "Allternit uses automation to carry out computer-use actions you approve, and sends a text message through Messages only after you approve it.",
         "NSMicrophoneUsageDescription": "Allternit uses the microphone for voice calls and on-device dictation.",
         "NSLocationUsageDescription": "When you turn on location sharing, your bots get your rough location so they can help with local times, places and weather.",
         "NSLocationWhenInUseUsageDescription": "When you turn on location sharing, your bots get your rough location so they can help with local times, places and weather.",

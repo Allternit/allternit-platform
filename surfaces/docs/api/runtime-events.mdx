@@ -56,7 +56,59 @@ x-allternit-owner: <paired owner>
 - The cloud answers `200` with one result per event (`accepted`, `duplicate`, `ignored`, `too_large` or `invalid`). Any 2xx moves the cursor past the whole batch. `401`, `5xx` or no answer leaves it where it was.
 - Only the paired owner's rows are sent. Rows on incognito threads never leave the runtime. A runtime that isn't paired sends nothing.
 - `data` is an allowlist of payload fields (ids, provider, decision, `text` cut to 240 characters, bot and thread names). Other payload fields stay on the runtime.
+- Every event from a bot ledger also carries `botId`, `threadId` (when it has one) and `botAvatar` (an `https://` URL only) in `data`, next to the top-level `bot_id` and `thread_id`.
 - Batches hold up to 100 ledger rows per source. A pass runs every 5 seconds, sooner while a backlog drains.
+
+### Approval fields
+
+An `approval.requested` whose [inbox item](/api/inbox#fields-for-approving-from-a-notification) is still open when the forwarder reads it also carries:
+
+| Key | Meaning |
+|---|---|
+| `inboxId` | The inbox item id, for example `approval:gap_1`, `email:o1`, `factory:fa_1`, `permission:per_1`. Approve with `POST /api/v1/inbox/:id/approve`. |
+| `inboxKind` | `approval`, `held_send`, `email_draft`, `factory_approval` or `gizzi_permission`. Pick the notification category from this, not from the event type. |
+| `sessionId` | The coding session to reply to, when there is one. |
+| `contentHash` | Send it back on approve. A changed item answers `409 changed`. |
+| `approveInline` | True when the notification may offer Approve without opening the app. |
+| `senderKind` | `bot`. |
+| `to`, `toName` | The recipient, when the item is addressed to someone. |
+| `trust` | `contact` or `stranger`, when the input came from outside. |
+| `private` | True when the item is addressed to another person. Its text must not travel in a plain push. |
+| `botId`, `botName`, `threadId` | The bot and thread. A coding-session ask or a Factory approval on the owner ledger gets them from its inbox item. |
+| `botAvatar` | The bot's avatar, only when it is an `https://` URL. |
+
+When `approveInline` is true, `text` is the whole text (300 characters or fewer) instead of the 240-character preview.
+
+One event per approval:
+- Gateway approvals and held channel posts are written to the bot ledger by `gateway_runner::create_approval`.
+- An email held for the owner's OK is written by `inbox_needs::record_email_draft`.
+- A Factory approval is written to its bot's ledger, or to the owner ledger when it has no bot.
+- A coding-session permission ask is written to the owner ledger by `v1_routes::record_gizzi_permission_ask`. It is idempotent per request id.
+
+All of them carry `approvalId`, so the event id is `rt:approval:<approvalId>:requested`.
+
+## Status snapshot
+
+`status.snapshot` is the runtime's current state for the phone's Live Activity, widget and badge. It does not come from a ledger: `status_snapshot.rs` builds it every 5 seconds and posts it on its own to the same route with the same signature, only when it changed and at most once per 5 seconds. Each send has a new id (`rt:snap:<unix ms>`). The cloud keeps the latest one per runtime and never shows it as an alert. A cloud that doesn't know the type answers 4xx, and the runtime waits 10 minutes before it tries again. The ledger forwarder is not affected.
+
+```json
+{"activeBots":2,"attentionBots":1,"pendingApprovals":1,"paused":false,
+ "focus":{"botId":"b1","botName":"Raven","status":"waiting_approval","step":"Drafting the reply",
+  "inboxId":"approval:ap1","sessionId":"s1","question":"Raven wants to post on slack: Hi Sam…",
+  "contentHash":"ab12…","approveInline":true,"private":true},
+ "bots":[{"botId":"b1","name":"Raven","status":"waiting_approval","step":"Drafting the reply"}],
+ "needsYou":["approval:ap1","attention:at9"],
+ "needsYouRows":[{"id":"approval:ap1","kind":"held_send","botName":"Raven","line":"Raven wants to post on slack: Hi Sam…","private":true}],
+ "loops":[{"loopId":"l1","command":"cargo test","iterationsCompleted":3,"maxIterations":10,"state":"running"}],
+ "lastRoutine":{"routineId":"r1","title":"Morning brief","status":"completed","at":1794200000}}
+```
+
+- **Bot status** is one of `waiting_approval`, `needs_input`, `blocked`, `failed`, `working` or `idle`, from the bot's pending approvals and its threads. Blocked and failed threads count for 24 hours.
+- **Focus** is the bot with the oldest pending approval. If there is none, it is the bot that has waited longest for input. Next comes the most recent blocked or failed bot, then the most recently active working bot. With none of these, `focus` is `null`.
+- **`focus.private`** and **`needsYouRows[].private`** are true when the item is addressed to another person. Show a generic line in a plain push.
+- **Limits:** `bots` holds up to 20, `needsYouRows` up to 4, and `line` up to 80 characters. `question` is up to 140. `needsYou` lists every open inbox id, so the cloud can remove notifications for items that left it. `progress` is not sent yet. `paused` is always `false` for now.
+- **Loops** come from gizzi-code's `GET /v1/automations/loops` on loopback, polled every 5 seconds while a loop runs and every 60 seconds otherwise. Only running and paused loops are listed (up to 5). When a poll fails, `loops` is left out, so a gizzi restart does not end a loop's Live Activity. The request uses Basic auth from `GIZZI_PASSWORD` when the gizzi server has a password.
+- **`lastRoutine`** is the newest `routine.completed` or `routine.failed` on the owner's bots. `at` is in Unix seconds.
 
 ## Exactly once (in effect)
 

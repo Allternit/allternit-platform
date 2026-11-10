@@ -1175,7 +1175,14 @@ pub async fn respond_approval(
             set_thread_status(db, &bot_id, &thread_id, "working", "");
         }
     }
-    Ok(json!({ "approvalId": approval_id, "state": st }))
+    let mut out = json!({ "approvalId": approval_id, "state": st });
+    // A held iMessage sends here, once: re-read, claimed and sent by messages_mac.
+    if st == "approved" {
+        if let Some(send) = crate::messages_mac::send_approved_now(db, owner, approval_id).await {
+            out["send"] = send;
+        }
+    }
+    Ok(out)
 }
 
 // ---------------------------------------------------------------- process-wide entry points

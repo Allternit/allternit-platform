@@ -2,6 +2,7 @@ import { Database } from "@/runtime/session/storage/db"
 import { LoopTable } from "@/runtime/session/session.sql"
 import { eq } from "drizzle-orm"
 import { spawn } from "child_process"
+import { waitWhilePaused } from "./pause-gate"
 import { armStats, noiseFloor, type MetricDirection } from "./arm-stats"
 
 export interface LoopLogEntry {
@@ -12,6 +13,19 @@ export interface LoopLogEntry {
 }
 
 export class LoopEngine {
+  /**
+   * While all bots are paused, wait before the next automatic iteration. A
+   * loop the owner starts by hand still runs its first iteration; an
+   * iteration already running finishes. Iterations are not skipped or
+   * burst-run after resume: the loop just resumes where it stopped.
+   */
+  private static async holdIfPaused(id: string): Promise<void> {
+    await waitWhilePaused(
+      () => Database.use((db) => db.select().from(LoopTable).where(eq(LoopTable.id, id)).get())?.state !== "running",
+      () => console.log(`[loop ${id}] bots are paused; holding the next iteration until they resume`),
+    )
+  }
+
   static async startLoop(id: string): Promise<void> {
     const loop = Database.use((db) =>
       db.select().from(LoopTable).where(eq(LoopTable.id, id)).get()
@@ -25,6 +39,8 @@ export class LoopEngine {
     const logs: LoopLogEntry[] = []
 
     while (iteration < maxIterations) {
+      // Bots paused: hold the next iteration (the first, hand-started one runs).
+      if (iteration > 0) await this.holdIfPaused(id)
       // Check if loop status changed (aborted / stopped) in the DB
       const currentLoop = Database.use((db) =>
         db.select().from(LoopTable).where(eq(LoopTable.id, id)).get()
@@ -183,7 +199,9 @@ export class LoopEngine {
     // Rejects are read before new attempts: the previous hypotheses are
     // exposed to the change command through the environment.
     let stalled = 0
+    const firstIteration = ledger.length + 1
     for (let iteration = ledger.length + 1; iteration <= maxIterations; iteration++) {
+      if (iteration > firstIteration) await this.holdIfPaused(id)
       if (read()?.state !== "running") return
       const head = await this.git("rev-parse HEAD", cwd)
       const before = await this.untracked(cwd)

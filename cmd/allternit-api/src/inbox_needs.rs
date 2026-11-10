@@ -18,12 +18,20 @@
 //! | `vendor_result` | `vendor_tickets` finished / failed / expired            | review (open)          |
 //! | `draft`       | `inbox_items` `autonomy.draft` cards (autonomy level kept a draft) | review (open) |
 //! | `factory_approval` | `factory_approvals` pending (a Factory node waiting on you) | approve / reject |
+//! | `gizzi_permission` | `cowork_approvals` from a coding session's permission ask (`source = gizzi-permission`) | approve / deny |
 //! | `attention`   | `attention_items` unresolved (failed or missed routine, no bot, lost run record …) | retry / dismiss |
 //! | `memory_import` | active `memory_facts` not yet in the Memory Drive (no import yet) | open Settings → Memory |
 //!
 //! `inbox_state` (V232) only remembers dismissals and snoozes. Routes live in
 //! `inbox_routes::inbox_router` (`GET /inbox` carries `needsYou`).
 //! Every action emits `inbox.changed` on the item's bot so other devices refresh.
+//!
+//! Approvable kinds ([`APPROVAL_KINDS`]) also carry `contentHash` (a stable hash
+//! over what the owner approves: recipient, full text, attachment ids, or the
+//! tool call), `full {to, toName, text}`, `approveInline`, `senderKind` and,
+//! when known, `trust`. Items on a bot thread carry `sessionId`. An approve
+//! that sends a `contentHash` that no longer matches answers 409
+//! `{"error":"changed"}` and approves nothing.
 
 use axum::extract::{Extension, Path, State};
 use axum::http::StatusCode;
@@ -43,6 +51,82 @@ pub const DEFAULT_UNANSWERED_MINUTES: i64 = 30;
 const WINDOW_DAYS: i64 = 7;
 const TICKET_WINDOW_DAYS: i64 = 3;
 const PER_SOURCE: i64 = 50;
+/// Longest text a notification may approve inline (the owner must see all of it).
+pub const INLINE_MAX: usize = 300;
+/// Kinds the owner approves from a notification; each carries `contentHash`.
+pub const APPROVAL_KINDS: &[&str] = &["approval", "held_send", "email_draft", "factory_approval", "gizzi_permission"];
+
+/// Stable hash over exactly what the owner approves. `parts` are joined with
+/// NUL, so ("ab","c") and ("a","bc") differ. 32 hex characters.
+pub fn content_hash(kind: &str, parts: &[&str]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(b"inbox-content-v1\0");
+    h.update(kind.as_bytes());
+    for p in parts {
+        h.update([0u8]);
+        h.update(p.as_bytes());
+    }
+    hex::encode(h.finalize())[..32].to_string()
+}
+
+/// The fields a notification needs to approve an item. `fits` is false when
+/// the owner can't see everything from the notification (attachments, a cut
+/// text, high risk); text longer than [`INLINE_MAX`] never fits.
+fn approvable(it: &mut Value, hash: String, to: Option<&str>, to_name: Option<&str>, text: &str, fits: bool) {
+    let trust = it["provenance"]["trust"].as_str().map(str::to_string);
+    let stranger = trust.as_deref() == Some("stranger");
+    it["contentHash"] = json!(hash);
+    it["full"] = json!({ "to": to, "toName": to_name, "text": text });
+    it["approveInline"] = json!(fits && !stranger && text.chars().count() <= INLINE_MAX);
+    it["senderKind"] = json!("bot");
+    if let Some(t) = trust {
+        it["trust"] = json!(t);
+    }
+}
+
+/// The keys an approval event and the status snapshot copy from an inbox item.
+pub fn notify_keys(it: &Value) -> serde_json::Map<String, Value> {
+    let mut m = serde_json::Map::new();
+    m.insert("inboxId".into(), it["id"].clone());
+    m.insert("inboxKind".into(), it["kind"].clone());
+    for k in ["sessionId", "contentHash", "approveInline", "senderKind", "trust"] {
+        if let Some(v) = it.get(k).filter(|v| !v.is_null()) {
+            m.insert(k.into(), v.clone());
+        }
+    }
+    if let Some(v) = it["full"]["to"].as_str() {
+        m.insert("to".into(), json!(v));
+    }
+    if let Some(v) = it["full"]["toName"].as_str() {
+        m.insert("toName".into(), json!(v));
+    }
+    m.insert("private".into(), json!(is_private(it)));
+    m
+}
+
+/// Text addressed to another person must not travel in plain pushes.
+pub fn is_private(it: &Value) -> bool {
+    it["private"].as_bool() == Some(true) || it["full"]["to"].as_str().is_some_and(|t| !t.is_empty())
+}
+
+/// The inbox item an `approval.requested` ledger payload is about, if it is still open.
+pub fn item_for_approval<'a>(items: &'a [Value], payload: &Value) -> Option<&'a Value> {
+    let mut ids = vec![];
+    if let Some(a) = payload["approvalId"].as_str().filter(|a| !a.is_empty()) {
+        ids.extend([format!("approval:{a}"), format!("permission:{a}"), format!("email:{a}"), format!("factory:{a}")]);
+    }
+    if let (Some(a), true) = (payload["id"].as_str(), payload.get("dagId").is_some()) {
+        ids.push(format!("factory:{a}"));
+    }
+    items.iter().find(|i| i["id"].as_str().is_some_and(|id| ids.iter().any(|c| c == id)))
+}
+
+/// Ledger an email held for the owner's OK (`approval.requested` on the bot's
+/// ledger), so the cloud gets one event for it like every other approval.
+pub fn record_email_draft(db: &crate::db::DbHandle, bot_id: &str, outbound_id: &str) -> bool {
+    crate::gateway_runner::led(db, bot_id, "", None, "approval.requested", ("system", "email"), json!({ "approvalId": outbound_id, "source": "email" }), Some(format!("email:approval.requested:{outbound_id}")))
+}
 
 pub fn needs_router() -> Router<Arc<AppState>> {
     Router::new()
@@ -104,16 +188,23 @@ pub fn collect(conn: &Connection, user_id: &str, unanswered_min: i64) -> rusqlit
 
     // Held outbound email.
     let mut st = conn.prepare(
-        "SELECT o.id, o.agent_id, o.thread_id, o.to_address, o.subject, o.snippet, o.created_at, COALESCE(a.name, '')
+        "SELECT o.id, o.agent_id, o.thread_id, o.to_address, o.subject, o.snippet, o.created_at, COALESCE(a.name, ''), o.idempotency_key
          FROM agent_email_outbound o LEFT JOIN agents a ON a.id = o.agent_id
          WHERE o.user_id = ?1 AND o.status = 'pending_approval' ORDER BY o.created_at DESC LIMIT ?2",
     )?;
     for r in st.query_map(params![user_id, PER_SOURCE], |r| {
-        Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3)?, r.get::<_, Option<String>>(4)?, r.get::<_, Option<String>>(5)?, r.get::<_, Option<String>>(6)?, r.get::<_, String>(7)?))
+        Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3)?, r.get::<_, Option<String>>(4)?, r.get::<_, Option<String>>(5)?, r.get::<_, Option<String>>(6)?, r.get::<_, String>(7)?, r.get::<_, String>(8)?))
     })? {
-        let (id, bot, _thread, to, subject, snip, at, bot_name) = r?;
-        let what = subject.filter(|s| !s.is_empty()).or(snip).unwrap_or_default();
-        out.push(item(format!("email:{id}"), "email_draft", "email", &bot, &bot_name, None, Some(to.clone()), format!("Email to {to} is waiting for your OK: {}", snippet(&what, 120)), at.as_deref().unwrap_or(""), ("approve", "Send"), true));
+        let (id, bot, _thread, to, subject, snip, at, bot_name, key) = r?;
+        let what = subject.clone().filter(|s| !s.is_empty()).or(snip.clone()).unwrap_or_default();
+        let mut it = item(format!("email:{id}"), "email_draft", "email", &bot, &bot_name, None, Some(to.clone()), format!("Email to {to} is waiting for your OK: {}", snippet(&what, 120)), at.as_deref().unwrap_or(""), ("approve", "Send"), true);
+        // The runtime keeps a 200-character snippet and no attachment list, so
+        // it can't show the whole email: never approved inline. The row never
+        // changes under one id; the idempotency key covers the full body.
+        let (subject, snip) = (subject.unwrap_or_default(), snip.unwrap_or_default());
+        let text = if subject.is_empty() { snip.clone() } else { format!("{subject}\n\n{snip}") };
+        approvable(&mut it, content_hash("email_draft", &[&id, &to, &subject, &snip, &key]), Some(&to), None, &text, false);
+        out.push(it);
     }
 
     // Approval gates (tools, vendor approvals, held channel posts).
@@ -129,14 +220,29 @@ pub fn collect(conn: &Connection, user_id: &str, unanswered_min: i64) -> rusqlit
         let (id, bot, thread, authority, action, detail, at, bot_name, title, provider) = r?;
         let detail: Value = serde_json::from_str(&detail).unwrap_or(Value::Null);
         let held = authority == "allternit" && action.starts_with("post to ") && detail["text"].is_string();
-        if held {
+        if authority == "allternit" && action == crate::messages_mac::ACTION && detail["text"].is_string() {
+            // A held iMessage from Messages on the Mac: the full recipient and text, sent only on approve.
+            let (to, text) = (detail["to"].as_str().unwrap_or(""), detail["text"].as_str().unwrap_or(""));
+            let to_name = detail["toName"].as_str().filter(|n| !n.is_empty()).map(str::to_string);
+            let thread = (thread != "messages-mac").then_some(thread.as_str());
+            let who = if bot_name.is_empty() { "Messages".to_string() } else { bot_name.clone() };
+            let mut it = item(format!("approval:{id}"), "held_send", "imessage", &bot, &bot_name, thread, Some(to_name.clone().unwrap_or_else(|| to.to_string())), format!("{who} wants to send a message to {}: {}", to_name.as_deref().unwrap_or(to), snippet(text, 120)), &at, ("approve", "Send"), true);
+            with_provenance(&mut it, &detail);
+            approvable(&mut it, content_hash("held_send", &[&id, "imessage", to, text]), Some(to), to_name.as_deref(), text, true);
+            out.push(it);
+        } else if held {
             let provider = provider.unwrap_or_else(|| action.trim_start_matches("post to ").to_string());
             let mut it = item(format!("approval:{id}"), "held_send", &provider, &bot, &bot_name, Some(&thread), title.clone(), format!("{bot_name} wants to post on {provider}: {}", snippet(detail["text"].as_str().unwrap_or(""), 120)), &at, ("approve", "Send"), true);
             with_provenance(&mut it, &detail);
+            let text = detail["text"].as_str().unwrap_or("");
+            let files = detail.get("files").filter(|f| f.as_array().is_some_and(|a| !a.is_empty()));
+            let files_s = files.map(|f| f.to_string()).unwrap_or_default();
+            approvable(&mut it, content_hash("held_send", &[&id, &provider, &thread, text, &files_s]), Some(&provider), title.as_deref(), text, files.is_none());
             out.push(it);
         } else {
             let mut it = item(format!("approval:{id}"), "approval", if authority == "vendor" { "vendor" } else { "tool" }, &bot, &bot_name, Some(&thread), title.clone(), format!("{bot_name} needs approval: {}", snippet(&action, 120)), &at, ("approve", "Approve"), true);
             with_provenance(&mut it, &detail);
+            approvable(&mut it, content_hash("approval", &[&id, &authority, &action, &detail.to_string()]), None, None, &action, true);
             // A phone approval hold: Review only (the owner sees the screen crop first), never in push text.
             if authority == "allternit" && action.starts_with("phone.") && detail["phone"].is_object() {
                 let p = &detail["phone"];
@@ -328,6 +434,47 @@ pub fn collect(conn: &Connection, user_id: &str, unanswered_min: i64) -> rusqlit
         let summary = if a.summary.is_empty() { format!("Factory: {} needs your OK", a.title) } else { format!("Factory: {} needs your OK: {}", a.title, snippet(&a.summary, 120)) };
         let mut it = item(format!("factory:{}", a.id), "factory_approval", "factory", &bot, &bot_name, None, None, summary, &a.created_at, ("approve", "Approve"), true);
         it["approval"] = a.to_json();
+        let text = if a.summary.is_empty() { a.title.clone() } else { format!("{}: {}", a.title, a.summary) };
+        approvable(&mut it, content_hash("factory_approval", &[&a.id, &a.title, &a.summary, a.evidence_ref.as_deref().unwrap_or("")]), None, None, &text, !a.is_high_risk());
+        out.push(it);
+    }
+
+    // Coding-session permission asks (a tool call parked on the owner's OK).
+    // Approve/deny goes through the same decision as the ApprovalGate card.
+    let mut st = conn.prepare(
+        "SELECT id, content, created_at FROM cowork_approvals
+         WHERE user_id = ?1 AND source = 'gizzi-permission' AND dismissed = 0 AND created_at >= datetime('now', ?2)
+         ORDER BY created_at DESC LIMIT ?3",
+    )?;
+    for r in st.query_map(params![user_id, format!("-{WINDOW_DAYS} days"), PER_SOURCE], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)))? {
+        let (id, content, at) = r?;
+        let c: Value = serde_json::from_str(&content).unwrap_or(Value::Null);
+        let session = c["sessionId"].as_str().unwrap_or("").to_string();
+        let (thread, bot, bot_name): (Option<String>, String, String) = if session.is_empty() {
+            (None, String::new(), String::new())
+        } else {
+            conn.query_row(
+                "SELECT t.id, t.bot_id, COALESCE(json_extract(a.config, '$.botProfile.displayName'), a.name, '') FROM bot_thread_sessions s JOIN bot_threads t ON t.id = s.thread_id LEFT JOIN agents a ON a.id = t.bot_id
+                 WHERE s.session_id = ?1 AND t.user_id = ?2 ORDER BY s.generation DESC LIMIT 1",
+                params![session, user_id],
+                |r| Ok((Some(r.get::<_, String>(0)?), r.get::<_, String>(1)?, r.get::<_, String>(2)?)),
+            )
+            .optional()?
+            .unwrap_or((None, String::new(), String::new()))
+        };
+        let tool = c["toolName"].as_str().unwrap_or("tool");
+        let summary = c["summary"].as_str().map(str::to_string).unwrap_or_else(|| format!("{tool} needs your OK"));
+        let target = c["details"]["target"].as_str().unwrap_or("");
+        let text = if target.is_empty() { summary.clone() } else { format!("{summary}: {target}") };
+        let mut it = item(format!("permission:{id}"), "gizzi_permission", "tool", &bot, &bot_name, thread.as_deref(), None, snippet(&text, 160), &at, ("approve", "Allow"), true);
+        if !session.is_empty() {
+            it["sessionId"] = json!(session);
+        }
+        let action_type = c["details"]["actionType"].as_str().unwrap_or("");
+        // Subscription cards need a person's session proof (and some an answer): open them in the app.
+        let card = crate::subscription_routes::is_subscription_card(&c) || action_type == crate::subscription_routes::SUBSCRIPTION_PERMISSION;
+        let fits = !card && c["riskLevel"].as_str() != Some("high");
+        approvable(&mut it, content_hash("gizzi_permission", &[&id, tool, action_type, target, &summary]), None, None, &text, fits);
         out.push(it);
     }
 
@@ -375,6 +522,16 @@ pub fn collect(conn: &Connection, user_id: &str, unanswered_min: i64) -> rusqlit
             it["provenance"] = p;
         }
         out.push(it);
+    }
+
+    // The coding session behind each bot thread: Reply posts to /agent-sessions/:id/messages.
+    let mut st = conn.prepare("SELECT session_id FROM bot_thread_sessions WHERE thread_id = ?1 ORDER BY generation DESC LIMIT 1")?;
+    for it in out.iter_mut().filter(|i| i.get("sessionId").is_none()) {
+        if let Some(t) = it["threadId"].as_str().filter(|t| !t.is_empty()).map(str::to_string) {
+            if let Some(s) = st.query_row(params![t], |r| r.get::<_, String>(0)).optional()? {
+                it["sessionId"] = json!(s);
+            }
+        }
     }
 
     // Drop what the owner already handled (unless the item changed since).
@@ -431,8 +588,17 @@ fn find(state: &AppState, user_id: &str, id: &str) -> Result<Value, Response> {
 }
 
 fn changed(state: &AppState, it: &Value, action: &str) {
-    let (Some(bot), Some(id)) = (it["botId"].as_str(), it["id"].as_str()) else { return };
-    crate::gateway_runner::led(&state.db, bot, it["threadId"].as_str().unwrap_or(""), None, "inbox.changed", ("user", "owner"), json!({ "itemId": id, "action": action }), None);
+    changed_from(state, it, action, None)
+}
+
+/// `surface` names where the owner acted (`notification`, `live_activity`, `widget`, …).
+fn changed_from(state: &AppState, it: &Value, action: &str, surface: Option<&str>) {
+    let (Some(bot), Some(id)) = (it["botId"].as_str().filter(|b| !b.is_empty()), it["id"].as_str()) else { return };
+    let mut p = json!({ "itemId": id, "action": action });
+    if let Some(s) = surface {
+        p["surface"] = json!(s);
+    }
+    crate::gateway_runner::led(&state.db, bot, it["threadId"].as_str().unwrap_or(""), None, "inbox.changed", ("user", "owner"), p, None);
 }
 
 fn remember(state: &AppState, user_id: &str, it: &Value, st: &str, until: Option<String>) -> rusqlite::Result<()> {
@@ -451,13 +617,18 @@ struct ActBody {
     decision: Option<String>,
     /// Snooze length; default 60.
     minutes: Option<i64>,
+    /// The `contentHash` the owner saw. A mismatch answers 409 `changed`.
+    #[serde(rename = "contentHash")]
+    content_hash: Option<String>,
+    /// Where the owner acted (logged on `inbox.changed`).
+    surface: Option<String>,
 }
 
 fn body(b: Option<Json<ActBody>>) -> ActBody {
     b.map(|Json(b)| b).unwrap_or_default()
 }
 
-async fn approve(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Path(id): Path<String>, b: Option<Json<ActBody>>) -> Response {
+async fn approve(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Path(id): Path<String>, headers: axum::http::HeaderMap, b: Option<Json<ActBody>>) -> Response {
     let b = body(b);
     let approve = match b.decision.as_deref() {
         None | Some("approve") => true,
@@ -468,6 +639,17 @@ async fn approve(State(state): State<Arc<AppState>>, Extension(user): Extension<
         Ok(i) => i,
         Err(r) => return r,
     };
+    // The owner approved what they saw: if it changed since, approve nothing.
+    if let Some(h) = b.content_hash.as_deref() {
+        if it["contentHash"].as_str() != Some(h) {
+            return (StatusCode::CONFLICT, Json(json!({ "error": "changed", "code": "CHANGED", "id": id, "contentHash": it["contentHash"] }))).into_response();
+        }
+    }
+    // A phone hold is approved only where the owner sees the screen it is about:
+    // never from a notification, a Live Activity, a widget or Siri. Deny is always allowed.
+    if approve && it["subkind"] == "phone_action" && matches!(b.surface.as_deref(), Some("notification" | "live_activity" | "widget" | "control" | "intent" | "siri" | "shortcut")) {
+        return (StatusCode::CONFLICT, Json(json!({ "error": "review_required", "code": "REVIEW_REQUIRED", "id": id }))).into_response();
+    }
     let result: Result<Value, Response> = match it["kind"].as_str().unwrap_or("") {
         "email_draft" => {
             let oid = id.trim_start_matches("email:");
@@ -486,7 +668,14 @@ async fn approve(State(state): State<Arc<AppState>>, Extension(user): Extension<
             let tx = crate::gateway_runner::transport(&state);
             match crate::gateway_runner::respond_approval(&state.db, tx.as_ref(), &user.user_id, &aid, if approve { "approve" } else { "deny" }, ("user", &user.user_id)).await {
                 Err(e) => Err(e.into_response()),
-                Ok(v) if approve && it["kind"] == "held_send" => Ok(json!({ "state": "approved", "send": send_held(&state, &user.user_id, &aid).await, "approval": v })),
+                Ok(v) if approve && it["kind"] == "held_send" => {
+                    // A held iMessage already ran its send inside respond_approval.
+                    let send = match v.get("send") {
+                        Some(sent) => sent.clone(),
+                        None => send_held(&state, &user.user_id, &aid).await,
+                    };
+                    Ok(json!({ "state": "approved", "send": send, "approval": v }))
+                }
                 Ok(v) => Ok(v),
             }
         }
@@ -516,11 +705,15 @@ async fn approve(State(state): State<Arc<AppState>>, Extension(user): Extension<
                 Err(e) => Err(e.into_response()),
             }
         }
+        "gizzi_permission" => {
+            let rid = id.trim_start_matches("permission:");
+            crate::cowork_routes::decide_from_inbox(&state, &user, &headers, rid, approve).await
+        }
         _ => Err(err(StatusCode::BAD_REQUEST, "NOT_APPROVABLE", "open this item to deal with it, or dismiss it")),
     };
     match result {
         Ok(v) => {
-            changed(&state, &it, "approve");
+            changed_from(&state, &it, "approve", b.surface.as_deref());
             Json(json!({ "id": id, "result": v })).into_response()
         }
         Err(r) => r,
@@ -853,5 +1046,192 @@ mod tests {
         assert!(!collect(&c, "user-a", 30).unwrap().iter().any(|i| i["id"] == "attention:routine_failed:r1"));
         let how: String = c.query_row("SELECT resolution FROM attention_items WHERE id = 'routine_failed:r1'", [], |r| r.get(0)).unwrap();
         assert_eq!(how, "dismissed");
+    }
+
+    // ---- iPhone system surfaces: one forwarded event per approvable kind
+
+    fn session(c: &Connection, thread: &str, sid: &str) {
+        c.execute("INSERT INTO bot_thread_sessions (thread_id, generation, session_id, started_at) VALUES (?1, 0, ?2, '2026-01-01T00:00:00Z')", params![thread, sid]).unwrap();
+    }
+
+    fn cx(thread: &str) -> crate::gateway_runner::Cx {
+        crate::gateway_runner::Cx { owner: "user-a".into(), thread_id: thread.into(), bot_id: "bot-a".into(), generation: 0, session_id: "s1".into(), exec: json!({ "vendor": "acme" }) }
+    }
+
+    #[tokio::test]
+    async fn each_approvable_kind_forwards_one_event_with_its_inbox_keys() {
+        use crate::runtime_events::testing::{approvals, Cloud};
+        let st = setup().await;
+        let c = st.db.connect().unwrap();
+        thread(&c, "t1", "bot-a", "user-a", "working", "");
+        thread(&c, "t2", "bot-a", "user-a", "working", "");
+        session(&c, "t1", "s1");
+        session(&c, "t2", "s2");
+        c.execute("UPDATE agents SET avatar = 'https://cdn.example.com/ledger.png' WHERE id = 'bot-a'", []).unwrap();
+        let cloud = Cloud::default();
+        assert!(approvals(&st.db, &cloud).await.is_empty()); // first pass: cursor at the end
+
+        // approval (vendor gate) and held_send (a channel post), through the real gateway write.
+        let ap = crate::gateway_runner::create_approval(&st.db, &cx("t1"), "vendor", "refund $20", None, json!({}), None).unwrap_or_else(|_| panic!("create_approval"));
+        let hs = crate::gateway_runner::create_approval(&st.db, &cx("t2"), "allternit", "post to slack", None, json!({ "text": "Hi Sam, the invoice is attached." }), None).unwrap_or_else(|_| panic!("create_approval"));
+        // email_draft
+        c.execute("INSERT INTO agent_email_outbound (id, agent_id, user_id, thread_id, idempotency_key, to_address, subject, snippet, status) VALUES ('o1','bot-a','user-a','mail:email-out-o1','k1','pat@example.com','Invoice','Hi Pat','pending_approval')", []).unwrap();
+        assert!(record_email_draft(&st.db, "bot-a", "o1"));
+        // gizzi_permission, published twice (an SSE replay): still one row, one event.
+        let content = json!({ "actionId": "per_1", "sessionId": "s1", "summary": "bash requested by bash", "toolName": "bash", "riskLevel": "medium", "details": { "actionType": "bash", "target": "rm -rf build" } }).to_string();
+        assert!(crate::v1_routes::record_gizzi_permission_ask(&c, "user-a", "per_1", &content).unwrap());
+        assert!(!crate::v1_routes::record_gizzi_permission_ask(&c, "user-a", "per_1", &content).unwrap());
+
+        let evs = approvals(&st.db, &cloud).await;
+        let by = |inbox: &str| -> Value {
+            let m: Vec<&Value> = evs.iter().filter(|e| e["data"]["inboxId"] == inbox).collect();
+            assert_eq!(m.len(), 1, "exactly one event for {inbox}: {evs:#?}");
+            m[0]["data"].clone()
+        };
+        assert_eq!(evs.len(), 4, "{evs:#?}");
+
+        let d = by(&format!("approval:{ap}"));
+        assert_eq!((d["inboxKind"].as_str(), d["sessionId"].as_str(), d["approveInline"].as_bool(), d["senderKind"].as_str()), (Some("approval"), Some("s1"), Some(true), Some("bot")));
+        assert_eq!(d["contentHash"].as_str().map(str::len), Some(32));
+
+        let d = by(&format!("approval:{hs}"));
+        assert_eq!((d["inboxKind"].as_str(), d["sessionId"].as_str(), d["to"].as_str(), d["toName"].as_str()), (Some("held_send"), Some("s2"), Some("slack"), Some("Thread t2")));
+        assert_eq!((d["approveInline"].as_bool(), d["private"].as_bool(), d["text"].as_str()), (Some(true), Some(true), Some("Hi Sam, the invoice is attached.")));
+
+        let d = by("email:o1");
+        assert_eq!((d["inboxKind"].as_str(), d["to"].as_str(), d["approveInline"].as_bool()), (Some("email_draft"), Some("pat@example.com"), Some(false)));
+        assert!(d.get("sessionId").is_none(), "an email thread has no coding session");
+
+        let d = by("permission:per_1");
+        assert_eq!((d["inboxKind"].as_str(), d["sessionId"].as_str(), d["approveInline"].as_bool()), (Some("gizzi_permission"), Some("s1"), Some(true)));
+        // An owner-ledger ask still names its bot (through the session's thread).
+        assert_eq!((d["botId"].as_str(), d["botName"].as_str(), d["threadId"].as_str()), (Some("bot-a"), Some("Ledger"), Some("t1")));
+        assert_eq!((d["private"].as_bool(), d["senderKind"].as_str()), (Some(false), Some("bot")));
+        // Every kind carries the bot's https avatar and its id.
+        for e in &evs {
+            assert_eq!((e["data"]["botId"].as_str(), e["data"]["botAvatar"].as_str()), (Some("bot-a"), Some("https://cdn.example.com/ledger.png")), "{e:#}");
+        }
+
+        // The inbox lists the same items with the same hash; the gateway's own
+        // cowork card is not a second gizzi_permission item.
+        let items = collect(&c, "user-a", 30).unwrap();
+        let perm: Vec<&Value> = items.iter().filter(|i| i["kind"] == "gizzi_permission").collect();
+        assert_eq!(perm.len(), 1);
+        assert_eq!(perm[0]["botId"], "bot-a", "found through the session's thread");
+        assert_eq!(perm[0]["contentHash"], by("permission:per_1")["contentHash"]);
+        assert_eq!(perm[0]["full"]["text"], "bash requested by bash: rm -rf build");
+    }
+
+    #[tokio::test]
+    async fn approve_with_a_stale_hash_answers_409_and_approves_nothing() {
+        let st = setup().await;
+        let c = st.db.connect().unwrap();
+        thread(&c, "t1", "bot-a", "user-a", "working", "");
+        let aid = crate::gateway_runner::create_approval(&st.db, &cx("t1"), "allternit", "post to slack", None, json!({ "text": "Hi Sam" }), None).unwrap_or_else(|_| panic!("create_approval"));
+        let app = Router::new().merge(needs_router()).with_state(st.clone());
+        let id = format!("approval:{aid}");
+        let hash = collect(&c, "user-a", 30).unwrap().into_iter().find(|i| i["id"] == id.as_str()).unwrap()["contentHash"].as_str().unwrap().to_string();
+
+        // The bot revised the text after the notification went out.
+        c.execute("UPDATE gateway_approvals SET detail_json = ?2 WHERE id = ?1", params![aid, json!({ "text": "Hi Sam, call me" }).to_string()]).unwrap();
+        let (s, v) = call(&app, "user-a", &format!("/inbox/{id}/approve"), json!({ "contentHash": hash, "surface": "notification" })).await;
+        assert_eq!(s, StatusCode::CONFLICT);
+        assert_eq!(v["error"], "changed");
+        let state: String = c.query_row("SELECT state FROM gateway_approvals WHERE id = ?1", params![aid], |r| r.get(0)).unwrap();
+        assert_eq!(state, "pending");
+
+        // The current hash approves; no hash at all (an older client) behaves as before.
+        let fresh = collect(&c, "user-a", 30).unwrap().into_iter().find(|i| i["id"] == id.as_str()).unwrap()["contentHash"].clone();
+        assert_ne!(fresh.as_str(), Some(hash.as_str()));
+        let (s, v) = call(&app, "user-a", &format!("/inbox/{id}/approve"), json!({ "contentHash": fresh })).await;
+        assert_eq!(s, StatusCode::OK, "{v}");
+        let state: String = c.query_row("SELECT state FROM gateway_approvals WHERE id = ?1", params![aid], |r| r.get(0)).unwrap();
+        assert_eq!(state, "approved");
+    }
+
+    #[tokio::test]
+    async fn a_phone_hold_is_not_approved_from_a_notification() {
+        let st = setup().await;
+        let c = st.db.connect().unwrap();
+        let req: crate::phone_guard::CheckIn = serde_json::from_value(json!({
+            "serial": "link:1", "tool": "phone.tap", "app": "Shop", "run_id": "task-9", "step": 2, "intent": "tap Pay now",
+            "el": { "class": "Button", "label": "Pay now", "id": "btn_pay" },
+            "ctx": { "owner": "user-a", "bot_id": "bot-a", "source": "api" },
+        }))
+        .unwrap();
+        let aid = match crate::phone_guard::check(&st.db, None, &req).unwrap() {
+            crate::phone_guard::Decision::Hold { approval_id, .. } => approval_id,
+            other => panic!("expected a hold, got {other:?}"),
+        };
+        let id = format!("approval:{aid}");
+        let it = collect(&c, "user-a", 30).unwrap().into_iter().find(|i| i["id"] == id.as_str()).unwrap();
+        // Review only: no inline Approve, no text in the push, and a hash like every approvable item.
+        assert_eq!((it["subkind"].as_str(), it["approveInline"].as_bool(), is_private(&it)), (Some("phone_action"), Some(false), true));
+        assert_eq!(notify_keys(&it)["private"], true);
+        assert_eq!(it["contentHash"].as_str().map(str::len), Some(32));
+        let state = |c: &Connection| -> String { c.query_row("SELECT state FROM gateway_approvals WHERE id = ?1", params![aid], |r| r.get(0)).unwrap() };
+
+        let app = Router::new().merge(needs_router()).with_state(st.clone());
+        for surface in ["notification", "live_activity", "widget", "siri"] {
+            let (s, v) = call(&app, "user-a", &format!("/inbox/{id}/approve"), json!({ "surface": surface })).await;
+            assert_eq!((s, v["error"].as_str()), (StatusCode::CONFLICT, Some("review_required")), "{surface}");
+        }
+        assert_eq!(state(&c), "pending");
+        // Opened in the app (no such surface), the owner approves it.
+        let (s, v) = call(&app, "user-a", &format!("/inbox/{id}/approve"), json!({ "contentHash": it["contentHash"] })).await;
+        assert_eq!(s, StatusCode::OK, "{v}");
+        assert_eq!(state(&c), "approved");
+    }
+
+    #[tokio::test]
+    async fn a_phone_hold_is_denied_from_a_notification() {
+        let st = setup().await;
+        let c = st.db.connect().unwrap();
+        let req: crate::phone_guard::CheckIn = serde_json::from_value(json!({
+            "serial": "link:1", "tool": "phone.tap", "app": "Shop", "run_id": "task-8", "step": 1,
+            "el": { "class": "Button", "label": "Pay now", "id": "btn_pay" },
+            "ctx": { "owner": "user-a", "bot_id": "bot-a", "source": "api" },
+        }))
+        .unwrap();
+        let aid = match crate::phone_guard::check(&st.db, None, &req).unwrap() {
+            crate::phone_guard::Decision::Hold { approval_id, .. } => approval_id,
+            other => panic!("expected a hold, got {other:?}"),
+        };
+        let app = Router::new().merge(needs_router()).with_state(st.clone());
+        let (s, v) = call(&app, "user-a", &format!("/inbox/approval:{aid}/approve"), json!({ "decision": "deny", "surface": "notification" })).await;
+        assert_eq!(s, StatusCode::OK, "{v}");
+        let state: String = c.query_row("SELECT state FROM gateway_approvals WHERE id = ?1", params![aid], |r| r.get(0)).unwrap();
+        assert_eq!(state, "denied");
+    }
+
+    #[tokio::test]
+    async fn approving_a_permission_ask_closes_the_same_cowork_row() {
+        let st = setup().await;
+        let c = st.db.connect().unwrap();
+        let content = json!({ "actionId": "per_9", "sessionId": "", "summary": "edit requested by edit", "toolName": "edit", "requestId": "per_9", "details": { "actionType": "edit", "target": "src/a.rs" } }).to_string();
+        crate::v1_routes::record_gizzi_permission_ask(&c, "user-a", "per_9", &content).unwrap();
+        let app = Router::new().merge(needs_router()).with_state(st.clone());
+        // Another owner can't see or decide it.
+        let (s, _) = call(&app, "user-b", "/inbox/permission:per_9/approve", json!({})).await;
+        assert_eq!(s, StatusCode::NOT_FOUND);
+        // The real outcome: the row is decided whatever happens to the relay, and a relay
+        // that failed (no gizzi in the test, or gizzi doesn't know per_9) is reported.
+        let (s, v) = call(&app, "user-a", "/inbox/permission:per_9/approve", json!({ "decision": "deny" })).await;
+        if s == StatusCode::OK {
+            let r = &v["result"];
+            assert_eq!((r["ok"].as_bool(), r["decision"].as_str()), (Some(true), Some("rejected")), "{v}");
+            match r["relayed"].as_bool() {
+                Some(true) => {}
+                Some(false) => assert!(r["relayError"].as_str().is_some_and(|e| !e.is_empty()), "a failed relay names why: {v}"),
+                None => panic!("a permission ask with a request id reports whether it reached the session: {v}"),
+            }
+        } else {
+            assert_eq!(s, StatusCode::BAD_GATEWAY, "{v}");
+            assert_eq!((v["decided"].as_bool(), v["relayed"].as_bool()), (Some(true), Some(false)), "{v}");
+            assert!(v["error"].as_str().is_some_and(|e| e.contains("rejected")), "{v}");
+        }
+        let (dismissed, decision): (i64, Option<String>) = c.query_row("SELECT dismissed, decision FROM cowork_approvals WHERE id = 'per_9'", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+        assert_eq!((dismissed, decision.as_deref()), (1, Some("rejected")));
+        assert!(collect(&c, "user-a", 30).unwrap().iter().all(|i| i["id"] != "permission:per_9"));
     }
 }

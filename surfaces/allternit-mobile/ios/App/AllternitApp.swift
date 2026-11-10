@@ -1,4 +1,5 @@
 import SwiftUI
+import CoreSpotlight
 import ClerkKit
 import ClerkKitUI
 
@@ -96,6 +97,9 @@ struct AllternitApp: App {
                 // in the workspace; anything else is a document to view.
                 if DeepLinkRouter.shared.open(url: url) { return }
                 openedDocumentURL = url
+            }
+            .onContinueUserActivity(CSSearchableItemActionType) { activity in
+                if let url = SpotlightIndexer.url(from: activity) { DeepLinkRouter.shared.open(url: url) }
             }
             .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { activity in
                 if let url = activity.webpageURL {

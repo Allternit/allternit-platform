@@ -201,6 +201,44 @@ export function stopComputer(id: string): Promise<{ id: string; status: string }
   return gateway(`/api/v1/computers/${encodeURIComponent(id)}/stop`, { method: "POST" })
 }
 
+// ── bots pause (allternit-api GET/PUT /api/v1/bots/pause) ─────────────────
+
+export type BotPause = { paused: boolean; since: number | null; by: string | null }
+
+/** Thrown when the runtime has no pause route (an older runtime answers 404). */
+export class BotPauseUnsupported extends Error {
+  constructor() {
+    super("This computer's Allternit runtime is too old for pause. Update it.")
+  }
+}
+
+async function botPauseCall(init: RequestInit = {}): Promise<BotPause> {
+  try {
+    return await gateway<BotPause>("/api/v1/bots/pause", init)
+  } catch (e) {
+    if (/ failed: 404\b/.test(String((e as Error)?.message))) throw new BotPauseUnsupported()
+    throw e
+  }
+}
+
+export function getBotPause(): Promise<BotPause> {
+  return botPauseCall()
+}
+
+export function setBotPause(paused: boolean): Promise<BotPause> {
+  return botPauseCall({ method: "PUT", body: JSON.stringify({ paused, by: "gizzi" }) })
+}
+
+/** One plain sentence for the paused state, with since/by when known. */
+export function describeBotPause(p: BotPause, now: number = Date.now()): string {
+  if (!p.paused) return "Bots are running."
+  const bits: string[] = []
+  if (p.since) bits.push(`since ${new Date(p.since * 1000).toLocaleString()}`)
+  if (p.by) bits.push(`by ${p.by}`)
+  void now
+  return `All bots are paused${bits.length ? ` ${bits.join(" ")}` : ""}. Routines and automatic replies are on hold; your own messages still run.`
+}
+
 /** Runtimes paired to this account (this machine's device token reads them). */
 export async function listRuntimes(): Promise<Runtime[]> {
   const cfg = await config()

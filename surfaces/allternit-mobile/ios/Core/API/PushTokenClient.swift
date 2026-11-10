@@ -25,27 +25,45 @@ final class PushTokenClient: Sendable {
         #endif
     }
 
-    func register(token: String, deviceId: String?) async throws {
+    /// What this build can do with a push. `la_push`: Live Activity pushes
+    /// (plan I3; tokens upload only while the Live Activities switch is on).
+    /// `widget_push` joins with plan I6.
+    static let capabilities = ["actions", "nse", "la_push", "widget_push"]
+
+    /// Registers the token; returns the device read token the cloud hands
+    /// out once (nil when it already did, or an older server).
+    @discardableResult
+    func register(token: String, deviceId: String?, osVersion: String) async throws -> String? {
         struct Body: Encodable {
             let token: String
             let platform: String
             let environment: String
             let deviceId: String?
+            let osVersion: String
+            let appBuild: String
+            let capabilities: [String]
         }
-        try await send(method: "POST", body: Body(token: token, platform: "ios", environment: Self.environment, deviceId: deviceId))
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? ""
+        let data = try await send(method: "POST", body: Body(
+            token: token, platform: "ios", environment: Self.environment, deviceId: deviceId,
+            osVersion: osVersion, appBuild: build, capabilities: Self.capabilities
+        ))
+        struct Answer: Decodable { let readToken: String? }
+        return (try? JSONDecoder().decode(Answer.self, from: data))?.readToken
     }
 
     func unregister(token: String) async throws {
         struct Body: Encodable { let token: String }
-        try await send(method: "DELETE", body: Body(token: token))
+        _ = try await send(method: "DELETE", body: Body(token: token))
     }
 
-    private func send<B: Encodable>(method: String, body: B) async throws {
+    private func send<B: Encodable>(method: String, body: B) async throws -> Data {
         let client = APIClient.shared
         var request = try await client.authorizedRequest(url: url, method: method)
         request.httpBody = try JSONEncoder().encode(body)
         let (data, response) = try await client.session.data(for: request)
         try client.validate(response, data: data)
+        return data
     }
 }
 

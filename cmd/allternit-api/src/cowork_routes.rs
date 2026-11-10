@@ -2730,6 +2730,8 @@ async fn decide_approval(
             // transient transport failure only warns so a briefly unreachable
             // runtime never blocks the local decision.
             let task_reply = relay.as_ref().is_some_and(|(_, b)| b.get("reply").and_then(|v| v.as_str()) == Some("task"));
+            // `None`: nothing to relay; `Some(Ok)`: gizzi took it; `Some(Err)`: it never got there.
+            let mut relayed: Option<Result<(), String>> = None;
             if let Some((request_id, reply_body)) = relay {
                 let gizzi = gizzi_base();
                 let client = gizzi_client(&headers);
@@ -2739,7 +2741,7 @@ async fn decide_approval(
                     .send()
                     .await
                 {
-                    Ok(resp) if resp.status().is_success() => {}
+                    Ok(resp) if resp.status().is_success() => relayed = Some(Ok(())),
                     Ok(resp) => {
                         let status = resp.status();
                         warn!(
@@ -2754,6 +2756,11 @@ async fn decide_approval(
                                     "agent runtime rejected the permission reply ({})",
                                     status
                                 ),
+                                // The decision is recorded; only the hand-off to the session failed.
+                                "decided": true,
+                                "id": id_for_response,
+                                "decision": label_for_response,
+                                "relayed": false,
                             })),
                         )
                             .into_response();
@@ -2764,6 +2771,7 @@ async fn decide_approval(
                             request_id = %request_id,
                             "failed to relay permission reply to gizzi"
                         );
+                        relayed = Some(Err(format!("the agent runtime could not be reached: {e}")));
                     }
                 }
             }
@@ -2772,6 +2780,16 @@ async fn decide_approval(
                 "id": id_for_response,
                 "decision": label_for_response,
             });
+            // A relay that never reached the session is reported, not swallowed:
+            // the decision stands, and the surface can say the session didn't get it.
+            match relayed {
+                Some(Ok(())) => body["relayed"] = json!(true),
+                Some(Err(e)) => {
+                    body["relayed"] = json!(false);
+                    body["relayError"] = json!(e);
+                }
+                None => {}
+            }
             // One-task grant: the bot thread this ask came from now allows this class.
             if task_reply {
                 let db = state.db.clone();
@@ -2821,6 +2839,45 @@ async fn decide_approval(
         }
     }
 }
+
+/// The Needs-you inbox's approve/deny for a `gizzi-permission` row
+/// (`inbox_needs`, kind `gizzi_permission`). It runs the same decision as the
+/// ApprovalGate card (`POST /cowork/approvals/decide`), so the row closes once
+/// and gizzi gets the same reply. The caller's headers pass through, so the
+/// person-proof checks are unchanged.
+pub(crate) async fn decide_from_inbox(
+    state: &Arc<AppState>,
+    user: &AuthUser,
+    headers: &HeaderMap,
+    approval_id: &str,
+    approve: bool,
+) -> Result<serde_json::Value, axum::response::Response> {
+    let mut headers = headers.clone();
+    if get_user(&headers).is_none() {
+        // auth_middleware sets this header; the extension is the same identity.
+        if let Ok(v) = axum::http::HeaderValue::from_str(&user.user_id) {
+            headers.insert("x-allternit-user-id", v);
+        }
+    }
+    let body = ApprovalDecisionBody {
+        action_id: Some(approval_id.to_string()),
+        id: None,
+        decision: Some(if approve { "approve" } else { "deny" }.to_string()),
+        action: None,
+        answer: None,
+        scope: None,
+    };
+    let resp = decide_approval(State(state.clone()), Extension(user.clone()), headers, Ok(Json(body))).await.into_response();
+    let status = resp.status();
+    let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20).await.unwrap_or_default();
+    let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+    if status.is_success() {
+        Ok(v)
+    } else {
+        Err((status, Json(v)).into_response())
+    }
+}
+
 
 async fn list_suggestions(
     State(state): State<Arc<AppState>>,

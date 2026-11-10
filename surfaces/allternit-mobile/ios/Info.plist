@@ -74,6 +74,17 @@
 			</array>
 		</dict>
 	</array>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.allternit.mobile</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>allternit</string>
+			</array>
+		</dict>
+	</array>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -118,6 +129,10 @@
 	<string>Allternit lets your bots read your reminders and add new ones, only after you turn on Device Access. Each new reminder needs your approval.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>Allternit uses speech recognition to turn your dictation and voice chat into text. Voice chat uses on-device recognition only.</string>
+	<key>NSUserActivityTypes</key>
+	<array>
+		<string>INSendMessageIntent</string>
+	</array>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
 	<key>UIBackgroundModes</key>
