@@ -1731,15 +1731,27 @@ export namespace Config {
   }
 
   /**
+   * The config files of `GIZZI_CONFIG_DIR`, when set. `Config.get()` merges
+   * them over the global config (same names, same order), so a sandboxed
+   * config dir decides `model` / `small_model` for the TUI as well.
+   */
+  export function configDirOverrideFiles(): string[] {
+    const dir = Flag.GIZZI_CONFIG_DIR
+    if (!dir) return []
+    return ["config.toml", "gizzi.jsonc", "gizzi.json"].map((name) => path.join(dir, name))
+  }
+
+  /**
    * The merged global config, read synchronously (for UI code that cannot
-   * await). Same files and order as `global()` and the same parsing:
+   * await). Same files and order as `global()`, then the `GIZZI_CONFIG_DIR`
+   * files on top, and the same parsing:
    * `{env:VAR}` / `{file:path}` substitution, JSONC with trailing commas,
    * TOML with `default_model` → `model`. Not schema-validated, and a file
    * that does not parse is skipped instead of throwing.
    */
   export function readGlobalConfigSync(): Record<string, unknown> {
     let result: Record<string, unknown> = {}
-    for (const filepath of globalConfigFiles()) {
+    for (const filepath of [...globalConfigFiles(), ...configDirOverrideFiles()]) {
       let text: string
       try {
         text = readFileSync(filepath, "utf8")

@@ -37,7 +37,7 @@ export const ModelCommand = cmd({
     await Instance.provide({
       directory: process.cwd(),
       async fn() {
-        const files = Config.globalConfigFiles().map((path) => {
+        const files = [...Config.globalConfigFiles(), ...Config.configDirOverrideFiles()].map((path) => {
           const present = existsSync(path)
           let values: Trio = {}
           if (present) {

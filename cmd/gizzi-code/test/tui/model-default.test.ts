@@ -59,3 +59,27 @@ describe("TUI default model", () => {
     expect(getUserSpecifiedModelSetting()).toBeUndefined()
   })
 })
+
+describe("GIZZI_CONFIG_DIR", () => {
+  test("its gizzi.json is merged over the global config for the TUI", async () => {
+    const { mkdtempSync, writeFileSync, rmSync } = await import("node:fs")
+    const { tmpdir } = await import("node:os")
+    const { join } = await import("node:path")
+    const { Config } = await import("../../src/runtime/context/config/config")
+    const dir = mkdtempSync(join(tmpdir(), "gizzi-config-dir-"))
+    const saved = process.env.GIZZI_CONFIG_DIR
+    try {
+      writeFileSync(join(dir, "gizzi.json"), JSON.stringify({ model: "local/big", small_model: "local/small" }))
+      process.env.GIZZI_CONFIG_DIR = dir
+      expect(Config.configDirOverrideFiles()).toContain(join(dir, "gizzi.json"))
+      const merged = Config.readGlobalConfigSync()
+      expect(merged.model).toBe("local/big")
+      expect(merged.small_model).toBe("local/small")
+    } finally {
+      if (saved === undefined) delete process.env.GIZZI_CONFIG_DIR
+      else process.env.GIZZI_CONFIG_DIR = saved
+      rmSync(dir, { recursive: true, force: true })
+    }
+    expect(Config.configDirOverrideFiles().some((file) => file.startsWith(dir))).toBe(false)
+  })
+})
