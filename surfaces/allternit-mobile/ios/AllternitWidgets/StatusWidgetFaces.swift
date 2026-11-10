@@ -179,7 +179,8 @@ struct ActionsFace: View {
         if let id = entry.botID ?? entry.content.snapshot?.focus?.botId, !id.isEmpty {
             return "allternit://bot/\(id)/chat"
         }
-        return "allternit://call/main"
+        // No bot picked: the main bot's chat (not a call).
+        return "allternit://bot/main/chat"
     }
 
     private var routineURL: String? {

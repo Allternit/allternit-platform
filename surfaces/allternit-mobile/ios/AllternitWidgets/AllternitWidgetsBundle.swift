@@ -7,5 +7,13 @@ struct AllternitWidgetsBundle: WidgetBundle {
         LoopLiveActivityWidget()
         BotLiveActivityWidget()
         StatusWidget()
+        if #available(iOS 18.0, *) {
+            CallMainBotControl()
+            AskBotControl()
+            HandOffTaskControl()
+            RunRoutineControl()
+            NeedsMeControl()
+            PauseBotsControl()
+        }
     }
 }

@@ -53,16 +53,16 @@ enum StatusWidgetTuning {
 /// define. Swapping is two lines: point these typealiases at the `AppEntity`
 /// types, and change the bodies of `WidgetConfigSeam.botID` and `.routineID`
 /// to return `entity.id`. Nothing else here reads the parameters.
-typealias WidgetBotParam = String
-typealias WidgetRoutineParam = String
+typealias WidgetBotParam = BotEntity
+typealias WidgetRoutineParam = RoutineEntity
 
 enum WidgetConfigSeam {
     static func botID(_ value: WidgetBotParam?) -> String? {
-        guard let v = value?.trimmingCharacters(in: .whitespacesAndNewlines), !v.isEmpty else { return nil }
+        guard let v = value?.id.trimmingCharacters(in: .whitespacesAndNewlines), !v.isEmpty else { return nil }
         return v
     }
     static func routineID(_ value: WidgetRoutineParam?) -> String? {
-        guard let v = value?.trimmingCharacters(in: .whitespacesAndNewlines), !v.isEmpty else { return nil }
+        guard let v = value?.id.trimmingCharacters(in: .whitespacesAndNewlines), !v.isEmpty else { return nil }
         return v
     }
 }
