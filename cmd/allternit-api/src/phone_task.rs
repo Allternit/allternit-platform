@@ -33,7 +33,7 @@ use std::{
 };
 
 use crate::db::DbHandle;
-use crate::phone_guard::{self, CheckIn, Decision, El, Outcome, TaskCtx};
+use crate::phone_guard::{self, CheckIn, El, Gate, Reread, TaskCtx};
 use crate::phone_replay::{act, brain, parse_ui, screenshot, UiEl};
 use std::path::Path as FsPath;
 
@@ -210,101 +210,6 @@ fn action_el(tool: &str, pick: &Value, els: &[UiEl], last: Option<&El>) -> Optio
     }
 }
 
-/// What the guard let the loop do with one action.
-enum Gate {
-    /// Act; `Some` = the approved hold this action uses (sent as `_hold`).
-    Go(Option<String>),
-    /// End the run with this status and reason.
-    Stop(&'static str, String),
-    /// Don't act; the model decides again on the next step.
-    Skip(String),
-}
-
-fn set_hold_state(holds: &mut [Value], aid: &str, state: &str) {
-    if let Some(h) = holds.iter_mut().find(|h| h["approvalId"] == aid) {
-        h["state"] = json!(state);
-    }
-}
-
-/// Run the guard for one action and wait in place on a hold (the task budget
-/// is paused meanwhile). After Approve the screen is read again; a tapped
-/// element that is gone marks the hold `changed`.
-#[allow(clippy::too_many_arguments)]
-async fn gate(
-    db: &DbHandle,
-    data_dir: Option<&FsPath>,
-    req: &mut CheckIn,
-    args: &mut Map<String, Value>,
-    serial: Option<&str>,
-    run_id: &str,
-    holds: &mut Vec<Value>,
-    held: &mut Duration,
-) -> Gate {
-    for _ in 0..4 {
-        req.args = args.clone();
-        let decision = match phone_guard::check(db, data_dir, req) {
-            Ok(d) => d,
-            Err(e) => return Gate::Stop("failed", e),
-        };
-        let (aid, effect) = match decision {
-            Decision::Allow { hold_id } => {
-                if let Some(h) = &hold_id {
-                    set_hold_state(holds, h, "approved");
-                }
-                return Gate::Go(hold_id);
-            }
-            Decision::Denied { approval_id } => {
-                set_hold_state(holds, &approval_id, "denied");
-                return Gate::Stop("denied", "the owner denied this step".into());
-            }
-            Decision::Hold { approval_id, effect, .. } => (approval_id, effect),
-        };
-        if !holds.iter().any(|h| h["approvalId"] == aid.as_str()) {
-            holds.push(json!({ "approvalId": aid, "effect": effect, "state": "requested" }));
-        }
-        phone_guard::set_live(run_id, Some(json!({ "status": "waiting_approval", "approvalId": aid, "effect": effect })));
-        let t0 = Instant::now();
-        let outcome = phone_guard::wait(db, &aid, phone_guard::WAIT).await;
-        *held += t0.elapsed();
-        phone_guard::set_live(run_id, Some(json!({ "status": "running" })));
-        match outcome {
-            Outcome::Denied => {
-                set_hold_state(holds, &aid, "denied");
-                return Gate::Stop("denied", "the owner denied this step".into());
-            }
-            Outcome::Expired => {
-                set_hold_state(holds, &aid, "expired");
-                return Gate::Stop("approval_timeout", "nobody approved this step within 5 minutes".into());
-            }
-            Outcome::Approved => {}
-        }
-        // The screen may have moved on while waiting: find the same element again.
-        if let Some(want) = req.el.clone().filter(|_| req.tool == "phone.tap") {
-            let now: Vec<UiEl> = match act("phone.read_ui", Map::from_iter([("max_elements".to_string(), json!(400))]), serial, run_id, "task").await {
-                Ok(v) => parse_ui(v.get("text").and_then(Value::as_str).unwrap_or_default()),
-                Err(e) if locked(&e) => return Gate::Stop("phone_locked", "the phone is locked".into()),
-                Err(_) => Vec::new(),
-            };
-            match now.iter().find(|e| El::from(*e) == want) {
-                Some(e) => {
-                    let (x, y) = e.center();
-                    args.insert("x".into(), json!(x));
-                    args.insert("y".into(), json!(y));
-                }
-                None if now.is_empty() => {}
-                None => {
-                    phone_guard::mark_changed(db, &aid);
-                    set_hold_state(holds, &aid, "changed");
-                    return Gate::Skip("the screen changed after approval".into());
-                }
-            }
-        }
-        // The re-check consumes the approved hold when the content still matches.
-        req.hold_id = Some(aid);
-    }
-    Gate::Stop("failed", "the screen kept changing while waiting for approval".into())
-}
-
 /// [`run_task`] for a caller context. Every acting step runs the phone guard first.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_task_ctx(
@@ -378,7 +283,7 @@ pub async fn run_task_ctx(
             _ => {}
         }
         match to_tool(&pick, &els) {
-            Ok((tool, mut args, label)) => {
+            Ok((tool, args, label)) => {
                 let el = action_el(tool, &pick, &els, last_el.as_ref());
                 let mut req = CheckIn {
                     serial: serial.unwrap_or_default().to_string(),
@@ -395,20 +300,56 @@ pub async fn run_task_ctx(
                     screenshot: image.clone(),
                     ..Default::default()
                 };
-                let hold = match gate(db, data_dir, &mut req, &mut args, serial, &run_id, &mut holds, &mut held).await {
-                    Gate::Go(h) => h,
-                    Gate::Stop(st, why) => {
-                        status = st;
-                        steps.push(json!({ "step": step, "action": label, "reason": reason, "ok": false, "error": why }));
-                        result = Some(why);
-                        break;
+                req.args = args;
+                let rid: &str = &run_id;
+                // After Approve: read the screen again and find the tapped element.
+                let reread = move |r: CheckIn| async move {
+                    let Some(want) = r.el.clone().filter(|_| r.tool == "phone.tap") else { return Reread::Same };
+                    match act("phone.read_ui", Map::from_iter([("max_elements".to_string(), json!(400))]), serial, rid, "task").await {
+                        Ok(v) => {
+                            let now = parse_ui(v.get("text").and_then(Value::as_str).unwrap_or_default());
+                            match now.iter().find(|e| El::from(*e) == want) {
+                                Some(e) => {
+                                    let (x, y) = e.center();
+                                    let mut a = r.args.clone();
+                                    a.insert("x".into(), json!(x));
+                                    a.insert("y".into(), json!(y));
+                                    Reread::Moved(a)
+                                }
+                                None if now.is_empty() => Reread::Same,
+                                None => Reread::Gone,
+                            }
+                        }
+                        Err(e) if locked(&e) => Reread::Locked,
+                        Err(_) => Reread::Same,
                     }
-                    Gate::Skip(why) => {
+                };
+                let outcome = phone_guard::gate(db, data_dir, &mut req, reread, &mut holds, &mut held).await;
+                let ended = match &outcome {
+                    Gate::Denied(w) => Some(("denied", w.clone())),
+                    Gate::Expired(w) => Some(("approval_timeout", w.clone())),
+                    Gate::Locked => Some(("phone_locked", "the phone is locked".to_string())),
+                    Gate::Failed(w) => Some(("failed", w.clone())),
+                    Gate::Go { .. } | Gate::Changed(_) => None,
+                };
+                if let Some((st, why)) = ended {
+                    status = st;
+                    steps.push(json!({ "step": step, "action": label, "reason": reason, "ok": false, "error": why }));
+                    result = Some(why);
+                    break;
+                }
+                let (hold, pass) = match outcome {
+                    Gate::Go { hold_id, pass } => (hold_id, pass),
+                    Gate::Changed(why) => {
                         history.push(format!("{step}. {label} — not done: {why}"));
                         steps.push(json!({ "step": step, "action": label, "reason": reason, "ok": false, "error": why }));
                         continue;
                     }
+                    _ => continue,
                 };
+                let mut args = req.args.clone();
+                // Desktop's dispatch check honours the pass once; `_hold` is for the run record.
+                args.insert("_pass".into(), json!(pass));
                 if let Some(h) = &hold {
                     args.insert("_hold".into(), json!(h));
                 }

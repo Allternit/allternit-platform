@@ -14,6 +14,15 @@
 //!   once. A mismatch marks it `changed` and makes a new hold. A retry more
 //!   than ten minutes after approval is not honoured (a new hold is made).
 //!
+//! - In-process loops (task, replay) call [`gate`]: check, wait, re-read the
+//!   screen through the caller's hook, re-check (which consumes the hold).
+//!   On go it issues a one-time **pass** ([`issue_pass`]): a random nonce
+//!   bound to serial, tool and args (keys starting with `_`, and `serial`,
+//!   ignored), alive [`PASS_TTL`]. The loop sends it as `_pass` in the tool
+//!   args; Desktop's dispatch check sends it back as `pass` (or leaves
+//!   `_pass` in `args`) and gets `allow` once without classifying again. A
+//!   wrong, used or expired pass falls through to the normal check.
+//!
 //! DB states: `pending` (shown as `requested`), `approved`, `denied`,
 //! `expired`, `changed`; `consumed = 1` once used. The typed text itself is
 //! never stored, only its length.
@@ -342,6 +351,9 @@ pub struct CheckIn {
     pub sensitive: Option<bool>,
     #[serde(default)]
     pub effect: Option<String>,
+    /// A one-time pass from an in-process loop ([`issue_pass`]); also read from `args._pass`.
+    #[serde(default)]
+    pub pass: Option<String>,
     /// The screen at check time (data URL or base64), kept on the runtime as the hold's crop.
     #[serde(default)]
     pub screenshot: Option<String>,
@@ -702,6 +714,167 @@ pub async fn wait_every(db: &DbHandle, approval_id: &str, timeout: Duration, eve
     }
 }
 
+// ─── One-time passes for in-process loops ──────────────────────────────────
+
+/// How long a pass lives.
+pub const PASS_TTL: Duration = Duration::from_secs(60);
+
+struct Pass {
+    serial: String,
+    hash: String,
+    until: Instant,
+}
+
+fn pass_table() -> &'static Mutex<HashMap<String, Pass>> {
+    static PASSES: OnceLock<Mutex<HashMap<String, Pass>>> = OnceLock::new();
+    PASSES.get_or_init(Default::default)
+}
+
+/// Hash of tool and args, ignoring `_`-prefixed keys and `serial` (the gateway adds those).
+pub fn args_hash(tool: &str, args: &Map<String, Value>) -> String {
+    let clean: std::collections::BTreeMap<&str, &Value> = args.iter().filter(|(k, _)| !k.starts_with('_') && k.as_str() != "serial").map(|(k, v)| (k.as_str(), v)).collect();
+    let mut h = Sha256::new();
+    h.update(norm_tool(tool).as_bytes());
+    h.update([0x1fu8]);
+    h.update(serde_json::to_string(&clean).unwrap_or_default().as_bytes());
+    hex::encode(h.finalize())
+}
+
+/// A one-time pass for an action the guard already allowed in process.
+/// An empty `serial` (Desktop picks the only phone) matches any serial.
+pub fn issue_pass(serial: &str, tool: &str, args: &Map<String, Value>) -> String {
+    issue_pass_ttl(serial, tool, args, PASS_TTL)
+}
+
+pub fn issue_pass_ttl(serial: &str, tool: &str, args: &Map<String, Value>, ttl: Duration) -> String {
+    let nonce = format!("pass_{}", uuid::Uuid::new_v4().simple());
+    if let Ok(mut m) = pass_table().lock() {
+        let now = Instant::now();
+        m.retain(|_, p| p.until > now);
+        m.insert(nonce.clone(), Pass { serial: serial.trim().to_string(), hash: args_hash(tool, args), until: now + ttl });
+    }
+    nonce
+}
+
+/// Use a pass: true once, for the same serial, tool and args, before it expires.
+/// Any lookup removes the pass, so a wrong guess burns it.
+pub fn redeem_pass(pass: &str, serial: &str, tool: &str, args: &Map<String, Value>) -> bool {
+    let Ok(mut m) = pass_table().lock() else { return false };
+    let now = Instant::now();
+    m.retain(|_, p| p.until > now);
+    let Some(p) = m.remove(pass) else { return false };
+    p.hash == args_hash(tool, args) && (p.serial.is_empty() || p.serial == serial.trim())
+}
+
+/// [`check`] for an outside caller (Desktop's dispatch): a live pass for this
+/// exact action answers `allow` once; anything else is checked as usual.
+pub fn check_with_pass(db: &DbHandle, data_dir: Option<&FsPath>, req: &CheckIn) -> Result<Decision, String> {
+    let pass = req.pass.clone().or_else(|| req.args.get("_pass").and_then(Value::as_str).map(str::to_string));
+    if let Some(p) = pass.filter(|p| !p.is_empty()) {
+        if redeem_pass(&p, &req.serial, &req.tool, &req.args) {
+            return Ok(Decision::Allow { hold_id: None });
+        }
+    }
+    check(db, data_dir, req)
+}
+
+// ─── The loop gate (task loop, replay) ─────────────────────────────────────
+
+/// What the caller's screen re-read found after Approve.
+pub enum Reread {
+    /// Act with the same args.
+    Same,
+    /// The element moved: act with these args.
+    Moved(Map<String, Value>),
+    /// The element is gone: the hold becomes `changed`.
+    Gone,
+    Locked,
+}
+
+/// How [`gate`] ended.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Gate {
+    /// Act with `req.args` plus `_pass` (and `_hold` for the record).
+    Go { hold_id: Option<String>, pass: String },
+    Denied(String),
+    /// Nobody answered within [`WAIT`].
+    Expired(String),
+    /// The screen changed after approval; decide again.
+    Changed(String),
+    Locked,
+    Failed(String),
+}
+
+fn set_hold_state(holds: &mut [Value], aid: &str, state: &str) {
+    if let Some(h) = holds.iter_mut().find(|h| h["approvalId"] == aid) {
+        h["state"] = json!(state);
+    }
+}
+
+/// Check one in-process action and wait in place on a hold. `reread` gets a
+/// copy of the request after Approve and reports the screen; the re-check
+/// then consumes the hold. `holds` gains `{approvalId, effect, state}` per
+/// hold; `held` gains the time spent waiting (callers pause their budget).
+pub async fn gate<F, Fut>(db: &DbHandle, data_dir: Option<&FsPath>, req: &mut CheckIn, mut reread: F, holds: &mut Vec<Value>, held: &mut Duration) -> Gate
+where
+    F: FnMut(CheckIn) -> Fut,
+    Fut: std::future::Future<Output = Reread>,
+{
+    let run = req.run_id.clone().unwrap_or_default();
+    for _ in 0..4 {
+        let (aid, effect) = match check(db, data_dir, req) {
+            Err(e) => return Gate::Failed(e),
+            Ok(Decision::Allow { hold_id }) => {
+                if let Some(h) = &hold_id {
+                    set_hold_state(holds, h, "approved");
+                }
+                let pass = issue_pass(&req.serial, &req.tool, &req.args);
+                return Gate::Go { hold_id, pass };
+            }
+            Ok(Decision::Denied { approval_id }) => {
+                set_hold_state(holds, &approval_id, "denied");
+                return Gate::Denied("the owner denied this step".into());
+            }
+            Ok(Decision::Hold { approval_id, effect, .. }) => (approval_id, effect),
+        };
+        if !holds.iter().any(|h| h["approvalId"] == aid.as_str()) {
+            holds.push(json!({ "approvalId": aid, "effect": effect, "state": "requested" }));
+        }
+        if !run.is_empty() {
+            set_live(&run, Some(json!({ "status": "waiting_approval", "approvalId": aid, "effect": effect })));
+        }
+        let t0 = Instant::now();
+        let outcome = wait(db, &aid, WAIT).await;
+        *held += t0.elapsed();
+        if !run.is_empty() {
+            set_live(&run, Some(json!({ "status": "running" })));
+        }
+        match outcome {
+            Outcome::Denied => {
+                set_hold_state(holds, &aid, "denied");
+                return Gate::Denied("the owner denied this step".into());
+            }
+            Outcome::Expired => {
+                set_hold_state(holds, &aid, "expired");
+                return Gate::Expired("nobody approved this step within 5 minutes".into());
+            }
+            Outcome::Approved => {}
+        }
+        match reread(req.clone()).await {
+            Reread::Same => {}
+            Reread::Moved(a) => req.args = a,
+            Reread::Gone => {
+                mark_changed(db, &aid);
+                set_hold_state(holds, &aid, "changed");
+                return Gate::Changed("the screen changed after approval".into());
+            }
+            Reread::Locked => return Gate::Locked,
+        }
+        req.hold_id = Some(aid);
+    }
+    Gate::Failed("the screen kept changing while waiting for approval".into())
+}
+
 // ─── Live run status ───────────────────────────────────────────────────────
 
 fn live() -> &'static Mutex<HashMap<String, Value>> {
@@ -754,7 +927,7 @@ async fn check_route(State(state): State<Arc<AppState>>, Extension(user): Extens
     if body.tool.trim().is_empty() {
         return bad(StatusCode::BAD_REQUEST, "tool is required");
     }
-    match check(&state.db, Some(state.data_dir.as_path()), &body) {
+    match check_with_pass(&state.db, Some(state.data_dir.as_path()), &body) {
         Ok(d) => Json(d.to_json()).into_response(),
         Err(e) => bad(StatusCode::INTERNAL_SERVER_ERROR, e),
     }
@@ -1006,6 +1179,74 @@ mod tests {
         let fresh = hold_id(&check(&st.db, None, &retry).unwrap());
         assert_ne!(fresh, id);
         assert_eq!(state_of(&st, &id), "changed");
+    }
+
+    #[tokio::test]
+    async fn a_pass_allows_once_and_only_that_action() {
+        let st = setup("pass").await;
+        let req = pay_tap("task-8", "Pay now");
+        let args = json!({ "x": 150, "y": 720 }).as_object().cloned().unwrap();
+        let pass = issue_pass("link:1", "phone.tap", &args);
+        // Another action, serial or tool burns the pass and is checked as usual.
+        let mut other = req.clone();
+        other.args = json!({ "x": 10, "y": 20 }).as_object().cloned().unwrap();
+        other.pass = Some(pass.clone());
+        assert!(matches!(check_with_pass(&st.db, None, &other).unwrap(), Decision::Hold { .. }));
+        let pass = issue_pass("link:1", "phone.tap", &args);
+        let mut wrong_serial = req.clone();
+        wrong_serial.serial = "link:2".into();
+        wrong_serial.args = args.clone();
+        wrong_serial.pass = Some(pass.clone());
+        assert!(matches!(check_with_pass(&st.db, None, &wrong_serial).unwrap(), Decision::Hold { .. }));
+        // The same action: allowed once, even with the gateway's own keys added.
+        let pass = issue_pass("link:1", "phone.tap", &args);
+        let mut same = req.clone();
+        same.args = args.clone();
+        same.args.insert("serial".into(), json!("link:1"));
+        same.args.insert("_pass".into(), json!(pass));
+        same.args.insert("_run_id".into(), json!("task-8"));
+        assert_eq!(check_with_pass(&st.db, None, &same).unwrap(), Decision::Allow { hold_id: None });
+        assert!(matches!(check_with_pass(&st.db, None, &same).unwrap(), Decision::Hold { .. }));
+    }
+
+    #[tokio::test]
+    async fn an_expired_pass_falls_through() {
+        let st = setup("pass-expired").await;
+        let mut req = pay_tap("task-9", "Pay now");
+        req.pass = Some(issue_pass_ttl("link:1", "phone.tap", &req.args, Duration::ZERO));
+        assert!(matches!(check_with_pass(&st.db, None, &req).unwrap(), Decision::Hold { .. }));
+        // A harmless tap with a bad pass is still just allowed by the rules.
+        let mut ok = pay_tap("task-9", "OK");
+        ok.el = Some(el("Button", "OK", ""));
+        ok.pass = Some("pass_guess".into());
+        assert_eq!(check_with_pass(&st.db, None, &ok).unwrap(), Decision::Allow { hold_id: None });
+    }
+
+    #[tokio::test]
+    async fn gate_consumes_the_hold_and_desktop_needs_the_pass() {
+        let st = setup("gate").await;
+        let mut req = pay_tap("task-10", "Pay now");
+        let (mut holds, mut held) = (Vec::new(), Duration::ZERO);
+        // The owner approves while the gate waits.
+        let approver = async {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            let id: String = st.db.connect().unwrap().query_row("SELECT id FROM gateway_approvals WHERE state = 'pending'", [], |r| r.get(0)).unwrap();
+            resolve(&st, &id, "approved", now());
+            id
+        };
+        let (out, id) = tokio::join!(gate(&st.db, None, &mut req, |_r: CheckIn| async { Reread::Same }, &mut holds, &mut held), approver);
+        let Gate::Go { hold_id: Some(used), pass } = out else { panic!("expected the gate to go") };
+        assert_eq!(used, id);
+        assert_eq!((holds.len(), holds[0]["state"].as_str()), (1, Some("approved")));
+        assert!(held > Duration::ZERO);
+        // Desktop's check without the pass, on the consumed hold, makes a new hold.
+        let mut direct = pay_tap("task-10", "Pay now");
+        direct.hold_id = Some(id.clone());
+        assert_ne!(hold_id(&check_with_pass(&st.db, None, &direct).unwrap()), id);
+        // With the pass it is allowed once.
+        let mut desk = pay_tap("task-10", "Pay now");
+        desk.pass = Some(pass);
+        assert_eq!(check_with_pass(&st.db, None, &desk).unwrap(), Decision::Allow { hold_id: None });
     }
 
     #[tokio::test]
