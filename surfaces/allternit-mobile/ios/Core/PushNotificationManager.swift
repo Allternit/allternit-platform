@@ -96,6 +96,8 @@ final class PushNotificationManager: NSObject {
             AppGroupStore.signedIn = true
             lastRegistrationError = nil
             UserDefaults.standard.set(true, forKey: Self.registeredForUserKey)
+            // Activity tokens need the device registered first (404 unknown_device).
+            await ActivityTokenRegistry.shared.resync()
         } catch {
             lastRegistrationError = error.localizedDescription
         }
@@ -117,6 +119,8 @@ final class PushNotificationManager: NSObject {
         SharedAccess.deleteReadToken()
         AppGroupStore.clearAll()
         UNUserNotificationCenter.current().removeAllDeliveredNotifications()
+        // Live Activity tokens off the server, activities off the Lock Screen.
+        await BotLiveActivityManager.willSignOut()
         guard UserDefaults.standard.bool(forKey: Self.registeredForUserKey),
               let hex = lastDeviceTokenHex else { return }
         try? await PushTokenClient.shared.unregister(token: hex)
