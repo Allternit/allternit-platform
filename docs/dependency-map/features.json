@@ -974,7 +974,7 @@
       "label": "Usage, credits and spend limits",
       "product": "product:ai-allternit",
       "status": "live",
-      "description": "What each account has used, what it has left, and the limits that stop runaway spend. Gizzi Code: /usage and Settings › Usage show the Allternit plan (Free/Plus/Max/Ultra), credits, Cloud balance and monthly meter from GET /api/v1/me/usage, plus each signed-in CLI brain's plan limits; the TUI footer shows a 'credits $X' chip.",
+      "description": "What each account has used, what it has left, and the limits that stop runaway spend. Gizzi Code: /usage and Settings \u203a Usage show the Allternit plan (Free/Plus/Max/Ultra), credits, Cloud balance and monthly meter from GET /api/v1/me/usage, plus each signed-in CLI brain's plan limits; the TUI footer shows a 'credits $X' chip.",
       "touches": [
         "allternit/cmd/gizzi-code/src/cli/ui/ink-app/services/allternitAccount.ts",
         "allternit/cmd/gizzi-code/src/cli/ui/ink-app/commands/usage/usage.ts",
@@ -3998,7 +3998,7 @@
       "label": "Gizzi Code TUI models: CLI brains through the engine driver, Desktop's provider rule, real failure causes",
       "product": "product:gizzi-code",
       "status": "building",
-      "description": "The Gizzi TUI runs CLI brains (claude-cli, codex-cli, kimi-cli, added CLIs, subs-*) through the engine's driver with the TUI's own permission prompts, offers the same providers as Desktop's picker (Cloud, subscriptions, connected API keys, local; never OpenRouter standalone) in /model and gizzi models, honours --model at launch, and names the real cause plus a command to run for each failure. /model has a second column with each model's thinking level from model-thinking.json; ← → cycles only that model's levels, and the level reaches the model (CLI brains get it as their own flag, e.g. claude --effort xhigh). /effort accepts every table level.",
+      "description": "The Gizzi TUI runs CLI brains (claude-cli, codex-cli, kimi-cli, added CLIs, subs-*) through the engine's driver with the TUI's own permission prompts, offers the same providers as Desktop's picker (Cloud, subscriptions, connected API keys, local; never OpenRouter standalone) in /model and gizzi models, honours --model at launch, and names the real cause plus a command to run for each failure. /model has a second column with each model's thinking level from model-thinking.json; \u2190 \u2192 cycles only that model's levels, and the level reaches the model (CLI brains get it as their own flag, e.g. claude --effort xhigh). /effort accepts every table level.",
       "touches": [
         "allternit/cmd/gizzi-code/src/cli/ui/ink-app/components/ModelPicker.tsx",
         "allternit/cmd/gizzi-code/src/cli/ui/ink-app/utils/effort.ts",
@@ -4024,6 +4024,52 @@
           "on": "2026-11-09",
           "note": "Gizzi audit wave 0 (make it run): the TUI sent CLI-brain turns to the Allternit API and failed with 'Not logged in'. One provider rule in runtime/providers/offer.ts mirrors Desktop's isOfferedProvider; Desktop itself is unchanged."
         }
+      ]
+    },
+    {
+      "id": "feature:iphone-system-surfaces",
+      "label": "iPhone system surfaces: notification buttons, Live Activities, widget, controls, Shortcuts, share, pause all bots, text-message drafts",
+      "product": "product:allternit-ios",
+      "status": "building",
+      "description": "Bots reach the owner outside the app. Cloud-api sends APNs alerts with Approve, Deny and Reply buttons (or Review when the item does not fit), a bot-first Live Activity and widget reloads; the iPhone app adds the notification extensions, one flipping widget, six controls, 26 Shortcuts actions with 10 App Shortcuts, a Focus filter and a share extension. The runtime supplies the status snapshot, the pause-all-bots switch, needs-me inbox items, forwarded events and the off-by-default Mac Messages tool. Web, Android and gizzi get the pause switch, web push buttons, the message draft card and launcher shortcuts. Not released until integ/ios-surfaces merges to main.",
+      "touches": [
+        "allternit/cmd/allternit-cloud-api/src/routes/apns.rs",
+        "allternit/cmd/allternit-cloud-api/src/routes/device_read.rs",
+        "allternit/cmd/allternit-cloud-api/src/routes/live_activity.rs",
+        "allternit/cmd/allternit-cloud-api/src/routes/notifications.rs",
+        "allternit/cmd/allternit-api/src/status_snapshot.rs",
+        "allternit/cmd/allternit-api/src/bots_pause.rs",
+        "allternit/cmd/allternit-api/src/inbox_needs.rs",
+        "allternit/cmd/allternit-api/src/runtime_events.rs",
+        "allternit/cmd/allternit-api/src/messages_mac.rs",
+        "allternit/surfaces/allternit-mobile/ios/SystemSurfaces",
+        "allternit/surfaces/allternit-mobile/ios/AllternitWidgets",
+        "allternit/surfaces/allternit-mobile/ios/AllternitNotifications",
+        "allternit/surfaces/allternit-mobile/ios/AllternitShare",
+        "allternit-ai/public/allternit-push-sw.js",
+        "allternit-ai/src/lib/bots/bots-pause.ts",
+        "allternit-ai/src/components/chat/MessageDraftCard.tsx",
+        "allternit/surfaces/allternit-mobile/android",
+        "allternit/cmd/gizzi-code/src/cli/commands/bot.ts"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-09",
+          "note": "Work merges into integ/ios-surfaces in both repos and deploys together: cloud-api first (migration 120), then ai.allternit.com, then the iOS build, runtime publish and Play build."
+        },
+        {
+          "on": "2026-11-10",
+          "note": "Pause all bots is one switch (GET/PUT /api/v1/bots/pause) shared by web, phone, Desktop, iPhone, Control Center, Shortcuts and gizzi agents bot pause. Mac Messages is off by default and every send is held for approval."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/iphone-system-surfaces.mdx",
+        "allternit/surfaces/docs/api/system-surfaces.mdx",
+        "allternit/surfaces/docs/api/ios-push.mdx",
+        "allternit/cmd/allternit-cloud-api/src/routes/apns.rs",
+        "allternit/cmd/allternit-api/src/status_snapshot.rs",
+        "allternit/surfaces/allternit-mobile/ios/SystemSurfaces",
+        "allternit-ai/public/allternit-push-sw.js"
       ]
     }
   ],
