@@ -17,6 +17,7 @@ struct NotificationsSettingsView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var status: UNAuthorizationStatus? = nil
     @State private var tested = false
+    @State private var liveActivities = LiveActivityPushSetting.isOn()
 
     @AppStorage(NotificationPrefs.responseKey) private var response = true
     @AppStorage(NotificationPrefs.approvalKey) private var approvals = true
@@ -44,9 +45,18 @@ struct NotificationsSettingsView: View {
                                 : "Calls vibrate only, with no ring sound.",
                               isOn: $ringSound)
 
+            SettingsSwitchRow(title: "Live Activities",
+                              detail: "Lets Allternit update bot progress and approval cards on your Lock Screen and Dynamic Island, even when the app is closed. Off stops those updates.",
+                              isOn: Binding(get: { liveActivities },
+                                            set: { on in
+                                                liveActivities = on
+                                                Task { await LiveActivityPushSetting.set(on) }
+                                            }))
+
             SettingsSectionHeading(text: "Delivery")
                 .padding(.top, 16)
-            SettingsLabeledRow(title: "iPhone notifications", detail: permissionDetail) {
+            SettingsLabeledRow(title: status == .denied ? "Notifications are off for Allternit" : "iPhone notifications",
+                               detail: permissionDetail) {
                 permissionControl
             }
             SettingsSwitchRow(title: "Sound",

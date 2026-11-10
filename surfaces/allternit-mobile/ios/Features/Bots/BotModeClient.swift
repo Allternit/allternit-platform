@@ -459,6 +459,35 @@ final class BotModeClient: @unchecked Sendable {
         try await client.post(path: "agent-sessions/\(Self.query(sessionId))/messages", body: Body(text: text))
     }
 
+    // MARK: Pause all bots (runtime `GET`/`PUT /api/v1/bots/pause`)
+
+    /// `{"paused": bool, "since": <unix seconds|null>, "by": <string|null>}`.
+    struct BotPauseState: Decodable, Sendable, Equatable {
+        let paused: Bool
+        let since: Double?
+        let by: String?
+    }
+
+    func botPauseState() async throws -> BotPauseState {
+        let request = try await client.authorizedRequest(path: "bots/pause")
+        return try await pauseRoundTrip(request)
+    }
+
+    /// `by` is "shortcut" for App Intents, "control" for the Control Center toggle.
+    func setBotPaused(_ paused: Bool, by: String = "shortcut") async throws -> BotPauseState {
+        struct Body: Encodable { let paused: Bool; let by: String }
+        var request = try await client.authorizedRequest(path: "bots/pause", method: "PUT")
+        request.httpBody = try JSONEncoder().encode(Body(paused: paused, by: by))
+        return try await pauseRoundTrip(request)
+    }
+
+    private func pauseRoundTrip(_ request: URLRequest) async throws -> BotPauseState {
+        let (data, response) = try await InstanceConnection.runtimeAPIData(for: request, session: client.session)
+        try client.validate(response, data: data)
+        do { return try JSONDecoder().decode(BotPauseState.self, from: data) }
+        catch { throw APIError.decoding(error) }
+    }
+
     // MARK: Computers (computer_routes.rs / computer_embed.rs / computer_ws.rs)
 
     func listComputers(botId: String? = nil) async throws -> [ComputerRecord] {

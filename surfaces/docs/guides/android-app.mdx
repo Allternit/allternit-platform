@@ -23,6 +23,14 @@ The version from allternit.com/android is also the Phone Link helper. The Google
 
 To see Phone Link's status (paired computers, **Stop** and **Start**, **Revoke**), tap its notification. You can also long-press the Allternit icon and tap **Phone Link**.
 
+## Shortcuts, sharing and notifications
+
+Long-press the Allternit icon for four shortcuts: **Ask a bot**, **Hand off a task**, **Needs you** and **Call main bot**. Each opens the app at that screen.
+
+To send a link or some text to a bot, tap **Share** in any app and choose **Allternit**. Text and links only; files and images are not shared.
+
+Notifications appear under **Allternit**, with their action buttons, not under Chrome. On Android 13 and later the app asks for notification permission the first time the site requests it. If you turn it off, use **Settings → Apps → Allternit → Notifications**.
+
 ## Updates
 
 Allternit Desktop updates the app when it sets up or relinks the phone. To update it yourself, open [allternit.com/android](https://allternit.com/android) again and install over the old version. Your sign-in stays.
@@ -36,3 +44,6 @@ Phone Link before version 0.4.0 was a separate app called **Allternit Phone Link
 - App ID `com.allternit.app`. The Kotlin classes keep the `com.allternit.phonelink` package. Source: `surfaces/allternit-mobile/android`.
 - The launcher is `LauncherActivity` from `androidbrowserhelper` (a Trusted Web Activity around `https://m.allternit.com/`). Its asset links are served from allternit-ai `public/.well-known/assetlinks.json`, with the release cert `3F:8A:39:51:…:E0:67` (sideloaded builds) and the Google Play app-signing cert `8D:4C:4F:BE:…:F9:4B` (Play installs).
 - Each build is published under `runtime.allternit.com/phone-link/android/<version>/` and pinned in Desktop's `phone-android-helper.ts`. The `/android` redirect in the www site's `public/_redirects` points at the current build. Move it with every new pin.
+- Shortcuts are static (`res/xml/shortcuts.xml`, in `src/main`; the Phone Link build overrides the file with the same four plus **Phone Link**). They open `https://m.allternit.com/?allternit_open=ask|handoff|inbox|call` through `LauncherActivity`.
+- The share target is the `METADATA_SHARE_TARGET` meta-data on `LauncherActivity` (JSON in the `share_target` string, GET `/share-target` with `title` and `text`) plus an `ACTION_SEND` `text/plain` intent filter. androidbrowserhelper 2.5.0 has no `url` parameter, so a shared link arrives in `text`.
+- Notification delegation is `DelegationService` plus `NotificationPermissionRequestActivity` (both from `androidbrowserhelper`) and the `POST_NOTIFICATIONS` permission, declared in `src/main`.

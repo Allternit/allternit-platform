@@ -949,6 +949,18 @@ async fn main() {
         });
     }
 
+    // Status snapshot for the phone's Live Activity, widget and badge (inert until paired).
+    {
+        let state = Arc::clone(&state);
+        let mut shutdown_rx = shutdown_tx.subscribe();
+        tokio::spawn(async move {
+            tokio::select! {
+                _ = shutdown_rx.recv() => {}
+                _ = allternit_api::status_snapshot::run(state) => {}
+            }
+        });
+    }
+
     // Office view: pushes the public floor projection to the cloud every 60 s while the live link is on.
     {
         let state = Arc::clone(&state);
@@ -1013,6 +1025,8 @@ async fn main() {
     // ── Build V1 API routes (all merged, then nested under /api/v1) ───────────
     let v1_routes = provider_router()
         .merge(inbox_router())
+        .merge(allternit_api::bots_pause::router())
+        .merge(allternit_api::messages_mac::router())
         .merge(file_router())
         .merge(memory_router())
         .merge(me_router())

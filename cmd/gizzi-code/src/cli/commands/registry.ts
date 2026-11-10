@@ -53,12 +53,14 @@ import { ProfileCommand } from "@/cli/commands/profile"
 import { PermissionProfileCommand } from "@/cli/commands/permission-profile"
 import { RemoteCommand } from "@/cli/commands/remote"
 import { CronLegacyStartCommand } from "@/cli/commands/cron"
+import { BotPauseAliasCommand } from "@/cli/commands/bot"
 import { AgentsCommand } from "@/cli/commands/factory/agents"
 import { TeamCommand } from "@/cli/commands/team"
 import { OrchestrationCommand } from "@/cli/commands/factory/orchestration"
 import { WorkflowsCommand } from "@/cli/commands/factory/workflows"
 import { WorkspaceCommand } from "@/cli/commands/factory/workspace"
 import { BoardCommand, SwarmCommand } from "@/cli/commands/factory/swarm"
+import { MissionCommand } from "@/cli/commands/mission"
 
 /**
  * Structural shape shared by every module in the registry. Deliberately
@@ -92,6 +94,8 @@ export const COMMANDS: RegisteredCommand[] = [
   // Swarms over the Factory: start, watch, wait, land.
   SwarmCommand,
   BoardCommand,
+  // Missions: a long goal planned into milestones, each run as a swarm, validated and landed.
+  MissionCommand,
   AcpCommand,
   McpCommand,
   TuiThreadCommand,
@@ -149,4 +153,6 @@ export const COMMANDS: RegisteredCommand[] = [
   TeamMcpCommand,
   // Hidden: installed cron supervisors still exec `gizzi cron start`.
   CronLegacyStartCommand,
+  // Hidden short form: `gizzi bot pause|resume`.
+  BotPauseAliasCommand,
 ]

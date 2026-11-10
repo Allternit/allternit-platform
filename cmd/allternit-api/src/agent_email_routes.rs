@@ -557,6 +557,8 @@ async fn send_email_inner(
         }
 
         info!(agent_id = %req.agent_id, to = %req.to, "agent-email: outbound pending approval");
+        // One `approval.requested` for the cloud (push with the inbox id).
+        crate::inbox_needs::record_email_draft(&state.db, &req.agent_id, &outbound_id);
         if let Some(e) = autonomy.as_ref().filter(|e| e.held()) {
             let (outcome, reason) = match &e.verdict {
                 crate::autonomy::Verdict::Draft { reason } => ("drafted", reason.clone()),
@@ -679,6 +681,23 @@ fn sender_has_thread(conn: &rusqlite::Connection, agent_id: &str, from_lower: &s
 /// switch) is re-read here so a settings change mid-conversation applies to
 /// the next reply, not the next restart.
 /// The bot thread an inbound email conversation lives in (same key as the inbound handler).
+/// An email kept unanswered (bots paused): a `channel.message.received` event on
+/// the bot's thread, so Needs you lists it as `unanswered` like other channels.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn record_unanswered_email(db: &crate::db::DbHandle, agent_id: &str, thread_id: &str, session: &str, inbound_id: &str, from: &str, subject: &str, body: &str) {
+    let text: String = format!("{subject}: {body}").chars().take(500).collect();
+    crate::gateway_runner::led(
+        db,
+        agent_id,
+        thread_id,
+        Some(session),
+        "channel.message.received",
+        ("system", "email"),
+        serde_json::json!({ "provider": "email", "from": from, "text": text, "inboundId": inbound_id }),
+        Some(format!("email-in:{inbound_id}")),
+    );
+}
+
 fn email_bot_thread(db: &crate::db::DbHandle, agent_id: &str, from: &str, subject: &str) -> Option<String> {
     let key = format!("email:{}:{}", from.to_lowercase(), crate::thread_routes::conversation_subject(subject));
     db.connect()
@@ -1255,6 +1274,14 @@ async fn receive_inbound_email(
                         }
                         None => text,
                     };
+                    // Pause all bots: the email is kept in the bot's thread; only the owner's own mail runs.
+                    if !from_owner && crate::bots_pause::is_paused_db(&db, &owner_s) {
+                        if let Some(thread) = email_bot_thread(&db, &agent, &from_s, &subject_s) {
+                            record_unanswered_email(&db, &agent, &thread, &session, &inbound, &from_s, &subject_s, &turn_body);
+                        }
+                        tracing::info!(agent = %agent, "bots paused: email kept, no auto-reply");
+                        return;
+                    }
                     match crate::agent_session_routes::send_bot_turn(&db, &session, &agent, &text).await {
                         Ok(reply) => {
                             if let Err(e) = send_reply_for_turn(
@@ -1924,5 +1951,27 @@ mod tests {
         let mut bad_headers = HeaderMap::new();
         bad_headers.insert("x-email-platform-signature", "zz".parse().unwrap());
         assert!(verify_mailflare_signature("test-webhook-secret", &bad_headers, body).is_err());
+    }
+}
+
+#[cfg(test)]
+mod paused_email_tests {
+    use rusqlite::params;
+
+    /// A bot email kept while bots are paused shows as `unanswered` in Needs you.
+    #[tokio::test]
+    async fn a_paused_email_shows_as_unanswered() {
+        let dir = std::env::temp_dir().join(format!("allternit-paused-email-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let st = crate::test_helpers::app_state(&dir).await;
+        let c = st.db.connect().unwrap();
+        c.execute("INSERT INTO agents (id, user_id, name, model, provider, is_bot, config) VALUES ('bot-e', 'user-a', 'Mailer', 'm', 'p', 1, '{}')", params![]).unwrap();
+        super::record_unanswered_email(&st.db, "bot-e", "th-email", "ses-e", "in-1", "ann@example.com", "Quote", "Can you send the quote?");
+        // A replayed delivery is recorded once.
+        super::record_unanswered_email(&st.db, "bot-e", "th-email", "ses-e", "in-1", "ann@example.com", "Quote", "Can you send the quote?");
+        let items = crate::inbox_needs::collect(&c, "user-a", 0).unwrap();
+        let un: Vec<_> = items.iter().filter(|i| i["kind"] == "unanswered").collect();
+        assert_eq!(un.len(), 1, "{items:?}");
+        assert_eq!((un[0]["id"].as_str(), un[0]["source"].as_str()), (Some("reply:th-email"), Some("email")));
     }
 }

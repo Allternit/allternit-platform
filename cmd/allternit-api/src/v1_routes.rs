@@ -213,6 +213,29 @@ async fn get_or_create_gizzi_session(
     Ok(session_id)
 }
 
+/// Store a coding-session permission ask (one `cowork_approvals` row, keyed by
+/// the gizzi request id) and, the first time, ledger `approval.requested` for
+/// the cloud. Idempotent: gizzi may re-publish the ask after an SSE replay.
+/// The row shows in the Needs-you inbox as `permission:<id>`.
+pub(crate) fn record_gizzi_permission_ask(conn: &rusqlite::Connection, user_id: &str, request_id: &str, content: &str) -> Result<bool, rusqlite::Error> {
+    let fresh = conn.execute(
+        "INSERT OR IGNORE INTO cowork_approvals (id, user_id, content, source) VALUES (?1, ?2, ?3, 'gizzi-permission')",
+        params![request_id, user_id, content],
+    )? == 1;
+    if fresh {
+        // Owner ledger → the cloud event backbone (approval.requested).
+        let _ = crate::runtime_events::record_user_event(
+            conn,
+            user_id,
+            "approval.requested",
+            None,
+            &serde_json::json!({ "approvalId": request_id, "source": "gizzi-permission" }),
+            Some(&format!("approval:{request_id}:requested")),
+        );
+    }
+    Ok(fresh)
+}
+
 /// Shape a gizzi `permission.asked` event's properties into the JSON payload
 /// stored in `cowork_approvals.content`. Keys match what the ApprovalGate
 /// poller reads (actionId, sessionId, riskLevel, summary, details) plus the
@@ -2617,25 +2640,8 @@ async fn agent_chat_bridge(
                             // (e.g. after an SSE reconnect replay); the row is
                             // keyed by the request id so it stays idempotent.
                             let _ = tokio::task::spawn_blocking(
-                                move || -> Result<(), rusqlite::Error> {
-                                    let conn = db.connect()?;
-                                    let fresh = conn.execute(
-                                        "INSERT OR IGNORE INTO cowork_approvals (id, user_id, content, source) \
-                                         VALUES (?1, ?2, ?3, 'gizzi-permission')",
-                                        params![rid, uid, content],
-                                    )? == 1;
-                                    if fresh {
-                                        // Owner ledger → the cloud event backbone (approval.requested).
-                                        let _ = crate::runtime_events::record_user_event(
-                                            &conn,
-                                            &uid,
-                                            "approval.requested",
-                                            None,
-                                            &serde_json::json!({ "approvalId": rid, "source": "gizzi-permission" }),
-                                            Some(&format!("approval:{rid}:requested")),
-                                        );
-                                    }
-                                    Ok(())
+                                move || -> Result<bool, rusqlite::Error> {
+                                    record_gizzi_permission_ask(&db.connect()?, &uid, &rid, &content)
                                 },
                             )
                             .await;

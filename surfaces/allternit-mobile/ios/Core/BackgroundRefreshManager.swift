@@ -1,5 +1,6 @@
 import Foundation
 import BackgroundTasks
+import UIKit
 @preconcurrency import UserNotifications
 
 /// Gap 2 mitigation (background stream liveness): the pty/permission SSE
@@ -27,6 +28,13 @@ enum BackgroundRefreshManager {
     /// `application(_:didFinishLaunchingWithOptions:)` returns (called from
     /// `AllternitApp.init()` here, SwiftUI's equivalent launch point).
     static func register() {
+        // Focus filter: the server drops it 24 h after the last confirm, so
+        // confirm again whenever the app comes to the foreground.
+        NotificationCenter.default.addObserver(
+            forName: UIApplication.didBecomeActiveNotification, object: nil, queue: nil
+        ) { _ in
+            Task { await FocusFilterClient.reconfirmIfNeeded() }
+        }
         BGTaskScheduler.shared.register(forTaskWithIdentifier: taskIdentifier, using: nil) { task in
             guard let refreshTask = task as? BGAppRefreshTask else {
                 task.setTaskCompleted(success: false)
@@ -64,6 +72,7 @@ enum BackgroundRefreshManager {
         let box = TaskBox(task: task)
         let work = Task {
             await pollForNewPermissions()
+            await FocusFilterClient.reconfirmIfNeeded()
             box.task.setTaskCompleted(success: true)
         }
         box.task.expirationHandler = {

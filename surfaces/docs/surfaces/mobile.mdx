@@ -241,6 +241,10 @@ The native app's Artifacts tab reads the same Artifacts v2 library as Desktop, a
 
 Developer notes: the client is `Core/API/ArtifactsV2Client.swift`; the library store is `Features/Artifacts/ArtifactLibraryStore.swift` (no local file; the old canvas mirror is gone). Studio sessions keep their instructions in `ArtifactStudioLauncher` and send them as the agent-chat `systemPrompt` on every turn. The Office editor web view signs the page's own `fetch` and XHR calls to its origin and the cloud API with a fresh token from the app (`AuthenticatedWebBridge`).
 
+## Notifications, widget and Shortcuts
+
+The iPhone app also works outside the app: notification buttons, Live Activities, a widget, Control Center controls and Shortcuts actions. See [Allternit on your iPhone](/guides/iphone-system-surfaces). Available in the next app update.
+
 ## Related links
 
 - [Allternit Factory](/factory/overview)

@@ -60,9 +60,11 @@ No auth: the token is the credential, and it was only sent to that person's devi
 
 | On | Off |
 |---|---|
-| `approval.requested`, `thread.needs_user`, `message.received`, `call.ended`, `subscription.login_needed`, `usage.threshold`, `attention.opened` | `agent.run.completed`, `approval.resolved`, `attention.resolved`, `inbox.item.created`, `vendor.ticket.created`, `subscription.signed_in` |
+| `approval.requested`, `thread.needs_user`, `message.received`, `call.ended`, `subscription.login_needed`, `usage.threshold`, `attention.opened`, `agent.run.completed` (failed or long runs only) | `approval.resolved`, `attention.resolved`, `inbox.item.created`, `vendor.ticket.created`, `subscription.signed_in` |
 
 `message.received` and `call.ended` default on because the app already pushed messages and missed calls before the sink existed.
+
+**Finished runs.** With no switch set, `agent.run.completed` pushes only when the run failed (`status` `failed`, `error`, `timeout`) or ran 2 minutes or longer (`durationMs`, `durationSec` or `duration_s`). A shorter successful run, or one with no duration, does not push; on the iPhone the Live Activity's end state covers it. Turned on explicitly, every finished run pushes. Turned off, none does.
 
 ## The push sink
 
@@ -70,17 +72,17 @@ No auth: the token is the credential, and it was only sent to that person's devi
 
 1. claims it in `notification_push_log` (`INSERT … ON CONFLICT DO NOTHING`), so a restart, a second replica or a rescan never pushes it twice;
 2. skips it when it happened at the producer more than 12 hours ago;
-3. checks the owner's preference;
-4. builds the notification ([copy and links](#copy-and-links));
+3. checks the owner's preference, and for `agent.run.completed` with no switch set, the [finished-run rule](#defaults);
+4. builds the notification ([copy and links](#copy-and-links)) and adds `eventId`;
 5. for `message.received`, applies the message limits (one per conversation per 20 seconds, 40 an hour) and skips it when a direct channel push went to the same person in the last 2 minutes (see below);
 6. holds it when the owner is in [quiet hours](#quiet-hours);
-7. sends it to every device the owner registered, and records `sent`, `off`, `unreachable` (no device took it), `skipped` or `held`.
+7. sends it to every device the owner registered (a coding-session permission ask to iPhones only, see below), and records `sent`, `off`, `unreachable` (no device took it), `skipped` or `held`.
 
 Migration `060_notification_preferences.sql` adds `notification_preferences`, `notification_push_log` and an index on `platform_events (created_at) WHERE subject = 'user'`. It is applied by hand to production, after 057.
 
 ### Copy and links
 
-The payload is the [Web Push](/api/web-push#what-gets-pushed) JSON with `type: "event"` (`"message"` for `message.received`) and `data: {event, botId, threadId}`. Links use the push-links scheme: `/?allternit_thread=<threadId>&bot=<botId>` when the event has both, `/?allternit_channel=<provider>` for a message without a thread, `/` otherwise.
+The payload is the [Web Push](/api/web-push#what-gets-pushed) JSON with `type: "event"` (`"message"` for `message.received`) and the `data` keys below. Links use the push-links scheme: `/?allternit_thread=<threadId>&bot=<botId>` when the event has both, `/?allternit_channel=<provider>` for a message without a thread, `/` otherwise.
 
 | Event | Title | Body | `tag` |
 |---|---|---|---|
@@ -99,7 +101,44 @@ The payload is the [Web Push](/api/web-push#what-gets-pushed) JSON with `type: "
 
 **Answer pages.** A `thread.needs_user` event whose `data.url` is an `https://artifacts.allternit.com/…` link (with `page_id`) is an agent waiting on an answer page: the notification opens that page as is, fragment included (the page's reply key rides in it), and its `tag` is `needs-page-<page_id>`. Any other `url` is ignored. The answer-me-with-html relay on a paired Mac sends these through `POST /api/v1/runtime/events` when a plan page or a page with open decisions has not been opened for 90 seconds.
 
-`<bot>` is the forwarded `botName`, or "Your bot". `approval.requested` with `source: "gizzi-permission"` (a coding-session permission ask) is never pushed here: the gizzi remote-control lane (`services/remote-control-push`) already notifies for it.
+`<bot>` is the forwarded `botName`, or "Your bot".
+
+**Coding-session permission asks** (`approval.requested` with `source: "gizzi-permission"`) reach browsers through the gizzi remote-control lane (`services/remote-control-push`). The sink sends them to iPhones only (APNs), never as a second Web Push.
+
+### Data keys
+
+Every sink push carries these in `data`, for the service worker and the iPhone app alike:
+
+| Key | Value |
+|---|---|
+| `event` | The registry event name |
+| `eventId` | The backbone event id. The iPhone's notification extension fetches the text with it ([content route](/api/ios-push#device-read-routes)) |
+| `botId`, `threadId` | When the event has them |
+| `inboxId` | The runtime's inbox item, for example `approval:ap1`. An `attention.opened` without one gets `attention:<attentionId>` |
+| `runtimeId` | The runtime that forwarded it. Cloud sets it at ingest, whatever the body said |
+| `sessionId` | The chat session a Reply goes to (`POST /api/v1/agent-sessions/:id/messages`) |
+| `contentHash` | The approve call echoes it; the runtime answers `409 changed` when the item changed since |
+| `senderKind` | `bot` or `person` (`message.received`) |
+| `botAvatar` | The bot's picture, `https` only, when the runtime sends one |
+| `category` | Which notification buttons to show (table below). Absent when the push has none |
+| `private` | `true` when the body holds the person's content: the forwarded `private`, or by default `approval.requested`, `message.received` and `thread.needs_user` |
+| `level` | `low`, `normal`, `needs_you` or `urgent` ([levels](#levels)) |
+
+A push for an inbox item uses the item as its `tag` (`approval:ap1` becomes `approval-ap1`), so its other pushes replace it. An approval's link is `/?allternit_inbox=<inboxId>` (URL-encoded), which opens that item.
+
+### Categories
+
+The category comes from the runtime's `inboxKind` first, then the event name, so an email draft that arrives as `thread.needs_user` still gets approval buttons.
+
+| Category | Buttons, in order | Used for |
+|---|---|---|
+| `APPROVAL_INLINE` | Approve, Deny, Reply | An inbox item of kind `approval`, `held_send`, `email_draft`, `factory_approval` or `gizzi_permission` whose whole text and recipient fit (`approveInline: true`) and that has a `contentHash` |
+| `APPROVAL_REVIEW` | Review, Deny, Reply | Such an item that does not fit, or has no hash; an `approval.requested` with an `inboxId` but no kind |
+| `BOT_REPLY` | Reply, Open | `message.received` with `senderKind: "bot"`; `thread.needs_user` with no inbox kind |
+| `RUN_DONE` | Open | `agent.run.completed` |
+| `NEEDS_FIX` | Retry, Snooze | `attention.opened` |
+
+An approval with no `inboxId` (an older runtime) gets no category: there is nothing for a button to act on. Buttons act through the runtime's inbox routes (`POST /api/v1/inbox/:id/approve`, `dismiss`, `snooze`) over the relay; cloud has no approve route of its own.
 
 ### Direct pushes
 
@@ -112,6 +151,28 @@ These don't go through the sink, because the backbone carries no event for them:
 | In-app thread message | Messages between invite-linked people are cloud-only | `message.received` |
 
 A message relayed to a runtime through a channel address (`channel_inbound`) used to be pushed directly. The runtime records the same message and forwards it as `message.received`, so now the direct push only goes out for a runtime that has never forwarded an event (an older build), and follows the `message.received` preference. Once a runtime forwards, the sink sends it, with the sender and text. While the sink isn't working (VAPID unset, or migration 060 not applied yet) every relayed message keeps its direct push. For the one message where both could fire (the first event a runtime ever forwards), the sink sees the direct push in `push_log` and skips its own.
+
+## Focus filter
+
+### `PUT /api/v1/notifications/focus`
+
+Clerk session or `compute`-scoped API key. The iPhone app sends it when a Focus with the Allternit filter turns on or off, and again on foreground and background refresh to confirm it.
+
+```json
+{ "deviceId": "phone-1", "active": true, "allowedBotIds": ["b1"], "allowApprovals": true }
+```
+
+Returns `{ok: true, deviceId, focus}`. `allowedBotIds` may be `null`, which means no bot is allowed. `allowApprovals` is optional (default `true`). Errors: `400 bad_value` (missing `deviceId` or `active`, wrong types, more than 200 bots), `404 unknown_device` (no iPhone with that `deviceId` registered for this person).
+
+While the filter is active and was confirmed in the last 24 hours, alerts to that iPhone from bots not in `allowedBotIds`, and alerts with no bot, arrive with `interruption-level: passive` and no sound. Nothing is dropped. Approvals keep their normal level when `allowApprovals` is true. Stored on the device row (`apns_device_tokens.focus`, `focus_at`; migration `120_ios_system_surfaces.sql`).
+
+## Status snapshots and revoke
+
+The runtime forwards `status.snapshot` through `POST /api/v1/runtime/events` whenever its status changes (at most one per 5 seconds). It is never a notification and never a backbone event. Cloud keeps the latest per runtime in `status_snapshots` with a content hash; the same content again answers `duplicate`. `GET /api/v1/status/summary` serves them ([iPhone push](/api/ios-push#device-read-routes)).
+
+The fields cloud reads today: `needsYou` (a list of inbox ids). The rest (`activeBots`, `attentionBots`, `pendingApprovals`, `paused`, `focus`, `bots`, `needsYouRows`, `loops`, `lastRoutine`) is stored as sent, for the Live Activity, widget and summary.
+
+When a sink push for an inbox item reaches at least one iPhone, cloud records the tag in `notification_delivered`. On each new snapshot, every inbox id that was in the previous `needsYou` and is not in this one (answered on another device, on the web, or it expired) has its delivered tags removed from the person's iPhones by a background push, and the rows are deleted. Web Push gets no revoke push: an open page closes its own notifications, and Safari drops subscriptions that receive silent pushes.
 
 ## Quiet hours
 

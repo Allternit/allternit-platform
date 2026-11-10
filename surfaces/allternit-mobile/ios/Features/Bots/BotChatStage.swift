@@ -396,6 +396,10 @@ struct BotTabComposer: View {
         .padding(.horizontal, 14)
         .padding(.top, 6)
         .padding(.bottom, 8)
+        .onAppear {
+            // A `bot/<id>/chat?prompt=` link fills the composer; never sends.
+            if let prefill = DeepLinkRouter.shared.takeComposerPrefill(), text.isEmpty { text = prefill }
+        }
     }
 
     private func send() {

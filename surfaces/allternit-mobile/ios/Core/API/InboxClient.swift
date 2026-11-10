@@ -31,6 +31,8 @@ struct InboxItem: Decodable, Identifiable, Equatable, Sendable {
     let provenance: Provenance?
     /// `peer_held` items: what the outside agent said.
     let text: String?
+    /// Hash of the text and recipient; sent back with Approve so a changed item answers 409.
+    let contentHash: String?
 
     var canApprove: Bool { actions.contains("approve") }
     var canRetry: Bool { actions.contains("retry") }
@@ -70,6 +72,31 @@ final class InboxClient: @unchecked Sendable {
     func dismiss(_ id: String) async throws { try await act(id, "dismiss") }
     func retry(_ id: String) async throws { try await act(id, "retry") }
     func snooze(_ id: String, minutes: Int = 60) async throws { try await act(id, "snooze", body: ["minutes": minutes]) }
+
+    /// Background path (notification buttons, Live Activity, App Intents):
+    /// sends `bearer` as given, never asking AuthManager, and relays to
+    /// `runtimeId` (the item's own computer) when set, else the active one.
+    /// Unlike the sheet's calls it does not swallow 404, so the caller can
+    /// tell "already handled" from "done".
+    func act(_ id: String, verb: String, body: [String: Any] = [:], runtimeId: String?, bearer: String) async throws {
+        let escaped = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed.subtracting(["/"])) ?? id
+        var request = URLRequest(url: client.baseURL.appendingPathComponent("inbox/\(escaped)/\(verb)"))
+        request.httpMethod = "POST"
+        request.timeoutInterval = 20
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("Bearer \(bearer)", forHTTPHeaderField: "Authorization")
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        let data: Data
+        let response: URLResponse
+        if let runtimeId {
+            let relay = RuntimeRelayClient(session: client.session, tokenProvider: { bearer })
+            (data, response) = try await relay.send(request, runtimeId: runtimeId)
+        } else {
+            (data, response) = try await InstanceConnection.runtimeAPIData(for: request, session: client.session)
+        }
+        try client.validate(response, data: data)
+    }
 
     private func act(_ id: String, _ verb: String, body: [String: Any] = [:]) async throws {
         let escaped = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed.subtracting(["/"])) ?? id

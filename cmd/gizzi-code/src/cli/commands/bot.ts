@@ -606,6 +606,46 @@ export const BotRoutineCommand = cmd({
 })
 
 /* -------------------------------------------------------------------------- */
+/* pause / resume (runtime-wide switch, allternit-api /api/v1/bots/pause)     */
+/* -------------------------------------------------------------------------- */
+
+async function runPause(args: { json?: boolean; status?: boolean }, target: boolean | "read") {
+  await guard(async () => {
+    const { getBotPause, setBotPause, describeBotPause } = await import("@/cli/work/api")
+    const state = target === "read" ? await getBotPause() : await setBotPause(target)
+    if (args.json) {
+      process.stdout.write(JSON.stringify(state) + "\n")
+    } else if (target === "read") {
+      UI.println(describeBotPause(state))
+    } else {
+      UI.println(
+        state.paused
+          ? "All bots are paused. Routines and automatic replies are on hold; your own messages still run."
+          : "Bots resumed.",
+      )
+    }
+    exitOk()
+  })
+}
+
+export const BotPauseCommand = cmd({
+  command: "pause",
+  describe: "Pause all bots: routines and automatic replies hold, your own messages still run",
+  builder: (yargs) =>
+    yargs
+      .option("status", { type: "boolean", describe: "show the current state without changing it" })
+      .option("json", { type: "boolean", describe: "print the runtime's JSON" }),
+  handler: async (args) => runPause(args, args.status ? "read" : true),
+})
+
+export const BotResumeCommand = cmd({
+  command: "resume",
+  describe: "Resume all bots after a pause",
+  builder: (yargs) => yargs.option("json", { type: "boolean", describe: "print the runtime's JSON" }),
+  handler: async (args) => runPause(args, false),
+})
+
+/* -------------------------------------------------------------------------- */
 /* group                                                                      */
 /* -------------------------------------------------------------------------- */
 
@@ -622,6 +662,20 @@ export const BotCommand = cmd({
       .command(BotDeleteCommand)
       .command(BotChatCommand)
       .command(BotThreadsCommand)
-      .command(BotRoutineCommand),
+      .command(BotRoutineCommand)
+      .command(BotPauseCommand)
+      .command(BotResumeCommand),
+  handler: async () => {},
+})
+
+/**
+ * Hidden top-level `gizzi bot pause|resume|pause --status`: the short form
+ * the docs and phone apps name. Everything else about bots stays under
+ * `gizzi agents bot`.
+ */
+export const BotPauseAliasCommand = cmd({
+  command: "bot",
+  describe: false,
+  builder: (yargs) => yargs.command(BotPauseCommand).command(BotResumeCommand).demandCommand(1),
   handler: async () => {},
 })
