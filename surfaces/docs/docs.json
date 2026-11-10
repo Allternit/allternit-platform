@@ -416,6 +416,7 @@
               "cli/skills",
               "cli/mcp",
               "cli/plugin",
+              "cli/customize",
               "cli/session",
               "cli/memory",
               "cli/native-sessions",

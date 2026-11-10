@@ -20,6 +20,12 @@ OpenRouter is never its own section. Allternit Cloud uses it to route, so it is 
 
 `gizzi models` prints the same list with the same headings. `gizzi models --all` prints every provider in the models.dev catalog, OpenRouter included.
 
+## Thinking levels
+
+The picker's second column shows each model's thinking level. It reads the same per-model table Desktop, the web app and iPhone pick from (`model-thinking.json`), so each model offers only the levels it takes. Claude Opus 5.5 takes Low, Medium, High, Extra high and Max. GPT-6 Sol adds Ultra. Gemini 3 takes Low and High. Press ← and → on the focused model to change its level. The row under the list shows every level, with the default marked `*`. A model with `—` has no levels in the table and runs at its own default.
+
+The level you pick reaches the model. A CLI brain gets it as its own flag (Claude Code runs with `--effort xhigh`). Allternit Cloud and other providers get the vendor's own option. `/effort <level>` sets it from the prompt and accepts every level in the table: none, minimal, low, medium, high, xhigh, max and ultra. A level the current model doesn't take is ignored and the model's default applies. The footer shows the level in the vendor's words, for example `effort: extra high`.
+
 ## Pick a model at launch
 
 ```bash

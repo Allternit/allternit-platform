@@ -103,17 +103,20 @@ function unsetEffortLevel(): EffortCommandResult {
     }
   };
 }
+const TABLE_LEVELS = ['none', 'minimal', 'xhigh', 'ultra'];
 export function executeEffort(args: string): EffortCommandResult {
   const normalized = args.toLowerCase();
   if (normalized === 'auto' || normalized === 'unset') {
     return unsetEffortLevel();
   }
-  if (!isEffortLevel(normalized)) {
+  // Levels from the shared per-model thinking table (model-thinking.json); a
+  // model that doesn't take the level keeps its own default.
+  if (!isEffortLevel(normalized) && !TABLE_LEVELS.includes(normalized)) {
     return {
-      message: `Invalid argument: ${args}. Valid options are: low, medium, high, max, auto`
+      message: `Invalid argument: ${args}. Valid options are: none, minimal, low, medium, high, xhigh, max, ultra, auto (/model shows the levels each model takes)`
     };
   }
-  return setEffortValue(normalized);
+  return setEffortValue(normalized as EffortValue);
 }
 function ShowCurrentEffort(t0) {
   const {
@@ -157,7 +160,7 @@ function ApplyEffortAndClose(t0) {
 export async function call(onDone: LocalJSXCommandOnDone, _context: unknown, args?: string): Promise<React.ReactNode> {
   args = args?.trim() || '';
   if (COMMON_HELP_ARGS.includes(args)) {
-    onDone('Usage: /effort [low|medium|high|max|auto]\n\nEffort levels:\n- low: Quick, straightforward implementation\n- medium: Balanced approach with standard testing\n- high: Comprehensive implementation with extensive testing\n- max: Maximum capability with deepest reasoning (Opus 4.6 only)\n- auto: Use the default effort level for your model');
+    onDone('Usage: /effort [none|minimal|low|medium|high|xhigh|max|ultra|auto]\n\nEach model takes its own levels: /model shows them in its second column (← → to change).\n\nEffort levels:\n- low: Quick, straightforward implementation\n- medium: Balanced approach with standard testing\n- high: Comprehensive implementation with extensive testing\n- max: Maximum capability with deepest reasoning (Opus 4.6 only)\n- auto: Use the default effort level for your model');
     return;
   }
   if (!args || args === 'current' || args === 'status') {

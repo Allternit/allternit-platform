@@ -853,8 +853,9 @@
       "label": "Customize directory (skills, connectors, plugins) with the A://TERNIT OFFICIAL shelf, Add from Git, Import an agent, and per-bot Capabilities",
       "product": "product:ai-allternit",
       "status": "live",
-      "description": "Customize: Skills, Connectors, Plugins and More, each with Yours and Discover. Discover leads with an ink section hero (A://TERNIT <SECTION> lockup), then the A://TERNIT OFFICIAL shelf of Allternit-made skills and plugins with versioned covers. Connector icons are the vendor's App Store icon, else a brand tile, shared with MCP Apps; a 'Has a screen' tag opens the app in ACI MCP Apps. Every card, official cover and hero opens an item page before install (skills read their files from GET /skills/catalog/:id/files). MCP servers, Commands, CLI tools and Webhooks have official shelves too (section-official.ts); Add writes where gizzi reads (mcp in ~/.config/gizzi-code/gizzi.json, command/<name>.md) and webhooks are API triggers.",
+      "description": "Customize: Skills, Connectors, Plugins and More, each with Yours and Discover. Discover leads with an ink section hero (A://TERNIT <SECTION> lockup), then the A://TERNIT OFFICIAL shelf of Allternit-made skills and plugins with versioned covers. Connector icons are the vendor's App Store icon, else a brand tile, shared with MCP Apps; a 'Has a screen' tag opens the app in ACI MCP Apps. Every card, official cover and hero opens an item page before install (skills read their files from GET /skills/catalog/:id/files). MCP servers, Commands, CLI tools and Webhooks have official shelves too (section-official.ts); Add writes where gizzi reads (mcp in ~/.config/gizzi-code/gizzi.json, command/<name>.md) and webhooks are API triggers. Gizzi Code /customize shows the same shelves (catalog.json generated from allternit-ai's Customize data); Enter opens an item page, a adds it, writing the same gizzi.json mcp entry / command file or calling the same skill installer as Desktop.",
       "touches": [
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/commands/customize",
         "allternit-ai/src/views/customize",
         "allternit-ai/src/components/connectors/ConnectorLogo.tsx",
         "allternit-ai/src/lib/design/connector-tile.ts",
@@ -894,6 +895,7 @@
         }
       ],
       "evidence": [
+        "allternit/surfaces/docs/cli/customize.mdx",
         "allternit/surfaces/docs/guides/customize.mdx",
         "allternit/surfaces/docs/guides/connectors.mdx"
       ]
@@ -903,8 +905,10 @@
       "label": "MCP Apps and events",
       "product": "product:mcp-apps",
       "status": "live",
-      "description": "Interactive MCP apps run inside the workspace. Event automations have owner instructions, approval-gated durable runs, batching, limits, history and subscription-scoped replay. About 800 connectors have an app screen: designed ones for the top apps and automatic ones built from each connector's tools; a standard connect screen, a welcome moment after sign-in, hover previews on Discover cards, an About tab, chat cards and deep views (search, detail, compose, overview) for top apps.",
+      "description": "Interactive MCP apps run inside the workspace. Event automations have owner instructions, approval-gated durable runs, batching, limits, history and subscription-scoped replay. About 800 connectors have an app screen: designed ones for the top apps and automatic ones built from each connector's tools; a standard connect screen, a welcome moment after sign-in, hover previews on Discover cards, an About tab, chat cards and deep views (search, detail, compose, overview) for top apps. Gizzi Code TUI: an MCP tool result with a ui:// resource gets a 'View in browser' line that opens a local host page running the app with its real tool input and result.",
       "touches": [
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/services/mcp/appView.ts",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/tools/MCPTool/UI.tsx",
         "allternit-ai/src/views/mini-apps",
         "allternit-ai/src/components/mcp",
         "allternit-ai/src/components/ai-elements/McpAppFrame.tsx",
@@ -959,6 +963,7 @@
         }
       ],
       "evidence": [
+        "allternit/surfaces/docs/cli/mcp.mdx",
         "allternit/surfaces/docs/guides/mcp-events.mdx",
         "allternit/surfaces/docs/guides/mcp-apps-status.mdx",
         "allternit/surfaces/docs/guides/app-screens.mdx"
@@ -969,8 +974,12 @@
       "label": "Usage, credits and spend limits",
       "product": "product:ai-allternit",
       "status": "live",
-      "description": "What each account has used, what it has left, and the limits that stop runaway spend.",
+      "description": "What each account has used, what it has left, and the limits that stop runaway spend. Gizzi Code: /usage and Settings › Usage show the Allternit plan (Free/Plus/Max/Ultra), credits, Cloud balance and monthly meter from GET /api/v1/me/usage, plus each signed-in CLI brain's plan limits; the TUI footer shows a 'credits $X' chip.",
       "touches": [
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/services/allternitAccount.ts",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/commands/usage/usage.ts",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/components/Settings/Usage.tsx",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/components/PromptInput/FooterContextLine.tsx",
         "allternit-ai/src/components/usage",
         "allternit-ai/src/lib/usage",
         "allternit-ai/src/lib/credits",
@@ -1015,6 +1024,7 @@
         }
       ],
       "evidence": [
+        "allternit/surfaces/docs/cli/usage.mdx",
         "allternit/surfaces/docs/api/usage.mdx",
         "allternit/surfaces/docs/admin/spend-limits.mdx",
         "allternit/surfaces/docs/guides/credits-and-auto-top-up.mdx",
@@ -3925,8 +3935,12 @@
       "label": "Gizzi Code TUI models: CLI brains through the engine driver, Desktop's provider rule, real failure causes",
       "product": "product:gizzi-code",
       "status": "building",
-      "description": "The Gizzi TUI runs CLI brains (claude-cli, codex-cli, kimi-cli, added CLIs, subs-*) through the engine's driver with the TUI's own permission prompts, offers the same providers as Desktop's picker (Cloud, subscriptions, connected API keys, local; never OpenRouter standalone) in /model and gizzi models, honours --model at launch, and names the real cause plus a command to run for each failure.",
+      "description": "The Gizzi TUI runs CLI brains (claude-cli, codex-cli, kimi-cli, added CLIs, subs-*) through the engine's driver with the TUI's own permission prompts, offers the same providers as Desktop's picker (Cloud, subscriptions, connected API keys, local; never OpenRouter standalone) in /model and gizzi models, honours --model at launch, and names the real cause plus a command to run for each failure. /model has a second column with each model's thinking level from model-thinking.json; ← → cycles only that model's levels, and the level reaches the model (CLI brains get it as their own flag, e.g. claude --effort xhigh). /effort accepts every table level.",
       "touches": [
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/components/ModelPicker.tsx",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/utils/effort.ts",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/commands/effort/effort.tsx",
+        "allternit/cmd/gizzi-code/src/runtime/providers/discovery/model-thinking.ts",
         "allternit/cmd/gizzi-code/src/cli/ui/ink-app/services/api",
         "allternit/cmd/gizzi-code/src/cli/ui/ink-app/utils/model",
         "allternit/cmd/gizzi-code/src/cli/ui/ink-app/components",
@@ -3935,6 +3949,7 @@
         "allternit/cmd/gizzi-code/src/cli/commands"
       ],
       "evidence": [
+        "allternit/surfaces/docs/cli/models.mdx",
         "allternit/surfaces/docs/cli/models.mdx",
         "allternit/cmd/gizzi-code/src/runtime/providers/offer.ts",
         "allternit/cmd/gizzi-code/src/cli/ui/ink-app/services/api/cliBrain.ts",
