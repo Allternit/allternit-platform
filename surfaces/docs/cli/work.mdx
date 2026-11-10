@@ -1,0 +1,90 @@
+---
+title: Decisions, PRs, projects, routines and computers
+description: "The work views from Allternit Desktop, in the terminal: everything agents are waiting on, this branch's PR checks, project status, routines, your computers, and share links for artifacts."
+---
+
+Gizzi Code reads the same data Allternit Desktop shows. Nothing here is a copy: answer a decision, pause a routine or start a computer in the terminal and Desktop, the web app and the phone apps see it at once.
+
+## Footer chips
+
+Two chips show in the footer when there is something to show:
+
+- `⚑ 3`, next to the context meter, means agents in three places are waiting on you. Open `/decisions`.
+- `PR #123 ✓4 ✗1 ●2`, on the mode line, is this branch's pull request: 4 checks passed, 1 failed, 2 are running. The number's color is the review state. Open `/pr`.
+
+Both stay hidden when nothing is waiting, the branch has no PR, or the source isn't there (Desktop's engine isn't running, `gh` isn't installed or signed in).
+
+## /decisions
+
+One queue for every question and approval an agent is waiting on, across all sessions on this machine: other terminal sessions, Desktop chats, bot chats and Factory workers. It is the same queue as **Tasks → Decisions** in Desktop.
+
+| Key | Does |
+|---|---|
+| `↑` `↓` | choose a decision |
+| `1`–`9` | pick that option (a decision with several questions asks them in turn) |
+| `x` | dismiss a question |
+| `y` or `enter` | allow an approval once |
+| `a` | always allow |
+| `n` | deny |
+
+The answer goes to the asking session through the engine, so it continues wherever it runs. The list refreshes every 5 seconds.
+
+## /pr
+
+The pull request for the current branch and its checks, refreshed every 20 seconds while open. `enter` opens the selected check in the browser and `o` opens the PR. It uses the GitHub CLI (`gh pr view`), the same source Desktop uses for linked PRs on code sessions, so `gh` must be installed and signed in.
+
+## /projects
+
+Your projects with the status chip Desktop shows (**On track**, **At risk**, **Blocked**, **Needs decision**, **Done**, or **Closed**) and the next action from the project's status page. Active projects come first.
+
+## /routines
+
+Your routines (Desktop's **Automation Tasks**) with when each runs next, when it last ran and its schedule, soonest first. Press `p` to pause or resume the selected routine.
+
+<Note>
+Routines that live on your cloud computer are listed by that computer's runtime. In the terminal, `/routines` lists the ones on this machine's runtime.
+</Note>
+
+## Computers
+
+```bash
+gizzi computers ls             # your computers and paired runtimes
+gizzi computers start "Mail VPS"
+gizzi computers stop cmp_7fe9…
+```
+
+`ls` shows two lists:
+
+- **Computers**: the ones in Desktop's Computers view (this machine, paired machines, cloud desktops). `start` and `stop` take a name or an id from this list.
+- **Paired runtimes**: every runtime signed in to your account (Desktops, cloud computers, VPSs, phones), online first.
+
+### Run a session on another computer
+
+```bash
+gizzi run --on "Allternit cloud computer" "fix the failing test in api/"
+```
+
+`--on` starts the session on that runtime through the Allternit relay, sends your message, and prints the web and phone links to follow it. The turn runs on that computer, with its files and its signed-in CLI tools. A sleeping cloud computer is woken first, which can take a minute. Add `--model <brain>` (any model id from `gizzi models`) to pick the model there.
+
+The relay needs an Allternit API key with the `compute` scope in `ALLTERNIT_API_TOKEN` (**Settings → API keys**). The device token from `gizzi pair` only identifies this machine and can't drive another one.
+
+## Share an artifact
+
+```bash
+gizzi artifact share art_e969…          # publish and print the link
+gizzi artifact share art_e969… --at 3   # publish version 3
+gizzi artifact share art_e969… --status # is it shared, and where
+gizzi artifact share art_e969… --off    # stop sharing
+```
+
+Sharing publishes a snapshot of the version, so later edits don't change the shared page until you share again. Artifacts have no comments yet, so there is no comments view.
+
+## Where the data comes from
+
+These views read Allternit Desktop's gateway on this machine (`127.0.0.1:8013`, or `ALLTERNIT_API_URL`) with this machine's sign-in from `gizzi pair`, and the engine at `127.0.0.1:4096` (`GIZZI_ENGINE_URL`). If Desktop isn't running, they say so. Open Desktop or run `gizzi serve`.
+
+## Related
+
+- [Plan mode](/cli/plan): press `e` on a plan approval to edit the plan before it runs
+- [Continue a terminal session anywhere](/cli/continue-anywhere)
+- [Edit and approve an agent's plan](/guides/plan-approval)

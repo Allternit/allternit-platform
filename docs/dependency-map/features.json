@@ -3817,6 +3817,26 @@
       ]
     },
     {
+      "id": "feature:gizzi-work-views",
+      "label": "Gizzi Code work views (decisions, PR checks, projects, routines, computers, artifact share)",
+      "product": "product:gizzi-code",
+      "status": "building",
+      "description": "Desktop's work views in the terminal over the same routes: /decisions (engine /v1/question + /v1/permission across all sessions, footer \u2691 badge), /pr (gh pr view checks, footer PR chip), /projects (allternit-api /api/v1/cowork/projects status chips), /routines (/api/v1/automation/routines next runs, pause/resume), `gizzi computers ls|start|stop` (/api/v1/computers + cloud /api/v1/runtime-devices), `gizzi run --on` (cloud relay /api/v1/runtime-devices/:id/proxy \u2192 agent-sessions), `gizzi artifact share` (/api/v1/content-artifacts/:id/publish), and `e` to edit a plan on approval.",
+      "touches": [
+        "allternit/cmd/gizzi-code/src/cli",
+        "allternit/cmd/allternit-api",
+        "allternit/cmd/allternit-cloud-api",
+        "allternit/surfaces/docs"
+      ],
+      "decisions": [],
+      "evidence": [
+        "allternit/cmd/gizzi-code/src/cli/work/api.ts",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/commands/work/index.ts",
+        "allternit/cmd/gizzi-code/src/cli/commands/computers.ts",
+        "allternit/surfaces/docs/cli/work.mdx"
+      ]
+    },
+    {
       "id": "feature:gizzi-tui-header",
       "label": "Gizzi Code startup header (mascot + wordmark)",
       "product": "product:gizzi-code",

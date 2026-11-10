@@ -54,6 +54,8 @@ When you enter plan mode, the agent switches to a read-only stance:
 
 When the plan is ready, the agent exits plan mode and presents the plan for your approval. After approval, the agent implements the plan using the normal permission rules.
 
+On the approval prompt in the terminal, press `e` (or `ctrl+g`) to open the plan in `$EDITOR`. Change, add, remove or reorder steps, save and close: the prompt shows the edited plan, and the edited plan is what runs when you approve. `e` types into the feedback box instead while **No, keep planning** is selected.
+
 ## Plan file
 
 Each session in plan mode writes its plan to a Markdown file under the Gizzi Code configuration directory:
