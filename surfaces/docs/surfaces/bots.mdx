@@ -158,6 +158,31 @@ Template routines start paused unless explicitly enabled during setup. Inspect s
 
 [Connected consumer subscriptions](/guides/subscriptions) have a separate Sessions-computer flow and require human initiation. Connecting a subscription does not make it an unattended model lane for scheduled bots.
 
+## Pause all bots
+
+New in the same release. One switch stops every bot from starting work on its own, without turning anything off.
+
+**What stops:**
+
+- Routines and loops do not start. A routine that comes due while paused is skipped and keeps its schedule: it runs at its next scheduled time after you resume. Missed runs are not run in a burst. Its run history shows the skip as "bots paused".
+- Bots send no messages on their own, such as the main bot's first hello.
+- Bots do not auto-reply on channels (Telegram, Discord, WhatsApp, Teams, SMS, Slack, bot email).
+
+**What keeps working:**
+
+- Messages people send are kept. They show in Inbox → Needs you as waiting for a reply, so you can answer them yourself or after you resume.
+- A run that already started finishes. Pause is not stop.
+- Your own messages to a bot still run, in the app and from your own verified channel account. **Run now** and approvals work too.
+
+**Where the switch is:**
+
+- Web and Desktop: the Bots view header.
+- Phone layout and the m.allternit.com app: the Bots screen header, with a banner while paused.
+- iPhone: the **Pause all bots** and **Resume all bots** Shortcuts actions, and the Control Center control.
+- Terminal: `gizzi agents bot pause` and `gizzi agents bot resume` (the short form `gizzi bot pause` and `gizzi bot resume` works too).
+
+Every surface reads and sets the same switch on your runtime, and it stays set after a restart. The API is in [System surfaces](/api/system-surfaces#pause-all-bots).
+
 ## Developer references
 
 Bot records use the [Agents API](/api/agents). Durable thread, project coordinator, and saved-template routes live in the private Allternit API data plane; each guide lists its runtime routes. See [API overview](/api/overview) for the public Cloud API and private runtime boundary.

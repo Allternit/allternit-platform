@@ -7,8 +7,9 @@
  * - Version-locked: Desktop 1.2.3 = Backend 1.2.3
  */
 
-import { app, autoUpdater, BrowserWindow, desktopCapturer, ipcMain, nativeTheme, Notification, safeStorage, session, Tray, webContents, Menu, dialog, globalShortcut, screen, protocol, nativeImage, type WebContents } from 'electron';
+import { app, shell, autoUpdater, BrowserWindow, desktopCapturer, ipcMain, nativeTheme, Notification, safeStorage, session, Tray, webContents, Menu, dialog, globalShortcut, screen, protocol, nativeImage, type WebContents } from 'electron';
 import { fileURLToPath } from 'node:url';
+import { openPrivacySettings as openPrivacySettingsHelper, messagesAccessHint as messagesAccessHintHelper } from './messages-permissions.js';
 import { dirname, join, resolve, basename } from 'node:path';
 import * as fs from 'node:fs';
 import * as net from 'node:net';
@@ -3265,6 +3266,12 @@ ipcMain.on('app:get-platform-url', (event) => {
 handleGuarded('shell:open-external', (_event, url: string) => {
   openExternalAllowlisted(url);
 });
+handleGuarded('shell:open-privacy-settings', (_event, pane: unknown) =>
+  openPrivacySettingsHelper(pane, { platform: process.platform, openExternal: (u) => shell.openExternal(u) }),
+);
+handleGuarded('shell:messages-access-hint', () =>
+  messagesAccessHintHelper({ platform: process.platform, exePath: app.getPath('exe'), appName: app.getName() }),
+);
 function openDesignStudio(prompt?: string | null): void {
   const target = new URL('/design', activePlatformUrl);
   if (prompt) target.searchParams.set('prompt', prompt);

@@ -86,12 +86,18 @@ final class PushNotificationManager: NSObject {
         // Signed out: keep the token; sign-in re-registers (AuthManager).
         guard AuthManager.shared.isSignedIn else { return }
         do {
-            try await PushTokenClient.shared.register(
+            let readToken = try await PushTokenClient.shared.register(
                 token: hex,
-                deviceId: UIDevice.current.identifierForVendor?.uuidString
+                deviceId: UIDevice.current.identifierForVendor?.uuidString,
+                osVersion: UIDevice.current.systemVersion
             )
+            // Widgets and the notification extension read it while locked.
+            if let readToken, !readToken.isEmpty { SharedAccess.storeReadToken(readToken) }
+            AppGroupStore.signedIn = true
             lastRegistrationError = nil
             UserDefaults.standard.set(true, forKey: Self.registeredForUserKey)
+            // Activity tokens need the device registered first (404 unknown_device).
+            await ActivityTokenRegistry.shared.resync()
         } catch {
             lastRegistrationError = error.localizedDescription
         }
@@ -108,6 +114,13 @@ final class PushNotificationManager: NSObject {
     /// Sign-out: stop pushes to this phone for the account leaving. Runs
     /// before the session is dropped (the DELETE needs its Bearer).
     func willSignOut() async {
+        // System surfaces drop this account's data even when no push token
+        // was registered.
+        SharedAccess.deleteReadToken()
+        AppGroupStore.clearAll()
+        UNUserNotificationCenter.current().removeAllDeliveredNotifications()
+        // Live Activity tokens off the server, activities off the Lock Screen.
+        await BotLiveActivityManager.willSignOut()
         guard UserDefaults.standard.bool(forKey: Self.registeredForUserKey),
               let hex = lastDeviceTokenHex else { return }
         try? await PushTokenClient.shared.unregister(token: hex)
@@ -120,8 +133,12 @@ final class PushNotificationManager: NSObject {
     /// A notification was tapped: open what it points at.
     /// An approval opens Decisions, where it can be answered; the rest open
     /// their link.
-    func handleTap(urlPath: String?, event: String? = nil) {
+    func handleTap(urlPath: String?, event: String? = nil, inboxId: String? = nil) {
         clearBadge()
+        if let inboxId, !inboxId.isEmpty {
+            DeepLinkRouter.shared.enqueue(.inboxItem(inboxId))
+            return
+        }
         if event == "approval.requested" {
             DeepLinkRouter.shared.enqueue(.decisions)
             return

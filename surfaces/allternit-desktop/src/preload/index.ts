@@ -409,6 +409,10 @@ interface HudPrefs {
 
 const shellAPI = {
   openExternal: (url: string): Promise<void> => ipcRenderer.invoke('shell:open-external', url),
+  openPrivacySettings: (pane: 'fullDisk' | 'automation'): Promise<{ supported: false } | { supported: true; opened: boolean }> =>
+    ipcRenderer.invoke('shell:open-privacy-settings', pane),
+  messagesAccessHint: (): Promise<{ supported: false } | { supported: true; appName: string; appPath: string }> =>
+    ipcRenderer.invoke('shell:messages-access-hint'),
   openDesign: (): Promise<void> => ipcRenderer.invoke('shell:open-design'),
   /** Real PDF of an HTML page via Chromium printToPDF. `pdf` is base64. */
   printToPdf: (req: { html: string; pageSize?: 'Letter' | 'A4'; landscape?: boolean; printBackground?: boolean }): Promise<{ ok: boolean; pdf?: string; bytes?: number; error?: string }> =>

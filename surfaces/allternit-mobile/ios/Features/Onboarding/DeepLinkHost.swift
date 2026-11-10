@@ -23,6 +23,8 @@ struct DeepLinkHost: ViewModifier {
     @State private var isSettingsPresented = false
     @State private var isComputersPresented = false
     @State private var isDecisionsPresented = false
+    @State private var isInboxPresented = false
+    @State private var routineSheet: Routine?
     @State private var inviteURL: IdentifiableURL?
     @State private var linkError: String?
     @State private var isResolving = false
@@ -76,6 +78,19 @@ struct DeepLinkHost: ViewModifier {
             .sheet(isPresented: $isDecisionsPresented) {
                 DecisionsScreen()
             }
+            .sheet(isPresented: $isInboxPresented) {
+                InboxSheet()
+            }
+            .sheet(item: $routineSheet) { routine in
+                NavigationStack {
+                    RoutineDetailView(routine: routine)
+                        .toolbar {
+                            ToolbarItem(placement: .topBarLeading) {
+                                Button("Done") { routineSheet = nil }
+                            }
+                        }
+                }
+            }
             .sheet(item: $inviteURL) { item in
                 SafariView(url: item.url)
                     .ignoresSafeArea()
@@ -97,6 +112,8 @@ struct DeepLinkHost: ViewModifier {
         isSettingsPresented = false
         isComputersPresented = false
         isDecisionsPresented = false
+        isInboxPresented = false
+        routineSheet = nil
         inviteURL = nil
         switch link {
         case .session(let id):
@@ -124,6 +141,27 @@ struct DeepLinkHost: ViewModifier {
             isComputersPresented = true
         case .decisions:
             isDecisionsPresented = true
+        case .inbox:
+            isInboxPresented = true
+        case .inboxItem(let id):
+            InboxStore.shared.focusedId = id
+            isInboxPresented = true
+        case .botChat(let id, let prompt):
+            // Filled into the composer; the owner sends it.
+            router.setComposerPrefill(prompt)
+            Task { await openBot(id) }
+        case .callMain:
+            if let main = AgentHubStore.shared.agents.first(where: \.isMainBot) {
+                botSheet = main
+            } else {
+                modeStore.selectBarItem(.agents)
+            }
+        case .routine(let id):
+            Task { await openRoutine(id) }
+        case .handoff:
+            // The bots launchpad composer hands a task to the team (a new bot
+            // project + its coordinator), same as HandOffTaskIntent.
+            modeStore.selectBarItem(.agents)
         }
     }
 
@@ -147,7 +185,26 @@ struct DeepLinkHost: ViewModifier {
         await openBot(botId, resolving: false)
     }
 
+    private func openRoutine(_ id: String) async {
+        if RoutineStore.shared.routine(withId: id) == nil {
+            isResolving = true
+            await RoutineStore.shared.refresh()
+            isResolving = false
+        }
+        if let routine = RoutineStore.shared.routine(withId: id) {
+            routineSheet = routine
+        } else {
+            linkError = "That routine isn't on this computer, or your computer is offline."
+        }
+    }
+
     private func openBot(_ id: String, resolving: Bool = true) async {
+        // `allternit://bot/main/chat` (widgets, controls): the main bot.
+        if id == "main" {
+            if let main = AgentHubStore.shared.agents.first(where: \.isMainBot) { botSheet = main }
+            else { modeStore.selectBarItem(.agents) }
+            return
+        }
         if let known = AgentHubStore.shared.agent(withId: id) {
             botSheet = known
             return

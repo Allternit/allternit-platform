@@ -6,7 +6,10 @@ import Foundation
 /// - **Universal Links** — `https://ai.allternit.com/...` or
 ///   `https://m.allternit.com/...` (apple-app-site-association in allternit-ai
 ///   `public/.well-known/`): `/b/<botId>`, `/i/<code>`, `/settings[/<section>]`,
-///   and any path with `?session=<id>`.
+///   `/inbox`, and any path with `?session=<id>`.
+/// - **`allternit://` links** — the same paths on the app's own scheme
+///   (`allternit://inbox`, `allternit://b/<botId>`), registered in
+///   Info.plist `CFBundleURLTypes` for widgets, Shortcuts and Spotlight.
 /// - **Push taps** — the cloud's notification `url` is a path on the app's
 ///   own origin, the same one the Web Push service worker opens
 ///   (`/?allternit_thread=…&bot=…`, `/?allternit_call=…`,
@@ -32,6 +35,20 @@ enum DeepLink: Equatable, Sendable {
     case computers
     /// Decisions: questions and approvals waiting on you (approval pushes).
     case decisions
+    /// The "Needs you" inbox across all bots (`/inbox`, `allternit://inbox`).
+    case inbox
+    /// The inbox with one item in view (`/inbox/<id>`, a push's `data.inboxId`).
+    case inboxItem(String)
+    /// A bot's chat with `prompt` in the composer, never sent
+    /// (`/bot/<id>/chat?prompt=`).
+    case botChat(botId: String, prompt: String?)
+    /// The main bot (`/call/main`): its chat, where the call button is.
+    case callMain
+    /// A routine's page (`/routine/<id>`).
+    case routine(String)
+    /// The team hand-off composer on the bots launchpad (`allternit://handoff`,
+    /// `/handoff`, or the web shortcut's `?allternit_open=handoff`).
+    case handoff
 
     static let webHosts: Set<String> = ["ai.allternit.com", "m.allternit.com"]
 
@@ -79,6 +96,9 @@ enum DeepLink: Equatable, Sendable {
         if let provider = query["allternit_channel"] {
             return .channel(provider)
         }
+        if query["allternit_open"] == "handoff" {
+            return .handoff
+        }
         if let session = query["session"] {
             return .session(session)
         }
@@ -101,6 +121,25 @@ enum DeepLink: Equatable, Sendable {
             return .settings(segments.count >= 2 ? segments[1] : nil)
         case "computers":
             return .computers
+        case "inbox":
+            if segments.count >= 2, let id = segments[1].removingPercentEncoding, !id.isEmpty {
+                return .inboxItem(id)
+            }
+            return .inbox
+        case "bot":
+            guard segments.count >= 2 else { return nil }
+            if segments.count >= 3, segments[2] == "chat" {
+                return .botChat(botId: segments[1], prompt: query["prompt"])
+            }
+            return .bot(segments[1])
+        case "call":
+            guard segments.count >= 2, segments[1] == "main" else { return nil }
+            return .callMain
+        case "routine":
+            guard segments.count >= 2 else { return nil }
+            return .routine(segments[1])
+        case "handoff":
+            return .handoff
         default:
             return nil
         }
@@ -142,6 +181,18 @@ final class DeepLinkRouter: ObservableObject {
         lastLink = link
         lastAt = Date()
         pending = link
+    }
+
+    /// Text a `botChat` link puts in the next bot composer that appears.
+    /// Never sent by itself.
+    private(set) var composerPrefill: String?
+
+    func setComposerPrefill(_ text: String?) { composerPrefill = text }
+
+    /// Takes the prefill (the composer calls this when it appears).
+    func takeComposerPrefill() -> String? {
+        defer { composerPrefill = nil }
+        return composerPrefill
     }
 
     /// Takes the pending link (the host calls this once it can act on it).

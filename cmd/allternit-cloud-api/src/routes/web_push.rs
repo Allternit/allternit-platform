@@ -8,7 +8,7 @@
 //!
 //! Routes (Clerk session or `compute`-scoped API key, except the public key):
 //! - `GET    /api/v1/push/vapid-key`                                  → `{publicKey}` (public)
-//! - `POST   /api/v1/push/subscriptions` {deviceId, subscription:{endpoint, keys:{p256dh, auth}}} → `{ok, id}`
+//! - `POST   /api/v1/push/subscriptions` {deviceId, subscription:{endpoint, keys:{p256dh, auth}}, platform?} → `{ok, id}`; `platform` is `ios-pwa`, `android` or `desktop` (migration 120)
 //! - `DELETE /api/v1/push/subscriptions` {deviceId}                   → `{ok, removed}`
 //!
 //! Senders used by the rest of cloud-api: the backbone push sink (`routes::notifications`, every user event
@@ -303,9 +303,15 @@ pub async fn send_to_user(db: &PgPool, transport: &dyn PushTransport, vapid: &Va
             return 0;
         }
     };
+    // An iPhone with both the app and the home-screen app gets one notification: the app's.
+    let skip: Vec<String> = if super::apns::can_reach(db, user).await {
+        sqlx::query_scalar("SELECT id FROM push_subscriptions WHERE user_id = $1 AND platform = 'ios-pwa'").bind(user).fetch_all(db).await.unwrap_or_default()
+    } else {
+        Vec::new()
+    };
     let payload = msg.json();
     let mut delivered = 0;
-    for sub in subs {
+    for sub in subs.into_iter().filter(|s| !skip.contains(&s.id)) {
         let outcome = async {
             let body = encrypt_payload(&payload, &sub.p256dh, &sub.auth)?;
             let headers = vec![
@@ -502,7 +508,13 @@ struct Subscription {
 struct SubscribeBody {
     device_id: String,
     subscription: Subscription,
+    /// `ios-pwa`, `android` or `desktop`; anything else is stored as unknown (null).
+    #[serde(default)]
+    platform: Option<String>,
 }
+
+/// Web Push subscriber platforms the client may name.
+pub const PLATFORMS: [&str; 3] = ["ios-pwa", "android", "desktop"];
 
 async fn subscribe_route(State(state): State<Arc<ApiState>>, headers: HeaderMap, Json(body): Json<SubscribeBody>) -> Response {
     if Vapid::from_env().is_none() {
@@ -513,7 +525,13 @@ async fn subscribe_route(State(state): State<Arc<ApiState>>, headers: HeaderMap,
         Err(e) => return e.into_response(),
     };
     match subscribe(&state.db, &user, &body.device_id, &body.subscription.endpoint, &body.subscription.keys.p256dh, &body.subscription.keys.auth, header_str(&headers, "user-agent")).await {
-        Ok(id) => (StatusCode::CREATED, Json(json!({ "ok": true, "id": id }))).into_response(),
+        Ok(id) => {
+            let platform = body.platform.as_deref().map(str::trim).filter(|p| PLATFORMS.contains(p));
+            if let Err(error) = sqlx::query("UPDATE push_subscriptions SET platform = $2 WHERE id = $1").bind(&id).bind(platform).execute(&state.db).await {
+                tracing::warn!("push subscribe: saving platform failed: {error}");
+            }
+            (StatusCode::CREATED, Json(json!({ "ok": true, "id": id }))).into_response()
+        }
         Err(SubscribeError::Bad(code)) => bad_request(code),
         Err(SubscribeError::TooMany) => (StatusCode::TOO_MANY_REQUESTS, Json(json!({ "error": "too_many_devices" }))).into_response(),
         Err(SubscribeError::Db(error)) => {
