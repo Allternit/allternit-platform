@@ -74,6 +74,15 @@ struct MessageRow: View {
                     toolStatusLine(toolStatus)
                 }
 
+                // Message tools: a draft card, or the held-for-approval line.
+                ForEach(message.toolCalls) { call in
+                    switch MessageToolResult.parse(toolName: call.toolName, output: call.output) {
+                    case .draft(let draft): MessageDraftCard(draft: draft)
+                    case .held(let inboxId): MessageHeldLine(inboxId: inboxId)
+                    case nil: EmptyView()
+                    }
+                }
+
                 // Message Bubble — markdown for the assistant, plain text for the user.
                 // Skipped when the message is nothing but an error card.
                 if !message.content.isEmpty || message.error == nil {
