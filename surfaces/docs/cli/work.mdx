@@ -70,6 +70,26 @@ gizzi run --on "Allternit cloud computer" "fix the failing test in api/"
 
 The relay needs an Allternit API key with the `compute` scope in `ALLTERNIT_API_TOKEN` (**Settings → API keys**). The device token from `gizzi pair` only identifies this machine and can't drive another one.
 
+## Phone tasks
+
+```bash
+gizzi phone task "open Settings and turn on Do Not Disturb"
+gizzi phone task "order my usual" --phone "Joe's Pixel"
+gizzi phone runs                  # recent runs and their status
+```
+
+`task` sends your goal to a linked phone and prints each step as the run moves. `--phone` takes a serial or a name; with one phone linked, or only one online, you can leave it out. Inside a session, `$GIZZI_THREAD_ID` and `$GIZZI_SESSION_ID` (or `--thread` and `--session`) tie the task to that conversation, so its card shows there.
+
+When the run reaches a sensitive step (a payment, a delete, a text, a call, a password), it stops and the terminal shows what it wants: the effect, the app, the button and how long you have. Then:
+
+- `o` opens the screen image (in the terminal itself on iTerm2 and WezTerm, otherwise in your image viewer).
+- `a` approves. It only works after the image has been shown. If the image can't load, you can still deny.
+- `d` denies.
+
+Approving is the same act as in the app, by you, signed in. Nothing in the terminal approves for you: with no terminal to ask (a pipe or a script), the hold is left for the app, and the run ends as timed out if nobody answers. API keys can't approve.
+
+A refusal is printed as it comes: your bots are paused, or the conversation's latest message didn't come from you. With no phone linked, an offline phone or a signed-out terminal you get one plain line saying so. See [Phone approval holds](/api/phone-holds).
+
 ## Share an artifact
 
 ```bash

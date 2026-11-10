@@ -59,10 +59,11 @@ struct ResolveCredentialRequest {
 async fn resolve_credential(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
+    peer: Option<axum::extract::ConnectInfo<std::net::SocketAddr>>,
     Path(id): Path<String>,
     Json(body): Json<ResolveCredentialRequest>,
 ) -> impl IntoResponse {
-    if let Err(status) = require_internal_token(&headers, &state) {
+    if let Err(status) = require_internal_token(&headers, peer, &state) {
         return (status, Json(json!({"error": "unauthorized"}))).into_response();
     }
 
@@ -157,9 +158,10 @@ struct UsageEventRequest {
 async fn ingest_usage_event(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
+    peer: Option<axum::extract::ConnectInfo<std::net::SocketAddr>>,
     Json(body): Json<UsageEventRequest>,
 ) -> impl IntoResponse {
-    if let Err(status) = require_internal_token(&headers, &state) {
+    if let Err(status) = require_internal_token(&headers, peer, &state) {
         return (status, Json(json!({"error": "unauthorized"}))).into_response();
     }
 
@@ -212,10 +214,11 @@ struct PushNotifyRequest {
 async fn notify_push(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
+    peer: Option<axum::extract::ConnectInfo<std::net::SocketAddr>>,
     Path(runtime_id): Path<String>,
     Json(body): Json<PushNotifyRequest>,
 ) -> impl IntoResponse {
-    if let Err(status) = require_internal_token(&headers, &state) {
+    if let Err(status) = require_internal_token(&headers, peer, &state) {
         return (status, Json(json!({"error": "unauthorized"}))).into_response();
     }
 

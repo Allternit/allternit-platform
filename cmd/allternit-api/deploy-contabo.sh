@@ -33,10 +33,30 @@ echo "Deploying $BINARY_PATH to $USER@$HOST..."
 
 scp $SSH_OPTS "$BINARY_PATH" "$USER@$HOST:/tmp/allternit-api.new"
 
-ssh $SSH_OPTS "$USER@$HOST" bash -s <<'REMOTE'
+# DEPLOY_SHA / DEPLOY_EPOCH (the commit and its committer time) let the host
+# refuse an older build. Two workflows install this binary (this one and
+# deploy-desktop-cloud-vps.yml); they share /var/lock/allternit-api-deploy and
+# /opt/allternit-api/DEPLOYED instead of one GitHub concurrency group, which
+# cancelled each other's waiting runs. Unset = no age check (manual run).
+ssh $SSH_OPTS "$USER@$HOST" "DEPLOY_SHA='${DEPLOY_SHA:-}' DEPLOY_EPOCH='${DEPLOY_EPOCH:-}' bash -s" <<'REMOTE'
 set -euo pipefail
 BIN=/opt/allternit-api/bin/allternit-api
 BAK=/opt/allternit-api/bin/allternit-api.prev
+STAMP=/opt/allternit-api/DEPLOYED
+
+# One install at a time on this host, whichever workflow runs it.
+exec 9>/var/lock/allternit-api-deploy
+flock -w 3600 9 || { echo "another allternit-api deploy held the lock for an hour" >&2; exit 1; }
+
+# A newer commit's binary is already live: keep it.
+if [[ "${DEPLOY_EPOCH:-}" =~ ^[0-9]+$ && -f "$STAMP" ]]; then
+    live_epoch=$(cut -d' ' -f2 "$STAMP")
+    if [[ "$live_epoch" =~ ^[0-9]+$ ]] && (( live_epoch > DEPLOY_EPOCH )); then
+        echo "::warning::newer build already live ($(cat "$STAMP")); not installing ${DEPLOY_SHA:-this build}"
+        rm -f /tmp/allternit-api.new
+        exit 0
+    fi
+fi
 
 if [[ -f "$BIN" ]]; then
     cp "$BIN" "$BAK"
@@ -67,6 +87,7 @@ for attempt in $(seq 1 30); do
         else
             echo "::warning::allternit-api is live but not ready: $(curl -s -m5 http://127.0.0.1:8013/health)"
         fi
+        echo "${DEPLOY_SHA:-unknown} ${DEPLOY_EPOCH:-0} $(date -u +%Y-%m-%dT%H:%M:%SZ) deploy-allternit-api-contabo" > "$STAMP"
         exit 0
     fi
     echo "waiting for health (attempt $attempt)..."
