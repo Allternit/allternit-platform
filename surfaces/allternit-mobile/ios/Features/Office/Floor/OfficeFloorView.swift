@@ -94,10 +94,10 @@ struct OfficeFloorView: View {
                 "role": bot.botTagline,
                 "color": colors.hex(for: bot) ?? "#9CA3AF",
                 "status": waiting != nil ? "waiting" : working != nil ? "working" : "idle",
-                "task": (working ?? threads.first).map { $0.statusLine ?? $0.title } ?? "",
+                "task": (working ?? threads.first).map { $0.statusLine ?? $0.displayTitle } ?? "",
                 "chief": bot.isPrimaryTemplateBot,
             ]
-            if let waiting { entry["question"] = waiting.statusLine ?? waiting.title }
+            if let waiting { entry["question"] = waiting.statusLine ?? waiting.displayTitle }
             // A:// is the Allternit orb (BotAvatarView): the facility sees this picture and draws the living orb.
             if bot.isPrimaryTemplateBot {
                 entry["avatar"] = ["sheet": Self.orbSheet, "layout": "still"]

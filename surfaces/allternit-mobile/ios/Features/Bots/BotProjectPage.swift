@@ -232,7 +232,7 @@ struct BotProjectPage: View {
         let columns: [String: ProjectBoardWork.Column] = ["waiting": .needsYou, "working": .working, "queued": .queued, "idle": .queued, "resolved": .done]
         let visible = threads.filter { !$0.incognito }
         let work = visible.map { t in
-            ProjectBoardWork(id: t.id, title: t.title, column: columns[t.group] ?? .queued, owner: store.bot(t.botId)?.botDisplayName,
+            ProjectBoardWork(id: t.id, title: t.displayTitle, column: columns[t.group] ?? .queued, owner: store.bot(t.botId)?.botDisplayName,
                              at: ProjectBoardData.date(t.lastActivityAt), open: { navigator.openThread(t) })
         }
         let people = team.map { bot -> ProjectBoardPerson in
@@ -240,7 +240,7 @@ struct BotProjectPage: View {
             let needs = own.first { $0.group == "waiting" }
             let busy = own.first { $0.group == "working" }
             let now = needs ?? busy
-            return ProjectBoardPerson(id: bot.id, name: bot.botDisplayName, doing: now.map { $0.statusLine ?? $0.title },
+            return ProjectBoardPerson(id: bot.id, name: bot.botDisplayName, doing: now.map { $0.statusLine ?? $0.displayTitle },
                                       state: needs != nil ? "needs_you" : busy != nil ? "working" : "idle", bot: bot,
                                       open: now.map { thread in { navigator.openThread(thread) } })
         }
@@ -627,7 +627,7 @@ struct BotProjectPage: View {
                 try await BotProjectClient.shared.reopenThread(thread)
                 await refresh()
             } catch {
-                status = "Couldn't reopen \(thread.title). Try again."
+                status = "Couldn't reopen \(thread.displayTitle). Try again."
             }
         }
     }

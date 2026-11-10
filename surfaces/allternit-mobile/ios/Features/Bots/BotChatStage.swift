@@ -111,7 +111,7 @@ struct BotChatStage: View {
     private var botSessions: [String: String?] {
         var sessions: [String: String?] = [:]
         for thread in botThreads {
-            if let id = thread.currentSessionId { sessions[id] = thread.id == currentThread?.id ? .some(nil) : .some(thread.title) }
+            if let id = thread.currentSessionId { sessions[id] = thread.id == currentThread?.id ? .some(nil) : .some(thread.displayTitle) }
         }
         if let id = sessionId ?? store.canonicalChatIds[bot.id] { sessions[id] = .some(nil) }
         return sessions
@@ -156,7 +156,7 @@ struct BotChatStage: View {
         if !needs.isEmpty {
             StageCard(label: "Needs you", accent: accent) {
                 ForEach(needs.prefix(3)) { thread in
-                    stageRow(thread.title, thread.statusLine ?? "Waiting on you") { onOpen(thread) }
+                    stageRow(thread.displayTitle, thread.statusLine ?? "Waiting on you") { onOpen(thread) }
                 }
             }
         }
@@ -164,7 +164,7 @@ struct BotChatStage: View {
             StageCard(label: suggestions.count == 1 ? "\(bot.botDisplayName) suggests" : "\(bot.botDisplayName) suggests \(suggestions.count) things", accent: accent) {
                 ForEach(suggestions.prefix(2)) { thread in
                     VStack(alignment: .leading, spacing: 8) {
-                        stageRow(thread.title, thread.statusLine) { onOpen(thread) }
+                        stageRow(thread.displayTitle, thread.statusLine) { onOpen(thread) }
                         HStack(spacing: 6) {
                             StageChip(title: "Go ahead", primary: true) { onApprove(thread) }
                             StageChip(title: "Not now") { onDecline(thread) }
