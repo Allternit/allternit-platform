@@ -34,7 +34,7 @@ Subscription routes take a Clerk session or a `compute`-scoped API key.
 }
 ```
 
-returns `201 {"ok": true, "id": "ps_…"}`. `deviceId` is a random id the app keeps in local storage; subscribing again from the same device replaces its row. The endpoint must be a public `https` host. A person may register 10 devices. If someone else signs in on the same browser, the endpoint moves to them. `platform` is optional: `ios-pwa` (the PWA added to an iPhone home screen), `android` or `desktop`; other values are stored as unknown (migration `120_ios_system_surfaces.sql`). Errors: `400 bad_device_id | bad_endpoint | bad_keys`, `429 too_many_devices`.
+returns `201 {"ok": true, "id": "ps_…"}`. `deviceId` is a random id the app keeps in local storage; subscribing again from the same device replaces its row. The endpoint must be a public `https` host. A person may register 10 devices. If someone else signs in on the same browser, the endpoint moves to them. `platform` is optional: `ios-pwa` (the PWA added to an iPhone home screen), `android` or `desktop`; other values are stored as unknown (migration `120_ios_system_surfaces.sql`). A subscription with `platform: "ios-pwa"` gets no push while the same person has the iPhone app registered for [native push](/api/ios-push), so the phone shows one notification, not two. Errors: `400 bad_device_id | bad_endpoint | bad_keys`, `429 too_many_devices`.
 
 - `DELETE /api/v1/push/subscriptions` with `{"deviceId": "d_7f3a…"}` returns `{"ok": true, "removed": true}`. Apps call it on sign-out and when the person turns notifications off.
 
@@ -55,6 +55,38 @@ The service worker receives JSON `{type, title, body, url, tag, data}`. `url` is
 `channel_message` only goes out for a runtime that doesn't forward its events yet; a forwarding runtime's messages come from the push sink with the sender and text instead, never both. Missed calls and in-app messages follow the person's `call.ended` and `message.received` [preferences](/api/notifications); rings always go out.
 
 Message-type pushes are also capped at 40 an hour per person. Calls are not (rings are already limited to 5 per person in 10 minutes). The `tag` is also sent as the push `Topic`, so a push service holds only the latest of each.
+
+### Buttons and data
+
+A backbone push (`type: "event"` or `"message"`) carries the keys listed under [data keys](/api/notifications#data-keys): `event`, `eventId`, `botId`, `threadId`, `inboxId`, `runtimeId`, `sessionId`, `contentHash`, `senderKind`, `botAvatar`, `private`, `level` and, when it has buttons, `category`. Web Push sends the full text; there is no generic body here.
+
+The worker (`public/inbox-action-sw.js`) turns `category` into buttons ([categories](/api/notifications#categories)):
+
+| Category | Buttons, in order |
+|---|---|
+| `APPROVAL_INLINE` | Approve, Deny, Reply |
+| `APPROVAL_REVIEW` | Review, Deny, Reply |
+| `BOT_REPLY` | Reply, Open |
+| `RUN_DONE` | Open |
+| `NEEDS_FIX` | Retry, Snooze |
+
+Browsers show only some of them. Chrome and Edge (desktop and Android) show the first two. Safari and the iOS home-screen app show none, so a tap opens the item. Reply is an inline text field where the browser supports it; elsewhere it opens the chat. A push with no `category` shows and opens as before.
+
+**A button never acts from a URL.** The worker makes no network call for an action. With an app window open, it posts the action to that window, which calls the runtime's inbox API with its own signed-in session. With no window open, it opens the app at the item (`/?allternit_inbox=<inboxId>`), which shows the item in the Needs-you inbox and does not act on it.
+
+**Answered notifications close themselves.** A notification closes when one of its buttons is used, and the result arrives as a short notification under the same tag (the inbox item: `approval:ap1` becomes `approval-ap1`), so it replaces the original. Cloud sends no Web Push revoke push, because Safari drops subscriptions that get silent pushes.
+
+### Links the app opens
+
+| Link | Opens |
+|---|---|
+| `/?allternit_inbox=<inboxId>` | That item in the Needs-you inbox (URL-encoded id) |
+| `/?allternit_open=ask` | Ask a bot |
+| `/?allternit_open=handoff` | Hand off a task to the team |
+| `/?allternit_open=inbox` | The Needs-you inbox |
+| `/?allternit_open=call` | A call with the main bot |
+
+The `allternit_open` links are the home-screen shortcuts in the web app manifests (long-press the icon).
 
 ## Where it lives
 

@@ -26,7 +26,11 @@
 //! - `DELETE /api/v1/device-tokens/activity` {token} → `{ok, removed}`
 //!
 //! The notification carries `{type, url, tag, data}` next to `aps`; the app opens `url` (the same app path
-//! the Web Push service worker opens) when the notification is tapped.
+//! the Web Push service worker opens) when the notification is tapped. `aps` is built per device
+//! ([`payload`]): buttons (`category`) only with the `actions` capability, `mutable-content` and a generic
+//! body for private content only with `nse`, `passive` while the device's Focus filter mutes the alert.
+//! A delivered alert for an inbox item is recorded in `notification_delivered`; [`revoke`] removes it
+//! with a background push when the item leaves "needs you".
 
 use aws_lc_rs::{
     rand::SystemRandom,
@@ -172,22 +176,100 @@ fn client() -> &'static reqwest::Client {
 // Payload
 // ---------------------------------------------------------------------------
 
-pub fn payload(msg: &PushMessage) -> Value {
+/// What a phone with the notification extension (`nse`) shows on the Lock Screen for private content until
+/// the extension fetches the text (`GET /api/v1/notifications/content/:eventId`).
+fn generic_body(data: &Value) -> &'static str {
+    let category = data.get("category").and_then(Value::as_str).unwrap_or("");
+    match data.get("event").and_then(Value::as_str).unwrap_or("") {
+        _ if category.starts_with("APPROVAL_") => "A bot is waiting for your OK.",
+        "approval.requested" => "A bot is waiting for your OK.",
+        "message.received" => "New message",
+        "thread.needs_user" => "A bot needs your answer.",
+        _ => "Open Allternit to see it.",
+    }
+}
+
+/// The alert one device gets for `msg`. The copy, link and `data` keys come from the sender
+/// (`notifications::message_for` for backbone events); this adds what depends on the device:
+/// - `category` (notification buttons) only when the app said it has `actions`;
+/// - `mutable-content` and, for private content, a generic body only when it has `nse` (older apps keep the full body);
+/// - `interruption-level`: `passive` with no sound when the device's Focus filter mutes this alert ([`Focus::mutes`]),
+///   otherwise `time-sensitive` at the needs-you level and above (`data.level`);
+/// - `thread-id` per bot, so one bot's notifications group together.
+pub fn payload(msg: &PushMessage, target: &PushTarget) -> Value {
     let clip = |s: &str, n: usize| s.chars().take(n).collect::<String>();
+    let d = &msg.data;
+    let get = |k: &str| d.get(k).and_then(Value::as_str).filter(|v| !v.is_empty());
+    let nse = target.has("nse");
+    let private = d.get("private").and_then(Value::as_bool) == Some(true);
+    let body = if nse && private { generic_body(d).to_string() } else { clip(&msg.body, 400) };
+    let muted = target.focus.as_ref().is_some_and(|f| f.mutes(d));
+    let thread = get("botId").map(|b| format!("bot-{b}")).unwrap_or_else(|| msg.tag.clone());
+    let mut aps = json!({
+        "alert": { "title": clip(&msg.title, 120), "body": body },
+        // The server keeps no unread count; 1 marks "something new" and the app clears it when opened.
+        "badge": 1,
+        "thread-id": clip(&thread, 64),
+    });
+    if !muted {
+        aps["sound"] = json!("default");
+    }
+    if nse {
+        aps["mutable-content"] = json!(1);
+    }
+    if let Some(category) = get("category").filter(|_| target.has("actions")) {
+        aps["category"] = json!(category);
+    }
+    if muted {
+        aps["interruption-level"] = json!("passive");
+    } else if matches!(get("level"), Some("needs_you" | "urgent")) {
+        aps["interruption-level"] = json!("time-sensitive");
+    }
     json!({
-        "aps": {
-            "alert": { "title": clip(&msg.title, 120), "body": clip(&msg.body, 400) },
-            "sound": "default",
-            // The server keeps no unread count; 1 marks "something new" and the app clears it when opened.
-            "badge": 1,
-            "thread-id": clip(&msg.tag, 64),
-            "mutable-content": 1,
-        },
+        "aps": aps,
         "type": msg.kind,
         "url": msg.url,
         "tag": msg.tag,
         "data": msg.data,
     })
+}
+
+/// How long a Focus filter holds after the phone last confirmed it (`PUT /api/v1/notifications/focus`).
+pub const FOCUS_TTL_HOURS: i64 = 24;
+
+/// A device's Focus filter while it is on and fresh. Alerts it mutes still arrive, as `passive` with no sound.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Focus {
+    /// Bots whose alerts keep their normal level. `None` (sent as `null`): no bot does.
+    pub allowed_bot_ids: Option<Vec<String>>,
+    /// Approvals keep their normal level whichever bot asks.
+    pub allow_approvals: bool,
+}
+
+impl Focus {
+    /// The filter stored on a device row (`apns_device_tokens.focus` / `focus_at`), or `None` when it is off
+    /// or was last confirmed more than [`FOCUS_TTL_HOURS`] ago.
+    pub fn from_row(focus: Option<&Value>, at: Option<chrono::DateTime<chrono::Utc>>, now: chrono::DateTime<chrono::Utc>) -> Option<Self> {
+        let f = focus?;
+        if f.get("active").and_then(Value::as_bool) != Some(true) || at.is_none_or(|t| now - t > chrono::Duration::hours(FOCUS_TTL_HOURS)) {
+            return None;
+        }
+        Some(Self {
+            allowed_bot_ids: f.get("allowedBotIds").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect()),
+            allow_approvals: f.get("allowApprovals").and_then(Value::as_bool).unwrap_or(true),
+        })
+    }
+
+    /// True when this alert (its `data`) goes out muted on the filtered device.
+    pub fn mutes(&self, data: &Value) -> bool {
+        let category = data.get("category").and_then(Value::as_str).unwrap_or("");
+        let approval = category.starts_with("APPROVAL_") || data.get("event").and_then(Value::as_str) == Some("approval.requested");
+        if approval && self.allow_approvals {
+            return false;
+        }
+        let bot = data.get("botId").and_then(Value::as_str);
+        !matches!((bot, &self.allowed_bot_ids), (Some(b), Some(list)) if list.iter().any(|x| x == b))
+    }
 }
 
 /// `apns-collapse-id` must be at most 64 bytes.
@@ -237,6 +319,8 @@ pub struct PushTarget {
     pub kind: Option<String>,
     pub attributes_type: Option<String>,
     pub activity_key: Option<String>,
+    /// Device tokens: the Focus filter in force now, if any. `None` for activity tokens.
+    pub focus: Option<Focus>,
 }
 
 impl PushTarget {
@@ -253,6 +337,8 @@ struct DeviceRow {
     token: String,
     environment: String,
     capabilities: Value,
+    focus: Option<Value>,
+    focus_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -269,11 +355,13 @@ struct ActivityRow {
 
 /// Every iOS device `user` registered, with its capabilities.
 pub async fn device_targets(db: &PgPool, user: &str) -> Result<Vec<PushTarget>, sqlx::Error> {
-    let rows: Vec<DeviceRow> = sqlx::query_as("SELECT id, user_id, device_id, token, environment, capabilities FROM apns_device_tokens WHERE user_id = $1").bind(user).fetch_all(db).await?;
+    let rows: Vec<DeviceRow> = sqlx::query_as("SELECT id, user_id, device_id, token, environment, capabilities, focus, focus_at FROM apns_device_tokens WHERE user_id = $1").bind(user).fetch_all(db).await?;
+    let now = chrono::Utc::now();
     Ok(rows
         .into_iter()
         .map(|r| PushTarget {
             table: TokenTable::Device,
+            focus: Focus::from_row(r.focus.as_ref(), r.focus_at, now),
             capabilities: r.capabilities.as_array().map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect()).unwrap_or_default(),
             id: r.id,
             user_id: r.user_id,
@@ -303,6 +391,7 @@ pub async fn activity_targets(db: &PgPool, user: &str, kind: &str) -> Result<Vec
             kind: Some(r.kind),
             attributes_type: r.attributes_type,
             activity_key: r.activity_key,
+            focus: None,
         })
         .collect())
 }
@@ -398,8 +487,10 @@ async fn forget_device_activity(db: &PgPool, user: &str, device_id: &str) {
     }
 }
 
-/// Push `msg` to every iOS device `user` registered. Returns how many APNs accepted. Does nothing, and
-/// costs nothing, when APNs isn't configured.
+/// Push `msg` to every iOS device `user` registered, each with its own [`payload`]. Returns how many APNs
+/// accepted. When at least one went out and `msg.data.inboxId` is set, records the tag in
+/// `notification_delivered` so the notification can be revoked when the item leaves "needs you"
+/// ([`revoke`]). Does nothing, and costs nothing, when APNs isn't configured.
 pub async fn send_to_user(db: &PgPool, user: &str, msg: &PushMessage) -> usize {
     let Some(apns) = Apns::from_env() else { return 0 };
     let targets = match device_targets(db, user).await {
@@ -412,16 +503,77 @@ pub async fn send_to_user(db: &PgPool, user: &str, msg: &PushMessage) -> usize {
     if targets.is_empty() {
         return 0;
     }
-    let body = payload(msg).to_string();
     let expiration = chrono::Utc::now().timestamp() + i64::from(msg.ttl_secs);
-    let priority = if msg.high_urgency { 10 } else { 5 };
     let mut delivered = 0;
     for target in &targets {
-        if deliver(db, &apns, target, "alert", "", priority, expiration, Some(&msg.tag), body.clone()).await {
+        let body = payload(msg, target);
+        let aps = &body["aps"];
+        // Never the text: the keys that decide how the phone shows it.
+        tracing::info!(
+            "apns alert to {}: event={} category={} interruption-level={} mutable-content={} private={}",
+            target.id,
+            body["data"]["event"].as_str().unwrap_or(msg.kind),
+            aps["category"].as_str().unwrap_or("-"),
+            aps["interruption-level"].as_str().unwrap_or("active"),
+            aps.get("mutable-content").is_some(),
+            body["data"]["private"].as_bool().unwrap_or(false),
+        );
+        let priority = if msg.high_urgency && aps["interruption-level"] != "passive" { 10 } else { 5 };
+        if deliver(db, &apns, target, "alert", "", priority, expiration, Some(&msg.tag), body.to_string()).await {
             delivered += 1;
         }
     }
+    if delivered > 0 {
+        if let Some(inbox) = msg.data.get("inboxId").and_then(Value::as_str).filter(|v| !v.is_empty()) {
+            record_delivered(db, user, inbox, &msg.tag, msg.data.get("eventId").and_then(Value::as_str)).await;
+        }
+    }
     delivered
+}
+
+/// Remember that the notification `tag` for inbox item `inbox_id` is on `user`'s phones.
+pub async fn record_delivered(db: &PgPool, user: &str, inbox_id: &str, tag: &str, event_id: Option<&str>) {
+    let result = sqlx::query(
+        "INSERT INTO notification_delivered (user_id, inbox_id, tag, event_id) VALUES ($1, $2, $3, $4)
+         ON CONFLICT (user_id, inbox_id, tag) DO UPDATE SET event_id = EXCLUDED.event_id, created_at = now()",
+    )
+    .bind(user)
+    .bind(inbox_id)
+    .bind(tag)
+    .bind(event_id)
+    .execute(db)
+    .await;
+    if let Err(error) = result {
+        tracing::warn!("apns: recording a delivered notification failed: {error}");
+    }
+}
+
+/// The background push that removes delivered notifications `tags` from a phone.
+pub fn revoke_payload(tags: &[String]) -> Value {
+    json!({ "aps": { "content-available": 1 }, "data": { "event": "notification.revoke", "tags": tags } })
+}
+
+/// Send [`revoke_payload`] to every iOS device of `user` (`apns-push-type: background`, priority 5).
+/// Returns how many APNs accepted. Web Push gets no revoke: the page closes its own notifications.
+pub async fn revoke(db: &PgPool, user: &str, tags: &[String]) -> usize {
+    if tags.is_empty() || Apns::from_env().is_none() {
+        return 0;
+    }
+    let targets = match device_targets(db, user).await {
+        Ok(rows) => rows,
+        Err(error) => {
+            tracing::warn!("apns: reading tokens for a revoke failed: {error}");
+            return 0;
+        }
+    };
+    let body = revoke_payload(tags);
+    let mut accepted = 0;
+    for target in &targets {
+        if send_raw(db, "background", "", 5, &body, target, &RawOptions::default()).await {
+            accepted += 1;
+        }
+    }
+    accepted
 }
 
 /// True when APNs is configured and `user` has at least one iOS device registered.
@@ -769,14 +921,71 @@ pub(crate) mod tests {
         assert!(Apns::new("not a key", "K", "T", "com.allternit.mobile", "sandbox").is_err());
     }
 
+    fn device(caps: &[&str], focus: Option<Focus>) -> PushTarget {
+        PushTarget {
+            table: TokenTable::Device,
+            id: "d1".into(),
+            user_id: "u1".into(),
+            device_id: "phone".into(),
+            token: "t".into(),
+            environment: "sandbox".into(),
+            capabilities: caps.iter().map(|c| c.to_string()).collect(),
+            kind: None,
+            attributes_type: None,
+            activity_key: None,
+            focus,
+        }
+    }
+
+    /// The sink's copy of a held send from Raven (`notifications::message_for` builds `data`).
+    fn approval() -> PushMessage {
+        crate::routes::notifications::message_for(
+            "approval.requested",
+            &json!({ "botId": "b1", "botName": "Raven", "approvalId": "ap1", "summary": "send the invoice to Acme", "inboxId": "approval:ap1", "inboxKind": "held_send", "approveInline": true, "contentHash": "ab12", "sessionId": "s1", "runtimeId": "rt_1" }),
+        )
+        .unwrap()
+    }
+
     #[test]
-    fn payload_carries_alert_and_app_url() {
-        let msg = PushMessage { kind: "message", title: "Raven".into(), body: "Done".into(), url: "/b/bot_1".into(), tag: "thread-1".into(), data: json!({"event": "message.received"}), ttl_secs: 60, high_urgency: false };
-        let p = payload(&msg);
-        assert_eq!(p["aps"]["alert"]["title"], "Raven");
-        assert_eq!(p["aps"]["thread-id"], "thread-1");
-        assert_eq!(p["url"], "/b/bot_1");
-        assert_eq!(p["type"], "message");
+    fn payload_per_capability_set() {
+        let msg = approval();
+        // An app from before the system surfaces: today's alert, full text, no buttons, no extension flag.
+        let old = payload(&msg, &device(&[], None));
+        assert_eq!(old["aps"]["alert"]["body"], "Raven wants to: send the invoice to Acme");
+        assert!(old["aps"].get("category").is_none() && old["aps"].get("mutable-content").is_none(), "{old}");
+        assert_eq!(old["aps"]["sound"], "default");
+        assert_eq!(old["aps"]["interruption-level"], "time-sensitive", "approvals are needs-you");
+        assert_eq!(old["aps"]["thread-id"], "bot-b1");
+        assert_eq!((old["tag"].as_str(), old["url"].as_str()), (Some("approval-ap1"), Some("/?allternit_inbox=approval%3Aap1")));
+        for key in ["event", "inboxId", "runtimeId", "botId", "sessionId", "contentHash", "private"] {
+            assert!(!old["data"][key].is_null(), "data.{key} in {old}");
+        }
+        // Buttons only: the category, still the full text.
+        let actions = payload(&msg, &device(&["actions"], None));
+        assert_eq!(actions["aps"]["category"], "APPROVAL_INLINE");
+        assert_eq!(actions["aps"]["alert"]["body"], "Raven wants to: send the invoice to Acme");
+        assert!(actions["aps"].get("mutable-content").is_none());
+        // Buttons and the extension: a generic body the extension replaces.
+        let full = payload(&msg, &device(&["actions", "nse"], None));
+        assert_eq!(full["aps"]["category"], "APPROVAL_INLINE");
+        assert_eq!(full["aps"]["mutable-content"], 1);
+        assert_eq!(full["aps"]["alert"]["body"], "A bot is waiting for your OK.");
+        assert!(!full.to_string().contains("Acme"), "no private text rides in the push: {full}");
+        // Not private: the text stays even with the extension.
+        let mut public = approval();
+        public.data["private"] = json!(false);
+        assert_eq!(payload(&public, &device(&["nse"], None))["aps"]["alert"]["body"], "Raven wants to: send the invoice to Acme");
+        // A normal-level push is not time-sensitive.
+        let reply = crate::routes::notifications::message_for("message.received", &json!({ "botId": "b1", "from": "Raven", "text": "done", "senderKind": "bot" })).unwrap();
+        let p = payload(&reply, &device(&["actions"], None));
+        assert!(p["aps"].get("interruption-level").is_none(), "{p}");
+        assert_eq!((p["aps"]["category"].as_str(), p["aps"]["sound"].as_str()), (Some("BOT_REPLY"), Some("default")));
+    }
+
+    #[test]
+    fn revoke_is_a_silent_push_with_the_tags() {
+        let p = revoke_payload(&["approval-ap1".to_string()]);
+        assert_eq!(p, json!({ "aps": { "content-available": 1 }, "data": { "event": "notification.revoke", "tags": ["approval-ap1"] } }));
     }
 
     #[test]

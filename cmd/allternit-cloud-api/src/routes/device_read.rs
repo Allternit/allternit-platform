@@ -12,8 +12,10 @@
 //! - `GET /api/v1/notifications/content/:eventId` → `{title, body, sender:{name, avatarUrl}, communication}`
 //!   for the caller's own backbone event; 404 for an unknown id, another person's event, or an event that is
 //!   never shown as a notification. `title`/`body` are what [`super::notifications::message_for`] builds, so
-//!   they match the push. `avatarUrl` is the event's `avatarUrl` / `botAvatarUrl` when the runtime sends one
-//!   (null otherwise); `communication` is false until the server-side switch lands.
+//!   they match the push. `avatarUrl` is the event's `botAvatar` / `avatarUrl` / `botAvatarUrl` (https only)
+//!   when the runtime sends one (null otherwise; cloud keeps no bot record). `communication` is true only for a
+//!   bot's direct reply (`message.received` with `senderKind = "bot"`): the server-side switch for iOS
+//!   communication notifications.
 
 use axum::{
     extract::{Path, State},
@@ -116,12 +118,15 @@ async fn content_route(State(state): State<Arc<ApiState>>, headers: HeaderMap, P
     let Some((event, data)) = row else { return error(StatusCode::NOT_FOUND, "not_found") };
     let Some(msg) = super::notifications::message_for(&event, &data) else { return error(StatusCode::NOT_FOUND, "not_found") };
     let name = text(&data, &["botName", "bot_name", "fromName", "from_name", "from"]);
-    let avatar = text(&data, &["avatarUrl", "botAvatarUrl", "avatar_url"]).filter(|u| u.starts_with("https://"));
+    // The bot's picture: cloud keeps no bot record, so it is the one the event carries.
+    let avatar = text(&data, &["botAvatar", "avatarUrl", "botAvatarUrl", "avatar_url"]).filter(|u| u.starts_with("https://"));
+    // A communication notification (sender picture, Focus breakthrough rules) only for a bot's own reply.
+    let communication = event == "message.received" && text(&data, &["senderKind", "sender_kind"]) == Some("bot");
     Json(json!({
         "title": msg.title,
         "body": msg.body,
         "sender": { "name": name, "avatarUrl": avatar },
-        "communication": false,
+        "communication": communication,
     }))
     .into_response()
 }

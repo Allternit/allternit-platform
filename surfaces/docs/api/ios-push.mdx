@@ -78,7 +78,7 @@ The notification service extension and the widgets run without the app's Clerk s
   "sender": { "name": "Raven", "avatarUrl": null }, "communication": false }
 ```
 
-It answers `404 not_found` for an unknown id, another person's event, or an event that is never shown as a notification. `sender.avatarUrl` is filled only when the computer's event carries an `https` avatar URL. `communication` is `false` until communication notifications are switched on server-side.
+It answers `404 not_found` for an unknown id, another person's event, or an event that is never shown as a notification. `sender.avatarUrl` is filled only when the computer's event carries an `https` avatar URL. `sender.avatarUrl` is also read from the event's `botAvatar`; cloud keeps no bot record of its own. `communication` is `true` only for a bot's direct reply (`message.received` with `senderKind: "bot"`). It is the server-side switch for iOS communication notifications (the bot shown as the sender, labelled as an assistant).
 
 A read token that is malformed, replaced by a newer registration, or belongs to an unregistered device gets `401 {"error":"invalid_read_token"}`.
 
@@ -90,23 +90,52 @@ Server: `cmd/allternit-cloud-api/src/routes/device_read.rs`.
 
 ## Payload
 
+Each iPhone gets its own alert. It is built from the same message as the Web Push and shaped by what that app said it supports at registration (`capabilities`):
+
 ```json
 {
   "aps": {
-    "alert": { "title": "Raven", "body": "Done: weekly update drafted" },
+    "alert": { "title": "Approval needed", "body": "A bot is waiting for your OK." },
     "sound": "default",
     "badge": 1,
-    "thread-id": "<tag>",
-    "mutable-content": 1
+    "thread-id": "bot-<botId>",
+    "mutable-content": 1,
+    "category": "APPROVAL_INLINE",
+    "interruption-level": "time-sensitive"
   },
   "type": "event",
-  "url": "/?allternit_thread=<threadId>&bot=<botId>",
-  "tag": "<tag>",
-  "data": { "event": "agent.run.completed", "botId": "…", "threadId": "…" }
+  "url": "/?allternit_inbox=approval%3Aap1",
+  "tag": "approval-ap1",
+  "data": { "event": "approval.requested", "eventId": "…", "inboxId": "approval:ap1", "runtimeId": "rt_1",
+            "botId": "…", "threadId": "…", "sessionId": "…", "contentHash": "ab12…", "senderKind": "bot",
+            "private": true, "category": "APPROVAL_INLINE", "level": "needs_you" }
 }
 ```
 
-`type`, `url`, `tag` and `data` are the same as in the [Web Push payload](/api/web-push#what-gets-pushed). `tag` is also sent as `apns-collapse-id` (first 64 bytes), so the phone keeps only the latest of each. Calls and urgent pages go out at `apns-priority: 10`, everything else at `5`. `apns-expiration` follows the message's TTL. The server keeps no unread count, so `badge` is `1` and the app clears it when opened.
+| Device | What changes |
+|---|---|
+| Any | `sound` on every alert. `thread-id` is `bot-<botId>` (the tag when the push has no bot). `interruption-level: time-sensitive` at the needs-you level and above (approvals, threads waiting on you, sign-in needed, urgent) |
+| Without `actions` (apps from before the system surfaces send `capabilities: []`) | No `category`, so no buttons |
+| With `actions` | `category` from `data.category` ([categories](/api/notifications#categories)) |
+| Without `nse` | The full body, as before. No `mutable-content` |
+| With `nse` | `mutable-content: 1`. When `data.private` is true, a generic body ("A bot is waiting for your OK.", "New message", "A bot needs your answer.", "Open Allternit to see it."). The notification extension fetches the real text with `GET /api/v1/notifications/content/:eventId` and the device read token, so private text never rides in the push |
+| [Focus filter](/api/notifications#focus-filter) on and muting this alert | `interruption-level: passive`, no `sound`, `apns-priority: 5` |
+
+`type`, `url`, `tag` and `data` are the same as in the [Web Push payload](/api/web-push#what-gets-pushed). The `data` keys are listed under [data keys](/api/notifications#data-keys). `tag` is also sent as `apns-collapse-id` (first 64 bytes), so the phone keeps only the latest of each; a push for an inbox item uses the item as its tag. Calls, urgent pages and needs-you pushes go out at `apns-priority: 10`, everything else at `5`. `apns-expiration` follows the message's TTL. The server keeps no unread count, so `badge` is `1` and the app clears it when opened. Each alert logs one line (`apns alert to <row id>: event=… category=… interruption-level=… mutable-content=… private=…`), never the text.
+
+**Coding-session permission asks** (`source: "gizzi-permission"`) come to the iPhone through this path only. Browsers get them from the gizzi remote-control lane.
+
+**One notification per iPhone.** A Web Push subscription with `platform: "ios-pwa"` is skipped while the same person has an iPhone registered here. A phone with both the app and the home-screen app gets the app's notification only.
+
+## Revoke
+
+When an inbox item leaves the runtime's `needsYou` list ([status snapshots](/api/notifications#status-snapshots-and-revoke)), cloud sends every iPhone of that person a background push (`apns-push-type: background`, `apns-priority: 5`):
+
+```json
+{ "aps": { "content-available": 1 }, "data": { "event": "notification.revoke", "tags": ["approval-ap1"] } }
+```
+
+The app removes the delivered notifications with those identifiers. It is best-effort: a force-quit app gets no background push, so the app also reconciles on every foreground. Only tags that reached at least one iPhone are revoked (`notification_delivered`).
 
 ## In the app
 

@@ -34,6 +34,16 @@
 //! → `approval.requested`, `run.completed` → `agent.run.completed`, registry
 //! names pass through). Unmapped types (and our own outbound echoes) are
 //! `ignored`, not errors, so the forwarder can send its whole outbox cursor.
+//! **`status.snapshot`** is not an event: its `data` is the runtime's whole
+//! status (`needsYou` ids, bots, loops, …). It is kept as that runtime's latest
+//! (`status_snapshots`, answered `accepted`, or `duplicate` when the content is
+//! unchanged), never pushed as an alert, and every inbox id that left
+//! `needsYou` has its delivered iPhone notifications revoked
+//! ([`notifications::ingest_snapshot`]).
+//!
+//! Cloud sets `runtimeId` in every event's `data` (the authenticated runtime,
+//! whatever the body said).
+//!
 //! `at` is optional (RFC 3339; default now). `bot_id` / `thread_id` are copied
 //! into `data` (unless `data` already has them) because subscriptions filter
 //! on `data`. `data` must be a JSON object of at most 250 KiB serialized
@@ -61,7 +71,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use sqlx::PgPool;
 
-use super::allternit_events;
+use super::{allternit_events, apns, notifications};
 use super::runtime_relay::sign_runtime_request;
 use crate::ApiState;
 
@@ -74,6 +84,8 @@ pub const MAX_BODY_BYTES: usize = 1024 * 1024;
 pub const MAX_EVENTS: usize = 100;
 /// Leaves room for the delivery envelope inside the 256 KiB MCP cap.
 pub const MAX_DATA_BYTES: usize = 250 * 1024;
+/// The forwarded type that carries the runtime's status, not an event.
+pub const STATUS_SNAPSHOT: &str = "status.snapshot";
 
 pub fn routes() -> Router<Arc<ApiState>> {
     Router::new().route(PATH, post(ingest_route))
@@ -213,6 +225,30 @@ pub async fn ingest(db: &PgPool, user_id: &str, runtime_id: &str, events: Vec<Va
             results.push(json!({ "id": ev.id, "status": "invalid" }));
             continue;
         }
+        if ev.kind == STATUS_SNAPSHOT {
+            if serde_json::to_vec(&data).map(|b| b.len()).unwrap_or(usize::MAX) > MAX_DATA_BYTES {
+                rejected += 1;
+                results.push(json!({ "id": ev.id, "status": "too_large" }));
+                continue;
+            }
+            match notifications::ingest_snapshot(db, user_id, runtime_id, &data).await? {
+                notifications::SnapshotIngest::Unchanged => {
+                    duplicates += 1;
+                    results.push(json!({ "id": ev.id, "status": "duplicate" }));
+                }
+                notifications::SnapshotIngest::Stored { revoke } => {
+                    if !revoke.is_empty() {
+                        let (db, user) = (db.clone(), user_id.to_string());
+                        tokio::spawn(async move {
+                            apns::revoke(&db, &user, &revoke).await;
+                        });
+                    }
+                    accepted += 1;
+                    results.push(json!({ "id": ev.id, "status": "accepted" }));
+                }
+            }
+            continue;
+        }
         let Some(name) = allternit_events::from_runtime(&ev.kind, &data) else {
             ignored += 1;
             results.push(json!({ "id": ev.id, "status": "ignored" }));
@@ -223,6 +259,7 @@ pub async fn ingest(db: &PgPool, user_id: &str, runtime_id: &str, events: Vec<Va
                 data.as_object_mut().expect("object").entry(key).or_insert(json!(v));
             }
         }
+        data.as_object_mut().expect("object").insert("runtimeId".into(), json!(runtime_id));
         if serde_json::to_vec(&data).map(|b| b.len()).unwrap_or(usize::MAX) > MAX_DATA_BYTES {
             rejected += 1;
             results.push(json!({ "id": ev.id, "status": "too_large" }));

@@ -303,9 +303,15 @@ pub async fn send_to_user(db: &PgPool, transport: &dyn PushTransport, vapid: &Va
             return 0;
         }
     };
+    // An iPhone with both the app and the home-screen app gets one notification: the app's.
+    let skip: Vec<String> = if super::apns::can_reach(db, user).await {
+        sqlx::query_scalar("SELECT id FROM push_subscriptions WHERE user_id = $1 AND platform = 'ios-pwa'").bind(user).fetch_all(db).await.unwrap_or_default()
+    } else {
+        Vec::new()
+    };
     let payload = msg.json();
     let mut delivered = 0;
-    for sub in subs {
+    for sub in subs.into_iter().filter(|s| !skip.contains(&s.id)) {
         let outcome = async {
             let body = encrypt_payload(&payload, &sub.p256dh, &sub.auth)?;
             let headers = vec![
