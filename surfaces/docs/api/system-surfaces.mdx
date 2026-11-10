@@ -116,17 +116,23 @@ Sent when an inbox id leaves `needsYou`. `apns-push-type: background`, priority 
 - Header `apns-push-type: liveactivity`. Topic `com.allternit.mobile.push-type.liveactivity`.
 - Events: `start`, `update`, `end`.
 - Payload: `{"aps":{"timestamp":..., "event":"start|update|end","content-state":{...},"stale-date":...,"alert":{...,"sound":"default"},"attributes-type":"BotActivityAttributes","attributes":{"mode":"summary"},"input-push-token":1}}`.
-- Content state keeps the six existing `BotActivityAttributes.ContentState` fields and adds optional fields only: `botId`, `step`, `progress`, `othersCount`, `question`, `inboxId`, `runtimeId`, `sessionId`, `contentHash`, `approveInline`. There are no `Date` values. The loop activity keeps its existing fields.
+- Bot activity content state (`BotActivityAttributes.ContentState`):
+  - Always, as the app has them today: `status` (String), `activityLabel` (String, optional in the app), `pendingApprovalsCount` (Int), `activeBotsCount` (Int), `attentionBotsCount` (Int), `displayName` (String, optional in the app).
+  - Optional additions: `botId` (String), `step` (String), `progress` (Double, 0 to 1), `othersCount` (Int), `question` (String), `inboxId` (String), `runtimeId` (String), `sessionId` (String), `contentHash` (String), `approveInline` (Bool). Absent ones are left out.
+  - There are no `Date` values.
+- Loop activity content state (`LoopActivityAttributes.ContentState`), unchanged: `iterationsCompleted` (Int), `maxIterations` (Int), `state` (String). Updated and ended by `activityKey` = `loopId`; the app starts loops itself.
+- Token keys the app uploads: `la_start` with `attributesType: "BotActivityAttributes"`; `la_update` with `activityKey: "summary"` for the bot activity and `activityKey: <loopId>` for a loop; `widget`. Full rules and examples: [iPhone push](/api/ios-push#live-activity-pushes).
 - The activity is bot first. The cloud fills it from `focus`. When a bot needs the owner it turns into the question with buttons.
 - Approve and Deny show only when `approveInline` is `true`, `private` is `false`, and the full text is 140 characters or fewer. Otherwise the activity shows a generic line and Open. Live Activity pushes travel in plain form, so private text never rides in them.
-- Throttles: progress updates use priority 5 and are at least 15 seconds apart. Needs-approval and end use priority 10 with an alert. A start happens only on idle to active, at most once per 10 minutes per device, and never while quiet hours hold the level.
+- Throttles: progress updates use priority 5 and are at least 15 seconds apart. Needs-approval uses priority 10 with an alert; end uses priority 10 without one (the run-finished notification already tells). A start happens only on idle to active, at most once per 10 minutes per device, and never while quiet hours hold the level.
 - The cloud ends and restarts an activity before it reaches 8 hours.
 - `NSSupportsLiveActivitiesFrequentUpdates` stays off.
 
 ### Widget
 
 - Header `apns-push-type: widgets`. Topic `com.allternit.mobile.push-type.widgets`. Requires iOS 26.
-- Payload `{"aps":{"content-changed":true}}`. At most one per 5 minutes per device.
+- Payload `{"aps":{"content-changed":true}}`. At most one per 5 minutes per device; a change inside the window is sent when it ends.
+- Sent when what the widget shows changes: the counts, `needsYouRows`, `paused` or `lastRoutine`. A new step or progress is not a widget change. Tokens: `kind: "widget"`, on devices with the `widget_push` capability. Details: [iPhone push](/api/ios-push#widget-pushes).
 - The widget is one flipping widget. The front shows status and the back shows actions. A flip button turns it over, and the front returns after 10 minutes. The accessory (Lock Screen) family shows the status face only.
 
 ## Cloud routes (planned)
