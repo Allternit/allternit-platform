@@ -740,6 +740,7 @@
               "api/platform/hosted-computers",
               "api/platform/computers",
               "api/platform/phones",
+              "api/phone-holds",
               "api/platform/webhooks",
               "api/platform/usage",
               "api/platform/tracing",

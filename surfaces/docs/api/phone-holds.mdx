@@ -1,0 +1,193 @@
+---
+title: 'Phone approval holds'
+description: 'The contract for phone approval holds: which phone actions wait for the owner, the hold lifecycle, how task loops, direct tool callers and the cloud API see a hold, the runtime routes, the inbox item, run report fields and webhooks.'
+---
+
+<Warning>
+This page is the contract for an unreleased build. Nothing described here is deployed yet. Routes, fields and statuses may change before release.
+</Warning>
+
+A phone approval hold stops a sensitive phone action until the phone's owner approves it. It covers every way an agent can act on a linked phone: the task loop, saved-skill replay, a bot's direct `phone.tap`, `POST /v1/phones/:serial/tool` and the MCP tools. The check runs in one place, at the Desktop's tool dispatch, and the runtime decides. For the cloud routes, see [Phones](/api/platform/phones).
+
+## Which actions hold
+
+A rule list runs first. It matches the label of the tapped element, and the app, against a fixed English lexicon. The model that drives a task can add a hold by flagging a step as sensitive. It cannot remove one the rules made, so text on the screen cannot talk the agent out of a hold.
+
+A hold has one of these effects:
+
+| Effect | Meaning |
+|---|---|
+| `pay` | Paying or buying |
+| `delete` | Deleting or erasing |
+| `send` | Sending a message or post |
+| `call` | Placing a call |
+| `credential` | Entering or revealing a credential |
+| `money_app` | Acting inside a bank, wallet or broker app |
+| `security_setting` | Changing a security setting |
+
+These actions make a hold:
+
+- A tap, or `phone.web.click`, whose label matches the lexicon.
+- `phone.type` into a secure field, or into a field named password, passcode, card number or CVV.
+- The enter key in a message composer. It counts as `send`.
+- `open_app` into a bank, wallet or broker app. One hold covers that app for the rest of the run.
+- A direct tap with no element. The Desktop reads the screen once and hit-tests the point. If it has no screen read, the foreground app decides.
+
+Texts and calls through `phone.sms.send` and `phone.call.dial` use the same hold. `phone.sms.read` does too.
+
+## Hold lifecycle
+
+| State | Meaning |
+|---|---|
+| `requested` | The hold exists and waits for the owner. |
+| `approved` | The owner approved it. It can be used once. |
+| `denied` | The owner denied it. |
+| `expired` | Nobody answered in time. |
+| `changed` | The owner approved, but the screen no longer matched. The approval is not used. |
+
+- **Re-check after approve.** Before the action runs, the loop reads the screen again. If the element hash differs from the one the hold was made for, the hold becomes `changed` and a new hold is made. If the owner approved on the driven phone itself, the loop first returns to the app.
+- **Use once.** An approved hold covers one action. It is consumed when the guard answers `allow` for it.
+- **Deny ends the run.** The run finishes as `denied`. The agent does not continue, because it could reach the same effect another way.
+
+## How each caller sees a hold
+
+| Caller | What happens |
+|---|---|
+| Task loop and replay | The loop waits in place for up to 5 minutes. The 300 second task budget is paused while it waits. |
+| Direct tool caller (a bot, `/tool`, MCP) | The tool result is `{ "ok": false, "error": "approval_required", "approvalId", "inboxId", "expiresAt" }`. After the owner approves, retry the same call with `_hold` set to the approved hold id, within 10 minutes. |
+| Cloud API | `POST /v1/phones/:serial/tool` answers `409` with code `approval_required`. |
+
+A direct call does not stay open while it waits, because the Desktop's tool call times out at 80 seconds.
+
+## Runtime routes
+
+These are runtime routes on the project owner's Desktop runtime. The cloud API relays the tool and task routes.
+
+### Check an action
+
+```http
+POST /api/v1/phones/guard/check
+```
+
+Body: `serial`, `tool`, `args`, `el`, `app`, `ctx` and `holdId`. `ctx` is the caller context: `owner`, `bot_id`, `thread_id`, `session_id` and `source`. `source` is one of `chat`, `sms`, `imessage_ext`, `intent`, `voice`, `api`, `routine` or `skill`. `el`, `app`, `bot_id`, `thread_id`, `session_id` and `holdId` are optional.
+
+It answers one of:
+
+```json
+{ "decision": "allow" }
+```
+
+```json
+{
+  "decision": "hold",
+  "approvalId": "apr_…",
+  "inboxId": "…",
+  "effect": "pay",
+  "expiresAt": "2026-11-10T15:10:00Z"
+}
+```
+
+A `holdId` that is approved, not yet used and for the same element hash answers `allow` and is consumed.
+
+### Read a hold
+
+```http
+GET /api/v1/phones/holds/:id
+GET /api/v1/phones/holds/:id/crop
+```
+
+The first returns the hold and its state. The second returns the screen crop the hold was made on. Both need the owner's signed-in session. The crop stays on the runtime and loads through the relay.
+
+### Start a task
+
+```http
+POST /api/v1/phones/:serial/task
+```
+
+The task route takes three new optional fields: `thread_id`, `session_id` and `source` (the same values as in `ctx`).
+
+## The hold record
+
+A hold is an approval with authority `allternit` and action `phone.<tool>`, for example `phone.tap`. Its correlation id is `phone:<runId>:<step>`. Creating it writes an `approval.requested` event, the same as any other approval. Its `contentHash` covers the serial, app, tool, element, effect and typed text.
+
+`detail.phone` holds:
+
+```json
+{
+  "serial": "link:7f3a",
+  "phoneName": "Joe's Pixel",
+  "platform": "android",
+  "app": "com.example.shop",
+  "effect": "pay",
+  "tool": "phone.tap",
+  "element": { "class": "Button", "label": "Pay now", "id": "btn_pay" },
+  "typedChars": 0,
+  "intent": "Tap Pay now",
+  "goal": "Buy the item in my cart",
+  "runId": "task-9c2e…",
+  "step": 6
+}
+```
+
+`typedChars` appears only for `phone.type`. It is a count. The typed text is never stored.
+
+## The inbox item
+
+The hold appears in the owner's "Needs you" list as an inbox item with kind `approval` and `subkind: "phone_action"`.
+
+- It is **Review only**. It has no inline Approve in a notification or on a row. The owner opens it and sees the screen crop first.
+- It is `private: true`. The crop and the hold detail are not put in push text.
+- Approve and Deny are available on the open item, in Allternit Desktop, ai.allternit.com, the PWA, the iOS app and Gizzi Code.
+
+## Run report
+
+A phone run's live status can be `waiting_approval`. A run that waits keeps its concurrency slot.
+
+Final statuses add three values to the existing ones:
+
+| Status | Meaning |
+|---|---|
+| `denied` | The owner denied a hold. |
+| `approval_timeout` | Nobody answered within the wait. |
+| `phone_locked` | The phone was locked and the run could not continue. |
+
+New fields on the run:
+
+| Field | Meaning |
+|---|---|
+| `held_ms` | Total time the run waited on holds. |
+| `holds` | A list of `{ "approvalId", "effect", "state" }`, one per hold. |
+
+`duration_ms` does not include held time, so phone minutes are not billed for the wait.
+
+## Webhooks
+
+| Event | When |
+|---|---|
+| `phone.approval.requested` | A hold was created. |
+| `phone.approval.resolved` | A hold was approved, denied, expired or changed. |
+
+They follow the same delivery rules as the other phone events in [Phones](/api/platform/phones). They carry no screenshots and no crop.
+
+## Unattended replay
+
+A routine that replays a saved skill can reach a hold with nobody there. After the wait, the run ends as `approval_timeout` and the hold becomes `expired`. An `attention` item appears, "Routine stopped at a step that needs you", with a Retry action. There is no standing permission for any effect.
+
+## Who can approve
+
+- A signed-in person who owns the project. Approval happens in the app.
+- **API keys cannot approve.** There is no approve route for keys.
+- **No approve by text.** A reply of "yes" to a text message does not approve a hold, because a text sender can be spoofed.
+
+## What a one-task grant covers
+
+A one-task grant lets an agent act without a hold for the rest of one task. It does not cover `pay`, `delete`, `credential` or `money_app`. Those always hold. `send` and `call` taps accept a live grant.
+
+## Channel threads
+
+Only the owner starts phone actions from a channel. On a thread whose latest input does not come from a sender with trust level `owner`, phone tools are refused. They do not make a hold, so a stranger cannot fill the owner's inbox.
+
+## Not in this version
+
+- Labels in languages other than English. For other languages, only the model's sensitive flag and the money-app rule catch a sensitive button.
+- An agent loop that runs on the phone itself. Holds apply to the Desktop-driven loop.
