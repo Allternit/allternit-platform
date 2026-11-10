@@ -281,7 +281,8 @@ pub(crate) async fn platform_fan_out(db: &PgPool, user_id: &str, name: &str, dat
     Ok(())
 }
 
-/// `phone.step` / `phone.run.completed` from a person's own Desktop: the
+/// `phone.step` / `phone.run.completed` / `phone.approval.requested` /
+/// `phone.approval.resolved` from a person's own Desktop: the
 /// phones are theirs, so every live Platform API project they own gets the
 /// event (project-wide, no account) when one of its endpoints subscribes to it. The payload is rebuilt from an allowlist; screen text, frames
 /// and typed values never reach the runtime's ledger row to begin with.
@@ -296,20 +297,34 @@ async fn phone_fan_out(db: &PgPool, user_id: &str, name: &str, data: &Value) -> 
             tracing::warn!("platform phones: run completion not recorded: {e}");
         }
     }
+    let approval = name.starts_with("phone.approval.");
+    if approval {
+        // A run that waits on a hold shows `waiting_approval` (bookkeeping, best effort).
+        if let Err(e) = crate::routes::platform_v1::phones::on_approval_event(db, user_id, name, data).await {
+            tracing::warn!("platform phones: hold not recorded: {e}");
+        }
+    }
     let keys: &[&str] = match name {
         "phone.step" => &["step_id", "run_id", "serial", "tool", "label", "ok", "error", "duration_ms", "source", "snapshot"],
-        "phone.run.completed" => &["run_id", "serial", "ok", "status", "skill", "source", "steps", "failed", "model_calls", "duration_ms"],
+        "phone.run.completed" => &["run_id", "serial", "ok", "status", "skill", "source", "steps", "failed", "model_calls", "duration_ms", "held_ms", "holds"],
+        // Never a screenshot, the crop or screen text: only these.
+        "phone.approval.requested" | "phone.approval.resolved" => &["approval_id", "run_id", "serial", "effect", "tool", "state"],
         _ => return Ok(()),
     };
-    // Trace export: every live project of the owner that has it on (best effort).
-    let traced: Vec<String> = sqlx::query_scalar(
-        "SELECT p.id FROM platform_projects p JOIN platform_project_tracing t ON t.project_id = p.id \
-         WHERE p.owner_user_id = $1 AND p.archived_at IS NULL AND t.enabled",
-    )
-    .bind(user_id)
-    .fetch_all(db)
-    .await
-    .unwrap_or_default();
+    // Trace export: every live project of the owner that has it on (best
+    // effort). A hold is not a span of its own; the run's span carries it.
+    let traced: Vec<String> = if approval {
+        Vec::new()
+    } else {
+        sqlx::query_scalar(
+            "SELECT p.id FROM platform_projects p JOIN platform_project_tracing t ON t.project_id = p.id \
+             WHERE p.owner_user_id = $1 AND p.archived_at IS NULL AND t.enabled",
+        )
+        .bind(user_id)
+        .fetch_all(db)
+        .await
+        .unwrap_or_default()
+    };
     for project in traced {
         crate::routes::platform_v1::project_tracing::emit(db, &project, crate::routes::platform_v1::project_tracing::phone_span(name, data));
     }
@@ -327,7 +342,10 @@ async fn phone_fan_out(db: &PgPool, user_id: &str, name: &str, data: &Value) -> 
     if projects.is_empty() {
         return Ok(());
     }
-    let payload = Value::Object(keys.iter().map(|k| ((*k).to_string(), data.get(*k).cloned().unwrap_or(Value::Null))).collect());
+    let mut payload = Value::Object(keys.iter().map(|k| ((*k).to_string(), data.get(*k).cloned().unwrap_or(Value::Null))).collect());
+    if let Some(holds) = data.get("holds").filter(|h| name == "phone.run.completed" && h.is_array()) {
+        payload["holds"] = crate::routes::platform_v1::phones::public_holds(holds);
+    }
     for project in projects {
         crate::routes::platform_v1::events::emit_event(db, &project, None, name, payload.clone()).await?;
     }
