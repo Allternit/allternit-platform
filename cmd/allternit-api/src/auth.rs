@@ -159,29 +159,124 @@ fn local_dev_user(tenant_id: Option<String>) -> AuthUser {
     }
 }
 
-/// Returns true when the request appears to originate from the same machine.
-pub(crate) fn is_localhost_origin(headers: &HeaderMap) -> bool {
-    let host = headers
-        .get("host")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
-    let origin = headers
-        .get("origin")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
-    let referer = headers
-        .get("referer")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
+// ─── Local trust ────────────────────────────────────────────────────────────
+//
+// Self-hosted and local-dev deployments sign same-machine callers in as the
+// local user without a token. "Same machine" is decided from the TCP peer,
+// never from request headers alone: Host, Origin and Referer are chosen by
+// the client, so a remote caller can claim to be `localhost`.
 
-    let local = |s: &str| {
-        s.contains("://127.0.0.1")
-            || s.contains("://localhost")
-            || s.starts_with("127.0.0.1:")
-            || s.starts_with("localhost:")
+/// Headers a reverse proxy (or the desktop's cloud relay) adds when it
+/// forwards someone else's request. A proxy on the same host makes every
+/// caller's TCP peer look like loopback, so a request carrying any of these is
+/// never treated as local.
+pub(crate) const FORWARDING_HEADERS: [&str; 7] = [
+    "forwarded",
+    "x-forwarded-for",
+    "x-real-ip",
+    "x-forwarded-host",
+    "cf-connecting-ip",
+    "true-client-ip",
+    // Set by the desktop's runtime relay on every request it replays to the
+    // local API on behalf of another device (phone, web). The replay goes over
+    // loopback, so without this marker it would look like a local call.
+    crate::cowork_devices_routes::RELAYED_HEADER,
+];
+
+/// True when the request carries any header that says it was forwarded.
+pub(crate) fn has_forwarding_headers(headers: &HeaderMap) -> bool {
+    FORWARDING_HEADERS
+        .iter()
+        .any(|name| headers.contains_key(*name))
+}
+
+/// The TCP peer address, when the server was started with
+/// `into_make_service_with_connect_info::<SocketAddr>()`.
+pub(crate) fn request_peer(request: &Request) -> Option<std::net::SocketAddr> {
+    request
+        .extensions()
+        .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+        .map(|info| info.0)
+}
+
+/// True when the TCP peer is a loopback address.
+///
+/// An unknown peer is not loopback. Every production listener that serves an
+/// `auth_middleware` route is started with connect info (see `main.rs`), so a
+/// missing peer means the server was wired without it, and the safe answer is
+/// "not local". Unit tests drive routers with `oneshot`, which never sets
+/// `ConnectInfo`; under `cfg(test)` only, a missing peer counts as loopback so
+/// those tests keep exercising the local-user path. Tests that need a remote
+/// peer set `ConnectInfo` explicitly. Integration tests (`tests/`) link the
+/// non-test build and get the production behaviour.
+fn peer_is_loopback(peer: Option<std::net::SocketAddr>) -> bool {
+    match peer {
+        Some(addr) => addr.ip().to_canonical().is_loopback(),
+        None => cfg!(test),
+    }
+}
+
+/// True for `localhost`, `127.0.0.1` or `[::1]` (case-insensitive host).
+fn is_loopback_host_name(host: &str) -> bool {
+    host.eq_ignore_ascii_case("localhost") || host == "127.0.0.1" || host == "[::1]"
+}
+
+/// A `Host` header value that is exactly a loopback host with an optional
+/// numeric port: `localhost`, `localhost:8013`, `127.0.0.1:8013`, `[::1]:8013`.
+fn is_loopback_host_header(value: &str) -> bool {
+    let (host, port) = if let Some(rest) = value.strip_prefix('[') {
+        match rest.split_once(']') {
+            Some((inner, tail)) => (format!("[{inner}]"), tail),
+            None => return false,
+        }
+    } else {
+        match value.split_once(':') {
+            Some((host, port)) => (host.to_string(), &value[host.len()..]),
+            None => (value.to_string(), ""),
+        }
     };
+    let port_ok = match port.strip_prefix(':') {
+        None => port.is_empty(),
+        Some(digits) => !digits.is_empty() && digits.parse::<u16>().is_ok(),
+    };
+    port_ok && is_loopback_host_name(&host)
+}
 
-    local(host) || local(origin) || local(referer)
+/// An `Origin` / `Referer` value that parses as a URL whose host is loopback.
+fn is_loopback_url(value: &str) -> bool {
+    let Ok(url) = url::Url::parse(value) else {
+        return false;
+    };
+    match url.host() {
+        Some(url::Host::Domain(domain)) => domain.eq_ignore_ascii_case("localhost"),
+        Some(url::Host::Ipv4(ip)) => ip == std::net::Ipv4Addr::LOCALHOST,
+        Some(url::Host::Ipv6(ip)) => ip == std::net::Ipv6Addr::LOCALHOST,
+        None => false,
+    }
+}
+
+/// Header half of the local check: `Host` must be a loopback host, and
+/// `Origin` / `Referer`, when sent, must name a loopback host too. A page on
+/// another site that the user's own browser loads would otherwise reach the
+/// local API as the local user (its Origin gives it away).
+fn has_loopback_headers(headers: &HeaderMap) -> bool {
+    let header = |name: &str| headers.get(name).map(|v| v.to_str().unwrap_or("\u{0}"));
+    let host_ok = header("host").is_some_and(is_loopback_host_header);
+    let origin_ok = header("origin").map_or(true, is_loopback_url);
+    let referer_ok = header("referer").map_or(true, is_loopback_url);
+    host_ok && origin_ok && referer_ok
+}
+
+/// True only when the request really came from this machine: the TCP peer is
+/// loopback, no proxy or relay forwarded it, and its Host / Origin / Referer
+/// all name a loopback host.
+pub(crate) fn is_local_request(headers: &HeaderMap, peer: Option<std::net::SocketAddr>) -> bool {
+    peer_is_loopback(peer) && !has_forwarding_headers(headers) && has_loopback_headers(headers)
+}
+
+/// [`is_local_request`] for a whole request.
+fn is_local(request: &Request) -> bool {
+    is_local_request(request.headers(), request_peer(request))
 }
 
 /// Clerk JWT claims
@@ -1041,10 +1136,10 @@ pub async fn auth_middleware(
             }
             Err(e) => {
                 // Local/self-hosted fallback: if the token is invalid but the
-                // request is clearly from the local app, continue to the
-                // localhost bypass below instead of hard-failing.
+                // request really comes from this machine, continue to the
+                // local fallback below instead of hard-failing.
                 if (state.config.local_dev_bypass() || state.config.self_hosted())
-                    && is_localhost_origin(request.headers())
+                    && is_local(&request)
                 {
                     warn!(error = %e, "JWT verification failed; falling back to local user");
                 } else {
@@ -1073,10 +1168,12 @@ pub async fn auth_middleware(
     }
 
     // 5. Self-hosted / local-dev fallback: when the deployment is local and no
-    // cloud auth succeeded, trust the loopback origin as the default local user.
-    // This keeps packaged apps and browser dev flows working without Clerk tokens.
+    // cloud auth succeeded, trust a same-machine caller (loopback TCP peer, no
+    // forwarding headers, loopback Host/Origin/Referer) as the default local
+    // user. This keeps local apps and browser dev flows working without Clerk
+    // tokens. Anything that came through a reverse proxy needs a token.
     if (state.config.self_hosted() || state.config.local_dev_bypass())
-        && is_localhost_origin(request.headers())
+        && is_local(&request)
     {
         let mut user = local_dev_user(Some(state.config.tenant_id()));
         match ensure_user_in_db(&state.db, &user) {
@@ -1324,5 +1421,123 @@ mod org_role_sync_tests {
         // A real role change still applies.
         ensure_user_in_db(&db, &user(Some("org:member"))).unwrap();
         assert_eq!(role_of(&db), "member");
+    }
+}
+
+/// Local trust: the self-hosted fallback must only sign in callers that are
+/// really on this machine. Driven through the real `auth_middleware`.
+#[cfg(test)]
+mod local_trust_tests {
+    use super::*;
+    use axum::body::Body;
+    use axum::extract::ConnectInfo;
+    use axum::routing::get;
+    use axum::{Extension, Router};
+    use std::net::{IpAddr, SocketAddr};
+    use tower::ServiceExt;
+
+    async fn self_hosted_app() -> (Router, tempfile::TempDir) {
+        let temp = tempfile::tempdir().unwrap();
+        let config = crate::config::AppConfig {
+            company: crate::config::CompanyConfig {
+                self_hosted: Some(true),
+                ..Default::default()
+            },
+            user: crate::config::UserConfig::default(),
+        };
+        let state = crate::test_helpers::app_state_with_config(temp.path(), config).await;
+        let app = Router::new()
+            .route(
+                "/api/v1/inbox",
+                get(|Extension(user): Extension<AuthUser>| async move { user.user_id }),
+            )
+            .layer(axum::middleware::from_fn_with_state(state, auth_middleware));
+        (app, temp)
+    }
+
+    async fn call(app: &Router, peer: &str, headers: &[(&str, &str)]) -> (StatusCode, String) {
+        let ip: IpAddr = peer.parse().unwrap();
+        let mut builder = axum::http::Request::builder()
+            .uri("/api/v1/inbox")
+            .extension(ConnectInfo(SocketAddr::new(ip, 50000)));
+        for (name, value) in headers {
+            builder = builder.header(*name, *value);
+        }
+        let resp = app.clone().oneshot(builder.body(Body::empty()).unwrap()).await.unwrap();
+        let status = resp.status();
+        let body = axum::body::to_bytes(resp.into_body(), 64 * 1024).await.unwrap();
+        (status, String::from_utf8_lossy(&body).into_owned())
+    }
+
+    const PUBLIC_PEER: &str = "203.0.113.9";
+
+    #[tokio::test]
+    async fn remote_peer_claiming_localhost_host_is_rejected() {
+        let (app, _temp) = self_hosted_app().await;
+        let (status, _) = call(&app, PUBLIC_PEER, &[("host", "localhost:8013")]).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn junk_bearer_with_forged_localhost_headers_from_remote_peer_is_rejected() {
+        let (app, _temp) = self_hosted_app().await;
+        let (status, _) = call(
+            &app,
+            PUBLIC_PEER,
+            &[
+                ("host", "127.0.0.1:8013"),
+                ("origin", "http://localhost:5173"),
+                ("referer", "http://localhost:5173/"),
+                ("authorization", "Bearer junk"),
+            ],
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn reverse_proxied_request_on_loopback_is_rejected() {
+        let (app, _temp) = self_hosted_app().await;
+        for header in ["x-forwarded-for", "x-real-ip", "forwarded", "x-allternit-relayed"] {
+            let (status, _) =
+                call(&app, "127.0.0.1", &[("host", "localhost:8013"), (header, "203.0.113.9")]).await;
+            assert_eq!(status, StatusCode::UNAUTHORIZED, "{header}");
+        }
+    }
+
+    #[tokio::test]
+    async fn referer_that_only_contains_a_loopback_string_is_rejected() {
+        let (app, _temp) = self_hosted_app().await;
+        for headers in [
+            &[("host", "api.example.com"), ("referer", "https://x.example/?u=://127.0.0.1")][..],
+            &[("host", "127.0.0.1:8013"), ("referer", "https://x.example/?u=://127.0.0.1")][..],
+            &[("host", "127.0.0.1:8013"), ("origin", "https://evil.example")][..],
+            &[("host", "localhost.evil.example")][..],
+        ] {
+            let (status, _) = call(&app, "127.0.0.1", headers).await;
+            assert_eq!(status, StatusCode::UNAUTHORIZED, "{headers:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn same_machine_caller_is_the_local_user() {
+        let (app, _temp) = self_hosted_app().await;
+        for (peer, headers) in [
+            ("127.0.0.1", &[("host", "127.0.0.1:8013")][..]),
+            ("::1", &[("host", "[::1]:8013")][..]),
+            // Browser dev server on localhost:5173 calling the local API.
+            (
+                "127.0.0.1",
+                &[
+                    ("host", "localhost:8013"),
+                    ("origin", "http://localhost:5173"),
+                    ("referer", "http://localhost:5173/chat"),
+                ][..],
+            ),
+        ] {
+            let (status, body) = call(&app, peer, headers).await;
+            assert_eq!(status, StatusCode::OK, "{peer} {headers:?}");
+            assert_eq!(body, "local-dev-user");
+        }
     }
 }

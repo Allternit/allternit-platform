@@ -315,6 +315,11 @@ async function handleRelayRequest(socket: WebSocket, message: any): Promise<void
       headers.set('Authorization', `Bearer ${identity.deviceToken}`);
     }
     headers.set('X-Allternit-Desktop-Access-Token', identity.deviceToken);
+    // Another device's request replayed over loopback: the marker keeps the
+    // local API from treating it as a same-machine call (its self-hosted
+    // fallback signs those in as the local user). Same marker the Desktop's
+    // relay sets.
+    headers.set('X-Allternit-Relayed', '1');
     headers.set('X-Allternit-User-Id', identity.userId);
     headers.set('X-Allternit-User-Email', identity.userEmail);
     if (identity.organizationId) headers.set('X-Allternit-Tenant-Id', identity.organizationId);
@@ -387,6 +392,7 @@ function handleRelaySocketOpen(relaySocket: WebSocket, message: any): void {
     headers: {
       Authorization: `Bearer ${identity.deviceToken}`,
       'X-Allternit-Desktop-Access-Token': identity.deviceToken,
+      'X-Allternit-Relayed': '1',
       'X-Allternit-User-Id': identity.userId,
       'X-Allternit-User-Email': identity.userEmail,
       ...(identity.organizationId ? { 'X-Allternit-Tenant-Id': identity.organizationId } : {}),
