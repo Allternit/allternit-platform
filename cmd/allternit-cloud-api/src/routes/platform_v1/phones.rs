@@ -14,7 +14,11 @@
 //! * `POST /v1/phones/{serial}/tool` → `POST /api/v1/phones/:serial/tool`: one
 //!   phone tool through the Desktop phone gateway, exactly as a bot calls it.
 //!   `phone.sms.send` and `phone.call.dial` still wait for the person to
-//!   approve on Desktop; the API can't skip that.
+//!   approve on Desktop; the API can't skip that. A sensitive action (pay,
+//!   delete, send, call, credential, money app, security setting) is held by
+//!   the Desktop's phone guard: 409 `approval_required` with the hold's
+//!   `approval_id`; the owner approves in the Allternit app (an API key never
+//!   can) and the caller repeats the call with `hold_id` (sent on as `_hold`).
 //! * `POST /v1/phones/{serial}/task` → `POST /api/v1/phones/:serial/task`
 //!   with `background: true`: answers 202 with the `run_id` at once.
 //! * `GET  /v1/phones/skills`, `POST /v1/phones/skills/{name}/run` (also 202,
@@ -28,13 +32,16 @@
 //! * The same operations back the MCP phone tools on mcp.allternit.com
 //!   ([`mcp_tools`], [`mcp_call`]; `routes::mcp_edge`).
 //!
-//! Metering: `phone_minutes` (a tool call = its clock minute per phone; a run =
-//! its duration rounded up, at `phone.run.completed`) and `linked_phone` (one
+//! Metering: `phone_minutes` (a tool call = its clock minute per phone, never
+//! for a held call; a run = its `duration_ms` rounded up, at
+//! `phone.run.completed`, which leaves out time spent waiting on a hold) and `linked_phone` (one
 //! per phone a live project drives in a month). Concurrent runs are capped per
 //! plan (`limits::check_phone_runs`, 429 `phone_run_limit`).
 //!
 //! Progress and the end of a run are webhooks: `phone.step` for every tool
-//! call and `phone.run.completed` when a task or skill run ends. The Desktop
+//! call, `phone.run.completed` when a task or skill run ends, and
+//! `phone.approval.requested` / `phone.approval.resolved` for holds (a run
+//! that waits on one shows `waiting_approval`). The Desktop
 //! writes them to its owner ledger (`allternit-api` `phone_runs`), its event
 //! forwarder posts them to `/api/v1/runtime/events`, and
 //! `runtime_events::platform_fan_out` stores them for every project the owner
@@ -383,12 +390,36 @@ pub(crate) async fn on_run_completed(db: &PgPool, owner: &str, data: &Value) -> 
     .await?;
     let now = Utc::now();
     for (project, key, fleet, started_at) in rows {
-        let minutes = run_minutes(data.get("duration_ms").and_then(Value::as_f64), started_at, now);
+        // `duration_ms` already leaves out held time; the wall-clock fallback does too.
+        let held = data.get("held_ms").and_then(Value::as_f64).filter(|h| h.is_finite() && *h > 0.0).unwrap_or(0.0).min(86_400_000.0);
+        let minutes = run_minutes(data.get("duration_ms").and_then(Value::as_f64), started_at + chrono::Duration::milliseconds(held as i64), now);
         meter_minutes(db, &project, key.as_deref(), minutes, run_id, format!("prun:{run_id}")).await;
         if let Some(fleet) = fleet {
             finish_fleet(db, &fleet).await?;
         }
     }
+    Ok(())
+}
+
+/// `phone.approval.requested` / `phone.approval.resolved` from the owner's
+/// Desktop: a run this project started shows `waiting_approval` while a hold
+/// waits, and `running` again once it is approved (or changed, which makes a
+/// new hold). A deny or expiry ends the run; its status comes with
+/// `phone.run.completed`. Fleet runs read the same rows.
+pub(crate) async fn on_approval_event(db: &PgPool, owner: &str, name: &str, data: &Value) -> Result<(), sqlx::Error> {
+    let Some(run_id) = data.get("run_id").and_then(Value::as_str).filter(|r| !r.is_empty()) else { return Ok(()) };
+    let (to, from) = match (name, data.get("state").and_then(Value::as_str)) {
+        ("phone.approval.requested", _) => ("waiting_approval", "running"),
+        ("phone.approval.resolved", Some("approved" | "changed")) => ("running", "waiting_approval"),
+        _ => return Ok(()),
+    };
+    sqlx::query("UPDATE platform_phone_runs SET status = $3 WHERE owner_user_id = $1 AND run_id = $2 AND ended_at IS NULL AND status = $4")
+        .bind(owner)
+        .bind(run_id)
+        .bind(to)
+        .bind(from)
+        .execute(db)
+        .await?;
     Ok(())
 }
 
@@ -552,10 +583,64 @@ struct ToolBody {
     arguments: Option<Value>,
     #[serde(default)]
     run_id: Option<String>,
+    /// The approved hold's `approval_id`, on the retry of a held call.
+    #[serde(default)]
+    hold_id: Option<String>,
+}
+
+/// What a held call says. API keys can't approve, by design.
+const HOLD_MESSAGE: &str = "The phone's owner must approve this action in the Allternit app. API keys can't approve. After they approve, repeat the same call with hold_id set to approval_id, within 10 minutes.";
+
+/// The approved hold id of a retry, put in the tool arguments as `_hold`
+/// (what the Desktop's phone guard reads). `None` = leave the arguments alone.
+pub(crate) fn with_hold(arguments: Option<Value>, hold_id: Option<&str>) -> Result<Option<Value>, PlatformError> {
+    let Some(hold) = hold_id.map(str::trim).filter(|h| !h.is_empty()) else { return Ok(arguments) };
+    if hold.len() > 128 || !hold.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | ':' | '.')) {
+        return Err(PlatformError::invalid_request("invalid_hold_id", "hold_id must be the approval_id a held call answered with.").with_param("hold_id"));
+    }
+    let mut args = match arguments {
+        None | Some(Value::Null) => Map::new(),
+        Some(Value::Object(m)) => m,
+        Some(_) => return Err(PlatformError::invalid_request("invalid_arguments", "arguments must be a JSON object.").with_param("arguments")),
+    };
+    args.insert("_hold".into(), json!(hold));
+    Ok(Some(Value::Object(args)))
+}
+
+/// The Desktop's answer when its phone guard held the call
+/// (`{ok:false, error:"approval_required", approvalId, inboxId, expiresAt}`),
+/// as the `/v1` held result (snake_case).
+fn held_result(out: &Value) -> Option<Value> {
+    if out.get("error").and_then(Value::as_str) != Some("approval_required") {
+        return None;
+    }
+    let pick = |camel: &str, snake: &str| out.get(camel).filter(|v| !v.is_null()).or_else(|| out.get(snake)).cloned().unwrap_or(Value::Null);
+    Some(json!({
+        "object": "phone.tool_result",
+        "ok": false,
+        "error": "approval_required",
+        "message": HOLD_MESSAGE,
+        "approval_id": pick("approvalId", "approval_id"),
+        "inbox_id": pick("inboxId", "inbox_id"),
+        "expires_at": pick("expiresAt", "expires_at"),
+    }))
+}
+
+/// `409 approval_required`: the `/v1` error object plus the hold.
+fn approval_required(held: &Value) -> Response {
+    let body = json!({
+        "error": { "type": "conflict_error", "code": "approval_required", "message": HOLD_MESSAGE, "param": null },
+        "approval_id": held["approval_id"],
+        "inbox_id": held["inbox_id"],
+        "expires_at": held["expires_at"],
+    });
+    (StatusCode::CONFLICT, Json(body)).into_response()
 }
 
 /// One phone tool, exactly as a bot calls it (`phone.sms.send` / `phone.call.dial`
 /// still wait for the person's approval on Desktop). Meters a phone-minute.
+/// A call the phone guard held answers `ok: false, error: "approval_required"`
+/// (nothing ran, nothing metered); `tool_call` turns it into a 409.
 pub(crate) async fn op_tool(db: &PgPool, host: &dyn PhoneHost, caller: &PlatformCaller, serial: &str, name: &str, arguments: Option<Value>, run_id: Option<String>) -> Result<Value, PlatformError> {
     gate(caller)?;
     let serial = check_serial(serial)?;
@@ -574,6 +659,10 @@ pub(crate) async fn op_tool(db: &PgPool, host: &dyn PhoneHost, caller: &Platform
     if status == 502 {
         // The gateway answered but the phone didn't (tool transport failure).
         return Err(PlatformError::service_unavailable("phone_unavailable", out.get("message").and_then(Value::as_str).unwrap_or("The phone couldn't be reached.")));
+    }
+    // Held by the phone guard (200 tool result or a 409/428 answer): nothing ran.
+    if let Some(held) = held_result(&out) {
+        return Ok(held);
     }
     if !(200..300).contains(&status) {
         return Err(runtime_error(status, &out));
@@ -607,7 +696,11 @@ async fn tool_call(
     ApiJson(body): ApiJson<ToolBody>,
 ) -> Result<Response, PlatformError> {
     let host = host_for(&state, layered);
-    let result = op_tool(&state.db, &*host, &caller, &serial, &body.name, body.arguments, body.run_id).await?;
+    let arguments = with_hold(body.arguments, body.hold_id.as_deref())?;
+    let result = op_tool(&state.db, &*host, &caller, &serial, &body.name, arguments, body.run_id).await?;
+    if result.get("error").and_then(Value::as_str) == Some("approval_required") {
+        return Ok(approval_required(&result));
+    }
     Ok((StatusCode::OK, Json(result)).into_response())
 }
 
@@ -799,6 +892,53 @@ async fn run_skill(
     Ok((StatusCode::ACCEPTED, Json(out)).into_response())
 }
 
+/// A run's `holds` in the public shape: `[{approval_id, effect, state}]`
+/// (the Desktop reports `approvalId`). Anything else in an entry is dropped.
+pub(crate) fn public_holds(holds: &Value) -> Value {
+    let Some(list) = holds.as_array() else { return Value::Null };
+    Value::Array(
+        list.iter()
+            .map(|h| {
+                let id = h.get("approval_id").filter(|v| !v.is_null()).or_else(|| h.get("approvalId")).cloned().unwrap_or(Value::Null);
+                json!({ "approval_id": id, "effect": h.get("effect"), "state": h.get("state") })
+            })
+            .collect(),
+    )
+}
+
+/// A run's holds and held time, from the owner's stored phone events
+/// (`phone.approval.*`, `phone.run.completed`); nothing more is kept here.
+/// `held_ms` is null until the run has ended.
+async fn run_holds(db: &PgPool, owner: &str, run_id: &str) -> Result<(Value, Value), sqlx::Error> {
+    let rows: Vec<(String, Value)> = sqlx::query_as(
+        "SELECT type, data FROM platform_events WHERE subject = 'user' AND user_id = $1 \
+           AND type IN ('phone.approval.requested', 'phone.approval.resolved', 'phone.run.completed') \
+           AND data->>'run_id' = $2 ORDER BY created_at, id LIMIT 200",
+    )
+    .bind(owner)
+    .bind(run_id)
+    .fetch_all(db)
+    .await?;
+    let mut holds: Vec<Value> = Vec::new();
+    let mut held_ms = Value::Null;
+    for (ty, data) in rows {
+        if ty == "phone.run.completed" {
+            held_ms = data.get("held_ms").cloned().unwrap_or(Value::Null);
+            continue;
+        }
+        let Some(id) = data.get("approval_id").and_then(Value::as_str) else { continue };
+        let resolved = ty == "phone.approval.resolved";
+        let state = data.get("state").filter(|v| !v.is_null()).cloned().unwrap_or_else(|| json!(if resolved { "resolved" } else { "requested" }));
+        match holds.iter().position(|h| h["approval_id"] == id) {
+            // A late `requested` never undoes a resolution.
+            Some(i) if resolved => holds[i]["state"] = state,
+            Some(_) => {}
+            None => holds.push(json!({ "approval_id": id, "effect": data.get("effect"), "state": state })),
+        }
+    }
+    Ok((held_ms, Value::Array(holds)))
+}
+
 /// A run's state: the project's own record (status, ok) over the Desktop history.
 pub(crate) async fn op_run_status(db: &PgPool, host: &dyn PhoneHost, caller: &PlatformCaller, serial: &str, run_id: &str) -> Result<Value, PlatformError> {
     gate(caller)?;
@@ -822,6 +962,7 @@ pub(crate) async fn op_run_status(db: &PgPool, host: &dyn PhoneHost, caller: &Pl
         None if run.get("ended_at").is_some_and(|e| !e.is_null()) => json!("ended"),
         None => json!("running"),
     };
+    let (held_ms, holds) = run_holds(db, &caller.owner_user_id, run_id).await?;
     Ok(json!({
         "object": "phone.run",
         "run_id": run_id,
@@ -832,6 +973,8 @@ pub(crate) async fn op_run_status(db: &PgPool, host: &dyn PhoneHost, caller: &Pl
         "ended_at": ours.as_ref().and_then(|o| o.3).map(|t| json!(t.to_rfc3339())).unwrap_or_else(|| run["ended_at"].clone()),
         "steps": run["steps"],
         "failed": run["failed"],
+        "held_ms": held_ms,
+        "holds": holds,
         "recent_steps": history["steps"].as_array().map(|s| s.iter().take(10).cloned().collect::<Vec<_>>()).unwrap_or_default(),
     }))
 }
@@ -1003,10 +1146,10 @@ pub fn mcp_tools() -> Vec<Value> {
     vec![
         tool("phones_list", "List the project owner's linked phones and whether each is online.", obj(json!({}), &[])),
         tool("phone_screenshot", "Take a screenshot of a phone's screen.", obj(json!({ "serial": serial }), &["serial"])),
-        tool("phone_tap", "Tap the phone screen at x, y (screen pixels).", obj(json!({ "serial": serial, "x": { "type": "integer", "minimum": 0 }, "y": { "type": "integer", "minimum": 0 } }), &["serial", "x", "y"])),
-        tool("phone_type", "Type text into the focused field on the phone.", obj(json!({ "serial": serial, "text": { "type": "string" } }), &["serial", "text"])),
-        tool("phone_open_app", "Open an app on the phone by name or package.", obj(json!({ "serial": serial, "app": { "type": "string" } }), &["serial", "app"])),
-        tool("phone_tool", "Run any phone tool (e.g. phone.swipe, phone.read_ui, phone.sms.read). phone.sms.send and phone.call.dial wait for the owner to approve on their Desktop.", obj(json!({ "serial": serial, "name": { "type": "string" }, "arguments": { "type": "object" } }), &["serial", "name"])),
+        tool("phone_tap", "Tap the phone screen at x, y (screen pixels). A sensitive tap (pay, delete, send, call...) is held until the project owner approves it in the Allternit app; then repeat with hold_id.", obj(json!({ "serial": serial, "x": { "type": "integer", "minimum": 0 }, "y": { "type": "integer", "minimum": 0 }, "hold_id": { "type": "string", "description": "On a retry after the owner approved a held action: its approval_id." } }), &["serial", "x", "y"])),
+        tool("phone_type", "Type text into the focused field on the phone. Typing into a password, passcode or card field is held until the project owner approves it; then repeat with hold_id.", obj(json!({ "serial": serial, "text": { "type": "string" }, "hold_id": { "type": "string", "description": "On a retry after the owner approved a held action: its approval_id." } }), &["serial", "text"])),
+        tool("phone_open_app", "Open an app on the phone by name or package. Opening a bank, wallet or broker app is held until the project owner approves it; then repeat with hold_id.", obj(json!({ "serial": serial, "app": { "type": "string" }, "hold_id": { "type": "string", "description": "On a retry after the owner approved a held action: its approval_id." } }), &["serial", "app"])),
+        tool("phone_tool", "Run any phone tool (e.g. phone.swipe, phone.read_ui, phone.sms.read). phone.sms.send and phone.call.dial wait for the owner to approve on their Desktop. A sensitive action is held until the project owner approves it in the Allternit app; then repeat with hold_id.", obj(json!({ "serial": serial, "name": { "type": "string" }, "arguments": { "type": "object" }, "hold_id": { "type": "string", "description": "On a retry after the owner approved a held action: its approval_id." } }), &["serial", "name"])),
         tool("phone_task", "Give a phone a goal; the Desktop drives it in the background. Returns a run_id for phone_run_status.", obj(json!({ "serial": serial, "goal": { "type": "string", "maxLength": MAX_GOAL }, "max_steps": { "type": "integer", "minimum": 1, "maximum": 40 }, "bot_id": { "type": "string" }, "brain": { "type": "string" } }), &["serial", "goal"])),
         tool("phone_run_status", "The state of a phone task or skill run, with its latest steps.", obj(json!({ "serial": serial, "run_id": { "type": "string" } }), &["serial", "run_id"])),
         tool("phone_skill_run", "Replay a saved phone skill in the background. Returns a run_id.", obj(json!({ "skill": { "type": "string" }, "serial": serial, "inputs": { "type": "object", "additionalProperties": { "type": "string" } }, "bot_id": { "type": "string" }, "brain": { "type": "string" } }), &["skill"])),
@@ -1025,13 +1168,14 @@ pub async fn mcp_call(db: &PgPool, host: &dyn PhoneHost, caller: &PlatformCaller
     let serial = s("serial").unwrap_or_else(|| "-".to_string());
     let need = |k: &str| s(k).ok_or_else(|| PlatformError::invalid_request("invalid_arguments", format!("{k} is required.")).with_param(k));
     let pick = |keys: &[&str]| Value::Object(keys.iter().filter_map(|k| args.get(*k).map(|v| ((*k).to_string(), v.clone()))).collect());
+    let hold = s("hold_id");
     match name {
         "phones_list" => Ok(json!({ "phones": op_list(host, caller).await? })),
         "phone_screenshot" => op_tool(db, host, caller, &serial, "phone.screenshot", None, None).await,
-        "phone_tap" => op_tool(db, host, caller, &serial, "phone.tap", Some(pick(&["x", "y"])), None).await,
-        "phone_type" => op_tool(db, host, caller, &serial, "phone.type", Some(pick(&["text"])), None).await,
-        "phone_open_app" => op_tool(db, host, caller, &serial, "phone.open_app", Some(pick(&["app"])), None).await,
-        "phone_tool" => op_tool(db, host, caller, &serial, &need("name")?, args.get("arguments").cloned(), None).await,
+        "phone_tap" => op_tool(db, host, caller, &serial, "phone.tap", with_hold(Some(pick(&["x", "y"])), hold.as_deref())?, None).await,
+        "phone_type" => op_tool(db, host, caller, &serial, "phone.type", with_hold(Some(pick(&["text"])), hold.as_deref())?, None).await,
+        "phone_open_app" => op_tool(db, host, caller, &serial, "phone.open_app", with_hold(Some(pick(&["app"])), hold.as_deref())?, None).await,
+        "phone_tool" => op_tool(db, host, caller, &serial, &need("name")?, with_hold(args.get("arguments").cloned(), hold.as_deref())?, None).await,
         "phone_task" => {
             let task = TaskBody { goal: need("goal")?, max_steps: args.get("max_steps").and_then(Value::as_u64).map(|n| n as u32), bot_id: s("bot_id"), brain: s("brain") };
             op_task(db, host, caller, &serial, &task, None).await
@@ -1051,6 +1195,14 @@ pub async fn mcp_call(db: &PgPool, host: &dyn PhoneHost, caller: &PlatformCaller
 /// screenshot as an image; a refusal or failure as `isError`.
 pub fn mcp_result(out: Result<Value, PlatformError>) -> Value {
     match out {
+        // A held action: the owner approves in the app (never the key), then the tool is called again with hold_id.
+        Ok(v) if v.get("error").and_then(Value::as_str) == Some("approval_required") => {
+            let id = v.get("approval_id").and_then(Value::as_str).unwrap_or_default();
+            let text = format!(
+                "approval_required: this phone action needs the project owner's approval in the Allternit app (approval {id}). An API key can't approve it. After the owner approves, call the same tool again with hold_id set to \"{id}\" within 10 minutes."
+            );
+            json!({ "content": [{ "type": "text", "text": text }], "structuredContent": v, "isError": true })
+        }
         Ok(mut v) => {
             let failed = v.get("ok").and_then(Value::as_bool) == Some(false);
             let image = v.as_object_mut().and_then(|o| o.remove("dataBase64")).and_then(|d| d.as_str().map(str::to_string));

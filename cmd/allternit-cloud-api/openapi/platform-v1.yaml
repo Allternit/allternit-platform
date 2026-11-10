@@ -1044,7 +1044,7 @@ paths:
               required: [url, events]
               properties:
                 url: { type: string, format: uri }
-                events: { type: array, items: { type: string, enum: ["*", approval.requested, message.received, message.status, registration.updated, inbox.item.created, call.started, call.ended, call.transcript.ready, usage.threshold, phone.step, phone.run.completed, phone.fleet_run.completed, mail.received] } }
+                events: { type: array, items: { type: string, enum: ["*", approval.requested, message.received, message.status, registration.updated, inbox.item.created, call.started, call.ended, call.transcript.ready, usage.threshold, phone.step, phone.run.completed, phone.fleet_run.completed, phone.approval.requested, phone.approval.resolved, mail.received] } }
                 description: { type: string, maxLength: 200 }
       responses:
         "201":
@@ -1925,6 +1925,7 @@ paths:
       description: |
         One phone tool through the Desktop phone gateway, exactly as a bot calls it: `phone.devices`, `phone.screenshot`, `phone.read_ui`, `phone.screen_text`, `phone.tap`, `phone.type`, `phone.find_and_tap`, `phone.swipe`, `phone.home`, `phone.back`, `phone.key`, `phone.open_app`, `phone.sms.read`, `phone.sms.send`, `phone.call.dial`. An iPhone running the Allternit app (serial `app:<phoneId>`) is screen only plus its in-app browser: `phone.screenshot`, `phone.devices` and `phone.web.open`, `phone.web.snapshot`, `phone.web.click`, `phone.web.type`, `phone.web.scroll`, `phone.web.back`, `phone.web.wait` (the app must be open; taps on native apps answer `not_supported`).
         `phone.sms.send` and `phone.call.dial` wait for the person to approve on their Desktop (up to 80 s; then 503 `phone_timeout`); a refusal is a 200 result with `ok: false, error: approval_denied`. Tool failures are 200 with `ok: false`. 409 `phone_offline` when the phone isn't connected, 503 `phone_desktop_offline` / `phone_gateway_unavailable` when the Desktop or its phone gateway isn't running. The call is a `phone.step` webhook like any other.
+        A sensitive action (pay, delete, send, call, a credential, a money app, a security setting) is held: 409 `approval_required` with `approval_id`, `inbox_id` and `expires_at`, and a `phone.approval.requested` webhook. Nothing runs and no phone-minute is billed. The project owner approves in the Allternit app; an API key can't approve. Then repeat the same call with `hold_id` set to the `approval_id` (or `_hold` in `arguments`) within 10 minutes, with a new `Idempotency-Key` if you send one. The approval covers that one action.
       tags: [Phones]
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"
@@ -1940,12 +1941,18 @@ paths:
                 name: { type: string, description: "e.g. phone.tap (the phone. prefix is optional)." }
                 arguments: { type: object, additionalProperties: true }
                 run_id: { type: string, description: "Group several calls into one run in the history (default: a new api- run)." }
+                hold_id: { type: string, maxLength: 128, description: "On the retry of a held call: the approval_id the owner approved. Sent to the phone as `_hold` in arguments." }
       responses:
         "200":
           description: The tool result.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/PhoneToolResult" }
+        "409":
+          description: "Held for the owner's approval (code approval_required), or another conflict such as phone_offline (then the body is the Error object)."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PhoneApprovalRequired" }
         default: { $ref: "#/components/responses/Error" }
   /v1/phones/{serial}/task:
     parameters:
@@ -1953,7 +1960,7 @@ paths:
     post:
       operationId: runPhoneTask
       summary: Give a phone a goal
-      description: The phone task loop on the Desktop (read the screen, one action, repeat) with `bot_id`'s brain, `brain`, or the default. Answers 202 with the `run_id`; each step is a `phone.step` webhook and the end is `phone.run.completed`. Tasks never send texts or place calls. At most 5 minutes.
+      description: The phone task loop on the Desktop (read the screen, one action, repeat) with `bot_id`'s brain, `brain`, or the default. Answers 202 with the `run_id`; each step is a `phone.step` webhook and the end is `phone.run.completed`. Tasks never send texts or place calls. At most 5 minutes. A sensitive step waits up to 5 minutes for the owner's approval with the budget paused (status `waiting_approval`, `phone.approval.requested`); the run ends `denied`, `approval_timeout` or `phone_locked` when it can't go on. `duration_ms` and phone minutes leave out held time.
       tags: [Phones]
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"
@@ -2585,7 +2592,7 @@ components:
       properties:
         id: { type: string }
         object: { type: string, const: event }
-        type: { type: string, enum: [approval.requested, message.received, message.status, registration.updated, inbox.item.created, call.started, call.ended, call.transcript.ready, usage.threshold, phone.step, phone.run.completed, phone.fleet_run.completed, mail.received, webhook.test] }
+        type: { type: string, enum: [approval.requested, message.received, message.status, registration.updated, inbox.item.created, call.started, call.ended, call.transcript.ready, usage.threshold, phone.step, phone.run.completed, phone.fleet_run.completed, phone.approval.requested, phone.approval.resolved, mail.received, webhook.test] }
         created: { type: integer, description: Unix seconds. }
         project_id: { type: string }
         account_id: { type: [string, "null"] }
@@ -2886,7 +2893,7 @@ components:
               object: { type: string, const: phone.run }
               run_id: { type: string }
               serial: { type: [string, "null"] }
-              status: { type: string, description: "running, or the end status (done, failed, max_steps, timeout, succeeded, diverged)." }
+              status: { type: string, description: "running, waiting_approval (a step waits on the owner's approval), or the end status (done, failed, max_steps, timeout, succeeded, diverged, denied, approval_timeout, phone_locked)." }
               ok: { type: [boolean, "null"] }
               started_at: { type: string, format: date-time }
               ended_at: { type: [string, "null"], format: date-time }
@@ -2917,3 +2924,12 @@ components:
         tool: { type: string }
         error: { type: string, description: "On ok: false, e.g. approval_denied, approval_timeout, rate_limited, not_found, accessibility_off." }
         message: { type: string }
+    PhoneApprovalRequired:
+      type: object
+      description: "A held phone action (409). API keys can't approve: the project owner approves in the Allternit app, then the call is repeated with hold_id."
+      required: [error]
+      properties:
+        error: { type: object, additionalProperties: true, description: "The usual error object, type conflict_error, code approval_required." }
+        approval_id: { type: string, description: "The hold; send it back as hold_id once approved." }
+        inbox_id: { type: string, description: "The owner's \"Needs you\" item." }
+        expires_at: { type: string, format: date-time, description: "The hold expires unanswered after this." }
