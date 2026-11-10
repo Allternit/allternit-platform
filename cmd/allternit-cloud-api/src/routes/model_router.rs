@@ -42,8 +42,10 @@ pub struct ModelListResponse {
 
 /// `GET /v1/models`
 ///
-/// Public endpoint listing all models Allternit can route. Returns a static
-/// catalog enriched with live upstream metadata when providers are healthy.
+/// Public endpoint listing the models Allternit can route: default model
+/// first (each row with `default: bool`), unlisted aliases last with
+/// `hidden: true` (pickers skip them; saved ids still route). Enriched with
+/// live upstream metadata when providers are healthy.
 pub async fn list_models(State(state): State<Arc<ApiState>>) -> Result<Json<ModelListResponse>, ApiError> {
     let mut models = state.model_router.list_models().await;
     // A disabled shared pool is refused by chat_completions. Do not offer its
@@ -386,7 +388,13 @@ mod tests {
         };
         let models = get_models(app.clone()).await;
         assert!(!models.iter().any(|model| model["provider"] == "groq"));
-        assert!(models.iter().any(|model| model["id"] == "glm-5.3-fireworks"));
+        // An enabled pool stays listed; an unlisted alias is still returned,
+        // flagged hidden.
+        let glm = models.iter().find(|model| model["id"] == "glm-5.3-fireworks").unwrap();
+        assert_eq!(glm["hidden"], true);
+        assert_eq!(models[0]["id"], "kimi-k3");
+        assert_eq!(models[0]["default"], true);
+        assert!(models[0].get("hidden").is_none());
         sqlx::query("UPDATE inference_pools SET enabled = TRUE WHERE provider_id = 'groq'")
             .execute(&state.db).await.unwrap();
         let models = get_models(app).await;

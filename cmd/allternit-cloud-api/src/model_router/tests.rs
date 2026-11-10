@@ -59,6 +59,7 @@ fn model_alias_map_supports_multiple_aliases() {
         prompt_price: 0.01,
         completion_price: 0.02,
         context_length: 128_000,
+        ..Default::default()
     }]);
 
     let primary = catalog.resolve("primary").unwrap();
@@ -81,8 +82,8 @@ fn disabled_router_reports_not_enabled() {
 async fn disabled_router_list_models_returns_static_catalog() {
     let router = ModelRouter::disabled(starter_catalog());
     let models = router.list_models().await;
-    // 22 catalog entries minus the 2 open-lane models, hidden while the
-    // open-lane provider is unset.
+    // 21 catalog entries minus the 2 open-lane models, hidden while the
+    // open-lane provider is unset. Unlisted aliases are still returned.
     assert_eq!(models.len(), 19);
     assert!(models.iter().any(|m| m.id == "llama-3.1-8b"));
     assert!(!models.iter().any(|m| m.id.ends_with("-open")));
@@ -93,6 +94,67 @@ async fn disabled_router_list_models_returns_static_catalog() {
     assert!(llama.extra.get("completion_price").and_then(|v| v.as_f64()).is_some());
     assert_eq!(llama.extra.get("context_length").and_then(|v| v.as_u64()), Some(128_000));
     assert_eq!(llama.extra.get("lane").and_then(|v| v.as_str()), Some("standard"));
+    assert_eq!(llama.extra.get("default").and_then(|v| v.as_bool()), Some(false));
+}
+
+/// Stale and duplicate-by-upstream aliases: returned by `GET /v1/models`
+/// flagged `hidden`, so pickers skip them and saved ids keep resolving.
+const UNLISTED: [&str; 6] = [
+    "llama-3.1-8b",
+    "llama-3.1-70b",
+    "gpt-4o",
+    "qwen-2.5-72b",
+    "kimi-k3-fireworks",
+    "glm-5.3-fireworks",
+];
+
+#[test]
+fn unlisted_aliases_still_resolve() {
+    // Saved bots and artifact_runtime's `llama-3.1-8b` fallback depend on it.
+    let catalog = starter_catalog();
+    for alias in UNLISTED.iter().chain(&["gpt4o", "llama3.1-8b"]) {
+        assert!(catalog.resolve(alias).is_some(), "unlisted alias no longer resolves: {alias}");
+    }
+    assert_eq!(
+        catalog.resolve("gpt-4o").map(|e| e.upstream_id.as_str()),
+        Some("openai/gpt-4o")
+    );
+    assert_eq!(
+        catalog.resolve("llama-3.1-8b").map(|e| e.upstream_id.as_str()),
+        Some("meta-llama/llama-3.1-8b-instruct")
+    );
+}
+
+#[tokio::test]
+async fn model_list_flags_hidden_rows_last_and_kimi_k3_first_as_default() {
+    let router = ModelRouter::disabled(starter_catalog());
+    let models = router.list_models().await;
+    let flag = |m: &super::ModelInfo, key: &str| m.extra.get(key).and_then(|v| v.as_bool());
+
+    // Default first, flagged, and the only default.
+    assert_eq!(models[0].id, "kimi-k3");
+    assert_eq!(flag(&models[0], "default"), Some(true));
+    assert!(models.iter().all(|m| flag(m, "default").is_some()), "every row carries `default`");
+    assert_eq!(models.iter().filter(|m| flag(*m, "default") == Some(true)).count(), 1);
+
+    // Hidden rows: exactly the unlisted set, last, in catalog order.
+    let hidden: Vec<&str> = models
+        .iter()
+        .filter(|m| flag(*m, "hidden") == Some(true))
+        .map(|m| m.id.as_str())
+        .collect();
+    assert_eq!(hidden, UNLISTED.to_vec());
+    let tail: Vec<&str> = models[models.len() - UNLISTED.len()..]
+        .iter()
+        .map(|m| m.id.as_str())
+        .collect();
+    assert_eq!(tail, UNLISTED.to_vec());
+    // Listed rows carry no `hidden` key; they keep catalog order after the default.
+    assert!(models[..models.len() - UNLISTED.len()]
+        .iter()
+        .all(|m| m.extra.get("hidden").is_none()));
+    assert_eq!(models[1].id, "claude-sonnet-4.6");
+    assert!(models.iter().any(|m| m.id == "qwen3.8-max-fireworks" && flag(m, "hidden").is_none()));
 }
 
 #[tokio::test]
@@ -146,17 +208,22 @@ mod pricing {
                     serde_json::Number::from_f64(completion_per_token).unwrap(),
                 ),
             );
+            let model = |id: &str, owned_by: &str| ModelInfo {
+                id: id.to_string(),
+                object: "model".to_string(),
+                created: 0,
+                owned_by: owned_by.to_string(),
+                upstream_id: None,
+                provider: Some("openrouter".to_string()),
+                aliases: None,
+                extra: extra.clone(),
+            };
             Arc::new(Self {
-                models: vec![ModelInfo {
-                    id: "openai/gpt-4o".to_string(),
-                    object: "model".to_string(),
-                    created: 0,
-                    owned_by: "openai".to_string(),
-                    upstream_id: None,
-                    provider: Some("openrouter".to_string()),
-                    aliases: None,
-                    extra,
-                }],
+                // gpt-4o is unlisted (still billed); Sonnet is listed.
+                models: vec![
+                    model("openai/gpt-4o", "openai"),
+                    model("anthropic/claude-sonnet-4.6", "anthropic"),
+                ],
                 last_request: Mutex::new(None),
             })
         }
@@ -273,14 +340,14 @@ mod pricing {
             starter_catalog(),
         );
         let models = router.list_models().await;
-        assert!((listed_price(&models, "gpt-4o", "prompt_price") - 0.00000015).abs() < 1e-15);
-        assert!((listed_price(&models, "gpt-4o", "completion_price") - 0.0000003).abs() < 1e-15);
+        assert!((listed_price(&models, "claude-sonnet-4.6", "prompt_price") - 0.00000015).abs() < 1e-15);
+        assert!((listed_price(&models, "claude-sonnet-4.6", "completion_price") - 0.0000003).abs() < 1e-15);
 
         // No live pricing: the static per-1M catalog price, listed per token.
         let router = ModelRouter::new(vec![StubProvider::without_pricing()], starter_catalog());
         let models = router.list_models().await;
-        assert!((listed_price(&models, "gpt-4o", "prompt_price") - 0.0000025).abs() < 1e-15);
-        assert!((listed_price(&models, "gpt-4o", "completion_price") - 0.00001).abs() < 1e-15);
+        assert!((listed_price(&models, "claude-sonnet-4.6", "prompt_price") - 0.000003).abs() < 1e-15);
+        assert!((listed_price(&models, "claude-sonnet-4.6", "completion_price") - 0.000015).abs() < 1e-15);
         for model in &models {
             assert!(
                 listed_price(&models, &model.id, "prompt_price") < 1e-4,
@@ -401,8 +468,9 @@ fn unavailable_routes_are_removed_and_saved_kimi_chats_use_live_host() {
     for alias in ["qwen3.6-27b-groq", "deepseek-v4-pro-fireworks", "qwen3.8-2.4t-a95b", "qwen3.8-2.4t"] {
         assert!(catalog.resolve(alias).is_none(), "unavailable route still offered: {alias}");
     }
-    // Runtime discovery lists primary ids, not alternate aliases. Both ids
-    // must stay in the list so existing app brains still resolve locally.
+    // Both ids stay primary catalog entries so existing app brains still
+    // resolve. `GET /v1/models` returns both; kimi-k3-fireworks (same
+    // upstream) is flagged `hidden: true`.
     for id in ["kimi-k3", "kimi-k3-fireworks"] {
         assert!(catalog.entries().iter().any(|entry| entry.alias == id));
     }

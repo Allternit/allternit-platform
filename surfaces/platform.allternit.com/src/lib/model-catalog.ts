@@ -8,6 +8,8 @@ export interface CatalogModel {
   inputPrice: string;
   outputPrice: string;
   context: string;
+  /** The recommended Cloud model (`default: true` in `GET /v1/models`). */
+  isDefault?: boolean;
 }
 
 export interface LiveModelInfo {
@@ -24,6 +26,10 @@ export interface LiveModelInfo {
   context_length?: number;
   /** "standard" or "open" (open-weight models with far fewer refusals). */
   lane?: string;
+  /** True on the one recommended model; the API lists it first. */
+  default?: boolean;
+  /** Still routes (saved ids keep working) but is not offered in pickers. */
+  hidden?: boolean;
   extra?: Record<string, unknown>;
 }
 
@@ -92,6 +98,7 @@ export function liveModelToCatalog(model: LiveModelInfo): CatalogModel {
     inputPrice: formatPrice(model.prompt_price ?? model.extra?.prompt_price),
     outputPrice: formatPrice(model.completion_price ?? model.extra?.completion_price),
     context: contextLength(model),
+    isDefault: (model.default ?? model.extra?.default) === true,
   };
 }
 
@@ -110,19 +117,26 @@ export async function fetchLiveModelCatalog(
         `Model catalog request failed (${response.status})`,
     );
   }
-  return response.json();
+  const body = (await response.json()) as LiveModelListResponse;
+  // The console never shows hidden rows (stale or duplicate aliases).
+  return { ...body, data: (body.data ?? []).filter((model) => !isHidden(model)) };
 }
 
+/** A `GET /v1/models` row flagged `hidden: true`. */
+export function isHidden(model: LiveModelInfo): boolean {
+  return (model.hidden ?? model.extra?.hidden) === true;
+}
+
+// Fallback when the live list is unreachable. Matches `GET /v1/models`: the
+// default (kimi-k3) first; llama-3.1-8b/70b, qwen-2.5-72b (qwen2.5-72b) and
+// gpt-4o are hidden there, so they are not shown here either.
 export const DRAFT_MODEL_CATALOG: CatalogModel[] = [
-  { id: "llama-3.1-8b", name: "Llama 3.1 8B", family: "Llama", provider: "local", inputPrice: "$0", outputPrice: "$0", context: "128K" },
-  { id: "llama-3.1-70b", name: "Llama 3.1 70B", family: "Llama", provider: "local", inputPrice: "$0", outputPrice: "$0", context: "128K" },
+  { id: "kimi-k3", name: "Kimi K3", family: "Kimi", provider: "cloud", upstreamProvider: "fireworks", inputPrice: "$3.00", outputPrice: "$15.00", context: "1.0M", isDefault: true },
   { id: "qwen2.5-7b", name: "Qwen 2.5 7B", family: "Qwen", provider: "local", inputPrice: "$0", outputPrice: "$0", context: "128K" },
-  { id: "qwen2.5-72b", name: "Qwen 2.5 72B", family: "Qwen", provider: "local", inputPrice: "$0", outputPrice: "$0", context: "128K" },
   { id: "mistral-nemo", name: "Mistral Nemo", family: "Mistral", provider: "local", inputPrice: "$0", outputPrice: "$0", context: "128K" },
   { id: "mistral-large", name: "Mistral Large 2", family: "Mistral", provider: "cloud", inputPrice: "$2.00", outputPrice: "$6.00", context: "128K" },
   { id: "claude-3-5-sonnet", name: "Claude 3.5 Sonnet", family: "Claude", provider: "cloud", inputPrice: "$3.00", outputPrice: "$15.00", context: "200K" },
   { id: "claude-3-opus", name: "Claude 3 Opus", family: "Claude", provider: "cloud", inputPrice: "$15.00", outputPrice: "$75.00", context: "200K" },
-  { id: "gpt-4o", name: "GPT-4o", family: "GPT", provider: "cloud", inputPrice: "$5.00", outputPrice: "$15.00", context: "128K" },
   { id: "gpt-4o-mini", name: "GPT-4o mini", family: "GPT", provider: "cloud", inputPrice: "$0.15", outputPrice: "$0.60", context: "128K" },
   { id: "gemini-1.5-pro", name: "Gemini 1.5 Pro", family: "Gemini", provider: "cloud", inputPrice: "$3.50", outputPrice: "$10.50", context: "1M" },
   { id: "gemini-1.5-flash", name: "Gemini 1.5 Flash", family: "Gemini", provider: "cloud", inputPrice: "$0.35", outputPrice: "$1.05", context: "1M" },
