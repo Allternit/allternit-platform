@@ -4052,11 +4052,20 @@
         "allternit/cmd/gizzi-code/src/cli/ui/ink-app/components",
         "allternit/cmd/gizzi-code/src/runtime/providers",
         "allternit/cmd/gizzi-code/src/runtime/drivers",
-        "allternit/cmd/gizzi-code/src/cli/commands"
+        "allternit/cmd/gizzi-code/src/cli/commands",
+        "allternit/cmd/gizzi-code/src/runtime/providers/model-list.ts",
+        "allternit/cmd/gizzi-code/src/runtime/providers/default-brain.ts",
+        "allternit/cmd/gizzi-code/src/runtime/providers/discovery/live-models.ts",
+        "allternit/cmd/gizzi-code/src/runtime/providers/discovery/sign-in.ts",
+        "allternit/cmd/gizzi-code/src/runtime/providers/discovery/cli-catalog.json",
+        "allternit/cmd/gizzi-code/src/cli/commands/models.ts",
+        "allternit/cmd/gizzi-code/src/cli/commands/debug/model.ts",
+        "allternit/cmd/allternit-api/src/cli_catalog.rs",
+        "allternit/cmd/allternit-cloud-api/src/model_router/catalog.rs"
       ],
       "evidence": [
         "allternit/surfaces/docs/cli/models.mdx",
-        "allternit/surfaces/docs/cli/models.mdx",
+        "allternit/surfaces/docs/cli/configuration.mdx",
         "allternit/cmd/gizzi-code/src/runtime/providers/offer.ts",
         "allternit/cmd/gizzi-code/src/cli/ui/ink-app/services/api/cliBrain.ts",
         "allternit/cmd/gizzi-code/test/provider/provider-offer.test.ts",

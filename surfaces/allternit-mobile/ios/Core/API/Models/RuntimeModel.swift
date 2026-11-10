@@ -24,6 +24,15 @@ struct RuntimeModel: Decodable, Sendable, Identifiable, Equatable {
     let supportsEffort: Bool
     /// The model's own thinking levels, word and default (model-thinking.json).
     let thinking: ModelThinking?
+    /// The vendor's own default for this provider (server `default`; absent on
+    /// older servers). Informational only: the app never auto-selects it.
+    let isDefault: Bool
+    /// Vendor order inside the provider, 0 = first (server `rank`; nil on
+    /// older servers).
+    let rank: Int?
+    /// Retired Cloud alias (server `hidden`): still runs for a saved choice but
+    /// is not offered in the picker.
+    let isHidden: Bool
 
     /// The bare model id ("claude-sonnet-4.6" out of
     /// "anthropic/claude-sonnet-4.6") — the composer pill's compact label.
@@ -37,9 +46,12 @@ struct RuntimeModel: Decodable, Sendable, Identifiable, Equatable {
         case id, name, provider, description, tier
         case supportsEffort = "supports_effort"
         case thinking
+        case isDefault = "default"
+        case rank
+        case isHidden = "hidden"
     }
 
-    init(id: String, name: String, provider: String, description: String? = nil, tier: Tier? = nil, supportsEffort: Bool = false, thinking: ModelThinking? = nil) {
+    init(id: String, name: String, provider: String, description: String? = nil, tier: Tier? = nil, supportsEffort: Bool = false, thinking: ModelThinking? = nil, isDefault: Bool = false, rank: Int? = nil, isHidden: Bool = false) {
         self.id = id
         self.name = name
         self.provider = provider
@@ -47,6 +59,9 @@ struct RuntimeModel: Decodable, Sendable, Identifiable, Equatable {
         self.tier = tier
         self.supportsEffort = supportsEffort || thinking != nil
         self.thinking = thinking
+        self.isDefault = isDefault
+        self.rank = rank
+        self.isHidden = isHidden
     }
 
     init(from decoder: Decoder) throws {
@@ -57,6 +72,9 @@ struct RuntimeModel: Decodable, Sendable, Identifiable, Equatable {
         description = try container.decodeIfPresent(String.self, forKey: .description)
         tier = try container.decodeIfPresent(Tier.self, forKey: .tier)
         thinking = try? container.decodeIfPresent(ModelThinking.self, forKey: .thinking)
+        isDefault = (try? container.decodeIfPresent(Bool.self, forKey: .isDefault)) ?? false
+        rank = try? container.decodeIfPresent(Int.self, forKey: .rank)
+        isHidden = (try? container.decodeIfPresent(Bool.self, forKey: .isHidden)) ?? false
         supportsEffort = (try container.decodeIfPresent(Bool.self, forKey: .supportsEffort) ?? false) || thinking != nil
     }
 

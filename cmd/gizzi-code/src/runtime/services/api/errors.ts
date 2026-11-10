@@ -1068,10 +1068,8 @@ export function getErrorMessageIfRefusal(
     ? `${API_ERROR_MESSAGE_PREFIX}: Gizzi is unable to respond to this request, which appears to violate our Usage Policy (https://www.allternit.com/legal/aup). Try rephrasing the request or attempting a different approach.`
     : `${API_ERROR_MESSAGE_PREFIX}: Gizzi is unable to respond to this request, which appears to violate our Usage Policy (https://www.allternit.com/legal/aup). Please double press esc to edit your last message or start a new session for Gizzi to assist with a different task.`
 
-  const modelSuggestion =
-    model !== 'claude-sonnet-4-20250514'
-      ? ' If you are seeing this refusal repeatedly, try running /model claude-sonnet-4-20250514 to switch models.'
-      : ''
+  // No model id here: which models exist depends on the user's own brains.
+  const modelSuggestion = ' If you are seeing this refusal repeatedly, try running /model to switch models.'
 
   return createAssistantAPIErrorMessage({
     content: baseMessage + modelSuggestion,

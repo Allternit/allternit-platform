@@ -5,6 +5,7 @@ import { ModelPicker } from '../../components/ModelPicker';
 import { COMMON_HELP_ARGS, COMMON_INFO_ARGS } from '../../constants/xml';
 import { type AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS, logEvent } from '../../services/analytics/index';
 import { useAppState, useSetAppState } from '../../state/AppState';
+import { persistModelPick } from '../../state/onChangeAppState';
 import type { LocalJSXCommandCall } from '../../types/command';
 import type { EffortLevel } from '../../utils/effort';
 import { isBilledAsExtraUsage } from '../../utils/extraUsage';
@@ -94,6 +95,9 @@ function ModelPickerWrapper(t0) {
         from_model: mainLoopModel as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
         to_model: model as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS
       });
+      // Re-picking the running model changes no state, so onChangeAppState
+      // would not see it: pin and record it here (a pick always pins).
+      if (model !== null && model === mainLoopModel) persistModelPick(model);
       setAppState(prev => ({
         ...prev,
         mainLoopModel: model,
@@ -159,6 +163,7 @@ function SetModelAndClose({
   }) => void;
 }): React.ReactNode {
   const isFastMode = useAppState(s => s.fastMode);
+  const currentModel = useAppState(s => s.mainLoopModel);
   const setAppState = useSetAppState();
   const model = args === 'default' ? null : args;
   React.useEffect(() => {
@@ -218,6 +223,7 @@ function SetModelAndClose({
       }
     }
     async function setModel(modelValue: string | null): Promise<void> {
+      if (modelValue !== null && modelValue === currentModel) persistModelPick(modelValue);
       setAppState(prev => ({
         ...prev,
         mainLoopModel: modelValue,

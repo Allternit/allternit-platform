@@ -38,8 +38,7 @@ import { onUnsupported, servingEngine } from "@/cli/mission/orchestrator"
 import { runMission } from "@/cli/mission/runner"
 import { badge, label, markdownToPlan, planProblems, planToMarkdown, type Mission, type PlanInput } from "@/cli/mission/state"
 import { activeMission, listMissions, logFile, projectRoot, readMission, runnerAlive, writeMission } from "@/cli/mission/store"
-
-export const DEFAULT_BRAIN = "claude-cli/claude-sonnet-5"
+import { workerBrain } from "@/cli/commands/factory/swarm"
 
 const color = () => !!process.stdout.isTTY && !process.env.NO_COLOR
 const paint = (code: string, s: string) => (color() ? `${code}${s}${C.reset}` : s)
@@ -199,8 +198,13 @@ async function planApproveSpawn(m: Mission, yes: boolean): Promise<number> {
 
 // ---------------------------------------------------------------- verbs
 
-async function start(argv: { goal: string; on?: string; maxWorkers: number; maxHours?: number; maxAttempts: number; brain: string; yes: boolean }): Promise<number> {
-  const made = newMission({ goal: argv.goal, cwd: process.cwd(), brain: argv.brain, maxWorkers: argv.maxWorkers, maxAttempts: argv.maxAttempts, maxHours: argv.maxHours, on: argv.on })
+async function start(argv: { goal: string; on?: string; maxWorkers: number; maxHours?: number; maxAttempts: number; brain?: string; yes: boolean }): Promise<number> {
+  const picked = await workerBrain(argv.brain)
+  if ("error" in picked) {
+    console.error(picked.error)
+    return EXIT.usage
+  }
+  const made = newMission({ goal: argv.goal, cwd: process.cwd(), brain: picked.brain, maxWorkers: argv.maxWorkers, maxAttempts: argv.maxAttempts, maxHours: argv.maxHours, on: argv.on })
   if ("error" in made) {
     console.error(made.error)
     return EXIT.usage
@@ -340,10 +344,10 @@ export const MissionCommand = cmd({
             .option("max-workers", { type: "number", default: 3, describe: "parallel workers per milestone" })
             .option("max-hours", { type: "number", describe: "stop to ask after this many hours" })
             .option("max-attempts", { type: "number", default: 2, describe: "fix rounds per milestone before it stops to ask" })
-            .option("brain", { alias: "m", type: "string", default: DEFAULT_BRAIN, describe: "orchestrator and worker brain: claude-cli/<model>, codex-cli/<model>, kimi-cli, grok-cli, gizzi" })
+            .option("brain", { alias: "m", type: "string", describe: "orchestrator and worker brain: claude-cli/<model>, codex-cli/<model>, kimi-cli, grok-cli, gizzi (default: your default CLI brain)" })
             .option("yes", { alias: "y", type: "boolean", default: false, describe: "approve the plan without asking" })
             .example('$0 mission start "add a --json flag to every list command, with tests"', "plan it, approve, run")
-            .example('$0 mission start "port the parser to Rust" --max-hours 6 -m codex-cli/gpt-5.5 --yes', "no prompt"),
+            .example('$0 mission start "port the parser to Rust" --max-hours 6 -m codex-cli/gpt-6.1-sol --yes', "no prompt"),
         handler: async (argv: any) => {
           process.exitCode = await start({
             goal: ((argv.goal as string[] | undefined) ?? []).map(String).join(" "),
@@ -351,7 +355,7 @@ export const MissionCommand = cmd({
             maxWorkers: Number(argv["max-workers"]),
             maxHours: argv["max-hours"] !== undefined ? Number(argv["max-hours"]) : undefined,
             maxAttempts: Number(argv["max-attempts"]),
-            brain: String(argv.brain),
+            brain: argv.brain ? String(argv.brain) : undefined,
             yes: !!argv.yes,
           })
         },

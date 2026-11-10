@@ -18,7 +18,56 @@ Sections appear in this order:
 
 OpenRouter is never its own section. Allternit Cloud uses it to route, so it is not offered on its own. A model ref that names it still runs when you ask for it by name (`gizzi --model openrouter/…`).
 
-`gizzi models` prints the same list with the same headings. `gizzi models --all` prints every provider in the models.dev catalog, OpenRouter included.
+## List the models
+
+`gizzi models` prints the models the picker offers, in the picker's order: Allternit Cloud, Your subscriptions, API keys, Local. Under Your subscriptions the CLIs come in a fixed order. Inside a provider, models are in the vendor's order, newest and strongest first. They are not sorted alphabetically.
+
+Each row is `provider/model`. Tags after a row:
+
+| Tag | Meaning |
+|---|---|
+| `default` | That provider's own default model |
+| `current` | The model Gizzi will use now |
+| `not signed in` | The CLI is installed but you are not signed in to it |
+
+The last line shows the current default and why: `default: provider/model (reason)`.
+
+- For CLIs that can list their own models, Gizzi asks the CLI and caches the list for 6 hours. `gizzi models --refresh` reads it again. Models a CLI marks as hidden are not shown. If the CLI cannot be asked, Gizzi shows its built-in list.
+- `gizzi models --json` prints the same data as JSON.
+- `gizzi models --all` also shows providers the picker does not offer: aggregators such as OpenRouter, and API providers with no key.
+- `gizzi models <provider>` shows one provider. Use `gizzi models claude-cli` for example.
+- Retired Allternit Cloud aliases are not listed, but a saved choice of one keeps working. A retired CLI model id in your config is mapped to its replacement.
+- A local server that is installed but reports no models is not listed.
+
+## Default model
+
+Gizzi picks the model for a turn in this order:
+
+1. **Your pick.** A model you chose with `/model` in the TUI, with `--model` for one run, or with `model` in the config. A pick stays until you change it.
+2. **Gizzi's choice.** On a paid Allternit plan, Allternit Cloud's default model. Otherwise the first CLI brain that is installed and signed in, in the fixed order, using that CLI's default model. A CLI that is not signed in is never chosen.
+3. **Nothing usable.** Gizzi says so and asks you to pick a model or sign in.
+
+Config keys:
+
+| Key | Meaning |
+|---|---|
+| `model` | The model, as `provider/model` |
+| `model_auto` | `true` means Gizzi chose the model and may change it when your plan or sign-ins change. `false`, or absent with a `model` set, means it is your pick. |
+| `small_model` | The model for background side tasks. If its provider is not available, Gizzi falls back to another small model. |
+
+Global config files are read in this order, and a later file wins. First the legacy `gizzi` config folder, then the `gizzi-code` config folder (`~/.config/gizzi-code`). In each folder: `config.json`, `gizzi.json`, `gizzi.jsonc`, `config.toml`. The TUI and the runtime read the same merged config.
+
+If the model shown is not the one you expect, run `gizzi debug model`. It prints the config files it read, the merged values, the choice and its reason, the runtime default, the TUI default, and `match: yes` or `match: no`.
+
+Swarm and mission workers use your default CLI brain unless you pass `--brain`.
+
+### In the TUI
+
+`/model` shows the same sections and order as `gizzi models`. Type to filter. Rows carry the `default` and `current` tags, and a CLI that is not signed in has a "not signed in" note. Where a model has thinking levels, you set one per model. Picking a model makes it your pick and adds it to your recent models.
+
+### Effort on `gizzi run` and `gizzi exec`
+
+`--effort` accepts the levels the picked model has. An unsupported level is an error that lists the valid ones. A failed run exits with a non-zero code.
 
 ## Thinking levels
 
@@ -29,8 +78,8 @@ The level you pick reaches the model. A CLI brain gets it as its own flag (Claud
 ## Pick a model at launch
 
 ```bash
-gizzi --model claude-cli/claude-sonnet-5
-gizzi attach http://127.0.0.1:4096 --model claude-cli/claude-sonnet-5
+gizzi --model claude-cli/claude-sonnet-5-5
+gizzi attach http://127.0.0.1:4096 --model claude-cli/claude-sonnet-5-5
 ```
 
 `--model` sets the model for the session, ahead of your settings and `gizzi.json`. `/model` changes it later.
@@ -52,7 +101,7 @@ Each failure names the real cause and one or two commands to run. Examples:
 
 | You see | Cause | Run |
 |---|---|---|
-| Allternit Cloud free allowance ($2.00/month) is used up · resets Dec 1 | The free monthly allowance is spent | `/model claude-cli/claude-sonnet-5` (your Claude plan) or `/usage` |
+| Allternit Cloud free allowance ($2.00/month) is used up · resets Dec 1 | The free monthly allowance is spent | `/model claude-cli/claude-sonnet-5-5` (your Claude plan) or `/usage` |
 | Allternit Cloud plan limit reached for this month | Your plan's monthly limit | `/model …` or `/usage` |
 | Allternit Cloud credits are used up | Prepaid credits ran out | `/usage` to add credits |
 | Allternit Cloud free models need a verified email address | The account's email is not verified | Verify it, then `/login` |

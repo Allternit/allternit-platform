@@ -95,7 +95,8 @@ async function probeServer(spec: LocalServerSpec): Promise<DiscoveredModel[] | n
     if (spec.id === "ollama") {
       const data = await res.json() as { models?: { name: string; details?: { parameter_size?: string } }[] }
       const list = data.models ?? []
-      if (list.length === 0) return spec.fallbackModels
+      // Running with nothing pulled: offer nothing, not a model that isn't there.
+      if (list.length === 0) return []
       return list.map((m) => ({
         id: m.name,
         name: `${m.name}${m.details?.parameter_size ? ` (${m.details.parameter_size})` : ""}`,
@@ -108,7 +109,8 @@ async function probeServer(spec: LocalServerSpec): Promise<DiscoveredModel[] | n
     if (spec.modelsEndpoint) {
       const data = await res.json() as { data?: { id: string }[] }
       const list = data.data ?? []
-      if (list.length === 0) return spec.fallbackModels
+      // The server answered with an empty list: no model is loaded, so offer none.
+      if (list.length === 0) return []
       return list.map((m) => ({ id: m.id, name: m.id, context: 32768, output: 4096 }))
     }
 
@@ -120,22 +122,23 @@ async function probeServer(spec: LocalServerSpec): Promise<DiscoveredModel[] | n
 }
 
 export async function discoverLocalProviders(): Promise<DiscoveredProvider[]> {
-  const discovered: DiscoveredProvider[] = []
-
-  await Promise.all(
-    LOCAL_SERVERS.map(async (spec) => {
-      const models = await probeServer(spec)
-      if (!models || models.length === 0) return
-      discovered.push({
+  // LOCAL_SERVERS order, not probe-finish order.
+  const found = await Promise.all(
+    LOCAL_SERVERS.map(async (spec): Promise<DiscoveredProvider | undefined> => {
+      const listed = await probeServer(spec)
+      if (!listed || listed.length === 0) return
+      // The server's own order; no default — the server doesn't name one.
+      const models = listed.map((m, rank) => ({ ...m, rank }))
+      return {
         id: spec.id,
         name: spec.name,
         auth_type: "none",
         base_url: `http://127.0.0.1:${spec.port}/v1`,
         source: "local",
         models,
-      })
+      }
     }),
   )
 
-  return discovered
+  return found.filter((p): p is DiscoveredProvider => p !== undefined)
 }

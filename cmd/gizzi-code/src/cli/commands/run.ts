@@ -37,6 +37,28 @@ import { ToolPrinter, columns } from "@/cli/commands/run-print"
 import { TurnSummary } from "@/shared/util/turn-summary"
 import chalk from "@/shared/util/chalk"
 import { runOnComputer } from "@/cli/commands/computers"
+import { ModelThinking } from "@/runtime/providers/discovery/model-thinking"
+
+/** Every level some model takes; the check when the model has no row in model-thinking.json. */
+const KNOWN_EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"]
+
+/**
+ * Why `--effort` cannot be used with this model, or undefined when it can.
+ * A model with a row in model-thinking.json takes only its own levels.
+ */
+export function effortProblem(effort: string, model?: string): string | undefined {
+  const level = effort.trim().toLowerCase()
+  const modelID = model ? model.slice(model.indexOf("/") + 1) : undefined
+  const entry = modelID ? ModelThinking.of(modelID) : undefined
+  if (entry) {
+    if (entry.levels.includes(level)) return undefined
+    return entry.levels.length === 0
+      ? `--effort: ${model} has no effort levels`
+      : `--effort: ${model} takes ${entry.levels.join(", ")} (got "${effort}")`
+  }
+  if (KNOWN_EFFORTS.includes(level)) return undefined
+  return `--effort: unknown level "${effort}"; use one of ${KNOWN_EFFORTS.join(", ")}`
+}
 
 // Gizzi sand through the chalk shim: 256-color terminals get 180, NO_COLOR gets nothing.
 const sand = (s: string) => chalk.rgb(212, 176, 140)(s)
@@ -209,8 +231,7 @@ export const RunCommand = cmd({
       })
       .option("effort", {
         type: "string",
-        describe: "reasoning effort level (alias for --variant)",
-        choices: ["low", "medium", "high"] as const,
+        describe: "reasoning effort level, checked against the model's levels (alias for --variant)",
       })
       .option("fallback-model", {
         type: "string",
@@ -251,8 +272,15 @@ export const RunCommand = cmd({
     if (args.worktree) Flag.GIZZI_WORKTREE = path.resolve(args.worktree)
     if (args.fallbackModel) Flag.GIZZI_FALLBACK_MODEL = args.fallbackModel
 
-    // Effort is an alias for variant
-    if (args.effort && !args.variant) args.variant = args.effort
+    // Effort is an alias for variant, checked against the picked model's levels.
+    if (args.effort) {
+      const problem = effortProblem(args.effort, args.model)
+      if (problem) {
+        UI.error(problem)
+        process.exit(1)
+      }
+      if (!args.variant) args.variant = args.effort.trim().toLowerCase()
+    }
 
     // Plugin dir override
     if (args.pluginDir) {
@@ -873,6 +901,9 @@ export const RunCommand = cmd({
       }
 
       if (!reviewOnly) await loopDone
+      // A failed turn (provider error, auth, connect, a CLI's own error reply)
+      // exits non-zero; review and usage-limit codes already set stay.
+      if (!reviewOnly && (error || lastFinishError) && !process.exitCode) process.exitCode = 1
 
       if (reviewRequested) {
         await runReviewStep(sessionID).catch((e) => {
@@ -903,7 +934,19 @@ export const RunCommand = cmd({
 
     await bootstrap(process.cwd(), async () => {
       const config = await Config.get()
-      args.model ??= config.model
+      if (!args.model) {
+        // No --model: the shared default-brain resolver decides (a real pin,
+        // else the plan/sign-in rule). Reading config.model directly ran a
+        // stale or mistaken pin. An explicit "auto" in config stays auto.
+        const configured = config.model?.trim().toLowerCase()
+        if (configured === "auto" || configured === "auto/auto") {
+          args.model = config.model
+        } else {
+          const { currentDefaultBrain } = await import("@/runtime/providers/default-brain")
+          const brain = await currentDefaultBrain().catch(() => undefined)
+          args.model = brain?.model ?? undefined
+        }
+      }
       if (config.sandbox?.enabled !== undefined && process.env.GIZZI_SANDBOX === undefined && process.env.GIZZI_SANDBOX_DISABLE === undefined && !args.dangerouslySkipSandbox) {
         Flag.GIZZI_SANDBOX = config.sandbox.enabled
         Flag.GIZZI_SANDBOX_DISABLE = !config.sandbox.enabled

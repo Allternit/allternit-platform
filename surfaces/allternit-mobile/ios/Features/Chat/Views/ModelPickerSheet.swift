@@ -80,11 +80,11 @@ struct ModelPickerSheet: View {
             .background(Color("FillNeutral"), in: Capsule())
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 7) {
-                    overviewChip(icon: AnyView(Image(systemName: "square.grid.2x2").font(.system(size: 14))), title: "All", detail: "\(modelStore.models.count) models", active: scope == .all) { scope = .all }
+                    overviewChip(icon: AnyView(Image(systemName: "square.grid.2x2").font(.system(size: 14))), title: "All", detail: "\(offered.count) models", active: scope == .all) { scope = .all }
                     overviewChip(icon: AnyView(Image(systemName: "star.fill").font(.system(size: 13)).foregroundColor(Color("AccentPrimary"))), title: "Favorites", detail: "\(favorites.count)", active: scope == .favorites) { scope = .favorites }
                     ForEach(providerIds, id: \.self) { pid in
                         let worst = quotas.worst(pid)
-                        let count = modelStore.models.filter { $0.provider == pid }.count
+                        let count = offered.filter { $0.provider == pid }.count
                         overviewChip(
                             icon: AnyView(LimitRingView(window: worst, size: 28) { ModelProviderMark(providerId: pid, size: 15) }),
                             title: ModelProviderNames.name(pid),
@@ -195,12 +195,17 @@ struct ModelPickerSheet: View {
         }
     }
 
+    /// Catalog rows the picker offers: hidden (retired) ones only when current.
+    private var offered: [RuntimeModel] {
+        modelStore.models.filter { !$0.isHidden || $0.id == modelStore.selectedModelId }
+    }
+
     private var searching: Bool { !query.trimmingCharacters(in: .whitespaces).isEmpty }
 
     /// Every model in scope that matches the search. Nothing is hidden.
     private var matches: [RuntimeModel] {
         let q = query.trimmingCharacters(in: .whitespaces).lowercased()
-        return modelStore.models.filter { model in
+        return offered.filter { model in
             switch scope {
             case .favorites: if !favorites.contains(model.id) { return false }
             case .provider(let pid): if model.provider != pid { return false }
@@ -214,7 +219,20 @@ struct ModelPickerSheet: View {
 
     private var groups: [(provider: String, rows: [RuntimeModel])] {
         let rows = Dictionary(grouping: matches, by: \.provider)
-        return providerIds.compactMap { pid in rows[pid].map { (pid, $0) } }
+        return providerIds.compactMap { pid in rows[pid].map { (pid, Self.rankOrdered($0)) } }
+    }
+
+    /// Ranked models first by ascending rank; unranked keep their order after.
+    private static func rankOrdered(_ rows: [RuntimeModel]) -> [RuntimeModel] {
+        let indexed = Array(rows.enumerated())
+        return indexed.sorted { a, b in
+            switch (a.element.rank, b.element.rank) {
+            case let (x?, y?): return x != y ? x < y : a.offset < b.offset
+            case (_?, nil): return true
+            case (nil, _?): return false
+            default: return a.offset < b.offset
+            }
+        }.map(\.element)
     }
 
     @ViewBuilder
@@ -274,10 +292,18 @@ struct ModelPickerSheet: View {
         return HStack(spacing: 10) {
             ModelProviderMark(providerId: model.provider, size: 24)
             VStack(alignment: .leading, spacing: 2) {
-                Text(model.name)
-                    .font(.system(size: 14))
-                    .foregroundColor(Color("TextPrimary"))
-                    .lineLimit(1)
+                HStack(spacing: 6) {
+                    Text(model.name)
+                        .font(.system(size: 14))
+                        .foregroundColor(Color("TextPrimary"))
+                        .lineLimit(1)
+                    if model.isDefault {
+                        Text("Default")
+                            .font(.system(size: 10.5))
+                            .foregroundColor(Color("TextTertiary"))
+                            .accessibilityHidden(true)
+                    }
+                }
                 HStack(spacing: 6) {
                     Text(model.shortName)
                         .font(.system(size: 10.5, design: .monospaced))
@@ -305,6 +331,7 @@ struct ModelPickerSheet: View {
         .contentShape(Rectangle())
         .onTapGesture { choose(model) }
         .accessibilityElement(children: .combine)
+        .accessibilityLabel(model.isDefault ? "\(model.name), default" : model.name)
         .accessibilityAddTraits(selected ? [.isButton, .isSelected] : [.isButton])
     }
 

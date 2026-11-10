@@ -40,6 +40,32 @@ describe("discoverAllternitCloud", () => {
     expect(providers[0]?.source).toBe("platform")
     expect(providers[0]?.models.map((m) => m.id)).toEqual(["llama-3.1-8b", "qwen2.5-7b"])
     expect(providers[0]?.models[1]?.context).toBe(32000)
+    // The server named no default, so none is invented; rank is the server's order.
+    expect(providers[0]?.models.map((m) => [m.rank, !!m.default])).toEqual([[0, false], [1, false]])
+  })
+
+  test("the server's default flag is kept; hidden aliases resolve but go last and are never default", async () => {
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      if (String(input).endsWith("/v1/models")) {
+        return Response.json({
+          data: [
+            { id: "old-alias", hidden: true, default: true },
+            { id: "fast", name: "Fast" },
+            { id: "retired", extra: { hidden: true } },
+            { id: "smart", extra: { name: "Smart", default: true } },
+          ],
+        })
+      }
+      return new Response("not found", { status: 404 })
+    }) as typeof fetch
+
+    const [provider] = await discoverAllternitCloud()
+    expect(provider?.models.map((m) => [m.id, m.rank, !!m.default, !!m.hidden])).toEqual([
+      ["fast", 0, false, false],
+      ["smart", 1, true, false],
+      ["old-alias", 2, false, true],
+      ["retired", 3, false, true],
+    ])
   })
 })
 

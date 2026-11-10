@@ -40,6 +40,10 @@ export interface DiscoveredProvider {
   /** Provider options merged into the provider (e.g. `runtime: "fabric"`) */
   options?: Record<string, unknown>
   models: DiscoveredModel[]
+  /** Subprocess CLIs: the CLI's sign-in check passed (unset = not checked). */
+  signedIn?: boolean
+  /** Catalog `defaultRank`: lower = preferred as the automatic default brain; unset = never automatic. */
+  defaultRank?: number
 }
 
 export interface DiscoveredModel {
@@ -47,6 +51,12 @@ export interface DiscoveredModel {
   name: string
   context?: number
   output?: number
+  /** The provider's default model (catalog `default: true`; at most one per provider). */
+  default?: boolean
+  /** Position in the vendor's order, 0 = first (best/newest). */
+  rank?: number
+  /** A retired alias: still resolves for saved choices, never offered in a picker. */
+  hidden?: boolean
 }
 
 /** Extension hook type — any module can register a discovery hook */
@@ -114,8 +124,14 @@ export const Discovery = {
         }
       }
 
-      _last = providers
-      return providers
+      // Ollama shows up twice: the HTTP server ("ollama") and the CLI
+      // ("ollama-cli"). Desktop knows only "ollama", so the CLI copy goes
+      // whenever the server reported models.
+      const httpOllama = providers.some((p) => p.id === "ollama" && p.models.length > 0)
+      const result = httpOllama ? providers.filter((p) => p.id !== "ollama-cli") : providers
+
+      _last = result
+      return result
     })()
     try {
       return await _running

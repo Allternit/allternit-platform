@@ -1387,7 +1387,7 @@ mod tests {
     fn aci_action_descriptor_is_deterministic_and_excludes_ephemeral_ids() {
         let body = AciRunBody {
             goal: "buy tickets example.com".to_string(),
-            model: Some("claude-sonnet-4-6".to_string()),
+            model: Some("claude-sonnet-5-5".to_string()),
             bot_id: None,
             thread_id: None,
             allowed_sites: Some(json!(["example.com"])),
@@ -1404,7 +1404,7 @@ mod tests {
         // (or absent) approval_id, must hash identically.
         let mut retry = AciRunBody {
             goal: "buy tickets example.com".to_string(),
-            model: Some("claude-sonnet-4-6".to_string()),
+            model: Some("claude-sonnet-5-5".to_string()),
             allowed_sites: Some(json!(["example.com"])),
             open_links_in_browser: Some(true),
             auto_verify: Some(false),

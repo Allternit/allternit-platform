@@ -34,6 +34,8 @@ import { Filesystem } from "@/shared/util/filesystem"
 import { ACPSessionManager } from "@/runtime/integrations/acp/session"
 import type { ACPConfig } from "@/runtime/integrations/acp/types"
 import { Provider } from "@/runtime/providers/provider"
+import { currentDefaultBrain, isPinnedModel } from "@/runtime/providers/default-brain"
+import { retiredModelId } from "@/runtime/providers/discovery/subprocess"
 import { Agent as AgentModule } from "@/runtime/loop/agent"
 import { Installation } from "@/shared/installation"
 import { MessageV2 } from "@/runtime/session/message-v2"
@@ -1654,23 +1656,29 @@ export namespace ACP {
     }
   }
 
+  /** A model ref with a retired model id mapped to its current one. */
+  function currentRef(ref: { providerID: string; modelID: string }) {
+    return { providerID: ref.providerID, modelID: retiredModelId(ref.providerID, ref.modelID) }
+  }
+
+  /**
+   * The session's starting model. An explicit model wins: the ACP client's
+   * `defaultModel`, then a `/model` pin in this directory's config. Otherwise
+   * the one default-brain resolver decides (default-brain.ts); when its pick
+   * is not available here, the best model this directory offers.
+   */
   async function defaultModel(config: ACPConfig, cwd?: string) {
     const sdk = config.sdk
-    const configured = config.defaultModel
-    if (configured) return configured
+    if (config.defaultModel) return currentRef(config.defaultModel)
 
     const directory = cwd ?? process.cwd()
 
-    const specified = await sdk.config
+    const pinned = await sdk.config
       .get({ query: { directory }, throwOnError: true })
       .then((resp: any) => {
         const cfg = resp.data
-        if (!cfg || !cfg.model) return undefined
-        const parsed = Provider.parseModel(cfg.model)
-        return {
-          providerID: parsed.providerID,
-          modelID: parsed.modelID,
-        }
+        if (!cfg?.model || !isPinnedModel({ modelAuto: cfg.model_auto, currentModel: cfg.model })) return undefined
+        return currentRef(Provider.parseModel(cfg.model))
       })
       .catch((error: unknown) => {
         log.error("failed to load user config for default model", { error })
@@ -1685,39 +1693,34 @@ export namespace ACP {
         return []
       })
 
-    if (specified && providers.length) {
-      const provider = providers.find((p: any) => p.id === specified.providerID)
-      if (provider && provider.models[specified.modelID]) return specified
-    }
+    const available = (ref: { providerID: string; modelID: string }) =>
+      !providers.length || Boolean(providers.find((p: any) => p.id === ref.providerID)?.models[ref.modelID])
 
-    if (specified && !providers.length) return specified
+    if (pinned && available(pinned)) return pinned
 
-    const gizziProvider = providers.find((p: any) => p.id === "gizzi")
-    if (gizziProvider) {
-      if (gizziProvider.models["big-pickle"]) {
-        return { providerID: "gizzi", modelID: "big-pickle" }
-      }
-      const [best] = Provider.sort(Object.values(gizziProvider.models))
-      if (best) {
-        return {
-          providerID: best.providerID,
-          modelID: best.id,
-        }
-      }
+    const brain = await currentDefaultBrain().catch((error: unknown) => {
+      log.error("failed to resolve the default brain", { error })
+      return undefined
+    })
+    if (brain?.model) {
+      const resolved = currentRef(Provider.parseModel(brain.model))
+      if (resolved.providerID !== "auto" && available(resolved)) return resolved
     }
 
     const models = providers.flatMap((p: any) => Object.values(p.models))
-    const [best] = Provider.sort(models)
+    const [best] = Provider.sort(models as any)
     if (best) {
       return {
-        providerID: best.providerID,
-        modelID: best.id,
+        providerID: (best as any).providerID,
+        modelID: (best as any).id,
       }
     }
 
-    if (specified) return specified
+    if (pinned) return pinned
 
-    return { providerID: "gizzi", modelID: "big-pickle" }
+    // Nothing in this directory: the runtime's own default (throws a clear
+    // "connect a provider" error when nothing is signed in).
+    return currentRef(await Provider.defaultModel())
   }
 
   function parseUri(
@@ -1907,7 +1910,7 @@ export namespace ACP {
       return { model: parsed, variant: undefined }
     }
 
-    // Try to extract variant from end of modelID (e.g., "claude-sonnet-4/high" -> model: "claude-sonnet-4", variant: "high")
+    // Try to extract variant from end of modelID (e.g., "claude-sonnet-5-5/high" -> model: "claude-sonnet-5-5", variant: "high")
     const segments = parsed.modelID.split("/")
     if (segments.length > 1) {
       const candidateVariant = segments[segments.length - 1]

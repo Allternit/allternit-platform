@@ -33,11 +33,9 @@ import {
 } from './model.js'
 import { has1mContext } from '../context.js'
 import { getGlobalConfig } from '../config.js'
-import { readFileSync } from 'fs'
 import { ProviderOffer } from '@/runtime/providers/offer'
-import { getLocalProviderConfig } from '../../services/api/localModel.js'
-import { homedir } from 'os'
-import { join } from 'path'
+import type { ModelList } from '@/runtime/providers/model-list'
+import { inferVendor, vendorDisplayName } from './modelPickerModel.js'
 
 // @[MODEL LAUNCH]: Update all the available and default model option strings below.
 
@@ -48,83 +46,214 @@ export type ModelOption = {
   descriptionForModel?: string
 }
 
-type ConfiguredProvider = {
-  id: string
-  name: string
-  kind: ProviderOffer.Kind
-  models: Array<{ value: string; label: string }>
+type ModelListModule = typeof import('../../../../../runtime/providers/model-list.js')
+/** One section of the shared model list (runtime/providers/model-list.ts). */
+export type ModelListSection = ModelList.Section
+
+function loadModelList(): ModelListModule | undefined {
+  try {
+    return require('../../../../../runtime/providers/model-list.js') as ModelListModule
+  } catch {
+    return undefined
+  }
 }
 
 /**
- * The providers in gizzi.json's "provider" section (e.g.
- * ~/.config/gizzi-code/gizzi.json) a picker may offer, by the shared rule
- * (runtime/providers/offer.ts): local and custom servers always, API-key
- * providers once a key is on file, aggregators (OpenRouter) never. Same file
- * and read pattern as getRuntimeConfigModel() in model.ts, kept synchronous
- * since this runs in a render path.
+ * The shared model list's last build (the rows `gizzi models` prints), `[]`
+ * before the first build. Synchronous: safe in a render path.
  */
-function getConfiguredProviders(): ConfiguredProvider[] {
+export function getModelListSections(): ModelListSection[] {
   try {
-    const configDir =
-      process.env.GIZZI_CONFIG_DIR ?? join(homedir(), '.config', 'gizzi-code')
-    const raw = readFileSync(join(configDir, 'gizzi.json'), 'utf-8')
-    const parsed = JSON.parse(raw)
-    const out: ConfiguredProvider[] = []
-    for (const [providerID, provider] of Object.entries<any>(parsed.provider ?? {})) {
-      const options = provider?.options ?? {}
-      const candidate = {
-        id: providerID,
-        auth_type: provider?.auth_type,
-        baseURL: options.baseURL ?? provider?.baseURL,
-        options,
-      }
-      const kind = ProviderOffer.kind(candidate)
-      // Cloud and subscriptions come from discovery; the TUI runs API-key and
-      // local providers over their OpenAI-compatible endpoint (localModel.ts).
-      if (kind !== 'api' && kind !== 'local') continue
-      const resolved = getLocalProviderConfig(`${providerID}/_`)
-      if (!resolved) continue
-      const envKeys: string[] = Array.isArray(provider?.env) ? provider.env : []
-      const connected = Boolean(resolved.config.apiKey) || envKeys.some(k => Boolean(process.env[k]))
-      if (!ProviderOffer.isOffered(candidate, { connected })) continue
-      out.push({
-        id: providerID,
-        name: provider.name ?? providerID,
-        kind,
-        models: Object.entries<any>(provider.models ?? {}).map(([modelKey, model]) => ({
-          value: `${providerID}/${model?.id ?? modelKey}`,
-          label: model?.name ?? modelKey,
-        })),
-      })
-    }
-    return out
+    return loadModelList()?.ModelList.last() ?? []
   } catch {
     return []
   }
 }
 
-function getConfiguredModelOptions(): ModelOption[] {
-  return getConfiguredProviders()
-    .sort((a, b) => ProviderOffer.ORDER.indexOf(a.kind) - ProviderOffer.ORDER.indexOf(b.kind))
-    .flatMap(p =>
-      p.models.map(m => ({
-        value: m.value,
-        label: m.label,
-        description: `${p.name} · ${p.kind === 'local' ? 'local' : 'API key'}`,
-        descriptionForModel: `${m.label} — ${p.kind === 'local' ? 'locally hosted' : 'API key'} via ${p.name}`,
-      })),
-    )
+let refreshing: Promise<ModelListSection[]> | null = null
+
+/**
+ * Build the shared model list (discovery + configured providers), the same
+ * way `gizzi models` does: inside an Instance for this directory so API-key
+ * and local providers from the config are included. Concurrent calls share
+ * one build. Never rejects; falls back to the last build.
+ */
+export function refreshModelListSections(): Promise<ModelListSection[]> {
+  if (refreshing) return refreshing
+  refreshing = (async () => {
+    const mod = loadModelList()
+    if (!mod) return []
+    const build = () => mod.ModelList.build()
+    try {
+      const { Instance } = await import('@/runtime/context/project/instance')
+      return await Instance.provide({ directory: process.cwd(), fn: build })
+    } catch {
+      return await build().catch(() => mod.ModelList.last())
+    }
+  })().finally(() => {
+    refreshing = null
+  })
+  return refreshing
 }
 
-/** Picker section metadata for gizzi.json providers (API keys, local servers). */
-export function getConfiguredProviderMeta(): Map<string, { providerId: string; providerName: string; source: string; kind: ProviderOffer.Kind }> {
-  const map = new Map<string, { providerId: string; providerName: string; source: string; kind: ProviderOffer.Kind }>()
-  for (const p of getConfiguredProviders()) {
-    for (const m of p.models) {
-      map.set(m.value, { providerId: p.id, providerName: p.name, source: p.kind === 'local' ? 'local' : 'api', kind: p.kind })
+/** Options for every row of the shared model list, in its order. */
+function getModelListOptions(): ModelOption[] {
+  const sections = getModelListSections()
+  if (sections.length === 0) void refreshModelListSections()
+  return sections.flatMap(section =>
+    section.providers.flatMap(provider =>
+      provider.models.map(row => ({
+        value: row.ref,
+        label: row.name,
+        description: `${provider.name} · ${section.title} · ${row.ref}`,
+        descriptionForModel: `${row.name} — ${section.title} via ${provider.name} (${row.ref})`,
+      })),
+    ),
+  )
+}
+
+/** A selectable or header row of the TUI model picker. */
+export type ModelPickerRow =
+  | { kind: 'section'; key: string; title: string }
+  | { kind: 'provider'; key: string; title: string; providerId?: string; notSignedIn: boolean }
+  | {
+      kind: 'option'
+      key: string
+      value: string
+      label: string
+      description?: string
+      providerId?: string
+      providerName?: string
+      sectionTitle: string
+      modelID?: string
+      isDefault: boolean
+      isCurrent: boolean
+      context?: number
+      /** False for a CLI known to be signed out (row stays selectable). */
+      signedIn?: boolean
+      favorite: boolean
+    }
+
+type PickerOptionRow = Extract<ModelPickerRow, { kind: 'option' }>
+
+/**
+ * The picker's rows: one header per section of the shared list (Allternit
+ * Cloud, Your subscriptions, API keys, Local), a sub-header per provider
+ * (Cloud rows grouped by upstream vendor when it can be inferred), then any
+ * option the list does not carry (env custom model, the running model) under
+ * "Other". The list's order is kept; headers whose rows the query hides are
+ * dropped.
+ *
+ * `current` is the model this session runs; null means "the default", in
+ * which case the list's own `current` flag (the resolved default brain) marks it.
+ */
+export function buildModelPickerRows(
+  sections: ModelListSection[],
+  extras: Array<{ value: string; label: string; description?: string }>,
+  opts: { query?: string; favorites?: string[]; current?: string | null } = {},
+): { rows: ModelPickerRow[]; matched: number; total: number } {
+  const query = (opts.query ?? '').trim().toLowerCase()
+  const favorites = opts.favorites ?? []
+  const current = opts.current ?? null
+  const rows: ModelPickerRow[] = []
+  let matched = 0
+  let total = 0
+  const seen = new Set<string>()
+
+  const matches = (hay: Array<string | undefined>) =>
+    !query || hay.filter(Boolean).join(' ').toLowerCase().includes(query)
+
+  type Group = { key: string; title: string; providerId?: string; notSignedIn: boolean; rows: PickerOptionRow[] }
+
+  for (const section of sections) {
+    const groups: Group[] = []
+    for (const provider of section.providers) {
+      const byKey = new Map<string, Group>()
+      const notSignedIn = provider.signedIn === false
+      const cloudVendors =
+        section.kind === 'cloud'
+          ? provider.models.map(row => inferVendor({ id: row.modelID, name: row.name }))
+          : []
+      const splitByVendor = cloudVendors.some(v => v !== 'other')
+      provider.models.forEach((row, i) => {
+        total++
+        seen.add(row.ref)
+        const vendor = splitByVendor ? cloudVendors[i]! : undefined
+        const groupTitle = vendor ? vendorDisplayName(vendor) : provider.name
+        const groupKey = `${section.kind}:${provider.id}${vendor ? `:${vendor}` : ''}`
+        const hay = [row.name, row.modelID, row.providerID, provider.name, section.title, vendor ? groupTitle : undefined]
+        if (!matches(hay)) return
+        matched++
+        let group = byKey.get(groupKey)
+        if (!group) {
+          group = {
+            key: groupKey,
+            title: notSignedIn ? `${groupTitle} · not signed in` : groupTitle,
+            providerId: provider.id,
+            notSignedIn,
+            rows: [],
+          }
+          byKey.set(groupKey, group)
+          groups.push(group)
+        }
+        group.rows.push({
+          kind: 'option',
+          key: `opt:${row.ref}`,
+          value: row.ref,
+          label: row.name,
+          providerId: provider.id,
+          providerName: provider.name,
+          sectionTitle: section.title,
+          modelID: row.modelID,
+          isDefault: row.default,
+          isCurrent: current !== null ? row.ref === current : row.current,
+          context: row.context,
+          signedIn: provider.signedIn,
+          favorite: favorites.includes(row.ref),
+        })
+      })
+    }
+    if (groups.length === 0) continue
+    rows.push({ kind: 'section', key: `sec:${section.kind}`, title: section.title })
+    for (const group of groups) {
+      rows.push({
+        kind: 'provider',
+        key: `prov:${group.key}`,
+        title: group.title,
+        providerId: group.providerId,
+        notSignedIn: group.notSignedIn,
+      })
+      rows.push(...group.rows)
     }
   }
-  return map
+
+  const other: PickerOptionRow[] = []
+  for (const extra of extras) {
+    if (seen.has(extra.value)) continue
+    seen.add(extra.value)
+    total++
+    if (!matches([extra.label, extra.value, extra.description, 'Other'])) continue
+    matched++
+    const slash = extra.value.indexOf('/')
+    other.push({
+      kind: 'option',
+      key: `opt:${extra.value}`,
+      value: extra.value,
+      label: extra.label,
+      description: extra.description,
+      providerId: slash > 0 ? extra.value.slice(0, slash) : undefined,
+      sectionTitle: 'Other',
+      modelID: slash > 0 ? extra.value.slice(slash + 1) : undefined,
+      isDefault: false,
+      isCurrent: current !== null && extra.value === current,
+      favorite: favorites.includes(extra.value),
+    })
+  }
+  if (other.length > 0) {
+    rows.push({ kind: 'section', key: 'sec:other', title: 'Other' })
+    rows.push(...other)
+  }
+  return { rows, matched, total }
 }
 
 export function getDefaultOptionForUser(fastMode = false): ModelOption {
@@ -543,43 +672,11 @@ function getKnownModelOption(model: string): ModelOption | null {
   }
 }
 
-function getDiscoveredBrainOptions(): ModelOption[] {
-  try {
-    const { Discovery } = require('../../../../../runtime/providers/discovery/index.js') as typeof import('../../../../../runtime/providers/discovery/index.js')
-    Discovery.prefetch()
-    const options: ModelOption[] = []
-    // Desktop's order and rule (runtime/providers/offer.ts): Allternit Cloud,
-    // your subscriptions, then local; aggregators never standalone.
-    const providers = [...Discovery.last()]
-      .filter(dp => ProviderOffer.isOffered(dp, { connected: true }))
-      .sort((a, b) => {
-        const d = ProviderOffer.rank(a) - ProviderOffer.rank(b)
-        return d !== 0 ? d : a.name.localeCompare(b.name)
-      })
-    for (const dp of providers) {
-      const kind = ProviderOffer.kind(dp)
-      const group =
-        kind === 'cloud' ? 'Allternit Cloud' : kind === 'subscription' ? 'your subscription' : kind === 'local' ? 'local' : 'API key'
-      const tag = kind === 'cloud' ? 'Cloud' : kind === 'subscription' ? (dp.source === 'subprocess' ? 'CLI' : 'Subscription') : group
-      for (const m of dp.models) {
-        options.push({
-          value: `${dp.id}/${m.id}`,
-          label: `${tag} · ${m.name}`,
-          description: `${dp.name} · ${group} · ${dp.id}/${m.id}`,
-        })
-      }
-    }
-    return options
-  } catch {
-    return []
-  }
-}
-
 export function getModelOptions(fastMode = false): ModelOption[] {
-  // Default brains: live Allternit Cloud catalog + installed CLI subprocesses,
-  // then connected API keys and local servers. Hardcoded Claude picker is not
-  // the default. Aggregators (OpenRouter) are never offered standalone.
-  const options = [...getDiscoveredBrainOptions(), ...getConfiguredModelOptions()].filter(
+  // The shared model list (runtime/providers/model-list.ts): the same rows,
+  // order and offer rule as `gizzi models` and Desktop. Aggregators
+  // (OpenRouter) are never offered standalone.
+  const options = getModelListOptions().filter(
     opt => !opt.value || !ProviderOffer.neverStandalone(opt.value.split('/')[0]!),
   )
 

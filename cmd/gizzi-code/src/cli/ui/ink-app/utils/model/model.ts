@@ -6,9 +6,6 @@
  * during dead code elimination
  */
 import { getLocalProviderConfig } from '../../services/api/localModel.js'
-import { readFileSync } from 'fs'
-import { homedir } from 'os'
-import { join } from 'path'
 import { getMainLoopModelOverride } from '../../bootstrap/state.js'
 import {
   getSubscriptionType,
@@ -38,33 +35,84 @@ export type ModelShortName = string
 export type ModelName = string
 export type ModelSetting = ModelName | ModelAlias | null
 
+// Runtime modules are loaded lazily (same pattern as modelOptions.ts): this
+// file sits in every render path, and a runtime module that fails to load
+// must degrade the default, not crash the TUI.
+type RuntimeConfigModule = typeof import('../../../../../runtime/context/config/config.js')
+type DefaultBrainModule = typeof import('../../../../../runtime/providers/default-brain.js')
+type DiscoveryModule = typeof import('../../../../../runtime/providers/discovery/index.js')
+type SubprocessModule = typeof import('../../../../../runtime/providers/discovery/subprocess.js')
+
+function loadRuntime<T>(load: () => T): T | undefined {
+  try {
+    return load()
+  } catch {
+    return undefined
+  }
+}
+
 /**
- * Read a top-level model field from the runtime gizzi.json config
- * (e.g. ~/.config/gizzi-code/gizzi.json). This bridges the Ink UI settings
- * path with the runtime provider config so models set in gizzi.json are
- * picked up by the TUI.
+ * The merged global runtime config, read the same way and from the same
+ * files (config.json, gizzi.json, gizzi.jsonc, config.toml, legacy dir
+ * first) as the runtime, so the TUI and the runtime agree on `model`,
+ * `model_auto` and `small_model`.
  */
+function readRuntimeConfig(): Record<string, unknown> {
+  const mod = loadRuntime(
+    () => require('../../../../../runtime/context/config/config.js') as RuntimeConfigModule,
+  )
+  if (!mod) return {}
+  try {
+    return mod.Config.readGlobalConfigSync()
+  } catch {
+    return {}
+  }
+}
+
+/** A `provider/model` ref with a retired model id mapped to its current one. */
+function mapRetiredRef(ref: string): string {
+  const slash = ref.indexOf('/')
+  if (slash <= 0) return ref
+  const sub = loadRuntime(
+    () => require('../../../../../runtime/providers/discovery/subprocess.js') as SubprocessModule,
+  )
+  if (!sub) return ref
+  const providerID = ref.slice(0, slash)
+  return `${providerID}/${sub.retiredModelId(providerID, ref.slice(slash + 1))}`
+}
+
+function stringField(cfg: Record<string, unknown>, field: string): string | undefined {
+  const value = cfg[field]
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined
+}
+
+/** A top-level model field from the merged runtime config, retired ids mapped. */
 function getRuntimeConfigField(
   field: 'model' | 'small_model',
 ): ModelName | undefined {
-  try {
-    const configDir =
-      process.env.GIZZI_CONFIG_DIR ?? join(homedir(), '.config', 'gizzi-code')
-    const configPath = join(configDir, 'gizzi.json')
-    const raw = readFileSync(configPath, 'utf-8')
-    const parsed = JSON.parse(raw)
-    const value = parsed?.[field]
-    if (typeof value === 'string' && value.length > 0) {
-      return value
-    }
-  } catch {
-    // Runtime config missing or unreadable — fall back to normal settings path.
-  }
-  return undefined
+  const value = stringField(readRuntimeConfig(), field)
+  return value ? mapRetiredRef(value) : undefined
 }
 
+/**
+ * The config's model only when it is the user's own pin (a `/model` pick):
+ * an automatic pick (`model_auto: true`) and Desktop's mistaken nail-35
+ * default are not user choices, so they go through the default resolver.
+ */
 function getRuntimeConfigModel(): ModelName | undefined {
-  return getRuntimeConfigField('model')
+  const cfg = readRuntimeConfig()
+  const model = stringField(cfg, 'model')
+  if (!model) return undefined
+  const brain = loadRuntime(
+    () => require('../../../../../runtime/providers/default-brain.js') as DefaultBrainModule,
+  )
+  const modelAuto = typeof cfg.model_auto === 'boolean' ? cfg.model_auto : undefined
+  if (brain) {
+    if (!brain.isPinnedModel({ modelAuto, currentModel: model })) return undefined
+  } else if (modelAuto === true) {
+    return undefined
+  }
+  return mapRetiredRef(model)
 }
 
 /**
@@ -112,7 +160,11 @@ export function isNonCustomOpusModel(model: ModelName): boolean {
  * 1. Model override during session (from /model command) - highest priority
  * 2. Model override at startup (from --model flag)
  * 3. ANTHROPIC_MODEL environment variable
- * 4. Settings (from user's saved settings)
+ * 4. The runtime config's pin (`model` with `model_auto` not true) — the
+ *    same pin the runtime and Desktop read
+ * 5. Settings (from user's saved settings) — aliases only; a
+ *    `provider/model` there is a copy of an older pick, and the runtime
+ *    config decides those
  */
 export function getUserSpecifiedModelSetting(): ModelSetting | undefined {
   let specifiedModel: ModelSetting | undefined
@@ -122,10 +174,14 @@ export function getUserSpecifiedModelSetting(): ModelSetting | undefined {
     specifiedModel = modelOverride
   } else {
     const settings = getSettings_DEPRECATED() || {}
+    const settingsModel =
+      typeof settings.model === 'string' && !settings.model.includes('/')
+        ? settings.model
+        : undefined
     specifiedModel =
       process.env.ANTHROPIC_MODEL ||
-      settings.model ||
       getRuntimeConfigModel() ||
+      settingsModel ||
       undefined
   }
 
@@ -226,18 +282,133 @@ export function getRuntimeMainLoopModel(params: {
   return mainLoopModel
 }
 
+/** Drop providers the user disabled (`disabled_providers` / `enabled_providers`), as the runtime does. */
+function allowedProviders<T extends { id: string }>(cfg: Record<string, unknown>, providers: T[]): T[] {
+  const disabled = new Set(Array.isArray(cfg.disabled_providers) ? (cfg.disabled_providers as string[]) : [])
+  const enabled = Array.isArray(cfg.enabled_providers) ? new Set(cfg.enabled_providers as string[]) : undefined
+  return providers.filter(p => !disabled.has(p.id) && (!enabled || enabled.has(p.id)))
+}
+
 /**
- * Get the default main loop model setting.
+ * The shared default-brain resolver's answer (runtime/providers/default-brain.ts),
+ * computed synchronously over the merged config, the cached Allternit plan
+ * and this process's last discovery. Null before discovery has finished or
+ * when nothing usable was found. A pin is not the default: it is resolved
+ * as if unpinned, which is what choosing "default" would give.
+ */
+function resolveDiscoveredDefault(cfg: Record<string, unknown>): ModelName | null {
+  const discovery = loadRuntime(
+    () => require('../../../../../runtime/providers/discovery/index.js') as DiscoveryModule,
+  )
+  const brain = loadRuntime(
+    () => require('../../../../../runtime/providers/default-brain.js') as DefaultBrainModule,
+  )
+  if (!discovery || !brain) return null
+  // Discovery runs once per process; the TUI thread starts its own here.
+  try {
+    discovery.Discovery.prefetch()
+  } catch {}
+  const providers = allowedProviders(cfg, discovery.Discovery.last())
+  if (providers.length === 0) return null
+
+  const currentModel = stringField(cfg, 'model')
+  const modelAuto = typeof cfg.model_auto === 'boolean' ? cfg.model_auto : undefined
+  const pinned = brain.isPinnedModel({ modelAuto, currentModel })
+  const plan = discovery.getCachedAllternitPlan()
+  const listed = (ref: string | null): ref is string => {
+    if (!ref) return false
+    const slash = ref.indexOf('/')
+    if (slash <= 0) return false
+    const providerID = ref.slice(0, slash)
+    const modelID = ref.slice(slash + 1)
+    return providers.some(p => p.id === providerID && p.models.some(m => m.id === modelID))
+  }
+
+  const first = brain.resolveDefaultBrain({
+    modelAuto: pinned ? undefined : modelAuto,
+    currentModel: pinned ? undefined : currentModel,
+    plan,
+    providers,
+  })
+  if (listed(first.model)) return first.model
+  // A kept automatic pick whose model is no longer listed: resolve afresh.
+  const fresh = brain.resolveDefaultBrain({ plan, providers })
+  return listed(fresh.model) ? fresh.model : null
+}
+
+/**
+ * The last automatic pick the runtime saved (`model_auto: true`), used only
+ * until this process's discovery finishes. It is the resolver's own earlier
+ * answer, so a warm start shows the same model before and after discovery.
+ */
+function lastAutomaticPick(cfg: Record<string, unknown>): ModelName | null {
+  if (cfg.model_auto !== true) return null
+  const model = stringField(cfg, 'model')
+  if (!model || !model.includes('/') || /^auto(\/auto)?$/i.test(model)) return null
+  const brain = loadRuntime(
+    () => require('../../../../../runtime/providers/default-brain.js') as DefaultBrainModule,
+  )
+  if (!brain || brain.isMistakenAutoDefault(model)) return null
+  return mapRetiredRef(model)
+}
+
+/**
+ * The catalog's first-ranked CLI and its flagged default model (claude-cli's
+ * default today), read from cli-catalog.json. Only a cold-start placeholder:
+ * the resolver replaces it once discovery finishes.
+ */
+function catalogFirstRankedDefault(): ModelName | null {
+  const sub = loadRuntime(
+    () => require('../../../../../runtime/providers/discovery/subprocess.js') as SubprocessModule,
+  )
+  if (!sub) return null
+  const tool = sub.CLI_CATALOG
+    .filter(t => !t.custom && t.defaultRank !== undefined && (t.models?.length ?? 0) > 0)
+    .sort((a, b) => a.defaultRank! - b.defaultRank!)[0]
+  if (!tool) return null
+  const model = tool.models!.find(m => m.default && !m.hidden) ?? tool.models!.find(m => !m.hidden)
+  return model ? `${tool.id}/${model.id}` : null
+}
+
+function hasAnthropicCredentials(): boolean {
+  return Boolean(
+    process.env.ANTHROPIC_API_KEY ||
+      process.env.GIZZI_CODE_OAUTH_TOKEN ||
+      process.env.ANTHROPIC_AUTH_TOKEN,
+  )
+}
+
+/**
+ * Get the default main loop model setting (used when the user specified none).
  *
- * This handles the built-in default:
- * - Opus for Max and Team Premium users
- * - Sonnet 4.6 for all other users (including Team Standard, Pro, Enterprise)
+ * 1. The shared default-brain resolver over this process's discovery
+ *    (paid plan → Allternit Cloud's flagged model, else the best-ranked
+ *    signed-in CLI's default) — never a model no provider lists.
+ * 2. Before discovery finishes: the runtime's last automatic pick.
+ * 3. Anthropic credentials in the environment: the Anthropic default below.
+ * 4. Otherwise the catalog's first-ranked CLI default, until discovery
+ *    finishes and (1) answers.
  *
  * @returns The default model setting to use
  */
 export function getDefaultMainLoopModelSetting(): ModelName | ModelAlias {
-  if (!process.env.ANTHROPIC_API_KEY && !process.env.GIZZI_CODE_OAUTH_TOKEN && !process.env.ANTHROPIC_AUTH_TOKEN) {
-    return 'antigravity/default'
+  const cfg = readRuntimeConfig()
+  const discovered = resolveDiscoveredDefault(cfg)
+  if (discovered) return discovered
+
+  const discoveryDone = (() => {
+    const discovery = loadRuntime(
+      () => require('../../../../../runtime/providers/discovery/index.js') as DiscoveryModule,
+    )
+    return Boolean(discovery && discovery.Discovery.last().length > 0)
+  })()
+  if (!discoveryDone) {
+    const kept = lastAutomaticPick(cfg)
+    if (kept) return kept
+  }
+
+  if (!hasAnthropicCredentials()) {
+    return catalogFirstRankedDefault() ?? getDefaultSonnetModel()
   }
 
   // Ants default to defaultModel from flag config, or Opus 1M if not configured

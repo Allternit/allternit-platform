@@ -506,6 +506,21 @@ fn is_local_provider(provider_id: &str) -> bool {
 /// always `local`; a remote provider's model takes its tier from
 /// `model_metadata` when known, else `standard`. `description` comes from
 /// `model_metadata` (or `null`), `thinking` from the shared thinking table.
+///
+/// `default` / `rank` (the vendor's default model and its 0-based vendor
+/// order) come from gizzi's model entry when it sends them; an older gizzi
+/// that doesn't gets them from the embedded CLI catalog for CLI providers
+/// (retired ids mapped to their replacement), else `false` / `null`. They are
+/// informational: nothing here selects a model for the user.
+///
+/// `hidden: true` (retired Allternit Cloud aliases) passes through only on
+/// those rows: they stay listed so a saved choice keeps resolving, are never
+/// `default`, and sort last in their provider.
+///
+/// Order: providers keep gizzi's `all` order; inside a provider visible rows
+/// come first, sorted by `rank` ascending, rows without a rank after them in model-id
+/// order (gizzi's `models` is a JSON object, read here as a sorted map since
+/// serde_json `preserve_order` is off). Clients (iOS) keep this order.
 fn live_model_catalog(body: &serde_json::Value) -> Option<Vec<serde_json::Value>> {
     let connected: std::collections::HashSet<&str> = body
         .get("connected")?
@@ -524,6 +539,8 @@ fn live_model_catalog(body: &serde_json::Value) -> Option<Vec<serde_json::Value>
         let provider_name = provider.get("name").and_then(|v| v.as_str()).unwrap_or(provider_id);
         let local = is_local_provider(provider_id);
         let Some(models) = provider.get("models").and_then(|v| v.as_object()) else { continue };
+        let cli_tool = crate::cli_catalog::find(provider_id);
+        let mut rows: Vec<(bool, Option<u64>, serde_json::Value)> = Vec::with_capacity(models.len());
         for (model_id, model) in models {
             let model_name = model.get("name").and_then(|v| v.as_str()).unwrap_or(model_id);
             let meta = crate::provider_routes::model_metadata(model_id);
@@ -533,7 +550,11 @@ fn live_model_catalog(body: &serde_json::Value) -> Option<Vec<serde_json::Value>
                 meta.map(|(_, t, _)| t).unwrap_or("standard")
             };
             let thinking = crate::model_thinking::thinking_json(model_id);
-            out.push(json!({
+            // Retired Allternit Cloud aliases: still listed so a saved choice
+            // stays valid, but flagged, never a default, and sorted last.
+            let hidden = model.get("hidden").and_then(|v| v.as_bool()).unwrap_or(false);
+            let (is_default, rank) = model_default_and_rank(cli_tool, model_id, model);
+            let mut row = json!({
                 "id": format!("{}/{}", provider_id, model_id),
                 "name": format!("{} ({})", model_name, provider_name),
                 "provider": provider_id,
@@ -541,10 +562,39 @@ fn live_model_catalog(body: &serde_json::Value) -> Option<Vec<serde_json::Value>
                 "tier": tier,
                 "supports_effort": !thinking.is_null(),
                 "thinking": thinking,
-            }));
+                "default": is_default && !hidden,
+                "rank": rank,
+            });
+            if hidden {
+                row["hidden"] = json!(true);
+            }
+            rows.push((hidden, rank, row));
         }
+        // Stable: visible before hidden, then rank ascending; equal ranks and
+        // the rankless tail keep model-id order.
+        rows.sort_by_key(|(hidden, rank, _)| (*hidden, rank.is_none(), rank.unwrap_or(u64::MAX)));
+        out.extend(rows.into_iter().map(|(_, _, row)| row));
     }
     Some(out)
+}
+
+/// A model's `(default, rank)` for `/api/v1/models`: gizzi's own fields when
+/// present, else the embedded CLI catalog's (`tool` is the provider's catalog
+/// entry, `None` for non-CLI providers).
+fn model_default_and_rank(
+    tool: Option<&crate::cli_catalog::CliTool>,
+    model_id: &str,
+    model: &serde_json::Value,
+) -> (bool, Option<u64>) {
+    let is_default = model
+        .get("default")
+        .and_then(|v| v.as_bool())
+        .unwrap_or_else(|| tool.is_some_and(|t| t.is_default_model(model_id)));
+    let rank = model
+        .get("rank")
+        .and_then(|v| v.as_u64())
+        .or_else(|| tool.and_then(|t| t.model_rank(model_id)).map(|r| r as u64));
+    (is_default, rank)
 }
 
 /// GET /api/v1/models/recommend — ranks available models for a task + priority.
@@ -576,6 +626,8 @@ async fn recommend_models(
 
     let mut recommendations: Vec<serde_json::Value> = catalog
         .into_iter()
+        // Hidden (retired) models stay valid for saved choices but are never offered.
+        .filter(|model| model.get("hidden").and_then(|v| v.as_bool()) != Some(true))
         .map(|model| {
             let (score, reason) = score_model_for_task(&model, &task, &priority);
             let mut rec = model.clone();
@@ -1824,6 +1876,13 @@ async fn agent_chat_bridge(
         (p.to_string(), m.to_string())
     } else {
         (default_provider, raw_model.clone())
+    };
+    // A saved choice of a retired CLI model id (`claude-cli/claude-fable-5-1`)
+    // keeps working: it runs as the catalog's replacement. Only renames the
+    // user's own choice; never picks one.
+    let model_id = match crate::cli_catalog::find(&provider_id) {
+        Some(tool) => tool.current_model_id(&model_id).to_string(),
+        None => model_id,
     };
 
     let gizzi = gizzi_base();
@@ -3525,11 +3584,11 @@ mod tests {
         let body = json!({
             "all": [
                 { "id": "claude-cli", "name": "Claude Code", "source": "cli",
-                  "models": { "claude-opus-5": { "name": "Claude Opus 5" } } },
+                  "models": { "claude-opus-5-5": { "name": "Claude Opus 5.5" } } },
                 { "id": "allternit", "name": "Allternit Cloud", "source": "api",
                   "models": { "some-new-model": { "name": "Some New Model" } } },
                 { "id": "sidecar", "name": "Sidecar", "source": "local",
-                  "models": { "claude-opus-5": { "name": "Local Opus" }, "qwen-coder": {} } },
+                  "models": { "claude-opus-5-5": { "name": "Local Opus" }, "qwen-coder": {} } },
                 { "id": "openai", "name": "OpenAI", "source": "env",
                   "models": { "gpt-5": { "name": "GPT-5" } } }
             ],
@@ -3539,14 +3598,14 @@ mod tests {
         let catalog = super::live_model_catalog(&body).expect("valid body");
         let ids: Vec<&str> = catalog.iter().filter_map(|m| m["id"].as_str()).collect();
         assert_eq!(ids.len(), 4);
-        assert!(ids.contains(&"claude-cli/claude-opus-5"));
+        assert!(ids.contains(&"claude-cli/claude-opus-5-5"));
         assert!(ids.contains(&"allternit/some-new-model"));
         assert!(ids.contains(&"sidecar/qwen-coder"));
         assert!(!ids.iter().any(|id| id.starts_with("openai/")), "not connected, not listed");
 
         let find = |id: &str| catalog.iter().find(|m| m["id"] == id).unwrap().clone();
-        let opus = find("claude-cli/claude-opus-5");
-        assert_eq!(opus["name"], "Claude Opus 5 (Claude Code)");
+        let opus = find("claude-cli/claude-opus-5-5");
+        assert_eq!(opus["name"], "Claude Opus 5.5 (Claude Code)");
         assert_eq!(opus["provider"], "claude-cli");
         assert_eq!(opus["tier"], "flagship", "known model keeps its metadata tier");
         assert_eq!(opus["description"], "For your toughest challenges");
@@ -3556,10 +3615,58 @@ mod tests {
         assert_eq!(unknown["tier"], "standard", "unknown remote model defaults to standard");
         assert!(unknown["description"].is_null());
 
-        assert_eq!(find("sidecar/claude-opus-5")["tier"], "local", "local providers are always local");
+        assert_eq!(find("sidecar/claude-opus-5-5")["tier"], "local", "local providers are always local");
         let qwen = find("sidecar/qwen-coder");
         assert_eq!(qwen["name"], "qwen-coder (Sidecar)", "model id stands in for a missing name");
         assert_eq!(qwen["tier"], "local");
+    }
+
+    #[test]
+    fn model_catalog_orders_by_rank_and_fills_default_from_catalog() {
+        // Older gizzi: no `default`/`rank` on models, so CLI rows take them from
+        // the embedded catalog; the JSON object's alphabetical order is not kept.
+        let old = json!({
+            "all": [
+                { "id": "claude-cli", "name": "Claude Code", "models": {
+                    "claude-haiku-5-5": {}, "claude-opus-5-5": {}, "claude-sonnet-5-5": {}, "zz-unlisted": {} } },
+                { "id": "allternit", "name": "Allternit Cloud", "models": { "b": {}, "a": {} } }
+            ],
+            "connected": ["claude-cli", "allternit"]
+        });
+        let rows = super::live_model_catalog(&old).expect("valid body");
+        let ids: Vec<&str> = rows.iter().filter_map(|m| m["id"].as_str()).collect();
+        assert_eq!(
+            ids,
+            [
+                "claude-cli/claude-opus-5-5",
+                "claude-cli/claude-sonnet-5-5",
+                "claude-cli/claude-haiku-5-5",
+                "claude-cli/zz-unlisted",
+                "allternit/a",
+                "allternit/b",
+            ],
+            "providers keep gizzi order; rank first, rankless after"
+        );
+        let defaults: Vec<&str> = rows.iter().filter(|m| m["default"] == true).filter_map(|m| m["id"].as_str()).collect();
+        assert_eq!(defaults, ["claude-cli/claude-sonnet-5-5"]);
+        assert!(rows.iter().find(|m| m["id"] == "allternit/a").unwrap()["rank"].is_null());
+
+        // Newer gizzi sends them: its values win over the catalog.
+        let new = json!({
+            "all": [{ "id": "allternit", "name": "Allternit Cloud", "models": {
+                "a": { "rank": 1 }, "b": { "rank": 0, "default": true }, "c": {},
+                "0-old": { "rank": 0, "hidden": true, "default": true } } }],
+            "connected": ["allternit"]
+        });
+        let rows = super::live_model_catalog(&new).expect("valid body");
+        let ids: Vec<&str> = rows.iter().filter_map(|m| m["id"].as_str()).collect();
+        assert_eq!(ids, ["allternit/b", "allternit/a", "allternit/c", "allternit/0-old"]);
+        assert_eq!(rows[0]["default"], true);
+        assert_eq!(rows[0]["rank"], 0);
+        assert_eq!(rows[1]["default"], false);
+        assert!(rows[0].get("hidden").is_none(), "visible rows carry no hidden key");
+        assert_eq!(rows[3]["hidden"], true, "hidden rows stay listed, flagged");
+        assert_eq!(rows[3]["default"], false, "a hidden model is never a default");
     }
 
     #[test]

@@ -1124,7 +1124,13 @@ fn resolve_default_model(env: Option<&str>, user: Option<&str>) -> (String, Stri
         .or_else(|| user.map(str::trim).filter(|s| !s.is_empty()))
         .unwrap_or_default();
     if let Some((provider, model)) = raw.split_once('/') {
-        (provider.trim().to_string(), model.trim().to_string())
+        let (provider, model) = (provider.trim(), model.trim());
+        // A saved CLI model the catalog retired keeps working under its
+        // replacement id (the user's own choice, renamed, never a new pick).
+        let model = crate::cli_catalog::find(provider)
+            .map(|tool| tool.current_model_id(model))
+            .unwrap_or(model);
+        (provider.to_string(), model.to_string())
     } else {
         (String::new(), raw.to_string())
     }
@@ -1355,11 +1361,16 @@ mod no_brain_tests {
         assert_eq!(resolve_default_model(None, None), (String::new(), String::new()));
         assert_eq!(resolve_default_model(Some(" "), Some("")), (String::new(), String::new()));
         assert_eq!(
+            resolve_default_model(None, Some("claude-cli/claude-opus-5-5")),
+            ("claude-cli".to_string(), "claude-opus-5-5".to_string())
+        );
+        // A saved CLI model the catalog retired is the same choice under its new id.
+        assert_eq!(
             resolve_default_model(None, Some("claude-cli/claude-opus-5")),
-            ("claude-cli".to_string(), "claude-opus-5".to_string())
+            ("claude-cli".to_string(), "claude-opus-5-5".to_string())
         );
         assert_eq!(
-            resolve_default_model(Some("zai/glm-5"), Some("claude-cli/claude-opus-5")),
+            resolve_default_model(Some("zai/glm-5"), Some("claude-cli/claude-opus-5-5")),
             ("zai".to_string(), "glm-5".to_string())
         );
         assert!(is_no_brain(&resolve_default_model(None, None).0, &resolve_default_model(None, None).1));

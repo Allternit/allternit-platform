@@ -151,8 +151,33 @@ final class ModelStore: ObservableObject {
             let selectionIsStale = self.selectedModelId != nil
                 && !self.models.contains(where: { $0.id == self.selectedModelId })
             if selectionIsStale, !self.models.isEmpty {
-                self.selectedModelId = nil
+                // A CLI model the vendor retired: carry the user's choice to
+                // its successor when the server lists it, else clear.
+                if let stale = self.selectedModelId,
+                   let renamed = Self.renamedId(stale),
+                   self.models.contains(where: { $0.id == renamed }) {
+                    self.selectedModelId = renamed
+                } else {
+                    self.selectedModelId = nil
+                }
             }
         }
+    }
+
+    /// Retired CLI model ids and their successors (model id part only).
+    private static let retiredModelIds: [String: String] = [
+        "claude-fable-5-1": "claude-fable-5-2",
+        "claude-opus-5": "claude-opus-5-5",
+        "claude-sonnet-5": "claude-sonnet-5-5",
+        "gemini-3.7-flash-high": "gemini-3.8-flash-high",
+        "kimi-k2.7-code": "kimi-for-coding",
+    ]
+
+    /// "provider/old" -> "provider/new", keeping the provider; nil if not retired.
+    private static func renamedId(_ id: String) -> String? {
+        guard let slash = id.firstIndex(of: "/") else { return retiredModelIds[id] }
+        let provider = id[..<slash]
+        let model = String(id[id.index(after: slash)...])
+        return retiredModelIds[model].map { "\(provider)/\($0)" }
     }
 }

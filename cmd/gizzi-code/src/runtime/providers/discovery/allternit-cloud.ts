@@ -139,8 +139,49 @@ type CloudModel = {
   owned_by?: string
   provider?: string
   name?: string
-  extra?: { name?: string; context_length?: number }
+  extra?: { name?: string; context_length?: number; default?: boolean; hidden?: boolean }
   context_length?: number
+  /** The Cloud's default model (at most one; absent = the server names none). */
+  default?: boolean
+  /** A retired alias: kept so saved choices resolve, never offered. */
+  hidden?: boolean
+}
+
+/**
+ * `/v1/models` rows → models in the server's order. Hidden rows go last and
+ * `rank` counts the offered rows first; only the server's own flag marks a
+ * default, and never on a hidden row.
+ */
+export function cloudModels(rows: CloudModel[]): DiscoveredModel[] {
+  const offered: DiscoveredModel[] = []
+  const hidden: DiscoveredModel[] = []
+  for (const item of rows) {
+    const id = item.id?.trim()
+    if (!id) continue
+    const name = item.name || item.extra?.name || id
+    const context = item.context_length ?? item.extra?.context_length
+    const model: DiscoveredModel = {
+      id,
+      name,
+      context: typeof context === "number" ? context : 128000,
+      output: 8192,
+    }
+    if (item.hidden === true || item.extra?.hidden === true) {
+      model.hidden = true
+      hidden.push(model)
+      continue
+    }
+    if (item.default === true || item.extra?.default === true) model.default = true
+    offered.push(model)
+  }
+  // One default at most, even if the server flags several.
+  let seenDefault = false
+  for (const model of offered) {
+    if (!model.default) continue
+    if (seenDefault) delete model.default
+    seenDefault = true
+  }
+  return [...offered, ...hidden].map((model, rank) => ({ ...model, rank }))
 }
 
 export async function discoverAllternitCloud(): Promise<DiscoveredProvider[]> {
@@ -155,19 +196,7 @@ export async function discoverAllternitCloud(): Promise<DiscoveredProvider[]> {
       return []
     }
     const json = (await res.json()) as { data?: CloudModel[] }
-    const models: DiscoveredModel[] = []
-    for (const item of json.data ?? []) {
-      const id = item.id?.trim()
-      if (!id) continue
-      const name = item.name || item.extra?.name || id
-      const context = item.context_length ?? item.extra?.context_length
-      models.push({
-        id,
-        name,
-        context: typeof context === "number" ? context : 128000,
-        output: 8192,
-      })
-    }
+    const models = cloudModels(json.data ?? [])
     if (models.length === 0) {
       await planTask
       return []
