@@ -2730,6 +2730,8 @@ async fn decide_approval(
             // transient transport failure only warns so a briefly unreachable
             // runtime never blocks the local decision.
             let task_reply = relay.as_ref().is_some_and(|(_, b)| b.get("reply").and_then(|v| v.as_str()) == Some("task"));
+            // `None`: nothing to relay; `Some(Ok)`: gizzi took it; `Some(Err)`: it never got there.
+            let mut relayed: Option<Result<(), String>> = None;
             if let Some((request_id, reply_body)) = relay {
                 let gizzi = gizzi_base();
                 let client = gizzi_client(&headers);
@@ -2739,7 +2741,7 @@ async fn decide_approval(
                     .send()
                     .await
                 {
-                    Ok(resp) if resp.status().is_success() => {}
+                    Ok(resp) if resp.status().is_success() => relayed = Some(Ok(())),
                     Ok(resp) => {
                         let status = resp.status();
                         warn!(
@@ -2754,6 +2756,11 @@ async fn decide_approval(
                                     "agent runtime rejected the permission reply ({})",
                                     status
                                 ),
+                                // The decision is recorded; only the hand-off to the session failed.
+                                "decided": true,
+                                "id": id_for_response,
+                                "decision": label_for_response,
+                                "relayed": false,
                             })),
                         )
                             .into_response();
@@ -2764,6 +2771,7 @@ async fn decide_approval(
                             request_id = %request_id,
                             "failed to relay permission reply to gizzi"
                         );
+                        relayed = Some(Err(format!("the agent runtime could not be reached: {e}")));
                     }
                 }
             }
@@ -2772,6 +2780,16 @@ async fn decide_approval(
                 "id": id_for_response,
                 "decision": label_for_response,
             });
+            // A relay that never reached the session is reported, not swallowed:
+            // the decision stands, and the surface can say the session didn't get it.
+            match relayed {
+                Some(Ok(())) => body["relayed"] = json!(true),
+                Some(Err(e)) => {
+                    body["relayed"] = json!(false);
+                    body["relayError"] = json!(e);
+                }
+                None => {}
+            }
             // One-task grant: the bot thread this ask came from now allows this class.
             if task_reply {
                 let db = state.db.clone();

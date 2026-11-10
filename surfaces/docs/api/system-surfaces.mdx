@@ -148,8 +148,32 @@ Web Push subscribe adds `platform`: `ios-pwa`, `android` or `desktop`.
 | Route | Description |
 |-------|-------------|
 | `POST /api/v1/inbox/:id/approve` | Body adds `contentHash` and `surface`, both optional. Answers 409 `{"error":"changed"}` on a hash mismatch. |
-| `GET` and `PUT /api/v1/bots/pause` | `{paused, since, by}`. While paused, routines and loops do not start, and bots send no proactive turns or channel auto-replies. Inbound messages are kept and show as unanswered. The owner's direct messages still run. |
+| `GET` and `PUT /api/v1/bots/pause` | Built. The "Pause all bots" switch, owner authenticated, saved across restarts. See [Pause all bots](#pause-all-bots) below. |
 | `GET` and `PUT /api/v1/messages-mac/settings` | `{enabled, access:{fullDisk, automation}}`. Off by default. macOS runtimes only. |
+
+### Pause all bots
+
+`GET /api/v1/bots/pause` answers:
+
+```json
+{ "paused": true, "since": 1762790400, "by": "phone" }
+```
+
+- `paused`: boolean.
+- `since`: Unix seconds when the switch was turned on, or `null` when not paused.
+- `by`: the surface that turned it on, or `null`. Values in use: `web`, `phone`, `desktop`, `ios`, `shortcut`, `control`, `gizzi`.
+
+`PUT /api/v1/bots/pause` takes `{"paused": true, "by": "phone"}` (`by` is optional) and answers the same object as `GET`. Pausing again keeps the first `since` and `by`. Resuming sets both to `null`. A body with no `paused` answers 422.
+
+While paused:
+
+- A due routine or loop is skipped, not run. It keeps its schedule and runs at its next slot after resume, so there is never a burst of missed runs. A skipped routine gets a run row with status `skipped` and `outcome_reason` `bots_paused`. Startup routines do not run.
+- Channel messages from people (Telegram, Discord, WhatsApp, Teams, SMS, Slack, bot email) are kept but get no auto-reply. They show as `unanswered` in Needs you. A message from the account's verified owner still runs.
+- The main bot does not reach out on its own.
+- A run already in progress finishes. Pause is not stop.
+- The owner's own messages in the app, **Run now**, and approvals still work.
+
+The status snapshot (`status.snapshot`) carries `paused` from this switch. A change wakes the snapshot producer, which sends within 5 seconds.
 
 Internal MCP tools, served at `/internal/connectors/mcp`:
 

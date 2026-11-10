@@ -1123,8 +1123,22 @@ mod tests {
         // Another owner can't see or decide it.
         let (s, _) = call(&app, "user-b", "/inbox/permission:per_9/approve", json!({})).await;
         assert_eq!(s, StatusCode::NOT_FOUND);
-        // The relay to gizzi may fail here (no runtime in the test); the row is decided first.
-        let _ = call(&app, "user-a", "/inbox/permission:per_9/approve", json!({ "decision": "deny" })).await;
+        // The real outcome: the row is decided whatever happens to the relay, and a relay
+        // that failed (no gizzi in the test, or gizzi doesn't know per_9) is reported.
+        let (s, v) = call(&app, "user-a", "/inbox/permission:per_9/approve", json!({ "decision": "deny" })).await;
+        if s == StatusCode::OK {
+            let r = &v["result"];
+            assert_eq!((r["ok"].as_bool(), r["decision"].as_str()), (Some(true), Some("rejected")), "{v}");
+            match r["relayed"].as_bool() {
+                Some(true) => {}
+                Some(false) => assert!(r["relayError"].as_str().is_some_and(|e| !e.is_empty()), "a failed relay names why: {v}"),
+                None => panic!("a permission ask with a request id reports whether it reached the session: {v}"),
+            }
+        } else {
+            assert_eq!(s, StatusCode::BAD_GATEWAY, "{v}");
+            assert_eq!((v["decided"].as_bool(), v["relayed"].as_bool()), (Some(true), Some(false)), "{v}");
+            assert!(v["error"].as_str().is_some_and(|e| e.contains("rejected")), "{v}");
+        }
         let (dismissed, decision): (i64, Option<String>) = c.query_row("SELECT dismissed, decision FROM cowork_approvals WHERE id = 'per_9'", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
         assert_eq!((dismissed, decision.as_deref()), (1, Some("rejected")));
         assert!(collect(&c, "user-a", 30).unwrap().iter().all(|i| i["id"] != "permission:per_9"));
