@@ -6,5 +6,6 @@ struct AllternitWidgetsBundle: WidgetBundle {
     var body: some Widget {
         LoopLiveActivityWidget()
         BotLiveActivityWidget()
+        StatusWidget()
     }
 }
