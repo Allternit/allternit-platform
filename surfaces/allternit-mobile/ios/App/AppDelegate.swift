@@ -13,6 +13,8 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         UNUserNotificationCenter.current().delegate = self
         // Buttons on Allternit notifications (identifiers fixed by the contract).
         NotificationCategories.register()
+        // App Intents call into the app through this (SystemSurfaces/Intents).
+        IntentServiceRegistry.register(IntentServices())
         // Extensions cannot import AppConfig; they read the cloud URL here.
         AppGroupStore.cloudBaseURL = AppConfig.cloudAPIBaseURL
         // Every foreground: remove delivered notifications whose item is gone.
