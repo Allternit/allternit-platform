@@ -258,6 +258,25 @@ pub fn typed_text(tool: &str, args: &Map<String, Value>) -> String {
     }
 }
 
+/// A text's or call's content: the recipient (`to`, or a call's `number`) and,
+/// for a text, the message. `None` for every other tool.
+pub fn comms(tool: &str, args: &Map<String, Value>) -> Option<(String, Option<String>)> {
+    match norm_tool(tool).trim_start_matches("phone.") {
+        "sms.send" | "sms_send" => Some((arg(args, &["to"]).unwrap_or_default().trim().to_string(), Some(arg(args, &["text"]).unwrap_or_default().to_string()))),
+        "call.dial" | "call_dial" | "dial" => Some((arg(args, &["number", "to"]).unwrap_or_default().trim().to_string(), None)),
+        _ => None,
+    }
+}
+
+/// The content a hold is tied to besides the element: typed text, or a
+/// text's recipient and message / a call's number.
+fn bound_text(tool: &str, args: &Map<String, Value>) -> String {
+    match comms(tool, args) {
+        Some((to, text)) => format!("to:{to}\u{1f}text:{}", text.unwrap_or_default()),
+        None => typed_text(tool, args),
+    }
+}
+
 /// What the rules say about an action. `None` = not sensitive.
 pub fn rule_effect(a: &Action<'_>) -> Option<&'static str> {
     let tool = norm_tool(a.tool);
@@ -269,6 +288,16 @@ pub fn rule_effect(a: &Action<'_>) -> Option<&'static str> {
             // A tap with no element: the foreground app decides.
             None => a.app.filter(|app| is_money_app(app)).map(|_| "money_app"),
         },
+        // A find-and-tap taps the element it searches for: its screen element when
+        // the caller read one, else the label (`match`) and id it looks for.
+        "find_and_tap" => {
+            let sought = El {
+                class: String::new(),
+                label: arg(a.args, &["match", "text"]).unwrap_or_default().to_string(),
+                id: arg(a.args, &["element_id"]).unwrap_or_default().to_string(),
+            };
+            el.and_then(label_effect).or_else(|| label_effect(&sought))
+        }
         "type" | "web.type" => {
             if el.map(is_secret_field).unwrap_or(false) || a.args.get("secure").and_then(Value::as_bool) == Some(true) {
                 return Some("credential");
@@ -366,6 +395,10 @@ pub enum Decision {
     Hold { approval_id: String, inbox_id: String, effect: String, expires_at: String },
     /// The owner denied this hold.
     Denied { approval_id: String },
+    /// [`check_with_pass`] only: the request's pass was redeemed.
+    Passed,
+    /// [`check_with_pass`] only: the request carried a pass that is wrong, used or expired.
+    BadPass,
 }
 
 impl Decision {
@@ -376,6 +409,8 @@ impl Decision {
                 json!({ "decision": "hold", "approvalId": approval_id, "inboxId": inbox_id, "effect": effect, "expiresAt": expires_at })
             }
             Decision::Denied { approval_id } => json!({ "decision": "denied", "approvalId": approval_id }),
+            Decision::Passed => json!({ "decision": "allow", "pass": true }),
+            Decision::BadPass => json!({ "decision": "bad_pass" }),
         }
     }
 }
@@ -536,7 +571,7 @@ pub fn check(db: &DbHandle, data_dir: Option<&FsPath>, req: &CheckIn) -> Result<
     if granted(db, &req.ctx, effect) {
         return Ok(Decision::Allow { hold_id: None });
     }
-    let typed = typed_text(&req.tool, &req.args);
+    let typed = bound_text(&req.tool, &req.args);
     let hash = content_hash(&req.serial, app, &req.tool, req.el.as_ref(), effect, &typed);
     let run = run_of(req);
     let conn = db.connect().map_err(|e| e.to_string())?;
@@ -632,6 +667,13 @@ fn create_hold(db: &DbHandle, data_dir: Option<&FsPath>, req: &CheckIn, effect: 
     });
     if is_type_tool(&tool) {
         phone["typedChars"] = json!(typed_text(&tool, &req.args).chars().count());
+    }
+    // A text's or call's content is what the owner approves (typed passwords stay out).
+    if let Some((to, text)) = comms(&tool, &req.args) {
+        phone["to"] = json!(to);
+        if let Some(t) = text {
+            phone["text"] = json!(t);
+        }
     }
     let crop = req.screenshot.as_deref().and_then(decode_image);
     phone["hasCrop"] = json!(crop.is_some() && data_dir.is_some());
@@ -766,14 +808,14 @@ pub fn redeem_pass(pass: &str, serial: &str, tool: &str, args: &Map<String, Valu
     p.hash == args_hash(tool, args) && (p.serial.is_empty() || p.serial == serial.trim())
 }
 
-/// [`check`] for an outside caller (Desktop's dispatch): a live pass for this
-/// exact action answers `allow` once; anything else is checked as usual.
+/// [`check`] for an outside caller (Desktop's dispatch). A request that carries
+/// a pass is never classified: a live pass for this exact action answers
+/// [`Decision::Passed`] once, any other pass [`Decision::BadPass`] (no hold is
+/// made; the caller drops the pass, reads the screen and checks again).
 pub fn check_with_pass(db: &DbHandle, data_dir: Option<&FsPath>, req: &CheckIn) -> Result<Decision, String> {
     let pass = req.pass.clone().or_else(|| req.args.get("_pass").and_then(Value::as_str).map(str::to_string));
     if let Some(p) = pass.filter(|p| !p.is_empty()) {
-        if redeem_pass(&p, &req.serial, &req.tool, &req.args) {
-            return Ok(Decision::Allow { hold_id: None });
-        }
+        return Ok(if redeem_pass(&p, &req.serial, &req.tool, &req.args) { Decision::Passed } else { Decision::BadPass });
     }
     check(db, data_dir, req)
 }
@@ -836,6 +878,7 @@ where
                 return Gate::Denied("the owner denied this step".into());
             }
             Ok(Decision::Hold { approval_id, effect, .. }) => (approval_id, effect),
+            Ok(Decision::Passed | Decision::BadPass) => return Gate::Failed("unexpected pass answer from the guard".into()),
         };
         if !holds.iter().any(|h| h["approvalId"] == aid.as_str()) {
             holds.push(json!({ "approvalId": aid, "effect": effect, "state": "requested" }));
@@ -1023,6 +1066,11 @@ mod tests {
         assert_eq!(rule("phone.tap", json!({ "x": 1, "y": 2 }), None, Some("Venmo")), Some("money_app"));
         assert_eq!(rule("phone.tap", json!({ "x": 1, "y": 2 }), None, Some("Notes")), None);
         assert_eq!(rule("phone.swipe", json!({ "direction": "up" }), None, Some("Venmo")), None);
+        // A find-and-tap is judged by what it looks for, like a tap on it.
+        assert_eq!(rule("phone.find_and_tap", json!({ "element_id": "btn", "match": "Pay" }), None, None), Some("pay"));
+        assert_eq!(rule("find_and_tap", json!({ "element_id": "com.mail:id/delete" }), None, None), Some("delete"));
+        assert_eq!(rule("phone.find_and_tap", json!({ "element_id": "title", "match": "Inbox" }), None, None), None);
+        assert_eq!(rule("phone.find_and_tap", json!({ "element_id": "x" }), Some(&el("Button", "Send", "x")), None), Some("send"));
     }
 
     #[test]
@@ -1187,17 +1235,19 @@ mod tests {
         let req = pay_tap("task-8", "Pay now");
         let args = json!({ "x": 150, "y": 720 }).as_object().cloned().unwrap();
         let pass = issue_pass("link:1", "phone.tap", &args);
-        // Another action, serial or tool burns the pass and is checked as usual.
+        // Another action or serial burns the pass and answers bad_pass, without a hold.
         let mut other = req.clone();
         other.args = json!({ "x": 10, "y": 20 }).as_object().cloned().unwrap();
         other.pass = Some(pass.clone());
-        assert!(matches!(check_with_pass(&st.db, None, &other).unwrap(), Decision::Hold { .. }));
+        assert_eq!(check_with_pass(&st.db, None, &other).unwrap(), Decision::BadPass);
         let pass = issue_pass("link:1", "phone.tap", &args);
         let mut wrong_serial = req.clone();
         wrong_serial.serial = "link:2".into();
         wrong_serial.args = args.clone();
         wrong_serial.pass = Some(pass.clone());
-        assert!(matches!(check_with_pass(&st.db, None, &wrong_serial).unwrap(), Decision::Hold { .. }));
+        assert_eq!(check_with_pass(&st.db, None, &wrong_serial).unwrap(), Decision::BadPass);
+        let holds: i64 = st.db.connect().unwrap().query_row("SELECT COUNT(*) FROM gateway_approvals", [], |r| r.get(0)).unwrap();
+        assert_eq!(holds, 0);
         // The same action: allowed once, even with the gateway's own keys added.
         let pass = issue_pass("link:1", "phone.tap", &args);
         let mut same = req.clone();
@@ -1205,21 +1255,26 @@ mod tests {
         same.args.insert("serial".into(), json!("link:1"));
         same.args.insert("_pass".into(), json!(pass));
         same.args.insert("_run_id".into(), json!("task-8"));
-        assert_eq!(check_with_pass(&st.db, None, &same).unwrap(), Decision::Allow { hold_id: None });
+        assert_eq!(check_with_pass(&st.db, None, &same).unwrap(), Decision::Passed);
+        assert_eq!(Decision::Passed.to_json(), json!({ "decision": "allow", "pass": true }));
+        // A second use is a bad pass; without the pass the action is checked and holds.
+        assert_eq!(check_with_pass(&st.db, None, &same).unwrap(), Decision::BadPass);
+        same.args.remove("_pass");
         assert!(matches!(check_with_pass(&st.db, None, &same).unwrap(), Decision::Hold { .. }));
     }
 
     #[tokio::test]
-    async fn an_expired_pass_falls_through() {
+    async fn a_wrong_pass_is_never_a_plain_allow() {
         let st = setup("pass-expired").await;
         let mut req = pay_tap("task-9", "Pay now");
         req.pass = Some(issue_pass_ttl("link:1", "phone.tap", &req.args, Duration::ZERO));
-        assert!(matches!(check_with_pass(&st.db, None, &req).unwrap(), Decision::Hold { .. }));
-        // A harmless tap with a bad pass is still just allowed by the rules.
+        assert_eq!(check_with_pass(&st.db, None, &req).unwrap(), Decision::BadPass);
+        // Even a harmless tap: a guessed pass answers bad_pass, so the caller reads the screen.
         let mut ok = pay_tap("task-9", "OK");
         ok.el = Some(el("Button", "OK", ""));
         ok.pass = Some("pass_guess".into());
-        assert_eq!(check_with_pass(&st.db, None, &ok).unwrap(), Decision::Allow { hold_id: None });
+        assert_eq!(check_with_pass(&st.db, None, &ok).unwrap(), Decision::BadPass);
+        assert_eq!(Decision::BadPass.to_json(), json!({ "decision": "bad_pass" }));
     }
 
     #[tokio::test]
@@ -1246,7 +1301,33 @@ mod tests {
         // With the pass it is allowed once.
         let mut desk = pay_tap("task-10", "Pay now");
         desk.pass = Some(pass);
-        assert_eq!(check_with_pass(&st.db, None, &desk).unwrap(), Decision::Allow { hold_id: None });
+        assert_eq!(check_with_pass(&st.db, None, &desk).unwrap(), Decision::Passed);
+    }
+
+    #[tokio::test]
+    async fn a_text_hold_is_tied_to_its_recipient_and_message() {
+        let st = setup("sms").await;
+        let text = |to: &str, body: &str| CheckIn {
+            serial: "link:1".into(),
+            tool: "phone.sms.send".into(),
+            args: json!({ "to": to, "text": body }).as_object().cloned().unwrap(),
+            ctx: TaskCtx { owner: "user-a".into(), source: "api".into(), ..Default::default() },
+            ..Default::default()
+        };
+        let id = hold_id(&check(&st.db, None, &text("+15551234567", "on my way")).unwrap());
+        let detail: Value = serde_json::from_str(&st.db.connect().unwrap().query_row("SELECT detail_json FROM gateway_approvals WHERE id = ?1", params![id], |r| r.get::<_, String>(0)).unwrap()).unwrap();
+        assert_eq!((detail["phone"]["to"].as_str(), detail["phone"]["text"].as_str()), (Some("+15551234567"), Some("on my way")));
+        resolve(&st, &id, "approved", now());
+        // The approved hold does not cover another message or another number.
+        let mut other_text = text("+15551234567", "send me your code");
+        other_text.hold_id = Some(id.clone());
+        assert_ne!(hold_id(&check(&st.db, None, &other_text).unwrap()), id);
+        assert_eq!(state_of(&st, &id), "changed");
+        // A call is tied to its number.
+        let call = |n: &str| CheckIn { tool: "phone.call.dial".into(), args: json!({ "number": n }).as_object().cloned().unwrap(), ..text("", "") };
+        let a = check(&st.db, None, &call("+15550000001")).unwrap();
+        let b = check(&st.db, None, &call("+15550000002")).unwrap();
+        assert_ne!(hold_id(&a), hold_id(&b));
     }
 
     #[tokio::test]

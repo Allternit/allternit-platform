@@ -39,14 +39,17 @@ export interface GuardCheckBody {
   runId?: string;
   phoneName?: string;
   platform?: 'android' | 'ios';
-  sensitive?: boolean;
+  /** A loop's one-time pass. A request with a pass is never classified: `allow` with `pass: true` or `bad_pass`. */
   pass?: string;
   /** Data URL or base64 of the screen, kept on the runtime as the hold's picture. */
   screenshot?: string;
 }
 
 export type GuardAnswer =
-  | { decision: 'allow'; holdId: string | null }
+  /** `pass: true` = the request's pass was redeemed. */
+  | { decision: 'allow'; holdId: string | null; pass?: boolean }
+  /** The request's pass was wrong, used or expired; no hold was made. */
+  | { decision: 'bad_pass' }
   | { decision: 'hold'; approvalId: string; inboxId: string; effect: string; expiresAt: string }
   | { decision: 'denied'; approvalId: string }
   /** No runtime, signed out, timeout or an error answer: acting calls are refused. */
@@ -112,7 +115,8 @@ export function httpPhoneHoldClient(deps: HttpPhoneHoldDeps): PhoneHoldClient {
         return { decision: 'unavailable', message: str(r.json.message) || `The approval check answered ${r.status}.` };
       }
       const j = r.json;
-      if (j.decision === 'allow') return { decision: 'allow', holdId: str(j.holdId) || null };
+      if (j.decision === 'allow') return { decision: 'allow', holdId: str(j.holdId) || null, ...(j.pass === true ? { pass: true } : {}) };
+      if (j.decision === 'bad_pass') return { decision: 'bad_pass' };
       if (j.decision === 'hold' && str(j.approvalId)) {
         return { decision: 'hold', approvalId: str(j.approvalId), inboxId: str(j.inboxId) || `approval:${str(j.approvalId)}`, effect: str(j.effect), expiresAt: str(j.expiresAt) };
       }

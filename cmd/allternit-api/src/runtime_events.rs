@@ -68,6 +68,7 @@ const DATA_KEYS: &[&str] = &[
 const PHONE_KEYS: &[&str] = &[
     "step_id", "run_id", "serial", "tool", "label", "ok", "error", "duration_ms", "source", "snapshot",
     "status", "skill", "steps", "failed", "model_calls",
+    "approval_id", "effect", "state", "held_ms", "holds",
 ];
 
 // ---------------------------------------------------------------- owner ledger
@@ -113,7 +114,7 @@ pub fn envelope(source: &str, row: &LedgerRow) -> Option<Value> {
     if let Some(t) = p["text"].as_str() {
         data.insert("text".into(), json!(t.chars().take(TEXT_PREVIEW).collect::<String>()));
     }
-    if matches!(kind, Kind::PhoneStep | Kind::PhoneRunCompleted) {
+    if matches!(kind, Kind::PhoneStep | Kind::PhoneRunCompleted | Kind::PhoneApprovalRequested | Kind::PhoneApprovalResolved) {
         for k in PHONE_KEYS {
             if let Some(v) = p.get(*k).filter(|v| !v.is_null()) {
                 data.insert((*k).to_string(), v.clone());
@@ -466,13 +467,15 @@ mod tests {
             ("subscription.task.needs_user", json!({}), Some("thread.needs_user")),
             ("phone.step", json!({ "step_id": "s1" }), Some("phone.step")),
             ("phone.run.completed", json!({ "run_id": "task-1" }), Some("phone.run.completed")),
+            ("phone.approval.requested", json!({ "approval_id": "a1" }), Some("phone.approval.requested")),
+            ("phone.approval.resolved", json!({ "approval_id": "a1", "state": "approved" }), Some("phone.approval.resolved")),
         ];
         for (ty, payload, want) in table {
             let got = classify(ty, payload).and_then(Kind::registry);
             assert_eq!(got, *want, "{ty} {payload}");
         }
         // The registry names this runtime emits are all in the agreed list.
-        let registry = ["approval.requested", "approval.resolved", "agent.run.completed", "thread.needs_user", "message.received", "call.ended", "inbox.item.created", "vendor.ticket.created", "subscription.login_needed", "subscription.signed_in", "usage.threshold", "attention.opened", "attention.resolved", "phone.step", "phone.run.completed"];
+        let registry = ["approval.requested", "approval.resolved", "agent.run.completed", "thread.needs_user", "message.received", "call.ended", "inbox.item.created", "vendor.ticket.created", "subscription.login_needed", "subscription.signed_in", "usage.threshold", "attention.opened", "attention.resolved", "phone.step", "phone.run.completed", "phone.approval.requested", "phone.approval.resolved"];
         for (_, _, want) in table {
             if let Some(w) = want {
                 assert!(registry.contains(w), "{w}");

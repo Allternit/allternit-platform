@@ -1201,10 +1201,11 @@ export class PhoneToolRunner {
     }
     const actionHash = canonicalHash({ kind, serial, ...payload });
     if (this.deps.guard) {
-      // The same hold as every other sensitive action; the element binds the hold to this recipient and text.
+      // The same hold as every other sensitive action. The runtime ties the hold to the
+      // recipient and text (or number) it reads from the args, which go as received.
       const tool = kind === 'sms' ? 'phone.sms.send' : 'phone.call.dial';
       const label = kind === 'sms' ? `Text ${String(payload.to)}` : `Call ${String(payload.number)}`;
-      const stop = await this.guardCheck(tool, serial, a, NO_LANES, { el: { class: tool, label, id: actionHash }, summary });
+      const stop = await this.guardCheck(tool, serial, a, NO_LANES, { el: { class: tool, label, id: '' }, summary });
       if (stop) return stop;
     } else {
       const decision = await this.deps.gate.request({ kind, serial, summary, actionHash });
@@ -1294,6 +1295,8 @@ export class PhoneToolRunner {
   /**
    * The approval check for one acting call (the runtime decides, this enforces).
    * - `_pass` in the args (a loop's one-time pass): sent with the args exactly as received, no screen read.
+   *   The runtime answers `allow` + `pass: true` only for a redeemed pass; on `bad_pass` (or an allow
+   *   without `pass: true`) the pass is dropped and the call is checked once like any direct call.
    * - Otherwise Desktop reads the screen once for the guard: the element a tap lands on, the focused
    *   field for typing, the foreground app. `_hold` is carried on a retry.
    * `comms` = texts, calls and inbox reads: the element is built from the recipient, no screen read.
@@ -1321,27 +1324,41 @@ export class PhoneToolRunner {
     if (holdId) body.holdId = holdId;
     if (runId) body.runId = runId;
     let app: string | undefined;
+    // What the guard classifies a call by: the recipient for comms, else one screen read.
+    const facts = async (): Promise<ToolResult | null> => {
+      if (comms) {
+        body.el = comms.el;
+        return null;
+      }
+      const f = await this.screenFacts(name, serial, a, lanes);
+      if (f.locked) return f.locked;
+      body.tool = f.tool;
+      if (f.el) body.el = f.el;
+      if (f.app) body.app = app = f.app;
+      if (f.screenshot) body.screenshot = f.screenshot;
+      return null;
+    };
+    const ask = async (): Promise<GuardAnswer> => {
+      try {
+        return await client.check(body);
+      } catch (error) {
+        return { decision: 'unavailable', message: error instanceof Error ? error.message : String(error) };
+      }
+    };
     if (pass) {
       body.pass = pass;
-      // Only a redeemed pass skips the rules: a wrong or used one falls through to classification,
-      // which here has no screen read, so it must hold rather than allow.
-      body.sensitive = true;
-      if (comms) body.el = comms.el;
-    } else if (comms) {
-      body.el = comms.el;
     } else {
-      const facts = await this.screenFacts(name, serial, a, lanes);
-      if (facts.locked) return facts.locked;
-      body.tool = facts.tool;
-      if (facts.el) body.el = facts.el;
-      if (facts.app) body.app = app = facts.app;
-      if (facts.screenshot) body.screenshot = facts.screenshot;
+      const stop = await facts();
+      if (stop) return stop;
     }
-    let answer: GuardAnswer;
-    try {
-      answer = await client.check(body);
-    } catch (error) {
-      answer = { decision: 'unavailable', message: error instanceof Error ? error.message : String(error) };
+    let answer = await ask();
+    if (pass && (answer.decision === 'bad_pass' || (answer.decision === 'allow' && answer.pass !== true))) {
+      // A wrong, used or expired pass: drop it and check the call like any direct one.
+      delete body.pass;
+      body.args = Object.fromEntries(Object.entries(raw).filter(([k]) => k !== '_pass'));
+      const stop = await facts();
+      if (stop) return stop;
+      answer = await ask();
     }
     switch (answer.decision) {
       case 'allow':
@@ -1372,7 +1389,7 @@ export class PhoneToolRunner {
       case 'denied':
         return fail('approval_denied', 'The owner denied this action. Do not try to reach the same result another way.', { approvalId: answer.approvalId });
       default:
-        return fail('guard_unavailable', `Not done: the approval check could not run (${answer.message}). Actions that can change something on the phone are refused until it works; reading the screen still works.`);
+        return fail('guard_unavailable', `Not done: the approval check could not run (${answer.decision === 'bad_pass' ? 'it refused the check twice' : answer.message}). Actions that can change something on the phone are refused until it works; reading the screen still works.`);
     }
   }
 
@@ -1384,8 +1401,8 @@ export class PhoneToolRunner {
    * foreground app; the mirror frame goes along as the owner's picture.
    */
   private async screenFacts(name: string, serial: string, a: Record<string, unknown>, lanes: GuardLanes): Promise<ScreenFacts> {
-    // phone.find_and_tap is a tap on a named element: the guard's tap rules apply.
-    const tool = name === 'phone.find_and_tap' ? 'phone.tap' : name;
+    // The guard has its own rule for phone.find_and_tap (the element it looks for).
+    const tool = name;
     if (name === 'phone.open_app') return { tool };
     if (name === 'phone.web.click' || name === 'phone.web.type') {
       const ref = typeof a.ref === 'string' ? a.ref : '';
@@ -1549,7 +1566,7 @@ interface GuardLanes {
 const NO_LANES: GuardLanes = { usb: null, links: null, apps: null };
 
 interface ScreenFacts {
-  /** The tool name the guard classifies (find_and_tap → phone.tap). */
+  /** The tool name the guard classifies. */
   tool: string;
   el?: GuardElement;
   app?: string;

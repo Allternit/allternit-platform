@@ -387,12 +387,8 @@ fn step_el(step: &PStep, last: Option<&El>) -> Option<El> {
     }
 }
 
-/// What the guard's rules say about one step. A find-and-tap is judged by the
-/// label it looks for, like a tap on that element.
+/// What the guard's rules say about one step.
 pub fn step_effect(op: &str, args: &Map<String, Value>, el: Option<&El>, app: Option<&str>) -> Option<&'static str> {
-    if op == "phone.find_and_tap" {
-        return el.and_then(phone_guard::label_effect);
-    }
     phone_guard::rule_effect(&phone_guard::Action { tool: op, args, el, app })
 }
 
@@ -814,12 +810,9 @@ async fn guard_step(
 ) -> Result<Map<String, Value>, (&'static str, String)> {
     let (serial, run_id, source) = at;
     let (index, label, goal) = step;
-    let flag = step_effect(op, args, el, app).map(str::to_string).or(flag);
     // The owner sees the screen with the hold; a plain step needs no frame.
-    let shot = match flag {
-        Some(_) => screenshot(serial, run_id, source).await.map(|(_, url)| url),
-        None => None,
-    };
+    // Only the saved flag goes to the guard as the model's flag: its own rules judge the step.
+    let shot = if flag.is_some() || step_effect(op, args, el, app).is_some() { screenshot(serial, run_id, source).await.map(|(_, url)| url) } else { None };
     let mut req = CheckIn {
         serial: serial.unwrap_or_default().to_string(),
         tool: op.to_string(),
@@ -1415,11 +1408,16 @@ mod tests {
     #[test]
     fn storing_a_skill_flags_its_delete_step() {
         let tmp = tempfile::tempdir().unwrap();
-        store(tmp.path(), &skill_of("tidy", vec![tap_step("Search", "s"), tap_step("Delete", "del")])).unwrap();
+        let pay = PStep { op: "phone.find_and_tap".into(), args: json!({ "element_id": "btn_go", "match": "Pay" }), label: "find \"Pay\"".into(), ..Default::default() };
+        store(tmp.path(), &skill_of("tidy", vec![tap_step("Search", "s"), tap_step("Delete", "del"), pay])).unwrap();
         let back = load(tmp.path(), "tidy").unwrap();
         assert!(!back.steps[0].sensitive && back.steps[0].effect.is_none());
         assert!(back.steps[1].sensitive);
         assert_eq!(back.steps[1].effect.as_deref(), Some("delete"));
+        // A find-and-tap on "Pay" is judged by the guard's own rule for it.
+        assert_eq!(back.steps[2].effect.as_deref(), Some("pay"));
+        let args = json!({ "element_id": "btn_go", "match": "Pay" }).as_object().cloned().unwrap();
+        assert_eq!(phone_guard::rule_effect(&phone_guard::Action { tool: "phone.find_and_tap", args: &args, el: None, app: None }), Some("pay"));
         // Additive: a plain step is written without the keys.
         let raw: Value = serde_json::from_slice(&std::fs::read(skill_path(tmp.path(), "tidy")).unwrap()).unwrap();
         assert!(raw["steps"][0].get("sensitive").is_none() && raw["steps"][1]["sensitive"] == json!(true));

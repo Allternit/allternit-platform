@@ -15,6 +15,7 @@ const XML =
   '</node></hierarchy>';
 
 const allow: GuardAnswer = { decision: 'allow', holdId: null };
+const passed: GuardAnswer = { decision: 'allow', holdId: null, pass: true };
 const hold = (id: string): GuardAnswer => ({ decision: 'hold', approvalId: id, inboxId: `approval:${id}`, effect: 'delete', expiresAt: '2026-11-10T10:05:00Z' });
 
 function fakePhone() {
@@ -106,7 +107,7 @@ describe('approval hold at dispatch', () => {
   });
 
   it('runs a call carrying a valid pass without reading the screen, sending the args as received', async () => {
-    const rt = fakeRuntime((b) => (b.pass === 'pass_ok' ? allow : hold('h9')));
+    const rt = fakeRuntime((b) => (b.pass === 'pass_ok' ? passed : hold('h9')));
     const { r, phone } = setup(rt.client);
     const args = { x: 300, y: 2100, _pass: 'pass_ok', _run_id: 'run-7' };
     expect(await r.call('phone.tap', args)).toEqual({ ok: true });
@@ -115,12 +116,17 @@ describe('approval hold at dispatch', () => {
     expect(rt.bodies[0]).toMatchObject({ tool: 'phone.tap', args, pass: 'pass_ok', runId: 'run-7' });
   });
 
-  it('never lets a wrong pass through as a bare allow: it is held, not run', async () => {
-    // A redeemed pass answers allow; anything else is classified, and Desktop marks it sensitive since it read no screen.
-    const rt = fakeRuntime((b) => (b.pass === 'pass_ok' ? allow : b.sensitive ? hold('h2') : allow));
+  it('drops a wrong pass, reads the screen and holds a tap on "Delete"', async () => {
+    // The runtime never classifies a pass-carrying request: bad_pass, and no hold.
+    const rt = fakeRuntime((b) => (b.pass || b.args._pass ? { decision: 'bad_pass' } : /delete/i.test(b.el?.label ?? '') ? hold('h2') : allow));
     const { r, phone } = setup(rt.client);
-    expect(await r.call('phone.tap', { x: 700, y: 2100, _pass: 'pass_forged' })).toMatchObject({ ok: false, error: 'approval_required', approvalId: 'h2' });
+    expect(await r.call('phone.tap', { x: 300, y: 2100, _pass: 'pass_forged' })).toMatchObject({ ok: false, error: 'approval_required', approvalId: 'h2' });
     expect(phone.taps()).toHaveLength(0);
+    expect(phone.dumps()).toBe(1);
+    expect(rt.bodies).toHaveLength(2);
+    expect(rt.bodies[1].pass).toBeUndefined();
+    expect(rt.bodies[1].args).not.toHaveProperty('_pass');
+    expect(rt.bodies[1].el?.label).toBe('Delete');
   });
 
   it('refuses acting calls when the runtime cannot be reached or nobody is signed in, but still reads', async () => {
@@ -165,12 +171,13 @@ describe('texts, calls and inbox reads through the hold', () => {
     expect(await r.call('phone.sms.read', { bot_id: 'bot-1', _source: 'api' })).toMatchObject({ ok: false, error: 'approval_required' });
   });
 
-  it('binds a text hold to its recipient and keeps the rate limit', async () => {
+  it('sends a text\'s recipient and message to the guard and keeps the rate limit', async () => {
     const rt = fakeRuntime((b) => (b.holdId === 's1' ? allow : hold('s1')));
     const { r, phone } = setup(rt.client);
     expect(await r.call('phone.sms.send', { to: '+15551234567', text: 'On my way' })).toMatchObject({ ok: false, error: 'approval_required', approvalId: 's1' });
     expect(phone.sends()).toHaveLength(0);
-    expect(rt.bodies[0]).toMatchObject({ tool: 'phone.sms.send', el: { class: 'phone.sms.send', label: 'Text +15551234567' } });
+    // The runtime ties the hold to the recipient and text it reads from the args.
+    expect(rt.bodies[0]).toMatchObject({ tool: 'phone.sms.send', args: { to: '+15551234567', text: 'On my way' }, el: { class: 'phone.sms.send', label: 'Text +15551234567', id: '' } });
     expect(await r.call('phone.sms.send', { to: '+15551234567', text: 'On my way', _hold: 's1' })).toMatchObject({ ok: true, status: 'submitted' });
     // A second text right away is stopped by the rate limit before any hold is made.
     expect(await r.call('phone.sms.send', { to: '+15551234567', text: 'Here', _hold: 's1' })).toMatchObject({ ok: false, error: 'rate_limited' });
