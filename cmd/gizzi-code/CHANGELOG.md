@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 2.3.1 (2026-11-09)
+
+### Fixed
+- **Remote Control:** slash commands that only run in the terminal (like `/remote`) no longer show up on the phone or web as raw markup, and the session title comes from your first real prompt.
+- **Remote Control:** after the engine restarts (for example a Desktop update), the terminal re-sends the whole session at once, so a turn that ran meanwhile isn't missing on other surfaces.
+- The context meter no longer drops to 0% after you stop a turn with Esc.
+
 ## 2.3.0 (2026-11-09)
 
 ### Added
