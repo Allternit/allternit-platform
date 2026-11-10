@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Errors a language server reports right after an edit, for the edit's tool
  * line. Both the TUI's own Edit/Write tools and edits a CLI brain made itself

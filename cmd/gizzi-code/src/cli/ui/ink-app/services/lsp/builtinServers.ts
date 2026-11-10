@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Language servers the TUI uses with no plugin installed, so diagnostics after
  * an edit work out of the box (Claude Code/OpenCode parity).
