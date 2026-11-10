@@ -41,6 +41,7 @@ import { getGlobalConfig, saveGlobalConfig } from '../../utils/config';
 import { getPlatform } from '../../utils/platform';
 import { PrBadge } from '../PrBadge';
 import { useFactoryBadge } from '../FactoryBadge';
+import { useMissionBadge } from '../MissionBadge';
 
 // Dead code elimination: conditional import for proactive mode
 /* eslint-disable @typescript-eslint/no-require-imports */
@@ -182,6 +183,7 @@ function ModeIndicator({
   const showSpinnerTree = expandedView === 'teammates';
   const prStatus = usePrStatus(isLoading, isPrStatusEnabled());
   const factoryBadge = useFactoryBadge();
+  const missionBadge = useMissionBadge(process.cwd());
   // @ts-expect-error TODO(types) verbatim upstream dead comparison ("external" === 'ant' is always false)
   const hasTmuxSession = useAppState(s_4 => "external" === 'ant' && s_4.tungstenActiveSession !== undefined);
   const nextTickAt = useSyncExternalStore(proactiveModule?.subscribeToProactiveChanges ?? NO_OP_SUBSCRIBE, proactiveModule?.getNextTickAt ?? NULL, NULL);
@@ -282,6 +284,7 @@ function ModeIndicator({
   ...("external" === 'ant' && hasTmuxSession ? [<TungstenPill key="tmux" selected={tmuxSelected} />] : []), ...(isAgentSwarmsEnabled() && hasTeams ? [<TeamStatus key="teams" teamsSelected={teamsSelected} showHint={showHint && !hasBackgroundTasks} />] : []), ...(shouldShowPrStatus ? [<PrBadge key="pr-status" number={prStatus.number!} url={prStatus.url!} reviewState={prStatus.reviewState!} checks={prStatus.checks} />] : [])];
   // Factory bots running (factory lane): "⚙ 3 bots · 1 waiting" while any work or wait.
   if (factoryBadge) parts.push(<Text key="factory" color={factoryBadge.waiting ? 'warning' : 'gizzi'}>{factoryBadge.text}</Text>);
+  if (missionBadge) parts.push(<Text key="mission" color={missionBadge.needsYou ? 'warning' : 'gizzi'}>{missionBadge.text}</Text>);
 
   // Check if any in-process teammates exist (for hint text cycling)
   const hasAnyInProcessTeammates = Object.values(tasks).some(t_2 => t_2.type === 'in_process_teammate' && t_2.status === 'running');

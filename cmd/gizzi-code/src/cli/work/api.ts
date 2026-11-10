@@ -185,6 +185,8 @@ export type Runtime = {
   status: string
   platform?: string
   lastSeenAt?: string
+  /** A cloud computer the relay can wake when it is asleep. */
+  wakeable?: boolean
 }
 
 export async function listComputers(): Promise<Computer[]> {
@@ -217,49 +219,225 @@ export function pick<T extends { id: string; name: string }>(list: T[], key: str
 }
 
 /**
+ * The paired runtime `key` names (id, then name), the way `gizzi run --on`
+ * and `gizzi mission start --on` look it up; or the line to print when there
+ * is none.
+ */
+export async function findRuntime(key: string, list: () => Promise<Runtime[]> = listRuntimes): Promise<{ runtime: Runtime } | { error: string }> {
+  const runtimes = await list().catch((e: Error) => e)
+  if (runtimes instanceof Error) return { error: `Couldn't list paired runtimes: ${runtimes.message}` }
+  const runtime = pick(runtimes, key)
+  if (!runtime) return { error: `No paired runtime named or with id "${key}". Run \`gizzi computers ls\`.` }
+  return { runtime }
+}
+
+/** `claude-cli/claude-sonnet-5` → `{ providerID, modelID }` (undefined without a provider). */
+export function modelRef(model?: string): { providerID: string; modelID: string } | undefined {
+  const [providerID, ...rest] = (model ?? "").split("/")
+  return providerID && rest.length ? { providerID, modelID: rest.join("/") } : undefined
+}
+
+const RELAY_KEY_NEEDED =
+  "Running on another computer goes through the Allternit relay, which needs an Allternit API key with the compute scope. Set ALLTERNIT_API_TOKEN (Settings → API keys) and try again."
+
+/** Why the relay can't be used from here (no API key), or undefined. */
+export function relayKeyProblem(): string | undefined {
+  return process.env.ALLTERNIT_API_TOKEN?.trim() ? undefined : RELAY_KEY_NEEDED
+}
+
+/** A relayed request that the runtime (or the relay) answered with an error status; 0 = no answer in time. */
+export class RelayError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly path: string,
+  ) {
+    super(message)
+  }
+  /** The relay or this client gave up waiting; the runtime may still be working on it. */
+  get timedOut(): boolean {
+    return this.status === 0 || this.status === 504 || /runtime_timeout/.test(this.message)
+  }
+}
+
+/** One request to a paired runtime's gateway through the cloud relay; resolves with the parsed JSON body. */
+export type RelayCall = (method: string, path: string, body?: unknown, timeoutMs?: number) => Promise<any>
+
+/**
+ * Requests to one paired runtime through the cloud relay
+ * `POST /api/v1/runtime-devices/:id/proxy`. The relay checks a Clerk session
+ * or an Allternit API key with the `compute` scope (ALLTERNIT_API_TOKEN); the
+ * device token from `gizzi pair` only identifies this machine and is refused
+ * there. The relay waits up to 90 s for the runtime's answer.
+ */
+export function runtimeRelay(runtimeId: string): RelayCall {
+  const token = process.env.ALLTERNIT_API_TOKEN?.trim()
+  if (!token) throw new Error(RELAY_KEY_NEEDED)
+  return async (method, path, body, timeoutMs = 60_000) => {
+    let res: Response
+    try {
+      res = await fetch(`${cloudBase()}/api/v1/runtime-devices/${encodeURIComponent(runtimeId)}/proxy`, {
+        method: "POST",
+        headers: { "content-type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          method,
+          path,
+          headers: { "content-type": "application/json" },
+          body: body === undefined ? "" : JSON.stringify(body),
+        }),
+        signal: AbortSignal.timeout(timeoutMs),
+      })
+    } catch (e) {
+      const err = e as Error
+      const timedOut = err?.name === "TimeoutError" || err?.name === "AbortError"
+      throw new RelayError(`relay ${path}: ${timedOut ? "no answer in time" : err?.message ?? String(e)}`, timedOut ? 0 : -1, path)
+    }
+    const raw = await res.text()
+    if (!res.ok) throw new RelayError(`relay ${path}: ${res.status} ${raw.slice(0, 200)}`, res.status, path)
+    return raw ? JSON.parse(raw) : {}
+  }
+}
+
+function followLinks(runtimeId: string, sessionID: string): { web: string; phone: string } {
+  const query = new URLSearchParams({ runtime: runtimeId, session: sessionID })
+  return { web: `https://ai.allternit.com/?${query}`, phone: `https://m.allternit.com/?${query}` }
+}
+
+async function createRuntimeSession(relay: RelayCall, name: string, model?: { providerID: string; modelID: string }): Promise<string> {
+  const created = await relay("POST", "/api/v1/agent-sessions", {
+    name,
+    origin_surface: "code",
+    model,
+    metadata: { sourceRef: { harness: "gizzi-cli" } },
+  })
+  const sessionID: string = created.id ?? created.session?.id ?? created.sessionId
+  if (!sessionID) throw new Error("The computer did not return a session id.")
+  return sessionID
+}
+
+/**
  * Start a session on another paired runtime through the cloud relay and send
- * it the first message. The relay checks a Clerk session or an Allternit API
- * key with the `compute` scope (ALLTERNIT_API_TOKEN); the device token from
- * `gizzi pair` only identifies this machine and is refused there.
+ * it the first message. Fire-and-forget: it does not wait for the reply.
  */
 export async function runOnRuntime(
   runtimeId: string,
   text: string,
   opts: { title?: string; model?: { providerID: string; modelID: string } } = {},
 ): Promise<{ sessionID: string; web: string; phone: string }> {
-  const token = process.env.ALLTERNIT_API_TOKEN?.trim()
-  if (!token) {
+  const relay = runtimeRelay(runtimeId)
+  const sessionID = await createRuntimeSession(relay, opts.title ?? text.slice(0, 60), opts.model)
+  await relay("POST", `/api/v1/agent-sessions/${encodeURIComponent(sessionID)}/messages`, { text })
+  return { sessionID, ...followLinks(runtimeId, sessionID) }
+}
+
+/** A message as the runtime's `/api/v1/agent-sessions/:id/messages` returns it. */
+type RuntimeMessage = { id?: string; role?: string; content?: string; metadata?: { error?: unknown } | null }
+
+const NO_TEXT = "[No text content]"
+
+/**
+ * Whether the runtime is running a turn in `sessionID`: allternit-api's
+ * `GET /api/v1/agent-sessions/:id/status`, else gizzi's own
+ * `GET /v1/session/status` (a BYO box whose gizzi serves the app protocol
+ * itself). Throws when the runtime answers neither.
+ */
+async function runtimeSessionBusy(relay: RelayCall, sessionID: string): Promise<boolean> {
+  let first: unknown
+  try {
+    const s = await relay("GET", `/api/v1/agent-sessions/${encodeURIComponent(sessionID)}/status`)
+    if (typeof s?.busy === "boolean") return s.busy
+    if (typeof s?.status === "string") return s.status !== "idle"
+  } catch (e) {
+    if (e instanceof RelayError && e.timedOut) return true // busy enough not to answer; look again
+    first = e
+  }
+  try {
+    const all = await relay("GET", "/v1/session/status")
+    const type = all?.[sessionID]?.type
+    return typeof type === "string" && type !== "idle"
+  } catch (e) {
+    if (e instanceof RelayError && e.timedOut) return true
     throw new Error(
-      "Running on another computer goes through the Allternit relay, which needs an Allternit API key with the compute scope. Set ALLTERNIT_API_TOKEN (Settings → API keys) and try again.",
+      `the computer has no way to say when the turn is done (${(first as Error)?.message ?? "no status"}; ${(e as Error).message})`,
     )
   }
-  const relay = async (method: string, path: string, body?: unknown) => {
-    const res = await fetch(`${cloudBase()}/api/v1/runtime-devices/${encodeURIComponent(runtimeId)}/proxy`, {
-      method: "POST",
-      headers: { "content-type": "application/json", Authorization: `Bearer ${token}` },
-      body: JSON.stringify({
-        method,
-        path,
-        headers: { "content-type": "application/json" },
-        body: body === undefined ? "" : JSON.stringify(body),
-      }),
-      signal: AbortSignal.timeout(60_000),
-    })
-    const raw = await res.text()
-    if (!res.ok) throw new Error(`relay ${path}: ${res.status} ${raw.slice(0, 200)}`)
-    return raw ? JSON.parse(raw) : {}
+}
+
+function replyText(msg: RuntimeMessage): string {
+  const text = (msg.content ?? "").trim()
+  if (msg.metadata?.error) throw new Error(text && text !== NO_TEXT ? text : "the turn on the computer failed")
+  if (!text || text === NO_TEXT) throw new Error("the computer's turn replied with nothing")
+  return text
+}
+
+/**
+ * One turn on a paired runtime that waits for the reply: sends `prompt` to
+ * `sessionID` (or a new session), then returns the assistant's reply text.
+ *
+ * The runtime's `POST /api/v1/agent-sessions/:id/messages` blocks until the
+ * turn ends and answers with the assistant message. A turn longer than the
+ * relay waits (90 s) comes back as a timeout while it keeps running there, so
+ * the reply is then read the way the app reads it: poll the session's status
+ * until it is idle, then take the newest assistant message that was not there
+ * before the send. Throws (never runs anything locally) when the turn fails,
+ * times out or the reply can't be read.
+ */
+export async function turnOnRuntime(
+  runtimeId: string,
+  prompt: string,
+  opts: {
+    sessionID?: string
+    /** `provider/model`, e.g. `claude-cli/claude-sonnet-5`. */
+    model?: string
+    title?: string
+    relay?: RelayCall
+    pollMs?: number
+    timeoutMs?: number
+    sleep?: (ms: number) => Promise<void>
+  } = {},
+): Promise<{ sessionID: string; web: string; phone: string; text: string }> {
+  const relay = opts.relay ?? runtimeRelay(runtimeId)
+  const model = modelRef(opts.model)
+  const pollMs = opts.pollMs ?? 5_000
+  const deadline = Date.now() + (opts.timeoutMs ?? 15 * 60_000)
+  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)))
+  const sessionID = opts.sessionID ?? (await createRuntimeSession(relay, opts.title ?? prompt.slice(0, 60), model))
+  const messagesPath = `/api/v1/agent-sessions/${encodeURIComponent(sessionID)}/messages`
+  const list = async (): Promise<RuntimeMessage[]> => {
+    const body = await relay("GET", messagesPath)
+    return Array.isArray(body) ? body : (body?.messages ?? [])
   }
-  const created = await relay("POST", "/api/v1/agent-sessions", {
-    name: opts.title ?? text.slice(0, 60),
-    origin_surface: "code",
-    model: opts.model,
-    metadata: { sourceRef: { harness: "gizzi-cli" } },
-  })
-  const sessionID: string = created.id ?? created.session?.id ?? created.sessionId
-  if (!sessionID) throw new Error("The computer did not return a session id.")
-  await relay("POST", `/api/v1/agent-sessions/${encodeURIComponent(sessionID)}/messages`, { text })
-  const query = new URLSearchParams({ runtime: runtimeId, session: sessionID })
-  return { sessionID, web: `https://ai.allternit.com/?${query}`, phone: `https://m.allternit.com/?${query}` }
+  const before = new Set(opts.sessionID ? (await list()).map((m) => m.id) : [])
+  const done = (msg: RuntimeMessage) => ({ sessionID, ...followLinks(runtimeId, sessionID), text: replyText(msg) })
+
+  let sent: RuntimeMessage | undefined
+  try {
+    sent = await relay("POST", messagesPath, { text: prompt, ...(model ? { metadata: { model } } : {}) }, 100_000)
+  } catch (e) {
+    if (!(e instanceof RelayError && e.timedOut)) throw e
+  }
+  if (sent?.role === "assistant") return done(sent)
+
+  for (;;) {
+    await sleep(pollMs)
+    if (await runtimeSessionBusy(relay, sessionID)) {
+      if (Date.now() > deadline) throw new Error(`the turn on the computer is still running after ${Math.round((opts.timeoutMs ?? 15 * 60_000) / 60_000)} min`)
+      continue
+    }
+    const fresh = (await list()).filter((m) => m.role === "assistant" && m.id && !before.has(m.id))
+    const last = fresh[fresh.length - 1]
+    if (!last) throw new Error("the turn on the computer ended without a reply")
+    return done(last)
+  }
+}
+
+/**
+ * PATCH the runtime engine's own session record (`/v1/session/:id`, which
+ * gizzi serves on every runtime and the relay allows), e.g. the `mission`
+ * label and `glance` line Remote Control shows.
+ */
+export async function patchRuntimeSession(runtimeId: string, sessionID: string, body: unknown, relay: RelayCall = runtimeRelay(runtimeId)): Promise<void> {
+  await relay("PATCH", `/v1/session/${encodeURIComponent(sessionID)}`, body, 10_000)
 }
 
 // ── projects ──────────────────────────────────────────────────────────────
