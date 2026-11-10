@@ -107,7 +107,7 @@ function ModelsScene() {
       <div className="ob-halo" style={{ left: -60, top: -60, width: 340, height: 340, background: "radial-gradient(circle,rgba(47,111,224,.20),rgba(47,111,224,0) 66%)" }} />
       <div className="ob-halo" style={{ left: 430, top: 180, width: 300, height: 300, background: "radial-gradient(circle,rgba(217,119,87,.18),rgba(217,119,87,0) 66%)" }} />
       <div className="ob-req ob-a" style={{ left: 172, top: 18, width: 350, ...d(0.1) }}>
-        <span className="ob-m">POST</span>/v1/chat/completions<em>model: kimi-k3</em>
+        <span className="ob-m">POST</span>/v1/chat/completions<em>model: glm-5.3</em>
       </div>
       <div className="ob-wire ob-f" style={{ left: 347, top: 118, width: 170, transform: "rotate(140deg)", ...d(0.5) }} />
       <div className="ob-wire ob-f" style={{ left: 347, top: 118, width: 46, transform: "rotate(90deg)", ...d(0.5) }} />
@@ -128,7 +128,7 @@ function ModelsScene() {
         <div className="ob-search">Search models, families, or providers...</div>
         <div className="ob-trow h"><span>Model</span><span>Family</span><span>Provider</span><span>Upstream</span></div>
         <div className="ob-trow ob-l" style={d(0.95)}><span className="m">kimi-k3</span><span>Kimi</span><span>Allternit Cloud</span><span>Kimi</span></div>
-        <div className="ob-trow ob-l on" style={d(1.05)}><span className="m">kimi-k3</span><span>Kimi</span><span>Allternit</span><span>Kimi</span></div>
+        <div className="ob-trow ob-l on" style={d(1.05)}><span className="m">glm-5.3</span><span>GLM</span><span>Allternit</span><span>Together AI</span></div>
         <div className="ob-trow ob-l" style={d(1.15)}><span className="m">deepseek-v4-pro</span><span>DeepSeek</span><span>Allternit</span><span>DeepSeek</span></div>
         <div className="ob-trow ob-l" style={d(1.25)}><span className="m">Local model</span><span>Your pick</span><span>Your hardware</span><span>—</span></div>
       </div>
