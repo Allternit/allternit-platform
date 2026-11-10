@@ -1362,31 +1362,67 @@ struct BotSelectionSheet: View {
 ///    character the user typed) on the type-tinted tile.
 /// 3. unset → the deterministic identicon from the agent id — every agent
 ///    has a distinctive mark out of the box, no generic icons.
+///
+/// A bot look saved by Edit bot (a JSON look, a photo or pack art URL, in
+/// `avatar` or `config.avatar`) is drawn by `BotAvatarView`, the same as on
+/// every bot surface, never printed as text. `BotAvatarView` sends only its
+/// `.legacy` case back here, and `.legacy` never takes that branch.
 struct AgentAvatarView: View {
     let agent: AgentRecord
     var size: CGFloat = 40
 
     var body: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: size * 0.325, style: .continuous)
-                .fill(tileBackground)
-            if let avatar = agent.avatar, !avatar.isEmpty {
-                if let seed = Self.gridSeed(avatar) {
-                    AgentIdenticonView(seed: seed, size: size * 0.62)
+        if drawsBotLook {
+            BotAvatarView(bot: agent, size: size)
+                .frame(width: size, height: size)
+        } else {
+            ZStack {
+                RoundedRectangle(cornerRadius: size * 0.325, style: .continuous)
+                    .fill(tileBackground)
+                if let avatar = agent.avatar, !avatar.isEmpty, !Self.isLook(avatar) {
+                    if let seed = Self.gridSeed(avatar) {
+                        AgentIdenticonView(seed: seed, size: size * 0.62)
+                    } else {
+                        Text(avatar)
+                            .font(.system(size: size * 0.475))
+                    }
                 } else {
-                    Text(avatar)
-                        .font(.system(size: size * 0.475))
+                    AgentIdenticonView(seed: agent.id, size: size * 0.62)
                 }
-            } else {
-                AgentIdenticonView(seed: agent.id, size: size * 0.62)
             }
+            .frame(width: size, height: size)
         }
-        .frame(width: size, height: size)
+    }
+
+    /// True when the saved avatar is a bot look `BotAvatarView` draws.
+    private var drawsBotLook: Bool {
+        switch BotAvatarSource.resolve(agent) {
+        case .legacy: return false
+        case .sprite, .image: return true
+        // `.gizzi` is also the no-look fallback; only a saved look goes there
+        // (unset and "grid:" keep the identicon).
+        case .gizzi: return Self.hasSavedLook(agent)
+        }
     }
 
     /// "grid:<seed>" → the seed, nil otherwise.
     static func gridSeed(_ avatar: String) -> String? {
         avatar.hasPrefix("grid:") ? String(avatar.dropFirst(5)) : nil
+    }
+
+    /// A JSON look (`{"type":…}`) rather than a glyph.
+    static func isLook(_ avatar: String?) -> Bool {
+        avatar?.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("{") == true
+    }
+
+    /// `avatar` or `config.avatar` holds a saved bot look.
+    static func hasSavedLook(_ agent: AgentRecord) -> Bool {
+        if isLook(agent.avatar) { return true }
+        switch agent.config?["avatar"] {
+        case .object(_)?: return true
+        case .string(let text)?: return isLook(text)
+        default: return false
+        }
     }
 
     private var tileBackground: Color {
