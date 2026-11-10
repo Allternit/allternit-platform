@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 2.5.0 (2026-11-10)
+
+### Added
+- **Missions:** `gizzi mission start "<goal>"` or `/mission <goal>`. An orchestrator plans 1 to 5 milestones, you approve or edit the plan, and a detached runner works each milestone with parallel workers, runs its check command and retries failures up to a limit. `gizzi mission land` merges a finished mission. `--on <runtime>` runs the orchestrator's turns on a paired computer.
+- **Pause all bots:** `gizzi agents bot pause`, `resume` and `pause --status` (short form `gizzi bot pause`). While paused, routines, loops and automatic replies are on hold on every surface; your own messages still run. A `bots paused` chip shows in the footer and in `/status`.
+- **Mac Messages tools in a session:** a held iMessage send shows as waiting for your approval, a message draft shows who it is for and its text, and a Messages search shows its matches.
+
+### Changed
+- Gizzi's own loops and scheduled agent routines obey the pause switch.
+
 ## 2.4.0 (2026-11-09)
 
 ### Added
