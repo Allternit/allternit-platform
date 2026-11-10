@@ -345,6 +345,30 @@ final class IntentServices: IntentServicing, @unchecked Sendable {
         try await bots.addMemory(botId: botId, content: text)
         return SavedResult(botName: name)
     }
+
+    // MARK: - Talk/Delegate/Decide additions
+
+    func openLink(_ url: URL) async -> Bool {
+        await MainActor.run { DeepLinkRouter.shared.open(url: url) }
+    }
+
+    func startCodeTask(text: String, projectId: String?) async throws -> ConversationInfo {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let name = trimmed.isEmpty ? "Code task" : String(trimmed.prefix(60))
+        // The same stamp the Code tab sends with the agent pill off
+        // (AppMode.code.originSurface, AgentModeStore.sessionMode(for: .code)).
+        let s = try await chat.createSession(name: name, originSurface: "code", sessionMode: "regular",
+                                             projectId: projectId)
+        try await bots.sendUserMessage(sessionId: s.id, text: text)
+        return ConversationInfo(id: s.id, sessionId: s.id, title: s.name ?? name, botId: nil)
+    }
+
+    func sendFile(botId: String, data: Data, filename: String, note: String?) async throws -> ConversationInfo {
+        try SendFileRules.check(byteCount: data.count)
+        let up = try await chat.upload(name: filename, mediaType: SendFileRules.mediaType(for: filename),
+                                       dataBase64: data.base64EncodedString())
+        return try await send(botId: botId, text: SendFileRules.message(filename: filename, url: up.url, note: note))
+    }
 }
 
 private extension String {

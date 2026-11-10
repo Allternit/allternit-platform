@@ -223,6 +223,18 @@ protocol IntentServicing: Sendable {
 
     // Memory
     func remember(botId: String, text: String) async throws -> SavedResult
+
+    // MARK: - Talk/Delegate/Decide additions
+
+    /// Routes an `allternit://` link inside the running app. False when no
+    /// screen handled it.
+    func openLink(_ url: URL) async -> Bool
+    /// Creates a Code session on the active computer (in `projectId` when
+    /// given) and sends `text` as its first message.
+    func startCodeTask(text: String, projectId: String?) async throws -> ConversationInfo
+    /// Uploads one file (at most `SendFileRules.maxBytes`) and sends the bot
+    /// a message carrying its link, plus `note` when given.
+    func sendFile(botId: String, data: Data, filename: String, note: String?) async throws -> ConversationInfo
 }
 
 // MARK: - Registry
