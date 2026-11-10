@@ -16,12 +16,19 @@
  * A hold closes when the runtime says it is no longer `requested` (approved,
  * denied, expired, changed, run ended), when its expiry time passes, or when
  * the runtime cannot be read for a while (guard unavailable). The helper also
- * removes the notice by itself at the expiry time, and when the link service stops.
+ * removes the notice by itself at the expiry time, when the link service stops, and
+ * when the heartbeat stops arriving (link loss).
  */
 import type { PhoneHoldNotice } from './phone-tools.js';
 import type { PhoneHoldClient } from './phone-hold-client.js';
 
 export const HOLD_NOTICE_POLL_MS = 3_000;
+/**
+ * While a hold is open, `waiting` is repeated this often. The helper keeps the notice on a 45 s lease
+ * that each repeat renews, so a dropped link clears the notice on the phone by itself, and the first
+ * repeat after the link is back shows it again.
+ */
+export const HOLD_NOTICE_HEARTBEAT_MS = 15_000;
 /** Consecutive unreadable polls after which the hold is treated as closed (the runtime is unavailable). */
 export const HOLD_NOTICE_MAX_UNREADABLE = 3;
 const FALLBACK_MS = 10 * 60_000;
@@ -33,10 +40,12 @@ export interface HoldNoticeDeps {
   /** One raw helper call. Rejects on any failure. */
   helperCall: (serial: string, method: string, params: Record<string, unknown>, timeoutMs?: number) => Promise<unknown>;
   pollMs?: number;
+  heartbeatMs?: number;
 }
 
 export function holdNoticeSender(deps: HoldNoticeDeps): (notice: PhoneHoldNotice) => void {
   const pollMs = deps.pollMs ?? HOLD_NOTICE_POLL_MS;
+  const heartbeatMs = deps.heartbeatMs ?? HOLD_NOTICE_HEARTBEAT_MS;
   /** serial → open hold ids → stop function. One notice per phone, cleared when its last hold closes. */
   const open = new Map<string, Map<string, () => void>>();
   const send = (serial: string, params: Record<string, unknown>) => {
@@ -55,6 +64,7 @@ export function holdNoticeSender(deps: HoldNoticeDeps): (notice: PhoneHoldNotice
       if (done) return;
       done = true;
       clearInterval(poll);
+      clearInterval(beat);
       clearTimeout(expiry);
       holds.delete(approvalId);
       if (holds.size === 0) {
@@ -75,9 +85,26 @@ export function holdNoticeSender(deps: HoldNoticeDeps): (notice: PhoneHoldNotice
         },
       );
     }, pollMs);
+    const waiting = () =>
+      send(serial, { state: 'waiting', effect: notice.effect, ...(notice.app ? { app: notice.app } : {}), expiresAt: notice.expiresAt });
+    const beat = setInterval(waiting, heartbeatMs);
     const left = Date.parse(notice.expiresAt) - Date.now();
     const expiry = setTimeout(close, Number.isFinite(left) && left > 0 ? left : FALLBACK_MS);
     holds.set(approvalId, close);
-    send(serial, { state: 'waiting', effect: notice.effect, ...(notice.app ? { app: notice.app } : {}), expiresAt: notice.expiresAt });
+    waiting();
+  };
+}
+
+export interface PhoneHoldHandlerDeps extends HoldNoticeDeps {
+  /** The owner's dialog on this computer (phone-service.ts holdDialog). */
+  dialog: (notice: PhoneHoldNotice) => void;
+}
+
+/** What the phone runner calls when it makes a hold: the owner's dialog here, the notice on the driven phone. */
+export function phoneHoldHandler(deps: PhoneHoldHandlerDeps): (notice: PhoneHoldNotice) => void {
+  const notice = holdNoticeSender(deps);
+  return (n) => {
+    deps.dialog(n);
+    notice(n);
   };
 }

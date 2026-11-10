@@ -10,6 +10,14 @@ import java.time.Instant
 object HoldNotice {
     /** Longest the notice may stay if Desktop never says `cleared` (holds last 10 minutes). */
     const val MAX_MS = 11 * 60 * 1000L
+
+    /**
+     * The link lease. Allternit Desktop repeats `waiting` about every 15 s while a hold is open, and each
+     * one restarts the timer. If the link drops (Desktop closed, phone off its network, heartbeat lost)
+     * the repeats stop and the notice removes itself within this long, even though the helper service
+     * keeps running. When the link comes back, Desktop's next `waiting` shows it again.
+     */
+    const val LEASE_MS = 45_000L
     private const val MIN_MS = 5_000L
 
     fun effectPhrase(effect: String?): String = when (effect) {
@@ -29,10 +37,12 @@ object HoldNotice {
 
     /**
      * How long to keep the notice when Desktop says nothing more: until [expiresAt]
-     * (ISO-8601) plus a little, never longer than [MAX_MS]; [MAX_MS] when the time is
-     * missing or unreadable.
+     * (ISO-8601) plus a little, never longer than [MAX_MS] (when the time is missing or
+     * unreadable, [MAX_MS]), and never longer than the link lease [LEASE_MS].
      */
-    fun timeoutMs(expiresAt: String?, nowMs: Long): Long {
+    fun timeoutMs(expiresAt: String?, nowMs: Long): Long = minOf(expiryMs(expiresAt, nowMs), LEASE_MS)
+
+    private fun expiryMs(expiresAt: String?, nowMs: Long): Long {
         val at = try { expiresAt?.takeIf { it.isNotBlank() }?.let { Instant.parse(it).toEpochMilli() } } catch (e: Exception) { null }
             ?: return MAX_MS
         return (at - nowMs + 5_000L).coerceIn(MIN_MS, MAX_MS)

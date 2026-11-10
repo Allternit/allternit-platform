@@ -10,19 +10,21 @@ class HoldNoticeTest {
     private val now = 1_800_000_000_000L // 2027-01-15
 
     @Test fun keepsTheNoticeUntilTheHoldExpiresPlusAMargin() {
-        val at = java.time.Instant.ofEpochMilli(now + 120_000).toString()
-        assertEquals(125_000L, HoldNotice.timeoutMs(at, now))
+        val at = java.time.Instant.ofEpochMilli(now + 20_000).toString()
+        assertEquals(25_000L, HoldNotice.timeoutMs(at, now))
     }
 
-    @Test fun neverKeepsItLongerThanTheCapEvenForALateExpiry() {
+    @Test fun aDroppedLinkClearsTheNoticeWithinTheLeaseEvenForALateExpiry() {
+        // Desktop repeats `waiting` while the link is up. Without a repeat the notice lives only one lease,
+        // however far off the hold's own expiry is, so a drop clears it while the service keeps running.
         val at = java.time.Instant.ofEpochMilli(now + 3_600_000).toString()
-        assertEquals(HoldNotice.MAX_MS, HoldNotice.timeoutMs(at, now))
+        assertEquals(HoldNotice.LEASE_MS, HoldNotice.timeoutMs(at, now))
+        assertEquals(HoldNotice.LEASE_MS, HoldNotice.timeoutMs(null, now))
+        assertEquals(HoldNotice.LEASE_MS, HoldNotice.timeoutMs("soon", now))
     }
 
     @Test fun anExpiredOrMissingOrUnreadableTimeStillEndsTheNotice() {
         assertEquals(5_000L, HoldNotice.timeoutMs(java.time.Instant.ofEpochMilli(now - 60_000).toString(), now))
-        assertEquals(HoldNotice.MAX_MS, HoldNotice.timeoutMs(null, now))
-        assertEquals(HoldNotice.MAX_MS, HoldNotice.timeoutMs("soon", now))
     }
 
     @Test fun bodyIsPlainWordsWithTheAppWhenKnown() {
@@ -36,7 +38,7 @@ class HoldNoticeTest {
         val p = JSONObject().put("state", "waiting").put("effect", "pay").put("app", "com.bank")
             .put("expiresAt", java.time.Instant.ofEpochMilli(1_800_000_060_000L).toString())
         d.dispatch("hold_notice", p)
-        assertEquals(listOf<Any?>(true, "pay", "com.bank", 65_000L), hooks.holdNotices[0])
+        assertEquals(listOf<Any?>(true, "pay", "com.bank", 45_000L), hooks.holdNotices[0])
         d.dispatch("hold_notice", JSONObject().put("state", "cleared"))
         assertFalse(hooks.holdNotices[1][0] as Boolean)
         try { d.dispatch("hold_notice", JSONObject().put("state", "x")); throw AssertionError("expected invalid") } catch (e: RpcException) { assertEquals(RpcException.INVALID_PARAMS, e.code) }
