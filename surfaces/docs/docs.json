@@ -946,6 +946,7 @@
               "api/audit-logs",
               "api/runtime-backend",
               "api/runtime-discovery",
+              "api/system-surfaces",
               "api/platform-v1",
               "api/h5i",
               "api/visualizations",
