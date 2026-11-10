@@ -478,7 +478,7 @@ final class ArtifactsV2Client: @unchecked Sendable {
         case 404: return "This artifact doesn’t exist or isn’t shared with you."
         case 409: return "Someone saved a newer version."
         case 413: return "This artifact is too large (16 MB max)."
-        default: return "Request failed (\(status))."
+        default: return "Something went wrong. Try again."
         }
     }
 }

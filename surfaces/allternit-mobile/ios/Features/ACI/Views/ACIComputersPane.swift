@@ -660,7 +660,25 @@ struct ACIWorkflowsSection: View {
                 if loading {
                     Text("Loading…").foregroundColor(Color("TextTertiary"))
                 } else if let error {
-                    Text(error).foregroundColor(Theme.statusError)
+                    // A failed load reads like the machines list's: a neutral
+                    // line and a retry, never a red status string.
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text(error)
+                            .foregroundColor(Color("TextSecondary"))
+                            .fixedSize(horizontal: false, vertical: true)
+                        Button { Task { await load() } } label: {
+                            Text("Try again")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundColor(Color("TextPrimary"))
+                                .padding(.horizontal, 14)
+                                .frame(minHeight: 32)
+                                .background(Color("BgPanel"))
+                                .clipShape(Capsule())
+                                .overlay(Capsule().stroke(Color("BorderSubtle"), lineWidth: 1))
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityHint("Loads the workflow specs again")
+                    }
                 } else if specs.isEmpty {
                     Text("No compiled workflow specs on the gateway yet. Compile a recording first (POST /v1/browser-skills/from-recording).")
                         .foregroundColor(Color("TextTertiary"))
