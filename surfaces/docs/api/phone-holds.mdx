@@ -28,6 +28,7 @@ A hold has one of these effects:
 These actions make a hold:
 
 - A tap, or `phone.web.click`, whose label matches the lexicon.
+- `phone.find_and_tap`, judged by the element it finds, or else by the label it searches for.
 - `phone.type` into a secure field, or into a field named password, passcode, card number or CVV.
 - The enter key in a message composer. It counts as `send`.
 - `open_app` into a bank, wallet or broker app. One hold covers that app for the rest of the run.
@@ -35,7 +36,9 @@ These actions make a hold:
 
 The label match looks at the first six words of the element's label and at its id. The lexicon is English.
 
-Texts and calls through `phone.sms.send` and `phone.call.dial` use the same hold, as `send` and `call`. `phone.sms.read` holds as `credential`, because texts carry one-time codes. On Desktop, the owner approves SMS read once for each bot and phone, and later reads by that bot on that phone run without a new hold. A caller that has no bot, and every API-key caller, is asked each time.
+Texts and calls through `phone.sms.send` and `phone.call.dial` use the same hold, as `send` and `call`. The hold is tied to the recipient and, for a text, the message: an approved hold does not cover a different number or a different text, and a retry must repeat the same `to` string.
+
+Web tasks on an app phone (`/api/aci`) go through the same check. A hold that ends such a run shows as an error in its stream. `phone.sms.read` holds as `credential`, because texts carry one-time codes. On Desktop, the owner approves SMS read once for each bot and phone, and later reads by that bot on that phone run without a new hold. A caller that has no bot, and every API-key caller, is asked each time.
 
 Desktop checks every acting call before it runs. If the runtime cannot be reached, Desktop fails closed: the call returns `guard_unavailable` and does not act.
 
@@ -100,7 +103,7 @@ A `holdId` that is approved, not yet used, used within 10 minutes of approval an
 
 A call with no `holdId` that repeats an action which already has an open hold answers with that hold, so the owner sees one item. The route answers an error when the caller has no owner to ask. The owner is always the signed-in caller, never a value in `ctx`.
 
-The runtime's own loops pass the check an internal one-time value, `_pass`, in the tool arguments. The runtime issues it after an approval has been used, and Desktop sends it back once so the same action is not asked about twice. Callers never send it. A wrong, used or expired value is ignored and the normal check runs.
+The runtime's own loops pass the check an internal one-time value, `_pass`, in the tool arguments. The runtime issues it after an approval has been used, and Desktop sends it back once so the same action is not asked about twice. Callers never send it. A request that carries one is not classified: the check answers `allow` with `pass: true`, or `bad_pass` for a wrong, used or expired value, and makes no hold. On `bad_pass` Desktop drops the value, reads the screen and runs the normal check.
 
 ### Read a hold
 
@@ -143,6 +146,8 @@ A hold is an approval with authority `allternit` and action `phone.<tool>`, for 
 ```
 
 `typedChars` appears only for `phone.type`. It is a count. The typed text is never stored.
+
+A text or call hold also carries `to`, and a text hold carries `text`, because the message is what the owner approves. `botless` is `true` when the task had no bot; the hold is then filed under the owner's main bot so that the approval event and its notification exist, and the inbox item reads "A phone task".
 
 ## The inbox item
 
