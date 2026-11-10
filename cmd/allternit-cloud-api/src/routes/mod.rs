@@ -39,6 +39,7 @@ pub mod hosted_runtimes;
 pub mod instances;
 pub mod inference_keys;
 pub mod jobs;
+pub mod live_activity;
 pub mod livekit_admin;
 pub mod me_flags;
 pub mod web_search;

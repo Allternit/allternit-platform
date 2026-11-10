@@ -1116,8 +1116,9 @@ pub enum SnapshotIngest {
     /// Same content as the stored one: nothing changed.
     Unchanged,
     /// Stored. `revoke` holds the notification tags to remove from the person's iPhones (their
-    /// `notification_delivered` rows are already deleted).
-    Stored { revoke: Vec<String> },
+    /// `notification_delivered` rows are already deleted). `previous` is the snapshot it replaced (`None`
+    /// for this runtime's first), which [`super::live_activity`] compares against.
+    Stored { revoke: Vec<String>, previous: Option<Value> },
 }
 
 /// Keep `snapshot` as `runtime_id`'s latest for `user`, and work out which delivered notifications to
@@ -1141,7 +1142,8 @@ pub async fn ingest_snapshot(db: &PgPool, user: &str, runtime_id: &str, snapshot
     .execute(&mut *tx)
     .await?;
     let now = needs_you(snapshot);
-    let left: Vec<String> = previous.map(|(p, _)| needs_you(&p)).unwrap_or_default().into_iter().filter(|id| !now.contains(id)).collect();
+    let previous = previous.map(|(p, _)| p);
+    let left: Vec<String> = previous.as_ref().map(needs_you).unwrap_or_default().into_iter().filter(|id| !now.contains(id)).collect();
     let mut revoke = Vec::new();
     if !left.is_empty() {
         revoke = sqlx::query_scalar("DELETE FROM notification_delivered WHERE user_id = $1 AND inbox_id = ANY($2) RETURNING tag").bind(user).bind(&left).fetch_all(&mut *tx).await?;
@@ -1149,7 +1151,7 @@ pub async fn ingest_snapshot(db: &PgPool, user: &str, runtime_id: &str, snapshot
         revoke.dedup();
     }
     tx.commit().await?;
-    Ok(SnapshotIngest::Stored { revoke })
+    Ok(SnapshotIngest::Stored { revoke, previous })
 }
 
 // ---------------------------------------------------------------------------
@@ -1326,7 +1328,7 @@ pub fn spawn_push_sink(db: PgPool) {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::routes::allternit_events;
     use crate::routes::test_support::{events_backbone_schema, test_pool};
@@ -1875,16 +1877,49 @@ mod tests {
         // ap1 was approved on another device: only its tag is revoked, only for this person.
         assert_eq!(
             ingest_snapshot(&db, "u1", "rt_1", &json!({ "pendingApprovals": 1, "needsYou": ["attention:at9"] })).await.unwrap(),
-            SnapshotIngest::Stored { revoke: vec!["approval-ap1".into()] }
+            SnapshotIngest::Stored { revoke: vec!["approval-ap1".into()], previous: Some(json!({ "pendingApprovals": 2, "needsYou": ["approval:ap1", "attention:at9"] })) }
         );
         let left: Vec<(String, String)> = sqlx::query_as("SELECT user_id, inbox_id FROM notification_delivered ORDER BY user_id").fetch_all(&db).await.unwrap();
         assert_eq!(left, vec![("u1".into(), "attention:at9".into()), ("u2".into(), "approval:ap1".into())]);
         // Another runtime's snapshot has its own previous state.
-        assert_eq!(ingest_snapshot(&db, "u1", "rt_2", &json!({ "needsYou": [] })).await.unwrap(), SnapshotIngest::Stored { revoke: vec![] });
+        assert_eq!(ingest_snapshot(&db, "u1", "rt_2", &json!({ "needsYou": [] })).await.unwrap(), SnapshotIngest::Stored { revoke: vec![], previous: None });
         // Every forwarded event carries the runtime cloud authenticated.
         ingest(&db, "u1", "rt_1", vec![json!({ "id": "e9", "type": "approval.requested", "data": { "approvalId": "ap2", "runtimeId": "spoofed" } })]).await.unwrap();
         let data: Value = sqlx::query_scalar("SELECT data FROM platform_events").fetch_one(&db).await.unwrap();
         assert_eq!(data["runtimeId"], "rt_1");
+    }
+
+    /// An iPhone with both the app and the home-screen app gets the app's notification only; once the app's
+    /// token is gone, the home-screen app gets it again.
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn the_home_screen_app_is_skipped_while_the_app_can_be_reached() {
+        std::env::set_var("APNS_KEY_P8", crate::routes::apns::tests::fixture_pem());
+        std::env::set_var("APNS_KEY_ID", "KEY1234567");
+        std::env::set_var("APNS_TEAM_ID", "TEAM123456");
+        let db = test_pool().await;
+        schema(&db).await;
+        let (p256dh, auth, _, _) = browser_sub();
+        let pwa = web_push::subscribe(&db, "u_pwa", "iphone", "https://push.example.com/pwa", &p256dh, &auth, "test").await.unwrap();
+        sqlx::query("UPDATE push_subscriptions SET platform = 'ios-pwa' WHERE id = $1").bind(&pwa).execute(&db).await.unwrap();
+        let desk = web_push::subscribe(&db, "u_pwa", "mac", "https://push.example.com/desk", &p256dh, &auth, "test").await.unwrap();
+        sqlx::query("UPDATE push_subscriptions SET platform = 'desktop' WHERE id = $1").bind(&desk).execute(&db).await.unwrap();
+        let token = "e5".repeat(32);
+        let info = crate::routes::apns::DeviceInfo { device_id: "iphone".into(), os_version: None, app_build: None, capabilities: vec![] };
+        crate::routes::apns::register(&db, "u_pwa", &token, "sandbox", &info).await.unwrap();
+        let msg = message_for("approval.requested", &json!({ "botName": "Raven", "approvalId": "ap1", "summary": "send it" })).unwrap();
+        let sent_to = |r: &Recorder| r.sent.lock().unwrap().iter().map(|(e, _, _)| e.clone()).collect::<Vec<_>>();
+
+        let rec = Recorder::default();
+        assert_eq!(web_push::send_to_user(&db, &rec, &vapid(), "u_pwa", &msg).await, 1);
+        assert_eq!(sent_to(&rec), vec!["https://push.example.com/desk".to_string()]);
+
+        sqlx::query("DELETE FROM apns_device_tokens WHERE user_id = 'u_pwa'").execute(&db).await.unwrap();
+        let rec = Recorder::default();
+        assert_eq!(web_push::send_to_user(&db, &rec, &vapid(), "u_pwa", &msg).await, 2);
+        let mut to = sent_to(&rec);
+        to.sort();
+        assert_eq!(to, vec!["https://push.example.com/desk".to_string(), "https://push.example.com/pwa".to_string()]);
     }
 
     /// The full router builds (no axum route-overlap panic) with these routes in it.
