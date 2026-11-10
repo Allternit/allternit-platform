@@ -523,9 +523,11 @@ impl ModelRouter {
     ///
     /// Live upstream pricing (from the provider's cached model list — no extra
     /// fetches) is treated as our wholesale cost and marked up by
-    /// `INFERENCE_MARKUP` (default 1.5, clamped 1.0..=5.0); the static catalog
-    /// entry is the fallback when the upstream exposes no pricing, in which
-    /// case the wholesale side is unknown (None).
+    /// `INFERENCE_MARKUP` (default 1.5, clamped 1.0..=5.0). When the upstream
+    /// exposes no pricing the static catalog entry is the fallback: an entry
+    /// with `static_price_is_wholesale` (Fireworks) is billed at static ×
+    /// `INFERENCE_MARKUP` with the static price as wholesale; any other entry
+    /// is billed at the static price with the wholesale side unknown (None).
     pub async fn retail_prices(&self, alias: &str) -> Result<RetailPrices, ModelRouterError> {
         let entry = self
             .alias_map
@@ -549,8 +551,10 @@ impl ModelRouter {
 /// Retail prices for a catalog entry given its upstream listing, if any.
 ///
 /// Live upstream pricing is our wholesale cost, marked up by
-/// `INFERENCE_MARKUP`; without it the static catalog price applies and the
-/// wholesale side is unknown.
+/// `INFERENCE_MARKUP`, and always wins. Without it: an entry with
+/// `static_price_is_wholesale` treats the static price the same way (marked
+/// up, recorded as wholesale); any other entry bills the static price as
+/// retail and the wholesale side is unknown.
 fn retail_from(entry: &catalog::ModelAliasEntry, upstream: Option<&ModelInfo>) -> RetailPrices {
     // Provider pricing extras are per-TOKEN USD (OpenRouter convention, see
     // openrouter::fetch_models); the catalog and everything downstream are
@@ -573,6 +577,16 @@ fn retail_from(entry: &catalog::ModelAliasEntry, upstream: Option<&ModelInfo>) -
         };
     }
 
+    if entry.static_price_is_wholesale {
+        let markup = inference_markup();
+        return RetailPrices {
+            prompt_per_1m: entry.prompt_price * markup,
+            completion_per_1m: entry.completion_price * markup,
+            wholesale_prompt_per_1m: Some(entry.prompt_price),
+            wholesale_completion_per_1m: Some(entry.completion_price),
+        };
+    }
+
     RetailPrices {
         prompt_per_1m: entry.prompt_price,
         completion_per_1m: entry.completion_price,
@@ -582,7 +596,8 @@ fn retail_from(entry: &catalog::ModelAliasEntry, upstream: Option<&ModelInfo>) -
 }
 
 /// Retail prices for one model, per 1M tokens USD. The wholesale fields are
-/// our actual upstream cost when live pricing was available.
+/// our upstream cost: live pricing when available, else the static catalog
+/// price of an entry flagged `static_price_is_wholesale`; None otherwise.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RetailPrices {
     pub prompt_per_1m: f64,
@@ -591,7 +606,7 @@ pub struct RetailPrices {
     pub wholesale_completion_per_1m: Option<f64>,
 }
 
-/// The retail markup over live upstream pricing: `INFERENCE_MARKUP`, default
+/// The retail markup over wholesale pricing: `INFERENCE_MARKUP`, default
 /// 1.5, clamped to 1.0..=5.0 so a typo can never give inference away for free
 /// or price it absurdly.
 fn inference_markup() -> f64 {

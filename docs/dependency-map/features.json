@@ -1021,6 +1021,10 @@
         {
           "on": "2026-10-27",
           "note": "Keep going on Allternit Cloud (button only, nothing charged without the tap, no automatic switching): a session paused/wrapped at the user's own subscription limit gets paused.cloud {modelID, label, funds} from gizzi (same model if /v1/models lists it, else deepseek-v4-pro, never lane open; funds from /billing/credits + /me/usage). POST /session/:id/resume {cloud:true} switches to allternit/<model>, clears the pause and continues with a 'Continued on Allternit Cloud (\u2026) after the \u2026 was reached.' note (part metadata.cloudContinue, surfaced by allternit-api as message metadata.cloudContinue). No funds: button reads Add Cloud credits and opens billing. Strip on Chat/Code/Bot threads on all surfaces; gizzi TUI /keep-going."
+        },
+        {
+          "on": "2026-11-10",
+          "note": "Cloud list checked against the real provider accounts. Added claude-sonnet-5.5, gpt-6.1-sol (OpenRouter) and kimi-k3.1-pro (Together); claude-sonnet-4.6 hidden. Fireworks rows now carry the 1.5\u00d7 retail markup (were billed at the provider price)."
         }
       ],
       "evidence": [
