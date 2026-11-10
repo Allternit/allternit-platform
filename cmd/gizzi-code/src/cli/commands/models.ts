@@ -2,8 +2,8 @@ import type { Argv } from "yargs"
 import { Instance } from "@/runtime/context/project/instance"
 import { Provider } from "@/runtime/providers/provider"
 import { ModelsDev } from "@/runtime/providers/adapters/models"
-import { Discovery } from "@/runtime/providers/discovery"
-import { ProviderOffer } from "@/runtime/providers/offer"
+import { ModelList } from "@/runtime/providers/model-list"
+import { currentDefaultBrain } from "@/runtime/providers/default-brain"
 import { cmd } from "@/cli/commands/cmd"
 import { UI } from "@/cli/ui"
 import { EOL } from "os"
@@ -43,6 +43,11 @@ export const ModelsCommand = cmd({
       })
       .option("all", {
         describe: "show every models.dev provider, aggregators like OpenRouter included (default: what the model picker offers)",
+        type: "boolean",
+        default: false,
+      })
+      .option("json", {
+        describe: "print the sections and models as JSON",
         type: "boolean",
         default: false,
       })
@@ -180,109 +185,64 @@ export const ModelsCommand = cmd({
 
     if (args.refresh) {
       await ModelsDev.refresh()
-      UI.println(UI.Style.TEXT_SUCCESS_BOLD + "Models cache refreshed" + UI.Style.TEXT_NORMAL)
+      // Make discovery re-read live CLI model lists instead of the cache.
+      process.env.GIZZI_MODELS_REFRESH = "1"
+      if (!args.json) UI.println(UI.Style.TEXT_SUCCESS_BOLD + "Models cache refreshed" + UI.Style.TEXT_NORMAL)
     }
 
     await Instance.provide({
       directory: process.cwd(),
       async fn() {
-        const modelsDev = await ModelsDev.get()
-        const configured = await Provider.list()
+        // With an explicit provider, show it even when the picker would not offer it.
+        const sections = await ModelList.build({ all: Boolean(args.all || args.provider) })
 
-        // Auto-discovered CLI/local providers
-        const discovered = await Discovery.run()
-        const discoveredMap: Record<string, typeof discovered[0]> = {}
-        for (const dp of discovered) discoveredMap[dp.id] = dp
-
-        function printModels(providerID: string, verbose?: boolean) {
-          const devProvider = modelsDev[providerID]
-          const configuredProvider = configured[providerID]
-          const provider = configuredProvider || devProvider
-          if (provider) {
-            const sortedModels = Object.entries(provider.models).sort(([a], [b]) => a.localeCompare(b))
-            for (const [modelID, model] of sortedModels) {
-              process.stdout.write(`${providerID}/${modelID}`)
-              process.stdout.write(EOL)
-              if (verbose) {
-                process.stdout.write(JSON.stringify(model, null, 2))
-                process.stdout.write(EOL)
-              }
-            }
-            return
-          }
-
-          // Discovered but not in models.dev (CLI/local providers)
-          const dp = discoveredMap[providerID]
-          if (dp) {
-            const badge = SOURCE_BADGE[dp.source] ?? ""
-            for (const m of dp.models) {
-              process.stdout.write(`${providerID}/${m.id}  ${badge}`)
-              process.stdout.write(EOL)
-              if (verbose) {
-                process.stdout.write(JSON.stringify({ context: m.context, output: m.output }, null, 2))
-                process.stdout.write(EOL)
-              }
-            }
-          }
-        }
-
-        // Build combined provider ID list
-        const allProviderIDs = new Set<string>([
-          ...(args.all ? Object.keys(modelsDev) : Object.keys(configured)),
-          ...Object.keys(discoveredMap),
-        ])
-
-        if (args.provider) {
-          if (!allProviderIDs.has(args.provider)) {
-            UI.error(`Provider not found: ${args.provider}`)
-            return
-          }
-          printModels(args.provider, args.verbose)
+        if (args.json) {
+          process.stdout.write(JSON.stringify(sections, null, 2) + EOL)
           return
         }
 
-        // The picker's rule (runtime/providers/offer.ts), same as the TUI and
-        // Desktop: Allternit Cloud, your subscriptions, API keys, local;
-        // aggregators (OpenRouter) only with --all or --provider.
-        const candidate = (id: string) => {
-          const dp = discoveredMap[id]
-          const info = configured[id]
-          return {
-            id,
-            source: dp?.source ?? info?.source,
-            auth_type: dp?.auth_type ?? info?.auth_type,
-            baseURL: dp?.base_url ?? (info?.options?.baseURL as string | undefined),
-            options: dp?.options ?? info?.options,
-          }
-        }
-        // A key or sign-in on file: an env var, `gizzi connect`, or one in gizzi.json.
-        const connected = (id: string) => {
-          if (discoveredMap[id]) return true
-          const info = configured[id]
-          if (!info) return false
-          return (
-            info.source === "env" ||
-            info.source === "api" ||
-            Boolean(info.key || info.token || info.options?.apiKey) ||
-            info.env.some((name) => Boolean(process.env[name]))
-          )
-        }
-        const providerIDs = [...allProviderIDs]
-          .filter((id) => args.all || ProviderOffer.isOffered(candidate(id), { connected: connected(id) }))
-          .sort((a, b) => {
-            const d = ProviderOffer.rank(candidate(a)) - ProviderOffer.rank(candidate(b))
-            if (d !== 0) return d
-            return a.localeCompare(b)
-          })
+        const configured = args.verbose ? await Provider.list().catch(() => ({}) as Record<string, any>) : {}
+        const modelsDev = args.verbose ? await ModelsDev.get().catch(() => ({}) as Record<string, any>) : {}
 
-        let lastGroup = ""
-        for (const providerID of providerIDs) {
-          const group = ProviderOffer.TITLE[ProviderOffer.kind(candidate(providerID))]
-          if (group !== lastGroup) {
-            UI.println(UI.Style.TEXT_DIM + `# ${group}` + UI.Style.TEXT_NORMAL)
-            lastGroup = group
+        if (args.provider) {
+          const found = sections.flatMap((s) => s.providers).find((p) => p.id === args.provider)
+          if (!found) {
+            UI.error(`Provider not found: ${args.provider}`)
+            return
           }
-          printModels(providerID, args.verbose)
+        }
+
+        const dim = (text: string) => UI.Style.TEXT_DIM + text + UI.Style.TEXT_NORMAL
+        for (const section of sections) {
+          const providers = section.providers.filter((p) => !args.provider || p.id === args.provider)
+          if (providers.length === 0) continue
+          if (!args.provider) UI.println(dim(`# ${section.title}`))
+          for (const provider of providers) {
+            for (const row of provider.models) {
+              const tags: string[] = []
+              if (row.default) tags.push("default")
+              if (row.current) tags.push("current")
+              if (provider.signedIn === false) tags.push("not signed in")
+              const ref = row.current ? UI.Style.TEXT_HIGHLIGHT_BOLD + row.ref + UI.Style.TEXT_NORMAL : row.ref
+              process.stdout.write(ref + (tags.length ? "  " + dim(tags.join(" ")) : "") + EOL)
+              if (args.verbose) {
+                const info = configured[provider.id]?.models?.[row.modelID] ?? modelsDev[provider.id]?.models?.[row.modelID]
+                const detail = info ?? { context: row.context, output: row.output }
+                process.stdout.write(JSON.stringify(detail, null, 2) + EOL)
+              }
+            }
+          }
+        }
+
+        if (!args.provider) {
+          const brain = await currentDefaultBrain().catch(() => ({ model: null, reason: "", pinned: false }))
+          UI.println(
+            dim(
+              brain.model
+                ? `default: ${brain.model} (${brain.reason})`
+                : "default: none — pick one with /model or --model",
+            ),
+          )
         }
       },
     })

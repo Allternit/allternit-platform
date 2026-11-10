@@ -7,11 +7,12 @@ import { approveAndSpawn, newMission, planMission } from '@/cli/mission/actions'
 import { servingEngine } from '@/cli/mission/orchestrator'
 import { badge, label, markdownToPlan, planProblems, planToMarkdown, type Mission, type PlanInput } from '@/cli/mission/state'
 import { listMissions, logFile, projectRoot } from '@/cli/mission/store'
-import { DEFAULT_BRAIN } from '../swarm/swarm'
+import { workerBrain } from '../swarm/swarm'
 
 export interface MissionArgs {
   goal: string
-  brain: string
+  /** Undefined when not given: the mission runs on the default CLI brain (see workerBrain). */
+  brain?: string
   on?: string
   maxWorkers?: number
   maxHours?: number
@@ -29,7 +30,7 @@ const NUMBER_FLAGS = { '--max-workers': 'maxWorkers', '--max-hours': 'maxHours',
  */
 export function parseMissionArgs(raw: string): MissionArgs {
   const words = raw.trim().split(/\s+/).filter(Boolean)
-  const out: MissionArgs = { goal: '', brain: DEFAULT_BRAIN }
+  const out: MissionArgs = { goal: '' }
   const rest: string[] = []
   for (let i = 0; i < words.length; i++) {
     const w = words[i]!
@@ -60,7 +61,7 @@ export function parseMissionArgs(raw: string): MissionArgs {
   return out
 }
 
-const USAGE = 'Usage: /mission <goal> [--brain claude-cli/claude-sonnet-5] [--on <computer>] [--max-workers 3] [--max-hours N] [--max-attempts 2]. Plans the goal as milestones, you approve, it runs in the background. Check it with `gizzi mission status`.'
+const USAGE = 'Usage: /mission <goal> [--brain <provider/model>] [--on <computer>] [--max-workers 3] [--max-hours N] [--max-attempts 2]. Plans the goal as milestones, you approve, it runs in the background. Check it with `gizzi mission status`.'
 
 function statusText(cwd: string): string {
   let root: string
@@ -212,7 +213,12 @@ export const call: LocalJSXCommandCall = async (onDone, context, args) => {
     onDone(statusText(cwd), { display: 'system' })
     return null
   }
-  const created = newMission({ goal, cwd, brain, on: parsed.on, maxWorkers: parsed.maxWorkers, maxHours: parsed.maxHours, maxAttempts: parsed.maxAttempts })
+  const picked = await workerBrain(brain)
+  if ('error' in picked) {
+    onDone(`Couldn't start the mission: ${picked.error}`, { display: 'system' })
+    return null
+  }
+  const created = newMission({ goal, cwd, brain: picked.brain, on: parsed.on, maxWorkers: parsed.maxWorkers, maxHours: parsed.maxHours, maxAttempts: parsed.maxAttempts })
   if ('error' in created) {
     onDone(`Couldn't start the mission: ${created.error}`, { display: 'system' })
     return null

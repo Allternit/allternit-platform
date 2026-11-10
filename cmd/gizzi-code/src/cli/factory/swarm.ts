@@ -74,6 +74,9 @@ const BRAIN_HARNESS: Record<string, string> = {
   "grok-cli": "grok",
   grok: "grok",
   agy: "agy",
+  antigravity: "agy",
+  "qwen-cli": "qwen",
+  qwen: "qwen",
   gizzi: "gizzi",
 }
 

@@ -1,4 +1,3 @@
 {
-  "$schema": "https://docs.gizziio.com/config.json",
-  "model": "moonshotai/kimi-k2-thinking"
+  "$schema": "https://docs.gizziio.com/config.json"
 }

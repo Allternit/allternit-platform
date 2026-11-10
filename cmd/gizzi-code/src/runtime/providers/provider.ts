@@ -2,7 +2,7 @@ import { nativeToolsetFetch } from "@/runtime/tools/computer-toolset/anthropic-n
 import z from "zod/v4"
 import fuzzysort from "fuzzysort"
 import { Config } from "@/runtime/context/config/config"
-import { mapValues, mergeDeep, omit, pickBy, sortBy } from "remeda"
+import { mapValues, mergeDeep, omit, pickBy } from "remeda"
 import { Log } from "@/shared/util/log"
 import { BunProc } from "@/shared/bun"
 import { Plugin } from "@/runtime/integrations/plugin"
@@ -26,7 +26,9 @@ import { BUNDLED_PROVIDERS, NoSuchModelError, type SDK, type LanguageModelV2 } f
 import { CUSTOM_LOADERS } from "@/runtime/providers/adapters/loaders"
 import type { CustomModelLoader } from "@/runtime/providers/types"
 import { Discovery, type DiscoveredProvider } from "@/runtime/providers/discovery"
-import { cloudInferenceToken } from "@/runtime/providers/discovery/allternit-cloud"
+import { cloudInferenceToken, getCachedAllternitPlan } from "@/runtime/providers/discovery/allternit-cloud"
+import { ModelList } from "@/runtime/providers/model-list"
+import { resolveDefaultBrain, type DefaultBrain } from "@/runtime/providers/default-brain"
 import { SubprocessLanguageModel } from "@/runtime/providers/adapters/loaders/subprocess"
 import { SubscriptionFabricLanguageModel } from "@/runtime/providers/fabric/language-model"
 import { fabricConfigured, isFabricProviderID } from "@/runtime/providers/fabric/client"
@@ -1138,26 +1140,35 @@ export namespace Provider {
 
     if (cfg.small_model) {
       const parsed = parseModel(cfg.small_model)
-      return getModel(parsed.providerID, parsed.modelID)
+      // A small_model whose provider/model is gone (CLI uninstalled, local
+      // server off) falls through to the automatic pick instead of failing the turn.
+      const configured = await state().then((s) => s.providers[parsed.providerID]?.models[parsed.modelID])
+      if (configured) return getModel(parsed.providerID, parsed.modelID)
+      log.warn("small_model not available, picking one", { small_model: cfg.small_model })
     }
 
     const provider = await state().then((state) => state.providers[providerID])
     if (provider) {
       let priority = [
-        "claude-haiku-4-5",
-        "claude-haiku-4.5",
-        "3-5-haiku",
-        "3.5-haiku",
-        "gemini-3-flash",
-        "gemini-2.5-flash",
-        "gpt-5-nano",
+        "claude-haiku-5-5",
+        "claude-haiku",
+        "gemini-3.8-flash",
+        "gemini-3",
+        "flash",
+        "gpt-6-luna",
+        "luna",
+        "mini",
+        "nano",
       ]
       if (providerID.startsWith("gizzi") || providerID.startsWith("gizziio")) {
         priority = ["gpt-5-nano"]
       }
+      // Match at a word start so "mini" never matches "gemini".
+      const matches = (model: string, item: string) =>
+        new RegExp(`(^|[^a-z0-9])${item.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`, "i").test(model)
       for (const item of priority) {
         for (const model of Object.keys(provider.models)) {
-          if (model.includes(item)) return getModel(providerID, model)
+          if (matches(model, item)) return getModel(providerID, model)
         }
       }
     }
@@ -1184,59 +1195,116 @@ export namespace Provider {
     return undefined
   }
 
-  const priority = ["gpt-5", "claude-sonnet-4", "big-pickle", "gemini-3-pro"]
-  export function sort(models: Model[]) {
-    return sortBy(
-      models,
-      [(model) => priority.findIndex((filter) => model.id.includes(filter)), "desc"],
-      [(model) => (model.id.includes("latest") ? 0 : 1), "asc"],
-      [(model) => model.id, "desc"],
-    )
+  /**
+   * Model order: for a catalog CLI the vendor's flagged default first, then
+   * the vendor's order; then current families (gpt-6, claude-sonnet-5,
+   * gemini-3, kimi), `latest`, id. One implementation in ModelList.
+   */
+  export function sort<T>(models: T[]): T[] {
+    // Callers pass registry models and loosely typed route payloads; every entry has an `id`.
+    return ModelList.sortModels(models as unknown as { id: string; providerID?: string }[]) as unknown as T[]
+  }
+
+  const AUTO_REF = { providerID: "auto", modelID: "auto" }
+
+  /** The shared default-brain resolver (default-brain.ts) over this config and discovery. */
+  function resolveBrain(cfg: Config.Info): DefaultBrain {
+    const disabled = new Set(cfg.disabled_providers ?? [])
+    const enabled = cfg.enabled_providers ? new Set(cfg.enabled_providers) : undefined
+    return resolveDefaultBrain({
+      modelAuto: cfg.model_auto,
+      currentModel: cfg.model,
+      plan: getCachedAllternitPlan(),
+      providers: Discovery.last().filter((p) => !disabled.has(p.id) && (!enabled || enabled.has(p.id))),
+    })
+  }
+
+  /** The resolver's model as a ref when it is a pin (validated) or a model this machine lists. */
+  async function resolvedRef(cfg: Config.Info, providers: Record<string, Info>): Promise<ModelRef | undefined> {
+    const brain = resolveBrain(cfg)
+    if (!brain.model) return undefined
+    const parsed = parseModel(brain.model)
+    if (parsed.providerID === "auto") return undefined
+    if (brain.pinned) {
+      // A pinned model is an explicit user decision. Validate it and surface
+      // ModelNotFoundError (with suggestions) instead of silently routing a
+      // request to a different provider/model.
+      await getModel(parsed.providerID, parsed.modelID)
+      return parsed
+    }
+    return providers[parsed.providerID]?.models[parsed.modelID] ? parsed : undefined
+  }
+
+  function isAutoRef(model: string | undefined) {
+    return model === "auto" || model === "auto/auto"
   }
 
   export async function defaultModel() {
     const cfg = await Config.get()
+    // list() runs discovery first, so the resolver sees this machine's CLIs.
     const providers = await list()
 
-    // Explicit model config takes priority (lets users pin a specific model)
-    if (cfg.model && cfg.model !== "auto" && cfg.model !== "auto/auto") {
-      const parsed = parseModel(cfg.model)
-      if (parsed.providerID !== "auto") {
-        // A pinned model is an explicit user decision. Validate it and surface
-        // ModelNotFoundError (with suggestions) instead of silently routing a
-        // request to a different provider/model.
-        await getModel(parsed.providerID, parsed.modelID)
-        return parsed
-      }
+    // Explicit "auto": per-request routing (resolveAuto).
+    if (!isAutoRef(cfg.model)) {
+      const ref = await resolvedRef(cfg, providers)
+      if (ref) return ref
     }
 
-    // Default: auto-route. Works as long as any provider is authenticated.
+    // Fallback: auto-route. Works as long as any provider is authenticated.
     // resolveAuto() picks the cheapest capable model per request at runtime.
     if (Object.keys(providers).length > 0) {
-      return { providerID: "auto", modelID: "auto" }
+      return AUTO_REF
     }
 
     // Nothing authenticated yet — tell the user
     throw new Error("No providers found. Run `gizzi auth add` to connect a provider.")
   }
 
+  type RecentModel = { providerID: string; modelID: string }
+  const RECENT_MAX = 20
+
+  function modelStateFile() {
+    return path.join(GlobalPaths.state, "model.json")
+  }
+
+  async function readRecent(): Promise<RecentModel[]> {
+    return (await Filesystem.readJson<{ recent?: RecentModel[] }>(modelStateFile())
+      .then((x) => (Array.isArray(x.recent) ? x.recent : []))
+      .catch(() => [])) as RecentModel[]
+  }
+
+  /** Record a model the user ran: `state/model.json` `recent`, newest first, unique, at most 20. */
+  export async function recordRecentModel(ref: { providerID: string; modelID: string }): Promise<void> {
+    if (!ref.providerID || !ref.modelID || ref.providerID === "auto") return
+    const file = modelStateFile()
+    const existing = await Filesystem.readJson<Record<string, unknown>>(file).catch(() => ({}) as Record<string, unknown>)
+    const base = existing && typeof existing === "object" && !Array.isArray(existing) ? existing : {}
+    const previous = Array.isArray(base["recent"]) ? (base["recent"] as RecentModel[]) : []
+    const recent = [
+      { providerID: ref.providerID, modelID: ref.modelID },
+      ...previous.filter(
+        (entry) =>
+          entry &&
+          typeof entry.providerID === "string" &&
+          typeof entry.modelID === "string" &&
+          !(entry.providerID === ref.providerID && entry.modelID === ref.modelID),
+      ),
+    ].slice(0, RECENT_MAX)
+    await Filesystem.writeJson(file, { ...base, recent }).catch((err) =>
+      log.warn("failed to record recent model", { error: err }),
+    )
+  }
+
   /** @deprecated kept for callers that need a concrete model ref for display purposes */
   export async function defaultModelConcrete() {
     const cfg = await Config.get()
     const providers = await list()
-    if (cfg.model && cfg.model !== "auto" && cfg.model !== "auto/auto") {
-      const parsed = parseModel(cfg.model)
-      if (parsed.providerID !== "auto") {
-        await getModel(parsed.providerID, parsed.modelID)
-        return parsed
-      }
+    if (!isAutoRef(cfg.model)) {
+      const ref = await resolvedRef(cfg, providers)
+      if (ref) return ref
     }
 
-    const recent = (await Filesystem.readJson<{ recent?: { providerID: string; modelID: string }[] }>(
-      path.join(GlobalPaths.state, "model.json"),
-    )
-      .then((x) => (Array.isArray(x.recent) ? x.recent : []))
-      .catch(() => [])) as { providerID: string; modelID: string }[]
+    const recent = await readRecent()
     for (const entry of recent) {
       const provider = providers[entry.providerID]
       if (!provider) continue
@@ -1255,9 +1323,10 @@ export namespace Provider {
   }
 
   const MODEL_ALIASES: Record<string, string> = {
-    "sonnet": "anthropic/claude-sonnet-4-6",
-    "opus": "anthropic/claude-opus-4-6",
-    "haiku": "anthropic/claude-haiku-4-5",
+    "sonnet": "anthropic/claude-sonnet-5-5",
+    "opus": "anthropic/claude-opus-5-5",
+    "haiku": "anthropic/claude-haiku-5-5",
+    "fable": "anthropic/claude-fable-5-2",
     "flash": "google/gemini-2.5-flash",
     "pro": "google/gemini-2.5-pro",
     "gpt4": "openai/gpt-4.1",

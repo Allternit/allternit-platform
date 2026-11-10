@@ -52,18 +52,7 @@ async fn detect_claude_code() -> CliProviderInfo {
     let installed = command_exists(binary).await;
     let authed = installed && (has_home_file(".claude/auth.json").await || env_key_set("ANTHROPIC_API_KEY"));
 
-    let models = vec![
-        CliProviderModel {
-            id: "claude-sonnet-4-6".to_string(),
-            name: "Claude Sonnet 4.6".to_string(),
-            default: Some(true),
-        },
-        CliProviderModel {
-            id: "claude-opus-4-6".to_string(),
-            name: "Claude Opus 4.6".to_string(),
-            default: None,
-        },
-    ];
+    let models = catalog_models("claude-cli");
 
     CliProviderInfo {
         id: "claude-cli".to_string(),
@@ -80,28 +69,7 @@ async fn detect_codex() -> CliProviderInfo {
     let installed = command_exists(binary).await;
     let authed = installed && (env_key_set("OPENAI_API_KEY") || has_home_file(".openai/token").await);
 
-    let models = vec![
-        CliProviderModel {
-            id: "gpt-6-astra".to_string(),
-            name: "Astra".to_string(),
-            default: Some(true),
-        },
-        CliProviderModel {
-            id: "gpt-5.6-sol".to_string(),
-            name: "Sol".to_string(),
-            default: None,
-        },
-        CliProviderModel {
-            id: "gpt-5.6-terra".to_string(),
-            name: "Terra".to_string(),
-            default: None,
-        },
-        CliProviderModel {
-            id: "gpt-5.6-luna".to_string(),
-            name: "Luna".to_string(),
-            default: None,
-        },
-    ];
+    let models = catalog_models("codex-cli");
 
     CliProviderInfo {
         id: "codex-cli".to_string(),
@@ -204,11 +172,7 @@ async fn detect_grok() -> CliProviderInfo {
 
 fn grok_info(binary_installed: bool, key_set: bool) -> CliProviderInfo {
     let available = binary_installed || key_set;
-    let models = vec![CliProviderModel {
-        id: "grok-3".to_string(),
-        name: "Grok 3".to_string(),
-        default: Some(true),
-    }];
+    let models = catalog_models("grok");
 
     CliProviderInfo {
         id: "grok".to_string(),
@@ -291,6 +255,24 @@ async fn detect_stack_provider(
 }
 
 // ─── Shared helpers ───────────────────────────────────────────────────────────
+
+/// A CLI's models from the shared catalog (`crate::cli_catalog`), in vendor
+/// order, with the catalog's default flagged, so ids never drift from what
+/// gizzi actually registers.
+fn catalog_models(tool_id: &str) -> Vec<CliProviderModel> {
+    let Some(tool) = crate::cli_catalog::find(tool_id) else {
+        return Vec::new();
+    };
+    let default_id = tool.default_model();
+    tool.models
+        .iter()
+        .map(|m| CliProviderModel {
+            id: m.id.clone(),
+            name: m.name.clone().unwrap_or_else(|| m.id.clone()),
+            default: (m.id == default_id).then_some(true),
+        })
+        .collect()
+}
 
 fn env_key_set(key: &str) -> bool {
     std::env::var(key).is_ok_and(|v| !v.is_empty())
@@ -389,7 +371,16 @@ async fn probe_ollama_models() -> Vec<CliProviderModel> {
 
 #[cfg(test)]
 mod tests {
-    use super::grok_info;
+    use super::{catalog_models, grok_info};
+
+    #[test]
+    fn cli_models_come_from_the_catalog_with_one_default() {
+        let claude = catalog_models("claude-cli");
+        let defaults: Vec<&str> = claude.iter().filter(|m| m.default == Some(true)).map(|m| m.id.as_str()).collect();
+        assert_eq!(defaults, ["claude-sonnet-5-5"]);
+        assert_eq!(claude.iter().find(|m| m.id == "claude-sonnet-5-5").map(|m| m.name.as_str()), Some("Claude Sonnet 5.5"));
+        assert_eq!(grok_info(true, false).models.unwrap()[0].id, "grok-4.6");
+    }
 
     #[test]
     fn grok_binary_on_path_is_detected_without_api_key() {

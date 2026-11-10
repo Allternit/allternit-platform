@@ -3,6 +3,8 @@ import { describeRoute, validator, resolver } from "@/runtime/server/openapi"
 import z from "zod/v4"
 import { Config } from "@/runtime/context/config/config"
 import { Provider } from "@/runtime/providers/provider"
+import { Discovery } from "@/runtime/providers/discovery"
+import { ModelList } from "@/runtime/providers/model-list"
 import { ModelsDev } from "@/runtime/providers/adapters/models"
 import { ProviderAuth } from "@/runtime/providers/adapters/auth"
 import { mapValues } from "remeda"
@@ -50,9 +52,36 @@ export const ProviderRoutes = lazy(() =>
           mapValues(filteredProviders, (x) => Provider.fromModelsDevProvider(x)),
           connected,
         )
+        // Additive fields (Desktop reads this route): per model `default` /
+        // `rank` / `hidden` from discovery or the CLI catalog, per provider
+        // `signedIn`. The `default` map is the flagged model, never a hidden one.
+        const discovered = new Map(Discovery.last().map((dp) => [dp.id, dp]))
+        const all = Object.values(providers).map((provider) => {
+          const dp = discovered.get(provider.id)
+          return {
+            ...provider,
+            ...(dp?.signedIn !== undefined ? { signedIn: dp.signedIn } : {}),
+            models: mapValues(provider.models, (model) => {
+              const flags = ModelList.modelFlags(provider.id, model.id, dp)
+              return {
+                ...model,
+                ...(flags.default ? { default: true } : {}),
+                ...(flags.rank !== undefined ? { rank: flags.rank } : {}),
+                ...(flags.hidden ? { hidden: true } : {}),
+              }
+            }),
+          }
+        })
+        const defaults: Record<string, string> = {}
+        for (const provider of all) {
+          const visible = Object.values(provider.models).filter((model) => !("hidden" in model && model.hidden))
+          const flagged = visible.find((model) => "default" in model && model.default)
+          const first = flagged ?? Provider.sort(visible)[0]
+          if (first) defaults[provider.id] = first.id
+        }
         return c.json({
-          all: Object.values(providers),
-          default: mapValues(providers, (item) => Provider.sort(Object.values(item.models))[0].id),
+          all,
+          default: defaults,
           connected: Object.keys(connected),
         })
       },

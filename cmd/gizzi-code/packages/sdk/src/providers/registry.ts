@@ -66,11 +66,16 @@ export const PROVIDER_REGISTRY: ProviderMetadata[] = [
       jsonMode: true,
       functionCalling: true,
     },
+    // Allternit Cloud's listed aliases (cmd/allternit-cloud-api/src/model_router/catalog.rs);
+    // the first is the Cloud's default and what getDefaultModel('allternit') returns.
     defaultModels: [
-      'claude-3-opus-20240229',
-      'claude-3-sonnet-20240229',
-      'claude-3-haiku-20240307',
-      'claude-3-5-sonnet-20240620',
+      'kimi-k3',
+      'deepseek-v4-pro',
+      'deepseek-v4.1-flash',
+      'glm-5.3',
+      'glm-5.3-flash',
+      'claude-sonnet-4.6',
+      'qwen3.8-max-fireworks',
     ],
     maxContextWindow: 200000,
   },

@@ -344,7 +344,7 @@ static ENV_PROVIDER_SPECS: &[(&str, &str, &str, &[&str])] = &[
         "anthropic",
         "Anthropic",
         "ANTHROPIC_API_KEY",
-        &["claude-sonnet-5", "claude-opus-5"],
+        &["claude-sonnet-5-5", "claude-opus-5-5"],
     ),
     (
         "google",
@@ -398,29 +398,50 @@ fn cli_models_for(tool: &crate::cli_catalog::CliTool) -> Vec<&str> {
 /// clients (the Claude-app sheet layout). Unknown models default to
 /// (no description, "standard", false).
 static MODEL_METADATA: &[(&str, &str, &str, bool)] = &[
-    ("claude-opus-5", "For your toughest challenges", "flagship", true),
-    ("claude-sonnet-5", "Most efficient for everyday tasks", "standard", true),
+    ("claude-fable-5-2", "Deepest reasoning for the hardest work", "flagship", true),
+    ("claude-opus-5-5", "For your toughest challenges", "flagship", true),
+    ("claude-sonnet-5-5", "Most efficient for everyday tasks", "standard", true),
+    ("claude-haiku-5-5", "Fastest for quick answers", "fast", true),
     ("gpt-5", "Latest GPT reasoning", "flagship", false),
     ("gpt-5-mini", "Fast GPT mini", "fast", false),
     ("gpt-4o", "Prior-generation flagship", "legacy", true),
+    ("gpt-6.1-sol", "Sol — complex open-ended work", "flagship", false),
     ("gpt-6-astra", "Astra — strongest Codex agent", "flagship", false),
+    ("gpt-6.1-terra", "Terra — everyday coding", "standard", false),
+    ("gpt-6-sol", "Sol — complex open-ended work", "flagship", false),
+    ("gpt-6-luna", "Luna — fast high-volume tasks", "fast", false),
     ("gpt-5.6-sol", "Sol — complex open-ended work", "flagship", false),
     ("gpt-5.6-terra", "Terra — everyday coding", "standard", false),
     ("gpt-5.6-luna", "Luna — fast high-volume tasks", "fast", false),
     ("gemini-2.5-pro", "Long-context reasoning", "flagship", false),
     ("gemini-2.5-flash", "Fastest for quick answers", "fast", false),
+    ("gemini-3.8-flash-high", "Gemini Flash, deepest thinking", "standard", false),
+    ("gemini-3.8-flash-medium", "Gemini Flash, balanced thinking", "standard", false),
+    ("gemini-3.8-flash-low", "Gemini Flash, quickest thinking", "fast", false),
+    ("grok-4.6", "Latest Grok", "flagship", false),
+    ("grok-4.5", "Prior Grok", "standard", false),
     ("sonar-pro", "Web-grounded answers", "standard", false),
     ("kimi-k3", "Kimi K3 reasoning", "flagship", false),
-    ("kimi-k2.7-code", "Kimi coding specialist", "standard", false),
+    ("kimi-for-coding", "Kimi coding specialist", "standard", false),
     ("qwen-max", "Qwen Max", "flagship", false),
     ("qwen-plus", "Qwen Plus", "standard", false),
 ];
 
 pub(crate) fn model_metadata(model: &str) -> Option<(&'static str, &'static str, bool)> {
-    MODEL_METADATA
-        .iter()
-        .find(|(id, _, _, _)| *id == model)
-        .map(|(_, desc, tier, effort)| (*desc, *tier, *effort))
+    let lookup = |model: &str| {
+        MODEL_METADATA
+            .iter()
+            .find(|(id, _, _, _)| *id == model)
+            .map(|(_, desc, tier, effort)| (*desc, *tier, *effort))
+    };
+    // A retired CLI model id (an older gizzi, a saved choice) reads its
+    // replacement's metadata.
+    lookup(model).or_else(|| {
+        crate::cli_catalog::tools()
+            .iter()
+            .find_map(|t| t.retired.get(model))
+            .and_then(|current| lookup(current.as_str()))
+    })
 }
 
 /// Flattened `{id, name, provider, description?, tier, supports_effort}`
@@ -1160,18 +1181,25 @@ async fn list_ollama_models(
 fn provider_capabilities(id: &str) -> serde_json::Value {
     let (tool_call, vision, context, output, default_model): (bool, bool, u64, u64, &str) = match id
     {
-        "anthropic" => (true, true, 200_000, 32_000, "claude-sonnet-5"),
+        "anthropic" => (true, true, 200_000, 32_000, "claude-sonnet-5-5"),
         "openai" => (true, true, 128_000, 16_384, "gpt-5"),
         "google" => (true, true, 1_000_000, 65_536, "gemini-2.5-pro"),
         "ollama" | "lmstudio" => (true, false, 128_000, 16_384, "llama3.2:3b"),
-        "claude-cli" => (true, true, 200_000, 32_000, "claude-sonnet-5"),
-        "codex-cli" => (true, false, 1_050_000, 128_000, "gpt-6-astra"),
-        "qwen" => (true, false, 128_000, 16_384, "qwen-plus"),
-        "kimi" => (true, false, 128_000, 16_384, "kimi-k3"),
-        "antigravity" | "agy" => (true, true, 1_000_000, 65_536, "gemini-2.5-pro"),
+        "claude-cli" | "claude" => (true, true, 200_000, 32_000, ""),
+        "codex-cli" | "codex" => (true, false, 1_050_000, 128_000, ""),
+        "qwen" | "qwen-cli" => (true, false, 128_000, 16_384, ""),
+        "kimi" | "kimi-cli" => (true, false, 128_000, 16_384, ""),
+        "antigravity" | "agy" => (true, true, 1_000_000, 65_536, ""),
         "zai" | "z.ai" | "glm" => (true, false, 200_000, 16_384, "glm-4.6"),
         _ => (true, false, 128_000, 16_384, ""),
     };
+    // CLI brains report the shared catalog's default (`crate::cli_catalog`)
+    // so this never names a model gizzi no longer registers. Informational
+    // only: nothing selects it for the user.
+    let default_model = crate::cli_catalog::find(id)
+        .filter(|t| !t.models.is_empty())
+        .map(|t| t.default_model())
+        .unwrap_or(default_model);
     json!({
         "tool_call": tool_call,
         "vision": vision,
@@ -1807,6 +1835,37 @@ fn catalog_auth(id: &str) -> Option<&'static crate::cli_catalog::AuthCheck> {
         .filter(|auth| !auth.files.is_empty() || !auth.env.is_empty())
 }
 
+/// Qwen Code with an auth type chosen in `~/.qwen/settings.json`
+/// (`security.auth.selectedType`, e.g. an API-key provider).
+fn qwen_auth_selected(settings: &std::path::Path) -> bool {
+    std::fs::read_to_string(settings)
+        .ok()
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+        .and_then(|value| {
+            value
+                .pointer("/security/auth/selectedType")
+                .and_then(|v| v.as_str())
+                .map(|s| !s.is_empty())
+        })
+        .unwrap_or(false)
+}
+
+/// agy's macOS Keychain item (service "gemini", account "antigravity").
+/// Reading an item's attributes shows no unlock prompt.
+fn antigravity_keychain_signed_in() -> bool {
+    if !cfg!(target_os = "macos") {
+        return false;
+    }
+    std::process::Command::new("/usr/bin/security")
+        .args(["find-generic-password", "-s", "gemini", "-a", "antigravity"])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
 fn subscription_auth_check(id: &str, binary: &str) -> bool {
     match id {
         "claude" | "claude-cli" => claude_cli_logged_in(binary),
@@ -1817,7 +1876,10 @@ fn subscription_auth_check(id: &str, binary: &str) -> bool {
         "qwen" | "qwen-cli" => {
             cli_alive(binary, &["--version"], None)
                 && (home_file(&[".qwen", "oauth_creds.json"]).exists()
-                    || home_file(&[".config", "qwen", "oauth_creds.json"]).exists())
+                    || home_file(&[".config", "qwen", "oauth_creds.json"]).exists()
+                    // An API-key setup picked in Qwen's own settings leaves no
+                    // oauth_creds.json.
+                    || qwen_auth_selected(&home_file(&[".qwen", "settings.json"])))
         }
         "kimi" | "kimi-cli" => {
             cli_alive(binary, &["--version"], Some("kimi"))
@@ -1834,7 +1896,9 @@ fn subscription_auth_check(id: &str, binary: &str) -> bool {
             cli_alive(binary, &["--version"], None)
                 && (home_file(&[".gemini", "oauth_creds.json"]).exists()
                     || home_file(&[".gemini", "antigravity-cli", "credentials.enc"]).exists()
-                    || home_file(&[".config", "antigravity", "auth.json"]).exists())
+                    || home_file(&[".config", "antigravity", "auth.json"]).exists()
+                    // On macOS agy keeps its sign-in in the Keychain, not a file.
+                    || antigravity_keychain_signed_in())
         }
         "zai" | "z.ai" | "glm" => {
             std::env::var("ZAI_API_KEY").is_ok() || std::env::var("ZHIPU_API_KEY").is_ok()
@@ -2794,7 +2858,9 @@ mod auth_status_kind_tests {
             .iter()
             .filter_map(|m| m.get("id").and_then(|v| v.as_str()).map(str::to_string))
             .collect();
-        assert!(ids.contains(&"antigravity/gemini-3.7-flash-high".to_string()));
+        assert!(ids.contains(&"antigravity/gemini-3.8-flash-high".to_string()));
+        assert!(ids.contains(&"claude-cli/claude-sonnet-5-5".to_string()));
+        assert!(!ids.contains(&"claude-cli/claude-fable-5-1".to_string()), "retired ids aren't offered");
         assert!(ids.contains(&"codex-cli/gpt-5.6-luna".to_string()));
         assert!(ids.contains(&"aider/default".to_string()));
         assert!(!ids.iter().any(|id| id.starts_with("dsh/")), "unsupported CLIs aren't offered as brains");

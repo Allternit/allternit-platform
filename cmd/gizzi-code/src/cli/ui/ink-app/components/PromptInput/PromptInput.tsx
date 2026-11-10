@@ -42,6 +42,7 @@ import type { MCPServerConnection } from '../../services/mcp/types';
 import { abortPromptSuggestion, logSuggestionSuppressed } from '../../services/PromptSuggestion/promptSuggestion';
 import { type ActiveSpeculationState, abortSpeculation } from '../../services/PromptSuggestion/speculation';
 import { getActiveAgentForInput, getViewedTeammateTask } from '../../state/selectors';
+import { persistModelPick } from '../../state/onChangeAppState';
 import { enterTeammateView, exitTeammateView, stopOrDismissAgent } from '../../state/teammateViewHelpers';
 import type { ToolPermissionContext } from '../../Tool';
 import { getRunningTeammatesSorted } from '../../tasks/InProcessTeammateTask/InProcessTeammateTask';
@@ -2025,6 +2026,9 @@ function PromptInput({
   // from visually "jumping" when notifications arrive.
   const handleModelSelect = useCallback((model: string | null, _effort: EffortLevel | undefined) => {
     let wasFastModeDisabled = false;
+    // Re-picking the running model changes no app state, so onChangeAppState
+    // never sees it: pin and record it here (a different model goes through there).
+    if (model && model === mainLoopModel_) persistModelPick(model);
     setAppState(prev => {
       wasFastModeDisabled = isFastModeEnabled() && !isFastModeSupportedByModel(model) && !!prev.fastMode;
       return {
@@ -2055,7 +2059,7 @@ function PromptInput({
     logEvent('tengu_model_picker_hotkey', {
       model: model as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS
     });
-  }, [setAppState, addNotification, isFastMode]);
+  }, [setAppState, addNotification, isFastMode, mainLoopModel_]);
   const handleModelCancel = useCallback(() => {
     setShowModelPicker(false);
   }, []);

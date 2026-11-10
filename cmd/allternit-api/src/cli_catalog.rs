@@ -47,6 +47,12 @@ const CATALOG_JSON: &str =
 #[derive(Debug, Clone, Deserialize)]
 pub(crate) struct CatalogModel {
     pub id: String,
+    /// Display name ("Claude Sonnet 5.5"); absent for `default` placeholders.
+    #[serde(default)]
+    pub name: Option<String>,
+    /// The tool's default model (at most one per tool; catalog v2).
+    #[serde(default)]
+    pub default: bool,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -107,8 +113,16 @@ pub(crate) struct CliTool {
     pub adapter: String,
     #[serde(default)]
     pub headless: Option<Headless>,
+    /// In the vendor's order (best/newest first).
     #[serde(default)]
     pub models: Vec<CatalogModel>,
+    /// Lower = preferred as the automatic default CLI brain (mirrors Desktop's
+    /// `CLI_DEFAULT_ORDER`). Absent = never picked automatically.
+    #[serde(default)]
+    pub default_rank: Option<u32>,
+    /// Old model id → current id, so saved choices keep working.
+    #[serde(default)]
+    pub retired: std::collections::BTreeMap<String, String>,
     /// `subscription` | `api_key` | `none`.
     pub sign_in: String,
     #[serde(default)]
@@ -142,16 +156,38 @@ pub(crate) struct CliTool {
 }
 
 impl CliTool {
-    /// The model gizzi registers first for this CLI ("default" when it lists none).
+    /// The CLI's default model: the one flagged `default`, else the first in
+    /// vendor order, else "default" (a tool that lists none).
     pub fn default_model(&self) -> &str {
         self.models
-            .first()
+            .iter()
+            .find(|m| m.default)
+            .or_else(|| self.models.first())
             .map(|m| m.id.as_str())
             .unwrap_or("default")
     }
 
     pub fn model_ids(&self) -> Vec<&str> {
         self.models.iter().map(|m| m.id.as_str()).collect()
+    }
+
+    /// The current id for `model_id`: its `retired` replacement when it was
+    /// renamed, else `model_id` unchanged. Saved choices keep working.
+    pub fn current_model_id<'a>(&'a self, model_id: &'a str) -> &'a str {
+        self.retired.get(model_id).map(String::as_str).unwrap_or(model_id)
+    }
+
+    /// `model_id`'s position in vendor order (0 = best/newest), after mapping
+    /// a retired id to its replacement. `None` when the catalog doesn't list it.
+    pub fn model_rank(&self, model_id: &str) -> Option<usize> {
+        let id = self.current_model_id(model_id);
+        self.models.iter().position(|m| m.id == id)
+    }
+
+    /// Whether `model_id` (after retired-id mapping) is this tool's default.
+    pub fn is_default_model(&self, model_id: &str) -> bool {
+        let id = self.current_model_id(model_id);
+        self.models.iter().any(|m| m.default && m.id == id)
     }
 }
 
@@ -751,6 +787,9 @@ fn catalog_row(tool: &CliTool, installed: bool, authenticated: bool) -> Value {
         "signIn": tool.sign_in,
         "custom": false,
         "runnable": tool.adapter != "unsupported",
+        "defaultRank": tool.default_rank,
+        "defaultModel": tool.default_model(),
+        "retired": tool.retired,
     })
 }
 
@@ -1042,6 +1081,24 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn each_tool_has_at_most_one_default_model() {
+        for tool in tools() {
+            let defaults = tool.models.iter().filter(|m| m.default).count();
+            assert!(defaults <= 1, "{}: {defaults} default models", tool.id);
+            for (old, current) in &tool.retired {
+                assert!(
+                    tool.models.iter().any(|m| &m.id == current),
+                    "{}: retired {old} points at unlisted {current}",
+                    tool.id
+                );
+            }
+        }
+        assert_eq!(find("claude-cli").map(|t| t.default_model()), Some("claude-sonnet-5-5"));
+        assert_eq!(find("grok").map(|t| t.default_model()), Some("grok-4.6"));
+        assert_eq!(find("claude-cli").and_then(|t| t.default_rank), Some(1));
     }
 
     #[test]

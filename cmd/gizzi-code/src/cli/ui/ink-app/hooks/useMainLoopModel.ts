@@ -23,6 +23,22 @@ export function useMainLoopModel(): ModelName {
   // while /model (which also re-resolves) displays another.
   const [, forceRerender] = useReducer(x => x + 1, 0)
   useEffect(() => onGrowthBookRefresh(forceRerender), [])
+  // With no model picked, the default comes from the shared resolver over
+  // provider discovery. On a cold start discovery is still running at first
+  // render, so the status line would keep the stand-in model until a
+  // keystroke. Re-render once discovery completes.
+  useEffect(() => {
+    let alive = true
+    void import('@/runtime/providers/discovery')
+      .then(({ Discovery }) => Discovery.run())
+      .then(() => {
+        if (alive) forceRerender()
+      })
+      .catch(() => {})
+    return () => {
+      alive = false
+    }
+  }, [])
   const model = parseUserSpecifiedModel(
     mainLoopModelForSession ??
       mainLoopModel ??

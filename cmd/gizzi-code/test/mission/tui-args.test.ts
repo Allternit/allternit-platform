@@ -15,6 +15,12 @@ describe("/mission arguments", () => {
     expect(parseMissionArgs("add a --verbose flag to the cli").goal).toBe("add a --verbose flag to the cli")
   })
 
+  // Regression: a hard-coded claude-cli/claude-sonnet-5 default outlived the model;
+  // with no --brain the brain is resolved at run time (the default CLI brain).
+  test("no --brain leaves the brain unset", () => {
+    expect(parseMissionArgs("port the parser").brain).toBeUndefined()
+  })
+
   test("a bad or missing value is reported, not planned", () => {
     expect(parseMissionArgs("x --max-workers two").problem).toContain("--max-workers")
     expect(parseMissionArgs("x --max-workers 0").problem).toContain("--max-workers")

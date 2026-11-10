@@ -1,13 +1,35 @@
 import type { LocalJSXCommandCall } from '../../types/command.js'
 import { startSwarm } from '@/cli/factory/swarm'
+import { defaultCliBrain } from '@/runtime/providers/default-brain'
+import { retiredModelId } from '@/runtime/providers/discovery/subprocess'
 
-export const DEFAULT_BRAIN = 'claude-cli/claude-sonnet-5'
+export const NO_CLI_BRAIN = 'No CLI brain to run workers: sign in to a CLI brain (gizzi connect) or pass --brain <provider/model>'
 
-/** `<task> [-n|--workers N] [--brain <brain>]` → its parts. Quotes around the task are optional. */
-export function parseSwarmArgs(raw: string): { task: string; workers: number; brain: string } {
+/**
+ * The brain workers run on: an explicit `--brain` (a retired model id mapped
+ * to its current one), else the user's default CLI brain resolved now.
+ * `{ error }` when neither exists, before any worker starts.
+ */
+export async function workerBrain(explicit: string | undefined): Promise<{ brain: string } | { error: string }> {
+  const given = explicit?.trim()
+  if (given) {
+    const slash = given.indexOf('/')
+    if (slash <= 0) return { brain: given }
+    const providerID = given.slice(0, slash)
+    return { brain: `${providerID}/${retiredModelId(providerID, given.slice(slash + 1))}` }
+  }
+  const brain = await defaultCliBrain().catch(() => null)
+  return brain ? { brain } : { error: NO_CLI_BRAIN }
+}
+
+/**
+ * `<task> [-n|--workers N] [--brain <brain>]` → its parts. Quotes around the
+ * task are optional. `brain` is undefined when not given (see workerBrain).
+ */
+export function parseSwarmArgs(raw: string): { task: string; workers: number; brain?: string } {
   const words = raw.trim().split(/\s+/).filter(Boolean)
   let workers = 2
-  let brain = DEFAULT_BRAIN
+  let brain: string | undefined
   const rest: string[] = []
   for (let i = 0; i < words.length; i++) {
     const w = words[i]!
@@ -26,16 +48,22 @@ export function parseSwarmArgs(raw: string): { task: string; workers: number; br
  * just opens the board.
  */
 export const call: LocalJSXCommandCall = async (onDone, context, args) => {
-  const { task, workers, brain } = parseSwarmArgs(args ?? '')
+  const { task, workers, brain: given } = parseSwarmArgs(args ?? '')
   if (context.options?.isNonInteractiveSession) {
-    onDone('Use `gizzi swarm "<task>" --workers 2 --brain claude-cli/<model>` outside the TUI.', { display: 'system' })
+    onDone('Use `gizzi swarm "<task>" --workers 2 [--brain <provider/model>]` outside the TUI.', { display: 'system' })
     return null
   }
   if (!task) {
     context.setAppState(prev => ({ ...prev, screen: 'board' }))
-    onDone('Usage: /swarm <task> [-n 2] [--brain claude-cli/claude-sonnet-5]. Opened the board.', { display: 'system' })
+    onDone('Usage: /swarm <task> [-n 2] [--brain <provider/model>] (default: your default CLI brain). Opened the board.', { display: 'system' })
     return null
   }
+  const picked = await workerBrain(given)
+  if ('error' in picked) {
+    onDone(`Couldn't start the swarm: ${picked.error}`, { display: 'system' })
+    return null
+  }
+  const brain = picked.brain
   const started = startSwarm({ task, workers, brain, cwd: process.cwd() })
   // Fail fast on usage errors (no git repo, bad brain) before switching screens.
   const early = await Promise.race([started.then(() => null, (e: unknown) => e), new Promise(r => setTimeout(() => r(null), 300))])

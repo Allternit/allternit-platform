@@ -2,7 +2,7 @@
  * `gizzi swarm` and `gizzi board` — delegations you can start, watch and
  * land from one terminal, over the Factory engine (see cli/factory/swarm.ts).
  *
- *   gizzi swarm "<task>" --workers 2 --brain claude-cli/claude-sonnet-5
+ *   gizzi swarm "<task>" --workers 2 [--brain <provider/model>]   (default: your default CLI brain)
  *   gizzi board                       live board of every running bot
  *   gizzi swarm wait [id]             block until every worker finishes, then a summary
  *   gizzi swarm land [id] [--worker w1] [--all] [--dry-run]
@@ -27,6 +27,8 @@ import {
   type SwarmRecord,
   type SwarmWorker,
 } from "@/cli/factory/swarm"
+import { defaultCliBrain } from "@/runtime/providers/default-brain"
+import { retiredModelId } from "@/runtime/providers/discovery/subprocess"
 
 const color = () => !!process.stdout.isTTY && !process.env.NO_COLOR
 const paint = (code: string, s: string) => (color() ? `${code}${s}${C.reset}` : s)
@@ -58,12 +60,36 @@ function summaryLines(rec: SwarmRecord): string[] {
   return out
 }
 
+// ---------------------------------------------------------------- brain
+
+export const NO_CLI_BRAIN = "No CLI brain to run workers: sign in to a CLI brain (gizzi connect) or pass --brain <provider/model>"
+
+/**
+ * The brain workers run on: an explicit `--brain` (a retired model id mapped
+ * to its current one), else the user's default CLI brain resolved now.
+ * `{ error }` when neither exists, before any worker starts.
+ */
+export async function workerBrain(explicit: string | undefined): Promise<{ brain: string } | { error: string }> {
+  const given = explicit?.trim()
+  if (given) {
+    const slash = given.indexOf("/")
+    if (slash <= 0) return { brain: given }
+    const providerID = given.slice(0, slash)
+    return { brain: `${providerID}/${retiredModelId(providerID, given.slice(slash + 1))}` }
+  }
+  const brain = await defaultCliBrain().catch(() => null)
+  return brain ? { brain } : { error: NO_CLI_BRAIN }
+}
+
 // ---------------------------------------------------------------- start
 
-async function start(args: { task: string; tasks: string[]; workers: number; brain: string; json: boolean; dryRun: boolean }): Promise<number> {
+async function start(args: { task: string; tasks: string[]; workers: number; brain?: string; json: boolean; dryRun: boolean }): Promise<number> {
+  const picked = await workerBrain(args.brain)
+  if ("error" in picked) return fail(new FactoryEngineError({ code: "usage", fact: picked.error }), args.json)
+  const brain = picked.brain
   try {
     if (args.dryRun) {
-      const plan = planSwarm({ task: args.task, tasks: args.tasks, workers: args.workers, brain: args.brain, cwd: process.cwd() })
+      const plan = planSwarm({ task: args.task, tasks: args.tasks, workers: args.workers, brain, cwd: process.cwd() })
       if (args.json) console.log(JSON.stringify({ dryRun: true, plan }, null, 2))
       else {
         console.log(`Would start swarm ${plan.id} from ${plan.root} (${plan.baseBranch}):`)
@@ -78,7 +104,7 @@ async function start(args: { task: string; tasks: string[]; workers: number; bra
       task: args.task,
       tasks: args.tasks,
       workers: args.workers,
-      brain: args.brain,
+      brain,
       cwd: process.cwd(),
       log: args.json ? undefined : (l) => console.log(l),
     })
@@ -189,13 +215,13 @@ export const SwarmCommand = cmd({
       .positional("args", { type: "string", array: true, describe: '"<task>", or wait|land|list [id]' })
       .option("workers", { alias: "n", type: "number", default: 2, describe: "how many workers (1–12)" })
       .option("task", { type: "string", array: true, describe: "one task per worker (repeat it; sets --workers)" })
-      .option("brain", { type: "string", default: "claude-cli/claude-sonnet-5", describe: "CLI brain: claude-cli/<model>, codex-cli/<model>, kimi-cli, grok-cli, gizzi" })
+      .option("brain", { type: "string", describe: "CLI brain: claude-cli/<model>, codex-cli/<model>, kimi-cli, grok-cli, gizzi (default: your default CLI brain)" })
       .option("worker", { type: "string", array: true, describe: "land: only these workers (w1, w2…)" })
       .option("all", { type: "boolean", default: false, describe: "land: also workers that haven't finished" })
       .option("timeout", { type: "number", describe: "wait: give up after this many seconds (exit 4)" })
       .option("dry-run", { type: "boolean", default: false, describe: "print exactly what would happen" })
       .option("json", { type: "boolean", default: false, describe: "one JSON document on stdout" })
-      .example('$0 swarm "add type hints to calc.py" -n 2 --brain claude-cli/claude-sonnet-5', "start two Claude Code workers")
+      .example('$0 swarm "add type hints to calc.py" -n 2', "start two workers on your default CLI brain")
       .example('$0 swarm --task "write tests for add" --task "add a sub function"', "one worker per task")
       .example("$0 board", "watch them live")
       .example("$0 swarm wait", "block until the newest swarm finishes")
@@ -215,11 +241,11 @@ export const SwarmCommand = cmd({
     const task = words.join(" ").trim()
     const tasks = ((argv.task as string[] | undefined) ?? []).map(String).filter((t) => t.trim())
     if (!task && !tasks.length) {
-      console.error('Give the swarm a task: gizzi swarm "<task>" --workers 2 --brain claude-cli/claude-sonnet-5')
+      console.error('Give the swarm a task: gizzi swarm "<task>" --workers 2 [--brain <provider/model>]')
       process.exitCode = EXIT.usage
       return
     }
-    process.exitCode = await start({ task, tasks, workers: Number(argv.workers), brain: String(argv.brain), json, dryRun: !!argv["dry-run"] })
+    process.exitCode = await start({ task, tasks, workers: Number(argv.workers), brain: argv.brain ? String(argv.brain) : undefined, json, dryRun: !!argv["dry-run"] })
   },
 })
 

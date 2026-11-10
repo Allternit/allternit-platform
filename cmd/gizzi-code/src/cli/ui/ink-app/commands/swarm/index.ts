@@ -9,7 +9,7 @@ const swarm = {
   name: 'swarm',
   aliases: ['swarms'],
   description: 'Hand a task to N CLI agents in their own worktrees and watch them on the board',
-  argumentHint: '<task> [-n 2] [--brain claude-cli/claude-sonnet-5]',
+  argumentHint: '<task> [-n 2] [--brain <provider/model>]',
   load: () => import('./swarm.js'),
 } satisfies Command
 

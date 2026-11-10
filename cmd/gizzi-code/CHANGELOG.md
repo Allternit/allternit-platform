@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+### Added
+- **`gizzi debug model`:** the config files, the merged values, the default model with its reason, and whether the runtime and the TUI agree.
+- **`gizzi models --json`**, and `default`, `current` and `not signed in` tags on the rows. The last line shows the default model and why.
+- **Live model lists** for the Codex, Antigravity and Grok CLIs, cached for 6 hours (`gizzi models --refresh` re-reads them).
+
+### Changed
+- **One model list:** `gizzi models` and the `/model` picker show the same rows in the same order: sections, signed-in CLIs in a fixed order, models in the vendor's order. The picker has section and provider headers and a detail line.
+- **One default model:** your pick, else Allternit Cloud on a paid plan, else the first signed-in CLI brain. `gizzi run`, `gizzi exec`, the TUI, swarm, mission and ACP all use it.
+- **`--effort`** accepts every level the picked model has.
+- Swarm and mission workers use your default CLI brain unless you pass `--brain`.
+
+### Fixed
+- The TUI no longer starts on `antigravity/default`, and a run with no `--model` no longer uses a stale local model from an old config file.
+- The model and thinking level you pick now reach the Antigravity, Grok and Kimi CLIs. Before, those CLIs ran their own default.
+- Retired model ids are gone from the list (old Claude ids, `gemini-3.7-flash-high`); a saved choice of one moves to its replacement.
+- Models a CLI marks as hidden, a duplicate Ollama entry, and placeholder models for local servers that report no models are no longer listed.
+- Antigravity (Keychain sign-in) and Qwen (API-key setup) no longer show as signed out.
+- A failed `gizzi run` or `gizzi exec` turn exits with code 1.
+
 ## 2.5.0 (2026-11-10)
 
 ### Added

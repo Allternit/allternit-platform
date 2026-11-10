@@ -86,7 +86,7 @@ export const BotCreateCommand = cmd({
       })
       .option("model", {
         type: "string",
-        describe: "model pin (provider/model), e.g. anthropic/claude-sonnet-4-5",
+        describe: "model pin (provider/model), e.g. claude-cli/claude-sonnet-5-5",
       })
       .option("soul", {
         type: "string",
@@ -94,7 +94,7 @@ export const BotCreateCommand = cmd({
       })
       .example("gizzi agents bot create research-buddy --title 'Research Buddy'", "create a bot")
       .example(
-        "gizzi agents bot create reviewer --model anthropic/claude-sonnet-4-5 --soul ./SOUL.md",
+        "gizzi agents bot create reviewer --model claude-cli/claude-sonnet-5-5 --soul ./SOUL.md",
         "with a model pin and custom persona",
       ),
   handler: async (args) => {

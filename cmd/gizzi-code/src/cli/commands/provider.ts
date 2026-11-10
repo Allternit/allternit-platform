@@ -68,7 +68,7 @@ const KNOWN_PROVIDERS: Array<{
   models_hint?: string // example model IDs
 }> = [
   // ── API key providers ────────────────────────────────────────────────────
-  { id: "allternit",   name: "Allternit",    auth_type: "api_key", base_url: "https://api.allternit.com/v1",        env: "ALLTERNIT_API_KEY",   key_url: "https://platform.allternit.com/api-keys", models_hint: "see platform.allternit.com/models" },
+  { id: "allternit",   name: "Allternit",    auth_type: "api_key", base_url: "https://api.allternit.com/v1",        env: "ALLTERNIT_API_KEY",   key_url: "https://platform.allternit.com/api-keys", models_hint: "kimi-k3, deepseek-v4-pro, glm-5.3 (all: platform.allternit.com/models)" },
   { id: "openai",      name: "OpenAI",       auth_type: "api_key", base_url: "https://api.openai.com/v1",           env: "OPENAI_API_KEY",      key_url: "https://platform.openai.com/api-keys",   models_hint: "gpt-5, gpt-5-mini, gpt-4o" },
   { id: "google",      name: "Google AI",    auth_type: "api_key", base_url: "https://generativelanguage.googleapis.com/v1beta", env: "GEMINI_API_KEY", key_url: "https://aistudio.google.com/app/apikey", models_hint: "gemini-2.5-pro" },
   { id: "moonshot",    name: "Kimi (Moonshot)", auth_type: "api_key", base_url: "https://api.moonshot.ai/v1",      env: "MOONSHOT_API_KEY",    key_url: "https://platform.moonshot.cn/console",   models_hint: "kimi-k2, moonshot-v1-128k" },
@@ -88,11 +88,11 @@ const KNOWN_PROVIDERS: Array<{
   { id: "vllm",        name: "vLLM",         auth_type: "none",    base_url: "http://localhost:8000/v1",   models_hint: "(auto-detected from server)" },
   { id: "llamacpp",    name: "llama.cpp server", auth_type: "none", base_url: "http://localhost:8080/v1", models_hint: "(server's loaded model)" },
   // ── CLI / subscription ────────────────────────────────────────────────────
-  { id: "claude-cli",  name: "Claude CLI",   auth_type: "subprocess", subprocess_cmd: "claude -p",   models_hint: "claude-sonnet-5, claude-opus-5" },
-  { id: "kimi-cli",    name: "Kimi CLI",     auth_type: "subprocess", subprocess_cmd: "kimi -p",     models_hint: "kimi-k3, kimi-k2.7-code" },
+  { id: "claude-cli",  name: "Claude CLI",   auth_type: "subprocess", subprocess_cmd: "claude -p",   models_hint: "claude-sonnet-5-5, claude-opus-5-5" },
+  { id: "kimi-cli",    name: "Kimi CLI",     auth_type: "subprocess", subprocess_cmd: "kimi -p",     models_hint: "kimi-for-coding, kimi-k3" },
   { id: "qwen-cli",    name: "Qwen Code CLI",auth_type: "subprocess", subprocess_cmd: "qwen -p",     models_hint: "qwen-max, qwen-plus" },
   { id: "gemini-cli",  name: "Gemini CLI",   auth_type: "subprocess", subprocess_cmd: "gemini -p",   models_hint: "gemini-2.5-pro" },
-  { id: "codex-cli",   name: "Codex CLI",    auth_type: "subprocess", subprocess_cmd: "codex",       models_hint: "codex-mini-latest, codex-latest" },
+  { id: "codex-cli",   name: "Codex CLI",    auth_type: "subprocess", subprocess_cmd: "codex",       models_hint: "gpt-6.1-sol, gpt-6.1-terra" },
 ]
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
