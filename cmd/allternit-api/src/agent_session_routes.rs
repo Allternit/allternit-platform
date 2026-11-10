@@ -681,7 +681,20 @@ fn run_telemetry(message: &GizziMessage) -> serde_json::Value {
     let tools: Vec<_> = message.parts.iter().filter(|p| p.part_type == "tool").collect();
     let failures = tools
         .iter()
-        .filter(|p| p.state.as_ref().and_then(|s| s.get("status")).and_then(|v| v.as_str()) == Some("error"))
+        .filter(|p| {
+            let state = p.state.as_ref();
+            let errored = state.and_then(|s| s.get("status")).and_then(|v| v.as_str()) == Some("error");
+            // A step the person stopped (Stop, Esc in a Gizzi terminal) is not a failure.
+            let stopped = state
+                .and_then(|s| s.get("error"))
+                .and_then(|v| v.as_str())
+                .map(|e| {
+                    let e = e.trim().to_ascii_lowercase();
+                    e.starts_with("interrupted by user") || e.starts_with("the operation was aborted") || e.starts_with("aborted") || e.starts_with("tool execution aborted") || e.starts_with("request interrupted by user")
+                })
+                .unwrap_or(false);
+            errored && !stopped
+        })
         .count();
     let model_id = match (&info.provider_id, &info.model_id) {
         (Some(p), Some(m)) => Some(format!("{p}/{m}")),
@@ -4123,6 +4136,7 @@ mod run_telemetry_tests {
             "parts": [
                 {"type": "tool", "tool": "WebSearch", "state": {"status": "completed"}},
                 {"type": "tool", "tool": "WebFetch", "state": {"status": "error"}},
+                {"type": "tool", "tool": "Bash", "state": {"status": "error", "error": "Interrupted by user"}},
                 {"type": "text", "text": "answer"}
             ]
         }));
@@ -4132,7 +4146,8 @@ mod run_telemetry_tests {
         assert_eq!(t["usage"]["inputTokens"], 8200);
         assert_eq!(t["usage"]["estimated"], true);
         assert!(t["usage"].get("cost").is_none());
-        assert_eq!(t["toolCalls"], 2);
+        assert_eq!(t["toolCalls"], 3);
+        // The stopped Bash step is not a failure.
         assert_eq!(t["toolFailures"], 1);
     }
 
