@@ -39,7 +39,8 @@
 //! (`status_snapshots`, answered `accepted`, or `duplicate` when the content is
 //! unchanged), never pushed as an alert, and every inbox id that left
 //! `needsYou` has its delivered iPhone notifications revoked
-//! ([`notifications::ingest_snapshot`]).
+//! ([`notifications::ingest_snapshot`]), then plans the Live Activity and widget pushes
+//! ([`super::live_activity::on_snapshot`]).
 //!
 //! Cloud sets `runtimeId` in every event's `data` (the authenticated runtime,
 //! whatever the body said).
@@ -236,13 +237,14 @@ pub async fn ingest(db: &PgPool, user_id: &str, runtime_id: &str, events: Vec<Va
                     duplicates += 1;
                     results.push(json!({ "id": ev.id, "status": "duplicate" }));
                 }
-                notifications::SnapshotIngest::Stored { revoke } => {
+                notifications::SnapshotIngest::Stored { revoke, previous } => {
                     if !revoke.is_empty() {
                         let (db, user) = (db.clone(), user_id.to_string());
                         tokio::spawn(async move {
                             apns::revoke(&db, &user, &revoke).await;
                         });
                     }
+                    tokio::spawn(super::live_activity::on_snapshot(db.clone(), user_id.to_string(), runtime_id.to_string(), previous));
                     accepted += 1;
                     results.push(json!({ "id": ev.id, "status": "accepted" }));
                 }

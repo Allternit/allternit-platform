@@ -72,6 +72,9 @@ const DATA_KEYS: &[&str] = &[
     // iPhone system surfaces: which inbox item an approval is, and what the
     // owner needs to approve it from a notification (`inbox_needs::notify_keys`).
     "inboxId", "inboxKind", "sessionId", "contentHash", "approveInline", "senderKind", "to", "toName", "trust",
+    // Factory approvals: where this runtime already asked (`["app","push",…]`). "push" means its own Web Push
+    // (factory_approvals_push) reached a device, so cloud sends the iPhone app only, not a second Web Push.
+    "surfaces",
 ];
 
 /// Extra keys a phone event (`phone.step`, `phone.run.completed`) carries, in
@@ -614,6 +617,28 @@ mod tests {
         assert_eq!(a["id"], b["id"]);
         assert!(a["data"].get("secret").is_none(), "payload keys are allowlisted");
         assert_eq!(a["data"]["decision"], "approved");
+    }
+
+    /// Cloud skips its own Web Push for a Factory approval this runtime already pushed, so `surfaces`
+    /// (where `factory_approvals::fan_out` asked) has to reach it.
+    #[test]
+    fn a_factory_approval_forwards_where_it_was_pushed() {
+        let row = LedgerRow {
+            rowid: 2,
+            id: "u-row".into(),
+            event_type: "approval.requested".into(),
+            bot_id: None,
+            bot_name: None,
+            thread_id: None,
+            thread_title: None,
+            payload: json!({ "approvalId": "fa-1", "title": "Deploy", "summary": "Deploy the site", "surfaces": ["app", "push"], "dagId": "d1" }),
+            occurred_at: "2026-11-10T10:00:00Z".into(),
+            bot_avatar: None,
+        };
+        let ev = envelope(SOURCE_USER, &row).unwrap();
+        assert_eq!(ev["id"], "rt:approval:fa-1:requested");
+        assert_eq!(ev["data"]["surfaces"], json!(["app", "push"]));
+        assert!(ev["data"].get("dagId").is_none(), "payload keys are allowlisted");
     }
 
     #[tokio::test]
