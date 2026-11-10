@@ -17,6 +17,7 @@ struct NotificationsSettingsView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var status: UNAuthorizationStatus? = nil
     @State private var tested = false
+    @State private var liveActivities = LiveActivityPushSetting.isOn()
 
     @AppStorage(NotificationPrefs.responseKey) private var response = true
     @AppStorage(NotificationPrefs.approvalKey) private var approvals = true
@@ -43,6 +44,14 @@ struct NotificationsSettingsView: View {
                                 ? "Ring while Allternit is open when someone calls you. The silent switch still silences the ring."
                                 : "Calls vibrate only, with no ring sound.",
                               isOn: $ringSound)
+
+            SettingsSwitchRow(title: "Live Activities",
+                              detail: "Lets Allternit update bot progress and approval cards on your Lock Screen and Dynamic Island, even when the app is closed. Off stops those updates.",
+                              isOn: Binding(get: { liveActivities },
+                                            set: { on in
+                                                liveActivities = on
+                                                Task { await LiveActivityPushSetting.set(on) }
+                                            }))
 
             SettingsSectionHeading(text: "Delivery")
                 .padding(.top, 16)

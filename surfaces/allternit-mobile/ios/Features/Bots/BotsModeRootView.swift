@@ -78,6 +78,7 @@ struct BotsModeRootView: View {
     @State private var isConnectionsPresented = false
     @State private var isThreadsPresented = false
     @State private var threadToOpen: BotThread?
+    @StateObject private var pause = BotPauseModel()
 
     /// Opens the shell drawer (the edge swipe also works).
     var onOpenSidebar: (() -> Void)?
@@ -115,6 +116,11 @@ struct BotsModeRootView: View {
                         PhoneIconButton(systemName: "building.2", label: "Office") {
                             navigator.open(.office)
                         }
+                        // Pause all bots (the same switch as the Pause control and the Shortcut).
+                        PhoneIconButton(systemName: pause.paused ? "play.circle.fill" : "pause.circle",
+                                        label: pause.paused ? "Resume all bots" : "Pause all bots") {
+                            Task { await pause.toggle() }
+                        }
                         // Connections: the apps your bots can use.
                         PhoneIconButton(systemName: "square.grid.2x2", label: "Connections") {
                             isConnectionsPresented = true
@@ -122,6 +128,10 @@ struct BotsModeRootView: View {
                     }
                     .environment(\.botTint, colors.activeHex)
                 }
+                .safeAreaInset(edge: .top, spacing: 0) {
+                    if pause.paused { PausedBanner() }
+                }
+                .task { await pause.refresh() }
                 .navigationDestination(for: BotRoute.self) { route in
                     BotRouteDestination(route: route)
                 }
@@ -326,5 +336,48 @@ struct BotRouteDestination: View {
                               message: "This bot was removed or isn't shared with you.")
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+    }
+}
+
+
+/// The Bots screen's pause state (`GET`/`PUT /api/v1/bots/pause`, by "ios").
+@MainActor
+final class BotPauseModel: ObservableObject {
+    @Published private(set) var paused = false
+    private let client = BotModeClient.shared
+
+    func refresh() async {
+        guard let state = try? await client.botPauseState() else { return }
+        apply(state.paused)
+    }
+
+    func toggle() async {
+        let target = !paused
+        guard let state = try? await client.setBotPaused(target, by: "ios") else { return }
+        apply(state.paused)
+    }
+
+    private func apply(_ value: Bool) {
+        paused = value
+        // The widget and the Pause control read the same flag.
+        if var snap = AppGroupStore.snapshot {
+            snap.paused = value
+            AppGroupStore.saveSnapshot(snap)
+            StatusSnapshotWriter.write(snap)
+        }
+    }
+}
+
+struct PausedBanner: View {
+    var body: some View {
+        Text("All bots are paused. Routines and automatic replies are on hold. Your own messages still run.")
+            .font(.system(size: 13))
+            .foregroundColor(Color("TextPrimary"))
+            .multilineTextAlignment(.leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .background(Theme.statusWarning.opacity(0.18))
+            .accessibilityAddTraits(.isStaticText)
     }
 }
