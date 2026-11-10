@@ -220,7 +220,17 @@ pub fn collect(conn: &Connection, user_id: &str, unanswered_min: i64) -> rusqlit
         let (id, bot, thread, authority, action, detail, at, bot_name, title, provider) = r?;
         let detail: Value = serde_json::from_str(&detail).unwrap_or(Value::Null);
         let held = authority == "allternit" && action.starts_with("post to ") && detail["text"].is_string();
-        if held {
+        if authority == "allternit" && action == crate::messages_mac::ACTION && detail["text"].is_string() {
+            // A held iMessage from Messages on the Mac: the full recipient and text, sent only on approve.
+            let (to, text) = (detail["to"].as_str().unwrap_or(""), detail["text"].as_str().unwrap_or(""));
+            let to_name = detail["toName"].as_str().filter(|n| !n.is_empty()).map(str::to_string);
+            let thread = (thread != "messages-mac").then_some(thread.as_str());
+            let who = if bot_name.is_empty() { "Messages".to_string() } else { bot_name.clone() };
+            let mut it = item(format!("approval:{id}"), "held_send", "imessage", &bot, &bot_name, thread, Some(to_name.clone().unwrap_or_else(|| to.to_string())), format!("{who} wants to send a message to {}: {}", to_name.as_deref().unwrap_or(to), snippet(text, 120)), &at, ("approve", "Send"), true);
+            with_provenance(&mut it, &detail);
+            approvable(&mut it, content_hash("held_send", &[&id, "imessage", to, text]), Some(to), to_name.as_deref(), text, true);
+            out.push(it);
+        } else if held {
             let provider = provider.unwrap_or_else(|| action.trim_start_matches("post to ").to_string());
             let mut it = item(format!("approval:{id}"), "held_send", &provider, &bot, &bot_name, Some(&thread), title.clone(), format!("{bot_name} wants to post on {provider}: {}", snippet(detail["text"].as_str().unwrap_or(""), 120)), &at, ("approve", "Send"), true);
             with_provenance(&mut it, &detail);
@@ -639,7 +649,14 @@ async fn approve(State(state): State<Arc<AppState>>, Extension(user): Extension<
             let tx = crate::gateway_runner::transport(&state);
             match crate::gateway_runner::respond_approval(&state.db, tx.as_ref(), &user.user_id, &aid, if approve { "approve" } else { "deny" }, ("user", &user.user_id)).await {
                 Err(e) => Err(e.into_response()),
-                Ok(v) if approve && it["kind"] == "held_send" => Ok(json!({ "state": "approved", "send": send_held(&state, &user.user_id, &aid).await, "approval": v })),
+                Ok(v) if approve && it["kind"] == "held_send" => {
+                    // A held iMessage already ran its send inside respond_approval.
+                    let send = match v.get("send") {
+                        Some(sent) => sent.clone(),
+                        None => send_held(&state, &user.user_id, &aid).await,
+                    };
+                    Ok(json!({ "state": "approved", "send": send, "approval": v }))
+                }
                 Ok(v) => Ok(v),
             }
         }

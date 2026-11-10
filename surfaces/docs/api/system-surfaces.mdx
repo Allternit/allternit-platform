@@ -149,7 +149,8 @@ Web Push subscribe adds `platform`: `ios-pwa`, `android` or `desktop`.
 |-------|-------------|
 | `POST /api/v1/inbox/:id/approve` | Body adds `contentHash` and `surface`, both optional. Answers 409 `{"error":"changed"}` on a hash mismatch. |
 | `GET` and `PUT /api/v1/bots/pause` | Built. The "Pause all bots" switch, owner authenticated, saved across restarts. See [Pause all bots](#pause-all-bots) below. |
-| `GET` and `PUT /api/v1/messages-mac/settings` | `{enabled, access:{fullDisk, automation}}`. Off by default. macOS runtimes only. |
+| `GET` and `PUT /api/v1/messages-mac/settings` | `{enabled, access:{fullDisk, automation}}`. Built. `PUT` takes `{enabled}` and answers the same object. Off by default, saved across restarts. macOS runtimes only: 404 elsewhere. See [Messages on the Mac](#messages-on-the-mac). |
+| `POST /api/v1/messages-mac/send` | Built. Body `{to, text}`. Answers `{"held": true, "inboxId": "approval:<id>"}`: always a hold, never a direct send. 404 when not macOS, 409 `{"error":"disabled"}` when the setting is off, 400 for a group id or empty text. |
 
 ### Pause all bots
 
@@ -175,17 +176,28 @@ While paused:
 
 The status snapshot (`status.snapshot`) carries `paused` from this switch. A change wakes the snapshot producer, which sends within 5 seconds.
 
+### Messages on the Mac
+
+Built in `cmd/allternit-api/src/messages_mac.rs`. User guide: [Messages on your Mac](/surfaces/desktop#messages-on-your-mac).
+
+- `access.fullDisk` is true when the runtime can open `~/Library/Messages/chat.db`. It opens the file read-only and immutable and never writes it.
+- `access.automation` is the result of a harmless AppleScript probe to Messages. It is probed only while the setting is on, so a `GET` never raises the macOS prompt for someone who has not opted in. A yes is cached; a no is retried after a minute.
+- A send hold is a `gateway_approvals` row with action `send imessage` and `detail {to, toName, text, channel: "imessage", provenance}`, made through the same path as held channel posts. Needs you lists it as `held_send` with source `imessage`, `contentHash`, and `full {to, toName, text}`.
+- The send runs only when the hold is approved (`respond_approval`, any approve path). It re-reads the row, checks `state = approved` and `consumed = 0`, sets `consumed = 1` in the same transaction, then runs `osascript` with the recipient and text as arguments. A second approve never sends twice. The approve answer carries `send {state: "sent" | "error" | "already_sent"}`.
+- Recipients are one phone number or email address. Group chat ids are refused.
+- Every search, hold and send writes a row to `messages_mac_audit`.
+
 Internal MCP tools, served at `/internal/connectors/mcp`:
 
-- `messages_search {contact?, query?, sinceDays (max 30), limit (max 50)}`.
-- `messages_send {to, text}`. Returns `{held: true, inboxId}`. It always creates a `gateway_approvals` hold and bypasses channel transports and autonomy levels.
-- `message_draft {to, text}`. Emits the card `{"type":"message_draft","to","toName","text"}`.
+- `messages_search {contact?, query?, sinceDays (max 30), limit (max 50)}`. Listed only on a macOS runtime with the setting on. Answers `{ok, rows: [{handle, name, fromMe, at, text, provenance}], provenance}`; `at` is Unix seconds and each `text` is fenced as outside text. 1:1 chats only.
+- `messages_send {to, text}`. Listed only on a macOS runtime with the setting on. Returns `{held: true, inboxId}`. It always creates a `gateway_approvals` hold and bypasses channel transports and autonomy levels.
+- `message_draft {to, text}`. Listed on every runtime. Emits the card `{"type":"message_draft","to","toName","text"}`. Nothing is held or sent.
 
 The iPhone actions Ask, Send, Hand off, Code task, Remember, Stop, Set brain, Switch computer and Quiet hours add no route. They use existing ones.
 
-## Provenance of Messages search results (planned)
+## Provenance of Messages search results
 
-Search results go to the model fenced as outside text, with `provenance {trust, sourceKind: "imessage"}`. `trust` is `contact` when the handle is in Contacts and `stranger` otherwise.
+Search results go to the model fenced as outside text, with `provenance {trust, sourceKind: "imessage"}`. `trust` is `contact` when the handle belongs to someone in the owner's People (a linked identity) and `stranger` otherwise. The runtime does not read the macOS Contacts database. A message that trips the injection scanner is down-ranked to `stranger`. When the search ran inside a bot conversation, each result is recorded as content provenance on that thread.
 
 A hold made in a turn that read such text stores the lowest trust seen in `detail.provenance`. The inbox shows it.
 

@@ -43,6 +43,18 @@ The A mark (the A from the app icon, drawn as square blocks on whole pixels in a
 
 The icon is a template image (`surfaces/allternit-desktop/build/trayTemplate.png` and `@2x`), so macOS draws it white on a dark menu bar. Code: `createTray` in `src/main/unified-main.ts`.
 
+## Messages on your Mac
+
+A bot can read your recent iMessage and SMS chats on this Mac and ask to send a message for you. It is off by default. Turn it on in **Settings → Notifications → Messages (Mac)**. The setting shows only when the active computer is a Mac.
+
+- **Two macOS permissions.** Reading needs **Full Disk Access** for Allternit (System Settings → Privacy & Security → Full Disk Access). Sending needs **Automation** permission for Messages, which macOS asks for the first time. The setting shows whether each one is granted.
+- **Every send waits for you.** A bot never sends on its own. Each message it wants to send appears in **Needs you** and on your phone with the full recipient and text. It sends only after you approve, and only once.
+- **One person at a time.** Search and send cover 1:1 chats only. Group chats are not read and cannot be messaged.
+- **Search is limited.** Up to the last 30 days and 50 messages per search. The bot treats message text as outside content and does not follow instructions in it.
+- **Drafts on any computer.** Without this setting, a bot can still write a draft you send yourself from your phone.
+
+Allternit opens the Messages database read-only and never changes it. The database layout and the AppleScript send are not official Apple interfaces and can break after a macOS update. Routes and tools: [Messages on the Mac](/api/system-surfaces#messages-on-the-mac).
+
 ## HUD
 
 The HUD is a chat that floats over other apps. It is one card on the desktop, with no frosted window around it. The message box sits at the top and the Agent mode, Plugins and Artifacts row sits at the bottom, on the same surface with no line between them. Replies appear in a second card below it.
