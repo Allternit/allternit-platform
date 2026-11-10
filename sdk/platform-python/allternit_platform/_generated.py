@@ -40,7 +40,7 @@ PhoneNumberList = TypedDict('PhoneNumberList', {'data': List["PhoneNumber"], 'ha
 Message = TypedDict('Message', {'id': str, 'object': Literal['message'], 'account_id': Optional[str], 'number_id': str, 'direction': Literal['inbound', 'outbound'], 'from': str, 'to': str, 'body': str, 'segments': int, 'status': Literal['sent', 'simulated', 'received', 'failed'], 'error_code': Optional[str], 'media': List[Dict[str, Any]], 'created_at': str}, total=False)
 MessageList = TypedDict('MessageList', {'data': List["Message"], 'has_more': bool, 'next_cursor': Optional[str]}, total=False)
 WebhookEndpoint = TypedDict('WebhookEndpoint', {'id': str, 'object': Literal['webhook_endpoint'], 'url': str, 'events': List[str], 'description': Optional[str], 'created_at': str}, total=False)
-Event = TypedDict('Event', {'id': str, 'object': Literal['event'], 'type': Literal['approval.requested', 'message.received', 'message.status', 'registration.updated', 'inbox.item.created', 'call.started', 'call.ended', 'call.transcript.ready', 'usage.threshold', 'phone.step', 'phone.run.completed', 'phone.fleet_run.completed', 'mail.received', 'webhook.test'], 'created': int, 'project_id': str, 'account_id': Optional[str], 'data': Dict[str, Any]}, total=False)
+Event = TypedDict('Event', {'id': str, 'object': Literal['event'], 'type': Literal['approval.requested', 'message.received', 'message.status', 'registration.updated', 'inbox.item.created', 'call.started', 'call.ended', 'call.transcript.ready', 'usage.threshold', 'phone.step', 'phone.run.completed', 'phone.fleet_run.completed', 'phone.approval.requested', 'phone.approval.resolved', 'mail.received', 'webhook.test'], 'created': int, 'project_id': str, 'account_id': Optional[str], 'data': Dict[str, Any]}, total=False)
 Computer = TypedDict('Computer', {'id': str, 'object': Literal['computer'], 'name': str, 'status': Literal['provisioning', 'starting', 'running', 'stopping', 'stopped', 'error', 'deleted'], 'account_id': Optional[str], 'key_id': str, 'created_at': str, 'started_at': Optional[str], 'metadata': Dict[str, Any]}, total=False)
 ComputerList = TypedDict('ComputerList', {'data': List["Computer"], 'has_more': bool, 'next_cursor': Optional[str]}, total=False)
 ComputerEvent = TypedDict('ComputerEvent', {'id': str, 'type': Literal['computer.action'], 'ts': str, 'data': Dict[str, Any]}, total=False)
@@ -64,6 +64,7 @@ PhoneLiveView = TypedDict('PhoneLiveView', {'object': Literal['phone.live_view']
 PhoneFleetRun = TypedDict('PhoneFleetRun', {'object': Literal['phone.fleet_run'], 'id': str, 'kind': Literal['task', 'skill'], 'goal': Optional[str], 'skill': Optional[str], 'status': Literal['running', 'completed'], 'created_at': str, 'completed_at': Optional[str], 'counts': Dict[str, Any], 'runs': List[Dict[str, Any]], 'not_started': List[Dict[str, Any]]}, total=False)
 PhoneRunStarted = TypedDict('PhoneRunStarted', {'object': Literal['phone.run'], 'run_id': str, 'serial': Optional[str], 'skill': Optional[str], 'status': Literal['running']}, total=False)
 PhoneToolResult = TypedDict('PhoneToolResult', {'object': Literal['phone.tool_result'], 'ok': bool, 'run_id': str, 'tool': str, 'error': str, 'message': str}, total=False)
+PhoneApprovalRequired = TypedDict('PhoneApprovalRequired', {'error': Dict[str, Any], 'approval_id': str, 'inbox_id': str, 'expires_at': str}, total=False)
 
 
 class AccountsResource:
@@ -802,7 +803,7 @@ class WebhooksResource:
             return self._client.request("GET", f"/v1/webhooks", query=q, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
         return self._client.paginate(_fetch, after if after is not NOT_GIVEN else None)
 
-    def create(self, *, url: str, events: List[Literal['*', 'approval.requested', 'message.received', 'message.status', 'registration.updated', 'inbox.item.created', 'call.started', 'call.ended', 'call.transcript.ready', 'usage.threshold', 'phone.step', 'phone.run.completed', 'phone.fleet_run.completed', 'mail.received']], description: str = NOT_GIVEN, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+    def create(self, *, url: str, events: List[Literal['*', 'approval.requested', 'message.received', 'message.status', 'registration.updated', 'inbox.item.created', 'call.started', 'call.ended', 'call.transcript.ready', 'usage.threshold', 'phone.step', 'phone.run.completed', 'phone.fleet_run.completed', 'phone.approval.requested', 'phone.approval.resolved', 'mail.received']], description: str = NOT_GIVEN, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
         """Create a webhook endpoint
 
         `url` must be public https. The response carries `secret` once.
@@ -1390,11 +1391,12 @@ class PhonesResource:
             _query['limit'] = limit
         return self._client.request("GET", f"/v1/phones/{_q(serial)}/history", query=_query, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
 
-    def call_tool(self, serial: str, *, name: str, arguments: Dict[str, Any] = NOT_GIVEN, run_id: str = NOT_GIVEN, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "PhoneToolResult":
+    def call_tool(self, serial: str, *, name: str, arguments: Dict[str, Any] = NOT_GIVEN, run_id: str = NOT_GIVEN, hold_id: str = NOT_GIVEN, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "PhoneToolResult":
         """Run one phone tool
 
         One phone tool through the Desktop phone gateway, exactly as a bot calls it: `phone.devices`, `phone.screenshot`, `phone.read_ui`, `phone.screen_text`, `phone.tap`, `phone.type`, `phone.find_and_tap`, `phone.swipe`, `phone.home`, `phone.back`, `phone.key`, `phone.open_app`, `phone.sms.read`, `phone.sms.send`, `phone.call.dial`. An iPhone running the Allternit app (serial `app:<phoneId>`) is screen only plus its in-app browser: `phone.screenshot`, `phone.devices` and `phone.web.open`, `phone.web.snapshot`, `phone.web.click`, `phone.web.type`, `phone.web.scroll`, `phone.web.back`, `phone.web.wait` (the app must be open; taps on native apps answer `not_supported`).
         `phone.sms.send` and `phone.call.dial` wait for the person to approve on their Desktop (up to 80 s; then 503 `phone_timeout`); a refusal is a 200 result with `ok: false, error: approval_denied`. Tool failures are 200 with `ok: false`. 409 `phone_offline` when the phone isn't connected, 503 `phone_desktop_offline` / `phone_gateway_unavailable` when the Desktop or its phone gateway isn't running. The call is a `phone.step` webhook like any other.
+        A sensitive action (pay, delete, send, call, a credential, a money app, a security setting) is held: 409 `approval_required` with `approval_id`, `inbox_id` and `expires_at`, and a `phone.approval.requested` webhook. Nothing runs and no phone-minute is billed. The project owner approves in the Allternit app; an API key can't approve. Then repeat the same call with `hold_id` set to the `approval_id` (or `_hold` in `arguments`) within 10 minutes, with a new `Idempotency-Key` if you send one. The approval covers that one action.
 
         ``POST /v1/phones/{serial}/tool``
         """
@@ -1405,12 +1407,14 @@ class PhonesResource:
             _body['arguments'] = arguments
         if run_id is not NOT_GIVEN:
             _body['run_id'] = run_id
+        if hold_id is not NOT_GIVEN:
+            _body['hold_id'] = hold_id
         return self._client.request("POST", f"/v1/phones/{_q(serial)}/tool", body=_body, idempotency_key=idempotency_key, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
 
     def run_task(self, serial: str, *, goal: str, max_steps: int = NOT_GIVEN, bot_id: str = NOT_GIVEN, brain: str = NOT_GIVEN, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "PhoneRunStarted":
         """Give a phone a goal
 
-        The phone task loop on the Desktop (read the screen, one action, repeat) with `bot_id`'s brain, `brain`, or the default. Answers 202 with the `run_id`; each step is a `phone.step` webhook and the end is `phone.run.completed`. Tasks never send texts or place calls. At most 5 minutes.
+        The phone task loop on the Desktop (read the screen, one action, repeat) with `bot_id`'s brain, `brain`, or the default. Answers 202 with the `run_id`; each step is a `phone.step` webhook and the end is `phone.run.completed`. Tasks never send texts or place calls. At most 5 minutes. A sensitive step waits up to 5 minutes for the owner's approval with the budget paused (status `waiting_approval`, `phone.approval.requested`); the run ends `denied`, `approval_timeout` or `phone_locked` when it can't go on. `duration_ms` and phone minutes leave out held time.
 
         ``POST /v1/phones/{serial}/task``
         """
