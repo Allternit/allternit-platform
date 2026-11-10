@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 2.6.0 (2026-11-10)
+
 ### Added
 - **`gizzi debug model`:** the config files, the merged values, the default model with its reason, and whether the runtime and the TUI agree.
 - **`gizzi models --json`**, and `default`, `current` and `not signed in` tags on the rows. The last line shows the default model and why.
