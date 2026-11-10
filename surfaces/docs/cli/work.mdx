@@ -64,7 +64,7 @@ gizzi computers stop cmp_7fe9…
 gizzi run --on "Allternit cloud computer" "fix the failing test in api/"
 ```
 
-`--on` starts the session on that runtime through the Allternit relay, sends your message, and prints the web and phone links to follow it. The turn runs on that computer, with its files and its signed-in CLI tools. A sleeping cloud computer is woken first, which can take a minute. Add `--model claude-cli/sonnet` to pick the model there.
+`--on` starts the session on that runtime through the Allternit relay, sends your message, and prints the web and phone links to follow it. The turn runs on that computer, with its files and its signed-in CLI tools. A sleeping cloud computer is woken first, which can take a minute. Add `--model <brain>` (any model id from `gizzi models`) to pick the model there.
 
 The relay needs an Allternit API key with the `compute` scope in `ALLTERNIT_API_TOKEN` (**Settings → API keys**). The device token from `gizzi pair` only identifies this machine and can't drive another one.
 
