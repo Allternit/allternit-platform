@@ -1,0 +1,191 @@
+---
+title: 'System Surfaces Contract'
+description: 'Shared contract for iPhone notification actions, Live Activities, widgets, App Intents and the Messages tool.'
+---
+
+## Overview
+
+This page is the single contract for the iPhone system surfaces: notification buttons, the Live Activity, the status widget, App Intents and Shortcuts, and the Messages tool on macOS runtimes. The iOS app, the cloud API and the runtime all build against it.
+
+<Warning>
+Status: planned. No route, table or field on this page is merged yet. The cloud lane (B) and the runtime lane (R) are building them. Every route below is marked "planned". Do not rely on any of it until the matching change is merged and this page says so.
+</Warning>
+
+Design rules:
+
+- **One action path.** Notification buttons call `POST /api/v1/inbox/:id/{approve|dismiss|snooze}` through the runtime relay. There is no cloud-side approve endpoint, so there is one authority for an approval.
+- **Runtime-owned status snapshot.** The runtime forwards `status.snapshot` when state changes. It drives the Live Activity, the widget, the badge and the revoke push. The cloud does not derive state from single events, because it has no run or loop state.
+- **Revoke by snapshot diff.** When an inbox id leaves `needsYou`, the cloud sends a background push that removes the delivered notification. The app also reconciles on every foreground.
+- **Sensitive text is fetched by the extension.** The APNs alert carries a generic body when the item is private. The notification service extension fetches the text by event id with a device read token.
+- **Web never approves from a URL.** With a window open, the service worker posts the action to it. With none open, it opens the item.
+
+## Forwarded event keys (planned)
+
+The runtime event forwarder (`runtime_events.rs`, `DATA_KEYS`) adds these keys. The cloud adds `runtimeId` at ingest.
+
+| Key | Meaning |
+|-----|---------|
+| `inboxId` | Inbox item id, for example `approval:ap1` or `email:e3`. |
+| `inboxKind` | Kind of inbox item. Selects the notification category. |
+| `contentHash` | Hash of the full text and recipient. Present only when the owner can see everything. |
+| `approveInline` | `true` when the item qualifies for inline Approve. |
+| `senderKind` | `bot` or `person`. |
+| `to`, `toName` | Recipient handle and display name. |
+| `trust` | Provenance trust of the text the item was made from. |
+| `sessionId` | Agent session the item belongs to. Used by Reply. |
+| `runtimeId` | Added by the cloud at ingest. |
+
+Inbox items also carry `contentHash`, `sessionId` and `full {to, toName, text}`. A new inbox kind, `gizzi_permission`, covers tool permissions from Gizzi.
+
+## Status snapshot (planned)
+
+`status.snapshot` is a forwarded event type. It is never pushed as an alert. The runtime emits it on change, at most one per 5 seconds. The cloud keeps the latest one per runtime.
+
+```json
+{"activeBots":2,"attentionBots":1,"pendingApprovals":1,"paused":false,
+ "focus":{"botId":"b1","botName":"Raven","status":"waiting_approval","step":"Drafting the reply",
+  "progress":0.4,"inboxId":"approval:ap1","sessionId":"s1","question":"Send the invoice to Acme?",
+  "contentHash":"ab12...","approveInline":true,"private":false},
+ "bots":[{"botId":"b1","name":"Raven","status":"waiting_approval","step":"..."}],
+ "needsYou":["approval:ap1","attention:at9"],
+ "needsYouRows":[{"id":"approval:ap1","kind":"approval","botName":"Raven","line":"Approval needed"}],
+ "loops":[{"loopId":"l1","command":"...","iterationsCompleted":3,"maxIterations":10,"state":"running"}],
+ "lastRoutine":{"routineId":"r1","title":"Morning brief","status":"completed","at":1794200000}}
+```
+
+- `needsYou` is a list of ids. It is the input to the revoke diff.
+- The focus bot is chosen in this order: oldest pending approval, then a bot that needs input, then a blocked or failed bot, then the most recently started working bot.
+- Limits: `bots` holds at most 20 entries, `needsYouRows` at most 4, and each `line` at most 80 characters. `progress` is optional.
+- Loop source: the snapshot producer polls the Gizzi server's `GET /v1/automations/loops` on loopback. It polls every 5 seconds while a loop runs and every 60 seconds otherwise. A failed poll leaves `loops` out of the snapshot, so a Gizzi restart does not end the activity.
+
+## Notification categories (planned)
+
+The category comes from `inboxKind`, not from the event name. An email draft that arrives as `thread.needs_user` therefore still gets approval buttons.
+
+| Category | Actions, in order | Used for |
+|----------|-------------------|----------|
+| `APPROVAL_INLINE` | `APPROVE`, `DENY` (destructive), `REPLY` (text input). All require authentication; none open the app. | Approval, held send or email draft where the full text and recipient fit and `contentHash` is present. |
+| `APPROVAL_REVIEW` | `REVIEW` (opens the app), `DENY`, `REPLY` | Anything that does not fit the inline rule. |
+| `BOT_REPLY` | `REPLY`, `OPEN` | `message.received` with `senderKind` of `bot`; `thread.needs_user` with no inbox kind. |
+| `RUN_DONE` | `OPEN` | `agent.run.completed`. |
+| `NEEDS_FIX` | `RETRY`, `SNOOZE` | `attention.opened`. |
+
+Action identifiers are fixed. Titles and wording come from one strings table in the app.
+
+Reply on an approval sends the owner's message to the bot through `POST /api/v1/agent-sessions/:id/messages` and leaves the item pending. If the bot revises the item, the hash changes and the old Approve answers 409 `changed`.
+
+### Inline approve rule
+
+An item gets `APPROVAL_INLINE` only when all of these hold:
+
+1. The full text and the recipient together fit in 300 characters.
+2. There is no attachment.
+3. `contentHash` is present.
+
+Otherwise the category is `APPROVAL_REVIEW`. The approve call carries the hash. If it does not match the current item, the runtime answers 409 `{"error":"changed"}` and nothing is sent.
+
+## APNs alert payload (planned)
+
+Existing keys stay. New keys ride in `PushMessage.data`, so the struct does not change.
+
+```json
+{"aps":{"alert":{"title":"...","body":"<generic when private>"},"sound":"default","badge":1,
+  "thread-id":"<tag>","mutable-content":1,"category":"APPROVAL_INLINE",
+  "interruption-level":"time-sensitive"},
+ "type":"event","url":"/?allternit_inbox=approval%3Aap1","tag":"approval-ap1",
+ "data":{"event":"approval.requested","eventId":"...","inboxId":"approval:ap1","runtimeId":"rt_1",
+  "botId":"...","threadId":"...","contentHash":"ab12...","senderKind":"bot","private":true}}
+```
+
+- A token without the `nse` capability gets today's body. A token without `actions` gets no `category`.
+- `interruption-level` is `time-sensitive` only at level `NeedsYou` and above.
+- Every alert carries `sound`.
+
+## Other pushes (planned)
+
+### Revoke
+
+Sent when an inbox id leaves `needsYou`. `apns-push-type: background`, priority 5.
+
+```json
+{"aps":{"content-available":1},"data":{"event":"notification.revoke","tags":["approval-ap1"]}}
+```
+
+### Live Activity
+
+- Header `apns-push-type: liveactivity`. Topic `com.allternit.mobile.push-type.liveactivity`.
+- Events: `start`, `update`, `end`.
+- Payload: `{"aps":{"timestamp":..., "event":"start|update|end","content-state":{...},"stale-date":...,"alert":{...,"sound":"default"},"attributes-type":"BotActivityAttributes","attributes":{"mode":"summary"},"input-push-token":1}}`.
+- Content state keeps the six existing `BotActivityAttributes.ContentState` fields and adds optional fields only: `botId`, `step`, `progress`, `othersCount`, `question`, `inboxId`, `runtimeId`, `sessionId`, `contentHash`, `approveInline`. There are no `Date` values. The loop activity keeps its existing fields.
+- The activity is bot first. The cloud fills it from `focus`. When a bot needs the owner it turns into the question with buttons.
+- Approve and Deny show only when `approveInline` is `true`, `private` is `false`, and the full text is 140 characters or fewer. Otherwise the activity shows a generic line and Open. Live Activity pushes travel in plain form, so private text never rides in them.
+- Throttles: progress updates use priority 5 and are at least 15 seconds apart. Needs-approval and end use priority 10 with an alert. A start happens only on idle to active, at most once per 10 minutes per device, and never while quiet hours hold the level.
+- The cloud ends and restarts an activity before it reaches 8 hours.
+- `NSSupportsLiveActivitiesFrequentUpdates` stays off.
+
+### Widget
+
+- Header `apns-push-type: widgets`. Topic `com.allternit.mobile.push-type.widgets`. Requires iOS 26.
+- Payload `{"aps":{"content-changed":true}}`. At most one per 5 minutes per device.
+- The widget is one flipping widget. The front shows status and the back shows actions. A flip button turns it over, and the front returns after 10 minutes. The accessory (Lock Screen) family shows the status face only.
+
+## Cloud routes (planned)
+
+| Route | Description |
+|-------|-------------|
+| `POST /api/v1/device-tokens` | Body adds `osVersion`, `appBuild` and `capabilities` (a list of `actions`, `nse`, `la_push`, `widget_push`). The answer adds `readToken`, returned once. `DELETE` also removes the device's activity tokens. |
+| `PUT` and `DELETE /api/v1/device-tokens/activity` | Body `{deviceId, kind, attributesType?, activityKey?, token, environment}`. `kind` is `la_start`, `la_update` or `widget`. |
+| `GET /api/v1/status/summary` | Clerk session or read token. Returns the latest snapshot per runtime. |
+| `GET /api/v1/notifications/content/:eventId` | Read token or Clerk. Returns `{title, body, sender:{name, avatarUrl}, communication}`. `communication` is the server-side switch for communication notifications. |
+| `PUT /api/v1/notifications/focus` | Body `{deviceId, active, allowedBotIds, allowApprovals}`; `allowedBotIds` may be `null`. For that device, pushes from other bots go out with `interruption-level: passive` and no sound, so nothing is dropped. The filter expires 24 hours after the last confirm. |
+
+The read token works on `GET /api/v1/status/summary` and `GET /api/v1/notifications/content/:eventId` only, and only for its own user.
+
+Web Push subscribe adds `platform`: `ios-pwa`, `android` or `desktop`.
+
+## Runtime routes (planned)
+
+| Route | Description |
+|-------|-------------|
+| `POST /api/v1/inbox/:id/approve` | Body adds `contentHash` and `surface`, both optional. Answers 409 `{"error":"changed"}` on a hash mismatch. |
+| `GET` and `PUT /api/v1/bots/pause` | `{paused, since, by}`. While paused, routines and loops do not start, and bots send no proactive turns or channel auto-replies. Inbound messages are kept and show as unanswered. The owner's direct messages still run. |
+| `GET` and `PUT /api/v1/messages-mac/settings` | `{enabled, access:{fullDisk, automation}}`. Off by default. macOS runtimes only. |
+
+Internal MCP tools, served at `/internal/connectors/mcp`:
+
+- `messages_search {contact?, query?, sinceDays (max 30), limit (max 50)}`.
+- `messages_send {to, text}`. Returns `{held: true, inboxId}`. It always creates a `gateway_approvals` hold and bypasses channel transports and autonomy levels.
+- `message_draft {to, text}`. Emits the card `{"type":"message_draft","to","toName","text"}`.
+
+The iPhone actions Ask, Send, Hand off, Code task, Remember, Stop, Set brain, Switch computer and Quiet hours add no route. They use existing ones.
+
+## Provenance of Messages search results (planned)
+
+Search results go to the model fenced as outside text, with `provenance {trust, sourceKind: "imessage"}`. `trust` is `contact` when the handle is in Contacts and `stranger` otherwise.
+
+A hold made in a turn that read such text stores the lowest trust seen in `detail.provenance`. The inbox shows it.
+
+## Migration 119 (planned)
+
+File: `migrations_pg/119_ios_system_surfaces.sql`. Take the next free number at merge. The file is additive and idempotent, and is never edited after it ships. Production applies it with `deploy-contabo.sh`, which applies files missing from `public.ops_applied_migrations` before the binary swap.
+
+| Table | Change |
+|-------|--------|
+| `apns_device_tokens` | Add `read_token_hash`, `os_version`, `app_build`, `capabilities jsonb`, `focus jsonb`, `focus_at timestamptz`. |
+| `apns_activity_tokens` | New: `id`, `user_id`, `device_id`, `kind`, `attributes_type`, `activity_key`, `token` (unique), `environment`, `created_at`, `last_ok_at`, `failures`, `last_error`. |
+| `status_snapshots` | New: `user_id`, `runtime_id`, `snapshot jsonb`, `hash`, `updated_at`. Primary key `(user_id, runtime_id)`. |
+| `notification_delivered` | New: `user_id`, `inbox_id`, `tag`, `event_id`, `created_at`. Primary key `(user_id, inbox_id, tag)`. |
+| `push_subscriptions` | Add `platform`. |
+
+## Device capabilities and old clients (planned)
+
+Each device registers a capability list with its token.
+
+| Capability | Meaning | Without it |
+|------------|---------|------------|
+| `actions` | App registers the notification categories. | Alerts carry no `category`. |
+| `nse` | App ships the notification service extension. | Alerts carry today's body, not the generic body plus fetch. |
+| `la_push` | App accepts Live Activity pushes. | No Live Activity start or update pushes. |
+| `widget_push` | Widgets accept push reloads (iOS 26). | No widget pushes. |
+
+A client that sends no `capabilities` is treated as having none. It keeps today's alerts and loses nothing. Old runtimes that do not forward the new keys produce Review or plain alerts, never inline Approve.
