@@ -2364,18 +2364,18 @@ mod tests {
         crate::bots_pause::set(&c, &acct.owner, true, Some("test")).unwrap();
         let tx = Arc::new(RecordingTelegram::default());
         // A person writes while paused: recorded, no turn, nothing posted back.
-        let (turns, failed) = accept_events(&st, &acct, tx.clone(), vec![tg(1, 77, "are you there?")], Default::default()).await;
+        let (turns, failed) = accept_events_with(&st, &Rt, &acct, tx.clone(), vec![tg(1, 77, "are you there?")], Default::default()).await;
         assert!(failed.is_none(), "{failed:?}");
         assert!(turns.is_empty(), "no auto-reply while paused");
         assert!(tx.posted.lock().unwrap().is_empty());
         let items = crate::inbox_needs::collect(&c, &acct.owner, 0).unwrap();
         assert!(items.iter().any(|i| i["kind"] == "unanswered" && i.to_string().contains("are you there?")), "an unanswered Needs-you item: {items:?}");
         // The owner's own message still runs.
-        let (turns, _) = accept_events(&st, &acct, tx.clone(), vec![tg(2, 42, "owner here")], Default::default()).await;
+        let (turns, _) = accept_events_with(&st, &Rt, &acct, tx.clone(), vec![tg(2, 42, "owner here")], Default::default()).await;
         assert_eq!(turns.len(), 1, "the owner's message still starts a turn");
         // After resume the person's next message is answered again.
         crate::bots_pause::set(&c, &acct.owner, false, None).unwrap();
-        let (turns, _) = accept_events(&st, &acct, tx.clone(), vec![tg(3, 77, "hello?")], Default::default()).await;
+        let (turns, _) = accept_events_with(&st, &Rt, &acct, tx.clone(), vec![tg(3, 77, "hello?")], Default::default()).await;
         assert_eq!(turns.len(), 1);
     }
 
