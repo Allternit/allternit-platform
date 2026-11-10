@@ -60,6 +60,7 @@ extension AuthManager {
     /// Clears the dead Clerk session and returns the app to the sign-in gate.
     func finishAccountDeletion() async {
         try? await Clerk.shared.auth.signOut()
+        clearSystemSurfaces()
         refreshAuthState()
     }
 }

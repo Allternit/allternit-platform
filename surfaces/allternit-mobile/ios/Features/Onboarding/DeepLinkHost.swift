@@ -195,6 +195,12 @@ struct DeepLinkHost: ViewModifier {
     }
 
     private func openBot(_ id: String, resolving: Bool = true) async {
+        // `allternit://bot/main/chat` (widgets, controls): the main bot.
+        if id == "main" {
+            if let main = AgentHubStore.shared.agents.first(where: \.isMainBot) { botSheet = main }
+            else { modeStore.selectBarItem(.agents) }
+            return
+        }
         if let known = AgentHubStore.shared.agent(withId: id) {
             botSheet = known
             return

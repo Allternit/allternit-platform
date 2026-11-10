@@ -31,6 +31,8 @@ struct InboxItem: Decodable, Identifiable, Equatable, Sendable {
     let provenance: Provenance?
     /// `peer_held` items: what the outside agent said.
     let text: String?
+    /// Hash of the text and recipient; sent back with Approve so a changed item answers 409.
+    let contentHash: String?
 
     var canApprove: Bool { actions.contains("approve") }
     var canRetry: Bool { actions.contains("retry") }

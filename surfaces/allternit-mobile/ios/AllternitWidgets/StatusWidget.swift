@@ -17,7 +17,7 @@ import WidgetKit
 //    `.push(from: .trailing)` plus scale. Reduce Motion always uses `.opacity`.
 //
 // 2. Does `openAppWhenRun` work from a small widget on iOS 17?
-//    Small-size action buttons are `Button(intent: OpenAllternitLinkIntent)`.
+//    Small-size action buttons are `Button(intent: OpenAllternitWidgetLinkIntent)`.
 //    If the app opens, the intent also leaves the URL in
 //    `WidgetFlags.pendingLink`, so the app can route it on foreground. If it
 //    does not open the app, switch the small actions face to `.widgetURL`
@@ -27,7 +27,7 @@ import WidgetKit
 // 3. Which process runs an intent compiled into both targets?
 //    `FlipWidgetIntent` only touches the App Group and calls
 //    `WidgetCenter.reloadTimelines`, so it is correct in either process.
-//    `OpenAllternitLinkIntent` (openAppWhenRun) runs in the app; the app hands
+//    `OpenAllternitWidgetLinkIntent` (openAppWhenRun) runs in the app; the app hands
 //    the URL to the router through `WidgetLinkOpener.handler` and/or the
 //    pending link. If the extension runs it instead, only the pending link
 //    is written and the app picks it up on the next foreground.
@@ -53,16 +53,16 @@ enum StatusWidgetTuning {
 /// define. Swapping is two lines: point these typealiases at the `AppEntity`
 /// types, and change the bodies of `WidgetConfigSeam.botID` and `.routineID`
 /// to return `entity.id`. Nothing else here reads the parameters.
-typealias WidgetBotParam = String
-typealias WidgetRoutineParam = String
+typealias WidgetBotParam = BotEntity
+typealias WidgetRoutineParam = RoutineEntity
 
 enum WidgetConfigSeam {
     static func botID(_ value: WidgetBotParam?) -> String? {
-        guard let v = value?.trimmingCharacters(in: .whitespacesAndNewlines), !v.isEmpty else { return nil }
+        guard let v = value?.id.trimmingCharacters(in: .whitespacesAndNewlines), !v.isEmpty else { return nil }
         return v
     }
     static func routineID(_ value: WidgetRoutineParam?) -> String? {
-        guard let v = value?.trimmingCharacters(in: .whitespacesAndNewlines), !v.isEmpty else { return nil }
+        guard let v = value?.id.trimmingCharacters(in: .whitespacesAndNewlines), !v.isEmpty else { return nil }
         return v
     }
 }

@@ -179,7 +179,8 @@ struct ActionsFace: View {
         if let id = entry.botID ?? entry.content.snapshot?.focus?.botId, !id.isEmpty {
             return "allternit://bot/\(id)/chat"
         }
-        return "allternit://call/main"
+        // No bot picked: the main bot's chat (not a call).
+        return "allternit://bot/main/chat"
     }
 
     private var routineURL: String? {
@@ -230,7 +231,7 @@ private struct ActionButton: View {
             if #available(iOS 18.0, *) {
                 Button(intent: OpenAllternitURLIntent(urlString: item.url)) { label }
             } else {
-                Button(intent: OpenAllternitLinkIntent(urlString: item.url)) { label }
+                Button(intent: OpenAllternitWidgetLinkIntent(urlString: item.url)) { label }
             }
         }
         .buttonStyle(.plain)
