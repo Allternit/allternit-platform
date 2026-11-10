@@ -184,7 +184,7 @@ They follow the same delivery rules as the other phone events in [Phones](/api/p
 
 ## Unattended replay
 
-A routine that replays a saved skill can reach a hold with nobody there. After the wait, the run ends as `approval_timeout` and the hold becomes `expired`. An `attention` item appears, "Routine stopped at a step that needs you", with a Retry action. There is no standing permission for any effect.
+A routine that replays a saved skill can reach a hold with nobody there. After the wait, the phone run ends as `approval_timeout` and the hold becomes `expired`. The routine's own run record stays `failed` with the reason `approval_timeout`. An `attention` item appears, "Routine stopped at a step that needs you", with a Retry action. While that item is open, scheduled runs of the routine are skipped; only Retry replays it. A replay has no model to choose again, so when the screen changed after Approve the replay stops as `diverged`. There is no standing permission for any effect.
 
 ## Who can approve
 
@@ -196,12 +196,9 @@ A routine that replays a saved skill can reach a hold with nobody there. After t
 
 A one-task grant lets an agent act without a hold for the rest of one task. It does not cover `pay`, `delete`, `credential` or `money_app`. Those hold even when a grant is live. Only `send` and `call` accept a live grant, and only on a thread. `security_setting` is not covered.
 
-## Channel threads
-
-Only the owner starts phone actions from a channel. On a thread whose latest input does not come from a sender with trust level `owner`, phone tools are refused. They do not make a hold, so a stranger cannot fill the owner's inbox.
-
 ## Not in this version
 
 - Labels in languages other than English. For other languages, only the model's sensitive flag and the money-app rule catch a sensitive button.
 - Full coverage. An action that no rule recognises, and that the model does not flag, runs without a hold. Do not treat a hold as a promise that every sensitive action is caught.
+- An owner-only rule for channel threads. A phone action that a bot starts from a channel thread is checked like any other and makes a hold when it is sensitive. Refusing phone tools on a thread whose latest sender is not the owner comes in a later version.
 - An agent loop that runs on the phone itself. Holds apply to the Desktop-driven loop.

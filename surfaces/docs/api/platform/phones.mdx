@@ -69,7 +69,7 @@ A `200` is the tool's result, even when the tool failed:
 { "object": "phone.tool_result", "ok": true, "run_id": "api-4be1…", "tool": "phone.tap" }
 ```
 
-A failed tool answers `ok: false` with an `error` such as `approval_denied`, `approval_timeout`, `rate_limited`, `not_found` or `accessibility_off`, plus a `message`. A text or call waits up to 80 seconds for the owner's approval.
+A failed tool answers `ok: false` with an `error` such as `approval_denied`, `approval_timeout`, `rate_limited`, `not_found` or `accessibility_off`, plus a `message`. A text, a call or an inbox read does not wait: it answers `approval_required` as described below.
 
 ### Approval holds
 
@@ -77,14 +77,14 @@ A tool call that would do a sensitive action (for example tapping "Pay now") is 
 
 ```json
 {
-  "error": { "type": "conflict", "code": "approval_required", "message": "The phone's owner must approve this action." },
+  "error": { "type": "conflict_error", "code": "approval_required", "message": "The phone's owner must approve this action." },
   "approval_id": "apr_…",
   "inbox_id": "…",
   "expires_at": "2026-11-10T15:10:00Z"
 }
 ```
 
-The owner approves in the app. API keys cannot approve. Then repeat the same call with `_hold` set to the `approval_id` in `arguments`, within 10 minutes. The approval covers that one action. Details, effects and lifecycle are in [Phone approval holds](/api/phone-holds), the contract for an unreleased build.
+The owner approves in the app. API keys cannot approve. Then repeat the same call with `hold_id` set to the `approval_id` in the request body, within 10 minutes. Use a new `Idempotency-Key` for the retry. `_hold` inside `arguments` is accepted too. The approval covers that one action. Details, effects and lifecycle are in [Phone approval holds](/api/phone-holds), the contract for an unreleased build.
 
 ## Give a phone a goal
 

@@ -53,14 +53,13 @@ The time a task spends waiting for you is not counted as phone minutes.
 
 Only you, signed in, in the app. An API key cannot approve a request. A reply of "yes" to a text message does not approve one either, because a text sender can be faked.
 
-Only the owner starts phone actions from a message thread. On a thread where the latest message did not come from you, the bot does not get to use the phone.
-
 If Allternit Desktop cannot check an action, for example when the runtime cannot be reached, the action does not run.
 
 ## Limits of this version
 
 - The words Allternit looks for are English. In another language, only the bot's own flag and the bank, wallet and broker app rule catch a sensitive button.
 - An action that no rule recognises, and that the bot does not flag, can still run without a request. This is a safeguard, not a promise that every sensitive action is caught. Keep sensitive apps off a phone you link, or sign out of them, if you do not want a bot near them.
+- A bot that takes messages from other people can try a phone action because of such a message. A sensitive action still waits for you, so read the request before you approve it.
 - Approvals apply to phones driven from Desktop. A bot loop that runs on the phone itself is not part of this version.
 
 For the routes, fields and statuses, see [Phone approval holds](/api/phone-holds). For linking a phone, see [Phone Link](/guides/phone-link).
