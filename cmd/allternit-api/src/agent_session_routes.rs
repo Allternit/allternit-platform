@@ -341,6 +341,10 @@ struct GizziSessionInfo {
     /// tool): `{ text, artifactId?, at }`; absent once cleared.
     #[serde(default)]
     glance: Option<serde_json::Value>,
+    /// Set on a `gizzi mission` orchestrator session:
+    /// `{ id, goal, milestone, total, status, label: "Mission · M2/5", at }`.
+    #[serde(default)]
+    mission: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -507,6 +511,7 @@ fn transform_session(info: GizziSessionInfo, db: &DbHandle) -> serde_json::Value
     metadata.insert("limit".to_string(), json!(info.limit));
     metadata.insert("environment".to_string(), json!(info.environment));
     metadata.insert("glance".to_string(), json!(info.glance));
+    metadata.insert("mission".to_string(), json!(info.mission));
     for (key, value) in stored_metadata {
         metadata.insert(key, value);
     }
@@ -2199,6 +2204,7 @@ async fn transform_bus_event(
                         "limit": info.limit,
                         "environment": info.environment,
                         "glance": info.glance,
+                        "mission": info.mission,
                     },
                     "environment": info.environment,
                 })

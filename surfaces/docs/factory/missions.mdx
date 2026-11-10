@@ -1,0 +1,129 @@
+---
+title: "Missions"
+description: "Give Gizzi a goal and let it plan milestones, run parallel workers on each one, check the result and retry failures, with you approving the plan first."
+---
+
+A **mission** is a goal that is too big for one prompt. You state the goal. An orchestrator session breaks it into 1 to 5 milestones. For each milestone Gizzi runs a [swarm](/factory/swarms) of workers, merges their branches, and runs a check command. If the check fails, the orchestrator plans a fix and the runner tries again, up to a limit. After that the mission stops and waits for you.
+
+Every worker starts with fresh context and works in its own git checkout, so a long mission doesn't fill one conversation. The mission works in its own checkout too, so your checkout is never switched.
+
+## Quick start
+
+```bash
+cd my-repo
+gizzi mission start "add CSV export to the reports page"
+```
+
+Or, in the Gizzi TUI:
+
+```text
+/mission add CSV export to the reports page
+```
+
+Run it from inside the git repo the workers should change. Gizzi shows you the plan. Press Enter to approve it. A detached runner then does the work, so you can close the terminal.
+
+With no arguments, `/mission` shows the active mission. `/mission` takes the same flags as `gizzi mission start`, anywhere in the line, except `--yes`: in the TUI you always see the plan first. For example, `/mission add CSV export --max-workers 2 --max-hours 6`. `--brain` (or `-m`) followed by a brain name picks the brain that runs the orchestrator and the workers. A flag with a bad value, such as `--max-workers two`, is reported and nothing is planned.
+
+## Approve the plan
+
+The orchestrator writes the plan before anything runs. Each milestone has:
+
+- a short name and what it should deliver;
+- **tracks**, which are tasks that run in parallel, one worker each;
+- one **validate** shell command that decides whether the milestone passed.
+
+| Key | What it does |
+|---|---|
+| `Enter` | Approve the plan and start the runner |
+| `e` | Open the plan in `$EDITOR`. Change milestones, tracks or the validate command, save, and approve the edited plan |
+| `r` | Ask the orchestrator to plan again |
+| `Esc` or `q` | Cancel. Nothing runs, and the mission is kept as stopped so `gizzi mission resume` can show the plan again |
+
+Enter is blocked while the plan has problems, such as a milestone with no validate command. Press `e` to fix it or `r` to re-plan.
+
+Pass `--yes` to skip this step. Use it only when you trust the goal and the validate commands, because the runner starts right away.
+
+## Commands and flags
+
+| Command | What it does |
+|---|---|
+| `gizzi mission start <goal>` | Plan a mission, ask for approval, then run it |
+| `gizzi mission ls` | Every mission in this repo with its state |
+| `gizzi mission status [id]` | The current milestone, track states and attempt count. Without an id, the latest mission |
+| `gizzi mission resume [id] [--max-hours N]` | Continue a mission after a restart or a "needs you" stop |
+| `gizzi mission stop [id]` | Stop the workers and keep the state |
+| `gizzi mission land [id] [--merge]` | Bring a finished mission's work into the branch it started from. See [Land the work](#land-the-work) |
+
+Flags for `start`:
+
+| Flag | What it does |
+|---|---|
+| `--on <runtime>` | Run the orchestrator's plan and fix turns on a paired runtime. See [Run the orchestrator elsewhere](#run-the-orchestrator-elsewhere) |
+| `--max-workers N` | The most workers running at once. The default is 3 |
+| `--max-hours H` | Stop with "needs you" after this many hours |
+| `--max-attempts N` | Fix attempts per milestone before the mission stops. The default is 2 |
+| `-m <brain>` | Which CLI brain or model runs the orchestrator and the workers |
+| `--yes` | Skip the approval step |
+
+## How a milestone runs
+
+1. The runner starts one swarm for the milestone. Each track gets a worker in its own checkout, on its own branch, with fresh context.
+2. When the workers finish, the runner merges their branches into the branch `mission/<id>`.
+3. The runner runs the milestone's validate command on that branch.
+4. If it passes, the runner moves to the next milestone. If it fails, see below.
+
+Milestones run one after another, because later ones build on earlier ones. Tracks inside a milestone run in parallel, up to `--max-workers`.
+
+## The mission's checkout
+
+The mission does its work in a separate checkout outside your project, at `~/.allternit/mission-checkouts/<repo>-<hash>/<id>`. Set `ALLTERNIT_MISSION_CHECKOUTS` to use another folder. The worker checkouts sit next to it. Your own checkout is never switched, so you can keep working in it while a mission runs.
+
+## Land the work
+
+When the last milestone passes, the work sits on `mission/<id>`. Gizzi then tries to land it: it fast-forwards your branch (the one the mission started from) to `mission/<id>`. It does this only if your checkout is clean and is on that branch. Otherwise the mission's status is "done, ready to land", and you land it yourself:
+
+```bash
+gizzi mission land
+gizzi mission land m-1234 --merge
+```
+
+`land` takes an optional mission id. It fast-forwards by default. `--merge` makes a merge commit when a fast-forward isn't possible. Landing never force-merges and never runs on a dirty tree. If something blocks it, `land` says what, and the mission stays "ready to land".
+
+After a mission lands, its checkout is removed. The `mission/<id>` branch is kept.
+
+## When a check fails
+
+The orchestrator reads the validate output and plans a **fix track** for that milestone. The runner runs it, merges, and validates again. This repeats up to `--max-attempts` times (default 2).
+
+If the check still fails, the mission stops with the state "needs you" and says which milestone and which command failed. Fix it by hand, then run `gizzi mission resume`.
+
+## Stop and resume
+
+`gizzi mission stop` stops the running workers and keeps everything else: the plan, the branches and the progress. Nothing is deleted.
+
+`gizzi mission resume [id] [--max-hours N]` continues from where the mission was. It also works after a restart of your computer, because the runner reads its position from the state file.
+
+- A mission that is over its hours limit is refused until you raise it: `gizzi mission resume --max-hours 12`.
+- A mission that was never approved goes back to the approval step.
+- Pressing `q` or Esc at the approval step keeps the mission as stopped, so `resume` can show the plan again.
+
+## Run the orchestrator elsewhere
+
+`--on <runtime>` runs the orchestrator's plan turn and its fix turns on a paired runtime, such as a cloud computer, instead of on this machine.
+
+It needs `ALLTERNIT_API_TOKEN`, an Allternit API key with the compute scope (Settings, then API keys). The mission is refused if the runtime isn't paired, if it is offline and can't be woken, or if there is no key. A mission never falls back to running the orchestrator locally.
+
+A remote orchestrator can't open your files, so it plans from the list of files tracked in your repo. Workers, validation and landing stay on your local checkout, because they need your files and your git history.
+
+## Where to see progress
+
+- **The TUI footer** shows a badge such as `◆ M2/5`: milestone 2 of 5. It reads `◆ M2/5 · needs you` when the mission is waiting on you.
+- **`gizzi mission status`** prints the milestone, tracks and attempts.
+- **`gizzi board`** shows the workers of the running milestone like any other swarm.
+- **Remote Control** lists the orchestrator session as "Mission · M2/5" on Desktop, the web app, the phone layout and iOS, so you can check on it away from your computer.
+
+## The state file and log
+
+Each mission is saved in your repo at `.allternit/missions/`, as a state file and a log. The state holds the goal, the approved plan, the flags, the current milestone and attempt, the worker branches, and the result of each validate run. The runner updates it as it goes, and `resume` and `status` read it.
+
+Gizzi excludes `.allternit/missions/` from git automatically, through `.git/info/exclude`. You don't need to add it to `.gitignore`.
