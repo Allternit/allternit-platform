@@ -284,8 +284,34 @@ final class IntentServices: IntentServicing, @unchecked Sendable {
                                  at: r.at.map { Date(timeIntervalSince1970: $0) })
     }
 
+    /// Newest artifact the bot wrote (version `author_id` = the bot). The list
+    /// rows carry no author, so the newest few are opened and matched. Text
+    /// bodies only: the v2 API returns the body as a string, and binary
+    /// artifacts (PDF, image) are not downloaded here.
     func latestArtifact(botId: String) async throws -> ArtifactInfo {
-        throw IntentFailure.notAvailable("Latest artifact")
+        let page = try await ArtifactsV2Client.shared.list(ArtifactV2ListQuery(scope: "all", limit: 12))
+        var sawBinary = false
+        for row in page.items.prefix(12) {
+            let artifact = try await ArtifactsV2Client.shared.get(id: row.id)
+            guard artifact.version.authorId == botId else { continue }
+            let format = artifact.version.bodyFormat.lowercased()
+            let ext: String
+            if format.contains("html") { ext = "html" }
+            else if format.contains("markdown") || format == "md" { ext = "md" }
+            else if format.contains("json") { ext = "json" }
+            else if format.contains("svg") { ext = "svg" }
+            else if format.contains("csv") { ext = "csv" }
+            else if format.hasPrefix("text") || format.isEmpty { ext = "txt" }
+            else { sawBinary = true; continue }
+            let safe = artifact.title.map { $0.isLetter || $0.isNumber ? $0 : "-" }
+            let dir = FileManager.default.temporaryDirectory.appendingPathComponent("intent-artifacts", isDirectory: true)
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            let url = dir.appendingPathComponent("\(String(safe.prefix(60))).\(ext)")
+            try artifact.version.body.write(to: url, atomically: true, encoding: .utf8)
+            return ArtifactInfo(id: artifact.id, title: artifact.title, mimeType: format, fileURL: url)
+        }
+        if sawBinary { throw IntentFailure.notAvailable("Downloading that kind of artifact") }
+        throw IntentFailure.notFound("an artifact from that bot")
     }
 
     func watchBot(botId: String) async throws -> BotInfo {
@@ -309,8 +335,27 @@ final class IntentServices: IntentServicing, @unchecked Sendable {
         return StoppedResult(sessionId: sid)
     }
 
+    /// Cloud route the Settings screen uses (works with no computer): read
+    /// the saved value, flip `enabled`, PUT the whole object back.
     func setQuietHours(enabled: Bool) async throws -> QuietHoursState {
-        throw IntentFailure.notAvailable("Quiet hours")
+        let url = AppConfig.cloudAPIBaseURL.appendingPathComponent("api/v1/notifications/quiet-hours")
+        let get = try await APIClient.shared.authorizedRequest(url: url, method: "GET")
+        let (data, response) = try await URLSession.shared.data(for: get)
+        var value: [String: Any] = [:]
+        if (response as? HTTPURLResponse)?.statusCode == 404 { throw IntentFailure.notAvailable("Quiet hours") }
+        try APIClient.shared.validate(response, data: data)
+        if let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] { value = obj }
+        if value["start"] == nil { value["start"] = "22:00" }
+        if value["end"] == nil { value["end"] = "07:00" }
+        if value["timeZone"] == nil { value["timeZone"] = TimeZone.current.identifier }
+        if value["allowCalls"] == nil { value["allowCalls"] = true }
+        if value["letThrough"] == nil { value["letThrough"] = "urgent" }
+        value["enabled"] = enabled
+        var put = try await APIClient.shared.authorizedRequest(url: url, method: "PUT")
+        put.httpBody = try JSONSerialization.data(withJSONObject: value)
+        let (out, resp) = try await URLSession.shared.data(for: put)
+        try APIClient.shared.validate(resp, data: out)
+        return QuietHoursState(enabled: enabled)
     }
 
     func switchComputer(id: String) async throws -> ComputerInfo {
@@ -368,6 +413,17 @@ final class IntentServices: IntentServicing, @unchecked Sendable {
         let up = try await chat.upload(name: filename, mediaType: SendFileRules.mediaType(for: filename),
                                        dataBase64: data.base64EncodedString())
         return try await send(botId: botId, text: SendFileRules.message(filename: filename, url: up.url, note: note))
+    }
+}
+
+// MARK: - Status/Control additions
+
+extension IntentServices: FocusFilterServicing {
+    /// Focus filter: one cloud call; see `FocusFilterClient`.
+    func setFocusFilter(_ request: FocusFilterRequest) async throws {
+        var r = request
+        r.deviceId = FocusFilterClient.currentDeviceId()
+        try await FocusFilterClient().send(r)
     }
 }
 
