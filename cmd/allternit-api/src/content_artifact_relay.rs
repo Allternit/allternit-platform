@@ -581,9 +581,10 @@ async fn relay_content_artifact(
 async fn relay_inbox(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
+    peer: Option<axum::extract::ConnectInfo<std::net::SocketAddr>>,
     Json(bundle): Json<RelayBundle>,
 ) -> impl IntoResponse {
-    if let Err(status) = require_internal_token(&headers, &state) {
+    if let Err(status) = require_internal_token(&headers, peer, &state) {
         return (
             status,
             Json(json!({"error": "unauthorized relay peer"})),

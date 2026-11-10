@@ -474,9 +474,10 @@ async fn handle_rpc(
 pub async fn mcp_tools_internal(
     State(state): State<Arc<AppState>>,
     headers: axum::http::HeaderMap,
+    peer: Option<axum::extract::ConnectInfo<std::net::SocketAddr>>,
     Json(req): Json<JsonRpcRequest>,
 ) -> impl IntoResponse {
-    if let Err(status) = crate::internal_auth::require_internal_token(&headers, &state) {
+    if let Err(status) = crate::internal_auth::require_internal_token(&headers, peer, &state) {
         return (status, Json(json!({"error": "unauthorized"}))).into_response();
     }
     let user_id = headers

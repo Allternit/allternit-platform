@@ -493,6 +493,7 @@ pub(crate) async fn verify_runtime_device_token(
 pub async fn mcp_proxy_internal(
     State(state): State<Arc<AppState>>,
     headers: axum::http::HeaderMap,
+    peer: Option<axum::extract::ConnectInfo<std::net::SocketAddr>>,
     Json(body): Json<Value>,
 ) -> impl IntoResponse {
     let user_id = if let Some(token) = device_token_from_headers(&headers) {
@@ -502,7 +503,7 @@ pub async fn mcp_proxy_internal(
             Err(resp) => return resp,
         }
     } else {
-        if let Err(status) = crate::internal_auth::require_internal_token(&headers, &state) {
+        if let Err(status) = crate::internal_auth::require_internal_token(&headers, peer, &state) {
             return (status, Json(json!({"error": "unauthorized"}))).into_response();
         }
         let user_id = headers

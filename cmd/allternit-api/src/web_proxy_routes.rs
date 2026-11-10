@@ -56,10 +56,10 @@ pub fn web_proxy_router() -> Router<Arc<AppState>> {
 /// Serve direct loopback callers (the Desktop UI) without further checks;
 /// everyone else must pass the normal auth middleware (401 otherwise).
 ///
-/// A non-loopback caller that claims a localhost `Host`/`Origin`/`Referer` is
-/// rejected outright: `auth_middleware`'s self-hosted fallback trusts those
-/// headers, and a LAN peer spoofing them must not ride that fallback into an
-/// SSRF-capable route.
+/// `auth_middleware`'s self-hosted fallback only trusts a real same-machine
+/// caller (loopback TCP peer, no forwarding headers), so a LAN peer that
+/// spoofs a localhost `Host`/`Origin`/`Referer` gets the same 401 as any other
+/// unauthenticated caller.
 pub async fn web_proxy_access(
     State(state): State<Arc<AppState>>,
     request: Request,
@@ -68,31 +68,17 @@ pub async fn web_proxy_access(
     if is_direct_loopback_peer(&request) {
         return next.run(request).await;
     }
-    if crate::auth::is_localhost_origin(request.headers()) {
-        return json_error(StatusCode::UNAUTHORIZED, "Authentication required");
-    }
     crate::auth::auth_middleware(State(state), request, next).await
 }
 
-/// True only when the TCP peer is loopback AND the request was not relayed by
-/// a reverse proxy on this host (which would make every public caller look
-/// like loopback).
+/// True only when the TCP peer is loopback AND the request was not forwarded
+/// by a reverse proxy on this host or the desktop's cloud relay (either makes
+/// every remote caller look like loopback). Stricter than
+/// `auth::is_local_request`: this route skips auth entirely, so an unknown
+/// peer is never loopback here, not even in unit tests.
 fn is_direct_loopback_peer(request: &Request) -> bool {
-    const FORWARDING_HEADERS: [&str; 5] = [
-        "forwarded",
-        "x-forwarded-for",
-        "x-real-ip",
-        "cf-connecting-ip",
-        "true-client-ip",
-    ];
-    let peer_is_loopback = request
-        .extensions()
-        .get::<axum::extract::ConnectInfo<SocketAddr>>()
-        .is_some_and(|info| info.0.ip().to_canonical().is_loopback());
-    peer_is_loopback
-        && !FORWARDING_HEADERS
-            .iter()
-            .any(|name| request.headers().contains_key(*name))
+    crate::auth::request_peer(request).is_some_and(|peer| peer.ip().to_canonical().is_loopback())
+        && !crate::auth::has_forwarding_headers(request.headers())
 }
 
 // ── Destination policy ───────────────────────────────────────────────────────
