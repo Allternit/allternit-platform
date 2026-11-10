@@ -13,6 +13,7 @@ Scope `phones`. These routes drive the **project owner's own phones**: the Andro
 
 - **Texts and calls need a person.** `phone.sms.send` and `phone.call.dial` open the approval dialog on the owner's Desktop, the same as when a bot asks. The API can't skip it. A refusal comes back as a result with `ok: false` and `error: "approval_denied"`.
 - **Tasks and skills never text or call.** The phone task loop and skill replays only tap, type, swipe and read.
+- **Sensitive actions wait for the owner.** A tap or typing that would pay, delete, send, call, enter a credential, act in a money app or change a security setting makes an approval hold. See the section below and [Phone approval holds](/api/phone-holds), the contract for an unreleased build.
 - **Nothing personal leaves the Desktop.** History redacts typed text, numbers and message bodies. Frames and screen text stay on the Desktop. Webhooks carry no screenshots.
 
 ## Errors when a phone isn't reachable
@@ -25,6 +26,7 @@ Scope `phones`. These routes drive the **project owner's own phones**: the Andro
 | `409` | `phone_offline` | That phone isn't connected to the Desktop right now. |
 | `409` | `phone_required` | More than one phone is connected. Name a serial instead of `-`. |
 | `404` | `no_desktop` | The owner has never paired an Allternit Desktop. |
+| `409` | `approval_required` | The call needs the owner's approval first. See below. |
 
 ## The phone object
 
@@ -67,7 +69,22 @@ A `200` is the tool's result, even when the tool failed:
 { "object": "phone.tool_result", "ok": true, "run_id": "api-4be1…", "tool": "phone.tap" }
 ```
 
-A failed tool answers `ok: false` with an `error` such as `approval_denied`, `approval_timeout`, `rate_limited`, `not_found` or `accessibility_off`, plus a `message`. A text or call waits up to 80 seconds for the owner's approval.
+A failed tool answers `ok: false` with an `error` such as `approval_denied`, `approval_timeout`, `rate_limited`, `not_found` or `accessibility_off`, plus a `message`. A text, a call or an inbox read does not wait: it answers `approval_required` as described below.
+
+### Approval holds
+
+A tool call that would do a sensitive action (for example tapping "Pay now") is not run. It answers `409` with code `approval_required`, and the body names the hold:
+
+```json
+{
+  "error": { "type": "conflict_error", "code": "approval_required", "message": "The phone's owner must approve this action." },
+  "approval_id": "apr_…",
+  "inbox_id": "…",
+  "expires_at": "2026-11-10T15:10:00Z"
+}
+```
+
+The owner approves in the app. API keys cannot approve. Then repeat the same call with `hold_id` set to the `approval_id` in the request body, within 10 minutes. Use a new `Idempotency-Key` for the retry. `_hold` inside `arguments` is accepted too. The approval covers that one action. Details, effects and lifecycle are in [Phone approval holds](/api/phone-holds), the contract for an unreleased build.
 
 ## Give a phone a goal
 
@@ -82,6 +99,8 @@ The task runs on the Desktop: it reads the screen, takes one action, and repeats
 ```json
 { "object": "phone.run", "run_id": "task-9c2e…", "serial": "link:7f3a", "skill": null, "status": "running" }
 ```
+
+A task that reaches a sensitive action waits for the owner for up to 5 minutes, with the 300 second budget paused. While it waits its status is `waiting_approval`. It ends as `denied` if the owner denies, `approval_timeout` if nobody answers, or `phone_locked` if the phone locks. The run also reports `held_ms` and `holds` (a list of `approvalId`, `effect` and `state`). `duration_ms` and phone minutes leave out the held time, and the run keeps its concurrency slot while it waits. The task body also takes optional `thread_id`, `session_id` and `source`.
 
 Follow it with the `phone.step` and `phone.run.completed` webhooks, or read its steps with `GET /v1/phones/{serial}/history?run_id=`.
 
@@ -243,7 +262,9 @@ Subscribe an endpoint ([Webhooks](/api/platform/webhooks)) to these events. They
 | Event | When | `data` |
 |---|---|---|
 | `phone.step` | A phone tool call finished, from any source | `step_id`, `run_id`, `serial`, `tool`, `label`, `ok`, `error`, `duration_ms`, `source` (`bot`, `skill`, `task`, `routine` or `api`), `snapshot` |
-| `phone.run.completed` | A phone task or skill run ended | `run_id`, `serial`, `ok`, `status` (task: `done`, `failed`, `max_steps`, `timeout`; skill: `succeeded`, `diverged`, `failed`), `skill`, `source`, `steps`, `failed`, `model_calls`, `duration_ms` |
+| `phone.run.completed` | A phone task or skill run ended | `run_id`, `serial`, `ok`, `status` (task: `done`, `failed`, `max_steps`, `timeout`; skill: `succeeded`, `diverged`, `failed`; either also `denied`, `approval_timeout`, `phone_locked`), `skill`, `source`, `steps`, `failed`, `model_calls`, `duration_ms`, `held_ms`, `holds` |
+| `phone.approval.requested` | A sensitive action made an approval hold | `approval_id`, `run_id`, `serial`, `effect`, `tool` |
+| `phone.approval.resolved` | A hold was approved, denied, expired or changed | `approval_id`, `run_id`, `serial`, `effect`, `state` |
 | `phone.fleet_run.completed` | Every run of a fleet run ended, or none could start. Sent only to the project that started it | `fleet_run_id`, `kind`, `runs`, `succeeded`, `failed`, `not_started` |
 
 Events come from the Desktop's event forwarder, so they arrive a few seconds after the step. If the Desktop was offline, they arrive when it reconnects.

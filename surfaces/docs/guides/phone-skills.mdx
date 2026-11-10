@@ -9,7 +9,7 @@ This works for every kind of phone Allternit drives: Android phones over Wireles
 
 ## Plain-English tasks run on your bot's brain
 
-`phone.task` ("open Settings and turn on dark mode") now runs on the bot's own model, on every kind of phone. Each step reads the screen, the bot's brain picks one phone action (tap, type, swipe, back, home, key or open an app), Desktop runs it, and the loop repeats until the task is done, can't be done, or reaches its step limit (15 by default, 40 at most). A task never sends texts or places calls; those stay separate tool calls that you approve on the computer.
+`phone.task` ("open Settings and turn on dark mode") now runs on the bot's own model, on every kind of phone. Each step reads the screen, the bot's brain picks one phone action (tap, type, swipe, back, home, key or open an app), Desktop runs it, and the loop repeats until the task is done, can't be done, or reaches its step limit (15 by default, 40 at most). A task never sends texts or places calls; those stay separate tool calls that you approve. Before a task taps Pay or Delete, types into a password field or opens a bank app, it waits for you: see [Approvals for sensitive phone actions](/guides/phone-approvals). The wait is not counted in the task's duration.
 
 A bot passes its `bot_id` (or a brain as `provider/model`) so the task uses its model; without one, the task uses the default model. Google ARTEMIS is now only a fallback: Desktop uses it when Desktop's local API can't be reached, for an Android phone over adb, with `GEMINI_API_KEY` set.
 
@@ -53,6 +53,10 @@ The result lists each step with how its element was found (`id`, `name`, `resour
 
 On an iPhone on a USB Agent, which has no screen read, taps replay at their recorded position.
 
+## Approvals during a replay
+
+A replay stops at a step that pays, deletes, sends, calls or types a secret, the same as a task does, and waits for you in Needs you. Approve lets that step run once. Deny ends the replay. Saving a skill does not save an approval: each replay asks again. See [Approvals for sensitive phone actions](/guides/phone-approvals).
+
 ## Run a skill on a schedule
 
 A routine can run a phone skill instead of sending its bot a message. Set the routine's config to:
@@ -68,7 +72,7 @@ A routine can run a phone skill instead of sending its bot a message. Set the ro
 }
 ```
 
-`serial` is optional when only one phone is connected. The routine still belongs to a bot: if a step moved, the bot's brain re-decides it. Each run is recorded like any other routine run, with the replayed steps as its output, and a replay that diverges counts as a failed run.
+`serial` is optional when only one phone is connected. The routine still belongs to a bot: if a step moved, the bot's brain re-decides it. If the routine reaches a step that needs your approval and nobody answers within 5 minutes, the run stops and shows one item, "Routine stopped at a step that needs you", with Retry. There is no standing permission that skips it. Each run is recorded like any other routine run, with the replayed steps as its output, and a replay that diverges counts as a failed run.
 
 ## For developers
 
@@ -86,7 +90,7 @@ The API is served by the local allternit-api (`cmd/allternit-api/src/phone_runs.
 | `DELETE /phones/skills/:name` | none | `{ok}` |
 | `POST /phones/skills/:name/run` | `{serial?, inputs?, bot_id?, brain?, background?}` | `{ok, status, skill, serial, run_id, model_calls, healed, steps, error, duration_ms}`, or `202 {ok, status: "running", run_id, skill, serial}` with `background: true` |
 | `POST /phones/:serial/task` | `{goal, max_steps?, bot_id?, brain?, background?}` | `{ok, status, result, steps, model_calls, run_id, serial, duration_ms}`, or `202 {ok, status: "running", run_id, serial}` with `background: true` |
-| `POST /phones/:serial/tool` | `{name, arguments?, run_id?}` | The phone tool's result plus `run_id` and `tool`. One gateway call, exactly as a bot makes it, so texts and calls still need approval on Desktop. Waits up to 80 s; `504` on timeout, `502` when the gateway can't be reached. |
+| `POST /phones/:serial/tool` | `{name, arguments?, run_id?}` | The phone tool's result plus `run_id` and `tool`. One gateway call, exactly as a bot makes it, so texts, calls and other sensitive actions still need approval. A sensitive call answers `approval_required`; retry with `_hold` in the arguments after you approve. See [Phone approval holds](/api/phone-holds). Waits up to 80 s; `504` on timeout, `502` when the gateway can't be reached. |
 
 A step has `{id, run_id, serial, at, tool, label, args, ok, error?, duration_ms, ui?, target?, source?, thumbnail?, snapshot}`. `thumbnail` is a small PNG data URL. `source` is `bot`, `skill`, `task` or `routine`. A run summary is `{run_id, serial, started_at, ended_at, steps, failed, source, thumbnail}`, newest first. For `POST /phones/:serial/task`, use the serial `-` to let Desktop pick the only connected phone. The task route answers 503 when Desktop's phone gateway isn't running.
 

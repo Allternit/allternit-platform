@@ -3,7 +3,7 @@ title: A phone for your bot (Android)
 description: Connect a spare Android phone over Wi-Fi so your bot can see and operate it, send a text and place a call from its own SIM.
 ---
 
-Connect a spare Android phone to Allternit Desktop, with no cable, and your bot can look at its screen, tap, type, swipe, open apps and do plain-English tasks on it. With your approval each time, it can also send a text or place a call from the phone's own SIM.
+Connect a spare Android phone to Allternit Desktop, with no cable, and your bot can look at its screen, tap, type, swipe, open apps and do plain-English tasks on it. With your approval each time, it can also send a text or place a call from the phone's own SIM. Other sensitive actions, such as paying or deleting, wait for you too: see [Approvals for sensitive phone actions](/guides/phone-approvals).
 
 Connecting a phone is **Desktop only**: adb runs in the Desktop app. On ai.allternit.com and the m.allternit.com phone app, Settings → Computers → Phones says to connect a phone from Allternit Desktop, and the paired phone is usable from every device. For an iPhone, see [An iPhone for your bot (Allternit USB Agent)](/guides/usb-agent). For a bot's own number and live AI calls, see [Messaging channels](/guides/messaging-channels) and [Calls and texts in threads](/guides/calls-and-texts).
 
@@ -64,14 +64,14 @@ Paired phones are remembered and reconnect on their own when they come back on t
 | `phone.task` | Do a plain-English task on the bot's own brain. See [Phone runs and phone skills](/guides/phone-skills). |
 | `phone.skills`, `phone.save_skill`, `phone.run_skill` | Save a run that worked as a skill and replay it with no model. See [Phone runs and phone skills](/guides/phone-skills). |
 | `phone.sms.send` | Send one text from the phone's SIM. |
-| `phone.sms.read` | Read recent texts in the inbox, optionally from one sender, and wait up to two minutes for one to arrive. Returns the messages and any sign-in `codes` in them. You approve this on your computer the first time each bot reads texts on a phone (the bot passes its `bot_id`); a bot that doesn't say who it is asks every time. |
+| `phone.sms.read` | Read recent texts in the inbox, optionally from one sender, and wait up to two minutes for one to arrive. Returns the messages and any sign-in `codes` in them. You approve this the first time each bot reads texts on a phone (the bot passes its `bot_id`); a bot that doesn't say who it is, and an API-key caller, asks every time. |
 | `phone.call.dial` | Place a call from the phone's SIM. |
 
 Bots reach these tools through the `allternit-phone` MCP server that Desktop runs while a phone is paired. The same tools drive iPhones on an [Allternit USB Agent](/guides/usb-agent); `phone.devices` lists both. A phone linked with the [Phone Link](/guides/phone-link) app gets the same tools without Wireless debugging, texts, calls, keys and `phone.sms.read` included; only `phone.task` is adb-only for now.
 
 ### Texts and calls always ask you first
 
-Every `phone.sms.send` and `phone.call.dial`, over adb or Phone Link, shows a confirmation on your computer with the exact recipient and message. The default button is **Deny**, an unanswered request expires after two minutes, and approval applies to that one action only.
+Every `phone.sms.send` and `phone.call.dial`, over adb or Phone Link, becomes an approval request with the exact recipient and message. It shows in Needs you and in the Desktop dialog, which are views of the same request. The default button is **Deny**, an unanswered request expires, and approval applies to that one action only. See [Approvals for sensitive phone actions](/guides/phone-approvals) for how long a request waits and what Deny does.
 
 Texts and calls are person-to-person. Limits: a text at most every 15 seconds, 10 an hour and 30 a day; a call at most every 10 seconds, 10 an hour and 30 a day. There is no bulk sending, and emergency numbers are blocked.
 

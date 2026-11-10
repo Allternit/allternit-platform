@@ -1,0 +1,65 @@
+---
+title: Approvals for sensitive phone actions
+description: Your bot asks you before it pays, deletes, sends, calls or touches passwords, codes, bank apps and security settings on a linked phone. See where the request shows up, what Approve and Deny do, and what happens when nobody answers.
+---
+
+<Note>
+Available after the next Desktop update.
+</Note>
+
+When a bot uses a linked phone, some actions wait for you. The bot stops, a request appears for you to review, and the action runs only if you approve it. This applies to a plain-English task, a saved phone skill, a routine, and a bot that taps on its own.
+
+## What the bot must ask about
+
+Allternit looks at the button the bot is about to tap, the field it is about to type into and the app it is in. It asks you before these:
+
+- **Paying or buying.** Buttons such as Pay, Buy, Checkout, Place order or Transfer.
+- **Deleting.** Buttons such as Delete, Remove, Erase or Uninstall.
+- **Sending.** Send, Post, Reply or Submit, and the enter key in a message box.
+- **Calling.** Call, Dial or FaceTime.
+- **Passwords and codes.** Typing into a password, passcode, card number or security code field, showing or copying a password, and reading your texts, which can hold sign-in codes.
+- **Bank, wallet and broker apps.** Opening one, or tapping inside one. One approval covers that app for the rest of the run.
+- **Security settings.** Two-factor, passcode, Face ID or Touch ID, screen lock and similar.
+
+Texts and calls the bot places with the phone tools ask you too.
+
+The bot's own model can also flag a step as sensitive and add a request. It cannot remove one the rules made, so text on the screen cannot talk the bot out of asking.
+
+## What you see and where
+
+The request shows in **Needs you**:
+
+- on ai.allternit.com and the m.allternit.com app
+- in the Allternit phone app
+- as a dialog in Allternit Desktop
+
+It shows the phone, the app, what the bot is about to do and a picture of the screen at that moment. On an iPhone, the notification opens **Review**. There is no one-tap Approve in the notification, because you should see the screen first.
+
+## Approve and Deny
+
+- **Approve** lets that one action run, once. Before it runs, Allternit looks at the screen again. If the screen changed since the request, the approval is not used and you get a new request.
+- **Deny** ends the task. The bot does not try another way to reach the same result.
+
+If you approve and the action is not used within 10 minutes, you are asked again.
+
+## When nobody answers
+
+- **A task** waits up to 5 minutes. If you have not answered, it stops and reports that approval timed out.
+- **A routine** stops at that step and shows one item, "Routine stopped at a step that needs you", with a **Retry** button.
+
+The time a task spends waiting for you is not counted as phone minutes.
+
+## Who can approve
+
+Only you, signed in, in the app. An API key cannot approve a request. A reply of "yes" to a text message does not approve one either, because a text sender can be faked.
+
+If Allternit Desktop cannot check an action, for example when the runtime cannot be reached, the action does not run.
+
+## Limits of this version
+
+- The words Allternit looks for are English. In another language, only the bot's own flag and the bank, wallet and broker app rule catch a sensitive button.
+- An action that no rule recognises, and that the bot does not flag, can still run without a request. This is a safeguard, not a promise that every sensitive action is caught. Keep sensitive apps off a phone you link, or sign out of them, if you do not want a bot near them.
+- A bot that takes messages from other people can try a phone action because of such a message. A sensitive action still waits for you, so read the request before you approve it.
+- Approvals apply to phones driven from Desktop. A bot loop that runs on the phone itself is not part of this version.
+
+For the routes, fields and statuses, see [Phone approval holds](/api/phone-holds). For linking a phone, see [Phone Link](/guides/phone-link).

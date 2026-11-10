@@ -28,7 +28,7 @@ The runtime event forwarder (`runtime_events.rs`, `DATA_KEYS`) adds these keys. 
 | `inboxId` | Inbox item id, for example `approval:ap1` or `email:e3`. |
 | `inboxKind` | Kind of inbox item. Selects the notification category. |
 | `contentHash` | Hash of the full text and recipient. Present only when the owner can see everything. |
-| `approveInline` | `true` when the item qualifies for inline Approve. |
+| `approveInline` | `true` when the item qualifies for inline Approve. Always `false` for a [phone approval hold](/api/phone-holds#the-inbox-item). |
 | `senderKind` | `bot` or `person`. |
 | `to`, `toName` | Recipient handle and display name. |
 | `trust` | Provenance trust of the text the item was made from. |
