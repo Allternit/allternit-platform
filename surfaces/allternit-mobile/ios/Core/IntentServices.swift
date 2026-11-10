@@ -195,7 +195,9 @@ final class IntentServices: IntentServicing, @unchecked Sendable {
     private func approvalInfo(_ i: InboxItem) -> ApprovalInfo {
         ApprovalInfo(id: i.id, kind: i.kind, botId: i.botId, botName: i.botName, summary: i.summary,
                      fullText: i.text ?? i.summary, recipient: i.person, contentHash: i.contentHash,
-                     sessionId: i.threadId, isPeerHeld: i.isPeerHeld, canApprove: i.canApprove, at: i.at)
+                     sessionId: i.threadId, isPeerHeld: i.isPeerHeld,
+                     // A phone hold is Review only: Siri says "Open Allternit to read the whole item".
+                     canApprove: i.canApprove && !i.isPhoneAction, at: i.at)
     }
 
     func listApprovals() async throws -> ApprovalList {
@@ -424,6 +426,62 @@ extension IntentServices: FocusFilterServicing {
         var r = request
         r.deviceId = await FocusFilterClient.currentDeviceId()
         try await FocusFilterClient().send(r)
+    }
+}
+
+// MARK: - Phone (PhoneIntents.swift)
+
+extension IntentServices {
+    private var phoneClient: PhoneTaskClient { .shared }
+
+    private func phoneError(_ error: Error) -> Error {
+        switch error as? PhoneTaskClient.Failure {
+        case .signedOut?: return IntentFailure.signedOut
+        case .noComputer?: return IntentFailure.noComputer
+        case .offline?: return IntentFailure.offline
+        case .quota?: return PhoneIntentFailure.quota
+        case .failed(let why)?: return IntentFailure.failed(why)
+        case nil: return error
+        }
+    }
+
+    func listPhones() async throws -> [PhoneInfo] {
+        do {
+            return try await phoneClient.phones().map { PhoneInfo(serial: $0.serial, name: $0.name, online: $0.isLive) }
+        } catch { throw phoneError(error) }
+    }
+
+    private func outcome(_ r: PhoneTaskClient.StartResult, serial: String) async -> PhoneStartOutcome {
+        switch r {
+        case .refused(let message): return .refused(message)
+        case .started(let runId):
+            let phone = (try? await listPhones())?.first { $0.serial == serial } ?? PhoneInfo(serial: serial, name: "your phone", online: true)
+            return .started(runId: runId, phone: phone)
+        }
+    }
+
+    func startPhoneTask(serial: String, goal: String) async throws -> PhoneStartOutcome {
+        do {
+            return await outcome(try await phoneClient.start(serial: serial, goal: goal, source: "intent"), serial: serial)
+        } catch { throw phoneError(error) }
+    }
+
+    func listPhoneRoutines() async throws -> [PhoneRoutineInfo] {
+        do { return try await phoneClient.routines().map { PhoneRoutineInfo(name: $0.name, detail: $0.description) } }
+        catch { throw phoneError(error) }
+    }
+
+    func runPhoneRoutine(name: String, serial: String) async throws -> PhoneStartOutcome {
+        do { return await outcome(try await phoneClient.runRoutine(name: name, serial: serial), serial: serial) }
+        catch { throw phoneError(error) }
+    }
+
+    func latestPhoneRun() async throws -> PhoneRunStatusInfo? {
+        do {
+            guard let run = try await phoneClient.latestRun() else { return nil }
+            let name = (try? await listPhones())?.first { $0.serial == run.serial }?.name ?? "your phone"
+            return PhoneRunStatusInfo(runId: run.runId, goal: run.goal, status: run.status, phoneName: name)
+        } catch { throw phoneError(error) }
     }
 }
 

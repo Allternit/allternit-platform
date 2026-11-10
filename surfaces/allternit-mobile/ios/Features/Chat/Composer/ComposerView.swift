@@ -75,6 +75,10 @@ struct ComposerView: View {
     var artifactKind: ArtifactStudioKind? = nil
     /// Artifacts ▾ → All artifacts, in an artifact session.
     var onAllArtifacts: (() -> Void)? = nil
+    /// "Run on my phone" in the "+" sheet, and the "On <phone>" chip while armed.
+    var allowsPhoneRun: Bool = false
+    var armedPhoneName: String? = nil
+    var onClearPhone: (() -> Void)? = nil
 
     @EnvironmentObject private var modeStore: AppModeStore
     @EnvironmentObject private var agentModeStore: AgentModeStore
@@ -123,6 +127,15 @@ struct ComposerView: View {
                     .zIndex(0)
             }
 
+            if let armedPhoneName {
+                HStack {
+                    PhoneArmedChip(name: armedPhoneName) { onClearPhone?() }
+                    Spacer()
+                }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 6)
+            }
+
             card
                 .zIndex(1)
 
@@ -134,7 +147,7 @@ struct ComposerView: View {
         }
         .animation(DeckMotion.animation, value: deck)
         .sheet(isPresented: $isPlusSheetPresented) {
-            ComposerPlusSheet(attachmentStore: attachmentStore, sessionId: sessionId)
+            ComposerPlusSheet(attachmentStore: attachmentStore, sessionId: sessionId, allowsPhoneRun: allowsPhoneRun)
         }
         .sheet(isPresented: $isModelPickerPresented) {
             ModelPickerSheet(modelStore: modelStore)

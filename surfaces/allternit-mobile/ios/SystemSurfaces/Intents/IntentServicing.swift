@@ -235,6 +235,13 @@ protocol IntentServicing: Sendable {
     /// Uploads one file (at most `SendFileRules.maxBytes`) and sends the bot
     /// a message carrying its link, plus `note` when given.
     func sendFile(botId: String, data: Data, filename: String, note: String?) async throws -> ConversationInfo
+
+    // Phone (PhoneIntents.swift). Tasks start with `source: "intent"`.
+    func listPhones() async throws -> [PhoneInfo]
+    func startPhoneTask(serial: String, goal: String) async throws -> PhoneStartOutcome
+    func listPhoneRoutines() async throws -> [PhoneRoutineInfo]
+    func runPhoneRoutine(name: String, serial: String) async throws -> PhoneStartOutcome
+    func latestPhoneRun() async throws -> PhoneRunStatusInfo?
 }
 
 // MARK: - Registry
