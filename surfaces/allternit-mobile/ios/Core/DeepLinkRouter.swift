@@ -49,6 +49,9 @@ enum DeepLink: Equatable, Sendable {
     /// The team hand-off composer on the bots launchpad (`allternit://handoff`,
     /// `/handoff`, or the web shortcut's `?allternit_open=handoff`).
     case handoff
+    /// Start a phone task on the linked phone (`allternit://phone-task?goal=&source=`),
+    /// sent by the iMessage app, which has no session of its own.
+    case phoneTask(goal: String, source: String)
 
     static let webHosts: Set<String> = ["ai.allternit.com", "m.allternit.com"]
 
@@ -121,6 +124,9 @@ enum DeepLink: Equatable, Sendable {
             return .settings(segments.count >= 2 ? segments[1] : nil)
         case "computers":
             return .computers
+        case "phone-task":
+            guard let goal = query["goal"], !goal.isEmpty else { return nil }
+            return .phoneTask(goal: goal, source: query["source"] ?? "imessage_ext")
         case "inbox":
             if segments.count >= 2, let id = segments[1].removingPercentEncoding, !id.isEmpty {
                 return .inboxItem(id)

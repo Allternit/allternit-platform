@@ -33,12 +33,47 @@ struct InboxItem: Decodable, Identifiable, Equatable, Sendable {
     let text: String?
     /// Hash of the text and recipient; sent back with Approve so a changed item answers 409.
     let contentHash: String?
+    /// `phone_action` on a phone approval hold (docs/api/phone-holds.mdx):
+    /// Review only, never approved from a row, notification or Siri.
+    let subkind: String?
+    /// A phone hold's `detail.phone` (what the bot wants to do on which phone).
+    let detail: Detail?
+
+    struct Detail: Decodable, Equatable, Sendable {
+        let phone: PhoneHoldDetail?
+    }
 
     var canApprove: Bool { actions.contains("approve") }
     var canRetry: Bool { actions.contains("retry") }
     var isPeerHeld: Bool { attentionKind == "peer_held" }
     var isCritical: Bool { kind == "attention" && severity == "critical" }
+    var isPhoneAction: Bool { subkind == "phone_action" }
+    /// The hold id behind an `approval:<id>` item.
+    var holdId: String { id.hasPrefix("approval:") ? String(id.dropFirst("approval:".count)) : id }
 }
+
+/// `detail.phone` of a phone approval hold. Every field is optional: the
+/// runtime adds `to`/`text` only for a text or call.
+struct PhoneHoldDetail: Decodable, Equatable, Sendable {
+    let serial: String?
+    let phoneName: String?
+    let platform: String?
+    let app: String?
+    let effect: String?
+    let tool: String?
+    let intent: String?
+    let goal: String?
+    let runId: String?
+    let step: Int?
+    let to: String?
+    let text: String?
+    let element: Element?
+
+    struct Element: Decodable, Equatable, Sendable {
+        let label: String?
+    }
+}
+
 
 final class InboxClient: @unchecked Sendable {
     static let shared = InboxClient()
@@ -67,6 +102,13 @@ final class InboxClient: @unchecked Sendable {
     }
 
     func approve(_ id: String) async throws { try await act(id, "approve") }
+    /// Approve from the open item (the Review pane): `surface: "app"` and the
+    /// hash it showed, so a hold that changed meanwhile answers 409.
+    func approveReviewed(_ id: String, contentHash: String?) async throws {
+        var body: [String: Any] = ["surface": "app"]
+        if let contentHash, !contentHash.isEmpty { body["contentHash"] = contentHash }
+        try await act(id, "approve", body: body)
+    }
     func deny(_ id: String) async throws { try await act(id, "approve", body: ["decision": "deny"]) }
     /// Also how a held message from an outside agent is refused.
     func dismiss(_ id: String) async throws { try await act(id, "dismiss") }

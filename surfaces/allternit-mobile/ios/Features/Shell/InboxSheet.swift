@@ -73,6 +73,8 @@ final class InboxStore: ObservableObject {
 struct InboxSheet: View {
     @ObservedObject private var store = InboxStore.shared
     @Environment(\.dismiss) private var dismiss
+    /// A phone hold open in its Review pane (Review only, never approved from the row).
+    @State private var reviewing: InboxItem?
 
     var body: some View {
         NavigationStack {
@@ -86,7 +88,14 @@ struct InboxSheet: View {
                 }
                 .background(Color("BgPrimary").ignoresSafeArea())
         }
-        .task { await store.refresh() }
+        .task {
+            await store.refresh()
+            // A hold's notification Review action lands here: open its pane.
+            if let id = store.focusedId, let item = store.items.first(where: { $0.id == id }), item.isPhoneAction {
+                reviewing = item
+            }
+        }
+        .sheet(item: $reviewing) { PhoneHoldReviewSheet(item: $0) }
         .onDisappear { store.focusedId = nil }
     }
 
@@ -132,11 +141,11 @@ struct InboxSheet: View {
             List {
                 if focusedIsGone { alreadyHandledNote }
                 ForEach(store.items) { item in
-                    InboxRow(item: item, onOpen: { open(item) })
+                    InboxRow(item: item, onOpen: { open(item) }, onReview: { reviewing = item })
                         .id(item.id)
                         .listRowBackground(item.id == store.focusedId ? Color("AccentPrimary").opacity(0.12) : Color("BgPrimary"))
                         .swipeActions(edge: .leading) {
-                            Button(item.primary.label) { primary(item) }
+                            Button(item.isPhoneAction ? "Review" : item.primary.label) { primary(item) }
                                 .tint(Color("AccentPrimary"))
                         }
                         .swipeActions(edge: .trailing) {
@@ -173,7 +182,9 @@ struct InboxSheet: View {
     }
 
     private func primary(_ item: InboxItem) {
-        if item.primary.action == "approve", item.canApprove {
+        if item.isPhoneAction {
+            reviewing = item
+        } else if item.primary.action == "approve", item.canApprove {
             store.act(item) { try await $0.approve(item.id) }
         } else if item.primary.action == "retry", item.canRetry {
             store.act(item) { try await $0.retry(item.id) }
@@ -197,6 +208,7 @@ struct InboxSheet: View {
 private struct InboxRow: View {
     let item: InboxItem
     let onOpen: () -> Void
+    var onReview: () -> Void = {}
 
     @ObservedObject private var store = InboxStore.shared
 
@@ -217,7 +229,7 @@ private struct InboxRow: View {
         let busy = store.busy.contains(item.id)
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Text((item.isPeerHeld ? "Other agent" : Self.words[item.kind] ?? item.kind).uppercased()
+                Text((item.isPeerHeld ? "Other agent" : item.isPhoneAction ? "Approval · Phone" : Self.words[item.kind] ?? item.kind).uppercased()
                      + (item.isCritical ? " · URGENT" : ""))
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundColor(item.isCritical ? .red : Color("TextSecondary"))
@@ -253,12 +265,12 @@ private struct InboxRow: View {
                     .foregroundColor(.red)
             }
             HStack(spacing: 8) {
-                Button(busy ? "Working…" : item.primary.label) { primaryTapped() }
+                Button(busy ? "Working…" : (item.isPhoneAction ? "Review" : item.primary.label)) { primaryTapped() }
                     .buttonStyle(.borderedProminent)
                     .tint(Color("AccentPrimary"))
                     .controlSize(.small)
                     .disabled(busy)
-                if item.canApprove, item.primary.action == "approve" {
+                if item.isPhoneAction || (item.canApprove && item.primary.action == "approve") {
                     Button(denyLabel) {
                         store.act(item) { client in
                             if item.isPeerHeld { try await client.dismiss(item.id) } else { try await client.deny(item.id) }
@@ -290,7 +302,9 @@ private struct InboxRow: View {
     }
 
     private func primaryTapped() {
-        if item.primary.action == "approve", item.canApprove {
+        if item.isPhoneAction {
+            onReview()
+        } else if item.primary.action == "approve", item.canApprove {
             store.act(item) { try await $0.approve(item.id) }
         } else if item.primary.action == "retry", item.canRetry {
             store.act(item) { try await $0.retry(item.id) }

@@ -150,6 +150,8 @@ struct DeepLinkHost: ViewModifier {
             // Filled into the composer; the owner sends it.
             router.setComposerPrefill(prompt)
             Task { await openBot(id) }
+        case .phoneTask(let goal, let source):
+            Task { await PhoneRunStore.shared.startForMessages(goal: goal, source: source) }
         case .callMain:
             if let main = AgentHubStore.shared.agents.first(where: \.isMainBot) {
                 botSheet = main
