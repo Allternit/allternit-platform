@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 2.7.0 (2026-11-11)
+
+- Pet offers: after a failed command or turn the terminal pet offers a fix; type `/fix` to run it. `/pet offers on|off` turns offers off. Failures also reach the Desktop pet.
+- A turn can turn on the computer tools for itself with `metadata.tools.computer: true`.
+- Phone tasks and runs with approvals.
+
 ## 2.6.0 (2026-11-10)
 
 ### Added
