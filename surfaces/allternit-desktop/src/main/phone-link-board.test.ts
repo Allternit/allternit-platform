@@ -51,7 +51,7 @@ function fakeNodeApi() {
   return { api, tasks };
 }
 
-async function rig(opts: { pair?: boolean; connect?: boolean; guard?: PhoneHoldClient; api?: PhoneApi } = {}) {
+async function rig(opts: { pair?: boolean; connect?: boolean; guard?: PhoneHoldClient; api?: PhoneApi; version?: 1 | 2 } = {}) {
   const phone = new SimPhone(600, 1300, 1.04);
   const app = new FakeAppPhone(phone);
   const store = memoryStore();
@@ -77,7 +77,7 @@ async function rig(opts: { pair?: boolean; connect?: boolean; guard?: PhoneHoldC
   backends.push(apps);
   const port = await manager.start();
   const info = await manager.setUp('/dev/cu.usbmodem101', { ssid: 'Home Wi-Fi', password: 'correct horse' }, 'Eoj iPhone');
-  const board = new SimBoard(info.boardId, serial.settings.key, phone);
+  const board = new SimBoard(info.boardId, serial.settings.key, phone, opts.version ?? 2);
   boards.push(board);
   board.onCommand = () => setTimeout(() => app.push(), 5);
   if (opts.pair !== false) manager.pair(BOARD, APP_SERIAL);
@@ -134,10 +134,31 @@ describe('Allternit Link: board hands, app-phone eyes', () => {
     expect(Math.abs(tx - 90)).toBeLessThan(4);
     expect(Math.abs(ty - 130)).toBeLessThan(4);
 
-    // A USBA/1 board never receives face or prog lines (its firmware would stay armed on them).
-    expect(r.board.ref.log.filter((l) => /^(face|prog|label) /.test(l))).toEqual([]);
     // The status every surface reads.
-    expect(r.manager.status(BOARD)).toMatchObject({ status: 'ready', eyes: 'app', phone: APP_SERIAL, screen: true, online: true, armed: true, protocol: 1, link: null, relay: 'none' });
+    expect(r.manager.status(BOARD)).toMatchObject({ status: 'ready', eyes: 'app', phone: APP_SERIAL, screen: true, online: true, armed: true, protocol: 2, link: 'lan', relay: 'none' });
+  }, 30_000);
+
+  it('a USBA/2 board shows the face and progress Desktop sends, armed or not; a USBA/1 board never receives them', async () => {
+    const v2 = await rig();
+    // Disarmed: display commands move nothing, so the board takes them.
+    expect(v2.manager.list()[0].armed).toBe(false);
+    await v2.manager.display(BOARD, [{ op: 'face', name: 'working' }, { op: 'prog', n: 3 }]);
+    // The simulated board's own display state: what its e-paper would show.
+    expect({ face: v2.board.ref.face, prog: v2.board.ref.prog }).toEqual({ face: 'working', prog: 3 });
+    // Display commands are not input: none reached the HID log.
+    expect(v2.board.ref.log).toEqual([]);
+    await until(() => v2.manager.status(BOARD)?.face === 'working');
+    expect(v2.manager.status(BOARD)).toMatchObject({ protocol: 2, face: 'working', armed: false });
+    // A display command never arms the board.
+    expect(v2.manager.list()[0].armed).toBe(false);
+
+    // The USBA/1 firmware resets its idle timer on any command once armed, so it must get none.
+    const v1 = await rig({ version: 1 });
+    await armAndCalibrate(v1);
+    await v1.manager.display(BOARD, [{ op: 'face', name: 'working' }, { op: 'prog', n: 3 }]);
+    expect(v1.linesToBoard.filter((l) => / (face|prog|label) /.test(l))).toEqual([]);
+    expect({ face: v1.board.ref.face, prog: v1.board.ref.prog }).toEqual({ face: 'default', prog: 0 });
+    expect(v1.manager.status(BOARD)).toMatchObject({ protocol: 1, link: null, face: null });
   }, 30_000);
 
   it('not paired: taps on the app iPhone answer not_supported with the board message, as before', async () => {
