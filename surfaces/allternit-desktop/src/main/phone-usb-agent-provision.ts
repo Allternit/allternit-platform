@@ -6,6 +6,8 @@
  *   desk  → prov info
  *   board → prov info <boardId> <fw> provisioned=<0|1>
  *   desk  → prov set ssid <hex> | pass <hex> | host <ipv4> | port <n> | desk <id> | key <64 hex>
+ *   desk  → prov set ssid1..3 <hex> | pass1..3 <hex>      (optional: more saved networks)
+ *   desk  → prov set relay <host> | rtok <64 hex>         (optional: the cloud relay, USBA/2 firmware)
  *   board → prov ok | prov err <reason>
  *   desk  → prov commit      (board saves to flash and restarts, disarmed)
  *
@@ -37,14 +39,33 @@ export interface ProvisionInput {
   /** This Desktop's id, advertised over mDNS so the board finds it if its IP changes. */
   deskId: string;
   keyHex: string;
+  /** Up to three more saved networks (`ssid1`…`ssid3`), tried after the first. */
+  networks?: Array<{ ssid: string; password: string }>;
+  /** The cloud relay host and the board's relay token (hardware/link/README.md section 2.9). Never logged. */
+  relay?: { host: string; tokenHex: string };
 }
+
+export const MAX_EXTRA_NETWORKS = 3;
 
 const toHex = (s: string) => Buffer.from(s, 'utf8').toString('hex');
 
+function validateNetwork(ssid: string, password: string): string | null {
+  if (!ssid || Buffer.byteLength(ssid) > 32) return 'The Wi-Fi name must be 1–32 bytes.';
+  if (Buffer.byteLength(password) > 63) return 'The Wi-Fi password is too long (63 bytes at most).';
+  if (password.length > 0 && password.length < 8) return 'Wi-Fi passwords are at least 8 characters.';
+  return null;
+}
+
 export function validateProvision(p: ProvisionInput): string | null {
-  if (!p.ssid || Buffer.byteLength(p.ssid) > 32) return 'The Wi-Fi name must be 1–32 bytes.';
-  if (Buffer.byteLength(p.password) > 63) return 'The Wi-Fi password is too long (63 bytes at most).';
-  if (p.password.length > 0 && p.password.length < 8) return 'Wi-Fi passwords are at least 8 characters.';
+  const wifi = validateNetwork(p.ssid, p.password);
+  if (wifi) return wifi;
+  const extra = p.networks ?? [];
+  if (extra.length > MAX_EXTRA_NETWORKS) return `A board saves ${MAX_EXTRA_NETWORKS + 1} Wi-Fi networks at most.`;
+  for (const [i, n] of extra.entries()) {
+    const problem = validateNetwork(n.ssid, n.password);
+    if (problem) return `Wi-Fi network ${i + 2}: ${problem}`;
+  }
+  if (p.relay && (!/^[a-z0-9.-]{1,63}$/.test(p.relay.host) || !/^[0-9a-f]{64}$/.test(p.relay.tokenHex))) return 'Bad relay settings.';
   if (!/^(\d{1,3}\.){3}\d{1,3}$/.test(p.host) || p.host.split('.').some((o) => Number(o) > 255)) return 'This computer has no usable IPv4 address on the network.';
   if (!Number.isInteger(p.port) || p.port < 1024 || p.port > 65535) return 'Bad port.';
   if (!/^[a-z0-9-]{4,40}$/.test(p.deskId)) return 'Bad desktop id.';
@@ -72,10 +93,16 @@ export async function readIdentity(port: SerialPort): Promise<BoardIdentity> {
   return { boardId: m[1], firmware: m[2], provisioned: m[3] === '1' };
 }
 
-export async function provision(port: SerialPort, p: ProvisionInput): Promise<BoardIdentity> {
+/**
+ * Writes the settings and commits. `relay` is true when the board took the
+ * relay host and token; a board with older firmware refuses those keys, and
+ * setup then finishes with the LAN link only. Pass `identity` when the caller
+ * already read it on this port.
+ */
+export async function provision(port: SerialPort, p: ProvisionInput, known?: BoardIdentity): Promise<BoardIdentity & { relay: boolean }> {
   const problem = validateProvision(p);
   if (problem) throw new Error(problem);
-  const identity = await readIdentity(port);
+  const identity = known ?? (await readIdentity(port));
   const lines = [
     `prov set ssid ${toHex(p.ssid)}`,
     `prov set pass ${toHex(p.password)}`,
@@ -83,14 +110,26 @@ export async function provision(port: SerialPort, p: ProvisionInput): Promise<Bo
     `prov set port ${p.port}`,
     `prov set desk ${p.deskId}`,
     `prov set key ${p.keyHex}`,
+    ...(p.networks ?? []).flatMap((n, i) => [`prov set ssid${i + 1} ${toHex(n.ssid)}`, `prov set pass${i + 1} ${toHex(n.password)}`]),
   ];
   for (const line of lines) {
     const reply = await ask(port, line);
-    if (reply !== 'prov ok') throw new Error(`The board refused a setting: ${reply.replace(/^prov err ?/, '') || 'unknown error'}.`);
+    if (reply === 'prov ok') continue;
+    const reason = reply.replace(/^prov err ?/, '') || 'unknown error';
+    if (/^prov set (ssid|pass)[1-3] /.test(line) && reason === 'unknown setting') {
+      throw new Error('This board’s firmware saves one Wi-Fi network. Update its firmware to save more.');
+    }
+    throw new Error(`The board refused a setting: ${reason}.`);
+  }
+  // The relay is optional: the board stores it only when both lines are taken
+  // (an older board answers "unknown setting"). Error text never carries the token.
+  let relay = false;
+  if (p.relay) {
+    relay = (await ask(port, `prov set relay ${p.relay.host}`)) === 'prov ok' && (await ask(port, `prov set rtok ${p.relay.tokenHex}`)) === 'prov ok';
   }
   const done = await ask(port, 'prov commit');
   if (done !== 'prov ok') throw new Error(`The board could not save: ${done.replace(/^prov err ?/, '')}.`);
-  return identity;
+  return { ...identity, relay };
 }
 
 // ── Production I/O ──────────────────────────────────────────────────────────

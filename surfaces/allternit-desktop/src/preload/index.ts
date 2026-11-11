@@ -900,12 +900,16 @@ const phonesAPI = {
   usbStatus: (): Promise<unknown> => ipcRenderer.invoke('phone:usb-status'),
   usbPorts: (): Promise<string[]> => ipcRenderer.invoke('phone:usb-ports'),
   usbIdentify: (port: string): Promise<unknown> => ipcRenderer.invoke('phone:usb-identify', port),
-  usbSetup: (port: string, ssid: string, password: string, name: string): Promise<unknown> =>
-    ipcRenderer.invoke('phone:usb-setup', port, ssid, password, name),
+  /** `networks`: up to three more Wi-Fi networks the board may join. The answer's `board.relay` and `relayNote` say whether the cloud relay was set. */
+  usbSetup: (port: string, ssid: string, password: string, name: string, networks?: Array<{ ssid: string; password: string }>): Promise<unknown> =>
+    ipcRenderer.invoke('phone:usb-setup', port, ssid, password, name, networks ?? []),
   usbFirmware: (): Promise<unknown> => ipcRenderer.invoke('phone:usb-firmware'),
   usbCalibrate: (boardId: string): Promise<{ ok: boolean; message?: string }> => ipcRenderer.invoke('phone:usb-calibrate', boardId),
   usbStop: (boardId: string): Promise<{ ok: boolean; message?: string }> => ipcRenderer.invoke('phone:usb-stop', boardId),
-  usbForget: (boardId: string): Promise<void> => ipcRenderer.invoke('phone:usb-forget', boardId),
+  usbForget: (boardId: string): Promise<{ ok: true; cloud: 'revoked' | 'none' | 'failed'; message?: string }> => ipcRenderer.invoke('phone:usb-forget', boardId),
+  /** Allternit Link: pair a board with an app iPhone (`app:<uuid>`), or unpair it with null. */
+  usbPair: (boardId: string, serial: string | null): Promise<{ ok: true; board: unknown } | { ok: false; message: string }> =>
+    ipcRenderer.invoke('phone:usb-pair', boardId, serial),
   onUsbDevices: (handler: (boards: unknown) => void): (() => void) => {
     const listener = (_: IpcRendererEvent, boards: unknown) => handler(boards);
     ipcRenderer.on('phone:usb-devices', listener);
