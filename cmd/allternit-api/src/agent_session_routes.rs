@@ -1361,8 +1361,29 @@ async fn list_messages(headers: HeaderMap, Path(session_id): Path<String>) -> im
     }
 }
 
+/// The owner's own chat turn on a bot thread is an owner input: it is labelled `owner` in
+/// `content_provenance`, so the owner-only rules (`phone_task::refusal`, `task_grants`) see
+/// the owner speak after an outside message. Only a signed-in session with no API key or
+/// agent credential, on a thread that user owns, writes the row. Server-relayed turns
+/// (`system`) and seed messages (`noReply`) are not the owner typing and write nothing.
+fn label_owner_turn(db: &DbHandle, user_id: Option<&str>, has_credential: bool, session_id: &str, body: &SendMessageBody) {
+    let Some(user_id) = user_id.filter(|u| !u.trim().is_empty()) else { return };
+    if has_credential || body.system.is_some() || body.no_reply == Some(true) || body.text.trim().is_empty() {
+        return;
+    }
+    let Ok(conn) = db.connect() else { return };
+    let thread: Option<String> = conn
+        .query_row("SELECT id FROM bot_threads WHERE current_session_id = ?1 AND user_id = ?2 LIMIT 1", params![session_id, user_id], |r| r.get(0))
+        .ok();
+    if let Some(thread) = thread {
+        crate::netops::provenance::label(&conn, &thread, crate::netops::provenance::Trust::Owner, "user", "owner", &body.text);
+    }
+}
+
 async fn send_message(
     State(state): State<Arc<AppState>>,
+    user: Option<axum::extract::Extension<AuthUser>>,
+    credential: Option<axum::extract::Extension<crate::enterprise_auth::CredentialContext>>,
     headers: HeaderMap,
     Path(session_id): Path<String>,
     Json(body): Json<SendMessageBody>,
@@ -1397,6 +1418,8 @@ async fn send_message(
         }))
         .into_response();
     }
+
+    label_owner_turn(&state.db, user.as_ref().map(|u| u.0.user_id.as_str()), credential.is_some(), &session_id, &body);
 
     if let Some(resp) = crate::gateway_runner::intercept_message(&session_id, &body.text, body.metadata.as_ref()).await {
         return resp;
