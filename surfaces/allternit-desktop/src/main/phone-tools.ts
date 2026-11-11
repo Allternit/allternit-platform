@@ -70,6 +70,7 @@ export interface AppPhoneLane extends UsbPhoneBackend {
   /** Re-reads the node's phone list when stale. Never throws. */
   refresh(): Promise<void>;
   devices(): Array<{ serial: string; platform: 'ios'; via: 'allternit-app'; route: 'iphone-app-store'; name: string; screen: boolean; note: string }>;
+  hands?(serial: string): boolean;
 }
 
 /** A Phone-Linked phone as phone.devices lists it, health included. */
@@ -226,7 +227,7 @@ const appSerialProp = { type: 'string', description: 'An iPhone connected with t
 export const PHONE_TOOLS = [
   {
     name: 'phone.devices',
-    description: 'List connected phones: Android phones (adb), iPhones on an Allternit USB Agent (serial "usb:…"), Phone-Linked phones with the AI apps signed in (serial "link:…", with per-phone health), and iPhones with the Allternit app (serial "app:…", route "iphone-app-store": screen only plus the app\'s browser through phone.web.*; screen says whether the screen is shared now).',
+    description: 'List connected phones: Android phones (adb), iPhones on an Allternit USB Agent (serial "usb:…"), Phone-Linked phones with the AI apps signed in (serial "link:…", with per-phone health), and iPhones with the Allternit app (serial "app:…", route "iphone-app-store": screen only plus the app\'s browser through phone.web.*; screen says whether the screen is shared now; with a paired, armed Allternit Link board in its port it also takes taps, swipes and typing).',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
@@ -880,16 +881,19 @@ export class PhoneToolRunner {
 
     const serial = this.resolveSerial(a.serial, usb, links, apps);
     if (typeof serial !== 'string') return serial;
+    const hands = apps?.hands?.(serial) === true;
     // Every acting call crosses here (task loop, replay, a bot's direct call, the gateway, MCP): the runtime decides, Desktop enforces.
     if (GUARDED_TOOLS.has(name) && !(name.startsWith('phone.web.') && !apps?.has(serial))) {
-      const stop = await this.guardCheck(name, serial, a, { usb, links, apps });
+      const stop = await this.guardCheck(name, serial, a, hands ? { usb: apps, links, apps: null } : { usb, links, apps });
       if (stop) return stop;
     }
-    // iPhones with the Allternit app: the screen and the app's browser, nothing that taps.
+    // iPhones with the Allternit app: the screen and the app's browser; taps only through a paired Link board.
     if (apps?.has(serial)) {
+      if (hands && name === 'phone.task') return this.task(serial, a, apps, links);
+      if (hands && name === 'phone.run_skill') return this.skillCall(name, { ...a, serial });
       const res = await apps.call(name, serial, a);
       if (name === 'phone.web.snapshot' && res.ok && Array.isArray(res.elements)) this.webEls.set(serial, res.elements as Array<Record<string, unknown>>);
-      return res;
+      return hands ? withHints(name, a, res) : res;
     }
     if (name.startsWith('phone.web.') || name === 'phone.screen.request' || name.startsWith('phone.calendar.') || name.startsWith('phone.reminders.') || name.startsWith('phone.contacts.')) {
       return fail('not_supported', `${name} works on an iPhone connected with the Allternit app (serial "app:…"); calendar, reminders and contacts are not available on other phones. On this phone use phone.screenshot, phone.open_app, phone.tap and phone.type.`);
