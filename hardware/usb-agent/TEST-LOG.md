@@ -12,7 +12,7 @@ Spec: Allternit Link, Phase 1, steps 1, 2 and 7 (`Research/specs/allternit-link-
 | Firmware version | not recorded yet |
 | Desktop version | not recorded yet |
 | iPhone model and iOS | not recorded yet |
-| UxPlay version and how it was installed | not recorded yet |
+| UxPlay version and how it was installed | 1.74, built from source with `install-uxplay.sh` on macOS 27 (Apple Silicon), GStreamer 1.28.9 from Homebrew, 2026-11-10 |
 | Wi-Fi band | not recorded yet |
 
 ## Findings before the first run

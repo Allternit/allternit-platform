@@ -4,10 +4,12 @@
 set -euo pipefail
 
 force=0
+# `uxplay -v` prints a GStreamer banner line first on macOS, so pick the version line.
+version_of() { "$1" -v 2>&1 | grep -m 1 -i "uxplay version" || echo "version not reported"; }
 [ "${1:-}" = "--force" ] && force=1
 
 if [ "$force" -eq 0 ] && command -v uxplay >/dev/null 2>&1; then
-  echo "uxplay is already installed: $(uxplay -v 2>&1 | head -n 1)"
+  echo "uxplay is already installed: $(version_of uxplay)"
   echo "Run with --force to rebuild it."
   exit 0
 fi
@@ -33,4 +35,4 @@ cmake -S "$tmp/UxPlay" -B "$tmp/UxPlay/build"
 cmake --build "$tmp/UxPlay/build"
 cmake --install "$tmp/UxPlay/build" --prefix "$(brew --prefix)"
 
-echo "Installed: $("$(brew --prefix)/bin/uxplay" -v 2>&1 | head -n 1)"
+echo "Installed: $(version_of "$(brew --prefix)/bin/uxplay")"
