@@ -104,7 +104,16 @@ prov commit                     → prov ok, then the board restarts (disarmed)
 prov wipe                       → forget everything
 ```
 
-Over Wi-Fi, the board looks for Desktop over mDNS (`_allternit-usba._tcp`, TXT `id=<desk id>`) first, then falls back to the address saved at setup. With no saved network joined, it tries the next saved network every 15 s.
+Over Wi-Fi, the board dials the address saved at setup first. If that fails, it looks for Desktop over mDNS (`_allternit-usba._tcp`, TXT `id=<desk id>`), at most once every 15 s. With no saved network joined, it tries the next saved network every 15 s.
+
+## Testing without a board
+
+Nothing here needs an ESP32-S3 board. None of it has an iPhone on the other end, so it does not replace the checks in [TEST-LOG.md](TEST-LOG.md).
+
+- **Native board** ([native/README.md](native/README.md)): the firmware source, unchanged, built as a program for macOS or Linux. Wi-Fi, USB, flash storage and the panel are stand-ins; TCP, TLS and the serial port are real. Desktop's tests drive it (`surfaces/allternit-desktop/src/main/phone-usb-agent-native-link.test.ts`). It proves what the board sends and answers. It does not run the chip's own Wi-Fi, USB or TLS code.
+- **Wokwi** ([wokwi/README.md](wokwi/README.md)): the real ESP32-S3 image on a simulated XIAO ESP32-S3. It needs a Wokwi account token and `wokwi-cli`. It has no USB mouse and no Bluetooth, and on the free plan it cannot reach a computer on your network. It has not been run yet.
+
+Plan and status: `docs/research-allternit-link-native-board-PLAN.md`.
 
 ## Licenses
 
