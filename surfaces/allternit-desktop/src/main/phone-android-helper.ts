@@ -42,8 +42,11 @@ export const PINNED_ANDROID_MANIFESTS: Record<string, string> = {
   // 0.5.0: the launcher opens the Allternit app (m.allternit.com as a Trusted
   // Web Activity); Phone Link status moves to the notification + icon shortcut.
   '0.5.0': '7c60640fa009db79d7776ff2e8d3d57705efd9a38472eb2a88bc1c02e2469164',
+  // 0.5.3: "waiting for approval" notice on the driven phone (Phone and Messages
+  // Wave 2, A1). Same release key (cert 3f8a3951…). versionCode 13.
+  '0.5.3': 'e1879d322d85c1ada676ecffa26ef0dcd439a338dee680a7e1f11aa3a54a3377',
 };
-export const ANDROID_HELPER_VERSION: string | null = '0.5.0';
+export const ANDROID_HELPER_VERSION: string | null = '0.5.3';
 
 export interface AndroidHelperManifest {
   version: string;
