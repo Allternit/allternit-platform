@@ -31,6 +31,9 @@ pub fn allternit_bus_router() -> Router<Arc<AppState>> {
         // AllternitBus inbox (route paths kept for backward compatibility)
         .route("/photon/agents/:agent_id/inbox", post(send_message))
         .route("/photon/agents/:agent_id/inbox", get(get_inbox))
+        // Held Photon texts: the owner approves (sends once) or rejects.
+        .route("/photon/outbound/:id/approve", post(approve_photon_outbound))
+        .route("/photon/outbound/:id/reject", post(reject_photon_outbound))
         // Connectors (this file holds the maintained handler — the
         // connector resolution test mounts this router)
         .route(
@@ -157,6 +160,11 @@ struct SendMessageRequest {
     from: String,
     content: String,
     surface: Option<String>,
+    /// Photon outbound (`surface: "photon"`): the owner handle and the Photon ids of the
+    /// conversation, taken from the person's first message to the line.
+    to: Option<String>,
+    space_id: Option<String>,
+    sender_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -182,6 +190,14 @@ async fn send_message(
     Json(req): Json<SendMessageRequest>,
 ) -> Result<Response, ApiError> {
     require_agent_owner(&state, &user, &agent_id)?;
+
+    // A Photon text goes out to a person, not into the local inbox: hold it for the owner.
+    if req.surface.as_deref() == Some("photon") {
+        let (to, space, sender) = (req.to.clone().unwrap_or_default(), req.space_id.clone().unwrap_or_default(), req.sender_id.clone().unwrap_or_default());
+        let id = crate::photon_outbound::request_hold(&state.db, &user.user_id, &agent_id, &to, &space, &sender, &req.content).map_err(photon_err)?;
+        info!(agent_id = %agent_id, hold_id = %id, "Photon outbound text held for approval");
+        return Ok((StatusCode::ACCEPTED, Json(json!({ "id": id, "status": "held", "approve": format!("/photon/outbound/{id}/approve") }))).into_response());
+    }
 
     let msg_id = uuid::Uuid::new_v4().to_string();
     let created_at = chrono::Utc::now().to_rfc3339();
@@ -218,6 +234,32 @@ async fn send_message(
 
     info!(agent_id = %agent_id, msg_id = %msg_id, "AllternitBus message delivered");
     Ok((StatusCode::ACCEPTED, Json(json!({ "id": msg_id, "status": "delivered" }))).into_response())
+}
+
+fn photon_err(e: crate::photon_outbound::PhotonError) -> ApiError {
+    use crate::photon_outbound::PhotonError as E;
+    match e {
+        E::BadRequest(m) => err(StatusCode::BAD_REQUEST, "bad_request", m),
+        E::Forbidden(m) => err(StatusCode::FORBIDDEN, "forbidden", m),
+        E::NotFound => err(StatusCode::NOT_FOUND, "not_found", "No such held text"),
+        E::NotConfigured => err(StatusCode::SERVICE_UNAVAILABLE, "photon_not_configured", "Photon is not connected for this agent (no API key or project id)."),
+        E::Conflict(m) => err(StatusCode::CONFLICT, "conflict", m),
+        E::Vendor(m) => err(StatusCode::BAD_GATEWAY, "photon_failed", m),
+        E::Internal(m) => internal(m),
+    }
+}
+
+async fn decide_photon_outbound(state: Arc<AppState>, user: AuthUser, id: String, approve: bool) -> Result<Response, ApiError> {
+    let out = crate::photon_outbound::decide(&state.db, &user.user_id, &id, approve, &crate::photon_outbound::api_base()).await.map_err(photon_err)?;
+    Ok(Json(out).into_response())
+}
+
+async fn approve_photon_outbound(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Path(id): Path<String>) -> Result<Response, ApiError> {
+    decide_photon_outbound(state, user, id, true).await
+}
+
+async fn reject_photon_outbound(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Path(id): Path<String>) -> Result<Response, ApiError> {
+    decide_photon_outbound(state, user, id, false).await
 }
 
 async fn get_inbox(
@@ -270,101 +312,31 @@ async fn get_inbox(
 // Inbound AllternitBus webhook
 // ============================================================================
 
-#[derive(Debug, Deserialize, Clone)]
-struct AllternitBusWebhookPayload {
-    from: String,
-    to: String,
-    body: String,
-    channel: String,
-    message_id: String,
-}
-
+/// `POST /webhooks/photon`: Photon 2.0 Beta events, Standard Webhooks signed. Unsigned, badly
+/// signed, stale (> 5 min) requests and an unset `PHOTON_WEBHOOK_SECRET` all answer 401.
 async fn receive_inbound_message(
     State(state): State<Arc<AppState>>,
-    Json(payload): Json<AllternitBusWebhookPayload>,
+    headers: axum::http::HeaderMap,
+    body: axum::body::Bytes,
 ) -> Result<Response, ApiError> {
-    let to = payload.to.clone();
-    let from = payload.from.clone();
-
-    let routed = tokio::task::spawn_blocking({
-        let db = state.db.clone();
-        let payload = payload.clone();
-        move || {
-            let conn = db.connect().map_err(internal)?;
-            let agent_id: Option<String> = conn
-                .query_row(
-                    "SELECT agent_id FROM agent_identity_channels WHERE phone_provider = 'photon' AND phone_number = ?1",
-                    params![payload.to],
-                    |row| row.get(0),
-                )
-                .optional()
-                .map_err(internal)?;
-            let agent_id = match agent_id {
-                Some(id) => id,
-                None => return Ok::<_, ApiError>(None),
-            };
-            conn.execute(
-                "INSERT OR IGNORE INTO agent_photon_inbox (id, agent_id, from_id, to_id, content, surface, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                params![
-                    payload.message_id,
-                    agent_id,
-                    payload.from,
-                    payload.to,
-                    payload.body,
-                    payload.channel,
-                    chrono::Utc::now().to_rfc3339()
-                ],
-            )
-            .map_err(internal)?;
-            Ok::<_, ApiError>(Some(agent_id))
-        }
-    })
-    .await
-    .map_err(|e| internal(e))??;
-
-    match routed {
-        Some(agent_id) => {
-            info!(agent_id = %agent_id, from = %from, "AllternitBus inbound webhook routed");
-        }
-        None => {
-            warn!(to = %to, "AllternitBus inbound webhook received but no matching agent phone channel");
-        }
+    let h = |k: &str| headers.get(k).and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
+    let secret = std::env::var("PHOTON_WEBHOOK_SECRET").unwrap_or_default();
+    let (id, ts, sig) = (h("webhook-id"), h("webhook-timestamp"), h("webhook-signature"));
+    if let Err(why) = crate::photon_outbound::verify_webhook(&secret, &id, &ts, &sig, &body, chrono::Utc::now().timestamp()) {
+        warn!(reason = why, "Photon webhook rejected");
+        return Err(err(StatusCode::UNAUTHORIZED, "unauthorized", "Invalid webhook signature"));
     }
-
-    Ok((StatusCode::ACCEPTED, Json(json!({ "status": "accepted" }))).into_response())
-}
-
-/// Dispatch an outbound SMS/message via Photon.codes Cloud Messaging REST API.
-pub async fn send_photon_outbound_message(
-    project_id: &str,
-    project_secret: &str,
-    to_phone: &str,
-    body: &str,
-) -> Result<Value, String> {
-    let client = crate::net_client::client();
-    let url = "https://api.photon.codes/v1/messages";
-    let resp = client
-        .post(url)
-        .header("Authorization", format!("Bearer {}", project_secret))
-        .header("Content-Type", "application/json")
-        .json(&json!({
-            "projectId": project_id,
-            "to": to_phone,
-            "body": body,
-        }))
-        .send()
+    let event: Value = serde_json::from_slice(&body).map_err(|_| err(StatusCode::BAD_REQUEST, "bad_request", "Body is not JSON"))?;
+    let db = state.db.clone();
+    let routed = tokio::task::spawn_blocking(move || crate::photon_outbound::ingest_event(&db, &id, &event))
         .await
-        .map_err(|e| format!("Photon API error: {}", e))?;
-
-    if resp.status().is_success() {
-        let val = resp.json::<Value>().await.unwrap_or_else(|_| json!({"status": "sent"}));
-        Ok(val)
-    } else {
-        let status = resp.status();
-        let text = resp.text().await.unwrap_or_default();
-        Err(format!("Photon API rejected message ({}): {}", status, text))
+        .map_err(internal)?
+        .map_err(photon_err)?;
+    match routed {
+        Some(agent_id) => info!(agent_id = %agent_id, "Photon inbound message routed"),
+        None => info!("Photon webhook event accepted, nothing to route"),
     }
+    Ok(StatusCode::NO_CONTENT.into_response())
 }
 
 // ============================================================================

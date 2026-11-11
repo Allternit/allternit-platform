@@ -370,6 +370,7 @@ pub mod permission_policy;
 pub mod policy_audit;
 pub mod policy_config;
 pub mod allternit_bus_routes;
+pub mod photon_outbound;
 pub mod platform_static;
 pub mod playground_routes;
 pub mod pricing;
