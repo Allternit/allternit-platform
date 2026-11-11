@@ -217,7 +217,7 @@ describe('UsbAgentManager end to end (simulated board + iPhone)', () => {
 });
 
 describe('statusOf', () => {
-  const session = (armed: boolean, usb: 'mounted' | 'asleep' | 'none') => ({ boardId: BOARD, firmware: '1', resetReason: 'x', address: 'a', connectedAt: 0, state: { armed, usb } });
+  const session = (armed: boolean, usb: 'mounted' | 'asleep' | 'none') => ({ boardId: BOARD, version: 2 as const, firmware: '1', resetReason: 'x', address: 'a', connectedAt: 0, state: { armed, usb } });
   it('reports the most blocking step first', () => {
     expect(statusOf(null, 'mirroring', true)).toBe('board_offline');
     expect(statusOf(session(true, 'none'), 'mirroring', true)).toBe('phone_not_connected');

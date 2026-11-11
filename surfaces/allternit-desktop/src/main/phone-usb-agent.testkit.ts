@@ -10,7 +10,7 @@ import * as net from 'node:net';
 import { PassThrough } from 'node:stream';
 import type { ChildProcess } from 'node:child_process';
 import { LineReader } from './phone-usb-agent-link.js';
-import { ReferenceBoard } from './phone-usb-agent-protocol.js';
+import { ReferenceBoard, type UsbaVersion } from './phone-usb-agent-protocol.js';
 import { FRAME_FD } from './phone-airplay.js';
 import type { Gray } from './phone-usb-agent-vision.js';
 
@@ -132,8 +132,9 @@ export class SimBoard {
   /** When true, the board swallows commands without answering (timeout path). */
   mute = false;
 
-  constructor(boardId: string, keyHex: string, readonly phone: SimPhone | null = null) {
-    this.ref = new ReferenceBoard(boardId, keyHex);
+  /** `version` 2 (default) runs firmware 1.1.0 with signed lines; 1 runs the USBA/1 firmware 1.0.0. */
+  constructor(boardId: string, keyHex: string, readonly phone: SimPhone | null = null, version: UsbaVersion = 2) {
+    this.ref = version === 2 ? new ReferenceBoard(boardId, keyHex) : new ReferenceBoard(boardId, keyHex, '1.0.0', 1);
   }
 
   connect(port: number): Promise<void> {
@@ -167,15 +168,22 @@ export class SimBoard {
     });
   }
 
-  /** Simulates pressing the arm button. */
+  /** Simulates pressing the arm button until the board is in the wanted state. */
   arm(armed = true): void {
-    this.ref.armed = armed;
-    this.socket?.write(`s armed=${armed ? 1 : 0} usb=${this.ref.usb}\n`);
+    const line = this.ref.armed !== armed ? this.ref.pressButton() : this.ref.stateLine();
+    if (line) this.socket?.write(`${line}\n`);
+  }
+
+  /** Simulates the dock stop input: disarms only. */
+  stop(): void {
+    const line = this.ref.pressStop();
+    if (line) this.socket?.write(`${line}\n`);
   }
 
   setUsb(usb: 'mounted' | 'asleep' | 'none'): void {
     this.ref.usb = usb;
-    this.socket?.write(`s armed=${this.ref.armed ? 1 : 0} usb=${usb}\n`);
+    const line = this.ref.stateLine();
+    if (line) this.socket?.write(`${line}\n`);
   }
 
   close(): void {
