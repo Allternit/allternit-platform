@@ -314,6 +314,9 @@ targets:
     deploymentTarget: "17.0"
     sources:
       - path: AllternitMessages
+        excludes:
+          - MessagesAssets.xcassets
+      - path: AllternitMessages/MessagesAssets.xcassets
       - path: SystemSurfaces
       - path: Assets.xcassets
     dependencies:
@@ -329,6 +332,9 @@ targets:
         MARKETING_VERSION: "1.0.1"
         CURRENT_PROJECT_VERSION: "32"
         CODE_SIGN_ENTITLEMENTS: AllternitMessages/AllternitMessages.entitlements
+        # The iMessage icon (4:3 slots + App Store image) lives in its own
+        # catalog; actool writes MSMessagesExtensionStoreIconName from it.
+        ASSETCATALOG_COMPILER_APPICON_NAME: "iMessage App Icon"
         DEVELOPMENT_TEAM: MQ85968PQP
         CODE_SIGN_STYLE: Automatic
         SKIP_INSTALL: true
