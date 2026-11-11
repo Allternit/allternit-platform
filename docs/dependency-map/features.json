@@ -2131,7 +2131,9 @@
         "allternit-ai/src/components/onboarding",
         "allternit-ai/src/lib",
         "allternit/cmd/allternit-sideload",
-        "allternit/cmd/allternit-cloud-api"
+        "allternit/cmd/allternit-cloud-api",
+        "allternit/hardware/link",
+        "allternit/cmd/allternit-api"
       ],
       "decisions": [
         {
@@ -2233,6 +2235,10 @@
         {
           "on": "2026-11-10",
           "note": "Phone approval holds (Eoj, 2026-11-10): a sensitive phone action (pay, delete, send, call, password or code, bank/wallet/broker app, security setting) waits for the owner as a gateway_approvals hold (inbox kind approval, subkind phone_action; Review only, no inline Approve). allternit-api phone_guard decides (label rules first; the model can only add a hold) and Desktop phone-tools dispatch() enforces on every route: the task loop, skill replay and routines, web tasks on app phones, a bot's direct tool call, /phones/:serial/tool and the MCP phone tools. Loops wait up to 5 minutes with the budget paused; direct and API callers get approval_required (cloud /v1/phones answers 409) and retry with the hold id. API keys cannot approve; there is no approve-by-text. Texts, calls and SMS reads moved from the Desktop dialog to the same hold. Held time is not billed as phone minutes. A routine that reaches a hold with nobody there stops with one item and Retry. The label rules are English only, so the guard does not catch every sensitive action."
+        },
+        {
+          "on": "2026-11-10",
+          "note": "Allternit Link Phase 1 (unreleased, simulated board only; nothing run on a real board or iPhone; no hardware for sale): USBA/2 extends the USB Agent protocol (signed replies and state lines, version bound into the handshake, sealed typed text via typex, face/prog/label display commands, dock/hid/link/face/prog state fields), a face on a 200x200 1-bit display from one shared renderer, a board reaching Desktop through the cloud relay (cloud-api link_boards table and routes, relay token, 30 s socket ticket, allternit-api phone_usba node socket piping to Desktop's loopback listener), a composite lane (board hands paired with an app iPhone's screen share), and one status shape for Desktop, web, phone layout, PWA, iOS and gizzi phone boards. The board boots disarmed and only its button arms it; software can only disarm, and a disarm ends a running phone task. Forget revokes the cloud registration and the key. Docs: guides/allternit-link.mdx and api/link-boards.mdx. Contract: hardware/link/README.md."
         }
       ],
       "evidence": [
@@ -2255,7 +2261,10 @@
         "allternit/cmd/allternit-api/src/phone_runs.rs",
         "allternit/cmd/allternit-api/src/phone_replay.rs",
         "allternit/cmd/allternit-api/src/phone_task.rs",
-        "allternit/surfaces/docs/guides/phone-skills.mdx"
+        "allternit/surfaces/docs/guides/phone-skills.mdx",
+        "allternit/hardware/link/README.md",
+        "allternit/surfaces/docs/guides/allternit-link.mdx",
+        "allternit/surfaces/docs/api/link-boards.mdx"
       ]
     },
     {

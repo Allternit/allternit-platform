@@ -151,6 +151,12 @@
       "path": "allternit/hardware/usb-agent"
     },
     {
+      "id": "allternit/hardware/link",
+      "label": "Allternit Link contract and notes",
+      "kind": "module",
+      "path": "allternit/hardware/link"
+    },
+    {
       "id": "external:openmausbot-local-api",
       "label": "openmausbot authenticated local API",
       "kind": "external",
@@ -956,11 +962,12 @@
     {
       "source": "allternit/surfaces/allternit-desktop",
       "target": "allternit/hardware/usb-agent",
-      "kind": "TCP USBA/1 on port 7300, board dials in over Wi-Fi (found via mDNS _allternit-usba._tcp): mutual HMAC handshake, signed sequenced input commands; USB serial setup (prov: Wi-Fi, desk id, 32-byte key)",
+      "kind": "TCP USBA/1 and USBA/2 on port 7300, board dials in over Wi-Fi (found via mDNS _allternit-usba._tcp) or through the cloud relay (cloud-api link-boards ticket, runtime socket, allternit-api /api/v1/phones/usba piped to the loopback listener): mutual HMAC handshake with the version bound in, signed sequenced commands (USBA/2 also signs replies and state lines and seals typed text); USB serial setup (prov: Wi-Fi, desk id, 32-byte key, relay host and token)",
       "evidence": [
         "allternit/surfaces/allternit-desktop/src/main/phone-usb-agent-protocol.ts",
         "allternit/surfaces/allternit-desktop/src/main/phone-usb-agent-provision.ts",
-        "allternit/hardware/usb-agent/firmware/usb_agent/usb_agent.ino"
+        "allternit/hardware/usb-agent/firmware/usb_agent/usb_agent.ino",
+        "allternit/hardware/link/README.md"
       ]
     },
     {

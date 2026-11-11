@@ -1,0 +1,156 @@
+---
+title: Allternit Link (a bot's hands for your iPhone)
+description: How the Allternit Link board works with your iPhone and the Allternit app: a board you arm with its own button, a face that shows what the bot is doing, a cloud relay so Desktop can be on another network, Stop, Forget and what the relay can and cannot see.
+---
+
+<Warning>
+This page describes an unreleased build. Everything here has been built and tested only against a simulated board. Nothing has run on a real Link board or on a real iPhone, and no Allternit Link hardware is for sale. Names, screens and behavior may change.
+</Warning>
+
+Allternit Link is the next version of the [Allternit USB Agent](/guides/usb-agent). It is the same small board that plugs into an iPhone's USB-C port and acts as a mouse and keyboard, with three additions:
+
+- **A face.** A small display on the board shows what your bot is doing: working, waiting for you, or stopped.
+- **A cloud relay.** The board can reach Allternit Desktop through Allternit's cloud when Desktop is on a different network.
+- **The app as the eyes.** Instead of AirPlay, the [Allternit iPhone app](/guides/iphone-app) can share the screen, and the board supplies the taps.
+
+The safety model is unchanged and comes first. It is the reason the board exists as a separate piece of hardware.
+
+## What stays in your hands
+
+- **The board starts disarmed.** After power-up it does nothing.
+- **Only its button arms it.** No message from Allternit, the cloud or your bot can arm a board. Software can only stop it.
+- **Stop always works.** Choose **Stop** in Allternit, press the button again, or unplug the board. The board lets go of every key and button and refuses input until you arm it again.
+- **Sensitive actions wait for you.** A tap that would pay, delete, send, call or touch a password makes an approval hold. Nothing is tapped until you approve. See [Approvals for sensitive phone actions](/guides/phone-approvals).
+- **Forget revokes the key.** **Forget** removes the board from your computer and from your account, so it can no longer reach Desktop through the cloud.
+
+The board cannot tell what a tap means. Keep it disarmed when you aren't using it, and watch the screen when the bot does anything that matters.
+
+## What you need
+
+- A Link board. A board in this phase is a development board of the kind the USB Agent uses (a Seeed Studio XIAO ESP32S3), flashed with the Link firmware by Desktop. The final shape of a Link board is not decided.
+- An iPhone with USB-C.
+- **Allternit Desktop** on macOS or Linux, running. A board always talks to Desktop, so a cloud computer cannot drive one.
+- For the app as the eyes: the Allternit iPhone app on that iPhone, paired with Desktop.
+
+## Set up a board
+
+Setup and pairing happen in Desktop, because they need the board in your computer's USB port. A web browser or a phone cannot set up a board.
+
+1. In **Settings → Computers → Phones**, plug the board into your computer and choose **Set up**. This is the same step as for the USB Agent: Desktop installs the firmware, writes your Wi-Fi details and a new private key over USB, and the board restarts disarmed.
+2. When you are signed in, Desktop also registers the board with your account and writes a relay token to it, so the board can use the cloud relay. If you are signed out, or the call fails, setup still finishes and the board works over your Wi-Fi only. Its row then shows no relay.
+3. Plug the board into the iPhone and turn on AssistiveTouch (**Settings → Accessibility → Touch → AssistiveTouch**). The pointer is how the board moves.
+
+## Pair a board with the app
+
+You can use AirPlay for the eyes, exactly as with the USB Agent, or pair the board with an iPhone that runs the Allternit app.
+
+1. In Desktop, choose **Pair** on the board and pick the app iPhone.
+2. On the iPhone, open the app and share the screen.
+3. Arm the board with its button, then choose **Calibrate**. Calibration looks for the AssistiveTouch pointer in the shared screen. Nothing proves the board is in that phone until calibration finds it.
+
+One board pairs with one app phone, and the other way round. Pairing or unpairing clears the calibration. A paired board is not listed as a phone of its own: your bot sees the app iPhone, and that iPhone takes taps while its board is armed.
+
+Calibrate again if you change AssistiveTouch's tracking speed.
+
+## How the link works
+
+The board tries your Wi-Fi first, as the USB Agent does. If no session forms within 5 seconds of joining Wi-Fi and the board has a relay token, it asks Allternit's cloud for a one-time ticket that lasts 30 seconds and opens a WebSocket to your own Desktop through the relay. The board shows which route it used: `lan` or `cloud`.
+
+The cloud does not drive the board. It passes lines between the board and Desktop. Desktop and the board prove they hold the board's key before any command is accepted, and on this version every command, reply and state line is signed, so the cloud cannot forge or change one.
+
+## The face
+
+The display is 200 by 200 pixels, one bit per pixel. Its picture comes from one pure drawing function that Desktop and the firmware share, so both produce the same picture.
+
+| Face | When |
+|---|---|
+| `default` | Idle, or just armed. Two open square eyes. |
+| `working` | A tool call or task step is running. Narrowed eyes and a row of five squares that fill as the task goes on. |
+| `wink` | A run ended well. After a second it goes back to `default`. |
+| `needs_you` | An approval hold is waiting. An exclamation mark appears above the eyes. |
+| `stopped` | The board was disarmed, for any reason. Closed eyes. |
+
+A small solid square in the corner shows that the board is armed. The board draws it from its own armed state. No message can set it.
+
+The face is for you. Face commands never arm the board and never move anything, so they are allowed while the board is disarmed. A failed face update never fails a tool call.
+
+On the first Link boards in this phase the display is simulated. The e-paper panel is planned and has not been tested.
+
+## What you see in Allternit
+
+Each board has a row with its state, its link (`lan` or `cloud`), its face, whether it is armed, and whether the screen feed is live.
+
+| State | What to do |
+|---|---|
+| Board offline | Check the board has power and that Wi-Fi or the relay is reachable. |
+| Phone not connected | The board is online but not plugged into a phone. |
+| Phone locked | Unlock the iPhone. |
+| No screen | Start Screen Mirroring, or share the screen in the Allternit app. |
+| Not calibrated | Choose **Calibrate**. |
+| Disarmed | Press the board's button to let your bot use the phone. |
+| Ready | Your bot can use the phone. |
+
+The row appears in Desktop, in the phones list on ai.allternit.com and the phone layout, in the m.allternit.com app, and in the iOS app under Settings → Phones. **Stop** and **Forget** are there too. Setup and pairing stay in Desktop.
+
+In Gizzi Code, `gizzi phone boards` lists each board's state, and `gizzi phone stop` disarms one (add `--board` to pick it when you have more than one).
+
+## Stop
+
+**Stop** disarms the board. If a bot run is in progress on that phone, it ends: the run fails with the result `stopped: the board was disarmed`, and the bot does not retry until it runs out of steps. Pressing the button while a swipe is in progress does the same. This also holds for an Android or `usb:` phone, since the rule lives in the node's task loop.
+
+Stop from a surface other than Desktop goes through your Desktop. If Desktop is off, the surface says so; the board then disarms itself when the link is gone (see Safety).
+
+## Forget, and removing a lost board
+
+**Forget** disarms the board, drops its session, deletes the board's key and calibration from your computer, and revokes its cloud registration. After that, the relay refuses the board's token.
+
+You can forget a board from any surface. The cloud revocation happens first and works even when Desktop is off. At its next start, Desktop reads your boards and removes the key of any board that was forgotten elsewhere. If you lose a board, forget it from the web app: that cuts off its relay access at once. The board still holds its Wi-Fi details and a key that Desktop no longer knows, so Desktop drops it as unknown. To use that board again, set it up again over USB.
+
+## What the relay can see
+
+The relay is Allternit's cloud and anything between the board and it.
+
+| It can | It cannot |
+|---|---|
+| See the board id, firmware version, reset reason and timing. | Learn the board's key or a session key. Those never cross the network. |
+| Read the commands: moves, taps, scrolls, key combinations, faces, progress. | Read typed text. Text is sent sealed (AES-256-GCM) on every Link session. |
+| Read replies and state lines. | Forge or change a command, reply or state line. Each is signed. |
+| Drop, delay or cut the connection. The board lets go of every key within 10 seconds and Desktop reports `uncertain`. | Have an old line accepted again. Every line carries a number that must rise, and each session has a new key. |
+| Refuse a ticket. | Arm a board. Only the button can. |
+| | Reach a Desktop with a board it did not set up. Desktop drops an unknown board. |
+
+Two limits to know about. Key combinations are not sealed, so a bot that types a secret one key at a time shows it to the relay. And the screen feed from the app is a separate channel with its own protection.
+
+## Safety
+
+- **The board lets go when nobody is driving.** If the link drops, or nothing arrives for 10 seconds, it releases every key and button. It disarms itself after 30 minutes without use.
+- **A wrong board key and a wrong relay token are both refused.** A board that this Desktop did not set up is dropped.
+- **A version change is caught.** The protocol version is part of the handshake. A party in the middle that rewrites the version makes the handshake fail.
+- **Replays fail.** A command needs a higher number than the last one, and each connection has a new session key.
+
+## Limits
+
+- A board needs Allternit Desktop running, on macOS or Linux.
+- Portrait apps. Typing is ASCII only.
+- iOS does not mirror every screen, such as passcode entry, Apple Pay and DRM video. With the app as the eyes, the app's own capture rules apply.
+- The label rules for approvals are English only.
+- Bluetooth mouse mode and a hardened (secure boot) board are planned and have not been built.
+
+## Planned hardware
+
+These are design intent, not hardware that exists:
+
+- A keychain-sized bot shaped like Gizzi, with a tinted window over the display.
+- A power bank that the bot docks into, with its own stop button wired to the bot's stop line.
+- The e-paper face on a real panel, which keeps its picture with power removed.
+
+Nothing here has been measured. The open items are listed in the hardware notes in the repository.
+
+## For developers
+
+- **Contract:** `hardware/link/README.md` in the Allternit platform repository. It defines USBA/2, the faces, the relay, pairing and the status shape. If the code and the contract disagree, the contract is wrong until someone says otherwise.
+- **Protocol:** USBA/2 extends USBA/1 on the same port. It signs replies and state lines, binds the version into the handshake labels, adds `typex`, `face`, `prog` and `label`, and adds the `dock`, `hid`, `link`, `face` and `prog` state fields. A USBA/1 board is still accepted. See `surfaces/allternit-desktop/src/main/phone-usb-agent-protocol.ts`, which also holds `ReferenceBoard`, a simulated board for tests.
+- **Face and display:** `phone-usb-agent-face.ts` and `hardware/usb-agent/firmware/usb_agent/face.h`.
+- **Composite lane:** `phone-link-board.ts` pairs a board's hands with an app phone's eyes.
+- **Cloud routes:** [Link boards API](/api/link-boards). Status routes: `GET /api/v1/phones/boards`, `POST /api/v1/phones/boards/:boardId/stop` and `DELETE /api/v1/phones/boards/:boardId`.
+- **Holds:** every tap goes through the same tool runner, so the [phone approval holds](/api/phone-holds) apply with no extra code.

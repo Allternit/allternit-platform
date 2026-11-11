@@ -10,6 +10,10 @@ The **Allternit USB Agent** is a small ESP32-S3 board. Plug it into an iPhone's 
 - **You stay in charge:** the board does nothing until you press its button (armed, light on). Press it again, or choose **Stop** in Allternit, and the bot loses control immediately.
 
 <Note>
+Allternit Link, the next version of this board, adds a face display, a cloud relay and the Allternit app as the eyes. It is an unreleased build tested only against a simulated board, and no Link hardware is for sale. See [Allternit Link](/guides/allternit-link).
+</Note>
+
+<Note>
 Only need your bot to **see** the iPhone's screen or use a browser? The [Allternit iPhone app](/guides/iphone-app) does that with no board or cable: share the screen from the app, and your bot can also use the app's own browser. Taps on other apps still need a board.
 </Note>
 
@@ -109,7 +113,7 @@ When a command gets no answer, the result is `uncertain`, never success. The bot
 ## For developers
 
 - **Desktop code:** `surfaces/allternit-desktop/src/main/phone-usb-agent.ts` (manager and tools), `phone-usb-agent-link.ts` (the authenticated TCP link on port 7300, advertised over mDNS as `_allternit-usba._tcp`), `phone-usb-agent-protocol.ts` (USBA/1, with `ReferenceBoard` mirroring the firmware), `phone-usb-agent-pointer.ts` (calibration and aiming), `phone-usb-agent-vision.ts`, `phone-usb-agent-provision.ts` (USB serial setup) and `phone-airplay.ts` (UxPlay, run as its own process).
-- **Firmware, protocol and safety model:** `hardware/usb-agent/README.md`.
+- **Firmware, protocol and safety model:** `hardware/usb-agent/README.md`. The USBA/2 extension, used by Allternit Link, is defined in `hardware/link/README.md`. A USBA/1 board, such as one running this guide's firmware, is still accepted by Desktop.
 - **Installing firmware:** Desktop ships `resources/phone/usb-agent/usb-agent-firmware.bin` with a `firmware.json` manifest (version, SHA-256), built reproducibly by `hardware/usb-agent/build-firmware.sh`. The setup page flashes it with Espressif's esptool-js over Web Serial; Desktop only lets Allternit's own pages use serial, and only for Espressif boards (USB vendor 0x303A), picked without a chooser.
 - **Storage:** board keys are sealed with the OS keychain in `<userData>/phone/usb-agents.json`; calibration is stored per board next to them.
 - **Credits:** adapted from [esp32-iphone-agent](https://github.com/onehumanbeing/esp32-iphone-agent) (MIT); see `hardware/usb-agent/NOTICE`. UxPlay is GPL-3.0 and isn't bundled.

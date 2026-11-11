@@ -176,3 +176,9 @@ Viewers are unchanged: `POST /api/v1/phones/app:<phoneId>/ws-token`, then `/ws/p
 ### Bot runs in the in-app browser
 
 `POST /api/aci/run` accepts `targetDevice: "app:<phoneId>"`. Until the ACU planning loop has a phone-browser adapter, the node refuses such a run rather than drive its own browser: `409 app_not_open` when the app's control socket is closed, otherwise `501 phone_browser_runs_unavailable`. Single browser steps work today through `POST /api/v1/phones/app/:phoneId/rpc`.
+
+## Allternit Link boards
+
+A Link board uses the same relay pattern as an app phone. It has its own cloud table (`link_boards`), its own relay token and ticket route (`POST /api/v1/link-boards/:boardId/socket-ticket`), and a node socket, `WS /api/v1/phones/usba?board=<boardId>`. That socket carries signed text lines between the board and Desktop's USBA listener and no screen data. Desktop's board status is read at `GET /api/v1/phones/boards`, with stop at `POST /api/v1/phones/boards/:boardId/stop` and forget at `DELETE /api/v1/phones/boards/:boardId`.
+
+The routes are in [Link boards](/api/link-boards). This is an unreleased build, tested only against a simulated board.

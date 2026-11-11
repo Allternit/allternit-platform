@@ -1,0 +1,142 @@
+---
+title: 'Link boards'
+description: 'The contract for Allternit Link boards: cloud registration, the relay token and socket ticket, the node socket that carries USBA lines, the board status shape and the status, stop and forget routes.'
+---
+
+<Warning>
+This page is the contract for an unreleased build. Nothing described here is deployed yet, and it has been tested only against a simulated board. Routes, fields and statuses may change before release.
+</Warning>
+
+An Allternit Link board is a small USB board that acts as a mouse and keyboard on an iPhone. For what it does and how to use it, see [Allternit Link](/guides/allternit-link). This page covers the routes behind it. A board talks to your Allternit Desktop. The cloud only registers boards and relays the connection.
+
+## Cloud routes
+
+The four routes sit on the public API, under the public rate limiter. The first three take a Clerk session or a `compute` token. The fourth takes the board's relay token.
+
+| Method | Path | Auth | Purpose |
+|---|---|---|---|
+| `POST` | `/api/v1/link-boards` | Clerk / compute token | Register a board. |
+| `GET` | `/api/v1/link-boards` | Clerk / compute token | List your boards. |
+| `DELETE` | `/api/v1/link-boards/:boardId` | Clerk / compute token | Revoke a board (Forget). |
+| `POST` | `/api/v1/link-boards/:boardId/socket-ticket` | Header `x-allternit-link-board-token` | Get a one-time socket ticket. |
+
+### Register a board
+
+Body: `{ "boardId", "name"?, "runtimeDeviceId" }`. `boardId` must match `usba-` followed by 12 lowercase hex characters. The runtime must be the caller's.
+
+Answer: `{ "boardId", "relayToken", "runtimeDeviceId" }`. `relayToken` is 32 random bytes as 64 lowercase hex characters. It is shown once. The cloud stores only its SHA-256 and never logs it.
+
+- Posting a board id again for the same account rotates the token and clears the revoked state.
+- `name` is trimmed, stripped of control characters and cut at 120 characters.
+- The key is the pair of account and board id. Board ids come from the board's MAC address and can be guessed, so a global key would let anyone block a board by registering its id first.
+
+Errors: `400` for a bad `boardId`, `404` when the runtime is not the caller's.
+
+### List boards
+
+Answer: `{ "boards": [{ "boardId", "serial", "name", "runtimeDeviceId", "createdAt", "lastSeenAt", "revokedAt" }] }`. `serial` is `usb:` followed by the board id.
+
+### Revoke a board
+
+Answer: `{ "revoked": true }`. Later ticket requests with that board's token are refused. `404` when the account has no such board.
+
+### Socket ticket
+
+Body: `{}`, or `{ "path" }`. Answer: `{ "ticket", "expiresInSeconds": 30, "runtimeDeviceId", "socketPath" }`. `socketPath` is `/api/v1/runtime-devices/:id/socket?ticket=...` with the ticket filled in. The board opens `wss://` plus the relay host plus `socketPath` within 30 seconds.
+
+If `path` is given it must be exactly `/api/v1/phones/usba?board=:boardId`. Any other value is `403`.
+
+Errors:
+
+- `401` with the message `Invalid link board token` for an unknown board, a revoked board, a bad board id, and a wrong or malformed token. One message covers all of them, so a caller cannot tell which was wrong.
+- `403` when `path` is not the one allowed.
+- `503` when the runtime is offline or waking. This is temporary.
+
+The route compares the presented hash with every active row for that board id in constant time, then uses the matching row's account and runtime. It sets `last_seen_at`.
+
+## Account erasure
+
+The `link_boards` table has an account column and is included in the account erase list. Deleting an account removes its boards.
+
+## The relay socket
+
+The board uses the existing runtime socket relay, `WS /api/v1/runtime-devices/:id/socket?ticket=...`, described in [Cloud API](/api/cloud-api) and [Phone stream relay](/api/phone-stream-relay). There is no new relay route.
+
+1. The board waits for one text frame, `{"type":"allternit_socket_ready"}`, which means the node answered. It discards that frame. Nothing is sent before it.
+2. From then on, one WebSocket text frame is one USBA line, with no line ending. Text frames only. The board sends its `hello` line first, as it does over TCP.
+
+The board tries your local network first. It uses the relay only when it holds a relay host and token and no local session formed within 5 seconds of joining Wi-Fi. It asks for a ticket no more often than once in 5 seconds, backing off up to 60 seconds after each failure.
+
+## Node socket
+
+`WS /api/v1/phones/usba?board=:boardId` is served by allternit-api on your Desktop. It arrives through the relay with the Desktop's credential, like the app-phone sockets.
+
+- `board` must match the board id pattern, or the socket closes with code `4400`.
+- The node opens a TCP connection to Desktop's listener on `127.0.0.1` (port 7300, or the value of `ALLTERNIT_USBA_PORT`). If that fails the socket closes with `4503`.
+- Each text frame becomes that text plus a newline on TCP, and each TCP line becomes one text frame. A binary frame, or a line or frame over 512 bytes, closes the socket with `4400`. Either side closing closes the other.
+- There is one socket per account and board id. A new one closes the old one with `4409`. An account may hold at most 8.
+- The node does not read, check or change USBA lines and holds no key. It logs board ids and close codes, never line contents.
+
+Desktop accepts the relayed connection like any other. The handshake decides. A board that Desktop did not set up is dropped as unknown.
+
+## Board status
+
+One status shape serves every surface. Desktop builds it.
+
+```json
+{
+  "boardId": "usba-0123456789ab",
+  "serial": "usb:usba-0123456789ab",
+  "name": "Joe's Link",
+  "online": true,
+  "armed": false,
+  "status": "disarmed",
+  "link": "cloud",
+  "usb": "mounted",
+  "hid": "usb",
+  "dock": false,
+  "face": "stopped",
+  "prog": 0,
+  "eyes": "app",
+  "phone": "app:0b1c...",
+  "screen": true,
+  "calibrated": true,
+  "firmware": "1.1.0",
+  "protocol": 2,
+  "firmwareUpdate": false,
+  "relay": "registered"
+}
+```
+
+| Field | Values |
+|---|---|
+| `status` | `board_offline`, `phone_not_connected`, `phone_locked`, `no_screen`, `not_calibrated`, `disarmed`, `ready` |
+| `link` | `lan`, `cloud`, or `null` when offline or the board speaks USBA/1 |
+| `usb` | `mounted`, `asleep`, `none`, or `null` |
+| `hid` | `usb`, `ble`, `none`, or `null`. The first images never report `ble`. |
+| `face` | `default`, `wink`, `working`, `needs_you`, `stopped`, or `null` |
+| `prog` | `0` to `5`, or `null` |
+| `eyes` | `airplay`, or `app` when the board is paired with an app iPhone |
+| `phone` | The paired app phone's serial, or `null` |
+| `protocol` | `1`, `2`, or `null` |
+| `relay` | `registered` or `none` |
+
+## Status, stop and forget
+
+allternit-api serves these on the node, reached the way each surface already reaches `GET /api/v1/phones`. They read Desktop's phone gateway on loopback.
+
+| Method | Path | Answer |
+|---|---|---|
+| `GET` | `/api/v1/phones/boards` | `{ "desktop": true, "boards": [...] }`, or `{ "desktop": false, "boards": [] }` when Desktop's phone gateway is not running. |
+| `POST` | `/api/v1/phones/boards/:boardId/stop` | `200 { "ok": true }`. `409 { "error": "board_offline" }`. `502 { "error": "uncertain" }`. `503 { "error": "desktop_offline" }`. |
+| `DELETE` | `/api/v1/phones/boards/:boardId` | `200 { "ok": true }`. `503 { "error": "desktop_offline" }`. |
+
+Error bodies are `{ "error", "message" }`. `GET /api/v1/phones` does not change. Setup and pairing happen only in Desktop.
+
+To forget a board from any surface, first call `DELETE /api/v1/link-boards/:boardId`, which works with Desktop off. Then call `DELETE /api/v1/phones/boards/:boardId` on a best-effort basis so Desktop removes the key. At its next start, Desktop reads `GET /api/v1/link-boards` and removes any stored board whose cloud row is revoked.
+
+## Safety rules the routes keep
+
+- No route arms a board. The board arms only from its own button.
+- Stop and Forget disarm. A disarm ends a running phone task with status `failed` and the result `stopped: the board was disarmed`. This adds no new run status, so [Phone approval holds](/api/phone-holds) is unchanged.
+- Every tap still goes through the tool runner and its approval guard.
