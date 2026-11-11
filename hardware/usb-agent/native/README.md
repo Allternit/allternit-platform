@@ -18,6 +18,7 @@ Plan: `docs/research-allternit-link-native-board-PLAN.md`. This page is the cont
 make -C hardware/usb-agent/native all          # build/link-board, link-board-dock, link-board-epd
 bash hardware/usb-agent/native/smoke.sh        # ends with: smoke ok: prov info usba-aabbccddeeff 1.1.0 provisioned=0
 bash hardware/usb-agent/native/check-signatures.sh   # signatures ok (needs the esp32 core installed)
+bash hardware/usb-agent/native/smoke-epd.sh    # epd ok: boot frame equals face_dump default 0 0, full
 ```
 
 `make FIRMWARE_DIR=<dir> OUT=<dir> link-board` builds another copy of the firmware (for example a mutant, or the USBA/1 firmware from main).
@@ -50,7 +51,7 @@ One command per line. Closing stdin is the same as `quit`.
 | `mdns set <ip> <port> <deskId>` | Adds an mDNS answer. Replaces an entry with the same desk id. |
 | `mdns clear` | Removes every answer. |
 | `mdns stall <ms>` | The next query blocks for `<ms>` instead of 3000, once. A query does not feed the watchdog. |
-| `epd busy <ms>` | How long the panel holds BUSY after a refresh. |
+| `epd busy <ms>` | How long the panel holds BUSY after a refresh. Unset (or 0): 1500 ms after a full refresh, 300 ms after a partial one. BUSY falls by board time, so `clock +<ms>` shortens it. |
 | `power-cycle` | Restarts with reason `power-on`. Flash storage is kept. |
 | `quit` | Stops the board. |
 
@@ -64,7 +65,8 @@ One JSON object per line: `{"ev":"<name>","t":<board millis>,…}`.
 | `hid` (mouse) | `dev:"mouse"`, `buttons`, `x`, `y`, `wheel`, `pan`, `sent`. One per report. |
 | `hid` (keyboard) | `dev:"keyboard"`, `call` (`press`, `release`, `write`, `releaseAll`), `ch`, `sent`. One per call. |
 | `pin` | `n`, `v`. Sent at `pinMode(OUTPUT)` and on every change. Read the latest value. Pin 21 is the armed LED, active low. |
-| `frame` | `full`, `hex`. One per panel refresh (epd variant). |
+| `frame` | `full`, `hex`. One per panel refresh (epd variant), at MASTER_ACTIVATE. `hex` is 10000 characters: what a person sees, 1 = black, MSB first, 25 bytes a row (the format of `face_dump`). `full` is false when the last `0x22` value selects display mode 2 (bit 3). |
+| `epd-error` | `reason`. The driver did something a real SSD1681 would not accept: a byte with CS high, with RST low, before any reset, while BUSY is high or in deep sleep; data with no command selected; extra parameter bytes; an unknown command; a RAM write outside the window; a refresh before the planes were written; a driver output other than 200 lines; SPI not mode 0, MSB first, at most 10 MHz. One per command. The picture does not change. |
 | `wifi` | `state` (`joining`, `connected`, `disconnected`), `ssid` (hex) |
 | `wdt` | The watchdog fired. A `boot` with reason `watchdog` follows. |
 | `nvs-violation` | `op`, `ns`, `key`. A key or namespace over 15 characters. |

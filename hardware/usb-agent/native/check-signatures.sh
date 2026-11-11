@@ -113,6 +113,13 @@ core|libraries/Network/src/NetworkClient.h|WiFi.h|void stop();
 core|libraries/Network/src/NetworkClient.h|WiFi.h|uint8_t connected();
 core|libraries/Network/src/NetworkClient.h|WiFi.h|int setNoDelay(bool nodelay);
 core|libraries/NetworkClientSecure/src/NetworkClientSecure.h|NetworkClientSecure.h|int connect(const char *host, uint16_t port, int32_t timeout)
+core|libraries/NetworkClientSecure/src/NetworkClientSecure.h|NetworkClientSecure.h|int connect(IPAddress ip, uint16_t port, int32_t timeout)
+core|libraries/NetworkClientSecure/src/NetworkClientSecure.h|NetworkClientSecure.h|int connect(const char *host, uint16_t port)
+core|libraries/NetworkClientSecure/src/NetworkClientSecure.h|NetworkClientSecure.h|size_t write(const uint8_t *buf, size_t size)
+core|libraries/NetworkClientSecure/src/NetworkClientSecure.h|NetworkClientSecure.h|int available()
+core|libraries/NetworkClientSecure/src/NetworkClientSecure.h|NetworkClientSecure.h|int read()
+core|libraries/NetworkClientSecure/src/NetworkClientSecure.h|NetworkClientSecure.h|void stop()
+core|libraries/NetworkClientSecure/src/NetworkClientSecure.h|NetworkClientSecure.h|uint8_t connected()
 core|libraries/NetworkClientSecure/src/NetworkClientSecure.h|NetworkClientSecure.h|void setHandshakeTimeout(unsigned long handshake_timeout)
 core|libraries/NetworkClientSecure/src/NetworkClientSecure.h|NetworkClientSecure.h|void useBuiltinCACertBundle()
 core|libraries/ESPmDNS/src/ESPmDNS.h|ESPmDNS.h|bool begin(const String &hostName);
