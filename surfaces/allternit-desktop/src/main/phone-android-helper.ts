@@ -45,8 +45,11 @@ export const PINNED_ANDROID_MANIFESTS: Record<string, string> = {
   // 0.5.3: "waiting for approval" notice on the driven phone (Phone and Messages
   // Wave 2, A1). Same release key (cert 3f8a3951…). versionCode 13.
   '0.5.3': 'e1879d322d85c1ada676ecffa26ef0dcd439a338dee680a7e1f11aa3a54a3377',
+  // 0.5.4: pet offers: Error help notifications for app error/crash dialogs.
+  // Same release key (cert 3f8a3951…). versionCode 14.
+  '0.5.4': '727dfbdea87ebb859a6e5a58c286bea11a6c6e556165efe7c1d6d7504e77204b',
 };
-export const ANDROID_HELPER_VERSION: string | null = '0.5.3';
+export const ANDROID_HELPER_VERSION: string | null = '0.5.4';
 
 export interface AndroidHelperManifest {
   version: string;
