@@ -5,6 +5,15 @@ description: 'Changelog for the Allternit platform, SDKs, and Gizzi Code CLI'
 
 # Release Notes
 
+## 2026-11-11 — Pet offers: your bot notices errors and offers a fix
+
+- **Desktop:** with **Read other apps' windows** turned on (off until you choose), the pet reads the window it walks over through the Allternit Driver, shows an eye while it reads, walks to a window with an error and offers **Fix it**. Fix it opens quick work with the error text attached and a draft; nothing is sent until you send. Password managers, banking apps and sites, Messages and private browser windows are never read. Mute an app from the bubble or by pressing and holding the pet. See [Pet offers](/guides/bot-avatars#pet-offers).
+- **Web, phone layout and PWA:** a failed bot run shows a card next to your bot, or a sheet at the bottom on a phone, that opens the bot's quick chat with the error.
+- **iPhone:** a banner when a run fails while you're on another screen. See [iPhone app](/guides/iphone-app#failed-run-banner).
+- **Android (Phone Link):** error and crash dialogs from other apps can bring up a notification with **Fix it** and **Mute**. Off until you turn it on. See [Android app](/guides/android-app#error-offers).
+- **Gizzi Code:** the terminal pet offers `/fix` after a failed command or turn, and tells the Desktop pet. `/pet offers on|off` turns it off. See [Work views](/cli/work#fix-a-failed-command).
+- **Developers:** a turn can turn on the computer tools for itself with `metadata.tools.computer: true`. See [Computer toolset](/tools/computer-toolset#turn-the-tools-on-for-one-turn).
+
 ## 2026-11-11 — Mobile: a rating prompt
 
 - **Rating prompt:** the iPhone app may show Apple's rating sheet after a chat answer once you have used it for a few days, and **Settings → Rate Allternit** opens the App Store review page. The Google Play version of the Android app may show Google Play's review card when it opens. Counters stay on your device. It ships in the next build after iPhone 1.0.1. See [iPhone app](/guides/iphone-app#rating-the-app) and [Android app](/guides/android-app#rating-the-app).

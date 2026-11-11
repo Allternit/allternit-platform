@@ -4,6 +4,7 @@ import { PetHud } from '../../pet/PetHud.js';
 import type { LocalJSXCommandOnDone } from '../../types/command.js';
 import type { ProcessUserInputContext } from '../../utils/processUserInput/processUserInput.js';
 import { getGlobalConfig, saveGlobalConfig } from '../../utils/config.js';
+import { petOffersEnabled, setPetOffersEnabled } from '../../pet/petOffersSettings.js';
 
 /**
  * /pet — the terminal pet wears the same Allternit bot as the Desktop pet
@@ -36,8 +37,19 @@ export async function call(onDone: LocalJSXCommandOnDone, context: ProcessUserIn
     return null;
   }
 
+  if (sub === 'offers' || sub === 'offers on' || sub === 'offers off') {
+    if (sub === 'offers') {
+      onDone(`Pet offers are ${petOffersEnabled() ? 'on' : 'off'}. /pet offers on|off to change.`, { display: 'system' });
+      return null;
+    }
+    const on = sub === 'offers on';
+    setPetOffersEnabled(on);
+    onDone(on ? 'Pet offers are on. After a failure your pet will offer /fix.' : 'Pet offers are off. /fix still works.', { display: 'system' });
+    return null;
+  }
+
   if (sub) {
-    onDone('Usage: /pet [pat|mute|unmute]', { display: 'system' });
+    onDone('Usage: /pet [pat|mute|unmute|offers on|off]', { display: 'system' });
     return null;
   }
 

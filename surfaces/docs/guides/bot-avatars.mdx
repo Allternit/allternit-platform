@@ -120,6 +120,45 @@ To make the pet say something from a script, run `desktop-pet-hook.sh bubble "Te
 Terminal states fade on their own: running and thinking last two minutes unless the agent reports again, so a closed terminal never leaves the pet stuck. A terminal agent's reply doesn't add the mail badge, because there's nothing waiting in Allternit.
 </Note>
 
+## Pet offers
+
+When something fails, your bot's pet can notice and offer to help. It only offers: nothing happens until you click **Fix it**, and nothing leaves your device until you send the message yourself.
+
+The pet looks for errors with a fixed set of rules on your device. No model reads your screen to decide. It offers for:
+
+- **A failed build**, such as `npm ERR!`, `error TS2322` or a failing test run: "That build failed. Fix it?"
+- **A stack trace or command error** in a terminal: "That command hit an error. Fix it?"
+- **An error dialog** in another app: "Terminal is showing an error. Fix it?" (with that app's name)
+- **A failed run** of one of your bots in Allternit: "That run failed. Fix it?"
+
+Each window gets at most one offer every 5 minutes, and the pet never offers twice for the same error line in the same window. An offer you ignore fades after 12 seconds.
+
+### On Desktop
+
+- **What it reads:** the window the pet walks over or the window in front, once per stroll, and only while **Read other apps' windows** is on. It reads the text in that window through the Allternit Driver that ships with Desktop (the macOS **Accessibility** permission on a Mac, UI Automation on Windows). It never takes a screenshot for this, and it never reads password fields. It pauses while any bot is working or an agent is using your computer.
+- **Off until you turn it on:** reading other apps is off at first. The pet asks once in a bubble, **Turn on?**, and clicking it shows the macOS Accessibility prompt. You can also turn it on in **Settings → Desktop pet → Pet offers**. Offers for Allternit's own failed runs and for terminal agents (below) work without it.
+- **The eye:** while the pet reads a window, a small eye shows on it. With reduce motion on, the eye stays still.
+- **Walking over:** when it finds an error, the pet walks to that window, sits on its title bar and shows the bubble.
+- **Fix it:** opens quick work with that bot. The error text is attached as a chip you can remove, and a draft asking the bot to fix it is in the composer. Nothing is sent until you press send. If the bot needs to use your computer to fix it, the turn turns on the computer tools for that one message. The bot can't touch your computer until you take control: its first step, even a screenshot, asks you to. Steps that send, pay or delete then ask for your approval, unless you've set the chat to run without asking.
+- **Never read:** the pet never reads password managers (1Password, Bitwarden, Keychain Access, Passwords, LastPass, Dashlane, KeePassXC, Proton Pass), banking and payment apps and sites, Messages, or private browser windows (Private Browsing, Incognito, InPrivate). A browser window whose title can't be read is skipped. These apps are checked before anything is read, so their windows are never opened at all.
+- **Your block list:** in **Settings → Desktop pet → Pet offers**, add more apps from the list of running apps or by name, and remove the ones you added. The built-in list above always applies.
+- **Mute an app:** click **Mute Terminal** (with that app's name) in the bubble, or **press and hold** the pet for a moment while the bubble shows. Muted apps are never read. Unmute them in the same settings page, which also has the main **Pet offers** switch.
+- **Terminal agents:** Gizzi tells the pet when a turn or command fails. Other terminal tools can do the same with `desktop-pet-hook.sh failed` from their own hook (see [Terminal agents](#terminal-agents)).
+
+### On the web, the phone layout and the PWA
+
+On ai.allternit.com and m.allternit.com there is no pet on your screen, and the page can't read other apps. The offer comes from Allternit's own failures: a bot run that fails, or an error message in the app. You see a card next to your bot on a computer, and a sheet at the bottom of the screen on a phone. **Fix it** opens the bot's quick chat with the error text attached, not sent. **Mute here** (or pressing and holding the card) stops offers on that view. You get no offers while signed out. Turn offers on or off in **Settings → Pet offers**.
+
+### On phones and in the terminal
+
+- **Android:** with Phone Link, error and crash dialogs from other apps can bring up a notification. See [Android app](/guides/android-app#error-offers).
+- **iPhone:** a banner shows when a bot's run fails while you're on another screen. See [iPhone app](/guides/iphone-app#failed-run-banner).
+- **Gizzi:** the terminal pet offers `/fix` after a failed command. See [Work views](/cli/work#fix-a-failed-command).
+
+<Note>
+Settings for pet offers stay on each device. Turning them off on your Mac doesn't change your phone.
+</Note>
+
 ## Create bot at a glance
 
 **Create bot** opens on the look. At the top you see your bot's avatar, live: it changes as soon as you pick a colour, a character or a photo. The colours sit right under it, and under those the four ways to make a look: **Build**, **Characters**, **Photo** and **Initials**. Click one to open it in place, or click **Edit look**. Click **Done** to fold it away.

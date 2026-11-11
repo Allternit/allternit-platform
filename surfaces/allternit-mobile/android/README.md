@@ -24,6 +24,8 @@ app/src/main/java/com/allternit/phonelink/
     MeshMessages.kt             string codec for the main↔mesh-process payloads (pure JVM)
     EncryptedFileSessionStore.kt sessions sealed with a BlobSealer
     Schema.kt                   GET /schema and GET /skill
+    PetNotice.kt                pet offers: contract matcher, block list, cooldown and mute (pure JVM)
+    PetOfferContract.gen.kt     generated from contracts/pet-offers (never edit by hand)
   PhoneLinkAccessibilityService.kt  DeviceOps on the real device (gestures, tree, screenshot)
   PhoneLinkService.kt           foreground service + "Allternit can use your phone's apps · Stop"
   ServerController.kt           process-wide owner of the server
@@ -31,6 +33,7 @@ app/src/main/java/com/allternit/phonelink/
   MeshService.kt                runs the gomobile node in the private :mesh process
   Receivers.kt                  BootReceiver, ProvisionReceiver (DUMP-protected), StopReceiver
   PairingNotifier.kt            Allow/Deny notification (60 s), PairingActionReceiver
+  PetOfferReceiver.kt           Mute action of the "Error help" notification (not exported)
   KeystoreSealer.kt             Android Keystore AES-256-GCM
   GomobileMeshNode.kt           MeshNodeApi backed by the gomobile tsnet AAR
   MainActivity.kt               status screen (sessions, Stop/Start, Revoke); the launcher is the TWA

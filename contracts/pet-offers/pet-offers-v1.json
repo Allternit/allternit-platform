@@ -1,0 +1,217 @@
+{
+  "name": "pet-offers",
+  "version": 1,
+  "description": "The pet notices an error or failure with plain local rules, offers help in a bubble, and acts only after a tap. This file is the one source for every surface: offer shape, kinds, copy, rules, block defaults, settings and test fixtures. Generated copies come from generate.mjs; never edit them by hand.",
+  "offer": {
+    "fields": {
+      "id": { "type": "string", "note": "Random id, unique per offer on the device." },
+      "surface": { "type": "string", "enum": ["desktop", "web", "phone", "pwa", "ios", "android", "gizzi"] },
+      "app": { "type": "string", "note": "Display name of the app the error came from, e.g. Terminal. Used for {App} in copy." },
+      "appId": { "type": "string", "note": "Bundle id (mac/iOS), exe name (Windows), package (Android), or 'allternit' for own failures." },
+      "title": { "type": "string", "note": "Window title, or empty." },
+      "windowKey": { "type": "string", "note": "appId + '|' + title. Gate key: one offer per windowKey per cooldownMs, and never the same trigger.line twice for one windowKey." },
+      "trigger": {
+        "type": "object",
+        "fields": {
+          "kind": { "type": "string", "enumRef": "kinds" },
+          "ruleId": { "type": "string", "note": "Id of the rule that matched, or 'event' for a failure event that needs no text rule (run_failed)." },
+          "line": { "type": "string", "note": "The matched line, trimmed, at most limits.lineMaxChars characters." }
+        }
+      },
+      "text": { "type": "string", "note": "The read text (tail-biased, at most maxTextChars). Stays in memory on the device until the user accepts. Never put it in a notification, a log or a URL query string." },
+      "botId": { "type": "string", "note": "The bot whose pet makes the offer." },
+      "createdAt": { "type": "integer", "note": "Epoch milliseconds." }
+    }
+  },
+  "kinds": ["error_dialog", "stack_trace", "build_failed", "run_failed"],
+  "kindNotes": {
+    "error_dialog": "An app shows an error or crash dialog.",
+    "stack_trace": "A command or program printed an error or stack trace.",
+    "build_failed": "A build, compile or test run failed.",
+    "run_failed": "An Allternit bot run or turn failed. Comes from the app's own failure event, not from a text rule (ruleId 'event')."
+  },
+  "copy": {
+    "byKind": {
+      "build_failed": "That build failed. Fix it?",
+      "stack_trace": "That command hit an error. Fix it?",
+      "error_dialog": "{App} is showing an error. Fix it?",
+      "run_failed": "That run failed. Fix it?"
+    },
+    "actions": {
+      "fixIt": "Fix it",
+      "mute": "Mute {App}"
+    },
+    "notification": {
+      "title": "Allternit",
+      "body": "Your bot spotted an error. Fix it?"
+    },
+    "appPlaceholder": "{App}",
+    "appFallback": "This app",
+    "placeholderNote": "Replace {App} with the offer's app display name, or appFallback when the name is empty.",
+    "notificationNote": "Notifications (Android heads-up, lock screen) always use notification.body. Never screen text, never the app name."
+  },
+  "matcher": {
+    "steps": [
+      "Replace every \\r\\n and \\r with \\n.",
+      "If the text is longer than maxTextChars, keep only the last maxTextChars characters.",
+      "Walk rules in file order. Skip a rule whose scope is 'dialog' unless the text came from a window or element with a dialog role (see dialogRoles).",
+      "The first rule whose pattern finds a match wins. Result: {kind, ruleId, line}, where line is the whole line holding the start of the match, trimmed, cut to limits.lineMaxChars.",
+      "No rule matches: no offer."
+    ],
+    "regexDialect": "Portable subset of JS RegExp, ICU (NSRegularExpression) and java.util.regex: no lookbehind, no named groups or backreferences, no inline flags, no \\p{...}, no atomic or possessive groups, no \\A \\Z \\z, ASCII only (write \\u2019 for a curly apostrophe). Flags are only 'i' (case-insensitive) and 'm' (^ and $ match at line breaks). '.' never matches a newline.",
+    "flagMap": {
+      "i": { "js": "i", "swift": ".caseInsensitive", "kotlin": "RegexOption.IGNORE_CASE" },
+      "m": { "js": "m", "swift": ".anchorsMatchLines", "kotlin": "RegexOption.MULTILINE" }
+    }
+  },
+  "rules": [
+    { "id": "mac.quit_unexpectedly", "kind": "error_dialog", "scope": "any", "flags": "i", "pattern": "\\bquit unexpectedly\\b" },
+    { "id": "android.keeps_stopping", "kind": "error_dialog", "scope": "any", "flags": "i", "pattern": "\\b(keeps stopping|has stopped|isn['\\u2019]t responding)\\b" },
+    { "id": "win.app_error", "kind": "error_dialog", "scope": "any", "flags": "i", "pattern": "(The application was unable to start correctly|is not a valid Win32 application|The program can['\\u2019]t start because|\\bhas stopped working\\b)" },
+    { "id": "win.dotnet_unhandled", "kind": "error_dialog", "scope": "any", "flags": "i", "pattern": "\\bUnhandled exception has occurred\\b" },
+    { "id": "tsc.error", "kind": "build_failed", "scope": "any", "flags": "", "pattern": "\\berror TS\\d{4}:" },
+    { "id": "tsc.found_errors", "kind": "build_failed", "scope": "any", "flags": "", "pattern": "\\bFound [1-9]\\d* errors?\\b" },
+    { "id": "npm.err", "kind": "build_failed", "scope": "any", "flags": "m", "pattern": "^npm (ERR!|error) " },
+    { "id": "pnpm.err", "kind": "build_failed", "scope": "any", "flags": "", "pattern": "\\bERR_PNPM_[A-Z_]+\\b" },
+    { "id": "yarn.command_failed", "kind": "build_failed", "scope": "any", "flags": "m", "pattern": "^error Command failed with exit code [1-9]\\d*" },
+    { "id": "cargo.error_code", "kind": "build_failed", "scope": "any", "flags": "m", "pattern": "^error\\[E\\d{4}\\]: " },
+    { "id": "cargo.could_not_compile", "kind": "build_failed", "scope": "any", "flags": "", "pattern": "\\berror: could not compile `" },
+    { "id": "xcodebuild.failed", "kind": "build_failed", "scope": "any", "flags": "", "pattern": "\\*\\* (BUILD|TEST|ARCHIVE) FAILED \\*\\*" },
+    { "id": "compiler.file_error", "kind": "build_failed", "scope": "any", "flags": "", "pattern": "\\.(swift|java|kt|c|cc|cpp|m|mm|h):\\d+(:\\d+)?: (fatal )?error: " },
+    { "id": "kotlin.e_line", "kind": "build_failed", "scope": "any", "flags": "m", "pattern": "^e: (file://)?\\S+\\.kts?:" },
+    { "id": "gradle.failure", "kind": "build_failed", "scope": "any", "flags": "", "pattern": "FAILURE: Build failed with an exception" },
+    { "id": "gradle.build_failed", "kind": "build_failed", "scope": "any", "flags": "m", "pattern": "^BUILD FAILED\\b" },
+    { "id": "make.error", "kind": "build_failed", "scope": "any", "flags": "", "pattern": "\\bmake(\\[\\d+\\])?: \\*\\*\\* .* Error \\d+" },
+    { "id": "go.test_fail", "kind": "build_failed", "scope": "any", "flags": "m", "pattern": "^(FAIL\\t\\S+|--- FAIL: \\S+)" },
+    { "id": "generic.build_failed", "kind": "build_failed", "scope": "any", "flags": "i", "pattern": "\\b(build|compilation) failed\\b" },
+    { "id": "python.traceback", "kind": "stack_trace", "scope": "any", "flags": "m", "pattern": "^Traceback \\(most recent call last\\):" },
+    { "id": "js.error_with_frames", "kind": "stack_trace", "scope": "any", "flags": "m", "pattern": "^(Uncaught )?([A-Z][A-Za-z0-9_]*)?(Error|Exception)(: .*)?\\n\\s+at \\S" },
+    { "id": "java.exception_in_thread", "kind": "stack_trace", "scope": "any", "flags": "m", "pattern": "^Exception in thread \"[^\"]+\" [A-Za-z0-9_.$]+" },
+    { "id": "java.caused_by", "kind": "stack_trace", "scope": "any", "flags": "m", "pattern": "^Caused by: [A-Za-z0-9_.$]+(Exception|Error)\\b" },
+    { "id": "swift.fatal_error", "kind": "stack_trace", "scope": "any", "flags": "", "pattern": "\\b(Fatal error: |Swift runtime failure: |EXC_BAD_ACCESS\\b|EXC_BREAKPOINT\\b)" },
+    { "id": "rust.panic", "kind": "stack_trace", "scope": "any", "flags": "", "pattern": "\\bthread '[^']+' panicked at " },
+    { "id": "go.panic", "kind": "stack_trace", "scope": "any", "flags": "m", "pattern": "^(panic: |goroutine \\d+ \\[running\\]:)" },
+    { "id": "shell.command_not_found", "kind": "stack_trace", "scope": "any", "flags": "", "pattern": "\\bcommand not found\\b" },
+    { "id": "cli.error_line", "kind": "stack_trace", "scope": "any", "flags": "m", "pattern": "^(error|fatal|Error|ERROR|FATAL): \\S" },
+    { "id": "dialog.generic", "kind": "error_dialog", "scope": "dialog", "flags": "i", "pattern": "\\b(error|failed|failure|couldn['\\u2019]t|could not|cannot be opened|can['\\u2019]t be opened|unexpectedly|crashed|not responding)\\b" }
+  ],
+  "dialogRoles": {
+    "note": "A text read counts as 'dialog' when its window or a parent element has one of these roles or classes. Only then do scope 'dialog' rules apply.",
+    "mac": { "roles": ["AXSheet", "AXDialog"], "subroles": ["AXDialog", "AXSystemDialog", "AXFloatingWindow"] },
+    "windows": { "controlTypes": ["Window"], "localizedControlTypes": ["Dialog", "dialog"], "classNames": ["#32770"] },
+    "android": { "classNames": ["android.app.AlertDialog", "androidx.appcompat.app.AlertDialog", "android.app.Dialog", "com.android.server.am.AppErrorDialog", "com.android.server.am.AppNotRespondingDialog"] }
+  },
+  "block": {
+    "order": "Check before any read: app block list (password managers, banking, messages, user blockList), then window context (title and URL), then private-window and banking-host checks, then read the text. A browser whose title cannot be read is not read.",
+    "passwordManagers": {
+      "names": ["1Password", "Bitwarden", "Keychain Access", "Passwords", "LastPass", "Dashlane", "KeePassXC", "Proton Pass"],
+      "appIds": ["com.1password.1password", "com.agilebits.onepassword7", "com.agilebits.onepassword", "com.bitwarden.desktop", "com.x8bit.bitwarden", "com.apple.keychainaccess", "com.apple.Passwords", "com.lastpass.lpandroid", "com.dashlane", "org.keepassxc.keepassxc", "proton.android.pass"],
+      "match": "Block when the app display name equals a name (case-insensitive) or the appId equals an appId. Names win when an id is unknown or missing."
+    },
+    "banking": {
+      "nameKeywords": ["bank", "banking", "credit union", "chase", "wells fargo", "bank of america", "capital one", "citibank", "paypal", "venmo", "cash app", "zelle", "schwab", "fidelity", "vanguard", "robinhood", "coinbase", "american express", "navy federal"],
+      "hostSuffixes": ["chase.com", "wellsfargo.com", "bankofamerica.com", "capitalone.com", "citi.com", "paypal.com", "venmo.com", "cash.app", "schwab.com", "fidelity.com", "vanguard.com", "robinhood.com", "coinbase.com", "americanexpress.com", "usbank.com", "navyfederal.org"],
+      "hostLabelKeywords": ["bank", "banking", "creditunion"],
+      "match": "Name: a keyword appears as whole words in the app name or window title (case-insensitive). Host: the URL host equals a suffix or ends with '.' + suffix, or any dot-separated host label contains a hostLabelKeyword."
+    },
+    "privateWindowTitles": {
+      "substrings": ["Private Browsing", "Incognito", "InPrivate", "Private Window"],
+      "match": "Case-insensitive substring of the window title. A match means the window is not read."
+    },
+    "messages": {
+      "mac": ["com.apple.MobileSMS"],
+      "android": ["com.google.android.apps.messaging", "com.samsung.android.messaging"]
+    },
+    "neverRead": {
+      "secureFields": true,
+      "note": "Never read secure text fields: AXSecureTextField (mac), UIA IsPassword=true (Windows), AccessibilityNodeInfo.isPassword() (Android). Skip the element and its value entirely; do not keep a placeholder or length."
+    }
+  },
+  "settings": {
+    "keys": {
+      "enabled": "petOffers.enabled",
+      "readOtherApps": "petOffers.readOtherApps",
+      "cooldownMs": "petOffers.cooldownMs",
+      "bubbleMs": "petOffers.bubbleMs",
+      "maxTextChars": "petOffers.maxTextChars",
+      "tailChars": "petOffers.tailChars",
+      "blockList": "petOffers.blockList",
+      "muted": "petOffers.muted"
+    },
+    "defaults": {
+      "petOffers.enabled": true,
+      "petOffers.readOtherApps": false,
+      "petOffers.cooldownMs": 300000,
+      "petOffers.bubbleMs": 12000,
+      "petOffers.maxTextChars": 8000,
+      "petOffers.tailChars": 4000,
+      "petOffers.blockList": [],
+      "petOffers.muted": []
+    },
+    "notes": {
+      "petOffers.enabled": "Offers for Allternit's own failures and terminal hook signals. On by default.",
+      "petOffers.readOtherApps": "EOJ SWITCH. The single default for reading other apps' windows on Desktop. false = off until the user turns it on from the one-time pet bubble or Settings (macOS only allows the Accessibility prompt from a user action). Flip this one value and rerun generate.mjs to change it everywhere.",
+      "petOffers.cooldownMs": "One offer per windowKey per this many ms.",
+      "petOffers.bubbleMs": "How long the offer bubble stays up.",
+      "petOffers.maxTextChars": "Total characters read per window.",
+      "petOffers.tailChars": "Last characters kept from the largest text element.",
+      "petOffers.blockList": "User-added app ids or names never read. Adds to block defaults; never replaces them.",
+      "petOffers.muted": "App ids the user muted with 'Mute {App}'. Still read for nothing: muted apps are skipped before any read."
+    },
+    "storage": "Device-local only: electron-store (Desktop), localStorage (web/phone/PWA), UserDefaults (iOS), SharedPreferences (Android), gizzi pet settings file (Gizzi). No server sync."
+  },
+  "limits": {
+    "sameWindowRereadMs": 30000,
+    "lineMaxChars": 240
+  },
+  "turnOptions": {
+    "computer": {
+      "path": "metadata.tools.computer",
+      "type": "boolean",
+      "default": false,
+      "scope": "turn",
+      "setBy": ["desktop"],
+      "meaning": "true turns on the computer tools for this one turn only. Set when the user picks 'computer tools on' while accepting a Desktop offer.",
+      "flow": "renderer send options -> metadata.tools on the turn -> stored_turn_metadata (allternit-api v1_routes.rs, forwarded whole) -> gizzi runtime MobileTools.",
+      "persistence": "None. Not stored on the session, no migration.",
+      "olderRuntimes": "Ignore the key; the turn runs without computer tools.",
+      "controlLease": "Not taken automatically. The first mouse or keyboard step shows the existing take-control prompt.",
+      "safety": "The computer_safety.rs confirm gate (money, send, delete) still applies."
+    }
+  },
+  "fixtures": [
+    { "name": "npm legacy ERR", "text": "> app@1.0.0 build\n> tsc\n\nnpm ERR! code ELIFECYCLE\nnpm ERR! errno 2\nnpm ERR! app@1.0.0 build: `tsc`", "expected": "build_failed", "rule": "npm.err" },
+    { "name": "npm 10 error", "text": "npm error code 1\nnpm error path /Users/me/app\nnpm error command failed\nnpm error command sh -c vite build", "expected": "build_failed", "rule": "npm.err" },
+    { "name": "tsc error", "text": "src/app.ts(12,5): error TS2322: Type 'string' is not assignable to type 'number'.\n\nFound 1 error in src/app.ts:12", "expected": "build_failed", "rule": "tsc.error" },
+    { "name": "pnpm recursive fail", "text": "src/main.tsx:4:1 build error\n ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL  @allternit/web@0.1.0 build: `vite build`\nExit status 1", "expected": "build_failed", "rule": "pnpm.err" },
+    { "name": "cargo mismatched types", "text": "   Compiling demo v0.1.0 (/Users/me/demo)\nerror[E0308]: mismatched types\n --> src/main.rs:4:18\n  |\n4 |     let x: u32 = \"a\";\n\nerror: could not compile `demo` (bin \"demo\") due to 1 previous error", "expected": "build_failed", "rule": "cargo.error_code" },
+    { "name": "xcodebuild failed", "text": "CompileSwift normal arm64 /Users/me/App/ContentView.swift\n/Users/me/App/ContentView.swift:14:9: error: cannot find 'foo' in scope\n\n** BUILD FAILED **", "expected": "build_failed", "rule": "xcodebuild.failed" },
+    { "name": "gradle exception", "text": "> Task :app:compileDebugKotlin FAILED\ne: file:///Users/me/app/src/Main.kt:3:5 Unresolved reference: foo\n\nFAILURE: Build failed with an exception.\n\n* What went wrong:\nExecution failed for task ':app:compileDebugKotlin'.", "expected": "build_failed", "rule": "kotlin.e_line" },
+    { "name": "gradle short", "text": "BUILD FAILED in 12s\n3 actionable tasks: 3 executed", "expected": "build_failed", "rule": "gradle.build_failed" },
+    { "name": "go test fail", "text": "--- FAIL: TestAdd (0.00s)\n    add_test.go:9: got 3, want 4\nFAIL\nexit status 1\nFAIL\texample.com/add\t0.002s", "expected": "build_failed", "rule": "go.test_fail" },
+    { "name": "python traceback", "text": "$ python main.py\nTraceback (most recent call last):\n  File \"main.py\", line 3, in <module>\n    foo()\nNameError: name 'foo' is not defined", "expected": "stack_trace", "rule": "python.traceback" },
+    { "name": "js TypeError", "text": "TypeError: Cannot read properties of undefined (reading 'map')\n    at render (/app/src/list.js:10:15)\n    at main (/app/src/index.js:3:1)", "expected": "stack_trace", "rule": "js.error_with_frames" },
+    { "name": "node uncaught Error", "text": "/app/index.js:5\n  throw new Error('boom');\n  ^\n\nError: boom\n    at Object.<anonymous> (/app/index.js:5:9)\n    at Module._compile (node:internal/modules/cjs/loader:1256:14)", "expected": "stack_trace", "rule": "js.error_with_frames" },
+    { "name": "java NPE", "text": "Exception in thread \"main\" java.lang.NullPointerException: Cannot invoke \"String.length()\" because \"s\" is null\n\tat com.example.App.main(App.java:7)", "expected": "stack_trace", "rule": "java.exception_in_thread" },
+    { "name": "swift fatal error", "text": "Demo/main.swift:4: Fatal error: Index out of range\n2026-11-11 10:00:00.000 Demo[123:456] Fatal error: Index out of range", "expected": "stack_trace", "rule": "swift.fatal_error" },
+    { "name": "rust panic", "text": "thread 'main' panicked at src/main.rs:2:5:\nattempt to subtract with overflow\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace", "expected": "stack_trace", "rule": "rust.panic" },
+    { "name": "zsh command not found", "text": "me@mac app % pnpmm install\nzsh: command not found: pnpmm", "expected": "stack_trace", "rule": "shell.command_not_found" },
+    { "name": "git fatal", "text": "fatal: not a git repository (or any of the parent directories): .git", "expected": "stack_trace", "rule": "cli.error_line" },
+    { "name": "macOS quit unexpectedly", "text": "Xcode quit unexpectedly.\nClick Reopen to open the application again. Click Report to see more detailed information and send a report to Apple.", "dialog": true, "expected": "error_dialog", "rule": "mac.quit_unexpectedly" },
+    { "name": "Windows unable to start", "text": "Application Error\nThe application was unable to start correctly (0xc000007b). Click OK to close the application.", "dialog": true, "expected": "error_dialog", "rule": "win.app_error" },
+    { "name": "Windows .NET unhandled", "text": "Unhandled exception has occurred in your application. If you click Continue, the application will ignore this error and attempt to continue.", "dialog": true, "expected": "error_dialog", "rule": "win.dotnet_unhandled" },
+    { "name": "Android keeps stopping", "text": "Allternit keeps stopping\nApp info\nClose app", "dialog": true, "expected": "error_dialog", "rule": "android.keeps_stopping" },
+    { "name": "Android not responding", "text": "Chrome isn't responding\nClose app\nWait", "dialog": true, "expected": "error_dialog", "rule": "android.keeps_stopping" },
+    { "name": "mac dialog could not be opened", "text": "The document \"Report.pages\" could not be opened.\nOK", "dialog": true, "expected": "error_dialog", "rule": "dialog.generic" },
+    { "name": "neg: 0 errors", "text": "Compiled successfully. 0 errors, 0 warnings.", "expected": null },
+    { "name": "neg: tsc watch clean", "text": "[10:02:11 AM] Found 0 errors. Watching for file changes.", "expected": null },
+    { "name": "neg: error handling docs", "text": "Read the error handling docs before you add retries. Errors are logged, not thrown.", "expected": null },
+    { "name": "neg: xcodebuild succeeded", "text": "Ld /Users/me/App.app/App normal\n** BUILD SUCCEEDED **", "expected": null },
+    { "name": "neg: gradle successful", "text": "BUILD SUCCESSFUL in 4s\n27 actionable tasks: 27 up-to-date", "expected": null },
+    { "name": "neg: cargo test ok", "text": "test result: ok. 42 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out", "expected": null },
+    { "name": "neg: log mentions error code", "text": "[info] retrying after transient error_code=429 (attempt 2)\n[info] request ok", "expected": null },
+    { "name": "neg: no errors found", "text": "INFO: no errors found in 12 files", "expected": null },
+    { "name": "neg: save dialog", "text": "Do you want to save the changes you made to Untitled?\nYour changes will be lost if you don't save them.", "dialog": true, "expected": null },
+    { "name": "neg: error word outside dialog", "text": "The import failed to find a match, so nothing changed. Could not is not an error here.", "expected": null }
+  ]
+}

@@ -18,12 +18,22 @@ struct NotificationsSettingsView: View {
     @State private var status: UNAuthorizationStatus? = nil
     @State private var tested = false
     @State private var liveActivities = LiveActivityPushSetting.isOn()
+    @ObservedObject private var petOffers = PetOfferCenter.shared
+    @ObservedObject private var botMode = BotModeStore.shared
 
     @AppStorage(NotificationPrefs.responseKey) private var response = true
     @AppStorage(NotificationPrefs.approvalKey) private var approvals = true
     @AppStorage(NotificationPrefs.soundKey) private var sound = true
     /// Per device: off = incoming Allternit calls vibrate only (InappCallStore).
     @AppStorage(InappCallStore.ringSoundKey) private var ringSound = true
+
+    private func mutedTitle(_ key: String) -> String {
+        if key.hasPrefix("bot:") {
+            let id = String(key.dropFirst(4))
+            return botMode.bots.first(where: { $0.id == id })?.botDisplayName ?? id
+        }
+        return "A muted chat"
+    }
 
     var body: some View {
         PhoneSettingsPage(title: "Notifications") {
@@ -33,6 +43,19 @@ struct NotificationsSettingsView: View {
             SettingsSwitchRow(title: "Response completions",
                               detail: "When a reply finishes and Allternit isn’t the app you’re in.",
                               isOn: $response)
+
+            SettingsSwitchRow(title: "Offer help when something fails",
+                              detail: "When a bot’s run fails while you’re on another screen, a banner offers to fix it. Nothing is sent until you tap Fix it and send.",
+                              isOn: Binding(get: { petOffers.isEnabled }, set: { petOffers.isEnabled = $0 }))
+
+            if !petOffers.mutedKeys.isEmpty {
+                ForEach(petOffers.mutedKeys, id: \.self) { key in
+                    SettingsLabeledRow(title: mutedTitle(key), detail: "Muted: no offers from here.") {
+                        Button("Unmute") { petOffers.unmute(key) }
+                            .font(.system(size: 14, weight: .medium))
+                    }
+                }
+            }
 
             SettingsSectionHeading(text: "Needs you")
                 .padding(.top, 16)

@@ -22,7 +22,8 @@ vi.mock('electron', () => ({
     isDestroyed() { return false; }
     focused = false;
     isVisible() { return this.visible; } isFocused() { return this.focused; } isMinimized() { return false; }
-    setAlwaysOnTop() {} setVisibleOnAllWorkspaces() {} setIgnoreMouseEvents() {}
+    ignoreMouse = false;
+    setAlwaysOnTop() {} setVisibleOnAllWorkspaces() {} setIgnoreMouseEvents(ignore: boolean) { this.ignoreMouse = ignore; }
     loadURL = vi.fn(async () => {});
     getBounds() { return this.bounds; }
     setBounds(bounds: any) { this.bounds = bounds; }
@@ -322,5 +323,144 @@ describe('carrying a bot out of the app', () => {
       mocks.events.get('companion:carry')!({ sender: {}, senderFrame: {} }, { phase: 'drop' });
       expect(openHud).not.toHaveBeenCalled();
     } finally { vi.useRealTimers(); }
+  });
+});
+
+describe('desktop pet offers', () => {
+  const terminal = { app: 'Terminal', appId: '', pid: 77, id: 5, title: '', bounds: { x: 200, y: 100, width: 800, height: 600 } };
+  async function setup() {
+    vi.useFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(0.5); // look and roam ticks at 12 s
+    const main = new (await import('electron')).BrowserWindow({}) as any;
+    const openHud = vi.fn(); const acceptOffer = vi.fn(); const requestAccessibility = vi.fn();
+    // The driver is a separate process: this stands in for its answers.
+    const driver = vi.fn(async (method: string) => method === 'context'
+      ? { pid: 77, app: 'Terminal', bundle_id: 'com.apple.Terminal', title: 'zsh — build' }
+      : { elements: [{ role: 'TextArea', value: '> vite build\nnpm ERR! code 1' }] });
+    const look = { windows: vi.fn(async () => [terminal]), driver, computerUseActive: vi.fn(() => false) };
+    const manager = installDesktopCompanion({ origin: () => 'http://localhost:8013', main: () => main, preload: '/preload.js', openHud, acceptOffer, requestAccessibility, look });
+    manager.start();
+    const pet = mocks.windows[1];
+    pet.webContents.emit('did-finish-load');
+    await vi.waitFor(() => expect(pet.visible).toBe(true));
+    mocks.events.get('companion:motion-pref')!(sender(pet), false);
+    await mocks.handlers.get('companion:update')!(sender(pet), { roam: false });
+    const bubble = () => mocks.windows.find(w => w.options.focusable === false);
+    const bubbleUrl = () => decodeURIComponent(bubble()?.loadURL.mock.calls.at(-1)?.[0] ?? '');
+    const click = (url: string) => bubble()!.webContents.emit('will-navigate', { preventDefault() {} }, url);
+    const offerState = () => main.webContents.send.mock.calls.filter((c: any[]) => c[0] === 'companion:offer-state').at(-1)?.[1];
+    const invoke = (name: string, from: any, value?: unknown) => mocks.handlers.get(name)!(sender(from), value);
+    return { main, pet, manager, openHud, acceptOffer, requestAccessibility, look, driver, bubble, bubbleUrl, click, offerState, invoke, store: mocks.stores[0] };
+  }
+  const activities = (pet: any) => pet.webContents.send.mock.calls.filter((c: any[]) => c[0] === 'companion:activity').map((c: any[]) => c[1]);
+
+  it.skipIf(process.platform === 'linux')('reads a failing build, walks to its title bar, offers, and Fix it opens Quick Work with the text', async () => {
+    const t = await setup();
+    try {
+      await t.invoke('companion:offer-settings-set', t.main, { readOtherApps: true });
+      expect(t.requestAccessibility).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(12_100);
+      expect(activities(t.pet).some((a: any) => a.reading === true)).toBe(true);
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(activities(t.pet).at(-1)).toMatchObject({ reading: false, moving: null });
+      // Sat on the title bar: right part of the window's top edge (pet side 96).
+      expect(t.pet.getBounds()).toMatchObject({ x: 200 + 800 - 96 - 24, y: 100 - 96 + 14 });
+      const url = t.bubbleUrl();
+      expect(url).toContain('That build failed. Fix it?');
+      expect(url).toContain('>Mute Terminal</a>');
+      expect(url).toContain("default-src 'none'");
+      expect(t.bubble()!.ignoreMouse).toBe(false);
+      // Renderers hear about it, never the screen text.
+      expect(t.offerState()).toMatchObject({ kind: 'build_failed', app: 'Terminal', appId: 'com.apple.Terminal', copy: 'That build failed. Fix it?', source: 'look' });
+      expect(JSON.stringify(t.offerState())).not.toContain('npm ERR');
+      const id = /allternit-offer:\/\/accept\/([\w-]+)/.exec(url)![1];
+      t.click(`allternit-offer://accept/${id}`);
+      expect(t.openHud).toHaveBeenCalledWith(null, expect.objectContaining({ x: 880, y: 18 }));
+      expect(t.acceptOffer).toHaveBeenCalledWith(expect.objectContaining({
+        app: 'Terminal', title: 'zsh — build', text: expect.stringContaining('npm ERR! code 1'), intent: 'That build failed. Fix it?', computer: true, kind: 'build_failed',
+      }), expect.anything());
+      expect(t.bubble()!.visible).toBe(false);
+      expect(t.bubble()!.ignoreMouse).toBe(true);
+      expect(t.offerState()).toBeNull();
+    } finally { vi.useRealTimers(); vi.restoreAllMocks(); }
+  });
+
+  it.skipIf(process.platform === 'linux')('does not read while a computer-use run is active, or while reading is off', async () => {
+    const t = await setup();
+    try {
+      await vi.advanceTimersByTimeAsync(40_000);
+      expect(t.driver).not.toHaveBeenCalled();
+      await t.invoke('companion:offer-settings-set', t.main, { readOtherApps: true });
+      t.look.computerUseActive.mockReturnValue(true);
+      await vi.advanceTimersByTimeAsync(40_000);
+      expect(t.driver).not.toHaveBeenCalled();
+    } finally { vi.useRealTimers(); vi.restoreAllMocks(); }
+  });
+
+  it('a terminal agent failing offers once, fades on time, and Mute silences that agent', async () => {
+    const t = await setup();
+    try {
+      t.manager.reportActivity('hook:claude', 'failed', 4000);
+      expect(t.bubbleUrl()).toContain('That run failed. Fix it?');
+      expect(t.bubbleUrl()).toContain('Mute Claude Code');
+      await vi.advanceTimersByTimeAsync(12_100);
+      expect(t.bubble()!.visible).toBe(false);
+      expect(t.offerState()).toBeNull();
+      // Inside the 5-minute cooldown: nothing new.
+      const shown = t.bubble()!.loadURL.mock.calls.length;
+      t.manager.reportActivity('hook:claude', 'failed', 4000);
+      expect(t.bubble()!.loadURL.mock.calls.length).toBe(shown);
+      await vi.advanceTimersByTimeAsync(5 * 60_000);
+      t.manager.reportActivity('hook:claude', 'failed', 4000);
+      const id = /allternit-offer:\/\/mute\/([\w-]+)/.exec(t.bubbleUrl())![1];
+      t.click(`allternit-offer://mute/${id}`);
+      expect(t.bubbleUrl()).toContain('Muted for Claude Code');
+      expect(await t.invoke('companion:offer-settings-get', t.pet)).toMatchObject({ muted: ['Claude Code'] });
+      await vi.advanceTimersByTimeAsync(10 * 60_000);
+      const before = t.bubble()!.loadURL.mock.calls.length;
+      t.manager.reportActivity('hook:claude', 'failed', 4000);
+      expect(t.bubble()!.loadURL.mock.calls.length).toBe(before);
+    } finally { vi.useRealTimers(); vi.restoreAllMocks(); }
+  });
+
+  it.skipIf(process.platform === 'linux')('asks once to turn reading on, and only a click turns it on and asks for Accessibility', async () => {
+    const t = await setup();
+    try {
+      await vi.advanceTimersByTimeAsync(125_000);
+      expect(t.bubbleUrl()).toContain('Turn on reading?');
+      expect(t.requestAccessibility).not.toHaveBeenCalled();
+      t.click('allternit-offer://reading/on');
+      expect(t.requestAccessibility).toHaveBeenCalledTimes(1);
+      expect(await t.invoke('companion:offer-settings-get', t.pet)).toMatchObject({ readOtherApps: true });
+      expect(t.store.store.offersAsked).toBe(true);
+      await t.invoke('companion:offer-settings-set', t.main, { readOtherApps: false });
+      await vi.advanceTimersByTimeAsync(10 * 60_000);
+      expect(t.bubbleUrl()).not.toContain('Turn on reading?');
+    } finally { vi.useRealTimers(); vi.restoreAllMocks(); }
+  });
+
+  it('takes an in-app failure only from the app window, and only while you are away from it', async () => {
+    const t = await setup();
+    try {
+      const failure = { kind: 'run_failed', text: 'step 3\nTypeError: x is undefined', botId: 'bot-7' };
+      expect(await t.invoke('companion:offer', t.pet, failure)).toBe(false);
+      t.main.visible = true; t.main.focused = true;
+      expect(await t.invoke('companion:offer', t.main, failure)).toBe(false);
+      t.main.focused = false;
+      expect(await t.invoke('companion:offer', t.main, { kind: 'not-a-kind' })).toBe(false);
+      expect(await t.invoke('companion:offer', t.main, failure)).toBe(true);
+      expect(t.offerState()).toMatchObject({ kind: 'run_failed', app: 'Allternit', botId: 'bot-7', source: 'app' });
+      expect(await t.invoke('companion:offer-accept', t.main, t.offerState().id)).toBe(true);
+      expect(t.openHud).toHaveBeenCalledWith('bot-7', expect.anything());
+      expect(t.acceptOffer).toHaveBeenCalledWith(expect.objectContaining({ text: 'step 3\nTypeError: x is undefined', computer: false }), expect.anything());
+    } finally { vi.useRealTimers(); vi.restoreAllMocks(); }
+  });
+
+  it('keeps settings in bounds', async () => {
+    const t = await setup();
+    try {
+      const next = await t.invoke('companion:offer-settings-set', t.main, { cooldownMs: 5, bubbleMs: 'x', blockList: ['Slack', ' slack ', 'Slack', 7], tailChars: 99_999 });
+      expect(next).toMatchObject({ cooldownMs: 30_000, bubbleMs: 12_000, blockList: ['Slack'], tailChars: 8000, enabled: true });
+    } finally { vi.useRealTimers(); vi.restoreAllMocks(); }
   });
 });
