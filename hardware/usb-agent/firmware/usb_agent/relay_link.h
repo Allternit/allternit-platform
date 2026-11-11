@@ -24,6 +24,15 @@
 #include <mbedtls/base64.h>
 #include <mbedtls/sha1.h>
 
+// Called from every wait inside RelayLink (the firmware sets it to
+// serviceButtonLatch), so a button press disarms during a connect.
+void (*relayWaitHook)() = nullptr;
+
+inline void relayWaitTick() {
+  esp_task_wdt_reset();
+  if (relayWaitHook) relayWaitHook();
+}
+
 class RelayLink {
  public:
   static const size_t MAX_FRAME = 512;
@@ -38,7 +47,7 @@ class RelayLink {
     stop();
     String path;
     if (!requestTicket(host, boardId, tokenHex, &path)) return false;
-    esp_task_wdt_reset();
+    relayWaitTick();
     if (!upgrade(host, path)) {
       stop();
       return false;
@@ -105,7 +114,7 @@ class RelayLink {
   }
 
   bool connectTls(const String &host) {
-    esp_task_wdt_reset();
+    relayWaitTick();
     tls_.stop();
     tls_.useBuiltinCACertBundle();
     tls_.setHandshakeTimeout(IO_TIMEOUT_MS / 1000);
@@ -117,7 +126,7 @@ class RelayLink {
   bool readLine(String *out, uint32_t deadline) {
     out->clear();
     while ((int32_t)(deadline - millis()) > 0) {
-      esp_task_wdt_reset();
+      relayWaitTick();
       if (tls_.available() <= 0) {
         if (!tls_.connected()) return false;
         delay(2);
@@ -156,7 +165,7 @@ class RelayLink {
 
   bool requestTicket(const String &host, const String &boardId, const String &tokenHex, String *path) {
     if (!connectTls(host)) return false;
-    esp_task_wdt_reset();
+    relayWaitTick();
     tls_.print(String("POST /api/v1/link-boards/") + boardId + "/socket-ticket HTTP/1.1\r\n" +
                "Host: " + host + "\r\n" +
                "x-allternit-link-board-token: " + tokenHex + "\r\n" +
@@ -172,7 +181,7 @@ class RelayLink {
     }
     String body;
     while ((int32_t)(deadline - millis()) > 0 && body.length() < 1024 && (len < 0 || (long)body.length() < len)) {
-      esp_task_wdt_reset();
+      relayWaitTick();
       if (tls_.available() > 0) {
         body += (char)tls_.read();
       } else if (!tls_.connected()) {
@@ -201,7 +210,7 @@ class RelayLink {
 
   bool upgrade(const String &host, const String &path) {
     if (!connectTls(host)) return false;
-    esp_task_wdt_reset();
+    relayWaitTick();
     uint8_t nonce[16];
     esp_fill_random(nonce, sizeof nonce);
     char key[32];

@@ -174,6 +174,12 @@ export class SimBoard {
     if (line) this.socket?.write(`${line}\n`);
   }
 
+  /** Simulates a button press while the board's loop is blocked (e.g. a relay connect): latched, disarm only. */
+  pressWhileBlocked(): void {
+    const line = this.ref.latchPress();
+    if (line) this.socket?.write(`${line}\n`);
+  }
+
   /** Simulates the dock stop input: disarms only. */
   stop(): void {
     const line = this.ref.pressStop();

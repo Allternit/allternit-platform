@@ -297,6 +297,29 @@ describe('USBA/2 protocol', () => {
     expect(board.log).toEqual(['click']);
   });
 
+  it('a press latched while the link is down disarms before the next session, and a latch never arms', () => {
+    const key = newKeyHex();
+    const board = new ReferenceBoard(ID, key);
+    const first = handshake2(board, key);
+    board.receive('ready');
+    board.pressButton();
+    expect(board.receive(commandLine(first.sk, 1, 'click'))).not.toBe('drop');
+    expect(board.log).toEqual(['click']);
+    // The link drops. Today's rule: losing the link does not disarm by itself.
+    board.hello();
+    expect(board.armed).toBe(true);
+    // The user presses the button while the board is blocked in a relay connect.
+    expect(board.latchPress()).toBeNull();
+    const second = handshake2(board, key);
+    const [ready] = board.receive('ready') as string[];
+    expect(parseState(ready, 2, second.sk)).toMatchObject({ armed: false, face: 'stopped' });
+    expect(parseReply((board.receive(commandLine(second.sk, 1, 'click')) as string[])[0], 2, second.sk)).toEqual({ seq: 1, ok: false, reason: 'disarmed' });
+    expect(board.log).toEqual(['click']);
+    // A latched press on a disarmed board does not arm it.
+    expect(parseState(board.latchPress()!, 2, second.sk)).toMatchObject({ armed: false });
+    expect(board.armed).toBe(false);
+  });
+
   it('shows a full refresh at boot, for stopped, and after every 20 partial refreshes', () => {
     const key = newKeyHex();
     const board = new ReferenceBoard(ID, key);

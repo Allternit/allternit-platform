@@ -54,7 +54,7 @@ The shipped image is reproducible: building the same source with the same core (
 
 **Known limit:** the Wi-Fi password and the board key sit in the board's flash (NVS) without encryption. Someone who takes the board and reads its flash can recover both. ESP32 flash encryption closes that, but turning it on burns eFuses, which can't be undone, so it's left to whoever builds production boards. If a board is lost, choose **Forget** in Desktop (its key stops working) and change your Wi-Fi password.
 
-Pressing the button disarms the board at once, including in the middle of a swipe or a long text.
+Pressing the button disarms the board at once, including in the middle of a swipe or a long text. An interrupt latches every press, so a press is not lost while the board is busy connecting (for example a relay connect); the latch can only disarm, and arming still needs the button held for 40 ms. Losing the link does not disarm the board by itself: it releases every key and button, and disarms after 1 min without a session.
 
 The board can't tell what a tap *means*. A pointer can open a payment sheet as easily as a settings page. Keep the board disarmed when it isn't working for you, and watch the live view when the bot does anything that matters.
 

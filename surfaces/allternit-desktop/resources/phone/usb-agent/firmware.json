@@ -3,7 +3,7 @@
   "chip": "esp32s3",
   "offset": 0,
   "size": 1232896,
-  "sha256": "b52859bd7bf41c4d1cf1c8ca37f16f4d84c0d7b4f6b2b553db697b4c7f9b1f81",
+  "sha256": "0470444b58336a6c1ae656a6ebafb1ad82a7f02ec59a14ff6df85a0b2f9fba7a",
   "fqbn": "esp32:esp32:esp32s3:USBMode=default,CDCOnBoot=cdc",
   "core": "esp32:esp32@3.3.12",
   "source": "hardware/usb-agent/firmware/usb_agent"
