@@ -191,6 +191,29 @@ fn locked(e: &str) -> bool {
     e.contains("device_locked")
 }
 
+/// A Link board (or USB Agent) was disarmed: its button, Stop, a timer or a
+/// lost link. Only a person can arm it again, so the run ends instead of
+/// retrying until the step limit (hardware/link/README.md section 5.4).
+fn disarmed(e: &str) -> bool {
+    e.contains("disarmed")
+}
+
+const DISARMED_RESULT: &str = "stopped: the board was disarmed";
+
+// The planner model's next action. Tests answer it at the model edge.
+#[cfg(test)]
+tokio::task_local! {
+    static FAKE_MODEL: Arc<dyn Fn() -> String + Send + Sync>;
+}
+
+async fn decide(prompt: &str, images: &[String], system: &str, model: Option<&(String, String)>) -> Result<String, String> {
+    #[cfg(test)]
+    if let Ok(text) = FAKE_MODEL.try_with(|f| f()) {
+        return Ok(text);
+    }
+    crate::gizzi_completion::complete_decision(prompt, images, Some(system), model, &schema()).await.map(|(t, _)| t)
+}
+
 /// The element an action concerns: the picked element, the element under an
 /// x, y tap, or the field tapped last (for type and key).
 fn action_el(tool: &str, pick: &Value, els: &[UiEl], last: Option<&El>) -> Option<El> {
@@ -408,6 +431,11 @@ async fn run_task_loop(
                 result = Some("the phone is locked".into());
                 break;
             }
+            Err(e) if disarmed(&e) => {
+                status = "failed";
+                result = Some(DISARMED_RESULT.into());
+                break;
+            }
             Err(_) => Vec::new(),
         };
         let image = screenshot(serial, &run_id, "task").await.map(|(_, url)| url);
@@ -418,8 +446,8 @@ async fn run_task_loop(
         }
         model_calls += 1;
         let images: Vec<String> = image.iter().cloned().collect();
-        let reply = crate::gizzi_completion::complete_decision(&prompt(goal, &els, &history, step, max), &images, Some(system), model.as_ref(), &schema()).await;
-        let pick = match reply.map(|(t, _)| parse_json(&t)) {
+        let reply = decide(&prompt(goal, &els, &history, step, max), &images, system, model.as_ref()).await;
+        let pick = match reply.map(|t| parse_json(&t)) {
             Ok(Some(p)) => p,
             Ok(None) => {
                 history.push(format!("{step}. (the model's answer wasn't an action)"));
@@ -523,6 +551,12 @@ async fn run_task_loop(
                 if err.as_deref().map(locked).unwrap_or(false) {
                     status = "phone_locked";
                     result = Some("the phone is locked".into());
+                    steps.push(json!({ "step": step, "action": label, "reason": reason, "ok": false, "error": err }));
+                    break;
+                }
+                if err.as_deref().map(disarmed).unwrap_or(false) {
+                    status = "failed";
+                    result = Some(DISARMED_RESULT.into());
                     steps.push(json!({ "step": step, "action": label, "reason": reason, "ok": false, "error": err }));
                     break;
                 }
@@ -836,6 +870,12 @@ async fn run_web_task_loop(
                     steps.push(json!({ "step": step, "action": label, "reason": reason, "ok": false, "error": err }));
                     break;
                 }
+                if err.as_deref().map(disarmed).unwrap_or(false) {
+                    status = "failed";
+                    result = Some(DISARMED_RESULT.into());
+                    steps.push(json!({ "step": step, "action": label, "reason": reason, "ok": false, "error": err }));
+                    break;
+                }
                 history.push(format!("{step}. {label}{}", err.as_deref().map(|e| format!(" — failed: {e}")).unwrap_or_default()));
                 steps.push(json!({ "step": step, "action": label, "reason": reason, "ok": err.is_none(), "error": err, "hold": hold }));
                 tokio::time::sleep(Duration::from_millis(400)).await;
@@ -1081,6 +1121,46 @@ mod tests {
         // Paused still applies to the owner.
         crate::bots_pause::set(&st.db.connect().unwrap(), "user-a", true, Some("test")).unwrap();
         assert_eq!(refusal_for(&st.db, &ctx(), true).map(|r| r.0), Some("paused"));
+    }
+
+    /// Board disarmed mid-run (hardware/link/README.md 5.4 item 2): the step
+    /// answers `disarmed`, and the run ends `failed` instead of asking the
+    /// model again until the step limit.
+    #[tokio::test]
+    async fn a_step_that_fails_disarmed_ends_the_run_and_asks_for_no_further_step() {
+        let st = state("disarmed").await;
+        let ctx = TaskCtx { thread_id: None, source: "api".into(), ..ctx() };
+        let calls = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let seen = calls.clone();
+        // Desktop's phone gateway, answering as a disarmed USB Agent does.
+        let tool: crate::phone_replay::FakeTool = Arc::new(move |name: &str, _args: &Value| {
+            seen.lock().unwrap().push(name.to_string());
+            match name {
+                "phone.read_ui" => Ok(json!({ "ok": true, "text": "Button \"OK\" [ok] {{0, 0}, {100, 50}}" })),
+                "phone.tap" => Ok(json!({ "ok": false, "error": "disarmed", "message": "The USB Agent is disarmed. Press its button to let the bot use the phone." })),
+                _ => Err("not on this phone".to_string()),
+            }
+        });
+        let asks = Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let counted = asks.clone();
+        let model: Arc<dyn Fn() -> String + Send + Sync> = Arc::new(move || {
+            counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            json!({ "action": "tap", "element": 0, "reason": "press OK" }).to_string()
+        });
+        let run = run_task_ctx(&st.db, None, &ctx, "task-disarm".into(), Some("usb:usba-0123456789ab"), "press OK", 10, None);
+        let report = crate::phone_replay::FAKE_TOOL.scope(tool, FAKE_MODEL.scope(model, run)).await;
+
+        assert_eq!(report["status"], "failed", "{report}");
+        assert_eq!(report["ok"], false);
+        assert_eq!(report["result"], DISARMED_RESULT);
+        assert_eq!(report["model_calls"], 1, "no further step was asked for: {report}");
+        assert_eq!(asks.load(std::sync::atomic::Ordering::SeqCst), 1);
+        let steps = report["steps"].as_array().unwrap();
+        assert_eq!(steps.len(), 1, "{report}");
+        assert_eq!(steps[0]["ok"], false);
+        assert!(steps[0]["error"].as_str().unwrap().contains("disarmed"));
+        let taps = calls.lock().unwrap().iter().filter(|n| *n == "phone.tap").count();
+        assert_eq!(taps, 1, "the board was asked once and never again: {:?}", calls.lock().unwrap());
     }
 
     #[tokio::test]

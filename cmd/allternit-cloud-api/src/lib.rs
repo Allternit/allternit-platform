@@ -559,6 +559,9 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         // iPhone via the App Store app: Clerk-managed app phone keys, and a
         // key-authenticated socket ticket for that phone's own node sockets.
         .merge(routes::app_phones::routes())
+        // Allternit Link boards: Clerk-managed relay tokens, and a
+        // token-authenticated socket ticket for that board's one node socket.
+        .merge(routes::link_boards::routes())
         // Code mode cloud environments (CODE_PARITY Contract B): Clerk
         // session / compute-scoped API token / runtime device token per
         // request; `/resolve` is runtime-device only and the one place secret

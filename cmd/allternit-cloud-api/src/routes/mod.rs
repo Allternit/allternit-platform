@@ -80,6 +80,7 @@ pub mod paired_computers;
 pub mod phone_live;
 pub mod registered_phones;
 pub mod app_phones;
+pub mod link_boards;
 pub mod mirror;
 pub mod model_router;
 pub mod mirror_ws;

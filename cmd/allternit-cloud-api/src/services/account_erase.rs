@@ -118,6 +118,7 @@ pub const ERASE: &[(&str, &str)] = &[
     ("user_node_preferences", USER),
     ("registered_phones", "account_id = $1"),
     ("app_phones", "account = $1"),
+    ("link_boards", "account = $1"),
     ("runtime_devices", USER),
     // Phone, voice and in-app calls.
     ("invite_contacts", "owner_user_id = $1 OR contact_user_id = $1"),

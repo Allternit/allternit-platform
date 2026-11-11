@@ -181,6 +181,7 @@ pub mod computer_audit;
 pub mod computer_ws;
 pub mod phone_app;
 pub mod phone_app_envelope;
+pub mod phone_usba;
 pub mod phone_ws;
 pub mod computer_replay;
 pub mod computer_history;
