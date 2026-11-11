@@ -1,0 +1,2 @@
+# Native board build output (make -C hardware/usb-agent/native).
+build/
