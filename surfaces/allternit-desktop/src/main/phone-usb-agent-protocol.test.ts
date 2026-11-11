@@ -97,6 +97,18 @@ describe('USBA/1 protocol', () => {
     expect(encodeCommand({ op: 'type', text: 'x'.repeat(201) })).toBeNull();
     expect(encodeCommand({ op: 'key', combo: 'cmd+space' })).toBe('key cmd+space');
     expect(encodeCommand({ op: 'key', combo: 'cmd+alt+ctrl+shift+delete' })).toBeNull();
+    expect(encodeCommand({ op: 'face', name: 'needs_you' })).toBe('face needs_you');
+    expect(encodeCommand({ op: 'face', name: 'angry' as never })).toBeNull();
+    expect(encodeCommand({ op: 'prog', n: 0 })).toBe('prog 0');
+    expect(encodeCommand({ op: 'prog', n: 5 })).toBe('prog 5');
+    expect(encodeCommand({ op: 'prog', n: 6 })).toBeNull();
+    expect(encodeCommand({ op: 'prog', n: -1 })).toBeNull();
+    expect(encodeCommand({ op: 'prog', n: 1.5 })).toBeNull();
+    expect(encodeCommand({ op: 'label', text: 'Hi' })).toBe('label 4869');
+    expect(encodeCommand({ op: 'label', text: '' })).toBe('label -');
+    expect(encodeCommand({ op: 'label', text: 'x'.repeat(24) })).toBe(`label ${'78'.repeat(24)}`);
+    expect(encodeCommand({ op: 'label', text: 'x'.repeat(25) })).toBeNull();
+    expect(encodeCommand({ op: 'label', text: 'héllo' })).toBeNull();
     expect(isValidCombo('enter')).toBe(true);
     expect(isValidCombo('cmd;rm')).toBe(false);
   });

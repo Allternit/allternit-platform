@@ -79,9 +79,21 @@ export function parseAuth(line: string): string | null {
 
 export type UsbStatus = 'mounted' | 'asleep' | 'none';
 
+export type UsbaVersion = 1 | 2;
+export type FaceName = 'default' | 'wink' | 'working' | 'needs_you' | 'stopped';
+export const FACE_NAMES: readonly FaceName[] = ['default', 'wink', 'working', 'needs_you', 'stopped'];
+export type HidTransport = 'usb' | 'ble' | 'none';
+export type LinkKind = 'lan' | 'cloud';
+
 export interface BoardState {
   armed: boolean;
   usb: UsbStatus;
+  // Present on USBA/2 sessions only.
+  dock?: boolean;
+  hid?: HidTransport;
+  link?: LinkKind;
+  face?: FaceName;
+  prog?: number;
 }
 
 export function parseState(line: string): BoardState | null {
@@ -110,7 +122,10 @@ export type BoardCommand =
   | { op: 'click' }
   | { op: 'scroll'; v: number; h: number }
   | { op: 'type'; text: string }
-  | { op: 'key'; combo: string };
+  | { op: 'key'; combo: string }
+  | { op: 'face'; name: FaceName }
+  | { op: 'prog'; n: number }
+  | { op: 'label'; text: string }; // '' clears it
 
 export const MOVE_LIMIT = 4000;
 export const TYPE_LIMIT = 200;
@@ -142,6 +157,15 @@ export function encodeCommand(cmd: BoardCommand): string | null {
         : null;
     case 'key':
       return isValidCombo(cmd.combo) ? `key ${cmd.combo}` : null;
+    case 'face':
+      return FACE_NAMES.includes(cmd.name) ? `face ${cmd.name}` : null;
+    case 'prog':
+      return Number.isInteger(cmd.n) && cmd.n >= 0 && cmd.n <= 5 ? `prog ${cmd.n}` : null;
+    case 'label':
+      if (cmd.text === '') return 'label -';
+      return cmd.text.length <= 24 && /^[\x20-\x7E]+$/.test(cmd.text)
+        ? `label ${Buffer.from(cmd.text, 'ascii').toString('hex')}`
+        : null;
   }
 }
 
