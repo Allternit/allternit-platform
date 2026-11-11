@@ -1,0 +1,94 @@
+# S0 on-phone spike. Development only: its own bundle ids, never part of the
+# App Store app (it is a separate XcodeGen project, not a target of ../../project.yml).
+# Generate: xcodegen generate --spec project.yml
+name: OnPhoneSpike
+options:
+  bundleIdPrefix: com.allternit.mobile
+  deploymentTarget:
+    iOS: "27.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    DEVELOPMENT_TEAM: MQ85968PQP
+    CODE_SIGN_STYLE: Automatic
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    TARGETED_DEVICE_FAMILY: "1"
+    GENERATE_INFOPLIST_FILE: NO
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+targets:
+  OnPhoneSpike:
+    type: application
+    platform: iOS
+    sources: [App, Shared]
+    info:
+      path: Generated/App-Info.plist
+      properties:
+        CFBundleDisplayName: OnPhone Spike
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        UIFileSharingEnabled: true
+        LSSupportsOpeningDocumentsInPlace: true
+        NSLocalNetworkUsageDescription: The spike reaches the Allternit runtime's phone guard on your network.
+    entitlements:
+      path: Generated/App.entitlements
+      properties:
+        com.apple.developer.networking.networkextension: [packet-tunnel-provider]
+        com.apple.security.application-groups: [group.com.allternit.mobile.onphone-spike]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.allternit.mobile.onphone-spike
+    dependencies:
+      - target: OnPhoneTunnel
+      - target: OnPhoneKeys
+
+  OnPhoneTunnel:
+    type: app-extension
+    platform: iOS
+    sources: [Tunnel, Shared]
+    info:
+      path: Generated/Tunnel-Info.plist
+      properties:
+        CFBundleDisplayName: OnPhone Tunnel
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.networkextension.packet-tunnel
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).PacketTunnelProvider
+    entitlements:
+      path: Generated/Tunnel.entitlements
+      properties:
+        com.apple.developer.networking.networkextension: [packet-tunnel-provider]
+        com.apple.security.application-groups: [group.com.allternit.mobile.onphone-spike]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.allternit.mobile.onphone-spike.tunnel
+
+  OnPhoneKeys:
+    type: app-extension
+    platform: iOS
+    sources: [Keyboard, Shared]
+    info:
+      path: Generated/Keys-Info.plist
+      properties:
+        CFBundleDisplayName: OnPhone Keys
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.keyboard-service
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).KeyboardViewController
+          NSExtensionAttributes:
+            IsASCIICapable: false
+            PrefersRightToLeft: false
+            PrimaryLanguage: en-US
+            RequestsOpenAccess: true
+    entitlements:
+      path: Generated/Keys.entitlements
+      properties:
+        com.apple.security.application-groups: [group.com.allternit.mobile.onphone-spike]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.allternit.mobile.onphone-spike.keys
