@@ -135,6 +135,8 @@ Two checks run before the task touches the phone. Either one refuses the task wi
 - `paused`: the owner turned on the pause switch for their bots.
 - `owner_only`: the thread's latest input is not from the owner (a contact, a stranger or another bot; a web page or tool result the bot read mid-turn is not counted, and a thread with no labelled input counts as the owner's). The owner's own chat turn in the app (`POST /agent-sessions/:id/messages` from a signed-in session, not an API key) is labelled `owner`, so replying in the app after an outside message lets the bot start a phone task again. A refusal is not a hold: nothing waits in the inbox, no card is posted and the phone is not touched. A task with no thread is not subject to this rule.
 
+The task route has no quota error today. Phone minutes are metered for billing (the `phone_minutes` usage meter, with overage billed on the plan), but nothing refuses a task on the runtime's `POST /phones/:serial/task` when minutes run out, so a client never gets `402` or `429` from it. The only phone limit that refuses a start is the concurrent-run cap on the Platform API's `/v1/phones` routes (`429 phone_run_limit`, see [Phones](/api/platform/phones)).
+
 Code that starts a task in process calls `phone_task::run_task_ctx(db, data_dir, ctx, run_id, serial, goal, max_steps, model)`. It applies the same checks and answers a refused task with a report of `status: "refused"` and the same `reason`.
 
 ### The phone task card

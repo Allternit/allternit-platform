@@ -1094,4 +1094,64 @@ mod tests {
         crate::bots_pause::set(&st.db.connect().unwrap(), "user-a", false, None).unwrap();
         assert!(refusal(&st.db, &ctx()).is_none());
     }
+    /// `POST /phones/live-voice` through the real router and the real auth layer: a signed-in
+    /// owner (an org access token minted by the real route) marks the Live session, so a
+    /// later chat-sourced task in it reads as `voice`; no credential is refused and marks nothing.
+    #[tokio::test]
+    async fn live_voice_route_marks_the_session_for_a_signed_in_owner_and_refuses_anonymous() {
+        use axum::{body::Body, http::Request};
+        use tower::ServiceExt;
+        let st = state("live-voice-route").await;
+        {
+            let c = st.db.connect().unwrap();
+            c.execute("INSERT OR IGNORE INTO organizations (id, name) VALUES ('org-lv', 'Org')", []).unwrap();
+            c.execute("INSERT OR IGNORE INTO users (id, email) VALUES ('admin-lv', 'admin-lv@test.local')", []).unwrap();
+            c.execute("INSERT OR IGNORE INTO organization_members (id, organization_id, user_id, role) VALUES ('org-lv:admin-lv', 'org-lv', 'admin-lv', 'owner')", []).unwrap();
+        }
+        let admin = AuthUser {
+            user_id: "admin-lv".into(),
+            email: None,
+            name: None,
+            avatar_url: None,
+            tenant_id: Some("org-lv".into()),
+            organization_id: Some("org-lv".into()),
+            organization_role: Some("owner".into()),
+            organization_slug: None,
+        };
+        let minted = crate::admin_access_token_routes::router()
+            .with_state(st.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/admin/access-tokens")
+                    .extension(admin)
+                    .header("content-type", "application/json")
+                    .body(Body::from(json!({ "name": "live voice", "scopes": "admin" }).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(minted.status(), StatusCode::CREATED);
+        let minted: Value = serde_json::from_slice(&axum::body::to_bytes(minted.into_body(), 1 << 20).await.unwrap()).unwrap();
+        let (token, owner) = (minted["token"].as_str().unwrap().to_string(), format!("token:{}", minted["id"].as_str().unwrap()));
+
+        let app = router().layer(axum::middleware::from_fn_with_state(st.clone(), crate::auth::auth_middleware)).with_state(st.clone());
+        let call = |bearer: Option<&str>, session: &str| {
+            let mut r = Request::builder().method("POST").uri("/phones/live-voice").header("content-type", "application/json");
+            if let Some(t) = bearer {
+                r = r.header("authorization", format!("Bearer {t}"));
+            }
+            r.body(Body::from(json!({ "session_id": session }).to_string())).unwrap()
+        };
+
+        let anon = app.clone().oneshot(call(None, "s-route-anon")).await.unwrap();
+        assert_eq!(anon.status(), StatusCode::UNAUTHORIZED);
+        assert!(!is_live_voice(&owner, Some("s-route-anon")));
+
+        let ok = app.clone().oneshot(call(Some(&token), "s-route-live")).await.unwrap();
+        assert_eq!(ok.status(), StatusCode::NO_CONTENT);
+        assert_eq!(source_for("chat".into(), &owner, Some("s-route-live")), "voice");
+        assert_eq!(source_for("chat".into(), "someone-else", Some("s-route-live")), "chat");
+        assert_eq!(source_for("chat".into(), &owner, Some("s-route-other")), "chat");
+    }
 }
