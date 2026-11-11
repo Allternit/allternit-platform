@@ -128,7 +128,9 @@ enum ChatSendError: LocalizedError {
 
 @MainActor
 final class ChatViewModel: ObservableObject {    @Published var messages: [MessageRecord] = []
-    @Published var isStreaming: Bool = false
+    @Published var isStreaming: Bool = false {
+        didSet { ReviewPromptStore.shared.streamingChanged(owner: self, streaming: isStreaming) }
+    }
     @Published var currentSessionId: String? = nil
     /// True only during the first message's session-create POST; the
     /// composer disables send on it so a slow create can't double-send.
@@ -619,6 +621,7 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
                 // Terminal frame arrived (finish / done / [DONE]) and the
                 // stream finished.
                 self.finishStreaming(messageId: assistantId)
+                if !streamFailed { ReviewPromptStore.shared.recordSuccessfulAnswer() }
                 let generator = UINotificationFeedbackGenerator()
                 generator.notificationOccurred(streamFailed ? .error : .success)
             } catch is CancellationError {

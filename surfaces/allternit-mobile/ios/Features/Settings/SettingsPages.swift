@@ -601,6 +601,7 @@ struct AllternitMobileSettingsPage: View {
 /// "Allternit & Coffee", the build, and Terms · Privacy · GitHub.
 struct AboutSettingsPage: View {
     @State private var safariURL: IdentifiableURL? = nil
+    @Environment(\.openURL) private var openURL
 
     static var versionString: String {
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—"
@@ -642,6 +643,12 @@ struct AboutSettingsPage: View {
                     link("Terms", "https://allternit.com/terms")
                     link("Privacy", "https://allternit.com/privacy")
                     link("GitHub", "https://github.com/allternit")
+                    Button("Rate Allternit") {
+                        if let url = URL(string: "https://apps.apple.com/app/id6828841999?action=write-review") { openURL(url) }
+                    }
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(Color("TextSecondary"))
+                    .buttonStyle(.plain)
                 }
                 .padding(.top, 40)
             }
