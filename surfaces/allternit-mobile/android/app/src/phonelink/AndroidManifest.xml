@@ -114,5 +114,11 @@
         <receiver
             android:name="com.allternit.phonelink.PairingActionReceiver"
             android:exported="false" />
+
+        <!-- Pet offers: the "Mute" action on an "Error help" notification. Only this
+             app's own PendingIntent reaches it. -->
+        <receiver
+            android:name="com.allternit.phonelink.PetOfferReceiver"
+            android:exported="false" />
     </application>
 </manifest>
