@@ -14,6 +14,15 @@
  *
  * Approve is only offered after the screen image has been shown. Nothing here
  * approves on its own: with no terminal to ask, the hold is left for the app.
+ *
+ * `gizzi phone boards` and `gizzi phone stop [--board <id|name>]` read and
+ * disarm Allternit Link boards (contract: hardware/link/README.md section 6):
+ *
+ * - `GET  /api/v1/phones/boards`               `{desktop, boards: LinkBoardStatus[]}`
+ * - `POST /api/v1/phones/boards/:id/stop`      disarm; 200 / 409 board_offline /
+ *                                              502 uncertain / 503 desktop_offline
+ *
+ * Disarm is the only board action here. Nothing in the CLI can arm a board.
  */
 import { spawn } from "node:child_process"
 import { mkdtemp, writeFile } from "node:fs/promises"
@@ -31,7 +40,7 @@ export class PhoneLineError extends Error {}
 
 type Reply = { status: number; body: any; raw: Response }
 
-async function call(method: "GET" | "POST", path: string, body?: unknown, timeoutMs = 15_000): Promise<Reply> {
+async function call(method: "GET" | "POST" | "DELETE", path: string, body?: unknown, timeoutMs = 15_000): Promise<Reply> {
   let raw: Response
   try {
     raw = await platformFetch(method, path, body, { timeoutMs })
@@ -428,10 +437,116 @@ const RunsCommand = cmd({
     }),
 })
 
+// ── Allternit Link boards ─────────────────────────────────────────────────
+
+/** The fields of `LinkBoardStatus` (hardware/link/README.md section 6) this command reads. */
+export interface LinkBoard {
+  boardId: string
+  serial?: string
+  name: string
+  online: boolean
+  armed: boolean
+  status: string
+  link: "lan" | "cloud" | null
+  dock: boolean | null
+  face: string | null
+}
+
+const BOARD_STATE: Record<string, string> = {
+  board_offline: "offline",
+  phone_not_connected: "no phone",
+  phone_locked: "phone locked",
+  no_screen: "no screen",
+  not_calibrated: "not calibrated",
+  disarmed: "disarmed",
+  ready: "ready",
+}
+
+const NO_BOARD_SUPPORT = "This runtime doesn't support Allternit Link boards yet. Update Allternit Desktop (or gizzi serve) and try again."
+const DESKTOP_OFFLINE = "Allternit Desktop isn't running, so no boards can be read. Open it and try again."
+
+export async function listBoards(): Promise<LinkBoard[]> {
+  const r = await call("GET", "/api/v1/phones/boards")
+  if (r.status === 404) throw new PhoneLineError(NO_BOARD_SUPPORT)
+  if (r.status === 401 || r.status === 403) throw new PhoneLineError("You're signed out. Run `gizzi login` first.")
+  if (r.status === 503) throw new PhoneLineError(DESKTOP_OFFLINE)
+  if (r.status !== 200) throw new PhoneLineError(`Couldn't list your boards: ${reason(r)}`)
+  if (r.body?.desktop === false) throw new PhoneLineError(DESKTOP_OFFLINE)
+  return (r.body?.boards ?? []) as LinkBoard[]
+}
+
+export function formatBoards(boards: LinkBoard[]): string {
+  if (!boards.length) return "No Allternit Link board is attached. Plug one into Allternit Desktop's computer to see it here."
+  const yn = (v: boolean | null) => (v === null || v === undefined ? "-" : v ? "yes" : "no")
+  return boards
+    .map(
+      (b) =>
+        `${(b.name || b.boardId).padEnd(18).slice(0, 18)}  ${(BOARD_STATE[b.status] ?? b.status).padEnd(14)}  armed: ${b.armed ? "yes" : "no "}  link: ${b.link ?? "-"}  dock: ${yn(b.dock)}  face: ${b.face ?? "-"}`,
+    )
+    .join("\n")
+}
+
+/** Which board `stop` means, or the one plain line that says why none. */
+export function chooseBoard(boards: LinkBoard[], key?: string): LinkBoard {
+  if (boards.length === 0) throw new PhoneLineError("No Allternit Link board is attached, so there is nothing to stop.")
+  const names = boards.map((b) => `${b.name || b.boardId} (${b.boardId})`).join(", ")
+  if (!key) {
+    if (boards.length === 1) return boards[0]!
+    throw new PhoneLineError(`You have ${boards.length} boards: ${names}. Pick one with --board.`)
+  }
+  const k = key.toLowerCase()
+  const exact = boards.find((b) => b.boardId === key || b.serial === key || (b.name || "").toLowerCase() === k)
+  if (exact) return exact
+  const near = boards.filter((b) => b.boardId.toLowerCase().startsWith(k) || (b.name || "").toLowerCase().startsWith(k))
+  if (near.length === 1) return near[0]!
+  if (near.length > 1) throw new PhoneLineError(`"${key}" matches more than one board: ${near.map((b) => b.name || b.boardId).join(", ")}. Use the full id.`)
+  throw new PhoneLineError(`No board matches "${key}". You have: ${names}.`)
+}
+
+export async function stopBoard(board: LinkBoard): Promise<string> {
+  const r = await call("POST", `/api/v1/phones/boards/${encodeURIComponent(board.boardId)}/stop`, {})
+  const who = board.name || board.boardId
+  if (r.status === 200 && r.body?.ok !== false) return `Stopped ${who}. It is disarmed. Only its button can arm it again.`
+  if (r.status === 404) throw new PhoneLineError(NO_BOARD_SUPPORT)
+  if (r.status === 401 || r.status === 403) throw new PhoneLineError("You're signed out. Run `gizzi login` first.")
+  const code = r.body?.error
+  if (code === "desktop_offline" || r.status === 503) throw new PhoneLineError(DESKTOP_OFFLINE)
+  if (code === "board_offline") throw new PhoneLineError(`${who} is offline, so it could not be reached. A board that is off cannot tap anything. Check it is plugged in and try again.`)
+  if (code === "uncertain" || r.status === 502)
+    throw new PhoneLineError(`Couldn't confirm that ${who} stopped. Treat it as still armed: press its button to disarm it, then check it in Allternit Desktop.`)
+  throw new PhoneLineError(`Couldn't stop ${who}: ${reason(r)}`)
+}
+
+export const BoardsCommand = cmd({
+  command: "boards",
+  describe: "list your Allternit Link boards: armed, link, dock and face",
+  builder: (y: Argv) => y,
+  handler: () =>
+    guard(async () => {
+      process.stdout.write(formatBoards(await listBoards()) + "\n")
+    }),
+})
+
+export const StopCommand = cmd({
+  command: "stop",
+  describe: "disarm an Allternit Link board (it can only be armed again with its button)",
+  builder: (y: Argv) => y.option("board", { type: "string", describe: "board id or name (default: your only board)" }),
+  handler: (args) =>
+    guard(async () => {
+      const board = chooseBoard(await listBoards(), args.board as string | undefined)
+      process.stdout.write((await stopBoard(board)) + "\n")
+    }),
+})
+
 export const PhoneCommand = cmd({
   command: "phone",
   describe: "run tasks on your linked phone and approve what it asks",
   builder: (y: Argv) =>
-    y.command(TaskCommand).command(RunsCommand).demandCommand(1, "Specify a phone command (task, runs)"),
+    y
+      .command(TaskCommand)
+      .command(RunsCommand)
+      .command(BoardsCommand)
+      .command(StopCommand)
+      .demandCommand(1, "Specify a phone command (task, runs, boards, stop)"),
   handler: () => {},
 })
