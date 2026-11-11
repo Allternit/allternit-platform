@@ -125,7 +125,10 @@ const fail = (error: 'device_offline' | 'disarmed', message: string): ToolResult
 
 export class LinkBoardLane implements LinkBoardHands {
   private attached: UsbAgentManager | null = null;
-  /** Boards that went from armed to disarmed: hands calls answer `disarmed` without sending until they arm again. */
+  /**
+   * Boards that went from armed to disarmed: hands calls answer `disarmed` without sending until they arm
+   * again. Not phone.screenshot: looking moves nothing, and a usb: phone still shows its screen while disarmed.
+   */
   private readonly stopped = new Set<string>();
   /** Acting hands calls since the face was last idle, per board (the progress squares). */
   private readonly steps = new Map<string, number>();
@@ -165,7 +168,7 @@ export class LinkBoardLane implements LinkBoardHands {
     const m = this.manager();
     const boardId = m?.boardForPhone(serial) ?? null;
     if (!m || !boardId) return fail('device_offline', `No Allternit Link board is paired with ${serial}.`);
-    if (this.stopped.has(boardId)) {
+    if (this.stopped.has(boardId) && name !== 'phone.screenshot') {
       return fail('disarmed', 'The Allternit Link board was disarmed, so the bot stopped. Press the board’s button to let the bot use the phone again.');
     }
     const acting = name !== 'phone.screenshot';

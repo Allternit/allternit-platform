@@ -160,6 +160,8 @@ describe('Allternit Link: board hands, app-phone eyes', () => {
 
     const offline = await rig({ connect: false });
     expect(await offline.runner.call('phone.tap', { serial: APP_SERIAL, x: 10, y: 10 })).toMatchObject({ ok: false, error: 'device_offline' });
+    // The board's link is not needed to look: the app's shared screen still answers, as a usb: phone's mirror does.
+    expect(await offline.runner.call('phone.screenshot', { serial: APP_SERIAL })).toMatchObject({ ok: true, width: 120, height: 260 });
   });
 
   it('a disarm mid-swipe answers disarmed; later calls send nothing until the board is armed again, link loss included', async () => {
@@ -179,7 +181,8 @@ describe('Allternit Link: board hands, app-phone eyes', () => {
 
     const sentBefore = r.linesToBoard.length;
     expect(await r.runner.call('phone.tap', { serial: APP_SERIAL, x: 90, y: 130 })).toMatchObject({ ok: false, error: 'disarmed' });
-    expect(await r.runner.call('phone.screenshot', { serial: APP_SERIAL })).toMatchObject({ ok: false, error: 'disarmed' });
+    // Looking still works while disarmed, as on a usb: phone: a frame with its size, and nothing sent to the board.
+    expect(await r.runner.call('phone.screenshot', { serial: APP_SERIAL })).toMatchObject({ ok: true, mimeType: 'image/jpeg', width: 120, height: 260 });
     expect(r.linesToBoard.length).toBe(sentBefore);
 
     // Armed again: calls work.
@@ -192,6 +195,7 @@ describe('Allternit Link: board hands, app-phone eyes', () => {
     r.board.close();
     await until(() => r.manager.list()[0].status === 'board_offline');
     expect(await r.runner.call('phone.tap', { serial: APP_SERIAL, x: 90, y: 130 })).toMatchObject({ ok: false, error: 'disarmed' });
+    expect(await r.runner.call('phone.screenshot', { serial: APP_SERIAL })).toMatchObject({ ok: true, width: 120, height: 260 });
   }, 30_000);
 
   it('the guard still holds a sensitive tap on a paired phone: approval_required, nothing reaches the board, the guard saw the screen', async () => {
