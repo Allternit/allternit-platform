@@ -84,8 +84,8 @@ targets:
         SWIFT_VERSION: "6.0"
         IPHONEOS_DEPLOYMENT_TARGET: "17.0"
         TARGETED_DEVICE_FAMILY: "1"
-        MARKETING_VERSION: "1.0.1"
-        CURRENT_PROJECT_VERSION: "31"
+        MARKETING_VERSION: "1.0.2"
+        CURRENT_PROJECT_VERSION: "32"
         CODE_SIGN_ENTITLEMENTS: Allternit.entitlements
         SWIFT_OBJC_BRIDGING_HEADER: Core/Voice/Voice-Bridging-Header.h
         # Clerk publishable key (client-public by design) — the production
@@ -222,8 +222,8 @@ targets:
         SWIFT_VERSION: "6.0"
         IPHONEOS_DEPLOYMENT_TARGET: "17.0"
         TARGETED_DEVICE_FAMILY: "1"
-        MARKETING_VERSION: "1.0.1"
-        CURRENT_PROJECT_VERSION: "31"
+        MARKETING_VERSION: "1.0.2"
+        CURRENT_PROJECT_VERSION: "32"
         # Same placeholder as the main app — set your team for device builds.
         DEVELOPMENT_TEAM: MQ85968PQP
         CODE_SIGN_STYLE: Automatic
@@ -246,8 +246,8 @@ targets:
         SWIFT_VERSION: "6.0"
         IPHONEOS_DEPLOYMENT_TARGET: "17.0"
         TARGETED_DEVICE_FAMILY: "1"
-        MARKETING_VERSION: "1.0.1"
-        CURRENT_PROJECT_VERSION: "31"
+        MARKETING_VERSION: "1.0.2"
+        CURRENT_PROJECT_VERSION: "32"
         CODE_SIGN_ENTITLEMENTS: AllternitNotifications/AllternitNotifications.entitlements
         DEVELOPMENT_TEAM: MQ85968PQP
         CODE_SIGN_STYLE: Automatic
@@ -269,8 +269,8 @@ targets:
         SWIFT_VERSION: "6.0"
         IPHONEOS_DEPLOYMENT_TARGET: "17.0"
         TARGETED_DEVICE_FAMILY: "1"
-        MARKETING_VERSION: "1.0.1"
-        CURRENT_PROJECT_VERSION: "31"
+        MARKETING_VERSION: "1.0.2"
+        CURRENT_PROJECT_VERSION: "32"
         CODE_SIGN_ENTITLEMENTS: AllternitShare/AllternitShare.entitlements
         DEVELOPMENT_TEAM: MQ85968PQP
         CODE_SIGN_STYLE: Automatic
@@ -300,22 +300,25 @@ targets:
         SWIFT_VERSION: "5.0"
         IPHONEOS_DEPLOYMENT_TARGET: "17.0"
         TARGETED_DEVICE_FAMILY: "1"
-        MARKETING_VERSION: "1.0.1"
-        CURRENT_PROJECT_VERSION: "31"
+        MARKETING_VERSION: "1.0.2"
+        CURRENT_PROJECT_VERSION: "32"
         CODE_SIGN_ENTITLEMENTS: AllternitScreen/AllternitScreen.entitlements
         # Same placeholder as the main app — set your team for device builds.
         DEVELOPMENT_TEAM: MQ85968PQP
         CODE_SIGN_STYLE: Automatic
         SKIP_INSTALL: true
   # iMessage app (Phone and Messages wave 2, I3): opens on the quick panel.
-  # The App ID com.allternit.mobile.messages is not in the Apple portal yet,
-  # so device and archive builds wait on it; simulator builds work.
   AllternitMessages:
-    type: app-extension
+    # .messages product type: actool only emits the iMessage icon PNGs
+    # App Store Connect checks for under this type.
+    type: app-extension.messages
     platform: iOS
     deploymentTarget: "17.0"
     sources:
       - path: AllternitMessages
+        excludes:
+          - MessagesAssets.xcassets
+      - path: AllternitMessages/MessagesAssets.xcassets
       - path: SystemSurfaces
       - path: Assets.xcassets
     dependencies:
@@ -328,9 +331,12 @@ targets:
         SWIFT_VERSION: "6.0"
         IPHONEOS_DEPLOYMENT_TARGET: "17.0"
         TARGETED_DEVICE_FAMILY: "1"
-        MARKETING_VERSION: "1.0.1"
-        CURRENT_PROJECT_VERSION: "31"
+        MARKETING_VERSION: "1.0.2"
+        CURRENT_PROJECT_VERSION: "32"
         CODE_SIGN_ENTITLEMENTS: AllternitMessages/AllternitMessages.entitlements
+        # The iMessage icon (4:3 slots + App Store image) lives in its own
+        # catalog; actool writes MSMessagesExtensionStoreIconName from it.
+        ASSETCATALOG_COMPILER_APPICON_NAME: "iMessage App Icon"
         DEVELOPMENT_TEAM: MQ85968PQP
         CODE_SIGN_STYLE: Automatic
         SKIP_INSTALL: true
@@ -350,8 +356,8 @@ targets:
         SWIFT_VERSION: "6.0"
         IPHONEOS_DEPLOYMENT_TARGET: "17.0"
         TARGETED_DEVICE_FAMILY: "1"
-        MARKETING_VERSION: "1.0.1"
-        CURRENT_PROJECT_VERSION: "31"
+        MARKETING_VERSION: "1.0.2"
+        CURRENT_PROJECT_VERSION: "32"
         DEVELOPMENT_TEAM: MQ85968PQP
         CODE_SIGN_STYLE: Automatic
         GENERATE_INFOPLIST_FILE: YES
