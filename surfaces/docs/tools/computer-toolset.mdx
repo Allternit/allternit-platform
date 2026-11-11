@@ -275,6 +275,25 @@ The function tools are one per toolset, named `computer` (pixel members), `compu
 
 When the executor answers `approval_required`, gizzi asks the person through its normal permission prompt, records the approval and retries once with the grant.
 
+## Turn the tools on for one turn
+
+`computer`, `computer_v2` and `computers` are listed when `GIZZI_ENABLE_COMPUTER_TOOL` is set for the whole runtime. A single turn can also turn them on for itself with `metadata.tools.computer: true` on the chat send:
+
+```json
+{
+  "chatId": "c1",
+  "message": "Fix the build error in the attached terminal text",
+  "metadata": { "tools": { "computer": true } }
+}
+```
+
+- **Scope:** that turn only. Nothing is saved on the session, and the next turn without the key has no computer tools. `computer: false` never removes tools that `GIZZI_ENABLE_COMPUTER_TOOL` turned on.
+- **Path:** allternit-api forwards `metadata.tools` to gizzi unchanged (`stored_turn_metadata` in `v1_routes.rs`). gizzi reads it in `MobileTools` (`runtime/session/prompt.ts`) and passes it to `ToolRegistry.tools`. Older gizzi builds ignore the key.
+- **Who sets it:** Allternit Desktop, when you accept a [pet offer](/guides/bot-avatars#pet-offers). The web, phone and iPhone apps never set it.
+- **Gates still apply:** the control lease and approvals run for every call, the same as with the env flag. Every member of the `computer` toolset needs the lease, read-only ones like `screenshot` and `read_ui` included. On `this-device` the agent never takes the lease itself: until the person takes control, each call fails with HTTP 423 `take_control_first` ("Take control of this computer first…"), or `computer_controlled_elsewhere` when someone else holds it. Steps that send, pay or delete still stop for approval ([Computer-use safety](/tools/computer-safety)).
+
+The contract for this option is `turnOptions.computer` in `contracts/pet-offers/pet-offers-v1.json`.
+
 ## What it replaced
 
 - **gizzi `browser` tool** (ACU gateway, goal-driven `execute`). It is replaced by the toolset `browser` tool under the same `GIZZI_DISABLE_BROWSER_TOOL` switch. Goal-driven browsing was a second agent loop, so it is gone.

@@ -4131,6 +4131,39 @@
         "allternit/surfaces/allternit-mobile/ios/SystemSurfaces",
         "allternit-ai/public/allternit-push-sw.js"
       ]
+    },
+    {
+      "id": "feature:pet-offers",
+      "label": "Pet offers: the bot's pet notices errors and offers a fix",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "The pet notices an error with fixed local rules (contracts/pet-offers/pet-offers-v1.json: kinds, copy, regex rules, block defaults, device-local settings, fixtures every surface's matcher must pass), offers help in a bubble and acts only after a tap. Desktop reads the window under the pet through the bundled Allternit Driver (off until the user turns on reading other apps; block list checked before any read); web, phone layout and PWA offer on Allternit's own failed runs and error toasts; iPhone shows a banner for a run that failed off-screen; Android Phone Link spots other apps' error dialogs and posts a generic heads-up notification whose Fix it opens m.allternit.com with the text in the URL fragment; Gizzi offers /fix and reports failed to the Desktop pet. Accepting opens quick work with the text attached, never sent automatically. A Desktop accept can set metadata.tools.computer on that one turn: allternit-api forwards metadata.tools whole and the gizzi runtime lists the computer toolset for that turn; the control lease and computer_safety confirm gate still apply.",
+      "touches": [
+        "allternit/surfaces/allternit-desktop/src/main/pet-offers.gen.ts",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/pet/petOffers.gen.ts",
+        "allternit/cmd/gizzi-code/src/runtime/session/prompt.ts",
+        "allternit/cmd/gizzi-code/src/runtime/tools/builtins/registry.ts",
+        "allternit/cmd/allternit-api/src/v1_routes.rs",
+        "allternit/cmd/allternit-api/src/computer_toolset.rs",
+        "allternit/cmd/allternit-api/src/computer_safety.rs",
+        "allternit/surfaces/allternit-mobile/ios/Core/PetOffers/PetOfferContract.gen.swift",
+        "allternit/surfaces/allternit-mobile/android/app/src/phonelink/java/com/allternit/phonelink/core/PetOfferContract.gen.kt",
+        "allternit-ai/src/lib/pet-offers",
+        "allternit-ai/src/components/desktop-companion"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-11",
+          "note": "Notice is plain shared rules with fixtures, no model; reading other apps on Desktop defaults off (petOffers.readOtherApps) until the user opts in; Fix it attaches the text and never auto-sends; computer tools are a per-turn metadata.tools.computer option, not a session flag; the control lease is never auto-taken."
+        }
+      ],
+      "evidence": [
+        "allternit/contracts/pet-offers/pet-offers-v1.json",
+        "allternit/contracts/pet-offers/README.md",
+        "allternit/cmd/gizzi-code/test/tool/registry.test.ts",
+        "allternit/surfaces/docs/guides/bot-avatars.mdx",
+        "allternit-ai/src/lib/pet-offers/contract.ts"
+      ]
     }
   ],
   "journeys": [
