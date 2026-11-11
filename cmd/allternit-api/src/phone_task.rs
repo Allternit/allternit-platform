@@ -957,6 +957,23 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_task_started_from_live_voice_keeps_source_voice_on_the_report_and_card() {
+        // The owner's signed-in web session (no agent credential) may start a voice task.
+        assert_eq!(phone_guard::clean_source(Some("Voice")), "voice");
+        assert!(is_owner_http_request(false, "voice"));
+        assert!(!is_owner_http_request(true, "voice"));
+        let st = state("voice").await;
+        provenance(&st, "owner", "2026-11-10T10:00:00Z");
+        let voice = TaskCtx { source: "voice".into(), ..ctx() };
+        let report = run_task_ctx(&st.db, None, &voice, "task-voice".into(), Some("link:1"), "order coffee", 3, None).await;
+        assert_eq!(report["source"].as_str(), Some("voice"));
+        // The hold card the web narrates ("I need your OK on your phone screen") rides the same thread.
+        assert!(crate::phone_runs::post_task_card(&st.db, &voice, "task-voice", "link:1", "order coffee", "waiting_approval", 1, Some("approval:gap_v")));
+        let last = cards(&st, "task-voice").pop().unwrap();
+        assert_eq!((last["status"].as_str(), last["inboxId"].as_str()), (Some("waiting_approval"), Some("approval:gap_v")));
+    }
+
+    #[tokio::test]
     async fn a_thread_whose_latest_input_is_not_the_owner_is_refused_and_nothing_runs() {
         let st = state("owner").await;
         provenance(&st, "owner", "2026-11-10T10:00:00Z");
