@@ -11,13 +11,13 @@ An Allternit Link board is a small USB board that acts as a mouse and keyboard o
 
 ## Cloud routes
 
-The four routes sit on the public API, under the public rate limiter. The first three take a Clerk session or a `compute` token. The fourth takes the board's relay token.
+The four routes sit on the public API, under the public rate limiter. The first three take an account credential: the runtime device token that Allternit Desktop holds (`Bearer allternit_runtime_...`, which acts as the runtime's owner), a Clerk session, or a `compute` token. The fourth takes the board's relay token.
 
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
-| `POST` | `/api/v1/link-boards` | Clerk / compute token | Register a board. |
-| `GET` | `/api/v1/link-boards` | Clerk / compute token | List your boards. |
-| `DELETE` | `/api/v1/link-boards/:boardId` | Clerk / compute token | Revoke a board (Forget). |
+| `POST` | `/api/v1/link-boards` | Runtime device token, Clerk session or compute token | Register a board. |
+| `GET` | `/api/v1/link-boards` | Runtime device token, Clerk session or compute token | List your boards. |
+| `DELETE` | `/api/v1/link-boards/:boardId` | Runtime device token, Clerk session or compute token | Revoke a board (Forget). |
 | `POST` | `/api/v1/link-boards/:boardId/socket-ticket` | Header `x-allternit-link-board-token` | Get a one-time socket ticket. |
 
 ### Register a board
@@ -27,10 +27,10 @@ Body: `{ "boardId", "name"?, "runtimeDeviceId" }`. `boardId` must match `usba-` 
 Answer: `{ "boardId", "relayToken", "runtimeDeviceId" }`. `relayToken` is 32 random bytes as 64 lowercase hex characters. It is shown once. The cloud stores only its SHA-256 and never logs it.
 
 - Posting a board id again for the same account rotates the token and clears the revoked state.
-- `name` is trimmed, stripped of control characters and cut at 120 characters.
+- `name` is trimmed, stripped of control characters and cut at 120 characters. Posting again without a name keeps the stored name.
 - The key is the pair of account and board id. Board ids come from the board's MAC address and can be guessed, so a global key would let anyone block a board by registering its id first.
 
-Errors: `400` for a bad `boardId`, `404` when the runtime is not the caller's.
+Errors: `400` for a bad `boardId`, `404` when the runtime is not the caller's or has been revoked.
 
 ### List boards
 
@@ -38,18 +38,19 @@ Answer: `{ "boards": [{ "boardId", "serial", "name", "runtimeDeviceId", "created
 
 ### Revoke a board
 
-Answer: `{ "revoked": true }`. Later ticket requests with that board's token are refused. `404` when the account has no such board.
+Answer: `{ "revoked": true }`. Later ticket requests with that board's token are refused. Revoking a board that is already revoked answers `200` again, so a caller can repeat the request. `404` when the account has no such board.
 
 ### Socket ticket
 
-Body: `{}`, or `{ "path" }`. Answer: `{ "ticket", "expiresInSeconds": 30, "runtimeDeviceId", "socketPath" }`. `socketPath` is `/api/v1/runtime-devices/:id/socket?ticket=...` with the ticket filled in. The board opens `wss://` plus the relay host plus `socketPath` within 30 seconds.
+Body: `{}`, an empty body, or `{ "path" }`. Answer: `{ "ticket", "expiresInSeconds": 30, "runtimeDeviceId", "socketPath" }`. `socketPath` is `/api/v1/runtime-devices/:id/socket?ticket=...` with the ticket filled in. The board opens `wss://` plus the relay host plus `socketPath` within 30 seconds.
 
 If `path` is given it must be exactly `/api/v1/phones/usba?board=:boardId`. Any other value is `403`.
 
 Errors:
 
 - `401` with the message `Invalid link board token` for an unknown board, a revoked board, a bad board id, and a wrong or malformed token. One message covers all of them, so a caller cannot tell which was wrong.
-- `403` when `path` is not the one allowed.
+- `400` when the body is not empty and is not JSON.
+- `403` when `path` is not the one allowed, or when the runtime's pairing does not allow relayed sockets.
 - `503` when the runtime is offline or waking. This is temporary.
 
 The route compares the presented hash with every active row for that board id in constant time, then uses the matching row's account and runtime. It sets `last_seen_at`.
@@ -65,6 +66,8 @@ The board uses the existing runtime socket relay, `WS /api/v1/runtime-devices/:i
 1. The board waits for one text frame, `{"type":"allternit_socket_ready"}`, which means the node answered. It discards that frame. Nothing is sent before it.
 2. From then on, one WebSocket text frame is one USBA line, with no line ending. Text frames only. The board sends its `hello` line first, as it does over TCP.
 
+Opening the relay socket counts against the account's relay socket limit, like every relayed socket. The limit covers sockets opened in a day and sockets open at once. The default for both is 5. Past either one, the socket request is refused with `403`. A board that often reconnects through the relay can reach the daily limit. The limit for boards is not settled for release.
+
 The board tries your local network first. It uses the relay only when it holds a relay host and token and no local session formed within 5 seconds of joining Wi-Fi. It asks for a ticket no more often than once in 5 seconds, backing off up to 60 seconds after each failure.
 
 ## Node socket
@@ -73,8 +76,8 @@ The board tries your local network first. It uses the relay only when it holds a
 
 - `board` must match the board id pattern, or the socket closes with code `4400`.
 - The node opens a TCP connection to Desktop's listener on `127.0.0.1` (port 7300, or the value of `ALLTERNIT_USBA_PORT`). If that fails the socket closes with `4503`.
-- Each text frame becomes that text plus a newline on TCP, and each TCP line becomes one text frame. A binary frame, or a line or frame over 512 bytes, closes the socket with `4400`. Either side closing closes the other.
-- There is one socket per account and board id. A new one closes the old one with `4409`. An account may hold at most 8.
+- Each text frame becomes that text plus a newline on TCP, and each TCP line becomes one text frame. A binary frame, a frame that carries a line break, or a line or frame over 512 bytes closes the socket with `4400`. Either side closing closes the other.
+- There is one socket per account and board id. A new one closes the old one with `4409`. An account may hold at most 8. A ninth board's socket closes with `4429`.
 - The node does not read, check or change USBA lines and holds no key. It logs board ids and close codes, never line contents.
 
 Desktop accepts the relayed connection like any other. The handshake decides. A board that Desktop did not set up is dropped as unknown.
@@ -127,11 +130,16 @@ allternit-api serves these on the node, reached the way each surface already rea
 
 | Method | Path | Answer |
 |---|---|---|
-| `GET` | `/api/v1/phones/boards` | `{ "desktop": true, "boards": [...] }`, or `{ "desktop": false, "boards": [] }` when Desktop's phone gateway is not running. |
-| `POST` | `/api/v1/phones/boards/:boardId/stop` | `200 { "ok": true }`. `409 { "error": "board_offline" }`. `502 { "error": "uncertain" }`. `503 { "error": "desktop_offline" }`. |
+| `GET` | `/api/v1/phones/boards` | `{ "desktop": true, "boards": [...] }`, or `{ "desktop": false, "boards": [] }` when Desktop's phone gateway is not running. A Desktop from before Link boards answers `{ "desktop": true, "boards": [] }`. |
+| `POST` | `/api/v1/phones/boards/:boardId/stop` | `200 { "ok": true }`. `409 { "error": "board_offline" }`. `502 { "error": "uncertain" }` when the board did not confirm, or Desktop did not answer in time. `503 { "error": "desktop_offline" }`. |
 | `DELETE` | `/api/v1/phones/boards/:boardId` | `200 { "ok": true }`. `503 { "error": "desktop_offline" }`. |
 
-Error bodies are `{ "error", "message" }`. `GET /api/v1/phones` does not change. Setup and pairing happen only in Desktop.
+Error bodies are `{ "error", "message" }`. Two more errors apply to these routes:
+
+- `400 { "error": "bad_board" }` on stop and forget when `boardId` does not match the board id pattern.
+- `502 { "error": "desktop_error" }` on all three when Desktop answers but the answer cannot be used: an unreadable answer, a slow answer to list or forget, or a Desktop from before Link boards asked to stop or forget one.
+
+`GET /api/v1/phones` does not change. Setup and pairing happen only in Desktop.
 
 To forget a board from any surface, first call `DELETE /api/v1/link-boards/:boardId`, which works with Desktop off. Then call `DELETE /api/v1/phones/boards/:boardId` on a best-effort basis so Desktop removes the key. At its next start, Desktop reads `GET /api/v1/link-boards` and removes any stored board whose cloud row is revoked.
 
