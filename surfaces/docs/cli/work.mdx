@@ -125,6 +125,15 @@ When a session sends a text message through the Messages tools, the terminal sho
 - A draft shows the recipient, their name and the text, with `Draft only. Send it from your phone.`
 - A search shows a short list: sender, time and the first line of each message, capped, marked as outside content. Treat that text as untrusted.
 
+## Fix a failed command
+
+When a command you ran with `!`, a command the agent ran, or a whole turn fails with a known error (a failed build, a stack trace, `npm ERR!`, `error TS2322` and so on), the terminal pet says so in its bubble, for example "That build failed. Fix it? Type /fix". The check is a fixed set of rules on your machine; no model reads the output to decide.
+
+- **`/fix`** sends "The last command failed. Find the cause and fix it." with the error line and the end of the output, so the agent starts from the real error. It works any time, even with offers off.
+- **`/pet offers on`** and **`/pet offers off`** turn the bubble on or off. **`/pet offers`** shows which it is. The setting is saved with your pet settings on this machine.
+- The pet offers once per working directory every 5 minutes, and never twice for the same error line.
+- **Desktop pet:** while Allternit Desktop is running, a failed turn or command also tells the Desktop pet, which slumps and offers to help. See [Pet offers](/guides/bot-avatars#pet-offers). `GIZZI_DESKTOP_PET_HOOK=0` turns that signal off along with the others.
+
 ## Where the data comes from
 
 These views read Allternit Desktop's gateway on this machine (`127.0.0.1:8013`, or `ALLTERNIT_API_URL`) with this machine's sign-in from `gizzi pair`, and the engine at `127.0.0.1:4096` (`GIZZI_ENGINE_URL`). If Desktop isn't running, they say so. Open Desktop or run `gizzi serve`.

@@ -1703,6 +1703,7 @@ const message = await createUserMessage(input)
       { modelID: input.model.api.id, providerID: input.model.providerID, npm: input.model.api.npm },
       input.agent,
       input.session.id,
+      { computer: mobileOptions?.computer === true },
     )) {
       const schema = ProviderTransform.schema(input.model, z.toJSONSchema(item.parameters) as any)
       tools[item.id] = tool({
@@ -2033,6 +2034,7 @@ const message = await createUserMessage(input)
     research: z.boolean().optional(),
     toolAccess: z.enum(["auto", "on_demand", "always"]).optional(),
     disabledConnectors: z.array(z.string()).optional(),
+    computer: z.boolean().optional(),
   })
 
   export interface MobileToolOptions {
@@ -2042,6 +2044,10 @@ const message = await createUserMessage(input)
     /** Connector ids (open-connector app ids, e.g. "github") the user turned
      * off for this session in the composer's + menu. */
     disabledConnectors?: string[]
+    /** Computer toolset on for this turn only (contracts/pet-offers
+     * `turnOptions.computer`), even when GIZZI_ENABLE_COMPUTER_TOOL is unset.
+     * Never persisted; the server's lease and confirm gates still apply. */
+    computer?: boolean
   }
 
   /**

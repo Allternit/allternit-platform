@@ -270,6 +270,8 @@ export type GlobalConfig = {
   // /pet companion soul — bones regenerated from userId on read. See src/pet/.
   companion?: import('../pet/types.js').StoredCompanion
   companionMuted?: boolean
+  // /pet offers on|off: pet offers after a failure (contract settings key petOffers.enabled)
+  petOffersEnabled?: boolean
 
   // Feedback survey tracking
   feedbackSurveyState?: {

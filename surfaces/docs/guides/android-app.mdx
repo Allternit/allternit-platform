@@ -23,6 +23,18 @@ The version from allternit.com/android is also the Phone Link helper. The Google
 
 To see Phone Link's status (paired computers, **Stop** and **Start**, **Revoke**), tap its notification. You can also long-press the Allternit icon and tap **Phone Link**.
 
+## Error offers
+
+With the Phone Link version, your bot can notice when another app on the phone shows an error or crash dialog (for example "keeps stopping") and offer to help. It is off until you turn it on.
+
+- **Turn it on:** open Phone Link's status screen (tap its notification) and turn on **Spot errors in other apps**. While it's on, the screen says it is watching for errors.
+- **What you see:** a notification that says "Your bot spotted an error. Fix it?" The notification never shows the error text or the app's name, so nothing private appears on the lock screen.
+- **Fix it:** opens m.allternit.com with the error text attached in your bot's quick chat. Nothing is sent until you send it. The text is passed in the part of the link that never reaches a server.
+- **Mute:** tap **Mute** on the notification to stop offers from that app. The status screen lists muted apps and your block list, where you can add or remove apps.
+- **Never read:** password managers, banking and payment apps, and messaging apps are skipped before anything is read. Password fields are never read.
+
+Phone Link reads only dialog windows for this, and only the text the phone's accessibility service already sees. The Google Play version doesn't read other apps; it shows offers inside Allternit when a bot's run fails, the same as [m.allternit.com](/guides/bot-avatars#on-the-web-the-phone-layout-and-the-pwa).
+
 ## Shortcuts, sharing and notifications
 
 Long-press the Allternit icon for four shortcuts: **Ask a bot**, **Hand off a task**, **Needs you** and **Call main bot**. Each opens the app at that screen.

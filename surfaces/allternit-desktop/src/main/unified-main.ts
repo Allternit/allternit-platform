@@ -25,7 +25,8 @@ import { updateElectronApp } from 'update-electron-app';
 import fixPath from 'fix-path';
 import { installDesktopCompanion } from './desktop-companion.js';
 import type { SystemTab } from './system-summary.js';
-import { readBotCarryContext, type BotCarryContext } from './bot-carry-context.js';
+import { offerCarryContext, readBotCarryContext, type BotCarryContext } from './bot-carry-context.js';
+import { driverCall } from './driver-rpc.js';
 import {
   HUD_MAX_HEIGHT, HUD_MAX_WIDTH, HUD_MIN_HEIGHT, HUD_MIN_WIDTH,
   applyHudBounds, clampHudBounds, debounce, defaultHudBounds, hudBoundsForDisplay, keepHudReachable,
@@ -885,6 +886,27 @@ const desktopCompanion = installDesktopCompanion({
   onSystem: () => { void updateTrayMenu(); },
   openSystem: (tab) => openSystemDrawer(tab),
   closeHud: () => hideHudWindow(),
+  // Pet offers: the pet reads other apps' windows through the bundled
+  // Allternit Driver (never Allternit's own windows). No driver = no reads.
+  look: {
+    windows: async () => {
+      const list = await enumerateWindowsFrontToBack(process.pid, false);
+      if (enumerationFailed(list)) return null;
+      return list.filter((w) => w.pid !== process.pid)
+        .map((w) => ({ app: w.app, appId: '', pid: w.pid, id: w.id, title: w.title, bounds: w.bounds }));
+    },
+    driver: (method, params) => {
+      const endpoint = computerUseDriverManager.getAllternitDriverEndpoint();
+      return endpoint ? driverCall(endpoint, method, params) : Promise.reject(new Error('The Allternit Driver is not running.'));
+    },
+    // The agent cursor badge is up while a computer-use run drives this computer.
+    computerUseActive: () => agentCursorWindow.window()?.isVisible() === true,
+  },
+  acceptOffer: (offer) => {
+    botCarryContext = offerCarryContext(offer);
+    if (isHudAlive()) hudWindow!.webContents.send('shell:hud:carry-context', botCarryContext);
+  },
+  requestAccessibility: () => { void presentGuide('accessibility').catch((err) => log.warn('[Main] accessibility prompt failed', err)); },
   moveHudWithPet: (dx, dy) => {
     if (hudCompanionAgentId === undefined || !hudWindow || hudWindow.isDestroyed() || !hudWindow.isVisible()) return false;
     const bounds = hudWindow.getBounds();

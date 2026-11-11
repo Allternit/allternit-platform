@@ -960,6 +960,13 @@ fn user_layers(profile: Option<&str>, writing_style: Option<&str>) -> Option<Str
 /// The `metadata` sent to gizzi for a turn, which gizzi stores on the user
 /// message: only the composer's `metadata.tools`, never anything else from
 /// the send body (in particular never `client_location`).
+///
+/// `metadata.tools` is forwarded whole on purpose: the gizzi runtime owns its
+/// schema (`MobileTools` in cmd/gizzi-code/src/runtime/session/prompt.ts),
+/// so new per-turn options need no change here. One of them is
+/// `computer: true` (contracts/pet-offers `turnOptions.computer`), which turns
+/// on the computer toolset for that turn only; the lease and confirm gates in
+/// computer_toolset.rs / computer_safety.rs still decide every call.
 fn stored_turn_metadata(body: &serde_json::Value) -> Option<serde_json::Value> {
     body.get("metadata")
         .and_then(|m| m.get("tools"))
@@ -3115,6 +3122,24 @@ mod tests {
             .map(|loc| crate::client_location::location_layer(&loc))
             .unwrap();
         assert!(layer.starts_with("Where the user is (shared from their device just now, approximate): about 40.71, -74.01"));
+    }
+
+    #[test]
+    fn stored_turn_metadata_passes_the_computer_option_through() {
+        // Pet offers: a Desktop offer sends `metadata.tools.computer: true`;
+        // gizzi turns the computer toolset on for that turn only if the key
+        // arrives untouched next to the composer's other options.
+        let body = json!({
+            "chatId": "c1",
+            "message": "Fix the build error",
+            "metadata": { "tools": { "computer": true, "webSearch": false }, "client_location": { "lat": 1.0 } }
+        });
+        assert_eq!(
+            stored_turn_metadata(&body),
+            Some(json!({ "tools": { "computer": true, "webSearch": false } }))
+        );
+        // No tools object: nothing is stored, so the turn has no computer tools.
+        assert_eq!(stored_turn_metadata(&json!({ "metadata": { "computer": true } })), None);
     }
 
     /// D16: a send to a `subs-*` model mints `chat.send` only for a person's

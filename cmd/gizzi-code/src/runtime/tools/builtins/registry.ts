@@ -142,7 +142,14 @@ export namespace ToolRegistry {
     custom.push(tool)
   }
 
-  async function all(): Promise<Tool.Info[]> {
+  /** Per-turn additions to the tool list. */
+  export interface TurnOptions {
+    /** The turn carries `metadata.tools.computer: true` (pet offers): the
+     * computer toolset is on for this turn even without the env flag. */
+    computer?: boolean
+  }
+
+  async function all(turn?: TurnOptions): Promise<Tool.Info[]> {
     const custom = await state().then((x) => x.custom)
     const config = await Config.get()
     const question = ["app", "cli", "desktop"].includes(Flag.GIZZI_CLIENT) || Flag.GIZZI_ENABLE_QUESTION_TOOL
@@ -236,8 +243,9 @@ export namespace ToolRegistry {
       // as a function tool.
       ...(Flag.GIZZI_ENABLE_BROWSER_TOOL ? [BrowserToolsetTool] : []),
       // `computers` (lifecycle + files via allternit-api computer_* tools)
-      // rides the same opt-in as `computer`.
-      ...(Flag.GIZZI_ENABLE_COMPUTER_TOOL ? [ComputerToolsetTool, ComputerV2ToolsetTool, ComputersTool] : []),
+      // rides the same opt-in as `computer`. A turn can also opt in on its own
+      // (`metadata.tools.computer`, contracts/pet-offers): this turn only.
+      ...(Flag.GIZZI_ENABLE_COMPUTER_TOOL || turn?.computer === true ? [ComputerToolsetTool, ComputerV2ToolsetTool, ComputersTool] : []),
       // Subscription capabilities (presentations, documents, deep research)
       // the user's connected subscriptions can run now; every call is
       // confirmed by the user (D16). Empty when the fabric is not set up.
@@ -246,8 +254,8 @@ export namespace ToolRegistry {
     ]
   }
 
-  export async function ids() {
-    return all().then((x) => x.map((t) => t.id))
+  export async function ids(turn?: TurnOptions) {
+    return all(turn).then((x) => x.map((t) => t.id))
   }
 
   export async function tools(
@@ -258,8 +266,9 @@ export namespace ToolRegistry {
     },
     agent?: Agent.Info,
     sessionID?: string,
+    turn?: TurnOptions,
   ) {
-    const tools = await all()
+    const tools = await all(turn)
     const result = await Promise.all(
       tools
         .filter((t) => {

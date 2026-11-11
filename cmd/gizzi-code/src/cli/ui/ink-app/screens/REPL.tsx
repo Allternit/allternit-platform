@@ -131,7 +131,7 @@ import { getGlobalConfig, saveGlobalConfig, getGlobalConfigWriteCount } from '..
 import { hasConsoleBillingAccess } from '../utils/billing';
 import { logEvent, type AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS } from './../services/analytics/index.ts';
 import { getFeatureValue_CACHED_MAY_BE_STALE } from './../services/analytics/growthbook.ts';
-import { textForResubmit, handleMessageFromStream, type StreamingToolUse, type StreamingThinking, isCompactBoundaryMessage, getMessagesAfterCompactBoundary, getContentText, createUserMessage, createAssistantMessage, createTurnDurationMessage, createAgentsKilledMessage, createApiMetricsMessage, createSystemMessage, createCommandInputMessage, createRunTelemetryMessage, formatCommandInputTags } from '../utils/messages';
+import { textForResubmit, handleMessageFromStream, type StreamingToolUse, type StreamingThinking, isCompactBoundaryMessage, getMessagesAfterCompactBoundary, getContentText, createUserMessage, createAssistantMessage, createTurnDurationMessage, createAgentsKilledMessage, createApiMetricsMessage, createSystemMessage, createCommandInputMessage, createRunTelemetryMessage, formatCommandInputTags, getAssistantMessageText } from '../utils/messages';
 import { getContextWindowForModel } from '../utils/context';
 import { renderModelName } from '../utils/model/model';
 import { quotaChipForProvider, resolveQuotaProviderId } from '../utils/telemetry/providerQuota';
@@ -388,6 +388,7 @@ import { useIssueFlagBanner } from '../hooks/useIssueFlagBanner';
 import { CompanionSprite, CompanionFloatingBubble, MIN_COLS_FOR_FULL_SPRITE } from '../pet/CompanionSprite';
 import { fireCompanionObserver } from '../pet/observer';
 import { useDesktopPetHook } from '../pet/desktopPetHook';
+import { handlePetFailure } from '../pet/petOffersSettings';
 import { DevBar } from '../components/DevBar';
 // Session manager removed - using AppState now
 import type { RemoteSessionConfig } from '../remote/RemoteSessionManager';
@@ -2887,6 +2888,32 @@ export function REPL({
       } else {
         setMessages(oldMessages => [...oldMessages, newMessage]);
       }
+      // Pet offers: a turn error, or an agent Bash result that failed with a known error line.
+      try {
+        const sayInTerminal = (bubble: string) => setAppState(prev => prev.companionReaction === bubble ? prev : {
+          ...prev,
+          companionReaction: bubble
+        });
+        if (newMessage.type === 'assistant' && 'isApiErrorMessage' in newMessage && newMessage.isApiErrorMessage) {
+          handlePetFailure({
+            cwd: getOriginalCwd(),
+            text: getAssistantMessageText(newMessage) ?? '',
+            needMatch: false,
+            say: sayInTerminal
+          });
+        } else if (newMessage.type === 'user' && Array.isArray(newMessage.message?.content)) {
+          for (const block of newMessage.message.content) {
+            if (block.type === 'tool_result' && block.is_error && typeof block.content === 'string' && /^Exit code [1-9]/.test(block.content)) {
+              handlePetFailure({
+                cwd: getOriginalCwd(),
+                text: block.content,
+                needMatch: true,
+                say: sayInTerminal
+              });
+            }
+          }
+        }
+      } catch {}
       // Block ticks on API errors to prevent tick → error → tick
       // runaway loops (e.g., auth failure, rate limit, blocking limit).
       // Cleared on compact boundary (above) or successful response (below).

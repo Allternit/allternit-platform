@@ -113,6 +113,7 @@ final class ShellSessionsStore: ObservableObject {
             if id != nil { streaming.remove(previous) }
         }
         activeId = id
+        PetOfferCenter.shared.visibleSessionId = id
         guard let id else { return }
         if isStreaming { streaming.insert(id) } else { streaming.remove(id) }
         markSeen(id)

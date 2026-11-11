@@ -1354,6 +1354,23 @@ contextBridge.exposeInMainWorld('allternitCompanion', {
     setReducedMotion: (reduced: boolean) => ipcRenderer.send('companion:motion-pref', reduced),
   },
   toggleMain: () => ipcRenderer.invoke('companion:toggle-main'),
+  // Pet offers (pet-offers-v1). Renderers hear which offer shows (never its
+  // screen text), mute an app, accept, edit the device-local settings and the
+  // block list. Only the app window may report an in-app failure.
+  offers: {
+    onOffer: (callback: (offer: unknown) => void) => {
+      const listener = (_event: IpcRendererEvent, offer: unknown) => callback(offer ?? null);
+      ipcRenderer.on('companion:offer-state', listener);
+      return () => ipcRenderer.removeListener('companion:offer-state', listener);
+    },
+    current: () => ipcRenderer.invoke('companion:offer-current'),
+    mute: (appId?: string) => ipcRenderer.invoke('companion:offer-mute', appId),
+    accept: (id: string) => ipcRenderer.invoke('companion:offer-accept', id),
+    getSettings: () => ipcRenderer.invoke('companion:offer-settings-get'),
+    setSettings: (patch: Record<string, unknown>) => ipcRenderer.invoke('companion:offer-settings-set', patch),
+    listApps: () => ipcRenderer.invoke('companion:apps'),
+    report: (offer: Record<string, unknown>) => ipcRenderer.invoke('companion:offer', offer),
+  },
   // System drawer (Settings → Developer). The app window reports its summary
   // and hears "open"; the pet reads it for its dot, hovers and clicks the dot.
   system: {
