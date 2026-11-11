@@ -73,7 +73,7 @@ describe('driverCall', () => {
 
   it('turns a driver error into its code', async () => {
     const endpoint = await listenTcp(fakeDriver('t', () => Object.assign(new Error('Terminal isn\'t running'), { name: 'app_not_running' })));
-    const error = await driverCall({ endpoint, token: 't' }, 'read_ui', { pid: 1 }).catch((e) => e);
+    const error: DriverRpcError = await driverCall({ endpoint, token: "t" }, "read_ui", { pid: 1 }).catch((e: DriverRpcError) => e) as DriverRpcError;
     expect(error).toBeInstanceOf(DriverRpcError);
     expect(error.code).toBe('app_not_running');
   });
