@@ -24,7 +24,7 @@ use crate::db::DbHandle;
 use crate::phone_guard::TaskCtx;
 
 const TITLE_MAX: usize = 40;
-const INBOX_URL: &str = "https://ai.allternit.com/inbox";
+const INBOX_URL: &str = "https://ai.allternit.com/";
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Event {
@@ -58,7 +58,7 @@ fn short_title(goal: &str) -> String {
 
 /// The inbox link for an approval id.
 pub fn inbox_link(approval_id: &str) -> String {
-    format!("{INBOX_URL}?item=approval:{approval_id}")
+    format!("{INBOX_URL}?allternit_inbox=approval:{approval_id}")
 }
 
 /// The text for an event. Short, plain, no screen content.
@@ -214,7 +214,7 @@ mod tests {
         let sent = http.sent.lock().unwrap();
         let texts: Vec<String> = sent.iter().map(|q| q.body["text"].as_str().unwrap().to_string()).collect();
         assert_eq!(texts[0], "Started: \"open settings on my phone\". I'll text when it needs you or is done.");
-        assert_eq!(texts[1], "Needs your approval: \"open settings on my phone\". Open the app inbox to decide: https://ai.allternit.com/inbox?item=approval:gap_1");
+        assert_eq!(texts[1], "Needs your approval: \"open settings on my phone\". Open the app inbox to decide: https://ai.allternit.com/?allternit_inbox=approval:gap_1");
         assert_eq!(texts[2], "Done: \"open settings on my phone\".");
         assert_eq!(texts[3], "Stopped: \"open settings on my phone\" was denied. Nothing more was done.");
         assert_eq!(texts[4], "Timed out waiting for approval on \"open settings on my phone\". Nothing was done. Ask again to retry.");
