@@ -2849,7 +2849,7 @@
 			);
 			productName = AllternitMessages;
 			productReference = 06B360969E6E7F337595712A /* AllternitMessages.appex */;
-			productType = "com.apple.product-type.app-extension";
+			productType = "com.apple.product-type.app-extension.messages";
 		};
 		3A6927A0E75BC2CECE5E8683 /* AllternitShare */ = {
 			isa = PBXNativeTarget;

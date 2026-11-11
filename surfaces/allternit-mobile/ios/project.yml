@@ -309,7 +309,9 @@ targets:
         SKIP_INSTALL: true
   # iMessage app (Phone and Messages wave 2, I3): opens on the quick panel.
   AllternitMessages:
-    type: app-extension
+    # .messages product type: actool only emits the iMessage icon PNGs
+    # App Store Connect checks for under this type.
+    type: app-extension.messages
     platform: iOS
     deploymentTarget: "17.0"
     sources:
