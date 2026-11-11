@@ -77,6 +77,17 @@ Texts and calls are person-to-person. Limits: a text at most every 15 seconds, 1
 
 A text is reported as **submitted** to the phone's messaging service, not delivered. Without extra hardware a call is **dialled** only: Android does not let apps capture carrier call audio, so the bot can't speak or listen on it. With a call cable from the phone to the Mac running Allternit Desktop, the bot can answer calls on the phone after one ring and talk on calls it places, on the same call screen as an Allternit number. See [Let your bot talk on its own phone](/guides/bot-voice-on-linked-phone). Without the cable, live AI voice calls use your Allternit number.
 
+## From Live voice
+
+When Live voice is on, your bot reads out where a phone task stands. It never reads the phone screen aloud.
+
+- **On hold:** "I need your OK on your phone screen in Allternit." Approve or Deny on the card.
+- **After you approve and the task ends:** "Done on your phone:" and the task's own result sentence (up to about 200 characters). If the run left no result, it says the goal instead.
+- **On deny or timeout:** "You said no, so I stopped on your phone." or "Nobody approved in time, so I stopped on your phone."
+- A phone locked or unreachable gets one short line too.
+
+A task your bot starts with its own phone tool during a Live turn is recorded as a voice task, the same as one you start from the composer.
+
 ## Limits
 
 - Over Wireless debugging, same network only. Away from home, the live view goes through Phone Link and the Allternit mesh (see **Away from home** above); the bot's other phone tools still use Wireless debugging.
