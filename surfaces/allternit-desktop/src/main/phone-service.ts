@@ -43,7 +43,8 @@ import { PhoneLinkPhoneSocket, phoneLinkApiUrl } from './phone-link-cloud.js';
 import { authManager } from './auth-manager.js';
 import { backendManager } from './backend-manager.js';
 import { URLS } from './config.js';
-import { UsbAgentManager, type Sealer, type StoredUsbAgent, type UsbAgentConfig, type UsbAgentStore } from './phone-usb-agent.js';
+import { UsbAgentManager, type Sealer, type StoredUsbAgent, type UsbAgentConfig, type UsbAgentStore, type UsbForgetResult } from './phone-usb-agent.js';
+import { httpLinkBoardCloud } from './phone-usb-agent-cloud.js';
 import { candidatePorts, lanAddresses, serialPort } from './phone-usb-agent-provision.js';
 import { USBA_MDNS_TYPE } from './phone-usb-agent-protocol.js';
 import { loadFirmware, type BundledFirmware } from './phone-usb-agent-firmware.js';
@@ -780,7 +781,7 @@ class PhoneService {
       });
       this.runner = runner;
       const token = newGatewayToken();
-      const gateway = await startPhoneGateway({ token, runner, handover: this.handoverInbox() });
+      const gateway = await startPhoneGateway({ token, runner, handover: this.handoverInbox(), boards: this.gatewayBoards() });
       this.gatewayClose = gateway.close;
       writeJson(this.gatewayFile, { url: gateway.url, token });
     })();
@@ -1343,6 +1344,18 @@ class PhoneService {
         bundledFirmware: () => this.firmwareVersion(),
         // A board paired with an app iPhone sees through that app's shared screen, not AirPlay.
         eyes: (pairedPhone) => this.ensureAppBackend().frameSource(pairedPhone),
+        // Allternit Link relay rows, as this Desktop's runtime device (its device token acts as the owner).
+        cloud: httpLinkBoardCloud({
+          cloudUrl: () => process.env.ALLTERNIT_CLOUD_API_URL || URLS.CLOUD_API,
+          headers: (): Record<string, string> => {
+            const token = authManager.getSessionSnapshot()?.accessToken;
+            return token ? { Authorization: `Bearer ${token}` } : {};
+          },
+          runtimeDeviceId: () => {
+            const session = authManager.getSessionSnapshot();
+            return session?.accessToken && session.runtimeId ? session.runtimeId : null;
+          },
+        }),
       });
     }
     await this.usbAgents.start();
@@ -1382,6 +1395,29 @@ class PhoneService {
 
   getUsbAgents(): UsbAgentManager | null {
     return this.usbAgents;
+  }
+
+  /**
+   * The phone gateway's board routes (allternit-api reads them for the web,
+   * the PWA, iOS and gizzi). Stop and Forget only. The USB lane comes up for
+   * them only when a board is stored, as at launch.
+   */
+  private gatewayBoards() {
+    const stored = () => readJson<StoredUsbAgent[]>(path.join(this.dir(), 'usb-agents.json'), []).length > 0;
+    const lane = async (): Promise<UsbAgentManager | null> => this.usbAgents ?? (stored() ? this.ensureUsbReady() : null);
+    return {
+      list: () => this.usbAgents?.list() ?? [],
+      stop: async (boardId: string) => {
+        const usb = await lane();
+        return usb ? usb.stop(boardId) : { ok: false as const, error: 'device_offline' as const, message: 'No Allternit Link board is set up on this computer.' };
+      },
+      forget: async (boardId: string): Promise<UsbForgetResult> => {
+        const usb = await lane();
+        const res = usb ? await usb.forget(boardId) : ({ ok: true, cloud: 'none' } as const);
+        if (res.cloud === 'failed') log.warn(`[Phone] board ${boardId} forgotten here; cloud revoke failed and is queued`);
+        return res;
+      },
+    };
   }
 
   /**

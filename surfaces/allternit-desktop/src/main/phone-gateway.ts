@@ -11,6 +11,14 @@
  *   POST /phone/call {name, arguments}     → ToolResult
  *   GET  /phone/handover/key               → HandoverKey (this Desktop's public key)
  *   POST /phone/handover {sealed}          → { ok, deviceId, platform, name }
+ *   GET  /phone/boards                     → { boards: LinkBoardStatus[] }
+ *   POST /phone/board/stop {boardId}       → ToolResult (disarms; nothing here can arm a board)
+ *   POST /phone/board/forget {boardId}     → { ok: true, cloud: 'revoked' | 'none' | 'failed', message? }
+ *
+ * The three board routes are what allternit-api's phone_usba.rs reads for
+ * `GET /api/v1/phones/boards` and its Stop and Forget (hardware/link/README.md
+ * section 6). The board list is projected to LinkBoardStatus field by field,
+ * so no key, token or LAN address leaves this process through it.
  *
  * The handover pair receives a phone's pairing from the person's Mac
  * (phone-link-handover.ts). The subscription gateway on this computer is the
@@ -22,6 +30,9 @@ import * as http from 'node:http';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { PHONE_TOOLS, type PhoneToolRunner } from './phone-tools.js';
 import type { HandoverKey, SealedHandover } from './phone-link-handover.js';
+import type { ToolResult } from './phone-tools.js';
+import type { LinkBoardStatus } from './phone-link-board.js';
+import { linkBoardStatusOf, type UsbForgetResult } from './phone-usb-agent.js';
 
 /** The receiving half of a pairing handover (phone-service.ts wires phone-link-handover.ts). */
 export interface PhoneGatewayHandover {
@@ -29,11 +40,21 @@ export interface PhoneGatewayHandover {
   receive(sealed: SealedHandover): Promise<{ deviceId: string; platform: 'ios' | 'android'; name?: string }>;
 }
 
+/** Allternit Link boards, for the node's board routes. Stop and Forget only: there is no route that arms. */
+export interface PhoneGatewayBoards {
+  list(): LinkBoardStatus[];
+  stop(boardId: string): Promise<ToolResult>;
+  forget(boardId: string): Promise<UsbForgetResult>;
+}
+
 export interface PhoneGatewayDeps {
   token: string;
   runner: PhoneToolRunner;
   handover?: PhoneGatewayHandover;
+  boards?: PhoneGatewayBoards;
 }
+
+const BOARD_ID = /^usba-[0-9a-f]{12}$/;
 
 export const PHONE_GATEWAY_TOKEN_HEADER = 'x-allternit-phone-token';
 
@@ -73,6 +94,36 @@ export function handlePhoneGatewayRequest(
           const code = (error as { code?: unknown })?.code;
           reply(400, { ok: false, error: typeof code === 'string' ? code : 'handover_failed', message: error instanceof Error ? error.message : String(error) });
         },
+      );
+    }, () => reply(400, { error: 'bad_json' }));
+  }
+  if (req.method === 'GET' && req.url === '/phone/boards') {
+    let boards: LinkBoardStatus[] = [];
+    try {
+      boards = deps.boards?.list().map(linkBoardStatusOf) ?? [];
+    } catch {
+      boards = [];
+    }
+    return reply(200, { boards });
+  }
+  if (req.url === '/phone/board/stop' || req.url === '/phone/board/forget') {
+    if (req.method !== 'POST') return reply(404, { error: 'not_found' });
+    const forget = req.url === '/phone/board/forget';
+    return readJson(req, (parsed) => {
+      const boardId = (parsed as { boardId?: unknown } | null)?.boardId;
+      if (typeof boardId !== 'string' || !BOARD_ID.test(boardId)) {
+        return reply(400, { ok: false, error: 'invalid_args', message: 'boardId must look like usba-0123456789ab.' });
+      }
+      const boards = deps.boards;
+      if (!boards) {
+        return forget
+          ? reply(200, { ok: true, cloud: 'none' })
+          : reply(200, { ok: false, error: 'device_offline', message: 'No Allternit Link board is set up on this computer.' });
+      }
+      const work: Promise<unknown> = forget ? boards.forget(boardId) : boards.stop(boardId);
+      work.then(
+        (result) => reply(200, result),
+        (error: unknown) => reply(500, { ok: false, error: 'adb_failed', message: error instanceof Error ? error.message : String(error) }),
       );
     }, () => reply(400, { error: 'bad_json' }));
   }

@@ -28,6 +28,7 @@ import { BoardError, UsbPointer, type Calibration, type PointerScreen } from './
 import { changed, type Gray } from './phone-usb-agent-vision.js';
 import { compareVersions } from './phone-usb-agent-firmware.js';
 import { provision, readIdentity, validateProvision, type SerialPort } from './phone-usb-agent-provision.js';
+import type { LinkBoardCloud } from './phone-usb-agent-cloud.js';
 import type { ToolErrorCode, ToolResult } from './phone-tools.js';
 import { APP_FRAME_TIMEOUT_MS, APP_SERIAL_PREFIX, APP_SHARE_SCREEN_MESSAGE } from './phone-app-store.js';
 import type { LinkBoardStatus, LinkFrameSource } from './phone-link-board.js';
@@ -51,7 +52,20 @@ export interface StoredUsbAgent {
 export interface UsbAgentConfig {
   deskId: string;
   airplayPin: string;
+  /** Boards forgotten here whose cloud revoke failed; retried at start. Board ids only, no secret. */
+  pendingRevokes?: string[];
 }
+
+/** What Forget did. The local key is gone in every case; `cloud` says whether the relay token was revoked. */
+export interface UsbForgetResult {
+  ok: true;
+  /** `revoked`: the cloud row is revoked. `none`: the board had no cloud row. `failed`: see `message`; retried at next start. */
+  cloud: 'revoked' | 'none' | 'failed';
+  message?: string;
+}
+
+/** The first firmware that stores the relay host and token (`prov set relay` / `rtok`). */
+export const RELAY_FIRMWARE = '1.1.0';
 
 export interface UsbAgentStore {
   load(): StoredUsbAgent[];
@@ -114,6 +128,8 @@ export interface UsbAgentDeps {
   bundledFirmware?: () => string | null;
   /** Allternit Link: the shared screen of a paired app phone (AppPhoneBackend.frameSource); null when that lane is off. */
   eyes?: (pairedPhone: string) => LinkFrameSource | null;
+  /** Allternit Link: cloud relay registration (phone-usb-agent-cloud.ts). Absent: boards get the LAN link only. */
+  cloud?: LinkBoardCloud;
 }
 
 interface Board {
@@ -138,6 +154,7 @@ export class UsbAgentManager extends EventEmitter {
   private config: UsbAgentConfig;
   private advertiser: ChildProcess | null = null;
   private listening: Promise<number> | null = null;
+  private cloudSync: Promise<{ removed: string[]; error?: string }> | null = null;
   private readonly now: () => number;
 
   constructor(private readonly deps: UsbAgentDeps) {
@@ -203,7 +220,57 @@ export class UsbAgentManager extends EventEmitter {
       });
     }
     for (const b of this.boards.values()) b.screen.start();
+    // Once per launch: drop boards forgotten on another surface, retry failed revokes.
+    this.cloudSync ??= this.syncCloud().catch((error: unknown) => ({ removed: [], error: error instanceof Error ? error.message : String(error) }));
     return this.listening;
+  }
+
+  /**
+   * Reads the account's cloud rows and forgets every stored board whose row is
+   * revoked (a Forget made on the web, the phone or gizzi while this Desktop
+   * was off), then retries revokes that failed before. Signed out or offline:
+   * nothing changes and the reason is returned.
+   */
+  async syncCloud(): Promise<{ removed: string[]; error?: string }> {
+    const cloud = this.deps.cloud;
+    if (!cloud) return { removed: [] };
+    const errors: string[] = [];
+    const pending = this.config.pendingRevokes ?? [];
+    if (pending.length) {
+      const left: string[] = [];
+      for (const id of pending) {
+        try {
+          await cloud.revoke(id);
+        } catch (error) {
+          left.push(id);
+          errors.push(error instanceof Error ? error.message : String(error));
+        }
+      }
+      this.setPendingRevokes(left);
+    }
+    const removed: string[] = [];
+    if ([...this.boards.values()].some((b) => b.stored.relay === 'registered')) {
+      try {
+        const rows = await cloud.list();
+        const revoked = new Set(rows.filter((r) => r.revokedAt !== null).map((r) => r.boardId));
+        for (const b of [...this.boards.values()]) {
+          if (b.stored.relay === 'registered' && revoked.has(b.stored.boardId)) {
+            this.dropLocal(b.stored.boardId);
+            removed.push(b.stored.boardId);
+          }
+        }
+      } catch (error) {
+        errors.push(error instanceof Error ? error.message : String(error));
+      }
+    }
+    return errors.length ? { removed, error: errors.join(' ') } : { removed };
+  }
+
+  private setPendingRevokes(ids: string[]): void {
+    const next = [...new Set(ids)];
+    if (next.length) this.config.pendingRevokes = next;
+    else delete this.config.pendingRevokes;
+    this.deps.store.saveConfig(this.config);
   }
 
   stopAll(): void {
@@ -234,18 +301,60 @@ export class UsbAgentManager extends EventEmitter {
     }
   }
 
-  /** Writes Wi-Fi and a fresh key to the board, then remembers it. */
-  async setUp(path: string, wifi: { ssid: string; password: string }, name: string): Promise<UsbAgentInfo> {
+  /**
+   * Writes Wi-Fi and a fresh key to the board, then remembers it. When this
+   * Desktop is signed in and the board's firmware has the relay client, the
+   * board is registered with the cloud first and its relay host and token go
+   * to the board with the other settings. Signed out, or the cloud call
+   * fails: setup still finishes with the LAN link only (`relay: 'none'`,
+   * `relayNote` says why). The relay token lives in memory for this call only.
+   */
+  async setUp(
+    path: string,
+    wifi: { ssid: string; password: string },
+    name: string,
+    opts: { networks?: Array<{ ssid: string; password: string }> } = {},
+  ): Promise<UsbAgentInfo & { relayNote?: string }> {
     const bound = await this.start();
     const host = this.deps.lanAddresses()[0];
     const keyHex = newKeyHex();
-    const input = { ssid: wifi.ssid, password: wifi.password, host: host ?? '', port: bound, deskId: this.config.deskId, keyHex };
+    const boardName = name.trim().slice(0, 40) || 'iPhone';
+    const input = { ssid: wifi.ssid, password: wifi.password, host: host ?? '', port: bound, deskId: this.config.deskId, keyHex, networks: opts.networks ?? [] };
     const problem = validateProvision(input);
     if (problem) throw new Error(problem);
     const port = await this.deps.openSerial(path);
     let boardId: string;
+    let relay = false;
+    let relayNote: string | undefined;
+    let revoking = false;
     try {
-      boardId = (await provision(port, input)).boardId;
+      const identity = await readIdentity(port);
+      boardId = identity.boardId;
+      let registration: { relayToken: string; relayHost: string } | null = null;
+      const cloud = this.deps.cloud;
+      if (!cloud) relayNote = 'This Desktop has no cloud connection, so the board uses this network only.';
+      else if (compareVersions(identity.firmware, RELAY_FIRMWARE) < 0) relayNote = `Firmware ${identity.firmware} has no cloud relay. Update the board to reach it away from this network.`;
+      else {
+        try {
+          registration = await cloud.register(boardId, boardName);
+        } catch (error) {
+          relayNote = `The board uses this network only: ${error instanceof Error ? error.message : String(error)}`;
+        }
+      }
+      let written: Awaited<ReturnType<typeof provision>>;
+      try {
+        written = await provision(port, { ...input, ...(registration ? { relay: { host: registration.relayHost, tokenHex: registration.relayToken } } : {}) }, identity);
+      } catch (error) {
+        // A cloud row whose token never reached the board: take it back.
+        if (registration) void this.revokeOrQueue(boardId);
+        throw error;
+      }
+      relay = registration !== null && written.relay;
+      if (registration && !written.relay) {
+        relayNote = 'The board did not take the relay settings, so it uses this network only.';
+        revoking = true;
+        void this.revokeOrQueue(boardId);
+      }
     } finally {
       port.close();
     }
@@ -253,22 +362,58 @@ export class UsbAgentManager extends EventEmitter {
     if (old) this.removeBoard(boardId);
     const stored: StoredUsbAgent = {
       boardId,
-      name: name.trim().slice(0, 40) || 'iPhone',
+      name: boardName,
       sealedKey: this.deps.sealer.seal(keyHex),
       addedAt: this.now(),
       slot: old?.stored.slot ?? this.freeSlot(),
       ...(old?.stored.pairedPhone ? { pairedPhone: old.stored.pairedPhone } : {}),
+      ...(relay ? { relay: 'registered' as const } : {}),
     };
+    if (relay) this.setPendingRevokes((this.config.pendingRevokes ?? []).filter((id) => id !== boardId));
+    // Set up again without the relay: the board no longer holds the old token, so its row goes.
+    else if (old?.stored.relay === 'registered' && !revoking) void this.revokeOrQueue(boardId);
     const board = this.addBoard(stored, keyHex);
     this.deps.store.saveCalibration(boardId, null);
     board.pointer.forget();
     this.persist();
     board.screen.start();
     this.emit('devices');
-    return this.info(board);
+    return relayNote ? { ...this.info(board), relayNote } : this.info(board);
   }
 
-  forget(boardId: string): void {
+  /**
+   * Disarms the board, drops its session, key and calibration, and revokes
+   * its cloud relay row. The local part happens first and does not wait for
+   * the cloud, so the key stops working even when the cloud call fails; a
+   * failed revoke is reported in the result and retried at the next start.
+   */
+  async forget(boardId: string): Promise<UsbForgetResult> {
+    const b = this.boards.get(boardId);
+    if (!b) return { ok: true, cloud: 'none' };
+    const registered = b.stored.relay === 'registered';
+    this.dropLocal(boardId);
+    if (!registered) return { ok: true, cloud: 'none' };
+    const problem = await this.revokeOrQueue(boardId);
+    return problem
+      ? { ok: true, cloud: 'failed', message: `Removed from this computer, but the cloud could not revoke the board’s relay token yet (${problem}). Allternit retries when it starts.` }
+      : { ok: true, cloud: 'revoked' };
+  }
+
+  /** Revokes a cloud row; on failure queues it for the next start and returns the reason. */
+  private async revokeOrQueue(boardId: string): Promise<string | null> {
+    const cloud = this.deps.cloud;
+    try {
+      if (!cloud) throw new Error('this Desktop has no cloud connection');
+      await cloud.revoke(boardId);
+      return null;
+    } catch (error) {
+      this.setPendingRevokes([...(this.config.pendingRevokes ?? []), boardId]);
+      return error instanceof Error ? error.message : String(error);
+    }
+  }
+
+  /** The local half of Forget: disarm, drop the session, the key and the calibration. */
+  private dropLocal(boardId: string): void {
     if (!this.boards.has(boardId)) return;
     void this.link.send(boardId, { op: 'disarm' });
     this.link.disconnect(boardId);
@@ -656,6 +801,36 @@ export class UsbAgentManager extends EventEmitter {
 }
 
 class ArgError extends Error {}
+
+/**
+ * The status other surfaces read (gateway, node, web, iOS, gizzi): exactly the
+ * LinkBoardStatus fields, picked one by one so nothing else (a key, a token,
+ * the board's LAN address) can ride along.
+ */
+export function linkBoardStatusOf(i: LinkBoardStatus): LinkBoardStatus {
+  return {
+    boardId: i.boardId,
+    serial: i.serial,
+    name: i.name,
+    online: i.online,
+    armed: i.armed,
+    status: i.status,
+    link: i.link,
+    usb: i.usb,
+    hid: i.hid,
+    dock: i.dock,
+    face: i.face,
+    prog: i.prog,
+    eyes: i.eyes,
+    phone: i.phone,
+    screen: i.screen,
+    calibrated: i.calibrated,
+    firmware: i.firmware,
+    protocol: i.protocol,
+    firmwareUpdate: i.firmwareUpdate,
+    relay: i.relay,
+  };
+}
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const isCoord = (v: unknown): v is number => Number.isInteger(v) && (v as number) >= 0 && (v as number) <= 20_000;

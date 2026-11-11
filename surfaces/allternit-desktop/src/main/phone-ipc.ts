@@ -335,10 +335,13 @@ export function registerPhoneIpc(handle: Guarded): void {
       return errorResult(error);
     }
   });
-  handle('phone:usb-setup', async (_e, port: unknown, ssid: unknown, password: unknown, name: unknown) => {
+  handle('phone:usb-setup', async (_e, port: unknown, ssid: unknown, password: unknown, name: unknown, networks: unknown) => {
     try {
-      const board = await (await usb()).setUp(String(port), { ssid: String(ssid ?? ''), password: String(password ?? '') }, String(name ?? ''));
-      return { ok: true as const, board };
+      const extra = Array.isArray(networks)
+        ? networks.slice(0, 8).map((n) => ({ ssid: String((n as { ssid?: unknown })?.ssid ?? ''), password: String((n as { password?: unknown })?.password ?? '') }))
+        : [];
+      const { relayNote, ...board } = await (await usb()).setUp(String(port), { ssid: String(ssid ?? ''), password: String(password ?? '') }, String(name ?? ''), { networks: extra });
+      return { ok: true as const, board, ...(relayNote ? { relayNote } : {}) };
     } catch (error) {
       return errorResult(error);
     }
@@ -354,7 +357,17 @@ export function registerPhoneIpc(handle: Guarded): void {
   });
   handle('phone:usb-calibrate', async (_e, boardId: unknown) => (await usb()).calibrate(String(boardId)));
   handle('phone:usb-stop', async (_e, boardId: unknown) => (await usb()).stop(String(boardId)));
+  // Forget: the key goes here at once; the result says whether the cloud revoked the relay token.
   handle('phone:usb-forget', async (_e, boardId: unknown) => (await usb()).forget(String(boardId)));
+  // Allternit Link: pair a board with an app iPhone (`app:<uuid>`), or unpair it (null). Never arms anything.
+  handle('phone:usb-pair', async (_e, boardId: unknown, serial: unknown) => {
+    try {
+      const board = (await usb()).pair(String(boardId), serial === null || serial === undefined ? null : String(serial));
+      return { ok: true as const, board };
+    } catch (error) {
+      return errorResult(error);
+    }
+  });
 
   handle('phone:artemis-install', async () => {
     await phoneService.ensureReady();
