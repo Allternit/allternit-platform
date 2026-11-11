@@ -17,8 +17,10 @@
  *   `POST /api/v1/phones/app/:id/rpc`, which forwards them to the app's control
  *   socket while the app is open. 409 `app_not_open` when it isn't.
  *
- * Taps and swipes on other apps are not possible yet ("Taps on native apps
- * need the Bluetooth board"), so those tools answer `not_supported`.
+ * Taps and swipes on other apps need a board: without one those tools answer
+ * `not_supported` ("Taps on native apps need the Bluetooth board"). With an
+ * Allternit Link board paired to the phone (phone-link-board.ts), the board's
+ * hands answer them, aimed with this phone's shared screen (frameSource).
  *
  * Everything that talks to the node is injected (AppPhoneNode), so the lane is
  * unit-tested with no phone and no node.
@@ -29,6 +31,7 @@ import { IosVideoPacketParser, type IosVideoConfig } from './phone-ios-video.js'
 import type { PhoneAudioMeta, PhoneInputEvent, PhoneStreamMeta, PhoneStreamStatus, ScrcpyDeviceMessage } from './phone-scrcpy.js';
 import type { StreamConsumer, StreamSessionHandle } from './phone-stream.js';
 import { canonicalHash, type ApprovalGate, type ToolErrorCode, type ToolResult, type UsbPhoneBackend } from './phone-tools.js';
+import { isHandsTool, LINK_STATUS_TEXT, type LinkBoardHands, type LinkFrame, type LinkFrameSource } from './phone-link-board.js';
 
 export const APP_SERIAL_PREFIX = 'app:';
 export const APP_PHONE_ROUTE = 'iphone-app-store';
@@ -329,9 +332,17 @@ export class AppFrameKeeper implements StreamConsumer {
   private codec: string | null = null;
   private rotation: 0 | 90 | 180 | 270 = 0;
   private at = 0;
+  private seq = 0;
   private waiters: Array<() => void> = [];
+  private readonly listeners = new Set<() => void>();
 
   constructor(private readonly now: () => number = Date.now) {}
+
+  /** Called after every kept frame and at the end of the stream; returns the detach function. */
+  listen(cb: () => void): () => void {
+    this.listeners.add(cb);
+    return () => this.listeners.delete(cb);
+  }
 
   onMeta(_serial: string, meta: PhoneStreamMeta): void {
     this.rotation = meta.rotation ?? 0;
@@ -349,9 +360,11 @@ export class AppFrameKeeper implements StreamConsumer {
       return;
     }
     this.at = this.now();
+    this.seq += 1;
     const waiters = this.waiters;
     this.waiters = [];
     for (const w of waiters) w();
+    for (const cb of [...this.listeners]) cb();
   }
 
   onEnd(): void {
@@ -360,12 +373,13 @@ export class AppFrameKeeper implements StreamConsumer {
     const waiters = this.waiters;
     this.waiters = [];
     for (const w of waiters) w();
+    for (const cb of [...this.listeners]) cb();
   }
 
-  /** The GOP to decode, or null before the first keyframe. */
-  snapshot(): { input: StillInput; at: number } | null {
+  /** The GOP to decode, or null before the first keyframe. `seq` rises with every kept frame. */
+  snapshot(): { input: StillInput; at: number; seq: number } | null {
     if (this.units.length === 0 || !this.codec) return null;
-    return { input: { codec: this.codec, units: [...this.units], rotation: this.rotation }, at: this.at };
+    return { input: { codec: this.codec, units: [...this.units], rotation: this.rotation }, at: this.at, seq: this.seq };
   }
 
   /** Resolves when a frame arrives (or the stream ends), or after timeoutMs. */
@@ -402,6 +416,8 @@ export interface AppPhoneBackendDeps {
   log?: (message: string) => void;
   viewerIdleMs?: number;
   frameTimeoutMs?: number;
+  /** Allternit Link boards paired to app phones: they answer the hands tools. */
+  hands?: LinkBoardHands;
 }
 
 /** One app phone as phone.devices lists it. */
@@ -591,11 +607,15 @@ interface Viewer {
   idle: ReturnType<typeof setTimeout> | null;
 }
 
+/** How fresh the newest frame must be for `mirroring`, unless the stream is live (a still screen sends no frames). */
+export const APP_FRAME_FRESH_MS = 5_000;
+
 export class AppPhoneBackend implements UsbPhoneBackend {
   private rows: AppPhoneRow[] = [];
   private listedAt = 0;
   private listing: Promise<void> | null = null;
   private readonly viewers = new Map<string, Viewer>();
+  private readonly sources = new Map<string, AppFrameSource>();
   private readonly now: () => number;
 
   constructor(private readonly deps: AppPhoneBackendDeps) {
@@ -642,10 +662,48 @@ export class AppPhoneBackend implements UsbPhoneBackend {
       route: APP_PHONE_ROUTE,
       name: r.name || 'iPhone',
       screen: r.online,
-      note: r.online
-        ? `Screen only: phone.screenshot and phone.web.* work; ${APP_TAPS_MESSAGE.toLowerCase()}.`
-        : `${APP_SHARE_SCREEN_MESSAGE} phone.web.* work while the Allternit app is open.`,
+      note: this.note(r),
     }));
+  }
+
+  private note(r: AppPhoneRow): string {
+    const board = this.hands(r.serial) ? this.deps.hands?.status(r.serial) ?? null : null;
+    if (board) {
+      if (board.status === 'ready') {
+        return 'Screen and taps: an Allternit Link board is in this iPhone and armed, so phone.tap, phone.swipe, phone.type, phone.key, phone.home and phone.open_app work, aimed with phone.screenshot. phone.web.* work while the Allternit app is open.';
+      }
+      return `An Allternit Link board is paired with this iPhone; taps work while it is armed, and right now ${LINK_STATUS_TEXT[board.status]}. ${r.online ? 'phone.screenshot works.' : APP_SHARE_SCREEN_MESSAGE}`;
+    }
+    return r.online
+      ? `Screen only: phone.screenshot and phone.web.* work; ${APP_TAPS_MESSAGE.toLowerCase()}.`
+      : `${APP_SHARE_SCREEN_MESSAGE} phone.web.* work while the Allternit app is open.`;
+  }
+
+  /** True when an Allternit Link board is paired with this phone (armed or not): the board answers the hands tools. */
+  hands(serial: string): boolean {
+    return Boolean(this.deps.hands?.boardFor(serial));
+  }
+
+  /**
+   * The shared screen as a paired board's eyes: the same viewer, AppFrameKeeper
+   * and decodeStill phone.screenshot uses. While started it joins the stream
+   * whenever the phone shares, and decodes a still whenever a newer frame has
+   * come and no decode is running.
+   */
+  frameSource(serial: string): LinkFrameSource {
+    let source = this.sources.get(serial);
+    if (!source) {
+      source = new AppFrameSource(serial, {
+        online: () => this.row(serial)?.online === true,
+        refresh: () => this.refresh(),
+        streams: this.deps.streams,
+        decodeStill: this.deps.decodeStill,
+        now: this.now,
+        log: this.deps.log,
+      });
+      this.sources.set(serial, source);
+    }
+    return source;
   }
 
   decidePair(phoneId: string, approve: boolean): Promise<{ ok: boolean; message?: string }> {
@@ -653,10 +711,12 @@ export class AppPhoneBackend implements UsbPhoneBackend {
   }
 
   async call(name: string, serial: string, args: Record<string, unknown>): Promise<ToolResult> {
-    if (name === 'phone.screenshot') return this.screenshot(serial);
     if (name === 'phone.screen.request') return this.screenRequest(serial);
     if (isWebTool(name)) return this.web(name, serial, args);
     if (isDeviceTool(name)) return this.device(name, serial, args);
+    // A paired board: its hands, aimed with this phone's shared screen. Errors are the board's own.
+    if (this.deps.hands && isHandsTool(name) && this.hands(serial)) return this.deps.hands.call(name, serial, args);
+    if (name === 'phone.screenshot') return this.screenshot(serial);
     const instead = notOnAppPhone(name);
     return fail('not_supported', instead ?? `${name} is not available on an iPhone connected with the Allternit app.`);
   }
@@ -784,8 +844,162 @@ export class AppPhoneBackend implements UsbPhoneBackend {
 
   dispose(): void {
     for (const serial of [...this.viewers.keys()]) this.release(serial);
+    for (const source of this.sources.values()) source.stop();
   }
 }
+
+interface AppFrameSourceHost {
+  /** The phone shares its screen right now (the node's row). */
+  online(): boolean;
+  /** Re-read the node's list when stale; never throws. */
+  refresh(): Promise<void>;
+  streams: AppStreams;
+  decodeStill: StillDecoder;
+  now: () => number;
+  log?: (message: string) => void;
+}
+
+/** An app phone's shared screen as a LinkFrameSource (see AppPhoneBackend.frameSource). */
+class AppFrameSource implements LinkFrameSource {
+  private wanted = false;
+  private viewer: { keeper: AppFrameKeeper; detach: () => void; startedHere: boolean } | null = null;
+  private joining = false;
+  private frame: LinkFrame | null = null;
+  private decoding = false;
+  private decodedSeq = 0;
+  private readonly waiters = new Set<() => void>();
+
+  constructor(private readonly serial: string, private readonly host: AppFrameSourceHost) {}
+
+  start(): void {
+    this.wanted = true;
+    this.join();
+  }
+
+  stop(): void {
+    this.wanted = false;
+    this.leave();
+  }
+
+  state(): 'unavailable' | 'stopped' | 'waiting' | 'mirroring' {
+    if (!this.wanted) return 'stopped';
+    this.join();
+    if (!this.host.online()) return 'stopped';
+    if (this.viewer && this.frame) {
+      const live = this.host.streams.status(this.serial).state === 'live';
+      if (live || this.host.now() - this.frame.at < APP_FRAME_FRESH_MS) return 'mirroring';
+    }
+    return 'waiting';
+  }
+
+  latest(): LinkFrame | null {
+    return this.frame;
+  }
+
+  nextFrame(since: number, timeoutMs: number): Promise<LinkFrame | null> {
+    this.join();
+    if (this.frame && this.frame.at > since) return Promise.resolve(this.frame);
+    return new Promise((resolve) => {
+      const check = () => {
+        if (this.frame && this.frame.at > since) {
+          clearTimeout(timer);
+          this.waiters.delete(check);
+          resolve(this.frame);
+        }
+      };
+      const timer = setTimeout(() => {
+        this.waiters.delete(check);
+        resolve(null);
+      }, timeoutMs);
+      this.waiters.add(check);
+    });
+  }
+
+  /** Waits until no frame has come for quietMs and no newer frame is still being decoded. */
+  async settled(quietMs = 350, leastMs = 250, mostMs = 4_000): Promise<void> {
+    const started = this.host.now();
+    await sleep(leastMs);
+    const busy = () => this.pending() || (this.frame !== null && this.host.now() - this.frame.at < quietMs);
+    while (busy() && this.host.now() - started < mostMs) await sleep(50);
+  }
+
+  async wake(timeoutMs: number): Promise<void> {
+    // Calibrate comes from Settings, not the tool runner: the node's list may not have been read yet.
+    await this.host.refresh();
+    this.join();
+    if (!this.host.online() || this.frame) return;
+    await this.nextFrame(0, timeoutMs);
+  }
+
+  private pending(): boolean {
+    const snap = this.viewer?.keeper.snapshot();
+    return this.decoding || Boolean(snap && snap.seq > this.decodedSeq);
+  }
+
+  /** Joins the stream when wanted and the phone shares. A failed start is retried on the next call. */
+  private join(): void {
+    if (!this.wanted || this.viewer || this.joining || !this.host.online()) return;
+    this.joining = true;
+    const keeper = new AppFrameKeeper(this.host.now);
+    const wasLive = this.host.streams.status(this.serial).state === 'live';
+    const unlisten = keeper.listen(() => this.onKeeper(keeper));
+    const unsubscribe = this.host.streams.subscribe(this.serial, keeper);
+    const viewer = { keeper, startedHere: !wasLive, detach: () => (unsubscribe(), unlisten()) };
+    this.viewer = viewer;
+    void this.host.streams.start(this.serial).then((res) => {
+      this.joining = false;
+      if (!res.ok && this.viewer === viewer) {
+        this.host.log?.(`[app-screen ${this.serial}] Link eyes could not join: ${res.message}`);
+        this.leave();
+      }
+    });
+  }
+
+  private leave(): void {
+    const viewer = this.viewer;
+    this.viewer = null;
+    this.frame = null;
+    this.decodedSeq = 0;
+    if (!viewer) return;
+    viewer.detach();
+    if (viewer.startedHere && this.host.streams.consumerCount(this.serial) === 0) void this.host.streams.stop(this.serial);
+  }
+
+  private onKeeper(keeper: AppFrameKeeper): void {
+    if (this.viewer?.keeper !== keeper) return;
+    if (!keeper.snapshot()) {
+      // The stream ended (the person stopped sharing): no picture until it is shared again.
+      this.leave();
+      return;
+    }
+    this.decode();
+  }
+
+  private decode(): void {
+    const viewer = this.viewer;
+    const snap = viewer?.keeper.snapshot();
+    if (!viewer || !snap || this.decoding || snap.seq <= this.decodedSeq) return;
+    this.decoding = true;
+    void this.host
+      .decodeStill(snap.input)
+      .then((still) => {
+        if (this.viewer !== viewer) return;
+        this.frame = { jpeg: still.jpeg, width: still.width, height: still.height, at: snap.at };
+        this.decodedSeq = snap.seq;
+        for (const w of [...this.waiters]) w();
+      })
+      .catch((error: unknown) => {
+        this.decodedSeq = snap.seq;
+        this.host.log?.(`[app-screen ${this.serial}] still decode failed: ${error instanceof Error ? error.message : String(error)}`);
+      })
+      .finally(() => {
+        this.decoding = false;
+        this.decode();
+      });
+  }
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // ── The real node client ────────────────────────────────────────────────────
 

@@ -7,7 +7,9 @@
  *          keyboard; iOS AssistiveTouch shows the pointer), commanded over
  *          Wi-Fi through the authenticated link (phone-usb-agent-link.ts)
  *   eyes:  the phone's AirPlay screen mirror, received here by UxPlay
- *          (phone-airplay.ts), one PIN-protected receiver per board
+ *          (phone-airplay.ts), one PIN-protected receiver per board; or, for
+ *          a board paired to an iPhone with the Allternit app (Allternit
+ *          Link, phone-link-board.ts), that app's shared screen
  *   aim:   calibration and closed-loop aiming (phone-usb-agent-pointer.ts)
  *
  * The board starts disarmed and only a press of its button arms it, so
@@ -21,12 +23,14 @@ import { randomInt } from 'node:crypto';
 import type { ChildProcess } from 'node:child_process';
 import { AirplayScreen, AIRPLAY_BASE_PORT, AIRPLAY_NAME, type AirplayState, type UxplayOptions } from './phone-airplay.js';
 import { UsbAgentLink, type BoardSessionInfo } from './phone-usb-agent-link.js';
-import { USBA_DEFAULT_PORT, newKeyHex, type BoardCommand } from './phone-usb-agent-protocol.js';
+import { USBA_DEFAULT_PORT, newKeyHex, type BoardCommand, type UsbaVersion } from './phone-usb-agent-protocol.js';
 import { BoardError, UsbPointer, type Calibration, type PointerScreen } from './phone-usb-agent-pointer.js';
 import { changed, type Gray } from './phone-usb-agent-vision.js';
 import { compareVersions } from './phone-usb-agent-firmware.js';
 import { provision, readIdentity, validateProvision, type SerialPort } from './phone-usb-agent-provision.js';
 import type { ToolErrorCode, ToolResult } from './phone-tools.js';
+import { APP_FRAME_TIMEOUT_MS, APP_SERIAL_PREFIX, APP_SHARE_SCREEN_MESSAGE } from './phone-app-store.js';
+import type { LinkBoardStatus, LinkFrameSource } from './phone-link-board.js';
 
 export const USB_SERIAL_PREFIX = 'usb:';
 
@@ -38,6 +42,10 @@ export interface StoredUsbAgent {
   addedAt: number;
   /** Index into the AirPlay port range; stable so the phone's PIN trust survives restarts. */
   slot: number;
+  /** Allternit Link: the app iPhone (`app:<uuid>`) whose shared screen is this board's eyes. Set on Desktop only. */
+  pairedPhone?: string;
+  /** The board has a cloud relay row (hardware/link/README.md section 4.5). */
+  relay?: 'registered';
 }
 
 export interface UsbAgentConfig {
@@ -79,19 +87,12 @@ export const USB_STATUS_LABEL: Record<UsbAgentStatus, string> = {
   ready: 'Ready',
 };
 
-export interface UsbAgentInfo {
-  boardId: string;
-  serial: string;
-  name: string;
-  status: UsbAgentStatus;
-  armed: boolean;
-  firmware: string | null;
+/** One board as Settings shows it: the shared status shape plus the Desktop-only fields. */
+export interface UsbAgentInfo extends LinkBoardStatus {
   address: string | null;
+  /** The eyes' state (the AirPlay mirror, or the paired app phone's shared screen). */
   mirroring: AirplayState;
   receiverName: string;
-  calibrated: boolean;
-  /** The board runs older firmware than this Desktop ships; set it up again to update. */
-  firmwareUpdate: boolean;
 }
 
 export interface UsbAgentDeps {
@@ -111,14 +112,19 @@ export interface UsbAgentDeps {
   now?: () => number;
   /** Firmware version this Desktop ships, for the update hint. */
   bundledFirmware?: () => string | null;
+  /** Allternit Link: the shared screen of a paired app phone (AppPhoneBackend.frameSource); null when that lane is off. */
+  eyes?: (pairedPhone: string) => LinkFrameSource | null;
 }
 
 interface Board {
   stored: StoredUsbAgent;
   keyHex: string;
-  screen: AirplayScreen;
+  /** The eyes: an AirPlay receiver, or the paired app phone's shared screen. */
+  screen: LinkFrameSource;
   pointer: UsbPointer;
   generation: number;
+  /** Last armed state seen (link loss counts as disarmed), for the `armed` event. */
+  armed: boolean;
 }
 
 type Point = [number, number];
@@ -143,6 +149,14 @@ export class UsbAgentManager extends EventEmitter {
       this.link.on(ev, (payload: { boardId: string }) => {
         const b = this.boards.get(payload.boardId);
         if (b && ev !== 'state') b.generation += 1;
+        if (b) {
+          // 'armed' fires on every change, link loss included (phone-link-board.ts stops a run on it).
+          const armed = this.link.session(b.stored.boardId)?.state.armed ?? false;
+          if (armed !== b.armed) {
+            b.armed = armed;
+            this.emit('armed', { boardId: b.stored.boardId, armed });
+          }
+        }
         this.emit('devices');
       });
     }
@@ -243,6 +257,7 @@ export class UsbAgentManager extends EventEmitter {
       sealedKey: this.deps.sealer.seal(keyHex),
       addedAt: this.now(),
       slot: old?.stored.slot ?? this.freeSlot(),
+      ...(old?.stored.pairedPhone ? { pairedPhone: old.stored.pairedPhone } : {}),
     };
     const board = this.addBoard(stored, keyHex);
     this.deps.store.saveCalibration(boardId, null);
@@ -272,6 +287,7 @@ export class UsbAgentManager extends EventEmitter {
   async calibrate(boardId: string): Promise<ToolResult> {
     const b = this.boards.get(boardId);
     if (!b) return fail('device_offline', 'Unknown USB Agent.');
+    if (b.screen.wake && b.screen.state() !== 'mirroring') await b.screen.wake(APP_FRAME_TIMEOUT_MS);
     const blocked = this.blocker(b, { needCalibration: false });
     if (blocked) return blocked;
     try {
@@ -285,35 +301,140 @@ export class UsbAgentManager extends EventEmitter {
     }
   }
 
+  /**
+   * Allternit Link: pairs a board with an app iPhone (`app:<uuid>`), or unpairs
+   * it (null). One board per phone: pairing a second board to the phone
+   * unpairs the first. Either way the board's calibration is cleared, since
+   * nothing proves which phone it is in until calibration finds the pointer
+   * in that phone's shared screen. A paired board's eyes are the app's shared
+   * screen and its AirPlay receiver is not started.
+   */
+  pair(boardId: string, serial: string | null): UsbAgentInfo {
+    const b = this.boards.get(boardId);
+    if (!b) throw new Error('Unknown USB Agent.');
+    if (serial !== null && (!serial.startsWith(APP_SERIAL_PREFIX) || serial.length <= APP_SERIAL_PREFIX.length || serial.length > 120)) {
+      throw new Error('Pair the board with an iPhone that has the Allternit app (serial "app:…").');
+    }
+    if (serial !== null) {
+      for (const other of this.boards.values()) {
+        if (other !== b && other.stored.pairedPhone === serial) this.setEyes(other, undefined);
+      }
+    }
+    this.setEyes(b, serial ?? undefined);
+    this.persist();
+    this.emit('devices');
+    return this.info(b);
+  }
+
+  private setEyes(b: Board, pairedPhone: string | undefined): void {
+    b.screen.stop();
+    if (pairedPhone) b.stored.pairedPhone = pairedPhone;
+    else delete b.stored.pairedPhone;
+    b.screen = this.eyesFor(b.stored);
+    this.deps.store.saveCalibration(b.stored.boardId, null);
+    b.pointer.forget();
+    if (this.listening) b.screen.start();
+  }
+
+  /** The app phone a board is paired with, or null. */
+  pairedPhone(boardId: string): string | null {
+    return this.boards.get(boardId)?.stored.pairedPhone ?? null;
+  }
+
+  /** The board paired with an app phone, or null. */
+  boardForPhone(serial: string): string | null {
+    for (const b of this.boards.values()) if (b.stored.pairedPhone === serial) return b.stored.boardId;
+    return null;
+  }
+
+  status(boardId: string): UsbAgentInfo | null {
+    const b = this.boards.get(boardId);
+    return b ? this.info(b) : null;
+  }
+
+  /**
+   * Faces and progress (USBA/2 display commands). Best effort: sent only on a
+   * USBA/2 session, failures ignored. A USBA/1 board never receives them, since
+   * its firmware resets the idle timer on any command once armed.
+   */
+  async display(boardId: string, cmds: BoardCommand[]): Promise<void> {
+    for (const cmd of cmds) {
+      if (cmd.op !== 'face' && cmd.op !== 'prog' && cmd.op !== 'label') continue;
+      if (protocolOf(this.link.session(boardId)) !== 2) return;
+      try {
+        await this.link.send(boardId, cmd);
+      } catch {
+        // best effort
+      }
+    }
+  }
+
   // ── queries ──────────────────────────────────────────────────────────────
 
   list(): UsbAgentInfo[] {
     return [...this.boards.values()].map((b) => this.info(b));
   }
 
+  /** Online boards that are phones of their own. A paired board is part of its app phone. */
   serials(): string[] {
-    return [...this.boards.values()].filter((b) => this.link.session(b.stored.boardId)).map((b) => serialOf(b.stored.boardId));
+    return [...this.boards.values()].filter((b) => !b.stored.pairedPhone && this.link.session(b.stored.boardId)).map((b) => serialOf(b.stored.boardId));
   }
 
   has(serial: string): boolean {
-    return serial.startsWith(USB_SERIAL_PREFIX) && this.boards.has(serial.slice(USB_SERIAL_PREFIX.length));
+    if (!serial.startsWith(USB_SERIAL_PREFIX)) return false;
+    const b = this.boards.get(serial.slice(USB_SERIAL_PREFIX.length));
+    return Boolean(b && !b.stored.pairedPhone);
   }
 
   private info(b: Board): UsbAgentInfo {
     const session = this.link.session(b.stored.boardId);
+    const mirroring = b.screen.state();
+    const state = session?.state;
     return {
       boardId: b.stored.boardId,
       serial: serialOf(b.stored.boardId),
       name: b.stored.name,
-      status: statusOf(session, b.screen.state(), b.pointer.calibrated),
-      armed: session?.state.armed ?? false,
-      firmware: session?.firmware ?? null,
-      address: session?.address ?? null,
-      mirroring: b.screen.state(),
-      receiverName: b.screen.receiverName(),
+      online: session !== null,
+      armed: state?.armed ?? false,
+      status: statusOf(session, mirroring, b.pointer.calibrated),
+      link: state?.link ?? null,
+      usb: state?.usb ?? null,
+      hid: state?.hid ?? null,
+      dock: state?.dock ?? null,
+      face: state?.face ?? null,
+      prog: state?.prog ?? null,
+      eyes: b.stored.pairedPhone ? 'app' : 'airplay',
+      phone: b.stored.pairedPhone ?? null,
+      screen: mirroring === 'mirroring',
       calibrated: b.pointer.calibrated,
+      firmware: session?.firmware ?? null,
+      protocol: protocolOf(session),
       firmwareUpdate: Boolean(session && compareVersions(session.firmware, this.deps.bundledFirmware?.() ?? null) < 0),
+      relay: b.stored.relay === 'registered' ? 'registered' : 'none',
+      address: session?.address ?? null,
+      mirroring,
+      receiverName: receiverNameFor(b.stored.slot),
     };
+  }
+
+  /** What to tell the bot when the eyes have no picture. */
+  private noScreen(b: Board): string {
+    return b.stored.pairedPhone
+      ? `${APP_SHARE_SCREEN_MESSAGE} The Allternit Link board sees through the app's shared screen.`
+      : `The iPhone isn’t mirroring. On the phone: Control Center → Screen Mirroring → ${receiverNameFor(b.stored.slot)}.`;
+  }
+
+  /**
+   * A paired board's eyes join the app stream on demand: before a screenshot,
+   * and before an action the board could otherwise run, wait for a picture.
+   */
+  private async wakeEyes(b: Board, name: string): Promise<void> {
+    if (!b.screen.wake || b.screen.state() === 'mirroring') return;
+    if (name !== 'phone.screenshot') {
+      const s = this.link.session(b.stored.boardId);
+      if (!s || !s.state.armed || s.state.usb !== 'mounted') return;
+    }
+    await b.screen.wake(APP_FRAME_TIMEOUT_MS);
   }
 
   // ── bot tools ────────────────────────────────────────────────────────────
@@ -322,6 +443,7 @@ export class UsbAgentManager extends EventEmitter {
     const b = this.boards.get(serial.slice(USB_SERIAL_PREFIX.length));
     if (!b) return fail('device_offline', `Phone ${serial} is not connected.`);
     try {
+      await this.wakeEyes(b, name);
       switch (name) {
         case 'phone.screenshot':
           return this.screenshot(b);
@@ -401,9 +523,7 @@ export class UsbAgentManager extends EventEmitter {
 
   private screenshot(b: Board): ToolResult {
     const frame = b.screen.latest();
-    if (!frame || b.screen.state() !== 'mirroring') {
-      return fail('no_screen', `The iPhone isn’t mirroring. On the phone: Control Center → Screen Mirroring → ${b.screen.receiverName()}.`);
-    }
+    if (!frame || b.screen.state() !== 'mirroring') return fail('no_screen', this.noScreen(b));
     return { ok: true, mimeType: 'image/jpeg', dataBase64: frame.jpeg.toString('base64'), width: frame.width, height: frame.height, ageMs: this.now() - frame.at };
   }
 
@@ -420,9 +540,7 @@ export class UsbAgentManager extends EventEmitter {
     if (session.state.usb === 'none') return fail('device_offline', 'The USB Agent isn’t plugged into the iPhone.');
     if (session.state.usb === 'asleep') return fail('device_locked', 'The iPhone is locked or asleep. Unlock it to continue.');
     if (!session.state.armed) return fail('disarmed', 'The USB Agent is disarmed. Press its button to let the bot use the phone.');
-    if ((opts.needScreen ?? true) && b.screen.state() !== 'mirroring') {
-      return fail('no_screen', `The iPhone isn’t mirroring. On the phone: Control Center → Screen Mirroring → ${b.screen.receiverName()}.`);
-    }
+    if ((opts.needScreen ?? true) && b.screen.state() !== 'mirroring') return fail('no_screen', this.noScreen(b));
     if (opts.needCalibration && !b.pointer.calibrated) return fail('not_calibrated', 'Calibrate the pointer first (Settings → Computers → Phones).');
     return null;
   }
@@ -466,9 +584,11 @@ export class UsbAgentManager extends EventEmitter {
 
   // ── internals ────────────────────────────────────────────────────────────
 
-  private addBoard(stored: StoredUsbAgent, keyHex: string): Board {
+  /** The eyes for a stored board: the paired app phone's shared screen, else its AirPlay receiver. */
+  private eyesFor(stored: StoredUsbAgent): LinkFrameSource {
+    if (stored.pairedPhone) return this.deps.eyes?.(stored.pairedPhone) ?? NO_EYES;
     const opts: UxplayOptions = {
-      name: stored.slot === 0 ? AIRPLAY_NAME : `${AIRPLAY_NAME} ${stored.slot + 1}`,
+      name: receiverNameFor(stored.slot),
       basePort: AIRPLAY_BASE_PORT + stored.slot * 3,
       fps: 8,
       quality: 75,
@@ -485,19 +605,24 @@ export class UsbAgentManager extends EventEmitter {
         this.emit('devices');
       }
     });
-    const board: Board = { stored, keyHex, screen, pointer: null as unknown as UsbPointer, generation: 0 };
+    return screen;
+  }
+
+  private addBoard(stored: StoredUsbAgent, keyHex: string): Board {
+    const board: Board = { stored, keyHex, screen: this.eyesFor(stored), pointer: null as unknown as UsbPointer, generation: 0, armed: false };
+    // Read board.screen on every call: pairing swaps the eyes under the same pointer.
     const view: PointerScreen = {
-      live: () => screen.state() === 'mirroring',
-      latestAt: () => screen.latest()?.at ?? null,
+      live: () => board.screen.state() === 'mirroring',
+      latestAt: () => board.screen.latest()?.at ?? null,
       latestGray: () => {
-        const f = screen.latest();
+        const f = board.screen.latest();
         return f ? this.deps.decode(f.jpeg, DECODE_WIDTH) : null;
       },
       nextGray: async (since, timeoutMs) => {
-        const f = await screen.nextFrame(since, timeoutMs);
+        const f = await board.screen.nextFrame(since, timeoutMs);
         return f ? this.deps.decode(f.jpeg, DECODE_WIDTH) : null;
       },
-      settled: (q, l, m) => screen.settled(q, l, m),
+      settled: (q, l, m) => board.screen.settled(q, l, m),
     };
     board.pointer = new UsbPointer({
       send: (cmd: BoardCommand) => this.link.send(stored.boardId, cmd),
@@ -534,6 +659,26 @@ class ArgError extends Error {}
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const isCoord = (v: unknown): v is number => Number.isInteger(v) && (v as number) >= 0 && (v as number) <= 20_000;
+
+/** Eyes for a paired board when the app phone lane is off: never a picture. */
+const NO_EYES: LinkFrameSource = {
+  state: () => 'unavailable',
+  latest: () => null,
+  nextFrame: async () => null,
+  settled: async () => undefined,
+  start: () => undefined,
+  stop: () => undefined,
+};
+
+function receiverNameFor(slot: number): string {
+  return slot === 0 ? AIRPLAY_NAME : `${AIRPLAY_NAME} ${slot + 1}`;
+}
+
+/** The session's USBA version (lane F adds `version` to BoardSessionInfo; a session without it is USBA/1). */
+function protocolOf(session: BoardSessionInfo | null): UsbaVersion | null {
+  if (!session) return null;
+  return (session as BoardSessionInfo & { version?: UsbaVersion }).version === 2 ? 2 : 1;
+}
 
 export function serialOf(boardId: string): string {
   return `${USB_SERIAL_PREFIX}${boardId}`;

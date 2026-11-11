@@ -49,6 +49,7 @@ import { USBA_MDNS_TYPE } from './phone-usb-agent-protocol.js';
 import { loadFirmware, type BundledFirmware } from './phone-usb-agent-firmware.js';
 import { grayFromBgra, type Gray } from './phone-usb-agent-vision.js';
 import type { Calibration } from './phone-usb-agent-pointer.js';
+import { LinkBoardLane } from './phone-link-board.js';
 import { IctrlClient, ictrlStoreKey, type SecretStore } from './ictrl-client.js';
 import { fileLinkStore, findIosLinkRecord, setIosCallBridge, type IosLinkRecord } from './phone-link-ios.js';
 import {
@@ -290,6 +291,8 @@ class PhoneService {
   private runner: PhoneToolRunner | null = null;
   private linkedBackend: PhoneLinkBackend | null = null;
   private appBackend: AppPhoneBackend | null = null;
+  /** Allternit Link: boards paired to app iPhones (their hands; the app's shared screen is their eyes). */
+  private linkBoards: LinkBoardLane | null = null;
   private appPhoneTimer: ReturnType<typeof setInterval> | null = null;
   private linkedHealth: PhoneLinkHealthMonitor | null = null;
   private iosRecovery: IosRecoveryScheduler | null = null;
@@ -736,6 +739,23 @@ class PhoneService {
           return userId ? backendManager.getLocalAuthHeaders(userId) : null;
         },
       });
+      // A finished phone.task ends the run on a Link board's face (wink, then idle).
+      const recorder = new PhoneRunRecorder({
+        api: () => phoneApi,
+        shrink: async (dataBase64) => shrinkFrame(dataBase64),
+        onError: (error) => log.debug(`[Phone] run history step not recorded: ${error instanceof Error ? error.message : String(error)}`),
+      });
+      const record = recorder.record.bind(recorder);
+      recorder.record = (call) => {
+        record(call);
+        if (call.tool === 'phone.task' && isAppSerial(call.serial)) this.ensureLinkBoards().runEnded(call.serial, call.result.done === true);
+      };
+      const holdHandler = phoneHoldHandler({
+        dialog: holdDialog(holds),
+        client: holds,
+        isAndroidLink: (serial) => this.linkedAndroid(serial) !== null,
+        helperCall: (serial, method, params, timeoutMs) => this.ensureLinkedBackend().helperCall(serial, method, params, timeoutMs),
+      });
       const runner = new PhoneToolRunner({
         adb: lazy,
         gate: dialogGate(),
@@ -749,20 +769,14 @@ class PhoneService {
         apps: () => this.ensureAppBackend(),
         onDialPlaced: (serial, number) => this.callBridge?.noteOutboundDial(serial, number) ?? false,
         // Run history (with frames) + phone.task on the bot's brain + phone skills, all in the local API.
-        recorder: new PhoneRunRecorder({
-          api: () => phoneApi,
-          shrink: async (dataBase64) => shrinkFrame(dataBase64),
-          onError: (error) => log.debug(`[Phone] run history step not recorded: ${error instanceof Error ? error.message : String(error)}`),
-        }),
+        recorder,
         api: () => phoneApi,
         guard: () => holds,
-        // The owner's dialog here, and "waiting for approval" on the driven Android phone.
-        onHold: phoneHoldHandler({
-          dialog: holdDialog(holds),
-          client: holds,
-          isAndroidLink: (serial) => this.linkedAndroid(serial) !== null,
-          helperCall: (serial, method, params, timeoutMs) => this.ensureLinkedBackend().helperCall(serial, method, params, timeoutMs),
-        }),
+        // The owner's dialog here, "waiting for approval" on the driven Android phone, and "needs you" on a Link board.
+        onHold: (notice) => {
+          holdHandler(notice);
+          if (isAppSerial(notice.serial)) this.ensureLinkBoards().noteHold(notice, (id) => holds.getHold(id));
+        },
       });
       this.runner = runner;
       const token = newGatewayToken();
@@ -932,8 +946,15 @@ class PhoneService {
       decodeStill: decodeStillInWindow,
       gate: dialogGate(),
       log: (message) => log.info(message),
+      hands: this.ensureLinkBoards(),
     });
     return this.appBackend;
+  }
+
+  /** The Link board lane: routes taps on a paired app iPhone to its board (phone-link-board.ts). */
+  private ensureLinkBoards(): LinkBoardLane {
+    this.linkBoards ??= new LinkBoardLane({ usb: () => this.usbAgents });
+    return this.linkBoards;
   }
 
   /** The desktop credential plus the signed-in user, as the node maps it to the account. */
@@ -1320,6 +1341,8 @@ class PhoneService {
         listSerial: () => candidatePorts(),
         lanAddresses: () => lanAddresses(),
         bundledFirmware: () => this.firmwareVersion(),
+        // A board paired with an app iPhone sees through that app's shared screen, not AirPlay.
+        eyes: (pairedPhone) => this.ensureAppBackend().frameSource(pairedPhone),
       });
     }
     await this.usbAgents.start();
@@ -1825,6 +1848,7 @@ class PhoneService {
     if (this.appPhoneTimer) clearInterval(this.appPhoneTimer);
     this.appPhoneTimer = null;
     this.appBackend?.dispose();
+    this.linkBoards?.dispose();
     for (const [serial, socket] of this.linkSockets) {
       socket.stop();
       this.cancelLinkDetach(serial);
