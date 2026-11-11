@@ -266,6 +266,27 @@ describe('UsbAgentLink', () => {
     expect(boardsByVersion[1].ref.log).toEqual([`type ${hex}`]);
   });
 
+  it('a button press during the reconnect window leaves the next session disarmed and refusing input', async () => {
+    const key = newKeyHex();
+    const { link, port } = await setup({ [ID]: key });
+    const b = board(ID, key);
+    await b.connect(port);
+    b.arm();
+    await until(() => link.session(ID)?.state.armed === true);
+    expect(await link.send(ID, { op: 'click' })).toEqual({ ok: true });
+    // The link drops; the board stays armed (no self-disarm for a minute).
+    b.close();
+    await until(() => link.session(ID) === null);
+    expect(b.ref.armed).toBe(true);
+    // The press arrives while the board is blocked connecting, before any session exists.
+    b.pressWhileBlocked();
+    await b.connect(port);
+    await until(() => link.session(ID)?.state.face === 'stopped');
+    expect(link.session(ID)?.state.armed).toBe(false);
+    expect(await link.send(ID, { op: 'click' })).toMatchObject({ ok: false, error: 'disarmed' });
+    expect(b.ref.log).toEqual(['click']);
+  });
+
   it('LineReader splits lines and flags overflow', () => {
     const lines: string[] = [];
     let overflow = 0;

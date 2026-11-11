@@ -353,6 +353,18 @@ export class ReferenceBoard {
     return this.stateLine();
   }
 
+  /**
+   * A press the firmware's interrupt latched while its loop was blocked (a
+   * relay connect, an mDNS query), or between two lines. The latch only
+   * disarms: it is acted on before any later line, so a session formed after
+   * it sees a disarmed board. It never arms; arming stays with the held,
+   * debounced press (`pressButton`). Returns the state line (null with no session).
+   */
+  latchPress(): string | null {
+    if (this.armed) this.setArmed(false);
+    return this.stateLine();
+  }
+
   /** The stop input (dock `STOP_N`): disarms, never arms. */
   pressStop(): string | null {
     if (this.armed) this.setArmed(false);

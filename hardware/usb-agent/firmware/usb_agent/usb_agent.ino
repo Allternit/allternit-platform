@@ -55,6 +55,7 @@
 #include <esp_mac.h>
 #include <esp_random.h>
 #include <esp_task_wdt.h>
+#include <driver/gpio.h>
 #include <mbedtls/gcm.h>
 #include <mbedtls/md.h>
 #include "USB.h"
@@ -322,6 +323,34 @@ bool stopLineLow() {
 }
 
 bool disarmedByHeldPress = false;
+
+// A press must never be missed, even while loop() is blocked (a relay TLS
+// connect, an mDNS query). An interrupt latches every press: a falling edge
+// after the line was quiet for 40 ms (so bounce on press and on release is
+// ignored). The latch only ever DISARMS. Arming stays with the debounced
+// level check in serviceButton(), exactly as before, so a press still
+// toggles: armed -> disarmed at once, disarmed -> armed after 40 ms held.
+volatile bool pressLatched = false;
+volatile uint32_t buttonEdgeAt = 0;
+
+void IRAM_ATTR onButtonEdge() {
+  uint32_t now = millis();
+  bool quiet = now - buttonEdgeAt >= 40;
+  buttonEdgeAt = now;
+  if (quiet && gpio_get_level((gpio_num_t)ARM_BUTTON_PIN) == 0) pressLatched = true;
+}
+
+// Runs at the top of loop(), before any line is handled, and from inside the
+// relay connect's waits. A latched press disarms an armed board; on a
+// disarmed board it is dropped (the level check arms, as today).
+void serviceButtonLatch() {
+  if (!pressLatched) return;
+  pressLatched = false;
+  if (!armed) return;
+  setArmed(false);
+  if (buttonDown()) disarmedByHeldPress = true;  // the level check sees this same press; don't re-arm on it
+  sendState(true);
+}
 
 bool stoppedByButton() {
   if (stopLineLow()) {  // the dock stop line: disarm only
@@ -592,6 +621,7 @@ void onLinkLine(const String &line) {
     return;
   }
   lastSeq = seq;
+  serviceButtonLatch();  // a press latched while this line was in flight wins
   String result = run(seq, command);
   if (!linkUp()) return;
   linkSend("r " + seqText + " " + result + " " + tagHex("r|" + seqText + "|" + result));
@@ -960,6 +990,7 @@ void serviceDisplay() {
 // ── arm button ──────────────────────────────────────────────────────────────
 
 void serviceButton() {
+  serviceButtonLatch();
   static bool lastLevel = HIGH;
   static uint32_t changedAt = 0;
   static bool handled = false;
@@ -989,6 +1020,8 @@ void setup() {
   boardId = "usba-" + toHex(mac, 6);
 
   pinMode(ARM_BUTTON_PIN, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(ARM_BUTTON_PIN), onButtonEdge, CHANGE);
+  relayWaitHook = serviceButtonLatch;
   if (ARM_LED_PIN >= 0) pinMode(ARM_LED_PIN, OUTPUT);
   if (DOCK_DETECT_PIN >= 0) pinMode(DOCK_DETECT_PIN, INPUT);
   if (STOP_PIN >= 0) pinMode(STOP_PIN, INPUT_PULLUP);
