@@ -30,6 +30,8 @@ import { resolveDefaultShell } from '../shell/resolveDefaultShell';
 import { isPowerShellToolEnabled } from '../shell/shellToolUtils';
 import { processToolResultBlock } from '../toolResultStorage';
 import { escapeXml } from '../xml';
+import { handlePetFailure } from '../../pet/petOffersSettings';
+import { getOriginalCwd } from '../../bootstrap/state';
 import type { ProcessUserInputContext } from './processUserInput';
 export async function processBashCommand(inputString: string, precedingInputBlocks: ContentBlockParam[], attachmentMessages: AttachmentMessage[], context: ProcessUserInputContext, setToolJSX: SetToolJSXFn): Promise<{
   messages: (UserMessage | AttachmentMessage | SystemMessage)[];
@@ -135,6 +137,17 @@ export async function processBashCommand(inputString: string, precedingInputBloc
           shouldQuery: false
         };
       }
+      try {
+        handlePetFailure({
+          cwd: getOriginalCwd(),
+          text: `${e.stderr}\n${e.stdout}`,
+          needMatch: false,
+          say: bubble => context.setAppState(prev => prev.companionReaction === bubble ? prev : {
+            ...prev,
+            companionReaction: bubble
+          })
+        });
+      } catch {}
       return {
         messages: [createSyntheticUserCaveatMessage(), userMessage, ...attachmentMessages, createUserMessage({
           content: `<bash-stdout>${escapeXml(e.stdout)}</bash-stdout><bash-stderr>${escapeXml(e.stderr)}</bash-stderr>`
