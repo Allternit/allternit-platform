@@ -36,6 +36,6 @@ pub fn cap_reached() -> PlatformError {
         kind: "invalid_request_error",
         code: "spend_cap_reached".into(),
         message: "This project reached its monthly spend cap. Raise the cap in the console to continue.".into(),
-        param: None, url: None,
+        param: None, url: None, reason: None, refusal_status: None,
     }
 }

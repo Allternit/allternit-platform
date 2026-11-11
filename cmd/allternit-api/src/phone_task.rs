@@ -218,9 +218,23 @@ fn action_el(tool: &str, pick: &Value, els: &[UiEl], last: Option<&El>) -> Optio
 /// mid-turn is not an input from another person, and the owner's own app turns record no
 /// label, so "nothing since" counts as the owner's (as in `task_grants`). A task with no thread (the app, the API) is not subject to the second rule.
 pub fn refusal(db: &DbHandle, ctx: &TaskCtx) -> Option<(&'static str, String)> {
+    refusal_for(db, ctx, false)
+}
+
+/// True when an HTTP call is the owner's own request: an owner session (no API key or
+/// agent credential) with a source of `chat|imessage_ext|intent|voice`.
+pub fn is_owner_http_request(has_credential: bool, source: &str) -> bool {
+    !has_credential && matches!(source, "chat" | "imessage_ext" | "intent" | "voice")
+}
+
+/// [`refusal`], where `owner_http` skips the `owner_only` provenance rule (the paused check stays).
+pub fn refusal_for(db: &DbHandle, ctx: &TaskCtx, owner_http: bool) -> Option<(&'static str, String)> {
     let conn = db.connect().ok()?;
     if !ctx.owner.trim().is_empty() && crate::bots_pause::is_paused(&conn, &ctx.owner) {
         return Some(("paused", "Your bots are paused, so I didn't start this phone task. Resume them and ask again.".into()));
+    }
+    if owner_http {
+        return None;
     }
     let thread = ctx.thread_id.as_deref().map(str::trim).filter(|t| !t.is_empty())?;
     let latest: Option<String> = conn
@@ -284,7 +298,23 @@ pub async fn run_task_ctx(
     max_steps: u32,
     model: Option<(String, String)>,
 ) -> Value {
-    if let Some((reason, sentence)) = refusal(db, ctx) {
+    run_task_ctx_for(db, data_dir, ctx, run_id, serial, goal, max_steps, model, false).await
+}
+
+/// [`run_task_ctx`] with `owner_http` set for the owner's own HTTP request (see [`is_owner_http_request`]).
+#[allow(clippy::too_many_arguments)]
+pub async fn run_task_ctx_for(
+    db: &DbHandle,
+    data_dir: Option<&FsPath>,
+    ctx: &TaskCtx,
+    run_id: String,
+    serial: Option<&str>,
+    goal: &str,
+    max_steps: u32,
+    model: Option<(String, String)>,
+    owner_http: bool,
+) -> Value {
+    if let Some((reason, sentence)) = refusal_for(db, ctx, owner_http) {
         return refused_report(&run_id, serial, ctx, reason, &sentence);
     }
     let s = serial.unwrap_or_default().to_string();
@@ -784,6 +814,7 @@ async fn run_web_task_loop(
 async fn post_task(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
+    credential: Option<Extension<crate::enterprise_auth::CredentialContext>>,
     Path(serial): Path<String>,
     Json(body): Json<TaskIn>,
 ) -> Response {
@@ -807,19 +838,20 @@ async fn post_task(
         session_id: some(&body.session_id),
         source: phone_guard::clean_source(body.source.as_deref()),
     };
-    if let Some((reason, sentence)) = refusal(&state.db, &ctx) {
+    let owner_http = is_owner_http_request(credential.is_some(), &ctx.source);
+    if let Some((reason, sentence)) = refusal_for(&state.db, &ctx, owner_http) {
         return (StatusCode::FORBIDDEN, Json(json!({ "ok": false, "status": "refused", "reason": reason, "message": sentence }))).into_response();
     }
     if body.background {
         let run_id = new_run_id();
         let (db, dir, id, goal, task_serial) = (state.db.clone(), state.data_dir.clone(), run_id.clone(), goal.to_string(), serial.clone());
         tokio::spawn(async move {
-            let report = run_task_ctx(&db, Some(dir.as_path()), &ctx, id, task_serial.as_deref(), &goal, max_steps, model).await;
+            let report = run_task_ctx_for(&db, Some(dir.as_path()), &ctx, id, task_serial.as_deref(), &goal, max_steps, model, owner_http).await;
             crate::phone_runs::record_run_completed(&db, &report, "task");
         });
         return (StatusCode::ACCEPTED, Json(json!({ "ok": true, "status": "running", "run_id": run_id, "serial": serial }))).into_response();
     }
-    let report = run_task_ctx(&state.db, Some(state.data_dir.as_path()), &ctx, new_run_id(), serial.as_deref(), goal, max_steps, model).await;
+    let report = run_task_ctx_for(&state.db, Some(state.data_dir.as_path()), &ctx, new_run_id(), serial.as_deref(), goal, max_steps, model, owner_http).await;
     crate::phone_runs::record_run_completed(&state.db, &report, "task");
     Json(report).into_response()
 }
@@ -948,6 +980,22 @@ mod tests {
         provenance(&st, "stranger", "2026-11-10T10:13:00Z");
         provenance(&st, "web", "2026-11-10T10:14:00Z");
         assert_eq!(refusal(&st.db, &ctx()).map(|r| r.0), Some("owner_only"));
+    }
+
+    #[tokio::test]
+    async fn the_owners_own_http_call_skips_owner_only_but_an_agent_start_does_not() {
+        let st = state("ownerhttp").await;
+        provenance(&st, "owner", "2026-11-10T10:00:00Z");
+        provenance(&st, "stranger", "2026-11-10T10:05:00Z");
+        assert!(is_owner_http_request(false, "chat"));
+        assert!(!is_owner_http_request(true, "chat"), "an API key is not the owner's own request");
+        assert!(!is_owner_http_request(false, "api"));
+        assert!(refusal_for(&st.db, &ctx(), is_owner_http_request(false, "chat")).is_none());
+        let agent = run_task_ctx(&st.db, None, &ctx(), "task-ag".into(), Some("link:1"), "tap pay", 3, None).await;
+        assert_eq!(agent["reason"].as_str(), Some("owner_only"));
+        // Paused still applies to the owner.
+        crate::bots_pause::set(&st.db.connect().unwrap(), "user-a", true, Some("test")).unwrap();
+        assert_eq!(refusal_for(&st.db, &ctx(), true).map(|r| r.0), Some("paused"));
     }
 
     #[tokio::test]

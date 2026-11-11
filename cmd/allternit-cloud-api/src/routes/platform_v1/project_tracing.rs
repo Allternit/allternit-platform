@@ -103,7 +103,7 @@ fn cipher(state: &ApiState) -> Result<&CredentialCipher, PlatformError> {
         code: "tracing_unavailable".into(),
         message: "Trace export isn't available on this deployment.".into(),
         param: None,
-        url: None,
+        url: None, reason: None, refusal_status: None,
     })
 }
 

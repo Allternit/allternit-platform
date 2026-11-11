@@ -92,7 +92,7 @@ The owner approves in the app. API keys cannot approve. Then repeat the same cal
 POST /v1/phones/{serial}/task
 ```
 
-`{ "goal": "Open Settings and turn on Wi-Fi", "max_steps": 15, "bot_id": "…", "brain": "provider/model" }`. `goal` is required (up to 2000 characters). `max_steps` is 1 to 40 (default 15). The model is `bot_id`'s brain, else `brain`, else the default.
+`{ "goal": "Open Settings and turn on Wi-Fi", "max_steps": 15, "bot_id": "…", "brain": "provider/model", "thread_id": "…", "session_id": "…", "source": "chat" }`. `thread_id`, `session_id` and `source` (`chat`, `imessage_ext`, `intent`, `voice`) are optional and tie the run to a conversation. If the Desktop refuses to start the task (for example `owner_only`, or your bots are paused), the call answers `403` with `error.reason` set to the refusal reason and `error.status` set to `refused`. `goal` is required (up to 2000 characters). `max_steps` is 1 to 40 (default 15). The model is `bot_id`'s brain, else `brain`, else the default.
 
 The task runs on the Desktop: it reads the screen, takes one action, and repeats until the goal is met, it fails, it runs out of steps, or 5 minutes pass. The call answers `202` at once:
 

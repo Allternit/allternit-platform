@@ -597,7 +597,7 @@ fn executor_error(status: u16, body: &Value) -> PlatformError {
         502..=504 => return starting(),
         _ => (StatusCode::SERVICE_UNAVAILABLE, "api_error"),
     };
-    PlatformError { status, kind, code, message, param: None, url: None }
+    PlatformError { status, kind, code, message, param: None, url: None, reason: None, refusal_status: None }
 }
 
 /// Screen point of the call's primary coordinate (model frame → screen px).

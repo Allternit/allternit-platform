@@ -53,6 +53,8 @@ impl PhoneHost for FakeDesktop {
             } else {
                 (200, json!({ "token": "tok/1", "expiresInSec": 600, "readOnly": true }))
             }
+        } else if path.ends_with("/task") && serial == "STRANGER" {
+            (403, json!({ "ok": false, "status": "refused", "reason": "owner_only", "message": "Only you can start a phone action from a conversation." }))
         } else if path.ends_with("/task") {
             (200, json!({ "run_id": format!("task-{n}"), "serial": serial }))
         } else if path.contains("/skills/") {
@@ -239,6 +241,17 @@ fn run_minutes_round_up_and_mcp_lists_every_phone_tool() {
     assert!(phones::is_mcp_tool("phone_live_url") && phones::is_mcp_tool("phones_list") && !phones::is_mcp_tool("phone_nope"));
     let shot = phones::mcp_result(Ok(json!({ "ok": true, "dataBase64": "iVBOR", "mimeType": "image/png" })));
     assert_eq!((shot["content"][0]["type"].as_str(), shot["structuredContent"].get("dataBase64")), (Some("image"), None));
+}
+
+#[tokio::test]
+async fn a_runtime_refusal_keeps_its_reason_and_the_task_context_passes_through() {
+    let c = ctx().await;
+    let (_p, key) = project(&c, "dev_ph_refuse").await;
+    let (s, e) = call(&c.app, "POST", "/v1/phones/STRANGER/task", &key, Some(json!({ "goal": "tap pay", "thread_id": "th-1", "session_id": "s-1", "source": "chat" }))).await;
+    assert_eq!(s, StatusCode::FORBIDDEN, "{e}");
+    assert_eq!((e["error"]["code"].as_str(), e["error"]["reason"].as_str(), e["error"]["status"].as_str()), (Some("phone_forbidden"), Some("owner_only"), Some("refused")), "{e}");
+    let sent = c.desktop.calls.lock().unwrap().last().unwrap().2.clone();
+    assert_eq!((sent["thread_id"].as_str(), sent["session_id"].as_str(), sent["source"].as_str()), (Some("th-1"), Some("s-1"), Some("chat")), "{sent}");
 }
 
 #[tokio::test]

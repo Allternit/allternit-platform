@@ -244,6 +244,10 @@ fn runtime_error(status: u16, body: &Value) -> PlatformError {
             "Allternit Desktop is online but its phone gateway isn't running. Open Phones in Allternit Desktop and retry.",
         ),
         400 => PlatformError::invalid_request("invalid_phone_request", message),
+        403 if body.get("status").and_then(Value::as_str) == Some("refused") => PlatformError::permission("phone_forbidden", message).with_refusal(
+            body.get("reason").and_then(Value::as_str).map(str::to_string),
+            Some("refused".into()),
+        ),
         401 | 403 => PlatformError::permission("phone_forbidden", message),
         404 => PlatformError::not_found("phone_not_found", message),
         409 => PlatformError::conflict("phone_conflict", message),
@@ -713,6 +717,12 @@ pub(crate) struct TaskBody {
     pub bot_id: Option<String>,
     #[serde(default)]
     pub brain: Option<String>,
+    #[serde(default)]
+    pub thread_id: Option<String>,
+    #[serde(default)]
+    pub session_id: Option<String>,
+    #[serde(default)]
+    pub source: Option<String>,
 }
 
 fn started(out: &Value) -> Value {
@@ -744,7 +754,7 @@ pub(crate) async fn op_task(db: &PgPool, host: &dyn PhoneHost, caller: &Platform
     if fleet.is_none() {
         check_phone_runs(db, caller, 1).await?;
     }
-    let payload = json!({ "goal": body.goal.trim(), "max_steps": body.max_steps, "bot_id": body.bot_id, "brain": body.brain, "background": true });
+    let payload = json!({ "goal": body.goal.trim(), "max_steps": body.max_steps, "bot_id": body.bot_id, "brain": body.brain, "thread_id": body.thread_id, "session_id": body.session_id, "source": body.source, "background": true });
     let path = format!("/api/v1/phones/{}/task", enc(&serial));
     let (_, out) = relay_ok(host, caller, named(&serial), "POST", &path, payload).await?;
     if let Some(run_id) = out.get("run_id").and_then(Value::as_str) {
@@ -1007,7 +1017,7 @@ pub(crate) struct FleetBody {
 async fn fleet_start(db: &PgPool, host: &dyn PhoneHost, caller: &PlatformCaller, body: &FleetBody, id: &str, serial: &String, goal: Option<String>, skill: Option<String>) -> (String, Result<Value, PlatformError>) {
     let out = match (goal, skill) {
         (Some(goal), _) => {
-            let task = TaskBody { goal, max_steps: body.max_steps, bot_id: body.bot_id.clone(), brain: body.brain.clone() };
+            let task = TaskBody { goal, max_steps: body.max_steps, bot_id: body.bot_id.clone(), brain: body.brain.clone(), ..Default::default() };
             op_task(db, host, caller, serial, &task, Some(id)).await
         }
         (_, Some(skill)) => {
@@ -1177,7 +1187,7 @@ pub async fn mcp_call(db: &PgPool, host: &dyn PhoneHost, caller: &PlatformCaller
         "phone_open_app" => op_tool(db, host, caller, &serial, "phone.open_app", with_hold(Some(pick(&["app"])), hold.as_deref())?, None).await,
         "phone_tool" => op_tool(db, host, caller, &serial, &need("name")?, with_hold(args.get("arguments").cloned(), hold.as_deref())?, None).await,
         "phone_task" => {
-            let task = TaskBody { goal: need("goal")?, max_steps: args.get("max_steps").and_then(Value::as_u64).map(|n| n as u32), bot_id: s("bot_id"), brain: s("brain") };
+            let task = TaskBody { goal: need("goal")?, max_steps: args.get("max_steps").and_then(Value::as_u64).map(|n| n as u32), bot_id: s("bot_id"), brain: s("brain"), thread_id: s("thread_id"), session_id: s("session_id"), source: s("source") };
             op_task(db, host, caller, &serial, &task, None).await
         }
         "phone_run_status" => op_run_status(db, host, caller, &serial, &need("run_id")?).await,
