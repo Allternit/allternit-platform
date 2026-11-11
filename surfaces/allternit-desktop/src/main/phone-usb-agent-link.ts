@@ -1,5 +1,7 @@
 /**
- * The Desktop end of USBA/1: a TCP listener boards dial into over Wi-Fi.
+ * The Desktop end of USBA/1 and USBA/2: a TCP listener boards dial into over
+ * Wi-Fi, or that the node pipes a relayed board into (contract
+ * hardware/link/README.md section 4.4; the handshake stays end to end).
  *
  * It has to listen on the LAN (the board is on the phone, not this computer),
  * so nothing is trusted until the mutual handshake in
@@ -11,6 +13,13 @@
  * Commands are sent one at a time. A command whose reply doesn't arrive is
  * reported `uncertain`, never ok: the board may or may not have acted, and
  * callers must look at the screen before trying again.
+ *
+ * USBA/2 sessions also check the board's side: every reply and state line
+ * carries a tag under the session key. A missing or wrong tag ends the
+ * session (`bad_tag`), so a relay in the path cannot forge an "ok" or an
+ * armed state. Typed text goes sealed as `typex`. The display commands
+ * (`face`, `prog`, `label`) are refused on USBA/1 without sending anything,
+ * because USBA/1 firmware resets its idle timer on any command.
  */
 
 import { EventEmitter } from 'node:events';
@@ -27,11 +36,15 @@ import {
   parseHello,
   parseReply,
   parseState,
+  sealType,
   serverProof,
   sessionKey,
+  textKey,
   type BoardCommand,
   type BoardState,
   type Hello,
+  type Reply,
+  type UsbaVersion,
 } from './phone-usb-agent-protocol.js';
 
 export const HANDSHAKE_TIMEOUT_MS = 5_000;
@@ -45,6 +58,7 @@ export type SendResult =
 
 export interface BoardSessionInfo {
   boardId: string;
+  version: UsbaVersion;
   firmware: string;
   resetReason: string;
   address: string;
@@ -59,10 +73,14 @@ interface Session {
   info: BoardSessionInfo;
   socket: net.Socket;
   sk: string;
+  /** USBA/2 text key for `typex`; null on USBA/1. */
+  ek: string | null;
   seq: number;
+  /** Highest state-line `n` applied on a USBA/2 session. */
+  lastN: number;
   /** Serializes commands: the board answers in order and we never pipeline. */
   queue: Promise<unknown>;
-  pending: { seq: number; resolve: (line: string | null) => void } | null;
+  pending: { seq: number; resolve: (reply: Reply | null) => void } | null;
   heartbeat: ReturnType<typeof setInterval> | null;
 }
 
@@ -139,19 +157,25 @@ export class UsbAgentLink extends EventEmitter {
   send(boardId: string, cmd: BoardCommand): Promise<SendResult> {
     const s = this.sessions.get(boardId);
     if (!s) return Promise.resolve({ ok: false, error: 'offline', message: 'The USB Agent is not connected.' });
+    if (s.info.version === 1 && (cmd.op === 'face' || cmd.op === 'prog' || cmd.op === 'label')) {
+      return Promise.resolve({ ok: false, error: 'invalid', message: `This board runs USBA/1 firmware, which has no "${cmd.op}" command. Update its firmware.` });
+    }
     const text = encodeCommand(cmd);
     if (text === null) return Promise.resolve({ ok: false, error: 'invalid', message: `Command out of bounds: ${cmd.op}.` });
-    const run = s.queue.then(() => this.sendNow(s, text));
+    // USBA/2 never sends text in the clear: the relay reads USBA lines.
+    const seal = s.ek !== null && cmd.op === 'type' ? { ek: s.ek, text: cmd.text } : null;
+    const run = s.queue.then(() => this.sendNow(s, text, seal));
     s.queue = run.catch(() => undefined);
     return run;
   }
 
-  private sendNow(s: Session, text: string): Promise<SendResult> {
+  private sendNow(s: Session, text: string, seal: { ek: string; text: string } | null): Promise<SendResult> {
     if (this.sessions.get(s.info.boardId) !== s) {
       return Promise.resolve({ ok: false, error: 'offline', message: 'The USB Agent disconnected.' });
     }
     s.seq += 1;
     const seq = s.seq;
+    const command = seal ? sealType(seal.ek, seq, seal.text) : text;
     const timeoutMs = this.opts.commandTimeoutMs ?? COMMAND_TIMEOUT_MS;
     return new Promise<SendResult>((resolve) => {
       const timer = setTimeout(() => {
@@ -160,14 +184,12 @@ export class UsbAgentLink extends EventEmitter {
       }, timeoutMs);
       s.pending = {
         seq,
-        resolve: (line) => {
+        resolve: (reply) => {
           clearTimeout(timer);
           s.pending = null;
-          if (line === null) {
+          if (reply === null) {
             return resolve({ ok: false, error: 'uncertain', message: 'The USB Agent disconnected mid-command — it may or may not have happened.' });
           }
-          const reply = parseReply(line);
-          if (!reply) return resolve({ ok: false, error: 'uncertain', message: 'Unreadable answer from the USB Agent.' });
           if (reply.ok) return resolve({ ok: true });
           if (reply.reason === 'disarmed') {
             return resolve({ ok: false, error: 'disarmed', message: 'The USB Agent is disarmed. Press its button to let the bot use the phone.' });
@@ -178,7 +200,7 @@ export class UsbAgentLink extends EventEmitter {
           resolve({ ok: false, error: 'rejected', message: `The USB Agent refused: ${reply.reason}.` });
         },
       };
-      s.socket.write(`${commandLine(s.sk, seq, text)}\n`);
+      s.socket.write(`${commandLine(s.sk, seq, command)}\n`);
     });
   }
 
@@ -216,17 +238,18 @@ export class UsbAgentLink extends EventEmitter {
             return socket.destroy();
           }
           sn = newNonceHex();
-          socket.write(`challenge ${sn} ${serverProof(key, hello.boardId, hello.boardNonce, sn)}\n`);
+          socket.write(`challenge ${sn} ${serverProof(key, hello.boardId, hello.boardNonce, sn, hello.version)}\n`);
           return;
         }
         const proof = parseAuth(line);
-        if (!proof || !key || !equalHex(proof, boardProof(key, hello.boardId, hello.boardNonce, sn))) {
+        if (!proof || !key || !equalHex(proof, boardProof(key, hello.boardId, hello.boardNonce, sn, hello.version))) {
           this.emit('rejected', { address, reason: 'bad_proof', boardId: hello.boardId });
           return socket.destroy();
         }
         clearTimeout(timer);
         uncount();
-        session = this.startSession(socket, hello, sessionKey(key, hello.boardNonce, sn), address);
+        const ek = hello.version === 2 ? textKey(key, hello.boardNonce, sn) : null;
+        session = this.startSession(socket, hello, sessionKey(key, hello.boardNonce, sn, hello.version), ek, address);
       },
       () => socket.destroy(),
     );
@@ -240,12 +263,13 @@ export class UsbAgentLink extends EventEmitter {
     });
   }
 
-  private startSession(socket: net.Socket, hello: Hello, sk: string, address: string): Session {
+  private startSession(socket: net.Socket, hello: Hello, sk: string, ek: string | null, address: string): Session {
     const old = this.sessions.get(hello.boardId);
     if (old) this.endSession(old, 'replaced');
     const s: Session = {
       info: {
         boardId: hello.boardId,
+        version: hello.version,
         firmware: hello.firmware,
         resetReason: hello.resetReason,
         address,
@@ -254,7 +278,9 @@ export class UsbAgentLink extends EventEmitter {
       },
       socket,
       sk,
+      ek,
       seq: 0,
+      lastN: 0,
       queue: Promise.resolve(),
       pending: null,
       heartbeat: null,
@@ -271,16 +297,34 @@ export class UsbAgentLink extends EventEmitter {
   }
 
   private onSessionLine(s: Session, line: string): void {
-    const state = parseState(line);
-    if (state) {
-      s.info.state = state;
-      this.emit('state', { boardId: s.info.boardId, state });
+    if (s.info.version === 1) {
+      const state = parseState(line);
+      if (state) return this.applyState(s, state);
+      if (line.startsWith('r ') && s.pending) {
+        const reply = parseReply(line);
+        if (reply && reply.seq === s.pending.seq) s.pending.resolve(reply);
+      }
       return;
     }
-    if (line.startsWith('r ') && s.pending) {
-      const reply = parseReply(line);
-      if (reply && reply.seq === s.pending.seq) s.pending.resolve(line);
+    if (line.startsWith('s ')) {
+      const signed = parseState(line, 2, s.sk);
+      if (!signed) return this.endSession(s, 'bad_tag');
+      const { n, ...state } = signed;
+      // A replayed or reordered state line never moves the state backwards.
+      if (n === undefined || n <= s.lastN) return;
+      s.lastN = n;
+      return this.applyState(s, state);
     }
+    if (line.startsWith('r ')) {
+      const reply = parseReply(line, 2, s.sk);
+      if (!reply) return this.endSession(s, 'bad_tag');
+      if (s.pending && reply.seq === s.pending.seq) s.pending.resolve(reply);
+    }
+  }
+
+  private applyState(s: Session, state: BoardState): void {
+    s.info.state = state;
+    this.emit('state', { boardId: s.info.boardId, state: { ...state } });
   }
 
   private endSession(s: Session, reason: string): void {
