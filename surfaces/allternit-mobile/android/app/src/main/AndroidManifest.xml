@@ -28,9 +28,13 @@
             android:resource="@string/asset_statements" />
 
         <!-- The Allternit app: m.allternit.com as a Trusted Web Activity. Without
-             a TWA-capable browser it opens as a Custom Tab instead. -->
+             a TWA-capable browser it opens as a Custom Tab instead.
+             ${launcherActivity} is set per flavor in app/build.gradle.kts:
+             phonelink = androidbrowserhelper's LauncherActivity; play =
+             com.allternit.app.ReviewLauncherActivity (same launcher, plus the
+             Play in-app review prompt). -->
         <activity
-            android:name="com.google.androidbrowserhelper.trusted.LauncherActivity"
+            android:name="${launcherActivity}"
             android:exported="true">
             <meta-data
                 android:name="android.support.customtabs.trusted.DEFAULT_URL"

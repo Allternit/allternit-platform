@@ -64,6 +64,7 @@ struct AllternitApp: App {
                 }
             }
             .environmentObject(authManager)
+            .reviewPrompt()
             .sheet(isPresented: $authManager.isPresentingAuth, onDismiss: {
                 authManager.refreshAuthState()
             }) {

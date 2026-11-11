@@ -4133,6 +4133,32 @@
       ]
     },
     {
+      "id": "feature:mobile-rating-prompt",
+      "label": "Store rating prompt: Apple rating sheet on iPhone, Google Play review card on Android",
+      "product": "product:allternit-ios",
+      "status": "building",
+      "description": "The mobile apps ask for a store rating at most rarely, on the device only. iPhone: after 5 successful chat answers on 2 different days, about 2 seconds after an answer finishes, once per app version and not within 120 days of the last ask; never while streaming, in debug builds, with -sample-workspace or under UI tests; Apple decides whether the sheet shows. Settings has a Rate Allternit row that opens the App Store review page. Android (Play build only): after 5 launches and 3 days since the first launch, not within 120 days of the last ask, the launcher may show Google Play's in-app review card before the app opens (3-second timeout); the sideloaded Phone Link build has none. Counters stay in UserDefaults or SharedPreferences; nothing is sent to Allternit.",
+      "touches": [
+        "allternit/surfaces/allternit-mobile/ios/Core/ReviewPromptStore.swift",
+        "allternit/surfaces/allternit-mobile/ios/Features/Chat/ViewModels/ChatViewModel.swift",
+        "allternit/surfaces/allternit-mobile/ios/App/AllternitApp.swift",
+        "allternit/surfaces/allternit-mobile/android/app/src/play/java/com/allternit/app/ReviewLauncherActivity.kt",
+        "allternit/surfaces/allternit-mobile/android/app/src/play/java/com/allternit/app/ReviewPolicy.kt"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-11",
+          "note": "Eoj approved the rating prompt. It ships in the next build after iPhone 1.0.1. App Store 1.0.1 metadata changed the same day: name Allternit: AI Agents & Bots, subtitle Remote control your computer."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/iphone-app.mdx",
+        "allternit/surfaces/docs/guides/android-app.mdx",
+        "allternit/surfaces/allternit-mobile/ios/README.md",
+        "allternit/surfaces/allternit-mobile/android/README.md"
+      ]
+    },
+    {
       "id": "feature:pet-offers",
       "label": "Pet offers: the bot's pet notices errors and offers a fix",
       "product": "product:ai-allternit",
