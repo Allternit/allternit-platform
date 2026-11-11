@@ -82,10 +82,13 @@ export function appBlocked(app: string, appId: string, userBlockList: readonly s
   if (listNamesApp(userBlockList, app, appId)) return true;
   const d = PET_OFFER_BLOCK_DEFAULTS;
   const ids = [...d.passwordManagerAppIds, ...d.messagesMacAppIds, ...d.messagesAndroidPackages];
-  if (listNamesApp(d.passwordManagerNames, app, '') || listNamesApp(ids, '', appId)) return true;
-  // The contract lists Messages by bundle id only; its name blocks it too on a Mac.
-  if (platform === 'darwin' && lower(app) === 'messages') return true;
+  if (listNamesApp(ids, '', appId)) return true;
+  // The OS window list has names only. A password manager's name may carry a
+  // version ("1Password 7"), so its name also blocks as a leading word.
   const name = lower(app);
+  if (d.passwordManagerNames.some(n => name === n.toLowerCase() || name.startsWith(`${n.toLowerCase()} `))) return true;
+  // The contract lists Messages by bundle id only; its name blocks it too on a Mac.
+  if (platform === 'darwin' && name === 'messages') return true;
   return name.length > 0 && d.bankingNameKeywords.some(k => wordIn(name, k.toLowerCase()));
 }
 
@@ -192,15 +195,21 @@ export async function lookAt(
   }
   // The pid must still be the app we checked; a reused pid could be anything.
   if (typeof ctx.pid === 'number' && ctx.pid !== target.pid) return { skip: 'no_driver' };
-  const app = str(ctx.app) || target.app;
-  const appId = str(ctx.bundle_id) || target.appId;
+  // macOS: the app's name and bundle id. Windows: `app` is the exe file name,
+  // which is the id; the window list's name is the friendlier label.
+  const exe = platform === 'win32' && /\.exe$/i.test(str(ctx.app)) ? str(ctx.app) : '';
+  const app = exe ? target.app || exe : str(ctx.app) || target.app;
+  const appId = exe || str(ctx.bundle_id) || target.appId;
   if (appBlocked(app, appId, settings.blockList, platform)) return { skip: 'blocked_app' };
   if (listNamesApp(settings.muted, app, appId)) return { skip: 'muted' };
   const title = str(ctx.title) || target.title;
   if (privateWindowTitle(title)) return { skip: 'private_window' };
   const host = str(ctx.host);
   if (host && bankingHost(host)) return { skip: 'blocked_host' };
-  if ((isBrowser(app, appId) || str(ctx.url)) && !title.trim()) return { skip: 'browser_no_title' };
+  const browser = isBrowser(app, appId) || Boolean(str(ctx.url));
+  if (browser && !title.trim()) return { skip: 'browser_no_title' };
+  // No page URL (Windows never gives one): a bank's name in the tab title blocks it.
+  if (browser && !host && PET_OFFER_BLOCK_DEFAULTS.bankingNameKeywords.some(k => wordIn(lower(title), k.toLowerCase()))) return { skip: 'blocked_host' };
 
   // 3. Same window, same title, under 30 s ago.
   const windowKey = offerWindowKey(appId || app, title);

@@ -25,6 +25,7 @@ describe('lookAt: order of checks', () => {
   it.each([
     ['a password manager by name', win({ app: '1Password', appId: 'com.1password.1password' })],
     ['a password manager by id under another name', win({ app: '1P', appId: 'com.1password.1password' })],
+    ['a password manager whose name carries a version', win({ app: '1Password 7', appId: '' })],
     ['Messages', win({ app: 'Messages', appId: 'com.apple.MobileSMS' })],
     ['a banking app by name', win({ app: 'Chase Mobile', appId: 'com.chase.mobile' })],
     ['an app on the user block list', win({ app: 'Slack', appId: 'com.tinyspeck.slackmacgap' })],
@@ -63,6 +64,16 @@ describe('lookAt: order of checks', () => {
     expect(eye).toBe(1);
     expect(await lookAt(win(), settings(), memo, { driver, platform: 'darwin' }, 20_000)).toEqual({ skip: 'recent' });
     expect(await lookAt(win(), settings(), memo, { driver, platform: 'darwin' }, 31_001)).toMatchObject({ text: 'npm ERR! code 1' });
+  });
+
+  it('on Windows the exe name from the driver is the id, and a bank tab title blocks a browser with no URL', async () => {
+    const terminal = fakeDriver({ context: { app: 'WindowsTerminal.exe', bundle_id: undefined, title: 'PowerShell' } });
+    expect(await lookAt(win({ app: 'Windows Terminal', appId: '' }), settings({ muted: ['WindowsTerminal.exe'] }), new LookMemo(), { driver: terminal.driver, platform: 'win32' }))
+      .toEqual({ skip: 'muted' });
+    const edge = fakeDriver({ context: { app: 'msedge.exe', bundle_id: undefined, title: 'Wells Fargo - Accounts and 2 more pages' } });
+    expect(await lookAt(win({ app: 'Microsoft Edge', appId: '' }), settings(), new LookMemo(), { driver: edge.driver, platform: 'win32' }))
+      .toEqual({ skip: 'blocked_host' });
+    expect(edge.calls).toEqual(['context']);
   });
 
   it('without the driver (not bundled, Windows build without it) Look returns nothing and does not throw', async () => {
