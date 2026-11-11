@@ -1,0 +1,91 @@
+{
+  "version": 1,
+  "author": "Allternit",
+  "editor": "wokwi",
+  "parts": [
+    {
+      "type": "board-xiao-esp32-s3",
+      "id": "esp",
+      "top": 0,
+      "left": 0,
+      "attrs": {
+        "serialInterface": "UART0"
+      }
+    },
+    {
+      "type": "wokwi-pushbutton",
+      "id": "btn1",
+      "top": -60,
+      "left": 120,
+      "attrs": {
+        "color": "green",
+        "label": "ARM"
+      }
+    },
+    {
+      "type": "wokwi-led",
+      "id": "led1",
+      "top": -60,
+      "left": 200,
+      "attrs": {
+        "color": "red",
+        "label": "ARMED"
+      }
+    },
+    {
+      "type": "wokwi-resistor",
+      "id": "r1",
+      "top": -20,
+      "left": 200,
+      "attrs": {
+        "value": "330"
+      }
+    }
+  ],
+  "connections": [
+    [
+      "btn1:1.l",
+      "esp:D0",
+      "green",
+      []
+    ],
+    [
+      "btn1:2.l",
+      "esp:GND",
+      "black",
+      []
+    ],
+    [
+      "led1:A",
+      "r1:1",
+      "red",
+      []
+    ],
+    [
+      "r1:2",
+      "esp:3V3",
+      "red",
+      []
+    ],
+    [
+      "led1:C",
+      "esp:D1",
+      "blue",
+      []
+    ],
+    [
+      "esp:D6",
+      "$serialMonitor:RX",
+      ""
+    ],
+    [
+      "esp:D7",
+      "$serialMonitor:TX",
+      ""
+    ]
+  ],
+  "serialMonitor": {
+    "display": "always",
+    "newline": "lf"
+  }
+}

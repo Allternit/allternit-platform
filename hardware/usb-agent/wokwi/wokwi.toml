@@ -1,0 +1,6 @@
+# Template. run.sh copies this and diagram.json into build/project/ and
+# points `firmware` and `elf` at the flavour it runs (build/a or build/b).
+[wokwi]
+version = 1
+firmware = 'build/a/usb_agent.ino.merged.bin'
+elf = 'build/a/usb_agent.ino.elf'

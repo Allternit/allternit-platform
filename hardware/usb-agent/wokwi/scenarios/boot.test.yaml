@@ -1,0 +1,8 @@
+name: 'Allternit Link firmware boots and answers prov info'
+version: 1
+author: 'Allternit'
+steps:
+  - delay: 2000ms
+  - write-serial: "prov info\n"
+  # A board with no saved settings reports provisioned=0.
+  - wait-serial: '1.1.0 provisioned=0'

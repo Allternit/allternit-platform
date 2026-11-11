@@ -1,0 +1,27 @@
+name: 'Wi-Fi join (written now; cannot be asserted on the free plan)'
+version: 1
+author: 'Allternit'
+# The firmware prints nothing on serial except prov replies, and the free plan
+# cannot reach a computer, so joining Wokwi-GUEST and the session handshake are
+# not observable. This scenario provisions and checks provisioned=1 only. The
+# real assertions (hello, handshake, ping) belong to the private-gateway step
+# (e2e-desk.ts). run.sh does not run this file.
+steps:
+  - delay: 2000ms
+  - write-serial: "prov set ssid 576f6b77692d4755455354\n"
+  - wait-serial: 'prov ok'
+  - write-serial: "prov set pass\n"
+  - wait-serial: 'prov ok'
+  - write-serial: "prov set host 192.0.2.1\n"
+  - wait-serial: 'prov ok'
+  - write-serial: "prov set port 7311\n"
+  - wait-serial: 'prov ok'
+  - write-serial: "prov set desk wokwi-test\n"
+  - wait-serial: 'prov ok'
+  - write-serial: "prov set key 0000000000000000000000000000000000000000000000000000000000000000\n"
+  - wait-serial: 'prov ok'
+  - write-serial: "prov commit\n"
+  - wait-serial: 'prov ok'
+  - delay: 15000ms
+  - write-serial: "prov info\n"
+  - wait-serial: '1.1.0 provisioned=1'

@@ -1,0 +1,26 @@
+name: 'Arm button toggles the LED; an armed board with no session disarms'
+version: 1
+author: 'Allternit'
+# Wokwi build: button on GPIO 1 (esp:D0), LED on GPIO 2 (esp:D1), LED active low
+# (see build.sh). Pin level low = armed.
+steps:
+  - delay: 2000ms
+  - expect-pin: { part-id: esp, name: D1, value: 1 }
+  - set-control: { part-id: btn1, name: pressed, value: 1 }
+  - delay: 200ms
+  - set-control: { part-id: btn1, name: pressed, value: 0 }
+  - delay: 300ms
+  - expect-pin: { part-id: esp, name: D1, value: 0 }
+  - set-control: { part-id: btn1, name: pressed, value: 1 }
+  - delay: 200ms
+  - set-control: { part-id: btn1, name: pressed, value: 0 }
+  - delay: 300ms
+  - expect-pin: { part-id: esp, name: D1, value: 1 }
+  # Arm again and leave it: with no session the firmware disarms after 60 s.
+  - set-control: { part-id: btn1, name: pressed, value: 1 }
+  - delay: 200ms
+  - set-control: { part-id: btn1, name: pressed, value: 0 }
+  - delay: 300ms
+  - expect-pin: { part-id: esp, name: D1, value: 0 }
+  - delay: 61000ms
+  - expect-pin: { part-id: esp, name: D1, value: 1 }

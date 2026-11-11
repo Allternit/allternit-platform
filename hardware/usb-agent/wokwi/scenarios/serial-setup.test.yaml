@@ -1,0 +1,27 @@
+name: 'Serial setup with the open Wokwi-GUEST network, then restart'
+version: 1
+author: 'Allternit'
+# Line shapes are the ones surfaces/allternit-desktop/src/main/phone-usb-agent-provision.ts
+# sends. 576f6b77692d4755455354 is hex for "Wokwi-GUEST". The key is 64 hex
+# zeros: an obviously fake test key, never a real secret. 192.0.2.1 is a
+# documentation address (the board never reaches it on the free plan).
+steps:
+  - delay: 2000ms
+  - write-serial: "prov set ssid 576f6b77692d4755455354\n"
+  - wait-serial: 'prov ok'
+  - write-serial: "prov set pass\n"
+  - wait-serial: 'prov ok'
+  - write-serial: "prov set host 192.0.2.1\n"
+  - wait-serial: 'prov ok'
+  - write-serial: "prov set port 7311\n"
+  - wait-serial: 'prov ok'
+  - write-serial: "prov set desk wokwi-test\n"
+  - wait-serial: 'prov ok'
+  - write-serial: "prov set key 0000000000000000000000000000000000000000000000000000000000000000\n"
+  - wait-serial: 'prov ok'
+  - write-serial: "prov commit\n"
+  - wait-serial: 'prov ok'
+  # The board saves to flash and restarts; ask again after it is back.
+  - delay: 3000ms
+  - write-serial: "prov info\n"
+  - wait-serial: '1.1.0 provisioned=1'
