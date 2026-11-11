@@ -276,10 +276,47 @@ fn card_status(status: &str) -> &'static str {
     }
 }
 
+/// Sessions with Live voice on, refreshed by the web on every Live turn. A task the bot starts
+/// through its own tool in such a session (source `chat`) is a voice task.
+static LIVE_VOICE: std::sync::Mutex<Option<std::collections::HashMap<String, std::time::Instant>>> = std::sync::Mutex::new(None);
+const LIVE_VOICE_TTL: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+
+fn mark_live_voice(session_id: &str) {
+    let mut g = LIVE_VOICE.lock().unwrap_or_else(|e| e.into_inner());
+    let m = g.get_or_insert_with(Default::default);
+    m.retain(|_, t| t.elapsed() < LIVE_VOICE_TTL);
+    m.insert(session_id.to_string(), std::time::Instant::now());
+}
+
+fn is_live_voice(session_id: Option<&str>) -> bool {
+    let Some(id) = session_id else { return false };
+    let g = LIVE_VOICE.lock().unwrap_or_else(|e| e.into_inner());
+    g.as_ref().and_then(|m| m.get(id)).is_some_and(|t| t.elapsed() < LIVE_VOICE_TTL)
+}
+
+/// "chat" becomes "voice" for a session in Live voice; every other source is kept.
+fn source_for(source: String, session_id: Option<&str>) -> String {
+    if source == "chat" && is_live_voice(session_id) { "voice".into() } else { source }
+}
+
+#[derive(Deserialize)]
+struct LiveVoiceIn {
+    session_id: String,
+}
+
+async fn post_live_voice(Extension(_user): Extension<AuthUser>, Json(body): Json<LiveVoiceIn>) -> Response {
+    let id = body.session_id.trim();
+    if !id.is_empty() && id.len() <= 200 {
+        mark_live_voice(id);
+    }
+    StatusCode::NO_CONTENT.into_response()
+}
+
 fn close_card(db: &DbHandle, ctx: &TaskCtx, report: &Value, run_id: &str, serial: &str, goal: &str) {
     let status = report.get("status").and_then(Value::as_str).unwrap_or("failed");
     let step = report.get("steps").and_then(Value::as_array).map(|s| s.len() as u32).unwrap_or(0);
-    crate::phone_runs::post_task_card(db, ctx, run_id, serial, goal, card_status(status), step, None);
+    let summary = report.get("result").and_then(Value::as_str);
+    crate::phone_runs::post_task_card_with_summary(db, ctx, run_id, serial, goal, card_status(status), step, None, summary);
 }
 
 /// [`run_task_loop`] for a caller context, the one entry point other lanes call to
@@ -836,8 +873,9 @@ async fn post_task(
         bot_id: some(&body.bot_id),
         thread_id: some(&body.thread_id),
         session_id: some(&body.session_id),
-        source: phone_guard::clean_source(body.source.as_deref()),
+        source: String::new(),
     };
+    let ctx = TaskCtx { source: source_for(phone_guard::clean_source(body.source.as_deref()), ctx.session_id.as_deref()), ..ctx };
     let owner_http = is_owner_http_request(credential.is_some(), &ctx.source);
     if let Some((reason, sentence)) = refusal_for(&state.db, &ctx, owner_http) {
         return (StatusCode::FORBIDDEN, Json(json!({ "ok": false, "status": "refused", "reason": reason, "message": sentence }))).into_response();
@@ -857,7 +895,7 @@ async fn post_task(
 }
 
 pub fn router() -> Router<Arc<AppState>> {
-    Router::new().route("/phones/:serial/task", post(post_task))
+    Router::new().route("/phones/:serial/task", post(post_task)).route("/phones/live-voice", post(post_live_voice))
 }
 
 #[cfg(test)]
@@ -971,6 +1009,22 @@ mod tests {
         assert!(crate::phone_runs::post_task_card(&st.db, &voice, "task-voice", "link:1", "order coffee", "waiting_approval", 1, Some("approval:gap_v")));
         let last = cards(&st, "task-voice").pop().unwrap();
         assert_eq!((last["status"].as_str(), last["inboxId"].as_str()), (Some("waiting_approval"), Some("approval:gap_v")));
+    }
+
+    #[tokio::test]
+    async fn a_tool_started_task_in_a_live_voice_session_is_a_voice_task_and_its_card_carries_the_result() {
+        mark_live_voice("s-live");
+        assert_eq!(source_for("chat".into(), Some("s-live")), "voice");
+        assert_eq!(source_for("chat".into(), Some("s-other")), "chat");
+        assert_eq!(source_for("routine".into(), Some("s-live")), "routine");
+        let st = state("summary").await;
+        let report = json!({ "status": "done", "steps": [{}, {}], "result": "Ordered the coffee.\n  Pickup at 5." });
+        close_card(&st.db, &ctx(), &report, "task-sum", "link:1", "order coffee");
+        let last = cards(&st, "task-sum").pop().unwrap();
+        assert_eq!((last["status"].as_str(), last["summary"].as_str()), (Some("done"), Some("Ordered the coffee. Pickup at 5.")));
+        let long = json!({ "status": "done", "steps": [], "result": "x".repeat(500) });
+        close_card(&st.db, &ctx(), &long, "task-long", "link:1", "g");
+        assert_eq!(cards(&st, "task-long").pop().unwrap()["summary"].as_str().unwrap().chars().count(), 200);
     }
 
     #[tokio::test]

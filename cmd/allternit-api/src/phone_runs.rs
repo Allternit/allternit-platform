@@ -425,6 +425,11 @@ pub fn step_event(step: &Step) -> Value {
 /// a task with no thread. Card shape:
 /// `{"type":"phone_task","runId","serial","goal","status","step","inboxId?"}`.
 pub fn post_task_card(db: &crate::db::DbHandle, ctx: &crate::phone_guard::TaskCtx, run_id: &str, serial: &str, goal: &str, status: &str, step: u32, inbox_id: Option<&str>) -> bool {
+    post_task_card_with_summary(db, ctx, run_id, serial, goal, status, step, inbox_id, None)
+}
+
+/// [`post_task_card`] plus the run's own result sentence (one line, ~200 chars) on a closed card.
+pub fn post_task_card_with_summary(db: &crate::db::DbHandle, ctx: &crate::phone_guard::TaskCtx, run_id: &str, serial: &str, goal: &str, status: &str, step: u32, inbox_id: Option<&str>, summary: Option<&str>) -> bool {
     let Some(thread) = ctx.thread_id.as_deref().map(str::trim).filter(|t| !t.is_empty()) else { return false };
     let Ok(conn) = db.connect() else { return false };
     let bot = ctx
@@ -444,6 +449,9 @@ pub fn post_task_card(db: &crate::db::DbHandle, ctx: &crate::phone_guard::TaskCt
     });
     if let Some(i) = inbox_id {
         card["inboxId"] = json!(i);
+    }
+    if let Some(line) = summary.map(|t| t.split_whitespace().collect::<Vec<_>>().join(" ")).filter(|t| !t.is_empty()) {
+        card["summary"] = json!(line.chars().take(200).collect::<String>());
     }
     let key = format!("phone-task:{run_id}:{status}:{step}:{}", inbox_id.unwrap_or(""));
     crate::gateway_runner::led(db, &bot, thread, ctx.session_id.as_deref(), "phone_task", ("system", "phone"), card, Some(key))
