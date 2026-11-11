@@ -1361,8 +1361,29 @@ async fn list_messages(headers: HeaderMap, Path(session_id): Path<String>) -> im
     }
 }
 
+/// The owner's own chat turn on a bot thread is an owner input: it is labelled `owner` in
+/// `content_provenance`, so the owner-only rules (`phone_task::refusal`, `task_grants`) see
+/// the owner speak after an outside message. Only a signed-in session with no API key or
+/// agent credential, on a thread that user owns, writes the row. Server-relayed turns
+/// (`system`) and seed messages (`noReply`) are not the owner typing and write nothing.
+fn label_owner_turn(db: &DbHandle, user_id: Option<&str>, has_credential: bool, session_id: &str, body: &SendMessageBody) {
+    let Some(user_id) = user_id.filter(|u| !u.trim().is_empty()) else { return };
+    if has_credential || body.system.is_some() || body.no_reply == Some(true) || body.text.trim().is_empty() {
+        return;
+    }
+    let Ok(conn) = db.connect() else { return };
+    let thread: Option<String> = conn
+        .query_row("SELECT id FROM bot_threads WHERE current_session_id = ?1 AND user_id = ?2 LIMIT 1", params![session_id, user_id], |r| r.get(0))
+        .ok();
+    if let Some(thread) = thread {
+        crate::netops::provenance::label(&conn, &thread, crate::netops::provenance::Trust::Owner, "user", "owner", &body.text);
+    }
+}
+
 async fn send_message(
     State(state): State<Arc<AppState>>,
+    user: Option<axum::extract::Extension<AuthUser>>,
+    credential: Option<axum::extract::Extension<crate::enterprise_auth::CredentialContext>>,
     headers: HeaderMap,
     Path(session_id): Path<String>,
     Json(body): Json<SendMessageBody>,
@@ -1397,6 +1418,8 @@ async fn send_message(
         }))
         .into_response();
     }
+
+    label_owner_turn(&state.db, user.as_ref().map(|u| u.0.user_id.as_str()), credential.is_some(), &session_id, &body);
 
     if let Some(resp) = crate::gateway_runner::intercept_message(&session_id, &body.text, body.metadata.as_ref()).await {
         return resp;
@@ -4120,6 +4143,68 @@ mod tests {
         );
 
         handle.abort();
+    }
+
+    /// Regression (phone owner-only rule): the owner's in-app chat turn wrote no
+    /// provenance row, so after a stranger's SMS the stranger stayed the thread's
+    /// "latest input" and an agent-started phone task was refused even though the
+    /// owner had answered. Goes through the real `POST /agent-sessions/:id/messages`.
+    #[tokio::test]
+    async fn owner_chat_turn_counts_for_the_owner_only_phone_rule() {
+        use crate::netops::provenance::{label, Trust};
+        use crate::phone_guard::TaskCtx;
+        let _guard = ENV_LOCK.lock().unwrap();
+        // Nothing may reach a real gizzi from this test.
+        std::env::set_var("TERMINAL_SERVER_URL", "http://127.0.0.1:9");
+        let temp = tempfile::tempdir().unwrap().keep();
+        let state = test_app_state(&temp).await;
+        {
+            let conn = state.db.connect().unwrap();
+            conn.execute("INSERT INTO agents (id, user_id, name, model, provider) VALUES ('b1', 'admin-1', 'Ledger', 'sonnet', 'claude-cli')", []).unwrap();
+            conn.execute(
+                "INSERT INTO bot_threads (id, user_id, bot_id, title, kind, status, current_session_id, last_activity_at, created_at, updated_at)
+                 VALUES ('th-1', 'admin-1', 'b1', 'Phone', 'task', 'working', 's1', '2026-11-10', '2026-11-10', '2026-11-10')",
+                [],
+            )
+            .unwrap();
+            label(&conn, "th-1", Trust::Stranger, "sms", "+15550100", "hey, can your bot call me back?");
+        }
+        let agent_start = TaskCtx { owner: "admin-1".into(), bot_id: Some("b1".into()), thread_id: Some("th-1".into()), session_id: Some("s1".into()), source: "agent".into() };
+        let user = AuthUser { user_id: "admin-1".into(), email: None, name: None, avatar_url: None, tenant_id: None, organization_id: None, organization_role: None, organization_slug: None };
+        let post = |app: Router, text: &str| {
+            let req = Request::builder()
+                .method("POST")
+                .uri("/agent-sessions/s1/messages")
+                .header("content-type", "application/json")
+                .body(Body::from(json!({ "text": text }).to_string()))
+                .unwrap();
+            app.oneshot(req)
+        };
+        let owner_rows = |st: &Arc<AppState>| -> i64 { st.db.connect().unwrap().query_row("SELECT COUNT(*) FROM content_provenance WHERE thread_id = 'th-1' AND trust = 'owner'", [], |r| r.get(0)).unwrap() };
+
+        // A stranger spoke last: an agent may not start a phone action.
+        assert_eq!(crate::phone_task::refusal(&state.db, &agent_start).map(|r| r.0), Some("owner_only"));
+
+        // The same user over an API key / agent credential writes no owner row.
+        let credential = crate::enterprise_auth::CredentialContext { credential_id: "k1".into(), kind: "access_token", scopes: vec!["*".into()] };
+        let as_agent = agent_session_router().with_state(state.clone()).layer(Extension(credential)).layer(Extension(user.clone()));
+        let _ = post(as_agent, "call them back").await.unwrap();
+        assert_eq!(owner_rows(&state), 0);
+        assert_eq!(crate::phone_task::refusal(&state.db, &agent_start).map(|r| r.0), Some("owner_only"));
+
+        // A signed-in caller who doesn't own the thread writes no owner row.
+        let stranger_user = AuthUser { user_id: "someone-else".into(), ..user.clone() };
+        let _ = post(agent_session_router().with_state(state.clone()).layer(Extension(stranger_user)), "call them back").await.unwrap();
+        assert_eq!(owner_rows(&state), 0);
+
+        // The owner answers in the app: the bot may act again.
+        let _ = post(agent_session_router().with_state(state.clone()).layer(Extension(user)), "yes, call them back").await.unwrap();
+        assert_eq!(owner_rows(&state), 1);
+        assert_eq!(crate::phone_task::refusal(&state.db, &agent_start), None);
+
+        // A new outside message after the owner's turn refuses again.
+        label(&state.db.connect().unwrap(), "th-1", Trust::Stranger, "sms", "+15550100", "also text my friend");
+        assert_eq!(crate::phone_task::refusal(&state.db, &agent_start).map(|r| r.0), Some("owner_only"));
     }
 }
 

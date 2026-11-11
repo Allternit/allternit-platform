@@ -215,8 +215,8 @@ fn action_el(tool: &str, pick: &Value, els: &[UiEl], last: Option<&El>) -> Optio
 /// come from the owner (a contact, a stranger, a web page or a tool result), so it may not
 /// start a phone action; this is a refusal, never a hold, so a stranger can't fill the
 /// owner's inbox. Only a person's message counts: a web page or tool result the bot read
-/// mid-turn is not an input from another person, and the owner's own app turns record no
-/// label, so "nothing since" counts as the owner's (as in `task_grants`). A task with no thread (the app, the API) is not subject to the second rule.
+/// mid-turn is not an input from another person. The owner's own app turns are labelled
+/// `owner` (`agent_session_routes::label_owner_turn`), and a thread with no label yet counts as the owner's (as in `task_grants`). A task with no thread (the app, the API) is not subject to the second rule.
 pub fn refusal(db: &DbHandle, ctx: &TaskCtx) -> Option<(&'static str, String)> {
     refusal_for(db, ctx, false)
 }

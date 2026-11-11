@@ -380,8 +380,8 @@ pub fn check_words(conn: &rusqlite::Connection, thread_id: &str, quote: &str, ac
     if let Some(f) = trust_floor(conn, thread_id).filter(|f| f.tainted()) {
         return Err(WordsRefusal::Tainted(f.as_str().into()));
     }
-    // The latest labelled input must be the owner's (the owner's app turns record
-    // no label of their own, so "nothing since" counts as the owner's).
+    // The latest labelled input must be the owner's (the owner's app turns are labelled
+    // `owner` by agent_session_routes::label_owner_turn; no label at all counts as the owner's).
     let latest: Option<String> = conn
         .query_row("SELECT trust FROM content_provenance WHERE thread_id = ?1 ORDER BY created_at DESC, rowid DESC LIMIT 1", params![thread_id], |r| r.get(0))
         .optional()
