@@ -70,4 +70,4 @@ Over Wi-Fi, the board looks for Desktop over mDNS (`_allternit-usba._tcp`, TXT `
 
 ## Licenses
 
-The firmware and the pointer and vision code are adapted from esp32-iphone-agent (MIT); see [NOTICE](NOTICE). UxPlay is GPL-3.0 and is not included: Desktop starts a `uxplay` you installed (`brew install uxplay`).
+The firmware and the pointer and vision code are adapted from esp32-iphone-agent (MIT); see [NOTICE](NOTICE). UxPlay is GPL-3.0 and is not included: Desktop starts a `uxplay` you installed. Homebrew has no `uxplay` formula, so on macOS UxPlay is built from source: run [install-uxplay.sh](install-uxplay.sh).
