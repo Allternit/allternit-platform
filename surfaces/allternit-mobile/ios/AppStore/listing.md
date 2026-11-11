@@ -6,8 +6,8 @@ Draft for App Store Connect. Register 1 voice: plain, no hype, no guarantees. Eo
 
 | Field | Value |
 |---|---|
-| Name (30) | Allternit |
-| Subtitle (30) | Your bots, chats and computer |
+| Name (30) | Allternit: AI Agents & Bots |
+| Subtitle (30) | Remote control your computer |
 | Bundle ID | com.allternit.mobile |
 | Primary category | Productivity |
 | Secondary category | Business |
@@ -16,6 +16,8 @@ Draft for App Store Connect. Register 1 voice: plain, no hype, no guarantees. Eo
 | Marketing URL | https://allternit.com |
 | Copyright | 2026 Allternit LLC |
 | Age rating | Answer the questionnaire "None" for every content row. The in-app browser (ACI, links) is unrestricted web access, which Apple puts in its highest age band. |
+
+Note: entered for 1.0.1 on 2026-11-11 (Eoj approved). Old values: name `Allternit`, subtitle `Your bots, chats and computer`. Reason: ASO Scout scored the old title 9/30, and App Store search on iPhone ranked "allternit" #75 because it spell-corrects to "alternative". Apple counts each word once across name, subtitle and keywords, so no word repeats. The rating prompt ships in the next build after 1.0.1.
 
 ## Promotional text (170)
 
@@ -44,7 +46,11 @@ Allternit needs an Allternit account. Code and automation features need a comput
 
 ## Keywords (100)
 
-ai,agents,bots,assistant,automation,chat,remote desktop,approvals,workflow,code,alternit,gizzi
+assistant,chatbot,desktop,automation,workflow,coding,tasks,approval,mac,pc,cloud,alternit,gizzi,llm
+
+Old keywords: `ai,agents,bots,assistant,automation,chat,remote desktop,approvals,workflow,code,alternit,gizzi`.
+
+Entered in App Store Connect for 1.0.1 on 2026-11-11 (Eoj approved). Same date: name and subtitle changed (see the table note below).
 
 1.0 shipped without `alternit,gizzi`; they were added for 1.0.1 (2026-11-09) because App Store search treated "allternit" as a misspelling of "alternative".
 

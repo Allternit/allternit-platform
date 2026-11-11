@@ -228,10 +228,23 @@ What had to adapt:
 ## The Allternit app (Trusted Web Activity, 0.5.0+)
 
 The launcher icon, labelled **Allternit**, opens m.allternit.com full-screen as a Trusted Web Activity. One install gives the Allternit phone UI and Phone Link.
-- The launcher is `com.google.androidbrowserhelper.trusted.LauncherActivity`, from `androidbrowserhelper` 2.5.0 (Apache-2.0). Without a TWA-capable browser it opens a Custom Tab, which shows the URL bar.
+- The launcher is `com.google.androidbrowserhelper.trusted.LauncherActivity`, from `androidbrowserhelper` 2.5.0 (Apache-2.0). The play flavor uses the subclass `com.allternit.app.ReviewLauncherActivity` (see the rating prompt section below). Without a TWA-capable browser it opens a Custom Tab, which shows the URL bar.
 - `https://m.allternit.com/.well-known/assetlinks.json` (allternit-ai `public/.well-known/`) names `com.allternit.app`, the release cert `3F:8A:39:51:…:E0:67`, and the Google Play app-signing cert `8D:4C:4F:BE:…:F9:4B`. The app's `asset_statements` string points back at the site. The VIEW filter for `https://m.allternit.com` has `autoVerify`, so links to the site open in the app.
 - This status screen (`MainActivity`) is no longer a launcher entry. It opens from the Phone Link notification and from the icon's long-press **Phone Link** shortcut (`res/xml/shortcuts.xml`).
 - Only the release key and the Play app-signing key pass the asset-links check. A debug-signed build shows the URL bar.
+
+## Rating prompt (play flavor only)
+
+When the app opens, the launcher may show Google Play's in-app review card before the app opens. Rules:
+
+- At least 5 launches and at least 3 days since the first launch.
+- Not within 120 days of the last ask.
+- The app always opens afterwards, with a 3-second timeout on the review flow.
+- Play shows the card only for apps installed from Play.
+
+Code: `app/src/play/java/com/allternit/app/ReviewLauncherActivity.kt` and `ReviewPolicy.kt`. The play flavor makes it the launcher through the manifest placeholder `launcherActivity`; the `phonelink` build keeps `LauncherActivity` and has no prompt. Counters are in `SharedPreferences` on the device; nothing is sent to Allternit.
+
+To reset while testing, clear the app's data (`adb shell pm clear com.allternit.app`).
 
 ## Live conformance
 
