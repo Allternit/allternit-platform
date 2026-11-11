@@ -92,7 +92,7 @@ The owner approves in the app. API keys cannot approve. Then repeat the same cal
 POST /v1/phones/{serial}/task
 ```
 
-`{ "goal": "Open Settings and turn on Wi-Fi", "max_steps": 15, "bot_id": "…", "brain": "provider/model" }`. `goal` is required (up to 2000 characters). `max_steps` is 1 to 40 (default 15). The model is `bot_id`'s brain, else `brain`, else the default.
+`{ "goal": "Open Settings and turn on Wi-Fi", "max_steps": 15, "bot_id": "…", "brain": "provider/model", "thread_id": "…", "session_id": "…", "source": "chat" }`. `thread_id`, `session_id` and `source` (`chat`, `imessage_ext`, `intent`, `voice`) are optional and tie the run to a conversation. If the Desktop refuses to start the task (for example `owner_only`, or your bots are paused), the call answers `403` with `error.reason` set to the refusal reason and `error.status` set to `refused`. `goal` is required (up to 2000 characters). `max_steps` is 1 to 40 (default 15). The model is `bot_id`'s brain, else `brain`, else the default.
 
 The task runs on the Desktop: it reads the screen, takes one action, and repeats until the goal is met, it fails, it runs out of steps, or 5 minutes pass. The call answers `202` at once:
 
@@ -100,7 +100,7 @@ The task runs on the Desktop: it reads the screen, takes one action, and repeats
 { "object": "phone.run", "run_id": "task-9c2e…", "serial": "link:7f3a", "skill": null, "status": "running" }
 ```
 
-A task that reaches a sensitive action waits for the owner for up to 5 minutes, with the 300 second budget paused. While it waits its status is `waiting_approval`. It ends as `denied` if the owner denies, `approval_timeout` if nobody answers, or `phone_locked` if the phone locks. The run also reports `held_ms` and `holds` (a list of `approvalId`, `effect` and `state`). `duration_ms` and phone minutes leave out the held time, and the run keeps its concurrency slot while it waits. The task body also takes optional `thread_id`, `session_id` and `source`.
+A task that reaches a sensitive action waits for the owner for up to 5 minutes, with the 300 second budget paused. While it waits its status is `waiting_approval`. It ends as `denied` if the owner denies, `approval_timeout` if nobody answers, or `phone_locked` if the phone locks. The run also reports `held_ms` and `holds` (a list of `approvalId`, `effect` and `state`). `duration_ms` and phone minutes leave out the held time, and the run keeps its concurrency slot while it waits. The task body also takes optional `thread_id`, `session_id` and `source`. A task that starts on a thread posts a `phone_task` card there. A paused bot, or a thread whose latest message was not from the owner, is refused with `403` before the phone is touched (see [Phone holds](/api/phone-holds)).
 
 Follow it with the `phone.step` and `phone.run.completed` webhooks, or read its steps with `GET /v1/phones/{serial}/history?run_id=`.
 

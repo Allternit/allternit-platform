@@ -120,7 +120,40 @@ The first returns the hold and its state. The second returns the review image fo
 POST /api/v1/phones/:serial/task
 ```
 
-The task route takes three new optional fields: `thread_id`, `session_id` and `source` (the same values as in `ctx`).
+The task route takes three optional fields: `thread_id`, `session_id` and `source` (the same values as in `ctx`; `source` defaults to `api`). They ride in the task context and come back on the run report as `thread_id`, `session_id` and `source`.
+
+Two checks run before the task touches the phone. Either one refuses the task with `403`:
+
+```json
+{ "ok": false, "status": "refused", "reason": "paused", "message": "Your bots are paused, so I didn't start this phone task. Resume them and ask again." }
+```
+
+```json
+{ "ok": false, "status": "refused", "reason": "owner_only", "message": "Only you can start a phone action from a conversation. The latest message here didn't come from you, so I didn't touch the phone." }
+```
+
+- `paused`: the owner turned on the pause switch for their bots.
+- `owner_only`: the thread's latest input is not from the owner (a contact, a stranger or another bot; a web page or tool result the bot read mid-turn is not counted, and the owner's own app turns record no label, so nothing since counts as the owner's). A refusal is not a hold: nothing waits in the inbox, no card is posted and the phone is not touched. A task with no thread is not subject to this rule.
+
+Code that starts a task in process calls `phone_task::run_task_ctx(db, data_dir, ctx, run_id, serial, goal, max_steps, model)`. It applies the same checks and answers a refused task with a report of `status: "refused"` and the same `reason`.
+
+### The phone task card
+
+A task started on a thread posts a card on that thread and updates it as the run moves:
+
+```json
+{ "type": "phone_task", "runId": "task-9c2e…", "serial": "link:1", "goal": "Open Settings", "status": "running", "step": 0 }
+```
+
+`status` is one of `running`, `waiting_approval`, `done`, `denied`, `approval_timeout`, `phone_locked` or `failed`. A `waiting_approval` card also carries `inboxId`, the inbox item that holds the approval. The card is a `phone_task` event on the thread's bot ledger; each change is a new event for the same `runId`, and the newest event is the card's state. A task with no thread posts no card.
+
+### The run's latest screen
+
+```http
+GET /api/v1/phones/runs/:runId/thumb
+```
+
+Answers the latest kept screen frame of the run as a JPEG, 360 px wide, with `Cache-Control: private, no-store`. A status card uses it as its thumbnail. It needs the owner's signed-in session, like the hold image. It answers `404` when the run has no kept frame, when it is not the caller's run, or when the id is unknown; it never answers `500` for these. Frames are redacted with the same screen check as the run history before they are kept.
 
 ## The hold record
 
@@ -170,6 +203,7 @@ Final statuses add three values to the existing ones:
 | `denied` | The owner denied a hold. |
 | `approval_timeout` | Nobody answered within the wait. |
 | `phone_locked` | The phone was locked and the run could not continue. |
+| `refused` | The run never started: the bots are paused, or the thread's latest input was not the owner's. The report has `reason` (`paused` or `owner_only`). |
 
 New fields on the run:
 
@@ -177,6 +211,7 @@ New fields on the run:
 |---|---|
 | `held_ms` | Total time the run waited on holds. |
 | `holds` | A list of `{ "approvalId", "effect", "state" }`, one per hold. |
+| `thread_id`, `session_id`, `source` | The context the task started with. |
 
 `duration_ms` does not include held time, so phone minutes are not billed for the wait.
 

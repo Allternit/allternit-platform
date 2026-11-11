@@ -25,6 +25,9 @@ pub struct PlatformError {
     /// Where to fix it (`payment_method_required`: the console billing page).
     /// Sent as `error.url` only when set.
     pub url: Option<String>,
+    /// A runtime refusal's machine reason and status (`owner_only`, `refused`), sent as `error.reason` / `error.status` when set.
+    pub reason: Option<String>,
+    pub refusal_status: Option<String>,
 }
 
 impl PlatformError {
@@ -36,11 +39,19 @@ impl PlatformError {
             message: message.into(),
             param: None,
             url: None,
+            reason: None,
+            refusal_status: None,
         }
     }
 
     pub fn with_url(mut self, url: impl Into<String>) -> Self {
         self.url = Some(url.into());
+        self
+    }
+
+    pub fn with_refusal(mut self, reason: Option<String>, status: Option<String>) -> Self {
+        self.reason = reason;
+        self.refusal_status = status;
         self
     }
 
@@ -117,6 +128,12 @@ impl IntoResponse for PlatformError {
         });
         if let Some(url) = self.url {
             body["error"]["url"] = json!(url);
+        }
+        if let Some(reason) = self.reason {
+            body["error"]["reason"] = json!(reason);
+        }
+        if let Some(status) = self.refusal_status {
+            body["error"]["status"] = json!(status);
         }
         (self.status, Json(body)).into_response()
     }
