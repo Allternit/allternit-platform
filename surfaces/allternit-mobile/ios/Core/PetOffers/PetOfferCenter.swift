@@ -78,9 +78,12 @@ final class PetOfferCenter: ObservableObject {
         if current?.sessionId == sessionId { current = nil }
     }
 
-    /// Settings: undo every mute.
-    func clearMutes() {
-        defaults.set(PetOfferContract.SettingsDefault.muted, forKey: PetOfferContract.SettingsKey.muted)
+    /// Settings list: every mute key, "bot:<id>" or "chat:<id>", sorted.
+    var mutedKeys: [String] { muted.sorted() }
+
+    /// Settings: undo one mute (a key from `mutedKeys`).
+    func unmute(_ key: String) {
+        defaults.set(muted.subtracting([key]).sorted(), forKey: PetOfferContract.SettingsKey.muted)
         objectWillChange.send()
     }
 

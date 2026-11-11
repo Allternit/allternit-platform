@@ -21,14 +21,6 @@ final class CoworkSessionStore: ObservableObject {
         self.client = client
     }
 
-    /// A failed session load is a run that failed with no chat on screen: the
-    /// main bot offers help (PetOfferCenter applies the gate).
-    private static func offerHelp(_ error: Error) {
-        PetOfferCenter.shared.report(failure: PetOfferFailure(
-            text: "Couldn't load Cowork sessions: \(error.localizedDescription)", botId: nil, sessionId: nil
-        ))
-    }
-
     // MARK: - Fetch
 
     /// Fetches the session list once per launch unless forced; concurrent
@@ -50,7 +42,6 @@ final class CoworkSessionStore: ObservableObject {
                 // View went away mid-flight — keep current state.
             } catch {
                 self.errorMessage = error.localizedDescription
-                Self.offerHelp(error)
             }
         }
     }
@@ -64,7 +55,6 @@ final class CoworkSessionStore: ObservableObject {
             // View went away mid-flight — keep current state.
         } catch {
             errorMessage = error.localizedDescription
-            Self.offerHelp(error)
         }
     }
 
