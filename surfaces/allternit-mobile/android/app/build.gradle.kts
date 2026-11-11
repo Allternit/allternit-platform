@@ -12,8 +12,8 @@ android {
         applicationId = "com.allternit.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 12
-        versionName = "0.5.2"
+        versionCode = 13
+        versionName = "0.5.3"
     }
 
     // Two builds of the same app ID:
