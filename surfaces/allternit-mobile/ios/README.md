@@ -82,6 +82,20 @@ Debug defaults point at local dev servers (`127.0.0.1`). Release defaults point 
 
 See [`CONTRIBUTING.md`](./CONTRIBUTING.md).
 
+## Rating prompt
+
+The app may show Apple's rating sheet (`SKStoreReviewController`) after a chat answer. Rules:
+
+- At least 5 successful chat answers on at least 2 different days.
+- Shown about 2 seconds after an answer finishes, never during a streaming answer.
+- At most once per app version, and not within 120 days of the last ask.
+- Never in debug builds, with the `-sample-workspace` launch argument, or under UI tests.
+- Apple decides whether the sheet shows (at most 3 times a year).
+
+Code: `Core/ReviewPromptStore.swift` holds the counters and the rules, wired in `Features/Chat/ViewModels/ChatViewModel.swift` and `App/AllternitApp.swift`. Counters are in `UserDefaults` on the device; nothing is sent to Allternit. Settings also has a **Rate Allternit** row that opens `https://apps.apple.com/app/id6828841999?action=write-review`.
+
+To reset while testing, delete the app and reinstall it.
+
 ## TestFlight release
 
 Build from current `origin/main`, including the intended native route changes.
