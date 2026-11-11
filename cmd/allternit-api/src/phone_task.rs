@@ -319,8 +319,21 @@ pub async fn run_task_ctx_for(
     }
     let s = serial.unwrap_or_default().to_string();
     crate::phone_runs::post_task_card(db, ctx, &run_id, &s, goal, "running", 0, None);
+    // A task that came in by text gets short status texts back on that thread (status only, never approve-by-text).
+    let sms = ctx.source == "sms";
+    if sms {
+        crate::phone_task_notify::notify(db, ctx, crate::phone_task_notify::http(), &crate::phone_task_notify::Event::Started, goal).await;
+    }
+    let watch = if sms { crate::phone_task_notify::watch_approvals(db, ctx, crate::phone_task_notify::http(), &run_id, goal) } else { None };
     let report = run_task_loop(db, data_dir, ctx, run_id.clone(), serial, goal, max_steps, model).await;
+    if let Some(w) = watch {
+        w.abort();
+    }
     close_card(db, ctx, &report, &run_id, &s, goal);
+    if sms {
+        let ev = crate::phone_task_notify::event_for_status(report.get("status").and_then(Value::as_str).unwrap_or("failed"));
+        crate::phone_task_notify::notify(db, ctx, crate::phone_task_notify::http(), &ev, goal).await;
+    }
     with_context(report, ctx)
 }
 
