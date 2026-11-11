@@ -15,6 +15,26 @@ A bot passes its `bot_id` (or a brain as `provider/model`) so the task uses its 
 
 The result says whether the task finished (`done`), its `status` (`done`, `failed`, `max_steps` or `timeout`), the result in words, each step, how many model calls it made, and its `run_id`.
 
+### Tasks started by text
+
+When you text your bot's own Allternit number and the bot starts a phone task from that text (`source: "sms"`), the bot texts short status lines back on the same thread, from the same number:
+
+| When | Text |
+| --- | --- |
+| The task starts | `Started: "<task>". I'll text when it needs you or is done.` |
+| The task waits for your approval | `Needs your approval: "<task>". Open the app inbox to decide: <link>` |
+| The task finishes | `Done: "<task>".` |
+| You deny the approval | `Stopped: "<task>" was denied. Nothing more was done.` |
+| Nobody approves in time | `Timed out waiting for approval on "<task>". Nothing was done. Ask again to retry.` |
+| The task fails or the phone is locked | `Couldn't finish "<task>". Check the app for details.` |
+
+`<task>` is the task's goal, cut to 40 characters. The link opens the Needs you inbox with that approval in view (`https://ai.allternit.com/?allternit_inbox=approval:<id>`).
+
+- **You can't approve by text.** Replying "yes" or "approve" does nothing to the approval. Approve or deny in the app, on any device.
+- **Status only.** The texts never include what was on the phone's screen, typed text or screenshots.
+- **Only the thread's own number sends.** If the thread's number does not belong to that bot, or the number has no texting account, no status texts are sent. A failed text never stops the task.
+- A refused task (a paused bot, or a thread you don't own) sends no status texts.
+
 ## Run history
 
 Each phone tool call becomes one step in the history: the tool, its arguments, whether it worked, how long it took, and a screenshot when the call returned one. Steps that ran close together form one **run**. A run starts again after five minutes with no calls, and every `phone.task` and every skill replay is its own run.
