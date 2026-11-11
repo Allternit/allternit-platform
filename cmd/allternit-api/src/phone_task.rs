@@ -281,22 +281,22 @@ fn card_status(status: &str) -> &'static str {
 static LIVE_VOICE: std::sync::Mutex<Option<std::collections::HashMap<String, std::time::Instant>>> = std::sync::Mutex::new(None);
 const LIVE_VOICE_TTL: std::time::Duration = std::time::Duration::from_secs(10 * 60);
 
-fn mark_live_voice(session_id: &str) {
+fn mark_live_voice(owner: &str, session_id: &str) {
     let mut g = LIVE_VOICE.lock().unwrap_or_else(|e| e.into_inner());
     let m = g.get_or_insert_with(Default::default);
     m.retain(|_, t| t.elapsed() < LIVE_VOICE_TTL);
-    m.insert(session_id.to_string(), std::time::Instant::now());
+    m.insert(format!("{owner}\u{0}{session_id}"), std::time::Instant::now());
 }
 
-fn is_live_voice(session_id: Option<&str>) -> bool {
+fn is_live_voice(owner: &str, session_id: Option<&str>) -> bool {
     let Some(id) = session_id else { return false };
     let g = LIVE_VOICE.lock().unwrap_or_else(|e| e.into_inner());
-    g.as_ref().and_then(|m| m.get(id)).is_some_and(|t| t.elapsed() < LIVE_VOICE_TTL)
+    g.as_ref().and_then(|m| m.get(&format!("{owner}\u{0}{id}"))).is_some_and(|t| t.elapsed() < LIVE_VOICE_TTL)
 }
 
 /// "chat" becomes "voice" for a session in Live voice; every other source is kept.
-fn source_for(source: String, session_id: Option<&str>) -> String {
-    if source == "chat" && is_live_voice(session_id) { "voice".into() } else { source }
+fn source_for(source: String, owner: &str, session_id: Option<&str>) -> String {
+    if source == "chat" && is_live_voice(owner, session_id) { "voice".into() } else { source }
 }
 
 #[derive(Deserialize)]
@@ -304,10 +304,10 @@ struct LiveVoiceIn {
     session_id: String,
 }
 
-async fn post_live_voice(Extension(_user): Extension<AuthUser>, Json(body): Json<LiveVoiceIn>) -> Response {
+async fn post_live_voice(Extension(user): Extension<AuthUser>, Json(body): Json<LiveVoiceIn>) -> Response {
     let id = body.session_id.trim();
     if !id.is_empty() && id.len() <= 200 {
-        mark_live_voice(id);
+        mark_live_voice(&user.user_id, id);
     }
     StatusCode::NO_CONTENT.into_response()
 }
@@ -875,7 +875,7 @@ async fn post_task(
         session_id: some(&body.session_id),
         source: String::new(),
     };
-    let ctx = TaskCtx { source: source_for(phone_guard::clean_source(body.source.as_deref()), ctx.session_id.as_deref()), ..ctx };
+    let ctx = TaskCtx { source: source_for(phone_guard::clean_source(body.source.as_deref()), &ctx.owner, ctx.session_id.as_deref()), ..ctx };
     let owner_http = is_owner_http_request(credential.is_some(), &ctx.source);
     if let Some((reason, sentence)) = refusal_for(&state.db, &ctx, owner_http) {
         return (StatusCode::FORBIDDEN, Json(json!({ "ok": false, "status": "refused", "reason": reason, "message": sentence }))).into_response();
@@ -1013,10 +1013,11 @@ mod tests {
 
     #[tokio::test]
     async fn a_tool_started_task_in_a_live_voice_session_is_a_voice_task_and_its_card_carries_the_result() {
-        mark_live_voice("s-live");
-        assert_eq!(source_for("chat".into(), Some("s-live")), "voice");
-        assert_eq!(source_for("chat".into(), Some("s-other")), "chat");
-        assert_eq!(source_for("routine".into(), Some("s-live")), "routine");
+        mark_live_voice("user-a", "s-live");
+        assert_eq!(source_for("chat".into(), "user-a", Some("s-live")), "voice");
+        assert_eq!(source_for("chat".into(), "user-b", Some("s-live")), "chat", "another user can't mark someone else's session");
+        assert_eq!(source_for("chat".into(), "user-a", Some("s-other")), "chat");
+        assert_eq!(source_for("routine".into(), "user-a", Some("s-live")), "routine");
         let st = state("summary").await;
         let report = json!({ "status": "done", "steps": [{}, {}], "result": "Ordered the coffee.\n  Pickup at 5." });
         close_card(&st.db, &ctx(), &report, "task-sum", "link:1", "order coffee");
