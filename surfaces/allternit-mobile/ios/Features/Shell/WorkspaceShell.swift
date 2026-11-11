@@ -113,6 +113,8 @@ struct MainWorkspaceView: View {
         )
         // The waiting games window, over every mode (WaitingGamesLayer).
         .overlay { WaitingGamesLayer() }
+        // Pet offers: the bot offers help when a run fails off-screen.
+        .overlay { PetOfferBannerLayer() }
         .overlay { sessionLookupCover }
         // Recents and the overviews open an artifact session in its studio,
         // with its editor or pane, not as a plain chat.

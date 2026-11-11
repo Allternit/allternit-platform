@@ -644,6 +644,7 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
                         self.needsBrainPick = true
                     } else {
                         self.transientError = "Couldn't send the message: \(FriendlyErrorMessage.from(error.localizedDescription))"
+                        self.reportPetOffer(error.localizedDescription)
                     }
                     self.finishStreaming(messageId: assistantId)
                     let generator = UINotificationFeedbackGenerator()
@@ -729,6 +730,7 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
             updateMessage(messageId) { message in
                 message.error = card
             }
+            reportPetOffer(raw)
             return true
 
         case .streamError(let reason):
@@ -738,6 +740,7 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
             updateMessage(messageId) { message in
                 message.error = ChatError(name: name, message: reason, raw: reason)
             }
+            if name == nil { reportPetOffer(reason) }
             return true
 
         case .question(let request):
@@ -916,6 +919,14 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
         }
     }
 
+    /// Tells the pet-offers center a run failed. It stays quiet when this chat
+    /// is the screen the user is looking at, so only off-screen failures offer.
+    private func reportPetOffer(_ text: String) {
+        PetOfferCenter.shared.report(failure: PetOfferFailure(
+            text: text, botId: sessionContext.agentId, sessionId: currentSessionId
+        ))
+    }
+
     /// Transport/creation failure: surface the error inline, then finalize.
     /// Intentional cancels (CancellationError / URLError.cancelled) stay silent.
     private func failStreaming(messageId: String, error: Error) {
@@ -925,6 +936,7 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
         updateMessage(messageId) { message in
             message.error = .connectionInterrupted(error.localizedDescription)
         }
+        reportPetOffer(error.localizedDescription)
         finishStreaming(messageId: messageId)
         let generator = UINotificationFeedbackGenerator()
         generator.notificationOccurred(.error)
