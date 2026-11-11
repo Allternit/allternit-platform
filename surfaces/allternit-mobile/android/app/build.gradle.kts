@@ -27,9 +27,16 @@ android {
         create("phonelink") {
             dimension = "dist"
             isDefault = true
+            // The stock androidbrowserhelper launcher (no in-app review here:
+            // this build is not installed from Google Play).
+            manifestPlaceholders["launcherActivity"] =
+                "com.google.androidbrowserhelper.trusted.LauncherActivity"
         }
         create("play") {
             dimension = "dist"
+            // Subclass of LauncherActivity that may show the Play in-app review
+            // sheet before opening the TWA (src/play/java/.../ReviewLauncherActivity.kt).
+            manifestPlaceholders["launcherActivity"] = "com.allternit.app.ReviewLauncherActivity"
         }
     }
 
@@ -77,6 +84,9 @@ dependencies {
     // The Allternit app as a Trusted Web Activity around m.allternit.com
     // (LauncherActivity, Custom Tab fallback). Apache-2.0, Google.
     implementation("com.google.androidbrowserhelper:androidbrowserhelper:2.5.0")
+    // Play In-App Review (the "rate this app" sheet), Google Play build only.
+    // The web content cannot call it, so ReviewLauncherActivity asks natively.
+    "playImplementation"("com.google.android.play:review:2.0.2")
     testImplementation("junit:junit:4.13.2")
     // Real org.json for JVM tests (android.jar only ships stubs). Public domain
     // since 20231013.

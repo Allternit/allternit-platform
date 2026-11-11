@@ -233,6 +233,19 @@ The launcher icon, labelled **Allternit**, opens m.allternit.com full-screen as 
 - This status screen (`MainActivity`) is no longer a launcher entry. It opens from the Phone Link notification and from the icon's long-press **Phone Link** shortcut (`res/xml/shortcuts.xml`).
 - Only the release key and the Play app-signing key pass the asset-links check. A debug-signed build shows the URL bar.
 
+## Rating prompt (play flavor only)
+
+When the app opens, the launcher may show Google Play's in-app review card before the app opens. Rules:
+
+- At least 5 launches and at least 3 days since the first launch.
+- Not within 120 days of the last ask.
+- The app always opens afterwards, with a 3-second timeout on the review flow.
+- Play shows the card only for apps installed from Play.
+
+Code: `app/src/play/java/com/allternit/app/ReviewLauncherActivity.kt` and `ReviewPolicy.kt`. The play flavor makes it the launcher through the manifest placeholder `launcherActivity`; the `phonelink` build keeps `LauncherActivity` and has no prompt. Counters are in `SharedPreferences` on the device; nothing is sent to Allternit.
+
+To reset while testing, clear the app's data (`adb shell pm clear com.allternit.app`).
+
 ## Live conformance
 
 ```sh
