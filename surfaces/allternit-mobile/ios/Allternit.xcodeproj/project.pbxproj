@@ -611,6 +611,7 @@
 		DFD61E74AD745777D77785A1 /* LiveKit in Frameworks */ = {isa = PBXBuildFile; productRef = 3BC35ADADF8DFFD314318117 /* LiveKit */; };
 		E011E8E55BE6B106ACF1073F /* FirstRunSetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 52010EB8219766551769D25B /* FirstRunSetupView.swift */; };
 		E02AB91657662D315445FD9F /* NotificationActions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7CEACA169A7BAD897AE60F35 /* NotificationActions.swift */; };
+		E02B5A75A3258D68468F0231 /* LinkBoard.swift in Sources */ = {isa = PBXBuildFile; fileRef = BFA17FDFD3ABDA91B8ABA94B /* LinkBoard.swift */; };
 		E075C0D8C56469AAF92A34ED /* BotProjectPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = E90183D58848B7BC017524C2 /* BotProjectPage.swift */; };
 		E0CAFD1462C34B7C970301C9 /* Entities.swift in Sources */ = {isa = PBXBuildFile; fileRef = B79C58B39750008BDE881C8B /* Entities.swift */; };
 		E0DC0E1E8A05B5F96AD473F6 /* TerminalServiceClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8B1021918E68EBAC25DAEC2 /* TerminalServiceClient.swift */; };
@@ -654,6 +655,7 @@
 		EFEE69415FF2CD3FBF0058CA /* AppPhoneLink.swift in Sources */ = {isa = PBXBuildFile; fileRef = 32DF0D2473DA44EC0CF41008 /* AppPhoneLink.swift */; };
 		F047EB8C6BDC03144EDF1187 /* ModeTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E7FB6E04286889DF3D4A1A6 /* ModeTheme.swift */; };
 		F0F75D379AB8F2DA9824B416 /* DelegateIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3EC6EDF88BCC99A466446F44 /* DelegateIntents.swift */; };
+		F145B9FC8506FF516F81359D /* LinkBoardDecodingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 171D5808AEEEBB1DA45D9EC0 /* LinkBoardDecodingTests.swift */; };
 		F14CA18B4E7DEDEDAA44F97C /* MeetVendorPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = C8D3F9547DC368CCA7166367 /* MeetVendorPanel.swift */; };
 		F1A225B56720D12EF63EA3F1 /* ProviderInfo.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC5B4B49803766889533088C /* ProviderInfo.swift */; };
 		F1E2C52CD5929D585E81AB19 /* ReplayKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 08ECCB8B13DE07B27E41D3D2 /* ReplayKit.framework */; };
@@ -825,6 +827,7 @@
 		16F6C3F9B79D37665FF643D3 /* IntelliScheduleEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IntelliScheduleEngine.swift; sourceTree = "<group>"; };
 		170E9249231498594D003369 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		171BCC12EDA4F66CEB80E43C /* DecideIntents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DecideIntents.swift; sourceTree = "<group>"; };
+		171D5808AEEEBB1DA45D9EC0 /* LinkBoardDecodingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LinkBoardDecodingTests.swift; sourceTree = "<group>"; };
 		1729C036634FA4AF903FD1B1 /* login-arrival.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; path = "login-arrival.html"; sourceTree = "<group>"; };
 		179676EEA871FCEC692E3990 /* AllternitWidgets.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = AllternitWidgets.entitlements; sourceTree = "<group>"; };
 		17A6395C46796FEB84D951E6 /* WebhookTriggersStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebhookTriggersStore.swift; sourceTree = "<group>"; };
@@ -1224,6 +1227,7 @@
 		BE44ED582CA4DA23E6DADFBB /* DecideDelegateIntentRulesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DecideDelegateIntentRulesTests.swift; sourceTree = "<group>"; };
 		BE858D6AF3774303747A0D87 /* FileBrowserDirectoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileBrowserDirectoryView.swift; sourceTree = "<group>"; };
 		BF2029F453F4A9EA8C874464 /* StatusSnapshotTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusSnapshotTests.swift; sourceTree = "<group>"; };
+		BFA17FDFD3ABDA91B8ABA94B /* LinkBoard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LinkBoard.swift; sourceTree = "<group>"; };
 		BFFE812B71668541B86320E1 /* NodeDirectory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NodeDirectory.swift; sourceTree = "<group>"; };
 		C016226CB6869693C4B2F472 /* BotChatSessionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotChatSessionView.swift; sourceTree = "<group>"; };
 		C06CD7152FFD4F0D52DD4BBA /* AgentDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentDetailView.swift; sourceTree = "<group>"; };
@@ -1900,6 +1904,7 @@
 				C343A72EAB0FEDC0099032C4 /* ACIBrowserBridge.swift */,
 				2845EEA196FE2DBF1EDFE9E1 /* AppPhoneService.swift */,
 				29A1419A6712D19C70C180C1 /* AppPhonesSettingsView.swift */,
+				BFA17FDFD3ABDA91B8ABA94B /* LinkBoard.swift */,
 				67BFAE687DE917E83F07757A /* PhoneSurfacesGallery.swift */,
 				F35A37E302DD3C63E6412452 /* PhoneTaskCardView.swift */,
 				65DE584766D15F75782CB57E /* PhoneTaskClient.swift */,
@@ -2014,6 +2019,7 @@
 			children = (
 				BE44ED582CA4DA23E6DADFBB /* DecideDelegateIntentRulesTests.swift */,
 				6D1CF76A3B4AF38B5A019D23 /* DeepLinkTests.swift */,
+				171D5808AEEEBB1DA45D9EC0 /* LinkBoardDecodingTests.swift */,
 				4D3988B903632B3ADBE8074A /* LiveActivityManagerTests.swift */,
 				FD8B49B37F98609F680978B5 /* MessageDraftCardTests.swift */,
 				B4FF0B496D38903A463A4B81 /* NativePaneRendererTests.swift */,
@@ -3173,6 +3179,7 @@
 			files = (
 				5C2093288994F432DB8B4804 /* DecideDelegateIntentRulesTests.swift in Sources */,
 				7A8A041B3D2EB92063AC4836 /* DeepLinkTests.swift in Sources */,
+				F145B9FC8506FF516F81359D /* LinkBoardDecodingTests.swift in Sources */,
 				D3F8D1E73F813E13DAAFF1D2 /* LiveActivityManagerTests.swift in Sources */,
 				1A50A4EF874CED28EA26C293 /* MessageDraftCardTests.swift in Sources */,
 				1D30FE683EABE02400B9EE6C /* NativePaneRendererTests.swift in Sources */,
@@ -3480,6 +3487,7 @@
 				C019640E35C6466E61D79072 /* KokoroSpeech.swift in Sources */,
 				BD69C6D7D65E0ABAB17A50BC /* LaunchArguments.swift in Sources */,
 				F9AE9C7766C4FC55919A399F /* LibrarySectionChrome.swift in Sources */,
+				E02B5A75A3258D68468F0231 /* LinkBoard.swift in Sources */,
 				5B10333F9113A6EFBE08747B /* LiveModeLookSection.swift in Sources */,
 				D50AD8ED55A115423F584718 /* LiveScreenPacket.swift in Sources */,
 				4E0B0117142FDF231A79FEBC /* LocalDocumentView.swift in Sources */,
