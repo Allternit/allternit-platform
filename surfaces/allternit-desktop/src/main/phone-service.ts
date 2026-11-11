@@ -94,6 +94,7 @@ import {
   type RateStore,
 } from './phone-tools.js';
 import { httpPhoneHoldClient, type PhoneHoldClient } from './phone-hold-client.js';
+import { phoneHoldHandler } from './phone-hold-notice.js';
 
 export const APPROVAL_TIMEOUT_MS = 120_000;
 
@@ -755,7 +756,13 @@ class PhoneService {
         }),
         api: () => phoneApi,
         guard: () => holds,
-        onHold: holdDialog(holds),
+        // The owner's dialog here, and "waiting for approval" on the driven Android phone.
+        onHold: phoneHoldHandler({
+          dialog: holdDialog(holds),
+          client: holds,
+          isAndroidLink: (serial) => this.linkedAndroid(serial) !== null,
+          helperCall: (serial, method, params, timeoutMs) => this.ensureLinkedBackend().helperCall(serial, method, params, timeoutMs),
+        }),
       });
       this.runner = runner;
       const token = newGatewayToken();

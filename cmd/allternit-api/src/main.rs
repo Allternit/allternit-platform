@@ -1722,7 +1722,11 @@ async fn main() {
         );
         let mut shutdown_rx = shutdown_tx.subscribe();
         tokio::spawn(async move {
-            axum::serve(admin_listener, admin_app)
+            // Connect info: auth_middleware decides "local" from the TCP peer.
+            axum::serve(
+                admin_listener,
+                admin_app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+            )
                 .with_graceful_shutdown(async move {
                     let _ = shutdown_rx.recv().await;
                 })
@@ -1799,7 +1803,9 @@ async fn main() {
     match listener {
         Some(listener) => {
             // Peer addresses let the rate limiter tell the desktop's own
-            // loopback UI apart from LAN/public callers (when bound to 0.0.0.0).
+            // loopback UI apart from LAN/public callers (when bound to 0.0.0.0),
+            // and auth_middleware's self-hosted/local-dev fallback requires a
+            // loopback peer. Without connect info no request is local.
             axum::serve(
                 listener,
                 app.into_make_service_with_connect_info::<std::net::SocketAddr>(),

@@ -235,13 +235,41 @@ print_summary() {
   echo ""
 }
 
+# deploy-allternit-api-contabo.yml installs the same binary. Both take
+# /var/lock/allternit-api-deploy and record the live build's commit in
+# ${API_DIR}/DEPLOYED ("<sha> <committer epoch> <utc> <workflow>"), so they never
+# swap at once and an older build never replaces a newer one. CI passes
+# DEPLOY_SHA / DEPLOY_EPOCH; without them there is no age check.
+DEPLOY_STAMP="${API_DIR}/DEPLOYED"
+
+newer_build_live() {
+  [[ "${DEPLOY_EPOCH:-}" =~ ^[0-9]+$ ]] || return 1
+  local live_epoch
+  live_epoch="$(ssh_cmd "cut -d' ' -f2 ${DEPLOY_STAMP} 2>/dev/null" || true)"
+  [[ "${live_epoch}" =~ ^[0-9]+$ ]] && (( live_epoch > DEPLOY_EPOCH ))
+}
+
+record_deployed() {
+  ssh_cmd "echo '${DEPLOY_SHA:-unknown} ${DEPLOY_EPOCH:-0} $(date -u +%Y-%m-%dT%H:%M:%SZ) deploy-desktop-cloud-vps' > ${DEPLOY_STAMP}"
+}
+
 print_banner
 ensure_src
-install_binary
+if [ "${VPS_HOST}" = "local" ] || [ "${VPS_HOST}" = "localhost" ] || [ "${VPS_HOST}" = "127.0.0.1" ]; then
+  exec 9>/var/lock/allternit-api-deploy
+  flock -w 3600 9 || { log_error "Another allternit-api deploy held the lock for an hour"; exit 1; }
+fi
+if newer_build_live; then
+  log_warn "A newer allternit-api build is live ($(ssh_cmd "cat ${DEPLOY_STAMP}")); keeping it and deploying the rest."
+  SKIP_BINARY=1
+else
+  install_binary
+fi
 install_env
 install_incus_certs
 install_service
 install_backup
 start_service
+[ -n "${SKIP_BINARY:-}" ] || record_deployed
 install_office_engine
 print_summary

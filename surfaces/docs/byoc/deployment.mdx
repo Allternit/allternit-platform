@@ -13,6 +13,16 @@ description: Hardening and operating a self-hosted Allternit API node
 - The node needs only outbound HTTPS/WSS to `api.allternit.com`. The relay (`/api/v1/runtime-relay/connect/:runtimeId`) carries browser and SDK traffic to the node, so no reverse proxy, TLS certificate or inbound port is required.
 - If nothing is paired and online, relayed routes return HTTP 428.
 
+## Local access without a token
+
+With `ALLTERNIT_SELF_HOSTED=true` (or `ALLTERNIT_LOCAL_DEV_BYPASS=true`), `allternit-api` signs a same-machine caller in as the local user without a token. "Same machine" means all of these hold:
+
+- The TCP connection comes from a loopback address (`127.0.0.1` or `::1`).
+- The request has no forwarding header: `Forwarded`, `X-Forwarded-For`, `X-Real-IP`, `X-Forwarded-Host`, `CF-Connecting-IP`, `True-Client-IP`, or the `X-Allternit-Relayed` marker the desktop's cloud relay adds.
+- `Host` is exactly `localhost`, `127.0.0.1` or `[::1]` (an optional port is fine), and `Origin` and `Referer`, when sent, name one of those hosts.
+
+The Host, Origin and Referer headers alone never make a request local. Anything that reaches the API through a reverse proxy (nginx, Caddy, a tunnel) or the cloud relay always needs a token, even when the proxy runs on the same host. `curl http://127.0.0.1:8013/...` on the node and a dev server on `http://localhost:5173` calling the local API keep working.
+
 ## Health checks
 
 ```bash

@@ -1,0 +1,48 @@
+---
+title: Allternit in Messages
+description: "The Allternit iMessage app: a quick panel inside a Messages conversation for drafting a reply, research, an image, sharing an artifact, checking a task and running a task on your linked phone."
+---
+
+The Allternit iMessage app puts a small panel inside a Messages conversation on your iPhone. It comes with [Allternit for iPhone](/guides/iphone-app). Open a conversation, tap the apps button next to the text field, and pick **Allternit**. It opens on the quick panel.
+
+## What the quick panel does
+
+| Action | What happens |
+|---|---|
+| Draft a reply | Opens your main bot in Allternit with a request to write a reply. You read it and send it yourself. |
+| Research | Opens your main bot with a research request filled in. |
+| Create an image | Opens your main bot with an image request filled in. |
+| Share an artifact | Opens your main bot with a request to share a saved artifact. |
+| Check a task | Shows the status card of the last phone task you started from Messages. |
+| Run on my phone | Asks your bot to do a task on your linked phone, then shows its status card. |
+
+Nothing is sent to the conversation on its own. Allternit fills in the request and you decide what to send.
+
+## Run on my phone
+
+1. Tap **Run on my phone** and type what your bot should do, for example "Turn on Do Not Disturb until 9".
+2. Tap **Run**. Allternit opens and starts the task on your first phone that is online. The task is marked as started from the iMessage app.
+3. Go back to Messages. The status card shows the task: running, needs you, done, denied, timed out, phone locked, phone offline, failed or not started.
+
+A sensitive step (pay, delete, send, call, a password or a security setting) stops and waits for you. The card then shows **Review**, which opens the item in Allternit, where you see the phone's screen before you approve. See [Phone approvals](/guides/phone-approvals).
+
+If your bots are paused, the task does not start and the card shows the reason in plain words.
+
+## When the panel can't help yet
+
+| You see | Why | What to do |
+|---|---|---|
+| Sign in to Allternit | You are signed out on this iPhone. | Open Allternit and sign in. |
+| Your session ended | The panel's access to your status expired. | Open Allternit once. |
+| You're offline | Messages can't reach Allternit. | Try again when you are back online. |
+| Phone minutes used up | Your phone minutes for this month are used up. | Tap **See usage**. |
+
+## Privacy
+
+The iMessage app does not read your messages. It reads only what Allternit for iPhone shares with it on this device: a status-only access key and the last phone task you started from Messages. It does not show the phone's screen. You see that in the Allternit app.
+
+## For developers
+
+- Target `AllternitMessages` (bundle id `com.allternit.mobile.messages`) in `surfaces/allternit-mobile/ios`. The panel views live in `AllternitMessages/Panel` and are also built into the app.
+- The panel reads the device read token through `SystemSurfaces/SharedAccess.swift`. Cloud accepts that token only for `GET /api/v1/status/summary` and notification content, so the panel uses it to tell signed out, expired session and offline apart.
+- **Run on my phone** opens `allternit://phone-task?goal=&source=imessage_ext`. The app starts `POST /api/v1/phones/:serial/task` with its own session and `source: "imessage_ext"`, then keeps the record `surfaces.phone.lastRun` in the App Group current for the panel's card. Contract: [Phone holds API](/api/phone-holds).

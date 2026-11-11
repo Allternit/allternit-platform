@@ -107,6 +107,8 @@ struct ChatContentView: View {
     /// A background (StageBackdropView) is drawn behind this chat: the page fills step aside.
     @Environment(\.backdropUnderneath) private var backdropUnderneath
     @StateObject private var modelStore = ModelStore.shared
+    /// "Run on my phone": the armed phone and this chat's phone task cards.
+    @ObservedObject private var phoneRuns = PhoneRunStore.shared
     /// Selected project — stamped into the next session's create metadata
     /// (`metadata.projectId`) so the Projects feature can group it.
     @StateObject private var projectStore = ProjectStore.shared
@@ -380,6 +382,9 @@ struct ChatContentView: View {
                                 }
                             }
                         }
+                        if !isTerminal {
+                            PhoneTaskCardsSection(sessionId: viewModel.currentSessionId, bot: chatBot)
+                        }
                     }
                     .padding(.vertical, 16)
                 }
@@ -485,8 +490,15 @@ struct ChatContentView: View {
             deck: deck,
             // A plain chat with no model picked opens the picker instead of
             // sending (there is no default brain); a bot chat runs on the bot's.
-            requiresModelPick: sessionContext.agentId == nil && (modelStore.selectedModelId ?? "").isEmpty,
+            requiresModelPick: phoneRuns.armed == nil && sessionContext.agentId == nil && (modelStore.selectedModelId ?? "").isEmpty,
             onSend: { attachments in
+                if phoneRuns.armed != nil, editingMessageId == nil {
+                    // Armed "On <phone>": the message is the phone task's goal.
+                    let goal = inputText
+                    inputText = ""
+                    Task { await phoneRuns.start(goal: goal, sessionId: viewModel.currentSessionId, bot: chatBot) }
+                    return
+                }
                 if let editingMessageId {
                     self.editingMessageId = nil
                     viewModel.resendEditedMessage(editingMessageId, newText: inputText, attachments: attachments, runtimeModelId: modelForSend, effort: modelStore.effortForSend)
@@ -509,12 +521,15 @@ struct ChatContentView: View {
                     viewModel.startNewSession()
                 }
             },
-            placeholderOverride: composerPlaceholder,
+            placeholderOverride: phoneRuns.armed.map { "Tell your bot what to do on \($0.name)…" } ?? composerPlaceholder,
             // A bot thread's composer (ThreadComposer) has no permission pill.
             showsPermission: chatBot == nil,
             topDeck: composerTopDeck,
             artifactKind: artifactStudio?.kind,
-            onAllArtifacts: onAllArtifacts
+            onAllArtifacts: onAllArtifacts,
+            allowsPhoneRun: artifactStudio == nil,
+            armedPhoneName: phoneRuns.armed?.name,
+            onClearPhone: { phoneRuns.armed = nil }
         )
     }
 

@@ -66,6 +66,8 @@ class PhoneLinkService : Service() {
 
     override fun onDestroy() {
         running = false
+        // The link is gone: a "waiting for approval" notice would be stale.
+        Notifications.clearHold(this)
         super.onDestroy()
     }
 }

@@ -10,9 +10,12 @@
 //! not silently permissive, except for the same localhost-only local-dev
 //! bypass `auth_middleware` already uses.
 
+use std::net::SocketAddr;
+
+use axum::extract::ConnectInfo;
 use axum::http::{HeaderMap, StatusCode};
 
-use crate::auth::is_localhost_origin;
+use crate::auth::is_local_request;
 use crate::AppState;
 
 const INTERNAL_TOKEN_HEADER: &str = "x-allternit-internal-token";
@@ -30,8 +33,15 @@ fn constant_time_eq(a: &str, b: &str) -> bool {
 
 /// Gate for internal-only handlers. Call at the top of each handler (axum
 /// doesn't make a clean per-route middleware layer worth it for two routes)
-/// with the request's `HeaderMap` and shared `AppState`.
-pub fn require_internal_token(headers: &HeaderMap, state: &AppState) -> Result<(), StatusCode> {
+/// with the request's `HeaderMap`, its TCP peer (an
+/// `Option<ConnectInfo<SocketAddr>>` extractor) and shared `AppState`. The
+/// peer decides whether the no-token local-dev bypass applies; headers alone
+/// never do.
+pub fn require_internal_token(
+    headers: &HeaderMap,
+    peer: Option<ConnectInfo<SocketAddr>>,
+    state: &AppState,
+) -> Result<(), StatusCode> {
     match state.config.internal_service_token() {
         Some(expected) => {
             let provided = headers
@@ -47,7 +57,11 @@ pub fn require_internal_token(headers: &HeaderMap, state: &AppState) -> Result<(
         // No token configured: only allow same-machine local dev, same
         // posture as auth_middleware's Clerk bypass -- never permissive
         // against a real (non-localhost) caller.
-        None if state.config.local_dev_bypass() && is_localhost_origin(headers) => Ok(()),
+        None if state.config.local_dev_bypass()
+            && is_local_request(headers, peer.map(|ConnectInfo(addr)| addr)) =>
+        {
+            Ok(())
+        }
         None => Err(StatusCode::UNAUTHORIZED),
     }
 }

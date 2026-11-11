@@ -76,6 +76,8 @@ class FakeHooks(var cfg: ServerConfig = ServerConfig("dev-1234", "Test phone", t
         cfg = cfg.copy(allowRemote = allowRemote ?: cfg.allowRemote, port = port ?: cfg.port, deviceName = deviceName ?: cfg.deviceName)
     }
     override fun scheduleStop() { stopScheduled = true }
+    val holdNotices = ArrayList<List<Any?>>()
+    override fun holdNotice(waiting: Boolean, effect: String?, app: String?, timeoutMs: Long) { holdNotices.add(listOf(waiting, effect, app, timeoutMs)) }
     var screen = ScreenServiceStatus(false, "waiting_for_computer", "Waiting", ShellServerProtocol.LaunchLines("k", "s"))
     override fun screenService() = screen
     /** mesh_restart: whether there is a mesh, and what the restart does to cfg. */

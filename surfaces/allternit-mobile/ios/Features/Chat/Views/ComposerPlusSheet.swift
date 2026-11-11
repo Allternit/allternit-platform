@@ -14,6 +14,8 @@ struct ComposerPlusSheet: View {
     /// The chat on screen — Permission settings acts on it (or the pending
     /// choice for a new chat).
     var sessionId: String? = nil
+    /// Chats that can send to a linked phone show "Run on my phone".
+    var allowsPhoneRun: Bool = false
 
     @StateObject private var toolOptions = ToolOptionsStore.shared
     @StateObject private var projectStore = ProjectStore.shared
@@ -107,6 +109,9 @@ struct ComposerPlusSheet: View {
                     .plusPanel()
 
                     VStack(spacing: 8) {
+                        if allowsPhoneRun {
+                            RunOnPhoneRow(onArmed: { dismiss() })
+                        }
                         if brainStore.hasBrain {
                             listRow(
                                 icon: "brain",
