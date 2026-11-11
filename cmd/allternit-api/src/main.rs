@@ -1191,6 +1191,10 @@ async fn main() {
         // iPhone via the App Store app: relayed pair/ingest/control sockets
         // for `app:<phoneId>` plus the Desktop's loopback rpc + pair decision.
         .merge(allternit_api::phone_app::phone_app_router())
+        // Allternit Link boards: the relayed board socket piped to Desktop's
+        // loopback USB Agent listener, and board state/stop/forget through
+        // Desktop's phone gateway.
+        .merge(allternit_api::phone_usba::phone_usba_router())
         // Phone run history, saved phone skills (record once, replay with no
         // model) and phone.task on the bot's brain.
         .merge(allternit_api::phone_runs::router())
