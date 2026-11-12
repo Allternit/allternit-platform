@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 2.8.0 (2026-11-12)
+
+- **Service status:** `gizzi status --services` shows status.allternit.com's components; `gizzi doctor` checks it; `/status` has a Services line.
+- **Fixed:** `gizzi teleport <session>` accepts a Claude or Codex session id again (2.7.0 rejected it with "must start with ses"). The same fix covers the apps' Teleport action.
+- `gizzi phone` task follow prints the step label and the waiting label.
+
 ## 2.7.0 (2026-11-11)
 
 - Pet offers: after a failed command or turn the terminal pet offers a fix; type `/fix` to run it. `/pet offers on|off` turns offers off. Failures also reach the Desktop pet.
