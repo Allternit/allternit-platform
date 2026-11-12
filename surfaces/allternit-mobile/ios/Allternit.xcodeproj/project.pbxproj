@@ -592,6 +592,7 @@
 		D731DA00E2ABCAC5EA9A1FF6 /* ACIComputersPane.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B32E0565DA7953C599388DC /* ACIComputersPane.swift */; };
 		D793BAB2C6CA36C8B5B8D4FC /* CodeEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5933541AB5CBF27334FF2068 /* CodeEditorView.swift */; };
 		D7CB3ECC567DA0E6372C1DBF /* AgentSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5ABE98CBC903A69C89BB489 /* AgentSession.swift */; };
+		D85CE5D3BCECE42D72051022 /* MemoryFactsClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA286491811103A72DD384B9 /* MemoryFactsClient.swift */; };
 		D8A42A315CBFD1B7439A82C9 /* BotStageLive.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3805BD78B0431F98B8FC1399 /* BotStageLive.swift */; };
 		D8D1C920A1F1D21C0D0AA0ED /* ConnectedView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C280E603BD4FF49299D97648 /* ConnectedView.swift */; };
 		D9794CED8248EA9A17185B68 /* BotHomeTabsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B88709AC7BC1F72F5AB364B7 /* BotHomeTabsView.swift */; };
@@ -1335,6 +1336,7 @@
 		E949D97C5E108AE7428E2C54 /* DiffRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiffRenderer.swift; sourceTree = "<group>"; };
 		E9AB58D0E21B85752E398114 /* WaitingGamesRulesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WaitingGamesRulesTests.swift; sourceTree = "<group>"; };
 		EA1555E7A74960CBA7D77549 /* CanvasProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanvasProtocol.swift; sourceTree = "<group>"; };
+		EA286491811103A72DD384B9 /* MemoryFactsClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MemoryFactsClient.swift; sourceTree = "<group>"; };
 		EB0E0A17C865B6B591899C47 /* TeachView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TeachView.swift; sourceTree = "<group>"; };
 		EB5FC664C55551D4AFE4F68F /* EnvironmentStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EnvironmentStore.swift; sourceTree = "<group>"; };
 		EB709B34E0E88AC2CBF7A6EF /* RFBClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RFBClient.swift; sourceTree = "<group>"; };
@@ -1805,6 +1807,7 @@
 				404FAB71FF1D75CA3636CDF5 /* LoopsClient.swift */,
 				F2DCB9887FA4FD5F745FFB3A /* McpServersClient.swift */,
 				ADC22289020633B79A4877ED /* MemoryClient.swift */,
+				EA286491811103A72DD384B9 /* MemoryFactsClient.swift */,
 				B85F6678BE960D0995556FE6 /* MeshEnrollClient.swift */,
 				A30ED6FB8687860800A24AA0 /* NodesClient.swift */,
 				0B0D034CA579C089C9E885F9 /* OrganizationClient.swift */,
@@ -3555,6 +3558,7 @@
 				65F58948DB57F802D27C2C7B /* MemoryClient.swift in Sources */,
 				32BA6D8AFEFBB6886D8A5FC7 /* MemoryDriveHistoryView.swift in Sources */,
 				3A2939F18A731584F1F4BF3E /* MemoryDriveView.swift in Sources */,
+				D85CE5D3BCECE42D72051022 /* MemoryFactsClient.swift in Sources */,
 				AE4827F580E76F77A891EB2A /* MemoryModels.swift in Sources */,
 				A0D56A46C6A07C804FF7524F /* MemoryScheduleIntents.swift in Sources */,
 				965ECCD0C479654C756FAAFD /* MemorySettingsView.swift in Sources */,
