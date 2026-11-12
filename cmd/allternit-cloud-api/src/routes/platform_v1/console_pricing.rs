@@ -41,6 +41,7 @@ async fn get_pricing(State(_state): State<Arc<ApiState>>, headers: HeaderMap) ->
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
     use axum::{
         body::Body,
         http::{Request, StatusCode},
@@ -50,18 +51,23 @@ mod tests {
     use super::super::{projects::Principal, router_gated, Gate, TestSession};
     use crate::routes::test_support::{test_state, MockGateway};
 
+    #[test]
+    fn pricing_lists_named_meters_and_no_tools() {
+        let v = super::pricing_body();
+        let meters = v["meters"].as_array().unwrap();
+        assert!(!meters.is_empty());
+        assert!(meters.iter().all(|m| m["name"].as_str().is_some_and(|n| !n.is_empty())));
+        assert!(v["tools"].as_array().unwrap().is_empty());
+        assert!(v["deprecations"].as_array().unwrap().is_empty());
+    }
+
     #[tokio::test]
-    async fn pricing_lists_meters_and_no_tools() {
+    async fn pricing_needs_a_session() {
         let state = test_state(Arc::new(MockGateway::new(None, vec![]))).await;
         let who = Principal { user_id: "u1".into(), org_id: None, org_admin: false };
         let app = router_gated(&state, Gate::Forced(true)).layer(axum::Extension(TestSession(who))).with_state(state.clone());
-        let req = Request::builder().uri("/api/v1/platform/pricing").header("authorization", "Bearer s").body(Body::empty()).unwrap();
+        let req = Request::builder().uri("/api/v1/platform/pricing").body(Body::empty()).unwrap();
         let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), StatusCode::OK);
-        let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20).await.unwrap();
-        let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-        assert!(!v["meters"].as_array().unwrap().is_empty());
-        assert!(v["tools"].as_array().unwrap().is_empty());
-        assert!(v["deprecations"].as_array().unwrap().is_empty());
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     }
 }
