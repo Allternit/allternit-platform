@@ -100,6 +100,8 @@ export interface RunRow {
   failed: number
   source?: string | null
   status?: string
+  step?: number
+  step_label?: string | null
   approvalId?: string
   effect?: string
 }
@@ -257,6 +259,12 @@ export interface FollowDeps {
  * open. Holds are handled one at a time because the run is blocked on them;
  * a hold that was already answered or expired in the app is skipped by `hold`.
  */
+export function formatStep(row: RunRow): string {
+  const n = row.step ?? row.steps
+  const label = row.step_label?.trim()
+  return `  step ${n}${label ? ` · ${label}` : ""}${row.failed ? ` (${row.failed} failed)` : ""}`
+}
+
 export async function followTask(d: FollowDeps): Promise<TaskReport> {
   let done = false
   const finished = d.task.finally(() => {
@@ -264,6 +272,7 @@ export async function followTask(d: FollowDeps): Promise<TaskReport> {
   })
   const seen = new Set<string>()
   let lastStep = 0
+  let lastLine = ""
   const pollMs = d.pollMs ?? 1500
   while (!done) {
     await Promise.race([finished.catch(() => {}), new Promise((r) => setTimeout(r, pollMs))])
@@ -275,9 +284,15 @@ export async function followTask(d: FollowDeps): Promise<TaskReport> {
       continue // a missed poll only delays the next line
     }
     const row = rows[0]
-    if (row && row.steps > lastStep) {
-      lastStep = row.steps
-      d.say(`  step ${row.steps}${row.failed ? ` (${row.failed} failed)` : ""}`)
+    if (row && (row.step ?? row.steps) > 0) {
+      const n = row.step ?? row.steps
+      const line = formatStep(row)
+      // Once per step, plus once more if the label changes (e.g. it starts waiting for an OK).
+      if (n > lastStep || (n === lastStep && line !== lastLine && row.step_label)) {
+        lastStep = n
+        lastLine = line
+        d.say(line)
+      }
     }
     const waiting = rows.find((r) => r.status === "waiting_approval" && r.approvalId && !seen.has(r.approvalId))
     if (waiting?.approvalId) {
