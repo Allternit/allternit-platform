@@ -2050,6 +2050,44 @@ paths:
       tags: [Phones]
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [serials]
+              additionalProperties: false
+              properties:
+                serials: { type: array, minItems: 1, maxItems: 100, uniqueItems: true, items: { type: string } }
+                goal: { type: string, maxLength: 2000, description: "A task for every phone. Give this or skill." }
+                skill: { type: string, maxLength: 80, description: "A saved phone skill to replay on every phone." }
+                inputs: { type: object, additionalProperties: { type: string }, description: "Skill inputs." }
+                max_steps: { type: integer, minimum: 1, maximum: 40 }
+                bot_id: { type: string }
+                brain: { type: string, description: "provider/model" }
+      responses:
+        "202":
+          description: Started.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PhoneFleetRun" }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/phones/runs/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: getPhoneFleetRun
+      summary: A fleet run
+      description: The fleet run and each phone's run (status, ok, start and end).
+      tags: [Phones]
+      responses:
+        "200":
+          description: The fleet run.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PhoneFleetRun" }
+        default: { $ref: "#/components/responses/Error" }
   /v1/mailboxes:
     get:
       operationId: listMailboxes
@@ -2209,37 +2247,6 @@ paths:
           application/json:
             schema:
               type: object
-              required: [serials]
-              additionalProperties: false
-              properties:
-                serials: { type: array, minItems: 1, maxItems: 100, uniqueItems: true, items: { type: string } }
-                goal: { type: string, maxLength: 2000, description: "A task for every phone. Give this or skill." }
-                skill: { type: string, maxLength: 80, description: "A saved phone skill to replay on every phone." }
-                inputs: { type: object, additionalProperties: { type: string }, description: "Skill inputs." }
-                max_steps: { type: integer, minimum: 1, maximum: 40 }
-                bot_id: { type: string }
-                brain: { type: string, description: "provider/model" }
-      responses:
-        "202":
-          description: Started.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/PhoneFleetRun" }
-        default: { $ref: "#/components/responses/Error" }
-  /v1/phones/runs/{id}:
-    parameters:
-      - { name: id, in: path, required: true, schema: { type: string } }
-    get:
-      operationId: getPhoneFleetRun
-      summary: A fleet run
-      description: The fleet run and each phone's run (status, ok, start and end).
-      tags: [Phones]
-      responses:
-        "200":
-          description: The fleet run.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/PhoneFleetRun" }
               required: [to, subject]
               additionalProperties: false
               properties:

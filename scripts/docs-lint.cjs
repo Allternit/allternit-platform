@@ -92,7 +92,8 @@ const referenced = new Set(
 
 // 2. Navigation references map to existing .mdx files.
 // Nav icons are asset paths (e.g. /icons/play.svg), not pages: check the file exists instead.
-const isAsset = (s) => /\.(svg|png|jpe?g|webp|gif)$/i.test(s);
+// OpenAPI specs named by an `openapi` group (e.g. api-reference/platform-v1.yaml) are files too.
+const isAsset = (s) => /\.(svg|png|jpe?g|webp|gif|ya?ml|json)$/i.test(s);
 for (const asset of [...referenced].filter(isAsset)) {
   if (!fs.existsSync(path.join(DOCS_DIR, asset.replace(/^\//, '')))) fail(`docs.json references missing asset: ${asset}`);
 }
