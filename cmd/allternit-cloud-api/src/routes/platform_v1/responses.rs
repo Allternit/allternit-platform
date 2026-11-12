@@ -26,11 +26,12 @@
 //! output items are appended `in_progress` when they open (so streamed item ids
 //! are the stored ids) and updated once when they close.
 //!
-//! **Approvals** never hold a turn synchronously (the runtime forwards them
-//! later, linked by lane 4). `status: "requires_action"` and `required_actions`
-//! are derived at read time from [`approvals::pending_for_response`]; at the end
-//! of a turn the same check runs once and, when something is pending, sends the
-//! best-effort `response.requires_action` event.
+//! **Approvals** never pause a turn. When an agent's twin `call` tool needs the
+//! owner's approval, that tool call fails ("try again once they approve") and
+//! the turn ends `completed`. `required_actions` is reserved and always `[]`;
+//! approvals are their own resource (`approval.requested` /
+//! `approval.resolved`), and after one resolves the client sends a new response
+//! in the same conversation.
 
 use std::{collections::HashMap, convert::Infallible, sync::Arc};
 
@@ -48,7 +49,7 @@ use serde_json::{json, Value};
 use sqlx::{FromRow, PgPool};
 
 use super::{
-    agents, approvals, build_page,
+    agents, build_page,
     conversations::{self, ConvRow, TurnLock, TurnMeter},
     hosting::{host_for, AgentHost, SseLines},
     items::{self, Item, NewItem},
@@ -255,15 +256,14 @@ impl RespRow {
     }
 }
 
-/// The public response object. `requires_action` / `required_actions` come from
-/// the approvals pending on it right now.
-fn response_json(r: &RespRow, pending: &[String]) -> Value {
-    let status = if !pending.is_empty() && matches!(r.status.as_str(), "in_progress" | "completed") { "requires_action" } else { r.status.as_str() };
+/// The public response object. `required_actions` is reserved and always empty
+/// in this release (approvals never pause a turn).
+fn response_json(r: &RespRow) -> Value {
     json!({
-        "id": r.id, "object": "response", "status": status, "model": r.model, "agent_id": r.agent_id,
+        "id": r.id, "object": "response", "status": r.status, "model": r.model, "agent_id": r.agent_id,
         "conversation_id": r.conversation_id, "previous_response_id": r.previous_response_id,
         "output": r.output,
-        "required_actions": pending.iter().map(|id| json!({ "type": "approval", "approval_id": id })).collect::<Vec<_>>(),
+        "required_actions": [],
         "usage": { "input_tokens": r.usage["input_tokens"].as_i64().unwrap_or(0), "output_tokens": r.usage["output_tokens"].as_i64().unwrap_or(0) },
         "error": r.error, "metadata": r.metadata, "created_at": r.created_at, "completed_at": r.completed_at,
     })
@@ -680,15 +680,7 @@ impl Finish {
                 Err(error) => tracing::error!(%error, response = %self.row.id, "platform: response outcome not stored"),
             }
         }
-        let pending = if self.row.agent_id.is_some() {
-            approvals::pending_for_response(&self.db, &self.row.id).await.unwrap_or_default()
-        } else {
-            Vec::new()
-        };
-        let body = response_json(&self.row, &pending);
-        if !pending.is_empty() {
-            emit.send(vec![ev("response.requires_action", json!({ "response": body }))]);
-        }
+        let body = response_json(&self.row);
         let last = if matches!(end, End::Failed(_)) { "response.failed" } else { "response.completed" };
         emit.send(vec![ev(last, json!({ "response": body }))]);
         body
@@ -706,7 +698,7 @@ async fn drive_agent(
     lock: TurnLock,
     mut emit: Emitter,
 ) -> Value {
-    emit.send(vec![ev("response.created", json!({ "response": response_json(&fin.row, &[]) }))]);
+    emit.send(vec![ev("response.created", json!({ "response": response_json(&fin.row) }))]);
     let mut fold = OutputFold::default();
     let (mut lines, mut failure, mut done, mut usage) = (SseLines::default(), None::<String>, false, Value::Null);
     'read: while let Some(chunk) = upstream.next().await {
@@ -850,7 +842,7 @@ fn model_end(finish_reason: Option<&str>) -> End {
 }
 
 async fn drive_model(run: RunOutput, mut sink: Box<dyn ItemSink>, fin: Finish, lock: Option<TurnLock>, mut emit: Emitter) -> Value {
-    emit.send(vec![ev("response.created", json!({ "response": response_json(&fin.row, &[]) }))]);
+    emit.send(vec![ev("response.created", json!({ "response": response_json(&fin.row) }))]);
     let mut fold = OutputFold::default();
     let (end, usage) = match run {
         RunOutput::Complete(c) => match fold.completion(sink.as_mut(), &c).await {
@@ -1038,8 +1030,7 @@ fn require_read(caller: &PlatformCaller) -> Result<(), PlatformError> {
 async fn fetch(State(state): State<Arc<ApiState>>, caller: PlatformCaller, Path(id): Path<String>) -> Result<Json<Value>, PlatformError> {
     require_read(&caller)?;
     let row = load_row(&state.db, &caller, &id).await?;
-    let pending = if row.agent_id.is_some() { approvals::pending_for_response(&state.db, &row.id).await? } else { Vec::new() };
-    Ok(Json(response_json(&row, &pending)))
+    Ok(Json(response_json(&row)))
 }
 
 async fn input_items(
@@ -1153,9 +1144,9 @@ mod tests {
         assert_eq!(agent_text(&items::parse_input(&json!("  Hi  ")).unwrap()).unwrap(), "Hi");
         let mut row = RespRow::new("resp_1".into(), None, Some("agt_1".into()), None, Some("conv_1".into()), None, json!({}));
         row.status = "completed".into();
-        let v = response_json(&row, &["apr_1".into()]);
-        assert_eq!((v["status"].as_str(), v["required_actions"][0]["approval_id"].as_str()), (Some("requires_action"), Some("apr_1")));
+        let v = response_json(&row);
+        assert_eq!((v["status"].as_str(), v["required_actions"].as_array().map(Vec::len)), (Some("completed"), Some(0)));
         row.status = "failed".into();
-        assert_eq!(response_json(&row, &["apr_1".into()])["status"], "failed");
+        assert_eq!(response_json(&row)["status"], "failed");
     }
 }

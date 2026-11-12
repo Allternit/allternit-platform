@@ -353,8 +353,8 @@ pub(crate) async fn platform_fan_out(db: &PgPool, user_id: &str, name: &str, dat
 
 /// The `platform_approvals` row for a twin `approval.requested`: linked to the
 /// conversation whose `runtime_session_id` is the event's `thread_id` (and that
-/// conversation's latest response), expiring at the event's `expires_at` or
-/// 24 h after it was raised. `(row, true)` when this event created it.
+/// conversation's latest response), expiring at the event's `expires_at`, or
+/// never when it carries none. `(row, true)` when this event created it.
 async fn twin_approval_row(
     db: &PgPool,
     project: &str,
@@ -381,7 +381,8 @@ async fn twin_approval_row(
                 "thread_id": data.get("thread_id"), "remote_ref": data.get("remoteRef"), "summary": data.get("summary"),
             }),
             status: "pending",
-            expires_at: Some(approvals::deadline(data, Utc::now(), chrono::Duration::hours(approvals::TWIN_DEFAULT_TTL_HOURS))),
+            // The event's deadline, or none: twin approvals don't expire on their own.
+            expires_at: approvals::deadline(data),
         },
     )
     .await

@@ -1520,15 +1520,14 @@ export class ResponsesResource {
    * `response.output_text.done`, `response.function_call_arguments.done`,
    * `response.tool_call.started` / `response.tool_call.completed` / `response.tool_call.failed`
    * (hosted tools, arguments and results cut at 8,000 characters),
-   * `response.output_item.done`, `response.requires_action` (an approval is holding the turn),
-   * then `response.completed` or `response.failed`, and `error` for failures before the
-   * stream starts. Clients should skip event names they don't know. A turn that raises an
-   * approval ends with `status: requires_action` and `required_actions`; once the approval
-   * resolves, continue with `previous_response_id`. `status: requires_action` and
-   * `required_actions` are derived from the pending approvals linked to the response, so they
-   * can appear after the turn ends (an approval raised late by the runtime): poll
-   * `GET /v1/responses/{id}` or subscribe to the `approval.requested` webhook;
-   * the `response.requires_action` event is best-effort. Errors before the stream starts are
+   * `response.output_item.done`, then `response.completed` or `response.failed`, and `error`
+   * for failures before the stream starts. Clients should skip event names they don't know.
+   * Approvals never pause a turn: when an agent's action needs the owner's approval, that
+   * tool call fails with a "try again once they approve" result and the turn still ends
+   * `completed`. `required_actions` is reserved and always empty in this release. Approvals
+   * are their own resource: subscribe to the `approval.requested` / `approval.resolved`
+   * webhooks (or read `GET /v1/approvals`), and after resolution send a new response in the
+   * same conversation. Errors before the stream starts are
    * plain errors: `400 invalid_request` for `agent` with `store: false`, `agent` with client
    * `tools`, or mixing `model` and `agent` turns in one conversation;
    * `400 missing_function_call_output` when a `function_call` of the previous response has no

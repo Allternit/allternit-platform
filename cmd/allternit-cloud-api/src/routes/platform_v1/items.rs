@@ -407,6 +407,11 @@ pub fn item_json(it: &Item) -> Value {
             v["status"] = json!(it.status);
         }
     }
+    // Spec `Item`: links and creation time on every type (RFC 3339, like the
+    // other platform objects).
+    v["conversation_id"] = json!(it.conversation_id);
+    v["response_id"] = json!(it.response_id);
+    v["created_at"] = json!(it.created_at);
     v
 }
 
@@ -518,12 +523,15 @@ mod tests {
 
     #[test]
     fn item_json_per_type() {
-        let m = item_json(&stored(NewItem::assistant_text("Hello")));
-        assert_eq!(m, json!({ "id": "item_000000000000000000000001", "object": "item", "type": "message", "role": "assistant", "content": [{ "type": "output_text", "text": "Hello" }], "status": "completed" }));
+        let mi = stored(NewItem::assistant_text("Hello"));
+        let m = item_json(&mi);
+        assert_eq!(m, json!({ "id": "item_000000000000000000000001", "object": "item", "type": "message", "role": "assistant", "content": [{ "type": "output_text", "text": "Hello" }], "status": "completed", "conversation_id": "conv_1", "response_id": null, "created_at": mi.created_at }));
+        assert_eq!(m["created_at"].as_str().map(|t| DateTime::parse_from_rfc3339(t).is_ok()), Some(true));
         let fc = item_json(&stored(NewItem::function_call("call_1", "lookup", "{}")));
         assert_eq!((fc["type"].as_str(), fc["call_id"].as_str(), fc["name"].as_str(), fc["arguments"].as_str(), fc["status"].as_str()), (Some("function_call"), Some("call_1"), Some("lookup"), Some("{}"), Some("completed")));
-        let fo = item_json(&stored(NewItem::function_call_output("call_1", "42")));
-        assert_eq!(fo, json!({ "id": "item_000000000000000000000001", "object": "item", "type": "function_call_output", "call_id": "call_1", "output": "42" }));
+        let foi = stored(NewItem::function_call_output("call_1", "42"));
+        let fo = item_json(&foi);
+        assert_eq!(fo, json!({ "id": "item_000000000000000000000001", "object": "item", "type": "function_call_output", "call_id": "call_1", "output": "42", "conversation_id": "conv_1", "response_id": null, "created_at": foi.created_at }));
         let tc = item_json(&stored(NewItem::tool_call("web_search", json!({ "q": "x" }), Value::Null, "failed", Some("timeout"))));
         assert_eq!((tc["name"].as_str(), tc["input"]["q"].as_str(), tc["status"].as_str(), tc["error"].as_str()), (Some("web_search"), Some("x"), Some("failed"), Some("timeout")));
         let ar = item_json(&stored(NewItem::approval_request("apr_1", json!({ "tool": "send_text" }))));

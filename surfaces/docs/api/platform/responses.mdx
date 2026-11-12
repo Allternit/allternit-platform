@@ -20,15 +20,15 @@ description: 'One call for a model or a hosted agent, with items in and items ou
 
 ## Response object
 
-`id` (`resp_`), `status` (`in_progress`, `completed`, `failed`, `incomplete`, `requires_action`), `model`, `agent_id`, `conversation_id`, `previous_response_id`, `output` (items), `required_actions`, `usage`, `error`, `metadata`, `created_at`, `completed_at`.
+`id` (`resp_`), `status` (`in_progress`, `completed`, `failed`, `incomplete`), `model`, `agent_id`, `conversation_id`, `previous_response_id`, `output` (items), `required_actions`, `usage`, `error`, `metadata`, `created_at`, `completed_at`.
 
-Items have `object: "item"` and a `type`: `message`, `function_call`, `function_call_output`, `tool_call` (a hosted tool) or `approval_request`.
+Items have `object: "item"` and a `type`: `message`, `function_call`, `function_call_output`, `tool_call` (a hosted tool) or `approval_request`. Every item also carries `conversation_id`, `response_id` and `created_at`.
 
-When an agent turn needs an [approval](/api/platform/approvals), the response can read `requires_action` with `required_actions: [{ "type": "approval", "approval_id" }]`. This is worked out when you read the response and can appear after the turn ends: poll `GET /v1/responses/{id}` or subscribe to `approval.requested`. After the approval is resolved, continue with `previous_response_id`.
+An agent turn never pauses for an [approval](/api/platform/approvals). When an action needs the owner's approval, that tool call fails with a "try again once they approve" result and the turn still ends `completed`. `required_actions` is reserved and always empty in this release. Approvals are their own resource: subscribe to `approval.requested` / `approval.resolved`; after resolution send a new response in the same conversation.
 
 ## Streaming
 
-With `stream: true`: `response.created`, `response.output_item.added`, `response.output_text.delta`, `response.output_text.done`, `response.function_call_arguments.done`, `response.tool_call.started`, `response.tool_call.completed`, `response.tool_call.failed`, `response.output_item.done`, `response.requires_action`, `response.completed`, `response.failed`, `error`. Skip event names you do not know.
+With `stream: true`: `response.created`, `response.output_item.added`, `response.output_text.delta`, `response.output_text.done`, `response.function_call_arguments.done`, `response.tool_call.started`, `response.tool_call.completed`, `response.tool_call.failed`, `response.output_item.done`, `response.completed`, `response.failed`, `error`. Skip event names you do not know.
 
 ## Billing
 

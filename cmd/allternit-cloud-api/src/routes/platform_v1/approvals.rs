@@ -12,8 +12,8 @@
 //!     `conversation_id` = the conversation whose `runtime_session_id` is the
 //!     event's `thread_id`; `response_id` = that conversation's latest response.
 //!     `expires_at` = the event's `expires_at` when it carries one, otherwise
-//!     **24 h** after the request ([`TWIN_DEFAULT_TTL_HOURS`]); the runtime
-//!     itself never expires a twin approval.
+//!     NULL: the runtime itself never expires a twin approval, so a row with no
+//!     deadline stays pending until it is decided and the sweep never touches it.
 //!   - computer: inserted on the executor's 409 `approval_required`
 //!     (`computers::toolset_call`), `source_ref` = the grant id,
 //!     `expires_at` = the executor's deadline or the ACI grant TTL.
@@ -21,16 +21,21 @@
 //!   (`POST /v1/accounts/{id}/approvals/{approval_id}/approve|deny`,
 //!   `POST /v1/computers/{id}/approvals/{approval_id}`): it relays the decision
 //!   to the source, then moves the row `pending → approved|denied` and emits
-//!   `approval.resolved`. Only the call that moves the row emits, so a decision
-//!   made elsewhere (the owner in the Allternit app, mirrored from the runtime's
-//!   own `approval.resolved`) is never reported twice.
+//!   `approval.resolved`. A row the sweep expired while the source was
+//!   answering moves too (`expired → approved|denied`): the source accepted the
+//!   decision, so that is the truth. Only the call that moves the row emits, so
+//!   a decision made elsewhere (the owner in the Allternit app, mirrored from the
+//!   runtime's own `approval.resolved`) is never reported twice.
 //! * **Lifecycle.** `pending → approved | denied | expired`; `approved →
 //!   consumed` when the computer call retried with the grant runs. The expiry
 //!   sweep ([`expire_due`], every 60 s on the Platform worker) marks pending rows
 //!   past `expires_at` and emits `approval.expired`; reads report such a row as
 //!   `expired` even before the sweep reaches it.
 //!
-//! [`pending_for_response`] is what responses use to derive `requires_action`.
+//! Responses never pause on an approval: a Platform agent turn whose twin
+//! `call` needs one fails that tool call ("try again once they approve") and
+//! ends `completed`; the client follows `approval.requested` /
+//! `approval.resolved` and sends a new response afterwards.
 
 use std::sync::Arc;
 
@@ -39,7 +44,7 @@ use axum::{
     routing::get,
     Extension, Json,
 };
-use chrono::{DateTime, Duration, TimeZone, Utc};
+use chrono::{DateTime, TimeZone, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sqlx::{FromRow, PgPool};
@@ -50,9 +55,6 @@ use super::{
 };
 use crate::ApiState;
 
-/// A twin approval whose `approval.requested` carries no deadline expires this
-/// long after it was raised.
-pub const TWIN_DEFAULT_TTL_HOURS: i64 = 24;
 /// A computer approval without an executor deadline: the ACI grant TTL
 /// (`aci_approvals.rs`, `ALLTERNIT_ACI_GRANT_TTL_SECS`, default 300 s).
 pub const COMPUTER_DEFAULT_TTL_SECS: i64 = 300;
@@ -213,8 +215,10 @@ pub fn link_keys(data: &Value) -> Vec<String> {
 }
 
 /// A deadline from an event or executor body (`expires_at` / `expiresAt`:
-/// RFC 3339, or Unix seconds / milliseconds), else `now + default`.
-pub fn deadline(data: &Value, now: DateTime<Utc>, default: Duration) -> DateTime<Utc> {
+/// RFC 3339, or Unix seconds / milliseconds); `None` when it carries none (or
+/// an unreadable one). Twin rows store that as-is (no expiry); computer rows
+/// fall back to [`COMPUTER_DEFAULT_TTL_SECS`].
+pub fn deadline(data: &Value) -> Option<DateTime<Utc>> {
     let raw = data.get("expires_at").or_else(|| data.get("expiresAt"));
     let parsed = match raw {
         Some(Value::String(s)) => DateTime::parse_from_rfc3339(s).ok().map(|t| t.with_timezone(&Utc)),
@@ -227,7 +231,7 @@ pub fn deadline(data: &Value, now: DateTime<Utc>, default: Duration) -> DateTime
         }),
         _ => None,
     };
-    parsed.unwrap_or(now + default)
+    parsed
 }
 
 // ---------------------------------------------------------------- store
@@ -292,17 +296,20 @@ async fn by_id(db: &PgPool, project_id: &str, id: &str) -> Result<Option<Approva
         .await
 }
 
-/// Drop a row an alias created just before its source answered 404.
+/// Drop a row an alias created just before its source failed (any error), so a
+/// failed relay never leaves a phantom pending row behind.
 pub async fn forget_fresh(db: &PgPool, id: &str) -> Result<(), sqlx::Error> {
     sqlx::query("DELETE FROM platform_approvals WHERE id = $1 AND status = 'pending'").bind(id).execute(db).await?;
     Ok(())
 }
 
-/// `pending → approved|denied`, once. `None` when the row was no longer pending
-/// (another path resolved or expired it first): the caller then emits nothing.
+/// `pending|expired → approved|denied`, once. Callers have the source's own
+/// acceptance of the decision, so a row the sweep expired in the meantime moves
+/// too. `None` when the row was already approved, denied or consumed (another
+/// path resolved it first): the caller then emits nothing.
 pub async fn mark_resolved(db: &PgPool, id: &str, status: &str, by: &str) -> Result<Option<ApprovalRow>, sqlx::Error> {
     sqlx::query_as(&format!(
-        "UPDATE platform_approvals SET status = $2, resolved_at = NOW(), resolved_by = $3 WHERE id = $1 AND status = 'pending' RETURNING {COLS}"
+        "UPDATE platform_approvals SET status = $2, resolved_at = NOW(), resolved_by = $3 WHERE id = $1 AND status IN ('pending', 'expired') RETURNING {COLS}"
     ))
     .bind(id)
     .bind(status)
@@ -322,8 +329,8 @@ pub async fn emit_resolved(db: &PgPool, row: &ApprovalRow, reason: Option<&str>)
 }
 
 /// A twin approval resolved on the runtime (the owner in the Allternit app,
-/// or our own relay echoed back): move the row if it is still pending and
-/// report it. Pre-existing approvals with no row are left alone.
+/// or our own relay echoed back): move the row if it is still pending (or was
+/// expired by the sweep) and report it. Pre-existing approvals with no row are left alone.
 pub async fn mirror_twin_resolution(db: &PgPool, project_id: &str, source_ref: &str, state: &str) -> Result<(), sqlx::Error> {
     let status = match state {
         "approved" | "denied" => state,
@@ -450,8 +457,9 @@ pub async fn resolve(
             emit_resolved(&state.db, &moved, reason).await;
             moved
         }
-        // Resolved elsewhere in the meantime (mirrored from the runtime): the
-        // source accepted ours, so report the row as it stands.
+        // Already approved/denied elsewhere in the meantime (mirrored from the
+        // runtime): the source accepted ours, so report the row as it stands
+        // without a second `approval.resolved`.
         None => {
             let current = by_id(&state.db, &row.project_id, &row.id).await?;
             current.unwrap_or(row)
@@ -579,23 +587,10 @@ async fn decide(
     Ok(Json(row.object(Utc::now())))
 }
 
-// ---------------------------------------------------------------- responses seam
-
-/// Ids (`apr_…`) of the approvals still pending for one response, oldest first.
-pub async fn pending_for_response(db: &PgPool, response_id: &str) -> Result<Vec<String>, PlatformError> {
-    let ids: Vec<String> = sqlx::query_scalar(
-        "SELECT id FROM platform_approvals WHERE response_id = $1 AND status = 'pending' \
-           AND (expires_at IS NULL OR expires_at > NOW()) ORDER BY created_at, id",
-    )
-    .bind(response_id)
-    .fetch_all(db)
-    .await?;
-    Ok(ids)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Duration;
     use crate::routes::platform_v1::caller::{Plan, ProjectEnv};
 
     fn caller(account: Option<&str>, scopes: &[&str]) -> PlatformCaller {
@@ -657,11 +652,10 @@ mod tests {
         assert_eq!(link_keys(&json!({ "thread_id": "th_1", "session_id": "th_1" })), vec!["th_1"]);
         assert!(link_keys(&json!({ "thread_id": "", "approvalId": "gap_1" })).is_empty());
         let now = Utc.timestamp_opt(1_800_000_000, 0).unwrap();
-        let day = Duration::hours(TWIN_DEFAULT_TTL_HOURS);
-        assert_eq!(deadline(&json!({}), now, day), now + day);
-        assert_eq!(deadline(&json!({ "expires_at": "2027-01-15T08:00:00Z" }), now, day).to_rfc3339(), "2027-01-15T08:00:00+00:00");
-        assert_eq!(deadline(&json!({ "expiresAt": 1_800_000_600_000i64 }), now, day), now + Duration::minutes(10));
-        assert_eq!(deadline(&json!({ "expires_at": 1_800_000_600 }), now, day), now + Duration::minutes(10));
-        assert_eq!(deadline(&json!({ "expires_at": "soon" }), now, day), now + day);
+        assert_eq!(deadline(&json!({})), None);
+        assert_eq!(deadline(&json!({ "expires_at": "2027-01-15T08:00:00Z" })).unwrap().to_rfc3339(), "2027-01-15T08:00:00+00:00");
+        assert_eq!(deadline(&json!({ "expiresAt": 1_800_000_600_000i64 })), Some(now + Duration::minutes(10)));
+        assert_eq!(deadline(&json!({ "expires_at": 1_800_000_600 })), Some(now + Duration::minutes(10)));
+        assert_eq!(deadline(&json!({ "expires_at": "soon" })), None);
     }
 }

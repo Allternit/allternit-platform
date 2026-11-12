@@ -11,12 +11,12 @@ Scope `twin` or `computers`; a key only sees approvals from sources its scopes c
 | `GET` | `/v1/approvals/{id}` | Retrieve |
 | `POST` | `/v1/approvals/{id}` | Resolve: `{ "decision": "approve" \| "deny", "reason"? }` |
 
-Object: `id` (`apr_`), `source` (`twin` or `computer`), `source_ref`, `account_id`, `conversation_id`, `response_id`, `kind`, `proposed_action`, `status` (`pending`, `approved`, `denied`, `expired`, `consumed`), `expires_at`, `created_at`, `resolved_at`, `resolved_by`.
+Object: `id` (`apr_`), `source` (`twin` or `computer`), `source_ref`, `account_id`, `conversation_id`, `response_id`, `kind`, `proposed_action`, `status` (`pending`, `approved`, `denied`, `expired`, `consumed`), `expires_at` (twin: the runtime's deadline when it sends one, otherwise `null` and the approval never expires; computer: the executor's deadline, otherwise 300 seconds), `created_at`, `resolved_at`, `resolved_by`.
 
 Whether a key may approve a computer action follows the project's `approval_mode` (`403 approval_requires_owner` otherwise). The older routes under `/v1/accounts/{id}/approvals` and `/v1/computers/{id}/approvals` still work and use the same resolver.
 
 ## With responses
 
-A [response](/api/platform/responses) whose agent turn raises an approval reads `requires_action` with `required_actions`. This is derived when you read it and may appear after the turn ends, so poll `GET /v1/responses/{id}` or use the `approval.requested` [webhook](/api/platform/webhooks). After resolving, continue with `previous_response_id`; nothing resumes on its own.
+A [response](/api/platform/responses) never pauses on an approval: the agent's tool call fails with a "try again once they approve" result and the turn ends `completed`. `required_actions` is reserved and always empty in this release. Approvals are their own resource: subscribe to the `approval.requested` / `approval.resolved` [webhooks](/api/platform/webhooks); after resolution send a new response in the same conversation. Nothing resumes on its own.
 
 Webhooks: `approval.requested`, `approval.resolved`, `approval.expired`.

@@ -857,7 +857,9 @@ async fn record_requested(db: &sqlx::PgPool, caller: &PlatformCaller, row: &Row,
             "confirmation_class": out.get("confirmation_class"), "requested_by": caller.key_id,
         }),
         status: "pending",
-        expires_at: Some(super::approvals::deadline(out, now, chrono::Duration::seconds(super::approvals::COMPUTER_DEFAULT_TTL_SECS))),
+        expires_at: Some(
+            super::approvals::deadline(out).unwrap_or(now + chrono::Duration::seconds(super::approvals::COMPUTER_DEFAULT_TTL_SECS)),
+        ),
     };
     match super::approvals::insert(db, n).await {
         Ok(Some((approval, true))) => {
@@ -875,7 +877,7 @@ async fn record_requested(db: &sqlx::PgPool, caller: &PlatformCaller, row: &Row,
 /// `POST /v1/computers/{id}/approvals/{approval_id}`: the alias of
 /// `POST /v1/approvals/{id}` with `decision: approve`, same answer as before.
 /// A grant with no row yet (raised before `platform_approvals` existed) gets
-/// one first.
+/// one first; that row is dropped again when the decision fails.
 async fn approve(
     State(state): State<Arc<ApiState>>,
     caller: PlatformCaller,
@@ -916,8 +918,12 @@ async fn approve(
     match super::approvals::resolve(&state, hosts, &caller, approval, super::approvals::Decision::Approve, None).await {
         Ok((_, answer)) => Ok(Json(answer)),
         Err(e) => {
-            if fresh && e.status == StatusCode::NOT_FOUND {
-                super::approvals::forget_fresh(&state.db, &approval_row_id).await?;
+            // Any failure (404, executor down, ...) on a row this call just
+            // created: drop it, so no phantom pending approval is left behind.
+            if fresh {
+                if let Err(err) = super::approvals::forget_fresh(&state.db, &approval_row_id).await {
+                    tracing::warn!(approval = %approval_row_id, "computer approve alias: fresh row not dropped: {err}");
+                }
             }
             Err(e)
         }

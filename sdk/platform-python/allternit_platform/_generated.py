@@ -38,7 +38,7 @@ UsageRow = TypedDict('UsageRow', {'group': Optional[str], 'meter': Literal['voic
 PhoneNumber = TypedDict('PhoneNumber', {'id': str, 'object': Literal['phone_number'], 'account_id': Optional[str], 'e164': str, 'type': Literal['local', 'toll_free'], 'sms_state': Literal['pending_registration', 'active', 'rejected', 'blocked'], 'simulated': bool, 'created_at': str}, total=False)
 PhoneNumberList = TypedDict('PhoneNumberList', {'data': List["PhoneNumber"], 'has_more': bool, 'next_cursor': Optional[str]}, total=False)
 WebhookEndpoint = TypedDict('WebhookEndpoint', {'id': str, 'object': Literal['webhook_endpoint'], 'url': str, 'events': List[str], 'description': Optional[str], 'created_at': str}, total=False)
-Event = TypedDict('Event', {'id': str, 'object': Literal['event'], 'type': Literal['approval.requested', 'message.received', 'message.status', 'registration.updated', 'inbox.item.created', 'call.started', 'call.ended', 'call.transcript.ready', 'usage.threshold', 'phone.step', 'phone.run.completed', 'phone.fleet_run.completed', 'phone.approval.requested', 'phone.approval.resolved', 'mail.received', 'webhook.test'], 'created': int, 'project_id': str, 'account_id': Optional[str], 'data': Dict[str, Any]}, total=False)
+Event = TypedDict('Event', {'id': str, 'object': Literal['event'], 'type': Literal['approval.requested', 'approval.resolved', 'approval.expired', 'message.received', 'message.status', 'registration.updated', 'inbox.item.created', 'call.started', 'call.ended', 'call.transcript.ready', 'usage.threshold', 'phone.step', 'phone.run.completed', 'phone.fleet_run.completed', 'phone.approval.requested', 'phone.approval.resolved', 'mail.received', 'webhook.test'], 'created': int, 'project_id': str, 'account_id': Optional[str], 'data': Dict[str, Any]}, total=False)
 Computer = TypedDict('Computer', {'id': str, 'object': Literal['computer'], 'name': str, 'status': Literal['provisioning', 'starting', 'running', 'stopping', 'stopped', 'error', 'deleted'], 'account_id': Optional[str], 'key_id': str, 'created_at': str, 'started_at': Optional[str], 'metadata': Dict[str, Any]}, total=False)
 ComputerList = TypedDict('ComputerList', {'data': List["Computer"], 'has_more': bool, 'next_cursor': Optional[str]}, total=False)
 ComputerEvent = TypedDict('ComputerEvent', {'id': str, 'type': Literal['computer.action'], 'ts': str, 'data': Dict[str, Any]}, total=False)
@@ -73,7 +73,7 @@ ItemInput = TypedDict('ItemInput', {'type': Literal['message', 'function_call_ou
 Item = TypedDict('Item', {'id': str, 'object': Literal['item'], 'type': Literal['message', 'function_call', 'function_call_output', 'tool_call', 'approval_request'], 'conversation_id': Optional[str], 'response_id': Optional[str], 'status': Literal['in_progress', 'completed', 'failed', 'incomplete'], 'role': Optional[Literal['user', 'assistant', 'system', 'developer']], 'content': List["ContentPart"], 'call_id': str, 'name': str, 'arguments': str, 'output': Any, 'input': Any, 'error': Optional[str], 'approval_id': str, 'proposed_action': Dict[str, Any], 'created_at': str}, total=False)
 ItemList = Dict[str, Any]
 ResponseRequest = TypedDict('ResponseRequest', {'model': str, 'agent': str, 'input': Union[str, List["ItemInput"]], 'instructions': str, 'tools': List[Dict[str, Any]], 'tool_choice': Any, 'stream': bool, 'store': bool, 'conversation': str, 'previous_response_id': str, 'metadata': Dict[str, Any], 'max_output_tokens': int, 'temperature': float}, total=False)
-Response = TypedDict('Response', {'id': str, 'object': Literal['response'], 'status': Literal['in_progress', 'completed', 'failed', 'incomplete', 'requires_action'], 'model': Optional[str], 'agent_id': Optional[str], 'conversation_id': Optional[str], 'previous_response_id': Optional[str], 'output': List["Item"], 'required_actions': List[Dict[str, Any]], 'usage': Dict[str, Any], 'error': Optional[Dict[str, Any]], 'metadata': Dict[str, Any], 'created_at': str, 'completed_at': Optional[str]}, total=False)
+Response = TypedDict('Response', {'id': str, 'object': Literal['response'], 'status': Literal['in_progress', 'completed', 'failed', 'incomplete'], 'model': Optional[str], 'agent_id': Optional[str], 'conversation_id': Optional[str], 'previous_response_id': Optional[str], 'output': List["Item"], 'required_actions': List[Dict[str, Any]], 'usage': Dict[str, Any], 'error': Optional[Dict[str, Any]], 'metadata': Dict[str, Any], 'created_at': str, 'completed_at': Optional[str]}, total=False)
 ModelMessageRequest = TypedDict('ModelMessageRequest', {'model': str, 'system': Union[str, List[Dict[str, Any]]], 'messages': List[Dict[str, Any]], 'tools': List[Dict[str, Any]], 'tool_choice': Dict[str, Any], 'max_tokens': int, 'temperature': float, 'stream': bool, 'metadata': Dict[str, Any], 'thread': Dict[str, Any]}, total=False)
 ModelMessage = TypedDict('ModelMessage', {'id': str, 'type': Literal['message'], 'role': Literal['assistant'], 'content': List[Dict[str, Any]], 'model': str, 'stop_reason': Literal['end_turn', 'tool_use', 'max_tokens'], 'usage': Dict[str, Any]}, total=False)
 Text = TypedDict('Text', {'id': str, 'object': Literal['text'], 'account_id': Optional[str], 'number_id': str, 'direction': Literal['inbound', 'outbound'], 'from': str, 'to': str, 'body': str, 'segments': int, 'status': Literal['sent', 'simulated', 'received', 'failed'], 'error_code': Optional[str], 'media': List[Dict[str, Any]], 'created_at': str}, total=False)
@@ -948,7 +948,7 @@ class WebhooksResource:
             return self._client.request("GET", f"/v1/webhooks", query=q, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
         return self._client.paginate(_fetch, after if after is not NOT_GIVEN else None)
 
-    def create(self, *, url: str, events: List[Literal['*', 'approval.requested', 'message.received', 'message.status', 'registration.updated', 'inbox.item.created', 'call.started', 'call.ended', 'call.transcript.ready', 'usage.threshold', 'phone.step', 'phone.run.completed', 'phone.fleet_run.completed', 'phone.approval.requested', 'phone.approval.resolved', 'mail.received']], description: str = NOT_GIVEN, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+    def create(self, *, url: str, events: List[Literal['*', 'approval.requested', 'approval.resolved', 'approval.expired', 'message.received', 'message.status', 'registration.updated', 'inbox.item.created', 'call.started', 'call.ended', 'call.transcript.ready', 'usage.threshold', 'phone.step', 'phone.run.completed', 'phone.fleet_run.completed', 'phone.approval.requested', 'phone.approval.resolved', 'mail.received']], description: str = NOT_GIVEN, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
         """Create a webhook endpoint
 
         `url` must be public https. The response carries `secret` once.
@@ -1918,15 +1918,14 @@ class ResponsesResource:
         `response.output_text.done`, `response.function_call_arguments.done`,
         `response.tool_call.started` / `response.tool_call.completed` / `response.tool_call.failed`
         (hosted tools, arguments and results cut at 8,000 characters),
-        `response.output_item.done`, `response.requires_action` (an approval is holding the turn),
-        then `response.completed` or `response.failed`, and `error` for failures before the
-        stream starts. Clients should skip event names they don't know. A turn that raises an
-        approval ends with `status: requires_action` and `required_actions`; once the approval
-        resolves, continue with `previous_response_id`. `status: requires_action` and
-        `required_actions` are derived from the pending approvals linked to the response, so they
-        can appear after the turn ends (an approval raised late by the runtime): poll
-        `GET /v1/responses/{id}` or subscribe to the `approval.requested` webhook;
-        the `response.requires_action` event is best-effort. Errors before the stream starts are
+        `response.output_item.done`, then `response.completed` or `response.failed`, and `error`
+        for failures before the stream starts. Clients should skip event names they don't know.
+        Approvals never pause a turn: when an agent's action needs the owner's approval, that
+        tool call fails with a "try again once they approve" result and the turn still ends
+        `completed`. `required_actions` is reserved and always empty in this release. Approvals
+        are their own resource: subscribe to the `approval.requested` / `approval.resolved`
+        webhooks (or read `GET /v1/approvals`), and after resolution send a new response in the
+        same conversation. Errors before the stream starts are
         plain errors: `400 invalid_request` for `agent` with `store: false`, `agent` with client
         `tools`, or mixing `model` and `agent` turns in one conversation;
         `400 missing_function_call_output` when a `function_call` of the previous response has no

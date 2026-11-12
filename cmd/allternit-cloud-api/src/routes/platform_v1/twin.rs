@@ -376,8 +376,12 @@ async fn decide(state: Arc<ApiState>, caller: PlatformCaller, layered: HostExt, 
     match approvals::resolve(&state, hosts, &caller, row, decision, None).await {
         Ok((_, answer)) => Ok(Json(answer)),
         Err(e) => {
-            if fresh && e.status == StatusCode::NOT_FOUND {
-                approvals::forget_fresh(&state.db, &row_id).await?;
+            // Any failure (404, runtime down, ...) on a row this call just
+            // created: drop it, so no phantom pending approval is left behind.
+            if fresh {
+                if let Err(err) = approvals::forget_fresh(&state.db, &row_id).await {
+                    tracing::warn!(approval = %row_id, "platform twin: fresh approval row not dropped: {err}");
+                }
             }
             // The alias keeps the runtime's own code for a second decision.
             if e.code == "approval_not_pending" {
@@ -394,7 +398,6 @@ async fn mirror_pending(db: &PgPool, project: &str, account: &str, page: &Value)
     let Some(items) = page["data"].as_array() else { return };
     for item in items.iter().filter(|i| i["status"] == "pending") {
         let Some(source_ref) = item["id"].as_str() else { continue };
-        let created = item["created_at"].as_str().and_then(|t| DateTime::parse_from_rfc3339(t).ok()).map(|t| t.with_timezone(&Utc)).unwrap_or_else(Utc::now);
         let n = approvals::NewApproval {
             project_id: project,
             source: "twin",
@@ -405,7 +408,9 @@ async fn mirror_pending(db: &PgPool, project: &str, account: &str, page: &Value)
             kind: item["action"].as_str().unwrap_or("action").to_string(),
             proposed_action: json!({ "action": item["action"], "detail": item["detail"], "agent_id": item["agent_id"], "thread_id": item["thread_id"] }),
             status: "pending",
-            expires_at: Some(created + chrono::Duration::hours(approvals::TWIN_DEFAULT_TTL_HOURS)),
+            // The runtime's deadline when it lists one; otherwise none (twin
+            // approvals don't expire on their own).
+            expires_at: approvals::deadline(item),
         };
         if let Err(e) = approvals::insert(db, n).await {
             tracing::warn!(approval = source_ref, "platform twin: approval row not mirrored: {e}");

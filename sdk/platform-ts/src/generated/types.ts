@@ -235,7 +235,7 @@ export type WebhookEndpoint = {
 export type Event = {
   id: string;
   object: "event";
-  type: "approval.requested" | "message.received" | "message.status" | "registration.updated" | "inbox.item.created" | "call.started" | "call.ended" | "call.transcript.ready" | "usage.threshold" | "phone.step" | "phone.run.completed" | "phone.fleet_run.completed" | "phone.approval.requested" | "phone.approval.resolved" | "mail.received" | "webhook.test";
+  type: "approval.requested" | "approval.resolved" | "approval.expired" | "message.received" | "message.status" | "registration.updated" | "inbox.item.created" | "call.started" | "call.ended" | "call.transcript.ready" | "usage.threshold" | "phone.step" | "phone.run.completed" | "phone.fleet_run.completed" | "phone.approval.requested" | "phone.approval.resolved" | "mail.received" | "webhook.test";
   /**
    * Unix seconds.
    */
@@ -851,12 +851,15 @@ export type Response = {
    */
   id: string;
   object: "response";
-  status: "in_progress" | "completed" | "failed" | "incomplete" | "requires_action";
+  status: "in_progress" | "completed" | "failed" | "incomplete";
   model?: (string | null);
   agent_id?: (string | null);
   conversation_id?: (string | null);
   previous_response_id?: (string | null);
   output: Array<Item>;
+  /**
+   * Reserved; always empty in this release. Approvals are their own resource: subscribe to `approval.requested` / `approval.resolved`; after resolution send a new response in the same conversation.
+   */
   required_actions?: Array<{
     type: "approval";
     approval_id: string;
@@ -961,6 +964,9 @@ export type Approval = {
   kind: string;
   proposed_action: Record<string, unknown>;
   status: "pending" | "approved" | "denied" | "expired" | "consumed";
+  /**
+   * Twin: the runtime's deadline when it sends one, else null (a twin approval with no deadline never expires). Computer: the executor's deadline, else 300 seconds after the request.
+   */
   expires_at?: (string | null);
   created_at: string;
   resolved_at?: (string | null);
@@ -1394,7 +1400,7 @@ export type ListWebhooksResponse = {
 
 export type CreateWebhookRequest = {
   url: string;
-  events: Array<"*" | "approval.requested" | "message.received" | "message.status" | "registration.updated" | "inbox.item.created" | "call.started" | "call.ended" | "call.transcript.ready" | "usage.threshold" | "phone.step" | "phone.run.completed" | "phone.fleet_run.completed" | "phone.approval.requested" | "phone.approval.resolved" | "mail.received">;
+  events: Array<"*" | "approval.requested" | "approval.resolved" | "approval.expired" | "message.received" | "message.status" | "registration.updated" | "inbox.item.created" | "call.started" | "call.ended" | "call.transcript.ready" | "usage.threshold" | "phone.step" | "phone.run.completed" | "phone.fleet_run.completed" | "phone.approval.requested" | "phone.approval.resolved" | "mail.received">;
   description?: string;
 };
 
