@@ -2204,6 +2204,10 @@ const message = await createUserMessage(input)
       id: part.id ?? Identifier.ascending("part"),
     })
 
+    // The person's own text, to tell which attachments the composer already inlined.
+    const userText = input.parts
+      .flatMap((p) => (p.type === "text" && !p.synthetic ? [p.text] : []))
+      .join("\n")
     const parts = await Promise.all(
       input.parts.map(async (part): Promise<Draft<MessageV2.Part>[]> => {
         if (part.type === "file") {
@@ -2323,7 +2327,8 @@ const message = await createUserMessage(input)
                     sessionID: input.sessionID,
                     type: "text",
                     synthetic: true,
-                    text: dataUrlText(part.url),
+                    // Capped like every data file (MessageV2.dataFileText): a big file is a note, not the whole text.
+                    text: MessageV2.dataFileText(part, userText, { bare: true }),
                   },
                   {
                     ...part,
@@ -3236,12 +3241,4 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       return Session.setTitle({ sessionID: input.session.id, title })
     }
   }
-}
-
-/** The text inside a `data:` URL (base64 or percent-encoded). */
-function dataUrlText(url: string): string {
-  const comma = url.indexOf(",")
-  if (comma < 0) return ""
-  const body = url.slice(comma + 1)
-  return url.slice(0, comma).endsWith(";base64") ? Buffer.from(body, "base64").toString() : decodeURIComponent(body)
 }
