@@ -4,7 +4,9 @@ import UIKit
 
 /// Debug only: draws the phone cards with fixtures for screenshots
 /// (`-phone-gallery <page>`, add `-phone-gallery-dark` for dark). Pages:
-/// approval, approval2, status, status2, entry, intents, imessage, imessage2.
+/// approval, approval2, status, status2, entry, intents, imessage, imessage2,
+/// pill (hosted reply: running, waiting), pill2 (done, denied, couldn't finish),
+/// pillcard (composer run: pill on the card), runsheet (`allternit://phone-run`).
 @MainActor enum PhoneSurfacesGallery {
     private static var window: UIWindow?
 
@@ -82,6 +84,28 @@ private struct GalleryPage: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(Color("BgPrimary"), in: RoundedRectangle(cornerRadius: 14))
             }
+        case "pill", "pill2":
+            let states: [PhoneTaskCardModel.Status] = page == "pill" ? [.running, .waitingApproval] : [.done, .denied, .failed]
+            ReduceMotionNote()
+            ForEach(states, id: \.self) { status in
+                label("Bot reply hosting the run · \(status.rawValue)")
+                let run = Fixtures.run(status)
+                MessageRow(message: Fixtures.reply(status), onArtifactTap: { _ in }, hostedRun: run)
+                    .padding(.horizontal, -16)
+                PhoneTaskCardView(card: run, loadThumb: nil, fixedThumb: Fixtures.screen, hosted: true)
+            }
+        case "pillcard":
+            ReduceMotionNote()
+            label("Composer run (no reply hosts it): pill and stream on the card")
+            PhoneTaskCardView(card: Fixtures.run(.running), loadThumb: nil, fixedThumb: Fixtures.screen)
+            PhoneTaskCardView(card: Fixtures.run(.waitingApproval), loadThumb: nil, fixedThumb: Fixtures.screen)
+        case "runsheet":
+            label("allternit://phone-run/<id> sheet · waiting")
+            PhoneRunSheet(runId: "task-1", fixedCard: Fixtures.run(.waitingApproval))
+                .frame(height: 520).clipShape(RoundedRectangle(cornerRadius: 16))
+            label("Same sheet · done")
+            PhoneRunSheet(runId: "task-1", fixedCard: Fixtures.run(.done))
+                .frame(height: 420).clipShape(RoundedRectangle(cornerRadius: 16))
         case "imessage":
             label("Quick panel · ready, with the last phone run")
             IMQuickPanel(fixedState: .ready, fixedRun: Fixtures.sharedRun("waiting_approval"))
@@ -103,6 +127,15 @@ private struct GalleryPage: View {
 
     private func label(_ text: String) -> some View {
         Text(text).font(.caption2).foregroundColor(Color("TextTertiary"))
+    }
+}
+
+/// Shows whether Reduce Motion is on, so a screenshot says which motion it shows.
+private struct ReduceMotionNote: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    var body: some View {
+        Text("Reduce Motion: \(reduceMotion ? "on (static orb, opacity only)" : "off")")
+            .font(.caption2).foregroundColor(Color("TextTertiary"))
     }
 }
 
@@ -144,6 +177,43 @@ private enum Fixtures {
                                   goal: "Order dinner on DoorDash: 2 pad thai and spring rolls, under $45",
                                   status: status, step: steps[status] ?? 1, inboxId: "approval:ap1",
                                   phoneName: "Pixel 8", line: lines[status])
+    }
+
+    static let labels = ["Opening DoorDash", "Searching Thai Basil", "Opening Thai Basil", "Adding 2 pad thai",
+                         "Adding spring rolls", "Opening the cart", "Checking the total", "Tapping Place order"]
+
+    /// A run with labelled steps, as the ledger cards build it.
+    static func run(_ status: PhoneTaskCardModel.Status) -> PhoneTaskCardModel {
+        var card = Fixtures.card(status)
+        let count: Int
+        switch status {
+        case .running: count = 5
+        case .waitingApproval: count = 8
+        case .done: count = 8
+        default: count = 4
+        }
+        card.step = count
+        card.steps = (1...count).map { RunStep(n: $0, label: labels[$0 - 1], ok: true) }
+        if status == .waitingApproval {
+            card.stepLabel = "Waiting for your OK to pay $42.18"
+            card.steps = RunStep.stream(trail: Array(card.steps.dropLast()), step: count, label: card.stepLabel)
+        } else if status == .running {
+            card.stepLabel = labels[count - 1]
+        }
+        if status == .done { card.summary = "Ordered 2 pad thai and spring rolls from Thai Basil for $42.18." }
+        card.line = status.isActive ? card.stepLabel : card.summary
+        return card
+    }
+
+    static func reply(_ status: PhoneTaskCardModel.Status) -> MessageRecord {
+        let text: String
+        switch status {
+        case .running, .waitingApproval: text = "On it. I'm ordering dinner on your Pixel 8: 2 pad thai and spring rolls from Thai Basil, under $45."
+        case .done: text = "Done. Dinner is ordered from Thai Basil and should arrive in about 35 minutes."
+        case .denied: text = "Okay, I stopped before placing the order. Nothing was bought."
+        default: text = "I couldn't finish the order: the cart button never showed up."
+        }
+        return MessageRecord(id: "reply-\(status.rawValue)", role: "assistant", content: text)
     }
 
     static func sharedRun(_ status: String) -> SharedPhoneRun {

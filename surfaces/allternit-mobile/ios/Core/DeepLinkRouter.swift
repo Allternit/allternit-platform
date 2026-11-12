@@ -52,6 +52,10 @@ enum DeepLink: Equatable, Sendable {
     /// Start a phone task on the linked phone (`allternit://phone-task?goal=&source=`),
     /// sent by the iMessage app, which has no session of its own.
     case phoneTask(goal: String, source: String)
+    /// One phone or computer run: its status, steps and Review in a sheet
+    /// (`allternit://phone-run/<runId>`, the iMessage card's
+    /// `https://ai.allternit.com/?allternit_phone_run=<runId>`).
+    case phoneRun(String)
 
     static let webHosts: Set<String> = ["ai.allternit.com", "m.allternit.com"]
 
@@ -99,6 +103,9 @@ enum DeepLink: Equatable, Sendable {
         if let provider = query["allternit_channel"] {
             return .channel(provider)
         }
+        if let run = query["allternit_phone_run"] {
+            return .phoneRun(run)
+        }
         if query["allternit_open"] == "handoff" {
             return .handoff
         }
@@ -127,6 +134,9 @@ enum DeepLink: Equatable, Sendable {
         case "phone-task":
             guard let goal = query["goal"], !goal.isEmpty else { return nil }
             return .phoneTask(goal: goal, source: query["source"] ?? "imessage_ext")
+        case "phone-run":
+            guard segments.count >= 2, let id = segments[1].removingPercentEncoding, !id.isEmpty else { return nil }
+            return .phoneRun(id)
         case "inbox":
             if segments.count >= 2, let id = segments[1].removingPercentEncoding, !id.isEmpty {
                 return .inboxItem(id)

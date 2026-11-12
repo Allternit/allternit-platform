@@ -204,6 +204,7 @@
 		4E0B0117142FDF231A79FEBC /* LocalDocumentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2DE4E63DE8400573B029C358 /* LocalDocumentView.swift */; };
 		4E591813BF737BB0D487E270 /* AutomationTaskDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD32C2411F5E0B0E4A902462 /* AutomationTaskDetailView.swift */; };
 		4E5BA5D8F7386934186AB012 /* ModelsTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6965002D7B6A6BF6D13EA533 /* ModelsTabView.swift */; };
+		4EE1B451BAB87F861DB27E87 /* RunStatusViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2D911C6455F824C12F55A7B /* RunStatusViews.swift */; };
 		4F0553D0FF20CC59EC2571E6 /* AgentHubView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11D989C244698E307DF2FE26 /* AgentHubView.swift */; };
 		4F41B5328DF5E3FE0D2281B6 /* WidgetFace.swift in Sources */ = {isa = PBXBuildFile; fileRef = 97212F4BDDE5652FF47596FD /* WidgetFace.swift */; };
 		4FDEEB8B0BE658FD8B6F7576 /* BotChatStage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7CF5F95F4608DEBB49E81EF6 /* BotChatStage.swift */; };
@@ -1310,6 +1311,7 @@
 		E069BEDB08471157C8919702 /* MessagesAssets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = MessagesAssets.xcassets; sourceTree = "<group>"; };
 		E10652B6A3C4031AC35E7A7D /* ToolOptionsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolOptionsStore.swift; sourceTree = "<group>"; };
 		E286E4C3C02329A40CC05A34 /* NotificationActionsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationActionsTests.swift; sourceTree = "<group>"; };
+		E2D911C6455F824C12F55A7B /* RunStatusViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunStatusViews.swift; sourceTree = "<group>"; };
 		E40323844DABB3650485AEC0 /* CloudDeployStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudDeployStore.swift; sourceTree = "<group>"; };
 		E44332C83123F7464F36D69E /* CustomizeViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CustomizeViews.swift; sourceTree = "<group>"; };
 		E44A5FBBCC1751E77BAB353F /* VoiceSettingsSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceSettingsSheet.swift; sourceTree = "<group>"; };
@@ -1927,6 +1929,7 @@
 				F35A37E302DD3C63E6412452 /* PhoneTaskCardView.swift */,
 				65DE584766D15F75782CB57E /* PhoneTaskClient.swift */,
 				F5542A6C638A2350F98D5186 /* RunOnPhoneEntry.swift */,
+				E2D911C6455F824C12F55A7B /* RunStatusViews.swift */,
 				826C50C90B28379AC0C39C05 /* ScreenShareViews.swift */,
 			);
 			path = Phones;
@@ -3653,6 +3656,7 @@
 				6D12F997D88F763DDDF9E9AD /* RoutinesClient.swift in Sources */,
 				C93A436608AE74D95C954409 /* RoutinesListView.swift in Sources */,
 				78FE5164B1AE4E7A2896406A /* RunOnPhoneEntry.swift in Sources */,
+				4EE1B451BAB87F861DB27E87 /* RunStatusViews.swift in Sources */,
 				B004C06C44D2029F36D32DAC /* RunTreeModel.swift in Sources */,
 				EBD76249148F2229E7E2D842 /* RuntimeModel.swift in Sources */,
 				647EC3F1139D16E46441BD26 /* RuntimeOperationsClient.swift in Sources */,

@@ -23,6 +23,9 @@ struct MessageRow: View {
     var sessionId: String? = nil
     /// Sends a prompt to the agent as a new turn (run tree Retry).
     var onSendPrompt: ((String) -> Void)? = nil
+    /// The phone or computer run this reply hosts (`PhoneRunHosting`): its pill sits on the
+    /// reply's top-left and its steps under the reply text, before the action icons.
+    var hostedRun: PhoneTaskCardModel? = nil
 
     @State private var isThinkingExpanded = false
     @State private var showsRunTree = false
@@ -85,7 +88,15 @@ struct MessageRow: View {
 
                 // Message Bubble — markdown for the assistant, plain text for the user.
                 // Skipped when the message is nothing but an error card.
-                if !message.content.isEmpty || message.error == nil {
+                if let run = hostedRun, message.role == "assistant" {
+                    VStack(alignment: .leading, spacing: 6) {
+                        RunStatusPill(card: run)
+                        if !message.content.isEmpty || message.error == nil {
+                            bubble
+                        }
+                        RunThoughtStream(steps: run.steps, active: run.status.isActive)
+                    }
+                } else if !message.content.isEmpty || message.error == nil {
                     bubble
                 }
 
