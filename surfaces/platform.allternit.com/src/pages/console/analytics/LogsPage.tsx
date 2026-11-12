@@ -10,7 +10,8 @@ import { useNavigate } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { isCloudGateway } from "@/lib/availability";
 import { useProjectContext } from "@/lib/project-context";
-import { ErrorRetry, REPORT_RANGES, useReportFilters, type ReportScope } from "./cloudReport";
+import { ErrorRetry, REPORT_RANGES, useReportFilters } from "./cloudReport";
+import type { ReportScope } from "@/lib/gateway-analytics";
 import { formatApiError } from "@/lib/api-client";
 import {
   ListPage,
