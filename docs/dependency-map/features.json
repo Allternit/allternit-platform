@@ -4190,6 +4190,41 @@
         "allternit/surfaces/docs/guides/bot-avatars.mdx",
         "allternit-ai/src/lib/pet-offers/contract.ts"
       ]
+    },
+    {
+      "id": "feature:live-run-status",
+      "label": "Live run status pill and thought stream",
+      "product": "product:ai-allternit",
+      "status": "live",
+      "description": "A bot runs a phone or computer task and the user watches its steps live in chat and in Messages: a status pill with the current step label, the thought stream under it, and per-step cards in the thread. The iMessage extension reads the status snapshot's phoneRun through cloud-api status/summary.",
+      "touches": [
+        "allternit/cmd/allternit-api/src/phone_task.rs",
+        "allternit/cmd/allternit-api/src/phone_runs.rs",
+        "allternit/cmd/allternit-api/src/phone_guard.rs",
+        "allternit/cmd/allternit-api/src/aci_routes.rs",
+        "allternit/cmd/allternit-api/src/status_snapshot.rs",
+        "allternit-ai/src/components/phones/RunStatus.tsx",
+        "allternit-ai/src/components/phones/PhoneTaskCard.tsx",
+        "allternit-ai/src/lib/phone-task-cards.ts",
+        "allternit-ai/src/views/chat/SessionTranscript.tsx",
+        "allternit-ai/src/components/bot-chat/BotTranscript.tsx",
+        "allternit-ai/src/views/chat/main/ChatActiveContent.tsx",
+        "allternit/surfaces/allternit-mobile/ios/Features/Phones/RunStatusViews.swift",
+        "allternit/surfaces/allternit-mobile/ios/Features/Chat/Views/MessageRow.swift",
+        "allternit/surfaces/allternit-mobile/ios/AllternitMessages",
+        "allternit/cmd/gizzi-code/src/cli/commands/phone.ts"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-12",
+          "note": "The iMessage card shows the step label to everyone in the conversation. Plain texting stays as status texts plus a run link. Photon stays on the free shared line, routed by sender."
+        }
+      ],
+      "evidence": [
+        "allternit/cmd/allternit-api/src/phone_runs.rs",
+        "allternit-ai/src/components/phones/RunStatus.tsx",
+        "allternit/surfaces/allternit-mobile/ios/Features/Phones/RunStatusViews.swift"
+      ]
     }
   ],
   "journeys": [
