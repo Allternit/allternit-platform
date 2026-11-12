@@ -12,7 +12,7 @@ import { Installation } from "@/shared/installation"
 
 import { Database, NotFoundError, eq, and, or, gte, isNull, isNotNull, desc, like, inArray, lt } from "@/runtime/session/storage/db"
 import type { SQL } from "@/runtime/session/storage/db"
-import { SessionTable, MessageTable, PartTable } from "@/runtime/session/session.sql"
+import { SessionTable, MessageTable, PartTable, MessageBranchTable } from "@/runtime/session/session.sql"
 import { SessionTrace } from "@/runtime/session/trace"
 import { ProjectTable } from "@/runtime/context/project/project.sql"
 import { Storage } from "@/runtime/session/storage/storage"
@@ -1108,6 +1108,8 @@ export namespace Session {
     Database.use((db) => {
       db.delete(PartTable).where(eq(PartTable.session_id, sessionID)).run()
       db.delete(MessageTable).where(eq(MessageTable.session_id, sessionID)).run()
+      // Earlier turn versions point at the cleared messages; they go too.
+      db.delete(MessageBranchTable).where(eq(MessageBranchTable.session_id, sessionID)).run()
       Database.effect(() => Bus.publish(Event.Cleared, { sessionID }))
     })
   })
