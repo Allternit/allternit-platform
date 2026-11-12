@@ -103,6 +103,9 @@ struct PatchProject {
     name: Option<String>,
     spend_cap_cents: Option<i64>,
     archived: Option<bool>,
+    /// Keep request/response bodies for the Logs page (also needs the
+    /// server's `PLATFORM_LOG_BODIES=1`).
+    log_bodies: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -169,7 +172,9 @@ async fn get_project(
     Path(id): Path<String>,
 ) -> Result<Json<projects::Project>, PlatformError> {
     let (who, _) = principal(&headers).await?;
-    Ok(Json(projects::get_project(&state.db, &who, &id).await?))
+    let mut project = projects::get_project(&state.db, &who, &id).await?;
+    projects::load_log_bodies(&state.db, &mut project).await;
+    Ok(Json(project))
 }
 
 async fn get_limits(
@@ -244,15 +249,19 @@ async fn update_project(
     ApiJson(body): ApiJson<PatchProject>,
 ) -> Result<Json<projects::Project>, PlatformError> {
     let (who, email) = principal(&headers).await?;
-    let project = projects::update_project(
+    let mut project = projects::update_project(
         &state.db,
         &who,
         &id,
         ProjectPatch { name: body.name, spend_cap_cents: body.spend_cap_cents, archived: body.archived },
     )
     .await?;
+    if let Some(on) = body.log_bodies {
+        projects::set_log_bodies(&state.db, &who, &id, on).await?;
+    }
+    projects::load_log_bodies(&state.db, &mut project).await;
     audit(&state, &who, email, "platform_project.update", "platform_project", &project.id,
-        json!({ "name": project.name, "spend_cap_cents": project.spend_cap_cents, "archived": project.archived_at.is_some() })).await;
+        json!({ "name": project.name, "spend_cap_cents": project.spend_cap_cents, "archived": project.archived_at.is_some(), "log_bodies": project.log_bodies })).await;
     Ok(Json(project))
 }
 
