@@ -86,6 +86,13 @@ struct MessageRow: View {
                     }
                 }
 
+                // run_code: produced files (images, CSV grids, downloads) + run summary.
+                ForEach(message.toolCalls) { call in
+                    if let result = call.runCode, call.toolName == "run_code" {
+                        RunCodeFilesView(result: result)
+                    }
+                }
+
                 // Message Bubble — markdown for the assistant, plain text for the user.
                 // Skipped when the message is nothing but an error card.
                 if let run = hostedRun, message.role == "assistant" {

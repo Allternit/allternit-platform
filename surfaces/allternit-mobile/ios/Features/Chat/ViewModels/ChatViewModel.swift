@@ -688,7 +688,7 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
 
         case .toolResult(let payload):
             updateMessage(messageId) { message in
-                message.upsertToolCall(id: payload.toolCallId, name: payload.toolName, state: .done, detail: payload.detail)
+                message.upsertToolCall(id: payload.toolCallId, name: payload.toolName, state: .done, detail: payload.detail, runCode: payload.runCode)
                 message.toolStatus?.state = .done
                 if let startedAt = message.toolStatus?.startedAt {
                     message.toolStatus?.elapsed = Date().timeIntervalSince(startedAt)
