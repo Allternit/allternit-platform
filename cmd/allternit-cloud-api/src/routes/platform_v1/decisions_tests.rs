@@ -18,8 +18,7 @@ fn normalizes_openai_shape() {
     let req = normalize(&json!({
         "input": [{ "role": "user", "content": [
             { "type": "input_text", "text": "Box arrived crushed." },
-            { "type": "input_json", "json": { "order": 7 } },
-            { "type": "input_image", "image_url": "data:image/png;base64,AAAA" }
+            { "type": "input_json", "json": { "order": 7 } }
         ]}],
         "instructions": "You triage support tickets.",
         "questions": [
@@ -33,7 +32,6 @@ fn normalizes_openai_shape() {
     }))
     .unwrap();
     assert_eq!(req.input.text, "Box arrived crushed.\n\n{\"order\":7}");
-    assert_eq!(req.input.image.as_deref(), Some("data:image/png;base64,AAAA"));
     assert_eq!(req.instructions, "You triage support tickets.");
     assert_eq!(req.budget_ms, 2500);
     assert!(req.allow_abstain);
@@ -47,7 +45,7 @@ fn normalizes_openai_shape() {
 #[test]
 fn normalizes_google_shape() {
     let req = normalize(&json!({
-        "input": [{ "text": "Refund please" }, { "inline_data": { "mime_type": "image/jpeg", "data": "QUJD" } }],
+        "input": [{ "text": "Refund please" }],
         "questions": {
             "is_refund": { "type": "noul", "instructions": "Is this a refund request?" },
             "dept": { "type": "choice", "instructions": "Which team?", "criteria": { "billing": "Money", "shipping": "Parcels" } },
@@ -57,8 +55,8 @@ fn normalizes_google_shape() {
     }))
     .unwrap();
     assert_eq!(req.input.text, "Refund please");
-    assert_eq!(req.input.image.as_deref(), Some("data:image/jpeg;base64,QUJD"));
-    assert_eq!(req.budget_ms, 10_000);
+    // Default budget: 5000 + 15 * 13 bytes + 3000 * 4 questions.
+    assert_eq!(req.budget_ms, 17_195);
     let q = |n: &str| req.questions.iter().find(|q| q.name == n).unwrap().clone();
     assert_eq!(q("is_refund").qtype, QType::Predicate);
     let dept = q("dept");
@@ -81,14 +79,10 @@ fn level_objects_without_numbers_are_rejected() {
 #[test]
 fn enforces_limits() {
     let pred = |name: &str| json!({ "name": name, "type": "predicate", "instructions": "?" });
-    let image = json!([{ "role": "user", "content": [{ "type": "input_image", "image_url": "data:image/png;base64,AA" }] }]);
     let seventeen: Vec<Value> = (0..17).map(|i| pred(&format!("q{i}"))).collect();
-    assert_eq!(err_code(normalize(&json!({ "input": image, "questions": seventeen }))), "too_many_questions_with_image");
+    assert_eq!(err_code(normalize(&json!({ "input": "x", "questions": seventeen }))), "invalid_question_count");
     let sixteen: Vec<Value> = (0..16).map(|i| pred(&format!("q{i}"))).collect();
-    assert!(normalize(&json!({ "input": image, "questions": sixteen })).is_ok());
-
-    let many: Vec<Value> = (0..401).map(|i| pred(&format!("q{i}"))).collect();
-    assert_eq!(err_code(normalize(&json!({ "input": "x", "questions": many }))), "invalid_question_count");
+    assert!(normalize(&json!({ "input": "x", "questions": sixteen })).is_ok());
     assert_eq!(err_code(normalize(&json!({ "input": "x", "questions": [] }))), "invalid_question_count");
     assert_eq!(err_code(normalize(&json!({ "input": "x", "questions": [pred("a"), pred("a")] }))), "duplicate_question_name");
     assert_eq!(
@@ -100,19 +94,34 @@ fn enforces_limits() {
         err_code(normalize(&json!({ "input": "x", "questions": [{ "name": "s", "type": "score", "instructions": "?", "levels": levels }] }))),
         "invalid_levels"
     );
-    assert_eq!(err_code(normalize(&json!({ "input": "x".repeat(64 * 1024 + 1), "questions": [pred("a")] }))), "input_too_large");
-    let two_images = json!([{ "role": "user", "content": [
-        { "type": "input_image", "image_url": "data:image/png;base64,AA" },
-        { "type": "input_image", "image_url": "data:image/png;base64,BB" }
-    ]}]);
-    assert_eq!(err_code(normalize(&json!({ "input": two_images, "questions": [pred("a")] }))), "too_many_images");
-    let remote = json!([{ "role": "user", "content": [{ "type": "input_image", "image_url": "https://example.com/a.png" }] }]);
-    assert_eq!(err_code(normalize(&json!({ "input": remote, "questions": [pred("a")] }))), "unsupported_image");
+    assert_eq!(err_code(normalize(&json!({ "input": "x".repeat(4 * 1024 + 1), "questions": [pred("a")] }))), "input_too_large");
+    assert!(normalize(&json!({ "input": "x".repeat(4 * 1024), "questions": [pred("a")] })).is_ok());
+    // The scorer has no vision: any image part, in either shape, is refused.
+    let image = json!([{ "role": "user", "content": [{ "type": "input_text", "text": "hi" }, { "type": "input_image", "image_url": "data:image/png;base64,AA" }] }]);
+    assert_eq!(err_code(normalize(&json!({ "input": image, "questions": [pred("a")] }))), "image_not_supported");
+    let inline = json!([{ "inline_data": { "mime_type": "image/jpeg", "data": "QUJD" } }]);
+    assert_eq!(err_code(normalize(&json!({ "input": inline, "questions": [pred("a")] }))), "image_not_supported");
     assert_eq!(err_code(normalize(&json!({ "input": "x", "questions": [pred("a")], "latency_budget_ms": 0 }))), "invalid_latency_budget");
     assert_eq!(
         err_code(normalize(&json!({ "input": "x", "questions": [{ "name": "a", "type": "predicate", "instructions": " " }] }))),
         "invalid_question_instructions"
     );
+}
+
+#[test]
+fn default_budget_scales_with_input_and_questions() {
+    let pred = |name: &str| json!({ "name": name, "type": "predicate", "instructions": "?" });
+    let qs = |n: usize| (0..n).map(|i| pred(&format!("q{i}"))).collect::<Vec<_>>();
+    // Small requests get the 10 s floor.
+    assert_eq!(normalize(&json!({ "input": "x", "questions": qs(1) })).unwrap().budget_ms, 10_000);
+    // 5000 + 15 * 4096 + 3000 * 16 = 114_440.
+    assert_eq!(normalize(&json!({ "input": "x".repeat(4096), "questions": qs(16) })).unwrap().budget_ms, 114_440);
+    // Shared instructions count: the scorer reads them as part of the context.
+    let with_instr = normalize(&json!({ "input": "x".repeat(1000), "instructions": "y".repeat(998), "questions": qs(3) })).unwrap();
+    assert_eq!(with_instr.budget_ms, 5_000 + 15 * 2_000 + 9_000);
+    // The caller's value wins.
+    assert_eq!(normalize(&json!({ "input": "x".repeat(4096), "questions": qs(16), "latency_budget_ms": 3000 })).unwrap().budget_ms, 3000);
+    assert_eq!(default_budget_ms(1_000_000, 16), 120_000);
 }
 
 #[test]
@@ -184,16 +193,23 @@ fn abstention_is_a_refusal() {
 }
 
 #[test]
-fn node_body_combines_instructions_and_never_sets_backends() {
+fn node_body_puts_shared_instructions_in_the_context_and_never_sets_backends() {
     let req = normalize(&json!({
-        "input": [{ "role": "user", "content": [{ "type": "input_text", "text": "hi" }, { "type": "input_image", "image_url": "data:image/png;base64,AA" }] }],
+        "input": [{ "role": "user", "content": [{ "type": "input_text", "text": "hi" }] }],
         "instructions": "Shared.",
-        "questions": [{ "name": "a", "type": "predicate", "instructions": "Own." }]
+        "questions": [
+            { "name": "a", "type": "predicate", "instructions": "Own." },
+            { "name": "b", "type": "predicate", "instructions": "Other." }
+        ]
     }))
     .unwrap();
     let body = node_body(&req, &req.questions[0], "proj_1", 900);
-    assert_eq!(body["question"], "Shared.\n\nOwn.");
-    assert_eq!(body["context"], json!({ "text": "hi", "image": "data:image/png;base64,AA" }));
+    assert_eq!(body["question"], "Own.");
+    assert_eq!(body["context"], "Shared.\n\nhi");
+    // Every question of a request sends the same context, so the scorer reuses the prefix.
+    assert_eq!(node_body(&req, &req.questions[1], "proj_1", 900)["context"], body["context"]);
+    let bare = normalize(&json!({ "input": "hi", "questions": [{ "name": "a", "type": "predicate", "instructions": "Own." }] })).unwrap();
+    assert_eq!(node_body(&bare, &bare.questions[0], "proj_1", 900)["context"], "hi");
     assert_eq!(body["project"], "proj_1");
     assert_eq!(body["latency_budget_ms"], 900);
     assert!(body.get("backends").is_none());

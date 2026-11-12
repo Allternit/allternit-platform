@@ -2342,8 +2342,8 @@ paths:
       operationId: createDecision
       summary: Ask one or more questions about some input
       description: |
-        Answers up to 400 typed questions about one input (text, optionally one image, or JSON),
-        with a probability and a confidence for each. Question types: `predicate` (yes or no;
+        Answers up to 16 typed questions about one input (text or JSON), with a probability
+        and a confidence for each. Question types: `predicate` (yes or no;
         `probability` is P(yes)), `choice` (2 to 255 `choices`; the answer names the best one
         and gives every probability), `score` (2 to 10 ordered `levels`; `score` is the
         probability-weighted level index scaled to 0..1, with the per-level distribution).
@@ -2353,9 +2353,13 @@ paths:
         together under one `latency_budget_ms`; a question the backends cannot answer in time
         comes back as a `refusal` answer (`reason`: `abstained`, `unavailable` or
         `budget_exhausted`), not a failed request. Each answer names the `backend` that answered
-        it; the top-level `backend` is the one that answered the most questions. Limits: `input`
-        text 64 KiB, one image 6 MiB; with an image, at most 16 questions
-        (`400 too_many_questions_with_image`). Billed per answered question (`decision_questions`
+        it; the top-level `backend` is the one that answered the most questions. Limits: 1 to 16
+        questions, `input` text up to 4 KiB (`400 input_too_large`). Image inputs are not
+        supported yet (`400 image_not_supported`). When `latency_budget_ms` is omitted it
+        defaults to `5000 + 15 * input_bytes + 3000 * questions` ms, clamped to 10000-120000;
+        input bytes count the shared `instructions` plus the input text, and an Agency body
+        counts as one question. These limits are sized to the current scoring hardware and rise
+        as it grows. Billed per answered question (`decision_questions`
         meter; refusals are not billed, `usage.questions` counts answered ones). Requires the
         `decisions` scope.
       tags: [Decisions]
@@ -3368,7 +3372,7 @@ components:
       description: The question list, or the single-question Agency body (`context`, `options`, `kind`, `question`).
       properties:
         input:
-          description: Text, or items with `input_text`, `input_image` or `input_json` content parts. Text up to 64 KiB, one image up to 6 MiB.
+          description: Text, or items with `input_text` or `input_json` content parts. Text up to 4 KiB. Image parts are not supported yet (`400 image_not_supported`).
           oneOf:
             - { type: string }
             - type: array
@@ -3380,14 +3384,18 @@ components:
                   content: { type: array, items: { type: object, additionalProperties: true } }
         instructions: { type: string }
         questions:
-          description: 1 to 400 questions. An object keyed by question name is also accepted.
+          description: 1 to 16 questions. An object keyed by question name is also accepted.
           oneOf:
-            - { type: array, minItems: 1, maxItems: 400, items: { $ref: "#/components/schemas/DecisionQuestion" } }
+            - { type: array, minItems: 1, maxItems: 16, items: { $ref: "#/components/schemas/DecisionQuestion" } }
             - { type: object, additionalProperties: true }
-        latency_budget_ms: { type: integer, minimum: 1, maximum: 120000, default: 10000 }
+        latency_budget_ms:
+          type: integer
+          minimum: 1
+          maximum: 120000
+          description: "When omitted: 5000 + 15 * input_bytes + 3000 * questions, clamped to 10000-120000."
         allow_abstain: { type: boolean, default: false }
         metadata: { type: object, additionalProperties: true }
-        context: { description: "Agency shape: string or {text, image}." }
+        context: { description: "Agency shape: a string or {text}, text up to 4 KiB. Images are not supported yet." }
         options: { type: array, items: { type: object, additionalProperties: true }, description: "Agency shape: 2 to 255 {id, text}." }
         kind: { type: string, description: "Agency shape." }
         question: { type: string, description: "Agency shape." }
@@ -3430,7 +3438,7 @@ components:
         created_at: { type: string, format: date-time }
         answers: { type: array, items: { $ref: "#/components/schemas/DecisionAnswer" } }
         backend: { type: string, description: The backend that answered the most questions (each answer has its own `backend`). }
-        latency_ms: { type: integer }
+        latency_ms: { type: integer, examples: [4200] }
         usage:
           type: object
           properties:

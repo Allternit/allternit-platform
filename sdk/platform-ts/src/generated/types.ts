@@ -651,7 +651,7 @@ export type DecisionQuestion = {
  */
 export type DecisionRequest = {
   /**
-   * Text, or items with `input_text`, `input_image` or `input_json` content parts. Text up to 64 KiB, one image up to 6 MiB.
+   * Text, or items with `input_text` or `input_json` content parts. Text up to 4 KiB. Image parts are not supported yet (`400 image_not_supported`).
    */
   input?: (string | Array<{
     role: string;
@@ -659,14 +659,17 @@ export type DecisionRequest = {
   }>);
   instructions?: string;
   /**
-   * 1 to 400 questions. An object keyed by question name is also accepted.
+   * 1 to 16 questions. An object keyed by question name is also accepted.
    */
   questions?: (Array<DecisionQuestion> | Record<string, unknown>);
+  /**
+   * When omitted: 5000 + 15 * input_bytes + 3000 * questions, clamped to 10000-120000.
+   */
   latency_budget_ms?: number;
   allow_abstain?: boolean;
   metadata?: Record<string, unknown>;
   /**
-   * Agency shape: string or {text, image}.
+   * Agency shape: a string or {text}, text up to 4 KiB. Images are not supported yet.
    */
   context?: unknown;
   /**

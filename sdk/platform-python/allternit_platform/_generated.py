@@ -1838,8 +1838,8 @@ class DecisionsResource:
     def create(self, *, input: Union[str, List[Dict[str, Any]]] = NOT_GIVEN, instructions: str = NOT_GIVEN, questions: Union[List["DecisionQuestion"], Dict[str, Any]] = NOT_GIVEN, latency_budget_ms: int = NOT_GIVEN, allow_abstain: bool = NOT_GIVEN, metadata: Dict[str, Any] = NOT_GIVEN, context: Any = NOT_GIVEN, options_: List[Dict[str, Any]] = NOT_GIVEN, kind: str = NOT_GIVEN, question: str = NOT_GIVEN, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "Decision":
         """Ask one or more questions about some input
 
-        Answers up to 400 typed questions about one input (text, optionally one image, or JSON),
-        with a probability and a confidence for each. Question types: `predicate` (yes or no;
+        Answers up to 16 typed questions about one input (text or JSON), with a probability
+        and a confidence for each. Question types: `predicate` (yes or no;
         `probability` is P(yes)), `choice` (2 to 255 `choices`; the answer names the best one
         and gives every probability), `score` (2 to 10 ordered `levels`; `score` is the
         probability-weighted level index scaled to 0..1, with the per-level distribution).
@@ -1849,9 +1849,13 @@ class DecisionsResource:
         together under one `latency_budget_ms`; a question the backends cannot answer in time
         comes back as a `refusal` answer (`reason`: `abstained`, `unavailable` or
         `budget_exhausted`), not a failed request. Each answer names the `backend` that answered
-        it; the top-level `backend` is the one that answered the most questions. Limits: `input`
-        text 64 KiB, one image 6 MiB; with an image, at most 16 questions
-        (`400 too_many_questions_with_image`). Billed per answered question (`decision_questions`
+        it; the top-level `backend` is the one that answered the most questions. Limits: 1 to 16
+        questions, `input` text up to 4 KiB (`400 input_too_large`). Image inputs are not
+        supported yet (`400 image_not_supported`). When `latency_budget_ms` is omitted it
+        defaults to `5000 + 15 * input_bytes + 3000 * questions` ms, clamped to 10000-120000;
+        input bytes count the shared `instructions` plus the input text, and an Agency body
+        counts as one question. These limits are sized to the current scoring hardware and rise
+        as it grows. Billed per answered question (`decision_questions`
         meter; refusals are not billed, `usage.questions` counts answered ones). Requires the
         `decisions` scope.
 

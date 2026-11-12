@@ -768,7 +768,7 @@ fn model_tools_for(key: &crate::routes::platform_v1::PlatformCaller) -> Vec<Valu
                 "type": "object",
                 "properties": {
                     "input": { "description": "Text, or a list of input items, the questions are about." },
-                    "questions": { "type": "array", "description": "1 to 400 questions, each { name, type: predicate|choice|score, instructions, choices?, levels? }.", "items": { "type": "object" } }
+                    "questions": { "type": "array", "description": "1 to 16 questions, each { name, type: predicate|choice|score, instructions, choices?, levels? }.", "items": { "type": "object" } }
                 },
                 "required": ["input", "questions"]
             }

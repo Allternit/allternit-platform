@@ -3,7 +3,7 @@ title: 'Decisions'
 description: 'Ask typed questions about some input and get back probabilities, a choice or a score.'
 ---
 
-`POST /v1/decisions` answers up to 400 typed questions about one input. Scope `decisions`.
+`POST /v1/decisions` answers up to 16 typed questions about one input. Scope `decisions`.
 
 | Method | Path | |
 |---|---|---|
@@ -13,13 +13,25 @@ description: 'Ask typed questions about some input and get back probabilities, a
 
 ## Request
 
-`input` is a string or a list of items (`input_text`, `input_image`, `input_json`). `instructions` is shared by all questions. Each question has a `name`, a `type` and `instructions`:
+`input` is a string or a list of items (`input_text`, `input_json`). `instructions` is shared by all questions. Each question has a `name`, a `type` and `instructions`:
 
 - `predicate`: a yes or no question. The answer carries `probability` of yes.
 - `choice`: `choices` is 2 to 255 `{ value, description }` options. The answer carries `choice` and `probabilities`.
 - `score`: `levels` is 2 to 10 `{ label, description }` levels. The answer carries `score` (0 to 1) and `probabilities` per level.
 
-Other fields: `latency_budget_ms`, `allow_abstain`, `metadata`. `questions` may also be an object keyed by question name. Limits: text input 64 KiB, one image up to 6 MiB, at most 16 questions when an image is attached.
+Other fields: `latency_budget_ms`, `allow_abstain`, `metadata`. `questions` may also be an object keyed by question name.
+
+## Limits and latency
+
+- 1 to 16 questions per request.
+- Text input up to 4 KiB. A larger input returns `400 input_too_large`.
+- Image inputs are not supported yet. An image part returns `400 image_not_supported`.
+
+Decisions run on our own scoring hardware. Expect about 5 s per 100 input tokens the first time an input is seen, plus 1 to 3 s per question. A 300-token input with 3 questions takes about 20 to 25 s. Questions about the same input share the work of reading it, so asking several questions in one request is faster than sending them one by one.
+
+If you leave out `latency_budget_ms`, it defaults to `5000 + 15 × input bytes + 3000 × questions` milliseconds, kept between 10,000 and 120,000. Input bytes are the shared `instructions` plus the input text. Set `latency_budget_ms` yourself (1 to 120,000) to wait less; questions that miss the budget come back as `refusal` answers with `reason: budget_exhausted`.
+
+These limits are sized to the current scoring hardware. They will rise as that hardware grows.
 
 ```bash
 curl https://api.allternit.com/v1/decisions \
@@ -36,7 +48,7 @@ curl https://api.allternit.com/v1/decisions \
   "answers": [
     { "name": "is_damaged", "type": "predicate", "probability": 0.93, "confidence": 0.93, "backend": "local" },
     { "name": "dept", "type": "choice", "choice": "shipping", "probabilities": [{ "value": "shipping", "probability": 0.9 }], "confidence": 0.9, "backend": "local" } ],
-  "latency_ms": 212, "usage": { "questions": 2 } }
+  "latency_ms": 4200, "usage": { "questions": 2 } }
 ```
 
 A question that cannot be answered returns `{ "name", "type": "refusal", "reason" }` with `reason` one of `abstained`, `unavailable` or `budget_exhausted`.

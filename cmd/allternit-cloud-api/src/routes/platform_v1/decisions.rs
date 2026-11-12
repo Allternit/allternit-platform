@@ -15,6 +15,11 @@
 //! - score → options from `levels` (id = level index, text = `label: description`);
 //!   `score` = probability-weighted index scaled to 0..1
 //!
+//! The node `context` is the shared `instructions` then the input, and the node
+//! `question` is only that question's own instructions. The scorer renders
+//! context first, so every question of one request shares the same prompt
+//! prefix and reuses its cache.
+//!
 //! The node is called as a trusted peer asserting `x-allternit-user-id:
 //! platform:<project_id>` (the forwarder's node URL and secret,
 //! `routes::agency_forward`); the caller's `backends` never pass through and
@@ -53,16 +58,29 @@ use crate::ApiState;
 pub const SCOPE: &str = "decisions";
 pub const METER: &str = "decision_questions";
 
-const MAX_QUESTIONS: usize = 400;
-const MAX_QUESTIONS_WITH_IMAGE: usize = 16;
+// Limits below are sized to the CPU scorer (llama.cpp, Qwen3.5-4B, 4 threads,
+// one request at a time, n_ctx 8192, no vision); raise with faster hardware.
+/// Questions per request. Sized to the CPU scorer; raise with faster hardware.
+const MAX_QUESTIONS: usize = 16;
 const MAX_CHOICES: usize = 255;
 const MAX_LEVELS: usize = 10;
-const MAX_TEXT_BYTES: usize = 64 * 1024;
-const MAX_IMAGE_BYTES: usize = 6 * 1024 * 1024;
-const DEFAULT_BUDGET_MS: u64 = 10_000;
+/// Input text bytes (the scorer's n_ctx is 8192 tokens). Sized to the CPU
+/// scorer; raise with faster hardware.
+const MAX_TEXT_BYTES: usize = 4 * 1024;
+/// Default budget when the caller sends none: `BASE + PER_BYTE * input bytes
+/// + PER_QUESTION * questions`, clamped to `MIN_DEFAULT_BUDGET_MS..=MAX_BUDGET_MS`.
+/// Sized to the CPU scorer (cold prefill about 5 s per 100 tokens, 1-3 s per
+/// question once the prefix is cached); raise with faster hardware.
+const BUDGET_BASE_MS: u64 = 5_000;
+const BUDGET_PER_BYTE_MS: u64 = 15;
+const BUDGET_PER_QUESTION_MS: u64 = 3_000;
+const MIN_DEFAULT_BUDGET_MS: u64 = 10_000;
 const MAX_BUDGET_MS: u64 = 120_000;
-/// Node calls in flight at once for one request.
-pub const CONCURRENCY: usize = 16;
+/// Node calls in flight at once for one request. The scorer serialises
+/// requests and a node timeout does not cancel its job, so more in flight only
+/// queues work that may be thrown away. Sized to the CPU scorer; raise with
+/// faster hardware.
+pub const CONCURRENCY: usize = 2;
 const MAX_NAME: usize = 100;
 /// Node limits (`agency_api/decisions/mod.rs validate`): option id 1-128, text 1-2000 bytes.
 const MAX_OPTION_ID: usize = 128;
@@ -147,8 +165,6 @@ impl Question {
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Input {
     pub text: String,
-    /// One `data:image/...` URL.
-    pub image: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -180,15 +196,8 @@ pub fn normalize(body: &Value) -> Result<DecisionRequest, PlatformError> {
         Some(_) => return Err(bad("invalid_instructions", "instructions must be a string.", "instructions")),
     };
     let questions = parse_questions(obj.get("questions"))?;
-    if input.image.is_some() && questions.len() > MAX_QUESTIONS_WITH_IMAGE {
-        return Err(bad(
-            "too_many_questions_with_image",
-            format!("With an image, ask at most {MAX_QUESTIONS_WITH_IMAGE} questions."),
-            "questions",
-        ));
-    }
     let budget_ms = match obj.get("latency_budget_ms") {
-        None | Some(Value::Null) => DEFAULT_BUDGET_MS,
+        None | Some(Value::Null) => default_budget_ms(node_context(&instructions, &input).len(), questions.len()),
         Some(v) => v.as_u64().filter(|n| (1..=MAX_BUDGET_MS).contains(n)).ok_or_else(|| {
             bad("invalid_latency_budget", format!("latency_budget_ms must be 1 to {MAX_BUDGET_MS}."), "latency_budget_ms")
         })?,
@@ -206,12 +215,27 @@ pub fn normalize(body: &Value) -> Result<DecisionRequest, PlatformError> {
     Ok(DecisionRequest { input, instructions, questions, budget_ms, allow_abstain, metadata })
 }
 
+/// The budget when the caller sends none, from the bytes the scorer reads
+/// (shared instructions + input) and the question count.
+pub fn default_budget_ms(input_bytes: usize, questions: usize) -> u64 {
+    (BUDGET_BASE_MS + BUDGET_PER_BYTE_MS * input_bytes as u64 + BUDGET_PER_QUESTION_MS * questions as u64)
+        .clamp(MIN_DEFAULT_BUDGET_MS, MAX_BUDGET_MS)
+}
+
+fn image_not_supported(param: &str) -> PlatformError {
+    bad("image_not_supported", "Image inputs are not supported yet.", param)
+}
+
+fn input_too_large() -> PlatformError {
+    bad("input_too_large", format!("input text is over {MAX_TEXT_BYTES} bytes."), "input")
+}
+
 /// `input`: a string, message items (`{role, content: string | parts}`), or bare
-/// parts (Google style). Parts: `input_text`, `input_image` (data URL or
-/// `inline_data`), `input_json`. Text joins with blank lines.
+/// parts (Google style). Parts: `input_text`, `input_json`; an image part
+/// (`input_image`, `inline_data`) is refused with `image_not_supported` (the
+/// scorer has no vision). Text joins with blank lines.
 pub fn parse_input(v: Option<&Value>) -> Result<Input, PlatformError> {
     let mut texts: Vec<String> = Vec::new();
-    let mut images: Vec<String> = Vec::new();
     match v {
         None | Some(Value::Null) => {}
         Some(Value::String(s)) => texts.push(s.clone()),
@@ -221,29 +245,26 @@ pub fn parse_input(v: Option<&Value>) -> Result<Input, PlatformError> {
                     Some(Value::String(s)) => texts.push(s.clone()),
                     Some(Value::Array(parts)) => {
                         for (j, p) in parts.iter().enumerate() {
-                            push_part(p, &format!("input[{i}].content[{j}]"), &mut texts, &mut images)?;
+                            push_part(p, &format!("input[{i}].content[{j}]"), &mut texts)?;
                         }
                     }
                     Some(_) => {
                         return Err(bad("invalid_input", "content must be a string or an array of parts.", &format!("input[{i}].content")))
                     }
-                    None => push_part(item, &format!("input[{i}]"), &mut texts, &mut images)?,
+                    None => push_part(item, &format!("input[{i}]"), &mut texts)?,
                 }
             }
         }
         Some(_) => return Err(bad("invalid_input", "input must be a string or an array of items.", "input")),
     }
-    if images.len() > 1 {
-        return Err(bad("too_many_images", "Send at most one image per decision.", "input"));
-    }
     let text = texts.join("\n\n");
     if text.len() > MAX_TEXT_BYTES {
-        return Err(bad("input_too_large", format!("input text is over {MAX_TEXT_BYTES} bytes."), "input"));
+        return Err(input_too_large());
     }
-    Ok(Input { text, image: images.pop() })
+    Ok(Input { text })
 }
 
-fn push_part(p: &Value, param: &str, texts: &mut Vec<String>, images: &mut Vec<String>) -> Result<(), PlatformError> {
+fn push_part(p: &Value, param: &str, texts: &mut Vec<String>) -> Result<(), PlatformError> {
     let ty = p.get("type").and_then(Value::as_str).unwrap_or("");
     let is = |names: &[&str]| names.contains(&ty);
     if is(&["input_text", "text", "output_text"]) || (ty.is_empty() && p.get("text").is_some()) {
@@ -264,37 +285,15 @@ fn push_part(p: &Value, param: &str, texts: &mut Vec<String>, images: &mut Vec<S
     } else if is(&["input_image", "image"])
         || (ty.is_empty() && (p.get("inline_data").is_some() || p.get("image_url").is_some()))
     {
-        images.push(image_url(p, param)?);
+        return Err(image_not_supported(param));
     } else {
         return Err(bad(
             "unsupported_input_part",
-            format!("Input part type '{ty}' is not supported (input_text, input_image, input_json)."),
+            format!("Input part type '{ty}' is not supported (input_text, input_json)."),
             &format!("{param}.type"),
         ));
     }
     Ok(())
-}
-
-fn image_url(p: &Value, param: &str) -> Result<String, PlatformError> {
-    let url = match p.get("image_url") {
-        Some(Value::String(s)) => Some(s.clone()),
-        Some(Value::Object(o)) => o.get("url").and_then(Value::as_str).map(str::to_string),
-        _ => None,
-    }
-    .or_else(|| {
-        let d = p.get("inline_data").or_else(|| p.get("source"))?;
-        let mime = d.get("mime_type").or_else(|| d.get("media_type"))?.as_str()?;
-        let data = d.get("data")?.as_str()?;
-        Some(format!("data:{mime};base64,{data}"))
-    })
-    .ok_or_else(|| bad("invalid_image", "An image part needs 'image_url' (a data:image/... URL).", param))?;
-    if !url.starts_with("data:image/") {
-        return Err(bad("unsupported_image", "Send the image inline as a data:image/... URL.", param));
-    }
-    if url.len() > MAX_IMAGE_BYTES {
-        return Err(bad("image_too_large", "The image is over 6 MiB.", param));
-    }
-    Ok(url)
 }
 
 /// `questions`: an array (OpenAI) or an object keyed by name (Google).
@@ -467,16 +466,19 @@ pub fn node_options(q: &Question) -> (&'static str, Value) {
     }
 }
 
-/// Shared instructions, then the question's own.
-pub fn node_question(shared: &str, q: &Question) -> String {
-    [shared.trim(), q.instructions.trim()].iter().filter(|s| !s.is_empty()).copied().collect::<Vec<_>>().join("\n\n")
+/// Node `question`: only this question's own instructions. The shared
+/// instructions live in [`node_context`] so the prompt prefix is the same for
+/// every question of a request.
+pub fn node_question(q: &Question) -> String {
+    q.instructions.trim().to_string()
 }
 
-/// Node `context`: the text, or `{text, image}` with an image.
-pub fn node_context(input: &Input) -> Value {
-    match &input.image {
-        Some(image) => json!({ "text": input.text, "image": image }),
-        None => json!(input.text),
+/// Node `context`: the shared instructions, a blank line, then the input text
+/// (just the input when there are no shared instructions).
+pub fn node_context(shared: &str, input: &Input) -> String {
+    match shared.trim() {
+        "" => input.text.clone(),
+        shared => format!("{shared}\n\n{}", input.text),
     }
 }
 
@@ -485,10 +487,10 @@ pub fn node_context(input: &Input) -> Value {
 pub fn node_body(req: &DecisionRequest, q: &Question, project_id: &str, budget_ms: u64) -> Value {
     let (kind, options) = node_options(q);
     json!({
-        "context": node_context(&req.input),
+        "context": node_context(&req.instructions, &req.input),
         "options": options,
         "kind": kind,
-        "question": node_question(&req.instructions, q),
+        "question": node_question(q),
         "allow_abstain": req.allow_abstain,
         "latency_budget_ms": budget_ms.clamp(1, MAX_BUDGET_MS),
         "project": project_id,
@@ -934,11 +936,25 @@ async fn decide_agency(db: &PgPool, node: &Node, caller: &PlatformCaller, mut bo
     obj.remove("backends");
     obj.remove("project_id");
     obj.insert("project".into(), json!(caller.project_id));
+    // Same input limits as the typed form: text only, at most MAX_TEXT_BYTES.
+    let context_bytes = match obj.get("context") {
+        Some(Value::String(s)) => s.len(),
+        Some(Value::Object(c)) => {
+            if c.get("image").is_some_and(|v| !v.is_null()) {
+                return Err(image_not_supported("context.image"));
+            }
+            c.get("text").and_then(Value::as_str).map_or(0, str::len)
+        }
+        _ => 0,
+    };
+    if context_bytes > MAX_TEXT_BYTES {
+        return Err(bad("input_too_large", format!("context text is over {MAX_TEXT_BYTES} bytes."), "context"));
+    }
     let budget = obj
         .get("latency_budget_ms")
         .or_else(|| obj.get("max_latency_ms"))
         .and_then(Value::as_u64)
-        .unwrap_or(DEFAULT_BUDGET_MS)
+        .unwrap_or_else(|| default_budget_ms(context_bytes, 1))
         .clamp(1, MAX_BUDGET_MS);
     // The node keeps its own budget; ours adds room for the round trip.
     let res = node
