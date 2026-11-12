@@ -110,7 +110,36 @@ pub(crate) async fn inference_attribution(
         client: Some(client.to_string()),
         request_id: Some(request_id),
         started_at: Some(std::time::Instant::now()),
+        capture_request: None,
     }
+}
+
+/// The request body to keep for the console Logs page (Decision D6): only
+/// with `PLATFORM_LOG_BODIES=1`, a key whose project has `log_bodies` on, and
+/// a body under the capture cap. `None` otherwise.
+async fn captured_request_body(
+    db: &sqlx::PgPool,
+    project_id: Option<&str>,
+    request: &ChatCompletionRequest,
+) -> Option<Arc<serde_json::Value>> {
+    let project_id = project_id?;
+    if !inference_settlement::log_bodies_enabled() {
+        return None;
+    }
+    let opted_in: Option<bool> = sqlx::query_scalar("SELECT log_bodies FROM platform_projects WHERE id = $1")
+        .bind(project_id)
+        .fetch_optional(db)
+        .await
+        .unwrap_or_else(|error| {
+            tracing::warn!(%error, project_id, "log_bodies lookup failed; bodies not kept");
+            None
+        });
+    if opted_in != Some(true) {
+        return None;
+    }
+    let body = serde_json::to_value(request).ok()?;
+    let size = serde_json::to_vec(&body).map(|bytes| bytes.len()).unwrap_or(usize::MAX);
+    (size <= inference_settlement::MAX_CAPTURED_BODY_BYTES).then(|| Arc::new(body))
 }
 
 /// `POST /v1/chat/completions`
@@ -130,7 +159,9 @@ pub async fn chat_completions(
     Json(request): Json<ChatCompletionRequest>,
 ) -> Result<Response, ApiError> {
     let request_id = format!("req_{}", uuid::Uuid::new_v4().simple());
-    let attribution = inference_attribution(&state.db, &auth.user, &headers, request_id.clone()).await;
+    let mut attribution = inference_attribution(&state.db, &auth.user, &headers, request_id.clone()).await;
+    attribution.capture_request =
+        captured_request_body(&state.db, attribution.project_id.as_deref(), &request).await;
     let mut response = match chat_completions_attributed(&state, auth, request, attribution).await {
         Ok(response) => response,
         Err(error) => error.into_response(),

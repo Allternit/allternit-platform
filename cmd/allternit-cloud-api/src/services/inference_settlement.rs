@@ -64,6 +64,104 @@ pub struct InferenceAttribution {
     /// When the request started; settlement records the elapsed ms (for a
     /// stream, until the stream ended).
     pub started_at: Option<std::time::Instant>,
+    /// The request body to keep beside the usage row for the console Logs
+    /// page (Decision D6). Set only when `PLATFORM_LOG_BODIES=1` and the key's
+    /// project has `log_bodies` on; see [`record_request_bodies`].
+    pub capture_request: Option<Arc<Value>>,
+}
+
+/// Largest request + response pair kept for the Logs page, in JSON bytes.
+/// A larger pair is not kept at all.
+pub const MAX_CAPTURED_BODY_BYTES: usize = 1024 * 1024;
+
+/// Server switch for body capture (console Decision D6). Off unless
+/// `PLATFORM_LOG_BODIES=1`; a project must also opt in with `log_bodies`.
+pub fn log_bodies_enabled() -> bool {
+    std::env::var("PLATFORM_LOG_BODIES")
+        .map(|value| value.trim() == "1")
+        .unwrap_or(false)
+}
+
+fn json_len(value: &Value) -> usize {
+    serde_json::to_vec(value).map(|bytes| bytes.len()).unwrap_or(usize::MAX)
+}
+
+/// Keep a settled completion's request and response bodies for 30 days
+/// (`inference_request_bodies`, migrations_pg/121). A no-op unless the
+/// attribution carries a captured request, a request id and a project. The
+/// pair must fit [`MAX_CAPTURED_BODY_BYTES`]. A second settlement under the
+/// same request id (open-lane handoff) replaces the response. Failures are
+/// logged and swallowed: capture never fails the user's response.
+pub async fn record_request_bodies(
+    db: &PgPool,
+    attribution: &InferenceAttribution,
+    response: Option<Value>,
+) {
+    let (Some(request), Some(request_id), Some(project_id)) = (
+        attribution.capture_request.as_deref(),
+        attribution.request_id.as_deref(),
+        attribution.project_id.as_deref(),
+    ) else {
+        return;
+    };
+    let size = json_len(request).saturating_add(response.as_ref().map(json_len).unwrap_or(0));
+    if size > MAX_CAPTURED_BODY_BYTES {
+        debug!(request_id, size, "request bodies over the capture cap; not kept");
+        return;
+    }
+    if let Err(error) = sqlx::query(
+        "INSERT INTO inference_request_bodies (request_id, project_id, request, response, expires_at) \
+         VALUES ($1, $2, $3, $4, NOW() + INTERVAL '30 days') \
+         ON CONFLICT (request_id) DO UPDATE \
+         SET response = EXCLUDED.response, expires_at = EXCLUDED.expires_at",
+    )
+    .bind(request_id)
+    .bind(project_id)
+    .bind(sqlx::types::Json(request))
+    .bind(response.map(sqlx::types::Json))
+    .execute(db)
+    .await
+    {
+        error!(%error, request_id, "failed to keep request bodies");
+    }
+}
+
+/// Raw SSE bytes of a streamed response kept for body capture, up to the cap.
+#[derive(Default)]
+struct StreamCapture {
+    bytes: Vec<u8>,
+    overflowed: bool,
+}
+
+impl StreamCapture {
+    fn push(&mut self, data: &[u8]) {
+        if self.overflowed {
+            return;
+        }
+        if self.bytes.len() + data.len() > MAX_CAPTURED_BODY_BYTES {
+            self.overflowed = true;
+            self.bytes = Vec::new();
+            return;
+        }
+        self.bytes.extend_from_slice(data);
+    }
+
+    /// The stream as `{object: "chat.completion.stream", chunks: [...]}`, one
+    /// entry per `data:` payload; `None` when it went over the cap.
+    fn into_response(self) -> Option<Value> {
+        if self.overflowed {
+            return None;
+        }
+        let text = String::from_utf8_lossy(&self.bytes);
+        let chunks: Vec<Value> = text
+            .lines()
+            .filter_map(|line| line.trim().strip_prefix("data:"))
+            .map(str::trim)
+            .filter(|payload| !payload.is_empty() && *payload != "[DONE]")
+            .filter_map(|payload| serde_json::from_str::<Value>(payload).ok())
+            .collect();
+        Some(serde_json::json!({ "object": "chat.completion.stream", "chunks": chunks }))
+    }
 }
 
 impl InferenceAttribution {
@@ -291,7 +389,8 @@ pub async fn meter_json_response(
         .map_err(|error| ApiError::Internal(format!("Failed to buffer the upstream response: {error}")))?;
 
     if parts.status.is_success() {
-        let usage = serde_json::from_slice::<Value>(&bytes).ok().and_then(|value| {
+        let parsed = serde_json::from_slice::<Value>(&bytes).ok();
+        let usage = parsed.as_ref().and_then(|value| {
             let usage = &value["usage"];
             let prompt = usage["prompt_tokens"].as_u64();
             let completion = usage["completion_tokens"].as_u64();
@@ -315,6 +414,9 @@ pub async fn meter_json_response(
             attribution,
         )
         .await;
+        if attribution.capture_request.is_some() {
+            record_request_bodies(db, attribution, parsed).await;
+        }
     }
 
     Ok(Response::from_parts(parts, axum::body::Body::from(bytes)))
@@ -359,14 +461,23 @@ pub struct UsageMeteringBody {
     inner: Pin<Box<axum::body::Body>>,
     scanner: SseUsageScanner,
     settlement: Option<StreamSettlement>,
+    /// Set when the request's bodies are being kept (see
+    /// [`record_request_bodies`]).
+    capture: Option<StreamCapture>,
 }
 
 impl UsageMeteringBody {
     pub fn new(inner: axum::body::Body, settlement: StreamSettlement) -> Self {
+        let capture = settlement
+            .attribution
+            .capture_request
+            .is_some()
+            .then(StreamCapture::default);
         Self {
             inner: Box::pin(inner),
             scanner: SseUsageScanner::default(),
             settlement: Some(settlement),
+            capture,
         }
     }
 
@@ -385,6 +496,7 @@ impl UsageMeteringBody {
                 true,
             ),
         };
+        let capture = self.capture.take();
         tokio::spawn(async move {
             settle_inference(
                 &settlement.db,
@@ -399,6 +511,9 @@ impl UsageMeteringBody {
                 &settlement.attribution,
             )
             .await;
+            if let Some(response) = capture.and_then(StreamCapture::into_response) {
+                record_request_bodies(&settlement.db, &settlement.attribution, Some(response)).await;
+            }
         });
     }
 }
@@ -417,6 +532,9 @@ impl HttpBody for UsageMeteringBody {
             Poll::Ready(Some(Ok(frame))) => {
                 if let Some(data) = frame.data_ref() {
                     this.scanner.push(data);
+                    if let Some(capture) = this.capture.as_mut() {
+                        capture.push(data);
+                    }
                 }
                 Poll::Ready(Some(Ok(frame)))
             }
@@ -881,6 +999,7 @@ mod tests {
                 client: Some("gizzi-code".to_string()),
                 request_id: Some("req_stream".to_string()),
                 started_at: Some(std::time::Instant::now()),
+                capture_request: None,
             },
         };
         let body = axum::body::Body::new(UsageMeteringBody::new(inner, settlement));
@@ -932,6 +1051,7 @@ mod tests {
             client: Some("api".to_string()),
             request_id: Some("req_1".to_string()),
             started_at: Some(std::time::Instant::now()),
+            capture_request: None,
         };
         settle_inference(&pool, "user_1", "gpt-4o", None, true, &test_prices(), 10, 5, false, &attribution).await;
         settle_inference(&pool, "user_2", "gpt-4o", None, true, &test_prices(), 10, 5, false, &InferenceAttribution::default()).await;

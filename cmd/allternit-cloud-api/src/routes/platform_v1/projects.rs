@@ -35,6 +35,11 @@ pub struct Project {
     pub call_cap_override: Option<i32>,
     pub created_at: DateTime<Utc>,
     pub archived_at: Option<DateTime<Utc>>,
+    /// Keep request/response bodies for the console Logs page
+    /// (migrations_pg/121; also needs `PLATFORM_LOG_BODIES=1`). Not in
+    /// [`COLUMNS`]: [`load_log_bodies`] fills it where the console shows it.
+    #[sqlx(default)]
+    pub log_bodies: bool,
 }
 
 const COLUMNS: &str = "id, 'project'::text AS object, owner_user_id, org_id, name, env, plan, \
@@ -198,6 +203,36 @@ pub async fn update_project(
     }
     tx.commit().await?;
     Ok(project)
+}
+
+/// Turn body capture on or off for a project the principal may manage.
+pub async fn set_log_bodies(db: &PgPool, who: &Principal, id: &str, on: bool) -> Result<(), PlatformError> {
+    let done = sqlx::query(&format!(
+        "UPDATE platform_projects SET log_bodies = $4 WHERE id = $5 AND {ACCESS}"
+    ))
+    .bind(&who.user_id)
+    .bind(&who.org_id)
+    .bind(who.org_admin)
+    .bind(on)
+    .bind(id)
+    .execute(db)
+    .await?;
+    if done.rows_affected() == 0 {
+        return Err(not_found());
+    }
+    Ok(())
+}
+
+/// Read `log_bodies` onto a loaded project. A schema without migration 121
+/// reads as off.
+pub async fn load_log_bodies(db: &PgPool, project: &mut Project) {
+    project.log_bodies = sqlx::query_scalar::<_, bool>("SELECT log_bodies FROM platform_projects WHERE id = $1")
+        .bind(&project.id)
+        .fetch_optional(db)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or(false);
 }
 
 /// `account_id` must be a live account of `project_id`.

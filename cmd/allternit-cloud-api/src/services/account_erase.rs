@@ -44,6 +44,7 @@ pub const RETAIN: &[(&str, &str)] = &[
     ("billing_auto_topup_attempts", "finance: charge attempts"),
     ("voice_billing_periods", "finance: voice invoices, unbilled ones closed"),
     ("inference_usage", "finance: token counts and cost, no content"),
+    ("platform_org_policies", "organization settings, keyed by org; the spend alert address belongs to the org"),
     ("artifact_versions", "versions of other people's artifacts, author cleared"),
 ];
 
