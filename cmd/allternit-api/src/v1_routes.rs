@@ -242,6 +242,45 @@ pub(crate) fn record_gizzi_permission_ask(conn: &rusqlite::Connection, user_id: 
 /// raw gizzi fields the decide route needs to relay the decision back to the
 /// runtime (requestId) and the modal renders with (toolName, patterns,
 /// always, messageId).
+/// The `metadata` of the chat stream's `tool_permission` frame: what the
+/// composer's approval card renders. Carries the ask's own card content
+/// (subscription / projectSend / summary) and, for `run_code`, the script,
+/// language and input files so the card shows what will run (the web's
+/// ComposerPermissionInfoBar / RunCodeDetail).
+pub(crate) fn tool_permission_frame_metadata(
+    session_id: &str,
+    request_id: &str,
+    props: &serde_json::Value,
+) -> serde_json::Value {
+    let permission = props.get("permission").and_then(|v| v.as_str());
+    let meta = |key: &str| {
+        props
+            .pointer(&format!("/metadata/{key}"))
+            .cloned()
+            .unwrap_or(serde_json::Value::Null)
+    };
+    let mut out = json!({
+        "sessionId": session_id,
+        "patterns": props.get("patterns").cloned().unwrap_or_else(|| json!([])),
+        "requestId": request_id,
+        "grantKey": permission.and_then(crate::task_grants::approval_grant_key),
+        // D16 cards (send / provider question) render from this.
+        "subscription": meta("subscription"),
+        // Bot-to-project sends: the card shows the project and message.
+        "projectSend": meta("projectSend"),
+        "summary": meta("summary"),
+    });
+    if permission == Some("run_code") {
+        for key in ["code", "language", "files", "code_truncated"] {
+            let value = meta(key);
+            if !value.is_null() {
+                out[key] = value;
+            }
+        }
+    }
+    out
+}
+
 pub(crate) fn gizzi_permission_approval_content(props: &serde_json::Value) -> serde_json::Value {
     let permission = props
         .get("permission")
@@ -2738,32 +2777,7 @@ async fn agent_chat_bridge(
                                     .pointer("/tool/messageID")
                                     .and_then(|v| v.as_str())
                                     .unwrap_or(""),
-                                "metadata": {
-                                    "sessionId": session_id,
-                                    "patterns": props
-                                        .get("patterns")
-                                        .cloned()
-                                        .unwrap_or_else(|| json!([])),
-                                    "requestId": request_id,
-                                    "grantKey": props
-                                        .get("permission")
-                                        .and_then(|v| v.as_str())
-                                        .and_then(crate::task_grants::approval_grant_key),
-                                    // D16 cards (send / provider question) render from this.
-                                    "subscription": props
-                                        .pointer("/metadata/subscription")
-                                        .cloned()
-                                        .unwrap_or(serde_json::Value::Null),
-                                    // Bot-to-project sends: the card shows the project and message.
-                                    "projectSend": props
-                                        .pointer("/metadata/projectSend")
-                                        .cloned()
-                                        .unwrap_or(serde_json::Value::Null),
-                                    "summary": props
-                                        .pointer("/metadata/summary")
-                                        .cloned()
-                                        .unwrap_or(serde_json::Value::Null),
-                                },
+                                "metadata": tool_permission_frame_metadata(&session_id, &request_id, &props),
                             }).to_string()));
                         }
                     }
@@ -3097,6 +3111,32 @@ mod tests {
         assert_eq!(super::delta_route("step-start"), super::DeltaRoute::Drop);
     }
     use super::*;
+
+    #[test]
+    fn tool_permission_frame_carries_the_run_code_script() {
+        // Seen live 2026-11-12: the Chat approval card for run_code showed only
+        // "python" because the frame dropped the ask's code/files.
+        let props = json!({
+            "permission": "run_code",
+            "patterns": ["python"],
+            "metadata": {
+                "language": "python",
+                "files": ["sales.csv"],
+                "code": "import pandas as pd",
+                "code_truncated": false
+            }
+        });
+        let m = tool_permission_frame_metadata("ses_1", "per_1", &props);
+        assert_eq!(m["code"], "import pandas as pd");
+        assert_eq!(m["files"], json!(["sales.csv"]));
+        assert_eq!(m["language"], "python");
+        assert_eq!(m["code_truncated"], false);
+        assert_eq!(m["patterns"], json!(["python"]));
+        assert_eq!(m["requestId"], "per_1");
+        // Other permissions do not copy arbitrary ask metadata.
+        let bash = json!({ "permission": "bash", "patterns": ["ls"], "metadata": { "code": "x" } });
+        assert!(tool_permission_frame_metadata("ses_1", "per_2", &bash).get("code").is_none());
+    }
 
     #[test]
     fn handoff_frame_reads_the_message_handoff() {
