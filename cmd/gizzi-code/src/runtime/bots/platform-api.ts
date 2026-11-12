@@ -60,11 +60,12 @@ export async function platformToken(): Promise<string | undefined> {
 export async function fetchWithPlatformToken(url: string, init: RequestInit = {}): Promise<Response | undefined> {
   const tokens = await platformTokens()
   if (tokens.length === 0) return undefined
-  const send = (token: string) => {
-    const headers = new Headers(init.headers)
-    headers.set("Authorization", `Bearer ${token}`)
-    return fetch(url, { ...init, headers })
-  }
+  // Keep a plain header object plain (callers and tests read it as a record).
+  const base: Record<string, string> =
+    init.headers instanceof Headers || Array.isArray(init.headers)
+      ? Object.fromEntries(new Headers(init.headers).entries())
+      : { ...((init.headers as Record<string, string> | undefined) ?? {}) }
+  const send = (token: string) => fetch(url, { ...init, headers: { ...base, Authorization: `Bearer ${token}` } })
   let response = await send(tokens[0]!)
   for (const next of tokens.slice(1)) {
     if (response.status !== 401 && response.status !== 403) break
