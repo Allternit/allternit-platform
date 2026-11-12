@@ -1,0 +1,35 @@
+---
+title: 'Responses'
+description: 'One call for a model or a hosted agent, with items in and items out.'
+---
+
+`POST /v1/responses` runs either a `model` (scope `inference`) or an `agent` (scope `agents`). Send exactly one of them.
+
+| Method | Path | |
+|---|---|---|
+| `POST` | `/v1/responses` | Create a response |
+| `GET` | `/v1/responses/{id}` | Retrieve it |
+| `GET` | `/v1/responses/{id}/input_items` | The items it was given |
+
+## Request
+
+`input` (string or items), `instructions`, `tools` (function tools with a JSON Schema `parameters`), `tool_choice`, `stream`, `store` (default `true`), `conversation`, `previous_response_id`, `metadata`, `max_output_tokens`, `temperature`. `conversation` and `previous_response_id` cannot be combined.
+
+- **Model mode** runs on the Allternit model router. Tool calls come back as `function_call` items for your code to run; send the result as a `function_call_output` item with `previous_response_id`.
+- **Agent mode** runs on the project's hosted runtime with the agent's own tools. A response chain is a conversation: it is created if absent, and `previous_response_id` must be the conversation's latest response (`409 previous_response_not_latest`). Agent mode refuses `store: false`, client `tools` and mixed modes with `400`.
+
+## Response object
+
+`id` (`resp_`), `status` (`in_progress`, `completed`, `failed`, `incomplete`), `model`, `agent_id`, `conversation_id`, `previous_response_id`, `output` (items), `required_actions`, `usage`, `error`, `metadata`, `created_at`, `completed_at`.
+
+Items have `object: "item"` and a `type`: `message`, `function_call`, `function_call_output`, `tool_call` (a hosted tool) or `approval_request`. Every item also carries `conversation_id`, `response_id` and `created_at`.
+
+An agent turn never pauses for an [approval](/api/platform/approvals). When an action needs the owner's approval, that tool call fails with a "try again once they approve" result and the turn still ends `completed`. `required_actions` is reserved and always empty in this release. Approvals are their own resource: subscribe to `approval.requested` / `approval.resolved`; after resolution send a new response in the same conversation.
+
+## Streaming
+
+With `stream: true`: `response.created`, `response.output_item.added`, `response.output_text.delta`, `response.output_text.done`, `response.function_call_arguments.done`, `response.tool_call.started`, `response.tool_call.completed`, `response.tool_call.failed`, `response.output_item.done`, `response.completed`, `response.failed`, `error`. Skip event names you do not know.
+
+## Billing
+
+The project pays for every response, in both modes. Model tokens are recorded as `tokens_in` and `tokens_out` usage rows and billed to the project at the model's list price plus 15%, as in [Pricing](/api/platform/pricing). They count toward the project's monthly spend cap: at the cap a new response answers `402 spend_cap_reached`. In `model` mode no member's personal credits are used, whichever key or console session made the call. A streamed response is billed once, when it ends. A response that fails at the model is not billed.

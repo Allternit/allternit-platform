@@ -31,7 +31,7 @@ describe("claude-cli model", () => {
     const argv = (model?: string) => cliAdapterArgv("claude-cli", ["claude"], "hi", { taskId: "t1", model })
     const flag = (args: string[]) => (args.includes("--model") ? args[args.indexOf("--model") + 1] : undefined)
     expect(flag(argv("claude-sonnet-5-5"))).toBe("claude-sonnet-5-5")
-    // A retired id goes out as its replacement (cli-catalog.json `retired`).
+    // A retired id moves to its replacement (cli-catalog.json `retired`, c54fe6711).
     expect(flag(argv("claude-sonnet-5"))).toBe("claude-sonnet-5-5")
     expect(flag(argv("default"))).toBe(process.env.MULTICA_CLAUDE_MODEL || undefined)
     expect(flag(argv("claude-cli"))).toBe(process.env.MULTICA_CLAUDE_MODEL || undefined)

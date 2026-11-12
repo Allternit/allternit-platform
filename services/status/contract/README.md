@@ -20,4 +20,4 @@ Cache and CORS, all GETs: `Cache-Control: public, max-age=30`, `Access-Control-A
 
 Clients: fetch `status.json` at most every 5 min and after an API failure, 3 s timeout; show a notice only when an incident touches a component the surface uses; show nothing if the fetch fails.
 
-Notes: `cloud-computers` has no target until A7 adds a computers health route. `other` has `max_status: degraded`. No SLA wording; label "measured by our checks, last 90 days".
+Notes: `cloud-computers` is checked through cloud-api `GET /api/v1/health/computers` (reachable + healthy). `other` has `max_status: degraded`. No SLA wording; label "measured by our checks, last 90 days".

@@ -4221,8 +4221,9 @@
       "label": "Share a thread by link",
       "product": "product:ai-allternit",
       "status": "building",
-      "description": "A user creates a public link to a thread snapshot, opens it signed out, and can revoke it. The snapshot is built client-side and stored by cloud-api (cmd/allternit-cloud-api/src/routes/thread_shares.rs, lands in a separate PR; its evidence is recorded in that PR's tree).",
+      "description": "A user creates a public link to a thread snapshot, opens it signed out, and can revoke it. The snapshot is built client-side and stored and served by cloud-api (thread_shares, migration 124).",
       "touches": [
+        "allternit/cmd/allternit-cloud-api/src/routes/thread_shares.rs",
         "allternit-ai/src/components/chat/ThreadShareDialog.tsx",
         "allternit-ai/src/pages/PublicThreadPage.tsx",
         "allternit-ai/src/lib/chat/thread-snapshot.ts",
@@ -4237,6 +4238,7 @@
         }
       ],
       "evidence": [
+        "allternit/cmd/allternit-cloud-api/src/routes/thread_shares.rs",
         "allternit-ai/src/lib/chat/thread-snapshot.ts",
         "allternit-ai/src/pages/PublicThreadPage.tsx",
         "allternit/surfaces/allternit-mobile/ios/Core/API/ThreadShareClient.swift"

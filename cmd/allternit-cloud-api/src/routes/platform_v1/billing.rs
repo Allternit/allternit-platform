@@ -5,7 +5,8 @@
 //!   Text conversation tokens (`tokens_in`, `tokens_out`) have no fixed price:
 //!   each row carries its billed amount (`amount_microusd`) = the provider's list
 //!   price + 15% ([`token_charge_microusd`]), or 0 when the agent runs on the
-//!   project's own model key. Hosted agents: the first [`FREE_AGENTS`] agent-months
+//!   project's own model key. Agent turns and model calls (`/v1/responses`
+//!   model mode, `/v1/messages`) both bill this way. Hosted agents: the first [`FREE_AGENTS`] agent-months
 //!   each month are free.
 //! * **Spend** is the UTC calendar month's usage rows × prices, in micro-dollars
 //!   ([`month_spend`]). It is what the month would bill at list price, before any
@@ -74,6 +75,9 @@ pub fn unit_price_microusd(meter: &str) -> Option<i64> {
         // Platform mail and the agent identity bundle (Eoj 2026-10-29).
         "mailbox_month" => 2_000_000,
         "identity_month" => 9_000_000,
+        // Decisions (Eoj 2026-11-13): $0.50 per 1,000 questions on live keys.
+        // unit_price_microusd does not see the key mode: `decisions` records live projects only.
+        "decision_questions" => 500,
         _ => return None,
     })
 }

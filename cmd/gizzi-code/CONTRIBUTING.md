@@ -19,6 +19,7 @@ node packages/sdk/scripts/build.mjs   # build the SDK dist (gitignored, required
 bun run dev                    # run from source
 bun run typecheck              # tsc --noEmit (must be exit 0)
 bash script/ci-smoke-test.sh   # empirically-green test subset (must be 0 fail)
+bun run test:full              # every test file, with the shipped feature() flags
 bun run build                  # production binary -> dist/
 bash script/check-command-exits.sh  # one-shot commands must exit (see #exithang)
 ```

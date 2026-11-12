@@ -49,7 +49,7 @@ use super::{new_id, PlatformError};
 
 /// Event types a webhook can subscribe to. `*` subscribes to all of them.
 /// Defined by the one registry (`routes::allternit_events`).
-pub const EVENT_TYPES: [&str; 15] = crate::routes::allternit_events::PLATFORM_EVENTS;
+pub const EVENT_TYPES: [&str; 17] = crate::routes::allternit_events::PLATFORM_EVENTS;
 
 /// Endpoint kinds (`platform_webhooks.kind`).
 pub const KIND_PLATFORM: &str = "platform_webhook";
@@ -512,7 +512,8 @@ pub async fn record_agent_months(db: &PgPool) -> Result<u64, sqlx::Error> {
     Ok(n)
 }
 
-/// Background worker: webhook deliveries every 5 s; number, agent, mailbox and identity months
+/// Background worker: webhook deliveries every 5 s; the approvals expiry sweep
+/// every 60 s (`approvals::expire_due`); number, agent, mailbox and identity months
 /// every 6 h; usage to Stripe every 5 min, only when that is switched on
 /// (`stripe_plan::report_if_enabled`).
 /// Started when the Platform API is switched on.
@@ -547,6 +548,14 @@ fn spawn_worker_with(db: PgPool, number_months: bool) {
             }
             if number_months && ticks % (5 * 12) == 0 {
                 super::stripe_plan::report_if_enabled(&db).await;
+            }
+            // Approvals past their deadline → `expired` + `approval.expired`, every 60 s.
+            if number_months && ticks % 12 == 0 {
+                match super::approvals::expire_due(&db).await {
+                    Ok(0) => {}
+                    Ok(n) => tracing::info!("platform approvals: {n} expired"),
+                    Err(e) => tracing::warn!("platform approvals expiry: {e}"),
+                }
             }
             if let Err(e) = deliver_due(&db, &client).await {
                 tracing::warn!("platform webhook delivery: {e}");

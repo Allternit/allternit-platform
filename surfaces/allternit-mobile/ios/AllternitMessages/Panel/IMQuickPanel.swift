@@ -14,6 +14,8 @@ struct IMQuickPanel: View {
     var fixedRun: SharedPhoneRun? = nil
     /// Opens an `allternit://` link in the app (the view controller's extension context).
     var open: (URL) -> Void = { _ in }
+    /// The live card for this conversation (nil in the app's gallery).
+    var live: IMRunController? = nil
 
     @State private var state: IMAccountState = .checking
     @State private var run: SharedPhoneRun?
@@ -53,13 +55,14 @@ struct IMQuickPanel: View {
                 Text("A://")
                     .font(.system(size: 13, weight: .heavy, design: .monospaced))
                     .foregroundColor(Color("BgPrimary"))
+                    .lineLimit(1).minimumScaleFactor(0.6)
                     .frame(width: 30, height: 30)
                     .background(Color("TextPrimary"), in: RoundedRectangle(cornerRadius: 9))
                 Text("Allternit").font(.system(size: 15, weight: .semibold))
                 Spacer()
             }
             .foregroundColor(Color("TextPrimary"))
-            content
+            ScrollView { content }.scrollBounceBehavior(.basedOnSize)
         }
         .padding(14)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -81,7 +84,7 @@ struct IMQuickPanel: View {
         case .quota:
             notice("Phone minutes used up", "Your phone minutes are used up this month.", "See usage", "allternit://settings/billing")
         case .ready:
-            ready
+            if let live { IMReadyLive(live: live, ready: ready, open: open) } else { ready }
         }
     }
 
@@ -104,7 +107,7 @@ struct IMQuickPanel: View {
                 }
             }
             if picked == .phone { phoneComposer }
-            if let run = fixedRun ?? run, picked == .phone || picked == .task || fixedRun != nil {
+            if live?.thread == nil, let run = fixedRun ?? run, picked == .phone || picked == .task || fixedRun != nil {
                 IMPhoneRunCard(run: run, open: open)
             }
         }
@@ -161,18 +164,49 @@ struct IMQuickPanel: View {
         SharedPhoneRun(runId: nil, goal: goal, status: "starting", step: 0, phoneName: "your phone", updatedAt: Date()).save()
         run = SharedPhoneRun.load()
         phoneGoal = ""
+        // The first card goes out on this tap (decision 9); later updates replace it in place.
+        live?.start(goal: goal)
+        #if DEBUG
+        if IMRunController.fixtureActive { return }
+        #endif
         if let url = c.url { open(url) }
     }
 
     private func refresh() async {
         guard fixedState == nil else { return }
         run = SharedPhoneRun.load()
+        #if DEBUG
+        if IMRunController.fixtureActive { state = .ready; return }
+        #endif
         switch await StatusSummaryClient().fetch() {
         case .success: state = run?.problem == "quota" ? .quota : .ready
         case .failure(.signedOut): state = .signedOut
         case .failure(.http(let code)) where code == 401 || code == 403: state = .expired
         case .failure(.http(let code)) where code == 402 || code == 429: state = .quota
         case .failure: state = AppGroupStore.signedIn ? .offline : .signedOut
+        }
+    }
+}
+
+/// The ready panel with the live run on top: a tapped card shows its run (or, for a recipient,
+/// the caption only) in place of the actions.
+private struct IMReadyLive<Ready: View>: View {
+    @ObservedObject var live: IMRunController
+    let ready: Ready
+    var open: (URL) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if live.selected != nil {
+                IMLiveRunSection(live: live, open: open)
+                Button("Back to actions") { live.clearSelection() }
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(Color("TextSecondary"))
+                    .frame(minHeight: 30)
+            } else {
+                ready
+                IMLiveRunSection(live: live, open: open)
+            }
         }
     }
 }

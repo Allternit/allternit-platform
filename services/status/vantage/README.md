@@ -24,7 +24,9 @@ journalctl -u allternit-status-probe -f
 
 The installer is safe to repeat. It keeps an existing key and config, sets the key to mode 600 root, and enables the timer (it starts it only when the key file is not empty). Remove with `sudo bash install.sh --uninstall` (add `--purge` to delete config, key and state).
 
-Config is `/etc/allternit-status/probe.conf` (`STATUS_BASE`, `KEY_FILE`, `STATE_DIR`, `ALERT_TO`, optional `ALERT_FROM`, `SENDMAIL`). Environment variables override the file.
+Config is `/etc/allternit-status/probe.conf` (`STATUS_BASE`, `KEY_FILE`, `STATE_DIR`, `ALERT_TO`, `ALERT_FROM` (default `status@allternit.com`, which the standby signs with DKIM and allternit.com's SPF allows; set with `--alert-from`), `SENDMAIL`). Environment variables override the file.
+
+Installed on allternit-standby 2026-11-12 with `--alert-to allternitpbc@gmail.com`; a test alert was accepted by Gmail.
 
 ## Notes
 

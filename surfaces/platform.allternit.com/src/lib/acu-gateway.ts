@@ -8,12 +8,12 @@
 const BASE_URL_STORAGE_KEY = 'allternit.platform.computerUse.baseUrl';
 const BASE_URL_SOURCE_STORAGE_KEY = 'allternit.platform.computerUse.baseUrlSource';
 
-function normalizeBaseUrl(value?: string | null): string {
+function normalizeBaseUrl(value?: string | null): string | null {
   const trimmed = String(value ?? '').trim();
   if (!trimmed) {
     const env = import.meta.env.VITE_ACU_GATEWAY_URL;
     if (env) return normalizeBaseUrl(env);
-    return 'http://127.0.0.1:8760';
+    return null;
   }
 
   if (/^https?:\/\//i.test(trimmed)) {
@@ -31,7 +31,8 @@ function normalizeBaseUrl(value?: string | null): string {
   return trimmed.replace(/\/+$/, '');
 }
 
-export function getAcuGatewayBaseUrl(): string {
+/** Returns null when no gateway is configured (no localhost fallback). */
+export function getAcuGatewayBaseUrl(): string | null {
   if (typeof window !== 'undefined') {
     try {
       const stored = window.localStorage.getItem(BASE_URL_STORAGE_KEY);

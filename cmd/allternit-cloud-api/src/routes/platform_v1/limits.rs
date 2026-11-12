@@ -26,7 +26,9 @@ use super::{PlatformCaller, PlatformError};
 
 pub const WINDOW_SECS: i64 = 60;
 const IDEMPOTENCY_TTL_HOURS: i32 = 24;
-const MAX_REQUEST_BODY: usize = 2 * 1024 * 1024;
+// Matches the global 10 MB body limit (`lib.rs DefaultBodyLimit`): a decision may carry
+// one 6 MiB image (base64 ≈ 8 MiB), so the idempotency hash must read that much.
+const MAX_REQUEST_BODY: usize = 10 * 1024 * 1024;
 const MAX_STORED_RESPONSE: usize = 4 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy)]

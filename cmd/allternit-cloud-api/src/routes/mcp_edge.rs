@@ -353,6 +353,11 @@ pub trait EdgeBackend: Send + Sync {
     async fn mail_tool(&self, _key: &crate::routes::platform_v1::PlatformCaller, _name: &str, _args: &Value) -> Result<Value, String> {
         Err("Mail tools are not available.".into())
     }
+    // ─── decide / respond tools (scopes `decisions`, `agents`, `inference`) ───
+    /// Run one `decide` or `respond` tool as a project key.
+    async fn model_tool(&self, _key: &crate::routes::platform_v1::PlatformCaller, _name: &str, _args: &Value) -> Result<Value, String> {
+        Err("The decide and respond tools are not available.".into())
+    }
 }
 
 /// A project key with this scope also gets the phone tools on `/mcp`
@@ -361,6 +366,8 @@ pub trait EdgeBackend: Send + Sync {
 const PHONES_SCOPE: &str = crate::routes::platform_v1::phones::SCOPE;
 /// Same for the mail tools (`platform_v1::mailboxes::MCP_TOOLS`).
 const MAIL_SCOPE: &str = "mail";
+/// Scope for the `decide` tool; `respond` needs `agents` or `inference`.
+const DECISIONS_SCOPE: &str = "decisions";
 
 /// A Platform API project key on the agents server (spec §4 MCP): the project's
 /// hosted runtime answers, as the project's runtime owner. Needs the `agents`
@@ -371,14 +378,14 @@ fn project_key_caller(target: &Target, resource: &str, key: &crate::routes::plat
     if *target != Target::Agents {
         return Err(refuse(StatusCode::FORBIDDEN, "insufficient_scope", "A project API key opens the agents server (/mcp) only."));
     }
-    if !key.has_scope("agents") && !key.has_scope(PHONES_SCOPE) && !key.has_scope(MAIL_SCOPE) {
-        return Err(refuse(StatusCode::FORBIDDEN, "insufficient_scope", "This API key lacks the 'agents' (or 'phones' or 'mail') scope."));
+    if !key.has_scope("agents") && !key.has_scope(PHONES_SCOPE) && !key.has_scope(MAIL_SCOPE) && !key.has_scope(DECISIONS_SCOPE) && !key.has_scope("inference") {
+        return Err(refuse(StatusCode::FORBIDDEN, "insufficient_scope", "This API key lacks the 'agents' (or 'phones', 'mail', 'decisions' or 'inference') scope."));
     }
     if key.account_id.is_some() {
         return Err(refuse(
             StatusCode::FORBIDDEN,
             "account_bound_key",
-            "This API key is bound to one account; the MCP agents server needs a project-wide key with the 'agents', 'phones' or 'mail' scope.",
+            "This API key is bound to one account; the MCP agents server needs a project-wide key with the 'agents', 'phones', 'mail', 'decisions' or 'inference' scope.",
         ));
     }
     Ok(Caller { user_id: crate::routes::platform_v1::hosting::runtime_owner(&key.project_id), client: format!("platform-key:{}", key.key_id), needs_approval: false, via_issuer: false })
@@ -498,11 +505,13 @@ async fn serve(backend: &dyn EdgeBackend, base: &str, target: Target, method: &M
     // A project key with `phones` also gets the phone tools (answered here).
     let mut phone_key: Option<crate::routes::platform_v1::PlatformCaller> = None;
     let mut mail_key: Option<crate::routes::platform_v1::PlatformCaller> = None;
+    let mut model_key: Option<crate::routes::platform_v1::PlatformCaller> = None;
     let caller = if crate::routes::platform_v1::caller::is_project_key_token(token) {
         match backend.verify_project_key(token).await {
             Ok(Some(key)) => match project_key_caller(&target, &resource, &key) {
                 Ok(c) => {
                     mail_key = key.has_scope(MAIL_SCOPE).then(|| key.clone());
+                    model_key = (!model_tools_for(&key).is_empty()).then(|| key.clone());
                     phone_key = key.has_scope(PHONES_SCOPE).then_some(key);
                     c
                 }
@@ -594,12 +603,16 @@ async fn serve(backend: &dyn EdgeBackend, base: &str, target: Target, method: &M
     }
 
     // Phone and mail tools are answered here for a project key, never relayed.
-    let edge_key = phone_key.as_ref().or(mail_key.as_ref());
+    let edge_key = phone_key.as_ref().or(mail_key.as_ref()).or(model_key.as_ref());
     if let Some(key) = edge_key {
         let tool = request["params"]["name"].as_str().unwrap_or_default();
         if rpc_method == "tools/call" {
             if let Some(pk) = phone_key.as_ref().filter(|_| crate::routes::platform_v1::phones::is_mcp_tool(tool)) {
                 let result = backend.phone_call(pk, tool, &request["params"]["arguments"]).await;
+                return rpc_reply(&era, mcp_protocol::finish(&spec, &era, rpc_method, mcp_protocol::rpc_ok(&id, result)));
+            }
+            if let Some(dk) = model_key.as_ref().filter(|_| MODEL_TOOLS.contains(&tool)) {
+                let result = mail_tool_result(model_tool_call(backend, dk, tool, &request["params"]["arguments"]).await);
                 return rpc_reply(&era, mcp_protocol::finish(&spec, &era, rpc_method, mcp_protocol::rpc_ok(&id, result)));
             }
             if let Some(mk) = mail_key.as_ref().filter(|_| crate::routes::platform_v1::mailboxes::MCP_TOOLS.contains(&tool)) {
@@ -616,7 +629,7 @@ async fn serve(backend: &dyn EdgeBackend, base: &str, target: Target, method: &M
                 return rpc_reply(&era, reply);
             }
             let reply = match rpc_method {
-                "tools/list" => mcp_protocol::rpc_ok(&id, json!({ "tools": edge_tools(phone_key.is_some(), mail_key.is_some()) })),
+                "tools/list" => mcp_protocol::rpc_ok(&id, json!({ "tools": edge_tools(phone_key.is_some(), mail_key.is_some(), model_key.as_ref()) })),
                 "tools/call" => mcp_protocol::rpc_err(&id, mcp_protocol::codes::INVALID_PARAMS, format!("Unknown tool: {tool}")),
                 _ => mcp_protocol::rpc_err(&id, mcp_protocol::codes::METHOD_NOT_FOUND, format!("Method not found: {rpc_method}")),
             };
@@ -636,6 +649,10 @@ async fn serve(backend: &dyn EdgeBackend, base: &str, target: Target, method: &M
             let reply = if rpc_method == "initialize" && status == 200 && target != Target::Connectors { advertise_events(reply) } else { reply };
             let reply = if rpc_method == "tools/list" && status == 200 && phone_key.is_some() { with_phone_tools(reply) } else { reply };
             let reply = if rpc_method == "tools/list" && status == 200 && mail_key.is_some() { with_mail_tools(reply) } else { reply };
+            let reply = match model_key.as_ref().filter(|_| rpc_method == "tools/list" && status == 200) {
+                Some(k) => with_model_tools(reply, k),
+                None => reply,
+            };
             let status = StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY);
             let mut resp = Response::new(axum::body::Body::from(reply));
             *resp.status_mut() = status;
@@ -707,13 +724,16 @@ fn mail_tool_result(out: Result<Value, String>) -> Value {
 }
 
 /// The tools a project key without `agents` sees: phone and/or mail tools.
-fn edge_tools(phones: bool, mail: bool) -> Vec<Value> {
+fn edge_tools(phones: bool, mail: bool, model: Option<&crate::routes::platform_v1::PlatformCaller>) -> Vec<Value> {
     let mut tools: Vec<Value> = Vec::new();
     if phones {
         tools.extend(crate::routes::platform_v1::phones::mcp_tools());
     }
     if mail {
         tools.extend(crate::routes::platform_v1::mailboxes::mcp_tool_defs());
+    }
+    if let Some(k) = model {
+        tools.extend(model_tools_for(k));
     }
     tools
 }
@@ -730,6 +750,69 @@ fn with_mail_tools(reply: Vec<u8>) -> Vec<u8> {
     }
 }
 // ─── mail tools (scope `mail`) ─── END
+
+// ─── decide / respond tools ─── BEGIN
+// `POST /v1/decisions` and `POST /v1/responses` as MCP tools, answered in
+// process through the same handler logic (no HTTP hop). `decide` needs the
+// `decisions` scope; `respond` needs `agents` or `inference`.
+const MODEL_TOOLS: [&str; 2] = ["decide", "respond"];
+
+/// The decide / respond tool definitions this key may see.
+fn model_tools_for(key: &crate::routes::platform_v1::PlatformCaller) -> Vec<Value> {
+    let mut tools = Vec::new();
+    if key.has_scope(DECISIONS_SCOPE) {
+        tools.push(json!({
+            "name": "decide",
+            "description": "Answer typed questions about some input: yes/no probabilities, a choice among options, or a score. Returns one answer per question.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "input": { "description": "Text, or a list of input items, the questions are about." },
+                    "questions": { "type": "array", "description": "1 to 16 questions, each { name, type: predicate|choice|score, instructions, choices?, levels? }.", "items": { "type": "object" } }
+                },
+                "required": ["input", "questions"]
+            }
+        }));
+    }
+    if key.has_scope("agents") || key.has_scope("inference") {
+        tools.push(json!({
+            "name": "respond",
+            "description": "Get one model or agent response. Give model or agent, not both. Pass previous_response_id to continue a stored response.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "model": { "type": "string", "description": "A model id; needs the inference scope." },
+                    "agent": { "type": "string", "description": "An agent id; needs the agents scope." },
+                    "input": { "description": "Text, or a list of input items." },
+                    "previous_response_id": { "type": "string" }
+                },
+                "required": ["input"]
+            }
+        }));
+    }
+    tools
+}
+
+/// Run `decide` or `respond`, enforcing the scope the tool needs.
+async fn model_tool_call(backend: &dyn EdgeBackend, key: &crate::routes::platform_v1::PlatformCaller, tool: &str, args: &Value) -> Result<Value, String> {
+    if !model_tools_for(key).iter().any(|t| t["name"] == tool) {
+        return Err(format!("insufficient_scope: this API key cannot call {tool}."));
+    }
+    backend.model_tool(key, tool, args).await
+}
+
+/// A relayed `tools/list` answer plus the decide / respond tools.
+fn with_model_tools(reply: Vec<u8>, key: &crate::routes::platform_v1::PlatformCaller) -> Vec<u8> {
+    let Ok(mut v) = serde_json::from_slice::<Value>(&reply) else { return reply };
+    match v.pointer_mut("/result/tools").and_then(Value::as_array_mut) {
+        Some(tools) => {
+            tools.extend(model_tools_for(key));
+            serde_json::to_vec(&v).unwrap_or(reply)
+        }
+        None => reply,
+    }
+}
+// ─── decide / respond tools ─── END
 
 // ─── human page ───────────────────────────────────────────────────────────────
 
@@ -907,6 +990,17 @@ impl EdgeBackend for ProdBackend<'_> {
     async fn mail_tool(&self, key: &crate::routes::platform_v1::PlatformCaller, name: &str, args: &Value) -> Result<Value, String> {
         use crate::routes::platform_v1::mailboxes;
         mailboxes::mcp_call(self.state, key, &mailboxes::ProdMailHost, name, args).await.map_err(|e| format!("{}: {}", e.code, e.message))
+    }
+
+    // ─── decide / respond tools ───
+    async fn model_tool(&self, key: &crate::routes::platform_v1::PlatformCaller, name: &str, args: &Value) -> Result<Value, String> {
+        use crate::routes::platform_v1 as p;
+        // Lanes 1 and 2 expose these two functions.
+        let out = match name {
+            "decide" => p::decisions::decide_for_mcp(self.state, key, args.clone()).await,
+            _ => p::responses::respond_for_mcp(self.state, key, args.clone()).await,
+        };
+        out.map_err(|e| format!("{}: {}", e.code, e.message))
     }
 
     async fn is_approved(&self, user_id: &str, client: &str, target: &str) -> Result<bool, String> {

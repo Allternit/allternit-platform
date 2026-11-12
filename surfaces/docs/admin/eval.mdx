@@ -12,7 +12,7 @@ All eval endpoints require the caller to be an organization owner or admin.
 ## Base URL
 
 ```text
-https://api.allternit.com/api/v1/admin/eval
+http://127.0.0.1:8013/api/v1/admin/eval
 ```
 
 For local development:
@@ -44,7 +44,7 @@ A dataset is a named collection of test cases. Each case is a free-form JSON obj
 ### Create a dataset
 
 ```bash
-curl -X POST https://api.allternit.com/api/v1/admin/eval/datasets \
+curl -X POST http://127.0.0.1:8013/api/v1/admin/eval/datasets \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -89,7 +89,7 @@ curl -X POST https://api.allternit.com/api/v1/admin/eval/datasets \
 ### Update a dataset
 
 ```bash
-curl -X PUT https://api.allternit.com/api/v1/admin/eval/datasets/ds_01hqx8x7x7x7x7x7x7x7x7x \
+curl -X PUT http://127.0.0.1:8013/api/v1/admin/eval/datasets/ds_01hqx8x7x7x7x7x7x7x7x7x \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -103,7 +103,7 @@ curl -X PUT https://api.allternit.com/api/v1/admin/eval/datasets/ds_01hqx8x7x7x7
 ### Delete a dataset
 
 ```bash
-curl -X DELETE https://api.allternit.com/api/v1/admin/eval/datasets/ds_01hqx8x7x7x7x7x7x7x7x7x \
+curl -X DELETE http://127.0.0.1:8013/api/v1/admin/eval/datasets/ds_01hqx8x7x7x7x7x7x7x7x7x \
   -H "Authorization: Bearer $ADMIN_TOKEN"
 ```
 
@@ -122,7 +122,7 @@ A run binds a dataset to an agent and optional rubric. The runtime worker execut
 ### Create a run
 
 ```bash
-curl -X POST https://api.allternit.com/api/v1/admin/eval/runs \
+curl -X POST http://127.0.0.1:8013/api/v1/admin/eval/runs \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -168,7 +168,7 @@ curl -X POST https://api.allternit.com/api/v1/admin/eval/runs \
 After a run completes, record per-case results and aggregate scores.
 
 ```bash
-curl -X POST https://api.allternit.com/api/v1/admin/eval/runs/run_01hqx8x7x7x7x7x7x7x7x7x/scores \
+curl -X POST http://127.0.0.1:8013/api/v1/admin/eval/runs/run_01hqx8x7x7x7x7x7x7x7x7x/scores \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -219,7 +219,7 @@ Valid statuses: `pending`, `running`, `completed`, `failed`.
 ### Grade a run against a rubric
 
 ```bash
-curl -X POST https://api.allternit.com/api/v1/admin/eval/runs/run_01hqx8x7x7x7x7x7x7x7x7x/grade \
+curl -X POST http://127.0.0.1:8013/api/v1/admin/eval/runs/run_01hqx8x7x7x7x7x7x7x7x7x/grade \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
