@@ -23,12 +23,37 @@ import { spawn } from "child_process"
 import { createHash } from "crypto"
 import { Global } from "@/runtime/context/global"
 import { Log } from "@/shared/util/log"
+import LOCK_TEXT from "./requirements.lock.txt"
 
 export namespace PythonEnv {
   const log = Log.create({ service: "python-env" })
 
   export const PYTHON_VERSION = "3.12"
   export const PACKAGES = ["pandas==2.3.3", "numpy==2.3.5", "openpyxl==3.1.5", "matplotlib==3.10.7"] as const
+
+  /**
+   * Hash-pinned lock of PACKAGES and every transitive dependency (universal:
+   * macOS/Linux, arm64/x64). Bundled as text; written to the data dir at
+   * setup and installed with --require-hashes --only-binary :all:.
+   */
+  export const LOCK: string = LOCK_TEXT
+  export const LOCK_HASH: string = createHash("sha256").update(LOCK_TEXT).digest("hex").slice(0, 16)
+
+  /** Minimal env for uv: no API keys or tokens from the parent process. */
+  const ENV_PASSTHROUGH = [
+    "PATH", "HOME", "USERPROFILE", "TMPDIR", "TEMP", "TMP", "LANG", "LC_ALL",
+    "UV_CACHE_DIR", "XDG_CACHE_HOME", "XDG_DATA_HOME", "XDG_CONFIG_HOME",
+    "HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY", "ALL_PROXY",
+    "https_proxy", "http_proxy", "no_proxy", "all_proxy",
+    "SSL_CERT_FILE", "SSL_CERT_DIR", "REQUESTS_CA_BUNDLE",
+  ]
+  export function uvEnv(src: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+    const env: NodeJS.ProcessEnv = {}
+    for (const k of ENV_PASSTHROUGH) if (src[k] !== undefined) env[k] = src[k]
+    env.UV_PYTHON_INSTALL_DIR = path.join(root(), "cpython")
+    env.UV_NO_PROGRESS = "1"
+    return env
+  }
 
   /** The uv release downloaded when the host has none, with its sha256 per target. */
   export const UV_VERSION = "0.11.19"
@@ -126,6 +151,7 @@ export namespace PythonEnv {
   interface Marker {
     python: string
     packages: string[]
+    lock?: string
   }
 
   /** True when the venv exists and was built with the current pins. */
@@ -133,7 +159,7 @@ export namespace PythonEnv {
     if (!fsSync.existsSync(pythonBin())) return false
     try {
       const marker = JSON.parse(await fs.readFile(path.join(venvDir(), MARKER), "utf8")) as Marker
-      return marker.python === PYTHON_VERSION && JSON.stringify(marker.packages) === JSON.stringify(PACKAGES)
+      return marker.python === PYTHON_VERSION && JSON.stringify(marker.packages) === JSON.stringify(PACKAGES) && marker.lock === LOCK_HASH
     } catch {
       return false
     }
@@ -174,11 +200,7 @@ export namespace PythonEnv {
     }
     // A dedicated install dir keeps the managed CPython next to the venv, so
     // the sandbox can bind one read-only tree on Linux.
-    const env = {
-      ...process.env,
-      UV_PYTHON_INSTALL_DIR: path.join(root(), "cpython"),
-      UV_NO_PROGRESS: "1",
-    }
+    const env = uvEnv()
     await fs.rm(venvDir(), { recursive: true, force: true })
     await fs.mkdir(root(), { recursive: true })
     opts.onStatus?.(`Setting up Python ${PYTHON_VERSION} (one-time)`)
@@ -188,12 +210,18 @@ export namespace PythonEnv {
       { env, signal: opts.signal, timeoutMs: INSTALL_TIMEOUT_MS },
     )
     opts.onStatus?.(`Installing ${PACKAGES.join(", ")} (one-time)`)
-    await run(uv, ["pip", "install", "--python", pythonBin(), "--no-config", ...PACKAGES], {
-      env,
-      signal: opts.signal,
-      timeoutMs: INSTALL_TIMEOUT_MS,
-    })
-    const marker: Marker = { python: PYTHON_VERSION, packages: [...PACKAGES] }
+    const lockFile = path.join(root(), `requirements-${LOCK_HASH}.lock`)
+    await fs.writeFile(lockFile, LOCK)
+    await run(
+      uv,
+      ["pip", "install", "--python", pythonBin(), "--no-config", "--require-hashes", "--only-binary", ":all:", "-r", lockFile],
+      {
+        env,
+        signal: opts.signal,
+        timeoutMs: INSTALL_TIMEOUT_MS,
+      },
+    )
+    const marker: Marker = { python: PYTHON_VERSION, packages: [...PACKAGES], lock: LOCK_HASH }
     await fs.writeFile(path.join(venvDir(), MARKER), JSON.stringify(marker))
     setup.push(
       `Set up a Python ${PYTHON_VERSION} environment with ${PACKAGES.join(", ")} in ${venvDir()}. One-time; later runs reuse it.`,
