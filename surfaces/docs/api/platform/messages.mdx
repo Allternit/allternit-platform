@@ -1,0 +1,26 @@
+---
+title: 'Messages'
+description: 'An Anthropic-shaped model call at POST /v1/messages.'
+---
+
+`POST /v1/messages` takes the Anthropic Messages request shape and runs it on the Allternit model router. Scope `inference`. (Texting is at [`/v1/texts`](/api/platform/texts).)
+
+## Request
+
+`model`, `max_tokens`, `messages` (`role` and `content` as a string or blocks of `text`, `image`, `tool_use`, `tool_result`), `system`, `tools` (`name`, `description`, `input_schema`), `tool_choice`, `stream`, `metadata`, and `thread`.
+
+`thread` keeps history on Allternit: `{ "type": "create" }` starts one, `{ "type": "continue", "previous_message_id": "mdl_…" }` continues it. There is no expiry. `system` and `tools` are set on create only; changing them on continue gives `400 thread_fingerprint_mismatch`.
+
+## Response
+
+```json
+{ "id": "mdl_…", "type": "message", "role": "assistant",
+  "content": [{ "type": "text", "text": "…" }],
+  "model": "…", "stop_reason": "end_turn", "usage": { "input_tokens": 12, "output_tokens": 40 } }
+```
+
+`stop_reason` is `end_turn`, `tool_use` or `max_tokens`. A `tool_use` block has `id`, `name` and `input`; answer with a `tool_result` block. Model message ids start with `mdl_`, so they never clash with text ids (`msg_`).
+
+Streaming events: `message_start`, `content_block_start`, `content_block_delta` (`text_delta`, `input_json_delta`), `content_block_stop`, `message_delta`, `message_stop`.
+
+Not supported: thinking blocks, server tools and files.

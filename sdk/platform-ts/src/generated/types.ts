@@ -134,10 +134,20 @@ export type StockVoice = "af_alloy" | "af_aoede" | "af_bella" | "af_heart" | "af
 export type Conversation = {
   id: string;
   object: "conversation";
-  agent_id: string;
-  account_id: string;
+  /**
+   * Null for a conversation made without an agent (used with `model` responses).
+   */
+  agent_id: (string | null);
+  account_id: (string | null);
   metadata: Record<string, unknown>;
+  /**
+   * Number of items; list them with listConversationItems.
+   */
+  item_count?: number;
   created_at: string;
+  /**
+   * The latest 200 user and assistant messages, oldest first: on GET /v1/conversations/{id} and the legacy alias routes.
+   */
   messages?: Array<ConversationMessage>;
 };
 
@@ -206,28 +216,6 @@ export type PhoneNumber = {
 
 export type PhoneNumberList = {
   data?: Array<PhoneNumber>;
-  has_more?: boolean;
-  next_cursor?: (string | null);
-};
-
-export type Message = {
-  id: string;
-  object: "message";
-  account_id?: (string | null);
-  number_id: string;
-  direction: "inbound" | "outbound";
-  from: string;
-  to: string;
-  body: string;
-  segments: number;
-  status: "sent" | "simulated" | "received" | "failed";
-  error_code?: (string | null);
-  media?: Array<Record<string, unknown>>;
-  created_at: string;
-};
-
-export type MessageList = {
-  data?: Array<Message>;
   has_more?: boolean;
   next_cursor?: (string | null);
 };
@@ -638,6 +626,351 @@ export type PhoneApprovalRequired = {
   expires_at?: string;
 };
 
+export type DecisionQuestion = {
+  name: string;
+  type: "predicate" | "choice" | "score";
+  instructions: string;
+  /**
+   * Required for `choice`.
+   */
+  choices?: Array<{
+    value: string;
+    description?: string;
+  }>;
+  /**
+   * Required for `score`, ordered low to high.
+   */
+  levels?: Array<{
+    label: string;
+    description?: string;
+  }>;
+};
+
+/**
+ * The question list, or the single-question Agency body (`context`, `options`, `kind`, `question`).
+ */
+export type DecisionRequest = {
+  /**
+   * Text, or items with `input_text`, `input_image` or `input_json` content parts. Text up to 64 KiB, one image up to 6 MiB.
+   */
+  input?: (string | Array<{
+    role: string;
+    content: Array<Record<string, unknown>>;
+  }>);
+  instructions?: string;
+  /**
+   * 1 to 400 questions. An object keyed by question name is also accepted.
+   */
+  questions?: (Array<DecisionQuestion> | Record<string, unknown>);
+  latency_budget_ms?: number;
+  allow_abstain?: boolean;
+  metadata?: Record<string, unknown>;
+  /**
+   * Agency shape: string or {text, image}.
+   */
+  context?: unknown;
+  /**
+   * Agency shape: 2 to 255 {id, text}.
+   */
+  options?: Array<Record<string, unknown>>;
+  /**
+   * Agency shape.
+   */
+  kind?: string;
+  /**
+   * Agency shape.
+   */
+  question?: string;
+};
+
+export type DecisionAnswer = {
+  name: string;
+  type: "predicate" | "choice" | "score" | "refusal";
+  /**
+   * predicate: P(yes).
+   */
+  probability?: number;
+  /**
+   * choice: the best value.
+   */
+  choice?: string;
+  /**
+   * score: probability-weighted level index scaled to 0..1.
+   */
+  score?: number;
+  probabilities?: Array<{
+    /**
+     * A choice value (string) or a level index (integer).
+     */
+    value?: unknown;
+    label?: string;
+    probability?: number;
+  }>;
+  confidence?: number;
+  /**
+   * The backend that answered this question (e.g. local, open, oracle).
+   */
+  backend?: string;
+  /**
+   * refusal only: abstained (below the confidence threshold with allow_abstain), unavailable (no backend could answer), budget_exhausted (latency_ms budget ran out).
+   */
+  reason?: "abstained" | "unavailable" | "budget_exhausted";
+};
+
+export type DecisionOutcome = {
+  status: "success" | "failure" | "error" | "skipped";
+  label?: string;
+  detail?: string;
+};
+
+export type Decision = {
+  id: string;
+  object: "decision";
+  created_at: string;
+  answers: Array<DecisionAnswer>;
+  /**
+   * The backend that answered the most questions (each answer has its own `backend`).
+   */
+  backend: string;
+  latency_ms: number;
+  usage: {
+    /**
+     * Answered (non-refusal) questions; this is what is billed.
+     */
+    questions?: number;
+    input_tokens?: number;
+  };
+  outcomes?: Record<string, DecisionOutcome>;
+  metadata?: Record<string, unknown>;
+};
+
+export type ContentPart = {
+  type: "input_text" | "output_text" | "input_image";
+  text?: string;
+  image_url?: string;
+};
+
+/**
+ * An item to give the model or append to a conversation.
+ */
+export type ItemInput = {
+  type: "message" | "function_call_output";
+  role?: "user" | "assistant" | "system" | "developer";
+  content?: (string | Array<ContentPart>);
+  call_id?: string;
+  output?: string;
+};
+
+export type Item = {
+  /**
+   * `item_…`
+   */
+  id: string;
+  object: "item";
+  type: "message" | "function_call" | "function_call_output" | "tool_call" | "approval_request";
+  conversation_id?: (string | null);
+  response_id?: (string | null);
+  status?: "in_progress" | "completed" | "failed" | "incomplete";
+  role?: ("user" | "assistant" | "system" | "developer" | null);
+  /**
+   * message items.
+   */
+  content?: Array<ContentPart>;
+  /**
+   * function_call, function_call_output.
+   */
+  call_id?: string;
+  /**
+   * function_call, tool_call.
+   */
+  name?: string;
+  /**
+   * function_call: JSON text.
+   */
+  arguments?: string;
+  /**
+   * function_call_output (string) or tool_call (any).
+   */
+  output?: unknown;
+  /**
+   * tool_call.
+   */
+  input?: unknown;
+  error?: (string | null);
+  /**
+   * approval_request.
+   */
+  approval_id?: string;
+  /**
+   * approval_request.
+   */
+  proposed_action?: Record<string, unknown>;
+  created_at: string;
+};
+
+export type ItemList = (ListEnvelope & {
+  data?: Array<Item>;
+});
+
+export type ResponseRequest = {
+  /**
+   * Exactly one of `model` or `agent`.
+   */
+  model?: string;
+  /**
+   * An agent id.
+   */
+  agent?: string;
+  input: (string | Array<ItemInput>);
+  instructions?: string;
+  tools?: Array<{
+    type: "function";
+    name: string;
+    description?: string;
+    /**
+     * JSON Schema.
+     */
+    parameters?: Record<string, unknown>;
+  }>;
+  tool_choice?: unknown;
+  stream?: boolean;
+  store?: boolean;
+  /**
+   * A `conv_…` id. Not with `previous_response_id`.
+   */
+  conversation?: string;
+  previous_response_id?: string;
+  metadata?: Record<string, unknown>;
+  max_output_tokens?: number;
+  temperature?: number;
+};
+
+export type Response = {
+  /**
+   * `resp_…`
+   */
+  id: string;
+  object: "response";
+  status: "in_progress" | "completed" | "failed" | "incomplete" | "requires_action";
+  model?: (string | null);
+  agent_id?: (string | null);
+  conversation_id?: (string | null);
+  previous_response_id?: (string | null);
+  output: Array<Item>;
+  required_actions?: Array<{
+    type: "approval";
+    approval_id: string;
+  }>;
+  usage?: {
+    input_tokens?: number;
+    output_tokens?: number;
+  };
+  error?: (Record<string, unknown> | null);
+  metadata?: Record<string, unknown>;
+  created_at: string;
+  completed_at?: (string | null);
+};
+
+export type ModelMessageRequest = {
+  model: string;
+  /**
+   * A string or text blocks.
+   */
+  system?: (string | Array<Record<string, unknown>>);
+  messages: Array<{
+    role: "user" | "assistant";
+    /**
+     * A string or blocks of type text, image, tool_use or tool_result.
+     */
+    content: (string | Array<Record<string, unknown>>);
+  }>;
+  tools?: Array<{
+    name: string;
+    description?: string;
+    input_schema: Record<string, unknown>;
+  }>;
+  tool_choice?: Record<string, unknown>;
+  max_tokens: number;
+  temperature?: number;
+  stream?: boolean;
+  metadata?: Record<string, unknown>;
+  thread?: {
+    type: "create" | "continue";
+    /**
+     * Required for `continue`: the `mdl_…` id of the thread's latest message.
+     */
+    previous_message_id?: string;
+  };
+};
+
+export type ModelMessage = {
+  /**
+   * `mdl_…`
+   */
+  id: string;
+  type: "message";
+  role: "assistant";
+  content: Array<Record<string, unknown>>;
+  model: string;
+  stop_reason: "end_turn" | "tool_use" | "max_tokens";
+  usage: {
+    input_tokens?: number;
+    output_tokens?: number;
+  };
+};
+
+export type Text = {
+  /**
+   * Keeps the stored `msg_` prefix.
+   */
+  id: string;
+  object: "text";
+  account_id?: (string | null);
+  number_id: string;
+  direction: "inbound" | "outbound";
+  from: string;
+  to: string;
+  body: string;
+  segments: number;
+  status: "sent" | "simulated" | "received" | "failed";
+  error_code?: (string | null);
+  media?: Array<Record<string, unknown>>;
+  created_at: string;
+};
+
+export type TextList = {
+  data?: Array<Text>;
+  has_more?: boolean;
+  next_cursor?: (string | null);
+};
+
+export type Approval = {
+  /**
+   * `apr_…`
+   */
+  id: string;
+  object: "approval";
+  source: "twin" | "computer";
+  /**
+   * The id in the source system.
+   */
+  source_ref: string;
+  account_id?: (string | null);
+  conversation_id?: (string | null);
+  response_id?: (string | null);
+  kind: string;
+  proposed_action: Record<string, unknown>;
+  status: "pending" | "approved" | "denied" | "expired" | "consumed";
+  expires_at?: (string | null);
+  created_at: string;
+  resolved_at?: (string | null);
+  resolved_by?: (string | null);
+};
+
+export type ApprovalList = (ListEnvelope & {
+  data?: Array<Approval>;
+});
+
 export type ListAccountsQuery = {
   /**
    * Page size, 1 to 100 (default 20).
@@ -784,7 +1117,7 @@ export type DeleteKnowledgeFileResponse = {
   deleted: true;
 };
 
-export type ListConversationsQuery = {
+export type ListAgentConversationsQuery = {
   /**
    * Page size, 1 to 100 (default 20).
    */
@@ -795,15 +1128,15 @@ export type ListConversationsQuery = {
   after?: string;
 };
 
-export type ListConversationsResponse = (ListEnvelope & {
+export type ListAgentConversationsResponse = (ListEnvelope & {
   data?: Array<Conversation>;
 });
 
-export type CreateConversationRequest = {
+export type CreateAgentConversationRequest = {
   metadata?: Record<string, unknown>;
 };
 
-export type CreateConversationResponse = Conversation;
+export type CreateAgentConversationResponse = Conversation;
 
 export type RunAgentAgUiRequest = {
   threadId?: string;
@@ -826,6 +1159,18 @@ export type RunAgentAgUiRequest = {
 export type RunAgentAgUiResponse = unknown;
 
 export type GetConversationResponse = Conversation;
+
+export type UpdateConversationRequest = {
+  metadata: Record<string, unknown>;
+};
+
+export type UpdateConversationResponse = Conversation;
+
+export type DeleteConversationResponse = {
+  id: string;
+  object: "conversation.deleted";
+  deleted: boolean;
+};
 
 export type SendConversationMessageRequest = {
   content: string;
@@ -1004,7 +1349,7 @@ export type SimulateInboundResponse = {
   handled?: string;
 };
 
-export type ListMessagesQuery = {
+export type ListTextsQuery = {
   /**
    * Page size, 1 to 100 (default 20).
    */
@@ -1018,17 +1363,17 @@ export type ListMessagesQuery = {
   direction?: "inbound" | "outbound";
 };
 
-export type ListMessagesResponse = MessageList;
+export type ListTextsResponse = TextList;
 
-export type SendMessageRequest = {
+export type CreateTextRequest = {
   number_id: string;
   to: string;
   body: string;
 };
 
-export type SendMessageResponse = Message;
+export type CreateTextResponse = Text;
 
-export type GetMessageResponse = Message;
+export type GetTextResponse = Text;
 
 export type ListWebhooksQuery = {
   /**
@@ -1160,7 +1505,7 @@ export type ListInboxResponse = Record<string, unknown>;
 
 export type ResolveInboxItemResponse = Record<string, unknown>;
 
-export type ListApprovalsResponse = Record<string, unknown>;
+export type ListAccountApprovalsResponse = Record<string, unknown>;
 
 export type ApproveApprovalResponse = Record<string, unknown>;
 
@@ -1458,3 +1803,114 @@ export type DeleteIdentityResponse = {
   object?: "identity";
   deleted?: boolean;
 };
+
+export type CreateDecisionRequest = DecisionRequest;
+
+export type CreateDecisionResponse = Decision;
+
+export type GetDecisionResponse = Decision;
+
+export type UpdateDecisionRequest = {
+  /**
+   * Keyed by question name.
+   */
+  outcomes: Record<string, DecisionOutcome>;
+};
+
+export type UpdateDecisionResponse = Decision;
+
+export type CreateResponseRequest = ResponseRequest;
+
+export type CreateResponseResponse = Response;
+
+export type GetResponseResponse = Response;
+
+export type ListResponseInputItemsQuery = {
+  /**
+   * Page size, 1 to 100 (default 20).
+   */
+  limit?: number;
+  /**
+   * Opaque cursor from `next_cursor` of the previous page.
+   */
+  after?: string;
+};
+
+export type ListResponseInputItemsResponse = ItemList;
+
+export type CreateMessageRequest = ModelMessageRequest;
+
+export type CreateMessageResponse = ModelMessage;
+
+export type ListConversationsQuery = {
+  /**
+   * Page size, 1 to 100 (default 20).
+   */
+  limit?: number;
+  /**
+   * Opaque cursor from `next_cursor` of the previous page.
+   */
+  after?: string;
+  agent_id?: string;
+  account_id?: string;
+};
+
+export type ListConversationsResponse = (ListEnvelope & {
+  data?: Array<Conversation>;
+});
+
+export type CreateConversationRequest = {
+  agent_id?: string;
+  account_id?: string;
+  metadata?: Record<string, unknown>;
+  items?: Array<ItemInput>;
+};
+
+export type CreateConversationResponse = Conversation;
+
+export type ListConversationItemsQuery = {
+  /**
+   * Page size, 1 to 100 (default 20).
+   */
+  limit?: number;
+  /**
+   * Opaque cursor from `next_cursor` of the previous page.
+   */
+  after?: string;
+  order?: "asc" | "desc";
+};
+
+export type ListConversationItemsResponse = ItemList;
+
+export type CreateConversationItemsRequest = {
+  items: Array<ItemInput>;
+};
+
+export type CreateConversationItemsResponse = ItemList;
+
+export type GetConversationItemResponse = Item;
+
+export type ListApprovalsQuery = {
+  /**
+   * Page size, 1 to 100 (default 20).
+   */
+  limit?: number;
+  /**
+   * Opaque cursor from `next_cursor` of the previous page.
+   */
+  after?: string;
+  status?: "pending" | "approved" | "denied" | "expired" | "consumed";
+  account_id?: string;
+  source?: "twin" | "computer";
+};
+
+export type ListApprovalsResponse = ApprovalList;
+
+export type GetApprovalResponse = Approval;
+
+export type ResolveApprovalRequest = {
+  decision: "approve" | "deny";
+  reason?: string;
+};
+
+export type ResolveApprovalResponse = Approval;

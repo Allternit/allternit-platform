@@ -18,7 +18,12 @@ from ._errors import (
 )
 from ._generated import NOT_GIVEN
 
-__version__ = "0.1.0"
+try:
+    from importlib.metadata import PackageNotFoundError, version as _pkg_version
+
+    __version__ = _pkg_version("allternit-platform")
+except Exception:  # not installed (running from a checkout)
+    __version__ = "0+unknown"
 
 __all__ = [
     "AllternitPlatform", "Conversations", "ConversationStream", "MessageCompleted", "MessageDelta", "StreamEvent",

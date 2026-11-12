@@ -1,0 +1,22 @@
+---
+title: 'Approvals'
+description: 'One list of actions waiting for a person, from the twin and from hosted computers.'
+---
+
+Scope `twin` or `computers`; a key only sees approvals from sources its scopes cover.
+
+| Method | Path | |
+|---|---|---|
+| `GET` | `/v1/approvals` | List (filters `status`, `account_id`, `source`) |
+| `GET` | `/v1/approvals/{id}` | Retrieve |
+| `POST` | `/v1/approvals/{id}` | Resolve: `{ "decision": "approve" \| "deny", "reason"? }` |
+
+Object: `id` (`apr_`), `source` (`twin` or `computer`), `source_ref`, `account_id`, `conversation_id`, `response_id`, `kind`, `proposed_action`, `status` (`pending`, `approved`, `denied`, `expired`, `consumed`), `expires_at`, `created_at`, `resolved_at`, `resolved_by`.
+
+Whether a key may approve a computer action follows the project's `approval_mode` (`403 approval_requires_owner` otherwise). The older routes under `/v1/accounts/{id}/approvals` and `/v1/computers/{id}/approvals` still work and use the same resolver.
+
+## With responses
+
+A [response](/api/platform/responses) whose agent turn raises an approval reads `requires_action` with `required_actions`. This is derived when you read it and may appear after the turn ends, so poll `GET /v1/responses/{id}` or use the `approval.requested` [webhook](/api/platform/webhooks). After resolving, continue with `previous_response_id`; nothing resumes on its own.
+
+Webhooks: `approval.requested`, `approval.resolved`, `approval.expired`.
