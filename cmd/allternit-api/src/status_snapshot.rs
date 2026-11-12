@@ -194,7 +194,99 @@ pub fn build(conn: &Connection, owner: &str, loops: Option<&[Value]>) -> rusqlit
     if let Some(l) = loops {
         snap["loops"] = json!(l);
     }
+    if let Some(run) = phone_run(owner) {
+        snap["phoneRun"] = run;
+    }
     Ok(snap)
+}
+
+// ─── phoneRun: the run the pill follows ────────────────────────────────────
+
+/// How long a closed run stays in the snapshot.
+const RUN_KEEP_MS: u64 = 10 * 60 * 1000;
+/// Trail entries the snapshot carries (the card carries up to 40).
+const PILL_TRAIL: usize = 6;
+
+struct RunNote {
+    owner: String,
+    card: Value,
+    at_ms: u64,
+}
+
+/// The newest card of each recent run, keyed by run id. Fed by `phone_runs::post_run_card`
+/// (every run, with or without a thread); read by [`phone_run`].
+#[derive(Default)]
+pub struct RunNotes {
+    runs: std::collections::HashMap<String, RunNote>,
+}
+
+fn is_open(status: &str) -> bool {
+    matches!(status, "running" | "waiting_approval")
+}
+
+impl RunNotes {
+    /// Remember `card` (a `phone_task` / `computer_task` card) as its run's latest state.
+    pub fn note(&mut self, owner: &str, card: &Value, now_ms: u64) {
+        let Some(id) = card["runId"].as_str() else { return };
+        self.runs.retain(|_, n| now_ms.saturating_sub(n.at_ms) < 6 * RUN_KEEP_MS);
+        self.runs.insert(id.to_string(), RunNote { owner: owner.to_string(), card: card.clone(), at_ms: now_ms });
+    }
+
+    /// The `phoneRun` field: a live run (its live-map entry gives step, label, hold and trail), else
+    /// the newest run closed within 10 minutes. `None` when there is neither.
+    pub fn pick(&self, owner: &str, now_ms: u64, live: &dyn Fn(&str) -> Option<Value>) -> Option<Value> {
+        let mine = || self.runs.iter().filter(|(_, n)| n.owner.is_empty() || n.owner == owner);
+        let open = mine().filter(|(id, n)| is_open(n.card["status"].as_str().unwrap_or("")) && live(id).is_some()).max_by_key(|(_, n)| n.at_ms);
+        let (id, n, live_entry) = match open {
+            Some((id, n)) => (id, n, live(id)),
+            None => {
+                let (id, n) = mine().filter(|(_, n)| !is_open(n.card["status"].as_str().unwrap_or("")) && now_ms.saturating_sub(n.at_ms) < RUN_KEEP_MS).max_by_key(|(_, n)| n.at_ms)?;
+                (id, n, None)
+            }
+        };
+        let c = &n.card;
+        let l = live_entry.as_ref();
+        let step = l.and_then(|l| l["step"].as_u64()).or_else(|| c["step"].as_u64()).unwrap_or(0);
+        let label = l.and_then(|l| l["step_label"].as_str()).or_else(|| c["stepLabel"].as_str());
+        let status = l.and_then(|l| l["status"].as_str()).unwrap_or_else(|| c["status"].as_str().unwrap_or("running"));
+        let trail = l.and_then(|l| l["trail"].as_array()).or_else(|| c["trail"].as_array()).cloned().unwrap_or_default();
+        let mut out = json!({
+            "runId": id,
+            "kind": if c["type"] == "computer_task" { "computer" } else { "phone" },
+            "goal": c["goal"],
+            "status": status,
+            "step": step,
+            "stepLabel": label.map(|t| cut(t, MAX_LINE)),
+            "trail": trail[trail.len().saturating_sub(PILL_TRAIL)..],
+        });
+        if let Some(s) = c["summary"].as_str().filter(|s| !s.is_empty()) {
+            out["summary"] = json!(s);
+        }
+        // A hold's inbox id sits on the live entry; a closed card may carry its own.
+        if let Some(i) = l.and_then(|l| l["approvalId"].as_str()).map(|a| format!("approval:{a}")).or_else(|| c["inboxId"].as_str().map(str::to_string)) {
+            out["inboxId"] = json!(i);
+        }
+        Some(out)
+    }
+}
+
+static RUN_NOTES: std::sync::Mutex<Option<RunNotes>> = std::sync::Mutex::new(None);
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
+}
+
+/// Called for every run card posted: keeps the run the snapshot follows.
+pub fn note_run_card(owner: &str, card: &Value) {
+    if let Ok(mut g) = RUN_NOTES.lock() {
+        g.get_or_insert_with(RunNotes::default).note(owner, card, now_ms());
+    }
+}
+
+/// The snapshot's `phoneRun` for `owner` right now.
+pub fn phone_run(owner: &str) -> Option<Value> {
+    let g = RUN_NOTES.lock().ok()?;
+    g.as_ref()?.pick(owner, now_ms(), &crate::phone_guard::live_status)
 }
 
 /// gizzi-code's loop rows → the snapshot's `loops` (running and paused only).
@@ -421,6 +513,46 @@ mod tests {
         assert_eq!(sent[0]["data"]["activeBots"], 0);
         assert_eq!(sent[1]["data"]["activeBots"], 1);
         assert_ne!(sent[0]["id"], sent[1]["id"]);
+    }
+
+    #[test]
+    fn phone_run_is_there_while_live_and_after_done_and_gone_after_ten_minutes() {
+        let mut notes = RunNotes::default();
+        let live_map = std::cell::RefCell::new(None::<Value>);
+        let live = |_: &str| live_map.borrow().clone();
+        let t0: u64 = 1_000_000;
+        assert!(notes.pick("user-a", t0, &live).is_none(), "no run: field omitted");
+
+        let running = json!({ "type": "computer_task", "runId": "r1", "serial": "browser", "goal": "Book it", "status": "running", "step": 8, "stepLabel": "Open the form" });
+        notes.note("user-a", &running, t0);
+        *live_map.borrow_mut() = Some(json!({ "status": "running", "step": 8, "step_label": "Open the form", "trail": (1..=7).map(|n| json!({ "n": n, "label": format!("S{n}"), "ok": true })).collect::<Vec<_>>() }));
+        let p = notes.pick("user-a", t0 + 5_000, &live).unwrap();
+        assert_eq!((p["runId"].as_str(), p["kind"].as_str(), p["status"].as_str(), p["step"].as_u64(), p["stepLabel"].as_str()), (Some("r1"), Some("computer"), Some("running"), Some(8), Some("Open the form")));
+        assert_eq!(p["trail"].as_array().unwrap().len(), 6, "last 6");
+        assert_eq!(p["trail"][5]["n"], 7);
+        assert!(p.get("summary").is_none());
+        assert!(notes.pick("user-b", t0 + 5_000, &live).is_none(), "another owner sees nothing");
+
+        // A hold shows the inbox id.
+        *live_map.borrow_mut() = Some(json!({ "status": "waiting_approval", "step": 8, "step_label": "Waiting for your OK to pay", "approvalId": "a1" }));
+        let p = notes.pick("user-a", t0 + 6_000, &live).unwrap();
+        assert_eq!((p["status"].as_str(), p["inboxId"].as_str()), (Some("waiting_approval"), Some("approval:a1")));
+
+        // Closed: the live entry is gone, the closing card stays for ten minutes.
+        *live_map.borrow_mut() = None;
+        let done = json!({ "type": "computer_task", "runId": "r1", "serial": "browser", "goal": "Book it", "status": "done", "step": 9, "summary": "Booked", "trail": [{ "n": 9, "label": "Submit", "ok": true }] });
+        notes.note("user-a", &done, t0 + 10_000);
+        let p = notes.pick("user-a", t0 + 20_000, &live).unwrap();
+        assert_eq!((p["status"].as_str(), p["summary"].as_str(), p["trail"][0]["label"].as_str()), (Some("done"), Some("Booked"), Some("Submit")));
+        assert!(notes.pick("user-a", t0 + 10_000 + RUN_KEEP_MS - 1, &live).is_some());
+        assert!(notes.pick("user-a", t0 + 10_000 + RUN_KEEP_MS, &live).is_none(), "gone after 10 minutes");
+    }
+
+    #[test]
+    fn a_stale_open_card_with_no_live_entry_is_not_shown() {
+        let mut notes = RunNotes::default();
+        notes.note("user-a", &json!({ "type": "phone_task", "runId": "r2", "goal": "g", "status": "running", "step": 1 }), 0);
+        assert!(notes.pick("user-a", 1, &|_: &str| None).is_none());
     }
 
     #[test]

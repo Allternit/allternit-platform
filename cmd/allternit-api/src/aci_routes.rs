@@ -238,6 +238,10 @@ fn buffer_push(run_id: &str, mut frame: serde_json::Value, done: bool) {
     if let Some(binding) = crate::aci_credentials::RUN_BINDINGS.get(run_id) {
         crate::aci_credentials::scrub_frame(&mut frame, binding.secrets());
     }
+    // The chat card for a computer run follows the same (scrubbed) frames.
+    if let Some((db, _)) = crate::phone_guard::installed() {
+        post_frame_cards(&db, run_id, &frame, done);
+    }
     if let Ok(mut store) = ACI_RUN_EVENTS.lock() {
         if let Some(buf) = store.get_mut(run_id) {
             if buf.frames.len() >= MAX_BUFFERED_FRAMES {
@@ -251,6 +255,133 @@ fn buffer_push(run_id: &str, mut frame: serde_json::Value, done: bool) {
             snapshot_if_due(run_id, buf, done);
         }
     }
+}
+
+// ─── computer_task cards (a computer run on a bot thread) ─────────────────
+
+/// What one computer run has posted so far.
+struct RunCards {
+    ctx: crate::phone_guard::TaskCtx,
+    goal: String,
+    step: u32,
+    label: String,
+    /// The steps before the current one, `[{n, label, ok}]`.
+    trail: Vec<serde_json::Value>,
+    closed: bool,
+}
+
+static RUN_CARDS: Lazy<Mutex<HashMap<String, RunCards>>> = Lazy::new(Default::default);
+
+const COMPUTER_SERIAL: &str = "browser";
+
+fn post_computer_card(db: &crate::db::DbHandle, rc: &RunCards, run_id: &str, status: &str, label: Option<&str>, summary: Option<&str>, trail: Option<&[serde_json::Value]>) {
+    crate::phone_runs::post_run_card(
+        db,
+        &rc.ctx,
+        &crate::phone_runs::RunCard { kind: "computer_task", run_id, serial: COMPUTER_SERIAL, goal: &rc.goal, status, step: rc.step, step_label: label, inbox_id: None, summary, trail },
+    );
+}
+
+/// Start `computer_task` cards for a run on a bot thread: posts the first card and
+/// remembers the run so `buffer_push` can follow it. Nothing for a run without a bot and
+/// a thread the caller owns. `app:` phone web tasks never come here (they post `phone_task`).
+fn register_run_cards(db: &crate::db::DbHandle, run_id: &str, owner: &str, bot_id: Option<&str>, thread_id: Option<&str>, goal: &str) -> bool {
+    let (Some(bot), Some(thread)) = (bot_id.map(str::trim).filter(|b| !b.is_empty()), thread_id.map(str::trim).filter(|t| !t.is_empty())) else {
+        return false;
+    };
+    let owned = db
+        .connect()
+        .ok()
+        .and_then(|c| c.query_row("SELECT COUNT(*) FROM bot_threads WHERE id = ?1 AND user_id = ?2 AND bot_id = ?3", rusqlite::params![thread, owner, bot], |r| r.get::<_, i64>(0)).ok())
+        .unwrap_or(0)
+        > 0;
+    if !owned {
+        return false;
+    }
+    let rc = RunCards {
+        ctx: crate::phone_guard::TaskCtx { owner: owner.into(), bot_id: Some(bot.into()), thread_id: Some(thread.into()), session_id: None, source: "api".into() },
+        goal: goal.into(),
+        step: 0,
+        label: "Starting".into(),
+        trail: Vec::new(),
+        closed: false,
+    };
+    crate::phone_guard::merge_live(run_id, json!({ "status": "running", "step": 0, "step_label": "Starting", "trail": [] }));
+    post_computer_card(db, &rc, run_id, "running", Some("Starting"), None, None);
+    if let Ok(mut m) = RUN_CARDS.lock() {
+        m.insert(run_id.to_string(), rc);
+    }
+    true
+}
+
+fn u32_of(v: &serde_json::Value) -> Option<u32> {
+    v.as_u64().and_then(|n| u32::try_from(n).ok())
+}
+
+/// Follow one stream frame of a registered run: a new step index posts a `running` card with
+/// its label, the approval wait posts `waiting_approval`, and `done` closes it with the trail.
+/// Labels come from `phone_task::step_label` (never typed text). No-op for any other run.
+fn post_frame_cards(db: &crate::db::DbHandle, run_id: &str, frame: &serde_json::Value, done: bool) {
+    let Ok(mut m) = RUN_CARDS.lock() else { return };
+    let Some(rc) = m.get_mut(run_id) else { return };
+    if rc.closed {
+        return;
+    }
+    let ty = frame.get("type").and_then(|t| t.as_str()).unwrap_or("");
+    if done || ty == "done" {
+        let d = frame.get("data").cloned().unwrap_or(serde_json::Value::Null);
+        let raw = d.get("status").and_then(|s| s.as_str()).unwrap_or("");
+        let status = match raw {
+            "done" | "completed" | "success" | "succeeded" => "done",
+            "denied" => "denied",
+            "approval_timeout" => "approval_timeout",
+            _ if d.get("success").and_then(|b| b.as_bool()) == Some(true) => "done",
+            _ => "failed",
+        };
+        let summary = ["result", "summary", "message"].iter().find_map(|k| d.get(*k).and_then(|v| v.as_str())).map(str::to_string);
+        let mut trail = rc.trail.clone();
+        if rc.step > 0 {
+            trail.push(json!({ "n": rc.step, "label": rc.label, "ok": status == "done" }));
+        }
+        let trail = trail[trail.len().saturating_sub(crate::phone_runs::TRAIL_MAX)..].to_vec();
+        post_computer_card(db, rc, run_id, status, None, summary.as_deref(), Some(&trail));
+        rc.closed = true;
+        m.remove(run_id);
+        crate::phone_guard::set_live(run_id, None);
+        return;
+    }
+    if ty != "trace" && ty != "state" {
+        return;
+    }
+    let data = frame.get("data").unwrap_or(&serde_json::Value::Null);
+    let event = data.get("event_type").and_then(|e| e.as_str()).unwrap_or("");
+    let payload = if ty == "trace" { data.get("data").unwrap_or(&serde_json::Value::Null) } else { data };
+    if event == "approval.required" {
+        let label = crate::phone_task::step_label("approval", "", "", true, None);
+        crate::phone_guard::merge_live(run_id, json!({ "status": "waiting_approval", "step_label": label }));
+        post_computer_card(db, rc, run_id, "waiting_approval", Some(&label), None, None);
+        return;
+    }
+    if event == "approval.resolved" {
+        crate::phone_guard::merge_live(run_id, json!({ "status": "running", "step_label": rc.label.clone() }));
+        return;
+    }
+    let step = ["step", "stepIndex", "step_index"].iter().find_map(|k| payload.get(*k).and_then(u32_of));
+    let Some(step) = step.filter(|s| *s > rc.step) else { return };
+    let text = |k: &str| payload.get(k).and_then(|v| v.as_str()).unwrap_or("");
+    let tool = ["kind", "tool", "action"].iter().map(|k| text(k)).find(|t| !t.is_empty()).unwrap_or("");
+    let fallback = format!("Step {step}");
+    let label = crate::phone_task::step_label(tool, &fallback, text("reason"), payload.get("sensitive").and_then(|b| b.as_bool()).unwrap_or(false), payload.get("effect").and_then(|e| e.as_str()));
+    if rc.step > 0 {
+        rc.trail.push(json!({ "n": rc.step, "label": rc.label, "ok": true }));
+        if rc.trail.len() > crate::phone_runs::TRAIL_MAX {
+            rc.trail.remove(0);
+        }
+    }
+    rc.step = step;
+    rc.label = label.clone();
+    crate::phone_guard::merge_live(run_id, json!({ "status": "running", "step": step, "step_label": label, "trail": rc.trail }));
+    post_computer_card(db, rc, run_id, "running", Some(&label), None, None);
 }
 
 fn buffer_mark_done(run_id: &str) {
@@ -770,6 +901,7 @@ async fn aci_run(
     }
     crate::aci_safety::record_aci_success(&actor_key);
     buffer_create(&run_id);
+    register_run_cards(&state.db, &run_id, &user.user_id, body.bot_id.as_deref(), body.thread_id.as_deref(), &decision.sanitized_goal);
     tokio::spawn(drain_acu_events(run_id.clone(), resp));
 
     (
@@ -1236,6 +1368,52 @@ async fn aci_handoff_deny(
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn computer_run_cards_follow_the_frames_in_order() {
+        let dir = std::env::temp_dir().join(format!("aci-cards-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let st = crate::test_helpers::app_state(&dir).await;
+        let c = st.db.connect().unwrap();
+        c.execute("INSERT INTO agents (id, user_id, name, model, provider, is_bot, config) VALUES ('bot-1','user-a','b','m','p',1,'{}')", []).unwrap();
+        c.execute("INSERT INTO bot_threads (id, user_id, bot_id, title, status, last_activity_at, created_at, updated_at) VALUES ('th-1','user-a','bot-1','Plans','idle','t','t','t')", []).unwrap();
+        let run = "aci-cards-run";
+        assert!(!register_run_cards(&st.db, "aci-other", "user-b", Some("bot-1"), Some("th-1"), "x"), "a thread the caller does not own gets no cards");
+        assert!(!register_run_cards(&st.db, "aci-nothread", "user-a", Some("bot-1"), None, "x"));
+        assert!(register_run_cards(&st.db, run, "user-a", Some("bot-1"), Some("th-1"), "Book a table"));
+
+        let trace = |ev: &str, data: serde_json::Value| json!({ "type": "trace", "data": { "message": ev, "event_type": ev, "data": data } });
+        post_frame_cards(&st.db, run, &trace("step.started", json!({ "step": 1, "kind": "click", "reason": "Open the booking page" })), false);
+        post_frame_cards(&st.db, run, &json!({ "type": "screenshot", "data": {} }), false);
+        post_frame_cards(&st.db, run, &trace("step.started", json!({ "step": 1, "kind": "click", "reason": "again" })), false);
+        post_frame_cards(&st.db, run, &trace("step.started", json!({ "step": 2, "kind": "type", "reason": "password hunter2" })), false);
+        post_frame_cards(&st.db, run, &trace("approval.required", json!({ "step": 2 })), false);
+        post_frame_cards(&st.db, run, &json!({ "type": "state", "data": { "stepIndex": 3, "reason": "Pick a time" } }), false);
+        post_frame_cards(&st.db, run, &json!({ "type": "done", "data": { "status": "done", "result": "Booked for 7pm" } }), true);
+        post_frame_cards(&st.db, run, &trace("step.started", json!({ "step": 4 })), false);
+
+        let mut q = c.prepare("SELECT payload FROM bot_events WHERE thread_id = 'th-1' AND event_type = 'computer_task' ORDER BY rowid").unwrap();
+        let cards: Vec<serde_json::Value> = q.query_map([], |r| r.get::<_, String>(0)).unwrap().flatten().filter_map(|t| serde_json::from_str(&t).ok()).collect();
+        let seq: Vec<(&str, u64, Option<&str>)> = cards.iter().map(|c| (c["status"].as_str().unwrap(), c["step"].as_u64().unwrap(), c["stepLabel"].as_str())).collect();
+        assert_eq!(
+            seq,
+            vec![
+                ("running", 0, Some("Starting")),
+                ("running", 1, Some("Open the booking page")),
+                ("running", 2, Some("Typing")),
+                ("waiting_approval", 2, Some("Waiting for your OK to continue")),
+                ("running", 3, Some("Pick a time")),
+                ("done", 3, None),
+            ]
+        );
+        assert!(cards.iter().all(|c| c["type"] == "computer_task" && c["serial"] == "browser" && c["runId"] == run));
+        assert!(!cards.iter().any(|c| c.to_string().contains("hunter2")), "typed text never reaches a card");
+        let last = &cards[5];
+        assert_eq!(last["summary"], "Booked for 7pm");
+        let trail: Vec<(u64, &str)> = last["trail"].as_array().unwrap().iter().map(|t| (t["n"].as_u64().unwrap(), t["label"].as_str().unwrap())).collect();
+        assert_eq!(trail, vec![(1, "Open the booking page"), (2, "Typing"), (3, "Pick a time")]);
+        assert!(crate::phone_guard::live_status(run).is_none(), "live entry cleared at the end");
+    }
+
     use super::*;
 
     #[test]
