@@ -41,6 +41,7 @@ import { ArtifactCommand } from "@/cli/commands/artifact"
 import { PdfCommand } from "@/cli/commands/pdf"
 import { ProgramsCommand } from "@/cli/commands/programs"
 import { OrgCommand } from "@/cli/commands/org"
+import { UsageCommand } from "@/cli/commands/usage"
 import { LabsCommand } from "@/cli/commands/labs"
 import { HookCommand } from "@/cli/commands/hook"
 import { TeamMcpCommand } from "@/cli/commands/team-mcp"
@@ -141,6 +142,7 @@ export const COMMANDS: RegisteredCommand[] = [
   PdfCommand,
   ProgramsCommand,
   OrgCommand,
+  UsageCommand,
   ProductsCommand,
   LabsCommand,
   UdemyCommand,
