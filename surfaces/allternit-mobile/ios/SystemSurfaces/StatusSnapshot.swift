@@ -15,6 +15,9 @@ struct StatusSnapshot: Codable, Sendable, Equatable {
     var needsYouRows: [NeedsYouRow] = []
     var loops: [Loop] = []
     var lastRoutine: LastRoutine?
+    /// The phone or computer run the live pill follows (live-status-pill contract); absent when
+    /// no run is live or ended in the last 10 minutes.
+    var phoneRun: PhoneRun?
     /// Set locally when the snapshot is stored; not part of the wire payload.
     var asOf: Date?
 
@@ -115,6 +118,51 @@ struct StatusSnapshot: Codable, Sendable, Equatable {
         }
     }
 
+    struct PhoneRun: Codable, Sendable, Equatable {
+        var runId: String = ""
+        /// `phone` or `computer`.
+        var kind: String = "phone"
+        var goal: String = ""
+        /// A `phone_task` card status: running, waiting_approval, done, denied, approval_timeout, …
+        var status: String = ""
+        var step: Int = 0
+        var stepLabel: String?
+        /// The last 6 finished steps.
+        var trail: [TrailStep] = []
+        var summary: String?
+        var inboxId: String?
+
+        struct TrailStep: Codable, Sendable, Equatable {
+            var n: Int = 0
+            var label: String = ""
+            var ok: Bool?
+
+            init(n: Int, label: String, ok: Bool? = nil) { self.n = n; self.label = label; self.ok = ok }
+            init(from decoder: Decoder) throws {
+                let c = try decoder.container(keyedBy: CodingKeys.self)
+                n = (try? c.decodeIfPresent(Int.self, forKey: .n)) ?? 0
+                label = (try? c.decodeIfPresent(String.self, forKey: .label)) ?? ""
+                ok = try? c.decodeIfPresent(Bool.self, forKey: .ok)
+            }
+        }
+
+        init() {}
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            runId = (try? c.decodeIfPresent(String.self, forKey: .runId)) ?? ""
+            kind = (try? c.decodeIfPresent(String.self, forKey: .kind)) ?? "phone"
+            goal = (try? c.decodeIfPresent(String.self, forKey: .goal)) ?? ""
+            status = (try? c.decodeIfPresent(String.self, forKey: .status)) ?? ""
+            step = (try? c.decodeIfPresent(Int.self, forKey: .step)) ?? 0
+            stepLabel = try? c.decodeIfPresent(String.self, forKey: .stepLabel)
+            // One malformed entry must not drop the whole trail.
+            let raw = (try? c.decodeIfPresent([TrailStep?].self, forKey: .trail)) ?? []
+            trail = raw.compactMap { $0 }.filter { !$0.label.isEmpty }.sorted { $0.n < $1.n }
+            summary = try? c.decodeIfPresent(String.self, forKey: .summary)
+            inboxId = try? c.decodeIfPresent(String.self, forKey: .inboxId)
+        }
+    }
+
     init() {}
 
     init(from decoder: Decoder) throws {
@@ -129,6 +177,7 @@ struct StatusSnapshot: Codable, Sendable, Equatable {
         needsYouRows = (try? c.decodeIfPresent([NeedsYouRow].self, forKey: .needsYouRows)) ?? []
         loops = (try? c.decodeIfPresent([Loop].self, forKey: .loops)) ?? []
         lastRoutine = try? c.decodeIfPresent(LastRoutine.self, forKey: .lastRoutine)
+        phoneRun = try? c.decodeIfPresent(PhoneRun.self, forKey: .phoneRun)
         asOf = try? c.decodeIfPresent(Date.self, forKey: .asOf)
     }
 
