@@ -10,6 +10,10 @@ export interface CatalogModel {
   context: string;
   /** The recommended Cloud model (`default: true` in `GET /v1/models`). */
   isDefault?: boolean;
+  /** Derived only from flags the API row carries: "Tools", "Vision", "JSON". */
+  capabilities: string[];
+  /** Formatted retirement date, only when the row has a non-null `expiration_date`. */
+  retires?: string;
 }
 
 export interface LiveModelInfo {
@@ -30,6 +34,14 @@ export interface LiveModelInfo {
   default?: boolean;
   /** Still routes (saved ids keep working) but is not offered in pickers. */
   hidden?: boolean;
+  /** Fireworks rows. */
+  supports_tools?: boolean;
+  supports_image_input?: boolean;
+  /** OpenRouter rows. */
+  supported_parameters?: string[];
+  architecture?: { input_modalities?: string[] };
+  /** Null on every row today; a date string once a model has a retirement date. */
+  expiration_date?: string | null;
   extra?: Record<string, unknown>;
 }
 
@@ -86,6 +98,30 @@ function contextLength(model: LiveModelInfo): string {
   return "—";
 }
 
+export function modelCapabilities(model: LiveModelInfo): string[] {
+  const params = Array.isArray(model.supported_parameters) ? model.supported_parameters : [];
+  const modalities = Array.isArray(model.architecture?.input_modalities)
+    ? model.architecture!.input_modalities!
+    : [];
+  const out: string[] = [];
+  if (model.supports_tools === true || params.includes("tools")) out.push("Tools");
+  if (model.supports_image_input === true || modalities.includes("image")) out.push("Vision");
+  if (params.includes("response_format") || params.includes("structured_outputs")) out.push("JSON");
+  return out;
+}
+
+function retireDate(value: unknown): string | undefined {
+  if (typeof value !== "string" || !value) return undefined;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return undefined;
+  return date.toLocaleDateString("en-US", {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  });
+}
+
 export function liveModelToCatalog(model: LiveModelInfo): CatalogModel {
   const upstreamProvider = model.provider || model.owned_by || "cloud";
   return {
@@ -99,6 +135,8 @@ export function liveModelToCatalog(model: LiveModelInfo): CatalogModel {
     outputPrice: formatPrice(model.completion_price ?? model.extra?.completion_price),
     context: contextLength(model),
     isDefault: (model.default ?? model.extra?.default) === true,
+    capabilities: modelCapabilities(model),
+    retires: retireDate(model.expiration_date),
   };
 }
 
@@ -126,20 +164,3 @@ export async function fetchLiveModelCatalog(
 export function isHidden(model: LiveModelInfo): boolean {
   return (model.hidden ?? model.extra?.hidden) === true;
 }
-
-// Fallback when the live list is unreachable: the listed (non-hidden) rows of
-// `GET /v1/models` as of 2026-11-10, default (kimi-k3) first, then catalog
-// order. Prices are what a request is billed (provider price × the default
-// 1.5 markup), formatted the way `liveModelToCatalog` formats the live list.
-// Keep in step with cmd/allternit-cloud-api/src/model_router/catalog.rs.
-export const DRAFT_MODEL_CATALOG: CatalogModel[] = [
-  { id: "kimi-k3", name: "Kimi K3", family: "Kimi", provider: "cloud", upstreamProvider: "fireworks", inputPrice: "$4.50", outputPrice: "$22.50", context: "1.0M", isDefault: true },
-  { id: "claude-sonnet-5.5", name: "Claude Sonnet 5.5", family: "Claude", provider: "cloud", upstreamProvider: "openrouter", inputPrice: "$3.00", outputPrice: "$15.00", context: "1.0M" },
-  { id: "gpt-6.1-sol", name: "GPT-6.1 Sol", family: "GPT", provider: "cloud", upstreamProvider: "openrouter", inputPrice: "$3.00", outputPrice: "$15.00", context: "1.1M" },
-  { id: "deepseek-v4.1-flash", name: "DeepSeek V4.1 Flash", family: "DeepSeek", provider: "cloud", upstreamProvider: "openrouter", inputPrice: "$0.45", outputPrice: "$1.80", context: "1.0M" },
-  { id: "glm-5.3-flash", name: "GLM 5.3 Flash", family: "GLM", provider: "cloud", upstreamProvider: "openrouter", inputPrice: "$0.06", outputPrice: "$0.12", context: "1.0M" },
-  { id: "deepseek-v4-pro", name: "DeepSeek V4 Pro", family: "DeepSeek", provider: "cloud", upstreamProvider: "together", inputPrice: "$1.98", outputPrice: "$5.94", context: "1.0M" },
-  { id: "glm-5.3", name: "GLM 5.3", family: "GLM", provider: "cloud", upstreamProvider: "together", inputPrice: "$2.10", outputPrice: "$6.60", context: "1.0M" },
-  { id: "kimi-k3.1-pro", name: "Kimi K3.1 Pro", family: "Kimi", provider: "cloud", upstreamProvider: "together", inputPrice: "$3.00", outputPrice: "$15.00", context: "1.0M" },
-  { id: "qwen3.8-max-fireworks", name: "Qwen 3.8 Max (Fireworks)", family: "Qwen", provider: "cloud", upstreamProvider: "fireworks", inputPrice: "$3.00", outputPrice: "$9.00", context: "1.0M" },
-];

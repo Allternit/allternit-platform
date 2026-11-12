@@ -18,6 +18,7 @@ import {
   usePlatformUser,
 } from "@/lib/platform-auth-client";
 import { api, formatApiError } from "@/lib/api-client";
+import { isHiddenOnCloud } from "@/lib/availability";
 import { createGatewayKey } from "@/lib/gateway-keys";
 import { createApiKey } from "@/lib/api-keys";
 import { createProject, isPlatformDisabled, listProjects } from "@/lib/platform-projects";
@@ -1073,7 +1074,9 @@ function ConnectedView(props: {
     { id: "runs", g: "Workloads", t: "Runs", x: 960, y: 240, conn: hasAny(snap.runs), status: countText(snap.runs, "run"), desc: "Start agent runs from the console or the CLI: allternit run.", to: "/runs" },
     { id: "schedules", g: "Workloads", t: "Schedules", x: 960, y: 305, conn: hasAny(snap.schedules), status: countText(snap.schedules, "schedule"), desc: "Run agents on a schedule.", to: "/schedules" },
     { id: "webhooks", g: "Workloads", t: "Webhooks", x: 960, y: 370, conn: hasAny(snap.webhooks), status: countText(snap.webhooks, "webhook"), desc: "Get called when a run finishes or needs approval.", to: "/manage/webhooks" },
-    { id: "batches", g: "Workloads", t: "Batches", x: 960, y: 435, conn: false, status: "Available", desc: "Send large volumes of requests asynchronously and retrieve results when they complete.", to: "/batches" },
+    ...(isHiddenOnCloud("batches") ? [] : [
+      { id: "batches", g: "Workloads", t: "Batches", x: 960, y: 435, conn: false, status: "Available", desc: "Send large volumes of requests asynchronously and retrieve results when they complete.", to: "/batches" },
+    ]),
     { id: "curl", g: "SDKs", t: "curl", x: 520, y: 545, conn: lang === "curl", status: lang === "curl" ? "Your first call" : "Available", desc: "Any HTTP client works. The API is OpenAI-compatible.", href: "https://docs.allternit.com" },
     { id: "python", g: "SDKs", t: "Python", x: 640, y: 560, conn: lang === "python", status: lang === "python" ? "Your first call" : "Available", desc: "Use the OpenAI SDK with base_url set to api.allternit.com/v1.", href: "https://docs.allternit.com" },
     { id: "ts", g: "SDKs", t: "TypeScript", x: 760, y: 545, conn: lang === "ts", status: lang === "ts" ? "Your first call" : "Available", desc: "Use the OpenAI SDK with baseURL set to api.allternit.com/v1.", href: "https://docs.allternit.com" },

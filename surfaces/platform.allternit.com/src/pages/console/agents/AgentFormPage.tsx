@@ -28,11 +28,10 @@ import {
   toolNames,
 } from "@/lib/managed-agents";
 import { fetchConsoleModels, type ConsoleModel } from "@/lib/console-models";
-import { DRAFT_MODEL_CATALOG } from "@/lib/model-catalog";
 import { FormPage } from "@/components/console-ui";
 
-// Cloud default (first listed row), sent when the form leaves the model blank.
-const DEFAULT_MODEL_ID = DRAFT_MODEL_CATALOG[0].id;
+// Cloud default (the `default: true` row of GET /v1/models), sent when the form leaves the model blank.
+const DEFAULT_MODEL_ID = "kimi-k3";
 
 const INPUT_CLASS =
   "w-full rounded-lg border border-solid border-[var(--border-subtle)] bg-[var(--bg-secondary)] px-3 py-2 text-[13px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-tertiary)] focus:border-[var(--border-default)]";
