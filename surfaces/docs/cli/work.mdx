@@ -80,6 +80,13 @@ gizzi phone runs                  # recent runs and their status
 
 `task` sends your goal to a linked phone and prints each step as the run moves. `--phone` takes a serial or a name; with one phone linked, or only one online, you can leave it out. Inside a session, `$GIZZI_THREAD_ID` and `$GIZZI_SESSION_ID` (or `--thread` and `--session`) tie the task to that conversation, so its card shows there.
 
+Each step prints once, with its label when the phone reports one, and a step that needs your approval prints the "Waiting for your OK to …" line before the prompt:
+
+```text
+  step 1 · Opening Settings
+  step 2 · Waiting for your OK to tap Pay now
+```
+
 When the run reaches a sensitive step (a payment, a delete, a text, a call, a password), it stops and the terminal shows what it wants: the effect, the app, the button and how long you have. Then:
 
 - `o` opens the screen image (in the terminal itself on iTerm2 and WezTerm, otherwise in your image viewer).

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { followTask, resolveHold, describeOutcome, choosePhone, type HoldIO, type Hold, type RunRow } from "@/cli/commands/phone"
+import { followTask, formatStep, resolveHold, describeOutcome, choosePhone, type HoldIO, type Hold, type RunRow } from "@/cli/commands/phone"
 
 const hold: Hold = {
   approvalId: "a1",
@@ -73,6 +73,29 @@ describe("followTask", () => {
     expect(holds).toEqual(["a1"])
     expect(said).toEqual(["  step 1", "  step 2"])
     expect(describeOutcome(report)).toBe("Done. Paid")
+  })
+  test("prints the step label, the waiting label once, and falls back to step N", async () => {
+    let release!: (v: any) => void
+    const task = new Promise<any>((r) => (release = r))
+    const said: string[] = []
+    let tick = 0
+    await followTask({
+      task,
+      pollMs: 5,
+      say: (l) => said.push(l),
+      runs: async () => {
+        tick++
+        if (tick <= 2) return [row({ steps: 1, step: 1, step_label: "Opening Settings" })]
+        if (tick === 3) return [row({ steps: 2, step: 2 })]
+        return [row({ steps: 3, step: 3, step_label: "Waiting for your OK to pay Pay now", status: "waiting_approval", approvalId: "a9", effect: "pay" })]
+      },
+      hold: async () => {
+        setTimeout(() => release({ ok: true, status: "done" }), 20)
+        return "approved"
+      },
+    })
+    expect(said).toEqual(["  step 1 · Opening Settings", "  step 2", "  step 3 · Waiting for your OK to pay Pay now"])
+    expect(formatStep(row({ steps: 4, step: 4, step_label: "Tap Save", failed: 1 }))).toBe("  step 4 · Tap Save (1 failed)")
   })
   test("denied and timed-out runs read as stopped", () => {
     expect(describeOutcome({ status: "denied" })).toBe("Stopped: you denied the approval.")
