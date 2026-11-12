@@ -630,6 +630,12 @@
       "label": "messages mac",
       "kind": "module",
       "path": "allternit/cmd/allternit-api/src/messages_mac.rs"
+    },
+    {
+      "id": "allternit/cmd/allternit-api/src/phone_runs.rs",
+      "label": "phone runs",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-api/src/phone_runs.rs"
     }
   ],
   "edges": [
@@ -1440,6 +1446,26 @@
       "evidence": [
         "allternit-ai/src/components/chat/MessageDraftCard.tsx",
         "allternit/cmd/allternit-api/src/messages_mac.rs"
+      ]
+    },
+    {
+      "source": "allternit/surfaces/allternit-mobile/ios",
+      "target": "allternit/cmd/allternit-cloud-api/src/routes/device_read.rs",
+      "kind": "authenticated HTTP: iMessage extension reads the status snapshot phoneRun through cloud-api status/summary",
+      "evidence": [
+        "allternit/surfaces/allternit-mobile/ios/AllternitMessages/Panel/SharedPhoneRun.swift",
+        "allternit/cmd/allternit-cloud-api/src/routes/device_read.rs",
+        "allternit/cmd/allternit-api/src/status_snapshot.rs"
+      ]
+    },
+    {
+      "source": "allternit/cmd/allternit-api/src/phone_runs.rs",
+      "target": "allternit/surfaces/allternit-mobile/ios",
+      "kind": "per-step thread ledger cards: each run step is written to the conversation thread and rendered as a card",
+      "evidence": [
+        "allternit/cmd/allternit-api/src/phone_runs.rs",
+        "allternit/surfaces/allternit-mobile/ios/Features/Phones/RunStatusViews.swift",
+        "allternit/surfaces/allternit-mobile/ios/Features/Chat/Views/MessageRow.swift"
       ]
     }
   ]
