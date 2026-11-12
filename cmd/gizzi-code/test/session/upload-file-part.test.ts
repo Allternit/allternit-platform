@@ -22,6 +22,14 @@ const server = Bun.serve({
 process.env.ALLTERNIT_API_URL = `http://127.0.0.1:${server.port}`
 process.env.ALLTERNIT_API_TOKEN = "tok-test"
 
+// Another test file in the same bun process may already have imported the
+// gateway constants with the real base; point them at this server.
+const realGateway = await import("../../src/shared/constants/allternitGateway")
+mock.module("../../src/shared/constants/allternitGateway", () => ({
+  ...realGateway,
+  ALLTERNIT_GATEWAY_BASE: process.env.ALLTERNIT_API_URL,
+}))
+
 const { Log } = await import("../../src/shared/util/log")
 Log.init({ print: false })
 mock.module("../../src/runtime/session/llm", () => ({

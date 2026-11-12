@@ -2207,6 +2207,7 @@ const message = await createUserMessage(input)
     const parts = await Promise.all(
       input.parts.map(async (part): Promise<Draft<MessageV2.Part>[]> => {
         if (part.type === "file") {
+          const partFilename = part.filename
           // before checking the protocol we check if this is an mcp resource because it needs special handling
           if (part.source?.type === "resource") {
             const { clientName, uri } = part.source
@@ -2416,7 +2417,7 @@ const message = await createUserMessage(input)
                         ...result.attachments.map((attachment) => ({
                           ...attachment,
                           synthetic: true,
-                          filename: attachment.filename ?? part.filename,
+                          filename: attachment.filename ?? partFilename,
                           messageID: info.id,
                           sessionID: input.sessionID,
                         })),
