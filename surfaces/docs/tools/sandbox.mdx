@@ -11,11 +11,12 @@ A separate lower-level `/sandbox/*` execution API is also available for ad-hoc c
 
 ## run_code in chat
 
-The Gizzi agent has a built-in `run_code` tool that analyzes attached files with Python. It does not use these VM sandboxes. It runs on the computer where the agent runs, inside the operating system sandbox (bubblewrap on Linux, sandbox-exec on macOS), with the network off and a clean environment. Windows, and Linux without bubblewrap, refuse to run it.
+The Gizzi agent has a built-in `run_code` tool that analyzes attached files with Python. It does not use these VM sandboxes. It runs on the computer where the agent runs, inside the operating system sandbox (bubblewrap on Linux, sandbox-exec on macOS), with the network off and a clean environment. The script can read only its input files and the Python environment (not the home folder, other users, mounted volumes or Keychains) and can write only its run folder. Windows, Linux without bubblewrap, and computers where the sandbox can't start (Allternit cloud computers today) refuse to run it; it never runs unsandboxed.
 
+- Attachments are staged only from `data:` URLs or allternit-api upload paths (`/api/v1/uploads/<id>`). `file:` paths and other URLs are refused.
 - Python 3.12 with pandas, numpy, openpyxl and matplotlib, set up once with a pinned uv (0.11.19, checksum verified).
 - 60 seconds by default, 120 at most. Output is capped at 64 KB each for stdout and stderr, and files it saves at 20 files and 20 MB.
-- The permission is `run_code`: Auto runs it, Ask shows an approval card, Read-only hides it.
+- The permission is `run_code`: Auto runs it, Ask shows an approval card with the script (up to 4 KB of it), Read-only hides it.
 - Files it saves are stored as uploads and listed on the result. Clients draw the result from `files` and `run`. Do not parse the tool's text `result`.
 
 The live `tool_result` event and the reloaded transcript carry the same payload. When a chat is loaded with `GET /api/v1/agent-sessions/:id/messages`, the `run_code` tool part in `metadata.parts` has the same `files` and `run` as the live event, plus its `callID`:

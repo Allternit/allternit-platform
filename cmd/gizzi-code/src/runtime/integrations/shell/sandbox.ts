@@ -6,18 +6,26 @@
  *   - macOS:  sandbox-exec with a Seatbelt profile — same as gizzi-code
  *   - Windows: no-op (not supported)
  *
- * The wrapper gives the spawned process:
- *   - READ access to the entire host filesystem
- *   - WRITE access only to declared write paths (workdir + /tmp by default)
+ * The wrapper gives the spawned process (default policy):
+ *   - READ access: macOS — the whole host filesystem; Linux — only what is
+ *     mounted: /usr, /etc, /opt, /bin, /sbin, /lib*, plus the declared read and
+ *     write paths
+ *   - WRITE access only to declared write paths (workdir, temp dirs and the
+ *     usual tool caches by default)
  *   - NETWORK access configurable (default: denied — set GIZZI_SANDBOX_ALLOW_NETWORK
  *     or an explicit policy override for npm/cargo/etc.)
+ *
+ * `strict: true` (run_code: untrusted scripts) narrows that: reads limited to
+ * system dirs + declared paths (macOS denies home, /Users, /Volumes, per-user
+ * temp and Keychains), writes to workdir + declared paths only, network always
+ * off, and on Linux a private /tmp plus PID/IPC namespaces and a new session.
  *
  * The agent's reasoning, tool dispatch, and API connections are completely
  * outside this boundary — only subprocesses spawned by the Bash tool are wrapped.
  */
 import path from "path"
 import os from "os"
-import { writeFile, unlink } from "fs/promises"
+import { realpathSync } from "fs"
 import { Log } from "@/shared/util/log"
 import { NetworkProxy, type NetworkProxyHandle } from "@/runtime/integrations/shell/network-proxy"
 
@@ -46,6 +54,15 @@ export interface SandboxPolicy {
    * bound read-only (e.g. run_code's Python env under the gizzi data dir).
    */
   allowReadPaths?: string[]
+  /**
+   * Untrusted-code mode (run_code). Reads: system files plus cwd and the
+   * declared read/write paths only — on macOS $HOME, /Users, /Volumes,
+   * /private/var/folders and /Library/Keychains are denied. Writes: cwd and
+   * allowWritePaths only (no shared temp or cache dirs; point TMPDIR/HOME into
+   * cwd). Network is always off, whatever allowNetwork says. Linux also gets a
+   * private /tmp, its own PID and IPC namespaces and a new session.
+   */
+  strict?: boolean
 }
 
 export type SandboxDriver = "bwrap" | "sandbox-exec" | "none"
@@ -97,11 +114,12 @@ export namespace Sandbox {
 
   /**
    * The full set of paths a sandboxed process may write to, given a cwd and
-   * policy. Shared by bwrapArgs, writeSeatbeltProfile, and isWriteAllowed so
+   * policy. Shared by bwrapArgs, seatbeltProfile, and isWriteAllowed so
    * the app-layer check (used by file-write tools) can never drift from what
    * the OS-level sandbox actually permits.
    */
   function writeAllowlist(cwd: string, policy: SandboxPolicy): string[] {
+    if (policy.strict) return [...new Set([cwd, ...policy.allowWritePaths])]
     return [
       cwd,
       os.tmpdir(),
@@ -132,7 +150,8 @@ export namespace Sandbox {
     })
   }
 
-  function bwrapArgs(
+  /** Exported for tests; `wrap` is the entry point. */
+  export function bwrapArgs(
     command: string,
     shell: string,
     cwd: string,
@@ -140,6 +159,11 @@ export namespace Sandbox {
     proxyHandle?: NetworkProxyHandle,
   ): WrappedCommand {
     const args: string[] = []
+    const strict = policy.strict === true
+
+    // Strict: a private, empty /tmp. Mounted first so binds of paths under
+    // /tmp (e.g. a run folder or read path there) land on top of it.
+    if (strict) args.push("--tmpfs", "/tmp")
 
     // ── Filesystem binds ──────────────────────────────────
     // Bind the host's entire root read-only as the base layer,
@@ -164,7 +188,7 @@ export namespace Sandbox {
       args.push("--ro-bind-try", p, p)
     }
 
-    // Write access to workdir and user home area
+    // Write access to workdir and user home area (strict: workdir + declared only)
     const writePaths = writeAllowlist(cwd, policy)
 
     for (const p of writePaths) {
@@ -181,7 +205,9 @@ export namespace Sandbox {
 
     // ── Process isolation ─────────────────────────────────
     args.push("--die-with-parent")
-    // Don't unshare PID — child tool calls like `git` need to see the parent shell
+    // Don't unshare PID — child tool calls like `git` need to see the parent shell.
+    // Strict runs untrusted code that needs no view of host processes.
+    if (strict) args.push("--unshare-pid", "--unshare-ipc", "--new-session")
 
     // ── Network ─────────────────────────────────────────────
     // Full block, or domain-allowlisted (proxy-only): both fully isolate the
@@ -190,7 +216,7 @@ export namespace Sandbox {
     // below. Only a bare `allowNetwork: true` with no domain list skips this
     // and leaves networking untouched (host's namespace, unrestricted).
     let finalCommand = command
-    if (!policy.allowNetwork) {
+    if (strict || !policy.allowNetwork) {
       args.push("--unshare-net")
     } else if (proxyHandle?.mode === "unix") {
       args.push("--unshare-net")
@@ -265,51 +291,112 @@ ${networkRule}
 `
   }
 
-  // Profile files are keyed by sessionID so concurrent sessions don't collide
-  const profilePaths = new Map<string, string>()
+  const q = (p: string) => `"${p.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`
 
-  export async function writeSeatbeltProfile(
-    sessionID: string,
-    policy: SandboxPolicy,
-    cwd: string,
-    proxyHandle?: NetworkProxyHandle,
-  ): Promise<string> {
-    const existing = profilePaths.get(sessionID)
-    if (existing) return existing
-
-    const profile = buildSeatbeltProfile(writeAllowlist(cwd, policy), policy, proxyHandle)
-    const profilePath = path.join(os.tmpdir(), `gizzi-sandbox-${sessionID}.sb`)
-    await writeFile(profilePath, profile, "utf8")
-    profilePaths.set(sessionID, profilePath)
-    log.info("wrote sandbox profile", { sessionID, profilePath })
-    return profilePath
+  /** The path as given plus its real path (Seatbelt matches resolved paths: /var → /private/var). */
+  function realVariants(p: string): string[] {
+    const abs = path.resolve(p)
+    let real = abs
+    try {
+      real = realpathSync(abs)
+    } catch {
+      if (abs === "/var" || abs.startsWith("/var/") || abs === "/tmp" || abs.startsWith("/tmp/")) real = `/private${abs}`
+    }
+    return real === abs ? [abs] : [abs, real]
   }
 
+  /**
+   * Strict (untrusted-code) Seatbelt profile. SBPL is last-match-wins:
+   * reads are allowed broadly so the dyld cache, /System and /usr load, then
+   * the user's data locations are denied, then the run folder and declared
+   * paths are re-allowed. Metadata (stat/readlink, not directory listings)
+   * stays readable so path resolution through denied parents still works.
+   */
+  function buildStrictSeatbeltProfile(cwd: string, policy: SandboxPolicy): string {
+    const uniq = (list: string[]) => [...new Set(list.flatMap(realVariants))]
+    const subpaths = (list: string[]) => list.map((p) => `  (subpath ${q(p)})`).join("\n")
+    const denied = uniq([os.homedir(), "/Users", "/Volumes", "/private/var/folders", "/Library/Keychains"])
+    const readable = uniq([cwd, ...policy.allowWritePaths, ...(policy.allowReadPaths ?? [])])
+    const writable = uniq(writeAllowlist(cwd, policy))
+    return `(version 1)
+(deny default)
+
+; ── Process execution ───────────────────────────────────────
+(allow process-exec*)
+(allow process-fork)
+(allow process-info* (target self))
+(allow signal (target self))
+(allow signal (target children))
+
+; ── IPC / Mach: only what the Python stack needs ────────────
+; libinfo answers getpwuid (getpass.getuser, pwd); pandas + matplotlib
+; (fonts are files under mpl-data and /System/Library/Fonts) need no others.
+(allow ipc-posix-sem)
+(allow mach-lookup
+  (global-name "com.apple.system.opendirectoryd.libinfo")
+)
+
+; ── System info ─────────────────────────────────────────────
+(allow sysctl-read)
+(allow system-socket)
+
+; ── File reads: system yes, user data no, run folder yes ────
+(allow file-read*)
+(allow file-test-existence)
+(deny file-read*
+${subpaths(denied)}
+)
+(allow file-read-metadata)
+(allow file-read*
+${subpaths(readable)}
+)
+
+; ── File writes: run folder (+ declared) only ───────────────
+(allow file-write*
+${subpaths(writable)}
+)
+(allow file-write-data (literal "/dev/null"))
+
+; ── Network: none (strict) ──────────────────────────────────
+; ── Devices: ioctl on already-open fds; no IOKit ────────────
+(allow file-ioctl)
+`
+  }
+
+  /**
+   * The Seatbelt profile text for a policy. Exported for tests; the default
+   * (non-strict) text is unchanged from when it was written to a file.
+   */
+  export function seatbeltProfile(cwd: string, policy: SandboxPolicy, proxyHandle?: NetworkProxyHandle): string {
+    if (policy.strict) return buildStrictSeatbeltProfile(cwd, policy)
+    return buildSeatbeltProfile(writeAllowlist(cwd, policy), policy, proxyHandle)
+  }
+
+  /**
+   * Session teardown. Profiles are passed inline (`sandbox-exec -p`), so there
+   * is no profile file to delete any more (it used to live in writable tmp,
+   * where a sandboxed process could rewrite the next command's profile); this
+   * stops the session's network proxy.
+   */
   export async function cleanupProfile(sessionID: string): Promise<void> {
-    const p = profilePaths.get(sessionID)
-    if (p) {
-      profilePaths.delete(sessionID)
-      await unlink(p).catch(() => {})
-    }
     await NetworkProxy.stop(sessionID)
   }
 
-  async function sandboxExecArgs(
+  function sandboxExecArgs(
     command: string,
     shell: string,
     cwd: string,
-    sessionID: string,
     policy: SandboxPolicy,
     proxyHandle?: NetworkProxyHandle,
-  ): Promise<WrappedCommand> {
-    const profilePath = await writeSeatbeltProfile(sessionID, policy, cwd, proxyHandle)
+  ): WrappedCommand {
+    const profile = seatbeltProfile(cwd, policy, proxyHandle)
     const finalCommand =
       proxyHandle?.mode === "tcp"
         ? `export HTTP_PROXY=http://127.0.0.1:${proxyHandle.port} HTTPS_PROXY=http://127.0.0.1:${proxyHandle.port}; ${command}`
         : command
     return {
       bin: "sandbox-exec",
-      args: ["-f", profilePath, shell, "-c", finalCommand],
+      args: ["-p", profile, shell, "-c", finalCommand],
     }
   }
 
@@ -334,7 +421,7 @@ ${networkRule}
     log.info("wrapping command", { driver, sessionID: opts.sessionID, cwd: opts.cwd })
 
     let proxyHandle: NetworkProxyHandle | undefined
-    if (opts.policy.allowNetwork && opts.policy.allowedDomains?.length) {
+    if (!opts.policy.strict && opts.policy.allowNetwork && opts.policy.allowedDomains?.length) {
       if (driver === "bwrap" && !NetworkProxy.hasSocat()) {
         throw new Error(
           "Domain-allowlisted network access requires `socat` on Linux (bridges the sandbox's " +
@@ -349,7 +436,7 @@ ${networkRule}
       return bwrapArgs(opts.command, opts.shell, opts.cwd, opts.policy, proxyHandle)
     }
 
-    // sandbox-exec (macOS) — async because it writes a profile file
-    return sandboxExecArgs(opts.command, opts.shell, opts.cwd, opts.sessionID, opts.policy, proxyHandle)
+    // sandbox-exec (macOS) — the profile is passed inline with -p
+    return sandboxExecArgs(opts.command, opts.shell, opts.cwd, opts.policy, proxyHandle)
   }
 }

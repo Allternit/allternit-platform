@@ -40,9 +40,9 @@ Each run starts from a fresh folder, so the agent re-reads your file every time.
 
 ## Privacy
 
-The script runs on the computer where your agent runs: your own computer, or your cloud computer. It runs inside the operating system's sandbox with the network turned off and a clean environment, so it can't see your API keys or send your data anywhere. It can read only the files you attached and can write only in its own run folder.
+The script runs on the computer where your agent runs: your own computer, or your cloud computer. It runs inside the operating system's sandbox with the network turned off and a clean environment, so it can't see your API keys or send your data anywhere. The script can read only your attached files and the Python environment, not your home folder or other files on the computer, and it can write only in its own output folder.
 
-The sandbox needs macOS or Linux. On Linux it needs bubblewrap installed. On Windows, or on Linux without bubblewrap, the agent can't run code and says so instead of running it unprotected.
+The sandbox needs macOS or Linux. On Linux it needs bubblewrap installed. On Windows, or on Linux without bubblewrap, the agent can't run code and says so instead of running it unprotected. Allternit cloud computers can't start the sandbox yet, so there the agent tells you running code isn't available on that computer yet.
 
 ## Permissions
 

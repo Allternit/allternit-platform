@@ -2,12 +2,14 @@
  * run_code — run Python on the files the person attached, in the OS sandbox.
  *
  * Each call gets `<data>/runs/<session>/<call>/` with `in/` (the attachments,
- * staged from data URLs, uploads or http URLs) and `out/` (what the script
- * saves). The script runs with the uv-managed venv's python (runtime/python/env.ts)
- * inside the same sandbox as Bash (bwrap / sandbox-exec), network OFF, write
- * access to the run dir plus the sandbox's temp dirs, a clean environment
- * (no API keys), MPLBACKEND=Agg, and `ulimit -v` on Linux. stdout/stderr are
- * capped at 64 KB each; files in `out/` at 20 MB in total.
+ * staged from data: URLs or allternit-api upload paths only) and `out/` (what
+ * the script saves). The script runs with the uv-managed venv's python
+ * (runtime/python/env.ts) inside the OS sandbox (bwrap / sandbox-exec) in
+ * STRICT mode: it can read only system files, the run folder and the Python
+ * env (not $HOME, other users, volumes or Keychains), write only the run folder
+ * (TMPDIR, HOME and MPLCONFIGDIR point inside it), no network, a clean
+ * environment (no API keys), MPLBACKEND=Agg, and `ulimit -v` on Linux.
+ * stdout/stderr are capped at 64 KB each; files in `out/` at 20 MB in total.
  *
  * The result lists `files[] {name, mediaType, path}`. allternit-api, which
  * shares this host, ingests those paths into uploads on the tool-result event
@@ -18,7 +20,6 @@ import z from "zod/v4"
 import path from "path"
 import fs from "fs/promises"
 import { spawn, type ChildProcess } from "child_process"
-import { fileURLToPath } from "url"
 import { Tool } from "@/runtime/tools/builtins/tool"
 import DESCRIPTION from "@/runtime/tools/builtins/run_code.txt"
 import { Global } from "@/runtime/context/global"
@@ -27,6 +28,7 @@ import { Shell } from "@/runtime/integrations/shell/shell"
 import { ProcessRegistry } from "@/runtime/process-registry"
 import { PythonEnv } from "@/runtime/python/env"
 import { platformApiBase, platformFetch } from "@/runtime/bots/platform-api"
+import { UPLOAD_PATH_PREFIX } from "@/runtime/session/upload-part"
 import type { MessageV2 } from "@/runtime/session/message-v2"
 import { Log } from "@/shared/util/log"
 
@@ -40,6 +42,8 @@ const MAX_OUT_FILES = 20
 const MAX_INPUT_FILES = 20
 const MAX_INPUT_BYTES = 100 * 1024 * 1024
 const MAX_CODE_CHARS = 200_000
+/** How much of the script the permission ask carries for the approval card. */
+const ASK_CODE_CHARS = 4096
 /** Linux address-space cap (KB): numpy/BLAS reserve a lot of virtual memory. */
 const LINUX_VMEM_KB = 8 * 1024 * 1024
 
@@ -51,12 +55,24 @@ export interface RunCodeFile {
   path: string
 }
 
+/** A file in `out/` that run_code did not return, and why. */
+export interface RunCodeSkipped {
+  name: string
+  /** `over_limit`: past the 20-file / 20 MB caps. */
+  reason: "over_limit"
+}
+
 export interface RunCodeMetadata {
   stdout: string
   stderr: string
   exit_code: number | null
   files: RunCodeFile[]
+  /** Files left out (allternit-api's ingest reads this key first). */
+  skipped: RunCodeSkipped[]
   inputs: string[]
+  /** Absolute run folder (`<data>/runs/<session>/<call>`). */
+  runDir: string
+  /** Same as runDir; kept for readers of the first version. */
   workdir: string
   setup: string[]
   timed_out: boolean
@@ -94,6 +110,21 @@ const EXT_FOR_MIME: Record<string, string> = {
   "image/png": "png",
   "image/jpeg": "jpg",
   "application/pdf": "pdf",
+}
+
+/** The one-line error when the OS sandbox exists but cannot start (e.g. bwrap in an unprivileged container). */
+export const SANDBOX_CANNOT_START = "Running code isn't available on this computer yet: the sandbox can't start."
+
+/**
+ * bwrap and sandbox-exec report their own setup failures as `<tool>: <reason>`
+ * on stderr and exit non-zero before the script starts (on an unprivileged
+ * Incus container: `bwrap: Failed to make / slave: Permission denied`).
+ * Returns that line, or undefined when the script itself ran.
+ */
+export function sandboxStartFailure(bin: string, exitCode: number | null, stdout: string, stderr: string): string | undefined {
+  if (exitCode === 0 || stdout.length > 0) return undefined
+  const first = stderr.trimStart().split("\n")[0] ?? ""
+  return first.startsWith(`${path.basename(bin)}: `) ? first : undefined
 }
 
 export function mediaTypeFor(name: string): string {
@@ -186,10 +217,17 @@ function nameFromUrl(url: string): string | undefined {
   }
 }
 
-const UPLOAD_PREFIX = "/api/v1/uploads/"
+/** One upload id segment: `/api/v1/uploads/<id>` and nothing below or beside it. */
+const UPLOAD_PATH = new RegExp(`^${UPLOAD_PATH_PREFIX.replace(/\//g, "\\/")}[A-Za-z0-9_-][A-Za-z0-9._-]*$`)
 
-/** The bytes behind a file part's url (data:, upload path, http(s), file:). */
-async function readAttachment(url: string, signal: AbortSignal): Promise<Buffer> {
+/**
+ * The bytes behind a file part's url. Only two sources are accepted: a data:
+ * URL, or an allternit-api upload path (`/api/v1/uploads/<id>`, relative or
+ * absolute on the API this gizzi talks to). Never file: URLs or arbitrary
+ * http(s): the staging step runs outside the sandbox, so it must not become a
+ * way to pull host files or fetch from anywhere.
+ */
+export async function readAttachment(url: string, signal: AbortSignal): Promise<Buffer> {
   if (url.startsWith("data:")) {
     const comma = url.indexOf(",")
     if (comma < 0) throw new Error("malformed data URL")
@@ -197,22 +235,28 @@ async function readAttachment(url: string, signal: AbortSignal): Promise<Buffer>
     const body = url.slice(comma + 1)
     return header.endsWith(";base64") ? Buffer.from(body, "base64") : Buffer.from(decodeURIComponent(body))
   }
-  if (url.startsWith("file:")) return fs.readFile(fileURLToPath(url))
-  const fetchSignal = AbortSignal.any([signal, AbortSignal.timeout(60_000)])
-  // Uploads live on the allternit-api this gizzi talks to; send its credential.
-  const base = new URL(platformApiBase())
-  const parsed = new URL(url, base)
-  let res: Response
-  if (parsed.origin === base.origin && parsed.pathname.startsWith(UPLOAD_PREFIX)) {
-    const rel = parsed.pathname + parsed.search
-    res = await platformFetch("GET", rel, undefined, { signal: fetchSignal, accept: "*/*" }).catch(() =>
-      fetch(`${platformApiBase()}${rel}`, { signal: fetchSignal }),
+  const refuse = () =>
+    new Error(
+      "run_code only stages attachments sent in the chat (data: URLs or allternit-api uploads at " +
+        `${UPLOAD_PATH_PREFIX}<id>); it does not read local file: paths or download from other URLs.`,
     )
-  } else if (parsed.protocol === "http:" || parsed.protocol === "https:") {
-    res = await fetch(parsed, { signal: fetchSignal, redirect: "follow" })
-  } else {
-    throw new Error(`unsupported URL scheme ${parsed.protocol}`)
+  const base = new URL(platformApiBase())
+  let parsed: URL
+  try {
+    parsed = new URL(url, base)
+  } catch {
+    throw refuse()
   }
+  const isRelative = url.startsWith("/") && !url.startsWith("//")
+  if ((!isRelative && parsed.origin !== base.origin) || !UPLOAD_PATH.test(parsed.pathname) || url.includes("..")) {
+    throw refuse()
+  }
+  // Uploads live on the allternit-api this gizzi talks to; send its credential.
+  const fetchSignal = AbortSignal.any([signal, AbortSignal.timeout(60_000)])
+  const rel = parsed.pathname
+  const res = await platformFetch("GET", rel, undefined, { signal: fetchSignal, accept: "*/*" }).catch(() =>
+    fetch(`${platformApiBase()}${rel}`, { signal: fetchSignal, redirect: "error" }),
+  )
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   return Buffer.from(await res.arrayBuffer())
 }
@@ -294,16 +338,24 @@ export const RunCodeTool = Tool.define<typeof parameters, RunCodeMetadata>("run_
     }
     const driver = Sandbox.detect()
     if (driver === "none") {
-      throw new Error(
-        "run_code only runs inside the OS sandbox and none is available. Install bubblewrap (e.g. `apt install bubblewrap`).",
-      )
+      // Never run unsandboxed: no driver means no run.
+      throw new Error(`${SANDBOX_CANNOT_START} No OS sandbox was found (install bubblewrap).`)
     }
 
     await ctx.ask({
       permission: "run_code",
       patterns: ["python"],
       always: ["*"],
-      metadata: { language: params.language, files: params.files },
+      // The approval card shows the script itself, not just "python".
+      metadata: {
+        language: params.language,
+        files: params.files,
+        code:
+          params.code.length > ASK_CODE_CHARS
+            ? `${params.code.slice(0, ASK_CODE_CHARS)}\n…(${params.code.length - ASK_CODE_CHARS} more characters)`
+            : params.code,
+        code_truncated: params.code.length > ASK_CODE_CHARS,
+      },
     })
 
     const callKey = segment(ctx.callID || `run-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`)
@@ -364,9 +416,11 @@ export const RunCodeTool = Tool.define<typeof parameters, RunCodeMetadata>("run_
       shell: "/bin/sh",
       cwd: workdir,
       sessionID: sandboxKey,
-      policy: { allowWritePaths: [workdir], allowNetwork: false, allowReadPaths: [PythonEnv.root()] },
+      // Strict: reads limited to system files + this run folder + the Python env;
+      // writes to this run folder only (HOME/TMPDIR/MPLCONFIGDIR point into it).
+      policy: { strict: true, allowWritePaths: [workdir], allowNetwork: false, allowReadPaths: [PythonEnv.root()] },
     })
-    if (!wrapped) throw new Error("The sandbox became unavailable; run_code did not run.")
+    if (!wrapped) throw new Error(SANDBOX_CANNOT_START)
 
     ctx.metadata({ title: "Running Python" })
     const timeoutS = params.timeout_s ?? RUN_CODE_DEFAULT_TIMEOUT_S
@@ -395,7 +449,11 @@ export const RunCodeTool = Tool.define<typeof parameters, RunCodeMetadata>("run_
       const onAbort = () => void kill()
       ctx.abort.addEventListener("abort", onAbort, { once: true })
       exitCode = await new Promise<number | null>((resolve, reject) => {
-        proc.once("error", reject)
+        proc.once("error", (error) => {
+          // bwrap / sandbox-exec missing or not executable: same clear message, no stack.
+          log.warn("sandbox spawn failed", { bin, error: error.message })
+          reject(new Error(SANDBOX_CANNOT_START))
+        })
         proc.once("close", (code) => {
           exited = true
           resolve(code)
@@ -408,18 +466,25 @@ export const RunCodeTool = Tool.define<typeof parameters, RunCodeMetadata>("run_
       await Sandbox.cleanupProfile(sandboxKey)
     }
 
-    const { files, skipped } = await collectOut(outDir)
+    const failure = timedOut ? undefined : sandboxStartFailure(wrapped.bin, exitCode, stdout.text(), stderr.text())
+    if (failure) {
+      log.warn("sandbox could not start", { driver, failure })
+      throw new Error(SANDBOX_CANNOT_START)
+    }
+
+    const collected = await collectOut(outDir)
+    const files = collected.files
+    const skipped: RunCodeSkipped[] = collected.skipped.map((name) => ({ name, reason: "over_limit" }))
     let errText = stderr.text()
     if (timedOut) errText += `${errText ? "\n" : ""}Stopped: the script ran past its ${timeoutS}s limit.`
-    if (skipped.length) {
-      errText += `${errText ? "\n" : ""}Not returned (over ${MAX_OUT_FILES} files or ${MAX_OUT_BYTES / 1024 / 1024} MB): ${skipped.join(", ")}`
-    }
     const metadata: RunCodeMetadata = {
       stdout: stdout.text(),
       stderr: errText,
       exit_code: timedOut ? null : exitCode,
       files,
+      skipped,
       inputs,
+      runDir: workdir,
       workdir,
       setup: env.setup,
       timed_out: timedOut,
@@ -433,6 +498,12 @@ export const RunCodeTool = Tool.define<typeof parameters, RunCodeMetadata>("run_
         stdout: metadata.stdout,
         stderr: metadata.stderr,
         files: files.map((f) => ({ name: f.name, mediaType: f.mediaType, size: f.size })),
+        ...(skipped.length
+          ? {
+              skipped: skipped.map((f) => f.name),
+              skipped_reason: `over the ${MAX_OUT_FILES}-file / ${MAX_OUT_BYTES / 1024 / 1024} MB limit`,
+            }
+          : {}),
         inputs,
         ...(env.setup.length ? { setup: env.setup } : {}),
       },
