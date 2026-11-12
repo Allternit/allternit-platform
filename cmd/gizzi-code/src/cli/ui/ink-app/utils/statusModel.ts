@@ -62,6 +62,21 @@ export function countUserTurns(messages: Array<any> | undefined): number {
   }).length
 }
 
+export type ServicesLine = { overall: string; summary: string; checkedAt: string } | null
+
+/** Allternit services line for /status. null when offline or the status page is unreachable. */
+export async function getServicesLine(): Promise<ServicesLine> {
+  try {
+    const { isEssentialTrafficOnly } = await import('../../../../shared/utils/privacyLevel.js')
+    if (isEssentialTrafficOnly()) return null
+    const sv = await import('../../../utils/serviceStatus.js')
+    const { status } = await sv.fetchServiceStatus({ timeoutMs: 2_000 })
+    return { overall: status.overall, summary: sv.summarizeServices(status), checkedAt: status.lastCheckedAt }
+  } catch {
+    return null
+  }
+}
+
 export type SessionStatus = {
   schemaVersion: number
   model: string
@@ -98,6 +113,8 @@ export type SessionStatus = {
     path?: string
     name?: string
   }
+  /** Allternit service status; null when it could not be read. */
+  services: ServicesLine
   errors: string[]
 }
 
@@ -187,6 +204,7 @@ export async function buildSessionStatus(
       ...(workspace?.path ? { path: workspace.path } : {}),
       ...(workspace?.identity?.name ? { name: workspace.identity.name } : {}),
     },
+    services: await getServicesLine(),
     errors: [],
   }
 }

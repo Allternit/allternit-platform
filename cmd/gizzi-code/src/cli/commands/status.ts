@@ -15,6 +15,11 @@ export const StatusCommand = cmd({
         type: "boolean",
         default: false,
       })
+      .option("services", {
+        describe: "show Allternit service status from status.allternit.com (exit 0 operational, 1 degraded, 2 down or unreachable)",
+        type: "boolean",
+        default: false,
+      })
       .option("inline", {
         describe: "output status as plain text",
         type: "boolean",
@@ -22,6 +27,18 @@ export const StatusCommand = cmd({
       })
   },
   handler: async (args) => {
+    if (args.services) {
+      const { fetchServiceStatus, statusUrl, exitCodeFor, renderServiceTable } = await import("@/cli/utils/serviceStatus")
+      const url = statusUrl()
+      try {
+        const { raw, status } = await fetchServiceStatus({ url })
+        process.stdout.write((args.json ? JSON.stringify(raw, null, 2) : renderServiceTable(status)) + "\n")
+        process.exit(exitCodeFor(status))
+      } catch (e) {
+        process.stderr.write(`gizzi status --services: could not read ${url}: ${e instanceof Error ? e.message : String(e)}\n`)
+        process.exit(2)
+      }
+    }
     await bootstrap(process.cwd(), async () => {
       const defaultModel = getDefaultMainLoopModelSetting()
       const model = getRuntimeMainLoopModel({
