@@ -4192,6 +4192,25 @@
       ]
     },
     {
+      "id": "feature:share-thread-link",
+      "label": "Share a thread by link",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "A user creates a public link to a thread snapshot, opens it signed out, and can revoke it. cloud-api stores and serves the snapshot; clients (web, iOS, gizzi) are recorded on feat/frontier-lane1 and merge into this entry.",
+      "touches": [
+        "allternit/cmd/allternit-cloud-api/src/routes/thread_shares.rs"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-12",
+          "note": "cloud-api route built on feat/frontier-lane1-share, not yet released."
+        }
+      ],
+      "evidence": [
+        "allternit/cmd/allternit-cloud-api/src/routes/thread_shares.rs"
+      ]
+    },
+    {
       "id": "feature:live-run-status",
       "label": "Live run status pill and thought stream",
       "product": "product:ai-allternit",
