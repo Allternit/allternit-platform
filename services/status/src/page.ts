@@ -135,6 +135,8 @@ export function renderPage(
   incidents: IncidentsResponse,
   opts: { now?: string; historyHref?: string } = {},
 ): string {
+  // Before the first tick the store reports the epoch; say so instead of "1970".
+  const neverChecked = !status.last_checked_at || new Date(status.last_checked_at).getTime() < Date.UTC(2000, 0, 1);
   const nowIso = opts.now ?? status.last_checked_at;
   const nowD = new Date(nowIso);
   const now = isNaN(nowD.getTime()) ? new Date(status.last_checked_at) : nowD;
@@ -181,7 +183,7 @@ export function renderPage(
 <nav aria-label="Site"><a href="https://allternit.com/support">Support</a></nav>
 </div></header>
 <main class="wrap">
-<section class="banner b-${banner}" role="status">${icon(banner, "ico")}<div><h1>${BANNER[banner]}</h1><p>Last checked <time datetime="${esc(status.last_checked_at)}" data-rel>${fmtTime(status.last_checked_at)}</time></p></div></section>
+<section class="banner b-${banner}" role="status">${icon(banner, "ico")}<div><h1>${BANNER[banner]}</h1><p>${neverChecked ? "Not checked yet. The first check runs within a few minutes." : `Last checked <time datetime="${esc(status.last_checked_at)}" data-rel>${fmtTime(status.last_checked_at)}</time>`}</p></div></section>
 ${openHtml}
 <h2>Components</h2>
 <p class="lead">Each cell is one day (UTC). Uptime is measured by our checks, over the days they have run (up to the last 90).</p>
