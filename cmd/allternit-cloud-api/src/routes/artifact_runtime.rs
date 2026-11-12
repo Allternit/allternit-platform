@@ -601,6 +601,7 @@ pub(crate) async fn billed_completion(
     let response = state.model_router.chat_completions(request).await.map_err(ApiError::from)?;
     let response = inference_settlement::meter_json_response(
         &state.db, &viewer, &alias, pool_id.as_deref(), true, &prices, prompt_chars, response,
+        &inference_settlement::InferenceAttribution::default(),
     )
     .await?;
     let status = response.status();

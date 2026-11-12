@@ -1,0 +1,44 @@
+---
+title: 'Usage and logs'
+description: 'Usage reports grouped by day, model, project, key or client, request logs, CSV export, and body capture.'
+---
+
+Usage routes live under `/api/v1/me/usage`. They accept any signed-in user or Gizzi token, so the console and `gizzi usage` read the same data.
+
+## Report
+
+`GET /api/v1/me/usage/report`
+
+| Query | Values |
+|---|---|
+| `from`, `to` | Date range |
+| `group_by` | `day`, `model`, `project`, `key`, `client` |
+| `project_id`, `client` | Filters |
+| `scope` | `me` (default) or `org` |
+| `format` | `json` (default) or `csv` |
+
+The JSON body is `{ "rows": [{ "group", "requests", "prompt_tokens", "completion_tokens", "cost_usd" }] }`. The CSV starts with a header row. `scope=org` needs an organization admin, and the organization comes from your session, never from a parameter. You cannot read another user's or organization's usage.
+
+## Client labels
+
+The server sets the `client` value on each call. A device token is `runtime`, a Playground key is `playground`, a request with the header `X-Allternit-Client: gizzi-code/<version>` is `gizzi-code`, and anything else is `api`.
+
+## Request log
+
+- `GET /api/v1/me/usage/requests` lists requests, paged by cursor.
+- `GET /api/v1/me/usage/requests/:request_id` returns one request.
+
+The `request_id` is the `x-request-id` header of the original response. The log lists billed requests only. A call that failed before it was billed has no row. Both endpoints accept `scope=org` (organization admins only), and the Logs page has a scope switch for admins that changes it between just you and the whole organization.
+
+## Request and response bodies
+
+Bodies are off by default. The log keeps metadata (model, tokens, cost, latency, key, project, client) for every request. A request detail includes the request and response bodies only when both conditions hold: the project has `log_bodies` turned on (`PATCH` on the project), and the deployment flag `PLATFORM_LOG_BODIES` is set. Captured bodies are kept for 30 days. In the console, the toggle "Keep request and response bodies for 30 days (for Logs replay)" is on the project's Edit panel. It appears only when the console build has `VITE_LOG_BODIES=1` and the server has `PLATFORM_LOG_BODIES=1`; both are needed, and both are off by default.
+
+## Gizzi
+
+`gizzi usage` prints the same report from the terminal: `--days`, `--group-by` and `--json`.
+
+## Related
+
+- [Usage API](/api/usage)
+- [Governance](/console/governance)

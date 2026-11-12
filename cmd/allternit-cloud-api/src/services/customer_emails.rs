@@ -13,6 +13,14 @@
 //!
 //! Sending is on when `ALLTERNIT_CUSTOMER_EMAILS=1`. The team notes (new
 //! sign-up, new paying customer) go out through [`super::ops_alert`] either way.
+//!
+//! Platform spend alerts ([`spend_alert_email`]) go to an org's
+//! `spend_alert_email` (console Security page) when a project crosses 50, 80
+//! or 100% of its monthly cap. They need `ALLTERNIT_CUSTOMER_EMAILS=1` AND
+//! `PLATFORM_SPEND_ALERT_EMAILS=1` (both Eoj gates); otherwise the alert is
+//! only recorded (`platform_spend_alerts`, the `usage.threshold` webhook).
+//! They are not claimed in `customer_emails` (whose rows are per Clerk user):
+//! the `platform_spend_alerts` insert already makes each one fire once.
 
 use std::process::Stdio;
 
@@ -30,6 +38,13 @@ const DEFAULT_SENDMAIL: &str = "/usr/sbin/sendmail";
 
 pub fn enabled() -> bool {
     matches!(std::env::var(ENV_ENABLED).as_deref(), Ok("1") | Ok("true"))
+}
+
+const ENV_SPEND_ALERTS: &str = "PLATFORM_SPEND_ALERT_EMAILS";
+
+/// Spend alert emails need this switch and [`enabled`].
+pub fn spend_alert_emails_enabled() -> bool {
+    enabled() && matches!(std::env::var(ENV_SPEND_ALERTS).as_deref(), Ok("1") | Ok("true"))
 }
 
 /// Who an email goes to.
@@ -339,6 +354,63 @@ pub fn auto_topup_failed_email(recipient: &Recipient, amount_usd: f64, reason: &
         ],
     );
     Email { subject: "Auto top-up failed and is now off".to_string(), body, html }
+}
+
+/// A platform project crossed `percent` of its monthly spend cap.
+#[allow(clippy::too_many_arguments)]
+pub fn spend_alert_email(
+    recipient: &Recipient,
+    project_name: &str,
+    project_id: &str,
+    percent: i64,
+    spent_usd: f64,
+    cap_usd: f64,
+    period: &str,
+    console_url: &str,
+) -> Email {
+    let (spent, cap) = (format_usd(spent_usd), format_usd(cap_usd));
+    let name = one_line(project_name);
+    let reached = percent >= 100;
+    let subject = if reached {
+        format!("{name} reached its monthly spend cap")
+    } else {
+        format!("{name} has used {percent}% of its monthly spend cap")
+    };
+    let lead = format!(
+        "The Allternit Platform project \"{name}\" ({project_id}) has used ${spent} of its ${cap} spend cap for {period} ({percent}%)."
+    );
+    let next = if reached {
+        "Calls that cost money are now refused for this project until the cap is raised or the month ends. The cap resets on the 1st (UTC). You can raise it on the project's billing page in the console."
+    } else {
+        "At 100% the project's calls that cost money are refused until the cap is raised or the month ends. You can change the cap on the project's billing page in the console."
+    };
+    let body = format!("{}\n\n{lead}\n\n{next}\n\n{console_url}\n\n— Allternit\n", greeting(recipient));
+    let html = html::layout(
+        &lead,
+        &[
+            html::heading(if reached { "Spend cap reached" } else { "Spend alert" }),
+            html::paragraph(&greeting(recipient)),
+            html::paragraph(&lead),
+            html::facts_card(
+                "Spend this month",
+                &[
+                    ("Project", name.clone()),
+                    ("Used", format!("${spent}")),
+                    ("Cap", format!("${cap}")),
+                    ("Period", period.to_string()),
+                ],
+            ),
+            html::paragraph(next),
+            html::button("Open billing", console_url),
+        ],
+    );
+    Email { subject, body, html }
+}
+
+/// Send without a `customer_emails` claim, for callers that already make the
+/// send happen once (spend alerts: the `platform_spend_alerts` insert).
+pub async fn send_unclaimed(recipient: &Recipient, email: &Email) -> Result<(), String> {
+    sendmail(recipient, email).await
 }
 
 fn format_usd(value: f64) -> String {

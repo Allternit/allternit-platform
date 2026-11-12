@@ -14,20 +14,34 @@ export type GatedFeature =
   | "files"
   | "serviceAccounts"
   | "security"
-  | "gizziUsage"
-  | "spendLimits";
+  | "spendLimits"
+  | "caching"
+  | "tags"
+  | "orgWebhooks"
+  | "routingPolicy"
+  | "routeCredentials";
 
 /** "hidden" = not on cloud (honest state). "redirect" = send to another page. */
 export const CLOUD_AVAILABILITY: Record<
   GatedFeature,
-  { available: false; redirectTo?: string }
+  { available: boolean; redirectTo?: string }
 > = {
   batches: { available: false },
   files: { available: false },
   serviceAccounts: { available: false },
-  security: { available: false },
-  gizziUsage: { available: false },
+  // On cloud, Security is the organization policy page (key expiry, IP allowlist).
+  security: { available: true },
   spendLimits: { available: false, redirectTo: "/platform/billing" },
+  // /api/v1/gateway/caching and /api/v1/tags are runtime routes; cloud relays
+  // them to a paired runtime, so a cloud-only user gets an error.
+  caching: { available: false },
+  tags: { available: false },
+  // Cloud webhooks are per project (Platform API /v1/webhooks).
+  orgWebhooks: { available: false, redirectTo: "/platform/webhooks" },
+  // /api/v1/gateway/provider-routing and /api/v1/gateway/route-credentials are
+  // relayed to a paired runtime (src/lib/gateway-routing-policy.ts).
+  routingPolicy: { available: false },
+  routeCredentials: { available: false },
 };
 
 export function isCloudHost(gatewayUrl: string | undefined | null): boolean {
@@ -42,6 +56,19 @@ export function isCloudHost(gatewayUrl: string | undefined | null): boolean {
 /** Same source as api-client gatewayBase(): VITE_ALLTERNIT_GATEWAY_URL, default api.allternit.com. */
 export function isCloudGateway(): boolean {
   return isCloudHost(import.meta.env.VITE_ALLTERNIT_GATEWAY_URL);
+}
+
+/**
+ * Per-key and org IP allowlists. Off until the API origin only accepts
+ * Cloudflare traffic and passes a trusted client IP (server change; Eoj gate).
+ */
+export function ipAllowlistEnabled(): boolean {
+  return String(import.meta.env.VITE_KEY_IP_ALLOWLIST ?? "").trim() === "1";
+}
+
+/** Body logging for Logs replay. Needs PLATFORM_LOG_BODIES=1 on the server too. */
+export function requestLoggingEnabled(): boolean {
+  return String(import.meta.env.VITE_LOG_BODIES ?? "").trim() === "1";
 }
 
 export function fabricEnabled(): boolean {

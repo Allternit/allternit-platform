@@ -33,6 +33,7 @@ import {
 import { CommandPalette } from "@/components/console-ui/CommandPalette";
 import { AnnouncementModal } from "@/components/console-ui/AnnouncementModal";
 import { AllternitWordmark } from "@/components/AllternitWordmark";
+import { ProjectProvider, ProjectSwitcher } from "@/lib/project-context";
 
 function groupContainsPath(group: ConsoleNavGroup, pathname: string): boolean {
   return group.items.some(
@@ -514,6 +515,7 @@ export function ConsoleLayout({ children }: { children: React.ReactNode }) {
   );
 
   return (
+    <ProjectProvider>
     <div className="flex h-screen w-full overflow-hidden bg-[var(--bg-primary)] text-[var(--text-primary)]">
       {/* Desktop sidebar */}
       <aside
@@ -584,11 +586,16 @@ export function ConsoleLayout({ children }: { children: React.ReactNode }) {
               <HugeiconsIcon icon={ListIcon} size={20} />
             </button>
 
-            <nav className="hidden sm:flex items-center gap-2 text-[13px] text-[var(--text-secondary)]">
-              <span className="text-[var(--text-tertiary)]">Dashboard</span>
-              <HugeiconsIcon icon={ChevronRightIcon} size={14} className="text-[var(--text-tertiary)]" />
-              <span className="text-[var(--text-primary)] font-medium">{pageLabel}</span>
+            <nav className="hidden sm:flex min-w-0 items-center gap-2 text-[13px] text-[var(--text-secondary)]">
+              <span className="shrink-0 text-[var(--text-tertiary)]">Dashboard</span>
+              <HugeiconsIcon icon={ChevronRightIcon} size={14} className="shrink-0 text-[var(--text-tertiary)]" />
+              <span className="truncate text-[var(--text-primary)] font-medium">{pageLabel}</span>
             </nav>
+
+            {/* Platform API project scope (within the active organization): every /platform page and Rate limits follow it. */}
+            <div className="flex min-w-0 shrink-0 items-center empty:hidden sm:border-0 sm:border-l sm:border-solid sm:border-[var(--border-subtle)] sm:pl-4">
+              <ProjectSwitcher compact className="min-w-0" />
+            </div>
           </div>
 
           <div className="flex items-center gap-3 shrink-0">
@@ -634,5 +641,6 @@ export function ConsoleLayout({ children }: { children: React.ReactNode }) {
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
       <AnnouncementModal />
     </div>
+    </ProjectProvider>
   );
 }

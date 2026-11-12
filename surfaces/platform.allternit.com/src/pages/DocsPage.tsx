@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   BookOpen,
@@ -10,6 +10,45 @@ import {
   Terminal,
   Lightning,
 } from "@phosphor-icons/react";
+
+import { usePlatformProjects } from "./console/platform/shared";
+import { listProjectKeys, type ProjectKey } from "@/lib/platform-projects";
+
+type Lang = "curl" | "python" | "typescript";
+
+function snippet(lang: Lang, key: string): string {
+  if (lang === "curl") {
+    return `curl https://api.allternit.com/v1/chat/completions \\
+  -H "Authorization: Bearer ${key}" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "model": "kimi-k3",
+    "messages": [{"role": "user", "content": "Hello, Allternit"}]
+  }'`;
+  }
+  if (lang === "python") {
+    return `from openai import OpenAI
+
+client = OpenAI(base_url="https://api.allternit.com/v1", api_key="${key}")
+reply = client.chat.completions.create(
+    model="kimi-k3",
+    messages=[{"role": "user", "content": "Hello, Allternit"}],
+)
+print(reply.choices[0].message.content)`;
+  }
+  return `const res = await fetch("https://api.allternit.com/v1/chat/completions", {
+  method: "POST",
+  headers: {
+    Authorization: "Bearer ${key}",
+    "Content-Type": "application/json",
+  },
+  body: JSON.stringify({
+    model: "kimi-k3",
+    messages: [{ role: "user", content: "Hello, Allternit" }],
+  }),
+});
+console.log((await res.json()).choices[0].message.content);`;
+}
 
 const QUICK_START_STEPS = [
   {
@@ -62,6 +101,27 @@ const ENDPOINTS = [
 ];
 
 export function DocsPage() {
+  const projects = usePlatformProjects();
+  const projectId = projects.project?.id ?? null;
+  const [keys, setKeys] = useState<ProjectKey[] | null>(null);
+  const [lang, setLang] = useState<Lang>("curl");
+
+  useEffect(() => {
+    let live = true;
+    setKeys(null);
+    if (!projectId) return;
+    listProjectKeys(projectId)
+      .then((list) => live && setKeys(list))
+      .catch(() => live && setKeys([]));
+    return () => {
+      live = false;
+    };
+  }, [projectId]);
+
+  // Only the public key prefix is shown. The full token is never fetched.
+  const prefix = keys?.[0]?.prefix ?? null;
+  const keyText = prefix ? `${prefix}…` : "$ALLTERNIT_API_KEY";
+
   return (
     <div className="space-y-8">
       <div>
@@ -109,22 +169,73 @@ export function DocsPage() {
         </div>
       </section>
 
-      {/* Example */}
+      {/* Live quickstart */}
       <section className="space-y-4">
         <div className="flex items-center gap-2 text-[14px] font-semibold text-[var(--text-primary)]">
-          <Terminal size={18} className="text-[var(--accent-primary)]" /> Example request
+          <Terminal size={18} className="text-[var(--accent-primary)]" /> Your quickstart
+        </div>
+        <p className="text-[12px] text-[var(--text-secondary)] m-0">
+          {prefix ? (
+            <>
+              Using project <strong>{projects.project?.name}</strong>, key{" "}
+              <code className="font-mono">{prefix}…</code>. Replace it with the full token you
+              saved when you created the key.
+            </>
+          ) : (
+            <>
+              {projects.loading || (projectId && keys === null)
+                ? "Looking for your project key…"
+                : "No key yet for this project."}{" "}
+              <Link to="/api-keys" className="text-[var(--accent-primary)] hover:underline">
+                Create a key
+              </Link>
+              , then set it as ALLTERNIT_API_KEY.
+            </>
+          )}
+        </p>
+        <div className="flex gap-1" role="tablist" aria-label="Language">
+          {(["curl", "python", "typescript"] as Lang[]).map((l) => (
+            <button
+              key={l}
+              type="button"
+              role="tab"
+              aria-selected={lang === l}
+              onClick={() => setLang(l)}
+              className={`rounded-md px-2.5 py-1 text-[12px] font-medium border border-solid ${
+                lang === l
+                  ? "border-[var(--accent-primary)] text-[var(--accent-primary)]"
+                  : "border-[var(--border-subtle)] text-[var(--text-secondary)]"
+              }`}
+            >
+              {l === "typescript" ? "TypeScript" : l === "python" ? "Python" : "curl"}
+            </button>
+          ))}
         </div>
         <div className="rounded-xl border border-solid border-[var(--border-subtle)] bg-[var(--bg-primary)] p-4 overflow-x-auto">
           <pre className="text-[12px] font-mono leading-relaxed text-[var(--text-secondary)]">
-            <code>{`curl https://api.allternit.com/v1/chat/completions \\
-  -H "Authorization: Bearer \$ALLTERNIT_API_KEY" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "model": "deepseek-v4.1-flash",
-    "messages": [{"role": "user", "content": "Hello, Allternit"}],
-    "stream": false
-  }'`}</code>
+            <code>{snippet(lang, keyText)}</code>
           </pre>
+        </div>
+        <div className="flex flex-wrap gap-4 text-[12px]">
+          <a
+            href="https://docs.allternit.com/api/chat-completions"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-[var(--accent-primary)] hover:underline"
+          >
+            Inference API reference
+          </a>
+          <a
+            href="https://docs.allternit.com/api/platform/overview"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-[var(--accent-primary)] hover:underline"
+          >
+            Platform API reference
+          </a>
+          <Link to="/playground" className="text-[var(--accent-primary)] hover:underline">
+            Try it in the Playground
+          </Link>
         </div>
       </section>
 

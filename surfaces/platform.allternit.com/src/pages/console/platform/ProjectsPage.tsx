@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { Link } from "react-router-dom";
 import { Archive, CircleNotch, Cube, Key, PencilSimple, Plus, Pulse, X, CreditCard } from "@phosphor-icons/react";
 import { formatApiError } from "@/lib/api-client";
+import { requestLoggingEnabled } from "@/lib/availability";
 import { createProject, updateProject, type PlatformProject, type ProjectEnv } from "@/lib/platform-projects";
 import { Badge, EmptyState, MonoChip, SkeletonCard } from "@/components/console-ui";
 import { DESTRUCTIVE_BUTTON_CLASS, QUIET_BUTTON_CLASS } from "@/components/console-ui/buttonStyles";
@@ -152,6 +153,7 @@ function ProjectRow({
   const [tracing, setTracing] = useState(false);
   const [name, setName] = useState(project.name);
   const [cap, setCap] = useState(String(project.spend_cap_cents / 100));
+  const [logBodies, setLogBodies] = useState(Boolean(project.log_bodies));
   const [busy, setBusy] = useState(false);
   const [confirmArchive, setConfirmArchive] = useState(false);
 
@@ -164,7 +166,9 @@ function ProjectRow({
     setBusy(true);
     onError(null);
     try {
-      await updateProject(project.id, { name: name.trim(), spend_cap_cents: capCents });
+      await updateProject(project.id, { name: name.trim(), spend_cap_cents: capCents,
+        ...(requestLoggingEnabled() ? { log_bodies: logBodies } : {}),
+      });
       setEditing(false);
       await onChanged();
     } catch (err) {
@@ -235,6 +239,12 @@ function ProjectRow({
             Monthly spend cap (USD)
             <input value={cap} onChange={(e) => setCap(e.target.value)} inputMode="decimal" className={INPUT_CLASS} />
           </label>
+          {requestLoggingEnabled() && (
+            <label className="flex items-center gap-2 text-[12px] font-medium text-[var(--text-secondary)] sm:col-span-2">
+              <input type="checkbox" checked={logBodies} onChange={(e) => setLogBodies(e.target.checked)} />
+              Keep request and response bodies for 30 days (for Logs replay)
+            </label>
+          )}
           <div className="flex flex-wrap items-center gap-2 sm:col-span-2">
             <button type="button" className={PRIMARY_BUTTON_CLASS} disabled={busy} onClick={() => void save()}>
               {busy ? <CircleNotch size={14} className="animate-spin" aria-hidden /> : null} Save

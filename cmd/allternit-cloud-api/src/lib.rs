@@ -660,6 +660,11 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
 
         CorsLayer::new()
             .allow_origin(allowed_origins)
+            .expose_headers([
+                axum::http::HeaderName::from_static("x-request-id"),
+                axum::http::HeaderName::from_static("x-next-cursor"),
+                axum::http::header::CONTENT_DISPOSITION,
+            ])
             .allow_methods([
                 Method::GET,
                 Method::POST,
@@ -822,8 +827,13 @@ pub async fn start_server(state: Arc<ApiState>, addr: &str) -> Result<(), ApiErr
         let _ = shutdown_tx.send(());
     });
 
-    // Start server with graceful shutdown
-    axum::serve(listener, router)
+    // Start server with graceful shutdown. ConnectInfo carries the TCP peer so
+    // key IP allowlists can trust `X-Real-IP` only from a loopback proxy
+    // (services::api_keys::client_ip) and the rate limiter can key by address.
+    axum::serve(
+        listener,
+        router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
         .with_graceful_shutdown(async {
             let _ = shutdown_rx.await;
         })

@@ -49,8 +49,9 @@ import {
   CubeIcon,
   BubbleChatIcon,
   SmartPhone01Icon,
+  Audit01Icon,
 } from "@hugeicons/core-free-icons";
-import { fabricEnabled, isCloudGateway, type GatedFeature } from "@/lib/availability";
+import { fabricEnabled, isCloudGateway, isHiddenOnCloud, type GatedFeature } from "@/lib/availability";
 
 export type ConsoleNavIcon = typeof LayoutDashboardIcon;
 
@@ -130,7 +131,7 @@ const baseConsoleNav: ConsoleNavConfig = {
       items: [
         { to: "/analytics/usage", label: "Usage", icon: Analytics01Icon },
         { to: "/analytics/logs", label: "Logs", icon: DocumentValidationIcon },
-        { to: "/analytics/caching", label: "Caching", icon: GaugeIcon },
+        { to: "/analytics/caching", label: "Caching", icon: GaugeIcon, cloudHidden: "caching" },
         { to: "/analytics/rate-limits", label: "Rate limits", icon: Timer01Icon },
         { to: "/analytics/cost", label: "Cost", icon: Dollar01Icon },
       ],
@@ -140,15 +141,15 @@ const baseConsoleNav: ConsoleNavConfig = {
       icon: AiBrain01Icon,
       badge: "soon",
       items: [
-        { to: "/gizzi/usage", label: "Gizzi Code usage", icon: CoinsDollarIcon, cloudHidden: "gizziUsage" },
+        { to: "/gizzi/usage", label: "Gizzi Code usage", icon: CoinsDollarIcon },
       ],
     },
     {
       label: "Gateway",
       icon: ApiGatewayIcon,
       items: [
-        { to: "/gateway/routing-policy", label: "Routing policy", icon: Route01Icon },
-        { to: "/gateway/credentials", label: "Route credentials", icon: Key02Icon },
+        { to: "/gateway/routing-policy", label: "Routing policy", icon: Route01Icon, cloudHidden: "routingPolicy" },
+        { to: "/gateway/credentials", label: "Route credentials", icon: Key02Icon, cloudHidden: "routeCredentials" },
       ],
     },
     {
@@ -159,8 +160,9 @@ const baseConsoleNav: ConsoleNavConfig = {
         { to: "/manage/members", label: "Members", icon: UserGroupIcon },
         { to: "/manage/service-accounts", label: "Service accounts", icon: ShieldUserIcon, cloudHidden: "serviceAccounts" },
         { to: "/manage/security", label: "Security", icon: LockPasswordIcon, cloudHidden: "security" },
-        { to: "/manage/webhooks", label: "Organization webhooks", icon: WebhookIcon },
-        { to: "/manage/tags", label: "Tags", icon: Tag01Icon },
+        { to: "/manage/audit-log", label: "Audit log", icon: Audit01Icon },
+        { to: "/manage/webhooks", label: "Organization webhooks", icon: WebhookIcon, cloudHidden: "orgWebhooks" },
+        { to: "/manage/tags", label: "Tags", icon: Tag01Icon, cloudHidden: "tags" },
       ],
     },
     {
@@ -199,7 +201,8 @@ export interface ConsoleNavOptions {
 /** Build the nav for a given environment; empty groups are dropped. */
 export function buildConsoleNav(opts: ConsoleNavOptions): ConsoleNavConfig {
   const keep = (item: ConsoleNavItem) =>
-    !(opts.cloud && item.cloudHidden) && !(item.requiresFabric && !opts.fabric);
+    !(item.cloudHidden && isHiddenOnCloud(item.cloudHidden, opts.cloud)) &&
+    !(item.requiresFabric && !opts.fabric);
   return {
     top: baseConsoleNav.top.filter(keep),
     groups: baseConsoleNav.groups

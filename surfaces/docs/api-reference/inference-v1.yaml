@@ -1,0 +1,233 @@
+openapi: 3.1.0
+info:
+  title: Allternit Inference API
+  version: "1.0.0"
+  summary: OpenAI-compatible model list and chat completions.
+  description: |
+    The Allternit inference surface. Base URL `https://api.allternit.com`.
+
+    `GET /v1/models` is public. `POST /v1/chat/completions` needs a Bearer API
+    key whose scopes include `inference` (or `models:write`). Usage is metered
+    per token and settled against prepaid credits; project keys bill to their
+    project.
+servers:
+  - url: https://api.allternit.com
+security:
+  - bearerAuth: []
+paths:
+  /v1/models:
+    get:
+      operationId: listModels
+      summary: List models
+      description: |
+        Lists the models Allternit can route, default model first. Unlisted
+        aliases come last with `hidden: true`. Prices are per token, retail, and
+        match what a request is billed. Models whose shared pool is disabled are
+        left out.
+      security: []
+      responses:
+        "200":
+          description: Model list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ModelList"
+  /v1/chat/completions:
+    post:
+      operationId: createChatCompletion
+      summary: Create a chat completion
+      description: |
+        OpenAI-compatible chat completions. `model` is an Allternit alias from
+        `GET /v1/models`. Set `stream: true` for server-sent events. Fields not
+        listed below are passed through to the upstream provider. Every response
+        carries an `x-request-id` header; quote it when you contact support or look
+        the request up in the console logs.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChatCompletionRequest"
+            example:
+              model: kimi-k3
+              messages:
+                - role: user
+                  content: Hello, Allternit
+              stream: false
+      responses:
+        "200":
+          description: Completion, or an event stream when `stream` is true.
+          headers:
+            x-request-id:
+              description: Identifier of this request.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChatCompletionResponse"
+            text/event-stream:
+              schema:
+                type: string
+                description: "OpenAI-style data chunks, ending with [DONE]."
+        "400":
+          description: Unknown model alias or invalid request, or blocked by a hard line.
+        "401":
+          description: Missing, invalid, revoked or expired API key.
+        "402":
+          description: Prepaid credits exhausted, or the project has no payment method.
+        "403":
+          description: The key lacks the `inference` scope.
+        "429":
+          description: Free-tier rate limit reached. `Retry-After` gives the seconds to wait.
+          headers:
+            Retry-After:
+              schema:
+                type: integer
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: RATE_LIMIT_EXCEEDED
+                  message:
+                    type: string
+                  retry_after:
+                    type: integer
+        "503":
+          description: The model router is not configured.
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Allternit API key (`alt_live_…`, `alt_test_…` or a user key).
+  schemas:
+    ModelList:
+      type: object
+      required: [object, data]
+      properties:
+        object:
+          type: string
+          const: list
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/Model"
+    Model:
+      type: object
+      description: One routable model. Live upstream metadata may add further fields.
+      additionalProperties: true
+      required: [id, object, created, owned_by]
+      properties:
+        id:
+          type: string
+          description: Allternit alias to send as `model`.
+        object:
+          type: string
+          const: model
+        created:
+          type: integer
+          description: Unix timestamp.
+        owned_by:
+          type: string
+          description: Provider id.
+        provider:
+          type: string
+        upstream_id:
+          type: string
+          description: The provider's own model id.
+        aliases:
+          type: array
+          items:
+            type: string
+          description: Other ids that resolve to this model.
+        name:
+          type: string
+        prompt_price:
+          type: number
+          description: Retail input price in USD per token.
+        completion_price:
+          type: number
+          description: Retail output price in USD per token.
+        context_length:
+          type: integer
+          description: Context window in tokens.
+        lane:
+          type: string
+          enum: [standard, open]
+        default:
+          type: boolean
+          description: True for the recommended model.
+        hidden:
+          type: boolean
+          description: Present and true for unlisted aliases. They still route.
+    ChatCompletionRequest:
+      type: object
+      additionalProperties: true
+      required: [model, messages]
+      properties:
+        model:
+          type: string
+        messages:
+          type: array
+          items:
+            $ref: "#/components/schemas/Message"
+        temperature:
+          type: number
+        max_tokens:
+          type: integer
+        top_p:
+          type: number
+        stream:
+          type: boolean
+    Message:
+      type: object
+      additionalProperties: true
+      required: [role]
+      properties:
+        role:
+          type: string
+        content:
+          description: Text, or an array of content parts.
+          oneOf:
+            - type: string
+            - type: array
+              items:
+                type: object
+            - type: "null"
+    ChatCompletionResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        object:
+          type: string
+        created:
+          type: integer
+        model:
+          type: string
+        choices:
+          type: array
+          items:
+            type: object
+            properties:
+              index:
+                type: integer
+              message:
+                $ref: "#/components/schemas/Message"
+              finish_reason:
+                type: string
+        usage:
+          type: object
+          properties:
+            prompt_tokens:
+              type: integer
+            completion_tokens:
+              type: integer
+            total_tokens:
+              type: integer
