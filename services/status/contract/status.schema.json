@@ -1,0 +1,640 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://status.allternit.com/api/v1/status.schema.json",
+  "title": "Allternit status contract v1",
+  "description": "Every payload carries a `schema` discriminator; the root validates any one of them.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/StatusDoc"
+    },
+    {
+      "$ref": "#/$defs/HistoryDoc"
+    },
+    {
+      "$ref": "#/$defs/IncidentsDoc"
+    },
+    {
+      "$ref": "#/$defs/TargetsDoc"
+    },
+    {
+      "$ref": "#/$defs/IngestPayload"
+    },
+    {
+      "$ref": "#/$defs/AdminIncidentCreate"
+    },
+    {
+      "$ref": "#/$defs/AdminIncidentPatch"
+    }
+  ],
+  "$defs": {
+    "Status": {
+      "enum": [
+        "operational",
+        "degraded",
+        "down",
+        "maintenance",
+        "unknown"
+      ]
+    },
+    "ComponentGroup": {
+      "enum": [
+        "website",
+        "app",
+        "mobile",
+        "signin",
+        "api",
+        "cloud-computers",
+        "phone-push",
+        "mail",
+        "console",
+        "docs",
+        "services",
+        "downloads",
+        "other"
+      ]
+    },
+    "Component": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name",
+        "status",
+        "uptime_90d",
+        "last_change"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9-]+$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "$ref": "#/$defs/Status"
+        },
+        "uptime_90d": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 1,
+          "description": "fraction 0..1, null = no data"
+        },
+        "last_change": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "critical": {
+          "type": "boolean"
+        }
+      }
+    },
+    "IncidentUpdate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ts",
+        "status",
+        "body"
+      ],
+      "properties": {
+        "id": {
+          "type": "integer"
+        },
+        "ts": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "status": {
+          "enum": [
+            "investigating",
+            "identified",
+            "monitoring",
+            "resolved"
+          ]
+        },
+        "body": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "Incident": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "title",
+        "state",
+        "impact",
+        "component_ids",
+        "started_at",
+        "resolved_at",
+        "auto",
+        "updates"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "state": {
+          "enum": [
+            "open",
+            "resolved"
+          ]
+        },
+        "impact": {
+          "enum": [
+            "degraded",
+            "down",
+            "maintenance"
+          ]
+        },
+        "component_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "started_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "resolved_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "auto": {
+          "type": "boolean",
+          "description": "false once a human edits; automation then only appends Resolved"
+        },
+        "updates": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/IncidentUpdate"
+          },
+          "minItems": 1
+        }
+      }
+    },
+    "StatusDoc": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "last_checked_at",
+        "overall",
+        "components",
+        "incidents"
+      ],
+      "properties": {
+        "schema": {
+          "const": "allternit.status/v1"
+        },
+        "last_checked_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "overall": {
+          "$ref": "#/$defs/Status"
+        },
+        "components": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Component"
+          }
+        },
+        "incidents": {
+          "type": "array",
+          "description": "open incidents only",
+          "items": {
+            "$ref": "#/$defs/Incident"
+          }
+        }
+      }
+    },
+    "HistoryDay": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "date",
+        "status",
+        "uptime"
+      ],
+      "properties": {
+        "date": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+        },
+        "status": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/Status"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "uptime": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 1
+        }
+      }
+    },
+    "HistoryDoc": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "days",
+        "generated_at",
+        "components"
+      ],
+      "properties": {
+        "schema": {
+          "const": "allternit.history/v1"
+        },
+        "days": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 400
+        },
+        "generated_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "components": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "days"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "days": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/HistoryDay"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "IncidentsDoc": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "incidents"
+      ],
+      "properties": {
+        "schema": {
+          "const": "allternit.incidents/v1"
+        },
+        "incidents": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Incident"
+          }
+        }
+      }
+    },
+    "HealthDoc": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "last_checked_at",
+        "age_seconds"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "ok",
+            "stale"
+          ]
+        },
+        "last_checked_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "age_seconds": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      }
+    },
+    "Target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "component_id",
+        "name",
+        "url",
+        "method",
+        "expect_status",
+        "body_marker",
+        "critical",
+        "vantages"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "component_id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string",
+          "format": "uri"
+        },
+        "method": {
+          "enum": [
+            "GET",
+            "HEAD"
+          ]
+        },
+        "expect_status": {
+          "type": "integer"
+        },
+        "follow_redirects": {
+          "type": "boolean"
+        },
+        "body_marker": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "critical": {
+          "type": "boolean"
+        },
+        "role": {
+          "enum": [
+            "live",
+            "ready",
+            "page",
+            "proxy"
+          ]
+        },
+        "vantages": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "cloudflare",
+              "allternit-standby"
+            ]
+          },
+          "minItems": 1
+        },
+        "timeout_ms": {
+          "type": "integer"
+        }
+      }
+    },
+    "TargetsDoc": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "version",
+        "components",
+        "targets"
+      ],
+      "properties": {
+        "schema": {
+          "const": "allternit.targets/v1"
+        },
+        "version": {
+          "type": "integer"
+        },
+        "components": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "name",
+              "group",
+              "critical"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "group": {
+                "$ref": "#/$defs/ComponentGroup"
+              },
+              "critical": {
+                "type": "boolean"
+              },
+              "max_status": {
+                "enum": [
+                  "degraded",
+                  "down"
+                ],
+                "description": "Other sites: degraded"
+              }
+            }
+          }
+        },
+        "targets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Target"
+          }
+        }
+      }
+    },
+    "ProbeResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "target_id",
+        "ok",
+        "status_code",
+        "latency_ms"
+      ],
+      "properties": {
+        "target_id": {
+          "type": "string"
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "status_code": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "latency_ms": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "marker_ok": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "IngestPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "vantage",
+        "ts",
+        "results"
+      ],
+      "properties": {
+        "schema": {
+          "const": "allternit.ingest/v1"
+        },
+        "vantage": {
+          "enum": [
+            "allternit-standby"
+          ]
+        },
+        "ts": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "targets_version": {
+          "type": "integer"
+        },
+        "results": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ProbeResult"
+          }
+        }
+      }
+    },
+    "AdminIncidentCreate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "title",
+        "impact",
+        "component_ids",
+        "body"
+      ],
+      "properties": {
+        "schema": {
+          "const": "allternit.admin.incident.create/v1"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "impact": {
+          "enum": [
+            "degraded",
+            "down",
+            "maintenance"
+          ]
+        },
+        "component_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1
+        },
+        "body": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "enum": [
+            "investigating",
+            "identified",
+            "monitoring"
+          ]
+        }
+      }
+    },
+    "AdminIncidentPatch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema"
+      ],
+      "properties": {
+        "schema": {
+          "const": "allternit.admin.incident.patch/v1"
+        },
+        "title": {
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "investigating",
+            "identified",
+            "monitoring",
+            "resolved"
+          ]
+        },
+        "body": {
+          "type": "string"
+        },
+        "component_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}
