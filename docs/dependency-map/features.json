@@ -4233,6 +4233,8 @@
       "status": "building",
       "description": "A user uploads a file in chat and the agent runs Python on it in the sandbox with the run_code tool. The API ingests the upload and writes a manifest, the sandbox gets the files, and the result card shows output and files the code produced. Running code asks the user for permission first.",
       "touches": [
+        "allternit/cmd/gizzi-code/src/runtime/integrations/cli-bridge/index.ts",
+        "allternit/cmd/gizzi-code/src/runtime/integrations/cli-bridge/results.ts",
         "allternit/cmd/gizzi-code/src/runtime/tools/builtins/run_code.ts",
         "allternit/cmd/gizzi-code/src/runtime/python/env.ts",
         "allternit/cmd/gizzi-code/src/runtime/python/requirements.lock.txt",
@@ -4257,6 +4259,8 @@
         }
       ],
       "evidence": [
+        "allternit/cmd/gizzi-code/src/runtime/integrations/cli-bridge/index.ts",
+        "allternit/cmd/gizzi-code/src/runtime/integrations/cli-bridge/results.ts",
         "allternit/cmd/gizzi-code/src/runtime/tools/builtins/run_code.ts",
         "allternit/cmd/gizzi-code/src/runtime/python/env.ts",
         "allternit/cmd/gizzi-code/src/runtime/python/requirements.lock.txt",
