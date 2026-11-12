@@ -38,7 +38,7 @@ Email to the alert address on a change to Down, on recovery, and a reminder ever
 
 ## Incidents
 
-- **Automatic incidents** use fixed wording and are controlled by the `AUTO_INCIDENTS` variable. It stays `off` for the first 24 hours (soak) while alerts run, then is switched `on`. Any manual edit sets `auto=false` on that incident; automation then only appends the Resolved update.
+- **Automatic incidents** use fixed wording and are controlled by the `AUTO_INCIDENTS` variable. It takes `off`, `on`, or an ISO time from which it is on. Production is set to `2026-11-13T14:05:00Z`, the end of the 24-hour soak, so it turns on by itself with no redeploy; incidents created during the soak stay drafts at `/admin`. Any manual edit sets `auto=false` on that incident; automation then only appends the Resolved update.
 - **Admin API,** bearer token: `POST /api/admin/incidents` to open, `PATCH /api/admin/incidents/:id` to update, resolve or set maintenance. Constant-time token check, rate limit, audit rows.
 - **Script:** `services/status/scripts/incident.mjs` wraps the same API. Run it with no arguments for its usage text. It reads the admin token from `STATUS_ADMIN_TOKEN` and the site from `STATUS_URL` (default `https://status.allternit.com`), never from a flag. The token is the Worker's `ADMIN_TOKEN` secret.
 - The `/admin` page does the same from a browser.
