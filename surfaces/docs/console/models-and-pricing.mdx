@@ -1,0 +1,42 @@
+---
+title: 'Models and pricing'
+description: 'Model catalog fields, per-token prices, tool prices, meter rates and deprecations.'
+---
+
+## Model catalog
+
+`GET https://api.allternit.com/v1/models` is public. Each model carries:
+
+| Field | Meaning |
+|---|---|
+| `id` | Alias to send as `model` |
+| `name` | Display name |
+| `provider`, `upstream_id` | Provider and its own model id |
+| `prompt_price`, `completion_price` | Retail USD per token (multiply by one million for the per-million rate) |
+| `context_length` | Context window in tokens |
+| `lane` | `standard` or `open` |
+| `default` | True for the recommended model |
+| `hidden` | True for unlisted aliases. They still route |
+
+The listed price is what a request is billed. The console Models page shows these values, with the default model first.
+
+## Pricing route
+
+`GET /api/v1/platform/pricing` (signed-in console session) returns:
+
+```json
+{
+  "meters": [{ "meter": "...", "unit": "...", "payg_cents": 0, "growth_cents": 0 }],
+  "tools": [],
+  "deprecations": [{ "model": "...", "retires_at": "...", "replacement": "..." }]
+}
+```
+
+- `meters` lists each metered unit with its pay-as-you-go and Growth plan price in cents.
+- `tools` comes from a checked-in price file. The file ships empty, so the Models page hides the tools table until prices are added.
+- `deprecations` lists models with a retirement date and the model to move to.
+
+## Related
+
+- [Chat completions](/api/chat-completions)
+- [Pricing](/api/pricing)

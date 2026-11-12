@@ -1,0 +1,43 @@
+---
+title: 'Playground'
+description: 'Try models in the console with a short-lived project key, inspect the request, and save prompts.'
+---
+
+The console Playground sends real requests to `POST https://api.allternit.com/v1/chat/completions`. It works for any signed-in user, with no paired runtime.
+
+## How it authenticates
+
+When you open the Playground, the console asks for a playground key for the selected project:
+
+`POST /api/v1/platform/projects/:id/playground-key`
+
+The response is `{ "object": "playground_key", "key": "...", "expires_at": "..." }`. The key has the `inference` scope, lasts 15 minutes, is not listed on the API keys page, and replaces your previous playground key for that project. The console keeps it in memory only. It is never written to browser storage.
+
+Requests made this way are recorded with the client label `playground` in [usage and logs](/console/usage-and-logs).
+
+## What you can set
+
+The model list comes live from `GET /v1/models`. You can set the sampling parameters the endpoint accepts (`temperature`, `top_p`, `max_tokens`, `stream`), edit tool definitions, set `response_format` or a JSON schema, and attach an image to a message. Fields the endpoint does not know are passed through to the upstream provider.
+
+## Inspector
+
+After each call the inspector shows the request body, the response, the response headers and the `x-request-id` header. The same identifier appears in the Logs page. You can export the request as curl, Python or TypeScript.
+
+## Saved prompts and sharing
+
+Prompts are stored per project.
+
+| Method and path | Purpose |
+|---|---|
+| `GET`, `POST /api/v1/platform/projects/:id/prompts` | List and create |
+| `GET`, `PATCH`, `DELETE /api/v1/platform/projects/:id/prompts/:prompt_id` | Read, update, delete |
+| `POST`, `DELETE /api/v1/platform/projects/:id/prompts/:prompt_id/share` | Create or remove a share link |
+| `GET /api/v1/platform/shared-prompts/:token` | Read a shared prompt |
+
+A prompt is returned as `{ id, name, body, share_url?, updated_at }`. A shared prompt read returns only `{ name, body }`, with no project or owner identifiers. Share links work for signed-in users only. A prompt from a project you cannot access returns 404.
+
+## Related
+
+- [Chat completions](/api/chat-completions)
+- [Models and pricing](/console/models-and-pricing)
+- [Projects](/console/projects)
