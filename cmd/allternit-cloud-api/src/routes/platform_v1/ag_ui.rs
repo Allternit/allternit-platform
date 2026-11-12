@@ -238,8 +238,8 @@ async fn run_agent(
     let lock = TurnLock::take(&conv.id).ok_or_else(|| PlatformError::conflict("conversation_busy", "The agent is still answering the previous message in this conversation."))?;
     let host = host_for(&state, layered);
     let (rt, session, own_key) = conversations::prepare(&state, host.as_ref(), &caller, &conv).await?;
-    let meter = TurnMeter::new(&caller, &conv, own_key);
-    let path = format!("/api/v1/platform/agents/{}/sessions/{}/turn", conv.agent_id, session);
+    let meter = TurnMeter::new(&caller, &conv, own_key)?;
+    let path = format!("/api/v1/platform/agents/{}/sessions/{}/turn", meter.agent_id, session);
     let mut upstream = host.stream(&rt, &path, &json!({ "text": content })).await?;
     conversations::insert_message(&state.db, &conv.id, "user", &content, "completed", None).await?;
 

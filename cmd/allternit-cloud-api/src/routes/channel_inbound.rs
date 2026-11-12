@@ -486,7 +486,7 @@ async fn inbound_inner(
         return Ok(match super::phone::sms_edge(state, &route.id, key, headers, &body).await {
             Ok(super::phone::Edge::Respond(response)) => response,
             Ok(super::phone::Edge::Deliver { body: normalised, number_id, message_id }) => {
-                match super::platform_v1::messages::record_inbound(&state.db, &number_id, &normalised).await {
+                match super::platform_v1::texts::record_inbound(&state.db, &number_id, &normalised).await {
                     Ok(()) => StatusCode::OK.into_response(),
                     Err(e) => {
                         // Let the carrier retry: undo the dedupe mark.

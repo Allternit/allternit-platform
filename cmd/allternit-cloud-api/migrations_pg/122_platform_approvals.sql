@@ -1,16 +1,18 @@
 -- 122_platform_approvals.sql
 --
--- Platform API parity, lane 0: one approvals resource over the twin, computer
--- and phone hold systems. Each source keeps its own state; this table is the
+-- Platform API parity, lane 0: one approvals resource over the twin and computer
+-- hold systems (phone holds have no insert path in this program, so there is no
+-- `phone` source). Each source keeps its own state; this table is the
 -- Platform-facing record (`GET /v1/approvals`, `POST /v1/approvals/{id}`).
 -- `UNIQUE (source, source_ref)` makes mirroring a source row idempotent.
 --
--- Idempotent. Apply by hand to prod as `postgres` (ALLTERNIT_SKIP_MIGRATIONS=1).
+-- Idempotent. Applied automatically before the binary swap by deploy-contabo.sh
+-- via the ops_applied_migrations ledger (platform #1892); never edit after it ships.
 
 CREATE TABLE IF NOT EXISTS public.platform_approvals (
     id text NOT NULL PRIMARY KEY,
     project_id text NOT NULL REFERENCES public.platform_projects (id),
-    source text NOT NULL CHECK (source IN ('twin', 'computer', 'phone')),
+    source text NOT NULL CHECK (source IN ('twin', 'computer')),
     source_ref text NOT NULL,
     account_id text REFERENCES public.platform_accounts (id),
     conversation_id text REFERENCES public.platform_conversations (id) ON DELETE SET NULL,

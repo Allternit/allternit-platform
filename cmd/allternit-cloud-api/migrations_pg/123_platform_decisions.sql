@@ -6,7 +6,8 @@
 -- There is no live/test column: no earlier platform table has one; a project's key mode comes from its keys
 -- (alt_live_ / alt_test_).
 --
--- Idempotent. Apply by hand to prod as `postgres` (ALLTERNIT_SKIP_MIGRATIONS=1).
+-- Idempotent. Applied automatically before the binary swap by deploy-contabo.sh
+-- via the ops_applied_migrations ledger (platform #1892); never edit after it ships.
 
 CREATE TABLE IF NOT EXISTS public.platform_decisions (
     id text NOT NULL PRIMARY KEY,

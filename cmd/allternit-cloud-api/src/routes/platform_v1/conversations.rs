@@ -81,8 +81,10 @@ impl Drop for TurnLock {
 #[derive(Debug, Clone, Serialize, FromRow)]
 pub(crate) struct ConvRow {
     pub(crate) id: String,
-    pub(crate) account_id: String,
-    pub(crate) agent_id: String,
+    /// Null for a conversation without an account (migration 121).
+    pub(crate) account_id: Option<String>,
+    /// Null for a conversation made without an agent (used by `model` responses).
+    pub(crate) agent_id: Option<String>,
     runtime_id: Option<String>,
     runtime_session_id: Option<String>,
     metadata: Value,
@@ -188,12 +190,19 @@ async fn list_conversations(
     })))
 }
 
-/// A conversation the caller may see (its account, its project, a live agent).
+/// The `409 conversation_has_no_agent` refusal: an agent turn on a conversation
+/// made without an agent.
+pub(crate) fn no_agent() -> PlatformError {
+    PlatformError::conflict("conversation_has_no_agent", "This conversation has no agent; run it with a model response instead.")
+}
+
+/// A conversation the caller may see (its account, its project, a live agent
+/// when it has one).
 pub(crate) async fn fetch_conversation(db: &PgPool, caller: &PlatformCaller, id: &str) -> Result<ConvRow, PlatformError> {
     let account = caller.account_filter(None)?;
     sqlx::query_as::<_, ConvRow>(&format!(
-        "SELECT c.{} FROM platform_conversations c JOIN platform_agents a ON a.id = c.agent_id \
-         WHERE c.id = $1 AND c.project_id = $2 AND a.deleted_at IS NULL AND ($3::text IS NULL OR c.account_id = $3)",
+        "SELECT c.{} FROM platform_conversations c LEFT JOIN platform_agents a ON a.id = c.agent_id \
+         WHERE c.id = $1 AND c.project_id = $2 AND (c.agent_id IS NULL OR a.deleted_at IS NULL) AND ($3::text IS NULL OR c.account_id = $3)",
         CONV_COLUMNS.replace(", ", ", c.")
     ))
     .bind(id)
@@ -315,8 +324,8 @@ async fn ensure_agent_key(state: &ApiState, host: &dyn AgentHost, caller: &Platf
 /// Make sure the runtime has the agent's current definition and the conversation has a session there.
 /// Returns the runtime, the session and whether the agent runs on the project's own model key.
 pub(crate) async fn prepare(state: &ApiState, host: &dyn AgentHost, caller: &PlatformCaller, conv: &ConvRow) -> Result<(HostRuntime, String, bool), PlatformError> {
-    let (rt, own_key) = ensure_agent_key(state, host, caller, &conv.agent_id).await?;
-    let agent_id = &conv.agent_id;
+    let agent_id = conv.agent_id.as_deref().ok_or_else(no_agent)?;
+    let (rt, own_key) = ensure_agent_key(state, host, caller, agent_id).await?;
     let session = match (&conv.runtime_id, &conv.runtime_session_id) {
         (Some(r), Some(s)) if r == &rt.runtime_id => s.clone(),
         _ => {
@@ -343,7 +352,7 @@ pub(crate) async fn prepare(state: &ApiState, host: &dyn AgentHost, caller: &Pla
 #[derive(Clone)]
 pub(crate) struct TurnMeter {
     pub(crate) project_id: String,
-    pub(crate) account_id: String,
+    pub(crate) account_id: Option<String>,
     pub(crate) key_id: String,
     pub(crate) own_key: bool,
     pub(crate) agent_id: String,
@@ -352,16 +361,17 @@ pub(crate) struct TurnMeter {
 }
 
 impl TurnMeter {
-    pub(crate) fn new(caller: &PlatformCaller, conv: &ConvRow, own_key: bool) -> Self {
-        Self {
+    /// `409 conversation_has_no_agent` for a conversation without an agent.
+    pub(crate) fn new(caller: &PlatformCaller, conv: &ConvRow, own_key: bool) -> Result<Self, PlatformError> {
+        Ok(Self {
             project_id: caller.project_id.clone(),
             account_id: conv.account_id.clone(),
             key_id: caller.key_id.clone(),
             own_key,
-            agent_id: conv.agent_id.clone(),
+            agent_id: conv.agent_id.clone().ok_or_else(no_agent)?,
             conversation_id: conv.id.clone(),
             started_at: chrono::Utc::now(),
-        }
+        })
     }
 }
 
@@ -376,7 +386,7 @@ pub(crate) async fn meter_turn(db: &PgPool, m: &TurnMeter, message_id: &str, usa
         .attr("gen_ai.agent.id", m.agent_id.as_str())
         .attr("gen_ai.conversation.id", m.conversation_id.as_str())
         .attr("allternit.message.id", message_id)
-        .attr("allternit.account.id", m.account_id.as_str())
+        .attr_opt("allternit.account.id", m.account_id.as_deref())
         .attr_opt("gen_ai.request.model", model)
         .attr_opt("gen_ai.provider.name", model.and_then(|x| x.split_once('/')).map(|(p, _)| p))
         .attr_opt("gen_ai.usage.input_tokens", usage["inputTokens"].as_i64())
@@ -402,7 +412,7 @@ pub(crate) async fn meter_turn(db: &PgPool, m: &TurnMeter, message_id: &str, usa
         };
         let event = super::UsageEvent {
             project_id: m.project_id.clone(),
-            account_id: Some(m.account_id.clone()),
+            account_id: m.account_id.clone(),
             key_id: Some(m.key_id.clone()),
             meter: meter.to_string(),
             quantity: quantity as f64,
@@ -436,7 +446,8 @@ pub(crate) async fn open(db: &PgPool, project_id: &str, account_id: &str, agent_
 pub(crate) async fn turn_target(state: &ApiState, host: &dyn AgentHost, caller: &PlatformCaller, conversation_id: &str) -> Result<(HostRuntime, String), PlatformError> {
     let conv = fetch_conversation(&state.db, caller, conversation_id).await?;
     let (rt, session, _own_key) = prepare(state, host, caller, &conv).await?;
-    Ok((rt, format!("/api/v1/platform/agents/{}/sessions/{}/turn", conv.agent_id, session)))
+    let agent_id = conv.agent_id.as_deref().ok_or_else(no_agent)?;
+    Ok((rt, format!("/api/v1/platform/agents/{agent_id}/sessions/{session}/turn")))
 }
 
 /// Read a buffered turn to its end: the reply text, or why it failed.
@@ -494,8 +505,8 @@ async fn send_message(
     let lock = TurnLock::take(&conv.id).ok_or_else(|| PlatformError::conflict("conversation_busy", "The agent is still answering the previous message in this conversation."))?;
     let host = host_for(&state, layered);
     let (rt, session, own_key) = prepare(&state, host.as_ref(), &caller, &conv).await?;
-    let meter = TurnMeter::new(&caller, &conv, own_key);
-    let path = format!("/api/v1/platform/agents/{}/sessions/{}/turn", conv.agent_id, session);
+    let meter = TurnMeter::new(&caller, &conv, own_key)?;
+    let path = format!("/api/v1/platform/agents/{}/sessions/{}/turn", meter.agent_id, session);
     let mut upstream = host.stream(&rt, &path, &json!({ "text": content })).await?;
     // Stored once the runtime took the turn: a refused turn (still starting) leaves nothing behind.
     insert_message(&state.db, &conv.id, "user", &content, "completed", None).await?;

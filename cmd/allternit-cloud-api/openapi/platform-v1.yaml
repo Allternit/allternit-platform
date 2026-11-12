@@ -481,10 +481,8 @@ paths:
     get:
       operationId: getConversation
       summary: Retrieve a conversation
-      description: The conversation without items (`item_count` says how many; list them with listConversationItems). The older shape with the latest 200 messages is available as `?expand=messages`.
+      description: The conversation with its latest 200 messages inline (`messages`, oldest first, the `conversation.message` shape SDK 0.3.x reads) and `item_count`, the number of items (list them all, including function and tool calls, with listConversationItems). Requires the `agents` scope.
       tags: [Conversations]
-      parameters:
-        - { name: expand, in: query, schema: { type: string, enum: [messages] } }
       responses:
         "200":
           description: The conversation.
@@ -2353,8 +2351,12 @@ paths:
         array form. The single-question Agency body (`context`, `options`, `kind`, `question`)
         is also accepted on this route and answered in the Agency shape. Questions run
         together under one `latency_budget_ms`; a question the backends cannot answer in time
-        comes back as a `refusal` answer (`reason`), not a failed request. Limits: `input` text
-        64 KiB, one image 6 MiB. Billed per question (`decision_questions` meter). Requires the
+        comes back as a `refusal` answer (`reason`: `abstained`, `unavailable` or
+        `budget_exhausted`), not a failed request. Each answer names the `backend` that answered
+        it; the top-level `backend` is the one that answered the most questions. Limits: `input`
+        text 64 KiB, one image 6 MiB; with an image, at most 16 questions
+        (`400 too_many_questions_with_image`). Billed per answered question (`decision_questions`
+        meter; refusals are not billed, `usage.questions` counts answered ones). Requires the
         `decisions` scope.
       tags: [Decisions]
       parameters:
@@ -2432,9 +2434,18 @@ paths:
         then `response.completed` or `response.failed`, and `error` for failures before the
         stream starts. Clients should skip event names they don't know. A turn that raises an
         approval ends with `status: requires_action` and `required_actions`; once the approval
-        resolves, continue with `previous_response_id`. Errors before the stream starts are
-        plain errors: `402 spend_cap_reached`, `402 payment_method_required`,
-        `409 conversation_busy`, `503 runtime_starting`. Token usage is recorded as
+        resolves, continue with `previous_response_id`. `status: requires_action` and
+        `required_actions` are derived from the pending approvals linked to the response, so they
+        can appear after the turn ends (an approval raised late by the runtime): poll
+        `GET /v1/responses/{id}` or subscribe to the `approval.requested` webhook;
+        the `response.requires_action` event is best-effort. Errors before the stream starts are
+        plain errors: `400 invalid_request` for `agent` with `store: false`, `agent` with client
+        `tools`, or mixing `model` and `agent` turns in one conversation;
+        `400 missing_function_call_output` when a `function_call` of the previous response has no
+        matching `function_call_output` in `input`; `409 previous_response_not_latest` when
+        `previous_response_id` is not the latest response of its conversation;
+        `402 spend_cap_reached`, `402 payment_method_required`, `409 conversation_busy`,
+        `503 runtime_starting`. Token usage is recorded as
         `tokens_in` and `tokens_out`. Requires the `inference` scope with `model`, or the
         `agents` scope with `agent`.
       tags: [Responses]
@@ -2553,7 +2564,7 @@ paths:
     post:
       operationId: createConversation
       summary: Create a conversation
-      description: Opens a conversation, optionally with an agent, an account and starting items (up to 20). Without `agent_id` it can be used with `model` responses. No model run happens.
+      description: Opens a conversation, optionally with an agent, an account and starting items (up to 20). Without `agent_id` it can be used with `model` responses. `items` are allowed only without `agent_id` (an agent's runtime keeps its own session history; 409 `conversation_has_agent`). No model run happens.
       tags: [Conversations]
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"
@@ -2604,7 +2615,7 @@ paths:
     post:
       operationId: createConversationItems
       summary: Append items
-      description: Adds up to 20 items without running the model. Requires the `agents` scope.
+      description: Adds up to 20 items without running the model. Only on a conversation without an agent (409 `conversation_has_agent`; an agent's runtime keeps its own session history). Requires the `agents` scope.
       tags: [Conversations]
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"
@@ -2649,14 +2660,14 @@ paths:
     get:
       operationId: listApprovals
       summary: List approvals
-      description: Held actions from the twin, computers and phones in one list, newest first. Requires the `twin` or `computers` scope.
+      description: Held actions from the twin and computers in one list, newest first. The list holds only the sources the key's scopes allow (`twin` scope → twin rows, `computers` scope → computer rows). Requires the `twin` or `computers` scope.
       tags: [Approvals]
       parameters:
         - $ref: "#/components/parameters/Limit"
         - $ref: "#/components/parameters/After"
         - { name: status, in: query, schema: { type: string, enum: [pending, approved, denied, expired, consumed] } }
         - { name: account_id, in: query, schema: { type: string } }
-        - { name: source, in: query, schema: { type: string, enum: [twin, computer, phone] } }
+        - { name: source, in: query, schema: { type: string, enum: [twin, computer] } }
       responses:
         "200":
           description: A page of approvals.
@@ -2883,7 +2894,7 @@ components:
         created_at: { type: string, format: date-time }
         messages:
           type: array
-          description: Only on the legacy alias routes and `?expand=messages`.
+          description: "The latest 200 user and assistant messages, oldest first: on GET /v1/conversations/{id} and the legacy alias routes."
           items: { $ref: "#/components/schemas/ConversationMessage" }
     ConversationMessage:
       type: object
@@ -3399,7 +3410,11 @@ components:
               label: { type: string }
               probability: { type: number }
         confidence: { type: number }
-        reason: { type: string, description: "refusal: why there is no answer, e.g. abstained, timeout." }
+        backend: { type: string, description: "The backend that answered this question (e.g. local, open, oracle)." }
+        reason:
+          type: string
+          enum: [abstained, unavailable, budget_exhausted]
+          description: "refusal only: abstained (below the confidence threshold with allow_abstain), unavailable (no backend could answer), budget_exhausted (latency_ms budget ran out)."
     DecisionOutcome:
       type: object
       required: [status]
@@ -3415,12 +3430,12 @@ components:
         object: { type: string, const: decision }
         created_at: { type: string, format: date-time }
         answers: { type: array, items: { $ref: "#/components/schemas/DecisionAnswer" } }
-        backend: { type: string }
+        backend: { type: string, description: The backend that answered the most questions (each answer has its own `backend`). }
         latency_ms: { type: integer }
         usage:
           type: object
           properties:
-            questions: { type: integer }
+            questions: { type: integer, description: Answered (non-refusal) questions; this is what is billed. }
             input_tokens: { type: integer }
         outcomes: { type: object, additionalProperties: { $ref: "#/components/schemas/DecisionOutcome" } }
         metadata: { type: object, additionalProperties: true }
@@ -3564,12 +3579,12 @@ components:
           required: [type]
           properties:
             type: { type: string, enum: [create, continue] }
-            previous_message_id: { type: string, description: "Required for `continue`." }
+            previous_message_id: { type: string, description: "Required for `continue`: the `mdl_…` id of the thread's latest message.", examples: ["mdl_0123456789abcdef01234567"] }
     ModelMessage:
       type: object
       required: [id, type, role, content, model, stop_reason, usage]
       properties:
-        id: { type: string, description: "`mdl_…`" }
+        id: { type: string, description: "`mdl_…`", examples: ["mdl_0123456789abcdef01234567"] }
         type: { type: string, const: message }
         role: { type: string, const: assistant }
         content: { type: array, items: { type: object, additionalProperties: true, description: "A `text` block or a `tool_use` block {id, name, input}." } }
@@ -3609,7 +3624,7 @@ components:
       properties:
         id: { type: string, description: "`apr_…`" }
         object: { type: string, const: approval }
-        source: { type: string, enum: [twin, computer, phone] }
+        source: { type: string, enum: [twin, computer] }
         source_ref: { type: string, description: The id in the source system. }
         account_id: { type: [string, "null"] }
         conversation_id: { type: [string, "null"] }
