@@ -31,7 +31,19 @@ import {
   type CostBreakdownItem,
   type CostSummary,
 } from "@/lib/usage";
-import { downloadCsv } from "@/lib/gateway-analytics";
+import { downloadCsv, formatUsd, sumReportRows, type ReportGroupBy } from "@/lib/gateway-analytics";
+import { isCloudGateway } from "@/lib/availability";
+import {
+  ErrorRetry,
+  MUTED as CLOUD_MUTED,
+  RefreshButton,
+  ReportFilters,
+  ReportTable,
+  dayLabel,
+  useCsvDownload,
+  useReportFilters,
+  useUsageReport,
+} from "./cloudReport";
 
 const GROUP_BYS = [
   { value: "provider", label: "By provider" },
@@ -75,7 +87,7 @@ function dimensionOf(row: CostBreakdownItem, groupBy: string): string {
   return row.provider;
 }
 
-export function CostPage(): React.ReactNode {
+function RuntimeCostPage(): React.ReactNode {
   const [month, setMonth] = useState(currentMonth());
   const [groupBy, setGroupBy] = useState("provider");
   const [summary, setSummary] = useState<CostSummary | null>(null);
@@ -328,6 +340,129 @@ export function CostPage(): React.ReactNode {
       )}
     </ListPage>
   );
+}
+
+const COST_GROUPS: ReportGroupBy[] = ["model", "project", "key", "client", "day"];
+
+/** Allternit Cloud: inference spend from the per-user report. */
+function CloudCostPage(): React.ReactNode {
+  const filters = useReportFilters(30);
+  const [groupBy, setGroupBy] = useState<ReportGroupBy>("model");
+  const base = { from: filters.from, to: filters.to, projectId: filters.projectId, scope: filters.scope };
+  const daily = useUsageReport({ ...base, groupBy: "day" }, "Unable to load cost data");
+  const grouped = useUsageReport(groupBy === "day" ? null : { ...base, groupBy }, "Unable to load cost data");
+  const csv = useCsvDownload({ ...base, groupBy }, `allternit-cost-${groupBy}-${filters.from}.csv`);
+
+  const dayRows = daily.rows ?? [];
+  const tableRows = groupBy === "day" ? dayRows : grouped.rows ?? [];
+  const totals = useMemo(() => sumReportRows(dayRows), [dayRows]);
+  const chartData = useMemo(
+    () =>
+      dayRows
+        .slice()
+        .sort((a, b) => a.group.localeCompare(b.group))
+        .map((r) => ({ day: dayLabel(r.group), cost: r.cost_usd })),
+    [dayRows],
+  );
+  const loading = daily.loading || (groupBy !== "day" && grouped.loading);
+  const error = daily.error ?? (groupBy !== "day" ? grouped.error : null) ?? csv.error;
+  const reload = () => {
+    daily.reload();
+    if (groupBy !== "day") grouped.reload();
+  };
+  const perThousand = totals.requests > 0 ? (totals.cost_usd / totals.requests) * 1000 : null;
+
+  return (
+    <ListPage
+      title="Cost"
+      subtitle="Inference spend for billed requests, by day and by what drove it."
+      filters={
+        <ReportFilters filters={filters}>
+          <select
+            value={groupBy}
+            onChange={(e) => setGroupBy(e.target.value as ReportGroupBy)}
+            aria-label="Group by"
+            className={SETTINGS_SELECT_CLASS}
+          >
+            {COST_GROUPS.map((g) => (
+              <option key={g} value={g}>
+                Group by {g === "key" ? "API key" : g}
+              </option>
+            ))}
+          </select>
+        </ReportFilters>
+      }
+      primaryAction={{ label: csv.busy ? "Preparing…" : "Download CSV", onClick: () => void csv.run() }}
+    >
+      {error && <ErrorRetry message={error} onRetry={reload} />}
+      {loading && daily.rows === null ? (
+        <SkeletonRow lines={6} />
+      ) : daily.rows === null ? null : (
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <StatCard label="Spend" value={formatUsd(totals.cost_usd)} hint={`Last ${filters.rangeDays} days`} />
+            <StatCard label="Requests" value={totals.requests.toLocaleString()} hint="Billed requests" />
+            <StatCard
+              label="Per 1,000 requests"
+              value={perThousand === null ? "—" : formatUsd(perThousand)}
+            />
+          </div>
+          {chartData.length === 0 ? (
+            <EmptyState
+              icon={<HugeiconsIcon icon={DollarIcon} size={32} />}
+              title="No spend in this range"
+              caption="Billed requests from your projects will show their cost here."
+            />
+          ) : (
+            <>
+              <div className="rounded-xl border border-solid border-[var(--border-subtle)] bg-[var(--bg-secondary)] p-4">
+                <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-[var(--text-tertiary)]">
+                  Spend per day
+                </h3>
+                <div className="h-48">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={chartData} margin={{ left: -12, right: 8, top: 4, bottom: 0 }}>
+                      <CartesianGrid stroke="var(--border-subtle)" vertical={false} />
+                      <XAxis dataKey="day" axisLine={false} tickLine={false} tick={{ fill: CLOUD_MUTED, fontSize: 10 }} />
+                      <YAxis
+                        axisLine={false}
+                        tickLine={false}
+                        tick={{ fill: CLOUD_MUTED, fontSize: 10 }}
+                        tickFormatter={(v: number) => `$${v}`}
+                      />
+                      <Tooltip
+                        cursor={{ fill: "var(--surface-hover)" }}
+                        contentStyle={{
+                          backgroundColor: "var(--bg-secondary)",
+                          border: "1px solid var(--border-subtle)",
+                          borderRadius: "8px",
+                        }}
+                        formatter={(v: number) => formatUsd(v)}
+                      />
+                      <Bar dataKey="cost" name="Spend" fill="var(--accent-primary)" radius={[4, 4, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+              <ReportTable rows={tableRows} groupBy={groupBy} projectNames={filters.projectNames} />
+            </>
+          )}
+          <p className="m-0 text-[12px] text-[var(--text-tertiary)]">
+            Only billed requests are counted. Plan charges and credits are on the{" "}
+            <a href="/platform/billing" className="text-[var(--accent-primary)]">
+              Billing
+            </a>{" "}
+            page.
+          </p>
+          <RefreshButton loading={loading} onClick={reload} />
+        </div>
+      )}
+    </ListPage>
+  );
+}
+
+export function CostPage(): React.ReactNode {
+  return isCloudGateway() ? <CloudCostPage /> : <RuntimeCostPage />;
 }
 
 export default CostPage;
