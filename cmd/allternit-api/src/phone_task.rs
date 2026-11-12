@@ -316,7 +316,70 @@ fn close_card(db: &DbHandle, ctx: &TaskCtx, report: &Value, run_id: &str, serial
     let status = report.get("status").and_then(Value::as_str).unwrap_or("failed");
     let step = report.get("steps").and_then(Value::as_array).map(|s| s.len() as u32).unwrap_or(0);
     let summary = report.get("result").and_then(Value::as_str);
-    crate::phone_runs::post_task_card_with_summary(db, ctx, run_id, serial, goal, card_status(status), step, None, summary);
+    let trail = report.get("trail").and_then(Value::as_array);
+    crate::phone_runs::post_run_card(
+        db,
+        ctx,
+        &crate::phone_runs::RunCard { kind: "phone_task", run_id, serial, goal, status: card_status(status), step, step_label: None, inbox_id: None, summary, trail: trail.map(|t| t.as_slice()) },
+    );
+}
+
+/// The readable label of one step, for the card, the live run row and the trail. Typing, text and
+/// call tools get a fixed phrase, never the typed text or the model's `reason` (which can echo
+/// it); a sensitive or held step reads "Waiting for your OK to <effect>"; any other step shows the
+/// model's `reason` (one line, 80 characters), or the action label when the reason is empty.
+pub(crate) fn step_label(tool: &str, action_label: &str, reason: &str, sensitive: bool, effect: Option<&str>) -> String {
+    let t = tool.strip_prefix("phone.").unwrap_or(tool);
+    let t = t.strip_prefix("web.").unwrap_or(t);
+    if matches!(t, "type" | "key") {
+        return "Typing".into();
+    }
+    if t.starts_with("sms") || t.starts_with("send_") || t.starts_with("text") || t.starts_with("message") {
+        return "Writing a message".into();
+    }
+    if t.starts_with("call") || t.starts_with("dial") {
+        return "Starting a call".into();
+    }
+    let effect = effect.filter(|e| phone_guard::EFFECTS.contains(e));
+    if sensitive || effect.is_some() {
+        return format!("Waiting for your OK to {}", effect.unwrap_or("continue"));
+    }
+    let clip = |t: &str| t.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(80).collect::<String>();
+    let line = clip(reason);
+    if !line.is_empty() {
+        return line;
+    }
+    // An opened URL can carry a token in its query: keep only the host.
+    if t == "open" {
+        let url = action_label.strip_prefix("open ").unwrap_or(action_label);
+        let host = url.split("://").nth(1).unwrap_or(url).split(['/', '?', '#']).next().unwrap_or_default();
+        return clip(&format!("Opening {host}"));
+    }
+    clip(action_label)
+}
+
+/// `[{n, label, ok}]` from a run's `steps`, newest last, at most [`crate::phone_runs::TRAIL_MAX`].
+pub(crate) fn trail_of(steps: &[Value]) -> Vec<Value> {
+    let all: Vec<Value> = steps
+        .iter()
+        .filter_map(|s| {
+            let label = s.get("step_label").and_then(Value::as_str)?;
+            Some(json!({ "n": s.get("step").and_then(Value::as_u64).unwrap_or(0), "label": label, "ok": s.get("ok").and_then(Value::as_bool).unwrap_or(false) }))
+        })
+        .collect();
+    all[all.len().saturating_sub(crate::phone_runs::TRAIL_MAX)..].to_vec()
+}
+
+/// Start step `step`: post its `running` card with the label and put step, label and the trail so far on the live entry.
+#[allow(clippy::too_many_arguments)]
+fn begin_step(db: &DbHandle, ctx: &TaskCtx, run_id: &str, serial: &str, goal: &str, step: u32, label: &str, steps: &[Value]) {
+    let trail = trail_of(steps);
+    phone_guard::merge_live(run_id, json!({ "status": "running", "step": step, "step_label": label, "trail": trail }));
+    crate::phone_runs::post_run_card(
+        db,
+        ctx,
+        &crate::phone_runs::RunCard { kind: "phone_task", run_id, serial, goal, status: "running", step, step_label: Some(label), inbox_id: None, summary: None, trail: None },
+    );
 }
 
 /// [`run_task_loop`] for a caller context, the one entry point other lanes call to
@@ -447,6 +510,8 @@ async fn run_task_loop(
         }
         match to_tool(&pick, &els) {
             Ok((tool, args, label)) => {
+                let slabel = step_label(tool, &label, &reason, pick.get("sensitive").and_then(Value::as_bool).unwrap_or(false), pick.get("effect").and_then(Value::as_str));
+                begin_step(db, ctx, &run_id, serial.unwrap_or_default(), goal, step, &slabel, &steps);
                 let el = action_el(tool, &pick, &els, last_el.as_ref());
                 let mut req = CheckIn {
                     serial: serial.unwrap_or_default().to_string(),
@@ -497,7 +562,7 @@ async fn run_task_loop(
                 };
                 if let Some((st, why)) = ended {
                     status = st;
-                    steps.push(json!({ "step": step, "action": label, "reason": reason, "ok": false, "error": why }));
+                    steps.push(json!({ "step": step, "action": label, "step_label": slabel, "reason": reason, "ok": false, "error": why }));
                     result = Some(why);
                     break;
                 }
@@ -505,7 +570,7 @@ async fn run_task_loop(
                     Gate::Go { hold_id, pass } => (hold_id, pass),
                     Gate::Changed(why) => {
                         history.push(format!("{step}. {label} — not done: {why}"));
-                        steps.push(json!({ "step": step, "action": label, "reason": reason, "ok": false, "error": why }));
+                        steps.push(json!({ "step": step, "action": label, "step_label": slabel, "reason": reason, "ok": false, "error": why }));
                         continue;
                     }
                     _ => continue,
@@ -523,7 +588,7 @@ async fn run_task_loop(
                 if err.as_deref().map(locked).unwrap_or(false) {
                     status = "phone_locked";
                     result = Some("the phone is locked".into());
-                    steps.push(json!({ "step": step, "action": label, "reason": reason, "ok": false, "error": err }));
+                    steps.push(json!({ "step": step, "action": label, "step_label": slabel, "reason": reason, "ok": false, "error": err }));
                     break;
                 }
                 if ok && tool == "phone.open_app" {
@@ -533,7 +598,7 @@ async fn run_task_loop(
                     last_el = el;
                 }
                 history.push(format!("{step}. {label}{}", err.as_deref().map(|e| format!(" — failed: {e}")).unwrap_or_default()));
-                steps.push(json!({ "step": step, "action": label, "reason": reason, "ok": ok, "error": err, "hold": hold }));
+                steps.push(json!({ "step": step, "action": label, "step_label": slabel, "reason": reason, "ok": ok, "error": err, "hold": hold }));
                 tokio::time::sleep(Duration::from_millis(600)).await;
             }
             Err(e) => {
@@ -554,6 +619,7 @@ async fn run_task_loop(
         "duration_ms": started.elapsed().saturating_sub(held).as_millis() as u64,
         "held_ms": held.as_millis() as u64,
         "holds": holds,
+        "trail": trail_of(&steps),
     })
 }
 
@@ -755,6 +821,8 @@ async fn run_web_task_loop(
         }
         match to_web_tool(&pick) {
             Ok((tool, args, label)) => {
+                let slabel = step_label(tool, &label, &reason, pick.get("sensitive").and_then(Value::as_bool).unwrap_or(false), pick.get("effect").and_then(Value::as_str));
+                begin_step(db, ctx, &run_id, serial, goal, step, &slabel, &steps);
                 on_step(json!({ "type": "state", "data": { "status": "Running", "lastMessage": reason, "stepIndex": step, "totalSteps": max } }));
                 let el = args.get("ref").and_then(Value::as_str).and_then(|r| web_el(&snap, r));
                 let mut req = CheckIn {
@@ -805,7 +873,7 @@ async fn run_web_task_loop(
                     Gate::Go { hold_id, pass } => (hold_id, pass),
                     Gate::Changed(why) => {
                         history.push(format!("{step}. {label} — not done: {why}"));
-                        steps.push(json!({ "step": step, "action": label, "reason": reason, "ok": false, "error": why }));
+                        steps.push(json!({ "step": step, "action": label, "step_label": slabel, "reason": reason, "ok": false, "error": why }));
                         continue;
                     }
                     other => {
@@ -817,7 +885,7 @@ async fn run_web_task_loop(
                             Gate::Go { .. } | Gate::Changed(_) => unreachable!(),
                         };
                         status = st;
-                        steps.push(json!({ "step": step, "action": label, "reason": reason, "ok": false, "error": why }));
+                        steps.push(json!({ "step": step, "action": label, "step_label": slabel, "reason": reason, "ok": false, "error": why }));
                         result = Some(why);
                         break;
                     }
@@ -833,11 +901,11 @@ async fn run_web_task_loop(
                 if err.as_deref().map(locked).unwrap_or(false) {
                     status = "phone_locked";
                     result = Some("the phone is locked".into());
-                    steps.push(json!({ "step": step, "action": label, "reason": reason, "ok": false, "error": err }));
+                    steps.push(json!({ "step": step, "action": label, "step_label": slabel, "reason": reason, "ok": false, "error": err }));
                     break;
                 }
                 history.push(format!("{step}. {label}{}", err.as_deref().map(|e| format!(" — failed: {e}")).unwrap_or_default()));
-                steps.push(json!({ "step": step, "action": label, "reason": reason, "ok": err.is_none(), "error": err, "hold": hold }));
+                steps.push(json!({ "step": step, "action": label, "step_label": slabel, "reason": reason, "ok": err.is_none(), "error": err, "hold": hold }));
                 tokio::time::sleep(Duration::from_millis(400)).await;
             }
             Err(e) => {
@@ -858,6 +926,7 @@ async fn run_web_task_loop(
         "duration_ms": started.elapsed().saturating_sub(held).as_millis() as u64,
         "held_ms": held.as_millis() as u64,
         "holds": holds,
+        "trail": trail_of(&steps),
     })
 }
 
@@ -952,6 +1021,73 @@ mod tests {
         assert_eq!(to_web_tool(&json!({ "action": "scroll", "dy": 99_999 })).unwrap().1["dy"], json!(20_000));
         assert!(to_web_tool(&json!({ "action": "click", "ref": "  " })).is_err());
         assert!(to_web_tool(&json!({ "action": "eval" })).is_err());
+    }
+
+    #[test]
+    fn typed_text_never_reaches_a_step_label() {
+        let reason = "typing the password hunter2 into the field";
+        assert_eq!(step_label("phone.type", "type 7 characters", reason, false, None), "Typing");
+        assert_eq!(step_label("phone.web.type", "type 7 characters into e4", reason, false, None), "Typing");
+        assert_eq!(step_label("phone.key", "key a", reason, false, None), "Typing");
+        assert_eq!(step_label("phone.sms.send", "send", reason, false, None), "Writing a message");
+        assert_eq!(step_label("phone.call", "call", reason, false, None), "Starting a call");
+        assert_eq!(step_label("phone.tap", "tap Pay", "Pay now", true, Some("pay")), "Waiting for your OK to pay");
+        assert_eq!(step_label("phone.tap", "tap Save", "  Open the\n Wi-Fi page ", false, None), "Open the Wi-Fi page");
+        assert_eq!(step_label("phone.tap", "tap Save", "", false, None), "tap Save");
+        assert_eq!(step_label("phone.web.open", "open https://x.test/a?token=abc", "", false, None), "Opening x.test");
+        assert_eq!(step_label("phone.tap", "t", &"w ".repeat(100), false, None).chars().count(), 80);
+    }
+
+    #[test]
+    fn the_notify_texts_are_unchanged() {
+        use crate::phone_task_notify::{status_text, Event};
+        let g = "open settings";
+        assert_eq!(status_text(&Event::Started, g), "Started: \"open settings\". I'll text when it needs you or is done.");
+        assert_eq!(status_text(&Event::Done, g), "Done: \"open settings\".");
+        assert_eq!(status_text(&Event::Denied, g), "Stopped: \"open settings\" was denied. Nothing more was done.");
+        assert_eq!(status_text(&Event::TimedOut, g), "Timed out waiting for approval on \"open settings\". Nothing was done. Ask again to retry.");
+        assert_eq!(
+            status_text(&Event::NeedsApproval { approval_id: "gap_1".into() }, g),
+            "Needs your approval: \"open settings\". Open the app inbox to decide: https://ai.allternit.com/?allternit_inbox=approval:gap_1"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_closing_card_carries_the_trail_and_running_cards_carry_the_step_label() {
+        let st = state("trail").await;
+        let steps: Vec<Value> = (1..=45).map(|n| json!({ "step": n, "action": "tap", "step_label": format!("Step {n}"), "reason": "r", "ok": n != 2 })).collect();
+        let trail = trail_of(&steps);
+        assert_eq!(trail.len(), 40);
+        assert_eq!(trail[0], json!({ "n": 6, "label": "Step 6", "ok": true }));
+        begin_step(&st.db, &ctx(), "task-trail", "link:1", "g", 3, "Open the Wi-Fi page", &steps[..2]);
+        let report = json!({ "status": "done", "result": "all set", "steps": steps, "trail": trail });
+        close_card(&st.db, &ctx(), &report, "task-trail", "link:1", "g");
+        let cs = cards(&st, "task-trail");
+        assert_eq!((cs[0]["status"].as_str(), cs[0]["stepLabel"].as_str(), cs[0]["step"].as_u64()), (Some("running"), Some("Open the Wi-Fi page"), Some(3)));
+        assert!(cs[0].get("trail").is_none());
+        assert_eq!((cs[1]["status"].as_str(), cs[1]["summary"].as_str()), (Some("done"), Some("all set")));
+        assert_eq!(cs[1]["trail"].as_array().unwrap().len(), 40);
+        assert_eq!(cs[1]["trail"][39], json!({ "n": 45, "label": "Step 45", "ok": true }));
+        // The live entry took the step, label and the trail so far.
+        let live = phone_guard::live_status("task-trail").unwrap();
+        assert_eq!((live["step"].as_u64(), live["step_label"].as_str()), (Some(3), Some("Open the Wi-Fi page")));
+        assert_eq!(live["trail"].as_array().unwrap().len(), 2);
+        phone_guard::set_live("task-trail", None);
+    }
+
+    #[test]
+    fn a_hold_keeps_the_trail_on_the_live_entry() {
+        let run = "task-hold-trail";
+        phone_guard::merge_live(run, json!({ "status": "running", "step": 2, "step_label": "Open Settings", "trail": [{ "n": 1, "label": "Home", "ok": true }] }));
+        phone_guard::merge_live(run, json!({ "status": "waiting_approval", "approvalId": "a1", "effect": "pay", "step_label": "Waiting for your OK to pay" }));
+        let held = phone_guard::live_status(run).unwrap();
+        assert_eq!((held["status"].as_str(), held["approvalId"].as_str(), held["step"].as_u64()), (Some("waiting_approval"), Some("a1"), Some(2)));
+        assert_eq!(held["trail"][0]["label"], "Home");
+        phone_guard::merge_live(run, json!({ "status": "running", "approvalId": null, "effect": null, "step_label": "Open Settings" }));
+        let after = phone_guard::live_status(run).unwrap();
+        assert!(after.get("approvalId").is_none() && after.get("effect").is_none());
+        assert_eq!((after["status"].as_str(), after["step_label"].as_str(), after["trail"].as_array().map(Vec::len)), (Some("running"), Some("Open Settings"), Some(1)));
+        phone_guard::set_live(run, None);
     }
 
     async fn state(tag: &str) -> Arc<AppState> {

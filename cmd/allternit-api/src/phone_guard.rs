@@ -890,15 +890,33 @@ where
         if !holds.iter().any(|h| h["approvalId"] == aid.as_str()) {
             holds.push(json!({ "approvalId": aid, "effect": effect, "state": "requested" }));
         }
+        let before = if run.is_empty() { None } else { live_status(&run).and_then(|l| l.get("step_label").cloned()) };
         if !run.is_empty() {
-            set_live(&run, Some(json!({ "status": "waiting_approval", "approvalId": aid, "effect": effect })));
-            crate::phone_runs::post_task_card(db, &req.ctx, &run, &req.serial, req.goal.as_deref().unwrap_or_default(), "waiting_approval", req.step.unwrap_or(0), Some(&format!("approval:{aid}")));
+            let label = format!("Waiting for your OK to {effect}");
+            merge_live(&run, json!({ "status": "waiting_approval", "approvalId": aid, "effect": effect, "step_label": label }));
+            let trail = live_status(&run).and_then(|l| l.get("trail").and_then(Value::as_array).cloned());
+            crate::phone_runs::post_run_card(
+                db,
+                &req.ctx,
+                &crate::phone_runs::RunCard {
+                    kind: "phone_task",
+                    run_id: &run,
+                    serial: &req.serial,
+                    goal: req.goal.as_deref().unwrap_or_default(),
+                    status: "waiting_approval",
+                    step: req.step.unwrap_or(0),
+                    step_label: Some(&label),
+                    inbox_id: Some(&format!("approval:{aid}")),
+                    summary: None,
+                    trail: trail.as_deref(),
+                },
+            );
         }
         let t0 = Instant::now();
         let outcome = wait(db, &aid, WAIT).await;
         *held += t0.elapsed();
         if !run.is_empty() {
-            set_live(&run, Some(json!({ "status": "running" })));
+            merge_live(&run, json!({ "status": "running", "approvalId": null, "effect": null, "step_label": before.unwrap_or(Value::Null) }));
         }
         match outcome {
             Outcome::Denied => {
@@ -942,6 +960,25 @@ pub fn set_live(run_id: &str, status: Option<Value>) {
             }
             None => {
                 m.remove(run_id);
+            }
+        }
+    }
+}
+
+/// Merge `patch` (an object) into a run's live entry, creating it when absent. A `null`
+/// value removes that key. A hold uses this so the step, label and trail survive it.
+pub fn merge_live(run_id: &str, patch: Value) {
+    let Some(p) = patch.as_object() else { return };
+    if let Ok(mut m) = live().lock() {
+        let e = m.entry(run_id.to_string()).or_insert_with(|| json!({}));
+        if !e.is_object() {
+            *e = json!({});
+        }
+        for (k, v) in p {
+            if v.is_null() {
+                e.as_object_mut().map(|o| o.remove(k));
+            } else {
+                e[k] = v.clone();
             }
         }
     }

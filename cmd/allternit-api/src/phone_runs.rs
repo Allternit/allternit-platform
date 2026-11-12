@@ -285,7 +285,7 @@ pub fn frame(data_dir: &FsPath, serial: &str, step: &str) -> Option<Vec<u8>> {
 
 /// Runs, newest first: `{run_id, serial, started_at, ended_at, steps, failed, source, thumbnail}`,
 /// plus `status` (`running` | `waiting_approval`, with `approvalId` and `effect`
-/// while a hold waits) for a task or replay still in progress.
+/// while a hold waits), `step`, `step_label` and `trail` (`[{n, label, ok}]`) for a task or replay still in progress.
 pub fn runs(steps: &[Step]) -> Vec<Value> {
     let mut order: Vec<String> = Vec::new();
     let mut by: std::collections::HashMap<String, Vec<&Step>> = std::collections::HashMap::new();
@@ -310,7 +310,7 @@ pub fn runs(steps: &[Step]) -> Vec<Value> {
                 "thumbnail": list.iter().rev().find_map(|s| s.thumbnail.clone()),
             });
             if let Some(live) = live_of(id) {
-                for k in ["status", "approvalId", "effect"] {
+                for k in ["status", "approvalId", "effect", "step", "step_label", "trail"] {
                     if let Some(v) = live.get(k).filter(|v| !v.is_null()) {
                         run[k] = v.clone();
                     }
@@ -430,6 +430,33 @@ pub fn post_task_card(db: &crate::db::DbHandle, ctx: &crate::phone_guard::TaskCt
 
 /// [`post_task_card`] plus the run's own result sentence (one line, ~200 chars) on a closed card.
 pub fn post_task_card_with_summary(db: &crate::db::DbHandle, ctx: &crate::phone_guard::TaskCtx, run_id: &str, serial: &str, goal: &str, status: &str, step: u32, inbox_id: Option<&str>, summary: Option<&str>) -> bool {
+    post_run_card(db, ctx, &RunCard { kind: "phone_task", run_id, serial, goal, status, step, step_label: None, inbox_id, summary, trail: None })
+}
+
+/// Most entries a closing card's `trail` (and the live `trail`) keeps.
+pub const TRAIL_MAX: usize = 40;
+
+/// One card event of a run, for any card kind (`phone_task`, `computer_task`).
+pub struct RunCard<'a> {
+    pub kind: &'a str,
+    pub run_id: &'a str,
+    pub serial: &'a str,
+    pub goal: &'a str,
+    pub status: &'a str,
+    pub step: u32,
+    /// What the run is doing now, from `phone_task::step_label` (never typed text).
+    pub step_label: Option<&'a str>,
+    pub inbox_id: Option<&'a str>,
+    pub summary: Option<&'a str>,
+    /// `[{n, label, ok}]`, newest last; clipped to [`TRAIL_MAX`].
+    pub trail: Option<&'a [Value]>,
+}
+
+/// Post one run card on the run's thread (a ledger event on the thread's bot). Card shape:
+/// `{"type":kind,"runId","serial","goal","status","step","stepLabel?","inboxId?","summary?","trail?":[{"n","label","ok"}]}`.
+/// The idempotency key is `phone-task:{run}:{status}:{step}:{inbox}` (`computer-task:` for a
+/// `computer_task`). `false` when the run has no thread.
+pub fn post_run_card(db: &crate::db::DbHandle, ctx: &crate::phone_guard::TaskCtx, c: &RunCard) -> bool {
     let Some(thread) = ctx.thread_id.as_deref().map(str::trim).filter(|t| !t.is_empty()) else { return false };
     let Ok(conn) = db.connect() else { return false };
     let bot = ctx
@@ -440,21 +467,28 @@ pub fn post_task_card_with_summary(db: &crate::db::DbHandle, ctx: &crate::phone_
     drop(conn);
     let Some(bot) = bot else { return false };
     let mut card = json!({
-        "type": "phone_task",
-        "runId": run_id,
-        "serial": serial,
-        "goal": goal.chars().take(300).collect::<String>(),
-        "status": status,
-        "step": step,
+        "type": c.kind,
+        "runId": c.run_id,
+        "serial": c.serial,
+        "goal": c.goal.chars().take(300).collect::<String>(),
+        "status": c.status,
+        "step": c.step,
     });
-    if let Some(i) = inbox_id {
+    if let Some(l) = c.step_label.map(|t| t.split_whitespace().collect::<Vec<_>>().join(" ")).filter(|t| !t.is_empty()) {
+        card["stepLabel"] = json!(l.chars().take(80).collect::<String>());
+    }
+    if let Some(i) = c.inbox_id {
         card["inboxId"] = json!(i);
     }
-    if let Some(line) = summary.map(|t| t.split_whitespace().collect::<Vec<_>>().join(" ")).filter(|t| !t.is_empty()) {
+    if let Some(line) = c.summary.map(|t| t.split_whitespace().collect::<Vec<_>>().join(" ")).filter(|t| !t.is_empty()) {
         card["summary"] = json!(line.chars().take(200).collect::<String>());
     }
-    let key = format!("phone-task:{run_id}:{status}:{step}:{}", inbox_id.unwrap_or(""));
-    crate::gateway_runner::led(db, &bot, thread, ctx.session_id.as_deref(), "phone_task", ("system", "phone"), card, Some(key))
+    if let Some(t) = c.trail.filter(|t| !t.is_empty()) {
+        card["trail"] = json!(t[t.len().saturating_sub(TRAIL_MAX)..]);
+    }
+    let prefix = if c.kind == "computer_task" { "computer-task" } else { "phone-task" };
+    let key = format!("{prefix}:{}:{}:{}:{}", c.run_id, c.status, c.step, c.inbox_id.unwrap_or(""));
+    crate::gateway_runner::led(db, &bot, thread, ctx.session_id.as_deref(), c.kind, ("system", "phone"), card, Some(key))
 }
 
 // ─── The run's latest screen (the status card's thumbnail) ────────────────
@@ -702,6 +736,20 @@ mod tests {
         assert_eq!(s["to"]["redacted"], true);
         let p = redact_args("phone.type", &json!({ "text": "{{email}}" }));
         assert_eq!(p["text"], "{{email}}");
+    }
+
+    #[test]
+    fn a_live_runs_row_carries_the_step_label_and_trail() {
+        let tmp = tempfile::tempdir().unwrap();
+        ingest(tmp.path(), "link:x", StepIn { run_id: Some("task-live-pill".into()), tool: "phone.tap".into(), ok: true, ..Default::default() }).unwrap();
+        let steps = steps(tmp.path(), "link:x", None);
+        crate::phone_guard::merge_live("task-live-pill", json!({ "status": "running", "step": 2, "step_label": "Open Settings", "trail": [{ "n": 1, "label": "Home", "ok": true }] }));
+        let row = runs(&steps).remove(0);
+        assert_eq!((row["status"].as_str(), row["step"].as_u64(), row["step_label"].as_str()), (Some("running"), Some(2), Some("Open Settings")));
+        assert_eq!(row["trail"][0]["label"], "Home");
+        crate::phone_guard::set_live("task-live-pill", None);
+        let done = runs(&steps).remove(0);
+        assert!(done.get("step_label").is_none());
     }
 
     #[test]
