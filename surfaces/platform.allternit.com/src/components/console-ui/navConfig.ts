@@ -50,6 +50,7 @@ import {
   BubbleChatIcon,
   SmartPhone01Icon,
 } from "@hugeicons/core-free-icons";
+import { fabricEnabled, isCloudGateway, type GatedFeature } from "@/lib/availability";
 
 export type ConsoleNavIcon = typeof LayoutDashboardIcon;
 
@@ -57,6 +58,10 @@ export interface ConsoleNavItem {
   to: string;
   label: string;
   icon: ConsoleNavIcon;
+  /** Hidden on Allternit Cloud (see src/lib/availability.ts). */
+  cloudHidden?: GatedFeature;
+  /** Only shown when the Fabric backend (VITE_ALLTERNITOS_URL) is configured. */
+  requiresFabric?: boolean;
 }
 
 export interface ConsoleNavGroup {
@@ -73,7 +78,7 @@ export interface ConsoleNavConfig {
   groups: ConsoleNavGroup[];
 }
 
-export const consoleNav: ConsoleNavConfig = {
+const baseConsoleNav: ConsoleNavConfig = {
   top: [
     { to: "/", label: "Dashboard", icon: LayoutDashboardIcon },
     { to: "/api-keys", label: "API keys", icon: Key01Icon },
@@ -85,9 +90,9 @@ export const consoleNav: ConsoleNavConfig = {
       defaultOpen: true,
       items: [
         { to: "/playground", label: "Playground", icon: PlayIcon },
-        { to: "/files", label: "Files", icon: File01Icon },
+        { to: "/files", label: "Files", icon: File01Icon, cloudHidden: "files" },
         { to: "/skills", label: "Skills", icon: SparklesIcon },
-        { to: "/batches", label: "Batches", icon: Briefcase01Icon },
+        { to: "/batches", label: "Batches", icon: Briefcase01Icon, cloudHidden: "batches" },
       ],
     },
     {
@@ -98,11 +103,11 @@ export const consoleNav: ConsoleNavConfig = {
         { to: "/platform/projects", label: "Projects", icon: CubeIcon },
         { to: "/platform/agents", label: "Agents", icon: BotIcon },
         { to: "/platform/conversations", label: "Conversations", icon: BubbleChatIcon },
-        { to: "/platform/computers", label: "Computers", icon: ComputerIcon },
+        { to: "/platform/computers", label: "Hosted computers", icon: ComputerIcon },
         { to: "/platform/phones", label: "Phones", icon: SmartPhone01Icon },
-        { to: "/platform/usage", label: "Usage", icon: Analytics01Icon },
-        { to: "/platform/billing", label: "Billing", icon: Dollar01Icon },
-        { to: "/platform/webhooks", label: "Webhooks", icon: WebhookIcon },
+        { to: "/platform/usage", label: "Project usage", icon: Analytics01Icon },
+        { to: "/platform/billing", label: "Project billing", icon: Dollar01Icon },
+        { to: "/platform/webhooks", label: "Project webhooks", icon: WebhookIcon },
       ],
     },
     {
@@ -114,7 +119,7 @@ export const consoleNav: ConsoleNavConfig = {
         { to: "/builder", label: "Builder", icon: MagicWandIcon },
         { to: "/sessions", label: "Sessions", icon: ComputerIcon },
         { to: "/deployments", label: "Deployments", icon: RocketIcon },
-        { to: "/computers", label: "Computers", icon: MonitorIcon },
+        { to: "/computers", label: "Agent computers", icon: MonitorIcon },
         { to: "/vaults", label: "Vaults", icon: DatabaseIcon },
         { to: "/memory", label: "Memory", icon: AiBrain01Icon },
       ],
@@ -134,7 +139,9 @@ export const consoleNav: ConsoleNavConfig = {
       label: "Gizzi Code",
       icon: AiBrain01Icon,
       badge: "soon",
-      items: [{ to: "/gizzi/usage", label: "Usage", icon: CoinsDollarIcon }],
+      items: [
+        { to: "/gizzi/usage", label: "Gizzi Code usage", icon: CoinsDollarIcon, cloudHidden: "gizziUsage" },
+      ],
     },
     {
       label: "Gateway",
@@ -148,12 +155,11 @@ export const consoleNav: ConsoleNavConfig = {
       label: "Manage",
       icon: Setting07Icon,
       items: [
-        { to: "/manage/rate-limits", label: "Rate limits", icon: Timer01Icon },
-        { to: "/manage/spend-limits", label: "Spend limits", icon: CoinsDollarIcon },
+        { to: "/manage/spend-limits", label: "Spend limits", icon: CoinsDollarIcon, cloudHidden: "spendLimits" },
         { to: "/manage/members", label: "Members", icon: UserGroupIcon },
-        { to: "/manage/service-accounts", label: "Service accounts", icon: ShieldUserIcon },
-        { to: "/manage/security", label: "Security", icon: LockPasswordIcon },
-        { to: "/manage/webhooks", label: "Webhooks", icon: WebhookIcon },
+        { to: "/manage/service-accounts", label: "Service accounts", icon: ShieldUserIcon, cloudHidden: "serviceAccounts" },
+        { to: "/manage/security", label: "Security", icon: LockPasswordIcon, cloudHidden: "security" },
+        { to: "/manage/webhooks", label: "Organization webhooks", icon: WebhookIcon },
         { to: "/manage/tags", label: "Tags", icon: Tag01Icon },
       ],
     },
@@ -164,7 +170,7 @@ export const consoleNav: ConsoleNavConfig = {
         { to: "/organizations", label: "Organizations", icon: TeamWorkIcon },
         { to: "/compute", label: "Compute", icon: CpuIcon },
         { to: "/devices", label: "Devices", icon: DeviceAccessIcon },
-        { to: "/fabric", label: "Fabric", icon: LayersIcon },
+        { to: "/fabric", label: "Fabric", icon: LayersIcon, requiresFabric: true },
         { to: "/runs", label: "Runs", icon: RocketIcon },
         { to: "/schedules", label: "Schedules", icon: Calendar02Icon },
         { to: "/approvals", label: "Approvals", icon: ShieldCheckIcon },
@@ -185,6 +191,28 @@ export const consoleNav: ConsoleNavConfig = {
   ],
 };
 
+export interface ConsoleNavOptions {
+  cloud: boolean;
+  fabric: boolean;
+}
+
+/** Build the nav for a given environment; empty groups are dropped. */
+export function buildConsoleNav(opts: ConsoleNavOptions): ConsoleNavConfig {
+  const keep = (item: ConsoleNavItem) =>
+    !(opts.cloud && item.cloudHidden) && !(item.requiresFabric && !opts.fabric);
+  return {
+    top: baseConsoleNav.top.filter(keep),
+    groups: baseConsoleNav.groups
+      .map((group) => ({ ...group, items: group.items.filter(keep) }))
+      .filter((group) => group.items.length > 0),
+  };
+}
+
+export const consoleNav: ConsoleNavConfig = buildConsoleNav({
+  cloud: isCloudGateway(),
+  fabric: fabricEnabled(),
+});
+
 /** Every navigable item, flattened with its group label for palette display. */
 export interface ConsoleNavEntry {
   to: string;
@@ -193,12 +221,16 @@ export interface ConsoleNavEntry {
   icon: ConsoleNavIcon;
 }
 
-export const consoleNavEntries: ConsoleNavEntry[] = [
-  ...consoleNav.top.map((item) => ({ ...item, group: null })),
-  ...consoleNav.groups.flatMap((group) =>
-    group.items.map((item) => ({ ...item, group: group.label }))
-  ),
-];
+export function buildConsoleNavEntries(nav: ConsoleNavConfig): ConsoleNavEntry[] {
+  return [
+    ...nav.top.map((item) => ({ ...item, group: null })),
+    ...nav.groups.flatMap((group) =>
+      group.items.map((item) => ({ ...item, group: group.label }))
+    ),
+  ];
+}
+
+export const consoleNavEntries: ConsoleNavEntry[] = buildConsoleNavEntries(consoleNav);
 
 export function consoleNavLabelForPath(pathname: string): string {
   if (pathname === "/") return "Dashboard";

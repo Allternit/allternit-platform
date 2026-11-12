@@ -65,6 +65,9 @@ export interface TestCloudCredentialResult {
  * provider via the ACU gateway. Nothing is persisted by this call. */
 export async function testCloudCredential(input: TestCloudCredentialInput): Promise<TestCloudCredentialResult> {
   const gatewayBase = getAcuGatewayBaseUrl();
+  if (!gatewayBase) {
+    throw new Error('Credential testing is not available: no gateway is configured.');
+  }
   const res = await fetch(`${gatewayBase}/v1/cloud-credentials/test`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
