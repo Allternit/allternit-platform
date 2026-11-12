@@ -174,6 +174,21 @@ describe("incidents", () => {
     expect(pub.map((i) => i.title)).toEqual(["Sign-in is down"]);
   });
 
+  it("AUTO_INCIDENTS set to a time keeps drafts before it and publishes after it", async () => {
+    env.AUTO_INCIDENTS = at(12).toISOString(); // soak ends at minute 12
+    await both(0);
+    failing = new Set(["signin"]);
+    for (let m = 1; m <= 5; m++) await both(m); // Down during the soak: draft
+    failing = new Set();
+    for (let m = 6; m <= 11; m++) await both(m);
+    failing = new Set(["api-ready", "api-live"]);
+    for (let m = 12; m <= 17; m++) await both(m); // Down after the soak: public
+    const list = (await (await admin("GET", "/api/admin/incidents", undefined, TOKEN, at(17))).json()) as { incidents: { draft: boolean; title: string }[] };
+    expect(list.incidents.filter((i) => i.draft).map((i) => i.title)).toEqual(["Sign-in is down"]);
+    const pub = (await get<IncidentsDoc>("/api/v1/incidents.json", at(17))).body.incidents;
+    expect(pub.map((i) => i.title)).toEqual(["API is down"]);
+  });
+
   it("admin opens an incident and schedules maintenance; both show in the public JSON", async () => {
     await tick(0);
     const r = await admin("POST", "/api/admin/incidents", {

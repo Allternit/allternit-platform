@@ -78,7 +78,7 @@ export async function runTick(env: Env, now: Date, deps: TickDeps = {}): Promise
     [...out.next].map(([id, r]) => [id, { status: r.status, alerted_at: ctx.components.get(id)?.alerted_at ?? null }]),
   );
   const plan = planAlerts(out.transitions, alertStates, names, inMaint, now);
-  const autoIncidents = (env.AUTO_INCIDENTS ?? "off").toLowerCase() === "on";
+  const autoIncidents = autoIncidentsOn(env.AUTO_INCIDENTS, now);
   let alertSubject: string | null = null;
   let applyAlerted = false;
   if (plan.items.length) {
@@ -276,4 +276,16 @@ export async function handleFetch(req: Request, env: Env, ctx?: ExecutionContext
     return env.ASSETS.fetch(new Request(new URL("/admin.html", url), req));
   }
   return plain(404, "not found");
+}
+
+/**
+ * AUTO_INCIDENTS: "on", "off", or an ISO 8601 time from which it is on (the end of a soak),
+ * so the switch flips on schedule without a redeploy. Anything else counts as off.
+ */
+export function autoIncidentsOn(value: string | undefined, now: Date): boolean {
+  const v = (value ?? "off").trim();
+  if (v.toLowerCase() === "on") return true;
+  if (!/^\d{4}-\d{2}-\d{2}T/.test(v)) return false;
+  const from = Date.parse(v);
+  return Number.isFinite(from) && now.getTime() >= from;
 }
