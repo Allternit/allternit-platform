@@ -51,6 +51,28 @@ export async function platformToken(): Promise<string | undefined> {
   return (await platformTokens())[0]
 }
 
+/**
+ * fetch() with the platform credential, falling back to the next one when the server
+ * rejects it (401/403), so a stale ALLTERNIT_API_TOKEN in a shell doesn't hide a good
+ * `gizzi login`. Returns undefined when there is no credential at all.
+ * The body must be re-sendable (string, bytes), not a stream.
+ */
+export async function fetchWithPlatformToken(url: string, init: RequestInit = {}): Promise<Response | undefined> {
+  const tokens = await platformTokens()
+  if (tokens.length === 0) return undefined
+  const send = (token: string) => {
+    const headers = new Headers(init.headers)
+    headers.set("Authorization", `Bearer ${token}`)
+    return fetch(url, { ...init, headers })
+  }
+  let response = await send(tokens[0]!)
+  for (const next of tokens.slice(1)) {
+    if (response.status !== 401 && response.status !== 403) break
+    response = await send(next)
+  }
+  return response
+}
+
 export async function platformSignedIn(): Promise<boolean> {
   return (await platformToken()) !== undefined
 }
@@ -72,30 +94,20 @@ export async function platformFetch(
   body?: unknown,
   options: PlatformRequestOptions & { accept?: string; headers?: Record<string, string> } = {},
 ): Promise<Response> {
-  const tokens = await platformTokens()
-  if (tokens.length === 0) throw new PlatformSignedOutError()
   const signals = [options.signal, options.timeoutMs ? AbortSignal.timeout(options.timeoutMs) : undefined].filter(
     (s): s is AbortSignal => s !== undefined,
   )
-  const send = (token: string) =>
-    fetch(`${platformApiBase()}${path}`, {
-      method,
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: options.accept ?? "application/json",
-        ...(body === undefined ? {} : { "Content-Type": "application/json" }),
-        ...options.headers,
-      },
-      body: body === undefined ? undefined : JSON.stringify(body),
-      signal: signals.length === 0 ? undefined : signals.length === 1 ? signals[0] : AbortSignal.any(signals),
-    })
-  // A stale ALLTERNIT_API_TOKEN left in a shell shouldn't hide a good
-  // `gizzi login`: on a rejected credential, try the next one.
-  let response = await send(tokens[0]!)
-  for (const next of tokens.slice(1)) {
-    if (response.status !== 401 && response.status !== 403) break
-    response = await send(next)
-  }
+  const response = await fetchWithPlatformToken(`${platformApiBase()}${path}`, {
+    method,
+    headers: {
+      Accept: options.accept ?? "application/json",
+      ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+      ...options.headers,
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
+    signal: signals.length === 0 ? undefined : signals.length === 1 ? signals[0] : AbortSignal.any(signals),
+  })
+  if (!response) throw new PlatformSignedOutError()
   return response
 }
 

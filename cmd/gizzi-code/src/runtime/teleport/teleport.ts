@@ -14,7 +14,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "
 import { basename, dirname, join } from "node:path"
 import { encodeClaudeCwd, getNativeSession, harnessHome, type HarnessId } from "@allternit/native-sessions"
 import { resumeNative } from "@/runtime/teleport/resume"
-import { platformApiBase, platformToken, PlatformApiError, PlatformSignedOutError } from "@/runtime/bots/platform-api"
+import { fetchWithPlatformToken, platformApiBase, PlatformApiError, PlatformSignedOutError } from "@/runtime/bots/platform-api"
 
 export type TeleportHarness = "claude" | "codex"
 export type TeleportDirection = "cloud" | "local"
@@ -167,17 +167,13 @@ function relay(targetId: string, path: string): string {
 }
 
 async function call(method: string, url: string, body?: unknown | Uint8Array): Promise<Response> {
-  const token = await platformToken()
-  if (!token) throw new PlatformSignedOutError()
   const raw = body instanceof Uint8Array
-  const res = await fetch(url, {
+  const res = await fetchWithPlatformToken(url, {
     method,
-    headers: {
-      Authorization: `Bearer ${token}`,
-      ...(body === undefined ? {} : { "Content-Type": raw ? "application/octet-stream" : "application/json" }),
-    },
+    headers: body === undefined ? {} : { "Content-Type": raw ? "application/octet-stream" : "application/json" },
     body: body === undefined ? undefined : raw ? (body as Uint8Array<ArrayBuffer>) : JSON.stringify(body),
   })
+  if (!res) throw new PlatformSignedOutError()
   if (!res.ok) {
     const text = await res.text().catch(() => "")
     let message = text

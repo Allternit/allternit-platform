@@ -16,7 +16,7 @@
  *
  * Free of CLI/UI imports so bun tests can drive it with a stubbed fetch.
  */
-import { platformApiBase, platformToken } from "@/runtime/bots/platform-api"
+import { fetchWithPlatformToken, platformApiBase } from "@/runtime/bots/platform-api"
 
 export interface AppRosterBot {
   id: string
@@ -71,27 +71,31 @@ export class AppRoutingError extends Error {
   }
 }
 
-async function headers(): Promise<Record<string, string> | undefined> {
+/**
+ * POST to the platform as this runtime: the internal service token when set, plus the account
+ * credential (with fallback past a stale ALLTERNIT_API_TOKEN). Undefined = no credential at all.
+ */
+async function send(url: string, headers: Record<string, string>, body: string, timeoutMs: number): Promise<Response | undefined> {
   const internal = process.env.ALLTERNIT_INTERNAL_SERVICE_TOKEN?.trim()
-  const token = await platformToken().catch(() => undefined)
-  if (!internal && !token) return undefined
-  return {
-    "Content-Type": "application/json",
-    Accept: "application/json",
-    ...(internal ? { "x-allternit-internal-token": internal } : {}),
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  const init: RequestInit = {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+      ...(internal ? { "x-allternit-internal-token": internal } : {}),
+      ...headers,
+    },
+    body,
+    signal: AbortSignal.timeout(timeoutMs),
   }
+  const withAccount = await fetchWithPlatformToken(url, init)
+  if (withAccount) return withAccount
+  return internal ? fetch(url, init) : undefined
 }
 
 async function post<T>(path: string, body: unknown, timeoutMs: number, extra?: Record<string, string>): Promise<T> {
-  const h = await headers()
-  if (!h) throw new AppRoutingError(401, "This runtime isn't connected to your Allternit account.")
-  const response = await fetch(`${platformApiBase()}/api/v1${path}`, {
-    method: "POST",
-    headers: extra ? { ...h, ...extra } : h,
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(timeoutMs),
-  })
+  const response = await send(`${platformApiBase()}/api/v1${path}`, extra ?? {}, JSON.stringify(body), timeoutMs)
+  if (!response) throw new AppRoutingError(401, "This runtime isn't connected to your Allternit account.")
   const text = await response.text().catch(() => "")
   if (!response.ok) {
     let message = text
@@ -226,14 +230,8 @@ export async function grantTaskPermission(
   sessionID: string,
   input: { actions: string[]; quote: string; messageId?: string },
 ): Promise<TaskGrantResult> {
-  const h = await headers()
-  if (!h) throw new AppRoutingError(401, "This runtime isn't connected to your Allternit account.")
-  const response = await fetch(`${platformApiBase()}/api/v1/task-grants/words`, {
-    method: "POST",
-    headers: h,
-    body: JSON.stringify({ sessionId: sessionID, ...input }),
-    signal: AbortSignal.timeout(10_000),
-  })
+  const response = await send(`${platformApiBase()}/api/v1/task-grants/words`, {}, JSON.stringify({ sessionId: sessionID, ...input }), 10_000)
+  if (!response) throw new AppRoutingError(401, "This runtime isn't connected to your Allternit account.")
   const text = await response.text().catch(() => "")
   if (!response.ok) {
     let message = text
