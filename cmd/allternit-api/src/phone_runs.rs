@@ -457,15 +457,6 @@ pub struct RunCard<'a> {
 /// The idempotency key is `phone-task:{run}:{status}:{step}:{inbox}` (`computer-task:` for a
 /// `computer_task`). `false` when the run has no thread.
 pub fn post_run_card(db: &crate::db::DbHandle, ctx: &crate::phone_guard::TaskCtx, c: &RunCard) -> bool {
-    let Some(thread) = ctx.thread_id.as_deref().map(str::trim).filter(|t| !t.is_empty()) else { return false };
-    let Ok(conn) = db.connect() else { return false };
-    let bot = ctx
-        .bot_id
-        .clone()
-        .filter(|b| !b.trim().is_empty())
-        .or_else(|| conn.query_row("SELECT bot_id FROM bot_threads WHERE id = ?1", rusqlite::params![thread], |r| r.get::<_, String>(0)).ok());
-    drop(conn);
-    let Some(bot) = bot else { return false };
     let mut card = json!({
         "type": c.kind,
         "runId": c.run_id,
@@ -486,6 +477,17 @@ pub fn post_run_card(db: &crate::db::DbHandle, ctx: &crate::phone_guard::TaskCtx
     if let Some(t) = c.trail.filter(|t| !t.is_empty()) {
         card["trail"] = json!(t[t.len().saturating_sub(TRAIL_MAX)..]);
     }
+    // The status snapshot follows the run even when it has no thread.
+    crate::status_snapshot::note_run_card(&ctx.owner, &card);
+    let Some(thread) = ctx.thread_id.as_deref().map(str::trim).filter(|t| !t.is_empty()) else { return false };
+    let Ok(conn) = db.connect() else { return false };
+    let bot = ctx
+        .bot_id
+        .clone()
+        .filter(|b| !b.trim().is_empty())
+        .or_else(|| conn.query_row("SELECT bot_id FROM bot_threads WHERE id = ?1", rusqlite::params![thread], |r| r.get::<_, String>(0)).ok());
+    drop(conn);
+    let Some(bot) = bot else { return false };
     let prefix = if c.kind == "computer_task" { "computer-task" } else { "phone-task" };
     let key = format!("{prefix}:{}:{}:{}:{}", c.run_id, c.status, c.step, c.inbox_id.unwrap_or(""));
     crate::gateway_runner::led(db, &bot, thread, ctx.session_id.as_deref(), c.kind, ("system", "phone"), card, Some(key))

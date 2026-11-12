@@ -823,7 +823,7 @@ async fn run_web_task_loop(
             Ok((tool, args, label)) => {
                 let slabel = step_label(tool, &label, &reason, pick.get("sensitive").and_then(Value::as_bool).unwrap_or(false), pick.get("effect").and_then(Value::as_str));
                 begin_step(db, ctx, &run_id, serial, goal, step, &slabel, &steps);
-                on_step(json!({ "type": "state", "data": { "status": "Running", "lastMessage": reason, "stepIndex": step, "totalSteps": max } }));
+                on_step(json!({ "type": "state", "data": { "status": "Running", "lastMessage": slabel, "stepIndex": step, "totalSteps": max } }));
                 let el = args.get("ref").and_then(Value::as_str).and_then(|r| web_el(&snap, r));
                 let mut req = CheckIn {
                     serial: serial.to_string(),
