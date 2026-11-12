@@ -364,6 +364,9 @@ export const RunCodeTool = Tool.define<typeof parameters, RunCodeMetadata>("run_
       throw new Error(`${SANDBOX_CANNOT_START} No OS sandbox was found (install bubblewrap).`)
     }
 
+    // Picked before the ask so the approval card's "Files:" row names what will
+    // be staged even when the call omits `files` (CLI brains usually do).
+    const attachments = pickAttachments(ctx.messages ?? [], params.files)
     await ctx.ask({
       permission: "run_code",
       patterns: ["python"],
@@ -371,7 +374,7 @@ export const RunCodeTool = Tool.define<typeof parameters, RunCodeMetadata>("run_
       // The approval card shows the script itself, not just "python".
       metadata: {
         language: params.language,
-        files: params.files,
+        files: attachments.map((a) => a.name),
         code:
           params.code.length > ASK_CODE_CHARS
             ? `${params.code.slice(0, ASK_CODE_CHARS)}\n…(${params.code.length - ASK_CODE_CHARS} more characters)`
@@ -391,7 +394,6 @@ export const RunCodeTool = Tool.define<typeof parameters, RunCodeMetadata>("run_
     await Promise.all([inDir, outDir, tmpDir, path.join(workdir, ".mpl")].map((d) => fs.mkdir(d, { recursive: true })))
 
     // Stage attachments into in/.
-    const attachments = pickAttachments(ctx.messages ?? [], params.files)
     const inputs: string[] = []
     let inputBytes = 0
     for (const a of attachments) {

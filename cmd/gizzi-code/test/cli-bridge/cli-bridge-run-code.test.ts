@@ -186,6 +186,8 @@ describe.skipIf(skipPython)("bridged run_code, really run", () => {
         expect(asks).toHaveLength(1)
         expect(asks[0].permission).toBe("run_code")
         expect(asks[0].metadata.code).toContain("pd.read_csv('in/sales.csv')")
+        // The approval bar's "Files:" row: the CLI omitted `files`, so the ask names what will be staged.
+        expect(asks[0].metadata.files).toEqual(["sales.csv"])
         const text = JSON.parse(reply.result.content[0].text)
         // Staged from the latest user message (not the older one's old.txt).
         expect(text.inputs).toEqual(["sales.csv"])

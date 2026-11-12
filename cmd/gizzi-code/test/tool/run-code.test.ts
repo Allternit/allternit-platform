@@ -369,6 +369,8 @@ describe.skipIf(skip)("tool.run_code", () => {
       // The approval card gets the script itself.
       expect(asks[0]!.metadata.code).toContain("pd.read_csv('in/sales.csv')")
       expect(asks[0]!.metadata.code_truncated).toBe(false)
+      // `files` omitted: the ask still names the attachments it will stage.
+      expect(asks[0]!.metadata.files).toEqual(["sales.csv"])
       expect(result.metadata.stdout).toContain("total 60")
       expect(result.metadata.inputs).toEqual(["sales.csv"])
       const files = result.metadata.files.map((f) => ({ name: f.name, mediaType: f.mediaType }))
