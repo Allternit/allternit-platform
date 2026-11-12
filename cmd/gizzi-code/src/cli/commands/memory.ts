@@ -281,7 +281,7 @@ interface MemoryRow {
 const LOOKUP_MS = 8_000
 
 async function loadTwin(): Promise<MemoryRow[]> {
-  const res = await platformRequest<{ memory?: any[] }>("GET", "/v1/twin/memory", undefined, { timeoutMs: LOOKUP_MS })
+  const res = await platformRequest<{ memory?: any[] }>("GET", "/api/v1/twin/memory", undefined, { timeoutMs: LOOKUP_MS })
   return (res.memory ?? []).map((m) => ({
     id: String(m.id),
     source: "twin" as const,
@@ -292,7 +292,7 @@ async function loadTwin(): Promise<MemoryRow[]> {
 }
 
 async function loadFacts(): Promise<MemoryRow[]> {
-  const res = await platformRequest<{ facts?: any[] }>("GET", "/memory/v2/facts?limit=500", undefined, { timeoutMs: LOOKUP_MS })
+  const res = await platformRequest<{ facts?: any[] }>("GET", "/api/v1/memory/v2/facts?limit=500", undefined, { timeoutMs: LOOKUP_MS })
   return (res.facts ?? []).map((f) => ({
     id: String(f.id),
     source: "facts" as const,
@@ -372,11 +372,11 @@ const EditCommand = cmd({
       const done = await bySource(
         args.source as string | undefined,
         async () => {
-          await platformRequest("PATCH", `/v1/twin/memory/${enc}`, { content: text }, { timeoutMs: LOOKUP_MS })
+          await platformRequest("PATCH", `/api/v1/twin/memory/${enc}`, { content: text }, { timeoutMs: LOOKUP_MS })
           return `Updated twin memory ${id}.`
         },
         async () => {
-          const res = await platformRequest<{ id?: string }>("PATCH", `/memory/v2/facts/${enc}`, { fact: text }, { timeoutMs: LOOKUP_MS })
+          const res = await platformRequest<{ id?: string }>("PATCH", `/api/v1/memory/v2/facts/${enc}`, { fact: text }, { timeoutMs: LOOKUP_MS })
           return `Updated fact ${id}. New id: ${res?.id ?? "(unknown)"}`
         },
         id,
@@ -399,11 +399,11 @@ const ForgetCommand = cmd({
       const done = await bySource(
         args.source as string | undefined,
         async () => {
-          await platformRequest("DELETE", `/v1/twin/memory/${enc}`, undefined, { timeoutMs: LOOKUP_MS })
+          await platformRequest("DELETE", `/api/v1/twin/memory/${enc}`, undefined, { timeoutMs: LOOKUP_MS })
           return `Forgot twin memory ${id}.`
         },
         async () => {
-          await platformRequest("DELETE", `/memory/v2/facts/${enc}`, undefined, { timeoutMs: LOOKUP_MS })
+          await platformRequest("DELETE", `/api/v1/memory/v2/facts/${enc}`, undefined, { timeoutMs: LOOKUP_MS })
           return `Forgot fact ${id}.`
         },
         id,
