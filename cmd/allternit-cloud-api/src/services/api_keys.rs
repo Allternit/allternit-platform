@@ -718,7 +718,7 @@ pub async fn create_playground_key(
 pub async fn revoke_project_key(db: &PgPool, project_id: &str, key_id: &str) -> Result<(), ApiError> {
     let result = sqlx::query(
         "UPDATE api_keys SET revoked_at = NOW(), updated_at = NOW() \
-         WHERE id = $1 AND project_id = $2 AND revoked_at IS NULL",
+         WHERE id = $1 AND project_id = $2 AND revoked_at IS NULL AND kind <> 'playground'",
     )
     .bind(key_id)
     .bind(project_id)
@@ -734,7 +734,7 @@ pub async fn revoke_project_key(db: &PgPool, project_id: &str, key_id: &str) -> 
 pub async fn get_project_key(db: &PgPool, project_id: &str, key_id: &str) -> Result<ProjectKey, ApiError> {
     sqlx::query_as::<_, ProjectKey>(&format!(
         "SELECT {PROJECT_KEY_COLUMNS} FROM api_keys \
-         WHERE id = $1 AND project_id = $2 AND revoked_at IS NULL"
+         WHERE id = $1 AND project_id = $2 AND revoked_at IS NULL AND kind <> 'playground'"
     ))
     .bind(key_id)
     .bind(project_id)
@@ -756,7 +756,7 @@ pub async fn update_project_key_governance(
     let allowed_cidrs = normalize_allowed_cidrs(allowed_cidrs)?;
     sqlx::query_as::<_, ProjectKey>(&format!(
         "UPDATE api_keys SET expires_at = $3, allowed_cidrs = $4, updated_at = NOW() \
-         WHERE id = $1 AND project_id = $2 AND revoked_at IS NULL RETURNING {PROJECT_KEY_COLUMNS}"
+         WHERE id = $1 AND project_id = $2 AND revoked_at IS NULL AND kind <> 'playground' RETURNING {PROJECT_KEY_COLUMNS}"
     ))
     .bind(key_id)
     .bind(project_id)

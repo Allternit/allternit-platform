@@ -5,7 +5,7 @@
 -- * api_keys.expires_at: a key past it is refused with 401 (both key-auth
 --   paths: services::api_keys::authenticate_api_key_at and
 --   platform_v1::caller::authenticate_from). NULL = never expires.
--- * api_keys.allowed_cidrs: client IPs (from the Cloudflare `cf-connecting-ip`
+-- * api_keys.allowed_cidrs: client IPs (from `X-Real-IP` set by the local proxy; see console_governance
 --   header) the key may be used from; anything else is a 403. NULL or empty =
 --   no restriction. Console sessions are not keys and are never restricted.
 -- * api_keys.kind: `standard` (every existing key) or `playground` (the
