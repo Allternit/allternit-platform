@@ -54,3 +54,10 @@ with no `LOCAL_URL`, the `local` backend is skipped.
 needed, empty until decisions accumulate). `oracle` only works once
 `ALLTERNIT_DECISIONS_ORACLE_MODEL` is set (`provider/model`), otherwise it is skipped.
 `open`, `vendor` and `typesafe` are left out on purpose.
+
+## Production install record (2026-11-13)
+
+- Installed on the cloud-api VPS; ready in about 90 s (download + load 8.8 s). Resident memory about 4.6 GB.
+- Weights `unsloth/Qwen3.5-4B-GGUF` `Qwen3.5-4B-Q4_K_M.gguf`, sha256 `00fe7986ff5f6b463e62455821146049db6f9313603938a70800d1fb69ef11a4` (pass as `ALLTERNIT_WEIGHTS_SHA256` on reinstall).
+- Measured: cold 88-token prompt about 4.2 s; warm (prefix reused) about 1.0 s. EPYC without AVX-512, 4 threads.
+- Node env: `head,local` (oracle inactive, `ALLTERNIT_DECISIONS_ORACLE_MODEL` unset). Env backup `/etc/allternit-api/api.env.bak.20261112-204404`.
