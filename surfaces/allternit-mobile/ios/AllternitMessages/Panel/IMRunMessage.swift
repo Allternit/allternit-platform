@@ -33,28 +33,37 @@ enum IMRunText {
 
 enum IMRunMessage {
     static let queryKey = "allternit_phone_run"
+    /// The card's own id (additive to the contract URL): ties a card sent before the run had an id,
+    /// like the first "Starting" card, to its run on the sender's device.
+    static let cardKey = "allternit_card"
 
-    /// `https://ai.allternit.com/?allternit_phone_run=<runId>`; the plain site before the run has an id.
-    static func url(runId: String?) -> URL {
+    /// `https://ai.allternit.com/?allternit_phone_run=<runId>&allternit_card=<cardId>`.
+    static func url(runId: String?, cardId: String? = nil) -> URL {
         var c = URLComponents(string: "https://ai.allternit.com/")!
-        if let runId, !runId.isEmpty { c.queryItems = [URLQueryItem(name: queryKey, value: runId)] }
+        var items: [URLQueryItem] = []
+        if let runId, !runId.isEmpty { items.append(URLQueryItem(name: queryKey, value: runId)) }
+        if let cardId, !cardId.isEmpty { items.append(URLQueryItem(name: cardKey, value: cardId)) }
+        c.queryItems = items.isEmpty ? nil : items
         return c.url!
     }
 
-    /// The run id a card carries, if it is an Allternit run card.
-    static func runId(of message: MSMessage?) -> String? {
+    private static func query(_ message: MSMessage?, _ name: String) -> String? {
         guard let url = message?.url, let c = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return nil }
-        return c.queryItems?.first(where: { $0.name == queryKey })?.value
+        return c.queryItems?.first(where: { $0.name == name })?.value
     }
 
-    @MainActor static func make(session: MSSession, goal: String, line: String, runId: String?) -> MSMessage {
+    /// The run id a card carries, if it is an Allternit run card.
+    static func runId(of message: MSMessage?) -> String? { query(message, queryKey) }
+    static func cardId(of message: MSMessage?) -> String? { query(message, cardKey) }
+
+    @MainActor static func make(session: MSSession, goal: String, line: String, runId: String?, cardId: String? = nil) -> MSMessage {
         let layout = MSMessageTemplateLayout()
         layout.image = cardImage
         layout.caption = goal
         layout.subcaption = line
         let message = MSMessage(session: session)
         message.layout = layout
-        message.url = url(runId: runId)
+        message.url = url(runId: runId, cardId: cardId)
         message.summaryText = line
         return message
     }
@@ -94,6 +103,8 @@ struct IMRunThread: Codable, Equatable, Sendable {
     var goal: String
     var startedAt: Date
     var runId: String?
+    /// Random per card; carried in the card URL. Optional so older archives still decode.
+    var cardId: String?
     var kind: String = "phone"
     /// `NSKeyedArchiver` data of the card's `MSSession`.
     var session: Data
@@ -159,6 +170,8 @@ final class IMRunController: ObservableObject {
         var caption: String
         var line: String
         var mine: Bool
+        /// The tapped card is this conversation's current run card: show its run.
+        var ours: Bool
     }
 
     private weak var conversation: MSConversation?
@@ -188,11 +201,17 @@ final class IMRunController: ObservableObject {
     func select(_ message: MSMessage?, in conversation: MSConversation) {
         guard let message, message.url?.host == "ai.allternit.com" else { selected = nil; return }
         let layout = message.layout as? MSMessageTemplateLayout
-        let mine = message.senderParticipantIdentifier == conversation.localParticipantIdentifier
         let id = IMRunMessage.runId(of: message)
-        selected = Selected(runId: id, caption: layout?.caption ?? "", line: layout?.subcaption ?? "", mine: mine)
+        let card = IMRunMessage.cardId(of: message)
+        // Only the sender's device holds the thread with this card id.
+        let sameCard = card != nil && card == thread?.cardId
+        let sameRun = id != nil && id == thread?.runId
+        let mine = message.senderParticipantIdentifier == conversation.localParticipantIdentifier || sameCard
+        let ours = mine && thread != nil && (sameCard || sameRun)
+        selected = Selected(runId: id ?? (ours ? thread?.runId : nil), caption: layout?.caption ?? "",
+                            line: layout?.subcaption ?? "", mine: mine, ours: ours)
         // The tapped bubble's session is the card's session: keep using it.
-        if mine, let session = message.session, var t = thread, id == nil || t.runId == nil || t.runId == id,
+        if ours, let session = message.session, var t = thread,
            let data = try? NSKeyedArchiver.archivedData(withRootObject: session, requiringSecureCoding: true) {
             t.session = data
             if t.runId == nil { t.runId = id }
@@ -227,7 +246,7 @@ final class IMRunController: ObservableObject {
         let session = MSSession()
         guard let data = try? NSKeyedArchiver.archivedData(withRootObject: session, requiringSecureCoding: true) else { return }
         let t = IMRunThread(conversationKey: Self.key(conversation), goal: goal, startedAt: Date(),
-                            kind: computer ? "computer" : "phone", session: data)
+                            cardId: UUID().uuidString, kind: computer ? "computer" : "phone", session: data)
         run = nil
         persist(t)
         deliver(status: "starting", step: 0, line: IMRunText.line(status: "starting", stepLabel: nil, summary: nil, computer: computer))
@@ -286,13 +305,15 @@ final class IMRunController: ObservableObject {
 
     /// Stages the card on the run's session. Proven in the iOS 26.4 simulator (2026-11-12):
     /// `send` without a fresh tap never posts (no completion, nothing in the transcript), so every
-    /// update is inserted into the input field and the user's send tap posts it; Messages then
+    /// update waits for a tap on "Update card" (insert then works), and the user's send posts it; Messages then
     /// replaces the session's earlier bubble in place.
     private func deliver(status: String, step: Int, line: String, force: Bool = false) {
         guard let conversation, var t = thread else { return }
         guard force || t.sends < IMSendRule.maxSends else { return }
         let session = (try? NSKeyedUnarchiver.unarchivedObject(ofClass: MSSession.self, from: t.session)) ?? MSSession()
-        let message = IMRunMessage.make(session: session, goal: t.goal, line: line, runId: t.runId ?? run?.runId)
+        // Once the run id is known every update carries it, so the first card is tied to its run.
+        if t.runId == nil, let id = run?.runId, !id.isEmpty { t.runId = id }
+        let message = IMRunMessage.make(session: session, goal: t.goal, line: line, runId: t.runId, cardId: t.cardId)
         t.lastStatus = status
         t.lastStep = step
         t.lastSentAt = Date()
@@ -327,7 +348,7 @@ struct IMLiveRunSection: View {
     var open: (URL) -> Void = { _ in }
 
     var body: some View {
-        if let sel = live.selected, !sel.mine || live.thread == nil || (sel.runId != nil && live.thread?.runId != sel.runId) {
+        if let sel = live.selected, !sel.ours {
             // A recipient sees the caption only; the sender's older card also links to its run.
             IMCaptionOnly(caption: sel.caption, line: sel.line)
             if sel.mine, let id = sel.runId, let url = URL(string: "allternit://phone-run/\(id)") {
@@ -426,11 +447,9 @@ struct IMRunStreamCard: View {
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(pillText)
 
-            Text(goal).font(.system(size: 14, weight: .semibold)).foregroundColor(Color("TextPrimary")).lineLimit(2)
-            stream
             if pending {
                 HStack(spacing: 8) {
-                    Text("The update is in the message field. Tap send to change the card in this chat.")
+                    Text("Messages posts only after a tap. Tap Update card, then send.")
                         .font(.system(size: 12)).foregroundColor(Color("TextSecondary"))
                         .fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: 4)
@@ -441,6 +460,9 @@ struct IMRunStreamCard: View {
                         .background(Color("TextPrimary"), in: Capsule())
                 }
             }
+
+            Text(goal).font(.system(size: 14, weight: .semibold)).foregroundColor(Color("TextPrimary")).lineLimit(2)
+            stream
             HStack {
                 Text(sends >= IMSendRule.maxSends ? "Card updates paused (12 sent)" : "One card in this chat updates as it runs")
                     .font(.system(size: 11)).foregroundColor(Color("TextTertiary"))
