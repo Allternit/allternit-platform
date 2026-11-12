@@ -95,13 +95,14 @@ pub(crate) fn normalize_scopes(scopes: Vec<String>) -> Vec<String> {
     }
 }
 
-/// List active (non-revoked) API keys for a user.
+/// List active (non-revoked) API keys for a user. Console playground keys
+/// (`kind = 'playground'`) are short-lived and never listed.
 pub async fn list_api_keys(db: &PgPool, user_id: &str) -> Result<Vec<ApiKey>, ApiError> {
     let rows = sqlx::query_as::<_, ApiKeyRow>(
         r#"
         SELECT id, user_id, organization_id, name, prefix, scopes, last_used_at, revoked_at, created_at
         FROM api_keys
-        WHERE user_id = $1 AND revoked_at IS NULL
+        WHERE user_id = $1 AND revoked_at IS NULL AND kind <> 'playground'
         ORDER BY created_at DESC
         "#,
     )
@@ -560,15 +561,79 @@ pub fn normalize_allowed_cidrs(entries: Vec<String>) -> Result<Option<Vec<String
     Ok((!out.is_empty()).then_some(out))
 }
 
-/// Active (non-revoked) keys of one project, newest first.
+/// Active (non-revoked) keys of one project, newest first. Playground keys
+/// are not listed (see [`create_playground_key`]).
 pub async fn list_project_keys(db: &PgPool, project_id: &str) -> Result<Vec<ProjectKey>, ApiError> {
     Ok(sqlx::query_as::<_, ProjectKey>(&format!(
         "SELECT {PROJECT_KEY_COLUMNS} FROM api_keys \
-         WHERE project_id = $1 AND revoked_at IS NULL ORDER BY created_at DESC, id"
+         WHERE project_id = $1 AND revoked_at IS NULL AND kind <> 'playground' ORDER BY created_at DESC, id"
     ))
     .bind(project_id)
     .fetch_all(db)
     .await?)
+}
+
+/// How long a console playground key lives.
+pub const PLAYGROUND_KEY_TTL_MINUTES: i64 = 15;
+
+/// A freshly minted playground key: the plaintext token (shown once, held in
+/// the console's memory only) and when it stops working.
+#[derive(Debug, Clone)]
+pub struct PlaygroundKey {
+    pub id: String,
+    pub token: String,
+    pub expires_at: DateTime<Utc>,
+}
+
+/// Mint the console playground's key for `user_id` on `project_id`: a
+/// user-style `alt_<64hex>` key (so `/v1/chat/completions` accepts it; project
+/// keys are refused there), scope `inference` only, kind `playground`,
+/// expiring [`PLAYGROUND_KEY_TTL_MINUTES`] from now. The project is attached
+/// for usage attribution. The caller's previous playground key for the same
+/// project is revoked in the same transaction, so at most one is live. The
+/// caller has already checked project access.
+pub async fn create_playground_key(
+    db: &PgPool,
+    user_id: &str,
+    organization_id: Option<&str>,
+    project_id: &str,
+) -> Result<PlaygroundKey, ApiError> {
+    let token = generate_token();
+    let prefix = token.chars().take(12).collect::<String>();
+    let id = generate_id();
+    let expires_at = Utc::now() + chrono::Duration::minutes(PLAYGROUND_KEY_TTL_MINUTES);
+    let scopes = vec!["inference".to_string()];
+
+    let mut tx = db.begin().await?;
+    sqlx::query(
+        "UPDATE api_keys SET revoked_at = NOW(), updated_at = NOW() \
+         WHERE user_id = $1 AND project_id = $2 AND kind = $3 AND revoked_at IS NULL",
+    )
+    .bind(user_id)
+    .bind(project_id)
+    .bind(KEY_KIND_PLAYGROUND)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query(
+        r#"
+        INSERT INTO api_keys (id, user_id, organization_id, name, token_hash, prefix, scopes, project_id, kind, expires_at)
+        VALUES ($1, $2, $3, 'Console playground', $4, $5, $6, $7, $8, $9)
+        "#,
+    )
+    .bind(&id)
+    .bind(user_id)
+    .bind(organization_id)
+    .bind(hash_token(&token))
+    .bind(&prefix)
+    .bind(&scopes)
+    .bind(project_id)
+    .bind(KEY_KIND_PLAYGROUND)
+    .bind(expires_at)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+
+    Ok(PlaygroundKey { id, token, expires_at })
 }
 
 /// Revoke one key of a project (the project check is the caller's job).

@@ -168,7 +168,12 @@ async fn chat_completions_attributed(
 
     // A key that belongs to a Platform API project bills to its project: no
     // card on file, no inference (Eoj 2026-10-08, no free usage).
-    if let Some(project_id) = attribution.project_id.as_deref() {
+    // The console playground's key is the signed-in user's own key with the
+    // project attached only for attribution: it bills to the user's credits
+    // (check_inference_allowed below), so the project's card is not required.
+    // `client` is `playground` only for an `api_keys` row of that kind.
+    let playground = attribution.client.as_deref() == Some(crate::services::api_keys::KEY_KIND_PLAYGROUND);
+    if let Some(project_id) = attribution.project_id.as_deref().filter(|_| !playground) {
         if let Err(e) = crate::routes::platform_v1::billing::spend_allowed(&state.db, project_id).await {
             return Ok(e.into_response());
         }

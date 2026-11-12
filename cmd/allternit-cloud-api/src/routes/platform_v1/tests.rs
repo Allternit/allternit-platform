@@ -336,8 +336,9 @@ async fn project_key_governance_is_persisted_at_mint() {
     assert_eq!(created.key.kind, "playground");
     assert!(created.key.expires_at.is_some());
     assert_eq!(created.key.allowed_cidrs, Some(vec!["10.0.0.0/8".to_string()]));
+    // Playground keys are never listed with the project's keys.
     let listed = api_keys::list_project_keys(&c.state.db, &p.id).await.unwrap();
-    assert_eq!(listed[0].kind, "playground");
+    assert!(listed.iter().all(|k| k.id != created.key.id), "{listed:?}");
     // Keys minted the old way are `standard` with no expiry or allowlist.
     let (key_id, _) = mint(&c, &p, None, &["agents"]).await;
     let (kind, expires, cidrs): (String, Option<chrono::DateTime<chrono::Utc>>, Option<Vec<String>>) =

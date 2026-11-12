@@ -73,6 +73,8 @@ pub const ERASE: &[(&str, &str)] = &[
     ("platform_spend_alerts", PROJECT),
     ("platform_credit_grants", PROJECT),
     ("platform_usage_events", PROJECT),
+    ("platform_saved_prompts", "owner_user_id = $1 OR project_id IN (SELECT id FROM platform_projects WHERE owner_user_id = $1)"),
+    ("inference_request_bodies", PROJECT),
     ("platform_phone_fleet_runs", PROJECT),
     ("platform_phone_runs", OWNER_USER),
     ("platform_idempotency", "key_id IN (SELECT id FROM api_keys WHERE user_id = $1 OR project_id IN (SELECT id FROM platform_projects WHERE owner_user_id = $1))"),
