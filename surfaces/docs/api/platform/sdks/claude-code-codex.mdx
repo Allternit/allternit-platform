@@ -92,7 +92,7 @@ A stdio-only client can bridge with `npx -y mcp-remote https://mcp.allternit.com
 | `mailbox_create`, `mailbox_list` | Agent mailboxes |
 | `mail_list`, `mail_read`, `mail_read_otp` | Read a mailbox, or just its newest one-time code |
 
-The same key works on the REST API at `https://api.allternit.com/v1`: [`/v1/phones`](/api/platform/phones) (including `/v1/phones/runs` for fleet runs), [`/v1/numbers`](/api/platform/numbers), [`/v1/messages`](/api/platform/messaging), `/v1/mailboxes`, and `/v1/identities`, which creates a number and mailbox (and attaches a phone) in one call.
+The same key works on the REST API at `https://api.allternit.com/v1`: [`/v1/phones`](/api/platform/phones) (including `/v1/phones/runs` for fleet runs), [`/v1/numbers`](/api/platform/numbers), [`/v1/texts`](/api/platform/texts), `/v1/mailboxes`, and `/v1/identities`, which creates a number and mailbox (and attaches a phone) in one call.
 
 ## What the skill teaches the agent
 
@@ -100,6 +100,6 @@ The same key works on the REST API at `https://api.allternit.com/v1`: [`/v1/phon
 - **Run a task:** for longer goals, start `phone_task`, share the live view link, and poll `phone_run_status`. Tasks and skill replays never text or call.
 - **Fleet run:** the same goal or skill on several phones, reported per phone.
 - **Give an agent an identity:** a number and mailbox for one agent or test persona; live numbers are billed monthly, so the agent confirms first.
-- **Read a one-time code:** `mail_read_otp` for email, inbound `/v1/messages` for an Allternit number, and `phone.sms.read` on your own phone only with your approval.
+- **Read a one-time code:** `mail_read_otp` for email, inbound `/v1/texts` for an Allternit number, and `phone.sms.read` on your own phone only with your approval.
 
 For phone errors such as `phone_desktop_offline` or `phone_required`, see [Phones](/api/platform/phones).

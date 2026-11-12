@@ -96,6 +96,27 @@ class Handler(BaseHTTPRequestHandler):
                 self.wfile.flush()
             self.close_connection = True
             return
+        if p == "/v1/decisions" and self.command == "POST":
+            return self._json(200, {"id": "dec_1", "object": "decision", "answers": [{"name": "ok", "type": "predicate", "probability": 0.9, "confidence": 0.9}]})
+        if p == "/v1/responses" and self.command == "POST":
+            if body.get("stream"):
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.send_header("Connection", "close")
+                self.end_headers()
+                self.wfile.write(b'event: response.output_text.delta\ndata: {"delta":"Hi"}\n\nevent: response.completed\ndata: {"id":"resp_1"}\n\n')
+                self.wfile.flush()
+                self.close_connection = True
+                return
+            return self._json(200, {"id": "resp_1", "object": "response", "status": "completed", "output": []})
+        if p == "/v1/messages" and self.command == "POST":
+            return self._json(200, {"id": "mdl_1", "type": "message", "role": "assistant", "content": [{"type": "text", "text": "Hi"}], "stop_reason": "end_turn"})
+        if p == "/v1/texts" and self.command == "POST":
+            return self._json(201, {"id": "msg_1", "object": "text", "status": "simulated"})
+        if p == "/v1/conversations/conv_1/items" and self.command == "GET":
+            return self._json(200, {"data": [{"id": "item_1", "object": "item"}], "has_more": False, "next_cursor": None})
+        if p == "/v1/approvals/apr_1" and self.command == "POST":
+            return self._json(200, {"id": "apr_1", "object": "approval", "status": "approved"})
         self._json(404, {"error": {"type": "not_found_error", "code": "route", "message": "no route", "param": None}})
 
     do_GET = do_POST = do_PATCH = do_PUT = do_DELETE = _handle
@@ -205,6 +226,40 @@ class ClientTests(unittest.TestCase):
                 deltas.append(ev.delta)
         self.assertEqual(deltas, ["Hal"])
         self.assertEqual((ctx.exception.code, ctx.exception.type), ("turn_failed", "api_error"))
+
+    def test_decisions_create(self):
+        d = self.client().decisions.create(input="Box arrived crushed", questions=[{"name": "ok", "type": "predicate", "instructions": "Damaged?"}])
+        self.assertEqual(d["id"], "dec_1")
+        self.assertEqual((SEEN[-1]["method"], SEEN[-1]["path"]), ("POST", "/v1/decisions"))
+        self.assertEqual(SEEN[-1]["body"]["questions"][0]["name"], "ok")
+
+    def test_responses_create_and_stream(self):
+        r = self.client().responses.create(model="allternit/auto", input="hi")
+        self.assertEqual(r["status"], "completed")
+        self.assertEqual(SEEN[-1]["body"], {"model": "allternit/auto", "input": "hi"})
+        events = list(self.client().responses.create_stream(model="allternit/auto", input="hi"))
+        self.assertEqual(SEEN[-1]["body"]["stream"], True)
+        self.assertEqual(len(events), 2)
+
+    def test_messages_create(self):
+        m = self.client().messages.create(model="allternit/auto", messages=[{"role": "user", "content": "hi"}], max_tokens=64)
+        self.assertEqual(m["id"], "mdl_1")
+        self.assertEqual(SEEN[-1]["path"], "/v1/messages")
+
+    def test_texts_create(self):
+        t = self.client().texts.create(number_id="n1", to="+14155550123", body="Hi")
+        self.assertEqual(t["object"], "text")
+        self.assertEqual(SEEN[-1]["path"], "/v1/texts")
+
+    def test_conversations_list_items(self):
+        page = self.client().conversations.list_items("conv_1")
+        self.assertEqual(page["data"][0]["id"], "item_1")
+        self.assertEqual(SEEN[-1]["path"].split("?")[0], "/v1/conversations/conv_1/items")
+
+    def test_approvals_resolve(self):
+        a = self.client().approvals.resolve("apr_1", decision="approve")
+        self.assertEqual(a["status"], "approved")
+        self.assertEqual(SEEN[-1]["body"], {"decision": "approve"})
 
     def test_generated_code_is_current(self):
         script = Path(__file__).resolve().parents[3] / "scripts/platform-sdk/generate.py"

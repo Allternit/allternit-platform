@@ -47,7 +47,7 @@ interface Page<T> {
 export const PROJECT_KEY_SCOPES: { value: string; label: string; hint: string }[] = [
   { value: "agents", label: "Agents", hint: "Agents and conversations" },
   { value: "voice", label: "Voice", hint: "Calls and realtime sessions" },
-  { value: "messaging", label: "Messaging", hint: "Texts" },
+  { value: "messaging", label: "Messaging", hint: "Texts (/v1/texts)" },
   { value: "numbers", label: "Numbers", hint: "Phone numbers and carrier registration" },
   { value: "channels", label: "Channels", hint: "Channel connections" },
   { value: "twin", label: "Twin", hint: "People, inbox, approvals, autonomy, memory" },
@@ -56,6 +56,7 @@ export const PROJECT_KEY_SCOPES: { value: string; label: string; hint: string }[
   { value: "inference", label: "Inference", hint: "/v1/chat/completions" },
   { value: "computers", label: "Computers", hint: "Hosted computers and the computer/browser toolsets" },
   { value: "phones", label: "Phones", hint: "Your linked phones: tools, tasks, skills and run history" },
+  { value: "decisions", label: "Decisions", hint: "Typed decisions" },
   { value: "mail", label: "Mail", hint: "Mailboxes: addresses, inbound mail, one-time codes and sending" },
 ];
 

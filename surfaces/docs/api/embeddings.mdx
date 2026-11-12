@@ -3,6 +3,11 @@ title: 'Embeddings'
 description: 'Generate text embeddings through the Allternit LLM gateway'
 ---
 
+<Warning>
+Not served on api.allternit.com. This page describes the gateway contract only.
+</Warning>
+
+
 ## Overview
 
 The `/v1/embeddings` endpoint returns vector embeddings for one or more input strings. Allternit normalizes and validates the request, then proxies it to the configured embeddings provider — the response (vectors, model id, usage) comes straight from the provider.

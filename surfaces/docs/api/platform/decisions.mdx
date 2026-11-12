@@ -1,0 +1,50 @@
+---
+title: 'Decisions'
+description: 'Ask typed questions about some input and get back probabilities, a choice or a score.'
+---
+
+`POST /v1/decisions` answers up to 400 typed questions about one input. Scope `decisions`.
+
+| Method | Path | |
+|---|---|---|
+| `POST` | `/v1/decisions` | Ask the questions |
+| `GET` | `/v1/decisions/{id}` | Retrieve a decision |
+| `PATCH` | `/v1/decisions/{id}` | Record outcomes per question |
+
+## Request
+
+`input` is a string or a list of items (`input_text`, `input_image`, `input_json`). `instructions` is shared by all questions. Each question has a `name`, a `type` and `instructions`:
+
+- `predicate`: a yes or no question. The answer carries `probability` of yes.
+- `choice`: `choices` is 2 to 255 `{ value, description }` options. The answer carries `choice` and `probabilities`.
+- `score`: `levels` is 2 to 10 `{ label, description }` levels. The answer carries `score` (0 to 1) and `probabilities` per level.
+
+Other fields: `latency_budget_ms`, `allow_abstain`, `metadata`. `questions` may also be an object keyed by question name. Limits: text input 64 KiB, one image up to 6 MiB, at most 16 questions when an image is attached.
+
+```bash
+curl https://api.allternit.com/v1/decisions \
+  -H "Authorization: Bearer $ALLTERNIT_KEY" -H "Content-Type: application/json" \
+  -d '{ "input": "The box arrived crushed and the lamp is in pieces.",
+        "questions": [
+          { "name": "is_damaged", "type": "predicate", "instructions": "Did the item arrive damaged?" },
+          { "name": "dept", "type": "choice", "instructions": "Which team?",
+            "choices": [{ "value": "billing" }, { "value": "shipping" }] } ] }'
+```
+
+```json
+{ "id": "dec_…", "object": "decision",
+  "answers": [
+    { "name": "is_damaged", "type": "predicate", "probability": 0.93, "confidence": 0.93, "backend": "local" },
+    { "name": "dept", "type": "choice", "choice": "shipping", "probabilities": [{ "value": "shipping", "probability": 0.9 }], "confidence": 0.9, "backend": "local" } ],
+  "latency_ms": 212, "usage": { "questions": 2 } }
+```
+
+A question that cannot be answered returns `{ "name", "type": "refusal", "reason" }` with `reason` one of `abstained`, `unavailable` or `budget_exhausted`.
+
+## Outcomes
+
+`PATCH /v1/decisions/{id}` takes `{ "outcomes": { "<name>": { "status": "success|failure|error|skipped", "label"?, "detail"? } } }`. Outcomes feed back into the decision backends.
+
+## Billing
+
+Only answered questions count, as the `decision_questions` meter. See [Pricing](/api/platform/pricing). For the agent-facing feature, see [Decisions and decision trees](/guides/decisions).

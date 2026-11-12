@@ -22,7 +22,7 @@ Until a card is on file, billable requests answer `402` and do nothing:
   "url": "https://platform.allternit.com/platform/billing?project=proj_…" } }
 ```
 
-That covers creating agents, `POST /v1/conversations/{id}/messages`, calls and realtime sessions (`/v1/calls`), inbound calls to your numbers, `POST /v1/messages`, `POST /v1/numbers`, channel connections, `/v1/computers` (create, start and toolset calls), and `/v1/chat/completions` with a project key. Reading data, accounts, model keys, webhooks and the spend cap keep working, so you can set up before you add a card.
+That covers creating agents, `POST /v1/conversations/{id}/messages`, calls and realtime sessions (`/v1/calls`), inbound calls to your numbers, `POST /v1/texts`, `POST /v1/numbers`, channel connections, `/v1/computers` (create, start and toolset calls), and `/v1/chat/completions` with a project key. Reading data, accounts, model keys, webhooks and the spend cap keep working, so you can set up before you add a card.
 
 The same `402 payment_method_required` comes back when a project's subscription is cancelled, or when a renewal payment fails and Stripe stops retrying (`unpaid`). While Stripe is still retrying (`past_due`) work continues; update the card in **Manage billing**.
 
