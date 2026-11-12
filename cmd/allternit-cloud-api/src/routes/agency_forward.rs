@@ -82,9 +82,10 @@ const DROPPED_RESPONSE_HEADERS: &[&str] = &[
 const PRIVATE_JWK_MEMBERS: &[&str] = &["d", "p", "q", "dp", "dq", "qi", "oth", "k"];
 
 pub struct AgencyForward {
-    node_url: String,
-    access_token: Option<String>,
-    client: reqwest::Client,
+    // `pub(crate)`: `platform_v1::decisions` calls the node directly (one call per question).
+    pub(crate) node_url: String,
+    pub(crate) access_token: Option<String>,
+    pub(crate) client: reqwest::Client,
     jwks_cache: Mutex<Option<(Instant, Bytes)>>,
 }
 
