@@ -74,6 +74,9 @@ pub fn unit_price_microusd(meter: &str) -> Option<i64> {
         // Platform mail and the agent identity bundle (Eoj 2026-10-29).
         "mailbox_month" => 2_000_000,
         "identity_month" => 9_000_000,
+        // $0.50 per 1,000 questions on live keys (unit_price_microusd does not see the key mode; sandbox handling stays with the caller).
+        // TODO(eoj): price pending sign-off
+        "decision_questions" => 500,
         _ => return None,
     })
 }

@@ -77,7 +77,12 @@ pub struct PendingMeter {
     pub unit: &'static str,
 }
 
-pub const PENDING_METERS: &[PendingMeter] = &[];
+pub const PENDING_METERS: &[PendingMeter] = &[PendingMeter {
+    meter: "decision_questions",
+    event_name: "allternit_decision_questions",
+    display_name: "Decision questions",
+    unit: "question",
+}];
 
 /// Meters recorded at $0 and never sent to Stripe: phone minutes an agent
 /// identity's bundle covers (its `identity_month` row is the charge).
