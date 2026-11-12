@@ -520,6 +520,32 @@ export const SessionRoutes = lazy(() =>
         return c.json(msgs)
       },
     )
+    .get(
+      "/:sessionID/branches",
+      describeRoute({
+        summary: "List earlier turn versions",
+        description:
+          "Earlier versions of turns that a revert-and-resend (Retry, Edit) replaced, newest first, at most 20. Each branch holds the removed messages (info + parts, tool outputs capped at 8 KB); `anchorMessageId` is the first removed message (the reverted user message).",
+        operationId: "session.branches",
+        responses: {
+          200: {
+            description: "Branches, newest first",
+            content: {
+              "application/json": {
+                schema: resolver(z.any()),
+              },
+            },
+          },
+          ...errors(404),
+        },
+      }),
+      validator("param", z.any()),
+      async (c) => {
+        const { sessionID } = c.req.valid("param") as any
+        await Session.get(sessionID)
+        return c.json(SessionRevert.branches(sessionID))
+      },
+    )
     .post(
       "/:sessionID/message",
       describeRoute({

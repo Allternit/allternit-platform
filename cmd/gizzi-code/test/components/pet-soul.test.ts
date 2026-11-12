@@ -1,8 +1,15 @@
-import { describe, expect, mock, test } from "bun:test"
+import { afterAll, describe, expect, mock, test } from "bun:test"
 
 // A model call that never settles, like a provider retrying an unreachable
 // small model. The pet must give up when its signal fires.
 const claudeApi = await import("../../src/cli/ui/ink-app/services/api/claude.js")
+// Bun keeps a mock.module override for the rest of the run, other test files
+// included, so the real module goes back once this file is done.
+const realClaudeApi = { ...claudeApi }
+afterAll(() => {
+  mock.module("../../src/cli/ui/ink-app/services/api/claude.js", () => realClaudeApi)
+})
+
 mock.module("../../src/cli/ui/ink-app/services/api/claude.js", () => ({
   ...claudeApi,
   queryModelWithoutStreaming: () => new Promise(() => {}),

@@ -1,0 +1,37 @@
+---
+title: 'Memory page'
+description: 'Settings, Memory: what Allternit knows about you, one searchable list of memories you can edit or delete, and your Memory Drive.'
+---
+
+Open **Settings, Memory** on Desktop, ai.allternit.com (including the phone layout) and the m.allternit.com app. On iPhone it is **Settings, Memory**. **Customize, Skills** also has a **Memory** card that opens it.
+
+## About you
+
+Your twin profile, plus **What Allternit knows about you**: a short summary built from your twin context. See [Your twin](/guides/your-twin).
+
+## Memories
+
+One list holds everything remembered about you:
+
+- Items from your twin, marked **Twin**.
+- Facts learned from your chats, marked **Learned**.
+
+You can search the list, edit an item and delete it. Editing a learned fact replaces it with a new one, so its id changes.
+
+## Drive
+
+The **Drive** section is unchanged. See [Memory Drive](/guides/memory-drive).
+
+## From the terminal
+
+```bash
+gizzi memory list [--source twin|facts] [--json]
+gizzi memory edit <id> "<text>"
+gizzi memory forget <id>
+```
+
+See [gizzi memory](/cli/memory).
+
+## Related
+
+- [Memory and learning](/guides/memory-and-learning)

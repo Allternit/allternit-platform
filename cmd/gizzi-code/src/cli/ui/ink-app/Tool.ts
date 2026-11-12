@@ -294,6 +294,8 @@ export type ToolUseContext = {
   onCompactProgress?: (event: CompactProgressEvent) => void
   setSDKStatus?: (status: SDKStatus) => void
   openMessageSelector?: () => void
+  /** Rewind to the last user message and prefill the composer with it. False when there is none. */
+  restoreLastUserMessage?: () => boolean
   updateFileHistoryState: (
     updater: (prev: FileHistoryState) => FileHistoryState,
   ) => void

@@ -71,6 +71,11 @@ struct TwinMemory: Codable, Identifiable, Equatable, Sendable {
     var isProposed: Bool { status == "proposed" }
 }
 
+struct TwinContext: Decodable, Equatable, Sendable {
+    let configured: Bool
+    let context: String
+}
+
 struct TwinMemoryInput: Encodable, Sendable {
     let kind: TwinKind
     let subject: String
@@ -121,6 +126,20 @@ final class TwinClient: @unchecked Sendable {
                                  signature: profile.signature, ownerDisclosure: profile.ownerDisclosure)
         let body: ProfileBody = try await send("twin/profile", method: "PUT", body: input)
         return body.profile
+    }
+
+    /// What bots are told about you right now (`GET twin/context`).
+    /// `configured` is false until the profile has any content.
+    func context(botId: String? = nil) async throws -> TwinContext {
+        var path = "twin/context"
+        if let botId, !botId.isEmpty {
+            path += "?botId=\(botId.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? botId)"
+        }
+        do {
+            return try await client.get(path: path)
+        } catch let APIError.httpError(status, _) where status == 404 {
+            return TwinContext(configured: false, context: "")
+        }
     }
 
     func memory() async throws -> [TwinMemory] {

@@ -114,6 +114,8 @@ struct MessageActionBar: View {
     /// reply — ChatView passes this for that row only.
     let isLastAssistant: Bool
     let onRegenerate: () -> Void
+    /// Opens the thread's share-link sheet (nil hides the menu entry).
+    var onShareLink: (() -> Void)? = nil
 
     /// 👍/👎 selection. LOCAL-ONLY: the backend has no message-feedback
     /// endpoint (verified against cmd/allternit-api routes, 2026-07) — the
@@ -127,8 +129,22 @@ struct MessageActionBar: View {
             actionButton("doc.on.doc", label: "Copy") {
                 UIPasteboard.general.string = message.content
             }
-            actionButton("square.and.arrow.up", label: "Share") {
-                isSharePresented = true
+            if let onShareLink {
+                Menu {
+                    Button { isSharePresented = true } label: { Label("Share text", systemImage: "square.and.arrow.up") }
+                    Button { onShareLink() } label: { Label("Share link…", systemImage: "link") }
+                } label: {
+                    Image(systemName: "square.and.arrow.up")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(Color("TextSecondary"))
+                        .frame(width: 30, height: 30)
+                        .contentShape(Rectangle())
+                }
+                .accessibilityLabel("Share")
+            } else {
+                actionButton("square.and.arrow.up", label: "Share") {
+                    isSharePresented = true
+                }
             }
             actionButton(
                 speaker.speakingMessageId == message.id ? "stop.fill" : "speaker.wave.2",

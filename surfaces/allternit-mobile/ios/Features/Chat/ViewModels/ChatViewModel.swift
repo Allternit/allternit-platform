@@ -115,6 +115,11 @@ struct SessionContext: Equatable, Sendable {
 
 /// Send-path failures with user-meaningful messages (surfaced via the
 /// composer's transient banner through `localizedDescription`).
+enum ChatEditError: LocalizedError {
+    case notSynced
+    var errorDescription: String? { "This message hasn't synced yet. Try again in a moment." }
+}
+
 enum ChatSendError: LocalizedError {
     case attachmentUploadFailed(String)
 
@@ -127,10 +132,19 @@ enum ChatSendError: LocalizedError {
 }
 
 @MainActor
-final class ChatViewModel: ObservableObject {    @Published var messages: [MessageRecord] = []
+final class ChatViewModel: ObservableObject {    @Published var messages: [MessageRecord] = [] {
+        didSet { if !branches.isEmpty, !isStreaming { remapEditedVersions() } }
+    }
     @Published var isStreaming: Bool = false {
         didSet { ReviewPromptStore.shared.streamingChanged(owner: self, streaming: isStreaming) }
     }
+    /// Earlier versions of edited turns, from `GET agent-sessions/:id/branches`.
+    private var branches: [MessageBranch] = []
+    /// User message id → its earlier versions (newest first), for the
+    /// "Edited" chip. Remapped by position whenever the feed changes.
+    @Published private(set) var editedVersions: [String: [MessageBranch]] = [:]
+    /// Set by an edit-resend so the branch list reloads once its reply lands.
+    private var reloadBranchesAfterStream = false
     @Published var currentSessionId: String? = nil
     /// True only during the first message's session-create POST; the
     /// composer disables send on it so a slow create can't double-send.
@@ -219,6 +233,8 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
         discardTemporaryBackingSession()
         transientError = nil
         messages = []
+        branches = []
+        editedVersions = [:]
         currentSessionId = nil
         isIncognito = ephemeral
         sessionContext.ephemeral = ephemeral
@@ -235,6 +251,8 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
         transientError = nil
         currentSessionId = sessionId
         messages = []
+        branches = []
+        editedVersions = [:]
 
         Task { [weak self] in
             guard let self else { return }
@@ -244,6 +262,7 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
                 // Ignore stale responses if the user switched sessions mid-flight.
                 guard self.currentSessionId == sessionId else { return }
                 self.messages = records.map(Self.mapRecord)
+                await self.loadBranches()
             } catch {
                 self.transientError = "Couldn't load the conversation: \(FriendlyErrorMessage.from(error.localizedDescription))"
             }
@@ -509,14 +528,11 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
     }
 
     /// Edit-resend: the user edited the LAST user bubble and hit send.
-    /// Truncates the conversation from that message on and re-sends the new
-    /// text as a fresh send.
-    ///
-    /// Server-side truncation: `POST /api/v1/agent-sessions/:id/revert` is
-    /// live on the backend (agent_session_routes.rs — probed 2026-07: 200 on
-    /// a valid session), so the revert call runs alongside the client-side
-    /// truncation. A failure is logged, not swallowed — the feed reload on
-    /// the next foreground reconcile is the source of truth.
+    /// Reverts the server conversation back to that message
+    /// (`POST agent-sessions/:id/revert {messageId}`), then truncates the feed
+    /// and re-sends the new text. If the revert can't be done (no server id for
+    /// the message, or the call fails) nothing is resent and a visible error
+    /// is shown: resending on top of the old turn would duplicate it.
     ///
     /// `attachments` are any newly-staged files in the composer while editing.
     /// Original attachments from the message being edited are not currently
@@ -524,19 +540,56 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
     func resendEditedMessage(_ messageId: String, newText: String, attachments: [StagedAttachment] = [], runtimeModelId: String?, effort: String? = nil) {
         guard !isStreaming, !isCreatingSession,
               let index = messages.firstIndex(where: { $0.id == messageId }) else { return }
-        if let sessionId = currentSessionId {
-            Task { [chatClient] in
-                do {
-                    try await chatClient.revert(sessionId: sessionId)
-                } catch {
-                    print("agent-sessions: revert failed for \(sessionId): \(error.localizedDescription)")
-                }
-            }
+        guard let sessionId = currentSessionId else {
+            transientError = "Couldn't edit this message: the chat isn't saved yet."
+            return
         }
-        messages.removeSubrange(index...)
-        // Re-apply active composer prefixes to the edited resend.
-        let enriched = ToolOptionsStore.shared.enrichedText(newText)
-        sendMessage(enriched, attachments: attachments, runtimeModelId: runtimeModelId, effort: effort, enrich: false)
+        isCreatingSession = true  // blocks a second send while the revert runs
+        Task { [weak self] in
+            guard let self else { return }
+            defer { self.isCreatingSession = false }
+            do {
+                let serverId = try await self.serverMessageId(for: messageId, localIndex: index, sessionId: sessionId)
+                try await self.chatClient.revert(sessionId: sessionId, messageId: serverId)
+            } catch {
+                self.transientError = "Couldn't edit this message: \(FriendlyErrorMessage.from(error.localizedDescription)) Your edit was not sent."
+                return
+            }
+            guard self.currentSessionId == sessionId,
+                  let current = self.messages.firstIndex(where: { $0.id == messageId }) else { return }
+            self.messages.removeSubrange(current...)
+            self.reloadBranchesAfterStream = true
+            self.isCreatingSession = false
+            // Re-apply active composer prefixes to the edited resend.
+            let enriched = ToolOptionsStore.shared.enrichedText(newText)
+            self.sendMessage(enriched, attachments: attachments, runtimeModelId: runtimeModelId, effort: effort, enrich: false)
+        }
+    }
+
+    /// The server id of a user bubble. Bubbles sent on this device carry a
+    /// local UUID until the feed reloads; match those by their position among
+    /// the user messages of the server transcript.
+    private func serverMessageId(for messageId: String, localIndex: Int, sessionId: String) async throws -> String {
+        if messageId.hasPrefix("msg_") { return messageId }
+        let ordinal = messages[..<localIndex].filter { $0.role == "user" }.count
+        let records = try await chatClient.listMessages(sessionId: sessionId)
+        let users = records.filter { $0.role == "user" }
+        guard ordinal < users.count else { throw ChatEditError.notSynced }
+        return users[ordinal].id
+    }
+
+    /// Reloads the edited-turn history and maps it onto the feed.
+    func loadBranches() async {
+        guard let sessionId = currentSessionId else { return }
+        let loaded = (try? await chatClient.branches(sessionId: sessionId)) ?? []
+        guard currentSessionId == sessionId else { return }
+        branches = loaded
+        remapEditedVersions()
+    }
+
+    private func remapEditedVersions() {
+        let transcript = messages.map { EditHistory.Entry(id: $0.id, role: $0.role, date: $0.createdAt) }
+        editedVersions = EditHistory.map(branches: branches, transcript: transcript)
     }
 
     /// The last user text actually handed to the stream — the retry source.
@@ -845,6 +898,7 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
             guard self.currentSessionId == sessionId, self.streamTask == nil else { return }
             self.messages = records.map(Self.mapRecord)
             self.transientError = nil
+            await self.loadBranches()
         } catch {
             self.transientError = "Couldn't refresh the conversation: \(FriendlyErrorMessage.from(error.localizedDescription))"
         }
@@ -905,6 +959,13 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
         isStreaming = false
         streamingMessageId = nil
         streamTask = nil
+
+        if reloadBranchesAfterStream {
+            reloadBranchesAfterStream = false
+            Task { [weak self] in await self?.loadBranches() }
+        } else if !branches.isEmpty {
+            remapEditedVersions()
+        }
 
         // Streaming consumes quota — refresh the usage meter (Phase 5;
         // UsageStore dedupes concurrent fetches).
