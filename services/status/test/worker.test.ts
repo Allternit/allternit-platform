@@ -251,7 +251,8 @@ describe("daily rollup", () => {
     ]);
     const status = (await get<StatusDoc>("/api/v1/status.json", new Date("2026-11-12T00:07:00Z"))).body;
     expect(status.components.find((c) => c.id === "api")!.uptime_90d).toBeCloseTo(93 / 103, 10); // 100 ticks yesterday + 3 healthy ticks today
-    expect(status.components.find((c) => c.id === "cloud-computers")).toMatchObject({ status: "operational", uptime_90d: 1 });
+    // Cloud computers has no live targets until the cloud-api route ships (contract/targets-held-until-cloud-api.json): no data, not a false Down.
+    expect(status.components.find((c) => c.id === "cloud-computers")).toMatchObject({ status: "unknown", uptime_90d: null });
 
     const h = await get<{ days: number; components: { id: string; days: { date: string; status: string | null; uptime: number | null }[] }[] }>(
       "/api/v1/history.json?days=3", new Date("2026-11-12T00:07:00Z"),

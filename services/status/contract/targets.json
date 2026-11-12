@@ -490,40 +490,6 @@
         "allternit-standby"
       ],
       "timeout_ms": 8000
-    },
-    {
-      "component_id": "cloud-computers",
-      "method": "GET",
-      "expect_status": 200,
-      "follow_redirects": false,
-      "vantages": [
-        "cloudflare",
-        "allternit-standby"
-      ],
-      "timeout_ms": 8000,
-      "url": "https://api.allternit.com/api/v1/health/computers",
-      "id": "cloud-computers-up",
-      "name": "Cloud computers provisioning (reachable)",
-      "body_marker": "\"checked_at\"",
-      "critical": true,
-      "role": "live"
-    },
-    {
-      "component_id": "cloud-computers",
-      "method": "GET",
-      "expect_status": 200,
-      "follow_redirects": false,
-      "vantages": [
-        "cloudflare",
-        "allternit-standby"
-      ],
-      "timeout_ms": 8000,
-      "url": "https://api.allternit.com/api/v1/health/computers",
-      "id": "cloud-computers-ok",
-      "name": "Cloud computers provisioning (healthy)",
-      "body_marker": "\"status\":\"ok\"",
-      "critical": false,
-      "role": "ready"
     }
   ]
 }

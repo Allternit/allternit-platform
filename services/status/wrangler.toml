@@ -23,7 +23,7 @@ crons = ["* * * * *"]
 [[d1_databases]]
 binding = "DB"
 database_name = "allternit-status"
-database_id = "00000000-0000-0000-0000-000000000000" # set at G2
+database_id = "a2f65199-4af7-4895-a11d-ef7ac18adf36"
 migrations_dir = "migrations"
 
 # public/admin.html and public/status.css. /admin serves admin.html.
