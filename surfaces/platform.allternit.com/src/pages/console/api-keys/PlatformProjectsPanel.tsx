@@ -366,7 +366,7 @@ function ProjectKeys({ project }: { project: PlatformProject }) {
         accept_terms: acceptTerms,
         ...(accountId.trim() ? { account_id: accountId.trim() } : {}),
         ...(expiresAt ? { expires_at: expiresAt } : {}),
-        ...(cidrs.length > 0 ? { allowed_cidrs: cidrs } : {}),
+        ...(ipAllowlistEnabled() && cidrs.length > 0 ? { allowed_cidrs: cidrs } : {}),
       });
       setCreated(key);
       setName("");
@@ -428,7 +428,7 @@ function ProjectKeys({ project }: { project: PlatformProject }) {
       try {
         await updateProjectKey(project.id, keyId, {
           ...(expiresAt !== undefined ? { expires_at: expiresAt } : {}),
-          allowed_cidrs: cidrs,
+          ...(ipAllowlistEnabled() ? { allowed_cidrs: cidrs } : {}),
         });
         setEditing(null);
         await load();

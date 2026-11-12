@@ -66,6 +66,11 @@ export function ipAllowlistEnabled(): boolean {
   return String(import.meta.env.VITE_KEY_IP_ALLOWLIST ?? "").trim() === "1";
 }
 
+/** Body logging for Logs replay. Needs PLATFORM_LOG_BODIES=1 on the server too. */
+export function requestLoggingEnabled(): boolean {
+  return String(import.meta.env.VITE_LOG_BODIES ?? "").trim() === "1";
+}
+
 export function fabricEnabled(): boolean {
   return Boolean(String(import.meta.env.VITE_ALLTERNITOS_URL ?? "").trim());
 }

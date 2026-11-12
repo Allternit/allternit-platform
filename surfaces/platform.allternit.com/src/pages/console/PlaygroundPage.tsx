@@ -378,7 +378,7 @@ export function PlaygroundPage(): React.ReactNode {
       loadBody(state.replay as Record<string, unknown>);
       setNotice("Loaded the request to replay. Nothing runs until you press Run.");
     } else if (replayId) {
-      fetchReplayRequest(replayId)
+      fetchReplayRequest(replayId, search.get("scope") === "org" ? "org" : "me")
         .then((body) => {
           if (!active) return;
           if (body) {

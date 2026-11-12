@@ -17,6 +17,8 @@ export interface PlatformProject {
   env: ProjectEnv;
   plan: string;
   spend_cap_cents: number;
+  /** Keep request and response bodies for 30 days (Logs replay). */
+  log_bodies?: boolean;
   created_at: string;
   archived_at?: string | null;
 }
@@ -115,7 +117,7 @@ export async function revokeProjectKey(projectId: string, keyId: string): Promis
 
 export async function updateProject(
   projectId: string,
-  input: { name?: string; spend_cap_cents?: number; archived?: boolean },
+  input: { name?: string; spend_cap_cents?: number; archived?: boolean; log_bodies?: boolean },
 ): Promise<PlatformProject> {
   return api.patch<PlatformProject>(`/api/v1/platform/projects/${encodeURIComponent(projectId)}`, input);
 }

@@ -10,7 +10,7 @@ import { useNavigate } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { isCloudGateway } from "@/lib/availability";
 import { useProjectContext } from "@/lib/project-context";
-import { ErrorRetry, REPORT_RANGES } from "./cloudReport";
+import { ErrorRetry, REPORT_RANGES, useReportFilters, type ReportScope } from "./cloudReport";
 import { formatApiError } from "@/lib/api-client";
 import {
   ListPage,
@@ -402,9 +402,11 @@ function BodyBlock({ label, value }: { label: string; value: unknown }): React.R
 
 function RequestDrawer({
   row,
+  scope,
   onClose,
 }: {
   row: UsageRequestRow;
+  scope: ReportScope;
   onClose: () => void;
 }): React.ReactNode {
   const navigate = useNavigate();
@@ -416,7 +418,7 @@ function RequestDrawer({
     setLoading(true);
     setError(null);
     try {
-      setDetail(await getUsageRequestDetail(row.request_id));
+      setDetail(await getUsageRequestDetail(row.request_id, scope));
     } catch (err) {
       setDetail(null);
       setError(formatApiError(err, "Unable to load this request"));
@@ -452,7 +454,7 @@ function RequestDrawer({
 
         <button
           type="button"
-          onClick={() => navigate(`/playground?replay=${encodeURIComponent(row.request_id)}`)}
+          onClick={() => navigate(`/playground?replay=${encodeURIComponent(row.request_id)}${scope === "org" ? "&scope=org" : ""}`)}
           className="mb-4 inline-flex items-center rounded-lg bg-[var(--accent-primary)] px-3.5 py-2 text-[13px] font-semibold text-[var(--ui-text-inverse)] transition-colors hover:brightness-110"
         >
           Replay in Playground
@@ -509,6 +511,7 @@ function CloudLogsPage(): React.ReactNode {
   const ctx = useProjectContext();
   const [override, setOverride] = useState<string | undefined>(undefined);
   const projectId = override ?? ctx.project?.id ?? "";
+  const { isOrgAdmin, scope, setScope } = useReportFilters();
   const [rangeDays, setRangeDays] = useState<number>(7);
   const [client, setClient] = useState("");
   const [search, setSearch] = useState("");
@@ -540,6 +543,7 @@ function CloudLogsPage(): React.ReactNode {
           model,
           cursor,
           limit: PAGE_LIMIT,
+          scope,
         });
         setRows(page.data);
         setNextCursor(page.next_cursor);
@@ -551,7 +555,7 @@ function CloudLogsPage(): React.ReactNode {
         setLoading(false);
       }
     },
-    [rangeDays, projectId, client, model],
+    [rangeDays, projectId, client, model, scope],
   );
 
   useEffect(() => {
@@ -615,6 +619,17 @@ function CloudLogsPage(): React.ReactNode {
               </option>
             ))}
           </select>
+          {isOrgAdmin && (
+            <select
+              value={scope}
+              onChange={(e) => setScope(e.target.value as ReportScope)}
+              aria-label="Scope"
+              className={SETTINGS_SELECT_CLASS}
+            >
+              <option value="me">Just me</option>
+              <option value="org">Whole organization</option>
+            </select>
+          )}
         </>
       }
     >
@@ -701,7 +716,7 @@ function CloudLogsPage(): React.ReactNode {
         </>
       )}
 
-      {selected && <RequestDrawer row={selected} onClose={() => setSelected(null)} />}
+      {selected && <RequestDrawer row={selected} scope={scope} onClose={() => setSelected(null)} />}
     </ListPage>
   );
 }

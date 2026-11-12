@@ -28,11 +28,11 @@ The server sets the `client` value on each call. A device token is `runtime`, a 
 - `GET /api/v1/me/usage/requests` lists requests, paged by cursor.
 - `GET /api/v1/me/usage/requests/:request_id` returns one request.
 
-The `request_id` is the `x-request-id` header of the original response. The log lists billed requests only. A call that failed before it was billed has no row.
+The `request_id` is the `x-request-id` header of the original response. The log lists billed requests only. A call that failed before it was billed has no row. Both endpoints accept `scope=org` (organization admins only), and the Logs page has a scope switch for admins that changes it between just you and the whole organization.
 
 ## Request and response bodies
 
-Bodies are off by default. The log keeps metadata (model, tokens, cost, latency, key, project, client) for every request. A request detail includes the request and response bodies only when both conditions hold: the project has `log_bodies` turned on (`PATCH` on the project), and the deployment flag `PLATFORM_LOG_BODIES` is set. Captured bodies expire.
+Bodies are off by default. The log keeps metadata (model, tokens, cost, latency, key, project, client) for every request. A request detail includes the request and response bodies only when both conditions hold: the project has `log_bodies` turned on (`PATCH` on the project), and the deployment flag `PLATFORM_LOG_BODIES` is set. Captured bodies are kept for 30 days. In the console, the toggle "Keep request and response bodies for 30 days (for Logs replay)" is on the project's Edit panel. It appears only when the console build has `VITE_LOG_BODIES=1` and the server has `PLATFORM_LOG_BODIES=1`; both are needed, and both are off by default.
 
 ## Gizzi
 

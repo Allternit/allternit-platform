@@ -74,7 +74,7 @@ export const UsageCommand = cmd({
       .option("json", { type: "boolean", default: false, describe: "print the raw rows as JSON" }),
   async handler(args) {
     const days = Number(args.days)
-    if (!Number.isFinite(days) || days <= 0) fail("--days must be a positive number.")
+    if (!Number.isFinite(days) || days < 1 || days > 366) fail("--days must be a number from 1 to 366.")
 
     const token = await resolveToken()
     if (!token) fail("You are not signed in to Allternit Cloud. Run `gizzi login` first.")
@@ -105,7 +105,14 @@ export const UsageCommand = cmd({
     if (res.status === 401 || res.status === 403)
       fail("Allternit Cloud did not accept your credentials. Run `gizzi login` again.")
     if (res.status === 404 || res.status === 501) fail("Usage reporting isn't available on this server yet.")
-    if (!res.ok) fail(`Usage report failed: HTTP ${res.status}`)
+    if (!res.ok) {
+      let detail = ""
+      try {
+        const body = (await res.json()) as { error?: { message?: string } | string; message?: string }
+        detail = (typeof body.error === "object" ? body.error?.message : undefined) || body.message || (typeof body.error === "string" ? body.error : "") || ""
+      } catch {}
+      fail(`Usage report failed (HTTP ${res.status})${detail ? `: ${detail}` : ""}`)
+    }
 
     const body = (await res.json().catch(() => ({}))) as { rows?: UsageRow[] }
     const rows = body.rows ?? []

@@ -80,6 +80,11 @@ describe("request log helpers", () => {
     expect(buildRequestsQuery({ projectId: "", cursor: "c1", limit: 50 })).toBe("cursor=c1&limit=50");
   });
 
+  it("adds scope=org only for org scope", () => {
+    expect(buildRequestsQuery({ scope: "org", limit: 10 })).toBe("limit=10&scope=org");
+    expect(buildRequestsQuery({ scope: "me", limit: 10 })).toBe("limit=10");
+  });
+
   it("normalizes a row", () => {
     expect(
       normalizeRequestRow({ id: "req_1", created_at: "t", model_id: "m", prompt_tokens: 3, cost_usd: "0.1", latency_ms: 12 }),

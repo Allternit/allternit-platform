@@ -440,6 +440,7 @@ export interface UsageRequestFilters {
   model?: string | null;
   cursor?: string | null;
   limit?: number;
+  scope?: ReportScope;
 }
 
 export function buildRequestsQuery(f: UsageRequestFilters): string {
@@ -451,6 +452,7 @@ export function buildRequestsQuery(f: UsageRequestFilters): string {
   if (f.model) search.set("model", f.model);
   if (f.cursor) search.set("cursor", f.cursor);
   if (f.limit) search.set("limit", String(f.limit));
+  if (f.scope === "org") search.set("scope", "org");
   return search.toString();
 }
 
@@ -484,9 +486,9 @@ export async function getUsageRequests(f: UsageRequestFilters): Promise<UsageReq
   };
 }
 
-export async function getUsageRequestDetail(requestId: string): Promise<UsageRequestDetail> {
+export async function getUsageRequestDetail(requestId: string, scope?: ReportScope): Promise<UsageRequestDetail> {
   const data = await api.get<Record<string, unknown>>(
-    `/api/v1/me/usage/requests/${encodeURIComponent(requestId)}`,
+    `/api/v1/me/usage/requests/${encodeURIComponent(requestId)}${scope === "org" ? "?scope=org" : ""}`,
   );
   const body = (data?.request_body ?? data?.request ?? null) as unknown;
   const resp = (data?.response_body ?? data?.response ?? null) as unknown;

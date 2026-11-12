@@ -73,9 +73,9 @@ export function getSharedPrompt(token: string): Promise<SharedPrompt> {
 }
 
 /** A past request loaded for replay (Wave 3 Logs). Null when no body was captured. */
-export async function fetchReplayRequest(requestId: string): Promise<Record<string, unknown> | null> {
+export async function fetchReplayRequest(requestId: string, scope?: "me" | "org"): Promise<Record<string, unknown> | null> {
   const detail = await api.get<{ request?: Record<string, unknown> | null }>(
-    `/api/v1/me/usage/requests/${encodeURIComponent(requestId)}`
+    `/api/v1/me/usage/requests/${encodeURIComponent(requestId)}${scope === "org" ? "?scope=org" : ""}`
   );
   return detail.request && typeof detail.request === "object" ? detail.request : null;
 }
