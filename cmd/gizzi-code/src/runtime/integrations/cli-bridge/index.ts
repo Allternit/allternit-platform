@@ -7,6 +7,7 @@ import { PaneArtifactTool } from "@/runtime/tools/builtins/pane-artifact"
 import { PaneBrowserTool } from "@/runtime/tools/builtins/pane-browser"
 import { MediaGenerateTool } from "@/runtime/tools/builtins/media-generate"
 import { ArtifactCheckTool } from "@/runtime/tools/builtins/artifact-check"
+import { RunCodeTool } from "@/runtime/tools/builtins/run_code"
 import { ARTIFACT_TOOLS } from "@/runtime/tools/builtins/artifact"
 import { QuestionTool } from "@/runtime/tools/builtins/question"
 import { TodoWriteTool } from "@/runtime/tools/builtins/todo"
@@ -18,6 +19,7 @@ import { BUNDLED_SKILLS } from "@/runtime/skills/bundledSkills"
 import { Log } from "@/shared/util/log"
 import { Bus } from "@/shared/bus"
 import { CLI_PERMISSION_TOOL } from "@/runtime/drivers/cli-session-flags"
+import { CliBridgeResults } from "./results"
 
 /**
  * CLI tool bridge: an installed CLI agent (Claude Code, Codex, Kimi…) runs a
@@ -38,7 +40,12 @@ export namespace CliBridge {
   // that Cowork's Progress panel reads.
   // skill: gizzi's own skills (planning, debugging, docs-writing, summarizing…),
   // which the delegation rule tells the CLI to load (agents/builtin-catalog.ts).
-  export const TOOLS: Tool.Info[] = [PaneArtifactTool, PaneBrowserTool, MediaGenerateTool, TodoWriteTool, GlanceTool, BuiltinSkillTool(), ...ARTIFACT_TOOLS, ArtifactCheckTool]
+  // run_code: Python on the chat's attachments in gizzi's OS sandbox (Analyze);
+  // its result metadata (files[]) reaches the session part via CliBridgeResults.
+  export const TOOLS: Tool.Info[] = [PaneArtifactTool, PaneBrowserTool, MediaGenerateTool, TodoWriteTool, GlanceTool, BuiltinSkillTool(), ...ARTIFACT_TOOLS, ArtifactCheckTool, RunCodeTool]
+
+  /** gizzi's id for a bridged tool reported under a CLI's vendor name (run_code only; see CliBridgeResults). */
+  export const canonicalTool = CliBridgeResults.canonicalTool
 
   const token = randomBytes(32).toString("hex")
 
@@ -276,13 +283,19 @@ export namespace CliBridge {
     const session = await Session.get(sessionID)
     const info = await tool.init()
     const callID = `cli_${randomBytes(6).toString("hex")}`
+    // run_code stages the latest user message's attachments, so it needs the
+    // conversation (oldest first: filterCompacted reverses the newest-first stream).
+    const messages =
+      tool.id === RunCodeTool.id
+        ? await import("@/runtime/session/message-v2").then(({ MessageV2 }) => MessageV2.filterCompacted(MessageV2.stream(sessionID)))
+        : []
     const ctx: Tool.Context = {
       sessionID,
       messageID: "cli-bridge",
       agent: "cli",
       abort: signal,
       callID,
-      messages: [],
+      messages,
       metadata: () => {},
       async ask(req) {
         // The task list is bookkeeping, allowed for every agent (loop/agent.ts); never prompt for it.
@@ -294,7 +307,13 @@ export namespace CliBridge {
     }
     log.info("call", { sessionID, tool: tool.id })
     try {
-      const result = await info.execute(params?.arguments ?? {}, ctx)
+      const args = params?.arguments ?? {}
+      const result = await info.execute(args, ctx)
+      // The CLI reports the call back as name + text; keep what run_code
+      // returned beyond the text for the processor to merge into the part.
+      if (CliBridgeResults.isCanonical(tool.id) && result.metadata) {
+        CliBridgeResults.put(sessionID, tool.id, args, { title: result.title, metadata: result.metadata as Record<string, unknown> })
+      }
       return { content: content(result), isError: false }
     } catch (error) {
       return { content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }], isError: true }
@@ -325,7 +344,7 @@ export namespace CliBridge {
           capabilities: { tools: { listChanged: false } },
           serverInfo: { name: SERVER_NAME, version: "1.0.0" },
           instructions:
-            "Allternit session tools: the document open beside the chat (pane_artifact), the pane's browser (pane_browser), image/video generation rendered in the user's app (media_generate), the user's Artifacts (artifact_create, artifact_update, artifact_read, artifact_suggest; artifact_claim and artifact_release for one frame of a design canvas; artifact_check to look at a page or design at phone, tablet and laptop widths, optionally against a reference picture), the task list shown as the session's Progress (todowrite), the one-line status on the session's sidebar row (glance), gizzi's built-in skills (skill), and multiple-choice questions to the user (question). To ask the user anything, use question: the CLI's own ask-the-user tools (AskUserQuestion, request_user_input) never reach them.",
+            "Allternit session tools: the document open beside the chat (pane_artifact), the pane's browser (pane_browser), image/video generation rendered in the user's app (media_generate), the user's Artifacts (artifact_create, artifact_update, artifact_read, artifact_suggest; artifact_claim and artifact_release for one frame of a design canvas; artifact_check to look at a page or design at phone, tablet and laptop widths, optionally against a reference picture), Python on the files the user attached in this chat, run in Allternit's sandbox with the charts and files it saves shown to the user (run_code: use it to analyze attachments, not your own shell, which cannot see them), the task list shown as the session's Progress (todowrite), the one-line status on the session's sidebar row (glance), gizzi's built-in skills (skill), and multiple-choice questions to the user (question). To ask the user anything, use question: the CLI's own ask-the-user tools (AskUserQuestion, request_user_input) never reach them.",
         })
       case "ping":
         return ok(req.id, {})
