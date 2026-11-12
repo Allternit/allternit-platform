@@ -3,7 +3,7 @@ title: "Status page"
 description: "How status.allternit.com works: Worker, standby vantage, D1, alerts, incidents and runbooks"
 ---
 
-**Status: BUILT, pending deploy.** The Worker lives in `services/status/`. Deploying it, creating the D1 database, setting secrets and installing the standby probe are separate approvals. See [status labels](/architecture#status-labels).
+**Status: AVAILABLE** since 2026-11-12. The Worker lives in `services/status/` and runs at `status.allternit.com` (D1 database `allternit-status`). The standby probe runs on `allternit-standby` and emails alerts from `status@allternit.com`. Secrets are in the operator's Keychain under the account `allternit-status`. See [status labels](/architecture#status-labels).
 
 Public view: [System status](/guides/system-status). Contract: `services/status/contract/` (`status.schema.json`, `types.ts`, `fixtures.json`, `targets.json`).
 
