@@ -1,0 +1,529 @@
+{
+  "schema": "allternit.targets/v1",
+  "version": 1,
+  "components": [
+    {
+      "id": "website",
+      "name": "Website",
+      "group": "website",
+      "critical": true
+    },
+    {
+      "id": "app",
+      "name": "Allternit app",
+      "group": "app",
+      "critical": true
+    },
+    {
+      "id": "mobile",
+      "name": "Mobile web app",
+      "group": "mobile",
+      "critical": true
+    },
+    {
+      "id": "signin",
+      "name": "Sign-in",
+      "group": "signin",
+      "critical": true
+    },
+    {
+      "id": "api",
+      "name": "API",
+      "group": "api",
+      "critical": true
+    },
+    {
+      "id": "cloud-computers",
+      "name": "Cloud computers",
+      "group": "cloud-computers",
+      "critical": true
+    },
+    {
+      "id": "phone-push",
+      "name": "Phone Link and push",
+      "group": "phone-push",
+      "critical": true
+    },
+    {
+      "id": "mail",
+      "name": "Mail",
+      "group": "mail",
+      "critical": true
+    },
+    {
+      "id": "console",
+      "name": "Console",
+      "group": "console",
+      "critical": true
+    },
+    {
+      "id": "docs",
+      "name": "Docs",
+      "group": "docs",
+      "critical": false
+    },
+    {
+      "id": "services",
+      "name": "Services and booking",
+      "group": "services",
+      "critical": true
+    },
+    {
+      "id": "downloads",
+      "name": "Downloads and updates",
+      "group": "downloads",
+      "critical": true
+    },
+    {
+      "id": "other",
+      "name": "Other sites",
+      "group": "other",
+      "critical": false,
+      "max_status": "degraded"
+    }
+  ],
+  "targets": [
+    {
+      "id": "website",
+      "component_id": "website",
+      "name": "allternit.com",
+      "url": "https://allternit.com/",
+      "method": "GET",
+      "expect_status": 200,
+      "follow_redirects": false,
+      "body_marker": "<title>Allternit — Agentic OS</title>",
+      "critical": true,
+      "role": "page",
+      "vantages": [
+        "cloudflare",
+        "allternit-standby"
+      ],
+      "timeout_ms": 8000
+    },
+    {
+      "id": "website-www",
+      "component_id": "website",
+      "name": "www.allternit.com",
+      "url": "https://www.allternit.com/",
+      "method": "GET",
+      "expect_status": 200,
+      "follow_redirects": false,
+      "body_marker": "<title>Allternit — Agentic OS</title>",
+      "critical": true,
+      "role": "page",
+      "vantages": [
+        "cloudflare",
+        "allternit-standby"
+      ],
+      "timeout_ms": 8000
+    },
+    {
+      "id": "app",
+      "component_id": "app",
+      "name": "ai.allternit.com",
+      "url": "https://ai.allternit.com/",
+      "method": "GET",
+      "expect_status": 200,
+      "follow_redirects": false,
+      "body_marker": "<title>Allternit — Agent Workspace</title>",
+      "critical": true,
+      "role": "page",
+      "vantages": [
+        "cloudflare",
+        "allternit-standby"
+      ],
+      "timeout_ms": 8000
+    },
+    {
+      "id": "mobile",
+      "component_id": "mobile",
+      "name": "m.allternit.com",
+      "url": "https://m.allternit.com/",
+      "method": "GET",
+      "expect_status": 200,
+      "follow_redirects": false,
+      "body_marker": "fabric-session-app",
+      "critical": true,
+      "role": "page",
+      "vantages": [
+        "cloudflare",
+        "allternit-standby"
+      ],
+      "timeout_ms": 8000
+    },
+    {
+      "id": "mobile-api",
+      "component_id": "mobile",
+      "name": "m.allternit.com /api proxy",
+      "url": "https://m.allternit.com/api/v1/health",
+      "method": "GET",
+      "expect_status": 200,
+      "follow_redirects": false,
+      "body_marker": "\"status\":\"healthy\"",
+      "critical": true,
+      "role": "proxy",
+      "vantages": [
+        "cloudflare",
+        "allternit-standby"
+      ],
+      "timeout_ms": 8000
+    },
+    {
+      "id": "signin",
+      "component_id": "signin",
+      "name": "Sign-in (Clerk proxy)",
+      "url": "https://clerk.allternit.com/v1/health",
+      "method": "GET",
+      "expect_status": 200,
+      "follow_redirects": false,
+      "body_marker": "\"status\":\"healthy\"",
+      "critical": true,
+      "role": "live",
+      "vantages": [
+        "cloudflare",
+        "allternit-standby"
+      ],
+      "timeout_ms": 8000
+    },
+    {
+      "id": "api-ready",
+      "component_id": "api",
+      "name": "API ready",
+      "url": "https://api.allternit.com/api/v1/health/ready",
+      "method": "GET",
+      "expect_status": 200,
+      "follow_redirects": false,
+      "body_marker": "{\"ready\":true,\"checks\":{\"database\":true}}",
+      "critical": true,
+      "role": "ready",
+      "vantages": [
+        "cloudflare",
+        "allternit-standby"
+      ],
+      "timeout_ms": 8000
+    },
+    {
+      "id": "api-live",
+      "component_id": "api",
+      "name": "API live",
+      "url": "https://api.allternit.com/api/v1/health/live",
+      "method": "GET",
+      "expect_status": 200,
+      "follow_redirects": false,
+      "body_marker": "{\"alive\":true}",
+      "critical": true,
+      "role": "live",
+      "vantages": [
+        "cloudflare",
+        "allternit-standby"
+      ],
+      "timeout_ms": 8000
+    },
+    {
+      "id": "phone-push",
+      "component_id": "phone-push",
+      "name": "Push Worker",
+      "url": "https://push.fabrictransport.allternit.com/health",
+      "method": "GET",
+      "expect_status": 200,
+      "follow_redirects": false,
+      "body_marker": "\"ok\":true",
+      "critical": true,
+      "role": "live",
+      "vantages": [
+        "cloudflare",
+        "allternit-standby"
+      ],
+      "timeout_ms": 8000
+    },
+    {
+      "id": "mail-relay",
+      "component_id": "mail",
+      "name": "Mail relay (mx)",
+      "url": "https://mx.allternit.com/relay/",
+      "method": "GET",
+      "expect_status": 401,
+      "follow_redirects": false,
+      "body_marker": null,
+      "critical": true,
+      "role": "live",
+      "vantages": [
+        "cloudflare",
+        "allternit-standby"
+      ],
+      "timeout_ms": 8000
+    },
+    {
+      "id": "console",
+      "component_id": "console",
+      "name": "Console",
+      "url": "https://platform.allternit.com/",
+      "method": "GET",
+      "expect_status": 200,
+      "follow_redirects": false,
+      "body_marker": "<title>Allternit Cloud</title>",
+      "critical": true,
+      "role": "page",
+      "vantages": [
+        "cloudflare",
+        "allternit-standby"
+      ],
+      "timeout_ms": 8000
+    },
+    {
+      "id": "docs",
+      "component_id": "docs",
+      "name": "Docs",
+      "url": "https://docs.allternit.com/",
+      "method": "GET",
+      "expect_status": 200,
+      "follow_redirects": false,
+      "body_marker": "<title>Welcome to Allternit - Allternit Docs</title>",
+      "critical": false,
+      "role": "page",
+      "vantages": [
+        "cloudflare",
+        "allternit-standby"
+      ],
+      "timeout_ms": 8000
+    },
+    {
+      "id": "services",
+      "component_id": "services",
+      "name": "Services site",
+      "url": "https://services.allternit.com/",
+      "method": "GET",
+      "expect_status": 200,
+      "follow_redirects": false,
+      "body_marker": "<title>Allternit Services — plans, Front Desk and demos for small business</title>",
+      "critical": true,
+      "role": "page",
+      "vantages": [
+        "cloudflare",
+        "allternit-standby"
+      ],
+      "timeout_ms": 8000
+    },
+    {
+      "id": "services-hooks",
+      "component_id": "services",
+      "name": "Booking intake Worker",
+      "url": "https://allternit-services-hooks.allternitpbc.workers.dev/health",
+      "method": "GET",
+      "expect_status": 200,
+      "follow_redirects": false,
+      "body_marker": "ok",
+      "critical": true,
+      "role": "live",
+      "vantages": [
+        "cloudflare",
+        "allternit-standby"
+      ],
+      "timeout_ms": 8000
+    },
+    {
+      "id": "downloads-runtime",
+      "component_id": "downloads",
+      "name": "Runtime updates",
+      "url": "https://runtime.allternit.com/stable/darwin-arm64/latest.json",
+      "method": "GET",
+      "expect_status": 200,
+      "follow_redirects": false,
+      "body_marker": "\"version\"",
+      "critical": true,
+      "role": "live",
+      "vantages": [
+        "cloudflare",
+        "allternit-standby"
+      ],
+      "timeout_ms": 8000
+    },
+    {
+      "id": "downloads-install",
+      "component_id": "downloads",
+      "name": "Installer",
+      "url": "https://install.allternit.com/install",
+      "method": "GET",
+      "expect_status": 200,
+      "follow_redirects": false,
+      "body_marker": "Allternit Desktop Installer",
+      "critical": true,
+      "role": "page",
+      "vantages": [
+        "cloudflare",
+        "allternit-standby"
+      ],
+      "timeout_ms": 8000
+    },
+    {
+      "id": "labs",
+      "component_id": "other",
+      "name": "Labs",
+      "url": "https://labs.allternit.com/",
+      "method": "GET",
+      "expect_status": 200,
+      "follow_redirects": false,
+      "body_marker": "<title>A://Labs",
+      "critical": false,
+      "role": "page",
+      "vantages": [
+        "cloudflare",
+        "allternit-standby"
+      ],
+      "timeout_ms": 8000
+    },
+    {
+      "id": "try",
+      "component_id": "other",
+      "name": "try",
+      "url": "https://try.allternit.com/",
+      "method": "GET",
+      "expect_status": 200,
+      "follow_redirects": true,
+      "body_marker": "<title>Allternit Facility",
+      "critical": false,
+      "role": "page",
+      "vantages": [
+        "cloudflare",
+        "allternit-standby"
+      ],
+      "timeout_ms": 8000
+    },
+    {
+      "id": "compute",
+      "component_id": "other",
+      "name": "Compute",
+      "url": "https://compute.allternit.com/",
+      "method": "GET",
+      "expect_status": 200,
+      "follow_redirects": false,
+      "body_marker": "<title>Allternit Compute</title>",
+      "critical": false,
+      "role": "page",
+      "vantages": [
+        "cloudflare",
+        "allternit-standby"
+      ],
+      "timeout_ms": 8000
+    },
+    {
+      "id": "series",
+      "component_id": "other",
+      "name": "Series",
+      "url": "https://series.allternit.com/",
+      "method": "GET",
+      "expect_status": 200,
+      "follow_redirects": false,
+      "body_marker": "<title>ALLTERNIT — The Series</title>",
+      "critical": false,
+      "role": "page",
+      "vantages": [
+        "cloudflare",
+        "allternit-standby"
+      ],
+      "timeout_ms": 8000
+    },
+    {
+      "id": "3dfacility",
+      "component_id": "other",
+      "name": "3D facility",
+      "url": "https://3dfacility.allternit.com/",
+      "method": "GET",
+      "expect_status": 200,
+      "follow_redirects": false,
+      "body_marker": "<title>Allternit Facility</title>",
+      "critical": false,
+      "role": "page",
+      "vantages": [
+        "cloudflare",
+        "allternit-standby"
+      ],
+      "timeout_ms": 8000
+    },
+    {
+      "id": "brawl",
+      "component_id": "other",
+      "name": "Brawl",
+      "url": "https://brawl.allternit.com/",
+      "method": "GET",
+      "expect_status": 200,
+      "follow_redirects": false,
+      "body_marker": "<title>Gizzi Brawl",
+      "critical": false,
+      "role": "page",
+      "vantages": [
+        "cloudflare",
+        "allternit-standby"
+      ],
+      "timeout_ms": 8000
+    },
+    {
+      "id": "gizzirpg",
+      "component_id": "other",
+      "name": "Gizzi RPG",
+      "url": "https://gizzirpg.allternit.com/",
+      "method": "GET",
+      "expect_status": 200,
+      "follow_redirects": false,
+      "body_marker": "<title>Gizzi: The Assistants",
+      "critical": false,
+      "role": "page",
+      "vantages": [
+        "cloudflare",
+        "allternit-standby"
+      ],
+      "timeout_ms": 8000
+    },
+    {
+      "id": "artifacts",
+      "component_id": "other",
+      "name": "Artifacts",
+      "url": "https://artifacts.allternit.com/",
+      "method": "GET",
+      "expect_status": 200,
+      "follow_redirects": false,
+      "body_marker": "<title>",
+      "critical": false,
+      "role": "page",
+      "vantages": [
+        "cloudflare",
+        "allternit-standby"
+      ],
+      "timeout_ms": 8000
+    },
+    {
+      "component_id": "cloud-computers",
+      "method": "GET",
+      "expect_status": 200,
+      "follow_redirects": false,
+      "vantages": [
+        "cloudflare",
+        "allternit-standby"
+      ],
+      "timeout_ms": 8000,
+      "url": "https://api.allternit.com/api/v1/health/computers",
+      "id": "cloud-computers-up",
+      "name": "Cloud computers provisioning (reachable)",
+      "body_marker": "\"checked_at\"",
+      "critical": true,
+      "role": "live"
+    },
+    {
+      "component_id": "cloud-computers",
+      "method": "GET",
+      "expect_status": 200,
+      "follow_redirects": false,
+      "vantages": [
+        "cloudflare",
+        "allternit-standby"
+      ],
+      "timeout_ms": 8000,
+      "url": "https://api.allternit.com/api/v1/health/computers",
+      "id": "cloud-computers-ok",
+      "name": "Cloud computers provisioning (healthy)",
+      "body_marker": "\"status\":\"ok\"",
+      "critical": false,
+      "role": "ready"
+    }
+  ]
+}

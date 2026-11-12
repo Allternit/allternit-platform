@@ -3,7 +3,6 @@ import { Link } from "react-router-dom";
 import { Info, MagnifyingGlass, Warning } from "@phosphor-icons/react";
 import {
   CatalogModel,
-  DRAFT_MODEL_CATALOG,
   fetchLiveModelCatalog,
   liveModelToCatalog,
 } from "@/lib/model-catalog";
@@ -15,6 +14,7 @@ export function ModelsPage() {
   const [models, setModels] = useState<CatalogModel[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
   const auth = usePlatformAuth();
 
   useEffect(() => {
@@ -28,11 +28,11 @@ export function ModelsPage() {
         const response = await fetchLiveModelCatalog(controller.signal);
         if (cancelled) return;
         const catalog = response.data.map(liveModelToCatalog);
-        setModels(catalog.length > 0 ? catalog : DRAFT_MODEL_CATALOG);
+        setModels(catalog);
       } catch (err) {
         if (cancelled) return;
-        setError(err instanceof Error ? err.message : "Failed to load model catalog");
-        setModels(DRAFT_MODEL_CATALOG);
+        setModels([]);
+        setError(err instanceof Error ? err.message : "Unknown error");
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -43,7 +43,7 @@ export function ModelsPage() {
       cancelled = true;
       controller.abort();
     };
-  }, []);
+  }, [attempt]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -107,14 +107,32 @@ export function ModelsPage() {
         </div>
 
         <div className="rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-secondary)] overflow-hidden">
-          {(loading || error) && (
-            <div className="flex items-center gap-2 border-b border-[var(--border-subtle)] bg-[var(--accent-primary)]/5 px-4 py-3 text-[12px] font-medium text-[var(--accent-primary)]">
-              <Warning size={14} />
-              {loading
-                ? "Loading live model catalog..."
-                : `Live catalog unavailable. Showing representative examples. (${error})`}
+          {loading && (
+            <div className="px-4 py-8 text-center text-[13px] text-[var(--text-secondary)]">
+              Loading the model catalog...
             </div>
           )}
+          {!loading && error && (
+            <div className="flex flex-col items-center gap-3 px-4 py-8 text-center">
+              <p className="flex items-center gap-2 text-[13px] text-[var(--text-secondary)]">
+                <Warning size={14} />
+                The model catalog did not load. Check your connection and try again. ({error})
+              </p>
+              <button
+                type="button"
+                onClick={() => setAttempt((n) => n + 1)}
+                className="rounded-lg border border-[var(--border-subtle)] px-3 py-1.5 text-[13px] font-medium text-[var(--text-primary)] transition-colors hover:bg-[var(--surface-hover)]"
+              >
+                Try again
+              </button>
+            </div>
+          )}
+          {!loading && !error && models.length === 0 && (
+            <div className="px-4 py-8 text-center text-[13px] text-[var(--text-secondary)]">
+              No models are listed right now.
+            </div>
+          )}
+          {!loading && !error && models.length > 0 && (
           <div className="overflow-x-auto">
             <table className="w-full text-left text-[13px]">
               <thead className="bg-[var(--bg-primary)] text-[11px] font-semibold uppercase tracking-wider text-[var(--text-tertiary)]">
@@ -126,6 +144,7 @@ export function ModelsPage() {
                   <th className="px-4 py-3">Input / 1M tokens</th>
                   <th className="px-4 py-3">Output / 1M tokens</th>
                   <th className="px-4 py-3">Context</th>
+                  <th className="px-4 py-3">Capabilities</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--border-subtle)]">
@@ -134,6 +153,11 @@ export function ModelsPage() {
                     <td className="px-4 py-3 font-medium text-[var(--text-primary)]">
                       {model.name}
                       <span className="ml-2 text-[11px] text-[var(--text-tertiary)]">{model.id}</span>
+                      {model.isDefault && (
+                        <span className="ml-2 inline-flex rounded-full bg-[var(--accent-primary)]/10 px-2 py-0.5 text-[11px] font-medium text-[var(--accent-primary)]">
+                          Default
+                        </span>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-[var(--text-secondary)]">{model.family}</td>
                     <td className="px-4 py-3">
@@ -153,12 +177,32 @@ export function ModelsPage() {
                     <td className="px-4 py-3 text-[var(--text-secondary)]">{model.inputPrice}</td>
                     <td className="px-4 py-3 text-[var(--text-secondary)]">{model.outputPrice}</td>
                     <td className="px-4 py-3 text-[var(--text-secondary)]">{model.context}</td>
+                    <td className="px-4 py-3">
+                      <div className="flex flex-wrap gap-1.5">
+                        {model.capabilities.map((cap) => (
+                          <span
+                            key={cap}
+                            className="rounded-md bg-[var(--bg-tertiary)] px-2 py-0.5 text-[11px] font-medium text-[var(--text-secondary)]"
+                          >
+                            {cap}
+                          </span>
+                        ))}
+                        {model.retires && (
+                          <span className="rounded-md bg-[var(--status-warning)]/10 px-2 py-0.5 text-[11px] font-medium text-[var(--status-warning)]">
+                            Retires {model.retires}
+                          </span>
+                        )}
+                        {model.capabilities.length === 0 && !model.retires && (
+                          <span className="text-[var(--text-tertiary)]">—</span>
+                        )}
+                      </div>
+                    </td>
                   </tr>
                 ))}
                 {filtered.length === 0 && (
                   <tr>
                     <td
-                      colSpan={7}
+                      colSpan={8}
                       className="px-4 py-8 text-center text-[13px] text-[var(--text-secondary)]"
                     >
                       No models match “{query}”.
@@ -168,6 +212,7 @@ export function ModelsPage() {
               </tbody>
             </table>
           </div>
+          )}
         </div>
       </div>
     </PublicPageShell>

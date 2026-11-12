@@ -103,6 +103,20 @@ An update to the hosted facility does not change the Office route compiled into
 an older installed iPhone app. Build 13 uses the legacy bot floor; the next
 native release must include platform PR #2035 to open the full facility.
 
+A fresh worktree from `origin/main` cannot archive yet. Git does not track
+these files, so add them first:
+
+- `Frameworks/Mesh.xcframework`: copy it from another checkout. No fetch
+  script exists for it.
+- `Frameworks/libgit2.xcframework`: run `Frameworks/fetch-libgit2.sh`, or copy
+  it.
+- `Frameworks/SherpaOnnxC.xcframework`: run `Frameworks/fetch-sherpa-onnx.sh`,
+  or copy it.
+- `Config/Secrets.xcconfig`: start from `Secrets.xcconfig.example`.
+
+If they are missing, the archive fails with "There is no XCFramework found",
+or XcodeGen reports an invalid config file path.
+
 Keep `CURRENT_PROJECT_VERSION` in sync for the app, widgets, broadcast extension
 and tests in `project.yml`, then regenerate the project with XcodeGen. Run the
 signed archive through `scripts/build-queue run ios --repo <checkout>`. After

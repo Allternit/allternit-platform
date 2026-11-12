@@ -18,6 +18,7 @@ import {
   type ChargeEvent,
   osApi,
   formatOSApiError,
+  isOSConfigured,
 } from "@/lib/allternitos";
 import { EmptyState } from "@/components/settings/EmptyState";
 import { SkeletonRow } from "@/components/settings/SkeletonRow";
@@ -114,7 +115,13 @@ export function FabricPage() {
   const [error, setError] = useState<string | null>(null);
   const [ackBusy, setAckBusy] = useState<string | null>(null);
 
+  const configured = isOSConfigured();
+
   const load = useCallback(async () => {
+    if (!configured) {
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
@@ -131,7 +138,7 @@ export function FabricPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [configured]);
 
   useEffect(() => {
     void load();
@@ -168,13 +175,21 @@ export function FabricPage() {
 
       <OrgCreditsCard />
 
+      {!configured && (
+        <EmptyState
+          icon={<HardDrives size={32} weight="thin" />}
+          title="Fabric is not available"
+          caption="This console is not connected to an AllternitOS control plane."
+        />
+      )}
+
       {error && (
         <div className="rounded-xl border border-solid border-[var(--status-error)]/30 bg-[var(--status-error)]/10 p-3 text-[13px] text-[var(--status-error)]">
           {error}
         </div>
       )}
 
-      {loading ? (
+      {!configured ? null : loading ? (
         <SkeletonRow lines={6} />
       ) : (
         <>

@@ -16,6 +16,8 @@ import { SignUpPage } from "@/pages/SignUpPage";
 import { RunsPage } from "@/pages/RunsPage";
 import { SchedulesPage } from "@/pages/SchedulesPage";
 import { ApprovalsPage } from "@/pages/ApprovalsPage";
+import { CloudGate } from "@/components/console-ui/CloudGate";
+import { isCloudGateway } from "@/lib/availability";
 import { FabricPage } from "@/pages/FabricPage";
 import { PortalLandingPage } from "@/pages/PortalLandingPage";
 import { ModelsPage } from "@/pages/ModelsPage";
@@ -391,7 +393,7 @@ export default function App() {
         path="/files/*"
         element={
           <ConsoleRoute>
-            <FilesPage />
+            {isCloudGateway() ? <CloudGate feature="files" /> : <FilesPage />}
           </ConsoleRoute>
         }
       />
@@ -407,7 +409,7 @@ export default function App() {
         path="/batches/*"
         element={
           <ConsoleRoute>
-            <BatchesPage />
+            {isCloudGateway() ? <CloudGate feature="batches" /> : <BatchesPage />}
           </ConsoleRoute>
         }
       />
@@ -473,7 +475,7 @@ export default function App() {
         path="/manage/service-accounts/*"
         element={
           <ConsoleRoute>
-            <ServiceAccountsPage />
+            {isCloudGateway() ? <CloudGate feature="serviceAccounts" /> : <ServiceAccountsPage />}
           </ConsoleRoute>
         }
       />
@@ -481,7 +483,7 @@ export default function App() {
         path="/manage/spend-limits/*"
         element={
           <ConsoleRoute>
-            <SpendLimitsPage />
+            {isCloudGateway() ? <Navigate to="/platform/billing" replace /> : <SpendLimitsPage />}
           </ConsoleRoute>
         }
       />
@@ -489,7 +491,7 @@ export default function App() {
         path="/manage/security/*"
         element={
           <ConsoleRoute>
-            <SecurityPage />
+            {isCloudGateway() ? <CloudGate feature="security" /> : <SecurityPage />}
           </ConsoleRoute>
         }
       />
@@ -514,7 +516,7 @@ export default function App() {
         path="/gizzi/usage/*"
         element={
           <ConsoleRoute>
-            <GizziUsagePage />
+            {isCloudGateway() ? <CloudGate feature="gizziUsage" /> : <GizziUsagePage />}
           </ConsoleRoute>
         }
       />

@@ -410,8 +410,8 @@ function SidebarContent({
             rel="noopener noreferrer"
             className="inline-flex items-center gap-1 text-[11px] text-[var(--text-tertiary)] hover:text-[var(--text-secondary)] transition-colors"
           >
-            <HugeiconsIcon icon={CircleIcon} size={8} className="text-[var(--status-success)]" />{" "}
-            Status
+            <SystemStatusDot />{" "}
+            System status
           </a>
           <span className="text-[var(--border-default)]">·</span>
           <a
@@ -425,6 +425,49 @@ function SidebarContent({
         </div>
       </div>
     </>
+  );
+}
+
+
+// Live dot for the "System status" link: reads the public status feed, shows a
+// neutral dot when the feed can't be reached (never claims "operational" blind).
+const STATUS_URL = "https://status.allternit.com/api/v1/status.json";
+const STATUS_DOT: Record<string, { cls: string; label: string }> = {
+  operational: { cls: "text-[var(--status-success)]", label: "All systems operational" },
+  degraded: { cls: "text-[var(--status-warning)]", label: "Some systems degraded" },
+  maintenance: { cls: "text-[var(--status-warning)]", label: "Maintenance in progress" },
+  down: { cls: "text-[var(--status-error)]", label: "Major outage" },
+};
+
+function SystemStatusDot() {
+  const [overall, setOverall] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    const load = async () => {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 3000);
+      try {
+        const res = await fetch(STATUS_URL, { signal: ctrl.signal });
+        const body = res.ok ? await res.json() : null;
+        if (alive) setOverall(typeof body?.overall === "string" ? body.overall : null);
+      } catch {
+        if (alive) setOverall(null);
+      } finally {
+        clearTimeout(timer);
+      }
+    };
+    void load();
+    const id = setInterval(() => { if (document.visibilityState === "visible") void load(); }, 5 * 60 * 1000);
+    return () => { alive = false; clearInterval(id); };
+  }, []);
+  const dot = overall ? STATUS_DOT[overall] : undefined;
+  return (
+    <HugeiconsIcon
+      icon={CircleIcon}
+      size={8}
+      className={dot ? dot.cls : "text-[var(--text-tertiary)]"}
+      aria-label={dot ? dot.label : "Status unknown"}
+    />
   );
 }
 

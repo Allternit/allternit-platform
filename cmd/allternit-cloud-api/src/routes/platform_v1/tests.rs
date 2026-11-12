@@ -760,3 +760,61 @@ fn openapi_matches_router() {
     );
     assert!(in_router.iter().all(|(_, p)| p.starts_with("/v1/")));
 }
+
+#[tokio::test]
+async fn project_limits_report_plan_usage_and_overrides() {
+    let c = ctx().await;
+    let db = &c.state.db;
+    let owner = principal("limits_owner");
+    let proj = projects::create_project(db, &owner, "Limits", ProjectEnv::Sandbox).await.unwrap();
+
+    // Fresh project: plan defaults, nothing used.
+    let v = super::console::project_limits(db, &owner, &proj.id).await.unwrap();
+    assert_eq!(v["object"], "project.limits");
+    assert_eq!(v["project_id"], proj.id.as_str());
+    assert_eq!(v["plan"], "sandbox");
+    assert_eq!(v["rate_limit"]["requests_per_minute"], 60);
+    assert_eq!(v["rate_limit"]["source"], "plan");
+    assert_eq!(v["rate_limit"]["window_seconds"], 60);
+    assert_eq!(v["rate_limit"]["used"], 0);
+    assert_eq!(v["rate_limit"]["remaining"], 60);
+    assert!(chrono::DateTime::parse_from_rfc3339(v["rate_limit"]["resets_at"].as_str().unwrap()).is_ok());
+    assert_eq!(v["concurrent_calls"]["limit"], 1);
+    assert_eq!(v["concurrent_calls"]["source"], "plan");
+
+    // Real traffic shows up in `used`.
+    let (_, token) = mint(&c, &proj, None, &["agents"]).await;
+    assert_eq!(call(&c.app, "GET", "/v1/accounts", Some(&token), None, None).await.status, StatusCode::OK);
+    let v = super::console::project_limits(db, &owner, &proj.id).await.unwrap();
+    assert!(v["rate_limit"]["used"].as_i64().unwrap() >= 1);
+
+    // Overrides are reported as such.
+    sqlx::query("UPDATE platform_projects SET rpm_override = 500, call_cap_override = 7 WHERE id = $1")
+        .bind(&proj.id)
+        .execute(db)
+        .await
+        .unwrap();
+    let v = super::console::project_limits(db, &owner, &proj.id).await.unwrap();
+    assert_eq!(v["rate_limit"]["requests_per_minute"], 500);
+    assert_eq!(v["rate_limit"]["source"], "override");
+    assert_eq!(v["concurrent_calls"]["limit"], 7);
+    assert_eq!(v["concurrent_calls"]["source"], "override");
+
+    // A stranger gets the same 404 as get_project.
+    let err = super::console::project_limits(db, &principal("stranger"), &proj.id).await.unwrap_err();
+    assert_eq!(err.status, StatusCode::NOT_FOUND);
+    assert_eq!(err.code, "project_not_found");
+
+    // Archived projects keep the same access as get_project: 200 for the owner, 404 for a stranger.
+    projects::update_project(db, &owner, &proj.id, ProjectPatch { name: None, spend_cap_cents: None, archived: Some(true) }).await.unwrap();
+    let v = super::console::project_limits(db, &owner, &proj.id).await.unwrap();
+    assert_eq!(v["project_id"], proj.id.as_str());
+    assert_eq!(v["rate_limit"]["requests_per_minute"], 500);
+    let err = super::console::project_limits(db, &principal("stranger"), &proj.id).await.unwrap_err();
+    assert_eq!(err.status, StatusCode::NOT_FOUND);
+
+    // The route needs a Clerk session.
+    let r = call(&c.app, "GET", &format!("/api/v1/platform/projects/{}/limits", proj.id), None, None, None).await;
+    assert_eq!(r.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(r.body["error"]["type"], "authentication_error");
+}

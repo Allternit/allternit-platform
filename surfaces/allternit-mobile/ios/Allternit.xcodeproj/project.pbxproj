@@ -95,6 +95,7 @@
 		1E8772D7405B81D6D6ADBE97 /* ActivityIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1826C3FD74FF56E3B6B1BD7 /* ActivityIntents.swift */; };
 		1EEA22F292B3FAF23C892BB1 /* V2ArtifactView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14F86E2F82AE9DF183DEC731 /* V2ArtifactView.swift */; };
 		1F010EB98323D25EEFB22CB6 /* ComputeBillingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D129CF0D5A7B51D59834876E /* ComputeBillingView.swift */; };
+		2001BEFE40AC1E204264DAEE /* IMRunMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBA01BD4FD64CA0F66DDD243 /* IMRunMessage.swift */; };
 		20876B1BDFC8B96D115E6201 /* AppGroupStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 879AEECFFCCDD7AD3D79A2CA /* AppGroupStore.swift */; };
 		20C5C86EEFF9CC220A028DD5 /* CodeWorkspace.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4FF5A433FAC2C691A9F790AD /* CodeWorkspace.swift */; };
 		20C7054DEC625347DE9E978D /* BotProfile.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F0CADD76BDEA330E8EBD079 /* BotProfile.swift */; };
@@ -513,6 +514,7 @@
 		B87CA5FA8D5058713E8EAF49 /* PlanUsageViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1BBC678E465D3B17E1016460 /* PlanUsageViews.swift */; };
 		B8B37987DF7D3622C177BE2A /* BotSetupSheets.swift in Sources */ = {isa = PBXBuildFile; fileRef = 468304A152B48DA563AF255C /* BotSetupSheets.swift */; };
 		B8EBFB6062961EAAB9C8EABD /* ScheduledTaskSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = B66D8B75F9E05EC31D8C93D5 /* ScheduledTaskSheet.swift */; };
+		B99F55F075E829142009CCE7 /* SystemStatusClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 125C141DE758E382A2E0916A /* SystemStatusClient.swift */; };
 		B9F1DCD514FBAAEA04F88068 /* BrainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33BE9B2F87B3C05A37CF52AF /* BrainStore.swift */; };
 		BA47E1AFD54680EE8CD3B04A /* AuthManager+DeleteAccount.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E1D84060FD81E44483971DA /* AuthManager+DeleteAccount.swift */; };
 		BA74158156A79E2C0B5B40C4 /* CreateLoopSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91DA83B808ADF24C16AA47C5 /* CreateLoopSheet.swift */; };
@@ -591,6 +593,7 @@
 		D731DA00E2ABCAC5EA9A1FF6 /* ACIComputersPane.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B32E0565DA7953C599388DC /* ACIComputersPane.swift */; };
 		D793BAB2C6CA36C8B5B8D4FC /* CodeEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5933541AB5CBF27334FF2068 /* CodeEditorView.swift */; };
 		D7CB3ECC567DA0E6372C1DBF /* AgentSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5ABE98CBC903A69C89BB489 /* AgentSession.swift */; };
+		D81BBDC3C07C66558949AF8B /* IMRunMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBA01BD4FD64CA0F66DDD243 /* IMRunMessage.swift */; };
 		D8A42A315CBFD1B7439A82C9 /* BotStageLive.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3805BD78B0431F98B8FC1399 /* BotStageLive.swift */; };
 		D8D1C920A1F1D21C0D0AA0ED /* ConnectedView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C280E603BD4FF49299D97648 /* ConnectedView.swift */; };
 		D9794CED8248EA9A17185B68 /* BotHomeTabsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B88709AC7BC1F72F5AB364B7 /* BotHomeTabsView.swift */; };
@@ -819,6 +822,7 @@
 		11DDE1CD60ED8E7F4561104F /* HermesClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HermesClient.swift; sourceTree = "<group>"; };
 		11ED019204529A31DB6E23FF /* DeleteAccountView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeleteAccountView.swift; sourceTree = "<group>"; };
 		122C28A0CEDC1D5563AA57F7 /* CodeCanvasStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodeCanvasStore.swift; sourceTree = "<group>"; };
+		125C141DE758E382A2E0916A /* SystemStatusClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemStatusClient.swift; sourceTree = "<group>"; };
 		125D14A1DF2FFFA988BAEC71 /* InstanceStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InstanceStore.swift; sourceTree = "<group>"; };
 		130D14F5DE715D27DFD14195 /* AllternitWidgetsBundle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AllternitWidgetsBundle.swift; sourceTree = "<group>"; };
 		134EECE81F53DFAD7A3B0703 /* OutboxStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutboxStore.swift; sourceTree = "<group>"; };
@@ -1336,6 +1340,7 @@
 		EB0E0A17C865B6B591899C47 /* TeachView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TeachView.swift; sourceTree = "<group>"; };
 		EB5FC664C55551D4AFE4F68F /* EnvironmentStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EnvironmentStore.swift; sourceTree = "<group>"; };
 		EB709B34E0E88AC2CBF7A6EF /* RFBClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RFBClient.swift; sourceTree = "<group>"; };
+		EBA01BD4FD64CA0F66DDD243 /* IMRunMessage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IMRunMessage.swift; sourceTree = "<group>"; };
 		EBE80E738D829F2E8E018127 /* MeetBotCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetBotCatalog.swift; sourceTree = "<group>"; };
 		ECCF48884128341077961F98 /* UsageStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageStore.swift; sourceTree = "<group>"; };
 		ECCFD9A14B1F6A5FA4443487 /* AccountProfileView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountProfileView.swift; sourceTree = "<group>"; };
@@ -1949,6 +1954,7 @@
 			isa = PBXGroup;
 			children = (
 				6E3675D6BEA522D8A6837910 /* IMQuickPanel.swift */,
+				EBA01BD4FD64CA0F66DDD243 /* IMRunMessage.swift */,
 				39168AAAA2A1729A6320147C /* SharedPhoneRun.swift */,
 			);
 			name = Panel;
@@ -2759,6 +2765,7 @@
 				C5BB9F2E0048B9D1662BD674 /* SettingsPages.swift */,
 				59F0F883C961CE5C29AD0B21 /* SettingsView.swift */,
 				B39AAE7FBCFE14C0E9A6D418 /* SubagentsSettingsView.swift */,
+				125C141DE758E382A2E0916A /* SystemStatusClient.swift */,
 				6D5F0FBBDFDA61BCA336D35B /* TwinSettingsView.swift */,
 				7355CA3620D382F4B41E9531 /* VPSServersManagerView.swift */,
 				802BD7F292B9273EC037ED15 /* WebhooksSettingsView.swift */,
@@ -3192,6 +3199,7 @@
 				4C1C71AB5E2F246232F1989B /* Entities.swift in Sources */,
 				07F88108749CC683CE14647B /* FocusFilter.swift in Sources */,
 				0DE0405F304EF35FEE5CFD82 /* IMQuickPanel.swift in Sources */,
+				D81BBDC3C07C66558949AF8B /* IMRunMessage.swift in Sources */,
 				53D54D8692CD424759F3672A /* IntentGate.swift in Sources */,
 				25F5606B388081ADD3241511 /* IntentServicing.swift in Sources */,
 				61669417FD686CCA47A09255 /* MemoryScheduleIntents.swift in Sources */,
@@ -3503,6 +3511,7 @@
 				872AF2B49557734CB68B452F /* HermesClient.swift in Sources */,
 				CD6E8FC8C6E89354387BCD63 /* HistorySidebarView.swift in Sources */,
 				917EC4AE1FF035DBEC9300D4 /* IMQuickPanel.swift in Sources */,
+				2001BEFE40AC1E204264DAEE /* IMRunMessage.swift in Sources */,
 				1BD970D51AA8C0B6C399D5EB /* ImpactMapView.swift in Sources */,
 				5A1972A355710FB2F70DF9C4 /* InappCallStore.swift in Sources */,
 				6429403CDCF8B0EABDF2A788 /* InappCallViews.swift in Sources */,
@@ -3718,6 +3727,7 @@
 				EF83E006F618ED5D837B9A14 /* SubagentFaceView.swift in Sources */,
 				0485D153515300F0EB63C0F5 /* SubagentTypesClient.swift in Sources */,
 				FC968DAFF1558F8F269CEB4B /* SubagentsSettingsView.swift in Sources */,
+				B99F55F075E829142009CCE7 /* SystemStatusClient.swift in Sources */,
 				9659676428438A32C643F67D /* TalkIntents.swift in Sources */,
 				FB4BF1C7CA40D4942BB1B4CE /* TasksBoardScreen.swift in Sources */,
 				58815317DBF05A8151B4F557 /* TeachClient.swift in Sources */,
@@ -3854,7 +3864,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = AllternitNotifications/AllternitNotifications.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 32;
+				CURRENT_PROJECT_VERSION = 33;
 				DEVELOPMENT_TEAM = MQ85968PQP;
 				INFOPLIST_FILE = AllternitNotifications/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
@@ -3941,7 +3951,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = AllternitShare/AllternitShare.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 32;
+				CURRENT_PROJECT_VERSION = 33;
 				DEVELOPMENT_TEAM = MQ85968PQP;
 				INFOPLIST_FILE = AllternitShare/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
@@ -3965,7 +3975,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = AllternitShare/AllternitShare.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 32;
+				CURRENT_PROJECT_VERSION = 33;
 				DEVELOPMENT_TEAM = MQ85968PQP;
 				INFOPLIST_FILE = AllternitShare/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
@@ -3990,7 +4000,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = "iMessage App Icon";
 				CODE_SIGN_ENTITLEMENTS = AllternitMessages/AllternitMessages.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 32;
+				CURRENT_PROJECT_VERSION = 33;
 				DEVELOPMENT_TEAM = MQ85968PQP;
 				INFOPLIST_FILE = AllternitMessages/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
@@ -4014,7 +4024,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = AllternitWidgets/AllternitWidgets.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 32;
+				CURRENT_PROJECT_VERSION = 33;
 				DEVELOPMENT_TEAM = MQ85968PQP;
 				INFOPLIST_FILE = AllternitWidgets/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
@@ -4038,7 +4048,7 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 32;
+				CURRENT_PROJECT_VERSION = 33;
 				DEVELOPMENT_TEAM = MQ85968PQP;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
@@ -4062,7 +4072,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = AllternitScreen/AllternitScreen.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 32;
+				CURRENT_PROJECT_VERSION = 33;
 				DEVELOPMENT_TEAM = MQ85968PQP;
 				INFOPLIST_FILE = AllternitScreen/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
@@ -4087,7 +4097,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = "iMessage App Icon";
 				CODE_SIGN_ENTITLEMENTS = AllternitMessages/AllternitMessages.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 32;
+				CURRENT_PROJECT_VERSION = 33;
 				DEVELOPMENT_TEAM = MQ85968PQP;
 				INFOPLIST_FILE = AllternitMessages/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
@@ -4111,7 +4121,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = AllternitScreen/AllternitScreen.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 32;
+				CURRENT_PROJECT_VERSION = 33;
 				DEVELOPMENT_TEAM = MQ85968PQP;
 				INFOPLIST_FILE = AllternitScreen/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
@@ -4142,7 +4152,7 @@
 				CODE_SIGN_ENTITLEMENTS = Allternit.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 32;
+				CURRENT_PROJECT_VERSION = 33;
 				DEVELOPMENT_TEAM = MQ85968PQP;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(inherited)",
@@ -4172,7 +4182,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = AllternitWidgets/AllternitWidgets.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 32;
+				CURRENT_PROJECT_VERSION = 33;
 				DEVELOPMENT_TEAM = MQ85968PQP;
 				INFOPLIST_FILE = AllternitWidgets/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
@@ -4196,7 +4206,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = AllternitNotifications/AllternitNotifications.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 32;
+				CURRENT_PROJECT_VERSION = 33;
 				DEVELOPMENT_TEAM = MQ85968PQP;
 				INFOPLIST_FILE = AllternitNotifications/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
@@ -4227,7 +4237,7 @@
 				CODE_SIGN_ENTITLEMENTS = Allternit.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 32;
+				CURRENT_PROJECT_VERSION = 33;
 				DEVELOPMENT_TEAM = MQ85968PQP;
 				ENABLE_DEBUG_DYLIB = NO;
 				FRAMEWORK_SEARCH_PATHS = (
@@ -4258,7 +4268,7 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 32;
+				CURRENT_PROJECT_VERSION = 33;
 				DEVELOPMENT_TEAM = MQ85968PQP;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;

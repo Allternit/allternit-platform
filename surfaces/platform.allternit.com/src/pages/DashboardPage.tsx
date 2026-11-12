@@ -22,6 +22,7 @@ import {
 } from "@/components/console-ui";
 import { getOrgCreditsBalance, type OrgCreditsBalance } from "@/lib/credits";
 import { getSpendLimit, type SpendLimit } from "@/lib/spend-limits";
+import { isCloudGateway, isHiddenOnCloud } from "@/lib/availability";
 import {
   dateDaysAgo,
   formatTokenCount,
@@ -136,7 +137,9 @@ export function DashboardPage(): React.ReactNode {
   const navigate = useNavigate();
 
   const [credits, setCredits] = useState<LoadState<OrgCreditsBalance>>({ status: "loading" });
-  const [spend, setSpend] = useState<LoadState<SpendLimit>>({ status: "loading" });
+  const [spend, setSpend] = useState<LoadState<SpendLimit>>(
+    isCloudGateway() ? { status: "hidden" } : { status: "loading" },
+  );
   const [caching, setCaching] = useState<LoadState<CachingResponse>>({ status: "loading" });
   const [usage, setUsage] = useState<LoadState<UsageResponse>>({ status: "loading" });
   const [models, setModels] = useState<LoadState<ConsoleModel[]>>({ status: "loading" });
@@ -160,6 +163,8 @@ export function DashboardPage(): React.ReactNode {
   }, []);
 
   useEffect(() => {
+    // No /api/v1/admin/spend-limits on Allternit Cloud; the card stays hidden.
+    if (isCloudGateway()) return;
     let active = true;
     getSpendLimit()
       .then((data) => active && setSpend({ status: "ok", data }))
@@ -484,11 +489,13 @@ export function DashboardPage(): React.ReactNode {
       <section>
         <h2 className="m-0 mb-3 text-[16px] font-semibold text-[var(--text-primary)]">Resources</h2>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          <ResourceCard
-            title="Batches"
-            description="Send large volumes of requests asynchronously and retrieve results when they complete."
-            action={{ label: "Go to Batches", to: "/batches" }}
-          />
+          {!isHiddenOnCloud("batches") && (
+            <ResourceCard
+              title="Batches"
+              description="Send large volumes of requests asynchronously and retrieve results when they complete."
+              action={{ label: "Go to Batches", to: "/batches" }}
+            />
+          )}
           <ResourceCard
             title="Prompt caching"
             description="Reuse long prefixes and context caches to cut repeat input cost on every request."

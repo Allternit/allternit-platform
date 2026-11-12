@@ -96,3 +96,29 @@ export async function updateProject(
 ): Promise<PlatformProject> {
   return api.patch<PlatformProject>(`/api/v1/platform/projects/${encodeURIComponent(projectId)}`, input);
 }
+
+export type LimitSource = "plan" | "override";
+
+/** Read-only limits for one project (GET /api/v1/platform/projects/:id/limits). */
+export interface ProjectLimits {
+  object: "project.limits";
+  project_id: string;
+  plan: string;
+  rate_limit: {
+    requests_per_minute: number;
+    source: LimitSource;
+    window_seconds: number;
+    /** Null when the counter could not be read. */
+    used: number | null;
+    remaining: number | null;
+    resets_at: string;
+  };
+  concurrent_calls: {
+    limit: number;
+    source: LimitSource;
+  };
+}
+
+export async function getProjectLimits(projectId: string): Promise<ProjectLimits> {
+  return api.get<ProjectLimits>(`/api/v1/platform/projects/${encodeURIComponent(projectId)}/limits`);
+}

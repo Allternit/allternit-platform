@@ -25,6 +25,7 @@ import {
 } from './auth.js'
 import { getAPIProvider } from './model/providers.js'
 import { detectWorkspace } from '../../../../runtime/kernel/bridge.js'
+import { stateSymbol, type ServiceState } from '../../../utils/serviceStatus.js'
 import type { LocalJSXCommandContext } from '../types/command.js'
 import type { Message } from '../types/message.js'
 
@@ -60,6 +61,28 @@ export function countUserTurns(messages: Array<any> | undefined): number {
     const block = m.message?.content?.[0]
     return block?.type !== 'tool_result'
   }).length
+}
+
+export type ServicesLine = { overall: string; summary: string; checkedAt: string } | null
+
+/** Allternit services line for /status. null when offline or the status page is unreachable. */
+export async function getServicesLine(): Promise<ServicesLine> {
+  try {
+    const { isEssentialTrafficOnly } = await import('../../../../shared/utils/privacyLevel.js')
+    if (isEssentialTrafficOnly()) return null
+    const sv = await import('../../../utils/serviceStatus.js')
+    const { status } = await sv.fetchServiceStatus({ timeoutMs: 2_000 })
+    return { overall: status.overall, summary: sv.summarizeServices(status), checkedAt: status.lastCheckedAt }
+  } catch {
+    return null
+  }
+}
+
+/** One display line for the Services row, or null (render nothing). */
+export function formatServicesLine(line: ServicesLine): string | null {
+  if (!line) return null
+  const symbol = stateSymbol((line.overall as ServiceState) ?? 'unknown')
+  return `${symbol} ${line.summary}`
 }
 
 export type SessionStatus = {
@@ -98,6 +121,8 @@ export type SessionStatus = {
     path?: string
     name?: string
   }
+  /** Allternit service status; null when it could not be read. */
+  services: ServicesLine
   errors: string[]
 }
 
@@ -187,6 +212,7 @@ export async function buildSessionStatus(
       ...(workspace?.path ? { path: workspace.path } : {}),
       ...(workspace?.identity?.name ? { name: workspace.identity.name } : {}),
     },
+    services: await getServicesLine(),
     errors: [],
   }
 }

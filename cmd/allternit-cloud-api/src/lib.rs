@@ -590,6 +590,7 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         .route("/api/v1/health", get(routes::health::health_check))
         .route("/api/v1/health/ready", get(routes::health::readiness_check))
         .route("/api/v1/health/live", get(routes::health::liveness_check))
+        .route("/api/v1/health/computers", get(routes::health::computers_health))
         .route("/api/v1/metrics", get(routes::health::metrics))
         .with_state(state.clone());
 
