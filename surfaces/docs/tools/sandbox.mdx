@@ -7,7 +7,18 @@ description: 'Administer sandbox templates and instances, and execute code in is
 
 Allternit Cloud Sandboxes run untrusted code in isolated virtual machines instead of the host process. Organization admins define **sandbox templates** that describe the runtime, source code, environment, and resource limits. A template can then be launched as a **sandbox instance**.
 
-A separate lower-level `/sandbox/*` execution API is also available for ad-hoc code execution.
+A separate lower-level `/sandbox/*` execution API is also available for ad-hoc code execution. It can stage uploads in and return files out; see [Sandbox API](/api/sandbox).
+
+## run_code in chat
+
+The Gizzi agent has a built-in `run_code` tool that analyzes attached files with Python. It does not use these VM sandboxes. It runs on the computer where the agent runs, inside the operating system sandbox (bubblewrap on Linux, sandbox-exec on macOS), with the network off and a clean environment. Windows, and Linux without bubblewrap, refuse to run it.
+
+- Python 3.12 with pandas, numpy, openpyxl and matplotlib, set up once with a pinned uv (0.11.19, checksum verified).
+- 60 seconds by default, 120 at most. Output is capped at 64 KB each for stdout and stderr, and files it saves at 20 files and 20 MB.
+- The permission is `run_code`: Auto runs it, Ask shows an approval card, Read-only hides it.
+- Files it saves are returned on the live `tool_result` event as `files: [{ name, mediaType, uploadId, size }]`, with `run: { stdout, stderr, exit_code }` (`exit_code` is null on timeout). Download them with `GET /api/v1/uploads/:id`.
+
+For the user view, see [Analyze files](/guides/analyze-files).
 
 ## Base URLs
 

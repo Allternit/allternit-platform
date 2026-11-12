@@ -162,6 +162,11 @@ If stdout is not valid JSON, the response wraps the captured output:
 }
 ```
 
+## Related built-in tools
+
+- **`run_code`** (Gizzi agent) runs Python on a chat's attached files in the operating system sandbox on the machine where the agent runs, with the network off. It is not a server tool. See [Cloud Sandboxes](/tools/sandbox#run_code-in-chat).
+- **`code_execution`** (host tool) runs code on the API host. It requires host control and is not sandboxed. Use a server tool when you need isolation.
+
 ## Server tools in the MCP catalog
 
 Server tools registered for an organization are also exposed through the `/mcp/server` JSON-RPC surface when the authenticated user belongs to that organization. The same precedence rule applies: a server tool shadows a native tool with the same name.

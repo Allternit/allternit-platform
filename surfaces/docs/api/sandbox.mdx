@@ -82,6 +82,7 @@ Request body:
 | `resources` | object | no | `{ "cpu_cores": number, "memory_mb": integer }` |
 | `toolchains` | array | no | Toolchain layers to install |
 | `network_enabled` | boolean | no | Whether the sandbox may access the network |
+| `files` | array | no | Uploads to stage into the sandbox as `in/<name>`: `[{ "name": "data.csv", "uploadId": "..." }]`. `/sandbox/execute` only. |
 
 Response:
 
@@ -94,6 +95,33 @@ Response:
   "session_id": "sess_abc123"
 }
 ```
+
+### Files in and out
+
+Pass `files` to stage uploads (from `POST /api/v1/uploads`) into the sandbox working folder as `in/<name>`. Whatever the code writes to `out/` comes back in the response as `files`, each stored as an upload you can fetch with `GET /api/v1/uploads/:id`.
+
+```json
+{
+  "code": "import csv\nopen('out/n.txt','w').write('42')",
+  "language": "python",
+  "files": [{ "name": "data.csv", "uploadId": "up_123" }]
+}
+```
+
+Response (extra field):
+
+```json
+{
+  "exit_code": 0,
+  "stdout": "",
+  "stderr": "",
+  "duration_ms": 180,
+  "session_id": "sess_abc123",
+  "files": [{ "name": "n.txt", "mediaType": "text/plain", "uploadId": "up_456" }]
+}
+```
+
+`files` is left out of the response when the request staged no files. Input and output are each limited to 20 MB in total. A file name must not be empty or contain `/`, `\`, quotes or control characters. `files` needs the VM sandbox: the plain-subprocess fallback used when no VM driver is configured refuses it, and `/sandbox/execute/stream` rejects it with 400 `files_unsupported`.
 
 ### Streaming execution
 
@@ -135,8 +163,8 @@ OK
 
 ## Security
 
-- Buffered `/sandbox/execute` runs on the VM driver; when a warm pool is configured it checks out a health-checked VM and returns it afterwards, and a checkout failure returns 503 rather than falling back to an unsandboxed run.
-- `/sandbox/execute/stream` spawns the process directly with a cleared, allow-listed environment and caps the timeout at 300 seconds. It does not use the VM driver.
+- Buffered `/sandbox/execute` (`execute_handler`) runs on the VM driver; when a warm pool is configured it checks out a health-checked VM and returns it afterwards, and a checkout failure returns 503 rather than falling back to an unsandboxed run.
+- `/sandbox/execute/stream` does not use the VM driver or the pool. It spawns the process directly on the API host with a cleared, allow-listed environment, supports `python`, `node` and `bash`, and caps the timeout at 300 seconds. Use `/sandbox/execute` when you need VM isolation.
 - `network_enabled` defaults to `false`.
 - Execution timeout is enforced by the server.
 
@@ -145,6 +173,10 @@ OK
 | HTTP | Code / Message | Meaning |
 |------|----------------|---------|
 | 200 | — | Execution succeeded; check `exit_code` |
+| 400 | `files_unsupported` | `files` was sent to `/sandbox/execute/stream` |
+| 400 | `invalid file name` | A `files[].name` is empty or has a path or control character |
+| 404 | `upload not found` | A `files[].uploadId` does not exist |
+| 413 | `files[] is limited to 20MB in total` | Staged files exceed 20 MB |
 | 503 | `VM driver not available` | No VM driver is initialized |
 | 503 | `VM driver not initialized` | Health check failed |
 

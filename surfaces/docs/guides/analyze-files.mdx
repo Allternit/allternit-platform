@@ -1,0 +1,60 @@
+---
+title: 'Analyze files'
+description: 'Attach a CSV, spreadsheet or JSON file and have the agent analyze it with Python: tables, charts and files you can download.'
+---
+
+Attach a data file to a chat and ask a question about it. The agent can run a Python script on the file, then show you the result in the chat: a table, a chart, or a new file such as a cleaned spreadsheet.
+
+## Use it
+
+1. Attach a CSV, XLSX or JSON file with **+** in the composer (see [Attachments and storage limits](/guides/attachments)).
+2. Ask for what you want: "Summarize this by month", "Chart revenue by region", "Remove duplicate rows and give me the cleaned file".
+3. The agent writes a short Python script and runs it on your file. You see its printed output, charts as images, and any file it saved.
+
+You can ask a follow-up about a file from earlier in the chat. The agent can pick it by name.
+
+## What you get
+
+- **A table or summary** of the numbers, printed by the script.
+- **Charts** as images that show inline in the chat.
+- **Files**: anything the script saves, such as a cleaned CSV, a converted XLSX or a chart PNG, appears as a file card in the chat. Select it to download. These files are stored as your uploads, the same as attachments.
+
+If the script fails, the agent reads the error, fixes the script and runs it again.
+
+## First run
+
+The first time you analyze a file, Allternit sets up Python once. The chat shows **Setting up Python (one-time)** while it downloads a small Python 3.12 environment with pandas, numpy, openpyxl and matplotlib. This can take a minute. Later runs reuse it and start right away.
+
+## Limits
+
+| Limit | Value |
+| --- | --- |
+| Language | Python only |
+| Time | 60 seconds per run by default, 120 seconds at most. If a script runs over, it is stopped. |
+| Printed output | 64 KB for output and 64 KB for errors |
+| Files returned | Up to 20 files and 20 MB in total |
+| Packages | pandas, numpy, openpyxl and matplotlib. Others can't be installed. |
+| Network | None. The script can't download data. |
+
+Each run starts from a fresh folder, so the agent re-reads your file every time. Run folders older than 7 days are deleted automatically.
+
+## Privacy
+
+The script runs on the computer where your agent runs: your own computer, or your cloud computer. It runs inside the operating system's sandbox with the network turned off and a clean environment, so it can't see your API keys or send your data anywhere. It can read only the files you attached and can write only in its own run folder.
+
+The sandbox needs macOS or Linux. On Linux it needs bubblewrap installed. On Windows, or on Linux without bubblewrap, the agent can't run code and says so instead of running it unprotected.
+
+## Permissions
+
+Running code follows the chat's permission setting (see [Chat sessions](/guides/chat-sessions)):
+
+| Setting | What happens |
+| --- | --- |
+| **Auto** | The agent runs the script right away. |
+| **Ask before actions** | You see an approval card with the code and choose whether it runs. |
+| **Read-only** | Running code is hidden from the agent. |
+
+## Related
+
+- [Attachments and storage limits](/guides/attachments)
+- [Cloud Sandboxes](/tools/sandbox)

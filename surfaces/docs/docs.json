@@ -621,6 +621,7 @@
               "guides/voice-call-runtime-routes",
               "guides/custom-voices",
               "guides/attachments",
+              "guides/analyze-files",
               "guides/chat-composer",
               "guides/chat-sessions",
               "guides/interactive-answers",
