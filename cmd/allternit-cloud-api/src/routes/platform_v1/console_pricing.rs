@@ -28,7 +28,7 @@ pub(super) fn routes() -> Router<Arc<ApiState>> {
 fn pricing_body() -> Value {
     let meters: Vec<Value> = stripe_plan::METER_PLANS
         .iter()
-        .map(|m| json!({ "meter": m.meters[0], "unit": m.unit, "payg_cents": m.payg_cents, "growth_cents": m.growth_cents }))
+        .map(|m| json!({ "meter": m.meters[0], "name": m.display_name, "unit": m.unit, "payg_cents": m.payg_cents, "growth_cents": m.growth_cents }))
         .collect();
     let tools: Value = serde_json::from_str(TOOL_PRICES).unwrap_or_else(|_| json!([]));
     json!({ "meters": meters, "tools": tools, "deprecations": [] })

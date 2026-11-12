@@ -316,7 +316,7 @@ export function ModelsPage() {
                 <tbody className="divide-y divide-[var(--border-subtle)]">
                   {pricing.meters.map((m) => (
                     <tr key={m.meter}>
-                      <td className="px-4 py-3 font-medium text-[var(--text-primary)]">{m.meter}</td>
+                      <td className="px-4 py-3 font-medium text-[var(--text-primary)]">{m.name ?? m.meter}</td>
                       <td className="px-4 py-3 text-[var(--text-secondary)]">{m.unit}</td>
                       <td className="px-4 py-3 text-[var(--text-secondary)]">{formatCents(m.payg_cents)}</td>
                       <td className="px-4 py-3 text-[var(--text-secondary)]">{formatCents(m.growth_cents)}</td>

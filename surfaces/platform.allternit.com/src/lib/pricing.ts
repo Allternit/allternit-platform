@@ -2,6 +2,7 @@ import { api } from "@/lib/api-client";
 
 export interface MeterPrice {
   meter: string;
+  name?: string;
   unit: string;
   /** Cents per unit, decimal string. */
   payg_cents: string;
