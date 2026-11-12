@@ -43,9 +43,12 @@ fs.inotify.max_user_instances = 8192
 fs.inotify.max_user_watches = 1048576
 EOF
 sysctl -p /etc/sysctl.d/90-incus-inotify.conf
-systemctl restart incus          # restarts the bridge's dnsmasq; running containers keep running
+# No restart: Incus retries the bridge every minute. On 2026-11-12 dnsmasq
+# came back within about 60 s of the sysctl change.
 incus network list               # incusbr0 back to CREATED
 ```
+
+If `incusbr0` is still not `CREATED` after two minutes, read the newest error with `journalctl -u incus --since -5min`. Restarting Incus is a last resort and was not tested on a host with running computers.
 
 The `90-` prefix sorts after older `10-*.conf` files, so it wins at boot. `infrastructure/vps-desktop-cloud/bootstrap-host.sh` writes the same file on every new host. After the fix, computers renew their lease on their own; restart one with `incus restart` if it still has no address after a few minutes.
 
