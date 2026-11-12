@@ -489,6 +489,11 @@ async fn v1_agents_is_shared_with_the_agency_api() {
     let (s, e) = call(&off, "GET", "/v1/agents", "not-a-project-key", None).await;
     assert_eq!(s, StatusCode::UNAUTHORIZED, "{e}");
     assert_ne!(e["error"]["code"], "platform_api_disabled");
+    // `/v1/decisions` is shared the same way (Desktop and computer use call it with
+    // Clerk or `allternit_*` tokens).
+    let (s, e) = call(&off, "POST", "/v1/decisions", "not-a-project-key", Some(json!({}))).await;
+    assert_eq!(s, StatusCode::UNAUTHORIZED, "{e}");
+    assert_ne!(e["error"]["code"], "platform_api_disabled");
     // A project key is the Platform API's.
     let on = super::router_with_agency(&c.state, Gate::Forced(true), agency).with_state(c.state.clone());
     let (s, list) = call(&on, "GET", "/v1/agents", &key, None).await;

@@ -136,7 +136,8 @@ pub fn routes(forward: Arc<AgencyForward>) -> Router<Arc<ApiState>> {
         .route("/v1/campaigns/*rest", any(forward_handler))
         .route("/v1/replays", any(forward_handler))
         .route("/v1/replays/*rest", any(forward_handler))
-        .route("/v1/decisions", any(forward_handler))
+        // `/v1/decisions` is shared with the Platform API like `/v1/agents`: its
+        // router sends every non-project-key call here (`platform_v1::v1_middleware`).
         .route("/v1/capabilities", any(forward_handler))
         // WP-P1 production safety: org policy, approvals queue, run journal.
         .route("/v1/agency-safety/*rest", any(forward_handler))
@@ -443,7 +444,7 @@ mod tests {
             ("GET", "/v1/capabilities"),
             ("GET", "/v1/authority-profiles"),
             ("GET", "/v1/completion-criteria"),
-            ("POST", "/v1/decisions"),
+            // `/v1/decisions` reaches the forwarder through `platform_v1::v1_middleware`.
         ] {
             // A spoofed identity header must not substitute for auth.
             let resp = app

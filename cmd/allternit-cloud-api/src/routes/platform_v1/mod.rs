@@ -308,10 +308,12 @@ async fn v1_middleware(
     mut request: Request,
     next: Next,
 ) -> Response {
-    // The Agency API owns `/v1/agents` for everything but project keys, whether or not
-    // the Platform API is switched on.
+    // The Agency API owns `/v1/agents` and `/v1/decisions` for everything but project
+    // keys, whether or not the Platform API is switched on. Clerk and `allternit_*`
+    // callers of `/v1/decisions` (Desktop, computer use) keep reaching the agency node;
+    // project keys get the Platform Decisions resource (`decisions.rs`).
     let console_project = console_project(&request);
-    if request.uri().path() == "/v1/agents" {
+    if matches!(request.uri().path(), "/v1/agents" | "/v1/decisions") {
         let project_key = request
             .headers()
             .get(header::AUTHORIZATION)
