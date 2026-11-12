@@ -14,6 +14,7 @@ import SwiftUI
 /// - invite  → the web invite page in-app
 /// - computers → the Computers list (Settings → Devices) in a sheet
 /// - decisions → Decisions in a sheet
+/// - phoneRun → that run's status, steps and Review in a sheet
 struct DeepLinkHost: ViewModifier {
     @ObservedObject private var router = DeepLinkRouter.shared
     @EnvironmentObject private var modeStore: AppModeStore
@@ -25,6 +26,7 @@ struct DeepLinkHost: ViewModifier {
     @State private var isDecisionsPresented = false
     @State private var isInboxPresented = false
     @State private var routineSheet: Routine?
+    @State private var runSheet: PhoneRunLink?
     @State private var inviteURL: IdentifiableURL?
     @State private var linkError: String?
     @State private var isResolving = false
@@ -91,6 +93,9 @@ struct DeepLinkHost: ViewModifier {
                         }
                 }
             }
+            .sheet(item: $runSheet) { link in
+                PhoneRunSheet(runId: link.id)
+            }
             .sheet(item: $inviteURL) { item in
                 SafariView(url: item.url)
                     .ignoresSafeArea()
@@ -114,6 +119,7 @@ struct DeepLinkHost: ViewModifier {
         isDecisionsPresented = false
         isInboxPresented = false
         routineSheet = nil
+        runSheet = nil
         inviteURL = nil
         switch link {
         case .session(let id):
@@ -152,6 +158,8 @@ struct DeepLinkHost: ViewModifier {
             Task { await openBot(id) }
         case .phoneTask(let goal, let source):
             Task { await PhoneRunStore.shared.startForMessages(goal: goal, source: source) }
+        case .phoneRun(let id):
+            runSheet = PhoneRunLink(id: id)
         case .callMain:
             if let main = AgentHubStore.shared.agents.first(where: \.isMainBot) {
                 botSheet = main

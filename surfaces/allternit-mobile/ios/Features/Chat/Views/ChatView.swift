@@ -361,6 +361,7 @@ struct ChatContentView: View {
             ScrollViewReader { scrollProxy in
                 ScrollView {
                     LazyVStack(spacing: 20) {
+                        let runHosts = isTerminal ? [:] : phoneRunHosts
                         if viewModel.messages.isEmpty {
                             if isTerminal {
                                 // Code thread empty state: terminal boot header.
@@ -378,12 +379,13 @@ struct ChatContentView: View {
                                 if isTerminal {
                                     terminalRow(message)
                                 } else {
-                                    messageRow(message)
+                                    messageRow(message, hostedRun: runHosts[message.id])
                                 }
                             }
                         }
                         if !isTerminal {
-                            PhoneTaskCardsSection(sessionId: viewModel.currentSessionId, bot: chatBot)
+                            PhoneTaskCardsSection(sessionId: viewModel.currentSessionId, bot: chatBot,
+                                                  hostedRunIds: Set(runHosts.values.map(\.runId)))
                         }
                     }
                     .padding(.vertical, 16)
@@ -535,7 +537,12 @@ struct ChatContentView: View {
 
     /// One feed row — extracted from `body` so the view stays under the
     /// type-checker's expression budget.
-    private func messageRow(_ message: MessageRecord) -> some View {
+    /// Which reply hosts which phone or computer run (pill + stream on the reply).
+    private var phoneRunHosts: [String: PhoneTaskCardModel] {
+        PhoneRunHosting.hosts(messages: viewModel.messages, cards: phoneRuns.cards(for: viewModel.currentSessionId))
+    }
+
+    private func messageRow(_ message: MessageRecord, hostedRun: PhoneTaskCardModel? = nil) -> some View {
         MessageRow(
             message: message,
             onArtifactTap: { artifact in
@@ -561,7 +568,8 @@ struct ChatContentView: View {
             sessionId: viewModel.currentSessionId,
             onSendPrompt: { prompt in
                 viewModel.sendMessage(prompt, runtimeModelId: modelStore.selectedModelId, effort: modelStore.effortForSend)
-            }
+            },
+            hostedRun: hostedRun
         )
         .id(message.id)
     }

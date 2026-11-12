@@ -7,7 +7,8 @@ import UIKit
 /// - `POST /api/v1/phones/:serial/task` `{goal, background, thread_id?, session_id?, bot_id?, source}`
 ///   → 202 `{run_id}`, or 403 `{status:"refused", reason, message}`
 /// - `GET  /api/v1/phones/skills` and `POST /api/v1/phones/skills/:name/run` (saved phone routines)
-/// - `GET  /api/v1/phones/history` → `{runs:[…]}` newest first
+/// - `GET  /api/v1/phones/history` → `{runs:[…]}` newest first; a live row adds `status`,
+///   `step`, `step_label`, `trail` and, while a hold waits, `approvalId`
 /// - `GET  /api/v1/phones/runs/:runId/thumb` → JPEG (404/401 = no thumbnail, never an error)
 /// - `GET  /api/v1/phones/holds/:id` and `/crop` → the hold and its review image
 ///
@@ -48,7 +49,17 @@ final class PhoneTaskClient: @unchecked Sendable {
         let runId: String
         let serial: String
         let goal: String
+        /// `running` | `waiting_approval` while live; empty once the run ended.
         let status: String
+        /// Live only: the current step, its label and the finished steps so far.
+        var step: Int = 0
+        var stepLabel: String? = nil
+        var trail: [RunStep] = []
+        /// Live only, while a hold waits: the inbox item is `approval:<approvalId>`.
+        var approvalId: String? = nil
+        /// Recorded steps, and how many failed.
+        var stepCount: Int = 0
+        var failed: Int = 0
     }
 
     private let api: APIClient
@@ -180,7 +191,14 @@ final class PhoneTaskClient: @unchecked Sendable {
             for k in keys { if let v = row[k] as? String, !v.isEmpty { return v } }
             return ""
         }
-        return RunSummary(runId: s("run_id", "runId"), serial: s("serial"), goal: s("goal", "skill"), status: s("status"))
+        var run = RunSummary(runId: s("run_id", "runId"), serial: s("serial"), goal: s("goal", "skill"), status: s("status"))
+        run.step = (row["step"] as? NSNumber)?.intValue ?? 0
+        run.stepLabel = (row["step_label"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+        run.trail = RunStep.list(any: row["trail"])
+        run.approvalId = (row["approvalId"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+        run.stepCount = (row["steps"] as? NSNumber)?.intValue ?? 0
+        run.failed = (row["failed"] as? NSNumber)?.intValue ?? 0
+        return run
     }
 
     private static func object(_ data: Data) -> [String: Any]? {
