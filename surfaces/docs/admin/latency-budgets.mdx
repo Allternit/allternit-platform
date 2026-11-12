@@ -12,7 +12,7 @@ All latency budget endpoints require the caller to be an organization owner or a
 ## Base URL
 
 ```text
-https://api.allternit.com/api/v1/admin/latency-budgets
+http://127.0.0.1:8013/api/v1/admin/latency-budgets
 ```
 
 For local development:
@@ -47,7 +47,7 @@ Use `*` as the `model_id` to define a global default budget.
 ## List budgets
 
 ```bash
-curl https://api.allternit.com/api/v1/admin/latency-budgets \
+curl http://127.0.0.1:8013/api/v1/admin/latency-budgets \
   -H "Authorization: Bearer $ADMIN_TOKEN"
 ```
 
@@ -81,7 +81,7 @@ curl https://api.allternit.com/api/v1/admin/latency-budgets \
 ## Set a budget
 
 ```bash
-curl -X PUT https://api.allternit.com/api/v1/admin/latency-budgets/allternit-balanced \
+curl -X PUT http://127.0.0.1:8013/api/v1/admin/latency-budgets/allternit-balanced \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -104,7 +104,7 @@ curl -X PUT https://api.allternit.com/api/v1/admin/latency-budgets/allternit-bal
 ## Delete a budget
 
 ```bash
-curl -X DELETE https://api.allternit.com/api/v1/admin/latency-budgets/allternit-balanced \
+curl -X DELETE http://127.0.0.1:8013/api/v1/admin/latency-budgets/allternit-balanced \
   -H "Authorization: Bearer $ADMIN_TOKEN"
 ```
 
@@ -113,7 +113,7 @@ Returns `204 No Content` on success.
 ## Latency report
 
 ```bash
-curl -G https://api.allternit.com/api/v1/admin/latency-budgets/report \
+curl -G http://127.0.0.1:8013/api/v1/admin/latency-budgets/report \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -d "window_hours=24"
 ```

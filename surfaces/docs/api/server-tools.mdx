@@ -12,7 +12,7 @@ Management routes are gated to organization owners and admins.
 ## Base URL
 
 ```
-https://api.allternit.com/api/v1/admin/server-tools
+http://127.0.0.1:8013/api/v1/admin/server-tools
 ```
 
 For local development:
@@ -74,7 +74,7 @@ POST /api/v1/admin/server-tools
 ### Example request
 
 ```bash
-curl -X POST https://api.allternit.com/api/v1/admin/server-tools \
+curl -X POST http://127.0.0.1:8013/api/v1/admin/server-tools \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{

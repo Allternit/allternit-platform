@@ -28,7 +28,7 @@ MCP tunnels connect Allternit to externally hosted MCP servers over HTTPS. Each 
 ## Create a tunnel
 
 ```bash
-curl -X POST https://api.allternit.com/api/v1/admin/mcp-tunnels \
+curl -X POST http://127.0.0.1:8013/api/v1/admin/mcp-tunnels \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -78,7 +78,7 @@ curl -X POST https://api.allternit.com/api/v1/admin/mcp-tunnels \
 ## List tunnels
 
 ```bash
-curl -X GET https://api.allternit.com/api/v1/admin/mcp-tunnels \
+curl -X GET http://127.0.0.1:8013/api/v1/admin/mcp-tunnels \
   -H "Authorization: Bearer $ADMIN_TOKEN"
 ```
 
@@ -107,7 +107,7 @@ curl -X GET https://api.allternit.com/api/v1/admin/mcp-tunnels \
 ## Update a tunnel
 
 ```bash
-curl -X PUT https://api.allternit.com/api/v1/admin/mcp-tunnels/amt_01hqx8x7x7x7x7x7x7x7x7x \
+curl -X PUT http://127.0.0.1:8013/api/v1/admin/mcp-tunnels/amt_01hqx8x7x7x7x7x7x7x7x7x \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -137,7 +137,7 @@ curl -X PUT https://api.allternit.com/api/v1/admin/mcp-tunnels/amt_01hqx8x7x7x7x
 ## Rotate the tunnel token
 
 ```bash
-curl -X POST https://api.allternit.com/api/v1/admin/mcp-tunnels/amt_01hqx8x7x7x7x7x7x7x7x7x/rotate \
+curl -X POST http://127.0.0.1:8013/api/v1/admin/mcp-tunnels/amt_01hqx8x7x7x7x7x7x7x7x7x/rotate \
   -H "Authorization: Bearer $ADMIN_TOKEN"
 ```
 
@@ -154,7 +154,7 @@ curl -X POST https://api.allternit.com/api/v1/admin/mcp-tunnels/amt_01hqx8x7x7x7
 ## Reveal the tunnel token
 
 ```bash
-curl -X POST https://api.allternit.com/api/v1/admin/mcp-tunnels/amt_01hqx8x7x7x7x7x7x7x7x7x/reveal \
+curl -X POST http://127.0.0.1:8013/api/v1/admin/mcp-tunnels/amt_01hqx8x7x7x7x7x7x7x7x7x/reveal \
   -H "Authorization: Bearer $ADMIN_TOKEN"
 ```
 
@@ -170,7 +170,7 @@ curl -X POST https://api.allternit.com/api/v1/admin/mcp-tunnels/amt_01hqx8x7x7x7
 ## Delete a tunnel
 
 ```bash
-curl -X DELETE https://api.allternit.com/api/v1/admin/mcp-tunnels/amt_01hqx8x7x7x7x7x7x7x7x7x \
+curl -X DELETE http://127.0.0.1:8013/api/v1/admin/mcp-tunnels/amt_01hqx8x7x7x7x7x7x7x7x7x \
   -H "Authorization: Bearer $ADMIN_TOKEN"
 ```
 

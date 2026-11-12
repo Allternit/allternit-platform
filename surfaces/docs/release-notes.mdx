@@ -5,6 +5,14 @@ description: 'Changelog for the Allternit platform, SDKs, and Gizzi Code CLI'
 
 # Release Notes
 
+## 2026-11-12 — Console fixes and project rate limits
+
+- **Clear states instead of errors:** pages that have no backend on Allternit Cloud now say so, or are hidden from the menu. They no longer show failed requests.
+- **Models:** the Models page shows only live catalog data, with a retry when the catalog can't load. Tools, vision and retirement badges appear only when the catalog reports them.
+- **Fabric:** no longer calls `localhost`. It shows when `VITE_ALLTERNITOS_URL` is set.
+- **Renamed menu items:** Hosted computers and Agent computers, Project webhooks and Organization webhooks, Project usage, and Project billing.
+- **Rate limits:** a new per-project view shows the limit, current use and concurrent call cap. See [Idempotency and limits](/api/platform/idempotency-and-limits#project-limits-in-the-console).
+
 ## 2026-11-11 — Pet offers: your bot notices errors and offers a fix
 
 - **Desktop:** with **Read other apps' windows** turned on (off until you choose), the pet reads the window it walks over through the Allternit Driver, shows an eye while it reads, walks to a window with an error and offers **Fix it**. Fix it opens quick work with the error text attached and a draft; nothing is sent until you send. Password managers, banking apps and sites, Messages and private browser windows are never read. Mute an app from the bubble or by pressing and holding the pet. See [Pet offers](/guides/bot-avatars#pet-offers).

@@ -40,7 +40,7 @@ Requires a service-account or admin API key in the `Authorization: Bearer <token
 ## Get quickstart progress
 
 ```bash
-curl -X GET https://api.allternit.com/api/v1/admin/quickstart \
+curl -X GET http://127.0.0.1:8013/api/v1/admin/quickstart \
   -H "Authorization: Bearer $ADMIN_TOKEN"
 ```
 
@@ -89,7 +89,7 @@ curl -X GET https://api.allternit.com/api/v1/admin/quickstart \
 ## Mark a step complete
 
 ```bash
-curl -X PUT https://api.allternit.com/api/v1/admin/quickstart/create_agent \
+curl -X PUT http://127.0.0.1:8013/api/v1/admin/quickstart/create_agent \
   -H "Authorization: Bearer $ADMIN_TOKEN"
 ```
 
@@ -108,7 +108,7 @@ curl -X PUT https://api.allternit.com/api/v1/admin/quickstart/create_agent \
 ## Unmark a step
 
 ```bash
-curl -X DELETE https://api.allternit.com/api/v1/admin/quickstart/create_agent \
+curl -X DELETE http://127.0.0.1:8013/api/v1/admin/quickstart/create_agent \
   -H "Authorization: Bearer $ADMIN_TOKEN"
 ```
 
@@ -127,7 +127,7 @@ curl -X DELETE https://api.allternit.com/api/v1/admin/quickstart/create_agent \
 ## Reset progress
 
 ```bash
-curl -X POST https://api.allternit.com/api/v1/admin/quickstart/reset \
+curl -X POST http://127.0.0.1:8013/api/v1/admin/quickstart/reset \
   -H "Authorization: Bearer $ADMIN_TOKEN"
 ```
 

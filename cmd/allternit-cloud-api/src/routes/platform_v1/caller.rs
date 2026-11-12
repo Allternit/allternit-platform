@@ -175,10 +175,26 @@ impl PlatformCaller {
     }
 
     pub fn rpm_limit(&self) -> u32 {
-        match self.rpm_override {
-            Some(n) if n > 0 => n as u32,
-            _ => self.plan.rpm(),
-        }
+        effective_rpm(self.plan, self.rpm_override).0
+    }
+}
+
+/// Requests per minute a project gets: its override when set (> 0), else the
+/// plan's. The bool is true when the override applies. One rule for the `/v1`
+/// limiter and the console limits view.
+pub(crate) fn effective_rpm(plan: Plan, rpm_override: Option<i32>) -> (u32, bool) {
+    match rpm_override {
+        Some(n) if n > 0 => (n as u32, true),
+        _ => (plan.rpm(), false),
+    }
+}
+
+/// Concurrent calls a project gets: its override when set (> 0), else the
+/// plan's. The bool is true when the override applies.
+pub(crate) fn effective_call_cap(plan: Plan, call_cap_override: Option<i32>) -> (u32, bool) {
+    match call_cap_override {
+        Some(n) if n > 0 => (n as u32, true),
+        _ => (plan.call_cap(), false),
     }
 }
 
