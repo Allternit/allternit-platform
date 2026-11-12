@@ -7,7 +7,7 @@
 
 use axum::{
     extract::{Extension, State},
-    http::StatusCode,
+    http::{HeaderMap, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
     Json,
 };
@@ -65,6 +65,83 @@ pub async fn list_models(State(state): State<Arc<ApiState>>) -> Result<Json<Mode
     }))
 }
 
+/// Response header naming the request; the same id is on its `inference_usage` row.
+pub const REQUEST_ID_HEADER: &str = "x-request-id";
+
+/// The `api_keys` row behind a request (its Platform project and kind), when
+/// the token is one. `allternit_*` tokens, device tokens and a failed lookup
+/// mean none.
+async fn api_key_of(db: &sqlx::PgPool, key_id: &str) -> Option<(Option<String>, String)> {
+    match sqlx::query_as::<_, (Option<String>, String)>("SELECT project_id, kind FROM api_keys WHERE id = $1")
+        .bind(key_id)
+        .fetch_optional(db)
+        .await
+    {
+        Ok(row) => row,
+        Err(error) => {
+            tracing::debug!(%error, "api key attribution lookup skipped");
+            None
+        }
+    }
+}
+
+/// Who is making this completion, for its usage row: the key's project and
+/// id when the token is an `api_keys` row, and the client (Decision D3,
+/// [`inference_settlement::derive_client`]).
+pub(crate) async fn inference_attribution(
+    db: &sqlx::PgPool,
+    user: &crate::auth::AuthenticatedUser,
+    headers: &HeaderMap,
+    request_id: String,
+) -> inference_settlement::InferenceAttribution {
+    let device = crate::routes::runtime_pairing::device_token_from_headers(headers).is_some();
+    let key = if device { None } else { api_key_of(db, &user.token_id).await };
+    let client_header = headers
+        .get(inference_settlement::CLIENT_HEADER)
+        .and_then(|value| value.to_str().ok());
+    let client = inference_settlement::derive_client(
+        device,
+        key.as_ref().map(|(_, kind)| kind.as_str()),
+        client_header,
+    );
+    inference_settlement::InferenceAttribution {
+        project_id: key.as_ref().and_then(|(project_id, _)| project_id.clone()),
+        key_id: key.map(|_| user.token_id.clone()),
+        client: Some(client.to_string()),
+        request_id: Some(request_id),
+        started_at: Some(std::time::Instant::now()),
+        capture_request: None,
+    }
+}
+
+/// The request body to keep for the console Logs page (Decision D6): only
+/// with `PLATFORM_LOG_BODIES=1`, a key whose project has `log_bodies` on, and
+/// a body under the capture cap. `None` otherwise.
+async fn captured_request_body(
+    db: &sqlx::PgPool,
+    project_id: Option<&str>,
+    request: &ChatCompletionRequest,
+) -> Option<Arc<serde_json::Value>> {
+    let project_id = project_id?;
+    if !inference_settlement::log_bodies_enabled() {
+        return None;
+    }
+    let opted_in: Option<bool> = sqlx::query_scalar("SELECT log_bodies FROM platform_projects WHERE id = $1")
+        .bind(project_id)
+        .fetch_optional(db)
+        .await
+        .unwrap_or_else(|error| {
+            tracing::warn!(%error, project_id, "log_bodies lookup failed; bodies not kept");
+            None
+        });
+    if opted_in != Some(true) {
+        return None;
+    }
+    let body = serde_json::to_value(request).ok()?;
+    let size = serde_json::to_vec(&body).map(|bytes| bytes.len()).unwrap_or(usize::MAX);
+    (size <= inference_settlement::MAX_CAPTURED_BODY_BYTES).then(|| Arc::new(body))
+}
+
 /// `POST /v1/chat/completions`
 ///
 /// Auth-protected OpenAI-compatible chat completions. Supports streaming via
@@ -73,26 +150,33 @@ pub async fn list_models(State(state): State<Arc<ApiState>>) -> Result<Json<Mode
 /// completion is metered and settled against the user's prepaid credits
 /// (Phase B): blocked up front when the balance is exhausted, deducted after
 /// the response from the upstream usage report (or a marked estimate).
-/// The Platform API project an `api_keys` key belongs to, if it is a project key.
-/// A schema without project keys (or a failed lookup) means none.
-async fn platform_project_of_key(db: &sqlx::PgPool, key_id: &str) -> Option<String> {
-    match sqlx::query_scalar::<_, Option<String>>("SELECT project_id FROM api_keys WHERE id = $1")
-        .bind(key_id)
-        .fetch_optional(db)
-        .await
-    {
-        Ok(row) => row.flatten(),
-        Err(error) => {
-            tracing::debug!(%error, "project key lookup skipped");
-            None
-        }
-    }
-}
-
+/// Every response, errors and streams included, carries `x-request-id`; the
+/// usage row records it with the key's project, the key and the client.
 pub async fn chat_completions(
     State(state): State<Arc<ApiState>>,
     Extension(auth): Extension<AuthContext>,
-    Json(mut request): Json<ChatCompletionRequest>,
+    headers: HeaderMap,
+    Json(request): Json<ChatCompletionRequest>,
+) -> Result<Response, ApiError> {
+    let request_id = format!("req_{}", uuid::Uuid::new_v4().simple());
+    let mut attribution = inference_attribution(&state.db, &auth.user, &headers, request_id.clone()).await;
+    attribution.capture_request =
+        captured_request_body(&state.db, attribution.project_id.as_deref(), &request).await;
+    let mut response = match chat_completions_attributed(&state, auth, request, attribution).await {
+        Ok(response) => response,
+        Err(error) => error.into_response(),
+    };
+    if let Ok(value) = HeaderValue::from_str(&request_id) {
+        response.headers_mut().insert(REQUEST_ID_HEADER, value);
+    }
+    Ok(response)
+}
+
+async fn chat_completions_attributed(
+    state: &Arc<ApiState>,
+    auth: AuthContext,
+    mut request: ChatCompletionRequest,
+    attribution: inference_settlement::InferenceAttribution,
 ) -> Result<Response, ApiError> {
     // `allternit.*` request options (handoff model) never reach an upstream.
     let open_lane_options = crate::services::open_lane::take_request_options(&mut request);
@@ -113,10 +197,15 @@ pub async fn chat_completions(
         ));
     }
 
-    // A Platform API project key (`alt_live_…` / `alt_test_…`) bills to its
-    // project: no card on file, no inference (Eoj 2026-10-08, no free usage).
-    if let Some(project_id) = platform_project_of_key(&state.db, &auth.user.token_id).await {
-        if let Err(e) = crate::routes::platform_v1::billing::spend_allowed(&state.db, &project_id).await {
+    // A key that belongs to a Platform API project bills to its project: no
+    // card on file, no inference (Eoj 2026-10-08, no free usage).
+    // The console playground's key is the signed-in user's own key with the
+    // project attached only for attribution: it bills to the user's credits
+    // (check_inference_allowed below), so the project's card is not required.
+    // `client` is `playground` only for an `api_keys` row of that kind.
+    let playground = attribution.client.as_deref() == Some(crate::services::api_keys::KEY_KIND_PLAYGROUND);
+    if let Some(project_id) = attribution.project_id.as_deref().filter(|_| !playground) {
+        if let Err(e) = crate::routes::platform_v1::billing::spend_allowed(&state.db, project_id).await {
             return Ok(e.into_response());
         }
     }
@@ -144,7 +233,7 @@ pub async fn chat_completions(
                 None => false,
             },
         ) {
-            return byok_chat_completions(&state, &user_id, provider_id, request).await;
+            return byok_chat_completions(state, &user_id, provider_id, request, attribution).await;
         }
     }
 
@@ -224,7 +313,7 @@ pub async fn chat_completions(
     let pool_id = pool.map(|pool| pool.id);
 
     if let Some(plan) = handoff {
-        return crate::routes::open_lane::chat_with_handoff(&state, user_id, plan, request, pool_id, prices).await;
+        return crate::routes::open_lane::chat_with_handoff(state, user_id, plan, request, pool_id, prices, attribution).await;
     }
 
     let response = state.model_router.chat_completions(request).await?;
@@ -232,6 +321,7 @@ pub async fn chat_completions(
     tracing::info!(
         user_id = %user_id,
         token_id = %auth.user.token_id,
+        request_id = attribution.request_id.as_deref().unwrap_or(""),
         status = %response.status(),
         streaming = streaming,
         "model router chat completion dispatched"
@@ -250,6 +340,7 @@ pub async fn chat_completions(
                 charge_user: true,
                 prices,
                 prompt_token_estimate: (prompt_chars / 4) as u64,
+                attribution,
             },
         )
     } else {
@@ -262,6 +353,7 @@ pub async fn chat_completions(
             &prices,
             prompt_chars,
             response,
+            &attribution,
         )
         .await?
     };
@@ -279,6 +371,7 @@ async fn byok_chat_completions(
     user_id: &str,
     provider_id: &str,
     mut request: ChatCompletionRequest,
+    attribution: inference_settlement::InferenceAttribution,
 ) -> Result<Response, ApiError> {
     let key_service = state
         .inference_key_service
@@ -342,6 +435,7 @@ async fn byok_chat_completions(
                 charge_user: false,
                 prices: zero_prices,
                 prompt_token_estimate: (prompt_chars / 4) as u64,
+                attribution,
             },
         )
     } else {
@@ -354,6 +448,7 @@ async fn byok_chat_completions(
             &zero_prices,
             prompt_chars,
             response,
+            &attribution,
         )
         .await?
     };

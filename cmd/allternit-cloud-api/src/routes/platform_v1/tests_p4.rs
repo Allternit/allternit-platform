@@ -88,6 +88,7 @@ async fn ctx(apps: ChannelApps) -> Ctx {
         include_str!("../../../migrations_pg/076_platform_twin.sql"),
         include_str!("../../../migrations_pg/080_platform_billing.sql"),
         include_str!("../../../migrations_pg/084_platform_payment_methods.sql"),
+        include_str!("../../../migrations_pg/122_key_governance.sql"),
     ] {
         sqlx::raw_sql(&sql.replace("public.", "")).execute(&state.db).await.expect("migration applies");
     }

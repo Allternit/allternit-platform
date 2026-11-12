@@ -44,6 +44,7 @@ pub const RETAIN: &[(&str, &str)] = &[
     ("billing_auto_topup_attempts", "finance: charge attempts"),
     ("voice_billing_periods", "finance: voice invoices, unbilled ones closed"),
     ("inference_usage", "finance: token counts and cost, no content"),
+    ("platform_org_policies", "organization settings, keyed by org; the spend alert address belongs to the org"),
     ("artifact_versions", "versions of other people's artifacts, author cleared"),
 ];
 
@@ -73,6 +74,8 @@ pub const ERASE: &[(&str, &str)] = &[
     ("platform_spend_alerts", PROJECT),
     ("platform_credit_grants", PROJECT),
     ("platform_usage_events", PROJECT),
+    ("platform_saved_prompts", "owner_user_id = $1 OR project_id IN (SELECT id FROM platform_projects WHERE owner_user_id = $1)"),
+    ("inference_request_bodies", PROJECT),
     ("platform_phone_fleet_runs", PROJECT),
     ("platform_phone_runs", OWNER_USER),
     ("platform_idempotency", "key_id IN (SELECT id FROM api_keys WHERE user_id = $1 OR project_id IN (SELECT id FROM platform_projects WHERE owner_user_id = $1))"),

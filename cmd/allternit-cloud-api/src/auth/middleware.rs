@@ -276,9 +276,12 @@ pub async fn auth_middleware(
 
     match token {
         Some(token) => {
-            // Validate against database
-            match validate_token_against_db(&state.db, &token).await {
-                Ok(Some(user)) => {
+            // Validate against database. An `alt_…` key past its expiry is a
+            // 401 and one used from outside its IP allowlist a 403, each with
+            // a message saying so (services::api_keys::check_key_policy).
+            let client_ip = crate::services::api_keys::client_ip_from_request(&request);
+            match validate_token_from_ip(&state.db, &token, client_ip).await {
+                Ok(Ok(Some(user))) => {
                     let mut request = request;
                     request.extensions_mut().insert(AuthContext {
                         user,
@@ -286,7 +289,8 @@ pub async fn auth_middleware(
                     });
                     next.run(request).await
                 }
-                Ok(None) => unauthorized_response("Invalid or expired token"),
+                Ok(Ok(None)) => unauthorized_response("Invalid or expired token"),
+                Ok(Err(rejection)) => key_rejection_response(&rejection),
                 Err(e) => {
                     tracing::error!("Token validation error: {}", e);
                     unauthorized_response("Token validation failed")
@@ -314,10 +318,24 @@ pub(crate) async fn validate_token_against_db(
     db: &sqlx::PgPool,
     token: &str,
 ) -> Result<Option<AuthenticatedUser>, sqlx::Error> {
+    // No client IP here: an `alt_…` key with an IP allowlist is refused.
+    Ok(validate_token_from_ip(db, token, None).await?.unwrap_or(None))
+}
+
+/// [`validate_token_against_db`] with the caller's IP (from the trusted proxy
+/// header). `Ok(Err(_))` is an `alt_…` key that exists but is expired or used
+/// from outside its allowlist; the request middleware answers it with the
+/// rejection's own status and message.
+pub(crate) async fn validate_token_from_ip(
+    db: &sqlx::PgPool,
+    token: &str,
+    client_ip: Option<std::net::IpAddr>,
+) -> Result<Result<Option<AuthenticatedUser>, crate::services::api_keys::KeyRejection>, sqlx::Error> {
+    use crate::services::api_keys::KeyRejection;
     if let Some(token_record) = lookup_api_token(db, token).await? {
         // Check expiration
         if token_record.is_expired() {
-            return Ok(None);
+            return Ok(Ok(None));
         }
 
         // Update last_used_at
@@ -327,22 +345,27 @@ pub(crate) async fn validate_token_against_db(
             .await;
 
         let permissions = token_record.permissions();
-        return Ok(Some(AuthenticatedUser {
+        return Ok(Ok(Some(AuthenticatedUser {
             user_id: token_record.user_id,
             token_id: token_record.id,
             permissions,
-        }));
+        })));
     }
 
     // Modern scoped keys (`alt_…`, sha256-hashed in `api_keys` with a real
     // scopes list). This is the only production validation path for them —
     // without it, keys minted on the platform simply do not work here.
-    if let Ok(Some(key)) = crate::services::api_keys::authenticate_api_key(db, token).await {
-        return Ok(Some(AuthenticatedUser {
-            user_id: key.user_id,
-            token_id: key.id,
-            permissions: key.scopes,
-        }));
+    // Lookup errors fall through as before (no `api_keys` table = no key).
+    match crate::services::api_keys::authenticate_api_key_at(db, token, client_ip).await {
+        Ok(Ok(key)) => {
+            return Ok(Ok(Some(AuthenticatedUser {
+                user_id: key.user_id,
+                token_id: key.id,
+                permissions: key.scopes,
+            })));
+        }
+        Ok(Err(rejection)) if rejection != KeyRejection::Unknown => return Ok(Err(rejection)),
+        _ => {}
     }
 
     // Development overrides — all opt-in and default-OFF. The hardcoded
@@ -355,10 +378,10 @@ pub(crate) async fn validate_token_against_db(
     ) || is_dev_api_token(token)
         || is_legacy_dev_api_token(token)
     {
-        return Ok(Some(AuthenticatedUser::development_user()));
+        return Ok(Ok(Some(AuthenticatedUser::development_user())));
     }
 
-    Ok(None)
+    Ok(Ok(None))
 }
 
 
@@ -524,6 +547,20 @@ pub(crate) fn legacy_dev_api_token_allowed() -> bool {
     env::var("ALLTERNIT_ALLOW_DEV_API_TOKEN")
         .map(|v| v == "true" || v == "1")
         .unwrap_or(false)
+}
+
+/// 401 (expired) or 403 (address not allowed) for an `alt_…` key, in the
+/// same `{error, message}` shape as the other auth failures here.
+fn key_rejection_response(rejection: &crate::services::api_keys::KeyRejection) -> Response {
+    let body = serde_json::json!({
+        "error": rejection.code().to_ascii_uppercase(),
+        "message": rejection.message(),
+    });
+    Response::builder()
+        .status(rejection.status())
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(body.to_string()))
+        .unwrap()
 }
 
 fn unauthorized_response(message: &str) -> Response {
