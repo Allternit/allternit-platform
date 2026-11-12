@@ -312,6 +312,29 @@ curl -X POST https://api.allternit.com/api/v1/agent-sessions/sess_9c1d.../messag
 
 Same shape as a message from `list messages`.
 
+### List earlier versions
+
+```http
+GET /api/v1/agent-sessions/:id/branches
+```
+
+When you edit a message or retry, the replaced turns are kept as branches. This returns them newest first, at most 20. The gizzi runtime serves the same list at `GET /v1/session/:sessionID/branches`.
+
+#### Example response
+
+```json
+[
+  {
+    "id": "br_3f2a...",
+    "anchorMessageId": "msg_1a2b...",
+    "createdAt": "2026-11-12T14:05:00Z",
+    "messages": []
+  }
+]
+```
+
+`anchorMessageId` is the message the edit or retry started from. `messages` has the same shape as [List messages](#list-messages). Large inline attachments are stored without their data.
+
 ### Abort a session
 
 ```http
