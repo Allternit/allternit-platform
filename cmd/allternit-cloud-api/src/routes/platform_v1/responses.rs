@@ -5,7 +5,9 @@
 //! A request names exactly one of:
 //!
 //! * `model` (scope `inference`): runs on the in-process model router through
-//!   [`bridge::run_items`] (spend check, hard lines and settlement live there).
+//!   [`bridge::run_items`] (spend check, hard lines and metering live there).
+//!   The project pays: `tokens_in` / `tokens_out` usage rows at list price + 15%,
+//!   idempotent per response (`resp:{id}:{meter}`), toward the spend cap.
 //!   Client `tools` come back as `function_call` items (status `completed`, as at
 //!   OpenAI); the client runs them and continues with `previous_response_id` and
 //!   `function_call_output` items. `instructions` apply to this turn only.
@@ -55,7 +57,7 @@ use super::{
     items::{self, Item, NewItem},
     new_id, ApiJson, ApiQuery, PageParams, PlatformCaller, PlatformError, RouteTable,
 };
-use crate::model_router::items_bridge::{self as bridge, Completion, Delta, RunItems, RunOutput};
+use crate::model_router::items_bridge::{self as bridge, Completion, Delta, RunItems, RunOutput, UsageRef};
 use crate::ApiState;
 
 /// Same cap as a conversation message.
@@ -915,6 +917,12 @@ async fn model_turn(state: &Arc<ApiState>, caller: &PlatformCaller, model: &str,
         Some(c) => items::history(db, &c.id, None).await?,
         None => Vec::new(),
     };
+    // The id is minted first so the usage rows can point at it.
+    let resp_id = new_id("resp_");
+    let account_id = match (&chain, store) {
+        (Some(c), true) => c.account_id.clone(),
+        _ => caller.account_id.clone(),
+    };
     let run = bridge::run_items(
         state,
         caller,
@@ -928,23 +936,23 @@ async fn model_turn(state: &Arc<ApiState>, caller: &PlatformCaller, model: &str,
             max_tokens: body.max_output_tokens,
             temperature: body.temperature,
             stream: body.stream,
+            usage: UsageRef { id: resp_id.clone(), prefix: "resp", account_id: account_id.clone() },
         },
     )
     .await?;
 
     // The model took the turn: now store it.
-    let resp_id = new_id("resp_");
     let (sink, row): (Box<dyn ItemSink>, RespRow) = if store {
-        let (conv_id, account_id) = match &chain {
-            Some(c) => (c.id.clone(), c.account_id.clone()),
-            None => (open_model_conversation(db, caller).await?, caller.account_id.clone()),
+        let conv_id = match &chain {
+            Some(c) => c.id.clone(),
+            None => open_model_conversation(db, caller).await?,
         };
         let row = RespRow::new(resp_id, account_id, None, Some(model.to_string()), Some(conv_id.clone()), body.previous_response_id.clone(), metadata);
         let row = insert_row(db, &caller.project_id, &row).await?;
         items::append(db, &caller.project_id, Some(&conv_id), Some(&row.id), input).await?;
         (Box::new(DbSink { db: db.clone(), project_id: caller.project_id.clone(), conversation_id: Some(conv_id), response_id: row.id.clone() }) as Box<dyn ItemSink>, row)
     } else {
-        let row = RespRow::new(resp_id.clone(), caller.account_id.clone(), None, Some(model.to_string()), None, body.previous_response_id.clone(), metadata);
+        let row = RespRow::new(resp_id.clone(), account_id, None, Some(model.to_string()), None, body.previous_response_id.clone(), metadata);
         (Box::new(MemSink { project_id: caller.project_id.clone(), response_id: resp_id, seq: 0 }) as Box<dyn ItemSink>, row)
     };
     let fin = Finish { db: db.clone(), store, row };
@@ -1148,5 +1156,173 @@ mod tests {
         assert_eq!((v["status"].as_str(), v["required_actions"].as_array().map(Vec::len)), (Some("completed"), Some(0)));
         row.status = "failed".into();
         assert_eq!(response_json(&row)["status"], "failed");
+    }
+}
+
+/// Model-mode billing end to end: the project pays (usage rows at list + 15%),
+/// no member's credits are touched, and a call that fails upstream bills nothing.
+/// Real Postgres, real routes, a fake upstream model.
+#[cfg(test)]
+mod billing_tests {
+    use std::sync::Mutex;
+
+    use axum::{body::Body, http::Request, Router};
+    use tower::ServiceExt;
+
+    use super::super::{projects, router_gated, Gate, ProjectEnv};
+    use super::*;
+    use crate::model_router::{catalog::starter_catalog, ChatCompletionRequest, ModelInfo, ModelRouter, ModelRouterError, UpstreamProvider};
+    use crate::routes::test_support::{platform_schema, test_state, MockGateway};
+    use crate::services::api_keys::{self, CreateProjectKeyInput};
+
+    /// `gpt-4o` (upstream `openai/gpt-4o`) at a list price of $2 / $8 per 1M tokens.
+    /// Every call reports 1,000 input and 500 output tokens.
+    struct FakeUpstream {
+        /// What the next stream sends: an `error` chunk after the usage.
+        fail_stream: Mutex<bool>,
+    }
+
+    #[async_trait]
+    impl UpstreamProvider for FakeUpstream {
+        fn provider_id(&self) -> &str {
+            "openrouter"
+        }
+        async fn list_models(&self) -> Result<Vec<ModelInfo>, ModelRouterError> {
+            let mut extra = serde_json::Map::new();
+            extra.insert("prompt_price".into(), json!(0.000002));
+            extra.insert("completion_price".into(), json!(0.000008));
+            Ok(vec![ModelInfo { id: "openai/gpt-4o".into(), object: "model".into(), created: 0, owned_by: "openai".into(), upstream_id: None, provider: Some("openrouter".into()), aliases: None, extra }])
+        }
+        async fn chat_completions(&self, request: ChatCompletionRequest) -> Result<axum::http::Response<Body>, ModelRouterError> {
+            let usage = json!({ "prompt_tokens": 1000, "completion_tokens": 500 });
+            let body = if request.stream == Some(true) {
+                let mut s = format!("data: {}\n\n", json!({ "choices": [{ "delta": { "content": "hello" } }] }));
+                if *self.fail_stream.lock().unwrap() {
+                    s.push_str(&format!("data: {}\n\n", json!({ "usage": usage, "error": { "message": "upstream fell over" } })));
+                } else {
+                    s.push_str(&format!("data: {}\n\ndata: [DONE]\n\n", json!({ "choices": [{ "delta": {}, "finish_reason": "stop" }], "usage": usage })));
+                }
+                s
+            } else {
+                json!({ "choices": [{ "message": { "role": "assistant", "content": "hello" }, "finish_reason": "stop" }], "usage": usage }).to_string()
+            };
+            axum::http::Response::builder().status(200).body(Body::from(body)).map_err(|e| ModelRouterError::Internal(e.to_string()))
+        }
+    }
+
+    struct Ctx {
+        db: PgPool,
+        app: Router,
+        upstream: Arc<FakeUpstream>,
+    }
+
+    async fn ctx() -> Ctx {
+        let state = test_state(Arc::new(MockGateway::new(None, vec![]))).await;
+        let mut state = Arc::try_unwrap(state).unwrap_or_else(|_| panic!("fresh test state is not shared"));
+        let upstream = Arc::new(FakeUpstream { fail_stream: Mutex::new(false) });
+        state.model_router = ModelRouter::new(vec![upstream.clone() as Arc<dyn UpstreamProvider>], starter_catalog());
+        let state = Arc::new(state);
+        platform_schema(&state.db).await;
+        // 007 references `users`; a bare one is enough for the personal-credit table to exist.
+        sqlx::query("CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY)").execute(&state.db).await.unwrap();
+        for sql in [include_str!("../../../migrations_pg/007_inference_usage.sql"), include_str!("../../../migrations_pg/009_inference_pools.sql")] {
+            sqlx::raw_sql(&sql.replace("public.", "")).execute(&state.db).await.expect("migration applies");
+        }
+        let app = router_gated(&state, Gate::Forced(true)).with_state(state.clone());
+        Ctx { db: state.db.clone(), app, upstream }
+    }
+
+    async fn key(c: &Ctx) -> (String, String) {
+        let owner = projects::Principal { user_id: "user_billing".into(), org_id: None, org_admin: false };
+        let p = projects::create_project(&c.db, &owner, "Billing test", ProjectEnv::Live).await.unwrap();
+        super::super::project_billing::put_test_card(&c.db, &p.id).await;
+        let token = api_keys::create_project_key(
+            &c.db,
+            CreateProjectKeyInput {
+                user_id: p.owner_user_id.clone(),
+                organization_id: None,
+                project_id: p.id.clone(),
+                account_id: None,
+                env: ProjectEnv::Live,
+                name: "k".into(),
+                scopes: vec!["inference".into()],
+            },
+        )
+        .await
+        .unwrap()
+        .token;
+        (p.id, token)
+    }
+
+    async fn post(c: &Ctx, token: &str, path: &str, body: Value) -> (u16, String) {
+        let req = Request::builder().method("POST").uri(path).header("authorization", format!("Bearer {token}")).header("content-type", "application/json").body(Body::from(body.to_string())).unwrap();
+        let resp = c.app.clone().oneshot(req).await.unwrap();
+        let status = resp.status().as_u16();
+        let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20).await.unwrap();
+        (status, String::from_utf8_lossy(&bytes).into_owned())
+    }
+
+    /// (meter, quantity, amount_microusd, idempotency, model) for one ref.
+    async fn rows(c: &Ctx, ref_id: &str) -> Vec<(String, f64, Option<i64>, Option<String>, Option<String>)> {
+        sqlx::query_as("SELECT meter, quantity::float8, amount_microusd, idempotency, model FROM platform_usage_events WHERE ref_id = $1 ORDER BY meter")
+            .bind(ref_id)
+            .fetch_all(&c.db)
+            .await
+            .unwrap()
+    }
+
+    fn expected(prefix: &str, id: &str) -> Vec<(String, f64, Option<i64>, Option<String>, Option<String>)> {
+        // 1,000 × $2/1M = 2,000 µ$ → +15% = 2,300; 500 × $8/1M = 4,000 µ$ → 4,600.
+        vec![
+            ("tokens_in".into(), 1000.0, Some(2300), Some(format!("{prefix}:{id}:tokens_in")), Some("gpt-4o".into())),
+            ("tokens_out".into(), 500.0, Some(4600), Some(format!("{prefix}:{id}:tokens_out")), Some("gpt-4o".into())),
+        ]
+    }
+
+    async fn total_rows(c: &Ctx) -> i64 {
+        sqlx::query_scalar("SELECT COUNT(*) FROM platform_usage_events").fetch_one(&c.db).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn the_project_pays_for_model_responses_and_messages() {
+        let c = ctx().await;
+        let (project_id, token) = key(&c).await;
+
+        // Responses, JSON.
+        let (s, b) = post(&c, &token, "/v1/responses", json!({ "model": "gpt-4o", "input": "hi" })).await;
+        assert_eq!(s, 200, "{b}");
+        let id = serde_json::from_str::<Value>(&b).unwrap()["id"].as_str().unwrap().to_string();
+        assert_eq!(rows(&c, &id).await, expected("resp", &id));
+        let billed: String = sqlx::query_scalar("SELECT DISTINCT project_id FROM platform_usage_events WHERE ref_id = $1").bind(&id).fetch_one(&c.db).await.unwrap();
+        assert_eq!(billed, project_id);
+
+        // Responses, streamed: billed once, at the end.
+        let (s, b) = post(&c, &token, "/v1/responses", json!({ "model": "gpt-4o", "input": "hi", "stream": true })).await;
+        assert_eq!(s, 200, "{b}");
+        let id = b.split("\"id\":\"").nth(1).unwrap().split('"').next().unwrap().to_string();
+        assert!(id.starts_with("resp_"), "{b}");
+        assert_eq!(rows(&c, &id).await, expected("resp", &id));
+
+        // Messages, JSON.
+        let (s, b) = post(&c, &token, "/v1/messages", json!({ "model": "gpt-4o", "max_tokens": 50, "messages": [{ "role": "user", "content": "hi" }] })).await;
+        assert_eq!(s, 200, "{b}");
+        let id = serde_json::from_str::<Value>(&b).unwrap()["id"].as_str().unwrap().to_string();
+        assert!(id.starts_with("mdl_"));
+        assert_eq!(rows(&c, &id).await, expected("mdl", &id));
+        assert_eq!(total_rows(&c).await, 6);
+
+        // A stream that fails upstream bills nothing.
+        *c.upstream.fail_stream.lock().unwrap() = true;
+        let (s, b) = post(&c, &token, "/v1/messages", json!({ "model": "gpt-4o", "max_tokens": 50, "stream": true, "messages": [{ "role": "user", "content": "hi" }] })).await;
+        assert_eq!(s, 200, "{b}");
+        assert!(b.contains("upstream fell over"), "{b}");
+        let (s, b) = post(&c, &token, "/v1/responses", json!({ "model": "gpt-4o", "input": "hi", "stream": true })).await;
+        assert_eq!(s, 200, "{b}");
+        assert!(b.contains("response.failed"), "{b}");
+        assert_eq!(total_rows(&c).await, 6, "a failed call records no usage");
+
+        // No double billing: nothing settled against the key creator's credits.
+        let personal: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM inference_usage").fetch_one(&c.db).await.unwrap();
+        assert_eq!(personal, 0);
     }
 }

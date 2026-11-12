@@ -24,3 +24,7 @@ description: 'An Anthropic-shaped model call at POST /v1/messages.'
 Streaming events: `message_start`, `content_block_start`, `content_block_delta` (`text_delta`, `input_json_delta`), `content_block_stop`, `message_delta`, `message_stop`.
 
 Not supported: thinking blocks, server tools and files.
+
+## Billing
+
+The project pays. Model tokens are recorded as `tokens_in` and `tokens_out` usage rows and billed to the project at the model's list price plus 15%, as in [Pricing](/api/platform/pricing). They count toward the project's monthly spend cap: at the cap a new message answers `402 spend_cap_reached`. No member's personal credits are used, whichever key or console session made the call. A streamed message is billed once, when it ends. A message that fails at the model is not billed.

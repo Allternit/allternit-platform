@@ -2,6 +2,10 @@
 //! `inference`, ids `mdl_`). Owned by **lane 2 (Responses + Messages)** of the
 //! Platform API parity program. SMS moved to `/v1/texts` ([`super::texts`]).
 //!
+//! Billing: the project pays, as for `model` responses ([`bridge::run_items`]):
+//! `tokens_in` / `tokens_out` usage rows at list price + 15%, idempotent per
+//! message (`mdl:{id}:{meter}`), toward the spend cap.
+//!
 //! Runs on the same [`bridge::run_items`] as `model` responses: the Anthropic
 //! `messages` become items (`text`/`image` blocks → message parts, `tool_use` →
 //! `function_call` with the block id as `call_id`, `tool_result` →
@@ -44,7 +48,7 @@ use super::{
     responses::{latest_in_conversation, open_model_conversation, refuse_file_images, valid_tool_name},
     ApiJson, PlatformCaller, PlatformError, RouteTable,
 };
-use crate::model_router::items_bridge::{self as bridge, Completion, Delta, RunItems, RunOutput};
+use crate::model_router::items_bridge::{self as bridge, Completion, Delta, RunItems, RunOutput, UsageRef};
 use crate::ApiState;
 
 const MAX_MESSAGES: usize = 500;
@@ -476,6 +480,9 @@ async fn create(
         Some(c) => items::history(db, &c.id, None).await?,
         None => Vec::new(),
     };
+    // The id is minted first so the usage rows (`mdl:{id}:{meter}`) can point at it.
+    let id = new_id("mdl_");
+    let account_id = chain.as_ref().map(|c| c.account_id.clone()).unwrap_or_else(|| caller.account_id.clone());
     let run = bridge::run_items(
         &state,
         &caller,
@@ -489,12 +496,12 @@ async fn create(
             max_tokens: Some(max_tokens),
             temperature: body.temperature,
             stream: body.stream,
+            usage: UsageRef { id: id.clone(), prefix: "mdl", account_id: account_id.clone() },
         },
     )
     .await?;
 
     // The model took the turn: store it when this is a thread.
-    let id = new_id("mdl_");
     let stored = match (&thread, &chain) {
         (Thread::None, _) => None,
         (_, Some(c)) => Some(c.id.clone()),
@@ -503,7 +510,6 @@ async fn create(
     let stored = match stored {
         None => None,
         Some(conv_id) => {
-            let account_id = chain.as_ref().map(|c| c.account_id.clone()).unwrap_or_else(|| caller.account_id.clone());
             sqlx::query(
                 "INSERT INTO platform_responses (id, project_id, account_id, model, conversation_id, previous_response_id, status, metadata, store) \
                  VALUES ($1, $2, $3, $4, $5, $6, 'in_progress', $7, true)",

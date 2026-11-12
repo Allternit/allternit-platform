@@ -77,12 +77,9 @@ pub struct PendingMeter {
     pub unit: &'static str,
 }
 
-pub const PENDING_METERS: &[PendingMeter] = &[PendingMeter {
-    meter: "decision_questions",
-    event_name: "allternit_decision_questions",
-    display_name: "Decision questions",
-    unit: "question",
-}];
+/// Empty: `decision_questions` got its price on 2026-11-13 (Eoj) and moved to
+/// [`METER_PLANS`].
+pub const PENDING_METERS: &[PendingMeter] = &[];
 
 /// Meters recorded at $0 and never sent to Stripe: phone minutes an agent
 /// identity's bundle covers (its `identity_month` row is the charge).
@@ -108,6 +105,8 @@ pub const METER_PLANS: &[MeterPlan] = &[
     MeterPlan { meters: &["mailbox_month"], event_name: "allternit_mailbox_months", display_name: "Mailboxes", unit: "mailbox", value: MeterValue::Quantity, payg_cents: "200", growth_cents: "180", free_units: 0 },
     MeterPlan { meters: &["identity_month"], event_name: "allternit_identity_months", display_name: "Agent identities (number + mailbox + linked-phone slot + 200 phone minutes)", unit: "identity", value: MeterValue::Quantity, payg_cents: "900", growth_cents: "810", free_units: 0 },
     MeterPlan { meters: &["recording_min_month"], event_name: "allternit_recording_minute_months", display_name: "Recording storage after 90 days", unit: "minute-month", value: MeterValue::CeilQuantity, payg_cents: "0.2", growth_cents: "0.18", free_units: 0 },
+    // Decisions (Eoj 2026-11-13): $0.50 per 1,000 questions on live keys; sandbox is never metered.
+    MeterPlan { meters: &["decision_questions"], event_name: "allternit_decision_questions", display_name: "Decision questions", unit: "question", value: MeterValue::Quantity, payg_cents: "0.05", growth_cents: "0.045", free_units: 0 },
 ];
 
 /// Units the Growth plan includes each month on top of `free_units`, by Stripe
@@ -290,9 +289,11 @@ pub fn render(steps: &[PlanStep]) -> String {
             out.push_str(&format!("      {k} = {v}\n"));
         }
     }
-    out.push_str("\nPending meters (price TBD by Eoj; not created by --apply, not reported to Stripe):\n");
-    for m in PENDING_METERS {
-        out.push_str(&format!("   - {} ({}): event {}, per {}, payg TBD, growth TBD\n", m.display_name, m.meter, m.event_name, m.unit));
+    if !PENDING_METERS.is_empty() {
+        out.push_str("\nPending meters (price TBD by Eoj; not created by --apply, not reported to Stripe):\n");
+        for m in PENDING_METERS {
+            out.push_str(&format!("   - {} ({}): event {}, per {}, payg TBD, growth TBD\n", m.display_name, m.meter, m.event_name, m.unit));
+        }
     }
     out.push_str(
         "\nNot in this plan (made per customer, later): the Growth $300 monthly credit grant \
@@ -519,6 +520,25 @@ mod tests {
         let row = PendingRow { id: "use_1".into(), meter: "sms_segment".into(), quantity: 3.0, amount_microusd: None, created_at: chrono::Utc::now(), stripe_customer_id: "cus_1".into() };
         let form = meter_event_form(&row).unwrap();
         assert!(form.contains(&("identifier".into(), "use_1".into())) && form.contains(&("payload[value]".into(), "3".into())));
+    }
+
+    /// The Stripe objects the decision price needs (meter, product, two prices),
+    /// in the dry-run text the coordinator shows Eoj before anyone creates them.
+    /// `cargo test ... stripe_plan::tests::decision_questions_steps -- --nocapture` prints it.
+    #[test]
+    fn decision_questions_steps() {
+        let steps: Vec<PlanStep> = plan()
+            .into_iter()
+            .filter(|s| s.key.ends_with("decision_questions"))
+            .collect();
+        let keys: Vec<&str> = steps.iter().map(|s| s.key.as_str()).collect();
+        assert_eq!(keys, ["meter:allternit_decision_questions", "product:decision_questions", "price:payg:decision_questions", "price:growth:decision_questions"]);
+        let price = |k: &str| steps.iter().find(|s| s.key == k).unwrap().form.clone();
+        assert!(price("price:payg:decision_questions").contains(&("unit_amount_decimal".into(), "0.05".into())));
+        assert!(price("price:growth:decision_questions").contains(&("unit_amount_decimal".into(), "0.045".into())));
+        assert!(plan_lookup_keys("payg").contains(&"platform_payg_decision_questions".to_string()));
+        assert_eq!(meter_value("decision_questions", 3.0, None), Some(("allternit_decision_questions", 3)));
+        println!("{}", render(&steps));
     }
 
     #[test]

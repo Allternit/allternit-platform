@@ -24,6 +24,7 @@ The Growth uptime figure is a target, not a service level agreement. Only an Ent
 | Voice agent minute, your own model key | $0.06 a minute | You pay your model provider directly |
 | Hosted agent | First 3 free, then $4 an agent a month | Always on, with memory, channels and inbox |
 | Text conversation (agent replies) | Model tokens at the provider's list price plus 15% | With your own model key there is no token charge |
+| Model calls ([Responses](/api/platform/responses) `model` mode and [Messages](/api/platform/messages)) | Model tokens at the provider's list price plus 15% | Billed to the project and counted toward its spend cap. Meters `tokens_in` and `tokens_out` |
 | Phone number | $2 a month local, $3 a month toll-free | |
 | [Mailbox](/api/platform/mailboxes) | $2 a mailbox a month | Inbound mail, one-time code reading and sending. Sandbox mailboxes are not charged |
 | [Agent identity](/api/platform/identities) | $9 a month | One bundle: a number, a mailbox, one linked-phone slot and 200 phone minutes. Its number and mailbox are not billed separately |
@@ -33,7 +34,7 @@ The Growth uptime figure is a target, not a service level agreement. Only an Ent
 | Call recording and transcript storage | Included for 90 days, then $0.002 a minute per month | |
 | Phone minute (an agent driving a linked phone) | $0.02 a minute | Task and skill runs rounded up to the minute; tool calls count each phone's clock minutes with calls. Growth includes 3,000 a month. See [Phones](/api/platform/phones#metering) |
 | Linked phone | $5 a phone a month | Each phone a live project drives in the month. Growth includes 25 |
-| Decision questions | $0.50 per 1,000 questions on live keys, free on test keys. Pending. | {/* TODO(eoj): price pending */} Pending sign-off; not yet billed. Meter `decision_questions` |
+| [Decision questions](/api/platform/decisions) | $0.50 per 1,000 questions | Live keys only; test keys are free. A refused question is not billed. Meter `decision_questions` |
 | Channels, webhooks, the twin layer and MCP | Included | |
 
 Each meter matches a `meter` value in [Usage](/api/platform/usage), so `GET /v1/usage` shows the quantities a bill is built from.

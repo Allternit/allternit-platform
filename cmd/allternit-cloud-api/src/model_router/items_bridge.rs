@@ -3,18 +3,25 @@
 //!
 //! [`run_items`] turns a transcript of Platform items (`items::history` of a
 //! chained conversation plus the new input) into OpenAI chat messages, runs it on
-//! the in-process [`super::ModelRouter`] and settles the tokens. It does not go
+//! the in-process [`super::ModelRouter`] and meters the tokens. It does not go
 //! through the `/v1/chat/completions` HTTP handler (that one needs an
-//! `AuthContext`), so it repeats that handler's gates itself, in the same order:
-//! project spend check (`billing::spend_allowed`), the hard-line keyword check,
-//! the credit / free-allowance check of the billing owner, pool breaker and
-//! free-tier pool policy, and afterwards `inference_settlement::settle_inference`.
+//! `AuthContext`), so it runs its own gates: project spend check
+//! (`billing::spend_allowed`), the hard-line keyword check and the pool breaker.
 //!
-//! **Billing owner of a project key** (mirrors `routes/model_router.rs`
-//! `chat_completions`): the `api_keys.user_id` of the calling key (the user who
-//! minted it; the same row `/v1/chat/completions` settles against). Console
-//! callers (`key_id` = `console:<user>`) and keys without a row fall back to the
-//! project's `owner_user_id`.
+//! **The project pays** (Eoj 2026-11-13), the same way an agent turn does
+//! (`conversations::meter_turn`): after the model answers, one `tokens_in` and
+//! one `tokens_out` row go to `platform_usage_events`, each priced at the
+//! model's list price + 15% ([`billing::token_charge_microusd`], never an own
+//! key here) and counted toward the project's spend cap. The list price is the
+//! provider's price the model router already knows ([`list_per_1m`] over
+//! `ModelRouter::retail_prices`: live upstream or wholesale catalog price, else
+//! the catalog price). Rows are idempotent per call (`{prefix}:{id}:{meter}`,
+//! `ref_id` = the `resp_`/`mdl_` id) and recorded in sandbox too, as agent
+//! turns are. No member's personal credits are checked or charged (no
+//! `inference_usage` row), for project keys and console callers alike. A
+//! stream is billed once, at its end, with the final usage (estimated from the
+//! text when the provider reports none); a call that fails upstream bills
+//! nothing.
 //!
 //! Folding rules ([`items_to_messages`]):
 //! * `instructions` become a leading `system` message for this turn only;
@@ -31,15 +38,14 @@
 //! must not spend a member's personal provider key.
 
 use std::collections::BTreeMap;
-use std::sync::Arc;
 
 use futures::StreamExt;
 use serde_json::{json, Map, Value};
 
 use super::{ChatCompletionRequest, Message, ModelRouterError, RetailPrices};
 use crate::routes::platform_v1::items::{Item, NewItem};
+use crate::routes::platform_v1::usage_events::{self, UsageEvent};
 use crate::routes::platform_v1::{billing, PlatformCaller, PlatformError};
-use crate::services::{inference_pool, inference_settlement};
 use crate::ApiState;
 
 const MAX_BUFFERED_JSON_BODY: usize = 32 * 1024 * 1024;
@@ -239,6 +245,8 @@ pub struct RunItems<'a> {
     pub max_tokens: Option<u32>,
     pub temperature: Option<f32>,
     pub stream: bool,
+    /// Where this call's usage is recorded.
+    pub usage: UsageRef,
 }
 
 /// Responses `tools` (`{type:"function", name, description, parameters}`) or
@@ -255,7 +263,21 @@ fn router_err(e: ModelRouterError) -> PlatformError {
     PlatformError::from(crate::ApiError::from(e))
 }
 
-/// The user an inference by this caller settles against (see the module docs).
+/// Where a model call's usage rows go: `ref_id` = `id`, idempotency
+/// `{prefix}:{id}:{meter}`.
+#[derive(Debug, Clone)]
+pub struct UsageRef {
+    /// The response (`resp_…`) or message (`mdl_…`) id the call answers.
+    pub id: String,
+    /// `resp` (`POST /v1/responses`) or `mdl` (`POST /v1/messages`).
+    pub prefix: &'static str,
+    /// The account the turn belongs to, if any.
+    pub account_id: Option<String>,
+}
+
+/// The user a hard-line block by this caller is recorded against: the
+/// `api_keys.user_id` of the calling key, else the project owner. Not a payer:
+/// the project pays for Platform model calls.
 pub async fn billing_owner(db: &sqlx::PgPool, caller: &PlatformCaller) -> String {
     let key_user = sqlx::query_scalar::<_, String>("SELECT user_id FROM api_keys WHERE id = $1 AND project_id = $2")
         .bind(&caller.key_id)
@@ -266,32 +288,73 @@ pub async fn billing_owner(db: &sqlx::PgPool, caller: &PlatformCaller) -> String
         Ok(Some(user)) if !user.is_empty() => user,
         Ok(_) => caller.owner_user_id.clone(),
         Err(error) => {
-            tracing::warn!(%error, "platform: key owner lookup failed; settling against the project owner");
+            tracing::warn!(%error, "platform: key owner lookup failed; recording against the project owner");
             caller.owner_user_id.clone()
         }
     }
 }
 
-struct Settle {
-    db: Arc<sqlx::PgPool>,
-    user_id: String,
+/// The provider's list price per 1M tokens (input, output) in USD: the
+/// wholesale side of [`RetailPrices`] when the router knows it (live upstream
+/// pricing or a wholesale catalog row), else the catalog price.
+pub fn list_per_1m(prices: &RetailPrices) -> (f64, f64) {
+    (
+        prices.wholesale_prompt_per_1m.unwrap_or(prices.prompt_per_1m),
+        prices.wholesale_completion_per_1m.unwrap_or(prices.completion_per_1m),
+    )
+}
+
+/// `tokens` at `per_1m_usd` per 1M tokens, in micro-dollars, rounded up
+/// (USD per 1M tokens is micro-dollars per token).
+pub fn list_microusd(per_1m_usd: f64, tokens: u64) -> i64 {
+    let micro = tokens as f64 * per_1m_usd.max(0.0);
+    // Shave float noise (1000 × 0.1 = 100.00000000000001) before rounding up.
+    (micro - 1e-6).ceil().max(0.0) as i64
+}
+
+/// Records a finished model call as project usage.
+struct ProjectMeter {
+    db: sqlx::PgPool,
+    project_id: String,
+    key_id: String,
+    usage: UsageRef,
     alias: String,
-    pool_id: Option<String>,
     prices: RetailPrices,
     prompt_chars: usize,
 }
 
-impl Settle {
-    async fn settle(&self, usage: Option<(u64, u64)>, completion_chars: usize) {
-        let (prompt, completion, estimated) = match usage {
-            Some((p, c)) => (p, c, false),
-            None => ((self.prompt_chars / 4) as u64, (completion_chars / 4) as u64, true),
+impl ProjectMeter {
+    /// `tokens_in` / `tokens_out` rows at list price + 15%. Failures are
+    /// logged, never surfaced (the answer already happened).
+    async fn record(&self, usage: Option<(u64, u64)>, completion_chars: usize) {
+        let (prompt, completion) = match usage {
+            Some(u) => u,
+            None => ((self.prompt_chars / 4) as u64, (completion_chars / 4) as u64),
         };
-        inference_settlement::settle_inference(&self.db, &self.user_id, &self.alias, self.pool_id.as_deref(), true, &self.prices, prompt, completion, estimated).await;
+        let (list_in, list_out) = list_per_1m(&self.prices);
+        for (meter, tokens, per_1m) in [("tokens_in", prompt, list_in), ("tokens_out", completion, list_out)] {
+            if tokens == 0 {
+                continue;
+            }
+            let amount = billing::token_charge_microusd(list_microusd(per_1m, tokens), false);
+            let event = UsageEvent {
+                project_id: self.project_id.clone(),
+                account_id: self.usage.account_id.clone(),
+                key_id: Some(self.key_id.clone()),
+                meter: meter.to_string(),
+                quantity: tokens as f64,
+                unit: Some("token".to_string()),
+                ref_id: Some(self.usage.id.clone()),
+                idempotency: Some(format!("{}:{}:{meter}", self.usage.prefix, self.usage.id)),
+            };
+            if let Err(e) = usage_events::record_usage_priced(&self.db, event, Some(amount), Some(&self.alias)).await {
+                tracing::error!(id = %self.usage.id, "platform: model usage not recorded: {}", e.message);
+            }
+        }
     }
 }
 
-/// Fold, check, gate, dispatch, settle. Errors before dispatch are plain
+/// Fold, check, gate, dispatch, meter. Errors before dispatch are plain
 /// `PlatformError`s; a stream that fails later ends with [`Delta::Failed`].
 pub async fn run_items(state: &ApiState, caller: &PlatformCaller, run: RunItems<'_>) -> Result<RunOutput, PlatformError> {
     let views: Vec<ItemView<'_>> = run.history.iter().map(ItemView::from).chain(run.input.iter().map(ItemView::from)).collect();
@@ -311,10 +374,10 @@ pub async fn run_items(state: &ApiState, caller: &PlatformCaller, run: RunItems<
         return Err(PlatformError::invalid_request("model_not_available", "Open-lane models aren't available on Platform keys.").with_param("model"));
     }
 
-    // Same gates as `/v1/chat/completions`, in the same order.
+    // The project pays: its spend cap (and card) gate the call.
     billing::spend_allowed(&state.db, &caller.project_id).await?;
-    let user_id = billing_owner(&state.db, caller).await;
     if let Some(line) = crate::services::hard_line::standard_check(&messages) {
+        let user_id = billing_owner(&state.db, caller).await;
         crate::services::open_lane::record_block(&state.db, &user_id, line.category()).await;
         return Err(PlatformError::invalid_request("content_policy_hard_line", "This request falls under a hard line no Allternit model serves.").with_refusal(Some(line.category().to_string()), None));
     }
@@ -340,11 +403,6 @@ pub async fn run_items(state: &ApiState, caller: &PlatformCaller, run: RunItems<
     }
     let alias = request.model.clone();
 
-    let balance = inference_settlement::credit_balance_row(&state.db, &user_id).await?;
-    inference_settlement::check_inference_allowed(&state.db, &user_id, balance).await?;
-    if balance.is_none() && state.free_inference_rate_limiter.check(&user_id).await.is_err() {
-        return Err(PlatformError::rate_limit("rate_limited", "Free inference rate limit reached — add credits for higher limits."));
-    }
     let prompt_chars: usize = request.messages.iter().map(|m| m.content_chars()).sum();
     let prices = router.retail_prices(&alias).await.map_err(router_err)?;
     let pool = match router.provider_for_alias(&alias) {
@@ -354,8 +412,15 @@ pub async fn run_items(state: &ApiState, caller: &PlatformCaller, run: RunItems<
     if let Some(pool) = pool.as_ref() {
         state.inference_pool_service.check_pool_available(pool).await?;
     }
-    inference_pool::check_free_tier_pool(inference_pool::free_tier_pool_policy(), balance.is_none(), pool.as_ref())?;
-    let settle = Settle { db: Arc::new(state.db.clone()), user_id, alias, pool_id: pool.map(|p| p.id), prices, prompt_chars };
+    let meter = ProjectMeter {
+        db: state.db.clone(),
+        project_id: caller.project_id.clone(),
+        key_id: caller.key_id.clone(),
+        usage: run.usage,
+        alias,
+        prices,
+        prompt_chars,
+    };
 
     let response = router.chat_completions(request).await.map_err(router_err)?;
     if !response.status().is_success() {
@@ -368,14 +433,14 @@ pub async fn run_items(state: &ApiState, caller: &PlatformCaller, run: RunItems<
             .map_err(|e| PlatformError::api_error("model_failed", format!("The model's answer was cut off: {e}")))?;
         let body: Value = serde_json::from_slice(&bytes).map_err(|_| PlatformError::api_error("model_failed", "The model sent an answer we couldn't read."))?;
         let (completion, usage) = parse_completion(&body);
-        settle.settle(usage, completion.text.len() + completion.tool_calls.iter().map(|c| c.arguments.len()).sum::<usize>()).await;
+        meter.record(usage, completion_chars(&completion)).await;
         return Ok(RunOutput::Complete(completion));
     }
 
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
     let mut body = response.into_body().into_data_stream();
     tokio::spawn(async move {
-        // Reads to the end even when the client hangs up, so the tokens are settled.
+        // Reads to the end even when the client hangs up, so the tokens are metered.
         let mut fold = ChatStreamFold::default();
         let mut cut = None;
         while let Some(chunk) = body.next().await {
@@ -392,13 +457,20 @@ pub async fn run_items(state: &ApiState, caller: &PlatformCaller, run: RunItems<
             }
         }
         let (completion, usage, failure) = fold.finish();
-        settle.settle(usage, completion.text.len() + completion.tool_calls.iter().map(|c| c.arguments.len()).sum::<usize>()).await;
         let _ = tx.send(match cut.or(failure) {
+            // Failed upstream: nothing is billed.
             Some(f) => Delta::Failed(f),
-            None => Delta::Done(completion),
+            None => {
+                meter.record(usage, completion_chars(&completion)).await;
+                Delta::Done(completion)
+            }
         });
     });
     Ok(RunOutput::Stream(rx))
+}
+
+fn completion_chars(c: &Completion) -> usize {
+    c.text.len() + c.tool_calls.iter().map(|t| t.arguments.len()).sum::<usize>()
 }
 
 fn usage_of(v: &Value) -> Option<(u64, u64)> {

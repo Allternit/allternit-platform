@@ -32,4 +32,4 @@ With `stream: true`: `response.created`, `response.output_item.added`, `response
 
 ## Billing
 
-Model tokens are recorded as `tokens_in` and `tokens_out` and billed as in [Pricing](/api/platform/pricing). Spend caps apply (`402 spend_cap_reached`).
+The project pays for every response, in both modes. Model tokens are recorded as `tokens_in` and `tokens_out` usage rows and billed to the project at the model's list price plus 15%, as in [Pricing](/api/platform/pricing). They count toward the project's monthly spend cap: at the cap a new response answers `402 spend_cap_reached`. In `model` mode no member's personal credits are used, whichever key or console session made the call. A streamed response is billed once, when it ends. A response that fails at the model is not billed.
