@@ -321,6 +321,7 @@ pub async fn events_backbone_schema(db: &sqlx::PgPool) {
         include_str!("../../migrations_pg/051_platform_numbers_messaging.sql"),
         include_str!("../../migrations_pg/057_allternit_events_backbone.sql"),
         include_str!("../../migrations_pg/083_mcp_event_replay.sql"),
+        include_str!("../../migrations_pg/122_key_governance.sql"),
     ] {
         sqlx::raw_sql(&sql.replace("public.", "")).execute(db).await.expect("migration applies");
     }
@@ -354,6 +355,7 @@ pub async fn platform_schema(db: &sqlx::PgPool) {
         include_str!("../../migrations_pg/112_phone_minutes.sql"),
         include_str!("../../migrations_pg/113_mailboxes.sql"),
         include_str!("../../migrations_pg/114_project_tracing.sql"),
+        include_str!("../../migrations_pg/122_key_governance.sql"),
     ] {
         sqlx::raw_sql(&sql.replace("public.", "")).execute(db).await.expect("migration applies");
     }

@@ -197,6 +197,7 @@ pub async fn chat_with_handoff(
     request: ChatCompletionRequest,
     pool_id: Option<String>,
     prices: RetailPrices,
+    attribution: inference_settlement::InferenceAttribution,
 ) -> Result<Response, ApiError> {
     let original = request.clone();
     let streaming = request.is_streaming();
@@ -207,7 +208,7 @@ pub async fn chat_with_handoff(
         // A provider that refuses with a content-policy error produced no
         // tokens: nothing to bill on the frontier side.
         Err(ModelRouterError::UpstreamError { status, message }) if refusal::error_is_refusal(&message) => {
-            return match hand_off(state, &user_id, &plan, original, streaming).await {
+            return match hand_off(state, &user_id, &plan, original, streaming, &attribution).await {
                 Some(response) => Ok(response),
                 None => Err(ModelRouterError::UpstreamError { status, message }.into()),
             };
@@ -223,6 +224,7 @@ pub async fn chat_with_handoff(
         charge_user: true,
         prices: prices.clone(),
         prompt_token_estimate: (chars / 4) as u64,
+        attribution: attribution.clone(),
     };
 
     if !streaming {
@@ -235,6 +237,7 @@ pub async fn chat_with_handoff(
             &prices,
             chars,
             frontier,
+            &attribution,
         )
         .await?;
         if !metered.status().is_success() {
@@ -248,7 +251,7 @@ pub async fn chat_with_handoff(
             .map(|v| refusal::response_is_refusal(&v))
             .unwrap_or(false);
         if refused {
-            if let Some(response) = hand_off(state, &user_id, &plan, original, false).await {
+            if let Some(response) = hand_off(state, &user_id, &plan, original, false, &attribution).await {
                 return Ok(response);
             }
         }
@@ -286,7 +289,7 @@ pub async fn chat_with_handoff(
     }
 
     if hold.is_refusal(ended) {
-        if let Some(response) = hand_off(state, &user_id, &plan, original.clone(), true).await {
+        if let Some(response) = hand_off(state, &user_id, &plan, original.clone(), true, &attribution).await {
             // Bill the frontier for what it streamed (usage if it finished,
             // else the marked estimate), then drop the rest of its stream.
             drop(stream);
@@ -318,6 +321,7 @@ async fn hand_off(
     plan: &HandoffPlan,
     original: ChatCompletionRequest,
     streaming: bool,
+    attribution: &inference_settlement::InferenceAttribution,
 ) -> Option<Response> {
     if hard_line_gate(state, user_id, &original).await.is_err() {
         return None;
@@ -350,6 +354,7 @@ async fn hand_off(
                 charge_user: true,
                 prices,
                 prompt_token_estimate: (chars / 4) as u64,
+                attribution: attribution.clone(),
             },
         );
         let (mut parts, body) = metered.into_parts();
@@ -362,7 +367,7 @@ async fn hand_off(
     }
 
     let metered = inference_settlement::meter_json_response(
-        &state.db, user_id, &plan.to, None, true, &prices, chars, response,
+        &state.db, user_id, &plan.to, None, true, &prices, chars, response, attribution,
     )
     .await
     .ok()?;

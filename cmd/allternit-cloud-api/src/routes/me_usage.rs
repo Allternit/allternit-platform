@@ -51,7 +51,48 @@ struct CreditTxnRow {
 }
 
 pub fn routes() -> Router<Arc<ApiState>> {
-    Router::new().route("/api/v1/me/usage", get(get_my_usage))
+    Router::new()
+        .route("/api/v1/me/usage", get(get_my_usage))
+        // Usage report + request logs (console Wave 3, lane L3B). Outside
+        // console_gate on purpose: Gizzi and API tokens resolve here too.
+        .route("/api/v1/me/usage/report", get(get_usage_report))
+        .route("/api/v1/me/usage/requests", get(list_usage_requests))
+        .route("/api/v1/me/usage/requests/:request_id", get(get_usage_request))
+}
+
+/// Placeholder until L3B lands: the caller is authenticated like
+/// `/api/v1/me/usage` (401 otherwise), then answered 501.
+async fn usage_not_built(state: &ApiState, headers: &HeaderMap) -> ApiError {
+    match caller_user_id(state, headers).await {
+        Ok(_) => ApiError::NotImplemented("Usage reports are not available yet.".to_string()),
+        Err(error) => error,
+    }
+}
+
+/// `GET /api/v1/me/usage/report` — grouped usage rows (JSON or CSV).
+async fn get_usage_report(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    Err(usage_not_built(&state, &headers).await)
+}
+
+/// `GET /api/v1/me/usage/requests` — billed requests, newest first (cursor).
+async fn list_usage_requests(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    Err(usage_not_built(&state, &headers).await)
+}
+
+/// `GET /api/v1/me/usage/requests/:request_id` — one request's metadata (and
+/// bodies when the project captured them).
+async fn get_usage_request(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+    axum::extract::Path(_request_id): axum::extract::Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    Err(usage_not_built(&state, &headers).await)
 }
 
 async fn caller_user_id(state: &ApiState, headers: &HeaderMap) -> Result<String, ApiError> {

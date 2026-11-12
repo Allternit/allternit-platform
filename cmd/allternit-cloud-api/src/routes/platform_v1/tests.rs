@@ -34,6 +34,7 @@ async fn ctx_with_gate(gate: Gate) -> Ctx {
         include_str!("../../../migrations_pg/050_platform_api_foundation.sql"),
         include_str!("../../../migrations_pg/080_platform_billing.sql"),
         include_str!("../../../migrations_pg/084_platform_payment_methods.sql"),
+        include_str!("../../../migrations_pg/122_key_governance.sql"),
     ] {
         sqlx::raw_sql(&sql.replace("public.", ""))
             .execute(&state.db)
@@ -218,6 +219,303 @@ async fn auth_errors_use_the_platform_error_format() {
     assert_eq!(e["code"], "missing_api_key");
     assert!(e["message"].is_string());
     assert!(e.get("param").is_some());
+}
+
+// ---- key governance: expiry and IP allowlist (migrations_pg/122) -----------
+
+async fn get_from(app: &Router, path: &str, token: &str, client_ip: Option<&str>) -> Reply {
+    let mut builder = Request::builder()
+        .method("GET")
+        .uri(path)
+        .header("authorization", format!("Bearer {token}"));
+    if let Some(ip) = client_ip {
+        builder = builder.header("cf-connecting-ip", ip);
+    }
+    let response = app.clone().oneshot(builder.body(Body::empty()).unwrap()).await.unwrap();
+    let status = response.status();
+    let headers = response.headers().clone();
+    let bytes = axum::body::to_bytes(response.into_body(), 1 << 20).await.unwrap();
+    Reply { status, headers, body: serde_json::from_slice(&bytes).unwrap_or(Value::Null) }
+}
+
+#[tokio::test]
+async fn expired_project_key_is_401_with_a_clear_message() {
+    let c = ctx().await;
+    let p = project(&c, "user_exp", ProjectEnv::Sandbox).await;
+    let (key_id, token) = mint(&c, &p, None, &["agents"]).await;
+    assert_eq!(call(&c.app, "GET", "/v1/accounts", Some(&token), None, None).await.status, StatusCode::OK);
+
+    sqlx::query("UPDATE api_keys SET expires_at = NOW() - INTERVAL '1 minute' WHERE id = $1")
+        .bind(&key_id)
+        .execute(&c.state.db)
+        .await
+        .unwrap();
+    let r = call(&c.app, "GET", "/v1/accounts", Some(&token), None, None).await;
+    assert_eq!(r.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(r.body["error"]["type"], "authentication_error");
+    assert_eq!(r.body["error"]["code"], "api_key_expired");
+    assert!(r.body["error"]["message"].as_str().unwrap().contains("expired on"), "{:?}", r.body);
+
+    // A future expiry still authenticates.
+    sqlx::query("UPDATE api_keys SET expires_at = NOW() + INTERVAL '1 hour' WHERE id = $1")
+        .bind(&key_id)
+        .execute(&c.state.db)
+        .await
+        .unwrap();
+    assert_eq!(call(&c.app, "GET", "/v1/accounts", Some(&token), None, None).await.status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn project_key_outside_its_ip_allowlist_is_403() {
+    let c = ctx().await;
+    let p = project(&c, "user_ip", ProjectEnv::Sandbox).await;
+    let (key_id, token) = mint(&c, &p, None, &["agents"]).await;
+    // An empty list is no restriction.
+    sqlx::query("UPDATE api_keys SET allowed_cidrs = '{}' WHERE id = $1")
+        .bind(&key_id)
+        .execute(&c.state.db)
+        .await
+        .unwrap();
+    assert_eq!(get_from(&c.app, "/v1/accounts", &token, Some("203.0.113.9")).await.status, StatusCode::OK);
+
+    sqlx::query("UPDATE api_keys SET allowed_cidrs = ARRAY['10.0.0.0/8', '2001:db8::/32'] WHERE id = $1")
+        .bind(&key_id)
+        .execute(&c.state.db)
+        .await
+        .unwrap();
+    let r = get_from(&c.app, "/v1/accounts", &token, Some("203.0.113.9")).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN);
+    assert_eq!(r.body["error"]["type"], "permission_error");
+    assert_eq!(r.body["error"]["code"], "ip_not_allowed");
+    assert!(r.body["error"]["message"].as_str().unwrap().contains("203.0.113.9"), "{:?}", r.body);
+
+    assert_eq!(get_from(&c.app, "/v1/accounts", &token, Some("10.1.2.3")).await.status, StatusCode::OK);
+    assert_eq!(get_from(&c.app, "/v1/accounts", &token, Some("2001:db8::7")).await.status, StatusCode::OK);
+    // No trusted client IP at all: the restriction cannot be checked, so it refuses.
+    assert_eq!(get_from(&c.app, "/v1/accounts", &token, None).await.status, StatusCode::FORBIDDEN);
+    // X-Forwarded-For is client-controlled and never trusted.
+    let spoofed = app_request_with(&c.app, &token, "x-forwarded-for", "10.1.2.3").await;
+    assert_eq!(spoofed, StatusCode::FORBIDDEN);
+}
+
+async fn app_request_with(app: &Router, token: &str, header: &str, value: &str) -> StatusCode {
+    let request = Request::builder()
+        .method("GET")
+        .uri("/v1/accounts")
+        .header("authorization", format!("Bearer {token}"))
+        .header(header, value)
+        .body(Body::empty())
+        .unwrap();
+    app.clone().oneshot(request).await.unwrap().status()
+}
+
+#[tokio::test]
+async fn project_key_governance_is_persisted_at_mint() {
+    let c = ctx().await;
+    let p = project(&c, "user_gov", ProjectEnv::Sandbox).await;
+    let expires_at = chrono::Utc::now() + chrono::Duration::minutes(15);
+    let created = api_keys::create_project_key_with(
+        &c.state.db,
+        CreateProjectKeyInput {
+            user_id: "user_gov".into(),
+            organization_id: None,
+            project_id: p.id.clone(),
+            account_id: None,
+            env: ProjectEnv::Sandbox,
+            name: "playground".into(),
+            scopes: vec!["inference".into()],
+        },
+        api_keys::KeyGovernance {
+            kind: api_keys::KEY_KIND_PLAYGROUND.into(),
+            expires_at: Some(expires_at),
+            allowed_cidrs: vec![" 10.0.0.0/8 ".into()],
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(created.key.kind, "playground");
+    assert!(created.key.expires_at.is_some());
+    assert_eq!(created.key.allowed_cidrs, Some(vec!["10.0.0.0/8".to_string()]));
+    let listed = api_keys::list_project_keys(&c.state.db, &p.id).await.unwrap();
+    assert_eq!(listed[0].kind, "playground");
+    // Keys minted the old way are `standard` with no expiry or allowlist.
+    let (key_id, _) = mint(&c, &p, None, &["agents"]).await;
+    let (kind, expires, cidrs): (String, Option<chrono::DateTime<chrono::Utc>>, Option<Vec<String>>) =
+        sqlx::query_as("SELECT kind, expires_at, allowed_cidrs FROM api_keys WHERE id = $1")
+            .bind(&key_id)
+            .fetch_one(&c.state.db)
+            .await
+            .unwrap();
+    assert_eq!((kind.as_str(), expires, cidrs), ("standard", None, None));
+}
+
+/// The model gateway's own auth (`auth_middleware` in front of the real
+/// `/v1/chat/completions` handler) with an `alt_…` key.
+fn gateway_app(state: &Arc<ApiState>) -> Router {
+    Router::new()
+        .route(
+            "/v1/chat/completions",
+            axum::routing::post(crate::routes::model_router::chat_completions),
+        )
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            crate::auth::middleware::auth_middleware,
+        ))
+        .with_state(state.clone())
+}
+
+async fn gateway_call(app: &Router, token: &str, client_ip: Option<&str>) -> Reply {
+    let mut builder = Request::builder()
+        .method("POST")
+        .uri("/v1/chat/completions")
+        .header("authorization", format!("Bearer {token}"))
+        .header("content-type", "application/json");
+    if let Some(ip) = client_ip {
+        builder = builder.header("cf-connecting-ip", ip);
+    }
+    let body = json!({ "model": "kimi-k3", "messages": [{ "role": "user", "content": "hi" }] });
+    let response = app.clone().oneshot(builder.body(Body::from(body.to_string())).unwrap()).await.unwrap();
+    let status = response.status();
+    let headers = response.headers().clone();
+    let bytes = axum::body::to_bytes(response.into_body(), 1 << 20).await.unwrap();
+    Reply { status, headers, body: serde_json::from_slice(&bytes).unwrap_or(Value::Null) }
+}
+
+#[tokio::test]
+async fn gateway_key_expiry_is_401_and_ip_allowlist_is_403() {
+    let c = ctx().await;
+    let legacy = api_keys::create_api_key(
+        &c.state.db,
+        api_keys::CreateApiKeyInput {
+            user_id: "user_gw".into(),
+            organization_id: None,
+            name: "gizzi".into(),
+            scopes: vec![],
+        },
+    )
+    .await
+    .unwrap();
+    let app = gateway_app(&c.state);
+
+    // Authenticated: the test router has no upstream (503), and even that
+    // error answer names its request.
+    let r = gateway_call(&app, &legacy.token, Some("203.0.113.9")).await;
+    assert_eq!(r.status, StatusCode::SERVICE_UNAVAILABLE, "{:?}", r.body);
+    assert!(r.headers["x-request-id"].to_str().unwrap().starts_with("req_"));
+
+    sqlx::query("UPDATE api_keys SET allowed_cidrs = ARRAY['10.0.0.0/8'] WHERE id = $1")
+        .bind(&legacy.key.id)
+        .execute(&c.state.db)
+        .await
+        .unwrap();
+    let r = gateway_call(&app, &legacy.token, Some("203.0.113.9")).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN);
+    assert_eq!(r.body["error"], "IP_NOT_ALLOWED");
+    assert!(r.body["message"].as_str().unwrap().contains("203.0.113.9"));
+    assert_eq!(gateway_call(&app, &legacy.token, None).await.status, StatusCode::FORBIDDEN);
+    assert_eq!(gateway_call(&app, &legacy.token, Some("10.4.5.6")).await.status, StatusCode::SERVICE_UNAVAILABLE);
+
+    sqlx::query("UPDATE api_keys SET expires_at = NOW() - INTERVAL '1 minute' WHERE id = $1")
+        .bind(&legacy.key.id)
+        .execute(&c.state.db)
+        .await
+        .unwrap();
+    let r = gateway_call(&app, &legacy.token, Some("10.4.5.6")).await;
+    assert_eq!(r.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(r.body["error"], "API_KEY_EXPIRED");
+    assert!(r.body["message"].as_str().unwrap().contains("expired on"));
+    // The IP-less entry point (websockets, resolve_user) refuses it too.
+    assert!(crate::auth::middleware::validate_token_against_db(&c.state.db, &legacy.token)
+        .await
+        .unwrap()
+        .is_none());
+}
+
+#[tokio::test]
+async fn settled_completion_row_carries_project_key_and_client() {
+    let c = ctx().await;
+    // inference_usage as migrations_pg 007 + 009 build it (minus the users FK),
+    // then 121 for real.
+    sqlx::raw_sql(
+        "CREATE TABLE inference_usage (
+            id TEXT PRIMARY KEY, user_id TEXT NOT NULL, model TEXT NOT NULL,
+            prompt_tokens BIGINT NOT NULL, completion_tokens BIGINT NOT NULL,
+            cost_usd DOUBLE PRECISION NOT NULL, wholesale_cost_usd DOUBLE PRECISION,
+            estimated BOOLEAN NOT NULL DEFAULT FALSE, pool_id TEXT,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())",
+    )
+    .execute(&c.state.db)
+    .await
+    .unwrap();
+    sqlx::raw_sql(&include_str!("../../../migrations_pg/121_inference_attribution.sql").replace("public.", ""))
+        .execute(&c.state.db)
+        .await
+        .expect("migration 121 applies");
+
+    let p = project(&c, "user_attr", ProjectEnv::Sandbox).await;
+    let (key_id, _) = mint(&c, &p, None, &["inference"]).await;
+    let user = crate::auth::AuthenticatedUser {
+        user_id: "user_attr".into(),
+        token_id: key_id.clone(),
+        permissions: vec!["inference".into()],
+    };
+    let mut headers = axum::http::HeaderMap::new();
+    headers.insert("x-allternit-client", "gizzi-code/2.3.0".parse().unwrap());
+    let attribution =
+        crate::routes::model_router::inference_attribution(&c.state.db, &user, &headers, "req_attr".into()).await;
+    let prices = crate::model_router::RetailPrices {
+        prompt_per_1m: 1.0,
+        completion_per_1m: 2.0,
+        wholesale_prompt_per_1m: None,
+        wholesale_completion_per_1m: None,
+    };
+    crate::services::inference_settlement::settle_inference(
+        &c.state.db, "user_attr", "kimi-k3", None, false, &prices, 100, 50, false, &attribution,
+    )
+    .await;
+
+    let (project_id, row_key, client, request_id, latency): (
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<i64>,
+    ) = sqlx::query_as(
+        "SELECT project_id, key_id, client, request_id, latency_ms FROM inference_usage WHERE user_id = 'user_attr'",
+    )
+    .fetch_one(&c.state.db)
+    .await
+    .unwrap();
+    assert_eq!(project_id.as_deref(), Some(p.id.as_str()));
+    assert_eq!(row_key.as_deref(), Some(key_id.as_str()));
+    assert_eq!(client.as_deref(), Some("gizzi-code"));
+    assert_eq!(request_id.as_deref(), Some("req_attr"));
+    assert!(latency.is_some_and(|ms| ms >= 0));
+
+    // A playground key is `playground` whatever the header says.
+    sqlx::query("UPDATE api_keys SET kind = 'playground' WHERE id = $1")
+        .bind(&key_id)
+        .execute(&c.state.db)
+        .await
+        .unwrap();
+    let playground =
+        crate::routes::model_router::inference_attribution(&c.state.db, &user, &headers, "req_pg".into()).await;
+    assert_eq!(playground.client.as_deref(), Some("playground"));
+    assert_eq!(playground.project_id.as_deref(), Some(p.id.as_str()));
+
+    // A paired computer's device token is `runtime`, with no key or project.
+    let mut device_headers = axum::http::HeaderMap::new();
+    device_headers.insert("authorization", "Bearer allternit_runtime_abc".parse().unwrap());
+    let device_user = crate::auth::AuthenticatedUser {
+        user_id: "user_attr".into(),
+        token_id: "rt_1".into(),
+        permissions: vec!["inference".into()],
+    };
+    let device =
+        crate::routes::model_router::inference_attribution(&c.state.db, &device_user, &device_headers, "req_rt".into())
+            .await;
+    assert_eq!(device.client.as_deref(), Some("runtime"));
+    assert_eq!((device.project_id, device.key_id), (None, None));
 }
 
 // ---- accounts and isolation ------------------------------------------------

@@ -34,6 +34,9 @@ pub mod calls;
 pub mod channels;
 pub mod computers;
 pub mod console;
+pub mod console_governance;
+pub mod console_playground;
+pub mod console_pricing;
 pub mod conversations;
 pub mod error;
 pub mod events;
@@ -264,8 +267,13 @@ pub fn router_with_agency(state: &Arc<ApiState>, gate: Gate, agency: Arc<crate::
         .router
         .layer(axum::middleware::from_fn_with_state(ps.clone(), v1_middleware));
 
+    // Console route files, one per lane (console Waves 1–6): every one sits
+    // behind console_gate with the projects and keys routes.
     let console = console::routes()
         .merge(project_billing::routes())
+        .merge(console_playground::routes())
+        .merge(console_pricing::routes())
+        .merge(console_governance::routes())
         .layer(axum::middleware::from_fn_with_state(ps, console_gate));
 
     Router::new().merge(v1).merge(console)
@@ -327,7 +335,10 @@ async fn v1_middleware(
             let (headers, test) = (request.headers().clone(), test_principal(&request));
             console_v1_caller(db, headers, test, project_id).await
         }
-        _ => caller::authenticate(db, token).await,
+        _ => {
+            let client_ip = crate::services::api_keys::client_ip_from_headers(request.headers());
+            caller::authenticate_from(db, token, client_ip).await
+        }
     };
     let caller = match authenticated {
         Ok(c) => c,

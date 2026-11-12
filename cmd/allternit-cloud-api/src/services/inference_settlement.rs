@@ -44,6 +44,55 @@ use crate::{
 /// rebuilt and forwarded unchanged).
 const MAX_BUFFERED_JSON_BODY: usize = 32 * 1024 * 1024;
 
+/// Request header a client sends to name itself (`gizzi-code/<version>`).
+pub const CLIENT_HEADER: &str = "x-allternit-client";
+
+/// Who made a completion, written onto its `inference_usage` row
+/// (migrations_pg/121). Every field is optional: internal callers that know
+/// none of it pass `InferenceAttribution::default()`.
+#[derive(Debug, Clone, Default)]
+pub struct InferenceAttribution {
+    /// Platform project the key belongs to.
+    pub project_id: Option<String>,
+    /// `api_keys.id` of the key that authenticated (None for device tokens,
+    /// `allternit_*` tokens and sessions).
+    pub key_id: Option<String>,
+    /// `runtime`, `playground`, `gizzi-code` or `api` (see [`derive_client`]).
+    pub client: Option<String>,
+    /// The `x-request-id` the response carries.
+    pub request_id: Option<String>,
+    /// When the request started; settlement records the elapsed ms (for a
+    /// stream, until the stream ended).
+    pub started_at: Option<std::time::Instant>,
+}
+
+impl InferenceAttribution {
+    fn latency_ms(&self) -> Option<i64> {
+        self.started_at
+            .map(|started| i64::try_from(started.elapsed().as_millis()).unwrap_or(i64::MAX))
+    }
+}
+
+/// The `client` a completion is recorded under (console Decision D3): a paired
+/// computer's device token is `runtime`; a console playground key is
+/// `playground`; `X-Allternit-Client: gizzi-code/<ver>` is `gizzi-code`;
+/// anything else is `api`. Earlier rules win, so a header cannot relabel a
+/// device or playground call.
+pub fn derive_client(device_token: bool, key_kind: Option<&str>, client_header: Option<&str>) -> &'static str {
+    if device_token {
+        "runtime"
+    } else if key_kind == Some(crate::services::api_keys::KEY_KIND_PLAYGROUND) {
+        "playground"
+    } else if client_header
+        .map(|value| value.trim().to_ascii_lowercase().starts_with("gizzi-code"))
+        .unwrap_or(false)
+    {
+        "gizzi-code"
+    } else {
+        "api"
+    }
+}
+
 /// The user's credit balance if they have a `user_credits` row. The Some/None
 /// distinction matters: None means free-allowance user (deduction no-ops,
 /// pre-check enforces the monthly allowance), Some(<= 0) means a paying user
@@ -148,6 +197,7 @@ pub async fn settle_inference(
     prompt_tokens: u64,
     completion_tokens: u64,
     estimated: bool,
+    attribution: &InferenceAttribution,
 ) {
     let (cost_usd, wholesale_cost_usd) = inference_cost(prices, prompt_tokens, completion_tokens);
     let usage_id = Uuid::new_v4().to_string();
@@ -156,8 +206,9 @@ pub async fn settle_inference(
     if let Err(error) = sqlx::query(
         r#"
         INSERT INTO inference_usage (
-            id, user_id, model, prompt_tokens, completion_tokens, cost_usd, wholesale_cost_usd, estimated, pool_id
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            id, user_id, model, prompt_tokens, completion_tokens, cost_usd, wholesale_cost_usd, estimated, pool_id,
+            project_id, key_id, client, request_id, latency_ms
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
         "#,
     )
     .bind(&usage_id)
@@ -169,6 +220,11 @@ pub async fn settle_inference(
     .bind(wholesale_cost_usd)
     .bind(estimated)
     .bind(pool_id)
+    .bind(&attribution.project_id)
+    .bind(&attribution.key_id)
+    .bind(&attribution.client)
+    .bind(&attribution.request_id)
+    .bind(attribution.latency_ms())
     .execute(db)
     .await
     {
@@ -227,6 +283,7 @@ pub async fn meter_json_response(
     prices: &RetailPrices,
     prompt_chars: usize,
     response: Response,
+    attribution: &InferenceAttribution,
 ) -> Result<Response, ApiError> {
     let (parts, body) = response.into_parts();
     let bytes = axum::body::to_bytes(body, MAX_BUFFERED_JSON_BODY)
@@ -255,6 +312,7 @@ pub async fn meter_json_response(
             prompt_tokens,
             completion_tokens,
             estimated,
+            attribution,
         )
         .await;
     }
@@ -277,6 +335,8 @@ pub struct StreamSettlement {
     /// chars/4 estimate of the request prompt, used only when the upstream
     /// never reports usage.
     pub prompt_token_estimate: u64,
+    /// Project, key, client and request id for the usage row.
+    pub attribution: InferenceAttribution,
 }
 
 /// Wrap a streaming (SSE) response body in the metering adapter. Every chunk
@@ -336,6 +396,7 @@ impl UsageMeteringBody {
                 prompt_tokens,
                 completion_tokens,
                 estimated,
+                &settlement.attribution,
             )
             .await;
         });
@@ -490,7 +551,7 @@ mod tests {
             .connect(url)
             .await
             .unwrap();
-        // Inference usage schema (migrations_pg 007), minus the users FK.
+        // Inference usage schema (migrations_pg 007 + 009 + 121), minus the users FK.
         sqlx::query("DROP TABLE IF EXISTS inference_usage CASCADE")
             .execute(&pool)
             .await
@@ -507,7 +568,13 @@ mod tests {
                 wholesale_cost_usd DOUBLE PRECISION,
                 estimated BOOLEAN NOT NULL DEFAULT FALSE,
                 pool_id TEXT,
-                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                -- migrations_pg/121: who made each completion.
+                project_id TEXT,
+                key_id TEXT,
+                client TEXT,
+                request_id TEXT,
+                latency_ms BIGINT
             )
             "#,
         )
@@ -571,7 +638,7 @@ mod tests {
             .await
             .unwrap();
 
-        settle_inference(&pool, "user_1", "gpt-4o", Some("pool_test"), true, &test_prices(), 1_000_000, 500_000, false).await;
+        settle_inference(&pool, "user_1", "gpt-4o", Some("pool_test"), true, &test_prices(), 1_000_000, 500_000, false, &InferenceAttribution::default()).await;
 
         // (1M/1M)*0.15 + (0.5M/1M)*0.30 = 0.30 retail; wholesale = 0.10 + 0.10 = 0.20.
         let balance = credit_balance_row(&pool, "user_1").await.unwrap().unwrap();
@@ -626,7 +693,7 @@ mod tests {
             wholesale_prompt_per_1m: None,
             wholesale_completion_per_1m: None,
         };
-        settle_inference(&pool, "user_1", "gpt-4o", None, false, &zero_prices, 1_000_000, 500_000, false).await;
+        settle_inference(&pool, "user_1", "gpt-4o", None, false, &zero_prices, 1_000_000, 500_000, false, &InferenceAttribution::default()).await;
 
         let (cost, prompt, completion): (f64, i64, i64) = sqlx::query_as(
             "SELECT cost_usd, prompt_tokens, completion_tokens FROM inference_usage WHERE user_id = 'user_1'",
@@ -655,7 +722,7 @@ mod tests {
     async fn settle_inference_without_credits_row_records_only() {
         let pool = test_pool().await;
 
-        settle_inference(&pool, "user_plan_cap", "gpt-4o", None, true, &test_prices(), 1000, 500, true).await;
+        settle_inference(&pool, "user_plan_cap", "gpt-4o", None, true, &test_prices(), 1000, 500, true, &InferenceAttribution::default()).await;
 
         let rows: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM inference_usage WHERE user_id = 'user_plan_cap'",
@@ -689,13 +756,13 @@ mod tests {
     async fn free_allowance_boundary_under_at_over() {
         let pool = test_pool().await;
         // Under the default $2.00 allowance → allowed.
-        settle_inference(&pool, "user_free", "gpt-4o", None, true, &test_prices(), 6_000_000, 2_000_000, false).await; // $1.50
+        settle_inference(&pool, "user_free", "gpt-4o", None, true, &test_prices(), 6_000_000, 2_000_000, false, &InferenceAttribution::default()).await; // $1.50
         assert!(
             check_inference_allowed(&pool, "user_free", None).await.is_ok(),
             "$1.50 < $2.00 must pass"
         );
         // Exactly at the allowance → blocked (>=).
-        settle_inference(&pool, "user_free", "gpt-4o", None, true, &test_prices(), 2_000_000, 1_000_000, false).await; // +$0.60 → $2.10
+        settle_inference(&pool, "user_free", "gpt-4o", None, true, &test_prices(), 2_000_000, 1_000_000, false, &InferenceAttribution::default()).await; // +$0.60 → $2.10
         let error = check_inference_allowed(&pool, "user_free", None).await.unwrap_err();
         assert!(error.to_string().contains("Free inference allowance"), "{error}");
         // Over → still blocked.
@@ -744,7 +811,7 @@ mod tests {
             .body(axum::body::Body::from(body.clone()))
             .unwrap();
 
-        let response = meter_json_response(&pool, "user_1", "gpt-4o", None, true, &test_prices(), 400, response)
+        let response = meter_json_response(&pool, "user_1", "gpt-4o", None, true, &test_prices(), 400, response, &InferenceAttribution::default())
             .await
             .unwrap();
 
@@ -808,6 +875,13 @@ mod tests {
             charge_user: true,
             prices: test_prices(),
             prompt_token_estimate: 0,
+            attribution: InferenceAttribution {
+                project_id: Some("proj_stream".to_string()),
+                key_id: Some("ak_stream".to_string()),
+                client: Some("gizzi-code".to_string()),
+                request_id: Some("req_stream".to_string()),
+                started_at: Some(std::time::Instant::now()),
+            },
         };
         let body = axum::body::Body::new(UsageMeteringBody::new(inner, settlement));
 
@@ -827,5 +901,60 @@ mod tests {
         assert_eq!(rows, 1);
         let balance = credit_balance_row(&pool, "user_1").await.unwrap().unwrap();
         assert!((balance - 24.70).abs() < 1e-9, "stream settled exactly once: {balance}");
+        let (project, key, client, request, latency): (Option<String>, Option<String>, Option<String>, Option<String>, Option<i64>) =
+            sqlx::query_as("SELECT project_id, key_id, client, request_id, latency_ms FROM inference_usage")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(project.as_deref(), Some("proj_stream"));
+        assert_eq!(key.as_deref(), Some("ak_stream"));
+        assert_eq!(client.as_deref(), Some("gizzi-code"));
+        assert_eq!(request.as_deref(), Some("req_stream"), "the streamed row carries the response's request id");
+        assert!(latency.is_some_and(|ms| ms >= 0));
+    }
+
+    #[test]
+    fn client_is_derived_device_then_playground_then_header() {
+        assert_eq!(derive_client(true, Some("playground"), Some("gizzi-code/2.3.0")), "runtime");
+        assert_eq!(derive_client(false, Some("playground"), Some("gizzi-code/2.3.0")), "playground");
+        assert_eq!(derive_client(false, Some("standard"), Some("gizzi-code/2.3.0")), "gizzi-code");
+        assert_eq!(derive_client(false, None, Some(" Gizzi-Code/1.0")), "gizzi-code");
+        assert_eq!(derive_client(false, None, Some("curl/8.4")), "api");
+        assert_eq!(derive_client(false, Some("standard"), None), "api");
+    }
+
+    #[tokio::test]
+    async fn settled_row_carries_project_key_client_and_request_id() {
+        let pool = test_pool().await;
+        let attribution = InferenceAttribution {
+            project_id: Some("proj_1".to_string()),
+            key_id: Some("ak_1".to_string()),
+            client: Some("api".to_string()),
+            request_id: Some("req_1".to_string()),
+            started_at: Some(std::time::Instant::now()),
+        };
+        settle_inference(&pool, "user_1", "gpt-4o", None, true, &test_prices(), 10, 5, false, &attribution).await;
+        settle_inference(&pool, "user_2", "gpt-4o", None, true, &test_prices(), 10, 5, false, &InferenceAttribution::default()).await;
+
+        let row = |user: &'static str| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query_as::<_, (Option<String>, Option<String>, Option<String>, Option<String>, Option<i64>)>(
+                    "SELECT project_id, key_id, client, request_id, latency_ms FROM inference_usage WHERE user_id = $1",
+                )
+                .bind(user)
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+            }
+        };
+        let (project, key, client, request, latency) = row("user_1").await;
+        assert_eq!(project.as_deref(), Some("proj_1"));
+        assert_eq!(key.as_deref(), Some("ak_1"));
+        assert_eq!(client.as_deref(), Some("api"));
+        assert_eq!(request.as_deref(), Some("req_1"));
+        assert!(latency.is_some_and(|ms| ms >= 0));
+        // An internal caller with no attribution still records the usage, NULLs alongside.
+        assert_eq!(row("user_2").await, (None, None, None, None, None));
     }
 }
