@@ -3,13 +3,13 @@ import UIKit
 
 // MARK: - Share link sheet
 //
-// "Share link…" from the thread header or a reply's action bar. Creates (or
-// finds) the thread's share link, then offers Share, Update link (re-snapshot
+// "Share link…" from the thread header or a reply's action bar. Looks up (never
+// creates on open) the thread's share link; "Create link" publishes it. Then offers Share, Update link (re-snapshot
 // the chat now) and Stop sharing (confirmed).
 
 @MainActor
 final class ThreadShareModel: ObservableObject {
-    enum Phase: Equatable { case loading, ready(ThreadShareEntry), failed(ThreadShareError) }
+    enum Phase: Equatable { case loading, notShared, ready(ThreadShareEntry), failed(ThreadShareError) }
 
     @Published var phase: Phase = .loading
     @Published var busy = false
@@ -40,10 +40,19 @@ final class ThreadShareModel: ObservableObject {
             if let existing = try await client.lookup(sessionId: sessionId) {
                 phase = .ready(existing)
             } else {
-                let snap = snapshot()
-                if snap.isEmpty { phase = .failed(.empty); return }
-                phase = .ready(try await client.createOrUpdate(sessionId: sessionId, title: title, snapshot: snap))
+                // Opening the sheet never publishes anything: wait for "Create link".
+                phase = .notShared
             }
+        } catch { phase = .failed(fail(error)) }
+    }
+
+    func create() async {
+        guard let sessionId else { phase = .failed(.empty); return }
+        let snap = snapshot()
+        if snap.isEmpty { phase = .failed(.empty); return }
+        busy = true; defer { busy = false }
+        do {
+            phase = .ready(try await client.createOrUpdate(sessionId: sessionId, title: title, snapshot: snap))
         } catch { phase = .failed(fail(error)) }
     }
 
@@ -99,7 +108,18 @@ struct ThreadShareSheet: View {
     @ViewBuilder private var content: some View {
         switch model.phase {
         case .loading:
-            HStack(spacing: 10) { ProgressView(); Text("Creating link…").foregroundColor(Color("TextSecondary")) }
+            HStack(spacing: 10) { ProgressView(); Text("Checking…").foregroundColor(Color("TextSecondary")) }
+        case .notShared:
+            VStack(alignment: .leading, spacing: 14) {
+                Text("This chat isn't shared. Creating a link makes a public snapshot of the messages and the names of tools used. Anyone with the link can see it. New messages are not added until you update the link, and you can stop sharing at any time.")
+                    .font(.footnote)
+                    .foregroundColor(Color("TextSecondary"))
+                Button { Task { await model.create() } } label: {
+                    Label("Create link", systemImage: "link").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(model.busy)
+            }
         case .failed(let error):
             VStack(alignment: .leading, spacing: 12) {
                 Label(error.errorDescription ?? "Something went wrong.", systemImage: "exclamationmark.triangle")

@@ -19,6 +19,9 @@ struct MessageRow: View {
     var onRegenerate: () -> Void = {}
     var onShareLink: (() -> Void)? = nil
     var onEdit: () -> Void = {}
+    /// Earlier versions of this user message (it was edited and re-sent),
+    /// newest first; non-empty shows the "Edited" chip.
+    var editedVersions: [MessageBranch] = []
     /// The chat's agent session — the run tree's task list and the pending
     /// questions/permissions lookup. Nil before the first send.
     var sessionId: String? = nil
@@ -30,6 +33,7 @@ struct MessageRow: View {
 
     @State private var isThinkingExpanded = false
     @State private var showsRunTree = false
+    @State private var showsEditedVersions = false
     @ObservedObject private var asks = AgentAskStore.shared
     /// Settings → Capabilities → Artifacts gates the inline artifact cards;
     /// observed so toggling it applies to already-rendered rows.
@@ -99,6 +103,22 @@ struct MessageRow: View {
                     }
                 } else if !message.content.isEmpty || message.error == nil {
                     bubble
+                }
+
+                if message.role == "user", !editedVersions.isEmpty {
+                    Button { showsEditedVersions = true } label: {
+                        Text("Edited")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundColor(Color("TextSecondary"))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(Capsule().fill(Color("FillNeutral")))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Edited. Show earlier versions")
+                    .sheet(isPresented: $showsEditedVersions) {
+                        EditedVersionsSheet(branches: editedVersions)
+                    }
                 }
 
                 // What the agent waits on: questions answered in place, and
@@ -483,5 +503,53 @@ struct WorkingMark: View {
         if name.range(of: "search|grep|glob|find|fetch|browse|lookup", options: .regularExpression) != nil { return .searching }
         if name.range(of: "write|edit|create|replace|notebook", options: .regularExpression) != nil { return .writing }
         return .working
+    }
+}
+
+
+// MARK: - Earlier versions of an edited message
+
+/// Read-only list of what an edit replaced: the earlier user text and the
+/// reply it got, newest version first.
+struct EditedVersionsSheet: View {
+    let branches: [MessageBranch]
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    ForEach(Array(branches.enumerated()), id: \.element.id) { offset, branch in
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(branches.count - offset == 1 ? "Original" : "Version \(branches.count - offset)")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundColor(Color("TextSecondary"))
+                            ForEach(branch.messages) { message in
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(message.role == "user" ? "You" : "Reply")
+                                        .font(.system(size: 11, weight: .medium))
+                                        .foregroundColor(Color("TextSecondary"))
+                                    Text(message.role == "user" ? ToolOptionsStore.shared.strippedText(message.content) : message.content)
+                                        .font(.system(size: 15))
+                                        .foregroundColor(Color("TextPrimary"))
+                                        .textSelection(.enabled)
+                                }
+                                .padding(12)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color("FillNeutral")))
+                            }
+                        }
+                    }
+                }
+                .padding(20)
+            }
+            .background(Color("BgPrimary"))
+            .navigationTitle("Earlier versions")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) { Button("Done") { dismiss() } }
+            }
+        }
+        .presentationDetents([.medium, .large])
     }
 }

@@ -170,6 +170,7 @@
 		405530EA187B4E52A3EABC38 /* LoopsClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 404FAB71FF1D75CA3636CDF5 /* LoopsClient.swift */; };
 		40A95EB44065C555EF1809A3 /* BotModeStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 573BFD351AF9889BE569D9E8 /* BotModeStore.swift */; };
 		40C9CBF6F83731D28F941789 /* ClerkKitUI in Frameworks */ = {isa = PBXBuildFile; productRef = D278352A3F8948B9D661A9F1 /* ClerkKitUI */; };
+		4121CD4E66C00FEDC29BE409 /* EditHistoryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD7AEBB0FB7A8734D3B1DA5C /* EditHistoryTests.swift */; };
 		418691B5F7ECB7F3852B6D13 /* CoworkSessionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 351C0F604FE6B5B8BCB29BEC /* CoworkSessionStore.swift */; };
 		418DC2A020432D765E3701B8 /* LiveScreenPacket.swift in Sources */ = {isa = PBXBuildFile; fileRef = C34F590B9CDCC3ED66535CD9 /* LiveScreenPacket.swift */; };
 		427BD04C4035802EF79C5B2C /* AgentChatClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 541657CC1F861072387754C4 /* AgentChatClient.swift */; };
@@ -1309,6 +1310,7 @@
 		DC7E9C031AD14F62A5837B4B /* Conversation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Conversation.swift; sourceTree = "<group>"; };
 		DCCA48BADEE0C298C8F3F832 /* ModelStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelStore.swift; sourceTree = "<group>"; };
 		DD574C98131DFBECE1E91F54 /* CloudInstancesClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudInstancesClient.swift; sourceTree = "<group>"; };
+		DD7AEBB0FB7A8734D3B1DA5C /* EditHistoryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditHistoryTests.swift; sourceTree = "<group>"; };
 		DDBA97DC0D00F97CA30AFA29 /* MarketplaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarketplaceView.swift; sourceTree = "<group>"; };
 		DE35C8560B69A64D1A4CE0C3 /* ProjectDashboard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectDashboard.swift; sourceTree = "<group>"; };
 		DE3FDB9D543D1CC1557600CA /* AllternitShare.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = AllternitShare.entitlements; sourceTree = "<group>"; };
@@ -2050,6 +2052,7 @@
 			children = (
 				BE44ED582CA4DA23E6DADFBB /* DecideDelegateIntentRulesTests.swift */,
 				6D1CF76A3B4AF38B5A019D23 /* DeepLinkTests.swift */,
+				DD7AEBB0FB7A8734D3B1DA5C /* EditHistoryTests.swift */,
 				4D3988B903632B3ADBE8074A /* LiveActivityManagerTests.swift */,
 				FD8B49B37F98609F680978B5 /* MessageDraftCardTests.swift */,
 				B4FF0B496D38903A463A4B81 /* NativePaneRendererTests.swift */,
@@ -3226,6 +3229,7 @@
 			files = (
 				5C2093288994F432DB8B4804 /* DecideDelegateIntentRulesTests.swift in Sources */,
 				7A8A041B3D2EB92063AC4836 /* DeepLinkTests.swift in Sources */,
+				4121CD4E66C00FEDC29BE409 /* EditHistoryTests.swift in Sources */,
 				D3F8D1E73F813E13DAAFF1D2 /* LiveActivityManagerTests.swift in Sources */,
 				1A50A4EF874CED28EA26C293 /* MessageDraftCardTests.swift in Sources */,
 				1D30FE683EABE02400B9EE6C /* NativePaneRendererTests.swift in Sources */,

@@ -585,6 +585,7 @@ struct ChatContentView: View {
                 editingMessageId = message.id
                 inputText = message.content
             },
+            editedVersions: viewModel.editedVersions[message.id] ?? [],
             sessionId: viewModel.currentSessionId,
             onSendPrompt: { prompt in
                 viewModel.sendMessage(prompt, runtimeModelId: modelStore.selectedModelId, effort: modelStore.effortForSend)
