@@ -31,7 +31,7 @@ it prints the sha256 so you can record it.
 
 - RAM: about 3.5 to 4 GB resident (2.7 GB weights plus KV and snapshots); hard cap `MemoryMax=5G`.
 - CPU: `CPUQuota=400%`, `CPUAffinity=0-3`, `Nice=5`. Scoring uses 4 cores while a request runs, idle otherwise.
-- Thread count: the engine uses `cpu_count()-1`; `PYTHON_CPU_COUNT=5` makes it 4 on Python 3.13+.
+- Thread count: `ALLTERNIT_DECISIONS_THREADS=4` in the env file (the engine's default is `cpu_count()-1`).
   On older Python it asks for 7 threads inside the 4-core quota (works, a bit slower).
 
 ## Logs
