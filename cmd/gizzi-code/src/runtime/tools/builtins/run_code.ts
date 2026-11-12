@@ -18,6 +18,7 @@
  */
 import z from "zod/v4"
 import path from "path"
+import { fileURLToPath } from "url"
 import fs from "fs/promises"
 import { spawn, type ChildProcess } from "child_process"
 import { Tool } from "@/runtime/tools/builtins/tool"
@@ -221,11 +222,19 @@ function nameFromUrl(url: string): string | undefined {
 const UPLOAD_PATH = new RegExp(`^${UPLOAD_PATH_PREFIX.replace(/\//g, "\\/")}[A-Za-z0-9_-][A-Za-z0-9._-]*$`)
 
 /**
- * The bytes behind a file part's url. Only two sources are accepted: a data:
- * URL, or an allternit-api upload path (`/api/v1/uploads/<id>`, relative or
- * absolute on the API this gizzi talks to). Never file: URLs or arbitrary
+ * The bytes behind a file part's url. Accepted sources: a data: URL, an
+ * allternit-api upload path (`/api/v1/uploads/<id>`, relative or absolute on
+ * the API this gizzi talks to), or a local `file:` URL. Never arbitrary
  * http(s): the staging step runs outside the sandbox, so it must not become a
- * way to pull host files or fetch from anywhere.
+ * way to fetch from anywhere.
+ *
+ * Why `file:` is safe here: allternit-api's `attachment_file_parts`
+ * (gizzi_chat_stream.rs) drops `file:` parts from every remote client, so a
+ * `file:` part can only come from the local CLI user's own attachment
+ * (`gizzi run -f`, `@file` mentions). It must be an absolute path to a regular
+ * file (symlinks are followed, the target must be a regular file) within the
+ * per-file size cap. The bytes are copied into `in/` by the caller; the
+ * sandboxed script only ever sees `in/`.
  */
 export async function readAttachment(url: string, signal: AbortSignal): Promise<Buffer> {
   if (url.startsWith("data:")) {
@@ -237,9 +246,22 @@ export async function readAttachment(url: string, signal: AbortSignal): Promise<
   }
   const refuse = () =>
     new Error(
-      "run_code only stages attachments sent in the chat (data: URLs or allternit-api uploads at " +
-        `${UPLOAD_PATH_PREFIX}<id>); it does not read local file: paths or download from other URLs.`,
+      "run_code only stages attachments sent in the chat (data: URLs, local file: attachments or allternit-api " +
+        `uploads at ${UPLOAD_PATH_PREFIX}<id>); it does not download from other URLs.`,
     )
+  if (url.startsWith("file:")) {
+    let file: string
+    try {
+      file = fileURLToPath(url)
+    } catch {
+      throw refuse()
+    }
+    if (!path.isAbsolute(file)) throw refuse()
+    const stat = await fs.stat(file).catch(() => undefined)
+    if (!stat?.isFile()) throw new Error("the file: attachment is not a regular file")
+    if (stat.size > MAX_INPUT_BYTES) throw new Error(`the file: attachment exceeds ${MAX_INPUT_BYTES / 1024 / 1024} MB`)
+    return fs.readFile(file)
+  }
   const base = new URL(platformApiBase())
   let parsed: URL
   try {

@@ -292,11 +292,20 @@ describe("run_code attachments", () => {
   test("data: URLs are read", async () => {
     expect((await readAttachment("data:text/plain;base64,aGk=", signal)).toString()).toBe("hi")
   })
-  test("http(s), file: and non-upload API paths are refused", async () => {
+  test("file: attachments: a regular file is read, a directory is refused", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "rc-file-"))
+    const f = path.join(dir, "data.csv")
+    await fs.writeFile(f, CSV)
+    const { pathToFileURL } = await import("url")
+    expect((await readAttachment(pathToFileURL(f).href, signal)).toString()).toBe(CSV)
+    await expect(readAttachment(pathToFileURL(dir).href, signal)).rejects.toThrow(/not a regular file/)
+    await expect(readAttachment("file://remote-host/etc/passwd", signal)).rejects.toThrow()
+    await fs.rm(dir, { recursive: true, force: true })
+  })
+  test("http(s) and non-upload API paths are refused", async () => {
     for (const url of [
       "http://example.com/a.csv",
       "https://169.254.169.254/latest/meta-data",
-      "file:///etc/passwd",
       "/api/v1/sessions/x",
       "/api/v1/uploads/../sessions",
       "//evil.example/api/v1/uploads/abc",

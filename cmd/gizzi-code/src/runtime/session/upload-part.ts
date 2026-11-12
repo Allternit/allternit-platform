@@ -16,7 +16,7 @@ export function isRelativeUrl(url: string): boolean {
   return url.startsWith("/") && !url.startsWith("//")
 }
 
-export type ResolvedUpload = { ok: true; url: string } | { ok: false; reason: string }
+export type ResolvedUpload = { ok: true; url: string; reason?: undefined } | { ok: false; url?: undefined; reason: string }
 
 export async function resolveUploadUrl(url: string, mime: string, signal?: AbortSignal): Promise<ResolvedUpload> {
   if (!url.startsWith(UPLOAD_PATH_PREFIX) || url.includes("..")) {
