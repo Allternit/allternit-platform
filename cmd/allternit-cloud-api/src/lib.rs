@@ -657,6 +657,11 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
 
         CorsLayer::new()
             .allow_origin(allowed_origins)
+            .expose_headers([
+                axum::http::HeaderName::from_static("x-request-id"),
+                axum::http::HeaderName::from_static("x-next-cursor"),
+                axum::http::header::CONTENT_DISPOSITION,
+            ])
             .allow_methods([
                 Method::GET,
                 Method::POST,
