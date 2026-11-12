@@ -4,7 +4,7 @@ import { MemoryDrive } from "@/runtime/memory/drive/drive"
 import { DrivePlatform } from "@/runtime/memory/drive/platform"
 import { applyMemdirImport, legacyMemdirRoots, planMemdirImport } from "@/runtime/memory/drive/import"
 import { formatDreams, formatFileView, formatHistory, formatOverview, formatSearch, syncLine } from "@/runtime/memory/drive/report"
-import { PlatformApiError, PlatformSignedOutError } from "@/runtime/bots/platform-api"
+import { PlatformApiError, PlatformSignedOutError, platformRequest } from "@/runtime/bots/platform-api"
 
 /**
  * `gizzi memory` — the user's Memory Drive from the terminal.
@@ -18,12 +18,22 @@ import { PlatformApiError, PlatformSignedOutError } from "@/runtime/bots/platfor
  *   gizzi memory import --apply    run it (one commit, idempotent)
  *   gizzi memory dreams            server Dream history
  *   gizzi memory undo-dream <id>   revert one Dream (later edits are kept)
+ *   gizzi memory list              twin memory + facts, newest first (--source, --json)
+ *   gizzi memory edit <id> "text"  edit one twin memory or fact
+ *   gizzi memory forget <id>       delete one twin memory or fact
  */
+
+function isConnectionError(error: unknown): boolean {
+  const text = error instanceof Error ? `${error.message} ${(error as any).code ?? ""} ${(error as any).cause?.code ?? ""}` : ""
+  return /ECONNREFUSED|ConnectionRefused|Unable to connect|fetch failed|ENOTFOUND|TimeoutError|timed out/i.test(text)
+}
 
 function fail(error: unknown): never {
   const message =
     error instanceof PlatformSignedOutError
       ? "Not signed in to Allternit. Run `gizzi login` first."
+      : isConnectionError(error)
+        ? "Cannot reach the Allternit runtime. Start Allternit Desktop (or the local allternit-api) and try again."
       : error instanceof PlatformApiError
         ? error.message
         : error instanceof Error
@@ -257,6 +267,154 @@ const AnswerCommand = cmd({
   },
 })
 
+// --- runtime memory: twin memory + facts (local allternit-api) ---
+
+type MemorySource = "twin" | "facts"
+interface MemoryRow {
+  id: string
+  source: MemorySource
+  text: string
+  kind?: string
+  createdAt: string
+}
+
+const LOOKUP_MS = 8_000
+
+async function loadTwin(): Promise<MemoryRow[]> {
+  const res = await platformRequest<{ memory?: any[] }>("GET", "/v1/twin/memory", undefined, { timeoutMs: LOOKUP_MS })
+  return (res.memory ?? []).map((m) => ({
+    id: String(m.id),
+    source: "twin" as const,
+    text: [m.subject, m.content].filter(Boolean).join(": "),
+    kind: m.kind,
+    createdAt: String(m.updatedAt ?? m.createdAt ?? ""),
+  }))
+}
+
+async function loadFacts(): Promise<MemoryRow[]> {
+  const res = await platformRequest<{ facts?: any[] }>("GET", "/memory/v2/facts?limit=500", undefined, { timeoutMs: LOOKUP_MS })
+  return (res.facts ?? []).map((f) => ({
+    id: String(f.id),
+    source: "facts" as const,
+    text: String(f.fact ?? ""),
+    kind: f.memory_type,
+    createdAt: String(f.valid_from ?? ""),
+  }))
+}
+
+const sourceOption = (yargs: any) =>
+  yargs.option("source", { type: "string", choices: ["twin", "facts"], describe: "twin memory or facts (default: detect from the id)" })
+
+/** Run the twin call, then the facts call, unless --source pins one. A 404 means "not in that store". */
+async function bySource<T>(
+  source: string | undefined,
+  twin: () => Promise<T>,
+  facts: () => Promise<T>,
+  id: string,
+): Promise<T> {
+  if (source === "twin") return twin()
+  if (source === "facts") return facts()
+  try {
+    return await twin()
+  } catch (error) {
+    if (!(error instanceof PlatformApiError) || (error.status !== 404 && error.status !== 400)) throw error
+  }
+  try {
+    return await facts()
+  } catch (error) {
+    if (error instanceof PlatformApiError && error.status === 404) throw new Error(`No memory with id ${id} (checked twin memory and facts).`)
+    throw error
+  }
+}
+
+const ListCommand = cmd({
+  command: "list",
+  describe: "list twin memory and facts from the runtime, newest first",
+  builder: (yargs) => sourceOption(yargs).option("json", { type: "boolean", describe: "print JSON" }),
+  handler: async (args) => {
+    try {
+      const source = args.source as string | undefined
+      const rows = [...(source === "facts" ? [] : await loadTwin()), ...(source === "twin" ? [] : await loadFacts())]
+      rows.sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      if (args.json) {
+        UI.println(JSON.stringify(rows, null, 2))
+        return
+      }
+      if (rows.length === 0) {
+        UI.println("No memories.")
+        return
+      }
+      const idWidth = Math.min(36, Math.max(2, ...rows.map((r) => r.id.length)))
+      UI.println(`${"ID".padEnd(idWidth)}  ${"SOURCE".padEnd(6)}  TEXT`)
+      for (const r of rows) {
+        const flat = r.text.replace(/\s+/g, " ").trim()
+        UI.println(`${r.id.padEnd(idWidth)}  ${r.source.padEnd(6)}  ${flat.length > 80 ? flat.slice(0, 79) + "…" : flat}`)
+      }
+    } catch (error) {
+      fail(error)
+    }
+  },
+})
+
+const EditCommand = cmd({
+  command: "edit <id> <text>",
+  describe: "replace the text of one twin memory or fact",
+  builder: (yargs) =>
+    sourceOption(yargs)
+      .positional("id", { type: "string", demandOption: true })
+      .positional("text", { type: "string", demandOption: true }),
+  handler: async (args) => {
+    const id = args.id as string
+    const text = args.text as string
+    if (!text.trim()) fail(new Error("Text cannot be empty."))
+    try {
+      const enc = encodeURIComponent(id)
+      const done = await bySource(
+        args.source as string | undefined,
+        async () => {
+          await platformRequest("PATCH", `/v1/twin/memory/${enc}`, { content: text }, { timeoutMs: LOOKUP_MS })
+          return `Updated twin memory ${id}.`
+        },
+        async () => {
+          const res = await platformRequest<{ id?: string }>("PATCH", `/memory/v2/facts/${enc}`, { fact: text }, { timeoutMs: LOOKUP_MS })
+          return `Updated fact ${id}. New id: ${res?.id ?? "(unknown)"}`
+        },
+        id,
+      )
+      UI.println(done)
+    } catch (error) {
+      fail(error)
+    }
+  },
+})
+
+const ForgetCommand = cmd({
+  command: "forget <id>",
+  describe: "delete one twin memory or fact",
+  builder: (yargs) => sourceOption(yargs).positional("id", { type: "string", demandOption: true }),
+  handler: async (args) => {
+    const id = args.id as string
+    try {
+      const enc = encodeURIComponent(id)
+      const done = await bySource(
+        args.source as string | undefined,
+        async () => {
+          await platformRequest("DELETE", `/v1/twin/memory/${enc}`, undefined, { timeoutMs: LOOKUP_MS })
+          return `Forgot twin memory ${id}.`
+        },
+        async () => {
+          await platformRequest("DELETE", `/memory/v2/facts/${enc}`, undefined, { timeoutMs: LOOKUP_MS })
+          return `Forgot fact ${id}.`
+        },
+        id,
+      )
+      UI.println(done)
+    } catch (error) {
+      fail(error)
+    }
+  },
+})
+
 export const MemoryCommand = cmd({
   command: "memory",
   describe: "your Memory Drive — status, sync, import, Dreams",
@@ -272,6 +430,9 @@ export const MemoryCommand = cmd({
       .command(AskCommand)
       .command(AnswerCommand)
       .command(DreamsCommand)
-      .command(UndoDreamCommand),
+      .command(UndoDreamCommand)
+      .command(ListCommand)
+      .command(EditCommand)
+      .command(ForgetCommand),
   handler: async () => {},
 })
