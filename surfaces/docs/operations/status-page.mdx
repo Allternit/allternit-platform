@@ -1,0 +1,81 @@
+---
+title: "Status page"
+description: "How status.allternit.com works: Worker, standby vantage, D1, alerts, incidents and runbooks"
+---
+
+**Status: BUILT, pending deploy.** The Worker lives in `services/status/`. Deploying it, creating the D1 database, setting secrets and installing the standby probe are separate approvals. See [status labels](/architecture#status-labels).
+
+Public view: [System status](/guides/system-status). Contract: `services/status/contract/` (`status.schema.json`, `types.ts`, `fixtures.json`, `targets.json`).
+
+## Architecture
+
+- **One Cloudflare Worker** serves the page, the JSON endpoints, the Atom feed, the admin API and the cron. It runs at `status.allternit.com`.
+- **Cron, every minute.** Each tick probes the targets assigned to the `cloudflare` vantage (at most 30 probes) and writes one D1 batch. At 00:05 UTC the same handler rolls the day up.
+- **Standby vantage.** A systemd timer on the `allternit-standby` host probes the targets assigned to it each minute and posts the results to `POST /api/v1/ingest`, signed with `X-Allternit-Signature: sha256=<hex>` over the raw body (HMAC, shared secret `INGEST_HMAC_SECRET`; the Worker rejects a `ts` more than 5 minutes off). The standby also watches the Worker: if `last_checked_at` is more than 5 minutes old on 3 runs, it emails the alert address directly through local Postfix, so a dead Worker still alerts.
+- **D1 database `allternit-status`.** Tables: `ticks` (per vantage per minute, JSON results, kept 14 days), `daily` (per component per day, 400 days), `component_state`, `incidents`, `incident_updates` (kept forever).
+
+## Targets
+
+`services/status/contract/targets.json` is the one table of components and checks. The Worker and the standby both read it, and `GET /api/v1/targets.json` serves it.
+
+To add a target:
+
+1. Add a component if needed (`id`, `name`, `group`, `critical`; non-critical components may set `max_status: degraded`).
+2. Add a target with `component_id`, `url`, `expect_status`, an optional `body_marker`, `role` (`page`, `proxy`, `live`, `ready`), `vantages` and `timeout_ms`.
+3. Check it validates against `status.schema.json` and deploy the Worker; the standby picks the table up on its next run.
+
+Use a body marker that a broken proxy page would not contain.
+
+## State rules
+
+- **Down:** a critical target fails 3 ticks at Cloudflare and in the last 2 standby reports. If the standby report is more than 3 minutes old, the rule is 5 Cloudflare ticks instead.
+- **Degraded:** one vantage fails 3 ticks, a non-critical target fails, a ready check fails while the live check passes, or median latency is over 3 seconds for 5 ticks.
+- **Recovered:** 3 passing ticks from both vantages.
+
+## Alerting
+
+Email to the alert address on a change to Down, on recovery, and a reminder every 60 minutes while Down. Alerts are on from the first minute.
+
+## Incidents
+
+- **Automatic incidents** use fixed wording and are controlled by the `AUTO_INCIDENTS` variable. It stays `off` for the first 24 hours (soak) while alerts run, then is switched `on`. Any manual edit sets `auto=false` on that incident; automation then only appends the Resolved update.
+- **Admin API,** bearer token: `POST /api/admin/incidents` to open, `PATCH /api/admin/incidents/:id` to update, resolve or set maintenance. Constant-time token check, rate limit, audit rows.
+- **Script:** `services/status/scripts/incident.mjs` wraps the same API. Run it with no arguments for its usage text. It reads the admin token from `STATUS_ADMIN_TOKEN` and the site from `STATUS_URL` (default `https://status.allternit.com`), never from a flag. The token is the Worker's `ADMIN_TOKEN` secret.
+- The `/admin` page does the same from a browser.
+
+## Health endpoint
+
+`GET /api/health` returns `{status, last_checked_at, age_seconds}`. `status` is `ok` when the last check is 300 seconds old or less, otherwise `stale` with HTTP 503. Uptime tools can watch it.
+
+## Runbooks
+
+### The status page says Down
+
+1. Open the component's latest tick in the admin page and see which target and vantage failed.
+2. Check the target yourself: `curl -i` the target URL and compare with its `expect_status` and `body_marker`.
+3. If only one vantage fails, suspect that vantage (network, the standby host) before the service.
+4. If the service is really down, follow its own recovery doc ([Recovery](/operations/recovery)). Add a manual incident update with what we know.
+5. If the check is wrong (a changed page title or marker), fix `targets.json`.
+
+### The Worker itself is down
+
+The standby emails the alert address after 3 stale runs. Then:
+
+1. `curl -i https://status.allternit.com/api/health`. A 503 `stale` means cron stopped; no response means the Worker or route is down.
+2. Check the Worker in the Cloudflare dashboard (Workers, Logs) and the cron trigger.
+3. Redeploy the last good version with Wrangler. Deploys need approval.
+4. Until it is back, the standby email and `gizzi status --services` (which will report unreachable) are the signals.
+
+A full Cloudflare outage also takes the page down; the standby email still fires.
+
+### Rotating secrets
+
+1. Generate a new value.
+2. Set it on the Worker with `wrangler secret put` (`INGEST_HMAC_SECRET` or the admin token).
+3. For `INGEST_HMAC_SECRET`, write the same value to `/etc/allternit-status/ingest.key` on `allternit-standby` (one line, mode 600) in the same sitting; ingest is rejected between the two steps.
+4. Confirm `last_checked_at` keeps moving and the next admin call works.
+
+## Related
+
+- [gizzi status](/cli/status)
+- [Recovery](/operations/recovery)

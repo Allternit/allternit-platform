@@ -17,7 +17,7 @@ const FOOTER_LINKS = [
     links: [
       { label: "Docs", to: "/docs" },
       { label: "API reference", href: "https://docs.allternit.com/api/chat-completions" },
-      { label: "API status", href: "https://status.allternit.com" },
+      { label: "System status", href: "https://status.allternit.com" },
       { label: "Changelog", href: "https://allternit.com/changelog" },
     ],
   },
@@ -93,7 +93,7 @@ export function PublicPageShell({ children }: { children: React.ReactNode }) {
             rel="noopener noreferrer"
             className="transition-colors hover:text-[var(--text-primary)]"
           >
-            Status
+            System status
           </a>
         </div>
       </footer>

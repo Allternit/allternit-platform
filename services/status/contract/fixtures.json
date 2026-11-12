@@ -1,0 +1,593 @@
+{
+  "operational": {
+    "status": {
+      "schema": "allternit.status/v1",
+      "last_checked_at": "2026-11-12T08:00:00Z",
+      "overall": "operational",
+      "components": [
+        {
+          "id": "website",
+          "name": "Website",
+          "status": "operational",
+          "uptime_90d": 0.9995,
+          "last_change": null,
+          "critical": true
+        },
+        {
+          "id": "app",
+          "name": "Allternit app",
+          "status": "operational",
+          "uptime_90d": 0.9995,
+          "last_change": null,
+          "critical": true
+        },
+        {
+          "id": "mobile",
+          "name": "Mobile web app",
+          "status": "operational",
+          "uptime_90d": 0.9995,
+          "last_change": null,
+          "critical": true
+        },
+        {
+          "id": "signin",
+          "name": "Sign-in",
+          "status": "operational",
+          "uptime_90d": 0.9995,
+          "last_change": null,
+          "critical": true
+        },
+        {
+          "id": "api",
+          "name": "API",
+          "status": "operational",
+          "uptime_90d": 0.9995,
+          "last_change": null,
+          "critical": true
+        },
+        {
+          "id": "cloud-computers",
+          "name": "Cloud computers",
+          "status": "operational",
+          "uptime_90d": 0.9995,
+          "last_change": null,
+          "critical": true
+        },
+        {
+          "id": "phone-push",
+          "name": "Phone Link and push",
+          "status": "operational",
+          "uptime_90d": 0.9995,
+          "last_change": null,
+          "critical": true
+        },
+        {
+          "id": "mail",
+          "name": "Mail",
+          "status": "operational",
+          "uptime_90d": 0.9995,
+          "last_change": null,
+          "critical": true
+        },
+        {
+          "id": "console",
+          "name": "Console",
+          "status": "operational",
+          "uptime_90d": 0.9995,
+          "last_change": null,
+          "critical": true
+        },
+        {
+          "id": "docs",
+          "name": "Docs",
+          "status": "operational",
+          "uptime_90d": 0.9995,
+          "last_change": null,
+          "critical": true
+        },
+        {
+          "id": "services",
+          "name": "Services and booking",
+          "status": "operational",
+          "uptime_90d": 0.9995,
+          "last_change": null,
+          "critical": true
+        },
+        {
+          "id": "downloads",
+          "name": "Downloads and updates",
+          "status": "operational",
+          "uptime_90d": 0.9995,
+          "last_change": null,
+          "critical": true
+        },
+        {
+          "id": "other",
+          "name": "Other sites",
+          "status": "operational",
+          "uptime_90d": 0.9995,
+          "last_change": null,
+          "critical": false
+        }
+      ],
+      "incidents": []
+    },
+    "history": {
+      "schema": "allternit.history/v1",
+      "days": 90,
+      "generated_at": "2026-11-12T08:00:00Z",
+      "components": [
+        {
+          "id": "website",
+          "days": [
+            {
+              "date": "2026-11-10",
+              "status": "operational",
+              "uptime": 1.0
+            },
+            {
+              "date": "2026-11-11",
+              "status": "operational",
+              "uptime": 1.0
+            },
+            {
+              "date": "2026-11-09",
+              "status": null,
+              "uptime": null
+            }
+          ]
+        },
+        {
+          "id": "app",
+          "days": [
+            {
+              "date": "2026-11-10",
+              "status": "operational",
+              "uptime": 1.0
+            },
+            {
+              "date": "2026-11-11",
+              "status": "operational",
+              "uptime": 1.0
+            },
+            {
+              "date": "2026-11-09",
+              "status": null,
+              "uptime": null
+            }
+          ]
+        }
+      ]
+    },
+    "incidents": {
+      "schema": "allternit.incidents/v1",
+      "incidents": []
+    }
+  },
+  "degraded": {
+    "status": {
+      "schema": "allternit.status/v1",
+      "last_checked_at": "2026-11-12T08:00:00Z",
+      "overall": "degraded",
+      "components": [
+        {
+          "id": "website",
+          "name": "Website",
+          "status": "operational",
+          "uptime_90d": 0.9995,
+          "last_change": null,
+          "critical": true
+        },
+        {
+          "id": "app",
+          "name": "Allternit app",
+          "status": "operational",
+          "uptime_90d": 0.9995,
+          "last_change": null,
+          "critical": true
+        },
+        {
+          "id": "mobile",
+          "name": "Mobile web app",
+          "status": "operational",
+          "uptime_90d": 0.9995,
+          "last_change": null,
+          "critical": true
+        },
+        {
+          "id": "signin",
+          "name": "Sign-in",
+          "status": "operational",
+          "uptime_90d": 0.9995,
+          "last_change": null,
+          "critical": true
+        },
+        {
+          "id": "api",
+          "name": "API",
+          "status": "degraded",
+          "uptime_90d": 0.998,
+          "last_change": "2026-11-12T07:30:00Z",
+          "critical": true
+        },
+        {
+          "id": "cloud-computers",
+          "name": "Cloud computers",
+          "status": "operational",
+          "uptime_90d": 0.9995,
+          "last_change": null,
+          "critical": true
+        },
+        {
+          "id": "phone-push",
+          "name": "Phone Link and push",
+          "status": "operational",
+          "uptime_90d": 0.9995,
+          "last_change": null,
+          "critical": true
+        },
+        {
+          "id": "mail",
+          "name": "Mail",
+          "status": "operational",
+          "uptime_90d": 0.9995,
+          "last_change": null,
+          "critical": true
+        },
+        {
+          "id": "console",
+          "name": "Console",
+          "status": "operational",
+          "uptime_90d": 0.9995,
+          "last_change": null,
+          "critical": true
+        },
+        {
+          "id": "docs",
+          "name": "Docs",
+          "status": "operational",
+          "uptime_90d": 0.9995,
+          "last_change": null,
+          "critical": true
+        },
+        {
+          "id": "services",
+          "name": "Services and booking",
+          "status": "operational",
+          "uptime_90d": 0.9995,
+          "last_change": null,
+          "critical": true
+        },
+        {
+          "id": "downloads",
+          "name": "Downloads and updates",
+          "status": "operational",
+          "uptime_90d": 0.9995,
+          "last_change": null,
+          "critical": true
+        },
+        {
+          "id": "other",
+          "name": "Other sites",
+          "status": "operational",
+          "uptime_90d": 0.9995,
+          "last_change": null,
+          "critical": false
+        }
+      ],
+      "incidents": [
+        {
+          "id": "inc-20261112-01",
+          "title": "Elevated errors on the API",
+          "state": "open",
+          "impact": "degraded",
+          "component_ids": [
+            "api"
+          ],
+          "started_at": "2026-11-12T07:30:00Z",
+          "resolved_at": null,
+          "auto": true,
+          "updates": [
+            {
+              "id": 1,
+              "ts": "2026-11-12T07:30:00Z",
+              "status": "investigating",
+              "body": "Our checks show the API is slower than normal. We are looking into it."
+            },
+            {
+              "id": 2,
+              "ts": "2026-11-12T07:50:00Z",
+              "status": "monitoring",
+              "body": "The API is responding normally again. We are watching it."
+            }
+          ]
+        }
+      ]
+    },
+    "history": {
+      "schema": "allternit.history/v1",
+      "days": 90,
+      "generated_at": "2026-11-12T08:00:00Z",
+      "components": [
+        {
+          "id": "website",
+          "days": [
+            {
+              "date": "2026-11-10",
+              "status": "operational",
+              "uptime": 1.0
+            },
+            {
+              "date": "2026-11-11",
+              "status": "operational",
+              "uptime": 1.0
+            },
+            {
+              "date": "2026-11-09",
+              "status": null,
+              "uptime": null
+            }
+          ]
+        },
+        {
+          "id": "app",
+          "days": [
+            {
+              "date": "2026-11-10",
+              "status": "operational",
+              "uptime": 1.0
+            },
+            {
+              "date": "2026-11-11",
+              "status": "operational",
+              "uptime": 1.0
+            },
+            {
+              "date": "2026-11-09",
+              "status": null,
+              "uptime": null
+            }
+          ]
+        }
+      ]
+    },
+    "incidents": {
+      "schema": "allternit.incidents/v1",
+      "incidents": [
+        {
+          "id": "inc-20261112-01",
+          "title": "Elevated errors on the API",
+          "state": "open",
+          "impact": "degraded",
+          "component_ids": [
+            "api"
+          ],
+          "started_at": "2026-11-12T07:30:00Z",
+          "resolved_at": null,
+          "auto": true,
+          "updates": [
+            {
+              "id": 1,
+              "ts": "2026-11-12T07:30:00Z",
+              "status": "investigating",
+              "body": "Our checks show the API is slower than normal. We are looking into it."
+            },
+            {
+              "id": 2,
+              "ts": "2026-11-12T07:50:00Z",
+              "status": "monitoring",
+              "body": "The API is responding normally again. We are watching it."
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "down": {
+    "status": {
+      "schema": "allternit.status/v1",
+      "last_checked_at": "2026-11-12T08:00:00Z",
+      "overall": "down",
+      "components": [
+        {
+          "id": "website",
+          "name": "Website",
+          "status": "operational",
+          "uptime_90d": 0.9995,
+          "last_change": null,
+          "critical": true
+        },
+        {
+          "id": "app",
+          "name": "Allternit app",
+          "status": "operational",
+          "uptime_90d": 0.9995,
+          "last_change": null,
+          "critical": true
+        },
+        {
+          "id": "mobile",
+          "name": "Mobile web app",
+          "status": "operational",
+          "uptime_90d": 0.9995,
+          "last_change": null,
+          "critical": true
+        },
+        {
+          "id": "signin",
+          "name": "Sign-in",
+          "status": "operational",
+          "uptime_90d": 0.9995,
+          "last_change": null,
+          "critical": true
+        },
+        {
+          "id": "api",
+          "name": "API",
+          "status": "down",
+          "uptime_90d": 0.99,
+          "last_change": "2026-11-12T07:40:00Z",
+          "critical": true
+        },
+        {
+          "id": "cloud-computers",
+          "name": "Cloud computers",
+          "status": "operational",
+          "uptime_90d": 0.9995,
+          "last_change": null,
+          "critical": true
+        },
+        {
+          "id": "phone-push",
+          "name": "Phone Link and push",
+          "status": "operational",
+          "uptime_90d": 0.9995,
+          "last_change": null,
+          "critical": true
+        },
+        {
+          "id": "mail",
+          "name": "Mail",
+          "status": "operational",
+          "uptime_90d": 0.9995,
+          "last_change": null,
+          "critical": true
+        },
+        {
+          "id": "console",
+          "name": "Console",
+          "status": "operational",
+          "uptime_90d": 0.9995,
+          "last_change": null,
+          "critical": true
+        },
+        {
+          "id": "docs",
+          "name": "Docs",
+          "status": "operational",
+          "uptime_90d": 0.9995,
+          "last_change": null,
+          "critical": true
+        },
+        {
+          "id": "services",
+          "name": "Services and booking",
+          "status": "operational",
+          "uptime_90d": 0.9995,
+          "last_change": null,
+          "critical": true
+        },
+        {
+          "id": "downloads",
+          "name": "Downloads and updates",
+          "status": "operational",
+          "uptime_90d": 0.9995,
+          "last_change": null,
+          "critical": true
+        },
+        {
+          "id": "other",
+          "name": "Other sites",
+          "status": "operational",
+          "uptime_90d": 0.9995,
+          "last_change": null,
+          "critical": false
+        }
+      ],
+      "incidents": [
+        {
+          "id": "inc-20261112-02",
+          "title": "API is not responding",
+          "state": "open",
+          "impact": "down",
+          "component_ids": [
+            "api"
+          ],
+          "started_at": "2026-11-12T07:40:00Z",
+          "resolved_at": null,
+          "auto": true,
+          "updates": [
+            {
+              "id": 1,
+              "ts": "2026-11-12T07:30:00Z",
+              "status": "investigating",
+              "body": "Our checks show the API is slower than normal. We are looking into it."
+            }
+          ]
+        }
+      ]
+    },
+    "history": {
+      "schema": "allternit.history/v1",
+      "days": 90,
+      "generated_at": "2026-11-12T08:00:00Z",
+      "components": [
+        {
+          "id": "website",
+          "days": [
+            {
+              "date": "2026-11-10",
+              "status": "operational",
+              "uptime": 1.0
+            },
+            {
+              "date": "2026-11-11",
+              "status": "operational",
+              "uptime": 1.0
+            },
+            {
+              "date": "2026-11-09",
+              "status": null,
+              "uptime": null
+            }
+          ]
+        },
+        {
+          "id": "app",
+          "days": [
+            {
+              "date": "2026-11-10",
+              "status": "operational",
+              "uptime": 1.0
+            },
+            {
+              "date": "2026-11-11",
+              "status": "operational",
+              "uptime": 1.0
+            },
+            {
+              "date": "2026-11-09",
+              "status": null,
+              "uptime": null
+            }
+          ]
+        }
+      ]
+    },
+    "incidents": {
+      "schema": "allternit.incidents/v1",
+      "incidents": [
+        {
+          "id": "inc-20261112-02",
+          "title": "API is not responding",
+          "state": "open",
+          "impact": "down",
+          "component_ids": [
+            "api"
+          ],
+          "started_at": "2026-11-12T07:40:00Z",
+          "resolved_at": null,
+          "auto": true,
+          "updates": [
+            {
+              "id": 1,
+              "ts": "2026-11-12T07:30:00Z",
+              "status": "investigating",
+              "body": "Our checks show the API is slower than normal. We are looking into it."
+            }
+          ]
+        }
+      ]
+    }
+  }
+}
