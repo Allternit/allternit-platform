@@ -5,6 +5,12 @@ description: 'Changelog for the Allternit platform, SDKs, and Gizzi Code CLI'
 
 # Release Notes
 
+## 2026-11-12 — Platform API: Decisions, Responses, Messages, Approvals; SMS moves to /v1/texts
+
+- **New:** [Decisions](/api/platform/decisions), [Responses](/api/platform/responses), an Anthropic-shaped [Messages](/api/platform/messages) call, [Approvals](/api/platform/approvals), and [Conversations](/api/platform/conversations) with items.
+- **Breaking (private beta):** SMS moved from `/v1/messages` to `/v1/texts`, and the object is now `text`. `POST /v1/messages` is now the model call. Webhook events `message.received` and `message.status` keep their names.
+- **MCP:** `decide` and `respond` tools for project keys. New key scope `decisions`.
+
 ## 2026-11-12 — Console fixes and project rate limits
 
 - **Clear states instead of errors:** pages that have no backend on Allternit Cloud now say so, or are hidden from the menu. They no longer show failed requests.

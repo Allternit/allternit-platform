@@ -1,4 +1,4 @@
--- 123_saved_prompts.sql
+-- 127_saved_prompts.sql
 --
 -- Console playground saved prompts (Waves 1–6). A prompt belongs to one
 -- Platform project; body holds the playground state (messages, model,

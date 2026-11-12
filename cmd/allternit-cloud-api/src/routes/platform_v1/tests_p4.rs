@@ -88,7 +88,10 @@ async fn ctx(apps: ChannelApps) -> Ctx {
         include_str!("../../../migrations_pg/076_platform_twin.sql"),
         include_str!("../../../migrations_pg/080_platform_billing.sql"),
         include_str!("../../../migrations_pg/084_platform_payment_methods.sql"),
-        include_str!("../../../migrations_pg/122_key_governance.sql"),
+        // The twin approve/deny aliases resolve through `platform_approvals`.
+        include_str!("../../../migrations_pg/121_platform_items.sql"),
+        include_str!("../../../migrations_pg/122_platform_approvals.sql"),
+        include_str!("../../../migrations_pg/126_key_governance.sql"),
     ] {
         sqlx::raw_sql(&sql.replace("public.", "")).execute(&state.db).await.expect("migration applies");
     }
@@ -325,7 +328,7 @@ async fn twin_reads_are_relayed_per_account_and_never_cross_accounts() {
     assert_eq!((s, e["error"]["code"].as_str()), (StatusCode::BAD_REQUEST, Some("invalid_status")));
 
     let (s, ap) = call(&c.app, "POST", &format!("/v1/accounts/{a}/approvals/gap_1/approve"), &key, None).await;
-    assert_eq!((s, ap["status"].as_str()), (StatusCode::OK, Some("approved")));
+    assert_eq!((s, ap["status"].as_str()), (StatusCode::OK, Some("approved")), "{ap}");
     let decide = c.host.calls().pop().unwrap();
     assert_eq!(decide.1, format!("/api/v1/platform/accounts/{a}/approvals/gap_1/decide"));
     assert!(decide.2["actor"].as_str().unwrap().starts_with("api_key:"), "the key is the actor of record");

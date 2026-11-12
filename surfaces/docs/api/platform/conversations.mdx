@@ -1,26 +1,33 @@
 ---
 title: 'Conversations'
-description: 'Talk to a hosted agent over REST, with the reply returned whole or streamed.'
+description: 'Durable threads of items, with or without a hosted agent.'
 ---
 
-A conversation is a chat between your app and one [agent](/api/platform/agents). Scope `agents`. A key bound to an account only sees that account's conversations.
+A conversation holds an ordered list of [items](/api/platform/responses). Scope `agents`. A key bound to an account only sees that account's conversations.
 
 | Method | Path | |
 |---|---|---|
-| `POST` | `/v1/agents/{id}/conversations` | Start one: `{ "metadata"? }` |
-| `GET` | `/v1/agents/{id}/conversations` | The agent's conversations, oldest first, without messages (`?limit=&after=` pages) |
-| `GET` | `/v1/conversations/{id}` | The conversation with its latest 200 messages, oldest first |
+| `POST` | `/v1/conversations` | Create: `{ "agent_id"?, "account_id"?, "metadata"?, "items"? }` |
+| `GET` | `/v1/conversations` | List (filters `agent_id`, `account_id`) |
+| `GET` | `/v1/conversations/{id}` | Retrieve, with its latest messages inline |
+| `PATCH` | `/v1/conversations/{id}` | Update `metadata` |
+| `DELETE` | `/v1/conversations/{id}` | Delete |
+| `GET` | `/v1/conversations/{id}/items` | Items (`limit`, `after`, `order=asc\|desc`) |
+| `POST` | `/v1/conversations/{id}/items` | Append up to 20 items, no model run |
+| `GET` | `/v1/conversations/{id}/items/{item_id}` | One item |
+
+A conversation may have no agent, so `model` responses can use it. Items can be appended only to a conversation without an agent (`409 conversation_has_agent` otherwise): an agent's runtime keeps its own session history. Endpoints that need an agent answer `409 conversation_has_no_agent` on an agent-less one.
+
+## Legacy routes
+
+These keep working with the same shape; they now read and write items.
+
+| Method | Path | |
+|---|---|---|
+| `POST` | `/v1/agents/{id}/conversations` | Start one with an agent |
+| `GET` | `/v1/agents/{id}/conversations` | The agent's conversations |
 | `POST` | `/v1/conversations/{id}/messages` | Send `{ "content", "stream"? }`, get the agent's reply |
 | `POST` | `/v1/agents/{id}/ag-ui` | Run a turn for an [AG-UI frontend](/api/platform/ag-ui) |
-
-```bash
-curl https://api.allternit.com/v1/agents/agent_3f9…/conversations \
-  -H "Authorization: Bearer $ALLTERNIT_KEY" -H "Content-Type: application/json" -d '{}'
-
-curl https://api.allternit.com/v1/conversations/conv_81c…/messages \
-  -H "Authorization: Bearer $ALLTERNIT_KEY" -H "Content-Type: application/json" \
-  -d '{ "content": "Can I book a cleaning next Tuesday?" }'
-```
 
 ```json
 { "id": "cmsg_5a2…", "object": "conversation.message", "conversation_id": "conv_81c…", "role": "assistant",
@@ -38,4 +45,4 @@ curl https://api.allternit.com/v1/conversations/conv_81c…/messages \
 
 **Billing.** Each reply records its model tokens as `tokens_in` and `tokens_out` [usage](/api/platform/usage), billed at the model provider's list price plus 15%. An agent on your own model key (`model: "anthropic/…"` with [`PUT /v1/model_keys/anthropic`](/api/platform/agents)) records the tokens at no charge; you pay your provider directly. Once the project reaches its monthly spend cap, sending a message answers `402 spend_cap_reached` and the agent doesn't run ([Billing and spend caps](/api/platform/billing)).
 
-Errors: `model_key_missing`, `model_key_sync_failed`, `invalid_content`, `invalid_metadata`, `agent_not_found`, `conversation_not_found`, `conversation_busy`, `runtime_starting`, `runtime_unavailable`, `agent_sync_failed`, `session_failed`, `insufficient_scope`, `spend_cap_reached`, `spend_check_unavailable`.
+Errors: `conversation_has_agent`, `conversation_has_no_agent`, `model_key_missing`, `model_key_sync_failed`, `invalid_content`, `invalid_metadata`, `agent_not_found`, `conversation_not_found`, `conversation_busy`, `runtime_starting`, `runtime_unavailable`, `agent_sync_failed`, `session_failed`, `insufficient_scope`, `spend_cap_reached`, `spend_check_unavailable`.

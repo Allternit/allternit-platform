@@ -31,7 +31,7 @@ async fn setup() -> (Arc<ApiState>, Router) {
     for sql in [
         include_str!("../../migrations_pg/003_api_keys.sql"),
         include_str!("../../migrations_pg/050_platform_api_foundation.sql"),
-        include_str!("../../migrations_pg/121_inference_attribution.sql"),
+        include_str!("../../migrations_pg/125_inference_attribution.sql"),
     ] {
         sqlx::raw_sql(&sql.replace("public.", ""))
             .execute(&state.db)

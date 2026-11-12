@@ -60,6 +60,10 @@ pub const ERASE: &[(&str, &str)] = &[
     ("platform_call_slots", PROJECT),
     ("platform_computer_events", PROJECT),
     ("platform_computers", "owner_user_id = $1 OR project_id IN (SELECT id FROM platform_projects WHERE owner_user_id = $1)"),
+    ("platform_approvals", PROJECT),
+    ("platform_decisions", PROJECT),
+    ("platform_items", PROJECT),
+    ("platform_responses", PROJECT),
     ("platform_conversation_messages", "conversation_id IN (SELECT id FROM platform_conversations WHERE project_id IN (SELECT id FROM platform_projects WHERE owner_user_id = $1))"),
     ("platform_conversations", PROJECT),
     ("platform_channel_connections", PROJECT),
@@ -182,6 +186,7 @@ pub const ERASE: &[(&str, &str)] = &[
     ("team_sessions", USER),
     ("team_members_seen", USER),
     ("floor_shares", USER),
+    ("thread_shares", USER),
     ("user_files", USER),
     ("user_credits", USER),
     ("user_cost_budgets", USER),
@@ -217,6 +222,7 @@ const REVOKE: &[&str] = &[
     "UPDATE api_keys SET revoked_at = NOW() WHERE revoked_at IS NULL AND (user_id = $1 OR project_id IN (SELECT id FROM platform_projects WHERE owner_user_id = $1))",
     "DELETE FROM vendor_bot_keys WHERE user_id = $1",
     "DELETE FROM floor_shares WHERE user_id = $1",
+    "DELETE FROM thread_shares WHERE user_id = $1",
     "UPDATE runtime_devices SET status = 'revoked', revoked_at = CURRENT_TIMESTAMP WHERE user_id = $1 AND revoked_at IS NULL",
 ];
 
@@ -702,7 +708,8 @@ mod tests {
                        VALUES ('a_{user}', 'x', 'y', '{user}', '{user}@example.com', TRUE);
                      INSERT INTO platform_projects (id, owner_user_id, name, env, stripe_subscription_id)
                        VALUES ('p_{user}', '{user}', 'n', 'live', 'sub_p_{user}');
-                     INSERT INTO platform_accounts (id, project_id, name) VALUES ('ac_{user}', 'p_{user}', 'n');"
+                     INSERT INTO platform_accounts (id, project_id, name) VALUES ('ac_{user}', 'p_{user}', 'n');
+                     INSERT INTO thread_shares (token, user_id, session_id) VALUES ('tok_{user}', '{user}', 'ses_1');"
                 )
                 .as_str(),
             )
@@ -745,6 +752,7 @@ mod tests {
             ("SELECT count(*) FROM billing_auto_topup WHERE user_id = 'user_gone'", 0),
             ("SELECT count(*) FROM platform_accounts WHERE project_id = 'p_user_gone'", 0),
             ("SELECT count(*) FROM platform_projects WHERE owner_user_id = 'user_gone'", 0),
+            ("SELECT count(*) FROM thread_shares WHERE user_id = 'user_gone'", 0),
             // Kept, with nothing that identifies a person.
             ("SELECT count(*) FROM credit_transactions WHERE user_id = 'user_gone'", 1),
             ("SELECT count(*) FROM billing_subscriptions WHERE user_id = 'user_gone' AND status = 'canceled'", 1),
@@ -755,6 +763,7 @@ mod tests {
             ("SELECT count(*) FROM user_files WHERE user_id = 'user_stays'", 1),
             ("SELECT count(*) FROM api_tokens WHERE user_id = 'user_stays' AND is_revoked = FALSE", 1),
             ("SELECT count(*) FROM platform_accounts WHERE project_id = 'p_user_stays'", 1),
+            ("SELECT count(*) FROM thread_shares WHERE user_id = 'user_stays'", 1),
             ("SELECT count(*) FROM billing_auto_topup WHERE user_id = 'user_stays' AND enabled", 1),
             ("SELECT count(*) FROM users WHERE id = 'user_stays' AND email = 'user_stays@example.com'", 1),
         ] {
@@ -762,5 +771,34 @@ mod tests {
         }
 
         drop_db(db, &base, &name).await;
+    }
+    /// Shared chat links die when the account is erased: the REVOKE step
+    /// deletes them before any step that can fail, and ERASE covers a retry.
+    /// Runs in CI (schema-per-test pool), unlike the full-schema test above.
+    #[tokio::test]
+    async fn erase_removes_thread_shares() {
+        let db = crate::routes::test_support::test_pool().await;
+        sqlx::raw_sql(include_str!("../../migrations_pg/124_thread_shares.sql")).execute(&db).await.expect("124 applies");
+        let revoke: Vec<&str> = REVOKE.iter().copied().filter(|s| s.contains("thread_shares")).collect();
+        let erase: Vec<String> = ERASE
+            .iter()
+            .filter(|(t, _)| *t == "thread_shares")
+            .map(|(t, c)| format!("DELETE FROM {t} WHERE {c}"))
+            .collect();
+        assert_eq!((revoke.len(), erase.len()), (1, 1));
+        for step in [revoke[0], erase[0].as_str()] {
+            for (user, session) in [("user_gone", "ses_1"), ("user_gone", "ses_2"), ("user_stays", "ses_1")] {
+                sqlx::query("INSERT INTO thread_shares (token, user_id, session_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING")
+                    .bind(format!("tok_{user}_{session}"))
+                    .bind(user)
+                    .bind(session)
+                    .execute(&db)
+                    .await
+                    .unwrap();
+            }
+            sqlx::query(step).bind("user_gone").execute(&db).await.unwrap();
+            assert_eq!(count(&db, "SELECT count(*) FROM thread_shares WHERE user_id = 'user_gone'").await, 0, "{step}");
+            assert_eq!(count(&db, "SELECT count(*) FROM thread_shares WHERE user_id = 'user_stays'").await, 1, "{step}");
+        }
     }
 }

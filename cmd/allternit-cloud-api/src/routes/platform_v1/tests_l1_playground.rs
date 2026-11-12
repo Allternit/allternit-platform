@@ -29,8 +29,8 @@ async fn state() -> Arc<ApiState> {
         include_str!("../../../migrations_pg/050_platform_api_foundation.sql"),
         include_str!("../../../migrations_pg/080_platform_billing.sql"),
         include_str!("../../../migrations_pg/084_platform_payment_methods.sql"),
-        include_str!("../../../migrations_pg/122_key_governance.sql"),
-        include_str!("../../../migrations_pg/123_saved_prompts.sql"),
+        include_str!("../../../migrations_pg/126_key_governance.sql"),
+        include_str!("../../../migrations_pg/127_saved_prompts.sql"),
     ] {
         sqlx::raw_sql(&sql.replace("public.", "")).execute(&state.db).await.expect("migration applies");
     }

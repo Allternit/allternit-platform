@@ -55,6 +55,7 @@ async fn ctx() -> Ctx {
     let mut state = test_state(Arc::new(MockGateway::new(None, vec![]))).await;
     Arc::get_mut(&mut state).expect("fresh state").credential_cipher = Some(Arc::new(allternit_cloud_core::CredentialCipher::new("test cipher key material")));
     crate::routes::test_support::platform_schema(&state.db).await;
+    super::tests_p2::items_schema(&state.db).await;
     let host: Arc<dyn AgentHost> = Arc::new(MeteredHost);
     let app = router_gated(&state, Gate::Forced(true)).layer(axum::Extension(host)).with_state(state.clone());
     Ctx { state, app }

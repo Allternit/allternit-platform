@@ -1,4 +1,4 @@
--- 122_key_governance.sql
+-- 126_key_governance.sql
 --
 -- Key governance for the console (Waves 1–6, lane C0).
 --

@@ -1,4 +1,5 @@
 import { runWithStreamContext } from "@/runtime/session/stream-context"
+import { isRelativeUrl, resolveUploadUrl } from "@/runtime/session/upload-part"
 import { matchReviewPreset, reviewPresetPrompt } from "@/shared/util/review-presets"
 import path from "path"
 import os from "os"
@@ -2203,9 +2204,14 @@ const message = await createUserMessage(input)
       id: part.id ?? Identifier.ascending("part"),
     })
 
+    // The person's own text, to tell which attachments the composer already inlined.
+    const userText = input.parts
+      .flatMap((p) => (p.type === "text" && !p.synthetic ? [p.text] : []))
+      .join("\n")
     const parts = await Promise.all(
       input.parts.map(async (part): Promise<Draft<MessageV2.Part>[]> => {
         if (part.type === "file") {
+          const partFilename = part.filename
           // before checking the protocol we check if this is an mcp resource because it needs special handling
           if (part.source?.type === "resource") {
             const { clientName, uri } = part.source
@@ -2273,7 +2279,38 @@ const message = await createUserMessage(input)
 
             return pieces
           }
-          const url = new URL(part.url)
+          if (isRelativeUrl(part.url)) {
+            // An upload path from allternit-api: fetch it now (see upload-part.ts).
+            const resolved = await resolveUploadUrl(part.url, part.mime)
+            if (!resolved.ok) {
+              log.warn("attachment could not be loaded", { filename: part.filename, reason: resolved.reason })
+              return [
+                {
+                  messageID: info.id,
+                  sessionID: input.sessionID,
+                  type: "text",
+                  synthetic: true,
+                  text: `The attachment ${part.filename ?? "file"} could not be loaded (${resolved.reason}).`,
+                },
+              ]
+            }
+            part = { ...part, url: resolved.url }
+          }
+          let url: URL
+          try {
+            url = new URL(part.url)
+          } catch {
+            log.warn("attachment url is not a valid URL", { filename: part.filename })
+            return [
+              {
+                messageID: info.id,
+                sessionID: input.sessionID,
+                type: "text",
+                synthetic: true,
+                text: `The attachment ${part.filename ?? "file"} has an invalid URL and was skipped.`,
+              },
+            ]
+          }
           switch (url.protocol) {
             case "data:":
               if (part.mime === "text/plain") {
@@ -2290,7 +2327,8 @@ const message = await createUserMessage(input)
                     sessionID: input.sessionID,
                     type: "text",
                     synthetic: true,
-                    text: Buffer.from(part.url, "base64url").toString(),
+                    // Capped like every data file (MessageV2.dataFileText): a big file is a note, not the whole text.
+                    text: MessageV2.dataFileText(part, userText, { bare: true }),
                   },
                   {
                     ...part,
@@ -2384,7 +2422,7 @@ const message = await createUserMessage(input)
                         ...result.attachments.map((attachment) => ({
                           ...attachment,
                           synthetic: true,
-                          filename: attachment.filename ?? part.filename,
+                          filename: attachment.filename ?? partFilename,
                           messageID: info.id,
                           sessionID: input.sessionID,
                         })),

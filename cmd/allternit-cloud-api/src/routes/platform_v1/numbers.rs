@@ -486,6 +486,6 @@ async fn simulate_inbound(
         phone::log_consent(db, &number.id, &body.from, "inbound_text", Some("sms"), None).await?;
     }
     let normalised = json!({ "provider": "sms", "messageId": format!("sim_{}", uuid::Uuid::new_v4().simple()), "numberId": number.id, "from": body.from, "to": number.e164, "text": body.body });
-    super::messages::record_inbound(db, &number.id, &serde_json::to_vec(&normalised).unwrap_or_default()).await?;
+    super::texts::record_inbound(db, &number.id, &serde_json::to_vec(&normalised).unwrap_or_default()).await?;
     Ok((StatusCode::OK, Json(json!({ "number_id": number.id, "handled": "received" }))))
 }

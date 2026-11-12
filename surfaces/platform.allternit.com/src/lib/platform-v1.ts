@@ -213,6 +213,7 @@ export const USAGE_METER_LABELS: Record<string, string> = {
   number_local_month: "Local number months",
   number_tollfree_month: "Toll-free number months",
   sms_segment: "SMS segments",
+  decision_questions: "Decision questions",
   mms: "MMS messages",
   registration_passthrough_cents: "Carrier registration (cents)",
   recording_min_month: "Recording storage (minute-months)",

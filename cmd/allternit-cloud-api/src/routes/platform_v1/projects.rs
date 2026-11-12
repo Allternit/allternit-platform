@@ -223,7 +223,7 @@ pub async fn set_log_bodies(db: &PgPool, who: &Principal, id: &str, on: bool) ->
     Ok(())
 }
 
-/// Read `log_bodies` onto a loaded project. A schema without migration 121
+/// Read `log_bodies` onto a loaded project. A schema without migration 125
 /// reads as off.
 pub async fn load_log_bodies(db: &PgPool, project: &mut Project) {
     project.log_bodies = sqlx::query_scalar::<_, bool>("SELECT log_bodies FROM platform_projects WHERE id = $1")

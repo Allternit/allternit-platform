@@ -476,6 +476,77 @@ export namespace MessageV2 {
   })
   export type WithParts = z.infer<typeof WithParts>
 
+  /** Up to this many characters, a data file's text goes to the model inline. */
+  export const DATA_FILE_INLINE_MAX_CHARS = 20_000
+
+  /** Types a provider takes as a raw file part (images, PDF, audio, video). */
+  export function isModelMediaType(mime: string): boolean {
+    const m = mime.toLowerCase()
+    return m.startsWith("image/") || m === "application/pdf" || m.startsWith("audio/") || m.startsWith("video/")
+  }
+
+  function isTextLike(mime: string): boolean {
+    const m = mime.toLowerCase().split(";")[0]!.trim()
+    return (
+      m.startsWith("text/") ||
+      m === "application/json" ||
+      m.endsWith("+json") ||
+      m === "application/x-ndjson" ||
+      m === "application/ndjson" ||
+      m === "application/xml" ||
+      m.endsWith("+xml") ||
+      m === "application/yaml" ||
+      m === "application/x-yaml"
+    )
+  }
+
+  function dataUrlBytes(url: string): Buffer | undefined {
+    if (!url.startsWith("data:")) return undefined
+    const comma = url.indexOf(",")
+    if (comma < 0) return undefined
+    const body = url.slice(comma + 1)
+    return url.slice(0, comma).endsWith(";base64") ? Buffer.from(body, "base64") : Buffer.from(decodeURIComponent(body))
+  }
+
+  function formatSize(bytes: number): string {
+    if (bytes < 1024) return `${bytes} B`
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+  }
+
+  /** The user's own text in a message, to see what the composer already inlined. */
+  export function userTextOf(parts: readonly Part[]): string {
+    return parts
+      .filter((p): p is TextPart => p.type === "text" && !p.synthetic && !p.ignored)
+      .map((p) => p.text)
+      .join("\n")
+  }
+
+  /**
+   * What the model reads for a non-media file part (CSV, TSV, JSON, XLSX,
+   * plain text…). Never the raw file: providers reject these types and CLI
+   * brains drop them. Text up to DATA_FILE_INLINE_MAX_CHARS goes inline;
+   * a bigger, binary or already-inlined file gets a short note pointing at
+   * run_code. The web composer inlines small files itself as
+   * "[Attached file: <name>]", so then only the note is sent.
+   */
+  export function dataFileText(
+    part: { url: string; mime: string; filename?: string },
+    userText = "",
+    options: { bare?: boolean } = {},
+  ): string {
+    const name = part.filename || "file"
+    const bytes = dataUrlBytes(part.url)
+    const facts = [part.mime, bytes ? formatSize(bytes.length) : undefined].filter(Boolean).join(", ")
+    const note = (reason: string) => `Attached file ${name} (${facts}): ${reason}; a code tool can read the file.`
+    if (userText.includes(`[Attached file: ${name}]`)) return note("its text is in the message above")
+    if (!isTextLike(part.mime)) return note("binary, not shown inline")
+    if (!bytes) return note("not shown inline")
+    const text = bytes.toString("utf8")
+    if (text.length > DATA_FILE_INLINE_MAX_CHARS) return note("too large to show inline")
+    return options.bare ? text : `[Attached file: ${name}]\n${text}\n[/Attached file]`
+  }
+
   export function toModelMessages(input: WithParts[], model: Provider.Model): ModelMessage[] {
     const result: UIMessage[] = []
     const toolNames = new Set<string>()
@@ -548,13 +619,23 @@ export namespace MessageV2 {
               text: part.text,
             })
           // text/plain and directory files are converted into text parts, ignore them
-          if (part.type === "file" && part.mime !== "text/plain" && part.mime !== "application/x-directory")
-            userMessage.parts.push({
-              type: "file",
-              url: part.url,
-              mediaType: part.mime,
-              filename: part.filename,
-            })
+          if (part.type === "file" && part.mime !== "text/plain" && part.mime !== "application/x-directory") {
+            if (isModelMediaType(part.mime))
+              userMessage.parts.push({
+                type: "file",
+                url: part.url,
+                mediaType: part.mime,
+                filename: part.filename,
+              })
+            // A data file (CSV, XLSX, JSON…) goes to the model as text; the
+            // stored part stays for run_code. Providers reject these types
+            // as raw file parts and CLI brains drop them.
+            else
+              userMessage.parts.push({
+                type: "text",
+                text: "\n\n" + dataFileText(part, userTextOf(msg.parts)),
+              })
+          }
 
           if (part.type === "compaction") {
             userMessage.parts.push({

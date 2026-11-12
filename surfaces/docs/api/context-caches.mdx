@@ -3,6 +3,11 @@ title: Context Caches
 description: Store reusable conversation prefixes for the Allternit LLM gateway
 ---
 
+<Warning>
+Not served on api.allternit.com. This page describes the gateway contract only.
+</Warning>
+
+
 ## Overview
 
 The Context Cache API stores entire message prefixes — such as long system instructions, reference documents, or few-shot examples — so they can be reused across chat-completion requests. When a cache id is supplied, the gateway prepends the cached messages to the request before routing to the runtime, reducing repeated token costs and latency.

@@ -34,7 +34,7 @@ async fn ctx_with_gate(gate: Gate) -> Ctx {
         include_str!("../../../migrations_pg/050_platform_api_foundation.sql"),
         include_str!("../../../migrations_pg/080_platform_billing.sql"),
         include_str!("../../../migrations_pg/084_platform_payment_methods.sql"),
-        include_str!("../../../migrations_pg/122_key_governance.sql"),
+        include_str!("../../../migrations_pg/126_key_governance.sql"),
     ] {
         sqlx::raw_sql(&sql.replace("public.", ""))
             .execute(&state.db)
@@ -478,10 +478,10 @@ async fn settled_completion_row_carries_project_key_and_client() {
     .execute(&c.state.db)
     .await
     .unwrap();
-    sqlx::raw_sql(&include_str!("../../../migrations_pg/121_inference_attribution.sql").replace("public.", ""))
+    sqlx::raw_sql(&include_str!("../../../migrations_pg/125_inference_attribution.sql").replace("public.", ""))
         .execute(&c.state.db)
         .await
-        .expect("migration 121 applies");
+        .expect("migration 125 applies");
 
     let p = project(&c, "user_attr", ProjectEnv::Sandbox).await;
     let (key_id, _) = mint(&c, &p, None, &["inference"]).await;
