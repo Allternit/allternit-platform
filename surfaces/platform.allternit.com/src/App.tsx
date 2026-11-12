@@ -492,7 +492,7 @@ export default function App() {
         path="/manage/security/*"
         element={
           <ConsoleRoute>
-            {isCloudGateway() ? <CloudGate feature="security" /> : <SecurityPage />}
+            <SecurityPage />
           </ConsoleRoute>
         }
       />

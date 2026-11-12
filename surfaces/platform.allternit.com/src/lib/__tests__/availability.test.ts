@@ -26,7 +26,6 @@ describe("console nav", () => {
     "Files",
     "Spend limits",
     "Service accounts",
-    "Security",
     "Gizzi Code usage",
     "Caching",
     "Tags",
@@ -54,9 +53,13 @@ describe("console nav", () => {
     expect(new Set(l).size).toBe(l.length);
   });
 
+  it("keeps Security on cloud as the organization policy page", () => {
+    expect(labels(true, false)).toContain("Security");
+  });
+
   it("keeps runtime items and unique labels", () => {
     const l = labels(false, true);
-    for (const h of hidden) expect(l).toContain(h);
+    for (const h of [...hidden, "Security"]) expect(l).toContain(h);
     expect(l).toContain("Fabric");
     expect(new Set(l).size).toBe(l.length);
   });

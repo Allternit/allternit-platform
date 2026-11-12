@@ -25,12 +25,13 @@ export type GatedFeature =
 /** "hidden" = not on cloud (honest state). "redirect" = send to another page. */
 export const CLOUD_AVAILABILITY: Record<
   GatedFeature,
-  { available: false; redirectTo?: string }
+  { available: boolean; redirectTo?: string }
 > = {
   batches: { available: false },
   files: { available: false },
   serviceAccounts: { available: false },
-  security: { available: false },
+  // On cloud, Security is the organization policy page (key expiry, IP allowlist).
+  security: { available: true },
   gizziUsage: { available: false },
   spendLimits: { available: false, redirectTo: "/platform/billing" },
   // /api/v1/gateway/caching and /api/v1/tags are runtime routes; cloud relays

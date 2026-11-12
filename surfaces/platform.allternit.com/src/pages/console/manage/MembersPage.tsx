@@ -24,6 +24,7 @@ import {
   DESTRUCTIVE_BUTTON_CLASS,
 } from "@/components/console-ui";
 import { cn } from "@/lib/utils";
+import { ORG_ROLES } from "@/lib/governance";
 
 const TH_CLASS =
   "text-left text-[11px] font-semibold uppercase tracking-wide text-[var(--text-tertiary)] px-3 py-2";
@@ -80,7 +81,7 @@ export function MembersPage(): React.ReactNode {
 
   const [showInvite, setShowInvite] = useState(false);
   const [inviteEmail, setInviteEmail] = useState("");
-  const [inviteRole, setInviteRole] = useState<"member" | "admin">("member");
+  const [inviteRole, setInviteRole] = useState<string>("developer");
   const [inviting, setInviting] = useState(false);
 
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -317,12 +318,18 @@ export function MembersPage(): React.ReactNode {
               </span>
               <select
                 value={inviteRole}
-                onChange={(event) => setInviteRole(event.target.value as "member" | "admin")}
+                onChange={(event) => setInviteRole(event.target.value)}
                 className="w-full rounded-lg border border-solid border-[var(--border-subtle)] bg-[var(--bg-primary)] px-3 py-2 text-[13px] text-[var(--text-primary)] outline-none focus:border-[var(--border-default)]"
               >
-                <option value="member">Member</option>
-                <option value="admin">Admin</option>
+                {ORG_ROLES.map((r) => (
+                  <option key={r.value} value={r.value}>
+                    {r.label}
+                  </option>
+                ))}
               </select>
+              <span className="mt-1 block text-[11px] text-[var(--text-tertiary)]">
+                {ORG_ROLES.find((r) => r.value === inviteRole)?.hint}
+              </span>
             </label>
           </div>
           <div className="mt-3 flex items-center justify-end gap-2">
@@ -401,10 +408,15 @@ export function MembersPage(): React.ReactNode {
                         onChange={(event) => void handleRoleChange(member, event.target.value)}
                         className="rounded-lg border border-solid border-[var(--border-subtle)] bg-[var(--bg-primary)] px-2 py-1 text-[12px] text-[var(--text-primary)] outline-none focus:border-[var(--border-default)] disabled:opacity-50"
                       >
-                        <option value="member">Member</option>
-                        <option value="admin">Admin</option>
-                        {!["member", "admin"].includes(member.role) && (
-                          <option value={member.role}>{member.role}</option>
+                        {ORG_ROLES.map((r) => (
+                          <option key={r.value} value={r.value}>
+                            {r.label}
+                          </option>
+                        ))}
+                        {!ORG_ROLES.some((r) => r.value === member.role) && (
+                          <option value={member.role} disabled>
+                            {member.role}
+                          </option>
                         )}
                       </select>
                     ) : (
@@ -515,6 +527,11 @@ export function MembersPage(): React.ReactNode {
       )}
 
       <p className="mt-6 text-[12px] text-[var(--text-tertiary)]">
+        Roles: {ORG_ROLES.map((r) => `${r.label} (${r.hint.toLowerCase()})`).join("; ")}. Only admins can change a
+        role. If a role is not set up for your organization in Clerk, the change is rejected and the reason is shown
+        above.
+      </p>
+      <p className="mt-3 text-[12px] text-[var(--text-tertiary)]">
         Member roles gate every admin surface in this console — service accounts, spend
         limits, security, and rate limits follow the same owner/admin boundary.{" "}
         <Link to="/organizations" className="text-[var(--accent-primary)] hover:underline">

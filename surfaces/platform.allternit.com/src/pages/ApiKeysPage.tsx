@@ -22,6 +22,7 @@ import {
 import { formatApiError } from "@/lib/api-client";
 import { EmptyState } from "@/components/settings/EmptyState";
 import { QUIET_BUTTON_CLASS, DESTRUCTIVE_BUTTON_CLASS } from "@/components/settings/buttonStyles";
+import { isHiddenOnCloud } from "@/lib/availability";
 import { GatewayKeysPanel } from "@/pages/console/api-keys/GatewayKeysPanel";
 import { PlatformProjectsPanel } from "@/pages/console/api-keys/PlatformProjectsPanel";
 
@@ -44,7 +45,12 @@ function formatDate(iso?: string | null): string {
 }
 
 export function ApiKeysPage() {
-  const [tab, setTab] = useState<"scoped" | "gateway" | "platform">("scoped");
+  // On cloud, project keys are the primary keys; the model-running preset still opens Scoped keys.
+  const [tab, setTab] = useState<"scoped" | "gateway" | "platform">(() =>
+    isHiddenOnCloud("routeCredentials") && new URLSearchParams(window.location.search).get("create") !== "inference"
+      ? "platform"
+      : "scoped",
+  );
   const [keys, setKeys] = useState<ApiKey[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -128,7 +134,7 @@ export function ApiKeysPage() {
             API Keys
           </h1>
           <p className="text-[13px] text-[var(--text-secondary)] mt-1">
-            Create scoped keys for the Allternit cloud API, gateway keys for the LLM gateway, and project keys for the developer Platform API.
+            Create scoped keys for the Allternit cloud API, project keys for the developer Platform API, and gateway keys for a connected runtime.
           </p>
           <div className="mt-3 inline-flex rounded-lg border border-solid border-[var(--border-subtle)] p-0.5">
             {(
@@ -137,7 +143,10 @@ export function ApiKeysPage() {
                 { id: "gateway", label: "Gateway keys" },
                 { id: "platform", label: "Platform API" },
               ] as const
-            ).map((item) => (
+            )
+              // Gateway keys are relayed to a paired runtime, so cloud accounts don't get that tab.
+              .filter((item) => item.id !== "gateway" || !isHiddenOnCloud("routeCredentials"))
+              .map((item) => (
               <button
                 key={item.id}
                 type="button"
@@ -168,7 +177,7 @@ export function ApiKeysPage() {
         )}
       </div>
 
-      {tab === "gateway" ? (
+      {tab === "gateway" && !isHiddenOnCloud("routeCredentials") ? (
         <GatewayKeysPanel />
       ) : tab === "platform" ? (
         <PlatformProjectsPanel />
