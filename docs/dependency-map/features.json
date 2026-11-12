@@ -4192,6 +4192,91 @@
       ]
     },
     {
+      "id": "feature:memory-page",
+      "label": "Memory page: see and edit what the bot remembers",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "A settings page lists the facts the bot has stored and lets the user edit or delete one, on web, phone, iOS and in gizzi.",
+      "touches": [
+        "allternit-ai/src/views/settings/MemorySettingsPanel.tsx",
+        "allternit-ai/src/lib/agents/memory-client.ts",
+        "allternit/surfaces/allternit-mobile/ios/Features/Settings/MemorySettingsView.swift",
+        "allternit/surfaces/allternit-mobile/ios/Core/API/MemoryFactsClient.swift",
+        "allternit/cmd/gizzi-code/src/cli/commands/memory.ts"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-12",
+          "note": "Built on feat/frontier-lane1, not yet released."
+        }
+      ],
+      "evidence": [
+        "allternit-ai/src/views/settings/MemorySettingsPanel.tsx",
+        "allternit-ai/src/lib/agents/memory-client.ts",
+        "allternit/surfaces/allternit-mobile/ios/Features/Settings/MemorySettingsView.swift"
+      ]
+    },
+    {
+      "id": "feature:share-thread-link",
+      "label": "Share a thread by link",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "A user creates a public link to a thread snapshot, opens it signed out, and can revoke it. The snapshot is built client-side and stored by cloud-api (cmd/allternit-cloud-api/src/routes/thread_shares.rs, lands in a separate PR; its evidence is recorded in that PR's tree).",
+      "touches": [
+        "allternit-ai/src/components/chat/ThreadShareDialog.tsx",
+        "allternit-ai/src/pages/PublicThreadPage.tsx",
+        "allternit-ai/src/lib/chat/thread-snapshot.ts",
+        "allternit/surfaces/allternit-mobile/ios/Core/API/ThreadShareClient.swift",
+        "allternit/surfaces/allternit-mobile/ios/Features/Chat/Views/ThreadShareSheet.swift",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/commands/share/share.ts"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-12",
+          "note": "Client side built on feat/frontier-lane1, not yet released; the cloud-api route ships in the share PR. The iOS sheet does not create a link until the user asks."
+        }
+      ],
+      "evidence": [
+        "allternit-ai/src/lib/chat/thread-snapshot.ts",
+        "allternit-ai/src/pages/PublicThreadPage.tsx",
+        "allternit/surfaces/allternit-mobile/ios/Core/API/ThreadShareClient.swift"
+      ]
+    },
+    {
+      "id": "feature:edit-sent-message",
+      "label": "Edit a sent message and keep its versions",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "A user edits a message already sent; the thread reverts to that point, resends, and the earlier versions stay in a persisted branch list the user can open. Retry-turn reuses the same revert path.",
+      "touches": [
+        "allternit/cmd/gizzi-code/src/runtime/session/revert.ts",
+        "allternit/cmd/gizzi-code/src/runtime/session/session.sql.ts",
+        "allternit/cmd/allternit-api/src/agent_session_routes.rs",
+        "allternit-ai/src/components/chat/StreamingChatComposer.tsx",
+        "allternit-ai/src/lib/chat/message-versions.ts",
+        "allternit-ai/src/lib/chat/retry-turn.ts",
+        "allternit-ai/src/views/chat/SessionTranscript.tsx",
+        "allternit-ai/src/views/code/CodeCanvas.tsx",
+        "allternit/surfaces/allternit-mobile/ios/Core/API/AgentChatClient.swift",
+        "allternit/surfaces/allternit-mobile/ios/Features/Chat/ViewModels/ChatViewModel.swift",
+        "allternit/surfaces/allternit-mobile/ios/Features/Chat/Views/MessageRow.swift",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/commands/edit/edit.ts"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-12",
+          "note": "Built on feat/frontier-lane1 (platform and ai), not yet released. Versions are the persisted message_branch rows listed by /agent-sessions/:id/branches."
+        }
+      ],
+      "evidence": [
+        "allternit/cmd/gizzi-code/src/runtime/session/revert.ts",
+        "allternit/cmd/allternit-api/src/agent_session_routes.rs",
+        "allternit-ai/src/lib/chat/message-versions.ts",
+        "allternit-ai/src/lib/chat/retry-turn.ts",
+        "allternit/surfaces/allternit-mobile/ios/Features/Chat/Views/MessageRow.swift"
+      ]
+    },
+    {
       "id": "feature:live-run-status",
       "label": "Live run status pill and thought stream",
       "product": "product:ai-allternit",
