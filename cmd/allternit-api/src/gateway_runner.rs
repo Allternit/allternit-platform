@@ -1704,9 +1704,18 @@ mod tests {
         f.push(delta("d1", "chunk", "Let me "));
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let sink = DeltaSink::new(tx);
-        let run = run_turn_streaming(&st.db, &slow, &Rt, "s-th-vendor", "hi", key("k1"), Some(&sink));
-        assert!(tokio::time::timeout(Duration::from_secs(5), run).await.is_err(), "the vendor never answered");
-        assert_eq!(collect(&mut rx).await, vec!["Let me ".to_string()]);
+        let mut run = Box::pin(run_turn_streaming(&st.db, &slow, &Rt, "s-th-vendor", "hi", key("k1"), Some(&sink)));
+        // Wait for the first delta itself, not a fixed window: under a loaded
+        // full-suite run the first poll can come after any fixed deadline.
+        // The timeout only guards against a hang.
+        let first = tokio::select! {
+            _ = &mut run => panic!("the turn finished, but the vendor never answered"),
+            got = tokio::time::timeout(Duration::from_secs(60), rx.recv()) => got.expect("no delta reached the sink").expect("sink closed"),
+        };
+        assert_eq!(first, "Let me ");
+        // The barge-in drops the turn mid-send; nothing more was spoken.
+        drop(run);
+        assert_eq!(collect(&mut rx).await, Vec::<String>::new());
         cancel_vendor_turn(&st.db, &*f, "s-th-vendor").await.unwrap();
         assert_eq!(f.count("agent.context.cancel"), 1);
     }

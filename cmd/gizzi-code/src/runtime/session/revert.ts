@@ -4,8 +4,9 @@ import { Snapshot } from "@/runtime/session/snapshot"
 import { MessageV2 } from "@/runtime/session/message-v2"
 import { Session } from "@/runtime/session"
 import { Log } from "@/shared/util/log"
-import { Database, eq } from "@/runtime/session/storage/db"
-import { MessageTable, PartTable } from "@/runtime/session/session.sql"
+import { randomUUID } from "node:crypto"
+import { Database, desc, eq } from "@/runtime/session/storage/db"
+import { MessageBranchTable, MessageTable, PartTable } from "@/runtime/session/session.sql"
 import { Storage } from "@/runtime/session/storage/storage"
 import { Bus } from "@/shared/bus"
 import { SessionPrompt } from "@/runtime/session/prompt"
@@ -112,27 +113,111 @@ export namespace SessionRevert {
       }
       remove.push(msg)
     }
-    for (const msg of remove) {
-      Database.use((db) => db.delete(MessageTable).where(eq(MessageTable.id, msg.info.id)).run())
-      await Bus.publish(MessageV2.Event.Removed, { sessionID: sessionID, messageID: msg.info.id })
-    }
+    let removeParts: MessageV2.Part[] = []
     if (session.revert.partID && target) {
       const partID = session.revert.partID
       const removeStart = target.parts.findIndex((part) => part.id === partID)
       if (removeStart >= 0) {
-        const preserveParts = target.parts.slice(0, removeStart)
-        const removeParts = target.parts.slice(removeStart)
-        target.parts = preserveParts
-        for (const part of removeParts) {
-          Database.use((db) => db.delete(PartTable).where(eq(PartTable.id, part.id)).run())
-          await Bus.publish(MessageV2.Event.PartRemoved, {
-            sessionID: sessionID,
-            messageID: target.info.id,
-            partID: part.id,
-          })
-        }
+        removeParts = target.parts.slice(removeStart)
+        target.parts = target.parts.slice(0, removeStart)
       }
     }
+    // Keep what is about to be deleted as one branch row (the earlier version
+    // of this turn), in the same transaction as the deletes: either the old
+    // version is kept and removed, or nothing changes.
+    const removed: MessageV2.WithParts[] = []
+    if (target && removeParts.length > 0) removed.push({ info: target.info, parts: removeParts })
+    removed.push(...remove)
+    Database.transaction((db) => {
+      if (removed.length > 0) {
+        db.insert(MessageBranchTable)
+          .values({
+            id: `brn_${randomUUID().replace(/-/g, "")}`,
+            session_id: sessionID,
+            anchor_message_id: messageID,
+            created_at: Date.now(),
+            payload: removed.map(branchMessage),
+          })
+          .run()
+      }
+      for (const msg of remove) db.delete(MessageTable).where(eq(MessageTable.id, msg.info.id)).run()
+      for (const part of removeParts) db.delete(PartTable).where(eq(PartTable.id, part.id)).run()
+    })
+    for (const msg of remove) {
+      await Bus.publish(MessageV2.Event.Removed, { sessionID: sessionID, messageID: msg.info.id })
+    }
+    for (const part of removeParts) {
+      await Bus.publish(MessageV2.Event.PartRemoved, {
+        sessionID: sessionID,
+        messageID: target!.info.id,
+        partID: part.id,
+      })
+    }
     await Session.clearRevert(sessionID)
+  }
+
+  /** Tool output kept per tool part in a branch row. */
+  export const BRANCH_OUTPUT_LIMIT = 8 * 1024
+  /** Newest branch rows `branches()` returns. */
+  export const BRANCH_LIST_LIMIT = 20
+
+  export type Branch = {
+    id: string
+    anchorMessageId: string
+    createdAt: number
+    messages: MessageV2.WithParts[]
+  }
+
+  function cap(text: string): string {
+    if (Buffer.byteLength(text, "utf8") <= BRANCH_OUTPUT_LIMIT) return text
+    return Buffer.from(text, "utf8").subarray(0, BRANCH_OUTPUT_LIMIT).toString("utf8") + "\n…[truncated]"
+  }
+
+  /** A removed message as stored in a branch row: tool outputs capped, inline file data dropped. */
+  function branchMessage(msg: MessageV2.WithParts): MessageV2.WithParts {
+    const parts = msg.parts.map((part): MessageV2.Part => {
+      if (part.type === "tool") {
+        const state = { ...part.state } as Record<string, any>
+        if (typeof state.output === "string") state.output = cap(state.output)
+        if (typeof state.error === "string") state.error = cap(state.error)
+        if (state.metadata && typeof state.metadata.output === "string") {
+          state.metadata = { ...state.metadata, output: cap(state.metadata.output) }
+        }
+        if (Array.isArray(state.attachments)) {
+          state.attachments = state.attachments.map((file: MessageV2.FilePart) => stripInline(file))
+        }
+        return { ...part, state } as MessageV2.Part
+      }
+      if (part.type === "file") return stripInline(part)
+      return part
+    })
+    return { info: msg.info, parts }
+  }
+
+  /** A data: URL (an inline attachment, up to 24 MB) is not copied into the branch row. */
+  function stripInline(file: MessageV2.FilePart): MessageV2.FilePart {
+    if (typeof file.url === "string" && file.url.startsWith("data:") && file.url.length > BRANCH_OUTPUT_LIMIT) {
+      return { ...file, url: "" }
+    }
+    return file
+  }
+
+  /** Earlier versions of turns in this session, newest first (max 20). */
+  export function branches(sessionID: string): Branch[] {
+    const rows = Database.use((db) =>
+      db
+        .select()
+        .from(MessageBranchTable)
+        .where(eq(MessageBranchTable.session_id, sessionID))
+        .orderBy(desc(MessageBranchTable.created_at), desc(MessageBranchTable.id))
+        .limit(BRANCH_LIST_LIMIT)
+        .all(),
+    )
+    return rows.map((row) => ({
+      id: row.id,
+      anchorMessageId: row.anchor_message_id,
+      createdAt: row.created_at,
+      messages: row.payload,
+    }))
   }
 }

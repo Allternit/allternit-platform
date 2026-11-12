@@ -47,6 +47,16 @@ Email to the alert address on a change to Down, on recovery, and a reminder ever
 
 `GET /api/health` returns `{status, last_checked_at, age_seconds}`. `status` is `ok` when the last check is 300 seconds old or less, otherwise `stale` with HTTP 503. Uptime tools can watch it.
 
+## Incus host check (cloud computer network)
+
+`/api/v1/health/computers` reads the database only. It does not see the Incus host, so when dnsmasq for `incusbr0` stops (2026-11-10, inotify limit), the page shows it only later, as provisioning failures. The host-side check is in `infrastructure/vps-desktop-cloud/apply-nesting.sh`:
+
+```bash
+CHECK_ONLY=1 bash apply-nesting.sh
+```
+
+It exits 1 and sends an ops alert when `fs.inotify.max_user_instances` is under 8192 or `incus network list` shows `incusbr0` not CREATED. It changes nothing. To run it on a schedule, install it on each Incus host with a systemd timer every 5 minutes, the same way `infrastructure/computer-app-update/` installs its timer (`ExecStart=/usr/bin/env CHECK_ONLY=1 /usr/local/sbin/allternit-apply-nesting.sh`). To show it on the status page as well, the check would have to be served as an HTTP target in `targets.json`; no host endpoint does that yet. Runbook: [Cloud computers: network and sandbox](/operations/cloud-computer-network).
+
 ## Runbooks
 
 ### The status page says Down
@@ -79,3 +89,4 @@ A full Cloudflare outage also takes the page down; the standby email still fires
 
 - [gizzi status](/cli/status)
 - [Recovery](/operations/recovery)
+- [Cloud computers: network and sandbox](/operations/cloud-computer-network)

@@ -96,6 +96,23 @@ Chat shows the agent's work as one stream: the plan line, a "Using N tools" head
 
 On ai.allternit.com's phone layout and in the m.allternit.com app, tap the session button (or the progress chip) to open the panel as a sheet from the bottom; drag it down to close it. It is also in the session header's pane menu as **Session**, which opens it full screen. Rows in **Used in this session** open in place, and jumping to a step closes the pane and scrolls the conversation to it.
 
+## Edit and versions
+
+You can change a message you sent and run the conversation again from there.
+
+- **Desktop, web and the m.allternit.com app:** point at your message and click the pencil. An editor opens in place. **Enter** sends, **Shift+Enter** adds a new line, **Esc** cancels.
+- **Phone layout:** press and hold your message, then pick **Copy**, **Edit** or **Retry**.
+- **iPhone:** tap **Edit** on your last message.
+- **Gizzi in the terminal:** type `/edit` (or `/edit-last`). Your last message goes back into the prompt so you can change it and send it again.
+
+Editing works like **Retry**: the chat goes back to that message and sends the new text, so the old reply and everything after it are replaced.
+
+Nothing is thrown away. The turn shows arrows such as **1/2**; use them to flip through earlier versions of your message and the reply to each. The versions survive a reload. On iPhone an **Edited** chip on the message opens the earlier versions. The terminal keeps its own transcript, so versions made there are not saved.
+
+A message with attachments that cannot be sent again by reference cannot be edited yet.
+
+Developers: [list a session's earlier versions](/api/agent-sessions#list-earlier-versions).
+
 ## Quick task
 
 The Quick task button on the rail's **New** row opens a small composer over the screen you are on. Type a request, pick an approval option and send: it starts a new chat and runs there while you keep working. Several can be open at once. They stack at the bottom right and shrink to chips that say **Running** while the agent works. Click **Open** to go to the chat.

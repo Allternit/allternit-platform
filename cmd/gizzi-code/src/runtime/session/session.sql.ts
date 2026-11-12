@@ -152,6 +152,26 @@ export const PartTable = sqliteTable(
   (table) => [index("part_message_idx").on(table.message_id), index("part_session_idx").on(table.session_id)],
 )
 
+/**
+ * Earlier versions of a turn. `SessionRevert.cleanup()` deletes the messages
+ * at/after the revert pointer on the next send (Retry, Edit); before it does,
+ * it keeps them here as one row so reply versions survive a reload.
+ * `payload` is the removed messages (info + parts, tool outputs capped).
+ */
+export const MessageBranchTable = sqliteTable(
+  "message_branch",
+  {
+    id: text().primaryKey(),
+    session_id: text()
+      .notNull()
+      .references(() => SessionTable.id, { onDelete: "cascade" }),
+    anchor_message_id: text().notNull(),
+    created_at: integer().notNull(),
+    payload: text({ mode: "json" }).notNull().$type<MessageV2.WithParts[]>(),
+  },
+  (table) => [index("message_branch_session_idx").on(table.session_id, table.created_at)],
+)
+
 /** Append-only replay ledger. Mutable message/part tables remain the current-state projection. */
 export const SessionTraceTable = sqliteTable(
   "session_trace",

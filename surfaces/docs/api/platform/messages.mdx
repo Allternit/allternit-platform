@@ -1,9 +1,9 @@
 ---
 title: 'Messages'
-description: 'A Messages-style model call at POST /v1/messages.'
+description: 'An Anthropic-shaped model call at POST /v1/messages.'
 ---
 
-`POST /v1/messages` takes a Messages-style request (the fields below) and runs it on the Allternit model router. Scope `inference`. (Texting is at [`/v1/texts`](/api/platform/texts).)
+`POST /v1/messages` takes the Anthropic Messages request shape and runs it on the Allternit model router. Scope `inference`. (Texting is at [`/v1/texts`](/api/platform/texts).)
 
 ## Request
 
@@ -27,4 +27,4 @@ Not supported: thinking blocks, server tools and files.
 
 ## Billing
 
-The project pays. Model tokens are recorded as `tokens_in` and `tokens_out` usage rows and billed to the project at the model's list price plus 15%, as in [Pricing](/api/platform/pricing). They count toward the project's monthly spend cap: at the cap a new message answers `402 spend_cap_reached`. No member's personal credits are used, whichever key or console session made the call. A streamed message is billed once, when it ends. A message that fails at the model is not billed.
+The project pays. The project needs a card on file first, sandbox included; without one the request answers `402 payment_method_required` (see [Billing](/api/platform/billing)). Model tokens are recorded as `tokens_in` and `tokens_out` usage rows and billed to the project at the model's list price plus 15%, as in [Pricing](/api/platform/pricing). They count toward the project's monthly spend cap: at the cap a new message answers `402 spend_cap_reached`. No member's personal credits are used, whichever key or console session made the call. A streamed message is billed once, when it ends. A message that fails at the model is not billed.

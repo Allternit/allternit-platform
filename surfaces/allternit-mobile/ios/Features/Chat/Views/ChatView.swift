@@ -13,6 +13,7 @@ struct ChatView: View {
 
     @StateObject private var viewModel = ChatViewModel()
     @ObservedObject private var sessions = ShellSessionsStore.shared
+    @State private var isShareLinkPresented = false
 
     /// The open chat's name, else "Allternit" (ChatsScreen `activeChat?.name`).
     private var title: String {
@@ -28,8 +29,15 @@ struct ChatView: View {
                 wideSides: true,
                 onMenu: { isSidebarOpen = true }
             ) {
-                PhoneIconButton(systemName: "square.and.pencil", label: "New chat") {
-                    startNewChat()
+                HStack(spacing: 0) {
+                    if viewModel.currentSessionId != nil, !viewModel.messages.isEmpty {
+                        PhoneIconButton(systemName: "link", label: "Share link") {
+                            isShareLinkPresented = true
+                        }
+                    }
+                    PhoneIconButton(systemName: "square.and.pencil", label: "New chat") {
+                        startNewChat()
+                    }
                 }
             }
             .zIndex(1)
@@ -41,6 +49,9 @@ struct ChatView: View {
             )
         }
         .background(Color("BgPrimary"))
+        .sheet(isPresented: $isShareLinkPresented) {
+            ThreadShareSheet(sessionId: viewModel.currentSessionId, title: title, messages: viewModel.messages)
+        }
         // The drawer's New chat / New pill: start fresh even when the
         // selection was already nil (a just-sent chat has no selection).
         .onReceive(NotificationCenter.default.publisher(for: .shellNewChat)) { _ in
@@ -118,6 +129,7 @@ struct ChatContentView: View {
     @StateObject private var attachmentStore = AttachmentStore()
     @ObservedObject private var usageStore = UsageStore.shared
     @State private var inputText: String = ""
+    @State private var isShareLinkPresented = false
     @StateObject private var voiceHost = VoiceHost()
     /// Edit-resend: id of the last user bubble whose "Edit" filled the
     /// composer; non-nil routes the next send through
@@ -179,6 +191,13 @@ struct ChatContentView: View {
             }
         }
         .animation(.easeOut(duration: 0.2), value: voiceHost.presentation)
+        .sheet(isPresented: $isShareLinkPresented) {
+            ThreadShareSheet(
+                sessionId: viewModel.currentSessionId,
+                title: ShellSessionsStore.shared.session(id: viewModel.currentSessionId)?.name ?? "Chat",
+                messages: viewModel.messages
+            )
+        }
         .voiceHostWiring(voiceHost, chat: viewModel)
         .fullScreenCover(isPresented: Binding(
             get: { voiceHost.presentation == .full && voiceHost.viewModel != nil },
@@ -559,12 +578,14 @@ struct ChatContentView: View {
             onRegenerate: {
                 viewModel.regenerateLastResponse(runtimeModelId: modelStore.selectedModelId, effort: modelStore.effortForSend)
             },
+            onShareLink: viewModel.currentSessionId == nil ? nil : { isShareLinkPresented = true },
             onEdit: {
                 // "Edit" on the last user message: the composer loads the
                 // text; sending truncates + re-sends (onSend above).
                 editingMessageId = message.id
                 inputText = message.content
             },
+            editedVersions: viewModel.editedVersions[message.id] ?? [],
             sessionId: viewModel.currentSessionId,
             onSendPrompt: { prompt in
                 viewModel.sendMessage(prompt, runtimeModelId: modelStore.selectedModelId, effort: modelStore.effortForSend)
