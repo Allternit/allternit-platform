@@ -5,7 +5,12 @@ description: Per-key and per-organization request limits on the LLM gateway.
 
 # Rate Limits
 
-The LLM gateway (`/v1/*` on the Allternit API, relayed by the Cloud API) enforces two sliding-window limits. When one is exceeded it returns `429` with a `Retry-After` header.
+<Note>
+These limits are enforced by the Allternit runtime, not by `api.allternit.com`. For a Platform API project on Allternit Cloud, the console's Rate limits page shows the project's limit and current use. See [Idempotency and limits](/api/platform/idempotency-and-limits#project-limits-in-the-console).
+</Note>
+
+
+The LLM gateway (`/v1/*`, served by the Allternit runtime) enforces two sliding-window limits. When one is exceeded it returns `429` with a `Retry-After` header.
 
 | Layer | Scope | Configured by |
 |-------|-------|---------------|
@@ -21,7 +26,8 @@ The Cloud API also applies its own rate-limit middleware and sets `X-RateLimit-L
 | `GET` | `/v1/rate-limits` | Requests and budget remaining for the calling virtual key |
 
 ```bash
-curl https://api.allternit.com/v1/rate-limits \
+# Runtime base URL: http://127.0.0.1:8013 on Desktop, or your paired or hosted computer
+curl http://127.0.0.1:8013/v1/rate-limits \
   -H "Authorization: Bearer $ALLTERNIT_API_KEY"
 ```
 

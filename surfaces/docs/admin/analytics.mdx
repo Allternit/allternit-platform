@@ -5,6 +5,11 @@ description: Organization-scoped cost, token, volume, and activity analytics for
 
 # Admin Analytics
 
+<Note>
+The `/api/v1/admin/analytics/*` endpoints are served by the Allternit runtime (the Desktop app, or a paired or hosted computer), not by `api.allternit.com`. The `/api/v1/analytics/*` rows below are relayed by `api.allternit.com` to the caller's default runtime node. On Allternit Cloud the console keeps Analytics (Usage, Logs, Caching, Cost) visible and hides only Gizzi Code usage.
+</Note>
+
+
 The Admin Analytics API aggregates `llm_usage_events` and related organization activity into time-series and per-dimension reports. Use these endpoints for budgeting, chargeback, capacity planning, and understanding how agents, plugins, skills, and connectors are used across your organization.
 
 All analytics endpoints are organization-scoped and require the caller to be an organization owner or admin.
@@ -12,10 +17,10 @@ All analytics endpoints are organization-scoped and require the caller to be an 
 ## Base URL
 
 ```text
-https://api.allternit.com/api/v1/admin/analytics
+http://127.0.0.1:8013/api/v1/admin/analytics
 ```
 
-For local development:
+For a paired or hosted computer, use that runtime's own base URL. For local development with the Desktop app:
 
 ```text
 http://127.0.0.1:8013/api/v1/admin/analytics
@@ -55,7 +60,7 @@ Most `GET` endpoints accept:
 ## Cost over time
 
 ```bash
-curl -G https://api.allternit.com/api/v1/admin/analytics/cost-over-time \
+curl -G http://127.0.0.1:8013/api/v1/admin/analytics/cost-over-time \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -d "organization_id=org_01hqx8x7x7x7x7x7x7x7x7x" \
   -d "start=2026-08-01" \
@@ -85,7 +90,7 @@ curl -G https://api.allternit.com/api/v1/admin/analytics/cost-over-time \
 ## Token usage
 
 ```bash
-curl -G https://api.allternit.com/api/v1/admin/analytics/token-usage \
+curl -G http://127.0.0.1:8013/api/v1/admin/analytics/token-usage \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -d "organization_id=org_01hqx8x7x7x7x7x7x7x7x7x" \
   -d "start=2026-08-01" \
@@ -113,7 +118,7 @@ curl -G https://api.allternit.com/api/v1/admin/analytics/token-usage \
 ## Request volume
 
 ```bash
-curl -G https://api.allternit.com/api/v1/admin/analytics/request-volume \
+curl -G http://127.0.0.1:8013/api/v1/admin/analytics/request-volume \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -d "organization_id=org_01hqx8x7x7x7x7x7x7x7x7x" \
   -d "start=2026-08-01" \
@@ -142,7 +147,7 @@ curl -G https://api.allternit.com/api/v1/admin/analytics/request-volume \
 ## Per-user cost
 
 ```bash
-curl -G https://api.allternit.com/api/v1/admin/analytics/per-user-cost \
+curl -G http://127.0.0.1:8013/api/v1/admin/analytics/per-user-cost \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -d "organization_id=org_01hqx8x7x7x7x7x7x7x7x7x" \
   -d "start=2026-08-01" \
@@ -166,7 +171,7 @@ curl -G https://api.allternit.com/api/v1/admin/analytics/per-user-cost \
 ## Active users
 
 ```bash
-curl -G https://api.allternit.com/api/v1/admin/analytics/active-users \
+curl -G http://127.0.0.1:8013/api/v1/admin/analytics/active-users \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -d "organization_id=org_01hqx8x7x7x7x7x7x7x7x7x" \
   -d "start=2026-08-01" \
@@ -191,7 +196,7 @@ curl -G https://api.allternit.com/api/v1/admin/analytics/active-users \
 ## Artifact activity
 
 ```bash
-curl -G https://api.allternit.com/api/v1/admin/analytics/artifact-activity \
+curl -G http://127.0.0.1:8013/api/v1/admin/analytics/artifact-activity \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -d "organization_id=org_01hqx8x7x7x7x7x7x7x7x7x" \
   -d "start=2026-08-01" \
@@ -217,7 +222,7 @@ curl -G https://api.allternit.com/api/v1/admin/analytics/artifact-activity \
 ## Chat project usage
 
 ```bash
-curl -G https://api.allternit.com/api/v1/admin/analytics/chat-project-usage \
+curl -G http://127.0.0.1:8013/api/v1/admin/analytics/chat-project-usage \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -d "organization_id=org_01hqx8x7x7x7x7x7x7x7x7x" \
   -d "start=2026-08-01" \
@@ -243,7 +248,7 @@ curl -G https://api.allternit.com/api/v1/admin/analytics/chat-project-usage \
 ## Connector usage
 
 ```bash
-curl -G https://api.allternit.com/api/v1/admin/analytics/connector-usage \
+curl -G http://127.0.0.1:8013/api/v1/admin/analytics/connector-usage \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -d "organization_id=org_01hqx8x7x7x7x7x7x7x7x7x" \
   -d "start=2026-08-01" \
@@ -268,7 +273,7 @@ curl -G https://api.allternit.com/api/v1/admin/analytics/connector-usage \
 ## Plugin usage
 
 ```bash
-curl -G https://api.allternit.com/api/v1/admin/analytics/plugin-usage \
+curl -G http://127.0.0.1:8013/api/v1/admin/analytics/plugin-usage \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -d "organization_id=org_01hqx8x7x7x7x7x7x7x7x7x" \
   -d "start=2026-08-01" \
@@ -294,7 +299,7 @@ curl -G https://api.allternit.com/api/v1/admin/analytics/plugin-usage \
 ## Skill usage
 
 ```bash
-curl -G https://api.allternit.com/api/v1/admin/analytics/skill-usage \
+curl -G http://127.0.0.1:8013/api/v1/admin/analytics/skill-usage \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -d "organization_id=org_01hqx8x7x7x7x7x7x7x7x7x" \
   -d "start=2026-08-01" \
@@ -357,7 +362,7 @@ curl -X POST https://api.allternit.com/api/v1/analytics/gizzi-code/events \
 ### Aggregate CLI usage
 
 ```bash
-curl -G https://api.allternit.com/api/v1/admin/analytics/gizzi-code/usage \
+curl -G http://127.0.0.1:8013/api/v1/admin/analytics/gizzi-code/usage \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -d "organization_id=org_01hqx8x7x7x7x7x7x7x7x7x" \
   -d "start=2026-08-01" \

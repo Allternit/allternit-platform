@@ -26,3 +26,45 @@ x-ratelimit-reset: 1759600860
 ## Concurrent calls
 
 Live calls per project are capped by plan (1 / 5 / 25), with a deployment-wide cap on top. A call over the cap is refused with `429 rate_limit_error` before it starts, and a slot is freed as soon as a call ends.
+
+## Project limits in the console
+
+The console's **Rate limits** page shows these numbers for each project. It reads them from a console route, not from the public API: it takes a signed-in console session, and you need the same access to the project as you do to read it.
+
+```http
+GET /api/v1/platform/projects/{id}/limits
+```
+
+```json
+{
+  "object": "project.limits",
+  "project_id": "proj_...",
+  "plan": "payg",
+  "rate_limit": {
+    "requests_per_minute": 300,
+    "source": "plan",
+    "window_seconds": 60,
+    "used": 12,
+    "remaining": 288,
+    "resets_at": "2026-11-12T10:15:00Z"
+  },
+  "concurrent_calls": {
+    "limit": 5,
+    "source": "plan"
+  }
+}
+```
+
+| Field | Meaning |
+|-------|---------|
+| `plan` | The project's plan. |
+| `rate_limit.requests_per_minute` | The project's request limit per window. |
+| `rate_limit.source` | `plan` for the plan default, `override` when the project has its own limit. |
+| `rate_limit.window_seconds` | Window length, 60. |
+| `rate_limit.used` | Every request counted in the current 60-second window, including rejected ones, so it can exceed `requests_per_minute`. `0` when nothing has been counted yet. `null` when the counter can't be read; `remaining` is then `null` too. |
+| `rate_limit.remaining` | `requests_per_minute` minus `used`, never below `0`. |
+| `rate_limit.resets_at` | When the current window ends, as an RFC 3339 time. |
+| `concurrent_calls.limit` | Live calls the project can have at once. |
+| `concurrent_calls.source` | `plan` or `override`. |
+
+Errors use the standard [error shape](/api/platform/errors).

@@ -6,7 +6,7 @@ description: 'Give your model a hosted computer: the Anthropic SDK toolset drive
 The hosted computer driver runs a computer for your app and executes the model's computer and browser tool calls on it. Your code keeps the model loop; each tool call goes to `POST /v1/computers/{id}/toolset` and comes back as text and screenshots. The full endpoint list is in [Computers API](/api/platform/computers).
 
 <Note>
-The hosted driver is switched on per project by Allternit. Until it is on for your project, every `/v1/computers` route answers `404` with code `hosted_driver_disabled`. You can see the flag under **Platform API → Computers** in the console; you can't switch it on yourself.
+The hosted driver is switched on per project by Allternit. Until it is on for your project, every `/v1/computers` route answers `404` with code `hosted_driver_disabled`. You can see the flag under **Hosted computers** in the console; you can't switch it on yourself.
 </Note>
 
 ## 1. Get a key with the `computers` scope

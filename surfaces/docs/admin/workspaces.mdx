@@ -53,7 +53,7 @@ All workspace endpoints are gated to organization owners and admins.
 ## Create a workspace
 
 ```bash
-curl -X POST https://api.allternit.com/api/v1/admin/workspaces \
+curl -X POST http://127.0.0.1:8013/api/v1/admin/workspaces \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -89,7 +89,7 @@ The caller is automatically added as the workspace `owner`.
 ## List workspaces
 
 ```bash
-curl -X GET https://api.allternit.com/api/v1/admin/workspaces \
+curl -X GET http://127.0.0.1:8013/api/v1/admin/workspaces \
   -H "Authorization: Bearer $ADMIN_TOKEN"
 ```
 
@@ -113,7 +113,7 @@ curl -X GET https://api.allternit.com/api/v1/admin/workspaces \
 ## Update a workspace
 
 ```bash
-curl -X PUT https://api.allternit.com/api/v1/admin/workspaces/ws_01hqx8x7x7x7x7x7x7x7x7x \
+curl -X PUT http://127.0.0.1:8013/api/v1/admin/workspaces/ws_01hqx8x7x7x7x7x7x7x7x7x \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -138,7 +138,7 @@ curl -X PUT https://api.allternit.com/api/v1/admin/workspaces/ws_01hqx8x7x7x7x7x
 ## Add a member
 
 ```bash
-curl -X POST https://api.allternit.com/api/v1/admin/workspaces/ws_01hqx8x7x7x7x7x7x7x7x7x/members \
+curl -X POST http://127.0.0.1:8013/api/v1/admin/workspaces/ws_01hqx8x7x7x7x7x7x7x7x7x/members \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -162,7 +162,7 @@ If the user is already a member, their role is updated.
 ## Set a member's role
 
 ```bash
-curl -X PUT https://api.allternit.com/api/v1/admin/workspaces/ws_01hqx8x7x7x7x7x7x7x7x7x/members/usr_01hqx8x7x7x7x7x7x7x7x7x \
+curl -X PUT http://127.0.0.1:8013/api/v1/admin/workspaces/ws_01hqx8x7x7x7x7x7x7x7x7x/members/usr_01hqx8x7x7x7x7x7x7x7x7x \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"role": "admin"}'
@@ -173,7 +173,7 @@ Returns `204 No Content` on success.
 ## Remove a member
 
 ```bash
-curl -X DELETE https://api.allternit.com/api/v1/admin/workspaces/ws_01hqx8x7x7x7x7x7x7x7x7x/members/usr_01hqx8x7x7x7x7x7x7x7x7x \
+curl -X DELETE http://127.0.0.1:8013/api/v1/admin/workspaces/ws_01hqx8x7x7x7x7x7x7x7x7x/members/usr_01hqx8x7x7x7x7x7x7x7x7x \
   -H "Authorization: Bearer $ADMIN_TOKEN"
 ```
 
@@ -182,7 +182,7 @@ Returns `204 No Content` on success.
 ## Add an IP allowlist entry
 
 ```bash
-curl -X POST https://api.allternit.com/api/v1/admin/workspaces/ws_01hqx8x7x7x7x7x7x7x7x7x/ip-allowlist \
+curl -X POST http://127.0.0.1:8013/api/v1/admin/workspaces/ws_01hqx8x7x7x7x7x7x7x7x7x/ip-allowlist \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{

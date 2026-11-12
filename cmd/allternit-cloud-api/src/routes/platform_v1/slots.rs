@@ -101,10 +101,7 @@ pub async fn acquire_slot_with_ttl(
     .await?;
     let (plan, override_cap) = project
         .ok_or_else(|| PlatformError::not_found("project_not_found", "The project does not exist."))?;
-    let project_cap = match override_cap {
-        Some(n) if n > 0 => n as i64,
-        _ => Plan::parse(&plan).call_cap() as i64,
-    };
+    let project_cap = super::caller::effective_call_cap(Plan::parse(&plan), override_cap).0 as i64;
 
     let in_project: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM platform_call_slots WHERE project_id = $1 AND kind = $2",

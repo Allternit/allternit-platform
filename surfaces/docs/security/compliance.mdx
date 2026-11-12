@@ -3,6 +3,11 @@ title: Compliance
 description: Data export, deletion workflows, and retention policies for organizations
 ---
 
+<Note>
+These endpoints are served by the Allternit runtime (the Desktop app, or a paired or hosted computer), not by `api.allternit.com`. On Allternit Cloud the console hides this page.
+</Note>
+
+
 The Compliance API lets organization administrators manage data lifecycle: requesting exports, deleting application records, and configuring retention policies including zero-data-residence regions.
 
 ## Authentication and authorization
@@ -32,7 +37,7 @@ Compliance endpoints require a Clerk JWT and an active organization. Only organi
 ### Create an export request
 
 ```bash
-curl -X POST https://api.allternit.com/api/v1/admin/compliance/requests \
+curl -X POST http://127.0.0.1:8013/api/v1/admin/compliance/requests \
   -H "Authorization: Bearer $ALLTERNIT_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -59,7 +64,7 @@ If `app_filters` is omitted or empty, the request covers all supported apps: `ch
 ### Create a deletion request
 
 ```bash
-curl -X POST https://api.allternit.com/api/v1/admin/compliance/requests \
+curl -X POST http://127.0.0.1:8013/api/v1/admin/compliance/requests \
   -H "Authorization: Bearer $ALLTERNIT_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -71,7 +76,7 @@ curl -X POST https://api.allternit.com/api/v1/admin/compliance/requests \
 ### Retrieve a request
 
 ```bash
-curl https://api.allternit.com/api/v1/admin/compliance/requests/req_01J4N \
+curl http://127.0.0.1:8013/api/v1/admin/compliance/requests/req_01J4N \
   -H "Authorization: Bearer $ALLTERNIT_TOKEN"
 ```
 
@@ -105,14 +110,14 @@ curl https://api.allternit.com/api/v1/admin/compliance/requests/req_01J4N \
 Mark a pending or running request as completed. This also marks all pending references as processed.
 
 ```bash
-curl -X POST https://api.allternit.com/api/v1/admin/compliance/requests/req_01J4N/complete \
+curl -X POST http://127.0.0.1:8013/api/v1/admin/compliance/requests/req_01J4N/complete \
   -H "Authorization: Bearer $ALLTERNIT_TOKEN"
 ```
 
 ### Download an export
 
 ```bash
-curl https://api.allternit.com/api/v1/admin/compliance/requests/req_01J4N/export \
+curl http://127.0.0.1:8013/api/v1/admin/compliance/requests/req_01J4N/export \
   -H "Authorization: Bearer $ALLTERNIT_TOKEN"
 ```
 
@@ -149,7 +154,7 @@ Admins can list and delete records directly. Delete operations are irreversible.
 ### List chats
 
 ```bash
-curl "https://api.allternit.com/api/v1/admin/compliance/chats?limit=50&offset=0" \
+curl "http://127.0.0.1:8013/api/v1/admin/compliance/chats?limit=50&offset=0" \
   -H "Authorization: Bearer $ALLTERNIT_TOKEN"
 ```
 
@@ -175,7 +180,7 @@ curl "https://api.allternit.com/api/v1/admin/compliance/chats?limit=50&offset=0"
 ### Delete a chat
 
 ```bash
-curl -X DELETE "https://api.allternit.com/api/v1/admin/compliance/chats?id=chat_01J" \
+curl -X DELETE "http://127.0.0.1:8013/api/v1/admin/compliance/chats?id=chat_01J" \
   -H "Authorization: Bearer $ALLTERNIT_TOKEN"
 ```
 
@@ -190,7 +195,7 @@ Configure how long each app class is retained and whether zero data residence (`
 ### Get the current policy
 
 ```bash
-curl https://api.allternit.com/api/v1/admin/compliance/retention-policy \
+curl http://127.0.0.1:8013/api/v1/admin/compliance/retention-policy \
   -H "Authorization: Bearer $ALLTERNIT_TOKEN"
 ```
 
@@ -214,7 +219,7 @@ If no policy has been set, the response returns the organization ID with all ret
 ### Set the retention policy
 
 ```bash
-curl -X POST https://api.allternit.com/api/v1/admin/compliance/retention-policy \
+curl -X POST http://127.0.0.1:8013/api/v1/admin/compliance/retention-policy \
   -H "Authorization: Bearer $ALLTERNIT_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
