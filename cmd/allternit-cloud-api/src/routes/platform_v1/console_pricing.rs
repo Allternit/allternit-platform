@@ -16,7 +16,7 @@ use std::sync::Arc;
 use axum::{extract::State, http::HeaderMap, routing::get, Json, Router};
 use serde_json::{json, Value};
 
-use super::{console, error::PlatformError, stripe_plan};
+use super::{console, stripe_plan, PlatformError};
 use crate::ApiState;
 
 const TOOL_PRICES: &str = include_str!("../../../data/tool-prices.json");
