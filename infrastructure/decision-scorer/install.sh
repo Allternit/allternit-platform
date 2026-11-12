@@ -53,7 +53,7 @@ ALLTERNIT_DECISIONS_MODEL=qwen3.5-4b
 HF_HOME=$STATE/hf
 PIP_CACHE_DIR=$STATE/pip-cache
 HF_HUB_DISABLE_TELEMETRY=1
-# The engine uses cpu_count()-1 threads; 5 makes that 4 (honoured by Python 3.13+).
+# Caps llama.cpp threads on this shared host (engine default: cpu_count()-1).
 ALLTERNIT_DECISIONS_THREADS=4
 OMP_NUM_THREADS=4
 ENV
