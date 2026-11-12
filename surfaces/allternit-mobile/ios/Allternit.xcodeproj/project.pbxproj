@@ -254,6 +254,7 @@
 		5DC5E2B00685DA941532809A /* CanvasClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC42714771756864D08FB907 /* CanvasClient.swift */; };
 		5E95134CE10DBA2F545693AC /* CustomizeScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA7A05D633BDBBDC4BBE5803 /* CustomizeScreen.swift */; };
 		5EBE2B73728427C21787E26C /* PetOfferBanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 268E12253B0F7008E8C657E0 /* PetOfferBanner.swift */; };
+		5F3BDE940C355E66EB28C582 /* ThreadShareSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 928652EEB4E5F6F29C2706F6 /* ThreadShareSheet.swift */; };
 		5F6D9D4AAA5BFCC160AF3A49 /* MemoryScheduleIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 496F7255316E63C24986718B /* MemoryScheduleIntents.swift */; };
 		60A3805DE133AB358A79B223 /* BotColor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9B3E58874D9684D848731F76 /* BotColor.swift */; };
 		614AF2CF6BCD87A0FE0F2961 /* ControlIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2EDB46F04BBA1DCA3AFA758 /* ControlIntents.swift */; };
@@ -402,6 +403,7 @@
 		93268B9EABC62F8BC790B16F /* ArtifactDetailsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 15187B0C77E90FFBEE394F9A /* ArtifactDetailsView.swift */; };
 		9385E59F21D8DFAB0594C4BD /* SignInStageMotion.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02A9822297D81E2FB62B5186 /* SignInStageMotion.swift */; };
 		93BBEF8FB0B6058E47480A86 /* ArtifactsLibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 384E354DC0746B0247176A44 /* ArtifactsLibraryView.swift */; };
+		93C6789B18079E7BA58BA1E9 /* ThreadShareClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 436DEFC5F3B8C4C5D70DFB98 /* ThreadShareClient.swift */; };
 		9408177BE0C2FA76E88F424B /* SharedAccess.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2A9B142E1D8FA2463A37DB2 /* SharedAccess.swift */; };
 		940D72C1A9031699082F391D /* AllternitNotifications.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 9A7E49E72A3891CF21E908A8 /* AllternitNotifications.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		94CC66D2C74EEE1ED16D40F0 /* CronDays.swift in Sources */ = {isa = PBXBuildFile; fileRef = A53CF550D3EEC133E7F574B3 /* CronDays.swift */; };
@@ -951,6 +953,7 @@
 		41E758C5D594CCBDB28AC87F /* AutomationScheduleGraphView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutomationScheduleGraphView.swift; sourceTree = "<group>"; };
 		41F892137D2ECA218AF0EF05 /* PlanCardViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlanCardViews.swift; sourceTree = "<group>"; };
 		436B6969DB4C176B2552F0D0 /* MeetYourBotsVisuals.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetYourBotsVisuals.swift; sourceTree = "<group>"; };
+		436DEFC5F3B8C4C5D70DFB98 /* ThreadShareClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThreadShareClient.swift; sourceTree = "<group>"; };
 		43BFEA6D9AD0DFA2A813D0C9 /* BotProjectSections.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotProjectSections.swift; sourceTree = "<group>"; };
 		45F44F59BA1C2AB3506C0B8A /* LoopLiveActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoopLiveActivity.swift; sourceTree = "<group>"; };
 		467C3A63EC0099855805319F /* PhoneHeader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhoneHeader.swift; sourceTree = "<group>"; };
@@ -1126,6 +1129,7 @@
 		91C770057CDB7F7249B6EE0D /* OnboardingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingView.swift; sourceTree = "<group>"; };
 		91DA83B808ADF24C16AA47C5 /* CreateLoopSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CreateLoopSheet.swift; sourceTree = "<group>"; };
 		92576416EF984EB91D9A016E /* WorkspaceFileEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceFileEditorView.swift; sourceTree = "<group>"; };
+		928652EEB4E5F6F29C2706F6 /* ThreadShareSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThreadShareSheet.swift; sourceTree = "<group>"; };
 		935537B322E18F002DBD5E9C /* WaitingGamesEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WaitingGamesEngine.swift; sourceTree = "<group>"; };
 		93E956710126053EB031C4BB /* CoworkProject.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoworkProject.swift; sourceTree = "<group>"; };
 		94097F5735D2AD25C0218820 /* DevicePairingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DevicePairingView.swift; sourceTree = "<group>"; };
@@ -1829,6 +1833,7 @@
 				861E4928AB3C96923A32C33C /* TeachClient.swift */,
 				E8B1021918E68EBAC25DAEC2 /* TerminalServiceClient.swift */,
 				0A0D9F0B41BC90D8F71BA867 /* ThreadsClient.swift */,
+				436DEFC5F3B8C4C5D70DFB98 /* ThreadShareClient.swift */,
 				7F376799D58D9D63E5B96B1F /* TwinClient.swift */,
 				46CCFABAA5DAC2922F88593D /* WebhookClient.swift */,
 				01C2CCA8211E408F571C4FDE /* WebhookTriggersClient.swift */,
@@ -2615,6 +2620,7 @@
 				BE3CC250492B1313864FA19D /* PermissionPrimingSheet.swift */,
 				789BAD46979B02B1781A9877 /* SketchSheet.swift */,
 				51ED218D5981C21CBFF76A8A /* ThinkingSliderView.swift */,
+				928652EEB4E5F6F29C2706F6 /* ThreadShareSheet.swift */,
 				D959806CFDF9C47AE9C5A123 /* Voice */,
 			);
 			path = Views;
@@ -3735,6 +3741,8 @@
 				FA39A9D1C72C62138B55E2D5 /* TerminalSessionView.swift in Sources */,
 				683F2944F5F17551266D58E1 /* ThinkingOrb.swift in Sources */,
 				CD1454C6B44C44395DC2F23E /* ThinkingSliderView.swift in Sources */,
+				93C6789B18079E7BA58BA1E9 /* ThreadShareClient.swift in Sources */,
+				5F3BDE940C355E66EB28C582 /* ThreadShareSheet.swift in Sources */,
 				5BFD6E36BD1DCA9DFA91016B /* ThreadsClient.swift in Sources */,
 				E2624AFE407931AEFE7AFE31 /* ToolCallRecord.swift in Sources */,
 				2F99615BC8D08B59611589C5 /* ToolCallsRail.swift in Sources */,

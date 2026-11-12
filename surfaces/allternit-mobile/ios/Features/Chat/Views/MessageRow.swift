@@ -17,6 +17,7 @@ struct MessageRow: View {
     /// the conversation after it).
     var isLastUser: Bool = false
     var onRegenerate: () -> Void = {}
+    var onShareLink: (() -> Void)? = nil
     var onEdit: () -> Void = {}
     /// The chat's agent session — the run tree's task list and the pending
     /// questions/permissions lookup. Nil before the first send.
@@ -135,7 +136,8 @@ struct MessageRow: View {
                     MessageActionBar(
                         message: message,
                         isLastAssistant: isLastAssistant,
-                        onRegenerate: onRegenerate
+                        onRegenerate: onRegenerate,
+                        onShareLink: onShareLink
                     )
 
                     if let stats = message.perfStats {
