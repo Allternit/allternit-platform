@@ -1,4 +1,5 @@
 import { runWithStreamContext } from "@/runtime/session/stream-context"
+import { isRelativeUrl, resolveUploadUrl } from "@/runtime/session/upload-part"
 import { matchReviewPreset, reviewPresetPrompt } from "@/shared/util/review-presets"
 import path from "path"
 import os from "os"
@@ -2273,7 +2274,38 @@ const message = await createUserMessage(input)
 
             return pieces
           }
-          const url = new URL(part.url)
+          if (isRelativeUrl(part.url)) {
+            // An upload path from allternit-api: fetch it now (see upload-part.ts).
+            const resolved = await resolveUploadUrl(part.url, part.mime)
+            if (!resolved.ok) {
+              log.warn("attachment could not be loaded", { filename: part.filename, reason: resolved.reason })
+              return [
+                {
+                  messageID: info.id,
+                  sessionID: input.sessionID,
+                  type: "text",
+                  synthetic: true,
+                  text: `The attachment ${part.filename ?? "file"} could not be loaded (${resolved.reason}).`,
+                },
+              ]
+            }
+            part = { ...part, url: resolved.url }
+          }
+          let url: URL
+          try {
+            url = new URL(part.url)
+          } catch {
+            log.warn("attachment url is not a valid URL", { filename: part.filename })
+            return [
+              {
+                messageID: info.id,
+                sessionID: input.sessionID,
+                type: "text",
+                synthetic: true,
+                text: `The attachment ${part.filename ?? "file"} has an invalid URL and was skipped.`,
+              },
+            ]
+          }
           switch (url.protocol) {
             case "data:":
               if (part.mime === "text/plain") {
@@ -2290,7 +2322,7 @@ const message = await createUserMessage(input)
                     sessionID: input.sessionID,
                     type: "text",
                     synthetic: true,
-                    text: Buffer.from(part.url, "base64url").toString(),
+                    text: dataUrlText(part.url),
                   },
                   {
                     ...part,
@@ -3203,4 +3235,12 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       return Session.setTitle({ sessionID: input.session.id, title })
     }
   }
+}
+
+/** The text inside a `data:` URL (base64 or percent-encoded). */
+function dataUrlText(url: string): string {
+  const comma = url.indexOf(",")
+  if (comma < 0) return ""
+  const body = url.slice(comma + 1)
+  return url.slice(0, comma).endsWith(";base64") ? Buffer.from(body, "base64").toString() : decodeURIComponent(body)
 }
