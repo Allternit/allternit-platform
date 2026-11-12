@@ -20,6 +20,25 @@ Use it when you want to:
   `/usage` is a session-local command, not a top-level shell command. Run it from the Gizzi Code REPL/TUI prompt by typing `/usage` and pressing Enter.
 </Note>
 
+## gizzi usage (shell command)
+
+`gizzi usage` prints your Allternit Cloud inference usage from the shell, using the credential you already have from `gizzi login` (or `ALLTERNIT_API_KEY` / `ALLTERNIT_API_TOKEN`).
+
+```bash
+gizzi usage                          # last 30 days, grouped by day
+gizzi usage --days 7 --group-by model
+gizzi usage --project <id> --json
+```
+
+| Flag | What it does |
+|---|---|
+| `--days N` | Days to report (default 30) |
+| `--group-by` | `day`, `model`, `project` or `client` (default `day`) |
+| `--project <id>` | Only this project |
+| `--json` | Print the raw rows |
+
+The table shows requests, prompt tokens, completion tokens and cost in USD per group, with a total row. Requests Gizzi Code sends to Allternit Cloud carry an `X-Allternit-Client: gizzi-code/<version>` header so they appear under the `gizzi-code` client. If the server does not offer usage reporting yet, the command says so.
+
 ## Command reference
 
 | Command | Description |

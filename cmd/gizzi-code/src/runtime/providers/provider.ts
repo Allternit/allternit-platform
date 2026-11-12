@@ -26,6 +26,7 @@ import { BUNDLED_PROVIDERS, NoSuchModelError, type SDK, type LanguageModelV2 } f
 import { CUSTOM_LOADERS } from "@/runtime/providers/adapters/loaders"
 import type { CustomModelLoader } from "@/runtime/providers/types"
 import { Discovery, type DiscoveredProvider } from "@/runtime/providers/discovery"
+import { Installation } from "@/shared/installation"
 import { cloudInferenceToken, getCachedAllternitPlan } from "@/runtime/providers/discovery/allternit-cloud"
 import { ModelList } from "@/runtime/providers/model-list"
 import { resolveDefaultBrain, type DefaultBrain } from "@/runtime/providers/default-brain"
@@ -722,6 +723,12 @@ export namespace Provider {
         options["headers"] = {
           ...options["headers"],
           ...model.headers,
+        }
+      // Lets the Cloud tell Gizzi Code traffic apart in usage reports (client=gizzi-code).
+      if (model.providerID === "allternit")
+        options["headers"] = {
+          ...options["headers"],
+          "X-Allternit-Client": `gizzi-code/${Installation.VERSION}`,
         }
 
       const key = Bun.hash.xxHash32(JSON.stringify({ providerID: model.providerID, npm: model.api.npm, options }))
