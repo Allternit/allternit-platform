@@ -66,8 +66,28 @@ struct SettingsFailureView: View {
     /// What couldn't load, e.g. "your skills".
     let subject: String
     let retry: () -> Void
+    @State private var safariURL: IdentifiableURL? = nil
 
     var body: some View {
+        VStack(spacing: 4) {
+            content
+            // Signed out is the person's own state, not an outage.
+            if failure != .signedOut {
+                Button("Check system status") {
+                    safariURL = IdentifiableURL(url: SystemStatusClient.pageURL)
+                }
+                .font(.footnote)
+                .foregroundColor(Color("TextSecondary"))
+                .frame(minHeight: 44)
+                .accessibilityLabel("Check system status")
+                .accessibilityHint("Opens status.allternit.com")
+            }
+        }
+        .sheet(item: $safariURL) { item in SafariView(url: item.url) }
+    }
+
+    @ViewBuilder
+    private var content: some View {
         switch failure {
         case .signedOut:
             SettingsSignedOutView(message: "Sign in to see \(subject).")

@@ -30,6 +30,8 @@ struct SettingsView: View {
     @State private var isConnectorsPresented = false
     @State private var safariURL: IdentifiableURL? = nil
     @State private var signOutError: String? = nil
+    /// Live status line for the System status row; nil until fetched or on failure.
+    @State private var systemStatus: SystemStatusLevel? = nil
 
     #if DEBUG
     @State private var isPlatformPresented = false
@@ -222,6 +224,46 @@ struct SettingsView: View {
         .buttonStyle(PhoneRowButtonStyle())
     }
 
+    /// "System status": opens status.allternit.com; a small live line sits
+    /// under the title when the fetch worked, nothing when it didn't.
+    private var systemStatusRow: some View {
+        Button(action: { safariURL = IdentifiableURL(url: SystemStatusClient.pageURL) }) {
+            HStack(spacing: 14) {
+                Image(systemName: "waveform.path.ecg")
+                    .font(.system(size: 19, weight: .regular))
+                    .foregroundColor(Color("TextPrimary"))
+                    .frame(width: 22, height: 22)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("System status")
+                        .font(.system(size: 16))
+                        .foregroundColor(Color("TextPrimary"))
+                    if let line = systemStatus?.line, let level = systemStatus {
+                        HStack(spacing: 4) {
+                            Image(systemName: level.symbol)
+                                .font(.system(size: 12))
+                                .accessibilityHidden(true)
+                            Text(line)
+                                .font(.system(size: 13))
+                        }
+                        .foregroundColor(Color("TextSecondary"))
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                PhoneRowChevron()
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+            .frame(minHeight: 50)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(PhoneRowButtonStyle())
+        .accessibilityLabel("System status")
+        .accessibilityValue(systemStatus?.line ?? "")
+        .accessibilityHint("Opens status.allternit.com")
+        .task { systemStatus = await SystemStatusClient.fetch() }
+    }
+
     /// Row values: the app version on About, the plan on Billing.
     private func value(for page: SettingsPageID) -> String? {
         switch page {
@@ -278,6 +320,8 @@ struct SettingsView: View {
                 }
                 PhoneCardDivider()
                 rows(pages.filter { $0.phone.order >= 9 })
+                PhoneCardDivider()
+                systemStatusRow
                 PhoneCardDivider()
                 actionRow("Open on the web", systemImage: "arrow.up.right.square") {
                     safariURL = IdentifiableURL(url: URL(string: "https://ai.allternit.com")!)

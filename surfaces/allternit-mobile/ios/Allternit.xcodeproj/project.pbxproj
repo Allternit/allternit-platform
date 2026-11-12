@@ -512,6 +512,7 @@
 		B87CA5FA8D5058713E8EAF49 /* PlanUsageViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1BBC678E465D3B17E1016460 /* PlanUsageViews.swift */; };
 		B8B37987DF7D3622C177BE2A /* BotSetupSheets.swift in Sources */ = {isa = PBXBuildFile; fileRef = 468304A152B48DA563AF255C /* BotSetupSheets.swift */; };
 		B8EBFB6062961EAAB9C8EABD /* ScheduledTaskSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = B66D8B75F9E05EC31D8C93D5 /* ScheduledTaskSheet.swift */; };
+		B99F55F075E829142009CCE7 /* SystemStatusClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 125C141DE758E382A2E0916A /* SystemStatusClient.swift */; };
 		B9F1DCD514FBAAEA04F88068 /* BrainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33BE9B2F87B3C05A37CF52AF /* BrainStore.swift */; };
 		BA47E1AFD54680EE8CD3B04A /* AuthManager+DeleteAccount.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E1D84060FD81E44483971DA /* AuthManager+DeleteAccount.swift */; };
 		BA74158156A79E2C0B5B40C4 /* CreateLoopSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91DA83B808ADF24C16AA47C5 /* CreateLoopSheet.swift */; };
@@ -818,6 +819,7 @@
 		11DDE1CD60ED8E7F4561104F /* HermesClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HermesClient.swift; sourceTree = "<group>"; };
 		11ED019204529A31DB6E23FF /* DeleteAccountView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeleteAccountView.swift; sourceTree = "<group>"; };
 		122C28A0CEDC1D5563AA57F7 /* CodeCanvasStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodeCanvasStore.swift; sourceTree = "<group>"; };
+		125C141DE758E382A2E0916A /* SystemStatusClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemStatusClient.swift; sourceTree = "<group>"; };
 		125D14A1DF2FFFA988BAEC71 /* InstanceStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InstanceStore.swift; sourceTree = "<group>"; };
 		130D14F5DE715D27DFD14195 /* AllternitWidgetsBundle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AllternitWidgetsBundle.swift; sourceTree = "<group>"; };
 		134EECE81F53DFAD7A3B0703 /* OutboxStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutboxStore.swift; sourceTree = "<group>"; };
@@ -2756,6 +2758,7 @@
 				C5BB9F2E0048B9D1662BD674 /* SettingsPages.swift */,
 				59F0F883C961CE5C29AD0B21 /* SettingsView.swift */,
 				B39AAE7FBCFE14C0E9A6D418 /* SubagentsSettingsView.swift */,
+				125C141DE758E382A2E0916A /* SystemStatusClient.swift */,
 				6D5F0FBBDFDA61BCA336D35B /* TwinSettingsView.swift */,
 				7355CA3620D382F4B41E9531 /* VPSServersManagerView.swift */,
 				802BD7F292B9273EC037ED15 /* WebhooksSettingsView.swift */,
@@ -3714,6 +3717,7 @@
 				EF83E006F618ED5D837B9A14 /* SubagentFaceView.swift in Sources */,
 				0485D153515300F0EB63C0F5 /* SubagentTypesClient.swift in Sources */,
 				FC968DAFF1558F8F269CEB4B /* SubagentsSettingsView.swift in Sources */,
+				B99F55F075E829142009CCE7 /* SystemStatusClient.swift in Sources */,
 				9659676428438A32C643F67D /* TalkIntents.swift in Sources */,
 				FB4BF1C7CA40D4942BB1B4CE /* TasksBoardScreen.swift in Sources */,
 				58815317DBF05A8151B4F557 /* TeachClient.swift in Sources */,
