@@ -789,3 +789,188 @@ mod attachment_file_parts_tests {
         assert_eq!(attachment_file_parts(Some(&attachments)).len(), MAX_MESSAGE_ATTACHMENTS);
     }
 }
+
+// ── run_code output files → uploads ─────────────────────────────────────────
+//
+// gizzi's `run_code` builtin writes what the script produced to
+// `<gizzi data>/runs/<session>/<call>/out/` on this host and lists them in the
+// completed tool part's `state.metadata.files[] {name, mediaType, path}`.
+// The bridge ingests each into `uploads` and adds `files[] {name, mediaType,
+// uploadId, size}` (plus `run {stdout, stderr, exit_code}`) to the
+// `tool_result` frame, so every surface fetches them via
+// `GET /api/v1/uploads/:id`. Only regular files under a gizzi run's `out/`
+// are read — a tool metadata path can't point the bridge at anything else.
+
+/// Most files and total bytes one run_code result may publish.
+const RUN_CODE_MAX_FILES: usize = 20;
+const RUN_CODE_MAX_TOTAL_BYTES: u64 = 20 * 1024 * 1024;
+
+/// Upload id for a run_code output file: derived from its canonical path, so
+/// re-ingesting the same file (a repeated part update, a transcript reload)
+/// yields the same id instead of a duplicate upload.
+pub(crate) fn run_code_upload_id(canonical: &std::path::Path) -> String {
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(canonical.to_string_lossy().as_bytes());
+    hex::encode(digest)[..32].to_string()
+}
+
+/// The canonical path of a run_code output file, or `None` unless it is a
+/// regular file (not a symlink) at `…/gizzi-code/runs/<session>/<call>/out/…`.
+fn run_code_output_path(raw: &str) -> Option<std::path::PathBuf> {
+    let path = std::path::Path::new(raw);
+    if !path.is_absolute() {
+        return None;
+    }
+    let meta = std::fs::symlink_metadata(path).ok()?;
+    if !meta.file_type().is_file() {
+        return None;
+    }
+    let canonical = std::fs::canonicalize(path).ok()?;
+    let comps: Vec<String> = canonical
+        .components()
+        .map(|c| c.as_os_str().to_string_lossy().into_owned())
+        .collect();
+    let ok = comps.windows(5).enumerate().any(|(i, w)| {
+        w[0] == "gizzi-code" && w[1] == "runs" && w[4] == "out" && comps.len() > i + 5
+    });
+    ok.then_some(canonical)
+}
+
+/// Ingest a completed `run_code` part's output files with `store(id, name,
+/// mediaType, bytes)`; returns the `files[]` entries for the client.
+pub(crate) fn ingest_run_code_files(
+    part: &serde_json::Value,
+    store: &mut dyn FnMut(&str, &str, &str, &[u8]) -> std::io::Result<()>,
+) -> Vec<serde_json::Value> {
+    let mut files = Vec::new();
+    let mut total = 0u64;
+    let list = part
+        .pointer("/state/metadata/files")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    for file in list.iter().take(RUN_CODE_MAX_FILES) {
+        let Some(canonical) = file.get("path").and_then(|v| v.as_str()).and_then(run_code_output_path) else {
+            continue;
+        };
+        let Ok(bytes) = std::fs::read(&canonical) else { continue };
+        total += bytes.len() as u64;
+        if total > RUN_CODE_MAX_TOTAL_BYTES {
+            break;
+        }
+        let name = file
+            .get("name")
+            .and_then(|v| v.as_str())
+            .filter(|n| !n.is_empty())
+            .map(str::to_string)
+            .or_else(|| canonical.file_name().map(|n| n.to_string_lossy().into_owned()))
+            .unwrap_or_else(|| "file".to_string());
+        let media_type = file
+            .get("mediaType")
+            .and_then(|v| v.as_str())
+            .unwrap_or("application/octet-stream");
+        let id = run_code_upload_id(&canonical);
+        if let Err(e) = store(&id, &name, media_type, &bytes) {
+            warn!(error = %e, file = %name, "run_code: failed to ingest output file");
+            continue;
+        }
+        files.push(json!({
+            "name": name,
+            "mediaType": media_type,
+            "uploadId": id,
+            "size": bytes.len(),
+        }));
+    }
+    files
+}
+
+/// Add `files[]` and `run {stdout, stderr, exit_code}` to a `run_code`
+/// `tool_result` frame (no-op for other tools or unsettled parts).
+pub(crate) fn add_run_code_fields(frame: &mut serde_json::Value, part: &serde_json::Value) {
+    if part.get("tool").and_then(|v| v.as_str()) != Some("run_code")
+        || part.pointer("/state/status").and_then(|v| v.as_str()) != Some("completed")
+    {
+        return;
+    }
+    let files = ingest_run_code_files(part, &mut |id, name, media_type, bytes| {
+        crate::upload_routes::store_upload(id, name, media_type, bytes)
+    });
+    let meta = part.pointer("/state/metadata").cloned().unwrap_or(json!({}));
+    frame["files"] = json!(files);
+    frame["run"] = json!({
+        "stdout": meta.get("stdout").cloned().unwrap_or(json!("")),
+        "stderr": meta.get("stderr").cloned().unwrap_or(json!("")),
+        "exit_code": meta.get("exit_code").cloned().unwrap_or(json!(null)),
+    });
+}
+
+#[cfg(test)]
+mod run_code_files_tests {
+    use super::*;
+
+    fn part(files: serde_json::Value) -> serde_json::Value {
+        json!({
+            "type": "tool", "tool": "run_code", "callID": "c1",
+            "state": { "status": "completed", "output": "ok", "input": {},
+                "metadata": { "stdout": "hi\n", "stderr": "", "exit_code": 0, "files": files } }
+        })
+    }
+
+    #[test]
+    fn ingests_only_regular_files_under_a_run_out_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let out = tmp.path().join("gizzi-code/runs/ses_1/call_1/out");
+        std::fs::create_dir_all(&out).unwrap();
+        std::fs::write(out.join("chart.png"), b"\x89PNG fake").unwrap();
+        std::fs::write(out.join("summary.csv"), b"a,b\n1,2\n").unwrap();
+        // Outside a run's out/ → refused.
+        let secret = tmp.path().join("secret.txt");
+        std::fs::write(&secret, b"nope").unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&secret, out.join("link.txt")).unwrap();
+
+        let p = part(json!([
+            { "name": "chart.png", "mediaType": "image/png", "path": out.join("chart.png") },
+            { "name": "summary.csv", "mediaType": "text/csv", "path": out.join("summary.csv") },
+            { "name": "secret.txt", "mediaType": "text/plain", "path": secret },
+            { "name": "link.txt", "mediaType": "text/plain", "path": out.join("link.txt") },
+            { "name": "rel.txt", "mediaType": "text/plain", "path": "gizzi-code/runs/a/b/out/x" },
+        ]));
+        let mut stored: Vec<(String, String, Vec<u8>)> = Vec::new();
+        let files = ingest_run_code_files(&p, &mut |id, name, _mt, bytes| {
+            stored.push((id.to_string(), name.to_string(), bytes.to_vec()));
+            Ok(())
+        });
+        assert_eq!(files.len(), 2, "{files:?}");
+        assert_eq!(files[0]["name"], "chart.png");
+        assert_eq!(files[0]["mediaType"], "image/png");
+        assert_eq!(files[1]["mediaType"], "text/csv");
+        assert_eq!(stored[1].2, b"a,b\n1,2\n");
+        let id = files[0]["uploadId"].as_str().unwrap();
+        assert_eq!(id.len(), 32);
+        assert!(id.chars().all(|c| c.is_ascii_hexdigit()));
+        assert_eq!(id, stored[0].0);
+        // Same file → same id (idempotent re-ingest).
+        let again = ingest_run_code_files(&p, &mut |_, _, _, _| Ok(()));
+        assert_eq!(again[0]["uploadId"], files[0]["uploadId"]);
+    }
+
+    #[test]
+    fn other_tools_and_unsettled_parts_are_untouched() {
+        let mut frame = json!({ "type": "tool_result" });
+        let mut p = part(json!([]));
+        p["tool"] = json!("bash");
+        add_run_code_fields(&mut frame, &p);
+        assert!(frame.get("files").is_none());
+
+        let mut running = part(json!([]));
+        running["state"]["status"] = json!("running");
+        add_run_code_fields(&mut frame, &running);
+        assert!(frame.get("files").is_none());
+
+        add_run_code_fields(&mut frame, &part(json!([])));
+        assert_eq!(frame["files"], json!([]));
+        assert_eq!(frame["run"]["stdout"], "hi\n");
+        assert_eq!(frame["run"]["exit_code"], 0);
+    }
+}

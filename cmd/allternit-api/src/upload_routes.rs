@@ -89,6 +89,28 @@ pub(crate) fn read_upload(id: &str) -> Option<(Vec<u8>, String, String)> {
     Some((bytes, name, media_type))
 }
 
+/// Write bytes as upload `id` (payload + sidecar). Shared by `POST /uploads`
+/// and server-side ingestion (run_code output files, sandbox `files[]`), so
+/// every produced file is fetchable at `GET /api/v1/uploads/:id`. The id must
+/// be alphanumeric; a missing sidecar only degrades the served media type, so
+/// a sidecar write failure is logged, not returned.
+pub(crate) fn store_upload(id: &str, name: &str, media_type: &str, bytes: &[u8]) -> std::io::Result<()> {
+    if id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "invalid upload id"));
+    }
+    if bytes.len() > MAX_UPLOAD_BYTES {
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "uploads are limited to 20MB"));
+    }
+    let dir = uploads_dir();
+    std::fs::create_dir_all(&dir)?;
+    std::fs::write(dir.join(id), bytes)?;
+    let meta = json!({ "name": name, "mediaType": media_type });
+    if let Err(e) = std::fs::write(meta_path(id), meta.to_string()) {
+        tracing::warn!(error = %e, upload_id = %id, "failed to write upload sidecar");
+    }
+    Ok(())
+}
+
 async fn create_upload(Json(req): Json<CreateUploadRequest>) -> impl IntoResponse {
     let bytes = match STANDARD.decode(req.data_base64.as_bytes()) {
         Ok(bytes) => bytes,
@@ -117,28 +139,12 @@ async fn create_upload(Json(req): Json<CreateUploadRequest>) -> impl IntoRespons
     }
 
     let id = Uuid::new_v4().simple().to_string();
-    let dir = uploads_dir();
-    if let Err(e) = std::fs::create_dir_all(&dir) {
+    if let Err(e) = store_upload(&id, &req.name, &req.media_type, &bytes) {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"error": "storage_error", "message": e.to_string()})),
         )
             .into_response();
-    }
-
-    if let Err(e) = std::fs::write(dir.join(&id), &bytes) {
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": "storage_error", "message": e.to_string()})),
-        )
-            .into_response();
-    }
-
-    let meta = json!({ "name": req.name, "mediaType": req.media_type });
-    if let Err(e) = std::fs::write(meta_path(&id), meta.to_string()) {
-        // Payload already landed; a missing sidecar only degrades GET's
-        // Content-Type, so log-and-continue instead of failing the upload.
-        tracing::warn!(error = %e, upload_id = %id, "failed to write upload sidecar");
     }
 
     Json(json!({

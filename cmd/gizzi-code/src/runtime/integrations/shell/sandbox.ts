@@ -40,6 +40,12 @@ export interface SandboxPolicy {
    * true, allow everything (unchanged prior behavior).
    */
   allowedDomains?: string[]
+  /**
+   * Extra paths the subprocess may READ but not write. Seatbelt already
+   * allows reads everywhere; bwrap only sees what is bound, so these are
+   * bound read-only (e.g. run_code's Python env under the gizzi data dir).
+   */
+  allowReadPaths?: string[]
 }
 
 export type SandboxDriver = "bwrap" | "sandbox-exec" | "none"
@@ -152,6 +158,9 @@ export namespace Sandbox {
     }
 
     for (const p of roBinds) {
+      args.push("--ro-bind-try", p, p)
+    }
+    for (const p of policy.allowReadPaths ?? []) {
       args.push("--ro-bind-try", p, p)
     }
 

@@ -1,0 +1,15 @@
+Run a Python script on the files the person attached, in a sandbox, and get back its output and any files it saves.
+
+Use it to analyze, transform or chart attached data (CSV, XLSX, JSON, text): summaries, pivots, cleaning, joins, plots, converted files.
+
+How it works:
+- The attachments are copied into `in/` (the script's working directory is the run folder, so open them as `in/<filename>`). By default the latest message's attachments are staged; pass `files` with filenames to pick attachments from earlier in the chat.
+- Save anything the person should get back into `out/` (e.g. `out/chart.png`, `out/cleaned.csv`). Those files are returned to the chat as downloadable files; images show inline.
+- Python 3.12 with pandas, numpy, openpyxl and matplotlib (Agg backend: use `plt.savefig("out/chart.png")`, never `plt.show()`). No other packages can be installed.
+- There is NO network access. Do not try to download data or install packages.
+- Time limit: 60 seconds by default, up to 120 with `timeout_s`. stdout and stderr are capped at 64 KB each; files in `out/` at 20 MB in total.
+- Every run starts from a fresh folder; files from earlier runs are not there. Re-read inputs each time.
+
+The result is JSON: `exit_code`, `stdout`, `stderr`, `files` (what was saved to `out/`), `inputs` (what was staged in `in/`), and `setup` when the one-time Python setup ran during this call (tell the person when it did).
+
+Print concise results (e.g. `df.describe().to_markdown()` is unavailable without tabulate; use `df.to_string()` or build a markdown table yourself). If the script fails, read stderr, fix the code and call again.

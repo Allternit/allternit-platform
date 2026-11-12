@@ -1167,13 +1167,16 @@ fn tool_frames_for_part(
     }
     if settled {
         frames.push(if status == "completed" {
-            json!({
+            let mut frame = json!({
                 "type": "tool_result",
                 "messageId": msg_id,
                 "toolCallId": call_id,
                 "toolName": tool_name,
                 "result": part.pointer("/state/output").cloned().unwrap_or_else(|| json!("")),
-            })
+            });
+            // run_code: produced files → uploads, `files[]` + `run` on the frame.
+            crate::gizzi_chat_stream::add_run_code_fields(&mut frame, part);
+            frame
         } else {
             json!({
                 "type": "tool_error",

@@ -21,6 +21,7 @@ import { SkillTool } from "@/runtime/tools/builtins/skill"
 import { AgentCommunicateTool } from "@/runtime/tools/builtins/agent-communicate"
 import { ListTool } from "@/runtime/tools/builtins/ls"
 import { MultiEditTool } from "@/runtime/tools/builtins/multiedit"
+import { RunCodeTool } from "@/runtime/tools/builtins/run_code"
 import type { Agent } from "@/runtime/loop/agent"
 import { Tool } from "@/runtime/tools/builtins/tool"
 import { Instance } from "@/runtime/context/project/instance"
@@ -172,6 +173,8 @@ export namespace ToolRegistry {
       AgentCommunicateTool,
       VerifyTool,
       BashTool,
+      // Python on attached files, OS-sandboxed with network off (Chat analysis).
+      RunCodeTool,
       ReadTool,
       GlobTool,
       GrepTool,
