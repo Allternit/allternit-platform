@@ -4,7 +4,7 @@
  * the step cap, the tool-call cap and the stuck detector each end the turn
  * with a guardrail.tripped event instead of looping on.
  */
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test"
+import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test"
 import path from "path"
 import { Instance } from "../../src/runtime/context/project/instance"
 import { Session } from "../../src/runtime/session"
@@ -18,6 +18,15 @@ type Step = { finish: "tool-calls" | "stop"; tool?: { name: string; input: any; 
 let script: Step[] = []
 const calls: { system: string[]; tail: string[] }[] = []
 let callSeq = 0
+
+// Bun keeps a mock.module override for the rest of the run, other test files
+// included, so the real modules go back once this file is done.
+const realLLMModule = { ...(await import("../../src/runtime/session/llm")) }
+const realProviderModule = { ...(await import("../../src/runtime/providers/provider")) }
+afterAll(() => {
+  mock.module("../../src/runtime/session/llm", () => realLLMModule)
+  mock.module("../../src/runtime/providers/provider", () => realProviderModule)
+})
 
 mock.module("../../src/runtime/session/llm", () => ({
   LLM: {
