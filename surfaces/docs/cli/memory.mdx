@@ -12,6 +12,9 @@ committed and synced at the end of the turn.
 | Command | What it does |
 | --- | --- |
 | `gizzi memory` / `gizzi memory status` | Drive location, sync state, pending changes, last error. |
+| `gizzi memory list [--source twin\|facts] [--json]` | Your memories: twin items and learned facts. See the [Memory page](/guides/memory). |
+| `gizzi memory edit <id> "<text>"` | Change one memory. Editing a learned fact replaces it, so it gets a new id. |
+| `gizzi memory forget <id>` | Delete one memory. |
 | `gizzi memory sync` | Sync now. `--dismiss` clears the notice about edits that were refused. |
 | `gizzi memory log [-n N]` | Recent changes. |
 | `gizzi memory view <path>` | Print a file, e.g. `facts.md`. |

@@ -3,6 +3,7 @@ export {
   SessionTable,
   MessageTable,
   PartTable,
+  MessageBranchTable,
   SessionTraceTable,
   TodoTable,
   PermissionTable,

@@ -235,8 +235,24 @@ final class AgentChatClient: ObservableObject, @unchecked Sendable {
 
     /// Conversation revert (Phase 8 edit-resend), live on the backend
     /// (agent_session_routes.rs — probed 2026-07: 200 on a valid session).
-    func revert(sessionId: String) async throws {
-        try await client.post(path: "agent-sessions/\(Self.escape(sessionId))/revert")
+    ///
+    /// The server (`RevertSessionBody`) requires `{"messageId": …}`: the
+    /// message to revert back to. A bodyless POST fails and the old turn would
+    /// never be reverted.
+    func revert(sessionId: String, messageId: String) async throws {
+        struct Body: Encodable { let messageId: String }
+        try await client.post(path: "agent-sessions/\(Self.escape(sessionId))/revert", body: Body(messageId: messageId))
+    }
+
+    /// Earlier versions of edited turns (`GET agent-sessions/:id/branches`,
+    /// newest first, max 20). Runtimes that predate the route answer 404:
+    /// that is "no branches", not an error.
+    func branches(sessionId: String) async throws -> [MessageBranch] {
+        do {
+            return try await client.get(path: "agent-sessions/\(Self.escape(sessionId))/branches")
+        } catch let APIError.httpError(statusCode, _) where statusCode == 404 {
+            return []
+        }
     }
 
     // MARK: - Uploads (POST /api/v1/uploads)
@@ -513,5 +529,59 @@ final class AgentChatClient: ObservableObject, @unchecked Sendable {
     /// path-safe; this is parity insurance).
     private static func escape(_ sessionId: String) -> String {
         sessionId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? sessionId
+    }
+}
+
+
+// MARK: - Edited-message history
+
+/// One revert-and-resend: the messages the edit removed, as
+/// `GET agent-sessions/:id/branches` returns them.
+struct MessageBranch: Decodable, Sendable, Identifiable, Equatable {
+    let id: String
+    let anchorMessageId: String
+    let createdAt: String
+    let messages: [Message]
+
+    struct Message: Decodable, Sendable, Identifiable, Equatable {
+        let id: String
+        let role: String
+        let content: String
+        let timestamp: String
+    }
+}
+
+/// Matches branches to the turn they replaced. The resent user message gets a
+/// NEW id, so the anchor id never matches the live transcript: the turn is the
+/// first message after the last live message older than the anchor's time.
+enum EditHistory {
+    struct Entry: Equatable {
+        let id: String
+        let role: String
+        let date: Date
+    }
+
+    static func parse(_ value: String) -> Date? {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let d = f.date(from: value) { return d }
+        f.formatOptions = [.withInternetDateTime]
+        return f.date(from: value)
+    }
+
+    /// `transcript` is the live feed in order. Result: user message id → its
+    /// earlier versions, newest first. Branches that match no user message are
+    /// dropped.
+    static func map(branches: [MessageBranch], transcript: [Entry]) -> [String: [MessageBranch]] {
+        var result: [String: [MessageBranch]] = [:]
+        for branch in branches {
+            let anchor = branch.messages.first(where: { $0.id == branch.anchorMessageId }) ?? branch.messages.first
+            guard let anchor, let anchorDate = parse(anchor.timestamp) else { continue }
+            let lastOlder = transcript.lastIndex(where: { $0.date < anchorDate })
+            let nextIndex = lastOlder.map { $0 + 1 } ?? 0
+            guard nextIndex < transcript.count, transcript[nextIndex].role == "user" else { continue }
+            result[transcript[nextIndex].id, default: []].append(branch)
+        }
+        return result
     }
 }

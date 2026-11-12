@@ -292,6 +292,38 @@ HTTP **428** means the account has no healthy node (pair a desktop/VPS or start 
 
 Unlike the relayed namespaces above, artifacts are stored in Cloud API Postgres itself, so every surface sees the same records. That includes the ones made on a cloud computer or by gizzi. Routes are under `/api/v2/artifacts`, plus a no-auth public link route `/api/v2/public/artifacts/{id}` and `/api/v2/org/artifact-settings`. See [Artifacts v2](/api/artifacts-v2).
 
+## Thread shares
+
+Read-only links to a snapshot of a conversation. All routes are under `/api/v2` and need your bearer token, except the public read.
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `POST` | `/api/v2/thread-shares` | Create a share, or return the existing one for the session. |
+| `PUT` | `/api/v2/thread-shares/:token` | Replace the snapshot. |
+| `DELETE` | `/api/v2/thread-shares/:token` | Stop sharing. `204`. |
+| `GET` | `/api/v2/thread-shares?sessionId=` | Find the share for a session. |
+| `GET` | `/api/v2/public/threads/:token` | Public read, no auth. Returns `{title, messages, updatedAt}`. |
+
+```bash
+curl -X POST https://api.allternit.com/api/v2/thread-shares \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"sessionId":"sess_9c1d","title":"Auth review","snapshot":[{"role":"user","text":"Review the auth module","images":[],"tools":[]}]}'
+# 201 (new) or 200 (existing): {"token":"...","url":"https://ai.allternit.com/t/...","updatedAt":"..."}
+```
+
+The server cleans the snapshot. A kept message is exactly `role` (`user` or `assistant`), `text`, `images` and `tools`.
+
+| Limit | Value |
+| --- | --- |
+| Request body | 2 MB |
+| Text per message | 20,000 characters |
+| Images | PNG, JPEG, WebP or GIF data URLs, 300 KB each, 10 per thread |
+| Tool names | names only, 80 characters each, 50 per message |
+| Messages | 2,000 |
+| Title | 300 characters |
+
+Errors: `400` (`bad_body`, `bad_session_id`), `401`, `404` (`not_found`), `413` (`too_large`), `422` (`empty_snapshot`). See [Share a thread by link](/guides/share-a-thread).
+
 ## Provisioned instances
 
 Paid subscriptions can get an Allternit-provisioned data-plane instance (isolated container, per-instance SQLite, auto-pair). These routes are control-plane only: they create/start/stop the instance. Traffic to Allternit API inside the instance still goes through the runtime relay.

@@ -774,6 +774,29 @@ pub fn profiles_for_instance(defaults: &[String], incus_name: &str) -> Vec<Strin
     }
 }
 
+/// Security keys every cloud computer container carries, set on create and
+/// re-applied after a restore (an Incus restore brings back the snapshot's
+/// config, which may predate a key).
+///
+/// - `security.privileged=false`: ADR A3/v1, unprivileged containers,
+///   explicit rather than the host default.
+/// - `security.nesting=true`: gizzi's bash tool and the run_code sandbox run
+///   bwrap inside the container. Without nesting the default AppArmor profile
+///   blocks the mount calls bwrap needs ("Failed to make / slave: Permission
+///   denied"). Nesting relaxes those mount rules only; on an unprivileged
+///   container root inside stays an unprivileged host uid, so this is safe
+///   together with `security.privileged=false`. Never set nesting on a
+///   privileged container.
+pub const CONTAINER_SECURITY_CONFIG: [(&str, &str); 2] =
+    [("security.privileged", "false"), ("security.nesting", "true")];
+
+fn container_security_config() -> serde_json::Map<String, serde_json::Value> {
+    CONTAINER_SECURITY_CONFIG
+        .iter()
+        .map(|(key, value)| (key.to_string(), serde_json::Value::from(*value)))
+        .collect()
+}
+
 /// Alias of the cancel-snapshot image for an instance name.
 pub fn snapshot_alias_for(incus_name: &str) -> String {
     format!("allternit-snap-{incus_name}")
@@ -786,8 +809,6 @@ impl ProvisionBackend for IncusHttpBackend {
         let mut config = serde_json::json!({
             "limits.cpu": spec.cpu_cores.to_string(),
             "limits.memory": format!("{}MiB", spec.memory_mb),
-            // ADR A3/v1: unprivileged containers, explicit rather than host default.
-            "security.privileged": "false",
             // Incus 6 consumes cloud-init.user-data (config-drive). user.user-data
             // is kept for older LXD-compatible daemons and is otherwise inert.
             "cloud-init.user-data": spec.user_data,
@@ -799,6 +820,10 @@ impl ProvisionBackend for IncusHttpBackend {
             .find_map(|line| line.strip_prefix("# allternit sha256: "))
         {
             config["user.allternit.binary-sha256"] = sha256.trim().into();
+        }
+        // Unprivileged + nesting (see CONTAINER_SECURITY_CONFIG).
+        for (key, value) in container_security_config() {
+            config[key] = value;
         }
         if let Some(allowance) = &spec.cpu_allowance {
             config["limits.cpu.allowance"] = allowance.as_str().into();
@@ -1086,6 +1111,21 @@ impl ProvisionBackend for IncusHttpBackend {
                 reqwest::Method::PUT,
                 &format!("/1.0/instances/{name}"),
                 Some(serde_json::json!({ "restore": snapshot })),
+            )
+            .await?;
+        if !is_success(status) {
+            return Err(error_from_status(status, &json));
+        }
+        self.wait_operation(&json).await?;
+        // The restore brings back the snapshot's config. A restore point taken
+        // before nesting was turned on would drop it, and bwrap (bash tool,
+        // run_code) would fail again. PATCH merges only these keys back.
+        let (status, json) = self
+            .transport
+            .request(
+                reqwest::Method::PATCH,
+                &format!("/1.0/instances/{name}"),
+                Some(serde_json::json!({ "config": container_security_config() })),
             )
             .await?;
         if !is_success(status) {
@@ -3946,6 +3986,8 @@ mod tests {
         assert_eq!(body["type"], "container");
         assert_eq!(body["source"]["alias"], "allternit-desktop");
         assert_eq!(body["config"]["security.privileged"], "false");
+        // bwrap (bash tool, run_code sandbox) needs nesting in the container.
+        assert_eq!(body["config"]["security.nesting"], "true");
         assert_eq!(body["config"]["limits.cpu"], "2");
         assert_eq!(body["config"]["limits.memory"], "2048MiB");
         // Paid computers keep the Incus CPU defaults.
@@ -3956,6 +3998,52 @@ mod tests {
         assert_eq!(body["devices"]["root"]["pool"], "default");
         assert_eq!(body["devices"]["root"]["size"], "20GiB");
         assert_eq!(requests[1].1, "/1.0/operations/op-1/wait?timeout=60");
+    }
+
+    #[tokio::test]
+    async fn incus_create_free_computer_is_also_unprivileged_with_nesting() {
+        let mock = Arc::new(MockTransport::default());
+        mock.responses
+            .lock()
+            .unwrap()
+            .push_back(create_operation_response("allternit-free-z"));
+        let backend = IncusHttpBackend::with_transport(Box::new(SharedTransport(mock.clone())));
+        let free_spec = ProvisionSpec {
+            cpu_priority: Some(2),
+            ..spec("allternit-free-z")
+        };
+
+        backend.create(&free_spec).await.unwrap();
+
+        let requests = mock.requests.lock().unwrap();
+        let config = &requests[0].2.as_ref().unwrap()["config"];
+        assert_eq!(config["security.privileged"], "false");
+        assert_eq!(config["security.nesting"], "true");
+    }
+
+    #[tokio::test]
+    async fn incus_restore_snapshot_reapplies_nesting_after_the_restore() {
+        let mock = Arc::new(MockTransport::default());
+        let backend = IncusHttpBackend::with_transport(Box::new(SharedTransport(mock.clone())));
+
+        backend.restore_snapshot("n1", "before-update").await.unwrap();
+
+        let requests = mock.requests.lock().unwrap();
+        let calls: Vec<(&str, &str)> = requests
+            .iter()
+            .map(|(method, path, _)| (method.as_str(), path.as_str()))
+            .collect();
+        assert_eq!(
+            calls,
+            vec![("PUT", "/1.0/instances/n1"), ("PATCH", "/1.0/instances/n1")]
+        );
+        assert_eq!(requests[0].2.as_ref().unwrap()["restore"], "before-update");
+        let patch = requests[1].2.as_ref().unwrap();
+        assert_eq!(patch["config"]["security.privileged"], "false");
+        assert_eq!(patch["config"]["security.nesting"], "true");
+        // Only the security keys: limits and devices stay as restored.
+        assert_eq!(patch["config"].as_object().unwrap().len(), 2);
+        assert!(patch.get("devices").is_none());
     }
 
     #[tokio::test]

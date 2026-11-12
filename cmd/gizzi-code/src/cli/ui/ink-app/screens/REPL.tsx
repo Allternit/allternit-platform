@@ -2664,6 +2664,14 @@ export function REPL({
           setIsMessageSelectorVisible(true);
         }
       },
+      restoreLastUserMessage: () => {
+        const lastUserMsg = messagesRef.current.findLast(selectableUserMessagesFilter);
+        if (!lastUserMsg) return false;
+        // rewindConversationTo's setMessages races stream appends: cancel first (idempotent).
+        onCancel();
+        restoreMessageSyncRef.current(lastUserMsg);
+        return true;
+      },
       onChangeAPIKey: reverify,
       readFileState: readFileState.current,
       setToolJSX,

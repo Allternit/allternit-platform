@@ -155,6 +155,9 @@ pub fn agent_session_router() -> Router<Arc<AppState>> {
             "/agent-sessions/:id/messages",
             get(list_messages).post(send_message),
         )
+        // Earlier versions of turns a Retry/Edit replaced, proxied to gizzi's
+        // `/v1/session/:id/branches` (newest first, max 20).
+        .route("/agent-sessions/:id/branches", get(list_branches))
         .route("/agent-sessions/:id/abort", post(abort_session))
         .route("/agent-sessions/:id/status", get(session_status))
         .route("/agent-sessions/:id/revert", post(revert_session))
@@ -1406,6 +1409,44 @@ async fn list_messages(headers: HeaderMap, Path(session_id): Path<String>) -> im
     let path = format!("/v1/session/{}/messages", urlencoding::encode(&session_id));
     match gizzi_json::<Vec<GizziMessage>>(&client, reqwest::Method::GET, &path, None).await {
         Ok(messages) => Json(transform_messages_blocking(messages).await).into_response(),
+        Err(response) => response,
+    }
+}
+
+/// A gizzi `message_branch` row: the messages a revert-and-resend removed.
+#[derive(Debug, Deserialize)]
+struct GizziBranch {
+    id: String,
+    #[serde(rename = "anchorMessageId")]
+    anchor_message_id: String,
+    #[serde(rename = "createdAt")]
+    created_at: i64,
+    #[serde(default)]
+    messages: Vec<GizziMessage>,
+}
+
+/// `GET /agent-sessions/:id/branches` → `[{ id, anchorMessageId, createdAt, messages }]`,
+/// newest first. Each message has the same shape as `/agent-sessions/:id/messages`
+/// (`transform_message`), so its `id` is the gizzi message id and `anchorMessageId`
+/// matches the reverted user message's `id` in the transcript before the revert.
+async fn list_branches(headers: HeaderMap, Path(session_id): Path<String>) -> impl IntoResponse {
+    let client = gizzi_client(&headers);
+    let path = format!("/v1/session/{}/branches", urlencoding::encode(&session_id));
+    match gizzi_json::<Vec<GizziBranch>>(&client, reqwest::Method::GET, &path, None).await {
+        Ok(branches) => Json(
+            branches
+                .into_iter()
+                .map(|branch| {
+                    json!({
+                        "id": branch.id,
+                        "anchorMessageId": branch.anchor_message_id,
+                        "createdAt": to_iso(Some(branch.created_at)),
+                        "messages": branch.messages.into_iter().map(transform_message).collect::<Vec<_>>(),
+                    })
+                })
+                .collect::<Vec<_>>(),
+        )
+        .into_response(),
         Err(response) => response,
     }
 }
@@ -4253,6 +4294,61 @@ mod tests {
             Some("profile-1")
         );
 
+        handle.abort();
+    }
+
+    /// `GET /agent-sessions/:id/branches` proxies gizzi's branch rows and gives
+    /// each removed message the `/messages` shape, ids unchanged.
+    #[tokio::test]
+    async fn branches_proxy_returns_old_reply_in_messages_shape() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let seen = Arc::new(Mutex::new(None::<String>));
+        let seen_clone = seen.clone();
+        let gizzi = Router::new().route(
+            "/v1/session/:id/branches",
+            get(move |axum::extract::Path(id): axum::extract::Path<String>| async move {
+                *seen_clone.lock().unwrap() = Some(id.clone());
+                Json(json!([{
+                    "id": "brn_1",
+                    "anchorMessageId": "msg_user2",
+                    "createdAt": 1_762_950_000_000i64,
+                    "messages": [
+                        { "info": { "id": "msg_user2", "sessionID": id, "role": "user", "time": { "created": 1_762_949_990_000i64 } },
+                          "parts": [{ "id": "prt_1", "type": "text", "text": "second question" }] },
+                        { "info": { "id": "msg_asst2", "sessionID": id, "role": "assistant", "time": { "created": 1_762_949_991_000i64, "completed": 1_762_949_995_000i64 } },
+                          "parts": [{ "id": "prt_2", "type": "text", "text": "old reply" }] }
+                    ]
+                }]))
+            }),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = tokio::spawn(async move { axum::serve(listener, gizzi).await.unwrap() });
+        std::env::set_var("TERMINAL_SERVER_URL", format!("http://{}", addr));
+
+        let temp = tempfile::tempdir().unwrap().keep();
+        let state = test_app_state(&temp).await;
+        let response = agent_session_router()
+            .with_state(state)
+            .oneshot(Request::builder().uri("/agent-sessions/ses_abc/branches").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(seen.lock().unwrap().as_deref(), Some("ses_abc"));
+        let branch = &body[0];
+        assert_eq!(branch["id"], "brn_1");
+        assert_eq!(branch["anchorMessageId"], "msg_user2");
+        assert!(branch["createdAt"].as_str().unwrap().starts_with("2025-11-12T"));
+        let messages = branch["messages"].as_array().unwrap();
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0]["id"], "msg_user2");
+        assert_eq!(messages[0]["role"], "user");
+        assert_eq!(messages[0]["content"], "second question");
+        assert_eq!(messages[1]["id"], "msg_asst2");
+        assert_eq!(messages[1]["content"], "old reply");
+        assert_eq!(messages[1]["metadata"]["parts"][0]["id"], "prt_2");
         handle.abort();
     }
 

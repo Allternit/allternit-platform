@@ -4,10 +4,19 @@
  * into ordered blocks around tool calls, and tool calls forwarded as frames.
  */
 
-import { describe, expect, mock, test } from "bun:test"
+import { afterAll, describe, expect, mock, test } from "bun:test"
 import type { AgentEvent } from "@/runtime/runtime-driver"
 
 const driverEvents: AgentEvent[] = []
+
+// Bun keeps a mock.module override for the rest of the run, other test files
+// included, so the real module goes back once this file is done.
+const realDriverFactoryModule = { ...(await import("@/runtime/runtime-driver-factory")) }
+const realRuntimeServiceModule = { ...(await import("@/runtime/runtime-service")) }
+afterAll(() => {
+  mock.module("@/runtime/runtime-driver-factory", () => realDriverFactoryModule)
+  mock.module("@/runtime/runtime-service", () => realRuntimeServiceModule)
+})
 
 mock.module("@/runtime/runtime-driver-factory", () => ({
   RuntimeDriverFactory: {

@@ -53,6 +53,7 @@ import resume from './commands/resume/index.js'
 import native from './commands/native/index.js'
 import review, { ultrareview } from './commands/review.js'
 import session from './commands/session/index.js'
+import edit from './commands/edit/index.js'
 import share from './commands/share/index.js'
 import skills from './commands/skills/index.js'
 import status from './commands/status/index.js'
@@ -281,7 +282,6 @@ export const INTERNAL_ONLY_COMMANDS = [
   resetLimits,
   resetLimitsNonInteractive,
   onboarding,
-  share,
   summary,
   antTrace,
   perfIssue,
@@ -420,6 +420,8 @@ const COMMANDS = memoize((): Command[] => [
   ...(pet ? [pet] : []),
   resumeNow,
   keepGoing,
+  share,
+  edit,
   ...(proactive ? [proactive] : []),
   ...(briefCommand ? [briefCommand] : []),
   ...(assistantCommand ? [assistantCommand] : []),

@@ -15,6 +15,7 @@ struct MemorySettingsView: View {
     @State private var loadError: String? = nil
     @State private var searchText = ""
     @State private var selectedDocument: MemoryDocument? = nil
+    @State private var refreshToken = 0
 
     private let client = MemoryClient()
 
@@ -28,20 +29,24 @@ struct MemorySettingsView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        ScrollView {
+            // The account memory map (every bot plus your own memory).
+            ImpactMapView(botId: nil)
+                .padding(.horizontal, 20)
+                .padding(.top, 16)
+                .padding(.bottom, 8)
+            MemoryAboutYouSection(refreshToken: refreshToken)
+            MemoryItemsSection(refreshToken: refreshToken)
+            sectionHeader("Drive")
             if loadError == nil {
                 searchBar
                 Divider().background(Color("BorderSubtle"))
             }
-            ScrollView {
-                // The account memory map (every bot plus your own memory).
-                ImpactMapView(botId: nil)
-                    .padding(.horizontal, 20)
-                    .padding(.top, 16)
-                    .padding(.bottom, 8)
-                content
-            }
-            .refreshable { await load() }
+            content
+        }
+        .refreshable {
+            refreshToken += 1
+            await load()
         }
         .background(Color("BgPrimary"))
         .navigationTitle("Memory")
@@ -52,6 +57,15 @@ struct MemorySettingsView: View {
         }
     }
 
+    private func sectionHeader(_ title: String) -> some View {
+        Text(title)
+            .font(.headline)
+            .foregroundColor(Color("TextPrimary"))
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 20)
+            .padding(.top, 20)
+    }
+
     // MARK: - Search
 
     private var searchBar: some View {
@@ -59,7 +73,7 @@ struct MemorySettingsView: View {
             Image(systemName: "magnifyingglass")
                 .font(.subheadline)
                 .foregroundColor(Color("TextSecondary"))
-            TextField("Search memories", text: $searchText)
+            TextField("Search documents", text: $searchText)
                 .font(.subheadline)
                 .foregroundColor(Color("TextPrimary"))
                 .textInputAutocapitalization(.never)
@@ -288,6 +302,471 @@ private struct MemoryDocumentDetailView: View {
                 .font(.subheadline)
                 .foregroundColor(Color("TextPrimary"))
                 .textSelection(.enabled)
+        }
+    }
+}
+
+// MARK: - About you
+
+/// Section 1: the twin profile bots speak from, plus what bots are told
+/// about you right now. The full voice and bot-scope controls stay in
+/// "Your twin".
+private struct MemoryAboutYouSection: View {
+    let refreshToken: Int
+    @EnvironmentObject private var authManager: AuthManager
+
+    private enum Phase: Equatable { case loading, unavailable, failed(String), ready }
+
+    @State private var phase: Phase = .loading
+    @State private var profile = TwinProfile(displayName: "", speakingStyle: "", signature: "", ownerDisclosure: "", updatedAt: nil)
+    @State private var saved: TwinProfile? = nil
+    @State private var context: TwinContext? = nil
+    @State private var saving = false
+    @State private var note: String? = nil
+    @State private var saveError: String? = nil
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("About you")
+                .font(.headline)
+                .foregroundColor(Color("TextPrimary"))
+            if !authManager.canCallAccountAPIs {
+                SettingsSignedOutView(message: "Sign in to see what Allternit knows about you.")
+            } else {
+                switch phase {
+                case .loading:
+                    HStack(spacing: 10) {
+                        ProgressView()
+                        Text("Loading…").font(.subheadline).foregroundColor(Color("TextSecondary"))
+                    }
+                case .unavailable:
+                    Text("Your twin isn't available on this computer yet. Update Allternit Desktop, then pull to refresh.")
+                        .font(.footnote).foregroundColor(Color("TextSecondary"))
+                case .failed(let message):
+                    FriendlyInlineStateView(
+                        style: .error, icon: "exclamationmark.triangle",
+                        title: "Couldn't load your profile", message: message,
+                        actionTitle: "Retry", action: { Task { await load() } }
+                    )
+                case .ready:
+                    field("Name your bots speak for", text: $profile.displayName, prompt: "Your name", axis: false, limit: 200)
+                    field("How it speaks", text: $profile.speakingStyle, prompt: "Plain and direct. Short sentences.", axis: true, limit: 2000)
+                    field("Signature", text: $profile.signature, prompt: "Your name, via Allternit", axis: false, limit: 2000)
+                    field("What bots may say about you", text: $profile.ownerDisclosure, prompt: "Share my availability. Never my address or finances.", axis: true, limit: 2000)
+                    HStack {
+                        Button {
+                            Task { await save() }
+                        } label: {
+                            HStack(spacing: 6) {
+                                if saving { ProgressView() }
+                                Text(saving ? "Saving…" : "Save")
+                            }
+                        }
+                        .disabled(saving || profile == saved)
+                        Spacer()
+                        NavigationLink {
+                            TwinSettingsView()
+                        } label: {
+                            Text("Open Your twin")
+                        }
+                    }
+                    .font(.subheadline.weight(.medium))
+                    if let saveError {
+                        Text(saveError).font(.caption).foregroundColor(Theme.statusError)
+                    } else if let note {
+                        Text(note).font(.caption).foregroundColor(Color("TextSecondary"))
+                    }
+                    contextBlock
+                }
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 20)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .task(id: refreshToken) { await load() }
+        .onChange(of: authManager.isSignedIn) { _, _ in Task { await load() } }
+    }
+
+    @ViewBuilder
+    private var contextBlock: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("What bots are told about you")
+                .font(.caption.weight(.medium))
+                .foregroundColor(Color("TextSecondary"))
+            if let context, context.configured, !context.context.isEmpty {
+                Text(context.context)
+                    .font(.footnote)
+                    .foregroundColor(Color("TextPrimary"))
+                    .textSelection(.enabled)
+            } else {
+                Text("Nothing yet. Fill in the fields above and bots will use them from their next turn.")
+                    .font(.footnote)
+                    .foregroundColor(Color("TextSecondary"))
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color("BgSecondary"))
+        .cornerRadius(10)
+    }
+
+    private func field(_ label: String, text: Binding<String>, prompt: String, axis: Bool, limit: Int) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label).font(.caption.weight(.medium)).foregroundColor(Color("TextSecondary"))
+            Group {
+                if axis {
+                    TextField(prompt, text: text, axis: .vertical).lineLimit(2...6)
+                } else {
+                    TextField(prompt, text: text)
+                }
+            }
+            .font(.subheadline)
+            .foregroundColor(Color("TextPrimary"))
+            .padding(10)
+            .background(Color("BgSecondary"))
+            .cornerRadius(10)
+            .onChange(of: text.wrappedValue) { _, new in
+                if new.count > limit { text.wrappedValue = String(new.prefix(limit)) }
+                note = nil
+            }
+        }
+    }
+
+    @MainActor
+    private func load() async {
+        guard authManager.canCallAccountAPIs else { return }
+        if phase != .ready { phase = .loading }
+        do {
+            guard let p = try await TwinClient.shared.profile() else {
+                phase = .unavailable
+                return
+            }
+            if saved == nil || profile == saved { profile = p }
+            saved = p
+            context = try? await TwinClient.shared.context()
+            phase = .ready
+        } catch is CancellationError {
+        } catch {
+            if phase != .ready { phase = .failed(SettingsLoadFailure.from(error).message) }
+        }
+    }
+
+    @MainActor
+    private func save() async {
+        saving = true
+        saveError = nil
+        note = nil
+        defer { saving = false }
+        do {
+            let result = try await TwinClient.shared.saveProfile(profile)
+            profile = result
+            saved = result
+            context = try? await TwinClient.shared.context()
+            note = "Saved. Every bot uses this from its next turn."
+        } catch {
+            saveError = "Couldn't save. \(TwinSettingsView.errorText(error))"
+        }
+    }
+}
+
+// MARK: - Memories
+
+/// Section 2: active twin memories and learned v2 facts in one searchable
+/// list. Twin items edit through the shared `TwinMemoryEditor`; facts edit
+/// through `PATCH memory/v2/facts/:id`.
+private struct MemoryItemsSection: View {
+    let refreshToken: Int
+    @EnvironmentObject private var authManager: AuthManager
+
+    private struct Row: Identifiable {
+        enum Source { case twin(TwinMemory), learned(MemoryFact) }
+        let source: Source
+        var id: String {
+            switch source {
+            case .twin(let m): return "twin-\(m.id)"
+            case .learned(let f): return "fact-\(f.id)"
+            }
+        }
+        var text: String {
+            switch source {
+            case .twin(let m): return m.content
+            case .learned(let f): return f.fact
+            }
+        }
+        var detail: String? {
+            switch source {
+            case .twin(let m): return m.subject.isEmpty ? m.kind.label : "\(m.kind.label) · \(m.subject)"
+            case .learned(let f): return f.memoryType
+            }
+        }
+        var chip: String {
+            switch source {
+            case .twin: return "Twin"
+            case .learned: return "Learned"
+            }
+        }
+    }
+
+    @State private var twinItems: [TwinMemory] = []
+    @State private var facts: [MemoryFact] = []
+    @State private var loading = true
+    @State private var twinError: String? = nil
+    @State private var factsError: String? = nil
+    @State private var search = ""
+    @State private var editingTwin: TwinMemory? = nil
+    @State private var editingFact: MemoryFact? = nil
+    @State private var confirmDelete: Row? = nil
+    @State private var actionError: String? = nil
+
+    private var rows: [Row] {
+        let all = twinItems.filter { $0.status == "active" }.map { Row(source: .twin($0)) }
+            + facts.map { Row(source: .learned($0)) }
+        let q = search.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !q.isEmpty else { return all }
+        return all.filter {
+            $0.text.localizedCaseInsensitiveContains(q) || ($0.detail ?? "").localizedCaseInsensitiveContains(q)
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Memories")
+                .font(.headline)
+                .foregroundColor(Color("TextPrimary"))
+            if !authManager.canCallAccountAPIs {
+                SettingsSignedOutView(message: "Sign in to see your memories.")
+            } else {
+                searchField
+                list
+                if let actionError {
+                    Text(actionError).font(.caption).foregroundColor(Theme.statusError)
+                }
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 20)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .task(id: refreshToken) { await load() }
+        .onChange(of: authManager.isSignedIn) { _, _ in Task { await load() } }
+        .sheet(item: $editingTwin) { memory in
+            TwinMemoryEditor(initial: memory) { input in
+                let updated = try await TwinClient.shared.update(id: memory.id, input)
+                if let i = twinItems.firstIndex(where: { $0.id == updated.id }) { twinItems[i] = updated }
+            }
+        }
+        .sheet(item: $editingFact) { fact in
+            MemoryFactEditor(fact: fact) { text in
+                let result = try await MemoryFactsClient.shared.edit(id: fact.id, fact: text)
+                if let i = facts.firstIndex(where: { $0.id == fact.id }) {
+                    facts[i] = MemoryFact(id: result.id, userId: fact.userId, agentId: fact.agentId, fact: text,
+                                          confidence: fact.confidence, validFrom: fact.validFrom, validUntil: nil,
+                                          sourceObservationId: fact.sourceObservationId,
+                                          memoryType: result.memoryType ?? fact.memoryType)
+                }
+            }
+        }
+        .confirmationDialog(
+            "Delete this memory?",
+            isPresented: Binding(get: { confirmDelete != nil }, set: { if !$0 { confirmDelete = nil } }),
+            titleVisibility: .visible,
+            presenting: confirmDelete
+        ) { row in
+            Button("Delete", role: .destructive) { Task { await remove(row) } }
+            Button("Keep", role: .cancel) {}
+        } message: { row in
+            Text("Allternit forgets “\(row.text)”.")
+        }
+    }
+
+    private var searchField: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass").font(.subheadline).foregroundColor(Color("TextSecondary"))
+            TextField("Search your memories", text: $search)
+                .font(.subheadline)
+                .foregroundColor(Color("TextPrimary"))
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+            if !search.isEmpty {
+                Button { search = "" } label: {
+                    Image(systemName: "xmark.circle.fill").font(.subheadline).foregroundColor(Color("TextSecondary"))
+                }
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .background(Color("BgSecondary"))
+        .cornerRadius(10)
+    }
+
+    @ViewBuilder
+    private var list: some View {
+        if loading && twinItems.isEmpty && facts.isEmpty {
+            HStack { Spacer(); ProgressView().padding(.vertical, 20); Spacer() }
+        } else if let message = twinError ?? factsError, twinItems.isEmpty && facts.isEmpty {
+            FriendlyInlineStateView(
+                style: .error, icon: "exclamationmark.triangle",
+                title: "Couldn't load memories", message: FriendlyErrorMessage.from(message),
+                actionTitle: "Retry", action: { Task { await load() } }
+            )
+        } else {
+            if let message = twinError ?? factsError {
+                Text("Some memories didn't load. \(FriendlyErrorMessage.from(message))")
+                    .font(.caption).foregroundColor(Theme.statusError)
+            }
+            if rows.isEmpty {
+                Text(search.isEmpty ? "Nothing remembered yet. Memories from your chats and your twin appear here."
+                                    : "No memories match your search.")
+                    .font(.footnote).foregroundColor(Color("TextSecondary"))
+                    .padding(.vertical, 8)
+            } else {
+                LazyVStack(spacing: 0) {
+                    ForEach(rows) { row in
+                        rowView(row)
+                        Divider().background(Color("BorderSubtle"))
+                    }
+                }
+            }
+        }
+    }
+
+    private func rowView(_ row: Row) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(row.text)
+                    .font(.subheadline)
+                    .foregroundColor(Color("TextPrimary"))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                HStack(spacing: 6) {
+                    Text(row.chip)
+                        .font(.caption2.weight(.semibold))
+                        .padding(.horizontal, 7).padding(.vertical, 2)
+                        .background(Color("AccentPrimary").opacity(0.12))
+                        .foregroundColor(Color("AccentPrimary"))
+                        .clipShape(Capsule())
+                    if let detail = row.detail, !detail.isEmpty {
+                        Text(detail).font(.caption).foregroundColor(Color("TextSecondary"))
+                    }
+                }
+            }
+            Button { startEdit(row) } label: {
+                Image(systemName: "pencil").font(.subheadline).frame(width: 32, height: 32)
+            }
+            .accessibilityLabel("Edit memory")
+            Button { confirmDelete = row } label: {
+                Image(systemName: "trash").font(.subheadline).frame(width: 32, height: 32)
+            }
+            .foregroundColor(Theme.statusError)
+            .accessibilityLabel("Delete memory")
+        }
+        .buttonStyle(.plain)
+        .padding(.vertical, 10)
+    }
+
+    private func startEdit(_ row: Row) {
+        switch row.source {
+        case .twin(let m): editingTwin = m
+        case .learned(let f): editingFact = f
+        }
+    }
+
+    @MainActor
+    private func load() async {
+        guard authManager.canCallAccountAPIs else { return }
+        loading = true
+        defer { loading = false }
+        async let twin = Result { try await TwinClient.shared.memory() }
+        async let learned = Result { try await MemoryFactsClient.shared.list() }
+        switch await twin {
+        case .success(let items): twinItems = items; twinError = nil
+        case .failure(let e):
+            // 404 = no twin routes on this computer yet; not an error to show.
+            if case APIError.httpError(let status, _) = e, status == 404 { twinItems = []; twinError = nil }
+            else { twinError = e.localizedDescription }
+        }
+        switch await learned {
+        case .success(let items): facts = items; factsError = nil
+        case .failure(let e):
+            if case APIError.httpError(let status, _) = e, status == 404 { facts = []; factsError = nil }
+            else { factsError = e.localizedDescription }
+        }
+    }
+
+    @MainActor
+    private func remove(_ row: Row) async {
+        actionError = nil
+        do {
+            switch row.source {
+            case .twin(let m):
+                try await TwinClient.shared.remove(id: m.id)
+                twinItems.removeAll { $0.id == m.id }
+            case .learned(let f):
+                try await MemoryFactsClient.shared.remove(id: f.id)
+                facts.removeAll { $0.id == f.id }
+            }
+        } catch {
+            actionError = "Couldn't delete that. \(TwinSettingsView.errorText(error))"
+        }
+    }
+}
+
+/// Edit the text of a learned fact. The server stores the edit as a new
+/// version and refuses text that looks like a secret.
+private struct MemoryFactEditor: View {
+    let fact: MemoryFact
+    let onSubmit: (String) async throws -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var text: String
+    @State private var busy = false
+    @State private var error: String? = nil
+
+    init(fact: MemoryFact, onSubmit: @escaping (String) async throws -> Void) {
+        self.fact = fact
+        self.onSubmit = onSubmit
+        _text = State(initialValue: fact.fact)
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    TextField("What to remember", text: $text, axis: .vertical).lineLimit(3...8)
+                } footer: {
+                    if let error { Text(error).foregroundColor(Theme.statusError) }
+                }
+            }
+            .scrollContentBackground(.hidden)
+            .background(Color("BgPrimary"))
+            .navigationTitle("Edit memory")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() }.disabled(busy) }
+                ToolbarItem(placement: .confirmationAction) {
+                    if busy { ProgressView() } else { Button("Save") { Task { await submit() } } }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+    }
+
+    @MainActor
+    private func submit() async {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { error = "Write what should be remembered."; return }
+        busy = true
+        error = nil
+        defer { busy = false }
+        do {
+            try await onSubmit(trimmed)
+            dismiss()
+        } catch {
+            if case APIError.httpError(let status, _) = error, status == 400 {
+                self.error = "That text looks like a password or key, so it can't be saved."
+            } else if case APIError.httpError(let status, _) = error, status == 404 {
+                self.error = "That memory is gone. Pull to refresh."
+            } else {
+                self.error = "Couldn't save that. \(TwinSettingsView.errorText(error))"
+            }
         }
     }
 }
