@@ -109,19 +109,30 @@ pub static REGISTRY: &[EventType] = &[
         agents: true,
         bot: false,
         filters: &[BOT, THREAD],
-        payload: &[P_BOT, P_THREAD, ("approval_id", "Approval id."), ("summary", "What the agent wants to do."), ("run_id", "The run waiting on it, when there is one.")],
+        payload: &[P_BOT, P_THREAD, ("approval_id", "Approval id in the source system (the runtime's approval id, or a computer's grant id)."), ("summary", "What the agent wants to do."), ("run_id", "The run waiting on it, when there is one."), ("source", "Platform: twin or computer."), ("status", "Platform: pending."), ("account_id", "Platform: the account, when there is one."), ("computer_id", "Platform, computer source: the computer."), ("approval", "Platform: the approval object (id `apr_…` for GET/POST /v1/approvals/{id}, kind, proposed_action, conversation_id and response_id when known, expires_at: twin default 24 h).")],
         runtime_aliases: &["approval.requested", "agent.approval.requested"],
     },
     EventType {
         name: "approval.resolved",
         title: "Approval decisions",
-        description: "An approval was granted or denied.",
-        platform: false,
+        description: "An approval was granted or denied (through POST /v1/approvals/{id}, an older approve route, or the owner in the Allternit app).",
+        platform: true,
         agents: true,
         bot: false,
         filters: &[BOT, THREAD],
-        payload: &[P_BOT, P_THREAD, ("approval_id", "Approval id."), ("decision", "approved | denied.")],
+        payload: &[P_BOT, P_THREAD, ("approval_id", "Approval id in the source system."), ("decision", "approved | denied."), ("source", "Platform: twin or computer."), ("status", "Platform: approved | denied."), ("account_id", "Platform: the account, when there is one."), ("reason", "Platform: the reason sent with the decision, when one was."), ("approval", "Platform: the approval object (id `apr_…`; resolved_by = the API key id, console:<user> for the owner in the console, runtime when decided in the Allternit app).")],
         runtime_aliases: &["approval.resolved", "agent.run.approval_resolved"],
+    },
+    EventType {
+        name: "approval.expired",
+        title: "Expired approvals",
+        description: "A held action waited past its expires_at with no decision; it will not run.",
+        platform: true,
+        agents: false,
+        bot: false,
+        filters: &[],
+        payload: &[("approval_id", "Approval id in the source system."), ("source", "twin or computer."), ("status", "expired."), ("account_id", "The account, when there is one."), ("approval", "The approval object (id `apr_…`, kind, expires_at = the deadline it passed).")],
+        runtime_aliases: &[],
     },
     EventType {
         name: "agent.run.completed",
@@ -357,11 +368,13 @@ pub static REGISTRY: &[EventType] = &[
 ];
 
 /// Event types a Platform API webhook can subscribe to: the 051 list, the P3
-/// `call.*` events, `usage.threshold` (P5 spend caps), and P4's `approval.requested`
+/// `call.*` events, `usage.threshold` (P5 spend caps), the approvals lifecycle
+/// (`approval.requested`, plus `approval.resolved` / `approval.expired` from
+/// `/v1/approvals`), P4's `approval.requested`
 /// and `inbox.item.created` (from the project's hosted runtime, per account),
 /// `phone.*` (the project owner's own phones, from their Desktop), and
 /// `mail.received` (the project's mailboxes).
-pub const PLATFORM_EVENTS: [&str; 15] = ["approval.requested", "message.received", "message.status", "registration.updated", "call.started", "call.ended", "call.transcript.ready", "inbox.item.created", "usage.threshold", "phone.step", "phone.run.completed", "phone.fleet_run.completed", "phone.approval.requested", "phone.approval.resolved", "mail.received"];
+pub const PLATFORM_EVENTS: [&str; 17] = ["approval.requested", "approval.resolved", "approval.expired", "message.received", "message.status", "registration.updated", "call.started", "call.ended", "call.transcript.ready", "inbox.item.created", "usage.threshold", "phone.step", "phone.run.completed", "phone.fleet_run.completed", "phone.approval.requested", "phone.approval.resolved", "mail.received"];
 
 pub fn find(name: &str) -> Option<&'static EventType> {
     REGISTRY.iter().find(|e| e.name == name)
@@ -530,7 +543,9 @@ mod tests {
         assert_eq!(from_runtime("phone.approval.requested", &json!({})), Some("phone.approval.requested"));
         assert_eq!(from_runtime("phone.approval.resolved", &json!({})), Some("phone.approval.resolved"));
         assert_eq!(from_runtime("inbox.changed", &json!({})), None);
+        assert_eq!(from_runtime("approval.resolved", &json!({})), Some("approval.resolved"));
         // Platform-only events can't be injected by a runtime.
+        assert_eq!(from_runtime("approval.expired", &json!({})), None);
         assert_eq!(from_runtime("message.status", &json!({})), None);
         assert_eq!(from_runtime("registration.updated", &json!({})), None);
     }
@@ -547,6 +562,10 @@ mod tests {
         }
         let approval = events.iter().find(|e| e["name"] == "approval.requested").unwrap();
         assert_eq!(approval["servers"], json!(["agents", "platform"]));
+        let resolved = events.iter().find(|e| e["name"] == "approval.resolved").unwrap();
+        assert_eq!(resolved["servers"], json!(["agents", "platform"]));
+        let expired = events.iter().find(|e| e["name"] == "approval.expired").unwrap();
+        assert_eq!(expired["servers"], json!(["platform"]));
         let msg = events.iter().find(|e| e["name"] == "message.received").unwrap();
         assert_eq!(msg["servers"], json!(["agents", "bot", "platform"]));
     }

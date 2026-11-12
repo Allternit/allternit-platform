@@ -323,6 +323,59 @@ impl AgencyStore {
         Ok(rec)
     }
 
+    /// Attention `expires_at` (attention.mdx, "How it works" step 5): every
+    /// open request whose deadline passed becomes `expired`. An `approval`
+    /// (anything not `kind: informational`) resolves as a rejection (fail
+    /// closed, `outcome: rejected`) and the run moves exactly as it would on a
+    /// rejection answer ([`rejection_next`], the same mapping as
+    /// `mod.rs resolve_attention_linked`); an `informational` one gets
+    /// `outcome: none` and the run is left as it is. Requests without
+    /// `expires_at` never expire. Run every 60 s by the executor's resume task;
+    /// returns the runs to re-queue.
+    pub async fn expire_attention(&self) -> anyhow::Result<Vec<String>> {
+        let at = Utc::now();
+        let mut requeue = Vec::new();
+        let _g = self.lock().await;
+        for listed in self.runs_with_status(&["needs_attention"]).await? {
+            if !listed.attention.iter().any(|a| attention_expired(a, at)) {
+                continue;
+            }
+            let id = listed.run["id"].as_str().unwrap_or_default().to_string();
+            let Some(mut rec) = self.load_run(&id).await? else { continue };
+            let due: Vec<Value> = rec.attention.iter().filter(|a| attention_expired(a, at)).cloned().collect();
+            if due.is_empty() {
+                continue;
+            }
+            let v = rec.run["version"].as_i64().unwrap_or(0);
+            let mut next = None;
+            for a in &due {
+                let rejected = a["kind"] != "informational";
+                let resolution = json!({ "type": "expiry", "resolved_by": "system", "resolved_at": now(), "receipt_id": new_id("rcpt"),
+                    "outcome": if rejected { "rejected" } else { "none" }, "requested_by": rec.owner, "self_approval": false });
+                for x in rec.attention.iter_mut().filter(|x| x["id"] == a["id"]) {
+                    x["status"] = json!("expired");
+                    x["resolution"] = resolution.clone();
+                }
+                self.emit(&id, v, "attention.expired", json!({ "data": { "attention_id": a["id"], "resolution": resolution } })).await?;
+                if rejected && next.is_none() {
+                    next = rejection_next(a["reason"].as_str().unwrap_or_default());
+                }
+            }
+            match next {
+                Some((to, why, again)) => {
+                    self.transition(rec, to, Some(why)).await?;
+                    if again {
+                        requeue.push(id);
+                    }
+                }
+                None => {
+                    self.save(rec).await?;
+                }
+            }
+        }
+        Ok(requeue)
+    }
+
     pub async fn lock(&self) -> tokio::sync::MutexGuard<'static, ()> {
         WRITE_LOCK.lock().await
     }
@@ -535,5 +588,59 @@ impl AgencyStore {
         let mut v: Vec<(&(String, String, String), &(Value, u64))> = g.objects.iter().filter(|(k, _)| k.0 == ty && k.2 == owner).collect();
         v.sort_by(|a, b| b.1 .1.cmp(&a.1 .1));
         Ok(v.into_iter().map(|(_, (o, _))| o.clone()).collect())
+    }
+}
+
+/// An open attention request past its `expires_at` (RFC 3339). No deadline,
+/// an unparsable one, or a request no longer open never expires.
+pub fn attention_expired(a: &Value, at: chrono::DateTime<Utc>) -> bool {
+    a["status"] == "open"
+        && a["expires_at"].as_str().and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok()).is_some_and(|t| t.with_timezone(&Utc) <= at)
+}
+
+/// Where a run goes when an attention request of `reason` is rejected (by a
+/// person or by expiry): `(status, why, re-queue)`, or `None` to leave it.
+/// Mirrors the rejection arms of `mod.rs resolve_attention_linked`.
+pub fn rejection_next(reason: &str) -> Option<(&'static str, &'static str, bool)> {
+    match reason {
+        "budget_exhausted" => Some(("failed", "budget exhausted; the request expired unanswered")),
+        r if r == super::guard::SPEND_REASON || r == super::guard::CAP_REASON => Some(("failed", "attention expired unanswered; the run stopped (fail closed)")),
+        r if matches!(r, super::safety::RUN_CAP_REASON | super::safety::STUCK_REASON | super::safety::UNKNOWN_EFFECT_REASON) => {
+            Some(("failed", "attention expired unanswered; the run stopped (fail closed)"))
+        }
+        _ => None,
+    }
+    .map(|(to, why)| (to, why, false))
+    .or_else(|| {
+        (reason == super::executor::generic::TASK_WAIT_REASON || reason == super::effect_template::CHILD_ATTENTION_REASON)
+            .then_some(("waiting", "attention expired unanswered (rejected); queued for execution", true))
+    })
+}
+
+#[cfg(test)]
+mod expiry_tests {
+    use super::*;
+
+    #[test]
+    fn only_open_requests_past_their_deadline_expire() {
+        let at = chrono::DateTime::parse_from_rfc3339("2026-11-12T12:00:00Z").unwrap().with_timezone(&Utc);
+        assert!(attention_expired(&json!({ "status": "open", "expires_at": "2026-11-12T11:59:59Z" }), at));
+        assert!(attention_expired(&json!({ "status": "open", "expires_at": "2026-11-12T12:00:00Z" }), at));
+        assert!(!attention_expired(&json!({ "status": "open", "expires_at": "2026-11-12T12:00:01Z" }), at));
+        assert!(!attention_expired(&json!({ "status": "open", "expires_at": null }), at));
+        assert!(!attention_expired(&json!({ "status": "open" }), at));
+        assert!(!attention_expired(&json!({ "status": "open", "expires_at": "tomorrow" }), at));
+        assert!(!attention_expired(&json!({ "status": "resolved", "expires_at": "2026-11-12T11:00:00Z" }), at));
+    }
+
+    #[test]
+    fn an_expired_approval_moves_the_run_like_a_rejection() {
+        assert_eq!(rejection_next("budget_exhausted").map(|n| (n.0, n.2)), Some(("failed", false)));
+        assert_eq!(rejection_next(super::super::guard::SPEND_REASON).map(|n| n.0), Some("failed"));
+        assert_eq!(rejection_next(super::super::guard::CAP_REASON).map(|n| n.0), Some("failed"));
+        assert_eq!(rejection_next(super::super::safety::STUCK_REASON).map(|n| n.0), Some("failed"));
+        assert_eq!(rejection_next(super::super::executor::generic::TASK_WAIT_REASON).map(|n| (n.0, n.2)), Some(("waiting", true)));
+        assert_eq!(rejection_next(super::super::effect_template::CHILD_ATTENTION_REASON).map(|n| (n.0, n.2)), Some(("waiting", true)));
+        assert_eq!(rejection_next("routing_policy"), None);
     }
 }
