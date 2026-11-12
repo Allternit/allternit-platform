@@ -368,6 +368,7 @@
               "operations/owned-downloads",
               "operations/screen-capture",
               "operations/hosted-driver",
+              "operations/cloud-computer-network",
               "operations/upstream-funding",
               "operations/database-migrations",
               "operations/mail-triage-eval",
