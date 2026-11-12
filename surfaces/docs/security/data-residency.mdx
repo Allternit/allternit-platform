@@ -5,6 +5,11 @@ description: Pin inference and storage to specific regions and enforce region pi
 
 # Data Residency
 
+<Note>
+These endpoints are served by the Allternit runtime (the Desktop app, or a paired or hosted computer), not by `api.allternit.com`. On Allternit Cloud the console hides this page.
+</Note>
+
+
 Allternit's Data Residency API lets organization owners and admins pin data processing and storage to a set of approved cloud regions. You can also enforce region pinning so that requests are rejected if they cannot be served from the pinned regions.
 
 ## Authentication and authorization
@@ -28,7 +33,7 @@ Data residency endpoints require a Clerk JWT or a valid organization access toke
 ## Available regions
 
 ```bash
-curl https://api.allternit.com/api/v1/admin/data-residency/regions \
+curl http://127.0.0.1:8013/api/v1/admin/data-residency/regions \
   -H "Authorization: Bearer $ALLTERNIT_TOKEN"
 ```
 
@@ -52,7 +57,7 @@ curl https://api.allternit.com/api/v1/admin/data-residency/regions \
 ## Get the current policy
 
 ```bash
-curl https://api.allternit.com/api/v1/admin/data-residency \
+curl http://127.0.0.1:8013/api/v1/admin/data-residency \
   -H "Authorization: Bearer $ALLTERNIT_TOKEN"
 ```
 
@@ -74,7 +79,7 @@ If no policy has been set, the response returns the organization ID with an empt
 ## Set the residency policy
 
 ```bash
-curl -X POST https://api.allternit.com/api/v1/admin/data-residency \
+curl -X POST http://127.0.0.1:8013/api/v1/admin/data-residency \
   -H "Authorization: Bearer $ALLTERNIT_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{

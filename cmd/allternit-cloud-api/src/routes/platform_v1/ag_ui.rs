@@ -19,8 +19,9 @@
 //! **Stream.** `text/event-stream`, one `data:` JSON event per AG-UI event:
 //! `RUN_STARTED` → `TEXT_MESSAGE_START` / `_CONTENT` / `_END` → for each tool the
 //! agent uses `TOOL_CALL_START` / `_ARGS` / `_END` / `TOOL_CALL_RESULT` → then
-//! `RUN_FINISHED`, or `RUN_ERROR {message, code}` when the turn fails. The reply
-//! is stored on the conversation like any other.
+//! `RUN_FINISHED`, or `RUN_ERROR {message, code}` when the turn fails. The turn
+//! is stored on the conversation like any other: the user's message, each tool
+//! step as a `tool_call` item, then the reply (see [`super::conversations`]).
 
 use std::{convert::Infallible, sync::Arc};
 
@@ -36,7 +37,7 @@ use serde_json::{json, Value};
 
 use super::{
     agents,
-    conversations::{self, TurnLock, TurnMeter},
+    conversations::{self, TurnLock, TurnLog, TurnMeter},
     hosting::{host_for, AgentHost, SseLines},
     new_id, ApiJson, PlatformCaller, PlatformError, RouteTable,
 };
@@ -235,60 +236,46 @@ async fn run_agent(
     super::spend_allowed(&state.db, &caller.project_id).await?;
     let conv_id = thread_conversation(&state, &caller, &agent, thread_id.as_deref()).await?;
     let conv = conversations::fetch_conversation(&state.db, &caller, &conv_id).await?;
-    let lock = TurnLock::take(&conv.id).ok_or_else(|| PlatformError::conflict("conversation_busy", "The agent is still answering the previous message in this conversation."))?;
+    let lock = TurnLock::take(&conv.id).ok_or_else(conversations::conversation_busy)?;
     let host = host_for(&state, layered);
     let (rt, session, own_key) = conversations::prepare(&state, host.as_ref(), &caller, &conv).await?;
-    let meter = TurnMeter::new(&caller, &conv, own_key);
-    let path = format!("/api/v1/platform/agents/{}/sessions/{}/turn", conv.agent_id, session);
+    let meter = TurnMeter::new(&caller, &conv, own_key)?;
+    let path = format!("/api/v1/platform/agents/{}/sessions/{}/turn", meter.agent_id, session);
     let mut upstream = host.stream(&rt, &path, &json!({ "text": content })).await?;
-    conversations::insert_message(&state.db, &conv.id, "user", &content, "completed", None).await?;
+    conversations::store_user(&state.db, &caller.project_id, &conv.id, &content).await?;
 
     let db = state.db.clone();
+    let project_id = caller.project_id.clone();
     let mut fold = AgUiFold::new(thread_id.as_deref().unwrap_or(&conv.id), &run_id);
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Value>();
     let _ = tx.send(fold.started());
     tokio::spawn(async move {
         let _lock = lock;
-        let (mut lines, mut text, mut failure, mut done, mut usage) = (SseLines::default(), String::new(), None::<String>, false, Value::Null);
+        let (mut lines, mut log) = (SseLines::default(), TurnLog::default());
         'read: while let Some(chunk) = upstream.next().await {
             let bytes = match chunk {
                 Ok(b) => b,
                 Err(e) => {
-                    failure = Some(format!("the agent's reply was cut off: {e}"));
+                    log.cut_off(e);
                     break 'read;
                 }
             };
             for ev in lines.push(&bytes) {
+                // The log keeps the reply and its tool steps for storage; the fold
+                // turns text and tool events into AG-UI events (it skips `done`/`error`).
+                log.feed(&ev);
                 let mut out = Vec::new();
-                match ev["type"].as_str() {
-                    Some("text.delta") => {
-                        text.push_str(ev["text"].as_str().unwrap_or(""));
-                        fold.feed(&ev, &mut out);
-                    }
-                    Some("done") => {
-                        text = ev["text"].as_str().unwrap_or(&text).to_string();
-                        usage = ev["usage"].clone();
-                        done = true;
-                    }
-                    Some("error") => {
-                        failure = Some(ev["message"].as_str().unwrap_or("the agent's turn failed").to_string());
-                        usage = ev["usage"].clone();
-                    }
-                    _ => fold.feed(&ev, &mut out),
-                }
+                fold.feed(&ev, &mut out);
                 // The client hung up: keep reading so the reply is still stored.
                 for e in out {
                     let _ = tx.send(e);
                 }
             }
         }
-        let failure = failure.or_else(|| (!done).then(|| "the agent's reply ended early".to_string()));
-        let stored = match &failure {
-            Some(f) => conversations::insert_message(&db, &conv.id, "assistant", &text, "failed", Some(f)).await,
-            None => conversations::insert_message(&db, &conv.id, "assistant", &text, "completed", None).await,
-        };
+        let failure = log.failure();
+        let stored = conversations::store_turn(&db, &project_id, &conv.id, &log, failure.as_deref()).await;
         if let Ok(m) = &stored {
-            conversations::meter_turn(&db, &meter, &m.id, &usage, failure.as_deref()).await;
+            conversations::meter_turn(&db, &meter, &m.id, &log.usage, failure.as_deref()).await;
         }
         let mut out = Vec::new();
         match (stored, &failure) {

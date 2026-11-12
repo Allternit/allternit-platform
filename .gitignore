@@ -16,6 +16,8 @@ target/
 *.png
 !surfaces/platform.allternit.com/public/favicon.png
 !services/remote-control-push/favicon.png
+# iMessage app icons: App Store Connect rejects the upload without them (build 33, 2026-11-12)
+!surfaces/allternit-mobile/ios/AllternitMessages/MessagesAssets.xcassets/**/*.png
 !surfaces/allternit-mobile/ios/Assets.xcassets/**/*.png
 !surfaces/platform.allternit.com/public/billing/*.png
 *.mov

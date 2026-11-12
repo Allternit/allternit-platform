@@ -23,6 +23,15 @@ Page = Dict[str, Any]
 """A list response: ``{"data": [...], "has_more": bool, "next_cursor": str | None}``."""
 
 
+def _sdk_version() -> str:
+    try:
+        from importlib.metadata import version
+
+        return version("allternit-platform")
+    except Exception:  # not installed (running from a checkout)
+        return "0+unknown"
+
+
 @dataclass
 class SSEEvent:
     """One server-sent event: its ``event:`` name and its ``data:`` payload, JSON-parsed when possible."""
@@ -75,7 +84,7 @@ class Transport:
         headers = {
             "Accept": accept,
             "Authorization": f"Bearer {self.api_key}",
-            "User-Agent": "allternit-platform-python/0.1.0",
+            "User-Agent": f"allternit-platform-python/{_sdk_version()}",
             **self.default_headers,
             **(extra_headers or {}),
         }

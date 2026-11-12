@@ -44,7 +44,7 @@ The Role-Based Access Control (RBAC) API lets organization admins define custom 
 ## Create a role
 
 ```bash
-curl -X POST https://api.allternit.com/api/v1/admin/rbac_roles \
+curl -X POST http://127.0.0.1:8013/api/v1/admin/rbac_roles \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -78,7 +78,7 @@ curl -X POST https://api.allternit.com/api/v1/admin/rbac_roles \
 ## List roles
 
 ```bash
-curl -X GET https://api.allternit.com/api/v1/admin/rbac_roles \
+curl -X GET http://127.0.0.1:8013/api/v1/admin/rbac_roles \
   -H "Authorization: Bearer $ADMIN_TOKEN"
 ```
 
@@ -102,7 +102,7 @@ curl -X GET https://api.allternit.com/api/v1/admin/rbac_roles \
 ## Update a role
 
 ```bash
-curl -X PUT https://api.allternit.com/api/v1/admin/rbac_roles/role_01hqx8x7x7x7x7x7x7x7x7x \
+curl -X PUT http://127.0.0.1:8013/api/v1/admin/rbac_roles/role_01hqx8x7x7x7x7x7x7x7x7x \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -127,7 +127,7 @@ curl -X PUT https://api.allternit.com/api/v1/admin/rbac_roles/role_01hqx8x7x7x7x
 ## Create a group
 
 ```bash
-curl -X POST https://api.allternit.com/api/v1/admin/rbac_groups \
+curl -X POST http://127.0.0.1:8013/api/v1/admin/rbac_groups \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -163,7 +163,7 @@ All `role_ids` must exist in the same organization.
 ## Add a member to a group
 
 ```bash
-curl -X POST https://api.allternit.com/api/v1/admin/rbac_groups/group_01hqx8x7x7x7x7x7x7x7x7x/members \
+curl -X POST http://127.0.0.1:8013/api/v1/admin/rbac_groups/group_01hqx8x7x7x7x7x7x7x7x7x/members \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"user_id": "usr_01hqx8x7x7x7x7x7x7x7x7x"}'
@@ -181,7 +181,7 @@ curl -X POST https://api.allternit.com/api/v1/admin/rbac_groups/group_01hqx8x7x7
 ## Remove a member from a group
 
 ```bash
-curl -X DELETE https://api.allternit.com/api/v1/admin/rbac_groups/group_01hqx8x7x7x7x7x7x7x7x7x/members/usr_01hqx8x7x7x7x7x7x7x7x7x \
+curl -X DELETE http://127.0.0.1:8013/api/v1/admin/rbac_groups/group_01hqx8x7x7x7x7x7x7x7x7x/members/usr_01hqx8x7x7x7x7x7x7x7x7x \
   -H "Authorization: Bearer $ADMIN_TOKEN"
 ```
 

@@ -43,6 +43,8 @@ ALERT_BINDING = "ALERT_EMAIL"
 ALERT_TO = "allternitpbc@gmail.com"
 ALERT_FROM = "status@allternit.com"
 # "off": auto incidents are saved as admin-only drafts (publish at /admin).
-# "on": auto incidents are public at once. Flip at G9 after the 24 h soak.
-AUTO_INCIDENTS = "off"
+# "on": auto incidents are public at once.
+# An ISO time: drafts before it, public from it on. Set to the end of the 24 h soak (G9)
+# so it turns on by itself; drafts made during the soak stay drafts in /admin.
+AUTO_INCIDENTS = "2026-11-13T14:05:00Z"
 SITE_URL = "https://status.allternit.com"

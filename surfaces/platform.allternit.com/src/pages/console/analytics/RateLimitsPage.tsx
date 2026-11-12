@@ -18,6 +18,8 @@ import {
   putAdminRateLimits,
   type AdminRateLimits,
 } from "@/lib/gateway-analytics";
+import { isCloudGateway } from "../../../lib/availability";
+import { ProjectRateLimits } from "./ProjectRateLimits";
 import { ensureConsoleGatewayKey, gatewayAuthOptions } from "@/lib/console-gateway";
 
 interface CallerRateLimits {
@@ -30,6 +32,10 @@ interface CallerRateLimits {
 }
 
 export function RateLimitsPage(): React.ReactNode {
+  return isCloudGateway() ? <ProjectRateLimits /> : <RuntimeRateLimitsPage />;
+}
+
+function RuntimeRateLimitsPage(): React.ReactNode {
   const [caller, setCaller] = useState<CallerRateLimits | null>(null);
   const [callerLoading, setCallerLoading] = useState(true);
   const [callerError, setCallerError] = useState<string | null>(null);

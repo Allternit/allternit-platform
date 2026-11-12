@@ -68,6 +68,17 @@ before(async () => {
         res.end(`event: message.completed\ndata: ${JSON.stringify(msg("Hi there"))}\n\n`);
         return;
       }
+      if (p === "/v1/decisions" && req.method === "POST") return json(res, 200, { id: "dec_1", object: "decision", answers: [{ name: "ok", type: "predicate", probability: 0.9, confidence: 0.9 }] });
+      if (p === "/v1/responses" && req.method === "POST") {
+        if (!body.stream) return json(res, 200, { id: "resp_1", object: "response", status: "completed", output: [] });
+        res.writeHead(200, { "content-type": "text/event-stream" });
+        res.end('event: response.output_text.delta\ndata: {"delta":"Hi"}\n\nevent: response.completed\ndata: {"id":"resp_1"}\n\n');
+        return;
+      }
+      if (p === "/v1/messages" && req.method === "POST") return json(res, 200, { id: "mdl_1", type: "message", role: "assistant", content: [{ type: "text", text: "Hi" }], stop_reason: "end_turn" });
+      if (p === "/v1/texts" && req.method === "POST") return json(res, 201, { id: "msg_1", object: "text", status: "simulated" });
+      if (p === "/v1/conversations/conv_1/items" && req.method === "GET") return json(res, 200, { data: [{ id: "item_1", object: "item" }], has_more: false, next_cursor: null });
+      if (p === "/v1/approvals/apr_1" && req.method === "POST") return json(res, 200, { id: "apr_1", object: "approval", status: "approved" });
       json(res, 404, { error: { type: "not_found_error", code: "route", message: "no route", param: null } });
     });
   });
@@ -187,6 +198,46 @@ test("an error event in the stream throws a typed error", async () => {
   assert.ok(err instanceof APIError);
   assert.equal(err.code, "turn_failed");
   assert.equal(err.type, "api_error");
+});
+
+test("decisions.create posts typed questions", async () => {
+  const d = await client().decisions.create({ input: "Box arrived crushed", questions: [{ name: "ok", type: "predicate", instructions: "Damaged?" }] } as any);
+  assert.equal(d.id, "dec_1");
+  assert.equal(seen.at(-1)!.url, "/v1/decisions");
+  assert.equal((seen.at(-1)!.body as any).questions[0].name, "ok");
+});
+
+test("responses.create and createStream", async () => {
+  const r = await client().responses.create({ model: "allternit/auto", input: "hi" } as any);
+  assert.equal(r.status, "completed");
+  const events = [];
+  for await (const ev of client().responses.createStream({ model: "allternit/auto", input: "hi" } as any)) events.push(ev);
+  assert.equal((seen.at(-1)!.body as any).stream, true);
+  assert.equal(events.length, 2);
+});
+
+test("messages.create uses the Anthropic shape", async () => {
+  const m = await client().messages.create({ model: "allternit/auto", messages: [{ role: "user", content: "hi" }], max_tokens: 64 } as any);
+  assert.equal(m.id, "mdl_1");
+  assert.equal(seen.at(-1)!.url, "/v1/messages");
+});
+
+test("texts.create posts to /v1/texts", async () => {
+  const t = await client().texts.create({ number_id: "n1", to: "+14155550123", body: "Hi" } as any);
+  assert.equal(t.object, "text");
+  assert.equal(seen.at(-1)!.url, "/v1/texts");
+});
+
+test("conversations.listItems reads the items page", async () => {
+  const page = await client().conversations.listItems("conv_1");
+  assert.equal(page.data[0].id, "item_1");
+  assert.match(seen.at(-1)!.url, /^\/v1\/conversations\/conv_1\/items/);
+});
+
+test("approvals.resolve sends the decision", async () => {
+  const a = await client().approvals.resolve("apr_1", { decision: "approve" });
+  assert.equal(a.status, "approved");
+  assert.deepEqual(seen.at(-1)!.body, { decision: "approve" });
 });
 
 test("the generated code matches the OpenAPI file (generate.py --check)", () => {

@@ -4,6 +4,7 @@
 //!
 //! - `POST/GET /api/v1/platform/projects`
 //! - `GET/PATCH /api/v1/platform/projects/:id`
+//! - `GET /api/v1/platform/projects/:id/limits` (read-only rate and call limits)
 //! - `POST/GET /api/v1/platform/projects/:id/keys`
 //! - `DELETE /api/v1/platform/projects/:id/keys/:key_id`
 //!
@@ -48,6 +49,7 @@ pub fn routes() -> Router<Arc<ApiState>> {
             "/api/v1/platform/projects/:id",
             get(get_project).patch(update_project),
         )
+        .route("/api/v1/platform/projects/:id/limits", get(get_limits))
         .route(
             "/api/v1/platform/projects/:id/keys",
             get(list_keys).post(create_key),
@@ -168,6 +170,71 @@ async fn get_project(
 ) -> Result<Json<projects::Project>, PlatformError> {
     let (who, _) = principal(&headers).await?;
     Ok(Json(projects::get_project(&state.db, &who, &id).await?))
+}
+
+async fn get_limits(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, PlatformError> {
+    let (who, _) = principal(&headers).await?;
+    Ok(Json(project_limits(&state.db, &who, &id).await?))
+}
+
+/// The project's effective rate and call limits plus current-window usage.
+/// Same access as `get_project`: it calls `projects::get_project` directly, so
+/// an archived project still answers 200 for its owner and a stranger gets 404.
+/// The limits use the same rules as `PlatformCaller::rpm_limit` and the plan's
+/// `call_cap` (the values the `/v1` limiter enforces); `used` is a read-only
+/// look at the `project:{id}` counter and never writes.
+pub(super) async fn project_limits(
+    db: &sqlx::PgPool,
+    who: &Principal,
+    id: &str,
+) -> Result<Value, PlatformError> {
+    let project = projects::get_project(db, who, id).await?;
+    let plan = super::caller::Plan::parse(&project.plan);
+    let source = |overridden: bool| if overridden { "override" } else { "plan" };
+    let (rpm, rpm_over) = super::caller::effective_rpm(plan, project.rpm_override);
+    let (call_limit, call_over) = super::caller::effective_call_cap(plan, project.call_cap_override);
+    let (rpm_source, call_source) = (source(rpm_over), source(call_over));
+
+    let now = chrono::Utc::now().timestamp();
+    let window_secs = super::limits::WINDOW_SECS;
+    let window_start = now - now.rem_euclid(window_secs);
+    let resets_at = chrono::DateTime::from_timestamp(window_start + window_secs, 0)
+        .map(|t| t.to_rfc3339())
+        .unwrap_or_default();
+    let used: Option<i64> = match sqlx::query_scalar::<_, i32>(
+        "SELECT count FROM platform_rate_windows WHERE bucket = $1 AND window_start = to_timestamp($2::float8)",
+    )
+    .bind(format!("project:{}", project.id))
+    .bind(window_start as f64)
+    .fetch_optional(db)
+    .await
+    {
+        Ok(row) => Some(row.unwrap_or(0) as i64),
+        Err(error) => {
+            tracing::error!(%error, "platform limits: reading the rate window failed");
+            None
+        }
+    };
+    let remaining = used.map(|u| (rpm as i64 - u).max(0));
+
+    Ok(json!({
+        "object": "project.limits",
+        "project_id": project.id,
+        "plan": plan,
+        "rate_limit": {
+            "requests_per_minute": rpm,
+            "source": rpm_source,
+            "window_seconds": window_secs,
+            "used": used,
+            "remaining": remaining,
+            "resets_at": resets_at,
+        },
+        "concurrent_calls": { "limit": call_limit, "source": call_source },
+    }))
 }
 
 async fn update_project(

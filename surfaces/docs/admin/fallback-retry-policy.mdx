@@ -12,7 +12,7 @@ All fallback retry policy endpoints require the caller to be an organization own
 ## Base URL
 
 ```text
-https://api.allternit.com/api/v1/admin/fallback-retry-policy
+http://127.0.0.1:8013/api/v1/admin/fallback-retry-policy
 ```
 
 For local development:
@@ -45,7 +45,7 @@ Retryable statuses: `refusal`, `error`, `rate_limited`, `budget_exceeded`, `dlp_
 ## Get the policy
 
 ```bash
-curl https://api.allternit.com/api/v1/admin/fallback-retry-policy \
+curl http://127.0.0.1:8013/api/v1/admin/fallback-retry-policy \
   -H "Authorization: Bearer $ADMIN_TOKEN"
 ```
 
@@ -69,7 +69,7 @@ curl https://api.allternit.com/api/v1/admin/fallback-retry-policy \
 ## Update the policy
 
 ```bash
-curl -X PUT https://api.allternit.com/api/v1/admin/fallback-retry-policy \
+curl -X PUT http://127.0.0.1:8013/api/v1/admin/fallback-retry-policy \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{

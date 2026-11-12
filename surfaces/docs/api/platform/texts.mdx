@@ -1,18 +1,22 @@
 ---
-title: 'Messaging'
+title: 'Texts'
 description: 'Send and receive texts on a project’s numbers.'
 ---
 
 Scope `messaging`.
 
+<Note>
+On 2026-11-12 SMS moved from `/v1/messages` to `/v1/texts`; the object is now `text` (ids keep their `msg_` prefix). `POST /v1/messages` is now the [Messages](/api/platform/messages) model call. The webhook events `message.received` and `message.status` keep their names, so stored subscriptions are unaffected.
+</Note>
+
 | Method | Path | |
 |---|---|---|
-| `POST` | `/v1/messages` | Send: `{ "number_id", "to", "body" }` |
-| `GET` | `/v1/messages` | List (cursor pagination; filters `number_id`, `account_id`, `direction`) |
-| `GET` | `/v1/messages/{id}` | Retrieve |
+| `POST` | `/v1/texts` | Send: `{ "number_id", "to", "body" }` |
+| `GET` | `/v1/texts` | List (cursor pagination; filters `number_id`, `account_id`, `direction`) |
+| `GET` | `/v1/texts/{id}` | Retrieve |
 
 ```json
-{ "id": "msg_9f2…", "object": "message", "account_id": "acct_7Hq…", "number_id": "6f1c…", "direction": "outbound",
+{ "id": "msg_9f2…", "object": "text", "account_id": "acct_7Hq…", "number_id": "6f1c…", "direction": "outbound",
   "from": "+16125550142", "to": "+14155550123", "body": "Yes, 2 pm works.", "segments": 1, "status": "sent",
   "error_code": null, "media": [], "created_at": "2026-10-04T18:20:44Z" }
 ```
@@ -31,7 +35,7 @@ Scope `messaging`.
 
 ## Retrying a send safely
 
-Send an `Idempotency-Key` header (any unique string up to 200 characters) with `POST /v1/messages`. If the request is retried with the same key on the same number, the original message comes back and no second text goes out. A retry that arrives while the first is still in flight returns `409` with `send_in_progress`; try again shortly. If the carrier rejects the first attempt, the key is released and a retry sends normally.
+Send an `Idempotency-Key` header (any unique string up to 200 characters) with `POST /v1/texts`. If the request is retried with the same key on the same number, the original text comes back and no second text goes out. A retry that arrives while the first is still in flight returns `409` with `send_in_progress`; try again shortly. If the carrier rejects the first attempt, the key is released and a retry sends normally.
 
 ## Receiving texts
 

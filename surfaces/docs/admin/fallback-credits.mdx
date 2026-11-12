@@ -12,7 +12,7 @@ The fallback credit policy is organization-scoped and gated to owners and admins
 ## Base URL
 
 ```text
-https://api.allternit.com/api/v1/admin/fallback-credits
+http://127.0.0.1:8013/api/v1/admin/fallback-credits
 ```
 
 For local development:
@@ -47,7 +47,7 @@ Eligible statuses: `refusal`, `error`, `rate_limited`, `budget_exceeded`, `dlp_b
 ## Get the policy
 
 ```bash
-curl https://api.allternit.com/api/v1/admin/fallback-credit-policy \
+curl http://127.0.0.1:8013/api/v1/admin/fallback-credit-policy \
   -H "Authorization: Bearer $ADMIN_TOKEN"
 ```
 
@@ -69,7 +69,7 @@ curl https://api.allternit.com/api/v1/admin/fallback-credit-policy \
 ## Update the policy
 
 ```bash
-curl -X PUT https://api.allternit.com/api/v1/admin/fallback-credit-policy \
+curl -X PUT http://127.0.0.1:8013/api/v1/admin/fallback-credit-policy \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -101,7 +101,7 @@ curl -X PUT https://api.allternit.com/api/v1/admin/fallback-credit-policy \
 Reconciliation scans `llm_usage_events` for eligible primary failures that were followed by a successful fallback event within the configured window, then creates pending credit ledger rows.
 
 ```bash
-curl -X POST https://api.allternit.com/api/v1/admin/fallback-credits/reconcile \
+curl -X POST http://127.0.0.1:8013/api/v1/admin/fallback-credits/reconcile \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -126,7 +126,7 @@ When `auto_apply` is enabled, eligible credits are applied during reconciliation
 ## List credits
 
 ```bash
-curl -G https://api.allternit.com/api/v1/admin/fallback-credits \
+curl -G http://127.0.0.1:8013/api/v1/admin/fallback-credits \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -d "status=pending" \
   -d "limit=20" \
@@ -158,7 +158,7 @@ curl -G https://api.allternit.com/api/v1/admin/fallback-credits \
 ## Apply a pending credit
 
 ```bash
-curl -X POST https://api.allternit.com/api/v1/admin/fallback-credits/fc_01hqx8x7x7x7x7x7x7x7x7x/apply \
+curl -X POST http://127.0.0.1:8013/api/v1/admin/fallback-credits/fc_01hqx8x7x7x7x7x7x7x7x7x/apply \
   -H "Authorization: Bearer $ADMIN_TOKEN"
 ```
 

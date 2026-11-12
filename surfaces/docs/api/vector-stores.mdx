@@ -3,6 +3,11 @@ title: Vector Stores
 description: Manage vector stores and search attached files through the Allternit LLM gateway
 ---
 
+<Warning>
+Not served on api.allternit.com. This page describes the gateway contract only.
+</Warning>
+
+
 ## Overview
 
 **Status:** Implementation IMPLEMENTED for store and file records (stored in the gateway database; a store or attached file is `completed` immediately, with no indexing step), and DESIGN - NOT YET IMPLEMENTED for search. `POST /v1/vector_stores/:id/search` validates the request and always returns an empty result list, because no embedding or similarity search is wired in yet. Exposure INTERNAL.

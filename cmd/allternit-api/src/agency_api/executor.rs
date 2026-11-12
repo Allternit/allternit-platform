@@ -225,6 +225,23 @@ pub fn resume_inflight_once(st: &Arc<AppState>) {
     }
     RESUMED.call_once(|| {
         let st = st.clone();
+        // Attention `expires_at`: every 60 s, expired approvals resolve as
+        // rejections (`store::expire_attention`); re-queue the runs it names.
+        let sweep = st.clone();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(Duration::from_secs(60));
+            loop {
+                tick.tick().await;
+                match super::store(&sweep).expire_attention().await {
+                    Ok(ids) => {
+                        for id in ids {
+                            spawn(sweep.clone(), id);
+                        }
+                    }
+                    Err(e) => tracing::warn!("agency attention expiry: {e}"),
+                }
+            }
+        });
         tokio::spawn(async move {
             let s = super::store(&st);
             for mut rec in s.runs_with_status(&["waiting", "running"]).await.unwrap_or_default() {

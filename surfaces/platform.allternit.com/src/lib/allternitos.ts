@@ -3,8 +3,9 @@
  *
  * Talks directly to an AllternitOS control-plane instance configured with
  * CORS origins that include `platform.allternit.com`. The base URL is set via
- * `VITE_ALLTERNITOS_URL` and defaults to `http://127.0.0.1:8080` for local
- * development.
+ * `VITE_ALLTERNITOS_URL`. When it is unset there is no default: `osBase()`
+ * returns null and no request is made. For local development set it to
+ * `http://127.0.0.1:8080` in `.env.local`.
  */
 
 export class AllternitOSApiError extends Error {
@@ -24,12 +25,22 @@ export function formatOSApiError(err: unknown, fallback: string): string {
   return fallback;
 }
 
-function osBase(): string {
-  const configured = import.meta.env.VITE_ALLTERNITOS_URL || 'http://127.0.0.1:8080';
-  return String(configured).replace(/\/+$/, '');
+function osBase(): string | null {
+  const configured = String(import.meta.env.VITE_ALLTERNITOS_URL ?? '').trim();
+  if (!configured) return null;
+  return configured.replace(/\/+$/, '');
+}
+
+/** True when a control-plane URL is configured for this build. */
+export function isOSConfigured(): boolean {
+  return osBase() !== null;
 }
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  const base = osBase();
+  if (base === null) {
+    throw new AllternitOSApiError('AllternitOS control plane is not configured', 0, 'not_configured');
+  }
   const normalizedPath = path.startsWith('/') ? path : `/${path}`;
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -40,7 +51,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   const timeoutMs = Number(import.meta.env.VITE_ALLTERNITOS_API_TIMEOUT_MS || 15000);
   const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
 
-  const response = await fetch(`${osBase()}${normalizedPath}`, {
+  const response = await fetch(`${base}${normalizedPath}`, {
     method,
     headers,
     signal: controller.signal,

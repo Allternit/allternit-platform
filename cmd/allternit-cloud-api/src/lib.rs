@@ -377,6 +377,9 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         .merge(routes::runtime_events::routes())
         // Office view live link: the runtime pushes the public floor (relay-signed); GET /api/v2/public/floors/:token is public, 404 when off.
         .merge(routes::floor_shares::routes())
+        // Shared chat threads: owner routes check the Clerk session (or device token) per request;
+        // GET /api/v2/public/threads/:token is public, 404 once the share is deleted.
+        .merge(routes::thread_shares::routes())
         // Runtime heartbeats (relay-signed) and the owner's presence list (agent network WP4).
         .merge(routes::runtime_presence::routes())
         // Team roster + send (agent network phase 2, WP13).
@@ -590,6 +593,7 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         .route("/api/v1/health", get(routes::health::health_check))
         .route("/api/v1/health/ready", get(routes::health::readiness_check))
         .route("/api/v1/health/live", get(routes::health::liveness_check))
+        .route("/api/v1/health/computers", get(routes::health::computers_health))
         .route("/api/v1/metrics", get(routes::health::metrics))
         .with_state(state.clone());
 

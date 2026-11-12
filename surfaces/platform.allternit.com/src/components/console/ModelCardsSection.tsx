@@ -1,7 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import {
-  DRAFT_MODEL_CATALOG,
   fetchLiveModelCatalog,
   liveModelToCatalog,
 } from "@/lib/model-catalog";
@@ -10,9 +9,7 @@ import { ModelMark } from "@/components/console/ModelMark";
 import { ModelCardOverlay } from "@/components/console/ModelCardOverlay";
 
 export function ModelCardsSection() {
-  const [cards, setCards] = useState<ModelCardInfo[]>(() =>
-    buildModelCards(DRAFT_MODEL_CATALOG),
-  );
+  const [cards, setCards] = useState<ModelCardInfo[]>([]);
   const [active, setActive] = useState<ModelCardInfo | null>(null);
 
   useEffect(() => {
@@ -26,7 +23,7 @@ export function ModelCardsSection() {
         const catalog = response.data.map(liveModelToCatalog);
         if (catalog.length > 0) setCards(buildModelCards(catalog));
       } catch {
-        // Keep the fallback catalog — cards already rendered.
+        // No live list: the section stays hidden rather than showing placeholder models.
       }
     }
 
@@ -38,6 +35,8 @@ export function ModelCardsSection() {
   }, []);
 
   const cardsMemo = useMemo(() => cards, [cards]);
+
+  if (cardsMemo.length === 0) return null;
 
   return (
     <section>

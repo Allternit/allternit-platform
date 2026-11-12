@@ -308,9 +308,40 @@ pub(crate) async fn platform_fan_out(db: &PgPool, user_id: &str, name: &str, dat
             "agent_id": agent, "channel": pick("channel").as_str().map(str::to_string).or_else(|| pick("provider").as_str().map(str::to_string)),
             "from": pick("from"), "text": pick("text"), "thread_id": pick("thread_id"),
         }),
-        "approval.requested" => json!({
-            "agent_id": agent, "approval_id": pick("approvalId"), "action": pick("action"), "summary": pick("summary"), "thread_id": pick("thread_id"),
-        }),
+        "approval.requested" => {
+            let legacy = json!({
+                "agent_id": agent, "approval_id": pick("approvalId"), "action": pick("action"), "summary": pick("summary"), "thread_id": pick("thread_id"),
+            });
+            // The mirror row never blocks the webhook: on a store error the
+            // legacy event still goes out.
+            let mirrored = twin_approval_row(db, project, &account, agent, data).await.unwrap_or_else(|e| {
+                tracing::warn!("platform approvals: twin approval not mirrored: {e}");
+                None
+            });
+            match mirrored {
+                // The legacy fields plus the Platform approval object (`apr_…`,
+                // for /v1/approvals/{id}). Sent even when the row already existed
+                // (the list alias may mirror it first); the ledger id dedupes.
+                Some((row, _)) => {
+                    let mut payload = crate::routes::platform_v1::approvals::event_payload(&row);
+                    for k in ["agent_id", "action", "summary", "thread_id"] {
+                        payload[k] = legacy[k].clone();
+                    }
+                    payload
+                }
+                None => legacy,
+            }
+        }
+        // Decided on the runtime (the owner in the Allternit app, or our own
+        // relay echoed back): the row moves once, and only that move is reported.
+        "approval.resolved" => {
+            if let (Some(source_ref), Some(state)) = (data["approvalId"].as_str(), data["state"].as_str().or_else(|| data["decision"].as_str())) {
+                if let Err(e) = crate::routes::platform_v1::approvals::mirror_twin_resolution(db, project, source_ref, state).await {
+                    tracing::warn!("platform approvals: twin resolution not mirrored: {e}");
+                }
+            }
+            return Ok(());
+        }
         "inbox.item.created" => json!({
             "agent_id": agent, "item_id": pick("itemId"), "kind": pick("kind"), "title": pick("title"), "severity": pick("severity"),
         }),
@@ -318,6 +349,43 @@ pub(crate) async fn platform_fan_out(db: &PgPool, user_id: &str, name: &str, dat
     };
     crate::routes::platform_v1::events::emit_event(db, project, Some(&account), name, payload).await?;
     Ok(())
+}
+
+/// The `platform_approvals` row for a twin `approval.requested`: linked to the
+/// conversation whose `runtime_session_id` is the event's `thread_id` (and that
+/// conversation's latest response), expiring at the event's `expires_at`, or
+/// never when it carries none. `(row, true)` when this event created it.
+async fn twin_approval_row(
+    db: &PgPool,
+    project: &str,
+    account: &str,
+    agent: &str,
+    data: &Value,
+) -> Result<Option<(crate::routes::platform_v1::approvals::ApprovalRow, bool)>, sqlx::Error> {
+    use crate::routes::platform_v1::approvals;
+    let Some(source_ref) = data["approvalId"].as_str().filter(|s| !s.is_empty() && s.len() <= 128) else { return Ok(None) };
+    let (conversation_id, response_id) = approvals::link_twin(db, project, agent, &approvals::link_keys(data)).await?;
+    let action = data["action"].as_str().unwrap_or("action").to_string();
+    approvals::insert(
+        db,
+        approvals::NewApproval {
+            project_id: project,
+            source: "twin",
+            source_ref,
+            account_id: Some(account),
+            conversation_id,
+            response_id,
+            kind: action.clone(),
+            proposed_action: json!({
+                "action": action, "authority": data.get("authority"), "agent_id": agent,
+                "thread_id": data.get("thread_id"), "remote_ref": data.get("remoteRef"), "summary": data.get("summary"),
+            }),
+            status: "pending",
+            // The event's deadline, or none: twin approvals don't expire on their own.
+            expires_at: approvals::deadline(data),
+        },
+    )
+    .await
 }
 
 /// `phone.step` / `phone.run.completed` / `phone.approval.requested` /

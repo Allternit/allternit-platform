@@ -174,6 +174,21 @@ describe("incidents", () => {
     expect(pub.map((i) => i.title)).toEqual(["Sign-in is down"]);
   });
 
+  it("AUTO_INCIDENTS set to a time keeps drafts before it and publishes after it", async () => {
+    env.AUTO_INCIDENTS = at(12).toISOString(); // soak ends at minute 12
+    await both(0);
+    failing = new Set(["signin"]);
+    for (let m = 1; m <= 5; m++) await both(m); // Down during the soak: draft
+    failing = new Set();
+    for (let m = 6; m <= 11; m++) await both(m);
+    failing = new Set(["api-ready", "api-live"]);
+    for (let m = 12; m <= 17; m++) await both(m); // Down after the soak: public
+    const list = (await (await admin("GET", "/api/admin/incidents", undefined, TOKEN, at(17))).json()) as { incidents: { draft: boolean; title: string }[] };
+    expect(list.incidents.filter((i) => i.draft).map((i) => i.title)).toEqual(["Sign-in is down"]);
+    const pub = (await get<IncidentsDoc>("/api/v1/incidents.json", at(17))).body.incidents;
+    expect(pub.map((i) => i.title)).toEqual(["API is down"]);
+  });
+
   it("admin opens an incident and schedules maintenance; both show in the public JSON", async () => {
     await tick(0);
     const r = await admin("POST", "/api/admin/incidents", {
@@ -251,8 +266,7 @@ describe("daily rollup", () => {
     ]);
     const status = (await get<StatusDoc>("/api/v1/status.json", new Date("2026-11-12T00:07:00Z"))).body;
     expect(status.components.find((c) => c.id === "api")!.uptime_90d).toBeCloseTo(93 / 103, 10); // 100 ticks yesterday + 3 healthy ticks today
-    // Cloud computers has no live targets until the cloud-api route ships (contract/targets-held-until-cloud-api.json): no data, not a false Down.
-    expect(status.components.find((c) => c.id === "cloud-computers")).toMatchObject({ status: "unknown", uptime_90d: null });
+    expect(status.components.find((c) => c.id === "cloud-computers")).toMatchObject({ status: "operational", uptime_90d: 1 });
 
     const h = await get<{ days: number; components: { id: string; days: { date: string; status: string | null; uptime: number | null }[] }[] }>(
       "/api/v1/history.json?days=3", new Date("2026-11-12T00:07:00Z"),

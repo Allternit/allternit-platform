@@ -38,7 +38,7 @@ use serde_json::{json, Value};
 use sqlx::{FromRow, PgPool};
 
 use super::{
-    agents,
+    agents, approvals,
     conversations::ensure_agent,
     hosting::{host_for, AgentHost},
     build_page, new_id, ApiJson, ApiQuery, Page, PageParams, PlatformCaller, PlatformError, RouteTable,
@@ -69,7 +69,7 @@ pub fn register(table: RouteTable) -> RouteTable {
         .add("/v1/agents/:id/autonomy", &["GET", "PUT"], get(get_autonomy).put(put_autonomy))
 }
 
-type HostExt = Option<Extension<Arc<dyn AgentHost>>>;
+pub(crate) type HostExt = Option<Extension<Arc<dyn AgentHost>>>;
 
 /// The account, if the caller may use it: a key bound to another account is a
 /// 403 `account_mismatch`; an unknown, deleted or other project's account is 404.
@@ -296,29 +296,134 @@ async fn list_approvals(
         return Ok(Json(empty_page()));
     }
     let v = relay(&state, layered, &caller, "GET", &format!("/api/v1/platform/accounts/{account}/approvals"), json!({ "limit": limit, "after": after, "status": status })).await?;
+    mirror_pending(&state.db, &caller.project_id, &account, &v).await;
     Ok(Json(add_account(v, &account)))
 }
 
-async fn decide(state: Arc<ApiState>, caller: PlatformCaller, layered: HostExt, id: String, approval: String, decision: &str) -> Result<Json<Value>, PlatformError> {
+/// The twin half of [`super::approvals::resolve`]: the decision relayed to the
+/// runtime's `decide` for one of `account`'s approvals. Returns the runtime's
+/// approval object with `account_id` added (what the aliases answer).
+pub(crate) async fn decide_on_runtime(
+    state: &Arc<ApiState>,
+    layered: HostExt,
+    caller: &PlatformCaller,
+    account: &str,
+    approval: &str,
+    decision: &str,
+) -> Result<Value, PlatformError> {
     caller.require("twin")?;
-    let account = visible_account(&state.db, &caller, &id).await?;
-    valid_id(&approval)?;
+    let account = visible_account(&state.db, caller, account).await?;
+    valid_id(approval)?;
     if !account_on_runtime(&state.db, &caller.project_id, &account).await? {
         return Err(PlatformError::not_found("approval_not_found", "No such approval."));
     }
     // The actor of record is the API key: a person at the developer's company
     // (or their customer) pressed approve in the developer's app.
     let body = json!({ "decision": decision, "actor": format!("api_key:{}", caller.key_id) });
-    let v = relay(&state, layered, &caller, "POST", &format!("/api/v1/platform/accounts/{account}/approvals/{approval}/decide"), body).await?;
-    Ok(Json(add_account(v, &account)))
+    let v = relay(state, layered, caller, "POST", &format!("/api/v1/platform/accounts/{account}/approvals/{approval}/decide"), body).await?;
+    Ok(add_account(v, &account))
+}
+
+/// The per-account alias: same resolver as `POST /v1/approvals/{id}`, same
+/// answer as before (the runtime's approval object). `approval` is the
+/// runtime's id or the `apr_…` id. A pending approval raised before
+/// `platform_approvals` existed gets its row first.
+async fn decide(state: Arc<ApiState>, caller: PlatformCaller, layered: HostExt, id: String, approval: String, decision: approvals::Decision) -> Result<Json<Value>, PlatformError> {
+    caller.require("twin")?;
+    let account = visible_account(&state.db, &caller, &id).await?;
+    valid_id(&approval)?;
+    if !account_on_runtime(&state.db, &caller.project_id, &account).await? {
+        return Err(PlatformError::not_found("approval_not_found", "No such approval."));
+    }
+    let existing = if approval.starts_with("apr_") {
+        sqlx::query_as::<_, approvals::ApprovalRow>(
+            "SELECT id, project_id, source, source_ref, account_id, conversation_id, response_id, kind, proposed_action, status, expires_at, created_at, resolved_at, resolved_by \
+               FROM platform_approvals WHERE project_id = $1 AND id = $2 AND source = 'twin'",
+        )
+        .bind(&caller.project_id)
+        .bind(&approval)
+        .fetch_optional(&state.db)
+        .await?
+    } else {
+        approvals::by_source(&state.db, &caller.project_id, "twin", &approval).await?
+    };
+    let (row, fresh) = match existing {
+        Some(row) => (row, false),
+        None if approval.starts_with("apr_") => return Err(PlatformError::not_found("approval_not_found", "No such approval.")),
+        None => approvals::insert(
+            &state.db,
+            approvals::NewApproval {
+                project_id: &caller.project_id,
+                source: "twin",
+                source_ref: &approval,
+                account_id: Some(&account),
+                conversation_id: None,
+                response_id: None,
+                kind: "action".into(),
+                proposed_action: json!({}),
+                status: "pending",
+                expires_at: None,
+            },
+        )
+        .await?
+        .ok_or_else(|| PlatformError::not_found("approval_not_found", "No such approval."))?,
+    };
+    if row.account_id.as_deref() != Some(account.as_str()) {
+        return Err(PlatformError::not_found("approval_not_found", "No such approval."));
+    }
+    let row_id = row.id.clone();
+    let hosts = approvals::Hosts { agent: layered, computer: None };
+    match approvals::resolve(&state, hosts, &caller, row, decision, None).await {
+        Ok((_, answer)) => Ok(Json(answer)),
+        Err(e) => {
+            // Any failure (404, runtime down, ...) on a row this call just
+            // created: drop it, so no phantom pending approval is left behind.
+            if fresh {
+                if let Err(err) = approvals::forget_fresh(&state.db, &row_id).await {
+                    tracing::warn!(approval = %row_id, "platform twin: fresh approval row not dropped: {err}");
+                }
+            }
+            // The alias keeps the runtime's own code for a second decision.
+            if e.code == "approval_not_pending" {
+                return Err(PlatformError::conflict("approval_already_resolved", "This approval is already resolved."));
+            }
+            Err(e)
+        }
+    }
+}
+
+/// Pending approvals the runtime lists get their `platform_approvals` row, so
+/// ones raised before the table existed show up in `GET /v1/approvals` too.
+async fn mirror_pending(db: &PgPool, project: &str, account: &str, page: &Value) {
+    let Some(items) = page["data"].as_array() else { return };
+    for item in items.iter().filter(|i| i["status"] == "pending") {
+        let Some(source_ref) = item["id"].as_str() else { continue };
+        let n = approvals::NewApproval {
+            project_id: project,
+            source: "twin",
+            source_ref,
+            account_id: Some(account),
+            conversation_id: None,
+            response_id: None,
+            kind: item["action"].as_str().unwrap_or("action").to_string(),
+            proposed_action: json!({ "action": item["action"], "detail": item["detail"], "agent_id": item["agent_id"], "thread_id": item["thread_id"] }),
+            status: "pending",
+            // The runtime's deadline when it lists one; otherwise none (twin
+            // approvals don't expire on their own).
+            expires_at: approvals::deadline(item),
+        };
+        if let Err(e) = approvals::insert(db, n).await {
+            tracing::warn!(approval = source_ref, "platform twin: approval row not mirrored: {e}");
+        }
+    }
 }
 
 async fn approve(State(state): State<Arc<ApiState>>, caller: PlatformCaller, layered: HostExt, Path((id, approval)): Path<(String, String)>) -> Result<Json<Value>, PlatformError> {
-    decide(state, caller, layered, id, approval, "approve").await
+    decide(state, caller, layered, id, approval, approvals::Decision::Approve).await
 }
 
 async fn deny(State(state): State<Arc<ApiState>>, caller: PlatformCaller, layered: HostExt, Path((id, approval)): Path<(String, String)>) -> Result<Json<Value>, PlatformError> {
-    decide(state, caller, layered, id, approval, "deny").await
+    decide(state, caller, layered, id, approval, approvals::Decision::Deny).await
 }
 
 // ---------------------------------------------------------------- memory
