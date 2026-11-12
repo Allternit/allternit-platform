@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Install the Allternit status probe on the standby host (Linux, systemd). Run as root.
 # Safe to run again: it rewrites its own files and keeps an existing key and config.
-#   sudo bash install.sh [--alert-to you@example.com] [--base https://status.allternit.com]
+#   sudo bash install.sh [--alert-to you@example.com] [--alert-from status@allternit.com] [--base https://status.allternit.com]
 #   sudo bash install.sh --uninstall [--purge]     remove units + script (--purge also config, key, state)
 # Writes: /usr/local/bin/allternit-status-probe, /etc/allternit-status/{probe.conf,ingest.key},
 #         /etc/systemd/system/allternit-status-probe.{service,timer}, /var/lib/allternit-status-probe
@@ -15,12 +15,13 @@ STATE=/var/lib/allternit-status-probe
 UNIT_DIR=/etc/systemd/system
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
-uninstall=0; purge=0; alert_to=""; base=""
+uninstall=0; purge=0; alert_to=""; alert_from=""; base=""
 while [ $# -gt 0 ]; do
   case $1 in
     --uninstall) uninstall=1 ;;
     --purge) purge=1 ;;
     --alert-to) alert_to=${2:?--alert-to needs an address}; shift ;;
+    --alert-from) alert_from=${2:?--alert-from needs an address}; shift ;;
     --base) base=${2:?--base needs a URL}; shift ;;
     -h|--help) sed -n '2,8p' "$0"; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
@@ -57,9 +58,11 @@ STATUS_BASE=${base:-https://status.allternit.com}
 KEY_FILE=$KEY
 STATE_DIR=$STATE
 ALERT_TO=$alert_to
+ALERT_FROM=${alert_from:-status@allternit.com}
 CFG
 else
   [ -n "$alert_to" ] && { grep -q '^ALERT_TO=' "$CONF" && sed -i "s|^ALERT_TO=.*|ALERT_TO=$alert_to|" "$CONF" || echo "ALERT_TO=$alert_to" >>"$CONF"; }
+  [ -n "$alert_from" ] && { grep -q '^ALERT_FROM=' "$CONF" && sed -i "s|^ALERT_FROM=.*|ALERT_FROM=$alert_from|" "$CONF" || echo "ALERT_FROM=$alert_from" >>"$CONF"; }
   [ -n "$base" ] && { grep -q '^STATUS_BASE=' "$CONF" && sed -i "s|^STATUS_BASE=.*|STATUS_BASE=$base|" "$CONF" || echo "STATUS_BASE=$base" >>"$CONF"; }
 fi
 chmod 644 "$CONF"
