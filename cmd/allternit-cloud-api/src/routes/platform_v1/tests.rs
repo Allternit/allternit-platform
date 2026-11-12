@@ -223,14 +223,22 @@ async fn auth_errors_use_the_platform_error_format() {
 
 // ---- key governance: expiry and IP allowlist (migrations_pg/122) -----------
 
+/// The request as the reverse proxy on the same host forwards it: a loopback
+/// TCP peer (axum `ConnectInfo`) with the client address in `X-Real-IP`.
+pub(super) fn via_local_proxy(builder: axum::http::request::Builder, client_ip: Option<&str>) -> axum::http::request::Builder {
+    let builder = builder.extension(axum::extract::ConnectInfo(std::net::SocketAddr::from(([127, 0, 0, 1], 40000))));
+    match client_ip {
+        Some(ip) => builder.header("x-real-ip", ip),
+        None => builder,
+    }
+}
+
 async fn get_from(app: &Router, path: &str, token: &str, client_ip: Option<&str>) -> Reply {
-    let mut builder = Request::builder()
+    let builder = Request::builder()
         .method("GET")
         .uri(path)
         .header("authorization", format!("Bearer {token}"));
-    if let Some(ip) = client_ip {
-        builder = builder.header("cf-connecting-ip", ip);
-    }
+    let builder = via_local_proxy(builder, client_ip);
     let response = app.clone().oneshot(builder.body(Body::empty()).unwrap()).await.unwrap();
     let status = response.status();
     let headers = response.headers().clone();
@@ -267,6 +275,7 @@ async fn expired_project_key_is_401_with_a_clear_message() {
 
 #[tokio::test]
 async fn project_key_outside_its_ip_allowlist_is_403() {
+    let _flag = api_keys::force_ip_allowlist(true);
     let c = ctx().await;
     let p = project(&c, "user_ip", ProjectEnv::Sandbox).await;
     let (key_id, token) = mint(&c, &p, None, &["agents"]).await;
@@ -293,20 +302,42 @@ async fn project_key_outside_its_ip_allowlist_is_403() {
     assert_eq!(get_from(&c.app, "/v1/accounts", &token, Some("2001:db8::7")).await.status, StatusCode::OK);
     // No trusted client IP at all: the restriction cannot be checked, so it refuses.
     assert_eq!(get_from(&c.app, "/v1/accounts", &token, None).await.status, StatusCode::FORBIDDEN);
-    // X-Forwarded-For is client-controlled and never trusted.
-    let spoofed = app_request_with(&c.app, &token, "x-forwarded-for", "10.1.2.3").await;
-    assert_eq!(spoofed, StatusCode::FORBIDDEN);
+    // X-Forwarded-For and cf-connecting-ip are forgeable when the origin is
+    // reached directly, so neither is read, even from the local proxy.
+    let local = Some(std::net::SocketAddr::from(([127, 0, 0, 1], 40000)));
+    assert_eq!(app_request_with(&c.app, &token, "x-forwarded-for", "10.1.2.3", local).await, StatusCode::FORBIDDEN);
+    assert_eq!(app_request_with(&c.app, &token, "cf-connecting-ip", "10.1.2.3", local).await, StatusCode::FORBIDDEN);
+    // X-Real-IP from a peer that is not the local proxy is not trusted either.
+    let remote = Some(std::net::SocketAddr::from(([198, 51, 100, 7], 40000)));
+    assert_eq!(app_request_with(&c.app, &token, "x-real-ip", "10.1.2.3", remote).await, StatusCode::FORBIDDEN);
+    assert_eq!(app_request_with(&c.app, &token, "x-real-ip", "10.1.2.3", None).await, StatusCode::FORBIDDEN);
+    // The IPv4-mapped loopback peer counts as the local proxy.
+    let mapped = Some("[::ffff:127.0.0.1]:40000".parse().unwrap());
+    assert_eq!(app_request_with(&c.app, &token, "x-real-ip", "10.1.2.3", mapped).await, StatusCode::OK);
+
+    // With PLATFORM_KEY_IP_ALLOWLIST off the list is stored but not enforced.
+    drop(_flag);
+    let _off = api_keys::force_ip_allowlist(false);
+    assert_eq!(get_from(&c.app, "/v1/accounts", &token, Some("203.0.113.9")).await.status, StatusCode::OK);
+    assert_eq!(get_from(&c.app, "/v1/accounts", &token, None).await.status, StatusCode::OK);
 }
 
-async fn app_request_with(app: &Router, token: &str, header: &str, value: &str) -> StatusCode {
-    let request = Request::builder()
+async fn app_request_with(
+    app: &Router,
+    token: &str,
+    header: &str,
+    value: &str,
+    peer: Option<std::net::SocketAddr>,
+) -> StatusCode {
+    let mut builder = Request::builder()
         .method("GET")
         .uri("/v1/accounts")
         .header("authorization", format!("Bearer {token}"))
-        .header(header, value)
-        .body(Body::empty())
-        .unwrap();
-    app.clone().oneshot(request).await.unwrap().status()
+        .header(header, value);
+    if let Some(peer) = peer {
+        builder = builder.extension(axum::extract::ConnectInfo(peer));
+    }
+    app.clone().oneshot(builder.body(Body::empty()).unwrap()).await.unwrap().status()
 }
 
 #[tokio::test]
@@ -365,14 +396,12 @@ fn gateway_app(state: &Arc<ApiState>) -> Router {
 }
 
 async fn gateway_call(app: &Router, token: &str, client_ip: Option<&str>) -> Reply {
-    let mut builder = Request::builder()
+    let builder = Request::builder()
         .method("POST")
         .uri("/v1/chat/completions")
         .header("authorization", format!("Bearer {token}"))
         .header("content-type", "application/json");
-    if let Some(ip) = client_ip {
-        builder = builder.header("cf-connecting-ip", ip);
-    }
+    let builder = via_local_proxy(builder, client_ip);
     let body = json!({ "model": "kimi-k3", "messages": [{ "role": "user", "content": "hi" }] });
     let response = app.clone().oneshot(builder.body(Body::from(body.to_string())).unwrap()).await.unwrap();
     let status = response.status();
@@ -383,6 +412,7 @@ async fn gateway_call(app: &Router, token: &str, client_ip: Option<&str>) -> Rep
 
 #[tokio::test]
 async fn gateway_key_expiry_is_401_and_ip_allowlist_is_403() {
+    let _flag = api_keys::force_ip_allowlist(true);
     let c = ctx().await;
     let legacy = api_keys::create_api_key(
         &c.state.db,

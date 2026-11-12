@@ -819,8 +819,13 @@ pub async fn start_server(state: Arc<ApiState>, addr: &str) -> Result<(), ApiErr
         let _ = shutdown_tx.send(());
     });
 
-    // Start server with graceful shutdown
-    axum::serve(listener, router)
+    // Start server with graceful shutdown. ConnectInfo carries the TCP peer so
+    // key IP allowlists can trust `X-Real-IP` only from a loopback proxy
+    // (services::api_keys::client_ip) and the rate limiter can key by address.
+    axum::serve(
+        listener,
+        router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
         .with_graceful_shutdown(async {
             let _ = shutdown_rx.await;
         })
