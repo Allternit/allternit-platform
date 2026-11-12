@@ -4225,6 +4225,55 @@
         "allternit-ai/src/components/phones/RunStatus.tsx",
         "allternit/surfaces/allternit-mobile/ios/Features/Phones/RunStatusViews.swift"
       ]
+    },
+    {
+      "id": "feature:run-code-on-files",
+      "label": "Run code on uploaded files",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "A user uploads a file in chat and the agent runs Python on it in the sandbox with the run_code tool. The API ingests the upload and writes a manifest, the sandbox gets the files, and the result card shows output and files the code produced. Running code asks the user for permission first.",
+      "touches": [
+        "allternit/cmd/gizzi-code/src/runtime/tools/builtins/run_code.ts",
+        "allternit/cmd/gizzi-code/src/runtime/python/env.ts",
+        "allternit/cmd/gizzi-code/src/runtime/python/requirements.lock.txt",
+        "allternit/cmd/gizzi-code/src/runtime/integrations/shell/sandbox.ts",
+        "allternit/cmd/allternit-api/src/gizzi_chat_stream.rs",
+        "allternit/cmd/allternit-api/src/upload_routes.rs",
+        "allternit/cmd/allternit-api/src/sandbox_routes.rs",
+        "allternit-ai/src/components/chat/RunCodeResultCard.tsx",
+        "allternit-ai/src/components/chat/run-code-model.ts",
+        "allternit-ai/src/components/chat/ComposerAttachments.tsx",
+        "allternit-ai/src/components/session-composer/session-permission-dock.tsx",
+        "allternit/surfaces/allternit-mobile/ios/Core/API/Models/RunCodeResult.swift",
+        "allternit/surfaces/allternit-mobile/ios/Features/Chat/Views/RunCodeFilesView.swift",
+        "allternit/surfaces/allternit-mobile/ios/Features/Chat/Views/UploadFileCard.swift",
+        "allternit/surfaces/allternit-mobile/ios/Features/Decisions/Views/PermissionAskView.swift",
+        "allternit/surfaces/docs/guides/analyze-files.mdx"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-12",
+          "note": "Lane 2 of the frontier gap work: run code on uploaded files, built on every surface in one change."
+        }
+      ],
+      "evidence": [
+        "allternit/cmd/gizzi-code/src/runtime/tools/builtins/run_code.ts",
+        "allternit/cmd/gizzi-code/src/runtime/python/env.ts",
+        "allternit/cmd/gizzi-code/src/runtime/python/requirements.lock.txt",
+        "allternit/cmd/gizzi-code/src/runtime/integrations/shell/sandbox.ts",
+        "allternit/cmd/allternit-api/src/gizzi_chat_stream.rs",
+        "allternit/cmd/allternit-api/src/upload_routes.rs",
+        "allternit/cmd/allternit-api/src/sandbox_routes.rs",
+        "allternit-ai/src/components/chat/RunCodeResultCard.tsx",
+        "allternit-ai/src/components/chat/run-code-model.ts",
+        "allternit-ai/src/components/chat/ComposerAttachments.tsx",
+        "allternit-ai/src/components/session-composer/session-permission-dock.tsx",
+        "allternit/surfaces/allternit-mobile/ios/Core/API/Models/RunCodeResult.swift",
+        "allternit/surfaces/allternit-mobile/ios/Features/Chat/Views/RunCodeFilesView.swift",
+        "allternit/surfaces/allternit-mobile/ios/Features/Chat/Views/UploadFileCard.swift",
+        "allternit/surfaces/allternit-mobile/ios/Features/Decisions/Views/PermissionAskView.swift",
+        "allternit/surfaces/docs/guides/analyze-files.mdx"
+      ]
     }
   ],
   "journeys": [
