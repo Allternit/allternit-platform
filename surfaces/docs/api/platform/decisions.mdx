@@ -24,7 +24,8 @@ Other fields: `latency_budget_ms`, `allow_abstain`, `metadata`. `questions` may 
 ## Limits and latency
 
 - 1 to 16 questions per request.
-- Text input up to 4 KiB. A larger input returns `400 input_too_large`.
+- Text input up to 4 KiB, counting the shared `instructions`. A larger input returns `400 input_too_large`.
+- Each question's own instructions plus its choice or level texts: up to 4 KiB (`400 question_too_large`).
 - Image inputs are not supported yet. An image part returns `400 image_not_supported`.
 
 Decisions run on our own scoring hardware. Expect about 5 s per 100 input tokens the first time an input is seen, plus 1 to 3 s per question. A 300-token input with 3 questions takes about 20 to 25 s. Questions about the same input share the work of reading it, so asking several questions in one request is faster than sending them one by one.

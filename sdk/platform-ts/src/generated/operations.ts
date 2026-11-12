@@ -1468,7 +1468,7 @@ export class DecisionsResource {
    * comes back as a `refusal` answer (`reason`: `abstained`, `unavailable` or
    * `budget_exhausted`), not a failed request. Each answer names the `backend` that answered
    * it; the top-level `backend` is the one that answered the most questions. Limits: 1 to 16
-   * questions, `input` text up to 4 KiB (`400 input_too_large`). Image inputs are not
+   * questions, `input` text plus shared `instructions` up to 4 KiB (`400 input_too_large`), each question's instructions plus choice or level texts up to 4 KiB (`400 question_too_large`). Image inputs are not
    * supported yet (`400 image_not_supported`). When `latency_budget_ms` is omitted it
    * defaults to `5000 + 15 * input_bytes + 3000 * questions` ms, clamped to 10000-120000;
    * input bytes count the shared `instructions` plus the input text, and an Agency body

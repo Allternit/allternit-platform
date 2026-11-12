@@ -195,7 +195,27 @@ pub fn normalize(body: &Value) -> Result<DecisionRequest, PlatformError> {
         Some(Value::String(s)) => s.clone(),
         Some(_) => return Err(bad("invalid_instructions", "instructions must be a string.", "instructions")),
     };
+    if node_context(&instructions, &input).len() > MAX_TEXT_BYTES {
+        return Err(bad(
+            "input_too_large",
+            format!("instructions plus input text are over {MAX_TEXT_BYTES} bytes."),
+            "instructions",
+        ));
+    }
     let questions = parse_questions(obj.get("questions"))?;
+    // The question tail (its instructions and option texts) must fit the scorer's
+    // context next to the shared prefix, so it gets the same cap.
+    for (i, q) in questions.iter().enumerate() {
+        let tail = q.instructions.len()
+            + q.options.iter().map(|o| o.value.len() + o.description.as_deref().map_or(0, str::len)).sum::<usize>();
+        if tail > MAX_TEXT_BYTES {
+            return Err(bad(
+                "question_too_large",
+                format!("a question's instructions plus its choices or levels are over {MAX_TEXT_BYTES} bytes."),
+                &format!("questions[{i}]"),
+            ));
+        }
+    }
     let budget_ms = match obj.get("latency_budget_ms") {
         None | Some(Value::Null) => default_budget_ms(node_context(&instructions, &input).len(), questions.len()),
         Some(v) => v.as_u64().filter(|n| (1..=MAX_BUDGET_MS).contains(n)).ok_or_else(|| {

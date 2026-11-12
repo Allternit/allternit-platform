@@ -95,6 +95,17 @@ fn enforces_limits() {
         "invalid_levels"
     );
     assert_eq!(err_code(normalize(&json!({ "input": "x".repeat(4 * 1024 + 1), "questions": [pred("a")] }))), "input_too_large");
+    // Shared instructions count toward the same context cap as the input.
+    assert_eq!(
+        err_code(normalize(&json!({ "input": "x".repeat(3 * 1024), "instructions": "y".repeat(1024 + 1), "questions": [pred("a")] }))),
+        "input_too_large"
+    );
+    // A question's own tail (instructions plus choice texts) is capped too.
+    let long_choices: Vec<_> = (0..3).map(|i| json!({ "value": format!("c{i}"), "description": "d".repeat(1500) })).collect();
+    assert_eq!(
+        err_code(normalize(&json!({ "input": "x", "questions": [{ "name": "q", "type": "choice", "instructions": "Pick one.", "choices": long_choices }] }))),
+        "question_too_large"
+    );
     assert!(normalize(&json!({ "input": "x".repeat(4 * 1024), "questions": [pred("a")] })).is_ok());
     // The scorer has no vision: any image part, in either shape, is refused.
     let image = json!([{ "role": "user", "content": [{ "type": "input_text", "text": "hi" }, { "type": "input_image", "image_url": "data:image/png;base64,AA" }] }]);
