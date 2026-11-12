@@ -433,6 +433,11 @@ export function PlaygroundPage(): React.ReactNode {
             Try models, tune parameters, and iterate on prompts before shipping
             them to code.
           </p>
+          {isCloudGateway() ? (
+            <p className="m-0 mt-1 text-[12px] text-[var(--text-tertiary)]">
+              Playground runs use your Allternit credits. The project spend cap does not apply.
+            </p>
+          ) : null}
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <div className="inline-flex rounded-lg border border-solid border-[var(--border-subtle)] bg-[var(--bg-secondary)] p-0.5">

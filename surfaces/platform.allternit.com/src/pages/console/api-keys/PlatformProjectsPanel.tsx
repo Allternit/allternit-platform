@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useState } from "react";
+import { ipAllowlistEnabled } from "@/lib/availability";
 import { Check, CircleNotch, Copy, Cube, Key, Plus, ShieldCheck, Trash, WarningCircle, X } from "@phosphor-icons/react";
 import { cn } from "@/lib/utils";
 import { formatApiError } from "@/lib/api-client";
@@ -247,6 +248,7 @@ function ExpiryField({
 
 function CidrField({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   const { invalid } = parseCidrList(value);
+  if (!ipAllowlistEnabled()) return null;
   return (
     <label className="block text-[12px] font-medium text-[var(--text-secondary)]">
       Allowed IP addresses (optional)

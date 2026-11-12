@@ -26,7 +26,6 @@ describe("console nav", () => {
     "Files",
     "Spend limits",
     "Service accounts",
-    "Gizzi Code usage",
     "Caching",
     "Tags",
     "Organization webhooks",

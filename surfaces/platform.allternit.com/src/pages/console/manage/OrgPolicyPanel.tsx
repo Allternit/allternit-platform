@@ -5,6 +5,7 @@ import { FormPage, SkeletonRow, QUIET_BUTTON_CLASS } from "@/components/console-
 import { hasOrganizationAdminAccess } from "@/components/settings/OrganizationAccessPanel";
 import { usePlatformAuth } from "@/lib/platform-auth-client";
 import { formatApiError, AllternitApiError } from "@/lib/api-client";
+import { ipAllowlistEnabled } from "@/lib/availability";
 import { getOrgPolicy, putOrgPolicy, parseCidrList, type OrgPolicy } from "@/lib/governance";
 
 const INPUT_CLASS =
@@ -233,7 +234,12 @@ export function OrgPolicyPanel(): React.ReactNode {
       description: "Limit where API requests can come from.",
       children: (
         <div className="max-w-xl">
-          <label className="block">
+          {!ipAllowlistEnabled() ? (
+            <p className="m-0 text-[13px] text-[var(--text-secondary)]">
+              IP allowlists are not turned on for Allternit Cloud yet.
+            </p>
+          ) : null}
+          <label className={ipAllowlistEnabled() ? "block" : "hidden"}>
             <span className="mb-1 block text-[12px] font-semibold text-[var(--text-secondary)]">Organization IP allowlist</span>
             <textarea
               rows={3}

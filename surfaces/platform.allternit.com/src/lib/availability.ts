@@ -58,6 +58,14 @@ export function isCloudGateway(): boolean {
   return isCloudHost(import.meta.env.VITE_ALLTERNIT_GATEWAY_URL);
 }
 
+/**
+ * Per-key and org IP allowlists. Off until the API origin only accepts
+ * Cloudflare traffic and passes a trusted client IP (server change; Eoj gate).
+ */
+export function ipAllowlistEnabled(): boolean {
+  return String(import.meta.env.VITE_KEY_IP_ALLOWLIST ?? "").trim() === "1";
+}
+
 export function fabricEnabled(): boolean {
   return Boolean(String(import.meta.env.VITE_ALLTERNITOS_URL ?? "").trim());
 }

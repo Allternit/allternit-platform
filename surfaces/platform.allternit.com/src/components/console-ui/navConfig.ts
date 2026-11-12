@@ -51,7 +51,7 @@ import {
   SmartPhone01Icon,
   Audit01Icon,
 } from "@hugeicons/core-free-icons";
-import { fabricEnabled, isCloudGateway, type GatedFeature } from "@/lib/availability";
+import { fabricEnabled, isCloudGateway, isHiddenOnCloud, type GatedFeature } from "@/lib/availability";
 
 export type ConsoleNavIcon = typeof LayoutDashboardIcon;
 
@@ -201,7 +201,8 @@ export interface ConsoleNavOptions {
 /** Build the nav for a given environment; empty groups are dropped. */
 export function buildConsoleNav(opts: ConsoleNavOptions): ConsoleNavConfig {
   const keep = (item: ConsoleNavItem) =>
-    !(opts.cloud && item.cloudHidden) && !(item.requiresFabric && !opts.fabric);
+    !(item.cloudHidden && isHiddenOnCloud(item.cloudHidden, opts.cloud)) &&
+    !(item.requiresFabric && !opts.fabric);
   return {
     top: baseConsoleNav.top.filter(keep),
     groups: baseConsoleNav.groups
