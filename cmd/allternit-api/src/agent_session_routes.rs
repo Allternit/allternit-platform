@@ -365,7 +365,7 @@ struct GizziMessage {
 struct GizziMessageInfo {
     id: String,
     #[serde(rename = "sessionID")]
-    _session_id: String,
+    session_id: String,
     role: String,
     #[serde(default)]
     time: Option<GizziMessageTimeInfo>,
@@ -428,8 +428,20 @@ pub(crate) struct GizziMessagePart {
     url: Option<String>,
     #[serde(default)]
     tool: Option<String>,
+    /// A tool part's call id — keys the run_code manifest (and lets clients
+    /// match a reloaded part to the live `tool_result.toolCallId`).
+    #[serde(default, rename = "callID", skip_serializing_if = "Option::is_none")]
+    call_id: Option<String>,
     #[serde(default)]
     state: Option<serde_json::Value>,
+    /// run_code only: the produced files `[{name, mediaType, uploadId, size,
+    /// url}]` from the call's manifest — the same list the live
+    /// `tool_result` frame carried. Added by the API, never read from gizzi.
+    #[serde(default, skip_deserializing, skip_serializing_if = "Option::is_none")]
+    files: Option<serde_json::Value>,
+    /// run_code only: `{stdout, stderr, exit_code, timed_out, skipped}`.
+    #[serde(default, skip_deserializing, skip_serializing_if = "Option::is_none")]
+    run: Option<serde_json::Value>,
     /// Injected by gizzi, not typed by the user (e.g. a handoff checkpoint).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     synthetic: Option<bool>,
@@ -582,7 +594,50 @@ fn extract_reasoning(parts: &[GizziMessagePart]) -> Option<String> {
     }
 }
 
+/// Blocking (run_code manifest reads, first-time ingest): async handlers
+/// call it through `transform_messages_blocking`.
 fn transform_message(message: GizziMessage) -> serde_json::Value {
+    transform_message_with(message, &crate::gizzi_chat_stream::RunCodePaths::current())
+}
+
+/// `transform_message` for a batch, on the blocking pool.
+async fn transform_messages_blocking(messages: Vec<GizziMessage>) -> Vec<serde_json::Value> {
+    tokio::task::spawn_blocking(move || {
+        let paths = crate::gizzi_chat_stream::RunCodePaths::current();
+        messages.into_iter().map(|m| transform_message_with(m, &paths)).collect()
+    })
+    .await
+    .unwrap_or_else(|e| {
+        tracing::warn!(error = %e, "transform_messages task failed");
+        Vec::new()
+    })
+}
+
+/// A completed run_code part gets `files` + `run` from its manifest (the
+/// same payload the live `tool_result` frame carried; ingests once if the
+/// API never saw the call live).
+fn attach_run_code_payload(
+    part: &mut GizziMessagePart,
+    session_id: &str,
+    paths: &crate::gizzi_chat_stream::RunCodePaths,
+) {
+    if part.part_type != "tool" || part.tool.as_deref() != Some("run_code") {
+        return;
+    }
+    let view = json!({ "tool": part.tool, "callID": part.call_id, "state": part.state });
+    if let Some(payload) = crate::gizzi_chat_stream::run_code_payload(&view, Some(session_id), paths) {
+        part.files = payload.get("files").cloned();
+        part.run = payload.get("run").cloned();
+    }
+}
+
+fn transform_message_with(
+    mut message: GizziMessage,
+    run_code_paths: &crate::gizzi_chat_stream::RunCodePaths,
+) -> serde_json::Value {
+    for part in message.parts.iter_mut() {
+        attach_run_code_payload(part, &message.info.session_id, run_code_paths);
+    }
     let content = extract_message_content(&message.parts);
     let content = if content.is_empty() {
         message
@@ -1350,13 +1405,7 @@ async fn list_messages(headers: HeaderMap, Path(session_id): Path<String>) -> im
     let client = gizzi_client(&headers);
     let path = format!("/v1/session/{}/messages", urlencoding::encode(&session_id));
     match gizzi_json::<Vec<GizziMessage>>(&client, reqwest::Method::GET, &path, None).await {
-        Ok(messages) => Json(
-            messages
-                .into_iter()
-                .map(transform_message)
-                .collect::<Vec<_>>(),
-        )
-        .into_response(),
+        Ok(messages) => Json(transform_messages_blocking(messages).await).into_response(),
         Err(response) => response,
     }
 }
@@ -2093,7 +2142,8 @@ async fn fetch_event_message(client: &Client, session_id: &str, message_id: Opti
     let messages = gizzi_json::<Vec<GizziMessage>>(client, reqwest::Method::GET, &path, None)
         .await
         .ok()?;
-    pick_event_message(messages, message_id).map(transform_message)
+    let message = pick_event_message(messages, message_id)?;
+    transform_messages_blocking(vec![message]).await.into_iter().next()
 }
 
 /// By id when the event carries one; the newest message otherwise.
@@ -3586,10 +3636,71 @@ mod tests {
             filename: None,
             url: None,
             tool: None,
+            call_id: None,
             state: None,
+            files: None,
+            run: None,
             synthetic: None,
             metadata: None,
         }
+    }
+
+    /// Transcript reload of a run_code call: the part carries the same
+    /// `files`/`run` as the live frame, also after gizzi pruned the run folder.
+    #[test]
+    fn reload_run_code_part_carries_manifest_files_after_run_folder_is_gone() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = crate::gizzi_chat_stream::RunCodePaths {
+            runs_root: tmp.path().join("gizzi-code/runs"),
+            uploads: tmp.path().join("uploads"),
+        };
+        let out = paths.runs_root.join("ses_r/call_r/out");
+        std::fs::create_dir_all(&out).unwrap();
+        std::fs::write(out.join("plot.png"), b"png-bytes").unwrap();
+        let raw = json!({
+            "info": { "id": "msg_1", "sessionID": "ses_r", "role": "assistant" },
+            "parts": [
+                { "type": "text", "text": "Here is the chart." },
+                { "type": "tool", "tool": "run_code", "callID": "call_r",
+                  "state": { "status": "completed", "input": {}, "output": "{}",
+                    "metadata": { "stdout": "done\n", "stderr": "", "exit_code": 0, "timed_out": false,
+                      "files": [{ "name": "plot.png", "mediaType": "image/png", "size": 9,
+                        "path": out.join("plot.png") }] } } },
+                { "type": "tool", "tool": "bash", "callID": "call_b",
+                  "state": { "status": "completed", "input": {}, "output": "ok" } }
+            ]
+        });
+        let load = |paths: &crate::gizzi_chat_stream::RunCodePaths| {
+            let message: GizziMessage = serde_json::from_value(raw.clone()).unwrap();
+            transform_message_with(message, paths)
+        };
+
+        // The live frame (v1_routes) runs the same payload function first.
+        let live_part = json!({ "type": "tool", "tool": "run_code", "callID": "call_r", "sessionID": "ses_r",
+            "state": raw["parts"][1]["state"] });
+        let mut frame = json!({ "type": "tool_result", "toolCallId": "call_r", "toolName": "run_code" });
+        crate::gizzi_chat_stream::merge_run_code_payload(
+            &mut frame,
+            crate::gizzi_chat_stream::run_code_payload(&live_part, None, &paths).unwrap(),
+        );
+
+        let first = load(&paths);
+        let part = &first["metadata"]["parts"][1];
+        assert_eq!(part["callID"], "call_r");
+        assert_eq!(part["files"], frame["files"]);
+        assert_eq!(part["run"], frame["run"]);
+        assert_eq!(part["files"][0]["name"], "plot.png");
+        assert_eq!(part["files"][0]["size"], 9);
+        assert_eq!(part["run"]["stdout"], "done\n");
+        // Other tools and text parts are untouched.
+        assert!(first["metadata"]["parts"][2].get("files").is_none());
+        assert!(first["metadata"]["parts"][0].get("run").is_none());
+
+        std::fs::remove_dir_all(paths.runs_root.join("ses_r")).unwrap();
+        let reload = load(&paths);
+        assert_eq!(reload["metadata"]["parts"][1]["files"], frame["files"]);
+        let id = frame["files"][0]["uploadId"].as_str().unwrap();
+        assert_eq!(std::fs::read(paths.uploads.join(id)).unwrap(), b"png-bytes");
     }
 
     #[test]

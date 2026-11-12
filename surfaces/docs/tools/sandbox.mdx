@@ -16,7 +16,59 @@ The Gizzi agent has a built-in `run_code` tool that analyzes attached files with
 - Python 3.12 with pandas, numpy, openpyxl and matplotlib, set up once with a pinned uv (0.11.19, checksum verified).
 - 60 seconds by default, 120 at most. Output is capped at 64 KB each for stdout and stderr, and files it saves at 20 files and 20 MB.
 - The permission is `run_code`: Auto runs it, Ask shows an approval card, Read-only hides it.
-- Files it saves are returned on the live `tool_result` event as `files: [{ name, mediaType, uploadId, size }]`, with `run: { stdout, stderr, exit_code }` (`exit_code` is null on timeout). Download them with `GET /api/v1/uploads/:id`.
+- Files it saves are stored as uploads and listed on the result. Clients draw the result from `files` and `run`. Do not parse the tool's text `result`.
+
+The live `tool_result` event and the reloaded transcript carry the same payload. When a chat is loaded with `GET /api/v1/agent-sessions/:id/messages`, the `run_code` tool part in `metadata.parts` has the same `files` and `run` as the live event, plus its `callID`:
+
+```json
+{
+  "type": "tool_result",
+  "toolCallId": "toolu_01",
+  "toolName": "run_code",
+  "result": "{ … }",
+  "files": [
+    {
+      "name": "chart.png",
+      "mediaType": "image/png",
+      "uploadId": "3f2a9c0e8b7d4e1f9a6b5c4d3e2f1a0b",
+      "size": 48213,
+      "url": "/api/v1/uploads/3f2a9c0e8b7d4e1f9a6b5c4d3e2f1a0b"
+    }
+  ],
+  "run": {
+    "stdout": "rows 120\n",
+    "stderr": "",
+    "exit_code": 0,
+    "timed_out": false,
+    "skipped": [{ "name": "big.parquet", "reason": "over_limit" }]
+  }
+}
+```
+
+| Field | Meaning |
+|-------|---------|
+| `files[].uploadId` | A random upload id, the same kind `POST /api/v1/uploads` returns. It stays the same for every later read of this call. |
+| `files[].url` | Where to fetch the bytes. See [Uploads API](/api/uploads) for the download headers. |
+| `files[].size` | Bytes stored. |
+| `run.exit_code` | The script's exit code. It is `null` when the run timed out. |
+| `run.timed_out` | `true` when the run was stopped at its time limit. |
+| `run.skipped` | Files the script saved that were not returned, each with a `reason`. |
+
+`run.skipped[].reason` values:
+
+| Reason | Meaning |
+|--------|---------|
+| `over_limit` | `run_code` left the file out: it went over 20 files or 20 MB. |
+| `over_file_limit` | The API received more than 20 files and left out the rest. |
+| `too_large` | The file did not fit in the 20 MB left for this result. It was not read. |
+| `not_regular_file` | A symlink, folder, pipe or device, or the file was missing. |
+| `hard_link` | The file has more than one hard link. |
+| `outside_run_folder` | The path is not inside this run's `out/` folder. |
+| `changed` | The file changed size while it was read. |
+| `unreadable`, `store_failed` | A read or write error. |
+| `unsupported_platform` | The API runs on a system without the needed file checks (Windows). |
+
+The API reads only regular files with one link inside `<gizzi data>/runs/<session>/<call>/out/`. It does not follow symlinks at any level, and it checks the size before it reads a file. The first time it sees a finished call, it stores the files and writes one record for the call. Every later read, live or reloaded, uses that record and never stores the files again. The files stay available after Gizzi deletes run folders older than 7 days.
 
 For the user view, see [Analyze files](/guides/analyze-files).
 

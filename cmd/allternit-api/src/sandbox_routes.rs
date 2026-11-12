@@ -71,6 +71,10 @@ pub struct SandboxFileOut {
     pub name: String,
     pub media_type: String,
     pub upload_id: String,
+    /// Bytes stored.
+    pub size: u64,
+    /// `GET /api/v1/uploads/<uploadId>`.
+    pub url: String,
 }
 
 fn default_timeout() -> u64 {
@@ -609,12 +613,18 @@ fn collect_out_files(stdout: String, marker: Option<&str>) -> (String, Vec<Sandb
     let mut files = Vec::new();
     for (name, bytes) in raw {
         let media_type = media_type_for(&name);
-        let id = uuid::Uuid::new_v4().simple().to_string();
+        let id = crate::upload_routes::new_upload_id();
         if let Err(e) = crate::upload_routes::store_upload(&id, &name, media_type, &bytes) {
             error!(error = %e, file = %name, "sandbox: failed to store out/ file");
             continue;
         }
-        files.push(SandboxFileOut { name, media_type: media_type.to_string(), upload_id: id });
+        files.push(SandboxFileOut {
+            url: crate::upload_routes::upload_url(&id),
+            name,
+            media_type: media_type.to_string(),
+            upload_id: id,
+            size: bytes.len() as u64,
+        });
     }
     (clean, files)
 }
@@ -691,6 +701,22 @@ mod files_tests {
             duration_ms: 0, session_id: None, files: Vec::new(),
         };
         assert!(serde_json::to_value(&resp).unwrap().get("files").is_none());
+    }
+
+    #[test]
+    fn output_files_carry_size_and_url() {
+        let file = SandboxFileOut {
+            name: "total.txt".into(),
+            media_type: "text/plain".into(),
+            upload_id: "abc123".into(),
+            size: 2,
+            url: crate::upload_routes::upload_url("abc123"),
+        };
+        assert_eq!(
+            serde_json::to_value(&file).unwrap(),
+            json!({ "name": "total.txt", "mediaType": "text/plain", "uploadId": "abc123", "size": 2,
+                    "url": "/api/v1/uploads/abc123" })
+        );
     }
 
     /// The staging script really stages `in/`, runs the code, and returns

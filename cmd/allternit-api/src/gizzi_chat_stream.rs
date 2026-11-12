@@ -795,182 +795,613 @@ mod attachment_file_parts_tests {
 // gizzi's `run_code` builtin writes what the script produced to
 // `<gizzi data>/runs/<session>/<call>/out/` on this host and lists them in the
 // completed tool part's `state.metadata.files[] {name, mediaType, path}`.
-// The bridge ingests each into `uploads` and adds `files[] {name, mediaType,
-// uploadId, size}` (plus `run {stdout, stderr, exit_code}`) to the
-// `tool_result` frame, so every surface fetches them via
-// `GET /api/v1/uploads/:id`. Only regular files under a gizzi run's `out/`
-// are read — a tool metadata path can't point the bridge at anything else.
+// The first time the API sees a completed call (live stream or transcript
+// load) it ingests each file into `uploads` under a fresh random id and writes
+// one manifest per call, `<uploads>/run_code/<session>-<call>.json`:
+//
+//   { files: [{name, mediaType, uploadId, size, url}],
+//     run:   {stdout, stderr, exit_code, timed_out, skipped: [{name, reason}]} }
+//
+// Every later read (a repeated part update, a reload, another device) returns
+// the manifest and never re-ingests, so ids are stable and the files survive
+// gizzi's 7-day prune of the run folder. Ingest only opens regular,
+// single-link files under the real gizzi runs folder, walking every path
+// component with O_NOFOLLOW, and checks the size before reading.
+
+use std::path::{Path, PathBuf};
 
 /// Most files and total bytes one run_code result may publish.
 const RUN_CODE_MAX_FILES: usize = 20;
 const RUN_CODE_MAX_TOTAL_BYTES: u64 = 20 * 1024 * 1024;
 
-/// Upload id for a run_code output file: derived from its canonical path, so
-/// re-ingesting the same file (a repeated part update, a transcript reload)
-/// yields the same id instead of a duplicate upload.
-pub(crate) fn run_code_upload_id(canonical: &std::path::Path) -> String {
-    use sha2::{Digest, Sha256};
-    let digest = Sha256::digest(canonical.to_string_lossy().as_bytes());
-    hex::encode(digest)[..32].to_string()
+/// Where run_code's runs live and where its uploads + manifests go.
+#[derive(Clone, Debug)]
+pub(crate) struct RunCodePaths {
+    /// `<gizzi data>/runs` — the only tree ingest will read from.
+    pub runs_root: PathBuf,
+    /// `<allternit data>/uploads`.
+    pub uploads: PathBuf,
 }
 
-/// The canonical path of a run_code output file, or `None` unless it is a
-/// regular file (not a symlink) at `…/gizzi-code/runs/<session>/<call>/out/…`.
-fn run_code_output_path(raw: &str) -> Option<std::path::PathBuf> {
-    let path = std::path::Path::new(raw);
-    if !path.is_absolute() {
-        return None;
+impl RunCodePaths {
+    pub(crate) fn current() -> Self {
+        Self { runs_root: gizzi_runs_dir(), uploads: crate::upload_routes::uploads_dir() }
     }
-    let meta = std::fs::symlink_metadata(path).ok()?;
-    if !meta.file_type().is_file() {
-        return None;
-    }
-    let canonical = std::fs::canonicalize(path).ok()?;
-    let comps: Vec<String> = canonical
-        .components()
-        .map(|c| c.as_os_str().to_string_lossy().into_owned())
-        .collect();
-    let ok = comps.windows(5).enumerate().any(|(i, w)| {
-        w[0] == "gizzi-code" && w[1] == "runs" && w[4] == "out" && comps.len() > i + 5
-    });
-    ok.then_some(canonical)
 }
 
-/// Ingest a completed `run_code` part's output files with `store(id, name,
-/// mediaType, bytes)`; returns the `files[]` entries for the client.
-pub(crate) fn ingest_run_code_files(
-    part: &serde_json::Value,
-    store: &mut dyn FnMut(&str, &str, &str, &[u8]) -> std::io::Result<()>,
-) -> Vec<serde_json::Value> {
-    let mut files = Vec::new();
-    let mut total = 0u64;
-    let list = part
-        .pointer("/state/metadata/files")
-        .and_then(|v| v.as_array())
-        .cloned()
-        .unwrap_or_default();
-    for file in list.iter().take(RUN_CODE_MAX_FILES) {
-        let Some(canonical) = file.get("path").and_then(|v| v.as_str()).and_then(run_code_output_path) else {
-            continue;
-        };
-        let Ok(bytes) = std::fs::read(&canonical) else { continue };
-        total += bytes.len() as u64;
-        if total > RUN_CODE_MAX_TOTAL_BYTES {
-            break;
+/// gizzi's `Global.Path.data` + `runs`. Mirrors gizzi-code
+/// `runtime/context/global/paths.ts` (xdg-basedir data = `$XDG_DATA_HOME` or
+/// `~/.local/share` on every OS, + `gizzi-code`) and run_code.ts
+/// (`path.join(Global.Path.data, "runs")`). The API passes XDG_DATA_HOME to
+/// the gizzi it spawns (env_allowlist.rs), so both resolve the same folder.
+pub(crate) fn gizzi_runs_dir() -> PathBuf {
+    std::env::var("XDG_DATA_HOME")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| dirs::home_dir().map(|h| h.join(".local").join("share")))
+        .unwrap_or_else(|| PathBuf::from(".local/share"))
+        .join("gizzi-code")
+        .join("runs")
+}
+
+/// A manifest file-name segment: the id itself when it is plain, else a hash
+/// (so an odd id can neither escape the folder nor collide on the `-`).
+fn manifest_segment(raw: &str, allow_dash: bool) -> String {
+    let plain = !raw.is_empty()
+        && raw.len() <= 128
+        && raw.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || (allow_dash && c == '-'));
+    if plain {
+        raw.to_string()
+    } else {
+        use sha2::{Digest, Sha256};
+        format!("h{}", &hex::encode(Sha256::digest(raw.as_bytes()))[..32])
+    }
+}
+
+fn manifest_path(uploads: &Path, session: &str, call: &str) -> PathBuf {
+    uploads
+        .join("run_code")
+        .join(format!("{}-{}.json", manifest_segment(session, false), manifest_segment(call, true)))
+}
+
+/// The manifest as stored, when it exists and has the expected shape.
+fn read_manifest(path: &Path) -> Option<std::io::Result<serde_json::Value>> {
+    let raw = match std::fs::read(path) {
+        Ok(raw) => raw,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(e) => return Some(Err(e)),
+    };
+    let parsed = serde_json::from_slice::<serde_json::Value>(&raw)
+        .ok()
+        .filter(|v| v.get("files").is_some_and(|f| f.is_array()) && v.get("run").is_some_and(|r| r.is_object()))
+        .map(|v| json!({ "files": v["files"], "run": v["run"] }))
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "malformed run_code manifest"));
+    Some(parsed)
+}
+
+/// Write the manifest only if none exists yet: write a temp file, then
+/// hard-link it into place (fails with AlreadyExists if another ingest won).
+fn write_manifest_once(path: &Path, payload: &serde_json::Value) -> std::io::Result<()> {
+    let dir = path.parent().ok_or_else(|| std::io::Error::other("manifest has no parent"))?;
+    std::fs::create_dir_all(dir)?;
+    let tmp = dir.join(format!(".tmp-{}", uuid::Uuid::new_v4().simple()));
+    std::fs::write(&tmp, payload.to_string())?;
+    let linked = std::fs::hard_link(&tmp, path);
+    let result = match linked {
+        Err(e) if e.kind() != std::io::ErrorKind::AlreadyExists => {
+            // A filesystem without hard links: exclusive create instead.
+            use std::io::Write;
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(path)
+                .and_then(|mut f| f.write_all(payload.to_string().as_bytes()))
         }
+        other => other,
+    };
+    let _ = std::fs::remove_file(&tmp);
+    result
+}
+
+/// Files run_code itself left out. Prefers a structured `metadata.skipped`
+/// (`[{name, reason}]` or `[name]`); otherwise parses the line run_code.ts
+/// appends to stderr: `Not returned (over N files or M MB): a.png, b.csv`.
+fn tool_skipped(meta: &serde_json::Value) -> Vec<serde_json::Value> {
+    if let Some(list) = meta.get("skipped").and_then(|v| v.as_array()) {
+        return list
+            .iter()
+            .filter_map(|entry| match entry {
+                serde_json::Value::String(name) => Some(json!({ "name": name, "reason": "over_limit" })),
+                serde_json::Value::Object(obj) => obj.get("name").and_then(|n| n.as_str()).map(|name| {
+                    let reason = obj.get("reason").and_then(|r| r.as_str()).unwrap_or("over_limit");
+                    json!({ "name": name, "reason": reason })
+                }),
+                _ => None,
+            })
+            .collect();
+    }
+    let stderr = meta.get("stderr").and_then(|v| v.as_str()).unwrap_or("");
+    let Some(line) = stderr.lines().last().filter(|l| l.starts_with("Not returned (over ")) else {
+        return Vec::new();
+    };
+    let Some((_, names)) = line.split_once("): ") else { return Vec::new() };
+    names
+        .split(", ")
+        .filter(|n| !n.is_empty())
+        .map(|name| json!({ "name": name, "reason": "over_limit" }))
+        .collect()
+}
+
+/// The `run` object: the tool's own result fields plus every file that did
+/// not come back and why.
+fn run_fields(meta: &serde_json::Value, skipped: Vec<serde_json::Value>) -> serde_json::Value {
+    json!({
+        "stdout": meta.get("stdout").cloned().unwrap_or(json!("")),
+        "stderr": meta.get("stderr").cloned().unwrap_or(json!("")),
+        "exit_code": meta.get("exit_code").cloned().unwrap_or(json!(null)),
+        "timed_out": meta.get("timed_out").and_then(|v| v.as_bool()).unwrap_or(false),
+        "skipped": skipped,
+    })
+}
+
+/// Open `raw` for reading only if it is a regular, single-link file at
+/// `<runs_root>/<session>/<call>/out/…`. Every component below the root is
+/// opened with O_NOFOLLOW (a symlink anywhere fails), the file itself also
+/// with O_NONBLOCK (a FIFO can't stall the open). Returns the file and its
+/// fstat size; nothing is read here. `Err` is the skip reason.
+#[cfg(unix)]
+fn open_run_output(runs_root: &Path, raw: &str) -> Result<(std::fs::File, u64), &'static str> {
+    use std::ffi::CString;
+    use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+    use std::os::unix::ffi::OsStrExt;
+    use std::os::unix::fs::MetadataExt;
+    use std::path::Component;
+
+    let path = Path::new(raw);
+    if !path.is_absolute() {
+        return Err("outside_run_folder");
+    }
+    let canon_root = std::fs::canonicalize(runs_root).map_err(|_| "outside_run_folder")?;
+    let rel = path
+        .strip_prefix(runs_root)
+        .or_else(|_| path.strip_prefix(&canon_root))
+        .map_err(|_| "outside_run_folder")?;
+    let mut comps = Vec::new();
+    for c in rel.components() {
+        match c {
+            Component::Normal(s) => comps.push(CString::new(s.as_bytes()).map_err(|_| "outside_run_folder")?),
+            _ => return Err("outside_run_folder"),
+        }
+    }
+    // <session>/<call>/out/<file…>
+    if comps.len() < 4 || comps[2].as_bytes() != b"out" {
+        return Err("outside_run_folder");
+    }
+    let root = CString::new(canon_root.as_os_str().as_bytes()).map_err(|_| "outside_run_folder")?;
+    let open_at = |dir: Option<&OwnedFd>, name: &CString, flags: libc::c_int| -> Option<OwnedFd> {
+        // SAFETY: `name` is NUL-terminated; on success the fd is owned here.
+        let fd = unsafe {
+            match dir {
+                Some(d) => libc::openat(d.as_raw_fd(), name.as_ptr(), flags),
+                None => libc::open(name.as_ptr(), flags),
+            }
+        };
+        (fd >= 0).then(|| unsafe { OwnedFd::from_raw_fd(fd) })
+    };
+    let dir_flags = libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC;
+    let mut dir = open_at(None, &root, dir_flags).ok_or("outside_run_folder")?;
+    let (last, parents) = comps.split_last().expect("at least four components");
+    for name in parents {
+        dir = open_at(Some(&dir), name, dir_flags | libc::O_NOFOLLOW).ok_or("not_regular_file")?;
+    }
+    let fd = open_at(Some(&dir), last, libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC)
+        .ok_or("not_regular_file")?;
+    let file = std::fs::File::from(fd);
+    let meta = file.metadata().map_err(|_| "unreadable")?;
+    if !meta.file_type().is_file() {
+        return Err("not_regular_file");
+    }
+    if meta.nlink() != 1 {
+        return Err("hard_link");
+    }
+    Ok((file, meta.len()))
+}
+
+#[cfg(not(unix))]
+fn open_run_output(_runs_root: &Path, _raw: &str) -> Result<(std::fs::File, u64), &'static str> {
+    // run_code needs an OS sandbox gizzi only has on macOS/Linux.
+    Err("unsupported_platform")
+}
+
+/// Ingest one call's output files (fresh random ids) and build the payload.
+/// Returns the payload and the ids it stored.
+fn ingest_run_code(part: &serde_json::Value, paths: &RunCodePaths) -> (serde_json::Value, Vec<String>) {
+    use std::io::Read;
+    let meta = part.pointer("/state/metadata").cloned().unwrap_or(json!({}));
+    let mut skipped = tool_skipped(&meta);
+    let mut files = Vec::new();
+    let mut stored = Vec::new();
+    let mut total = 0u64;
+    let list = meta.get("files").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+    for (index, file) in list.iter().enumerate() {
+        let raw = file.get("path").and_then(|v| v.as_str()).unwrap_or("");
         let name = file
             .get("name")
             .and_then(|v| v.as_str())
             .filter(|n| !n.is_empty())
             .map(str::to_string)
-            .or_else(|| canonical.file_name().map(|n| n.to_string_lossy().into_owned()))
+            .or_else(|| Path::new(raw).file_name().map(|n| n.to_string_lossy().into_owned()))
             .unwrap_or_else(|| "file".to_string());
+        let mut skip = |reason: &str| skipped.push(json!({ "name": name, "reason": reason }));
+        if index >= RUN_CODE_MAX_FILES {
+            skip("over_file_limit");
+            continue;
+        }
+        let (handle, size) = match open_run_output(&paths.runs_root, raw) {
+            Ok(opened) => opened,
+            Err(reason) => {
+                skip(reason);
+                continue;
+            }
+        };
+        // Cap before read: never read a file that would not fit.
+        if size > RUN_CODE_MAX_TOTAL_BYTES - total {
+            skip("too_large");
+            continue;
+        }
+        let mut bytes = Vec::with_capacity(size as usize);
+        if handle.take(size + 1).read_to_end(&mut bytes).is_err() {
+            skip("unreadable");
+            continue;
+        }
+        if bytes.len() as u64 != size {
+            skip("changed");
+            continue;
+        }
         let media_type = file
             .get("mediaType")
             .and_then(|v| v.as_str())
+            .filter(|m| !m.is_empty())
             .unwrap_or("application/octet-stream");
-        let id = run_code_upload_id(&canonical);
-        if let Err(e) = store(&id, &name, media_type, &bytes) {
+        let id = crate::upload_routes::new_upload_id();
+        if let Err(e) = crate::upload_routes::store_upload_in(&paths.uploads, &id, &name, media_type, &bytes) {
             warn!(error = %e, file = %name, "run_code: failed to ingest output file");
+            skip("store_failed");
             continue;
         }
+        total += size;
+        stored.push(id.clone());
         files.push(json!({
             "name": name,
             "mediaType": media_type,
             "uploadId": id,
-            "size": bytes.len(),
+            "size": size,
+            "url": crate::upload_routes::upload_url(&id),
         }));
     }
-    files
+    (json!({ "files": files, "run": run_fields(&meta, skipped) }), stored)
 }
 
-/// Add `files[]` and `run {stdout, stderr, exit_code}` to a `run_code`
-/// `tool_result` frame (no-op for other tools or unsettled parts).
-pub(crate) fn add_run_code_fields(frame: &mut serde_json::Value, part: &serde_json::Value) {
+/// `{files, run}` for a completed `run_code` tool part (`None` for any other
+/// part). Reads the call's manifest when it exists; otherwise ingests once and
+/// writes it. `session_id` is used when the part carries no `sessionID`.
+/// Blocking file I/O — async callers go through `run_code_payload_async`.
+pub(crate) fn run_code_payload(
+    part: &serde_json::Value,
+    session_id: Option<&str>,
+    paths: &RunCodePaths,
+) -> Option<serde_json::Value> {
     if part.get("tool").and_then(|v| v.as_str()) != Some("run_code")
         || part.pointer("/state/status").and_then(|v| v.as_str()) != Some("completed")
     {
-        return;
+        return None;
     }
-    let files = ingest_run_code_files(part, &mut |id, name, media_type, bytes| {
-        crate::upload_routes::store_upload(id, name, media_type, bytes)
-    });
     let meta = part.pointer("/state/metadata").cloned().unwrap_or(json!({}));
-    frame["files"] = json!(files);
-    frame["run"] = json!({
-        "stdout": meta.get("stdout").cloned().unwrap_or(json!("")),
-        "stderr": meta.get("stderr").cloned().unwrap_or(json!("")),
-        "exit_code": meta.get("exit_code").cloned().unwrap_or(json!(null)),
-    });
+    let session = part.get("sessionID").and_then(|v| v.as_str()).or(session_id).filter(|s| !s.is_empty());
+    let call = part.get("callID").and_then(|v| v.as_str()).filter(|s| !s.is_empty());
+    let (Some(session), Some(call)) = (session, call) else {
+        // No key to make ingest idempotent under: report the run, publish nothing.
+        return Some(json!({ "files": [], "run": run_fields(&meta, tool_skipped(&meta)) }));
+    };
+    let manifest = manifest_path(&paths.uploads, session, call);
+    match read_manifest(&manifest) {
+        Some(Ok(payload)) => return Some(payload),
+        Some(Err(e)) => {
+            // Never re-ingest over an existing manifest.
+            warn!(error = %e, manifest = %manifest.display(), "run_code: unreadable manifest");
+            return Some(json!({ "files": [], "run": run_fields(&meta, tool_skipped(&meta)) }));
+        }
+        None => {}
+    }
+    let (payload, stored) = ingest_run_code(part, paths);
+    match write_manifest_once(&manifest, &payload) {
+        Ok(()) => Some(payload),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            // A concurrent ingest won: drop ours, use theirs.
+            for id in &stored {
+                crate::upload_routes::remove_upload_in(&paths.uploads, id);
+            }
+            match read_manifest(&manifest) {
+                Some(Ok(theirs)) => Some(theirs),
+                _ => Some(payload),
+            }
+        }
+        Err(e) => {
+            warn!(error = %e, manifest = %manifest.display(), "run_code: failed to write manifest");
+            Some(payload)
+        }
+    }
+}
+
+/// `run_code_payload` on the blocking pool, with the live data dirs — the
+/// SSE bridge must not stall its stream on file I/O.
+pub(crate) async fn run_code_payload_async(
+    part: serde_json::Value,
+    session_id: Option<String>,
+) -> Option<serde_json::Value> {
+    tokio::task::spawn_blocking(move || run_code_payload(&part, session_id.as_deref(), &RunCodePaths::current()))
+        .await
+        .unwrap_or_else(|e| {
+            warn!(error = %e, "run_code: ingest task failed");
+            None
+        })
+}
+
+/// Copy a payload's `files` and `run` onto a frame or transcript part.
+pub(crate) fn merge_run_code_payload(target: &mut serde_json::Value, payload: serde_json::Value) {
+    if let serde_json::Value::Object(mut fields) = payload {
+        for key in ["files", "run"] {
+            if let Some(value) = fields.remove(key) {
+                target[key] = value;
+            }
+        }
+    }
 }
 
 #[cfg(test)]
 mod run_code_files_tests {
     use super::*;
 
+    struct Fixture {
+        _tmp: tempfile::TempDir,
+        paths: RunCodePaths,
+        out: PathBuf,
+        outside: PathBuf,
+    }
+
+    fn fixture() -> Fixture {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = RunCodePaths {
+            runs_root: tmp.path().join("gizzi-data/gizzi-code/runs"),
+            uploads: tmp.path().join("allternit/uploads"),
+        };
+        let out = paths.runs_root.join("ses_1/call_1/out");
+        std::fs::create_dir_all(&out).unwrap();
+        let outside = tmp.path().join("elsewhere");
+        std::fs::create_dir_all(&outside).unwrap();
+        Fixture { _tmp: tmp, paths, out, outside }
+    }
+
     fn part(files: serde_json::Value) -> serde_json::Value {
         json!({
-            "type": "tool", "tool": "run_code", "callID": "c1",
+            "type": "tool", "tool": "run_code", "callID": "call_1", "sessionID": "ses_1",
             "state": { "status": "completed", "output": "ok", "input": {},
-                "metadata": { "stdout": "hi\n", "stderr": "", "exit_code": 0, "files": files } }
+                "metadata": { "stdout": "hi\n", "stderr": "", "exit_code": 0, "timed_out": false, "files": files } }
         })
     }
 
-    #[test]
-    fn ingests_only_regular_files_under_a_run_out_dir() {
-        let tmp = tempfile::tempdir().unwrap();
-        let out = tmp.path().join("gizzi-code/runs/ses_1/call_1/out");
-        std::fs::create_dir_all(&out).unwrap();
-        std::fs::write(out.join("chart.png"), b"\x89PNG fake").unwrap();
-        std::fs::write(out.join("summary.csv"), b"a,b\n1,2\n").unwrap();
-        // Outside a run's out/ → refused.
-        let secret = tmp.path().join("secret.txt");
-        std::fs::write(&secret, b"nope").unwrap();
-        #[cfg(unix)]
-        std::os::unix::fs::symlink(&secret, out.join("link.txt")).unwrap();
+    fn entry(name: &str, media_type: &str, path: &Path) -> serde_json::Value {
+        json!({ "name": name, "mediaType": media_type, "path": path })
+    }
 
-        let p = part(json!([
-            { "name": "chart.png", "mediaType": "image/png", "path": out.join("chart.png") },
-            { "name": "summary.csv", "mediaType": "text/csv", "path": out.join("summary.csv") },
-            { "name": "secret.txt", "mediaType": "text/plain", "path": secret },
-            { "name": "link.txt", "mediaType": "text/plain", "path": out.join("link.txt") },
-            { "name": "rel.txt", "mediaType": "text/plain", "path": "gizzi-code/runs/a/b/out/x" },
-        ]));
-        let mut stored: Vec<(String, String, Vec<u8>)> = Vec::new();
-        let files = ingest_run_code_files(&p, &mut |id, name, _mt, bytes| {
-            stored.push((id.to_string(), name.to_string(), bytes.to_vec()));
-            Ok(())
-        });
-        assert_eq!(files.len(), 2, "{files:?}");
-        assert_eq!(files[0]["name"], "chart.png");
-        assert_eq!(files[0]["mediaType"], "image/png");
-        assert_eq!(files[1]["mediaType"], "text/csv");
-        assert_eq!(stored[1].2, b"a,b\n1,2\n");
-        let id = files[0]["uploadId"].as_str().unwrap();
-        assert_eq!(id.len(), 32);
-        assert!(id.chars().all(|c| c.is_ascii_hexdigit()));
-        assert_eq!(id, stored[0].0);
-        // Same file → same id (idempotent re-ingest).
-        let again = ingest_run_code_files(&p, &mut |_, _, _, _| Ok(()));
-        assert_eq!(again[0]["uploadId"], files[0]["uploadId"]);
+    fn reasons(payload: &serde_json::Value) -> Vec<(String, String)> {
+        payload["run"]["skipped"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| (s["name"].as_str().unwrap().to_string(), s["reason"].as_str().unwrap().to_string()))
+            .collect()
     }
 
     #[test]
-    fn other_tools_and_unsettled_parts_are_untouched() {
-        let mut frame = json!({ "type": "tool_result" });
+    fn ingests_regular_files_with_random_ids_and_a_full_payload() {
+        let fx = fixture();
+        std::fs::write(fx.out.join("chart.png"), b"\x89PNG fake").unwrap();
+        std::fs::write(fx.out.join("summary.csv"), b"a,b\n1,2\n").unwrap();
+        let p = part(json!([
+            entry("chart.png", "image/png", &fx.out.join("chart.png")),
+            entry("summary.csv", "text/csv", &fx.out.join("summary.csv")),
+        ]));
+        let payload = run_code_payload(&p, None, &fx.paths).unwrap();
+        let files = payload["files"].as_array().unwrap();
+        assert_eq!(files.len(), 2, "{payload}");
+        assert_eq!(files[0]["name"], "chart.png");
+        assert_eq!(files[0]["mediaType"], "image/png");
+        assert_eq!(files[0]["size"], 9);
+        assert_eq!(files[1]["mediaType"], "text/csv");
+        let id = files[0]["uploadId"].as_str().unwrap();
+        assert_eq!(id.len(), 32);
+        assert!(id.chars().all(|c| c.is_ascii_hexdigit()));
+        assert_eq!(files[0]["url"], format!("/api/v1/uploads/{id}"));
+        assert_ne!(files[0]["uploadId"], files[1]["uploadId"]);
+        assert_eq!(std::fs::read(fx.paths.uploads.join(files[1]["uploadId"].as_str().unwrap())).unwrap(), b"a,b\n1,2\n");
+        assert_eq!(payload["run"]["stdout"], "hi\n");
+        assert_eq!(payload["run"]["exit_code"], 0);
+        assert_eq!(payload["run"]["timed_out"], false);
+        assert_eq!(payload["run"]["skipped"], json!([]));
+    }
+
+    #[test]
+    fn manifest_is_written_once_and_reused_without_reingesting() {
+        let fx = fixture();
+        std::fs::write(fx.out.join("a.txt"), b"one").unwrap();
+        let p = part(json!([entry("a.txt", "text/plain", &fx.out.join("a.txt"))]));
+        let first = run_code_payload(&p, None, &fx.paths).unwrap();
+        let manifest = fx.paths.uploads.join("run_code/ses_1-call_1.json");
+        let on_disk: serde_json::Value = serde_json::from_slice(&std::fs::read(&manifest).unwrap()).unwrap();
+        assert_eq!(on_disk, first);
+        let uploads_before = std::fs::read_dir(&fx.paths.uploads).unwrap().count();
+
+        // Change the file: a re-ingest would store new bytes under a new id.
+        std::fs::write(fx.out.join("a.txt"), b"two!").unwrap();
+        let second = run_code_payload(&p, None, &fx.paths).unwrap();
+        assert_eq!(second, first);
+        assert_eq!(std::fs::read_dir(&fx.paths.uploads).unwrap().count(), uploads_before);
+        let id = first["files"][0]["uploadId"].as_str().unwrap();
+        assert_eq!(std::fs::read(fx.paths.uploads.join(id)).unwrap(), b"one");
+        // Session from the caller when the part lacks one → same manifest.
+        let mut bare = p.clone();
+        bare.as_object_mut().unwrap().remove("sessionID");
+        assert_eq!(run_code_payload(&bare, Some("ses_1"), &fx.paths).unwrap(), first);
+    }
+
+    #[test]
+    fn reload_after_the_run_folder_is_deleted_returns_the_same_files() {
+        let fx = fixture();
+        std::fs::write(fx.out.join("plot.png"), b"png").unwrap();
+        let p = part(json!([entry("plot.png", "image/png", &fx.out.join("plot.png"))]));
+        let live = run_code_payload(&p, None, &fx.paths).unwrap();
+        std::fs::remove_dir_all(fx.paths.runs_root.join("ses_1")).unwrap();
+        let reload = run_code_payload(&p, None, &fx.paths).unwrap();
+        assert_eq!(reload["files"], live["files"]);
+        assert_eq!(reload["files"].as_array().unwrap().len(), 1);
+        let id = reload["files"][0]["uploadId"].as_str().unwrap();
+        assert_eq!(std::fs::read(fx.paths.uploads.join(id)).unwrap(), b"png");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn refuses_symlinks_hard_links_fifos_and_paths_outside_the_runs_folder() {
+        let fx = fixture();
+        let secret = fx.outside.join("secret.txt");
+        std::fs::write(&secret, b"nope").unwrap();
+        // Symlinked file in out/.
+        std::os::unix::fs::symlink(&secret, fx.out.join("link.txt")).unwrap();
+        // Hard link (nlink == 2) in out/.
+        std::fs::hard_link(&secret, fx.out.join("hard.txt")).unwrap();
+        // Symlinked directory under out/.
+        std::os::unix::fs::symlink(&fx.outside, fx.out.join("dir")).unwrap();
+        // A FIFO: must not hang the open.
+        let fifo = fx.out.join("pipe");
+        let c = std::ffi::CString::new(fifo.to_str().unwrap()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+        // A gizzi-shaped path that is not under the real runs folder.
+        let fake = fx.outside.join("gizzi-code/runs/ses_1/call_1/out");
+        std::fs::create_dir_all(&fake).unwrap();
+        std::fs::write(fake.join("x.txt"), b"x").unwrap();
+        // Not in out/, and `..` escapes.
+        std::fs::write(fx.paths.runs_root.join("ses_1/call_1/main.py"), b"print(1)").unwrap();
+        let dotdot = format!("{}/../../../../../elsewhere/secret.txt", fx.out.display());
+        std::fs::write(fx.out.join("ok.txt"), b"ok").unwrap();
+
+        let p = part(json!([
+            entry("link.txt", "text/plain", &fx.out.join("link.txt")),
+            entry("hard.txt", "text/plain", &fx.out.join("hard.txt")),
+            entry("dir/secret.txt", "text/plain", &fx.out.join("dir/secret.txt")),
+            entry("pipe", "text/plain", &fifo),
+            entry("x.txt", "text/plain", &fake.join("x.txt")),
+            entry("main.py", "text/plain", &fx.paths.runs_root.join("ses_1/call_1/main.py")),
+            { "name": "up.txt", "mediaType": "text/plain", "path": dotdot },
+            { "name": "rel.txt", "mediaType": "text/plain", "path": "ses_1/call_1/out/ok.txt" },
+            entry("ok.txt", "text/plain", &fx.out.join("ok.txt")),
+        ]));
+        let payload = run_code_payload(&p, None, &fx.paths).unwrap();
+        let files = payload["files"].as_array().unwrap();
+        assert_eq!(files.len(), 1, "{payload}");
+        assert_eq!(files[0]["name"], "ok.txt");
+        let expect = [
+            ("link.txt", "not_regular_file"),
+            ("hard.txt", "hard_link"),
+            ("dir/secret.txt", "not_regular_file"),
+            ("pipe", "not_regular_file"),
+            ("x.txt", "outside_run_folder"),
+            ("main.py", "outside_run_folder"),
+            ("up.txt", "outside_run_folder"),
+            ("rel.txt", "outside_run_folder"),
+        ];
+        let got = reasons(&payload);
+        assert_eq!(got, expect.iter().map(|(a, b)| (a.to_string(), b.to_string())).collect::<Vec<_>>());
+        // Nothing but ok.txt was stored.
+        let stored: Vec<_> = std::fs::read_dir(&fx.paths.uploads)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_type().unwrap().is_file() && !e.file_name().to_string_lossy().ends_with(".json"))
+            .collect();
+        assert_eq!(stored.len(), 1);
+    }
+
+    #[test]
+    fn oversize_file_is_skipped_by_its_size_without_being_read() {
+        let fx = fixture();
+        // 4 GiB sparse file: reading it would take seconds and gigabytes.
+        let big = std::fs::File::create(fx.out.join("huge.bin")).unwrap();
+        big.set_len(4 * 1024 * 1024 * 1024).unwrap();
+        // A second file that still fits under the remaining cap.
+        std::fs::write(fx.out.join("small.txt"), b"fits").unwrap();
+        let p = part(json!([
+            entry("huge.bin", "application/octet-stream", &fx.out.join("huge.bin")),
+            entry("small.txt", "text/plain", &fx.out.join("small.txt")),
+        ]));
+        let started = std::time::Instant::now();
+        let payload = run_code_payload(&p, None, &fx.paths).unwrap();
+        assert!(started.elapsed() < std::time::Duration::from_secs(2));
+        assert_eq!(reasons(&payload), vec![("huge.bin".to_string(), "too_large".to_string())]);
+        assert_eq!(payload["files"][0]["name"], "small.txt");
+    }
+
+    #[test]
+    fn run_carries_timed_out_and_the_tools_own_skips() {
+        let fx = fixture();
+        let mut p = part(json!([]));
+        p["state"]["metadata"]["timed_out"] = json!(true);
+        p["state"]["metadata"]["exit_code"] = json!(null);
+        p["state"]["metadata"]["stderr"] = json!(
+            "warn\nStopped: the script ran past its 60s limit.\nNot returned (over 20 files or 20 MB): big.parquet, out/b.csv"
+        );
+        let payload = run_code_payload(&p, None, &fx.paths).unwrap();
+        assert_eq!(payload["run"]["timed_out"], true);
+        assert_eq!(payload["run"]["exit_code"], json!(null));
+        assert_eq!(
+            reasons(&payload),
+            vec![
+                ("big.parquet".to_string(), "over_limit".to_string()),
+                ("out/b.csv".to_string(), "over_limit".to_string())
+            ]
+        );
+        // A structured list wins over the stderr line.
+        p["callID"] = json!("call_2");
+        p["state"]["metadata"]["skipped"] = json!([{ "name": "x.bin", "reason": "over_limit" }, "y.bin"]);
+        let payload = run_code_payload(&p, None, &fx.paths).unwrap();
+        assert_eq!(payload["run"]["skipped"], json!([
+            { "name": "x.bin", "reason": "over_limit" }, { "name": "y.bin", "reason": "over_limit" }
+        ]));
+    }
+
+    #[test]
+    fn other_tools_and_unsettled_parts_get_nothing() {
+        let fx = fixture();
         let mut p = part(json!([]));
         p["tool"] = json!("bash");
-        add_run_code_fields(&mut frame, &p);
-        assert!(frame.get("files").is_none());
-
+        assert!(run_code_payload(&p, None, &fx.paths).is_none());
         let mut running = part(json!([]));
         running["state"]["status"] = json!("running");
-        add_run_code_fields(&mut frame, &running);
-        assert!(frame.get("files").is_none());
+        assert!(run_code_payload(&running, None, &fx.paths).is_none());
 
-        add_run_code_fields(&mut frame, &part(json!([])));
+        let mut frame = json!({ "type": "tool_result" });
+        merge_run_code_payload(&mut frame, run_code_payload(&part(json!([])), None, &fx.paths).unwrap());
         assert_eq!(frame["files"], json!([]));
         assert_eq!(frame["run"]["stdout"], "hi\n");
-        assert_eq!(frame["run"]["exit_code"], 0);
+    }
+
+    #[test]
+    fn odd_ids_cannot_escape_the_manifest_folder() {
+        let up = Path::new("/u");
+        assert_eq!(manifest_path(up, "ses_1", "toolu-01"), Path::new("/u/run_code/ses_1-toolu-01.json"));
+        let odd = manifest_path(up, "../x", "a/b");
+        assert_eq!(odd.parent().unwrap(), Path::new("/u/run_code"));
+        assert!(!odd.to_string_lossy().contains(".."));
+        // `-` in a session would make `a-b` + `c` collide with `a` + `b-c`.
+        assert_ne!(manifest_path(up, "a-b", "c"), manifest_path(up, "a", "b-c"));
     }
 }

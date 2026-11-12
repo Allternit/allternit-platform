@@ -117,11 +117,11 @@ Response (extra field):
   "stderr": "",
   "duration_ms": 180,
   "session_id": "sess_abc123",
-  "files": [{ "name": "n.txt", "mediaType": "text/plain", "uploadId": "up_456" }]
+  "files": [{ "name": "n.txt", "mediaType": "text/plain", "uploadId": "up_456", "size": 2, "url": "/api/v1/uploads/up_456" }]
 }
 ```
 
-`files` is left out of the response when the request staged no files. Input and output are each limited to 20 MB in total. A file name must not be empty or contain `/`, `\`, quotes or control characters. `files` needs the VM sandbox: the plain-subprocess fallback used when no VM driver is configured refuses it, and `/sandbox/execute/stream` rejects it with 400 `files_unsupported`.
+Each output file has `size` (bytes stored) and `url` (where to fetch it). Downloads use the protective headers listed in [Uploads API](/api/uploads#download-upload). `files` is left out of the response when the request staged no files. Input and output are each limited to 20 MB in total. A file name must not be empty or contain `/`, `\`, quotes or control characters. `files` needs the VM sandbox: the plain-subprocess fallback used when no VM driver is configured refuses it, and `/sandbox/execute/stream` rejects it with 400 `files_unsupported`.
 
 ### Streaming execution
 

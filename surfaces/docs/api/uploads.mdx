@@ -58,7 +58,19 @@ Response:
 GET /api/v1/uploads/abc123upload
 ```
 
-The response returns the stored bytes with the original `Content-Type`. If the sidecar is missing, `application/octet-stream` is used.
+The response returns the stored bytes with the original `Content-Type`. If the sidecar is missing, `application/octet-stream` is used. `Range` requests are supported.
+
+Every upload is served with these headers, whoever made it (a client, `run_code`, or the sandbox `files` output):
+
+| Header | Value |
+|--------|-------|
+| `X-Content-Type-Options` | `nosniff` |
+| `Content-Security-Policy` | `sandbox` |
+| `Content-Disposition` | `inline; filename*=UTF-8''<name>` for `image/png`, `image/jpeg`, `image/gif`, `image/webp` and `application/pdf`. `attachment; filename*=UTF-8''<name>` for every other type. |
+
+So an HTML or SVG upload downloads and never runs as a page on the API's origin. To show one in an app, fetch the bytes and display them in a sandboxed frame, for example `<iframe sandbox srcdoc=…>` or a blob URL in a frame with the `sandbox` attribute. `fetch()` and `<img>` are not affected by these headers.
+
+Upload IDs are random. `run_code` and sandbox output files get the same kind of ID as client uploads.
 
 ## Error codes
 

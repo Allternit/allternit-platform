@@ -1167,16 +1167,15 @@ fn tool_frames_for_part(
     }
     if settled {
         frames.push(if status == "completed" {
-            let mut frame = json!({
+            // run_code's `files[]` + `run` are added by the caller off the
+            // async stream (gizzi_chat_stream::run_code_payload_async).
+            json!({
                 "type": "tool_result",
                 "messageId": msg_id,
                 "toolCallId": call_id,
                 "toolName": tool_name,
                 "result": part.pointer("/state/output").cloned().unwrap_or_else(|| json!("")),
-            });
-            // run_code: produced files → uploads, `files[]` + `run` on the frame.
-            crate::gizzi_chat_stream::add_run_code_fields(&mut frame, part);
-            frame
+            })
         } else {
             json!({
                 "type": "tool_error",
@@ -2488,8 +2487,21 @@ async fn agent_chat_bridge(
                         if part_type == "tool"
                             && part.get("sessionID").and_then(|v| v.as_str()) == Some(session_id.as_str())
                         {
-                            for frame in tool_frames_for_part(part, &msg_id, &mut tool_frames_sent) {
+                            for mut frame in tool_frames_for_part(part, &msg_id, &mut tool_frames_sent) {
                                 let settled_ok = frame["type"] == "tool_result";
+                                // run_code: produced files → uploads (once per call, via
+                                // its manifest), `files[]` + `run` on the frame. The file
+                                // I/O runs on the blocking pool, not this stream.
+                                if settled_ok && frame["toolName"] == "run_code" {
+                                    if let Some(payload) = crate::gizzi_chat_stream::run_code_payload_async(
+                                        part.clone(),
+                                        Some(session_id.to_string()),
+                                    )
+                                    .await
+                                    {
+                                        crate::gizzi_chat_stream::merge_run_code_payload(&mut frame, payload);
+                                    }
+                                }
                                 yield Ok(sse_frame(trace_cursor).data(frame.to_string()));
                                 // MCP Apps: a completed tool whose connector declares a
                                 // ui:// resource also yields an `mcp_app` frame.
