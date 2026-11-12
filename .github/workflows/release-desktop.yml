@@ -101,6 +101,11 @@ jobs:
       # skips CI. Setting this explicitly keeps the artifactName env macro
       # deterministic on jobs that invoke electron-builder directly.
       ALLTERNIT_BUILD_SUFFIX: ""
+      # The repo has no Developer ID certificate, so CI Mac builds are ad-hoc
+      # (package.json identity "-"; build-local.cjs and notarize.cjs already
+      # skip signing on CI). runtime-package.cjs stamp refuses ad-hoc since
+      # 434665fec; CI never packs or publishes a runtime, so allow it here.
+      ALLTERNIT_RUNTIME_ALLOW_ADHOC: "1"
 
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
