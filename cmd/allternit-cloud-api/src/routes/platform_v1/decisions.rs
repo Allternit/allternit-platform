@@ -690,7 +690,10 @@ async fn fan_out(node: &Node, project_id: &str, req: &DecisionRequest) -> Vec<(V
     let started = Instant::now();
     let budget = Duration::from_millis(req.budget_ms);
     let mut results: Vec<Option<(Value, Option<String>)>> = vec![None; req.questions.len()];
-    let calls = stream::iter(req.questions.iter().enumerate().map(|(i, q)| async move {
+    // Collected first: a lazy `Map` over borrowed questions inside
+    // `buffer_unordered` trips the "FnOnce is not general enough" HRTB error
+    // once the handler future must be `Send` for axum.
+    let futs: Vec<_> = req.questions.iter().enumerate().map(|(i, q)| async move {
         let left = budget.saturating_sub(started.elapsed());
         if left.is_zero() {
             return (i, (refusal(&q.name, "budget_exhausted"), None));
@@ -698,8 +701,8 @@ async fn fan_out(node: &Node, project_id: &str, req: &DecisionRequest) -> Vec<(V
         let body = node_body(req, q, project_id, left.as_millis() as u64);
         let res = node.send(reqwest::Method::POST, "/v1/decisions", project_id, &body, left).await;
         (i, answer_from(q, res))
-    }))
-    .buffer_unordered(CONCURRENCY);
+    }).collect();
+    let calls = stream::iter(futs).buffer_unordered(CONCURRENCY);
     let mut calls = Box::pin(calls);
     let _ = tokio::time::timeout(budget, async {
         while let Some((i, r)) = calls.next().await {
