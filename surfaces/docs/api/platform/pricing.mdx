@@ -34,7 +34,7 @@ The Growth uptime figure is a target, not a service level agreement. Only an Ent
 | Call recording and transcript storage | Included for 90 days, then $0.002 a minute per month | |
 | Phone minute (an agent driving a linked phone) | $0.02 a minute | Task and skill runs rounded up to the minute; tool calls count each phone's clock minutes with calls. Growth includes 3,000 a month. See [Phones](/api/platform/phones#metering) |
 | Linked phone | $5 a phone a month | Each phone a live project drives in the month. Growth includes 25 |
-| [Decision questions](/api/platform/decisions) | $0.50 per 1,000 questions | Live keys only; test keys are free. A refused question is not billed. Meter `decision_questions` |
+| [Decision questions](/api/platform/decisions) | $0.50 per 1,000 questions | Live keys only; test keys are not charged but still need a card on the project. A refused question is not billed. Meter `decision_questions` |
 | Channels, webhooks, the twin layer and MCP | Included | |
 
 Each meter matches a `meter` value in [Usage](/api/platform/usage), so `GET /v1/usage` shows the quantities a bill is built from.
@@ -42,7 +42,7 @@ Each meter matches a `meter` value in [Usage](/api/platform/usage), so `GET /v1/
 ## Limits that protect your bill
 
 - Every project has a monthly spend cap ($100 by default once a card is on file). Raise or lower it per project in the console under **Platform API → Projects**.
-- A card on file is required before any billable work: agents, conversations, calls, texts, numbers and computers.
+- A card on file is required before any billable work: agents, conversations, calls, texts, numbers, computers, decisions, responses and messages.
 - International calling is off by default.
 - Concurrent calls are capped per plan (see the table above).
 - Phone task and skill runs at once are capped per plan: Sandbox 1, Pay as you go 5, Growth 25, Enterprise by contract.
