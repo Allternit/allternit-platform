@@ -99,17 +99,38 @@ export interface OpenAiListResponse<T> {
   data: T[];
 }
 
+export type ChatContentPart =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string } };
+
+export interface ChatToolCall {
+  id: string;
+  type: "function";
+  function: { name: string; arguments: string };
+}
+
 export interface ChatCompletionMessage {
-  role: "system" | "user" | "assistant";
-  content: string;
+  role: "system" | "user" | "assistant" | "tool";
+  content: string | ChatContentPart[] | null;
+  tool_calls?: ChatToolCall[];
+  tool_call_id?: string;
 }
 
 export interface ChatCompletionRequest {
   model: string;
   messages: ChatCompletionMessage[];
   temperature?: number;
+  top_p?: number;
   max_tokens?: number;
+  stop?: string[];
+  presence_penalty?: number;
+  frequency_penalty?: number;
+  seed?: number;
   stream?: boolean;
+  stream_options?: { include_usage: boolean };
+  tools?: unknown[];
+  tool_choice?: unknown;
+  response_format?: unknown;
 }
 
 export interface ChatCompletionChunk {
@@ -119,8 +140,17 @@ export interface ChatCompletionChunk {
   model?: string;
   choices?: Array<{
     index: number;
-    delta?: { role?: string; content?: string };
-    message?: { role?: string; content?: string };
+    delta?: {
+      role?: string;
+      content?: string;
+      tool_calls?: Array<{
+        index?: number;
+        id?: string;
+        type?: string;
+        function?: { name?: string; arguments?: string };
+      }>;
+    };
+    message?: { role?: string; content?: string | null; tool_calls?: ChatToolCall[] };
     finish_reason?: string | null;
   }>;
   usage?: {
@@ -161,4 +191,206 @@ export interface OpenAiBatch {
   failed_at?: number | null;
   cancelled_at?: number | null;
   metadata?: Record<string, unknown> | null;
+}
+
+// ─── Cloud playground key (D1) ──────────────────────────────────────────────
+//
+// On Allternit Cloud the Playground calls the public /v1/chat/completions
+// with a short-lived project key minted by the console. The key lives in
+// memory only: never localStorage, never /api/v1/gateway/keys.
+
+export interface PlaygroundKey {
+  key: string;
+  /** Epoch milliseconds. */
+  expiresAt: number;
+  projectId: string;
+}
+
+let playgroundKey: PlaygroundKey | null = null;
+let minting: { projectId: string; promise: Promise<PlaygroundKey> } | null = null;
+
+/** Re-mint this long before the server-side expiry. */
+const EXPIRY_MARGIN_MS = 60_000;
+
+export function forgetPlaygroundKey(): void {
+  playgroundKey = null;
+}
+
+export async function mintPlaygroundKey(projectId: string): Promise<PlaygroundKey> {
+  if (minting && minting.projectId === projectId) return minting.promise;
+  const promise = api
+    .post<{ key: string; expires_at: string | number }>(
+      `/api/v1/platform/projects/${encodeURIComponent(projectId)}/playground-key`
+    )
+    .then((res) => {
+      const parsed =
+        typeof res.expires_at === "number"
+          ? res.expires_at < 1e12
+            ? res.expires_at * 1000
+            : res.expires_at
+          : Date.parse(res.expires_at);
+      const minted: PlaygroundKey = {
+        key: res.key,
+        expiresAt: Number.isFinite(parsed) ? parsed : Date.now() + 14 * 60_000,
+        projectId,
+      };
+      playgroundKey = minted;
+      return minted;
+    })
+    .finally(() => {
+      minting = null;
+    });
+  minting = { projectId, promise };
+  return promise;
+}
+
+/** The in-memory key for `projectId`, minted or re-minted when missing, expired or `force`d. */
+export async function getPlaygroundKey(projectId: string, force = false): Promise<string> {
+  const cur = playgroundKey;
+  if (
+    !force &&
+    cur &&
+    cur.projectId === projectId &&
+    cur.expiresAt - EXPIRY_MARGIN_MS > Date.now()
+  ) {
+    return cur.key;
+  }
+  return (await mintPlaygroundKey(projectId)).key;
+}
+
+export function gatewayBaseUrl(): string {
+  return String(
+    import.meta.env.VITE_ALLTERNIT_GATEWAY_URL || "https://api.allternit.com"
+  ).replace(/\/+$/, "");
+}
+
+/** Register-1 message for a failed gateway call. */
+export function describeGatewayError(status: number, serverMessage?: string): string {
+  const detail = serverMessage ? ` (${serverMessage})` : "";
+  switch (status) {
+    case 401:
+      return `The Playground key was rejected. Run again to get a fresh key.${detail}`;
+    case 403:
+      return `This project's key is not allowed to use that model or feature.${detail}`;
+    case 402:
+      return `Your organization is out of credits. Add credits on the Billing page, then run again.${detail}`;
+    case 429:
+      return `Too many requests or a rate limit was reached. Wait a moment, then run again.${detail}`;
+    default:
+      return serverMessage || `The request failed with HTTP ${status}.`;
+  }
+}
+
+export interface GatewayChatResult {
+  status: number;
+  headers: Record<string, string>;
+  latencyMs: number;
+  /** Final response body: the JSON body, or the stream assembled by the caller. */
+  json: unknown;
+}
+
+/**
+ * POST /v1/chat/completions with a Bearer key. Throws GatewayHttpError on a
+ * non-2xx. For `stream: true` the caller passes `onChunk` and gets each SSE
+ * `data:` payload parsed; for non-stream the JSON body is returned.
+ */
+export class GatewayHttpError extends Error {
+  constructor(
+    message: string,
+    public status: number,
+    public headers: Record<string, string>,
+    public body: unknown,
+    public latencyMs: number
+  ) {
+    super(message);
+    this.name = "GatewayHttpError";
+  }
+}
+
+export async function gatewayChat(
+  key: string,
+  body: ChatCompletionRequest,
+  opts: { signal?: AbortSignal; onChunk?: (chunk: ChatCompletionChunk) => void }
+): Promise<GatewayChatResult> {
+  const started = performance.now();
+  const response = await fetch(`${gatewayBaseUrl()}/v1/chat/completions`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${key}`,
+      "Content-Type": "application/json",
+      Accept: body.stream ? "text/event-stream" : "application/json",
+    },
+    body: JSON.stringify(body),
+    signal: opts.signal,
+  });
+  const headers: Record<string, string> = {};
+  response.headers.forEach((v, k) => {
+    headers[k] = v;
+  });
+
+  if (!response.ok) {
+    const errBody = await response.json().catch(() => null);
+    const nested =
+      errBody && typeof errBody.error === "object" && errBody.error ? errBody.error : null;
+    const msg: string | undefined =
+      nested?.message ??
+      (typeof errBody?.error === "string" ? errBody.error : undefined) ??
+      errBody?.message;
+    throw new GatewayHttpError(
+      describeGatewayError(response.status, msg),
+      response.status,
+      headers,
+      errBody,
+      Math.round(performance.now() - started)
+    );
+  }
+
+  if (!body.stream || !response.body) {
+    const json = await response.json();
+    return {
+      status: response.status,
+      headers,
+      latencyMs: Math.round(performance.now() - started),
+      json,
+    };
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let nl: number;
+      while ((nl = buffer.indexOf("\n")) >= 0) {
+        const line = buffer.slice(0, nl).trim();
+        buffer = buffer.slice(nl + 1);
+        if (!line.startsWith("data:")) continue;
+        const payload = line.slice(5).trim();
+        if (payload === "[DONE]") {
+          return {
+            status: response.status,
+            headers,
+            latencyMs: Math.round(performance.now() - started),
+            json: undefined,
+          };
+        }
+        try {
+          opts.onChunk?.(JSON.parse(payload) as ChatCompletionChunk);
+        } catch {
+          // keep-alive or comment payload
+        }
+      }
+    }
+  } finally {
+    reader.cancel().catch(() => undefined);
+  }
+  return {
+    status: response.status,
+    headers,
+    latencyMs: Math.round(performance.now() - started),
+    json: undefined,
+  };
 }

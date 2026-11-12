@@ -1,4 +1,5 @@
-import React from "react";
+import React, { useState } from "react";
+import type { ChatToolCall } from "@/lib/console-gateway";
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
   ArrowUp01Icon,
@@ -11,13 +12,32 @@ import { SETTINGS_SELECT_CLASS } from "@/components/console-ui";
 
 export interface EditableMessage {
   id: string;
-  role: "user" | "assistant";
+  role: "user" | "assistant" | "tool";
   content: string;
+  /** Image data URLs attached to a user message (vision models only). */
+  images?: string[];
+  /** Assistant message that asked for tools. */
+  toolCalls?: ChatToolCall[];
+  /** Tool message: the call this result answers. */
+  toolCallId?: string;
 }
 
 interface MessagesEditorProps {
   messages: EditableMessage[];
   onChange: (messages: EditableMessage[]) => void;
+  /** Image upload is offered only when the selected model supports vision. */
+  supportsVision?: boolean;
+}
+
+const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
+
+function readDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error ?? new Error("Could not read the image."));
+    reader.readAsDataURL(file);
+  });
 }
 
 const TEXTAREA_CLASS =
@@ -33,7 +53,35 @@ const ICON_BUTTON_CLASS =
 export function MessagesEditor({
   messages,
   onChange,
+  supportsVision = false,
 }: MessagesEditorProps): React.ReactNode {
+  const [imageError, setImageError] = useState<string | null>(null);
+
+  const attach = async (id: string, files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    setImageError(null);
+    const urls: string[] = [];
+    for (const file of Array.from(files)) {
+      if (!file.type.startsWith("image/")) {
+        setImageError("Only image files can be attached.");
+        continue;
+      }
+      if (file.size > MAX_IMAGE_BYTES) {
+        setImageError("Images must be 4 MB or smaller.");
+        continue;
+      }
+      try {
+        urls.push(await readDataUrl(file));
+      } catch (err) {
+        setImageError(err instanceof Error ? err.message : "Could not read the image.");
+      }
+    }
+    if (urls.length > 0) {
+      const target = messages.find((m) => m.id === id);
+      update(id, { images: [...(target?.images ?? []), ...urls] });
+    }
+  };
+
   const update = (id: string, patch: Partial<EditableMessage>) =>
     onChange(
       messages.map((m) => (m.id === id ? { ...m, ...patch } : m))
@@ -93,19 +141,25 @@ export function MessagesEditor({
           className="rounded-xl border border-solid border-[var(--border-subtle)] bg-[var(--bg-secondary)] p-3"
         >
           <div className="mb-2 flex items-center justify-between gap-2">
-            <select
-              value={message.role}
-              onChange={(e) =>
-                update(message.id, {
-                  role: e.target.value as "user" | "assistant",
-                })
-              }
-              className={SETTINGS_SELECT_CLASS}
-              aria-label={`Message ${index + 1} role`}
-            >
-              <option value="user">user</option>
-              <option value="assistant">assistant</option>
-            </select>
+            {message.role === "tool" ? (
+              <span className="font-mono text-[12px] text-[var(--text-secondary)]">
+                tool result{message.toolCallId ? ` · ${message.toolCallId}` : ""}
+              </span>
+            ) : (
+              <select
+                value={message.role}
+                onChange={(e) =>
+                  update(message.id, {
+                    role: e.target.value as "user" | "assistant",
+                  })
+                }
+                className={SETTINGS_SELECT_CLASS}
+                aria-label={`Message ${index + 1} role`}
+              >
+                <option value="user">user</option>
+                <option value="assistant">assistant</option>
+              </select>
+            )}
             <div className="flex gap-1">
               <button
                 type="button"
@@ -142,8 +196,68 @@ export function MessagesEditor({
             rows={Math.min(10, Math.max(3, message.content.split("\n").length))}
             className={TEXTAREA_CLASS}
           />
+          {message.toolCalls && message.toolCalls.length > 0 && (
+            <pre className="m-0 mt-2 overflow-x-auto rounded-lg bg-[var(--bg-primary)] p-2 font-mono text-[11px] text-[var(--text-secondary)]">
+              {message.toolCalls
+                .map((t) => `${t.function.name}(${t.function.arguments})`)
+                .join("\n")}
+            </pre>
+          )}
+          {message.role === "user" && (
+            <div className="mt-2 space-y-2">
+              {(message.images ?? []).length > 0 && (
+                <div className="flex flex-wrap gap-2">
+                  {message.images!.map((url, i) => (
+                    <div key={i} className="relative">
+                      <img
+                        src={url}
+                        alt={`Attached image ${i + 1}`}
+                        className="size-16 rounded-lg border border-solid border-[var(--border-subtle)] object-cover"
+                      />
+                      <button
+                        type="button"
+                        aria-label="Remove image"
+                        onClick={() =>
+                          update(message.id, {
+                            images: message.images!.filter((_, j) => j !== i),
+                          })
+                        }
+                        className="absolute -right-1.5 -top-1.5 inline-flex size-5 items-center justify-center rounded-full border border-solid border-[var(--border-subtle)] bg-[var(--bg-primary)] text-[11px] text-[var(--text-secondary)]"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {supportsVision ? (
+                <label className="inline-flex cursor-pointer items-center gap-1 text-[12px] font-semibold text-[var(--accent-primary)]">
+                  Attach image
+                  <input
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    className="sr-only"
+                    onChange={(e) => {
+                      void attach(message.id, e.target.files);
+                      e.target.value = "";
+                    }}
+                  />
+                </label>
+              ) : (
+                (message.images ?? []).length > 0 && (
+                  <p className="m-0 text-[11px] text-[var(--status-error)]">
+                    The selected model does not accept images. Pick a model with vision or remove them.
+                  </p>
+                )
+              )}
+            </div>
+          )}
         </div>
       ))}
+      {imageError && (
+        <p className="m-0 text-[12px] text-[var(--status-error)]">{imageError}</p>
+      )}
     </div>
   );
 }
