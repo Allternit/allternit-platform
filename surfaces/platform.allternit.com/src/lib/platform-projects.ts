@@ -31,6 +31,11 @@ export interface ProjectKey {
   scopes: string[];
   last_used_at?: string | null;
   created_at: string;
+  /** Null or absent = never expires. */
+  expires_at?: string | null;
+  /** Empty or absent = any IP (subject to the organization allowlist). */
+  allowed_cidrs?: string[] | null;
+  kind?: string;
 }
 
 export interface CreatedProjectKey extends ProjectKey {
@@ -80,9 +85,28 @@ export async function listProjectKeys(projectId: string): Promise<ProjectKey[]> 
 
 export async function createProjectKey(
   projectId: string,
-  input: { name: string; scopes: string[]; account_id?: string; accept_terms: boolean },
+  input: {
+    name: string;
+    scopes: string[];
+    account_id?: string;
+    accept_terms: boolean;
+    expires_at?: string;
+    allowed_cidrs?: string[];
+  },
 ): Promise<CreatedProjectKey> {
   return api.post<CreatedProjectKey>(`/api/v1/platform/projects/${encodeURIComponent(projectId)}/keys`, input);
+}
+
+/** Change a key's expiry or IP allowlist. `expires_at: null` clears the expiry; `[]` clears the allowlist. */
+export async function updateProjectKey(
+  projectId: string,
+  keyId: string,
+  input: { expires_at?: string | null; allowed_cidrs?: string[] },
+): Promise<ProjectKey> {
+  return api.patch<ProjectKey>(
+    `/api/v1/platform/projects/${encodeURIComponent(projectId)}/keys/${encodeURIComponent(keyId)}`,
+    input,
+  );
 }
 
 export async function revokeProjectKey(projectId: string, keyId: string): Promise<void> {
