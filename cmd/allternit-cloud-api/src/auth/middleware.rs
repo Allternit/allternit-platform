@@ -279,7 +279,7 @@ pub async fn auth_middleware(
             // Validate against database. An `alt_…` key past its expiry is a
             // 401 and one used from outside its IP allowlist a 403, each with
             // a message saying so (services::api_keys::check_key_policy).
-            let client_ip = crate::services::api_keys::client_ip_from_headers(request.headers());
+            let client_ip = crate::services::api_keys::client_ip_from_request(&request);
             match validate_token_from_ip(&state.db, &token, client_ip).await {
                 Ok(Ok(Some(user))) => {
                     let mut request = request;

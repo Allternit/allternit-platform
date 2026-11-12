@@ -212,12 +212,7 @@ pub async fn authenticate_api_key_at(
         return Ok(Err(KeyRejection::Unknown));
     };
 
-    if let Err(rejection) = check_key_policy(
-        row.expires_at,
-        row.allowed_cidrs.as_deref(),
-        client_ip,
-        Utc::now(),
-    ) {
+    if let Err(rejection) = enforce_key_policy(row.expires_at, row.allowed_cidrs.as_deref(), client_ip) {
         return Ok(Err(rejection));
     }
 
@@ -239,17 +234,100 @@ pub async fn authenticate_api_key_at(
     }))
 }
 
-/// Header Cloudflare sets to the real client address on every proxied request
-/// (api.allternit.com is proxied; the edge overwrites any client-sent value).
-pub const CLIENT_IP_HEADER: &str = "cf-connecting-ip";
+/// Env switch for IP allowlists (per-key `allowed_cidrs` and the org policy's
+/// `ip_allowlist`). Off by default: with it off no allowlist is enforced and
+/// the console refuses to save a non-empty one (400 "IP allowlists are not
+/// enabled on this server"), so nobody is told they are protected when they
+/// are not. Turn it on only once the origin sits behind a reverse proxy on
+/// the same host that sets `X-Real-IP` (see [`client_ip`]).
+pub const IP_ALLOWLIST_ENV: &str = "PLATFORM_KEY_IP_ALLOWLIST";
 
-/// The caller's IP for key IP allowlists: the trusted proxy header only.
-/// `X-Forwarded-For` is client-controlled and never used here.
-pub fn client_ip_from_headers(headers: &axum::http::HeaderMap) -> Option<IpAddr> {
+/// The one header a client IP is read from, and only from a loopback peer.
+pub const CLIENT_IP_HEADER: &str = "x-real-ip";
+
+#[cfg(test)]
+thread_local! {
+    static IP_ALLOWLIST_OVERRIDE: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
+}
+
+/// Is [`IP_ALLOWLIST_ENV`] on?
+pub fn ip_allowlist_enabled() -> bool {
+    if let Some(forced) = ip_allowlist_override() {
+        return forced;
+    }
+    matches!(std::env::var(IP_ALLOWLIST_ENV).as_deref(), Ok("1") | Ok("true"))
+}
+
+#[cfg(test)]
+fn ip_allowlist_override() -> Option<bool> {
+    IP_ALLOWLIST_OVERRIDE.with(|cell| cell.get())
+}
+
+#[cfg(not(test))]
+fn ip_allowlist_override() -> Option<bool> {
+    None
+}
+
+/// Test-only: force [`ip_allowlist_enabled`] on this thread (a
+/// `#[tokio::test]` runs its whole request on the test thread) until the
+/// guard drops. Avoids flipping a process-wide env var under parallel tests.
+#[cfg(test)]
+pub(crate) fn force_ip_allowlist(on: bool) -> IpAllowlistGuard {
+    IP_ALLOWLIST_OVERRIDE.with(|cell| cell.set(Some(on)));
+    IpAllowlistGuard
+}
+
+#[cfg(test)]
+pub(crate) struct IpAllowlistGuard;
+
+#[cfg(test)]
+impl Drop for IpAllowlistGuard {
+    fn drop(&mut self) {
+        IP_ALLOWLIST_OVERRIDE.with(|cell| cell.set(None));
+    }
+}
+
+/// The caller's IP for allowlists. Trusted only when the TCP peer is loopback
+/// (a reverse proxy on the same host) and then only from `X-Real-IP`, which
+/// that proxy overwrites. A request that reached the port directly from
+/// anywhere else has no trusted address: `cf-connecting-ip` and
+/// `X-Forwarded-For` are both forgeable when the origin is reachable without
+/// Cloudflare, so neither is read. `peer` comes from axum `ConnectInfo`
+/// (`start_server` serves with `into_make_service_with_connect_info`); no
+/// peer means no trusted address. With no address a key that has an
+/// allowlist is refused (fail closed).
+pub fn client_ip(headers: &axum::http::HeaderMap, peer: Option<std::net::SocketAddr>) -> Option<IpAddr> {
+    let peer_ip = match peer?.ip() {
+        IpAddr::V6(v6) => v6.to_ipv4_mapped().map(IpAddr::V4).unwrap_or(IpAddr::V6(v6)),
+        v4 => v4,
+    };
+    if !peer_ip.is_loopback() {
+        return None;
+    }
     headers
         .get(CLIENT_IP_HEADER)
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.trim().parse::<IpAddr>().ok())
+}
+
+/// [`client_ip`] for a request: the peer from its `ConnectInfo` extension.
+pub fn client_ip_from_request<B>(request: &axum::http::Request<B>) -> Option<IpAddr> {
+    let peer = request
+        .extensions()
+        .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+        .map(|info| info.0);
+    client_ip(request.headers(), peer)
+}
+
+/// [`check_key_policy`] as the key-auth paths apply it: now, and with the
+/// allowlist ignored while [`IP_ALLOWLIST_ENV`] is off. Expiry always applies.
+pub fn enforce_key_policy(
+    expires_at: Option<DateTime<Utc>>,
+    allowed_cidrs: Option<&[String]>,
+    client_ip: Option<IpAddr>,
+) -> Result<(), KeyRejection> {
+    let allowed_cidrs = if ip_allowlist_enabled() { allowed_cidrs } else { None };
+    check_key_policy(expires_at, allowed_cidrs, client_ip, Utc::now())
 }
 
 /// Why an existing, unrevoked key was refused.
@@ -650,6 +728,43 @@ pub async fn revoke_project_key(db: &PgPool, project_id: &str, key_id: &str) -> 
         return Err(ApiError::NotFound("API key not found or already revoked".to_string()));
     }
     Ok(())
+}
+
+/// One active key of a project (the project check is the caller's job).
+pub async fn get_project_key(db: &PgPool, project_id: &str, key_id: &str) -> Result<ProjectKey, ApiError> {
+    sqlx::query_as::<_, ProjectKey>(&format!(
+        "SELECT {PROJECT_KEY_COLUMNS} FROM api_keys \
+         WHERE id = $1 AND project_id = $2 AND revoked_at IS NULL"
+    ))
+    .bind(key_id)
+    .bind(project_id)
+    .fetch_optional(db)
+    .await?
+    .ok_or_else(|| ApiError::NotFound("API key not found or already revoked".to_string()))
+}
+
+/// Set a project key's expiry and IP allowlist (both written as given: the
+/// caller has merged the patch onto the current values and checked policy).
+/// `allowed_cidrs` is validated with [`normalize_allowed_cidrs`].
+pub async fn update_project_key_governance(
+    db: &PgPool,
+    project_id: &str,
+    key_id: &str,
+    expires_at: Option<DateTime<Utc>>,
+    allowed_cidrs: Vec<String>,
+) -> Result<ProjectKey, ApiError> {
+    let allowed_cidrs = normalize_allowed_cidrs(allowed_cidrs)?;
+    sqlx::query_as::<_, ProjectKey>(&format!(
+        "UPDATE api_keys SET expires_at = $3, allowed_cidrs = $4, updated_at = NOW() \
+         WHERE id = $1 AND project_id = $2 AND revoked_at IS NULL RETURNING {PROJECT_KEY_COLUMNS}"
+    ))
+    .bind(key_id)
+    .bind(project_id)
+    .bind(expires_at)
+    .bind(allowed_cidrs)
+    .fetch_optional(db)
+    .await?
+    .ok_or_else(|| ApiError::NotFound("API key not found or already revoked".to_string()))
 }
 
 fn into_api_key(row: ApiKeyRow) -> ApiKey {

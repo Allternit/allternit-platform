@@ -20,7 +20,11 @@
 //!   past the cap; the next one is refused.
 //! * **Thresholds.** After usage is recorded, [`check_thresholds`] sends
 //!   `usage.threshold` at 50, 80 and 100% of the cap, each once per project and
-//!   month (`platform_spend_alerts`).
+//!   month (`platform_spend_alerts`). When the project's org set a
+//!   `spend_alert_email` (console Security page) and both
+//!   `ALLTERNIT_CUSTOMER_EMAILS=1` and `PLATFORM_SPEND_ALERT_EMAILS=1` are on,
+//!   that address also gets an email ([`spawn_spend_alert_email`]); otherwise
+//!   the alert is only recorded.
 //! * **Routes.** `GET /v1/projects/current/spend_cap` (scope `usage`) and
 //!   `PUT` (scope `usage`, project-wide key). Over the API a cap can only be
 //!   lowered; raising it is a console action (`PATCH /api/v1/platform/projects/{id}`),
@@ -275,9 +279,53 @@ pub async fn check_thresholds(db: &PgPool, project_id: &str) -> Result<Vec<i64>,
             "period": period,
         });
         events::emit_event(db, project_id, None, "usage.threshold", data).await?;
+        spawn_spend_alert_email(db, project_id, percent, spent, cap, &period);
         sent.push(percent);
     }
     Ok(sent)
+}
+
+/// Email the project's org `spend_alert_email` about a threshold just recorded
+/// (each threshold once: the `platform_spend_alerts` insert above). Off unless
+/// both email switches are on; runs in the background so usage recording never
+/// waits on mail; failures are logged.
+fn spawn_spend_alert_email(db: &PgPool, project_id: &str, percent: i64, spent_microusd: i64, cap_cents: i64, period: &str) {
+    if !crate::services::customer_emails::spend_alert_emails_enabled() {
+        return;
+    }
+    let (db, project_id, period) = (db.clone(), project_id.to_string(), period.to_string());
+    tokio::spawn(async move {
+        let row: Result<Option<(String, Option<String>)>, sqlx::Error> = sqlx::query_as(
+            "SELECT p.name, o.spend_alert_email FROM platform_projects p \
+             LEFT JOIN platform_org_policies o ON o.org_id = p.org_id WHERE p.id = $1",
+        )
+        .bind(&project_id)
+        .fetch_optional(&db)
+        .await;
+        let (name, address) = match row {
+            Ok(Some((name, Some(address)))) if !address.trim().is_empty() => (name, address),
+            Ok(_) => return,
+            Err(error) => {
+                tracing::warn!(%error, %project_id, "spend alert email: policy lookup failed; alert recorded only");
+                return;
+            }
+        };
+        let recipient = crate::services::customer_emails::Recipient { email: address, first_name: None };
+        let email = crate::services::customer_emails::spend_alert_email(
+            &recipient,
+            &name,
+            &project_id,
+            percent,
+            spent_microusd as f64 / 1_000_000.0,
+            cap_cents as f64 / 100.0,
+            &period,
+            &billing_page_url(&project_id),
+        );
+        match crate::services::customer_emails::send_unclaimed(&recipient, &email).await {
+            Ok(()) => tracing::info!(%project_id, percent, "spend alert email sent"),
+            Err(error) => tracing::error!(%project_id, percent, %error, "spend alert email failed"),
+        }
+    });
 }
 
 /// [`check_thresholds`], logged instead of returned: usage recording never fails on it.

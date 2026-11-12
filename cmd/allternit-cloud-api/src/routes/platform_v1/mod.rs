@@ -336,7 +336,7 @@ async fn v1_middleware(
             console_v1_caller(db, headers, test, project_id).await
         }
         _ => {
-            let client_ip = crate::services::api_keys::client_ip_from_headers(request.headers());
+            let client_ip = crate::services::api_keys::client_ip_from_request(&request);
             caller::authenticate_from(db, token, client_ip).await
         }
     };
@@ -426,6 +426,8 @@ mod tests_p2;
 mod tests_p2_tools;
 #[cfg(test)]
 mod tests_p5_console;
+#[cfg(test)]
+mod tests_governance;
 #[cfg(test)]
 mod tests_p3;
 #[cfg(test)]

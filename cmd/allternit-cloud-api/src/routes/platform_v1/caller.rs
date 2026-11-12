@@ -222,9 +222,10 @@ pub async fn authenticate(db: &PgPool, token: Option<&str>) -> Result<PlatformCa
     authenticate_from(db, token, None).await
 }
 
-/// [`authenticate`] with the caller's IP (the trusted proxy header, see
-/// `services::api_keys::client_ip_from_headers`). A key past `expires_at` is a
-/// 401 `api_key_expired`; one used from outside `allowed_cidrs` is a 403
+/// [`authenticate`] with the caller's IP (`X-Real-IP` from a loopback proxy
+/// only, see `services::api_keys::client_ip`). A key past `expires_at` is a
+/// 401 `api_key_expired`; while `PLATFORM_KEY_IP_ALLOWLIST=1`, one used from
+/// outside its `allowed_cidrs` or its organization's `ip_allowlist` is a 403
 /// `ip_not_allowed`.
 pub async fn authenticate_from(
     db: &PgPool,
@@ -270,18 +271,40 @@ pub async fn authenticate_from(
         ));
     }
 
-    if let Err(rejection) = crate::services::api_keys::check_key_policy(
-        row.expires_at,
-        row.allowed_cidrs.as_deref(),
-        client_ip,
-        chrono::Utc::now(),
-    ) {
+    if let Err(rejection) =
+        crate::services::api_keys::enforce_key_policy(row.expires_at, row.allowed_cidrs.as_deref(), client_ip)
+    {
         let message = rejection.message();
         return Err(if rejection.status() == axum::http::StatusCode::FORBIDDEN {
             PlatformError::permission(rejection.code(), message)
         } else {
             PlatformError::authentication(rejection.code(), message)
         });
+    }
+    // The project's organization may restrict every key to its own IP list
+    // (`platform_org_policies.ip_allowlist`, console Security page). Only
+    // while IP allowlists are switched on; console sessions never come here.
+    if crate::services::api_keys::ip_allowlist_enabled() {
+        if let Some(org_id) = row.org_id.as_deref() {
+            let org_list: Option<Vec<String>> = sqlx::query_scalar::<_, Option<Vec<String>>>(
+                "SELECT ip_allowlist FROM platform_org_policies WHERE org_id = $1",
+            )
+            .bind(org_id)
+            .fetch_optional(db)
+            .await?
+            .flatten();
+            if crate::services::api_keys::check_key_policy(None, org_list.as_deref(), client_ip, chrono::Utc::now())
+                .is_err()
+            {
+                let message = match client_ip {
+                    Some(ip) => format!(
+                        "This project's organization allows API requests only from its listed IP ranges, and {ip} is not one of them. An org admin can change the list on the console Security page."
+                    ),
+                    None => "This project's organization allows API requests only from its listed IP ranges, and the request's address could not be determined.".to_string(),
+                };
+                return Err(PlatformError::permission("ip_not_allowed", message));
+            }
+        }
     }
 
     // Best-effort, throttled to once a minute per key.
