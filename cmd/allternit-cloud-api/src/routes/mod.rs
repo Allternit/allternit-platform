@@ -56,6 +56,8 @@ pub mod mcp_event_callbacks;
 pub mod allternit_events;
 pub mod runtime_events;
 pub mod floor_shares;
+/// Share a chat thread by link: owner routes + the public /api/v2/public/threads/:token.
+pub mod thread_shares;
 pub mod runtime_presence;
 pub mod mesh;
 pub mod channel_inbound;
