@@ -8,6 +8,7 @@ import {
 } from "@/lib/model-catalog";
 import { usePlatformAuth } from "@/lib/platform-auth-client";
 import { PublicPageShell } from "@/components/PublicPageShell";
+import { Pricing, formatCents, getPricing } from "@/lib/pricing";
 
 export function ModelsPage() {
   const [query, setQuery] = useState("");
@@ -16,6 +17,33 @@ export function ModelsPage() {
   const [error, setError] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
   const auth = usePlatformAuth();
+  const [pricing, setPricing] = useState<Pricing | null>(null);
+
+  // Pricing needs a console session; signed-out visitors just see the catalog.
+  useEffect(() => {
+    if (!auth.isLoaded || !auth.isSignedIn) return;
+    let cancelled = false;
+    getPricing()
+      .then((p) => {
+        if (!cancelled) setPricing(p);
+      })
+      .catch(() => {
+        if (!cancelled) setPricing(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [auth.isLoaded, auth.isSignedIn]);
+
+  const deprecations = useMemo(() => {
+    const rows = [...(pricing?.deprecations ?? [])];
+    for (const m of models) {
+      if (m.retires && !rows.some((r) => r.model === m.id)) {
+        rows.push({ model: m.id, retires_at: m.retires, replacement: null });
+      }
+    }
+    return rows;
+  }, [pricing, models]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -214,6 +242,91 @@ export function ModelsPage() {
           </div>
           )}
         </div>
+
+        {deprecations.length > 0 && (
+          <section className="mt-8">
+            <h2 className="mb-3 text-[18px] font-semibold text-[var(--text-primary)]">Deprecations</h2>
+            <div className="overflow-x-auto rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-secondary)]">
+              <table className="w-full text-left text-[13px]">
+                <thead className="bg-[var(--bg-primary)] text-[11px] font-semibold uppercase tracking-wider text-[var(--text-tertiary)]">
+                  <tr>
+                    <th className="px-4 py-3">Model</th>
+                    <th className="px-4 py-3">Retires</th>
+                    <th className="px-4 py-3">Replacement</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[var(--border-subtle)]">
+                  {deprecations.map((d) => (
+                    <tr key={d.model}>
+                      <td className="px-4 py-3 font-medium text-[var(--text-primary)]">{d.model}</td>
+                      <td className="px-4 py-3 text-[var(--text-secondary)]">{d.retires_at}</td>
+                      <td className="px-4 py-3 text-[var(--text-secondary)]">{d.replacement || "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        )}
+
+        {pricing && pricing.tools.length > 0 && (
+          <section className="mt-8">
+            <h2 className="mb-3 text-[18px] font-semibold text-[var(--text-primary)]">Hosted tools</h2>
+            <div className="overflow-x-auto rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-secondary)]">
+              <table className="w-full text-left text-[13px]">
+                <thead className="bg-[var(--bg-primary)] text-[11px] font-semibold uppercase tracking-wider text-[var(--text-tertiary)]">
+                  <tr>
+                    <th className="px-4 py-3">Tool</th>
+                    <th className="px-4 py-3">Unit</th>
+                    <th className="px-4 py-3">Price</th>
+                    <th className="px-4 py-3">Provider</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[var(--border-subtle)]">
+                  {pricing.tools.map((t) => (
+                    <tr key={`${t.tool}-${t.unit}`}>
+                      <td className="px-4 py-3 font-medium text-[var(--text-primary)]">{t.tool}</td>
+                      <td className="px-4 py-3 text-[var(--text-secondary)]">{t.unit}</td>
+                      <td className="px-4 py-3 text-[var(--text-secondary)]">${t.price_usd}</td>
+                      <td className="px-4 py-3 text-[var(--text-secondary)]">{t.provider}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        )}
+
+        {pricing && pricing.meters.length > 0 && (
+          <section className="mt-8">
+            <h2 className="mb-1 text-[18px] font-semibold text-[var(--text-primary)]">Usage meters</h2>
+            <p className="mb-3 text-[13px] text-[var(--text-secondary)]">
+              Prices per unit for metered products, on Pay as you go and on Growth.
+            </p>
+            <div className="overflow-x-auto rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-secondary)]">
+              <table className="w-full text-left text-[13px]">
+                <thead className="bg-[var(--bg-primary)] text-[11px] font-semibold uppercase tracking-wider text-[var(--text-tertiary)]">
+                  <tr>
+                    <th className="px-4 py-3">Meter</th>
+                    <th className="px-4 py-3">Unit</th>
+                    <th className="px-4 py-3">Pay as you go</th>
+                    <th className="px-4 py-3">Growth</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[var(--border-subtle)]">
+                  {pricing.meters.map((m) => (
+                    <tr key={m.meter}>
+                      <td className="px-4 py-3 font-medium text-[var(--text-primary)]">{m.meter}</td>
+                      <td className="px-4 py-3 text-[var(--text-secondary)]">{m.unit}</td>
+                      <td className="px-4 py-3 text-[var(--text-secondary)]">{formatCents(m.payg_cents)}</td>
+                      <td className="px-4 py-3 text-[var(--text-secondary)]">{formatCents(m.growth_cents)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        )}
       </div>
     </PublicPageShell>
   );
