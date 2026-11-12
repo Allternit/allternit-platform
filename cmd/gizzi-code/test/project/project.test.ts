@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { describe, expect, mock, test } from "bun:test"
+import { afterAll, describe, expect, mock, test } from "bun:test"
 import { Project } from "../../src/runtime/context/project/project"
 import { Log } from "../../src/shared/util/log"
 import { $ } from "bun"
@@ -15,6 +15,13 @@ const originalGit = gitModule.git
 
 type Mode = "none" | "rev-list-fail" | "top-fail" | "common-dir-fail"
 let mode: Mode = "none"
+
+// Bun keeps a mock.module override for the rest of the run, other test files
+// included, so the real module goes back once this file is done.
+const realGitModule = { ...gitModule }
+afterAll(() => {
+  mock.module("../../src/shared/util/git", () => realGitModule)
+})
 
 mock.module("../../src/shared/util/git", () => ({
   git: (args: string[], opts: { cwd: string; env?: Record<string, string> }) => {
