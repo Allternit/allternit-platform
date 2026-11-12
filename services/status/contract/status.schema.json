@@ -24,6 +24,9 @@
     },
     {
       "$ref": "#/$defs/AdminIncidentPatch"
+    },
+    {
+      "$ref": "#/$defs/AdminMaintenanceCreate"
     }
   ],
   "$defs": {
@@ -633,6 +636,49 @@
           "items": {
             "type": "string"
           }
+        }
+      }
+    },
+    "AdminMaintenanceCreate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "title",
+        "component_ids",
+        "body",
+        "starts_at",
+        "ends_at"
+      ],
+      "properties": {
+        "schema": {
+          "const": "allternit.admin.maintenance.create/v1"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "component_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "maxItems": 20
+        },
+        "body": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 5000
+        },
+        "starts_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "ends_at": {
+          "type": "string",
+          "format": "date-time"
         }
       }
     }

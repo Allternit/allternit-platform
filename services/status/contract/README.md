@@ -14,6 +14,7 @@ Status enum: `operational | degraded | down | maintenance | unknown`. Times are 
 | `GET /feed.xml` | none | Atom feed of incidents |
 | `POST /api/v1/ingest` | HMAC | standby vantage posts `IngestPayload` each minute; header `X-Allternit-Signature: sha256=<hex>` over the raw body, shared secret `INGEST_HMAC_SECRET`; reject if `ts` is more than 5 min off |
 | `POST /api/admin/incidents`, `PATCH /api/admin/incidents/:id` | `Authorization: Bearer` | `AdminIncidentCreate` / `AdminIncidentPatch`; any manual edit sets `auto=false` |
+| `POST /api/admin/maintenance` | `Authorization: Bearer` | `AdminMaintenanceCreate` (`allternit.admin.maintenance.create/v1`): title, component_ids, body, starts_at, ends_at (ISO 8601, end after start and in the future); returns 201 `{id}` |
 
 Cache and CORS, all GETs: `Cache-Control: public, max-age=30`, `Access-Control-Allow-Origin: *`. `/api/health` uses `no-store`. POST/PATCH send no CORS headers.
 

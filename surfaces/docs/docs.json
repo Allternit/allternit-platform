@@ -121,6 +121,7 @@
               "guides/connect-vendor-from-chat",
               "guides/open-models",
               "guides/lane-status",
+              "guides/system-status",
               "guides/always-on-bots",
               "plugins/guides/vendor-packs",
               "guides/artifacts",
@@ -356,6 +357,7 @@
             "group": "Operations",
             "pages": [
               "operations/overview",
+              "operations/status-page",
               "operations/rollout",
               "operations/recovery",
               "operations/owned-downloads",
@@ -430,6 +432,7 @@
               "cli/work",
               "cli/tasks",
               "cli/doctor",
+              "cli/status",
               "cli/context",
               "cli/code-intelligence",
               "cli/usage",

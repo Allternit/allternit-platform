@@ -144,3 +144,13 @@ export interface AdminIncidentPatch {
   body?: string;
   component_ids?: string[];
 }
+
+/** POST /api/admin/maintenance (bearer). Schedules a maintenance window; ends_at must be after starts_at and in the future. */
+export interface AdminMaintenanceCreate {
+  schema: "allternit.admin.maintenance.create/v1";
+  title: string;
+  component_ids: string[];
+  body: string;
+  starts_at: string;
+  ends_at: string;
+}
