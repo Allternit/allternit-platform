@@ -93,6 +93,7 @@ const SYMBOL: Record<ServiceState, string> = {
   maintenance: "◆ maintenance",
   unknown: "? unknown",
 }
+export const stateSymbol = (s: ServiceState): string => SYMBOL[s].split(' ')[0]
 export const stateLabel = (s: ServiceState): string => SYMBOL[s]
 
 /** Aligned table: component, status (symbol + text), open incident titles. Footer carries last checked. */

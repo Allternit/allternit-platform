@@ -25,6 +25,7 @@ import {
 } from './auth.js'
 import { getAPIProvider } from './model/providers.js'
 import { detectWorkspace } from '../../../../runtime/kernel/bridge.js'
+import { stateSymbol, type ServiceState } from '../../../utils/serviceStatus.js'
 import type { LocalJSXCommandContext } from '../types/command.js'
 import type { Message } from '../types/message.js'
 
@@ -75,6 +76,13 @@ export async function getServicesLine(): Promise<ServicesLine> {
   } catch {
     return null
   }
+}
+
+/** One display line for the Services row, or null (render nothing). */
+export function formatServicesLine(line: ServicesLine): string | null {
+  if (!line) return null
+  const symbol = stateSymbol((line.overall as ServiceState) ?? 'unknown')
+  return `${symbol} ${line.summary}`
 }
 
 export type SessionStatus = {
