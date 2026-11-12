@@ -14,7 +14,6 @@ export type GatedFeature =
   | "files"
   | "serviceAccounts"
   | "security"
-  | "gizziUsage"
   | "spendLimits"
   | "caching"
   | "tags"
@@ -31,7 +30,6 @@ export const CLOUD_AVAILABILITY: Record<
   files: { available: false },
   serviceAccounts: { available: false },
   security: { available: false },
-  gizziUsage: { available: false },
   spendLimits: { available: false, redirectTo: "/platform/billing" },
   // /api/v1/gateway/caching and /api/v1/tags are runtime routes; cloud relays
   // them to a paired runtime, so a cloud-only user gets an error.

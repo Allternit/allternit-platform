@@ -28,6 +28,8 @@ import {
   formatTokenCount,
   getGatewayCaching,
   getGatewayUsage,
+  getUsageReport,
+  sumReportRows,
   microdollarsToUsd,
   tomorrowDate,
   type CachingResponse,
@@ -140,7 +142,10 @@ export function DashboardPage(): React.ReactNode {
   const [spend, setSpend] = useState<LoadState<SpendLimit>>(
     isCloudGateway() ? { status: "hidden" } : { status: "loading" },
   );
-  const [caching, setCaching] = useState<LoadState<CachingResponse>>({ status: "loading" });
+  // Caching is a paired-runtime route; on cloud the card is hidden.
+  const [caching, setCaching] = useState<LoadState<CachingResponse>>(
+    isHiddenOnCloud("caching") ? { status: "hidden" } : { status: "loading" },
+  );
   const [usage, setUsage] = useState<LoadState<UsageResponse>>({ status: "loading" });
   const [models, setModels] = useState<LoadState<ConsoleModel[]>>({ status: "loading" });
 
@@ -183,6 +188,7 @@ export function DashboardPage(): React.ReactNode {
   }, []);
 
   useEffect(() => {
+    if (isHiddenOnCloud("caching")) return;
     let active = true;
     getGatewayCaching("30d")
       .then((data) => active && setCaching({ status: "ok", data }))
@@ -194,7 +200,32 @@ export function DashboardPage(): React.ReactNode {
 
   useEffect(() => {
     let active = true;
-    getGatewayUsage({ from: dateDaysAgo(7), to: tomorrowDate() })
+    // Cloud reads the per-user report; the relayed /api/v1/gateway/usage needs a paired runtime.
+    const request: Promise<UsageResponse> = isCloudGateway()
+      ? getUsageReport({ from: dateDaysAgo(7), to: tomorrowDate(), groupBy: "day" }).then((rows) => {
+          const totals = sumReportRows(rows);
+          return {
+            from: dateDaysAgo(7),
+            to: tomorrowDate(),
+            group_by: "day" as const,
+            usage: rows.map((r) => ({
+              day: r.group,
+              prompt_tokens: r.prompt_tokens,
+              completion_tokens: r.completion_tokens,
+              requests: r.requests,
+            })) as unknown as UsageDayRow[],
+            totals: {
+              requests: totals.requests,
+              prompt_tokens: totals.prompt_tokens,
+              completion_tokens: totals.completion_tokens,
+              reasoning_tokens: 0,
+              cached_tokens: 0,
+              spend_microdollars: Math.round(totals.cost_usd * 1_000_000),
+            },
+          };
+        })
+      : getGatewayUsage({ from: dateDaysAgo(7), to: tomorrowDate() });
+    request
       .then((data) => active && setUsage({ status: "ok", data }))
       .catch(() => active && setUsage({ status: "error" }));
     return () => {
@@ -496,11 +527,13 @@ export function DashboardPage(): React.ReactNode {
               action={{ label: "Go to Batches", to: "/batches" }}
             />
           )}
-          <ResourceCard
-            title="Prompt caching"
-            description="Reuse long prefixes and context caches to cut repeat input cost on every request."
-            action={{ label: "Go to caching", to: "/analytics/caching" }}
-          />
+          {!isHiddenOnCloud("caching") && (
+            <ResourceCard
+              title="Prompt caching"
+              description="Reuse long prefixes and context caches to cut repeat input cost on every request."
+              action={{ label: "Go to caching", to: "/analytics/caching" }}
+            />
+          )}
           <ResourceCard
             title="Cloud Agents"
             description="Build, deploy, and monitor agents that run in the Allternit cloud."

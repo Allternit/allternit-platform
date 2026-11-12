@@ -141,7 +141,7 @@ const baseConsoleNav: ConsoleNavConfig = {
       icon: AiBrain01Icon,
       badge: "soon",
       items: [
-        { to: "/gizzi/usage", label: "Gizzi Code usage", icon: CoinsDollarIcon, cloudHidden: "gizziUsage" },
+        { to: "/gizzi/usage", label: "Gizzi Code usage", icon: CoinsDollarIcon },
       ],
     },
     {

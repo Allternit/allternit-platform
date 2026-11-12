@@ -267,14 +267,17 @@ export function tomorrowDate(): string {
   return dateDaysAgo(-1);
 }
 
-/** Client-side CSV download (Anthropic parity — export from the fetched rows). */
-export function downloadCsv(filename: string, headers: string[], rows: Array<Array<string | number>>): void {
+/** RFC 4180 CSV text: quotes a cell that holds a comma, quote or newline. */
+export function toCsv(headers: string[], rows: Array<Array<string | number>>): string {
   const escape = (value: string | number) => {
     const raw = String(value);
-    return /[",\n]/.test(raw) ? `"${raw.replace(/"/g, '""')}"` : raw;
+    return /[",\n\r]/.test(raw) ? `"${raw.replace(/"/g, '""')}"` : raw;
   };
-  const csv = [headers, ...rows].map((row) => row.map(escape).join(",")).join("\n");
-  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  return [headers, ...rows].map((row) => row.map(escape).join(",")).join("\n");
+}
+
+/** Save a Blob through a temporary link. */
+export function saveBlob(filename: string, blob: Blob): void {
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;
@@ -283,4 +286,209 @@ export function downloadCsv(filename: string, headers: string[], rows: Array<Arr
   anchor.click();
   document.body.removeChild(anchor);
   URL.revokeObjectURL(url);
+}
+
+/** Client-side CSV download (Anthropic parity — export from the fetched rows). */
+export function downloadCsv(filename: string, headers: string[], rows: Array<Array<string | number>>): void {
+  saveBlob(filename, new Blob([toCsv(headers, rows)], { type: "text/csv;charset=utf-8" }));
+}
+
+// ─── Cloud: GET /api/v1/me/usage/report and /requests ────────────────────────
+// Contract (console plan, C0/L3B). Runs outside console_gate, so it works for
+// Gizzi tokens and cloud-only users with no paired runtime.
+
+export type ReportGroupBy = "day" | "model" | "project" | "key" | "client";
+export type ReportScope = "me" | "org";
+
+export interface UsageReportRow {
+  group: string;
+  requests: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  cost_usd: number;
+}
+
+export interface UsageReportParams {
+  from: string;
+  to: string;
+  groupBy: ReportGroupBy;
+  /** Empty/undefined = all projects. */
+  projectId?: string | null;
+  client?: string | null;
+  scope?: ReportScope;
+}
+
+export interface UsageReportTotals {
+  requests: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  cost_usd: number;
+}
+
+export function buildReportQuery(params: UsageReportParams, format: "json" | "csv" = "json"): string {
+  const search = new URLSearchParams({
+    from: params.from,
+    to: params.to,
+    group_by: params.groupBy,
+  });
+  if (params.projectId) search.set("project_id", params.projectId);
+  if (params.client) search.set("client", params.client);
+  if (params.scope === "org") search.set("scope", "org");
+  if (format === "csv") search.set("format", "csv");
+  return search.toString();
+}
+
+function num(value: unknown): number {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 0;
+}
+
+export function normalizeReportRows(raw: unknown): UsageReportRow[] {
+  const list = (raw as { rows?: unknown })?.rows;
+  if (!Array.isArray(list)) return [];
+  return list.map((r) => {
+    const row = (r ?? {}) as Record<string, unknown>;
+    return {
+      group: String(row.group ?? ""),
+      requests: num(row.requests),
+      prompt_tokens: num(row.prompt_tokens),
+      completion_tokens: num(row.completion_tokens),
+      cost_usd: num(row.cost_usd),
+    };
+  });
+}
+
+export async function getUsageReport(params: UsageReportParams): Promise<UsageReportRow[]> {
+  const data = await api.get<unknown>(`/api/v1/me/usage/report?${buildReportQuery(params)}`);
+  return normalizeReportRows(data);
+}
+
+/** Fetch the CSV with the user's auth and save it as a file. */
+export async function downloadUsageReportCsv(params: UsageReportParams, filename: string): Promise<void> {
+  const response = await api.raw(`/api/v1/me/usage/report?${buildReportQuery(params, "csv")}`, {
+    headers: { Accept: "text/csv" },
+  });
+  if (!response.ok) throw new Error(`Download failed (HTTP ${response.status})`);
+  saveBlob(filename, await response.blob());
+}
+
+export function sumReportRows(rows: UsageReportRow[]): UsageReportTotals {
+  return rows.reduce<UsageReportTotals>(
+    (acc, r) => ({
+      requests: acc.requests + r.requests,
+      prompt_tokens: acc.prompt_tokens + r.prompt_tokens,
+      completion_tokens: acc.completion_tokens + r.completion_tokens,
+      cost_usd: acc.cost_usd + r.cost_usd,
+    }),
+    { requests: 0, prompt_tokens: 0, completion_tokens: 0, cost_usd: 0 },
+  );
+}
+
+/** Rows as CSV text with a header row (used where the server CSV is not fetched). */
+export function reportRowsToCsv(groupLabel: string, rows: UsageReportRow[]): string {
+  return toCsv(
+    [groupLabel, "Requests", "Tokens in", "Tokens out", "Cost (USD)"],
+    rows.map((r) => [r.group, r.requests, r.prompt_tokens, r.completion_tokens, r.cost_usd.toFixed(6)]),
+  );
+}
+
+/** Sort for tables: day ascending (chart order), everything else by cost then requests. */
+export function sortReportRows(rows: UsageReportRow[], groupBy: ReportGroupBy): UsageReportRow[] {
+  const copy = rows.slice();
+  if (groupBy === "day") return copy.sort((a, b) => a.group.localeCompare(b.group));
+  return copy.sort((a, b) => b.cost_usd - a.cost_usd || b.requests - a.requests);
+}
+
+export function formatUsd(value: number): string {
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 4,
+  }).format(value);
+}
+
+export interface UsageRequestRow {
+  request_id: string;
+  created_at: string;
+  model: string | null;
+  client: string | null;
+  key: string | null;
+  project_id: string | null;
+  prompt_tokens: number;
+  completion_tokens: number;
+  cost_usd: number;
+  latency_ms: number | null;
+}
+
+export interface UsageRequestDetail extends UsageRequestRow {
+  /** null when the project does not log bodies. */
+  request: unknown | null;
+  response: unknown | null;
+}
+
+export interface UsageRequestsPage {
+  data: UsageRequestRow[];
+  next_cursor: string | null;
+}
+
+export interface UsageRequestFilters {
+  from?: string;
+  to?: string;
+  projectId?: string | null;
+  client?: string | null;
+  model?: string | null;
+  cursor?: string | null;
+  limit?: number;
+}
+
+export function buildRequestsQuery(f: UsageRequestFilters): string {
+  const search = new URLSearchParams();
+  if (f.from) search.set("from", f.from);
+  if (f.to) search.set("to", f.to);
+  if (f.projectId) search.set("project_id", f.projectId);
+  if (f.client) search.set("client", f.client);
+  if (f.model) search.set("model", f.model);
+  if (f.cursor) search.set("cursor", f.cursor);
+  if (f.limit) search.set("limit", String(f.limit));
+  return search.toString();
+}
+
+function str(value: unknown): string | null {
+  return value === null || value === undefined || value === "" ? null : String(value);
+}
+
+export function normalizeRequestRow(raw: unknown): UsageRequestRow {
+  const r = (raw ?? {}) as Record<string, unknown>;
+  return {
+    request_id: String(r.request_id ?? r.id ?? ""),
+    created_at: String(r.created_at ?? ""),
+    model: str(r.model ?? r.model_id),
+    client: str(r.client),
+    key: str(r.key_prefix ?? r.key_id ?? r.key),
+    project_id: str(r.project_id),
+    prompt_tokens: num(r.prompt_tokens),
+    completion_tokens: num(r.completion_tokens),
+    cost_usd: num(r.cost_usd),
+    latency_ms: r.latency_ms === null || r.latency_ms === undefined ? null : num(r.latency_ms),
+  };
+}
+
+export async function getUsageRequests(f: UsageRequestFilters): Promise<UsageRequestsPage> {
+  const q = buildRequestsQuery(f);
+  const data = await api.get<Record<string, unknown>>(`/api/v1/me/usage/requests${q ? `?${q}` : ""}`);
+  const list = (data?.data ?? data?.requests ?? []) as unknown[];
+  return {
+    data: Array.isArray(list) ? list.map(normalizeRequestRow).filter((r) => r.request_id) : [],
+    next_cursor: str(data?.next_cursor ?? data?.cursor),
+  };
+}
+
+export async function getUsageRequestDetail(requestId: string): Promise<UsageRequestDetail> {
+  const data = await api.get<Record<string, unknown>>(
+    `/api/v1/me/usage/requests/${encodeURIComponent(requestId)}`,
+  );
+  const body = (data?.request_body ?? data?.request ?? null) as unknown;
+  const resp = (data?.response_body ?? data?.response ?? null) as unknown;
+  return { ...normalizeRequestRow(data), request: body ?? null, response: resp ?? null };
 }

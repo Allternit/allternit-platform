@@ -525,7 +525,7 @@ export default function App() {
         path="/gizzi/usage/*"
         element={
           <ConsoleRoute>
-            {isCloudGateway() ? <CloudGate feature="gizziUsage" /> : <GizziUsagePage />}
+            <GizziUsagePage />
           </ConsoleRoute>
         }
       />
