@@ -54,9 +54,9 @@ Running code follows the chat's permission setting (see [Chat sessions](/guides/
 | **Ask before actions** | You see an approval card with the code and choose whether it runs. |
 | **Read-only** | Running code is hidden from the agent. |
 
-## With a CLI brain (Claude Code, Codex)
+## With a CLI brain
 
-Analyze works the same when the chat runs on a CLI brain such as Claude Code or Codex: `run_code` runs in Allternit's sandbox and the table, chart and file cards appear in the chat. The vendor CLI also has its own shell tools, and those run under the CLI's own permission settings, outside Allternit's sandbox. Analyze asks the model to use `run_code` on your attached files instead of its own shell.
+Analyze works the same when the chat runs on a CLI brain (a vendor's coding CLI that you sign in to in Settings): `run_code` runs in Allternit's sandbox and the table, chart and file cards appear in the chat. The vendor CLI also has its own shell tools, and those run under the CLI's own permission settings, outside Allternit's sandbox. Analyze asks the model to use `run_code` on your attached files instead of its own shell.
 
 On Allternit cloud computers, running code isn't available yet because the sandbox can't start there. If you use Analyze on a cloud computer, the run_code tool returns "Running code isn't available on this computer yet" and the assistant tells you so. With a CLI brain, the vendor CLI may then try its own shell, which runs under that CLI's permission settings.
 
