@@ -15,7 +15,12 @@ export type GatedFeature =
   | "serviceAccounts"
   | "security"
   | "gizziUsage"
-  | "spendLimits";
+  | "spendLimits"
+  | "caching"
+  | "tags"
+  | "orgWebhooks"
+  | "routingPolicy"
+  | "routeCredentials";
 
 /** "hidden" = not on cloud (honest state). "redirect" = send to another page. */
 export const CLOUD_AVAILABILITY: Record<
@@ -28,6 +33,16 @@ export const CLOUD_AVAILABILITY: Record<
   security: { available: false },
   gizziUsage: { available: false },
   spendLimits: { available: false, redirectTo: "/platform/billing" },
+  // /api/v1/gateway/caching and /api/v1/tags are runtime routes; cloud relays
+  // them to a paired runtime, so a cloud-only user gets an error.
+  caching: { available: false },
+  tags: { available: false },
+  // Cloud webhooks are per project (Platform API /v1/webhooks).
+  orgWebhooks: { available: false, redirectTo: "/platform/webhooks" },
+  // /api/v1/gateway/provider-routing and /api/v1/gateway/route-credentials are
+  // relayed to a paired runtime (src/lib/gateway-routing-policy.ts).
+  routingPolicy: { available: false },
+  routeCredentials: { available: false },
 };
 
 export function isCloudHost(gatewayUrl: string | undefined | null): boolean {

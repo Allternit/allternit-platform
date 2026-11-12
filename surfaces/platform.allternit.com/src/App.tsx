@@ -54,6 +54,7 @@ import { SpendLimitsPage } from "@/pages/console/manage/SpendLimitsPage";
 import { SecurityPage } from "@/pages/console/manage/SecurityPage";
 import { WebhooksPage } from "@/pages/console/manage/WebhooksPage";
 import { TagsPage } from "@/pages/console/manage/TagsPage";
+import { AuditLogPage } from "@/pages/console/manage/AuditLogPage";
 import { PlatformProjectsPage } from "@/pages/console/platform/ProjectsPage";
 import { PlatformAgentsPage } from "@/pages/console/platform/AgentsPage";
 import { PlatformConversationsPage } from "@/pages/console/platform/ConversationsPage";
@@ -442,7 +443,7 @@ export default function App() {
         path="/analytics/caching/*"
         element={
           <ConsoleRoute>
-            <CachingPage />
+            {isCloudGateway() ? <CloudGate feature="caching" /> : <CachingPage />}
           </ConsoleRoute>
         }
       />
@@ -496,10 +497,18 @@ export default function App() {
         }
       />
       <Route
+        path="/manage/audit-log/*"
+        element={
+          <ConsoleRoute>
+            <AuditLogPage />
+          </ConsoleRoute>
+        }
+      />
+      <Route
         path="/manage/webhooks/*"
         element={
           <ConsoleRoute>
-            <WebhooksPage />
+            {isCloudGateway() ? <Navigate to="/platform/webhooks" replace /> : <WebhooksPage />}
           </ConsoleRoute>
         }
       />
@@ -507,7 +516,7 @@ export default function App() {
         path="/manage/tags/*"
         element={
           <ConsoleRoute>
-            <TagsPage />
+            {isCloudGateway() ? <CloudGate feature="tags" /> : <TagsPage />}
           </ConsoleRoute>
         }
       />
@@ -525,7 +534,7 @@ export default function App() {
         path="/gateway/routing-policy/*"
         element={
           <ConsoleRoute>
-            <RoutingPolicyPage />
+            {isCloudGateway() ? <CloudGate feature="routingPolicy" /> : <RoutingPolicyPage />}
           </ConsoleRoute>
         }
       />
@@ -533,7 +542,7 @@ export default function App() {
         path="/gateway/credentials/*"
         element={
           <ConsoleRoute>
-            <RouteCredentialsPage />
+            {isCloudGateway() ? <CloudGate feature="routeCredentials" /> : <RouteCredentialsPage />}
           </ConsoleRoute>
         }
       />

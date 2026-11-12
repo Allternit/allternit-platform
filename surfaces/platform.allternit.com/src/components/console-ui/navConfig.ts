@@ -49,6 +49,7 @@ import {
   CubeIcon,
   BubbleChatIcon,
   SmartPhone01Icon,
+  Audit01Icon,
 } from "@hugeicons/core-free-icons";
 import { fabricEnabled, isCloudGateway, type GatedFeature } from "@/lib/availability";
 
@@ -130,7 +131,7 @@ const baseConsoleNav: ConsoleNavConfig = {
       items: [
         { to: "/analytics/usage", label: "Usage", icon: Analytics01Icon },
         { to: "/analytics/logs", label: "Logs", icon: DocumentValidationIcon },
-        { to: "/analytics/caching", label: "Caching", icon: GaugeIcon },
+        { to: "/analytics/caching", label: "Caching", icon: GaugeIcon, cloudHidden: "caching" },
         { to: "/analytics/rate-limits", label: "Rate limits", icon: Timer01Icon },
         { to: "/analytics/cost", label: "Cost", icon: Dollar01Icon },
       ],
@@ -147,8 +148,8 @@ const baseConsoleNav: ConsoleNavConfig = {
       label: "Gateway",
       icon: ApiGatewayIcon,
       items: [
-        { to: "/gateway/routing-policy", label: "Routing policy", icon: Route01Icon },
-        { to: "/gateway/credentials", label: "Route credentials", icon: Key02Icon },
+        { to: "/gateway/routing-policy", label: "Routing policy", icon: Route01Icon, cloudHidden: "routingPolicy" },
+        { to: "/gateway/credentials", label: "Route credentials", icon: Key02Icon, cloudHidden: "routeCredentials" },
       ],
     },
     {
@@ -159,8 +160,9 @@ const baseConsoleNav: ConsoleNavConfig = {
         { to: "/manage/members", label: "Members", icon: UserGroupIcon },
         { to: "/manage/service-accounts", label: "Service accounts", icon: ShieldUserIcon, cloudHidden: "serviceAccounts" },
         { to: "/manage/security", label: "Security", icon: LockPasswordIcon, cloudHidden: "security" },
-        { to: "/manage/webhooks", label: "Organization webhooks", icon: WebhookIcon },
-        { to: "/manage/tags", label: "Tags", icon: Tag01Icon },
+        { to: "/manage/audit-log", label: "Audit log", icon: Audit01Icon },
+        { to: "/manage/webhooks", label: "Organization webhooks", icon: WebhookIcon, cloudHidden: "orgWebhooks" },
+        { to: "/manage/tags", label: "Tags", icon: Tag01Icon, cloudHidden: "tags" },
       ],
     },
     {
