@@ -1,4 +1,7 @@
-//! `/v1/messages`: texts on a project's numbers (scope `messaging`).
+//! `/v1/texts`: texts (SMS/MMS) on a project's numbers (scope `messaging`).
+//! Formerly `/v1/messages` (that path is now the Anthropic-shaped model Messages
+//! route); stored ids keep their `msg_` prefix and the webhook events keep the
+//! names `message.received` / `message.status`. The object name is `text`.
 //!
 //! Sending goes through the same rules as the Allternit app's numbers
 //! (`phone::send_sms`): the number's texting must be active (carrier
@@ -33,8 +36,8 @@ use crate::ApiState;
 
 pub fn register(table: RouteTable) -> RouteTable {
     table
-        .add("/v1/messages", &["GET", "POST"], get(list_messages).post(send_message))
-        .add("/v1/messages/:id", &["GET"], get(get_message))
+        .add("/v1/texts", &["GET", "POST"], get(list_texts).post(send_text))
+        .add("/v1/texts/:id", &["GET"], get(get_text))
 }
 
 #[derive(Debug, Clone, Serialize, FromRow)]
@@ -56,7 +59,7 @@ pub struct Message {
     pub created_at: DateTime<Utc>,
 }
 
-const COLUMNS: &str = "id, 'message'::text AS object, account_id, number_id, direction, from_e164, to_e164, body, segments, status, error_code, media, created_at";
+const COLUMNS: &str = "id, 'text'::text AS object, account_id, number_id, direction, from_e164, to_e164, body, segments, status, error_code, media, created_at";
 
 /// SMS segments for `text`: GSM-7 is 160 per message (153 when split),
 /// anything else (UCS-2) is 70 (67 when split).
@@ -103,7 +106,7 @@ async fn insert(db: &PgPool, m: &Message, project_id: &str, carrier_id: Option<&
     Ok(())
 }
 
-async fn send_message(
+async fn send_text(
     State(state): State<Arc<ApiState>>,
     caller: PlatformCaller,
     headers: axum::http::HeaderMap,
@@ -170,7 +173,7 @@ pub async fn send_inner(
     };
     let m = Message {
         id: new_id("msg_"),
-        object: "message".into(),
+        object: "text".into(),
         account_id: number.account_id.clone(),
         number_id: number.id.clone(),
         direction: "outbound".into(),
@@ -216,7 +219,7 @@ pub async fn record_inbound(db: &PgPool, number_id: &str, normalised: &[u8]) -> 
     let text = v["text"].as_str().unwrap_or("").to_string();
     let m = Message {
         id: new_id("msg_"),
-        object: "message".into(),
+        object: "text".into(),
         account_id,
         number_id: number_id.to_string(),
         direction: "inbound".into(),
@@ -260,7 +263,7 @@ struct ListQuery {
     account_id: Option<String>,
 }
 
-async fn list_messages(
+async fn list_texts(
     State(state): State<Arc<ApiState>>,
     caller: PlatformCaller,
     ApiQuery(q): ApiQuery<ListQuery>,
@@ -295,7 +298,7 @@ async fn list_messages(
     Ok(Json(build_page(rows, limit, |m| (m.created_at, m.id.clone()))))
 }
 
-async fn get_message(
+async fn get_text(
     State(state): State<Arc<ApiState>>,
     caller: PlatformCaller,
     Path(id): Path<String>,
@@ -309,5 +312,5 @@ async fn get_message(
         .fetch_optional(&state.db)
         .await?
         .map(Json)
-        .ok_or_else(|| PlatformError::not_found("message_not_found", "No such message."))
+        .ok_or_else(|| PlatformError::not_found("text_not_found", "No such text."))
 }

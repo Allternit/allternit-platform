@@ -15,7 +15,7 @@ use tower::ServiceExt;
 
 use super::{
     events,
-    messages::segments,
+    texts::segments,
     projects::{self, Principal},
     router_gated, Gate, ProjectEnv,
 };
@@ -107,7 +107,7 @@ async fn sandbox_numbers_are_simulated_and_follow_the_texting_rules() {
 
     // Nobody has texted the number: sending is refused.
     let person = "+14155550123";
-    let (s, e) = call(&c.app, "POST", "/v1/messages", &token, Some(json!({ "number_id": num, "to": person, "body": "Hi" }))).await;
+    let (s, e) = call(&c.app, "POST", "/v1/texts", &token, Some(json!({ "number_id": num, "to": person, "body": "Hi" }))).await;
     assert_eq!((s, e["error"]["code"].as_str()), (StatusCode::FORBIDDEN, Some("no_consent")));
 
     // They text first: kept, and sent as message.received.
@@ -118,35 +118,35 @@ async fn sandbox_numbers_are_simulated_and_follow_the_texting_rules() {
     assert_eq!(received[0]["message"]["body"], "Do you have time Tuesday?");
 
     // Now a reply goes out (simulated, no carrier), with a message.status event.
-    let (s, m) = call(&c.app, "POST", "/v1/messages", &token, Some(json!({ "number_id": num, "to": person, "body": "Yes, 2 pm works." }))).await;
+    let (s, m) = call(&c.app, "POST", "/v1/texts", &token, Some(json!({ "number_id": num, "to": person, "body": "Yes, 2 pm works." }))).await;
     assert_eq!((s, m["status"].as_str(), m["direction"].as_str(), m["segments"].as_i64()), (StatusCode::CREATED, Some("simulated"), Some("outbound"), Some(1)));
     assert_eq!(events_of(&c, &p.id, "message.status").await.len(), 1);
     // Simulated texts are free.
     let usage: i64 = sqlx::query_scalar("SELECT count(*) FROM platform_usage_events WHERE project_id = $1").bind(&p.id).fetch_one(&c.state.db).await.unwrap();
     assert_eq!(usage, 0);
 
-    let (s, list) = call(&c.app, "GET", &format!("/v1/messages?number_id={num}"), &token, None).await;
+    let (s, list) = call(&c.app, "GET", &format!("/v1/texts?number_id={num}"), &token, None).await;
     assert_eq!(s, StatusCode::OK);
     assert_eq!(list["data"].as_array().unwrap().len(), 2);
-    let (s, inbound) = call(&c.app, "GET", "/v1/messages?direction=inbound", &token, None).await;
+    let (s, inbound) = call(&c.app, "GET", "/v1/texts?direction=inbound", &token, None).await;
     assert_eq!((s, inbound["data"].as_array().unwrap().len()), (StatusCode::OK, 1));
 
     // STOP wins over everything, START lifts it.
     let (_, r) = call(&c.app, "POST", &format!("/v1/numbers/{num}/simulate_inbound"), &token, Some(json!({ "from": person, "body": "STOP" }))).await;
     assert_eq!(r["handled"], "opted_out");
-    let (s, e) = call(&c.app, "POST", "/v1/messages", &token, Some(json!({ "number_id": num, "to": person, "body": "?" }))).await;
+    let (s, e) = call(&c.app, "POST", "/v1/texts", &token, Some(json!({ "number_id": num, "to": person, "body": "?" }))).await;
     assert_eq!((s, e["error"]["code"].as_str()), (StatusCode::FORBIDDEN, Some("recipient_opted_out")));
     let (s, consent) = call(&c.app, "POST", &format!("/v1/numbers/{num}/consent"), &token, Some(json!({ "e164": person, "source": "signed form" }))).await;
     assert_eq!((s, consent["opted_out"].as_bool()), (StatusCode::CREATED, Some(true)), "consent never lifts STOP");
     let (_, r) = call(&c.app, "POST", &format!("/v1/numbers/{num}/simulate_inbound"), &token, Some(json!({ "from": person, "body": "START" }))).await;
     assert_eq!(r["handled"], "opted_in");
-    let (s, _) = call(&c.app, "POST", "/v1/messages", &token, Some(json!({ "number_id": num, "to": person, "body": "Welcome back" }))).await;
+    let (s, _) = call(&c.app, "POST", "/v1/texts", &token, Some(json!({ "number_id": num, "to": person, "body": "Welcome back" }))).await;
     assert_eq!(s, StatusCode::CREATED);
 
     // Recorded consent lets you text someone who never texted first.
     let other = "+14155550199";
     call(&c.app, "POST", &format!("/v1/numbers/{num}/consent"), &token, Some(json!({ "e164": other, "source": "existing patient record" }))).await;
-    let (s, _) = call(&c.app, "POST", "/v1/messages", &token, Some(json!({ "number_id": num, "to": other, "body": "Reminder: cleaning tomorrow" }))).await;
+    let (s, _) = call(&c.app, "POST", "/v1/texts", &token, Some(json!({ "number_id": num, "to": other, "body": "Reminder: cleaning tomorrow" }))).await;
     assert_eq!(s, StatusCode::CREATED);
 
     // Registration is for real numbers only; available is for live projects only.
@@ -191,7 +191,7 @@ async fn numbers_and_messages_stay_inside_their_account_and_project() {
     let msg_only = mint(&c, &p, None, &["messaging"]).await;
     assert_eq!(call(&c.app, "POST", "/v1/numbers", &msg_only, Some(json!({ "account_id": a }))).await.0, StatusCode::FORBIDDEN);
     let num_only = mint(&c, &p, None, &["numbers"]).await;
-    assert_eq!(call(&c.app, "GET", "/v1/messages", &num_only, None).await.0, StatusCode::FORBIDDEN);
+    assert_eq!(call(&c.app, "GET", "/v1/texts", &num_only, None).await.0, StatusCode::FORBIDDEN);
 }
 
 #[tokio::test]

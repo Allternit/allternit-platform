@@ -654,6 +654,211 @@
               "release-notes"
             ],
             "icon": "/icons/bubble.svg"
+          },
+          {
+            "group": "Runtime internals",
+            "pages": [
+              {
+                "group": "Overview",
+                "pages": [
+                  "api/overview",
+                  "api/cloud-api",
+                  "api/phone-numbers",
+                  "api/phone-invites",
+                  "api/people",
+                  "api/autonomy",
+                  "api/inapp-calls",
+                  "api/web-push",
+                  "api/ios-push",
+                  "api/notifications",
+                  "api/allternit-api",
+                  "api/phone-stream-relay",
+                  "api/authentication",
+                  "api/endpoints",
+                  "api/rate-limits",
+                  "api/event-stream",
+                  "api/runtime-events",
+                  "api/inbox",
+                  "api/morning-brief",
+                  "api/status",
+                  "api/me",
+                  "api/setup-checks",
+                  "api/quickstart"
+                ]
+              },
+              {
+                "group": "LLM Gateway",
+                "pages": [
+                  "api/providers",
+                  "api/open-lane",
+                  "api/data-retention",
+                  "api/embeddings",
+                  "api/images",
+                  "api/realtime-audio",
+                  "api/cache",
+                  "api/context-caches",
+                  "api/vector-stores",
+                  "api/estimates",
+                  "api/proxy",
+                  "api/translate",
+                  "api/local-engine"
+                ]
+              },
+              {
+                "group": "Agents & Runtime",
+                "pages": [
+                  "api/agents",
+                  "api/cloud-agents",
+                  "api/agents-v1",
+                  "api/agent-operations",
+                  "api/agent-runtimes",
+                  "api/agent-workspaces",
+                  "api/agent-preferences",
+                  "api/subagent-types",
+                  "api/cowork-preferences",
+                  "api/agent-sessions",
+                  "api/teleports",
+                  "api/sessions",
+                  "api/memory-stores",
+                  "api/memory",
+                  "api/memory-drive",
+                  "api/bot-hub",
+                  "api/page-agents",
+                  "api/local-brains",
+                  "api/brains",
+                  "api/memory-reconstruction",
+                  "api/checkpoints",
+                  "api/enrollment",
+                  "api/team-skills",
+                  "api/code-environments"
+                ]
+              },
+              {
+                "group": "Work Queue & Deployments",
+                "pages": [
+                  "api/work-queue",
+                  "api/deployments",
+                  "api/batches",
+                  "api/beta"
+                ]
+              },
+              {
+                "group": "Files, Webhooks & Sandbox",
+                "pages": [
+                  "api/files",
+                  "api/workspace-files",
+                  "api/webhooks",
+                  "api/webhook-subscriptions",
+                  "api/slack-webhooks",
+                  "api/sandbox",
+                  "api/sandbox-templates",
+                  "api/uploads"
+                ]
+              },
+              {
+                "group": "Tools & Connectors",
+                "pages": [
+                  "api/aci",
+                  "api/connectors",
+                  "api/tools",
+                  "api/office",
+                  "api/office-engine",
+                  "api/voice",
+                  "api/voice-tickets",
+                  "api/voice-recordings",
+                  "api/files",
+                  "api/server-tools",
+                  "api/mcp-servers",
+                  "api/openship-integration",
+                  "api/connector-events",
+                  "api/webhook-triggers",
+                  "api/design-connector",
+                  "api/automation",
+                  "api/library",
+                  "api/marketplace"
+                ]
+              },
+              {
+                "group": "Collaboration & Workflows",
+                "pages": [
+                  "api/agent-chat",
+                  "api/subscription-gateway",
+                  "api/connections",
+                  "api/conversations",
+                  "api/artifacts",
+                  "api/artifacts-v2",
+                  "api/artifact-runtime",
+                  "api/artifacts-motion",
+                  "api/boards",
+                  "api/board-streams",
+                  "api/inbox",
+                  "api/allternit-bus",
+                  "api/cowork",
+                  "api/cowork-teams",
+                  "api/workflows",
+                  "api/tasks",
+                  "api/swarm"
+                ]
+              },
+              {
+                "group": "Infrastructure & Platform",
+                "pages": [
+                  "api/terminal",
+                  "api/vm-sessions",
+                  "api/ssh",
+                  "api/ssh-keys",
+                  "api/web-proxy",
+                  "api/usage",
+                  "api/cloud-billing",
+                  "api/analytics",
+                  "api/audit-logs",
+                  "api/runtime-backend",
+                  "api/runtime-discovery",
+                  "api/system-surfaces",
+                  "api/platform-v1",
+                  "api/h5i",
+                  "api/visualizations",
+                  "api/workspaces",
+                  "api/har",
+                  "api/oauth",
+                  "api/pricing",
+                  "api/backend-install",
+                  "api/brain-git",
+                  "api/cloud-api",
+                  "api/udemy"
+                ]
+              },
+              {
+                "group": "Canvases",
+                "pages": [
+                  "api/canvases"
+                ]
+              },
+              {
+                "group": "Onboarding",
+                "pages": [
+                  "api/onboarding"
+                ]
+              },
+              {
+                "group": "A Labs",
+                "pages": [
+                  "api/alabs"
+                ]
+              },
+              {
+                "group": "Playground",
+                "pages": [
+                  "api/playground"
+                ]
+              },
+              {
+                "group": "Users & Profiles",
+                "pages": [
+                  "api/user-profiles"
+                ]
+              }
+            ]
           }
         ],
         "icon": "/icons/book.svg"
@@ -742,9 +947,10 @@
               "api/platform/agents",
               "api/platform/knowledge",
               "api/platform/conversations",
+              "api/platform/approvals",
               "api/platform/ag-ui",
               "api/platform/numbers",
-              "api/platform/messaging",
+              "api/platform/texts",
               "api/platform/mailboxes",
               "api/platform/identities",
               "api/platform/voice",
@@ -765,40 +971,19 @@
             ]
           },
           {
-            "group": "Legal",
+            "group": "Inference",
             "pages": [
-              "legal/developer-terms",
-              "legal/acceptable-use-policy"
+              "api/platform/responses",
+              "api/platform/messages",
+              "api/chat-completions",
+              "api/models"
             ]
           },
           {
-            "group": "Overview",
+            "group": "Decisions",
             "pages": [
-              "api/overview",
-              "api/cloud-api",
-              "api/phone-numbers",
-              "api/phone-invites",
-              "api/people",
-              "api/autonomy",
-              "api/inapp-calls",
-              "api/web-push",
-              "api/ios-push",
-              "api/notifications",
-              "api/allternit-api",
-              "api/phone-stream-relay",
-              "api/authentication",
-              "api/endpoints",
-              "api/rate-limits",
-              "api/event-stream",
-              "api/runtime-events",
-              "api/inbox",
-              "api/morning-brief",
-              "api/status",
-              "api/me",
-              "api/setup-checks",
-              "api/quickstart"
-            ],
-            "icon": "/icons/play.svg"
+              "api/platform/decisions"
+            ]
           },
           {
             "group": "Agency API (Preview)",
@@ -825,190 +1010,11 @@
             "icon": "/icons/team.svg"
           },
           {
-            "group": "LLM Gateway",
+            "group": "Legal",
             "pages": [
-              "api/models",
-              "api/providers",
-              "api/chat-completions",
-              "api/open-lane",
-              "api/data-retention",
-              "api/embeddings",
-              "api/images",
-              "api/realtime-audio",
-              "api/cache",
-              "api/context-caches",
-              "api/vector-stores",
-              "api/estimates",
-              "api/proxy",
-              "api/translate",
-              "api/local-engine"
-            ],
-            "icon": "/icons/chip.svg"
-          },
-          {
-            "group": "Agents & Runtime",
-            "pages": [
-              "api/agents",
-              "api/cloud-agents",
-              "api/agents-v1",
-              "api/agent-operations",
-              "api/agent-runtimes",
-              "api/agent-workspaces",
-              "api/agent-preferences",
-              "api/subagent-types",
-              "api/cowork-preferences",
-              "api/agent-sessions",
-              "api/teleports",
-              "api/sessions",
-              "api/memory-stores",
-              "api/memory",
-              "api/memory-drive",
-              "api/bot-hub",
-              "api/page-agents",
-              "api/local-brains",
-              "api/brains",
-              "api/memory-reconstruction",
-              "api/checkpoints",
-              "api/enrollment",
-              "api/team-skills",
-              "api/code-environments"
-            ],
-            "icon": "/icons/agent.svg"
-          },
-          {
-            "group": "Work Queue & Deployments",
-            "pages": [
-              "api/work-queue",
-              "api/deployments",
-              "api/batches",
-              "api/beta"
-            ],
-            "icon": "/icons/clock.svg"
-          },
-          {
-            "group": "Files, Webhooks & Sandbox",
-            "pages": [
-              "api/files",
-              "api/workspace-files",
-              "api/webhooks",
-              "api/webhook-subscriptions",
-              "api/slack-webhooks",
-              "api/sandbox",
-              "api/sandbox-templates",
-              "api/uploads"
-            ],
-            "icon": "/icons/document.svg"
-          },
-          {
-            "group": "Tools & Connectors",
-            "pages": [
-              "api/aci",
-              "api/connectors",
-              "api/tools",
-              "api/office",
-              "api/office-engine",
-              "api/voice",
-              "api/voice-tickets",
-              "api/voice-recordings",
-              "api/files",
-              "api/server-tools",
-              "api/mcp-servers",
-              "api/openship-integration",
-              "api/connector-events",
-              "api/webhook-triggers",
-              "api/design-connector",
-              "api/automation",
-              "api/library",
-              "api/marketplace"
-            ],
-            "icon": "/icons/link.svg"
-          },
-          {
-            "group": "Collaboration & Workflows",
-            "pages": [
-              "api/agent-chat",
-              "api/subscription-gateway",
-              "api/connections",
-              "api/conversations",
-              "api/artifacts",
-              "api/artifacts-v2",
-              "api/artifact-runtime",
-              "api/artifacts-motion",
-              "api/boards",
-              "api/board-streams",
-              "api/inbox",
-              "api/allternit-bus",
-              "api/cowork",
-              "api/cowork-teams",
-              "api/workflows",
-              "api/tasks",
-              "api/swarm"
-            ],
-            "icon": "/icons/team.svg"
-          },
-          {
-            "group": "Infrastructure & Platform",
-            "pages": [
-              "api/terminal",
-              "api/vm-sessions",
-              "api/ssh",
-              "api/ssh-keys",
-              "api/web-proxy",
-              "api/usage",
-              "api/cloud-billing",
-              "api/analytics",
-              "api/audit-logs",
-              "api/runtime-backend",
-              "api/runtime-discovery",
-              "api/system-surfaces",
-              "api/platform-v1",
-              "api/h5i",
-              "api/visualizations",
-              "api/workspaces",
-              "api/har",
-              "api/oauth",
-              "api/pricing",
-              "api/backend-install",
-              "api/brain-git",
-              "api/cloud-api",
-              "api/udemy"
-            ],
-            "icon": "/icons/screen.svg"
-          },
-          {
-            "group": "Canvases",
-            "pages": [
-              "api/canvases"
-            ],
-            "icon": "/icons/window.svg"
-          },
-          {
-            "group": "Onboarding",
-            "pages": [
-              "api/onboarding"
-            ],
-            "icon": "/icons/play.svg"
-          },
-          {
-            "group": "A Labs",
-            "pages": [
-              "api/alabs"
-            ],
-            "icon": "/icons/book.svg"
-          },
-          {
-            "group": "Playground",
-            "pages": [
-              "api/playground"
-            ],
-            "icon": "/icons/code.svg"
-          },
-          {
-            "group": "Users & Profiles",
-            "pages": [
-              "api/user-profiles"
-            ],
-            "icon": "/icons/agent.svg"
+              "legal/developer-terms",
+              "legal/acceptable-use-policy"
+            ]
           }
         ],
         "icon": "/icons/code.svg"

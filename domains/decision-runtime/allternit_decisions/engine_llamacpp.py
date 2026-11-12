@@ -36,7 +36,10 @@ class LlamaCppScorer:
     vision = False
 
     def __init__(self, model_path: str, n_ctx: int = 8192) -> None:
-        threads = max(1, (os.cpu_count() or 2) - 1)
+        # ALLTERNIT_DECISIONS_THREADS caps threads on shared hosts (the cloud VPS);
+        # Desktop leaves it unset and uses every core but one.
+        env_threads = os.environ.get("ALLTERNIT_DECISIONS_THREADS", "").strip()
+        threads = int(env_threads) if env_threads.isdigit() and int(env_threads) > 0 else max(1, (os.cpu_count() or 2) - 1)
         self.llm = Llama(
             model_path=model_path,
             n_ctx=n_ctx,

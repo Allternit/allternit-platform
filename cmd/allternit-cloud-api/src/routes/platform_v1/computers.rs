@@ -648,6 +648,7 @@ async fn toolset_call(
         }
     }
     if status == 409 && out.get("error").and_then(Value::as_str) == Some("approval_required") {
+        record_requested(&state.db, &caller, &row, &toolset, &member, &out).await;
         let approval_id = out.get("approval_id").and_then(Value::as_str).unwrap_or_default().to_string();
         let envelope = json!({
             "error": {
@@ -676,6 +677,12 @@ async fn toolset_call(
 
     let executed = out.get("error").and_then(Value::as_str) != Some("not_executed");
     if executed {
+        // The retried call ran on its grant: the executor redeemed (consumed) it.
+        if let Some(grant) = body.get("approval_grant").and_then(Value::as_str).filter(|g| valid_grant(g)) {
+            if let Err(e) = super::approvals::mark_consumed(&state.db, &caller.project_id, "computer", grant).await {
+                tracing::warn!(grant, "hosted driver: approval not marked consumed: {e}");
+            }
+        }
         let idem = match (body.get("turn_id").and_then(Value::as_str), body.get("call_index").and_then(Value::as_u64)) {
             (Some(t), Some(i)) => Some(format!("cact:{}:{t}:{i}", row.id)),
             _ => None,
@@ -786,6 +793,91 @@ async fn list_events(
     Ok(Json(build_page(rows, limit, |e| (e.created_at, e.id.clone()))))
 }
 
+/// The computer half of [`super::approvals::resolve`]: the decision relayed to
+/// the computer's ACI handoff (`/api/aci/handoff/{grant}/approve|deny`), with
+/// the computer's rules: the flag and the `computers` scope, and an API key
+/// approves only when the project's `approval_mode` is `api_key` (the console
+/// owner always can). Returns the alias's answer.
+pub(crate) async fn decide_on_computer(
+    state: &Arc<ApiState>,
+    layered: Option<Extension<Arc<dyn ComputerHost>>>,
+    caller: &PlatformCaller,
+    computer_id: &str,
+    grant: &str,
+    decision: super::approvals::Decision,
+) -> Result<Value, PlatformError> {
+    let settings = gate(&state.db, caller).await?;
+    if !is_console(caller) && settings.approval_mode != "api_key" {
+        return Err(PlatformError::permission(
+            "approval_requires_owner",
+            "Only the project owner approves computer actions (in the console). The owner can let API keys approve by setting approval_mode to 'api_key'.",
+        ));
+    }
+    if !valid_grant(grant) {
+        return Err(PlatformError::not_found("approval_not_found", "No such approval."));
+    }
+    let mut row = fetch(&state.db, caller, computer_id).await?;
+    let host = host_for(state, layered);
+    let runtime = runtime_of(state, host.as_ref(), &mut row).await?;
+    let path = format!("/api/aci/handoff/{grant}/{}", decision.as_str());
+    let (status, out) = host.call(&row.owner_user_id, &runtime, "POST", &path, &json!({})).await?;
+    match status {
+        200..=299 => Ok(match decision {
+            super::approvals::Decision::Approve => json!({ "approval_id": grant, "approved": true, "approval_grant": grant }),
+            super::approvals::Decision::Deny => json!({ "approval_id": grant, "approved": false }),
+        }),
+        404 => Err(PlatformError::not_found("approval_not_found", "No such approval (it may have expired).")),
+        s => Err(executor_error(s, &out)),
+    }
+}
+
+fn valid_grant(id: &str) -> bool {
+    !id.is_empty() && id.len() <= 128 && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+/// The executor's 409 `approval_required`: mirror the grant as a
+/// `platform_approvals` row and report `approval.requested` (once per grant).
+async fn record_requested(db: &sqlx::PgPool, caller: &PlatformCaller, row: &Row, toolset: &str, member: &str, out: &Value) {
+    let grant = out.get("approval_id").and_then(Value::as_str).unwrap_or_default();
+    if !valid_grant(grant) {
+        return;
+    }
+    let now = Utc::now();
+    let n = super::approvals::NewApproval {
+        project_id: &caller.project_id,
+        source: "computer",
+        source_ref: grant,
+        account_id: row.account_id.as_deref(),
+        conversation_id: None,
+        response_id: None,
+        kind: format!("{toolset}.{member}"),
+        proposed_action: json!({
+            "computer_id": row.id, "toolset": toolset, "member": member,
+            "action_hash": out.get("action_hash"), "risk": out.get("risk"),
+            "confirmation_class": out.get("confirmation_class"), "requested_by": caller.key_id,
+        }),
+        status: "pending",
+        expires_at: Some(
+            super::approvals::deadline(out).unwrap_or(now + chrono::Duration::seconds(super::approvals::COMPUTER_DEFAULT_TTL_SECS)),
+        ),
+    };
+    match super::approvals::insert(db, n).await {
+        Ok(Some((approval, true))) => {
+            let mut data = super::approvals::event_payload(&approval);
+            data["computer_id"] = json!(row.id);
+            if let Err(e) = super::events::emit_event(db, &caller.project_id, row.account_id.as_deref(), "approval.requested", data).await {
+                tracing::warn!(approval = %approval.id, "approval.requested not emitted: {e}");
+            }
+        }
+        Ok(_) => {}
+        Err(e) => tracing::warn!(grant, "hosted driver: approval row not recorded: {e}"),
+    }
+}
+
+/// `POST /v1/computers/{id}/approvals/{approval_id}`: the alias of
+/// `POST /v1/approvals/{id}` with `decision: approve`, same answer as before.
+/// A grant with no row yet (raised before `platform_approvals` existed) gets
+/// one first; that row is dropped again when the decision fails.
 async fn approve(
     State(state): State<Arc<ApiState>>,
     caller: PlatformCaller,
@@ -799,17 +891,42 @@ async fn approve(
             "Only the project owner approves computer actions (in the console). The owner can let API keys approve by setting approval_mode to 'api_key'.",
         ));
     }
-    if approval_id.is_empty() || approval_id.len() > 128 || !approval_id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+    if !valid_grant(&approval_id) {
         return Err(PlatformError::not_found("approval_not_found", "No such approval."));
     }
-    let mut row = fetch(&state.db, &caller, &id).await?;
-    let host = host_for(&state, layered);
-    let runtime = runtime_of(&state, host.as_ref(), &mut row).await?;
-    let (status, out) = host.call(&row.owner_user_id, &runtime, "POST", &format!("/api/aci/handoff/{approval_id}/approve"), &json!({})).await?;
-    match status {
-        200..=299 => Ok(Json(json!({ "approval_id": approval_id, "approved": true, "approval_grant": approval_id }))),
-        404 => Err(PlatformError::not_found("approval_not_found", "No such approval (it may have expired).")),
-        s => Err(executor_error(s, &out)),
+    let computer = fetch(&state.db, &caller, &id).await?;
+    let n = super::approvals::NewApproval {
+        project_id: &caller.project_id,
+        source: "computer",
+        source_ref: &approval_id,
+        account_id: computer.account_id.as_deref(),
+        conversation_id: None,
+        response_id: None,
+        kind: "computer.action".into(),
+        proposed_action: json!({ "computer_id": computer.id }),
+        status: "pending",
+        expires_at: None,
+    };
+    let (approval, fresh) = super::approvals::insert(&state.db, n)
+        .await?
+        .ok_or_else(|| PlatformError::not_found("approval_not_found", "No such approval."))?;
+    if approval.proposed_action.get("computer_id").and_then(Value::as_str) != Some(computer.id.as_str()) {
+        return Err(PlatformError::not_found("approval_not_found", "No such approval."));
+    }
+    let approval_row_id = approval.id.clone();
+    let hosts = super::approvals::Hosts { agent: None, computer: layered };
+    match super::approvals::resolve(&state, hosts, &caller, approval, super::approvals::Decision::Approve, None).await {
+        Ok((_, answer)) => Ok(Json(answer)),
+        Err(e) => {
+            // Any failure (404, executor down, ...) on a row this call just
+            // created: drop it, so no phantom pending approval is left behind.
+            if fresh {
+                if let Err(err) = super::approvals::forget_fresh(&state.db, &approval_row_id).await {
+                    tracing::warn!(approval = %approval_row_id, "computer approve alias: fresh row not dropped: {err}");
+                }
+            }
+            Err(e)
+        }
     }
 }
 

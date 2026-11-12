@@ -16,7 +16,8 @@ The Platform API is in private beta. It answers `404 not_found_error` with code 
 | **Project** | Your app. Holds agents, numbers, channels, webhooks, keys and usage. Each project is `sandbox` (test keys, no real numbers or calls) or `live`. Created in the console. |
 | **Account** | One end-customer business you serve. Every agent, number, person and inbox item belongs to exactly one account, and one account never sees another's data. See [Accounts](/api/platform/accounts). |
 | **API key** | `alt_test_…` (sandbox) or `alt_live_…` (live), bound to one project, with scopes, optionally bound to one account. See [Authentication](/api/platform/authentication). |
-| **Numbers and texts** | Phone numbers per account, texting with consent and STOP built in, carrier registration. Sandbox numbers are simulated. See [Numbers](/api/platform/numbers) and [Messaging](/api/platform/messaging). |
+| **API families** | Platform API (agents, conversations, texts, numbers, computers), Inference ([Responses](/api/platform/responses), [Messages](/api/platform/messages), chat completions), [Decisions](/api/platform/decisions), and the [Agency API](/api/agency/overview). |
+| **Numbers and texts** | Phone numbers per account, texting with consent and STOP built in, carrier registration. Sandbox numbers are simulated. See [Numbers](/api/platform/numbers) and [Texts](/api/platform/texts). |
 | **Computers and phones** | Hosted cloud computers your agents drive ([Computers](/api/platform/computers)), and the project owner's own linked phones ([Phones](/api/platform/phones)). |
 | **Webhooks** | Signed, retried events to your server. See [Webhooks](/api/platform/webhooks). |
 | **Usage** | Every billable action records a usage event against a meter. See [Usage](/api/platform/usage). |
@@ -24,7 +25,7 @@ The Platform API is in private beta. It answers `404 not_found_error` with code 
 
 ## Conventions
 
-- JSON in and out; IDs are prefixed (`proj_`, `acct_`, `agent_`, `call_`, `num_`, `msg_`, `wh_`, `evt_`).
+- JSON in and out; IDs are prefixed (`proj_`, `acct_`, `agent_`, `call_`, `num_`, `msg_` (texts), `mdl_` (model messages), `dec_`, `resp_`, `item_`, `apr_`, `wh_`, `evt_`).
 - Lists use cursor pagination: `?limit=&after=` and `{ "data": [...], "has_more": true, "next_cursor": "…" }`.
 - Every `POST` accepts an `Idempotency-Key`. See [Idempotency and limits](/api/platform/idempotency-and-limits).
 - Errors share one shape. See [Errors](/api/platform/errors).
