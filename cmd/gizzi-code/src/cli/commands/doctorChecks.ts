@@ -140,6 +140,29 @@ export async function checkGatewayReachability(deps: GatewayCheckDeps = {}): Pro
   }
 }
 
+/**
+ * Allternit services (status.allternit.com). Warns when anything is degraded or
+ * down; never fails doctor, and an unreachable feed (offline) is only info.
+ */
+export async function checkAllternitServices(
+  deps: { fetchStatus?: () => Promise<import("@/cli/utils/serviceStatus").ServiceStatus>; offline?: boolean } = {},
+): Promise<DoctorCheck> {
+  const id = "allternit-services"
+  const section = "Cloud"
+  if (deps.offline ?? isEssentialTrafficOnly()) {
+    return { id, section, status: "info", message: "Allternit services: offline mode — status not checked" }
+  }
+  const sv = await import("@/cli/utils/serviceStatus")
+  try {
+    const status = deps.fetchStatus ? await deps.fetchStatus() : (await sv.fetchServiceStatus()).status
+    return sv.exitCodeFor(status) === 0
+      ? { id, section, status: "pass", message: "Allternit services: all operational" }
+      : { id, section, status: "warn", message: `Allternit services: ${sv.summarizeServices(status)} (see ${sv.statusUrl().replace(/\/api\/.*$/, "")})` }
+  } catch (e) {
+    return { id, section, status: "info", message: `Allternit services: status page not reachable (${e instanceof Error ? e.message : String(e)})` }
+  }
+}
+
 export type CronCheckDeps = {
   isRunning: () => Promise<boolean>
   /** Supervision probe from cron supervision (slice 4); null = not wired. */
