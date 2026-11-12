@@ -312,6 +312,9 @@ async fn v1_middleware(
     // keys, whether or not the Platform API is switched on. Clerk and `allternit_*`
     // callers of `/v1/decisions` (Desktop, computer use) keep reaching the agency node;
     // project keys get the Platform Decisions resource (`decisions.rs`).
+    // Handlers that call the agency node (`decisions.rs`) take it from here, so tests
+    // can point `router_with_agency` at a stand-in node.
+    request.extensions_mut().insert(ps.agency.clone());
     let console_project = console_project(&request);
     if matches!(request.uri().path(), "/v1/agents" | "/v1/decisions") {
         let project_key = request
