@@ -1669,7 +1669,31 @@ export type RunPhoneTaskResponse = PhoneRunStarted;
 
 export type GetPhoneLiveViewResponse = PhoneLiveView;
 
-export type StartPhoneFleetRunResponse = unknown;
+export type StartPhoneFleetRunRequest = {
+  serials: Array<string>;
+  /**
+   * A task for every phone. Give this or skill.
+   */
+  goal?: string;
+  /**
+   * A saved phone skill to replay on every phone.
+   */
+  skill?: string;
+  /**
+   * Skill inputs.
+   */
+  inputs?: Record<string, string>;
+  max_steps?: number;
+  bot_id?: string;
+  /**
+   * provider/model
+   */
+  brain?: string;
+};
+
+export type StartPhoneFleetRunResponse = PhoneFleetRun;
+
+export type GetPhoneFleetRunResponse = PhoneFleetRun;
 
 export type ListMailboxesQuery = {
   /**
@@ -1743,30 +1767,13 @@ export type ReadMailOtpResponse = {
 };
 
 export type SendMailRequest = {
-  serials: Array<string>;
-  /**
-   * A task for every phone. Give this or skill.
-   */
-  goal?: string;
-  /**
-   * A saved phone skill to replay on every phone.
-   */
-  skill?: string;
-  /**
-   * Skill inputs.
-   */
-  inputs?: Record<string, string>;
-  max_steps?: number;
-  bot_id?: string;
-  /**
-   * provider/model
-   */
-  brain?: string;
+  to: string;
+  subject: string;
+  text?: string;
+  html?: string;
 };
 
-export type SendMailResponse = PhoneFleetRun;
-
-export type GetPhoneFleetRunResponse = {
+export type SendMailResponse = {
   object?: "mail_send";
   mailbox_id?: string;
   from?: string;

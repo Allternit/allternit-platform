@@ -1274,8 +1274,8 @@ export class PhonesResource {
    *
    * `POST /v1/phones/runs`
    */
-  startFleetRun(options?: RequestOptions): Promise<T.StartPhoneFleetRunResponse> {
-    return this._client.request<T.StartPhoneFleetRunResponse>({ method: "POST", path: `/v1/phones/runs`, options });
+  startFleetRun(body: T.StartPhoneFleetRunRequest, options?: RequestOptions): Promise<T.StartPhoneFleetRunResponse> {
+    return this._client.request<T.StartPhoneFleetRunResponse>({ method: "POST", path: `/v1/phones/runs`, body: body, options });
   }
 
   /**

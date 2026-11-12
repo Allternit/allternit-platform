@@ -314,6 +314,26 @@ async fn the_stripe_reporter_sends_billable_rows_of_live_paid_projects_once() {
     assert_eq!(Some(&meter_ref), ids.get("meter:allternit_sms_segments"));
 }
 
+/// Internal test projects (Eoj 2026-11-13): an operator-set `billing_status =
+/// 'internal'` lets a sandbox project do billable work with no card; on a live
+/// project the same value is refused, so it can never stand in for real billing.
+#[tokio::test]
+async fn internal_billing_status_unlocks_sandbox_projects_only() {
+    let c = ctx().await;
+    let who = Principal { user_id: "dev_internal".into(), org_id: None, org_admin: false };
+    let sandbox = projects::create_project(&c.state.db, &who, "Internal sandbox", ProjectEnv::Sandbox).await.unwrap();
+    let live = projects::create_project(&c.state.db, &who, "Internal live", ProjectEnv::Live).await.unwrap();
+    for p in [&sandbox, &live] {
+        sqlx::query("UPDATE platform_projects SET billing_status = 'internal' WHERE id = $1").bind(&p.id).execute(&c.state.db).await.unwrap();
+    }
+    billing::spend_allowed(&c.state.db, &sandbox.id).await.unwrap();
+    let key = mint(&c, &sandbox, None, &["agents"]).await;
+    let (_, acct) = call(&c.app, "POST", "/v1/accounts", &key, Some(json!({ "name": "A" }))).await;
+    let (s, body) = call(&c.app, "POST", "/v1/agents", &key, Some(json!({ "account_id": acct["id"], "name": "A" }))).await;
+    assert_ne!(s, StatusCode::PAYMENT_REQUIRED, "{body}");
+    assert_eq!(billing::spend_allowed(&c.state.db, &live.id).await.unwrap_err().code, "payment_method_required");
+}
+
 /// Card required (Eoj 2026-10-08): no card → 402 payment_method_required with the
 /// console billing link, on the API too; the Stripe webhook's checkout puts the
 /// card on file; cancellation and an unpaid subscription take it away again.

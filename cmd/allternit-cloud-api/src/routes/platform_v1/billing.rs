@@ -178,6 +178,20 @@ pub fn status_allows_work(billing_status: Option<&str>) -> bool {
     matches!(billing_status, Some("active" | "past_due"))
 }
 
+/// `billing_status` of Allternit's own test projects (Eoj 2026-11-13: "it's our
+/// platform, we need a test one"). Set only by an operator in the database
+/// (`operations/platform-test-projects.mdx`); no route or Stripe webhook writes
+/// it, and webhooks only touch projects that have a subscription. It counts as
+/// a payment method on a **sandbox** project only: sandbox usage is never sent
+/// to Stripe (`stripe_plan` reports `env = 'live'` rows), so the work is free,
+/// and the monthly spend cap still applies. On a live project it does nothing.
+pub const INTERNAL_BILLING_STATUS: &str = "internal";
+
+/// A sandbox project an operator marked [`INTERNAL_BILLING_STATUS`].
+pub fn internal_test_project(env: &str, billing_status: Option<&str>) -> bool {
+    env == "sandbox" && billing_status == Some(INTERNAL_BILLING_STATUS)
+}
+
 /// 402 `payment_method_required`, with the console billing page as `error.url`.
 pub fn payment_method_required(project_id: &str) -> PlatformError {
     let url = billing_page_url(project_id);
@@ -192,16 +206,18 @@ pub fn payment_method_required(project_id: &str) -> PlatformError {
 }
 
 /// `Ok` once the project has a card on file and a subscription in good standing
-/// (Eoj 2026-10-08: card required, $0 free usage, sandbox included); otherwise
+/// (Eoj 2026-10-08: card required, $0 free usage, sandbox included), or is one
+/// of Allternit's internal test projects ([`internal_test_project`]); otherwise
 /// `402 payment_method_required`. A failed check refuses the work (fail closed).
 pub async fn require_payment_method(db: &PgPool, project_id: &str) -> Result<(), PlatformError> {
-    let row: Result<Option<(Option<String>, Option<String>)>, sqlx::Error> =
-        sqlx::query_as("SELECT stripe_customer_id, billing_status FROM platform_projects WHERE id = $1")
+    let row: Result<Option<(Option<String>, Option<String>, String)>, sqlx::Error> =
+        sqlx::query_as("SELECT stripe_customer_id, billing_status, env FROM platform_projects WHERE id = $1")
             .bind(project_id)
             .fetch_optional(db)
             .await;
     match row {
-        Ok(Some((Some(_customer), status))) if status_allows_work(status.as_deref()) => Ok(()),
+        Ok(Some((Some(_customer), status, _))) if status_allows_work(status.as_deref()) => Ok(()),
+        Ok(Some((_, status, env))) if internal_test_project(&env, status.as_deref()) => Ok(()),
         Ok(_) => Err(payment_method_required(project_id)),
         Err(error) => {
             tracing::error!(%error, project_id, "platform payment method check failed; refusing billable work");
