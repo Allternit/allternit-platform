@@ -77,7 +77,7 @@ describe("data files reach the model as text, never as a raw file part", () => {
     const content = userContent(userMessage("plot it", [{ ...csvPart, url: dataUrl("text/csv", big) }]))
     expect(content.some((p) => p.type === "file")).toBe(false)
     expect(content[1].text.trim()).toBe(
-      "Attached file sales.csv (text/csv, 23.4 KB): too large to show inline; use run_code to read it.",
+      "Attached file sales.csv (text/csv, 23.4 KB): too large to show inline; a code tool can read the file.",
     )
     expect(content[1].text).not.toContain("1,2")
   })
@@ -94,9 +94,9 @@ describe("data files reach the model as text, never as a raw file part", () => {
     expect(content.some((p) => p.type === "file")).toBe(false)
     expect(content[1].text).toContain("a\tb")
     expect(content[2].text).toContain('{"k":1}')
-    expect(content[3].text.trim()).toBe(`Attached file book.xlsx (${XLSX}, 4 B): binary, not shown inline; use run_code to read it.`)
+    expect(content[3].text.trim()).toBe(`Attached file book.xlsx (${XLSX}, 4 B): binary, not shown inline; a code tool can read the file.`)
     expect(content[4].text).toContain("Attached file old.xls (application/vnd.ms-excel, 2 B)")
-    expect(content[4].text).toContain("use run_code to read it")
+    expect(content[4].text).toContain("a code tool can read the file")
   })
 
   test("text the composer already inlined is not sent twice", () => {
@@ -104,7 +104,7 @@ describe("data files reach the model as text, never as a raw file part", () => {
     const content = userContent(userMessage(text, [csvPart]))
     expect(content).toHaveLength(2)
     expect(content[1].text.trim()).toBe(
-      "Attached file sales.csv (text/csv, 28 B): its text is in the message above; use run_code to read it.",
+      "Attached file sales.csv (text/csv, 28 B): its text is in the message above; a code tool can read the file.",
     )
     // The CSV appears once: in the person's own text.
     expect(content.map((p) => p.text).join("").split("Feb,30").length - 1).toBe(1)

@@ -538,7 +538,7 @@ export namespace MessageV2 {
     const name = part.filename || "file"
     const bytes = dataUrlBytes(part.url)
     const facts = [part.mime, bytes ? formatSize(bytes.length) : undefined].filter(Boolean).join(", ")
-    const note = (reason: string) => `Attached file ${name} (${facts}): ${reason}; use run_code to read it.`
+    const note = (reason: string) => `Attached file ${name} (${facts}): ${reason}; a code tool can read the file.`
     if (userText.includes(`[Attached file: ${name}]`)) return note("its text is in the message above")
     if (!isTextLike(part.mime)) return note("binary, not shown inline")
     if (!bytes) return note("not shown inline")
