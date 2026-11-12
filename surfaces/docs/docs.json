@@ -731,6 +731,25 @@
         "tab": "API Reference",
         "groups": [
           {
+            "group": "Console",
+            "pages": [
+              "console/projects",
+              "console/playground",
+              "console/models-and-pricing",
+              "console/usage-and-logs",
+              "console/governance"
+            ],
+            "icon": "/icons/code.svg"
+          },
+          {
+            "group": "Platform API reference",
+            "openapi": "api-reference/platform-v1.yaml"
+          },
+          {
+            "group": "Inference API reference",
+            "openapi": "api-reference/inference-v1.yaml"
+          },
+          {
             "group": "Platform API",
             "pages": [
               "api/platform/overview",
@@ -1086,6 +1105,11 @@
     },
     "body": {
       "family": "Inter"
+    }
+  },
+  "api": {
+    "playground": {
+      "display": "interactive"
     }
   }
 }

@@ -1,0 +1,27 @@
+---
+title: 'Projects'
+description: 'The project switcher and how projects scope keys, usage, limits and prompts.'
+---
+
+A project is the unit that owns API keys, usage, rate limits, saved prompts and the spend cap. Projects are either `sandbox` or `live`.
+
+## Switcher
+
+The console shows a project switcher next to the organization switcher. The project you pick is remembered in this browser, and every console request carries it in the `X-Allternit-Project` header. Pages read it: API keys, Playground, Usage, Logs and Rate limits all show data for the selected project.
+
+## What scopes to a project
+
+- Keys: a project key (`alt_live_...` or `alt_test_...`) belongs to one project and bills to it. A live project needs a payment method before inference runs.
+- Usage and logs: filter or group by `project_id`. See [usage and logs](/console/usage-and-logs).
+- Limits: `GET /api/v1/platform/projects/:id/limits` returns the project's effective limits and whether each comes from the plan or an override.
+- Prompts: saved per project ([Playground](/console/playground)).
+- Body logging: `log_bodies` on the project, off by default.
+
+## Access
+
+You can read and change only projects in organizations you belong to. A project you cannot access returns 404.
+
+## Related
+
+- [Governance](/console/governance)
+- [Platform API authentication](/api/platform/authentication)
