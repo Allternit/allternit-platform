@@ -39,8 +39,15 @@ async fn ctx() -> Ctx {
 
 async fn ctx_from(state: Arc<ApiState>) -> Ctx {
     crate::routes::test_support::platform_schema(&state.db).await;
+    items_schema(&state.db).await;
     let app = router_gated(&state, Gate::Forced(true)).with_state(state.clone());
     Ctx { state, app }
+}
+
+/// Migration 121 (conversation items), which conversations now read and write.
+/// Idempotent, so it is harmless once `test_support::platform_schema` lists it too.
+pub(super) async fn items_schema(db: &sqlx::PgPool) {
+    sqlx::raw_sql(&include_str!("../../../migrations_pg/121_platform_items.sql").replace("public.", "")).execute(db).await.expect("migration 121 applies");
 }
 
 /// A runtime that answers every turn with "echo: <text>" (or fails, or is still starting).
@@ -499,4 +506,105 @@ async fn v1_agents_is_shared_with_the_agency_api() {
     let (s, list) = call(&on, "GET", "/v1/agents", &key, None).await;
     assert_eq!(s, StatusCode::OK);
     assert!(list["data"].is_array(), "{list}");
+}
+
+#[tokio::test]
+async fn conversations_v2_hold_items_and_page_them() {
+    let (c, _host) = ctx_with_host().await;
+    let p = project(&c, "dev_v2", ProjectEnv::Sandbox).await;
+    let key = mint(&c, &p, None, &["agents"]).await;
+    let acct_a = account(&c, &key, "A").await;
+    let acct_b = account(&c, &key, "B").await;
+
+    // An agent-less conversation with starting items; bad items name their field.
+    let (s, conv) = call(&c.app, "POST", "/v1/conversations", &key, Some(json!({ "account_id": acct_a, "metadata": { "k": "1" }, "items": [{ "role": "system", "content": "Be brief." }, { "role": "user", "content": "m0" }] }))).await;
+    assert_eq!(s, StatusCode::CREATED, "{conv}");
+    assert_eq!((conv["agent_id"].clone(), conv["account_id"].as_str(), conv["item_count"].as_i64(), conv["object"].as_str()), (Value::Null, Some(acct_a.as_str()), Some(2), Some("conversation")));
+    let conv_id = conv["id"].as_str().unwrap().to_string();
+    let (s, e) = call(&c.app, "POST", "/v1/conversations", &key, Some(json!({ "items": [{ "role": "robot", "content": "x" }] }))).await;
+    assert_eq!((s, e["error"]["param"].as_str()), (StatusCode::BAD_REQUEST, Some("items[0].role")));
+    let (s, e) = call(&c.app, "POST", &format!("/v1/conversations/{conv_id}/items"), &key, Some(json!({ "items": vec![json!({ "role": "user", "content": "x" }); 21] }))).await;
+    assert_eq!((s, e["error"]["code"].as_str()), (StatusCode::BAD_REQUEST, Some("invalid_items")));
+
+    // Twenty through the route, the rest straight into the store: 250 items.
+    let batch: Vec<Value> = (1..=20).map(|i| json!({ "role": "user", "content": format!("m{i}") })).collect();
+    let (s, added) = call(&c.app, "POST", &format!("/v1/conversations/{conv_id}/items"), &key, Some(json!({ "items": batch }))).await;
+    assert_eq!((s, added["data"].as_array().map(Vec::len), added["has_more"].as_bool()), (StatusCode::OK, Some(20), Some(false)), "{added}");
+    let rest: Vec<super::items::NewItem> = (21..249).map(|i| super::items::NewItem::user_text(&format!("m{i}"))).collect();
+    super::items::append(&c.state.db, &p.id, Some(&conv_id), None, rest).await.unwrap();
+
+    async fn walk(c: &Ctx, key: &str, conv: &str, order: &str) -> Vec<Value> {
+        let (mut out, mut after, mut pages) = (Vec::new(), String::new(), 0);
+        loop {
+            let q = if after.is_empty() { String::new() } else { format!("&after={after}") };
+            let (s, page) = call(&c.app, "GET", &format!("/v1/conversations/{conv}/items?limit=100&order={order}{q}"), key, None).await;
+            assert_eq!(s, StatusCode::OK, "{page}");
+            out.extend(page["data"].as_array().unwrap().iter().cloned());
+            pages += 1;
+            match page["next_cursor"].as_str() {
+                Some(next) if page["has_more"] == true => after = next.to_string(),
+                _ => break,
+            }
+        }
+        assert_eq!(pages, 3, "250 items at 100 a page");
+        out
+    }
+    let asc = walk(&c, &key, &conv_id, "asc").await;
+    let texts: Vec<&str> = asc.iter().map(|i| i["content"][0]["text"].as_str().unwrap()).collect();
+    let want: Vec<String> = std::iter::once("Be brief.".to_string()).chain((0..249).map(|i| format!("m{i}"))).collect();
+    assert_eq!(texts, want, "every item once, in order");
+    let mut desc = walk(&c, &key, &conv_id, "desc").await;
+    desc.reverse();
+    assert_eq!(desc, asc, "desc is asc reversed");
+    let (s, e) = call(&c.app, "GET", &format!("/v1/conversations/{conv_id}/items?order=sideways"), &key, None).await;
+    assert_eq!((s, e["error"]["code"].as_str()), (StatusCode::BAD_REQUEST, Some("invalid_order")));
+
+    // One item; the inline legacy messages are the latest 200 user/assistant messages.
+    let first = asc[1]["id"].as_str().unwrap();
+    let (s, it) = call(&c.app, "GET", &format!("/v1/conversations/{conv_id}/items/{first}"), &key, None).await;
+    assert_eq!((s, it["content"][0]["text"].as_str()), (StatusCode::OK, Some("m0")));
+    let (_, full) = call(&c.app, "GET", &format!("/v1/conversations/{conv_id}"), &key, None).await;
+    let msgs = full["messages"].as_array().unwrap();
+    assert_eq!((full["item_count"].as_i64(), msgs.len(), msgs[0]["content"].as_str(), msgs[199]["content"].as_str()), (Some(250), 200, Some("m49"), Some("m248")));
+    assert_eq!(msgs[0]["object"], "conversation.message");
+
+    // PATCH replaces metadata; a key bound to another account sees nothing.
+    let (s, patched) = call(&c.app, "PATCH", &format!("/v1/conversations/{conv_id}"), &key, Some(json!({ "metadata": { "j": "2" } }))).await;
+    assert_eq!((s, patched["metadata"].clone()), (StatusCode::OK, json!({ "j": "2" })));
+    let key_b = mint(&c, &p, Some(&acct_b), &["agents"]).await;
+    assert_eq!(call(&c.app, "GET", &format!("/v1/conversations/{conv_id}"), &key_b, None).await.0, StatusCode::NOT_FOUND);
+    assert_eq!(call(&c.app, "GET", &format!("/v1/conversations/{conv_id}/items/{first}"), &key_b, None).await.0, StatusCode::NOT_FOUND);
+    let (_, listed) = call(&c.app, "GET", "/v1/conversations", &key_b, None).await;
+    assert!(listed["data"].as_array().unwrap().is_empty(), "{listed}");
+    let (_, listed) = call(&c.app, "GET", &format!("/v1/conversations?account_id={acct_a}"), &key, None).await;
+    assert_eq!(listed["data"][0]["id"].as_str(), Some(conv_id.as_str()));
+
+    // An agent's conversation takes messages, not items; the legacy reply is projected from items.
+    let (_, agent) = call(&c.app, "POST", "/v1/agents", &key, Some(json!({ "account_id": acct_a, "name": "Ada" }))).await;
+    let agent_id = agent["id"].as_str().unwrap();
+    let (s, e) = call(&c.app, "POST", "/v1/conversations", &key, Some(json!({ "agent_id": agent_id, "items": [{ "role": "user", "content": "x" }] }))).await;
+    assert_eq!((s, e["error"]["code"].as_str()), (StatusCode::CONFLICT, Some("conversation_has_agent")));
+    let (s, aconv) = call(&c.app, "POST", "/v1/conversations", &key, Some(json!({ "agent_id": agent_id }))).await;
+    assert_eq!((s, aconv["account_id"].as_str()), (StatusCode::CREATED, Some(acct_a.as_str())));
+    let aconv_id = aconv["id"].as_str().unwrap();
+    let (s, e) = call(&c.app, "POST", &format!("/v1/conversations/{aconv_id}/items"), &key, Some(json!({ "items": [{ "role": "user", "content": "x" }] }))).await;
+    assert_eq!((s, e["error"]["code"].as_str()), (StatusCode::CONFLICT, Some("conversation_has_agent")));
+    let (s, raw) = call_raw(&c.app, "POST", &format!("/v1/conversations/{aconv_id}/messages"), &key, json!({ "content": "hello" })).await;
+    assert_eq!(s, StatusCode::OK, "{raw}");
+    let keys: Vec<usize> = ["\"id\"", "\"object\"", "\"conversation_id\"", "\"role\"", "\"content\"", "\"status\"", "\"error\"", "\"created_at\""].iter().map(|k| raw.find(k).unwrap()).collect();
+    assert!(keys.windows(2).all(|w| w[0] < w[1]), "conversation.message field order: {raw}");
+    let reply: Value = serde_json::from_str(&raw).unwrap();
+    let (_, aitems) = call(&c.app, "GET", &format!("/v1/conversations/{aconv_id}/items"), &key, None).await;
+    let roles: Vec<&str> = aitems["data"].as_array().unwrap().iter().map(|i| i["role"].as_str().unwrap()).collect();
+    assert_eq!(roles, ["user", "assistant"]);
+    assert_eq!(aitems["data"][1]["id"], reply["id"], "the reply is the assistant item");
+    let legacy_rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM platform_conversation_messages WHERE conversation_id = $1").bind(aconv_id).fetch_one(&c.state.db).await.unwrap();
+    assert_eq!(legacy_rows, 0, "the legacy table is no longer written");
+
+    // DELETE takes the items with it.
+    let (s, gone) = call(&c.app, "DELETE", &format!("/v1/conversations/{conv_id}"), &key, None).await;
+    assert_eq!((s, gone), (StatusCode::OK, json!({ "id": conv_id, "object": "conversation.deleted", "deleted": true })));
+    assert_eq!(call(&c.app, "GET", &format!("/v1/conversations/{conv_id}"), &key, None).await.0, StatusCode::NOT_FOUND);
+    let left: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM platform_items WHERE conversation_id = $1").bind(&conv_id).fetch_one(&c.state.db).await.unwrap();
+    assert_eq!(left, 0);
 }
