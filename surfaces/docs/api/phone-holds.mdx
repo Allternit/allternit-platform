@@ -149,6 +149,56 @@ A task started on a thread posts a card on that thread and updates it as the run
 
 `status` is one of `running`, `waiting_approval`, `done`, `denied`, `approval_timeout`, `phone_locked` or `failed`. A `waiting_approval` card also carries `inboxId`, the inbox item that holds the approval. The card is a `phone_task` event on the thread's bot ledger; each change is a new event for the same `runId`, and the newest event is the card's state. A task with no thread posts no card.
 
+### Live step fields on the card (new in this release)
+
+The card now follows the run step by step. Old clients ignore the new fields.
+
+```json
+{ "type": "phone_task", "runId": "task-9c2e…", "serial": "link:1", "goal": "Open Settings",
+  "status": "running", "step": 3, "stepLabel": "Opening the Wi-Fi page",
+  "inboxId": "approval:ap1", "summary": "Wi-Fi is on", "trail": [{ "n": 1, "label": "Typing", "ok": true }] }
+```
+
+| Field | Meaning |
+|---|---|
+| `type` | `phone_task` for a phone run, `computer_task` for a computer run (see [Computer use](/tools/computer-use#the-computer-task-card-new-in-this-release)). |
+| `serial` | The phone serial. On a `computer_task` card it holds the computer id. |
+| `stepLabel` | Optional one-line label of the current step. Present on `running` and `waiting_approval` cards. |
+| `inboxId` | Optional. Set on `waiting_approval`. |
+| `summary` | Optional. Set on `done`. |
+| `trail` | Optional. Only on the closing card: `{n, label, ok}` for each step, 40 entries at most. |
+
+- A `running` card is posted once per step, each with its `stepLabel`.
+- A `waiting_approval` card carries the "Waiting for your OK to ..." label.
+- The closing card carries the full `trail`, so a finished stream stays whole after the per-step events fall out of the thread ledger's 200-event window.
+- The idempotency key stays `phone-task:{run}:{status}:{step}:{inbox}`.
+
+#### The step label rule
+
+The runtime builds every `stepLabel` in Rust; clients never derive one.
+
+- Typing, text and call tools show a fixed phrase: "Typing", "Writing a message", "Starting a call".
+- A sensitive or held step shows "Waiting for your OK to" followed by the effect.
+- Any other step shows the model's `reason`, one line of 80 characters at most, or the action label when the reason is empty.
+
+Typed text never appears in a label, because a raw `reason` can echo it.
+
+#### Live runs rows
+
+`GET /api/v1/phones/history` returns `runs[]`. While a run is live its row carries three new fields: `step`, `step_label` and `trail`. A run with no thread (a gizzi run, or the iMessage path) has no card, so these rows are how a client follows it. A hold merges into the live row instead of replacing it, so the row keeps its `trail`.
+
+#### Status to text mapping
+
+| Status | Chat pill | iMessage subcaption |
+|---|---|---|
+| `running` | "Using phone" or "Using computer", with a working orb | "Using phone · `stepLabel`" |
+| `waiting_approval` | "Needs your OK" (a click opens Review) | "Needs your OK · tap to review" |
+| `done` | "Task completed" with a check | "Done · `summary`" |
+| `denied` | "Denied" | "Denied" |
+| `approval_timeout`, `phone_locked`, `failed`, `offline` | "Couldn't finish" | "Couldn't finish" |
+
+The iMessage app follows a run through `phoneRun` in the [status snapshot](/api/system-surfaces#phone-run-in-the-snapshot-new-in-this-release). Its card caption is the goal and its link is `https://ai.allternit.com/?allternit_phone_run=` followed by the run id. The app link is `allternit://phone-run/` followed by the run id. Each iMessage update is a real message to everyone in the conversation, so the app sends on every status change, on a step change at most once per 8 seconds, and at most 12 times per run.
+
 ### The run's latest screen
 
 ```http

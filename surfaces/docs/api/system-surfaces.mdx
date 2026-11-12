@@ -58,6 +58,24 @@ Inbox items also carry `contentHash`, `sessionId` and `full {to, toName, text}`.
 - Limits: `bots` holds at most 20 entries, `needsYouRows` at most 4, and each `line` at most 80 characters. `progress` is optional.
 - Loop source: the snapshot producer polls the Gizzi server's `GET /v1/automations/loops` on loopback. It polls every 5 seconds while a loop runs and every 60 seconds otherwise. A failed poll leaves `loops` out of the snapshot, so a Gizzi restart does not end the activity.
 
+### Phone run in the snapshot (new in this release)
+
+While a phone or computer run is live, and shortly after it ends, the snapshot also carries `phoneRun`:
+
+```json
+{"phoneRun":{"runId":"task-9c2e","kind":"phone","goal":"Open Settings","status":"running","step":3,
+ "stepLabel":"Opening the Wi-Fi page","trail":[{"n":2,"label":"Typing","ok":true}],
+ "summary":"Wi-Fi is on","inboxId":"approval:ap1"}}
+```
+
+- `kind` is `phone` or `computer`. `status` uses the same values as the [phone task card](/api/phone-holds#the-phone-task-card). `summary` and `inboxId` are optional.
+- `stepLabel` follows the [step label rule](/api/phone-holds#the-step-label-rule). `trail` holds the last 6 steps.
+- `phoneRun` is absent when no run is live or recently ended.
+- The runtime builds the snapshot in `cmd/allternit-api/src/status_snapshot.rs` and pushes it every 5 seconds on change. Cloud stores it as opaque JSON, so it needs no migration.
+- The iMessage extension reads it through `GET /api/v1/status/summary` with its existing read token, so no new auth scope exists.
+
+The status to pill and subcaption table is in [Phone holds](/api/phone-holds#status-to-text-mapping).
+
 ## Notification categories (planned)
 
 The category comes from `inboxKind`, not from the event name. An email draft that arrives as `thread.needs_user` therefore still gets approval buttons.
