@@ -4394,6 +4394,63 @@
         "allternit/surfaces/allternit-mobile/ios/Features/Decisions/Views/PermissionAskView.swift",
         "allternit/surfaces/docs/guides/analyze-files.mdx"
       ]
+    },
+    {
+      "id": "feature:self-hosted-agents",
+      "label": "Self-Hosted Agents server (customer-run, no calls to Allternit)",
+      "product": "product:allternit-api",
+      "status": "building",
+      "description": "A customer runs the whole agent service in their own environment: allternit-agents-server (API, agent loop via a gizzi child, Postgres or SQLite state) plus gizzi workers that poll a fleet work queue over outbound HTTPS and run shell/file tools in a sandbox. Model calls go to the customer's provider (Anthropic, Bedrock, Vertex, Foundry or a gateway with a model_map). Desktop, web, phone layout, PWA, iOS and gizzi connect to the server URL with a server API key.",
+      "touches": [
+        "allternit/cmd/allternit-api/src/bin/allternit-agents-server.rs",
+        "allternit/cmd/allternit-api/src/selfhost/mod.rs",
+        "allternit/cmd/allternit-api/src/selfhost/loop.rs",
+        "allternit/cmd/allternit-api/src/selfhost/routes_work.rs",
+        "allternit/cmd/allternit-api/src/selfhost/store/mod.rs",
+        "allternit/cmd/allternit-api/openapi/selfhost-v1.yaml",
+        "allternit/cmd/gizzi-code/src/runtime/tools/remote-host.ts",
+        "allternit/cmd/gizzi-code/src/runtime/selfhost/worker.ts",
+        "allternit/cmd/gizzi-code/src/runtime/providers/selfhost-inference.ts",
+        "allternit/cmd/gizzi-code/src/shared/selfhost/offline.ts",
+        "allternit/cmd/gizzi-code/src/cli/commands/worker.ts",
+        "allternit-ai/src/components/settings/SelfHostedServerPanel.tsx",
+        "allternit-ai/src/lib/selfhost/client.ts",
+        "allternit-ai/src/pages/RuntimesPage.tsx",
+        "allternit/surfaces/allternit-desktop/src/main/selfhost-credentials-ipc.ts",
+        "allternit/surfaces/allternit-mobile/ios/Core/SelfHosted/SelfHostedClient.swift",
+        "allternit/surfaces/allternit-mobile/ios/Features/Settings/SelfHosted/SelfHostedSettingsView.swift",
+        "allternit/sdk/platform-ts/src/selfhost/client.ts",
+        "allternit/deploy/selfhost/compose/docker-compose.yml",
+        "allternit/surfaces/docs/self-hosted/overview.mdx"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-13",
+          "note": "Built from Eoj's request to match Anthropic's self-hosted Managed Agents; plan ~/.claude/plans/declarative-sprouting-catmull.md, contract approved (G1)."
+        }
+      ],
+      "evidence": [
+        "allternit/cmd/allternit-api/src/bin/allternit-agents-server.rs",
+        "allternit/cmd/allternit-api/src/selfhost/mod.rs",
+        "allternit/cmd/allternit-api/src/selfhost/loop.rs",
+        "allternit/cmd/allternit-api/src/selfhost/routes_work.rs",
+        "allternit/cmd/allternit-api/src/selfhost/store/mod.rs",
+        "allternit/cmd/allternit-api/openapi/selfhost-v1.yaml",
+        "allternit/cmd/gizzi-code/src/runtime/tools/remote-host.ts",
+        "allternit/cmd/gizzi-code/src/runtime/selfhost/worker.ts",
+        "allternit/cmd/gizzi-code/src/runtime/providers/selfhost-inference.ts",
+        "allternit/cmd/gizzi-code/src/shared/selfhost/offline.ts",
+        "allternit/cmd/gizzi-code/src/cli/commands/worker.ts",
+        "allternit-ai/src/components/settings/SelfHostedServerPanel.tsx",
+        "allternit-ai/src/lib/selfhost/client.ts",
+        "allternit-ai/src/pages/RuntimesPage.tsx",
+        "allternit/surfaces/allternit-desktop/src/main/selfhost-credentials-ipc.ts",
+        "allternit/surfaces/allternit-mobile/ios/Core/SelfHosted/SelfHostedClient.swift",
+        "allternit/surfaces/allternit-mobile/ios/Features/Settings/SelfHosted/SelfHostedSettingsView.swift",
+        "allternit/sdk/platform-ts/src/selfhost/client.ts",
+        "allternit/deploy/selfhost/compose/docker-compose.yml",
+        "allternit/surfaces/docs/self-hosted/overview.mdx"
+      ]
     }
   ],
   "journeys": [
