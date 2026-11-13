@@ -9,6 +9,7 @@
  */
 
 import { api } from "@/lib/api-client";
+import type { DecisionOutcome, V1Decision } from "@/lib/decisions";
 
 export const PROJECT_HEADER = "X-Allternit-Project";
 
@@ -379,6 +380,11 @@ export function v1(projectId: string) {
     phoneHistory: (serial: string, runId?: string | null) =>
       api.get<V1PhoneHistory>(`/v1/phones/${enc(serial)}/history${qs({ run_id: runId })}`, opts),
     phoneLive: (serial: string) => api.post<V1PhoneLive>(`/v1/phones/${enc(serial)}/live`, undefined, opts),
+
+    listDecisions: (after?: string | null) => api.get<V1Page<V1Decision>>(`/v1/decisions${qs({ limit: 50, after })}`, opts),
+    getDecision: (id: string) => api.get<V1Decision>(`/v1/decisions/${enc(id)}`, opts),
+    recordOutcomes: (id: string, outcomes: Record<string, DecisionOutcome>) =>
+      api.patch<V1Decision>(`/v1/decisions/${enc(id)}`, { outcomes }, opts),
 
     getTracing: () => api.get<V1ProjectTracing>(`/v1/projects/${enc(projectId)}/tracing`, opts),
     putTracing: (input: { endpoint: string; headers?: Record<string, string>; service_name?: string; enabled?: boolean }) =>
