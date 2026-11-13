@@ -150,6 +150,10 @@ final class APIClient: @unchecked Sendable {
             // the device log.
             NSLog("[APIClient] %d %@", httpResponse.statusCode, httpResponse.url?.path ?? "-")
             #endif
+            // 409 compute_required: the account has no computer; open the gate.
+            if httpResponse.statusCode == 409, ComputeHTTP.errorCode(data) == "compute_required" {
+                Task { @MainActor in ComputeStatusStore.shared.noteComputeRequired() }
+            }
             throw APIError.httpError(
                 statusCode: httpResponse.statusCode,
                 message: Self.errorMessage(from: data)

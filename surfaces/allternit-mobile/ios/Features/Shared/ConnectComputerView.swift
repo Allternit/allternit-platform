@@ -18,12 +18,22 @@ struct ConnectComputerView: View {
     @ObservedObject private var relay = RuntimeRelayStore.shared
     @ObservedObject private var instances = InstanceStore.shared
     @Environment(\.shellShowsNoComputer) private var shellShowsNoComputer
+    @ObservedObject private var compute = ComputeStatusStore.shared
     @State private var isSheetPresented = false
+
+    /// The compute gate (or its check failing) takes the banner's place.
+    private var gateVisible: Bool {
+        if compute.loadFailed && compute.status == nil { return true }
+        guard let s = compute.status else { return false }
+        return s.gate || ComputeGateNotice.text(s) != nil
+    }
 
     var body: some View {
         Group {
             if shellShowsNoComputer && !isShellBanner {
                 EmptyView()
+            } else if gateVisible {
+                ComputeGateStrip()
             } else if relay.isWaking {
                 row(text: "Waking your computer…", action: nil, showsProgress: true)
             } else if shouldShow {
@@ -35,6 +45,7 @@ struct ConnectComputerView: View {
             }
         }
         .task {
+            await compute.refreshIfNeeded()
             await relay.refresh()
             await instances.refreshIfNeeded()
         }

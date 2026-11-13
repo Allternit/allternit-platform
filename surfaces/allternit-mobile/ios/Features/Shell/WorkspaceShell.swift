@@ -14,6 +14,7 @@ struct MainWorkspaceView: View {
     @EnvironmentObject private var modeStore: AppModeStore
     @ObservedObject private var botColors = BotColorStore.shared
     @ObservedObject private var railBackdrop = RailBackdropStore.shared
+    @ObservedObject private var computeGate = ComputeStatusStore.shared
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isSidebarOpen = false
     @State private var dragOffset: CGFloat = 0
@@ -39,6 +40,12 @@ struct MainWorkspaceView: View {
     }
 
     var body: some View {
+        shellBody
+            // 409 compute_required from any agent route opens the gate.
+            .sheet(isPresented: $computeGate.showGateSheet) { ComputeGateSheet() }
+    }
+
+    private var shellBody: some View {
         ZStack(alignment: .leading) {
             // Root backdrop — also the strip behind the status bar / home
             // indicator (the content pane is clipped to the safe area and

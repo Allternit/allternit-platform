@@ -351,6 +351,7 @@ struct FirstRunSetupView: View {
                     .padding(.bottom, 8)
                     .id("q-\(field.rawValue)")
                     .setupRise()
+                if field == .where { SetupComputeGatePanel().padding(.bottom, 8) }
                 tileList(field)
                 if let card = resultCard(eff, field) {
                     SetupResultCardView(card: card, working: busy)
