@@ -752,6 +752,13 @@ export interface AllternitDesktopAPI {
   permissionGuide: PermissionGuideAPI;
   phones: PhonesAPI;
   phoneLink: import('../main/phone-link-types').PhoneLinkAPI;
+  selfhost: {
+    credentials: {
+      get: (name: string) => Promise<string | null>;
+      set: (name: string, value: string) => Promise<{ success: boolean; error?: string }>;
+      delete: (name: string) => Promise<{ success: boolean }>;
+    };
+  };
   featureFlags: FeatureFlagsAPI;
   findInPage: FindInPageAPI;
   locale: LocaleAPI;
