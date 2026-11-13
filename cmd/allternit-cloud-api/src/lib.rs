@@ -480,6 +480,9 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         // Zoom for Meetings: /api/v1/zoom/* and the pod-token
         // /api/v1/meeting-sessions/:sid/zoom-tokens (docs/meetings/ZOOM.md).
         .merge(routes::zoom::routes())
+        // Compute gate (which computer the account has, chat-only choice);
+        // Clerk session or `account` API token per-request.
+        .merge(routes::account_compute::routes())
         .merge(routes::web_search::routes())
         // Setup checklist: live checks for account, brain, computers, channels.
         .merge(routes::setup_checks::routes())

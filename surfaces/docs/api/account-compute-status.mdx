@@ -21,20 +21,23 @@ A signed-in account with no computer does not reach agent work until it links it
   "paths": {
     "own": { "download_url": "https://www.allternit.com/download", "pairing_supported": true },
     "plan": { "plans": [
-      { "id": "plus", "name": "Plus", "price_usd_month": 20,
-        "computer": { "cpu": 2, "memory_gb": 8, "disk_gb": 50 }, "included_hours": 200 }
+      { "id": "plus", "billing_plan_id": "plus", "name": "Plus", "price_usd_month": 20,
+        "computer": { "cpu": 2, "memory_gb": 8, "disk_gb": 50 }, "included_hours": 200 },
+      { "id": "max", "billing_plan_id": "super", "name": "Max", "price_usd_month": 100,
+        "computer": { "cpu": 4, "memory_gb": 16, "disk_gb": 100 }, "included_hours": null }
     ] },
     "credits": {
       "price_per_hour_usd": 0.10, "stopped_price_per_hour_usd": 0.005,
       "balance_usd": 0.0, "min_start_usd": 5,
-      "sizes": [ { "id": "medium", "cpu": 2, "memory_gb": 8, "disk_gb": 50 } ]
+      "sizes": [ { "id": "medium", "cpu": 2, "memory_gb": 8, "disk_gb": 50,
+                   "price_per_hour_usd": 0.10, "stopped_price_per_hour_usd": 0.005 } ]
     }
   },
   "docs_url": "https://docs.allternit.com/api/account-compute-status"
 }
 ```
 
-Prices and included hours shown here are not final. Read them from `paths`, do not hard-code them.
+Prices, sizes and included hours shown here are not final. Read them from `paths`, do not hard-code them. Plan sizes come from the server's plan table, so they can differ from this example.
 
 | Field | Meaning |
 | --- | --- |
@@ -42,8 +45,13 @@ Prices and included hours shown here are not final. Read them from `paths`, do n
 | `online` | The computer is reachable now. |
 | `gate` | True when `state` is `none` or `suspended`. Agent entry is refused while true. |
 | `acknowledged_at` | When the user confirmed chat-only. Does not lift the gate. |
-| `computer` | `{id, kind, provider, status, sleeps_when_idle}` or null. `kind` is `own`, `plan` or `credits`. `provider` is `incus`, `orgo` or null. |
+| `computer` | `{id, kind, provider, status, sleeps_when_idle, runway_hours, retention_until}` or null. `kind` is `own`, `plan` or `credits`. `provider` is `incus`, `orgo` or null (your own machine). `status` is `running`, `sleeping`, `starting`, `stopped` or `error`. |
+| `computer.runway_hours` | Credit computers: hours of running time the balance buys. Show the low-runway notice at 24 and 2. Null otherwise. |
+| `computer.retention_until` | Suspended computers: when the stopped computer is deleted (RFC 3339). Null otherwise. |
+| `paths.plan.plans[].billing_plan_id` | The id to pass to `POST /api/v1/billing/subscribe` (Max is `super`). |
 | `paths.credits` | Null when credit computers are not enabled. |
+
+When both your own Desktop and a hosted computer exist, `state` reports your default computer. A failed hosted create shows as `none` with `computer.status` of `error` for a day, so clients can offer a retry. Free hosted computers do not count.
 
 ## Acknowledge chat-only
 
@@ -74,11 +82,20 @@ Create a code with `POST /api/v1/runtime-pairings`, open the download page with 
 
 | Method | Path | Notes |
 | --- | --- | --- |
-| POST | `/api/v1/provisioned-instances/credit` | Create or start a hosted computer billed from the credit wallet. |
-| POST | `/api/v1/provisioned-instances/credit/stop` | Stop it. The stopped rate applies. |
-| POST | `/api/v1/provisioned-instances/free` | Always `410` with `error.code` of `free_computers_retired`. |
+| POST | `/api/v1/provisioned-instances/credit` | Body `{"size":"medium"}` (optional). Create or start a hosted computer billed from the credit wallet. `202 {"id","status":"starting","pollUrl","instance"}`, or `200` with `"status":"running"` when it already runs. Poll `pollUrl` until `instance.runtimeOnline` is true. |
+| POST | `/api/v1/provisioned-instances/credit/stop` | Stop it. The stopped rate applies. `200 {"instance"}`; `404` when the account has none. |
+| POST | `/api/v1/provisioned-instances/free` | `410` with `error.code` of `free_computers_retired`. |
 
-Billing is per minute while running. Starting needs at least `min_start_usd`, otherwise the API answers `402` with `error.code` of `insufficient_credits` and `min_start_usd`. Warnings come at 24 hours and 2 hours of runway. The computer stops at $0 and the state becomes `suspended`.
+Both credit routes answer `404` while credit computers are not enabled.
+
+Billing is per minute: the running price while it runs, the stopped price while it is stopped or asleep, both debited from the credit wallet. Starting (also restarting a stopped-at-$0 computer) needs at least `min_start_usd`, otherwise the API answers:
+
+```json
+{ "error": { "code": "insufficient_credits", "message": "Starting needs at least $5 in credits.",
+             "min_start_usd": 5, "balance_usd": 1.2 } }
+```
+
+with status `402`. Warnings come at 24 hours and 2 hours of runway. The computer stops at $0 and the state becomes `suspended`; its disk is kept until `computer.retention_until`, then it is deleted. A suspended computer is not billed.
 
 ## Flags
 
@@ -86,3 +103,5 @@ Billing is per minute while running. Starting needs at least `min_start_usd`, ot
 | --- | --- | --- |
 | `ALLTERNIT_COMPUTE_GATE` | `off`, `on` | Turns enforcement on. Default off. |
 | `ALLTERNIT_CREDIT_COMPUTERS` | `0`, `1` | Turns the credits path on. Default off. |
+
+Prices, the minimum start, retention and the warning emails are set by environment variables listed in [Compute providers](/operations/compute-providers#compute-gate-and-credit-computers).

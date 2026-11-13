@@ -82,7 +82,8 @@ pub use provisioning::{
     ProvisionDefaults, ProvisionError, ProvisionSpec, ProvisioningService, SuspendReason, INIT_SCRIPT,
     free_incus_name_for, note_runtime_attached, start_free_computer_task,
     touch_provisioned_activity, FreeDefaults, ProvisionedWakeOutcome, WakeReason, WakeResult,
-    TIER_FREE, TIER_PAID,
+    TIER_FREE, TIER_PAID, TIER_CREDIT, credit_computers_enabled, start_credit_computer_task,
+    CreditDefaults, CreditStart, CreditTick, CREDIT_SIZE_ID,
 };
 pub use quota_service::{QuotaService, SharedQuotaService, UserQuota};
 pub use run_service::{RunListFilter, RunService, RunServiceImpl};
