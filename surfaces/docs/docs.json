@@ -966,7 +966,9 @@
               "console/playground",
               "console/models-and-pricing",
               "console/usage-and-logs",
-              "console/governance"
+              "console/governance",
+              "console/navigation",
+              "console/approvals-and-decisions"
             ],
             "icon": "/icons/code.svg"
           },

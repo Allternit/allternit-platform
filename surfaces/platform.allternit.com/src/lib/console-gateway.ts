@@ -269,7 +269,7 @@ export function describeGatewayError(status: number, serverMessage?: string): st
   const detail = serverMessage ? ` (${serverMessage})` : "";
   switch (status) {
     case 401:
-      return `The Playground key was rejected. Run again to get a fresh key.${detail}`;
+      return `The request wasn't authorized. Run again; if it keeps failing, sign in again.${detail}`;
     case 403:
       return `This project's key is not allowed to use that model or feature.${detail}`;
     case 402:
@@ -312,13 +312,40 @@ export async function gatewayChat(
   body: ChatCompletionRequest,
   opts: { signal?: AbortSignal; onChunk?: (chunk: ChatCompletionChunk) => void }
 ): Promise<GatewayChatResult> {
+  return gatewayPost("/v1/chat/completions", key, body as unknown as Record<string, unknown>, {
+    signal: opts.signal,
+    onEvent: opts.onChunk ? (_name, data) => opts.onChunk?.(data as ChatCompletionChunk) : undefined,
+  });
+}
+
+/** One parsed SSE event: the `event:` name ("message" when absent) and the JSON `data:` payload. */
+export type GatewayStreamEvent = { event: string; data: unknown };
+
+/**
+ * POST a Platform API body (`/v1/chat/completions`, `/v1/responses`,
+ * `/v1/messages`) with a Bearer key. Same error and streaming rules as
+ * gatewayChat; for `stream: true` each `data:` line is parsed and handed to
+ * `onEvent` with the event name that preceded it (chat completions send none).
+ */
+export async function gatewayPost(
+  path: string,
+  key: string,
+  body: Record<string, unknown>,
+  opts: {
+    signal?: AbortSignal;
+    onEvent?: (event: string, data: unknown) => void;
+    /** Extra request headers (the console session's `X-Allternit-Project`). */
+    headers?: Record<string, string>;
+  }
+): Promise<GatewayChatResult> {
   const started = performance.now();
-  const response = await fetch(`${gatewayBaseUrl()}/v1/chat/completions`, {
+  const response = await fetch(`${gatewayBaseUrl()}${path}`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${key}`,
       "Content-Type": "application/json",
       Accept: body.stream ? "text/event-stream" : "application/json",
+      ...(opts.headers ?? {}),
     },
     body: JSON.stringify(body),
     signal: opts.signal,
@@ -358,6 +385,7 @@ export async function gatewayChat(
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  let eventName = "message";
   try {
     for (;;) {
       const { done, value } = await reader.read();
@@ -367,6 +395,14 @@ export async function gatewayChat(
       while ((nl = buffer.indexOf("\n")) >= 0) {
         const line = buffer.slice(0, nl).trim();
         buffer = buffer.slice(nl + 1);
+        if (line === "") {
+          eventName = "message";
+          continue;
+        }
+        if (line.startsWith("event:")) {
+          eventName = line.slice(6).trim() || "message";
+          continue;
+        }
         if (!line.startsWith("data:")) continue;
         const payload = line.slice(5).trim();
         if (payload === "[DONE]") {
@@ -377,10 +413,17 @@ export async function gatewayChat(
             json: undefined,
           };
         }
+        let parsed: unknown;
         try {
-          opts.onChunk?.(JSON.parse(payload) as ChatCompletionChunk);
+          parsed = JSON.parse(payload);
         } catch {
           // keep-alive or comment payload
+          continue;
+        }
+        try {
+          opts.onEvent?.(eventName, parsed);
+        } catch {
+          // A handler error drops this one event, as before; the stream goes on.
         }
       }
     }

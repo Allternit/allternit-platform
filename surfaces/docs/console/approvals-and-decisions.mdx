@@ -1,0 +1,29 @@
+---
+title: 'Approvals and decisions'
+description: 'Review agent actions that need an owner, and record outcomes for decisions.'
+---
+
+Both pages are in the Platform API group and work on the selected [project](/console/projects). You need a project to use them.
+
+## Approvals
+
+The Approvals page (`/approvals`) uses `GET /v1/approvals`. It lists actions your agents proposed that need the owner's OK.
+
+- Filter by status: pending, approved, denied, expired or consumed.
+- Filter by source: Twin or Computer.
+- Select **Approve** or **Deny**. This calls `POST /v1/approvals/:id` with a `decision` of `approve` or `deny`.
+- Follow the links to the conversation or response that proposed the action.
+
+Cancel is not offered. A pending approval is either decided or it expires.
+
+## Decisions
+
+The Decisions page (`/platform/decisions`) uses `GET /v1/decisions`. It lists decisions your agents made.
+
+- Open a decision to see the options with probability bars.
+- Record the outcome. The console sends a `PATCH` to the decision.
+
+## Related
+
+- [Navigation](/console/navigation)
+- [Governance](/console/governance)

@@ -636,6 +636,7 @@
 		DFD61E74AD745777D77785A1 /* LiveKit in Frameworks */ = {isa = PBXBuildFile; productRef = 3BC35ADADF8DFFD314318117 /* LiveKit */; };
 		E011E8E55BE6B106ACF1073F /* FirstRunSetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 52010EB8219766551769D25B /* FirstRunSetupView.swift */; };
 		E02AB91657662D315445FD9F /* NotificationActions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7CEACA169A7BAD897AE60F35 /* NotificationActions.swift */; };
+		E02B5A75A3258D68468F0231 /* LinkBoard.swift in Sources */ = {isa = PBXBuildFile; fileRef = BFA17FDFD3ABDA91B8ABA94B /* LinkBoard.swift */; };
 		E075C0D8C56469AAF92A34ED /* BotProjectPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = E90183D58848B7BC017524C2 /* BotProjectPage.swift */; };
 		E0CAFD1462C34B7C970301C9 /* Entities.swift in Sources */ = {isa = PBXBuildFile; fileRef = B79C58B39750008BDE881C8B /* Entities.swift */; };
 		E0DC0E1E8A05B5F96AD473F6 /* TerminalServiceClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8B1021918E68EBAC25DAEC2 /* TerminalServiceClient.swift */; };
@@ -679,6 +680,7 @@
 		EFEE69415FF2CD3FBF0058CA /* AppPhoneLink.swift in Sources */ = {isa = PBXBuildFile; fileRef = 32DF0D2473DA44EC0CF41008 /* AppPhoneLink.swift */; };
 		F047EB8C6BDC03144EDF1187 /* ModeTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E7FB6E04286889DF3D4A1A6 /* ModeTheme.swift */; };
 		F0F75D379AB8F2DA9824B416 /* DelegateIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3EC6EDF88BCC99A466446F44 /* DelegateIntents.swift */; };
+		F145B9FC8506FF516F81359D /* LinkBoardDecodingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 171D5808AEEEBB1DA45D9EC0 /* LinkBoardDecodingTests.swift */; };
 		F14CA18B4E7DEDEDAA44F97C /* MeetVendorPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = C8D3F9547DC368CCA7166367 /* MeetVendorPanel.swift */; };
 		F1A225B56720D12EF63EA3F1 /* ProviderInfo.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC5B4B49803766889533088C /* ProviderInfo.swift */; };
 		F1E2C52CD5929D585E81AB19 /* ReplayKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 08ECCB8B13DE07B27E41D3D2 /* ReplayKit.framework */; };
@@ -711,6 +713,7 @@
 		FC968DAFF1558F8F269CEB4B /* SubagentsSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B39AAE7FBCFE14C0E9A6D418 /* SubagentsSettingsView.swift */; };
 		FD8EDC6D571088159DE61BE9 /* BotActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6705087F95CB65F4CAFDBB53 /* BotActivityAttributes.swift */; };
 		FDA3FE969C5ED9A7445AF1B9 /* DevPreviewClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E8CB0BD0F5ECDD86A8F010D /* DevPreviewClient.swift */; };
+		FDE5709F65A8E4390CEB925B /* ByokVoice.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FAB7261305AF6B2F5601DFF /* ByokVoice.swift */; };
 		FE8B6D34018BE9584D17E531 /* BotProjectPanes.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8FD1CB110D3F95E09D3D165 /* BotProjectPanes.swift */; };
 		FEA213F071503B7A07B32330 /* RuntimeOperationsModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E309E127E42B78330B54B0E /* RuntimeOperationsModels.swift */; };
 		FEB8E6984D1F9B73C03B7BBD /* WidgetFace.swift in Sources */ = {isa = PBXBuildFile; fileRef = 97212F4BDDE5652FF47596FD /* WidgetFace.swift */; };
@@ -852,6 +855,7 @@
 		16F6C3F9B79D37665FF643D3 /* IntelliScheduleEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IntelliScheduleEngine.swift; sourceTree = "<group>"; };
 		170E9249231498594D003369 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		171BCC12EDA4F66CEB80E43C /* DecideIntents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DecideIntents.swift; sourceTree = "<group>"; };
+		171D5808AEEEBB1DA45D9EC0 /* LinkBoardDecodingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LinkBoardDecodingTests.swift; sourceTree = "<group>"; };
 		1729C036634FA4AF903FD1B1 /* login-arrival.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; path = "login-arrival.html"; sourceTree = "<group>"; };
 		179676EEA871FCEC692E3990 /* AllternitWidgets.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = AllternitWidgets.entitlements; sourceTree = "<group>"; };
 		17A6395C46796FEB84D951E6 /* WebhookTriggersStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebhookTriggersStore.swift; sourceTree = "<group>"; };
@@ -1141,6 +1145,7 @@
 		8E94E901486FE16F1874839C /* Secrets.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Secrets.xcconfig; sourceTree = "<group>"; };
 		8EA82180F7A2046DAEA52E6F /* ChatView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatView.swift; sourceTree = "<group>"; };
 		8F1773539996DD0C8EB6E726 /* SherpaOnnx.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SherpaOnnx.swift; sourceTree = "<group>"; };
+		8FAB7261305AF6B2F5601DFF /* ByokVoice.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ByokVoice.swift; sourceTree = "<group>"; };
 		90CF477027052D37D783286C /* CodeOverviewSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodeOverviewSheet.swift; sourceTree = "<group>"; };
 		914FE83348400D7577B8EB07 /* PrewarmManagerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrewarmManagerView.swift; sourceTree = "<group>"; };
 		91572463CAB3A25D69FEABED /* BotHomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotHomeView.swift; sourceTree = "<group>"; };
@@ -1265,6 +1270,7 @@
 		BE44ED582CA4DA23E6DADFBB /* DecideDelegateIntentRulesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DecideDelegateIntentRulesTests.swift; sourceTree = "<group>"; };
 		BE858D6AF3774303747A0D87 /* FileBrowserDirectoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileBrowserDirectoryView.swift; sourceTree = "<group>"; };
 		BF2029F453F4A9EA8C874464 /* StatusSnapshotTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusSnapshotTests.swift; sourceTree = "<group>"; };
+		BFA17FDFD3ABDA91B8ABA94B /* LinkBoard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LinkBoard.swift; sourceTree = "<group>"; };
 		BFFE812B71668541B86320E1 /* NodeDirectory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NodeDirectory.swift; sourceTree = "<group>"; };
 		C016226CB6869693C4B2F472 /* BotChatSessionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotChatSessionView.swift; sourceTree = "<group>"; };
 		C06CD7152FFD4F0D52DD4BBA /* AgentDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentDetailView.swift; sourceTree = "<group>"; };
@@ -1713,6 +1719,7 @@
 		36ACD8B5EE96431E93AF2A6D /* Voice */ = {
 			isa = PBXGroup;
 			children = (
+				8FAB7261305AF6B2F5601DFF /* ByokVoice.swift */,
 				03A5F3D7BDB50F7FF2388D3F /* Bz2Tar.swift */,
 				E056E8E54B52FF70C59DE250 /* KokoroSpeech.swift */,
 				27522796D66DD8598AF0E758 /* LocalVoiceBackends.swift */,
@@ -1971,6 +1978,7 @@
 				C343A72EAB0FEDC0099032C4 /* ACIBrowserBridge.swift */,
 				2845EEA196FE2DBF1EDFE9E1 /* AppPhoneService.swift */,
 				29A1419A6712D19C70C180C1 /* AppPhonesSettingsView.swift */,
+				BFA17FDFD3ABDA91B8ABA94B /* LinkBoard.swift */,
 				67BFAE687DE917E83F07757A /* PhoneSurfacesGallery.swift */,
 				F35A37E302DD3C63E6412452 /* PhoneTaskCardView.swift */,
 				65DE584766D15F75782CB57E /* PhoneTaskClient.swift */,
@@ -2088,6 +2096,7 @@
 				BE44ED582CA4DA23E6DADFBB /* DecideDelegateIntentRulesTests.swift */,
 				6D1CF76A3B4AF38B5A019D23 /* DeepLinkTests.swift */,
 				DD7AEBB0FB7A8734D3B1DA5C /* EditHistoryTests.swift */,
+				171D5808AEEEBB1DA45D9EC0 /* LinkBoardDecodingTests.swift */,
 				4D3988B903632B3ADBE8074A /* LiveActivityManagerTests.swift */,
 				FD8B49B37F98609F680978B5 /* MessageDraftCardTests.swift */,
 				B4FF0B496D38903A463A4B81 /* NativePaneRendererTests.swift */,
@@ -3284,6 +3293,7 @@
 				5C2093288994F432DB8B4804 /* DecideDelegateIntentRulesTests.swift in Sources */,
 				7A8A041B3D2EB92063AC4836 /* DeepLinkTests.swift in Sources */,
 				4121CD4E66C00FEDC29BE409 /* EditHistoryTests.swift in Sources */,
+				F145B9FC8506FF516F81359D /* LinkBoardDecodingTests.swift in Sources */,
 				D3F8D1E73F813E13DAAFF1D2 /* LiveActivityManagerTests.swift in Sources */,
 				1A50A4EF874CED28EA26C293 /* MessageDraftCardTests.swift in Sources */,
 				1D30FE683EABE02400B9EE6C /* NativePaneRendererTests.swift in Sources */,
@@ -3456,6 +3466,7 @@
 				F7B19CC042E5B3F179191EE8 /* BrainsClient.swift in Sources */,
 				A076803F5886FF12CF36A054 /* BrowserChatView.swift in Sources */,
 				C230ADFADE88022662D3F365 /* BudgetDashboardView.swift in Sources */,
+				FDE5709F65A8E4390CEB925B /* ByokVoice.swift in Sources */,
 				021521EDBDEF3B9033EBD5A1 /* Bz2Tar.swift in Sources */,
 				35FFBD20A864D0ADCA415580 /* CallAudio.swift in Sources */,
 				5DC5E2B00685DA941532809A /* CanvasClient.swift in Sources */,
@@ -3596,6 +3607,7 @@
 				C019640E35C6466E61D79072 /* KokoroSpeech.swift in Sources */,
 				BD69C6D7D65E0ABAB17A50BC /* LaunchArguments.swift in Sources */,
 				F9AE9C7766C4FC55919A399F /* LibrarySectionChrome.swift in Sources */,
+				E02B5A75A3258D68468F0231 /* LinkBoard.swift in Sources */,
 				5B10333F9113A6EFBE08747B /* LiveModeLookSection.swift in Sources */,
 				D50AD8ED55A115423F584718 /* LiveScreenPacket.swift in Sources */,
 				4E0B0117142FDF231A79FEBC /* LocalDocumentView.swift in Sources */,
@@ -3940,7 +3952,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = AllternitNotifications/AllternitNotifications.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 34;
+				CURRENT_PROJECT_VERSION = 35;
 				DEVELOPMENT_TEAM = MQ85968PQP;
 				INFOPLIST_FILE = AllternitNotifications/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
@@ -4027,7 +4039,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = AllternitShare/AllternitShare.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 34;
+				CURRENT_PROJECT_VERSION = 35;
 				DEVELOPMENT_TEAM = MQ85968PQP;
 				INFOPLIST_FILE = AllternitShare/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
@@ -4051,7 +4063,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = AllternitShare/AllternitShare.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 34;
+				CURRENT_PROJECT_VERSION = 35;
 				DEVELOPMENT_TEAM = MQ85968PQP;
 				INFOPLIST_FILE = AllternitShare/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
@@ -4076,7 +4088,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = "iMessage App Icon";
 				CODE_SIGN_ENTITLEMENTS = AllternitMessages/AllternitMessages.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 34;
+				CURRENT_PROJECT_VERSION = 35;
 				DEVELOPMENT_TEAM = MQ85968PQP;
 				INFOPLIST_FILE = AllternitMessages/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
@@ -4100,7 +4112,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = AllternitWidgets/AllternitWidgets.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 34;
+				CURRENT_PROJECT_VERSION = 35;
 				DEVELOPMENT_TEAM = MQ85968PQP;
 				INFOPLIST_FILE = AllternitWidgets/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
@@ -4124,7 +4136,7 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 34;
+				CURRENT_PROJECT_VERSION = 35;
 				DEVELOPMENT_TEAM = MQ85968PQP;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
@@ -4148,7 +4160,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = AllternitScreen/AllternitScreen.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 34;
+				CURRENT_PROJECT_VERSION = 35;
 				DEVELOPMENT_TEAM = MQ85968PQP;
 				INFOPLIST_FILE = AllternitScreen/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
@@ -4173,7 +4185,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = "iMessage App Icon";
 				CODE_SIGN_ENTITLEMENTS = AllternitMessages/AllternitMessages.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 34;
+				CURRENT_PROJECT_VERSION = 35;
 				DEVELOPMENT_TEAM = MQ85968PQP;
 				INFOPLIST_FILE = AllternitMessages/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
@@ -4197,7 +4209,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = AllternitScreen/AllternitScreen.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 34;
+				CURRENT_PROJECT_VERSION = 35;
 				DEVELOPMENT_TEAM = MQ85968PQP;
 				INFOPLIST_FILE = AllternitScreen/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
@@ -4228,7 +4240,7 @@
 				CODE_SIGN_ENTITLEMENTS = Allternit.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 34;
+				CURRENT_PROJECT_VERSION = 35;
 				DEVELOPMENT_TEAM = MQ85968PQP;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(inherited)",
@@ -4258,7 +4270,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = AllternitWidgets/AllternitWidgets.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 34;
+				CURRENT_PROJECT_VERSION = 35;
 				DEVELOPMENT_TEAM = MQ85968PQP;
 				INFOPLIST_FILE = AllternitWidgets/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
@@ -4282,7 +4294,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = AllternitNotifications/AllternitNotifications.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 34;
+				CURRENT_PROJECT_VERSION = 35;
 				DEVELOPMENT_TEAM = MQ85968PQP;
 				INFOPLIST_FILE = AllternitNotifications/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
@@ -4313,7 +4325,7 @@
 				CODE_SIGN_ENTITLEMENTS = Allternit.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 34;
+				CURRENT_PROJECT_VERSION = 35;
 				DEVELOPMENT_TEAM = MQ85968PQP;
 				ENABLE_DEBUG_DYLIB = NO;
 				FRAMEWORK_SEARCH_PATHS = (
@@ -4344,7 +4356,7 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 34;
+				CURRENT_PROJECT_VERSION = 35;
 				DEVELOPMENT_TEAM = MQ85968PQP;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;

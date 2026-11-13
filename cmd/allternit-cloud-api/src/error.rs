@@ -254,6 +254,15 @@ impl IntoResponse for ApiError {
             code: error_code.to_string(),
         });
 
-        (status, body).into_response()
+        let capacity = matches!(&self, ApiError::ServiceUnavailable(m)
+            if crate::services::provisioning::is_capacity_message(m));
+        let mut response = (status, body).into_response();
+        if capacity {
+            response.headers_mut().insert(
+                axum::http::header::RETRY_AFTER,
+                axum::http::HeaderValue::from(crate::services::provisioning::CAPACITY_RETRY_AFTER_SECONDS),
+            );
+        }
+        response
     }
 }

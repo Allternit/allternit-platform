@@ -3,7 +3,7 @@ title: 'Playground'
 description: 'Try models in the console with a short-lived project key, inspect the request, and save prompts.'
 ---
 
-The console Playground sends real requests to `POST https://api.allternit.com/v1/chat/completions`. It works for any signed-in user, with no paired runtime.
+The console Playground sends real requests to the Allternit API in one of three modes (see [Modes](#modes)). It works for any signed-in user, with no paired runtime.
 
 ## How it authenticates
 
@@ -15,13 +15,27 @@ The response is `{ "object": "playground_key", "key": "...", "expires_at": "..."
 
 Requests made this way are recorded with the client label `playground` in [usage and logs](/console/usage-and-logs).
 
+## Modes
+
+Pick the mode at the top of the Playground. Chat completions uses the short-lived playground key and your Allternit credits. Responses and Messages are Platform API routes: the console calls them with your signed-in session for the selected project, so they bill that project and count toward its spend cap.
+
+| Mode | Endpoint |
+|---|---|
+| Chat completions | `POST /v1/chat/completions` |
+| Responses | `POST /v1/responses`, in model mode |
+| Messages | `POST /v1/messages` |
+
+In Responses mode, a follow-up turn shows "continues `resp_...`". It sends the previous response id, so the model sees the earlier turns. Start a new conversation to clear it.
+
+Some settings do not apply to every mode. The Playground lists them as "Not sent in ... mode" and leaves them out of the request.
+
 ## What you can set
 
 The model list comes live from `GET /v1/models`. You can set the sampling parameters the endpoint accepts (`temperature`, `top_p`, `max_tokens`, `stream`), edit tool definitions, set `response_format` or a JSON schema, and attach an image to a message. Fields the endpoint does not know are passed through to the upstream provider.
 
 ## Inspector
 
-After each call the inspector shows the request body, the response, the response headers and the `x-request-id` header. The same identifier appears in the Logs page. You can export the request as curl, Python or TypeScript.
+After each call the inspector shows the request body, the response, the response headers and the `x-request-id` header. The same identifier appears in the Logs page. You can export the request as curl, Python or TypeScript. The snippet follows the mode you picked, so it calls the same endpoint.
 
 ## Saved prompts and sharing
 
@@ -39,5 +53,6 @@ A prompt is returned as `{ id, name, body, share_url?, updated_at }`. A shared p
 ## Related
 
 - [Chat completions](/api/chat-completions)
+- [Navigation](/console/navigation)
 - [Models and pricing](/console/models-and-pricing)
 - [Projects](/console/projects)

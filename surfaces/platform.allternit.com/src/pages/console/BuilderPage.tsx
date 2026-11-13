@@ -70,6 +70,8 @@ export function BuilderPage(): React.ReactNode {
   const [model, setModel] = useState("auto");
   const [models, setModels] = useState<ConsoleModel[]>([]);
   const [modelsError, setModelsError] = useState<string | null>(null);
+  // Until the catalog arrives, "auto" can't resolve yet: say so instead of an error.
+  const [modelsLoaded, setModelsLoaded] = useState(false);
   const [policy, setPolicy] = useState<ModelAutoPolicy>(loadModelAutoPolicy);
 
   const [generating, setGenerating] = useState(false);
@@ -89,6 +91,9 @@ export function BuilderPage(): React.ReactNode {
       })
       .catch((err) => {
         if (active) setModelsError(formatApiError(err, "model catalog"));
+      })
+      .finally(() => {
+        if (active) setModelsLoaded(true);
       });
     api
       .get<{ templates: AgentTemplate[] }>("/api/v1/agent-templates")
@@ -232,9 +237,12 @@ export function BuilderPage(): React.ReactNode {
               <HugeiconsIcon icon={MagicWandIcon} size={13} />
               {generating ? "Saving prototype…" : "Generate"}
             </button>
-            {model === "auto" && !resolvedModel && (
+            {model === "auto" && !resolvedModel && !modelsLoaded && (
+              <span className="text-[12px] text-[var(--text-tertiary)]">Loading models…</span>
+            )}
+            {model === "auto" && !resolvedModel && modelsLoaded && (
               <span className="text-[12px] text-[var(--status-error)]">
-                Auto policy resolves to no model.
+                No model matches the Auto policy. Pick a model from the list or change the policy.
               </span>
             )}
           </div>

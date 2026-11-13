@@ -441,8 +441,8 @@ private struct ThemeSegment: View {
 
 // MARK: - Voice
 
-/// Settings → Voice (the web's VoiceSettings panel): where voice runs.
-/// Allternit hosts no voice; both choices run on this phone.
+/// Settings → Voice (the web's VoiceSettings panel): where voice runs, and
+/// the user's own OpenAI / ElevenLabs keys. Allternit hosts no voice.
 struct VoiceSettingsPage: View {
     @ObservedObject private var settings = SettingsStore.shared
 
@@ -450,6 +450,8 @@ struct VoiceSettingsPage: View {
         switch route {
         case .automatic: return "Automatic (recommended)"
         case .device: return "This device"
+        case .openai: return "Your own OpenAI"
+        case .elevenlabs: return "Your own ElevenLabs"
         }
     }
 
@@ -457,6 +459,8 @@ struct VoiceSettingsPage: View {
         switch route {
         case .automatic: return "Voice runs on this phone. The voice model downloads once; until it's ready, the iPhone's built-in voice is used. Free, and your audio stays on this phone."
         case .device: return "The same, chosen on purpose: your audio stays on this phone."
+        case .openai: return "OpenAI Realtime listens and OpenAI speech reads replies, with your API key. OpenAI bills you directly."
+        case .elevenlabs: return "An ElevenLabs voice reads replies, with your API key; listening stays on this phone. ElevenLabs bills you directly."
         }
     }
 
@@ -470,6 +474,19 @@ struct VoiceSettingsPage: View {
                                       isSelected: settings.voiceRoute == route,
                                       action: { settings.voiceRoute = route })
                 }
+            }
+
+            SettingsSectionHeading(text: "Your own provider")
+                .padding(.top, 16)
+            SettingsDescription(text: "Optional. For a different voice, connect your own account. Your key is kept only on this phone, in the Keychain, and goes straight to that company, never to Allternit. You pay them directly.")
+            VStack(alignment: .leading, spacing: 14) {
+                VoiceKeyField(label: "OpenAI API key", field: .openai, placeholder: "sk-…")
+                VoiceKeyField(label: "ElevenLabs API key", field: .elevenlabs, placeholder: "Your ElevenLabs key")
+                VoiceKeyField(label: "ElevenLabs voice ID", field: .elevenlabsVoiceId,
+                              placeholder: "\(VoiceProviderKeys.defaultElevenLabsVoice) (Rachel)", secret: false)
+                Text("Then choose Your own OpenAI or Your own ElevenLabs under Where voice runs.")
+                    .font(.system(size: 13))
+                    .foregroundColor(Color("TextSecondary"))
             }
 
             SettingsSectionHeading(text: "Speech to text")
@@ -492,12 +509,63 @@ struct VoiceSettingsPage: View {
             LiveModeLookSection(inset: 0)
                 .padding(.top, 16)
 
-            Text("Privacy: voice runs on this phone. Your audio is processed here and isn't sent to Allternit; what you say becomes a normal message in the thread.")
+            Text("Privacy: with voice on this phone, your audio is processed here and isn't sent to Allternit. With your own OpenAI, your audio and the bot's replies go from this phone to OpenAI; with your own ElevenLabs, the bot's replies go to ElevenLabs. Allternit never receives your audio or your key. Either way, what you say becomes a normal message in the thread.")
                 .font(.system(size: 13))
                 .foregroundColor(Color("TextSecondary"))
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.top, 16)
         }
+    }
+}
+
+/// One saved-on-this-phone voice key (Keychain): secure entry, a masked
+/// "Saved" line, Replace and Remove. Mirrors the web's KeyField.
+private struct VoiceKeyField: View {
+    let label: String
+    let field: VoiceProviderKeys.Field
+    let placeholder: String
+    var secret = true
+    @State private var draft = ""
+    @State private var saved: String? = nil
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(label)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundColor(Color("TextPrimary"))
+            HStack(spacing: 8) {
+                Group {
+                    if secret {
+                        SecureField(saved.map { "Saved on this phone (\(VoiceProviderKeys.masked($0)))" } ?? placeholder, text: $draft)
+                    } else {
+                        TextField(saved ?? placeholder, text: $draft)
+                    }
+                }
+                .font(.system(size: 14))
+                .autocorrectionDisabled()
+                .textInputAutocapitalization(.never)
+                .padding(.horizontal, 12)
+                .frame(minHeight: 36)
+                .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(Color("BorderSubtle"), lineWidth: 1))
+                .accessibilityLabel(label)
+                Button(saved == nil ? "Save" : "Replace") {
+                    VoiceProviderKeys.set(field, draft)
+                    draft = ""
+                    saved = VoiceProviderKeys.value(field)
+                }
+                .buttonStyle(SettingsQuietButtonStyle())
+                .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                if saved != nil {
+                    Button("Remove") {
+                        VoiceProviderKeys.set(field, nil)
+                        saved = nil
+                    }
+                    .buttonStyle(SettingsQuietButtonStyle())
+                    .accessibilityLabel("Remove \(label)")
+                }
+            }
+        }
+        .onAppear { saved = VoiceProviderKeys.value(field) }
     }
 }
 

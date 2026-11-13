@@ -1,22 +1,25 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { formatApiError } from "@/lib/api-client";
 import { isCloudGateway } from "@/lib/availability";
+import { usePlatformAuth } from "@/lib/platform-auth-client";
+import { PROJECT_HEADER } from "@/lib/platform-v1";
 import {
   ensureConsoleGatewayKey,
   forgetPlaygroundKey,
   forgetStoredGatewayKey,
-  gatewayChat,
+  gatewayPost,
   GatewayHttpError,
   getPlaygroundKey,
-  type ChatCompletionRequest,
   type ChatToolCall,
 } from "@/lib/console-gateway";
 import {
-  assembledToJson,
-  mergeChunk,
-  newAssembly,
-  readCompletion,
-  type AssembledResponse,
+  MODE_PATHS,
+  mergeModeEvent,
+  modeAssemblyToJson,
+  newModeAssembly,
+  readModeReply,
+  type ModeAssembly,
+  type PlaygroundMode,
 } from "@/lib/playground-request";
 
 export interface ChatRunUsage {
@@ -33,7 +36,14 @@ export interface ChatRunState {
   modelUsed: string | null;
   stopped: boolean;
   toolCalls: ChatToolCall[];
+  /** Chat finish_reason, Responses status, or Messages stop_reason. */
   finishReason: string | null;
+  /** The route the last run used. */
+  mode: PlaygroundMode;
+  /** Responses `incomplete_details.reason`. */
+  incompleteReason: string | null;
+  /** The reply id (`chatcmpl_…`, `resp_…`, `mdl_…`). */
+  responseId: string | null;
   /** Inspector data. */
   request: Record<string, unknown> | null;
   responseJson: unknown;
@@ -52,6 +62,9 @@ const IDLE: ChatRunState = {
   stopped: false,
   toolCalls: [],
   finishReason: null,
+  mode: "chat",
+  incompleteReason: null,
+  responseId: null,
   request: null,
   responseJson: null,
   responseHeaders: null,
@@ -61,8 +74,10 @@ const IDLE: ChatRunState = {
 };
 
 export interface ChatRunArgs {
-  /** Full OpenAI-compatible request body (see buildRequestBody). */
+  /** Full request body for `mode` (see buildModeRequestBody). */
   body: Record<string, unknown>;
+  /** Route to call; chat completions when omitted. */
+  mode?: PlaygroundMode;
   /** Selected project; required on cloud to mint the playground key. */
   projectId: string | null;
 }
@@ -77,7 +92,7 @@ async function acquireKey(projectId: string | null, force: boolean): Promise<str
 }
 
 /**
- * One runnable chat-completion lane. Cloud: a 15-minute project key held in
+ * One runnable Playground lane (chat completions, Responses or Messages). Cloud: a 15-minute project key held in
  * memory (re-minted on expiry or 401). Runtime: the stored console key.
  * `stop()` aborts the stream. Compare lanes are independent instances.
  */
@@ -89,6 +104,8 @@ export function useChatRun(): {
 } {
   const [state, setState] = useState<ChatRunState>(IDLE);
   const abortRef = useRef<AbortController | null>(null);
+  const auth = usePlatformAuth();
+  const getSessionToken = auth?.getToken;
 
   const stop = useCallback(() => abortRef.current?.abort(), []);
   const reset = useCallback(() => {
@@ -100,17 +117,34 @@ export function useChatRun(): {
     abortRef.current?.abort();
     const abort = new AbortController();
     abortRef.current = abort;
-    const request = args.body as unknown as ChatCompletionRequest;
-    setState({ ...IDLE, running: true, request: args.body });
+    const mode: PlaygroundMode = args.mode ?? "chat";
+    const streaming = args.body.stream === true;
+    setState({ ...IDLE, running: true, mode, request: args.body });
 
-    let acc: AssembledResponse = newAssembly();
+    let acc: ModeAssembly = newModeAssembly();
+    // On cloud, /v1/responses and /v1/messages are Platform API routes: they take a
+    // project key (alt_live_/alt_test_) or the console session plus the project
+    // header, never the user-style playground key (that one is for chat completions).
+    // The session path bills the selected project, which these routes always do.
+    const sessionMode = isCloudGateway() && mode !== "chat";
     const attempt = async (force: boolean) => {
-      acc = newAssembly();
-      const key = await acquireKey(args.projectId, force);
-      return gatewayChat(key, request, {
+      acc = newModeAssembly();
+      let key: string;
+      let headers: Record<string, string> | undefined;
+      if (sessionMode) {
+        if (!args.projectId) throw new Error("Select a project to use the Playground.");
+        const token = getSessionToken ? await getSessionToken() : null;
+        if (!token) throw new Error("Your console session has ended. Sign in again, then run.");
+        key = token;
+        headers = { [PROJECT_HEADER]: args.projectId };
+      } else {
+        key = await acquireKey(args.projectId, force);
+      }
+      return gatewayPost(MODE_PATHS[mode], key, args.body, {
         signal: abort.signal,
-        onChunk: (chunk) => {
-          acc = mergeChunk(acc, chunk);
+        headers,
+        onEvent: (event, data) => {
+          acc = mergeModeEvent(mode, acc, event, data);
           setState((prev) => ({
             ...prev,
             text: acc.content,
@@ -127,13 +161,13 @@ export function useChatRun(): {
         result = await attempt(false);
       } catch (err) {
         if (err instanceof GatewayHttpError && err.status === 401) {
-          if (isCloudGateway()) forgetPlaygroundKey();
+          if (isCloudGateway() && !sessionMode) forgetPlaygroundKey();
           result = await attempt(true);
         } else {
           throw err;
         }
       }
-      const final = request.stream ? acc : readCompletion(result.json);
+      const final = streaming ? acc : readModeReply(mode, result.json);
       setState({
         ...IDLE,
         text: final.content,
@@ -141,8 +175,12 @@ export function useChatRun(): {
         usage: final.usage,
         modelUsed: final.model ?? null,
         finishReason: final.finishReason,
+        mode,
+        incompleteReason: final.incompleteReason,
+        responseId: final.id ?? null,
+        error: final.error,
         request: args.body,
-        responseJson: request.stream ? assembledToJson(final) : result.json,
+        responseJson: streaming ? modeAssemblyToJson(mode, final) : result.json,
         responseHeaders: result.headers,
         status: result.status,
         latencyMs: result.latencyMs,
@@ -166,7 +204,7 @@ export function useChatRun(): {
     } finally {
       if (abortRef.current === abort) abortRef.current = null;
     }
-  }, []);
+  }, [getSessionToken]);
 
   useEffect(() => () => abortRef.current?.abort(), []);
 

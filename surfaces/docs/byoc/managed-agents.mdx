@@ -21,6 +21,10 @@ Browser / SDK  --HTTPS-->  Cloud API  --WSS relay-->  agent-daemon --> allternit
 
 There is no per-agent binding to a deployment. Routing is per paired runtime: relayed routes go to your paired, online node, and return HTTP 428 if none is available.
 
+## Before a device is paired
+
+Until a node is paired, the Cloud API has nowhere to run agents, sessions, vaults, memory or deployments. These calls answer `428 PRECONDITION_REQUIRED` with the message "No data-plane node registered for this account". In the console, those pages show a "Managed Agents run on a computer you connect" card with **Connect a device** and **Docs** instead of an error. Pair your Mac, PC or a cloud computer and the pages fill in.
+
 ## Steps
 
 1. [Install](/byoc/installation) `allternit-api` and `agent-daemon`.
