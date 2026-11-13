@@ -1,0 +1,162 @@
+---
+title: 'Configuration'
+description: 'Every key in the Agents Server settings file, with types, defaults and what each one does.'
+---
+
+<Note>
+**Status: Private beta.** This page follows `cmd/allternit-api/openapi/selfhost-settings.schema.json`. The server that reads it is still being built.
+</Note>
+
+The server reads one settings file, written as YAML or JSON. The schema is strict: an unknown key is an error. Only `inference.provider` is required.
+
+## Secrets
+
+Secrets never go in the file. Wherever a key takes a secret, give a reference:
+
+| Reference | Reads |
+|---|---|
+| `env:NAME` | The environment variable `NAME`. |
+| `file:/path` | The contents of a file, for example a mounted Kubernetes or Docker secret. |
+| `vault:path#key` | Field `key` of a HashiCorp Vault KV v2 secret at `path` (needs `secrets.backend: vault`). |
+
+## Example
+
+```yaml
+server:
+  listen: 127.0.0.1:8400
+  public_url: https://agents.example.internal
+  cors_origins: [https://ai.allternit.com, https://m.allternit.com]
+database:
+  url: env:DATABASE_URL
+  max_connections: 20
+inference:
+  provider: gateway
+  gateway:
+    format: openai-chat
+    base_url: https://llm-gateway.example.internal/v1
+    headers:
+      Authorization: env:GATEWAY_AUTH_HEADER
+  model_map:
+    claude-sonnet: our-sonnet-deployment
+mcp:
+  allowed_hostnames: [mcp.example.internal]
+git:
+  allowed_hostnames: [github.example.internal]
+  allowed_push_refs: [refs/heads/agent/*]
+auth:
+  oidc:
+    issuer: https://idp.example.internal
+    audiences: [allternit-agents]
+    role_claim: groups
+    role_map:
+      platform-admins: admin
+      engineers: developer
+    default_role: none
+secrets:
+  backend: vault
+  vault:
+    address: https://vault.example.internal
+    mount: secret
+    path: allternit/agents
+    auth:
+      method: approle
+      role_id: allternit-agents
+      secret_id: file:/run/secrets/vault_secret_id
+  encryption_key_ref: vault:allternit/agents#encryption_key
+observability:
+  log_format: json
+  prometheus:
+    enabled: true
+    listen: 127.0.0.1:9464
+health:
+  check_interval: 60s
+```
+
+## Storage
+
+| Key | Type | Default | What it does |
+|---|---|---|---|
+| `data_dir` | string | `/var/lib/allternit-agents-server` | Where SQLite and local files live when `database.url` is not set. |
+| `ephemeral` | boolean | `false` | Keep state in memory only. For tests. Ignored when `database.url` is set. |
+| `database.url` | string or secret reference | none | PostgreSQL URL (`postgres://` or `postgresql://`), or a reference to one. Without it the server uses SQLite in `data_dir`, or memory when `ephemeral` is true. |
+| `database.max_connections` | integer, 1 or more | `20` | Size of the connection pool. |
+
+## Server
+
+| Key | Type | Default | What it does |
+|---|---|---|---|
+| `server.listen` | string | `127.0.0.1:8400` | `host:port` to bind. |
+| `server.public_url` | URI | none | The URL clients use. Shown in `/v1/server/info`. |
+| `server.cors_origins` | list of URIs | `[]` | Browser origins allowed to call the API. Empty means no CORS headers. The web app and PWA need their origins here. See [Client apps](/self-hosted/client-apps). |
+
+## Inference
+
+| Key | Type | Default | What it does |
+|---|---|---|---|
+| `inference.provider` | `anthropic`, `bedrock`, `vertex`, `foundry` or `gateway` | required | Which model provider the server calls. |
+| `inference.gateway.format` | `anthropic-messages`, `bedrock-invoke`, `vertex-raw-predict` or `openai-chat` | required with `gateway` | The request format your gateway speaks. |
+| `inference.gateway.base_url` | URI | required with `gateway` | The gateway's base URL. |
+| `inference.gateway.headers` | map of string to string | none | Extra request headers. Values may be secret references. |
+| `inference.model_map` | map of string to string | none | Agent model name to the provider's model id. A model not listed is refused with `422 model_not_mapped`. Required with `gateway`. |
+| `inference.credentials.api_key` | secret reference | none | Anthropic API key. |
+| `inference.credentials.aws_access_key_id` | secret reference | none | Bedrock access key id. |
+| `inference.credentials.aws_secret_access_key` | secret reference | none | Bedrock secret access key. |
+| `inference.credentials.aws_session_token` | secret reference | none | Bedrock session token, for temporary credentials. |
+| `inference.credentials.aws_region` | string | none | Bedrock region. |
+| `inference.credentials.gcp_service_account_json` | secret reference | none | Vertex AI service-account key (JSON). |
+| `inference.credentials.gcp_project` | string | none | Vertex AI project. |
+| `inference.credentials.gcp_region` | string | none | Vertex AI region. |
+| `inference.credentials.foundry_endpoint` | URI | none | Microsoft Foundry endpoint. |
+| `inference.credentials.foundry_api_key` | secret reference | none | Microsoft Foundry key. |
+
+Which credentials apply depends on the provider. See [Models](/self-hosted/models).
+
+## MCP, git and web tools
+
+| Key | Type | Default | What it does |
+|---|---|---|---|
+| `mcp.allowed_hostnames` | list of hostnames | `[]` | MCP servers agents may use. Exact match, HTTPS only, optionally with a port. No wildcards, no scheme. A subdomain does not match. |
+| `mcp.max_result_bytes` | integer, 1 or more | `102400` | Largest MCP tool result the server accepts. |
+| `git.allowed_hostnames` | list of hostnames | `[]` | Hosts workers may clone from and push to. |
+| `git.allowed_push_refs` | list of ref patterns | `[]` | Refs a push may update, for example `refs/heads/agent/*`. A push to any other ref is refused. |
+| `web_tools.enabled` | boolean | `false` | Web tools are not part of v1. Leave this off. |
+
+An environment's own `git` and `mcp` lists can only narrow these server-wide lists. See [Networking](/self-hosted/networking).
+
+## Authentication
+
+| Key | Type | Default | What it does |
+|---|---|---|---|
+| `auth.oidc.issuer` | URI | required with `oidc` | Your identity provider's issuer URL. |
+| `auth.oidc.audiences` | list of strings, at least one | required with `oidc` | Accepted token audiences. |
+| `auth.oidc.role_claim` | string | `groups` | The token claim that holds the user's groups or role. |
+| `auth.oidc.role_map` | map of claim value to `admin`, `developer` or `viewer` | none | Which claim values give which role. |
+| `auth.oidc.default_role` | `admin`, `developer`, `viewer` or `none` | `none` | Role when no claim value matches. `none` refuses the sign-in. |
+
+Server API keys and environment keys are not set here. They live in the database. See [Authentication](/self-hosted/auth).
+
+## Secrets backend
+
+| Key | Type | Default | What it does |
+|---|---|---|---|
+| `secrets.backend` | `env`, `file` or `vault` | `env` | Where secret references are resolved. |
+| `secrets.vault.address` | URI | required with `vault` | Vault address. |
+| `secrets.vault.mount` | string | `secret` | KV v2 mount. |
+| `secrets.vault.path` | string | required with `vault` | Base path for the server's secrets. |
+| `secrets.vault.auth.method` | `token`, `approle` or `kubernetes` | required when `auth` is set | How the server signs in to Vault. |
+| `secrets.vault.auth.token` | secret reference | none | Vault token, for `token`. |
+| `secrets.vault.auth.role_id` | string | none | AppRole role id, for `approle`. |
+| `secrets.vault.auth.secret_id` | secret reference | none | AppRole secret id, for `approle`. |
+| `secrets.vault.auth.role` | string | none | Vault role, for `kubernetes`. |
+| `secrets.encryption_key_ref` | secret reference | none | The key that encrypts stored credentials. Rotate it with `admin rotate-key`. See [Operations](/self-hosted/operations#rotate-keys). |
+
+## Observability and health
+
+| Key | Type | Default | What it does |
+|---|---|---|---|
+| `observability.log_format` | `json` or `text` | `json` | Log format. Logs go to stderr. |
+| `observability.prometheus.enabled` | boolean | `false` | Serve Prometheus metrics. |
+| `observability.prometheus.listen` | string | `127.0.0.1:9464` | A separate listener for metrics. The main API port never serves `/metrics`. |
+| `health.check_interval` | duration (`ms`, `s`, `m`, `h`) | `60s` | How often the server runs its health checks. |
+
+OpenTelemetry export is not set in this file. It comes from the standard `OTEL_*` environment variables. See [Observability](/self-hosted/observability).

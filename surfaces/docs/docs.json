@@ -561,6 +561,24 @@
             "icon": "/icons/stack.svg"
           },
           {
+            "group": "Self-Hosted Agents",
+            "pages": [
+              "self-hosted/overview",
+              "self-hosted/quickstart",
+              "self-hosted/configuration",
+              "self-hosted/workers",
+              "self-hosted/auth",
+              "self-hosted/models",
+              "self-hosted/networking",
+              "self-hosted/observability",
+              "self-hosted/operations",
+              "self-hosted/client-apps",
+              "self-hosted/sdks",
+              "self-hosted/api-reference"
+            ],
+            "icon": "/icons/shield.svg"
+          },
+          {
             "group": "Surfaces",
             "pages": [
               "surfaces/desktop",
@@ -959,6 +977,13 @@
           {
             "group": "Inference API reference",
             "openapi": "api-reference/inference-v1.yaml"
+          },
+          {
+            "group": "Self-Hosted Agents API reference",
+            "openapi": {
+              "source": "api-reference/selfhost-v1.yaml",
+              "directory": "api-reference/selfhost"
+            }
           },
           {
             "group": "Platform API",
