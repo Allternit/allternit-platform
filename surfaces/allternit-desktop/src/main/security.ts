@@ -266,7 +266,9 @@ function buildContentSecurityPolicy(): string {
       'ws://127.0.0.1:*', 'ws://localhost:*',
       'allternit-api:', 'allternit-gizzi:',
     ],
-    'media-src': ["'self'", 'blob:'],
+    // ElevenLabs voice previews (Settings > Voice picker) play straight from
+    // the vendor: storage.googleapis.com and api.us.elevenlabs.io (2026-11-13).
+    'media-src': ["'self'", 'blob:', 'data:', 'https://storage.googleapis.com', 'https://*.elevenlabs.io'],
     'worker-src': ["'self'", 'blob:'],
     'frame-src': ["'self'", 'https:', 'http://127.0.0.1:*', 'http://localhost:*', 'allternit-preview:'],
     'object-src': ["'none'"],
