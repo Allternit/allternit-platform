@@ -1,0 +1,35 @@
+---
+title: "Computer on credits"
+description: "Run a hosted computer paid from your credit balance, billed per minute while it runs."
+---
+
+A computer on credits is a hosted computer you pay for from your credit balance instead of a plan. Current prices are shown in the app.
+
+## Start and stop
+
+Open **Billing** in the [console](https://platform.allternit.com/billing) and find **Computer on credits**. It shows the price per hour, your balance, and how long the balance lasts while the computer runs. Choose **Start** or **Stop**.
+
+- Starting needs at least $5 in credits. With less, the app says: Starting needs at least $5 in credits.
+- Starting takes about a minute.
+- Stop ends the running charge. The stopped price applies while the computer is stopped.
+
+The API is `POST /api/v1/provisioned-instances/credit` with `{"size":"medium"}` and `POST /api/v1/provisioned-instances/credit/stop`. See [Account compute status](/api/account-compute-status).
+
+## What it costs
+
+| Size | Running | Stopped |
+| --- | --- | --- |
+| Medium, 2 cores, 8 GB | $0.10 an hour | $0.005 an hour |
+
+These are the current prices; the app shows the live ones. Billing is per minute. Runway is your balance divided by the running price.
+
+## States
+
+- Starting: about a minute.
+- Running.
+- Asleep: after 30 idle minutes. It wakes when an agent needs it.
+- Out of credits: the computer stops and the disk is kept 14 days (current policy). Add credits to start it again.
+
+You get an in-app notice at about 24 hours and about 2 hours of runway left. [Auto top-up](/guides/credits-and-auto-top-up) can refill the balance.
+
+Hosted computers run on a third-party cloud provider, managed by Allternit. They sleep when idle.

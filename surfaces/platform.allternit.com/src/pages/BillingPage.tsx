@@ -23,6 +23,7 @@ import { SkeletonRow } from "@/components/settings/SkeletonRow";
 import { QUIET_BUTTON_CLASS } from "@/components/settings/buttonStyles";
 import { formatApiError } from "@/lib/api-client";
 import { PlanPicker, type LiveBillingPlan, type PlanId } from "@/components/PlanPicker";
+import { ComputerOnCreditsCard } from "@/components/billing/ComputerOnCreditsCard";
 import { TransferToOrgPanel } from "@/components/billing/TransferToOrgPanel";
 
 function formatHours(seconds: number): string {
@@ -721,6 +722,8 @@ export function BillingPage() {
               </>
             )}
           </div>
+
+          <ComputerOnCreditsCard onChanged={() => void load()} />
 
           <TransferToOrgPanel onTransferred={() => void load()} />
 

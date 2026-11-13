@@ -1,0 +1,40 @@
+---
+title: "Computer pricing"
+description: "Plans with an included hosted computer, the credits computer's hourly price, sleep, and what happens at zero credits."
+---
+
+Current prices are shown in the app and returned by `GET /api/v1/account/compute-status`. The tables below are the current prices and can change.
+
+## Plans with an included computer
+
+Each plan includes one hosted computer.
+
+| Plan | Per month | Computer | Included running hours |
+| --- | --- | --- | --- |
+| Plus | $20 | 2 cores, 8 GB, 50 GB disk | 200 a month |
+| Max | $100 | 4 cores, 16 GB, 100 GB disk | not decided yet |
+| Ultra | $200 | 8 cores, 32 GB, 200 GB disk | not decided yet |
+
+Sizes and hours for Max and Ultra are not final.
+
+## Computer on credits
+
+A hosted computer billed per minute from your credit balance (rate divided by 60 each minute).
+
+| Size | Running | Stopped |
+| --- | --- | --- |
+| Medium, 2 cores, 8 GB | $0.10 an hour | $0.005 an hour |
+
+Starting needs at least $5 in credits. See [Computer on credits](/guides/credits-computer).
+
+## Sleep
+
+Hosted computers sleep after 30 idle minutes and wake when an agent needs them. Hosted computers run on a third-party cloud provider, managed by Allternit.
+
+## When credits reach $0
+
+The computer stops and the account shows as suspended. The disk is kept for 14 days, then the computer is deleted. Current policy: the 14 days and the reminder emails may change. Add credits and start the computer again to keep it.
+
+## Free accounts
+
+Free accounts do not get a hosted computer. Free accounts can link their own computer or chat with Allternit Cloud models. See [Choose how agents run](/guides/choose-how-agents-run).
