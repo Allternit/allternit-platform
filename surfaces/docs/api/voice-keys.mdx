@@ -1,0 +1,31 @@
+---
+title: 'Voice Keys API'
+description: 'Account-saved OpenAI and ElevenLabs voice keys and the QR handoff relay in the Allternit cloud API.'
+---
+
+## Overview
+
+Optional "Save to my Allternit account" stores a user's own OpenAI or ElevenLabs key, encrypted, so their other signed-in devices can use it. The same routes relay the device-to-device QR handoff, which carries only a session id and a one-time public key; the key itself never reaches the server. For the user flow see [Talk to your bots](/guides/voice#your-own-provider). For storage and protocol details see [Voice in the app](/surfaces/voice#your-own-key-storage-sync-and-qr-handoff).
+
+## Base URL
+
+```
+https://api.allternit.com
+```
+
+## Authentication
+
+Signed-in session only. Platform API keys are refused with `403`. Responses carry `Cache-Control: no-store`.
+
+## Endpoints
+
+| Method and path | Body | Response |
+| --- | --- | --- |
+| `GET /api/v1/voice/keys` | none | `{"keys":[{"provider","api_key","voice_id","label","updated_at"}]}` (decrypted, for the owner) |
+| `PUT /api/v1/voice/keys/:provider` | `{"api_key","voice_id"?,"label"?}` | The saved key. `provider` is `openai` or `elevenlabs`; `api_key` is at most 512 characters. |
+| `DELETE /api/v1/voice/keys` | none | `204`. Deletes every saved key for the user. |
+| `POST /api/v1/voice/handoff` | none | `{"sid","expires_at"}`. Expires after 120 seconds. |
+| `PUT /api/v1/voice/handoff/:sid/receiver` | `{"pubkey"}` | `204`; `409` if a receiver is already set; `404` if unknown or expired. |
+| `GET /api/v1/voice/handoff/:sid` | none | `{"sid","receiver_pubkey":null,"expires_at"}`. `receiver_pubkey` is null until the receiver registers. |
+
+Keys are sealed with AES-256-GCM using `ALLTERNIT_CREDENTIALS_KEY` (migration `128_voice_keys.sql`, table `user_voice_keys`). Handoff rows live in `voice_key_handoffs`.

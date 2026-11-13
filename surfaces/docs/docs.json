@@ -771,6 +771,7 @@
                   "api/office-engine",
                   "api/voice",
                   "api/voice-tickets",
+                  "api/voice-keys",
                   "api/voice-recordings",
                   "api/files",
                   "api/server-tools",
