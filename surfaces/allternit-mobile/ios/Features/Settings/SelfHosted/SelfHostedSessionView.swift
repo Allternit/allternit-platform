@@ -115,14 +115,27 @@ struct SelfHostedSessionView: View {
         .onDisappear { model.leave() }
     }
 
+    private func pickerRow<P: View>(_ label: String, @ViewBuilder picker: () -> P) -> some View {
+        HStack {
+            Text(label).font(.system(size: 15)).foregroundColor(Color("TextSecondary"))
+            Spacer()
+            picker()
+        }
+        .frame(minHeight: 36)
+    }
+
     private var pickers: some View {
-        VStack(spacing: 8) {
-            Picker("Agent", selection: $model.agentID) {
-                ForEach(store.agents) { Text($0.name).tag($0.id) }
+        VStack(spacing: 4) {
+            pickerRow("Agent") {
+                Picker("Agent", selection: $model.agentID) {
+                    ForEach(store.agents) { Text($0.name).tag($0.id) }
+                }
             }
-            Picker("Environment", selection: $model.environmentID) {
-                ForEach(store.environments) { env in
-                    Text("\(env.name) (\(env.workerCount ?? 0) online)").tag(env.id)
+            pickerRow("Environment") {
+                Picker("Environment", selection: $model.environmentID) {
+                    ForEach(store.environments) { env in
+                        Text("\(env.name) (\(env.workerCount ?? 0) online)").tag(env.id)
+                    }
                 }
             }
         }

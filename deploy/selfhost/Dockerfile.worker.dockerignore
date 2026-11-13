@@ -21,7 +21,7 @@ archive
 allternit-session-*
 tmp
 output
-.agents
+# .agents stays in: allternit-api compiles .agents/skills into the binary (include_dir! in skill_catalog_install.rs).
 .beads
 .claude
 .codex-logs

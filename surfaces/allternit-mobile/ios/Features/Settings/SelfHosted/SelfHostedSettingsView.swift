@@ -8,7 +8,13 @@ struct SelfHostedSettingsView: View {
     @State private var urlText = ""
     @State private var keyText = ""
     @State private var seeded = false
-    @FocusState private var focused: Bool
+    /// True while the user types a new key. Otherwise a saved key shows as a
+    /// "Saved in Keychain" row: a filled SecureField that leaves the screen makes
+    /// iOS offer "Save Password?" (as an allternit.com password), which is wrong
+    /// for a server key and covered the session screen.
+    @State private var editingKey = false
+    private enum Field { case url, key }
+    @FocusState private var focused: Field?
 
     var body: some View {
         PhoneSettingsPage(title: "Self-hosted server") {
@@ -18,31 +24,55 @@ struct SelfHostedSettingsView: View {
             SettingsCardBox {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Server address").font(.system(size: 13)).foregroundColor(Color("TextSecondary"))
+                        .accessibilityHidden(true)
                     TextField("https://agents.example.com", text: $urlText)
                         .modifier(SHFieldStyle())
                         .keyboardType(.URL)
                         .textContentType(.URL)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
-                        .focused($focused)
+                        .focused($focused, equals: .url)
+                        .submitLabel(.next)
+                        .onSubmit { focused = .key }
                         .accessibilityLabel("Server address")
                 }
                 VStack(alignment: .leading, spacing: 6) {
                     Text("API key").font(.system(size: 13)).foregroundColor(Color("TextSecondary"))
-                    SecureField("ask_…", text: $keyText)
-                        .modifier(SHFieldStyle())
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .focused($focused)
-                        .accessibilityLabel("API key")
+                        .accessibilityHidden(true)
+                    if showsKeyField {
+                        SecureField("ask_…", text: $keyText)
+                            .modifier(SHFieldStyle())
+                            .textContentType(.oneTimeCode)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .focused($focused, equals: .key)
+                            .submitLabel(.go)
+                            .onSubmit { if canConnect { connect() } }
+                            .accessibilityLabel("API key")
+                    } else {
+                        HStack {
+                            Text("Saved in Keychain (ends \(String(store.apiKey.suffix(4))))")
+                                .font(.system(size: 16)).foregroundColor(Color("TextPrimary"))
+                            Spacer()
+                            Button("Change") { editingKey = true; focused = .key }
+                                .font(.system(size: 15, weight: .medium))
+                                .foregroundColor(Color("TextPrimary"))
+                        }
+                        .padding(.horizontal, 13)
+                        .frame(minHeight: 44)
+                        .background(Color("FillNeutral"))
+                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        .accessibilityElement(children: .combine)
+                        .accessibilityLabel("API key saved in Keychain")
+                    }
                 }
                 HStack(spacing: 10) {
                     Button(store.isConfigured ? "Save and test" : "Connect") { connect() }
                         .buttonStyle(SettingsPrimaryButtonStyle())
-                        .disabled(store.phase == .connecting || urlText.isEmpty || keyText.isEmpty)
+                        .disabled(store.phase == .connecting || !canConnect)
                     if store.isConfigured {
                         Button("Disconnect") {
-                            store.disconnect(); urlText = ""; keyText = ""
+                            store.disconnect(); urlText = ""; keyText = ""; editingKey = false
                         }
                         .buttonStyle(SettingsQuietButtonStyle())
                     }
@@ -76,14 +106,26 @@ struct SelfHostedSettingsView: View {
             guard !seeded else { return }
             seeded = true
             urlText = store.serverURL
-            keyText = store.apiKey
             if store.isConfigured { Task { await store.reload() } }
         }
     }
 
+    private var showsKeyField: Bool { editingKey || !store.isConfigured }
+
+    private var canConnect: Bool {
+        !urlText.isEmpty && (showsKeyField ? !keyText.isEmpty : true)
+    }
+
     private func connect() {
-        focused = false
-        Task { await store.connect(urlText: urlText, key: keyText) }
+        focused = nil
+        let key = showsKeyField ? keyText : store.apiKey
+        Task {
+            await store.connect(urlText: urlText, key: key)
+            // Saved: drop the typed key so no filled secure field stays on screen.
+            if store.phase == .connected {
+                keyText = ""; editingKey = false
+            }
+        }
     }
 
     // MARK: States
