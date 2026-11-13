@@ -4159,6 +4159,35 @@
       ]
     },
     {
+      "id": "feature:mobile-store-links",
+      "label": "App Store and Google Play links on every surface",
+      "product": "product:allternit-ios",
+      "status": "live",
+      "description": "One set of store-link constants (IOS_LIVE, ANDROID_LIVE, the App Store and Google Play URLs) drives the store badges on allternit.com (/download cards, footer, /app device redirect, /ios and /play short links), the ai.allternit.com and m.allternit.com footer and first-run install sheet (InstallCoach; hidden inside the Android app and the iPhone app's web view), the docs Get the app and Android guides, and Gizzi Code's /mobile QR codes. allternit.com/android stays the sideloaded APK with Phone Link, which Desktop installs.",
+      "touches": [
+        "allternit-ai/src/lib/store-links.ts",
+        "allternit-ai/src/components/store/StoreBadge.tsx",
+        "allternit-ai/src/fabric-session/phone/installOffer.ts",
+        "allternit-ai/src/fabric-session/phone/InstallCoach.tsx",
+        "allternit-ai/src/components/auth/SiteFooter.tsx",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/commands/mobile/mobile.tsx"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-09",
+          "note": "iPhone app live on the App Store (id 6828841999); IOS_LIVE turned on."
+        },
+        {
+          "on": "2026-11-12",
+          "note": "Google Play listing for com.allternit.app checked live (0.5.2); ANDROID_LIVE turned on in the ai app and the www site, /play short link added, /android kept for the Phone Link APK."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/get-the-app.mdx",
+        "allternit/surfaces/docs/guides/android-app.mdx"
+      ]
+    },
+    {
       "id": "feature:pet-offers",
       "label": "Pet offers: the bot's pet notices errors and offers a fix",
       "product": "product:ai-allternit",
