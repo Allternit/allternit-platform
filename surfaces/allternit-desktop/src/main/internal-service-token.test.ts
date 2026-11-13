@@ -3,6 +3,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { internalServiceLaunchEnvironment, loadOrCreateInternalServiceToken } from './internal-service-token.js';
+import { KeychainUnavailableError } from './os-crypt.js';
 
 // Regression (2026-11-13): Desktop never set ALLTERNIT_INTERNAL_SERVICE_TOKEN,
 // so gizzi skipped its bundled allternit-connectors/allternit-tools MCP servers
@@ -74,6 +75,16 @@ describe('internal service token', () => {
 
     expect(token).toMatch(/^[a-f0-9]{64}$/);
     expect(s.quarantined).toEqual([s.filePath]);
+    expect(loadOrCreateInternalServiceToken(s)).toBe(token);
+  });
+  it('keeps the token file when the macOS Keychain is locked, instead of replacing it', () => {
+    const s = store();
+    const token = loadOrCreateInternalServiceToken(s);
+    const before = fs.readFileSync(s.filePath);
+    const locked = { ...s, decode: () => { throw new KeychainUnavailableError('pending'); } };
+    expect(() => loadOrCreateInternalServiceToken(locked)).toThrow(KeychainUnavailableError);
+    expect(s.quarantined).toEqual([]);
+    expect(fs.readFileSync(s.filePath).equals(before)).toBe(true);
     expect(loadOrCreateInternalServiceToken(s)).toBe(token);
   });
 });

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, net, powerMonitor, safeStorage, session, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, net, powerMonitor, session, shell } from 'electron';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -11,6 +11,14 @@ import {
 } from './auth-https-forward.js';
 import { PORTS } from './config.js';
 import { connectorSidecarManager } from './connector-sidecar-manager.js';
+import { isEncryptionAvailable, KeychainUnavailableError } from './os-crypt.js';
+import {
+  assertLocalEnvelopeAllowed,
+  openOsEncrypted,
+  SAFE_STORAGE_HEADER,
+  sealWithOsEncryption,
+  secretsReady,
+} from './secure-store.js';
 import { internalServiceLaunchEnvironment, loadOrCreateInternalServiceToken } from './internal-service-token.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -49,7 +57,6 @@ const REQUEST_CLERK_WAIT_MS = 4_000;
 const RENDERER_CLERK_WAIT_MS = 1_500;
 // One-shot flows that need a real token wait out a full hidden refresh.
 export const FULL_CLERK_REFRESH_WAIT_MS = 25_000;
-const SAFE_STORAGE_HEADER = 'allternit-safe-storage-v1\n';
 const LOCAL_STORAGE_HEADER = 'allternit-local-aes-gcm-v1\n';
 
 /**
@@ -305,6 +312,9 @@ export class DesktopAuthManager {
 
   async initialize(): Promise<void> {
     log.info('[Auth] Initializing paired runtime identity');
+    // Packaged macOS already passed the startup Keychain gate (this returns at
+    // once); a dev build unlocks lazily here only if the identity is sealed.
+    await secretsReady(this.identityPath);
     // After sleep the relay socket is usually dead without a TCP reset; the
     // watchdog would notice within ~75s, but the phone is in use right now.
     powerMonitor?.on?.('resume', () => {
@@ -348,7 +358,7 @@ export class DesktopAuthManager {
   /**
    * Connector encryption is owned by Electron main, not the frequently rebuilt
    * Rust API. Packaged builds protect this key with the signed application's
-   * `safeStorage`; development uses the existing authenticated local envelope
+   * OS encryption (os-crypt.ts); development uses the existing authenticated local envelope
    * so rebuilds cannot trigger recurring Keychain ACL prompts.
    */
   getPlatformEncryptionEnvironment(): Record<string, string> {
@@ -358,6 +368,9 @@ export class DesktopAuthManager {
         key = this.decodeSecret(fs.readFileSync(this.platformKeyPath));
         if (!/^[a-f0-9]{64}$/i.test(key)) throw new Error('Connector key has an invalid format');
       } catch (error) {
+        // A locked Keychain is not a corrupt key: replacing it would orphan
+        // every connector secret encrypted with it.
+        if (error instanceof KeychainUnavailableError) throw error;
         log.warn('[Auth] Connector encryption key is unreadable; replacing it:', error);
         this.quarantineCorruptFile(this.platformKeyPath);
         key = null;
@@ -366,7 +379,7 @@ export class DesktopAuthManager {
     if (!key) {
       key = randomBytes(32).toString('hex');
       fs.mkdirSync(path.dirname(this.platformKeyPath), { recursive: true });
-      fs.writeFileSync(this.platformKeyPath, this.encodeSecret(key), { mode: 0o600 });
+      fs.writeFileSync(this.platformKeyPath, this.encodeSecret(key, this.platformKeyPath), { mode: 0o600 });
     }
     return { ALLTERNIT_ENCRYPTION_KEY: key };
   }
@@ -376,7 +389,7 @@ export class DesktopAuthManager {
    * connector sidecar (see cmd/allternit-api/src/open_connector_proxy.rs and
    * services/open-connector/PROVENANCE.md). Same persistence pattern as
    * getPlatformEncryptionEnvironment() above — generated once, protected by
-   * the same authenticated local envelope / OS safeStorage in packaged
+   * the same authenticated local envelope / OS encryption in packaged
    * builds, reused across restarts so existing connector connections don't
    * silently invalidate every relaunch.
    */
@@ -394,6 +407,7 @@ export class DesktopAuthManager {
           throw new Error('Connector sidecar tokens have an invalid format');
         }
       } catch (error) {
+        if (error instanceof KeychainUnavailableError) throw error;
         log.warn('[Auth] Connector sidecar tokens are unreadable; replacing them:', error);
         this.quarantineCorruptFile(this.connectorSidecarTokensPath);
         tokens = null;
@@ -402,7 +416,11 @@ export class DesktopAuthManager {
     if (!tokens) {
       tokens = { admin: randomBytes(24).toString('hex'), runtime: randomBytes(24).toString('hex') };
       fs.mkdirSync(path.dirname(this.connectorSidecarTokensPath), { recursive: true });
-      fs.writeFileSync(this.connectorSidecarTokensPath, this.encodeSecret(JSON.stringify(tokens)), { mode: 0o600 });
+      fs.writeFileSync(
+        this.connectorSidecarTokensPath,
+        this.encodeSecret(JSON.stringify(tokens), this.connectorSidecarTokensPath),
+        { mode: 0o600 },
+      );
     }
     return {
       // The sidecar binds an ephemeral port and announces it at start; ask
@@ -426,7 +444,7 @@ export class DesktopAuthManager {
     if (explicit) return explicit;
     return loadOrCreateInternalServiceToken({
       filePath: this.internalServiceTokenPath,
-      encode: (value) => this.encodeSecret(value),
+      encode: (value) => this.encodeSecret(value, this.internalServiceTokenPath),
       decode: (raw) => this.decodeSecret(raw),
       quarantine: (filePath) => this.quarantineCorruptFile(filePath),
       warn: (message, error) => log.warn(message, error),
@@ -603,6 +621,8 @@ export class DesktopAuthManager {
   }
 
   private async startPairing(bootstrap?: ProvisionedBootstrap, clerkToken?: string): Promise<DesktopAuthSession> {
+    // machineId() and persistIdentity() need the Keychain unlocked (packaged builds).
+    await secretsReady(this.identityPath, path.join(app.getPath('userData'), 'machine-id.bin'));
     if (this.pendingPairing) return this.pendingPairing.promise;
 
     const { publicKey, privateKey } = generateKeyPairSync('ed25519');
@@ -1299,7 +1319,7 @@ export class DesktopAuthManager {
     this.runtimeIdentity = identity;
     this.session = this.toSession(identity);
     fs.mkdirSync(path.dirname(this.identityPath), { recursive: true });
-    fs.writeFileSync(this.identityPath, this.encodeSecret(JSON.stringify(identity)));
+    fs.writeFileSync(this.identityPath, this.encodeSecret(JSON.stringify(identity), this.identityPath));
     this.persistDaemonIdentity(identity);
   }
 
@@ -1345,6 +1365,9 @@ export class DesktopAuthManager {
       }
       return parsed;
     } catch (error) {
+      // Keychain pending/denied/failing: the identity is fine, it just can't be
+      // opened right now. Quarantining it here forced a re-pair (data loss).
+      if (error instanceof KeychainUnavailableError) throw error;
       log.warn('[Auth] Runtime identity is unreadable:', error);
       this.quarantineCorruptFile(this.identityPath);
       return null;
@@ -1898,14 +1921,16 @@ export class DesktopAuthManager {
     try {
       const v = this.decodeSecret(fs.readFileSync(sealedPath)).trim();
       if (valid(v)) id = v;
-    } catch {
+    } catch (error) {
+      // A locked Keychain must not mint a second machine id for this Mac.
+      if (error instanceof KeychainUnavailableError) throw error;
       // missing or unreadable: adopt the shared copy or make a new one below
     }
     if (!id) id = readShared() ?? randomBytes(24).toString('base64url');
     if (!fs.existsSync(sealedPath)) {
       try {
         fs.mkdirSync(path.dirname(sealedPath), { recursive: true });
-        fs.writeFileSync(sealedPath, this.encodeSecret(id), { mode: 0o600 });
+        fs.writeFileSync(sealedPath, this.encodeSecret(id, sealedPath), { mode: 0o600 });
       } catch (error) {
         log.warn('[Auth] Could not seal the machine id', error);
       }
@@ -1921,13 +1946,14 @@ export class DesktopAuthManager {
     return id;
   }
 
-  private encodeSecret(value: string): Buffer {
-    // In production Electron's signed main process is the sole Keychain owner.
-    // Dev builds use authenticated local encryption so rebuilding the API or
-    // Electron does not cause repeated macOS Keychain prompts.
-    if (app.isPackaged && safeStorage.isEncryptionAvailable()) {
-      return Buffer.from(`${SAFE_STORAGE_HEADER}${safeStorage.encryptString(value).toString('base64')}`, 'utf8');
-    }
+  private encodeSecret(value: string, target: string): Buffer {
+    // In production Electron's signed main process is the sole Keychain owner
+    // (os-crypt.ts). Dev builds use authenticated local encryption so
+    // rebuilding the API or Electron does not cause repeated macOS Keychain
+    // prompts. A Keychain that is merely unavailable never downgrades or
+    // overwrites a Keychain-sealed file (assertLocalEnvelopeAllowed throws).
+    if (app.isPackaged && isEncryptionAvailable()) return sealWithOsEncryption(value);
+    assertLocalEnvelopeAllowed(target);
     const key = this.localHardwareKey();
     const iv = randomBytes(12);
     const cipher = createCipheriv('aes-256-gcm', key, iv);
@@ -1938,10 +1964,7 @@ export class DesktopAuthManager {
 
   private decodeSecret(raw: Buffer): string {
     const value = raw.toString('utf8');
-    if (value.startsWith(SAFE_STORAGE_HEADER)) {
-      if (!safeStorage.isEncryptionAvailable()) throw new Error('macOS credential storage is unavailable');
-      return safeStorage.decryptString(Buffer.from(value.slice(SAFE_STORAGE_HEADER.length), 'base64'));
-    }
+    if (value.startsWith(SAFE_STORAGE_HEADER)) return openOsEncrypted(value);
     if (value.startsWith(LOCAL_STORAGE_HEADER)) {
       const payload = Buffer.from(value.slice(LOCAL_STORAGE_HEADER.length), 'base64');
       const iv = payload.subarray(0, 12);

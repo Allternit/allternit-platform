@@ -3,7 +3,10 @@
  * provider). The web app keeps these in localStorage; on Desktop the renderer
  * swaps in a store backed by these channels (allternit-ai
  * src/lib/voice/byok/desktopStore.ts), so the keys sit in secure-store
- * (safeStorage in packaged builds, the local AES-GCM envelope in dev).
+ * (OS encryption via os-crypt.ts in packaged builds, the local AES-GCM
+ * envelope in dev). unified-main registers these with handleGuardedSecrets,
+ * which waits for the macOS Keychain unlock first; voiceKeys:get rejects
+ * instead of answering null while the Keychain is unavailable.
  *
  * Channels (all trusted-sender guarded by the caller's handleGuarded, and
  * additionally limited to a window's top frame):

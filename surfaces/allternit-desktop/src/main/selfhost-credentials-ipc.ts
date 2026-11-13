@@ -2,9 +2,13 @@
  * Keychain bridge for the self-hosted server credential
  * (window.allternit.selfhost.credentials). The web app asks for a named secret
  * (it uses "selfhost-server-token"); the value is sealed with secure-store.ts
- * (Electron safeStorage / macOS Keychain). The value is never logged.
+ * (os-crypt.ts: macOS Keychain, Electron safeStorage elsewhere). The value is
+ * never logged. unified-main registers these with handleGuardedSecrets, which
+ * waits for the Keychain unlock; get rejects (never answers null) when the
+ * Keychain is still unavailable.
  */
 
+import { KeychainUnavailableError } from './os-crypt.js';
 import { deleteSecret, readSecret, writeSecret } from './secure-store.js';
 
 type Guarded = (
@@ -33,7 +37,10 @@ export function registerSelfHostCredentialsIpc(handleGuarded: Guarded): void {
     try {
       writeSecret(key, value);
       return { success: true };
-    } catch {
+    } catch (error) {
+      if (error instanceof KeychainUnavailableError) {
+        return { success: false, error: 'macOS Keychain access is needed to store the credential' };
+      }
       return { success: false, error: 'Could not store the credential securely' };
     }
   });

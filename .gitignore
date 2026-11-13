@@ -48,6 +48,8 @@ _tmp_*/
 _archive/
 coverage/
 build/
+# Desktop macOS Keychain addon output (scripts/prepare-keychain-addon.cjs builds it)
+surfaces/allternit-desktop/native/keychain/build/
 # electron-builder resources live under surfaces/allternit-desktop/build/
 # (icons, installer art, LICENSE.txt) — the NSIS license field hard-fails
 # without build/LICENSE.txt (desktop-v1.1.1 run 13).

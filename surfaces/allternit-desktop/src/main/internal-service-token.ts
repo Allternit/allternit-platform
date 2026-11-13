@@ -17,6 +17,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { randomBytes } from 'node:crypto';
+import { KeychainUnavailableError } from './os-crypt.js';
 
 const TOKEN_FORMAT = /^[a-f0-9]{64}$/i;
 
@@ -37,6 +38,9 @@ export function loadOrCreateInternalServiceToken(store: InternalTokenStore): str
       if (TOKEN_FORMAT.test(token)) return token;
       throw new Error('Internal service token has an invalid format');
     } catch (error) {
+      // A locked or denied macOS Keychain is not a damaged file: keep it, or
+      // the next launch's API and an adopted gizzi stop agreeing on the token.
+      if (error instanceof KeychainUnavailableError) throw error;
       store.warn?.('[Auth] Internal service token is unreadable; replacing it:', error);
       store.quarantine(store.filePath);
     }
