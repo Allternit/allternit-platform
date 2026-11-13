@@ -1,0 +1,163 @@
+{{- $root := . }}
+{{- $url := required "server.url is required (the Agents Server URL as workers reach it)" .Values.server.url }}
+{{- $apparmorField := semverCompare ">=1.30-0" .Capabilities.KubeVersion.Version }}
+{{- range $env := .Values.environments }}
+{{- $e := mergeOverwrite (deepCopy $root.Values.defaults) $env }}
+{{- if not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" (toString $e.name)) }}
+{{- fail (printf "environments[].name %q must be lowercase letters, digits and dashes" (toString $e.name)) }}
+{{- end }}
+{{- $_ := required (printf "environments[%s].id is required" $e.name) $e.id }}
+{{- $_ := required (printf "environments[%s].keySecret.name is required" $e.name) (dig "keySecret" "name" "" $e) }}
+{{- if not (has (default "none" $e.network) (list "none" "limited" "full")) }}
+{{- fail (printf "environments[%s].network must be none, limited or full" $e.name) }}
+{{- end }}
+{{- $ctx := dict "root" $root "env" $e }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "sandboxes.envFullname" $ctx }}
+  labels:
+    {{- include "sandboxes.labels" $root | nindent 4 }}
+    app.kubernetes.io/component: worker
+    allternit.com/environment: {{ $e.name | quote }}
+    allternit.com/network: {{ default "none" $e.network | quote }}
+spec:
+  {{- if not $e.autoscaling.enabled }}
+  replicas: {{ $e.replicas }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "sandboxes.envSelectorLabels" $ctx | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "sandboxes.envSelectorLabels" $ctx | nindent 8 }}
+        app.kubernetes.io/part-of: allternit-selfhost
+        allternit.com/network: {{ default "none" $e.network | quote }}
+        {{- with $root.Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- if or $root.Values.podAnnotations (and (not $apparmorField) (not $root.Values.sandbox.privileged)) }}
+      annotations:
+        {{- with $root.Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- if and (not $apparmorField) (not $root.Values.sandbox.privileged) }}
+        # Kubernetes before 1.30 sets AppArmor through this annotation.
+        {{- $aa := $root.Values.sandbox.appArmorProfile }}
+        {{- if eq (toString $aa.type) "Localhost" }}
+        container.apparmor.security.beta.kubernetes.io/worker: {{ printf "localhost/%s" (required "sandbox.appArmorProfile.localhostProfile is required for Localhost" $aa.localhostProfile) }}
+        {{- else if eq (toString $aa.type) "RuntimeDefault" }}
+        container.apparmor.security.beta.kubernetes.io/worker: runtime/default
+        {{- else }}
+        container.apparmor.security.beta.kubernetes.io/worker: unconfined
+        {{- end }}
+        {{- end }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "sandboxes.serviceAccountName" $root }}
+      automountServiceAccountToken: false
+      {{- with $root.Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $root.Values.runtimeClassName }}
+      runtimeClassName: {{ . }}
+      {{- end }}
+      {{- if and $root.Values.sandbox.userNamespace (not $root.Values.sandbox.privileged) }}
+      # Own user namespace: required for procMount Unmasked.
+      hostUsers: false
+      {{- end }}
+      terminationGracePeriodSeconds: {{ $root.Values.terminationGracePeriodSeconds }}
+      securityContext:
+        {{- toYaml $root.Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: worker
+          image: {{ include "sandboxes.image" $root }}
+          imagePullPolicy: {{ $root.Values.image.pullPolicy }}
+          # The image entrypoint is `gizzi worker --workdir /workspace`.
+          args:
+            {{- with $e.blockMs }}
+            - --block-ms={{ . | int64 }}
+            {{- end }}
+            {{- with $e.reclaimOlderThanMs }}
+            - --reclaim-older-than-ms={{ . | int64 }}
+            {{- end }}
+            {{- with $e.autoStop }}
+            - --auto-stop={{ . | int64 }}
+            {{- end }}
+            {{- range $e.extraArgs }}
+            - {{ . | quote }}
+            {{- end }}
+          env:
+            - name: ALLTERNIT_SERVER_URL
+              value: {{ $url | quote }}
+            - name: ALLTERNIT_ENVIRONMENT_ID
+              value: {{ $e.id | quote }}
+            - name: ALLTERNIT_ENVIRONMENT_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $e.keySecret.name }}
+                  key: {{ default "ALLTERNIT_ENVIRONMENT_KEY" $e.keySecret.key }}
+            # Shown in the server's worker list.
+            - name: ALLTERNIT_WORKER_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: ALLTERNIT_SELF_HOSTED
+              value: "1"
+            {{- with $root.Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          securityContext:
+            {{- if $root.Values.sandbox.privileged }}
+            privileged: true
+            {{- else }}
+            # bwrap uses unprivileged user namespaces: no capabilities, no setuid.
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+            seccompProfile:
+              {{- toYaml $root.Values.sandbox.seccompProfile | nindent 14 }}
+            {{- if $apparmorField }}
+            appArmorProfile:
+              {{- toYaml $root.Values.sandbox.appArmorProfile | nindent 14 }}
+            {{- end }}
+            {{- if $root.Values.sandbox.userNamespace }}
+            procMount: Unmasked
+            {{- end }}
+            {{- end }}
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace
+            - name: home
+              mountPath: /var/lib/gizzi-worker
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            {{- toYaml $e.resources | nindent 12 }}
+      volumes:
+        - name: workspace
+          emptyDir:
+            sizeLimit: {{ $e.workspace.sizeLimit }}
+            {{- with $e.workspace.medium }}
+            medium: {{ . }}
+            {{- end }}
+        - name: home
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+      {{- with $root.Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $root.Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $root.Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

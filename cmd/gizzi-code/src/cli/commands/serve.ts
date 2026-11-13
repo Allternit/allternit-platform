@@ -1,5 +1,6 @@
 import { Server } from "@/runtime/server/server"
 import { Mesh } from "@/runtime/server/mesh"
+import { isSelfHosted, isVendorUrl } from "@/shared/selfhost/offline"
 import { cmd } from "@/cli/commands/cmd"
 import { withNetworkOptions, resolveNetworkOptions } from "@/cli/network"
 import { Flag } from "@/runtime/context/flag/flag"
@@ -65,6 +66,14 @@ export const ServeCommand = cmd({
       args.meshControlUrl ?? Flag.GIZZI_MESH_CONTROL_URL ?? config?.server?.mesh_control_url ?? Mesh.DEFAULT_CONTROL_URL
     // An auth key implies mesh mode even without --mesh (same rule as --tunnel-token).
     const mesh = meshFlag || !!meshAuthKey
+    // Self-hosted: the default coordination server is an Allternit host (a child
+    // process, so the fetch guard can't see it). Refuse instead of connecting.
+    if (mesh && isSelfHosted() && isVendorUrl(meshControlUrl)) {
+      throw new Error(
+        `--mesh would connect to ${meshControlUrl}, an Allternit host. Self-hosted mode (ALLTERNIT_SELF_HOSTED=1) ` +
+          "makes no Allternit calls: pass --mesh-control-url for your own Headscale server, or leave mesh off.",
+      )
+    }
 
     // A tunnel exposes even a loopback server to the public internet, so the
     // same "never expose an unauthenticated server" rule applies. Shared with

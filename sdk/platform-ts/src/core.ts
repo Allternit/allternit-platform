@@ -19,6 +19,8 @@ export interface RequestOptions {
   headers?: Record<string, string>;
   /** Extra query parameters. */
   query?: Record<string, unknown>;
+  /** Called with the status and headers of a successful response (including 204) before the body is read. */
+  onResponse?: (response: { status: number; headers: Headers }) => void;
 }
 
 export interface Page<T> {
@@ -170,6 +172,7 @@ export class HttpTransport implements Transport {
   async request<T>(spec: RequestSpec): Promise<T> {
     const { response, done } = await this.send(spec, "application/json");
     try {
+      spec.options?.onResponse?.({ status: response.status, headers: response.headers });
       if (response.status === 204) return undefined as T;
       const text = await response.text();
       return (text ? JSON.parse(text) : undefined) as T;

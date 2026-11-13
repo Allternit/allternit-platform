@@ -15,6 +15,7 @@ import { basicAuth } from "hono/basic-auth"
 import type { MiddlewareHandler } from "hono"
 import { Flag } from "@/runtime/context/flag/flag"
 import { Log } from "@/shared/util/log"
+import { assertNotVendor, isSelfHosted, isVendorUrl } from "@/shared/selfhost/offline"
 import { CLOUD_URLS } from "@/shared/constants/cloudUrls"
 import { classifyAllternitToken } from "@/shared/utils/allternitToken"
 
@@ -84,6 +85,8 @@ export namespace ClerkAuth {
   }
 
   export async function verify(token: string): Promise<ClerkUser> {
+    // Self-hosted: the default JWKS lives on clerk.allternit.com, which is never called.
+    assertNotVendor(jwksUrl())
     const { payload } = await jwtVerify(token, jwks(), {
       issuer: allowedIssuers(),
       algorithms: ["RS256"],
@@ -114,6 +117,8 @@ export namespace ClerkAuth {
     const cached = validCache.get(token)
     if (cached && Date.now() - cached.checkedAt < VALID_CACHE_TTL_MS) return cached.user
     if (validCache.size > 512) validCache.clear()
+    // Self-hosted: Allternit gateway keys are validated by api.allternit.com, which is never called.
+    if (isSelfHosted() && isVendorUrl(validateUrl())) return undefined
 
     const response = await fetch(validateUrl(), {
       method: "POST",

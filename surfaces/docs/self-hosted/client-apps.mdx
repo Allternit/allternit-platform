@@ -1,0 +1,81 @@
+---
+title: 'Client apps'
+description: 'Connect Allternit Desktop, ai.allternit.com and the PWA, the iOS app, Android and Gizzi Code to your self-hosted Agents Server.'
+---
+
+<Note>
+**Status: Private beta.** The connect screens are being built in each app. This page describes the intended flow. A screen may not be in the build you have yet.
+</Note>
+
+Every app connects to your server the same way: a server URL plus a server API key (`ask_...`) or, when the server has OIDC set, a sign-in with your identity provider. The app first calls `GET /v1/server/info` (no key needed) to read the version and the sign-in modes.
+
+## What each app shows
+
+| State | Meaning |
+|---|---|
+| Connecting | The app is calling `/v1/server/info`. |
+| Connected | The server answered and the key or sign-in works. The app shows the server version, provider, agents and environments with their online workers. |
+| Key refused (401) | The key is wrong, expired or revoked. Mint a new one with `POST /v1/api_keys` or `admin keys`. |
+| Unreachable | No answer from the URL. Check DNS, the reverse proxy and the firewall. |
+| `http://` blocked | The web app and PWA only accept `https://` URLs. Put TLS in front of the server. |
+
+## Desktop
+
+Allternit Desktop has **Connect to your server** in Settings, under Runtimes and under Enterprise:
+
+1. Enter the server URL.
+2. Paste an API key, or choose SSO when the server offers OIDC.
+3. The status card shows the connection, the agents, and a session console.
+
+Desktop calls your server directly. It does not need an Allternit account for this connection, and it can reach `http://` URLs on your network, for example `http://127.0.0.1:8400` on the same machine.
+
+## ai.allternit.com and the PWA
+
+The web app (including its phone layout) and the PWA at m.allternit.com have the same panel.
+
+- The server URL must be `https://`. Browsers block calls from an HTTPS page to `http://` hosts, so the app refuses an `http://` URL with a clear error instead of failing silently.
+- Add the app's origins to `server.cors_origins` in the settings file, or the browser blocks the calls. List all three clients that run in a browser engine:
+
+```yaml
+server:
+  public_url: https://agents.example.internal
+  cors_origins:
+    - https://ai.allternit.com    # web app
+    - https://m.allternit.com     # PWA
+    - http://127.0.0.1:8013       # packaged Desktop
+```
+
+iOS and Gizzi Code make no browser calls and need no entry.
+
+- The page itself loads from `allternit.com`, but API calls go straight from the browser to your server. Your agents, sessions and keys do not pass through Allternit. If no part of the flow may touch an Allternit domain, use Desktop, the iOS app or Gizzi Code instead.
+
+## iOS
+
+In the iOS app, open **Settings**, then **Self-hosted server**:
+
+1. Enter the server's HTTPS address and an API key. iOS accepts HTTPS only.
+2. Tap **Connect**. The app saves the address and key only after the server accepts the key. The key is stored in the iOS Keychain and then shows as **Saved in Keychain** with its last four characters. Tap **Change** to enter a different key, or **Disconnect** to remove both.
+3. The screen shows the connection, the server's agents and environments with their online workers, and lets you start a session. Replies and tool calls stream in.
+
+If your server uses a certificate from a private CA, install the CA profile on the device and trust it: Settings, General, About, Certificate Trust Settings. Until the CA is trusted, the app cannot connect.
+
+## Android
+
+The Android app shows m.allternit.com, so it gets the same panel as the PWA, with the same `https://` and CORS rules.
+
+## Gizzi Code
+
+Register the server as a runtime and check it from the terminal:
+
+```bash
+gizzi runtime register --self-hosted   # adds your server URL and an API key
+gizzi runtime status                   # connection, workers online and queue depth per environment
+```
+
+Check `gizzi runtime register --help` for the exact flags on your version.
+
+Run a worker from the same CLI with `gizzi worker`. See [Workers](/self-hosted/workers).
+
+## SDKs
+
+The TypeScript and Python SDKs have a `SelfHostClient`. See [SDKs](/self-hosted/sdks).

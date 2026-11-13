@@ -25,6 +25,7 @@ import { Log } from "@/shared/util/log"
 import { Flag } from "@/runtime/context/flag/flag"
 import { Auth } from "@/runtime/integrations/auth"
 import { Pairing } from "@/runtime/services/pairing/pairing"
+import { isSelfHosted } from "@/shared/selfhost/offline"
 
 export namespace InstanceRegistration {
   const log = Log.create({ service: "instance-registration" })
@@ -103,6 +104,11 @@ export namespace InstanceRegistration {
   }
 
   export async function register(opts: { url: string; name?: string }): Promise<void> {
+    // Self-hosted: no Allternit instance registry.
+    if (isSelfHosted()) {
+      log.info("self-hosted mode; skipping instance registration")
+      return
+    }
     // Rotate a soon-to-expire device token before resolving, so the very first
     // registration PUT already carries the fresh token. Best-effort: a failed
     // rotation leaves the old token in place and registration proceeds with it.

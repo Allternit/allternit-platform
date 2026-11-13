@@ -23,6 +23,7 @@ import { ProviderTransform } from "@/runtime/providers/adapters/transform"
 import { BUNDLED_PROVIDERS, NoSuchModelError, type SDK, type LanguageModelV2 } from "@/runtime/providers/adapters/bundled"
 
 // Provider-specific loaders — each provider's config/auth/model logic in its own file
+import { SelfhostInference } from "@/runtime/providers/selfhost-inference"
 import { CUSTOM_LOADERS } from "@/runtime/providers/adapters/loaders"
 import type { CustomModelLoader } from "@/runtime/providers/types"
 import { Discovery, type DiscoveredProvider } from "@/runtime/providers/discovery"
@@ -285,7 +286,58 @@ export namespace Provider {
     }
   }
 
+  function selfhostModel(cfg: SelfhostInference.Config, spec: SelfhostInference.Spec, name: string): Model {
+    const apiID = SelfhostInference.resolveModel(cfg, name)
+    return {
+      id: name,
+      providerID: spec.id,
+      name,
+      api: { id: apiID, url: spec.url, npm: spec.npm(apiID) },
+      status: "active",
+      headers: {},
+      options: {},
+      cost: { input: 0, output: 0, cache: { read: 0, write: 0 } },
+      limit: { context: 200000, output: 32000 },
+      capabilities: {
+        temperature: true,
+        reasoning: true,
+        attachment: true,
+        toolcall: true,
+        input: { text: true, audio: false, image: true, video: false, pdf: true },
+        output: { text: true, audio: false, image: false, video: false, pdf: false },
+        interleaved: false,
+      },
+      release_date: "",
+      variants: {},
+    }
+  }
+
+  /** Self-hosted inference: one provider, the model_map keys as its models, no catalog, no discovery. */
+  function selfhostState(cfg: SelfhostInference.Config) {
+    const spec = SelfhostInference.spec(cfg)
+    const info: Info = {
+      id: spec.id,
+      name: spec.name,
+      source: "config",
+      env: [],
+      options: spec.options,
+      models: {},
+    }
+    for (const name of SelfhostInference.listed(cfg)) info.models[name] = selfhostModel(cfg, spec, name)
+    return {
+      models: new Map<string, LanguageModelV2>(),
+      providers: { [spec.id]: info } as { [providerID: string]: Info },
+      sdk: new Map<number, SDK>(),
+      modelLoaders: {} as { [providerID: string]: CustomModelLoader },
+    }
+  }
+
   const state = Instance.state(async () => {
+    const selfhost = SelfhostInference.load()
+    if (selfhost) {
+      log.info("self-hosted inference", { provider: selfhost.provider, models: SelfhostInference.listed(selfhost).length })
+      return selfhostState(selfhost)
+    }
     using _ = log.time("state")
     const config = await Config.get()
     const modelsDev = await ModelsDev.get()
@@ -860,6 +912,17 @@ export namespace Provider {
 
   export async function getModel(providerID: string, modelID: string) {
     modelID = stripProviderPrefix(providerID, modelID)
+    const selfhost = SelfhostInference.load()
+    if (selfhost) {
+      // A name outside model_map (or a provider this server did not register) fails here, before any network call.
+      const spec = SelfhostInference.spec(selfhost)
+      if (providerID !== spec.id) throw new SelfhostInference.ModelNotMappedError(modelID, SelfhostInference.listed(selfhost))
+      const s = await state()
+      const apiID = SelfhostInference.resolveModel(selfhost, modelID)
+      const provider = s.providers[spec.id]
+      // Own-id passthrough (non-gateway, empty model_map): remember the model on the provider.
+      return (provider.models[modelID] ??= { ...selfhostModel(selfhost, spec, modelID), api: { id: apiID, url: spec.url, npm: spec.npm(apiID) } })
+    }
     const s = await state()
     const provider = s.providers[providerID]
     if (!provider) {
@@ -880,6 +943,8 @@ export namespace Provider {
   }
 
   export async function getLanguage(model: Model, plan?: AuthPlan): Promise<LanguageModelV2> {
+    const selfhost = SelfhostInference.load()
+    if (selfhost) SelfhostInference.resolveModel(selfhost, model.id)
     const s = await state()
     const key = `${model.providerID}/${model.id}`
     if (s.models.has(key)) return s.models.get(key)!
@@ -932,6 +997,19 @@ export namespace Provider {
   }
 
   export async function prepareAuth(ref: ModelRef): Promise<AuthPlan> {
+    const selfhost = SelfhostInference.load()
+    if (selfhost) {
+      // Credentials come from the server's inference config only; stored auth, env keys and profiles never apply.
+      const model = await getModel(ref.providerID, ref.modelID)
+      return {
+        providerID: ref.providerID,
+        modelID: ref.modelID,
+        baseURL: model.api.url,
+        authType: "api_key",
+        extraHeaders: {},
+        source: "config",
+      }
+    }
     const [provider, model, cfg] = await Promise.all([
       getProvider(ref.providerID),
       getModel(ref.providerID, ref.modelID).catch(() => undefined),

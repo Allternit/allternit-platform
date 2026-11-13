@@ -724,6 +724,16 @@ function streamUnsubscribe(serial: string): void {
 // ─── Phone Link (phone-link.ts) ───────────────────────────────────────────────
 // Apple ID credentials pass through once to main; nothing here stores them.
 
+const selfhostAPI = {
+  /** Keychain-sealed credentials for the self-hosted server panel. A missing secret is null. */
+  credentials: {
+    get: (name: string): Promise<string | null> => ipcRenderer.invoke('selfhost:credentials:get', name),
+    set: (name: string, value: string): Promise<{ success: boolean; error?: string }> =>
+      ipcRenderer.invoke('selfhost:credentials:set', name, value),
+    delete: (name: string): Promise<{ success: boolean }> => ipcRenderer.invoke('selfhost:credentials:delete', name),
+  },
+};
+
 const phoneLinkAPI = {
   status: (): Promise<unknown> => ipcRenderer.invoke('phone-link:status'),
   devices: (): Promise<unknown> => ipcRenderer.invoke('phone-link:devices'),
@@ -1271,6 +1281,7 @@ const allternitDesktopAPI = {
   permissionGuide: permissionGuideAPI,
   phones: phonesAPI,
   phoneLink: phoneLinkAPI,
+  selfhost: selfhostAPI,
   featureFlags: featureFlagsAPI,
   findInPage: findInPageAPI,
   locale: localeAPI,

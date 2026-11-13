@@ -1,0 +1,55 @@
+[Unit]
+# Gizzi sandbox worker for a self-hosted Agents Server (allternit-agents-server).
+# The worker only makes outbound HTTPS calls to your server; it never calls
+# *.allternit.com (ALLTERNIT_SELF_HOSTED=1). Protocol:
+# docs/SELFHOST_WORKER_PROTOCOL.md.
+#
+# Install:
+#   1. apt install bubblewrap socat git    (bubblewrap sandboxes every bash call;
+#      socat is needed for environments with network: limited)
+#   2. useradd --system --home /var/lib/gizzi-worker --shell /usr/sbin/nologin gizzi-worker
+#      install -d -o gizzi-worker -g gizzi-worker -m 0750 /workspace
+#   3. install -d -m 0750 /etc/allternit
+#      cp gizzi-selfhost-worker.env.example /etc/allternit/gizzi-selfhost-worker.env
+#      chmod 0600 /etc/allternit/gizzi-selfhost-worker.env   (it holds the aek_ key)
+#      and fill in ALLTERNIT_SERVER_URL, ALLTERNIT_ENVIRONMENT_ID, ALLTERNIT_ENVIRONMENT_KEY.
+#   4. cp this file to /etc/systemd/system/gizzi-selfhost-worker.service
+#   5. systemctl daemon-reload && systemctl enable --now gizzi-selfhost-worker
+# More workers on one host: copy the unit as gizzi-selfhost-worker@.service,
+# add ALLTERNIT_WORKER_ID=%H-%i and a WorkingDirectory per instance.
+Description=Gizzi self-hosted sandbox worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=gizzi-worker
+Group=gizzi-worker
+EnvironmentFile=/etc/allternit/gizzi-selfhost-worker.env
+Environment=ALLTERNIT_SELF_HOSTED=1
+Environment=HOME=/var/lib/gizzi-worker
+Environment=XDG_DATA_HOME=/var/lib/gizzi-worker/data
+Environment=XDG_CONFIG_HOME=/var/lib/gizzi-worker/config
+Environment=XDG_STATE_HOME=/var/lib/gizzi-worker/state
+Environment=XDG_CACHE_HOME=/var/lib/gizzi-worker/cache
+StateDirectory=gizzi-worker
+WorkingDirectory=/workspace
+ExecStart=/usr/local/bin/gizzi worker --workdir /workspace
+Restart=always
+RestartSec=5
+# SIGTERM: the worker hands its item back (/release) so another worker can
+# take it at once, then exits 0.
+KillSignal=SIGTERM
+TimeoutStopSec=30
+# Hardening. bubblewrap needs unprivileged user namespaces, so do not add
+# PrivateUsers= or RestrictNamespaces= here.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/workspace /var/lib/gizzi-worker
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

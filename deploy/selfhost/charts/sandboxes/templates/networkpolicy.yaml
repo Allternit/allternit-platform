@@ -1,0 +1,70 @@
+{{- if .Values.networkPolicy.enabled }}
+{{- $root := . }}
+{{- range $env := .Values.environments }}
+{{- $e := mergeOverwrite (deepCopy $root.Values.defaults) $env }}
+{{- $net := default "none" $e.network }}
+{{- $ctx := dict "root" $root "env" $e }}
+---
+# Worker egress for environment {{ $e.name }} (network: {{ $net }}).
+# The NetworkPolicy covers the whole pod: the worker's own calls to the server
+# and the sandbox's traffic. Per-host rules for `limited` are enforced by the
+# worker's CONNECT proxy; this policy keeps the pod inside the same bounds by IP.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "sandboxes.envFullname" $ctx }}
+  labels:
+    {{- include "sandboxes.labels" $root | nindent 4 }}
+    allternit.com/environment: {{ $e.name | quote }}
+    allternit.com/network: {{ $net | quote }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "sandboxes.envSelectorLabels" $ctx | nindent 6 }}
+  # No ingress rule: nothing may connect to a worker.
+  policyTypes: [Ingress, Egress]
+  egress:
+    # DNS.
+    - to:
+        {{- toYaml $root.Values.networkPolicy.dns.to | nindent 8 }}
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    # The Agents Server.
+    - to:
+        {{- if $root.Values.server.cidr }}
+        - ipBlock:
+            cidr: {{ $root.Values.server.cidr }}
+        {{- else }}
+        - podSelector:
+            {{- toYaml $root.Values.server.podSelector | nindent 12 }}
+        {{- end }}
+      ports:
+        - port: {{ $root.Values.server.port }}
+          protocol: TCP
+    {{- if eq $net "limited" }}
+    {{- range $e.allowedEgress }}
+    - to:
+        - ipBlock:
+            cidr: {{ required "allowedEgress[].cidr is required" .cidr }}
+      {{- with .ports }}
+      ports:
+        {{- range . }}
+        - port: {{ . }}
+          protocol: TCP
+        {{- end }}
+      {{- end }}
+    {{- end }}
+    {{- else if eq $net "full" }}
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            {{- with $root.Values.fullEgressExcept }}
+            except:
+              {{- toYaml . | nindent 14 }}
+            {{- end }}
+    {{- end }}
+{{- end }}
+{{- end }}

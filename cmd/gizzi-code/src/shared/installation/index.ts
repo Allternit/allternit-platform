@@ -4,6 +4,7 @@ import { $ } from "bun"
 import z from "zod/v4"
 import { NamedError } from "@allternit/gizzi-util/error.js"
 import { Log } from "@/shared/util/log"
+import { isSelfHosted } from "@/shared/selfhost/offline"
 import { iife } from "@/shared/util/iife"
 import { Flag } from "@/runtime/context/flag/flag"
 
@@ -43,7 +44,7 @@ export namespace Installation {
   export async function info() {
     return {
       version: VERSION,
-      latest: await latest(),
+      latest: isSelfHosted() ? VERSION : await latest(),
     }
   }
 
@@ -198,6 +199,8 @@ export namespace Installation {
   export const USER_AGENT = `gizzi-code/${CHANNEL}/${VERSION}/${Flag.GIZZI_CLIENT}`
 
   export async function latest(installMethod?: Method) {
+    // Self-hosted: no update checks (operators upgrade the image themselves).
+    if (isSelfHosted()) throw new Error("Update checks are off in self-hosted mode (ALLTERNIT_SELF_HOSTED=1).")
     const detectedMethod = installMethod || (await method())
 
     if (detectedMethod === "brew") {

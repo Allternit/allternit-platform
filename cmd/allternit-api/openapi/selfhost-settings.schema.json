@@ -1,0 +1,246 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.example.invalid/allternit/selfhost-settings.schema.json",
+  "title": "Allternit Agents Server settings",
+  "description": "Settings file for allternit-agents-server. Write it as YAML or JSON. Secrets are never written here: use a reference such as env:NAME, file:/path or vault:path#key. OpenTelemetry export is not set here. It comes from the standard OTEL_* environment variables (for example OTEL_EXPORTER_OTLP_ENDPOINT, OTEL_SERVICE_NAME, OTEL_TRACES_SAMPLER).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["inference"],
+  "$defs": {
+    "secretRef": {
+      "type": "string",
+      "pattern": "^(env:|file:|vault:).+",
+      "description": "A reference to a secret: env:NAME, file:/path, or vault:path#key."
+    },
+    "hostnames": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1, "pattern": "^[^/\\s]+$" },
+      "uniqueItems": true,
+      "description": "Exact hostnames, optionally with a port. No wildcards. No scheme."
+    }
+  },
+  "properties": {
+    "data_dir": {
+      "type": "string",
+      "default": "/var/lib/allternit-agents-server",
+      "description": "Where SQLite and local files live when no database url is set."
+    },
+    "ephemeral": {
+      "type": "boolean",
+      "default": false,
+      "description": "Keep state in memory only. For tests. Ignored when database.url is set."
+    },
+    "server": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "listen": { "type": "string", "default": "127.0.0.1:8400", "description": "host:port to bind." },
+        "public_url": { "type": "string", "format": "uri", "description": "The URL clients use. Shown in /v1/server/info." },
+        "cors_origins": {
+          "type": "array",
+          "items": { "type": "string", "anyOf": [{ "format": "uri" }, { "const": "null" }], "not": { "const": "*" } },
+          "default": [],
+          "description": "Exact browser origins allowed to call the API, as scheme://host[:port]. Empty means no CORS headers. \"*\" is refused. The literal \"null\" allows Origin: null (the Desktop app's file:/app: renderer) and is never implied by another entry. Allowed methods: GET, POST, PATCH, DELETE, OPTIONS. Allowed headers: Authorization, Content-Type, Idempotency-Key, Last-Event-ID, X-Session-Secret. Exposed: Last-Event-ID. Preflight max age 600 s. No credentials mode: clients send the key in Authorization."
+        }
+      }
+    },
+    "database": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "url": {
+          "oneOf": [{ "$ref": "#/$defs/secretRef" }, { "type": "string", "pattern": "^postgres(ql)?://" }],
+          "description": "PostgreSQL URL, or a secret reference to one. If absent, the server uses SQLite in data_dir, or memory when ephemeral is true."
+        },
+        "max_connections": { "type": "integer", "minimum": 1, "default": 20 }
+      }
+    },
+    "inference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider"],
+      "properties": {
+        "provider": { "type": "string", "enum": ["anthropic", "bedrock", "vertex", "foundry", "gateway"] },
+        "gateway": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["format", "base_url"],
+          "properties": {
+            "format": { "type": "string", "enum": ["anthropic-messages", "bedrock-invoke", "vertex-raw-predict", "openai-chat"] },
+            "base_url": { "type": "string", "format": "uri" },
+            "headers": {
+              "type": "object",
+              "additionalProperties": { "type": "string" },
+              "description": "Extra request headers. Values may be secret references."
+            }
+          }
+        },
+        "model_map": {
+          "type": "object",
+          "additionalProperties": { "type": "string", "minLength": 1 },
+          "description": "Agent model name to the provider's model id. A model not listed here is refused with 422 model_not_mapped. Required for the gateway provider."
+        },
+        "credentials": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "References to credentials. Which ones apply depends on the provider.",
+          "properties": {
+            "api_key": { "$ref": "#/$defs/secretRef" },
+            "aws_access_key_id": { "$ref": "#/$defs/secretRef" },
+            "aws_secret_access_key": { "$ref": "#/$defs/secretRef" },
+            "aws_session_token": { "$ref": "#/$defs/secretRef" },
+            "aws_region": { "type": "string" },
+            "gcp_service_account_json": { "$ref": "#/$defs/secretRef" },
+            "gcp_project": { "type": "string" },
+            "gcp_region": { "type": "string" },
+            "foundry_endpoint": { "type": "string", "format": "uri" },
+            "foundry_api_key": { "$ref": "#/$defs/secretRef" }
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "provider": { "const": "gateway" } }, "required": ["provider"] },
+          "then": { "required": ["gateway", "model_map"] }
+        }
+      ]
+    },
+    "mcp": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "allowed_hostnames": { "$ref": "#/$defs/hostnames", "default": [] },
+        "max_result_bytes": { "type": "integer", "minimum": 1, "default": 102400 }
+      }
+    },
+    "git": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "allowed_hostnames": { "$ref": "#/$defs/hostnames", "default": [] },
+        "allowed_push_refs": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "Ref patterns a push may update, for example refs/heads/agent/*."
+        }
+      }
+    },
+    "web_tools": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean", "default": false }
+      }
+    },
+    "auth": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "oidc": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["issuer", "audiences"],
+          "properties": {
+            "issuer": { "type": "string", "format": "uri" },
+            "audiences": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+            "jwks_uri": { "type": "string", "format": "uri", "description": "Where the signing keys are. When absent, the server reads it from the issuer's discovery document and accepts it only on the issuer's own host. Set it when the keys live on another host; that host is then added to the egress allowlist." },
+            "role_claim": { "type": "string", "default": "groups", "description": "The token claim that holds the user's groups or role." },
+            "role_map": {
+              "type": "object",
+              "additionalProperties": { "type": "string", "enum": ["admin", "developer", "viewer"] },
+              "description": "Claim value to role."
+            },
+            "default_role": { "type": "string", "enum": ["admin", "developer", "viewer", "none"], "default": "none", "description": "Role when no claim value matches. none refuses the sign-in." }
+          }
+        }
+      }
+    },
+    "secrets": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "backend": { "type": "string", "enum": ["env", "file", "vault"], "default": "env" },
+        "vault": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["address", "mount", "path"],
+          "properties": {
+            "address": { "type": "string", "format": "uri" },
+            "mount": { "type": "string", "default": "secret", "description": "KV v2 mount." },
+            "path": { "type": "string" },
+            "auth": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["method"],
+              "properties": {
+                "method": { "type": "string", "enum": ["token", "approle", "kubernetes"] },
+                "token": { "$ref": "#/$defs/secretRef" },
+                "role_id": { "type": "string" },
+                "secret_id": { "$ref": "#/$defs/secretRef" },
+                "role": { "type": "string" }
+              }
+            }
+          }
+        },
+        "encryption_key_ref": {
+          "$ref": "#/$defs/secretRef",
+          "description": "The key that encrypts stored credentials. Rotate with `admin rotate-key`."
+        },
+        "previous_key_refs": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/secretRef" },
+          "default": [],
+          "description": "Earlier encryption keys. Values sealed with them stay readable until `admin rotate-key` re-seals them with encryption_key_ref. Needs encryption_key_ref."
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "backend": { "const": "vault" } }, "required": ["backend"] },
+          "then": { "required": ["vault"] }
+        }
+      ]
+    },
+    "observability": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "log_format": { "type": "string", "enum": ["json", "text"], "default": "json" },
+        "prometheus": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean", "default": false },
+            "listen": { "type": "string", "default": "127.0.0.1:9464", "description": "Separate listener. The main API port never serves /metrics." }
+          }
+        }
+      }
+    },
+    "health": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "check_interval": { "type": "string", "pattern": "^[0-9]+(ms|s|m|h)$", "default": "60s" }
+      }
+    },
+    "sessions": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Session and work item timing.",
+      "properties": {
+        "idle_timeout": {
+          "type": "string",
+          "pattern": "^[0-9]*[1-9][0-9]*(ms|s|m|h)$",
+          "default": "1h",
+          "description": "A session with no turn running and no pending tool call for this long ends its work item. The worker's next tool_calls/next answers 204 with X-Session-Closed: true, and the worker completes the item. The next turn that needs a tool queues a new item."
+        },
+        "no_worker_timeout": {
+          "type": "string",
+          "pattern": "^[0-9]*[1-9][0-9]*(ms|s|m|h)$",
+          "default": "10m",
+          "description": "How long a tool call waits for a worker to take it. After that the agent loop gets 504 no_worker and the model sees a tool error."
+        }
+      }
+    }
+  }
+}

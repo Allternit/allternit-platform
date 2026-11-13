@@ -1,0 +1,78 @@
+---
+title: 'Authentication'
+description: 'Server API keys and roles, environment keys for workers, the per-session secret, and OIDC sign-in with role mapping.'
+---
+
+<Note>
+**Status: Private beta.** This page follows the security schemes in `selfhost-v1.yaml`. The server that enforces them is still being built.
+</Note>
+
+The server has its own keys and roles. There is no Allternit account and no call to an Allternit sign-in service.
+
+## Four kinds of credential
+
+| Credential | Looks like | Sent as | Who uses it |
+|---|---|---|---|
+| Server API key | `ask_...` | `Authorization: Bearer ask_...` | Admins, developers and viewers, through clients, SDKs and the CLI. |
+| Environment key | `aek_...` | `Authorization: Bearer aek_...` | Workers. Works only on the worker routes of its own environment. |
+| Session secret | random string | `X-Session-Secret: ...` | A worker, for one session only. Handed out by a work claim. |
+| OIDC id token | a JWT from your identity provider | `Authorization: Bearer ...` | People signing in with your identity provider. |
+
+`GET /v1/server/info` needs no credential, so a client can show the right sign-in screen first. It reveals no secrets.
+
+## Roles
+
+| Role | Can |
+|---|---|
+| `admin` | Everything, including API keys and environment keys. |
+| `developer` | Everything except managing keys. |
+| `viewer` | Read only. |
+
+A call without a valid credential gets `401` with code `unauthorized`. A call the role does not allow gets `403` with code `forbidden`.
+
+## Server API keys
+
+- `allternit-agents-server admin setup` mints the first admin key and prints it once.
+- After that, an admin creates keys with `POST /v1/api_keys` (`name`, `role`, optional `expires_at`). The `ask_...` secret is returned once. The server stores only a hash.
+- `GET /v1/api_keys` lists keys by prefix and metadata, never the secret.
+- `DELETE /v1/api_keys/{id}` revokes a key at once. The last admin key cannot be revoked (`409 last_admin_key`).
+
+```bash
+curl -s -X POST $ALLTERNIT_SERVER_URL/v1/api_keys -H "Authorization: Bearer $ADMIN_KEY" \
+  -H 'Content-Type: application/json' -d '{"name":"ci","role":"developer"}'
+```
+
+## Environment keys
+
+- An admin creates one with `POST /v1/environments/{id}/keys`. The `aek_...` secret is returned once.
+- It can claim work, renew and complete items for its own environment. It gets `403` on `/v1/agents` and every other non-worker route.
+- `DELETE /v1/environments/{id}/keys/{key_id}` revokes it at once. Workers using it get `401` on their next call.
+- Deleting an environment revokes its keys.
+
+## Session secret
+
+A work claim returns a secret that works for that one session until the lease ends. Workers keep it in memory only. See [Workers](/self-hosted/workers#the-session-secret).
+
+## OIDC sign-in
+
+Set `auth.oidc` in the settings file to accept id tokens from your identity provider:
+
+```yaml
+auth:
+  oidc:
+    issuer: https://idp.example.internal
+    audiences: [allternit-agents]
+    role_claim: groups
+    role_map:
+      platform-admins: admin
+      engineers: developer
+      auditors: viewer
+    default_role: none
+```
+
+- The server checks the token's issuer and audience against these values.
+- It reads the claim named by `role_claim` and maps its value through `role_map`.
+- When no value matches, `default_role` applies. `none` refuses the sign-in.
+- `/v1/server/info` lists `oidc` in `auth_modes` when it is set, so clients can offer SSO.
+
+The server fetches your issuer's discovery document and signing keys, so it needs to reach the issuer URL. See [Networking](/self-hosted/networking#hosts-the-server-talks-to).
