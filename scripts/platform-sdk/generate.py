@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
 """Generate the Allternit Platform SDKs' typed layer from the OpenAPI file.
 
-Source of truth: cmd/allternit-cloud-api/openapi/platform-v1.yaml.
+Default source of truth: cmd/allternit-cloud-api/openapi/platform-v1.yaml.
 
-Writes:
+Writes (defaults):
   sdk/platform-ts/src/generated/types.ts       (schema + request/response types)
   sdk/platform-ts/src/generated/operations.ts  (one resource class per tag)
   sdk/platform-python/allternit_platform/_generated.py
+
+Other specs (for example the self-hosted Agents Server) go to their own
+output with --spec/--out/--out-py. Operations marked `x-internal: true` are
+skipped.
 
 Everything is derived generically from the spec (paths, path/query params,
 JSON request bodies, response schemas, $ref/allOf/nullable/enum/const), so
@@ -16,12 +20,29 @@ Usage:
   python3 scripts/platform-sdk/generate.py           # write files
   python3 scripts/platform-sdk/generate.py --check   # exit 1 if files are stale
 
+  # self-hosted Agents Server client
+  python3 scripts/platform-sdk/generate.py \
+    --spec cmd/allternit-api/openapi/selfhost-v1.yaml \
+    --out sdk/platform-ts/src/selfhost \
+    --out-py sdk/platform-python/allternit_platform/_selfhost_generated.py \
+    --client-name SelfHostClient
+
+  --out     TypeScript folder for types.ts + operations.ts. Must sit directly
+            under sdk/platform-ts/src (operations.ts imports ../core.ts).
+  --out-py  Python module. Must sit in sdk/platform-python/allternit_platform
+            (it imports ._core).
+  Relative paths are taken from the repo root.
+  --spec without --out and --out-py is refused, so the Platform files are
+  never overwritten by another spec.
+
 Needs PyYAML (`pip3 install pyyaml`).
 """
 
 from __future__ import annotations
 
+import argparse
 import keyword
+import os
 import re
 import sys
 from pathlib import Path
@@ -37,7 +58,12 @@ TS_TYPES = ROOT / "sdk/platform-ts/src/generated/types.ts"
 TS_OPS = ROOT / "sdk/platform-ts/src/generated/operations.ts"
 PY_GEN = ROOT / "sdk/platform-python/allternit_platform/_generated.py"
 
+TS_SRC = ROOT / "sdk/platform-ts/src"
+PY_PKG = ROOT / "sdk/platform-python/allternit_platform"
+
 HEADER = "Generated from cmd/allternit-cloud-api/openapi/platform-v1.yaml by scripts/platform-sdk/generate.py. Do not edit."
+CLIENT_NAME = "AllternitPlatform"
+TS_CORE_IMPORT = "../core.ts"
 METHODS = ["get", "post", "put", "patch", "delete"]
 
 
@@ -51,6 +77,9 @@ def pascal(s: str) -> str:
 
 def camel(s: str) -> str:
     p = pascal(s)
+    m = re.match(r"([A-Z]{2,})(?=[A-Z][a-z])", p)
+    if m:  # leading acronym: "APIKeys" -> "apiKeys"
+        return m.group(1).lower() + p[m.end():]
     return p[:1].lower() + p[1:]
 
 
@@ -99,18 +128,25 @@ class Spec:
         self.request_bodies = comps.get("requestBodies", {}) or {}
 
     def deref(self, node):
+        """Follow local `$ref`s, including deep JSON pointers such as
+        `#/components/schemas/X/properties/y`."""
         seen = 0
         while isinstance(node, dict) and "$ref" in node and seen < 20:
             ref = node["$ref"]
-            _, _, kind, name = ref.split("/", 3)
-            node = (self.raw["components"][kind])[name]
+            target = self.raw
+            for part in ref.lstrip("#/").split("/"):
+                target = target[part.replace("~1", "/").replace("~0", "~")]
+            node = target
             seen += 1
         return node
 
 
 def ref_name(node) -> str | None:
+    """The schema name of a `$ref` to a top-level component schema. A deeper
+    pointer (`.../X/properties/y`) has no name of its own and is inlined."""
     if isinstance(node, dict) and "$ref" in node and node["$ref"].startswith("#/components/schemas/"):
-        return node["$ref"].rsplit("/", 1)[1]
+        rest = node["$ref"][len("#/components/schemas/"):]
+        return rest if "/" not in rest else None
     return None
 
 
@@ -132,7 +168,7 @@ def collect_ops(spec: Spec) -> list[Op]:
         shared = item.get("parameters", []) or []
         for method in METHODS:
             o = item.get(method)
-            if not o:
+            if not o or o.get("x-internal") is True:
                 continue
             op = Op()
             op.path, op.method = path, method.upper()
@@ -155,6 +191,9 @@ def collect_ops(spec: Spec) -> list[Op]:
                     op.body_schema = content["application/json"].get("schema") or {}
                     op.body_required = bool(rb.get("required"))
             op.response_schema, op.streams = None, False
+            # A 204 answer (e.g. a long-poll that found nothing) has no body:
+            # the method then returns undefined / None.
+            op.may_be_empty = "204" in {str(c) for c in (o.get("responses") or {})}
             for code, resp in (o.get("responses") or {}).items():
                 if not str(code).startswith("2"):
                     continue
@@ -187,11 +226,12 @@ def assign_method_names(ops: list[Op]) -> None:
             m = re.match(r"([a-z]+)(.*)", op.operation_id)
             verb, rest = (m.group(1), m.group(2)) if m else (op.operation_id, "")
             name = op.operation_id
-            if rest in (plural, singular):
+            # Case-insensitive, so tag "API keys" matches `listApiKeys`.
+            if rest.lower() in (plural.lower(), singular.lower()):
                 name = verb
             else:
                 for noun in (plural, singular):
-                    if rest.startswith(noun) and rest[len(noun):][:1].isupper():
+                    if rest.lower().startswith(noun.lower()) and rest[len(noun):][:1].isupper():
                         name = verb + rest[len(noun):]
                         break
             op.method_name = name
@@ -217,6 +257,20 @@ def page_item(spec: Spec, schema) -> object | None:
             if items:
                 return data.get("items") if isinstance(data, dict) and "items" in data else items
     return None
+
+
+def ts_stream_name(op: Op) -> str:
+    """`sendMessage` -> `sendMessageStream`. A stream-only operation already
+    named `stream…` keeps its name (`streamSessionEvents`)."""
+    if op.stream_only and op.method_name.startswith("stream"):
+        return op.method_name
+    return op.method_name + "Stream"
+
+
+def py_stream_name(op: Op) -> str:
+    if op.stream_only and op.py_name.startswith("stream"):
+        return op.py_name
+    return op.py_name + "_stream"
 
 
 # ---------------------------------------------------------------- TypeScript
@@ -289,7 +343,29 @@ def ts_object(spec: Spec, s, indent="") -> str:
     return "\n".join(l for l in lines if l is not None)
 
 
+def ts_aliases(spec: Spec, ops: list[Op]) -> None:
+    """Name each operation's Query/Request/Response type. When a component
+    schema already has that name (selfhost-v1.yaml has `CreateAgentRequest`),
+    an alias that is just a `$ref` to it reuses the schema; anything else gets
+    `<Op>Op<Kind>` so the two never clash."""
+    taken = {pascal(n) for n in spec.schemas}
+    for op in ops:
+        base = pascal(op.operation_id)
+        op.ts_alias, op.ts_emit = {}, {}
+        for kind, schema in (("Query", None), ("Request", op.body_schema), ("Response", op.response_schema)):
+            name = base + kind
+            emit = True
+            if name in taken:
+                same = ref_name(schema) is not None and pascal(ref_name(schema)) == name
+                if same and not (kind == "Response" and op.may_be_empty):
+                    emit = False
+                else:
+                    name = f"{base}Op{kind}"
+            op.ts_alias[kind], op.ts_emit[kind] = name, emit
+
+
 def gen_ts(spec: Spec, ops: list[Op]) -> tuple[str, str]:
+    ts_aliases(spec, ops)
     out = [f"// {HEADER}", "/* eslint-disable */", ""]
     for name, s in spec.schemas.items():
         out.append(doc_ts(s.get("description"), "").rstrip("\n")) if s.get("description") else None
@@ -303,17 +379,19 @@ def gen_ts(spec: Spec, ops: list[Op]) -> tuple[str, str]:
                     fields.append(doc_ts(p.description, "  ").rstrip("\n"))
                 fields.append(f"  {ts_key(p.name)}{'' if p.required else '?'}: {ts_type(spec, p.schema, '  ')};")
             fields.append("}")
-            out.append(f"export type {base}Query = " + "\n".join(fields) + ";\n")
-        if op.body_schema is not None:
-            out.append(f"export type {base}Request = {ts_type(spec, op.body_schema)};\n")
+            out.append(f"export type {op.ts_alias['Query']} = " + "\n".join(fields) + ";\n")
+        if op.body_schema is not None and op.ts_emit["Request"]:
+            out.append(f"export type {op.ts_alias['Request']} = {ts_type(spec, op.body_schema)};\n")
         if op.response_schema is not None:
-            out.append(f"export type {base}Response = {ts_type(spec, op.response_schema)};\n")
+            empty = " | undefined" if op.may_be_empty else ""
+            if op.ts_emit["Response"]:
+                out.append(f"export type {op.ts_alias['Response']} = {ts_type(spec, op.response_schema)}{empty};\n")
         else:
-            out.append(f"export type {base}Response = unknown;\n")
+            out.append(f"export type {op.ts_alias['Response']} = unknown;\n")
     types_ts = "\n".join(l for l in out if l is not None).rstrip() + "\n"
 
     o = [f"// {HEADER}", "/* eslint-disable */",
-         'import type { RequestOptions, Transport, Page, SSEEvent } from "../core.ts";',
+         f'import type {{ RequestOptions, Transport, Page, SSEEvent }} from "{TS_CORE_IMPORT}";',
          'import type * as T from "./types.ts";', ""]
     tags: dict[str, list[Op]] = {}
     for op in ops:
@@ -332,19 +410,19 @@ def gen_ts(spec: Spec, ops: list[Op]) -> tuple[str, str]:
                 call_path = call_path.replace("{" + p.name + "}", "${encodeURIComponent(" + v + ")}")
             body_arg = query_expr = None
             if op.body_schema is not None:
-                body_type = f"T.{base}Request"
+                body_type = f"T.{op.ts_alias['Request']}"
                 if op.streams:
-                    body_type = f'Omit<T.{base}Request, "stream">'
+                    body_type = f'Omit<T.{op.ts_alias["Request"]}, "stream">'
                 args.append(f"body{'' if op.body_required else '?'}: {body_type}")
                 body_arg = "body"
                 if op.query:
                     query_expr = "options?.query"
             elif op.query:
                 req = any(p.required for p in op.query)
-                args.append(f"query{'' if req else '?'}: T.{base}Query")
+                args.append(f"query{'' if req else '?'}: T.{op.ts_alias['Query']}")
                 query_expr = "query"
             args.append("options?: RequestOptions")
-            resp = f"T.{base}Response"
+            resp = f"T.{op.ts_alias['Response']}"
             desc = op.summary or ""
             if op.description:
                 desc = (desc + "\n\n" + op.description).strip()
@@ -374,7 +452,7 @@ def gen_ts(spec: Spec, ops: list[Op]) -> tuple[str, str]:
                 o.append(f"  {op.method_name}All({', '.join(args)}): AsyncIterable<{item_t}> {{")
                 call_args = ", ".join(
                     ([a for a in fetch_args if a != "query"])
-                    + ([f"{{ ...({qname} ?? {{}}), after }} as T.{base}Query"] if qname else [])
+                    + ([f"{{ ...({qname} ?? {{}}), after }} as T.{op.ts_alias['Query']}"] if qname else [])
                     + ["options"]
                 )
                 o.append(f"    return this._client.paginate<{item_t}>((after) => this.{op.method_name}({call_args}) as unknown as Promise<Page<{item_t}>>);")
@@ -391,11 +469,11 @@ def gen_ts(spec: Spec, ops: list[Op]) -> tuple[str, str]:
                     + (f", query: {query_expr}" if query_expr else "")
                     + f", body: {stream_body}, options }}"
                 )
-                o.append(f"  {op.method_name}Stream({', '.join(args)}): AsyncIterable<SSEEvent> {{")
+                o.append(f"  {ts_stream_name(op)}({', '.join(args)}): AsyncIterable<SSEEvent> {{")
                 o.append(f"    return this._client.streamRequest({req_obj});")
                 o.append("  }")
         o.append("}\n")
-    o.append("/** Every API area as a client property. `AllternitPlatform` extends this. */")
+    o.append(f"/** Every API area as a client property. `{CLIENT_NAME}` extends this. */")
     o.append("export class GeneratedResources {")
     for tag in tags:
         o.append(f"  {camel(tag)}: {pascal(tag)}Resource;")
@@ -534,6 +612,8 @@ def gen_py(spec: Spec, ops: list[Op]) -> str:
             sig = ", ".join(params + ["*"] + kw)
             resp = op.response_schema
             ret = py_type(spec, resp) if resp is not None and ref_name(resp) else "Dict[str, Any]"
+            if op.may_be_empty:
+                ret = f"Optional[{ret}]"
 
             def emit_body_lines(indent="        "):
                 lines = []
@@ -575,7 +655,7 @@ def gen_py(spec: Spec, ops: list[Op]) -> str:
                 o.append(f"        return self._client.paginate(_fetch, {after_var} if {after_var} is not NOT_GIVEN else None)")
             if op.streams:
                 o.append("")
-                o.append(f"    def {op.py_name}_stream({sig}) -> Iterator[SSEEvent]:")
+                o.append(f"    def {py_stream_name(op)}({sig}) -> Iterator[SSEEvent]:")
                 stream_doc = f"{desc.strip()}\n\n``{op.method} {op.path}``" if op.stream_only else f"``{op.py_name}`` with ``stream: true``: yields the raw server-sent events."
                 o.append(py_doc(stream_doc, "        ").rstrip("\n"))
                 o.extend(emit_body_lines())
@@ -590,7 +670,7 @@ def gen_py(spec: Spec, ops: list[Op]) -> str:
     o.append("")
     o.append("")
     o.append("class GeneratedResources:")
-    o.append('    """Every API area as a client attribute. ``AllternitPlatform`` extends this."""')
+    o.append(f'    """Every API area as a client attribute. ``{CLIENT_NAME}`` extends this."""')
     o.append("")
     o.append("    def __init__(self, client: Transport) -> None:")
     for tag in tags:
@@ -600,12 +680,52 @@ def gen_py(spec: Spec, ops: list[Op]) -> str:
 
 # ---------------------------------------------------------------- main
 
+def _resolve(p: str) -> Path:
+    """Relative paths are taken from the repo root, so the same command works
+    from any folder (the npm scripts run in sdk/platform-ts)."""
+    path = Path(p)
+    return (path if path.is_absolute() else ROOT / path).resolve()
+
+
 def main() -> int:
-    check = "--check" in sys.argv[1:]
-    spec = Spec(yaml.safe_load(SPEC.read_text()))
+    global HEADER, CLIENT_NAME, TS_CORE_IMPORT
+    ap = argparse.ArgumentParser(description="Generate the platform SDKs' typed layer from an OpenAPI file.")
+    ap.add_argument("--check", action="store_true", help="exit 1 if the generated files are stale")
+    ap.add_argument("--spec", help="OpenAPI yaml (default: the Platform API spec)")
+    ap.add_argument("--out", help="TypeScript output folder, directly under sdk/platform-ts/src")
+    ap.add_argument("--out-py", help="Python output module, inside sdk/platform-python/allternit_platform")
+    ap.add_argument("--client-name", default=CLIENT_NAME, help="client class named in generated doc comments")
+    args = ap.parse_args()
+
+    spec_path, ts_types, ts_ops, py_gen = SPEC, TS_TYPES, TS_OPS, PY_GEN
+    if args.spec:
+        spec_path = _resolve(args.spec)
+        if spec_path != SPEC and not (args.out and args.out_py):
+            ap.error("--spec needs --out and --out-py, so the Platform SDK files are not overwritten")
+    if args.out:
+        out_dir = _resolve(args.out)
+        if out_dir.parent != TS_SRC.resolve():
+            ap.error(f"--out must be a folder directly under {TS_SRC.relative_to(ROOT)}")
+        ts_types, ts_ops = out_dir / "types.ts", out_dir / "operations.ts"
+        TS_CORE_IMPORT = os.path.relpath(TS_SRC / "core.ts", out_dir).replace(os.sep, "/")
+        if not TS_CORE_IMPORT.startswith("."):
+            TS_CORE_IMPORT = "./" + TS_CORE_IMPORT
+    if args.out_py:
+        py_gen = _resolve(args.out_py)
+        if py_gen.parent != PY_PKG.resolve() or py_gen.suffix != ".py":
+            ap.error(f"--out-py must be a .py file in {PY_PKG.relative_to(ROOT)}")
+    try:
+        spec_rel = spec_path.relative_to(ROOT)
+    except ValueError:
+        spec_rel = spec_path
+    HEADER = f"Generated from {spec_rel} by scripts/platform-sdk/generate.py. Do not edit."
+    CLIENT_NAME = args.client_name
+    check = args.check
+
+    spec = Spec(yaml.safe_load(spec_path.read_text()))
     ops = collect_ops(spec)
     types_ts, ops_ts = gen_ts(spec, ops)
-    outputs = {TS_TYPES: types_ts, TS_OPS: ops_ts, PY_GEN: gen_py(spec, ops)}
+    outputs = {ts_types: types_ts, ts_ops: ops_ts, py_gen: gen_py(spec, ops)}
     stale = []
     for path, text in outputs.items():
         current = path.read_text() if path.exists() else None
@@ -617,7 +737,8 @@ def main() -> int:
     rel = [str(p.relative_to(ROOT)) for p in stale]
     if check:
         if stale:
-            print("SDK code is stale; run: python3 scripts/platform-sdk/generate.py\n  " + "\n  ".join(rel))
+            rerun = " ".join(["python3 scripts/platform-sdk/generate.py"] + [a for a in sys.argv[1:] if a != "--check"])
+            print(f"SDK code is stale; run: {rerun}\n  " + "\n  ".join(rel))
             return 1
         print(f"SDK code is up to date ({len(ops)} operations).")
         return 0
