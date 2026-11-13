@@ -538,6 +538,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial]
     async fn no_healthy_node_is_a_428_pair_a_device_error() {
         let _guard = DEV_TOKEN_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var(ALLOW_DEV_TOKEN_ENV, "true");
@@ -561,6 +562,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial]
     async fn relays_to_the_resolved_default_node_with_exact_method_and_path() {
         let _guard = DEV_TOKEN_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var(ALLOW_DEV_TOKEN_ENV, "true");
@@ -603,7 +605,10 @@ mod tests {
         }
 
         std::env::remove_var(ALLOW_DEV_TOKEN_ENV);
-    }    #[tokio::test]
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
     async fn sync_streams_the_relayed_sse_channel_verbatim() {
         let _guard = DEV_TOKEN_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var(ALLOW_DEV_TOKEN_ENV, "true");
@@ -648,6 +653,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial]
     async fn lifecycle_and_message_routes_wire_to_the_matching_8013_paths() {
         let _guard = DEV_TOKEN_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var(ALLOW_DEV_TOKEN_ENV, "true");

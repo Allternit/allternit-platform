@@ -101,6 +101,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial]
     async fn unknown_runtime_routes_relay_with_method_path_query_and_body() {
         let _guard = DEV_TOKEN_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var(ALLOW_DEV_TOKEN_ENV, "true");
@@ -134,6 +135,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial]
     async fn no_runtime_online_is_428_pair_a_device() {
         let _guard = DEV_TOKEN_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var(ALLOW_DEV_TOKEN_ENV, "true");

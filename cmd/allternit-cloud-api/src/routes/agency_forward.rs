@@ -465,6 +465,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial]
     async fn forwards_identity_and_passthrough_headers_only() {
         let _guard = DEV_TOKEN_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var(ALLOW_DEV_TOKEN_ENV, "true");
@@ -498,6 +499,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial]
     async fn fails_closed_without_peer_token() {
         let _guard = DEV_TOKEN_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var(ALLOW_DEV_TOKEN_ENV, "true");
@@ -518,6 +520,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial]
     async fn sse_streams_without_buffering() {
         let _guard = DEV_TOKEN_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var(ALLOW_DEV_TOKEN_ENV, "true");
