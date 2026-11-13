@@ -58,7 +58,7 @@ struct VoiceKeyHandoffSheet: View {
         case .confirm:
             return "Keep the camera on your computer's screen. When you confirm the codes match there, it shows a second code and this phone reads it."
         default:
-            return "On your computer, open Settings › Voice in Allternit and choose to send your key to your phone. Then point this camera at the QR code."
+            return "On your computer, open Settings › Voice in Allternit and click Send to my phone. Then point this camera at the QR code."
         }
     }
 
