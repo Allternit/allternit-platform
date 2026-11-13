@@ -84,7 +84,7 @@ function DecisionsBody({ client }: { client: V1Client }) {
           <pre className="m-0 overflow-x-auto rounded-lg border border-solid border-[var(--border-subtle)] bg-[var(--bg-secondary)] p-3 font-mono text-[12px] text-[var(--text-primary)]">{`curl https://api.allternit.com/v1/decisions \\
   -H "Authorization: Bearer $ALLTERNIT_API_KEY" \\
   -H "Content-Type: application/json" \\
-  -d '{"input":"My parcel arrived broken","questions":[{"name":"is_damaged","type":"predicate","prompt":"Is the item damaged?"}]}'`}</pre>
+  -d '{"input":"My parcel arrived broken","questions":[{"name":"is_damaged","type":"predicate","instructions":"Is the item damaged?"}]}'`}</pre>
           <a href={DOCS_URL} target="_blank" rel="noreferrer" className="text-[13px] font-medium text-[var(--accent-primary)] hover:underline">
             Decisions API docs
           </a>
