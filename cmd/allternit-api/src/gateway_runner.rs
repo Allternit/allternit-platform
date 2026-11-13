@@ -1083,16 +1083,15 @@ pub(crate) fn create_approval(db: &DbHandle, cx: &Cx, authority: &str, action: &
         "INSERT OR IGNORE INTO cowork_approvals (id, user_id, content, source, dismissed) VALUES (?1, ?2, ?3, ?4, 0)",
         params![aid, cx.owner, card.to_string(), format!("gateway:{authority}")],
     );
-    led(
-        db,
-        &cx.bot_id,
-        &cx.thread_id,
-        Some(&cx.session_id),
-        "approval.requested",
-        ("system", "gateway"),
-        json!({ "approvalId": aid, "authority": authority, "action": action, "remoteRef": remote_ref, "provenance": detail.get("provenance") }),
-        None,
-    );
+    // `session_id`: the agent session whose turn asked, so the cloud can tie the
+    // approval to that turn (Platform API `requires_action`); the thread stays
+    // where the owner sees the card.
+    let session = Some(cx.session_id.as_str()).filter(|s| !s.is_empty());
+    let mut payload = json!({ "approvalId": aid, "authority": authority, "action": action, "remoteRef": remote_ref, "provenance": detail.get("provenance") });
+    if let Some(sid) = session {
+        payload["session_id"] = json!(sid);
+    }
+    led(db, &cx.bot_id, &cx.thread_id, session, "approval.requested", ("system", "gateway"), payload, None);
     set_thread_status(db, &cx.bot_id, &cx.thread_id, "needs_you", &format!("Approval needed ({authority}): {action}"));
     Ok(aid)
 }
