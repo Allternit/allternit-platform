@@ -31,6 +31,8 @@ import { InitCommand } from "@/cli/commands/init"
 import { DoctorCommand } from "@/cli/commands/doctor"
 import { VerificationCommand } from "@/cli/commands/verification"
 import { FabricWorkerCommand } from "@/cli/commands/fabric-worker"
+import { WorkerCommand } from "@/cli/commands/worker"
+import { RuntimeCommand } from "@/cli/commands/runtime"
 import { ProviderCommand } from "@/cli/commands/provider"
 import { AllternitCommand } from "@/cli/commands/allternit"
 import { BrainCommand } from "@/cli/commands/brain"
@@ -133,6 +135,9 @@ export const COMMANDS: RegisteredCommand[] = [
   DoctorCommand,
   VerificationCommand,
   FabricWorkerCommand,
+  // Self-hosted Agents Server: sandbox worker, and server profiles (`runtime register --self-hosted`, `runtime status`).
+  WorkerCommand,
+  RuntimeCommand,
   ProviderCommand,
   AllternitCommand,
   BrainCommand,

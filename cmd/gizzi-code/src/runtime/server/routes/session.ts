@@ -418,6 +418,39 @@ export const SessionRoutes = lazy(() =>
         return c.json(session)
       },
     )
+    .post(
+      "/import",
+      describeRoute({
+        summary: "Import session",
+        description:
+          "Create a session from a transcript in gizzi's stored shape (messages with their parts). Messages are written in order with new ids, the same way fork copies them. The self-hosted Agents Server uses this to rebuild a session after a restart.",
+        operationId: "session.import",
+        responses: {
+          200: {
+            description: "The new session",
+            content: {
+              "application/json": {
+                schema: resolver(z.any()),
+              },
+            },
+          },
+          ...errors(400),
+        },
+      }),
+      validator(
+        "json",
+        z.object({
+          title: z.string().optional(),
+          agentID: z.string().optional(),
+          messages: z.array(MessageV2.WithParts),
+        }),
+      ),
+      async (c) => {
+        const body = c.req.valid("json")
+        const session = await Session.importSession(body)
+        return c.json(session)
+      },
+    )
     .get(
       "/status",
       describeRoute({

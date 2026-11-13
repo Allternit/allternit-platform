@@ -735,6 +735,12 @@ paths:
         session. Returns 204 when none arrived. A tool call that was handed out but has no result yet
         is handed out again after the lease changes hands (at-least-once), with the
         same `tool_call_id`. Run it once per id. Auth: the session secret.
+
+        **Session finished.** When the session will send no more tool calls (it was
+        archived, interrupted for good, or its turn loop ended and released the
+        environment), the server answers 204 with the header `X-Session-Closed: true`.
+        The worker then calls `/complete` for the work item. A 204 without the
+        header only means "nothing yet, poll again".
       tags: [Tool calls]
       security:
         - SessionSecret: []
@@ -758,7 +764,11 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ToolCall" }
         "204":
-          description: No tool call yet.
+          description: No tool call yet, or (with `X-Session-Closed`) the session is finished.
+          headers:
+            X-Session-Closed:
+              description: "`true` when the session is finished and will send no more tool calls. The worker completes the work item. Absent otherwise."
+              schema: { type: string, enum: ["true"] }
         default: { $ref: "#/components/responses/Error" }
   /v1/tool_calls/{id}/result:
     parameters:

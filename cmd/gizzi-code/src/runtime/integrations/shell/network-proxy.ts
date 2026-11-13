@@ -33,22 +33,46 @@ export interface NetworkProxyHandle {
   close(): Promise<void>
 }
 
-function hostAllowed(hostname: string, allowedDomains: string[]): boolean {
-  const host = hostname.toLowerCase()
+export interface NetworkProxyOptions {
+  /**
+   * Exact-match mode (self-hosted environments, `network: limited`): a host
+   * is allowed only when it equals an entry; no subdomains. An entry may
+   * carry a port (`git.example.com:8443`), which then must match too.
+   * Refusals carry the code `host_not_allowed`.
+   */
+  exact?: boolean
+}
+
+/** Exported for tests. */
+export function hostAllowed(hostname: string, allowedDomains: string[], opts: NetworkProxyOptions = {}, port?: number): boolean {
+  const host = hostname.toLowerCase().replace(/\.$/, "")
   return allowedDomains.some((domain) => {
-    const d = domain.toLowerCase()
+    const d = domain.trim().toLowerCase()
+    if (!d) return false
+    if (opts.exact) {
+      const idx = d.lastIndexOf(":")
+      const hasPort = idx > 0 && !d.startsWith("[") && /^\d+$/.test(d.slice(idx + 1))
+      if (hasPort) return host === d.slice(0, idx) && port === Number(d.slice(idx + 1))
+      return host === d
+    }
     return host === d || host.endsWith("." + d)
   })
 }
 
-function createProxyServer(allowedDomains: string[]): http.Server {
+function refusalText(hostname: string, opts: NetworkProxyOptions): string {
+  return opts.exact
+    ? `host_not_allowed: ${hostname || "(no host)"} is not on this environment's allowed_hosts list`
+    : `Blocked by sandbox network policy: ${hostname || "(no host)"} is not in the allowlist`
+}
+
+function createProxyServer(allowedDomains: string[], opts: NetworkProxyOptions = {}): http.Server {
   const server = http.createServer((req, res) => {
     // Plain (non-TLS) HTTP request — proxy it directly.
     const hostHeader = req.headers.host ?? ""
     const [hostname, portStr] = hostHeader.split(":")
-    if (!hostname || !hostAllowed(hostname, allowedDomains)) {
-      res.writeHead(403, { "Content-Type": "text/plain" })
-      res.end(`Blocked by sandbox network policy: ${hostname || "(no host)"} is not in the allowlist`)
+    if (!hostname || !hostAllowed(hostname, allowedDomains, opts, portStr ? Number(portStr) : 80)) {
+      res.writeHead(403, { "Content-Type": "text/plain", "X-Refusal-Code": "host_not_allowed" })
+      res.end(refusalText(hostname ?? "", opts))
       return
     }
     const target = http.request(
@@ -71,8 +95,11 @@ function createProxyServer(allowedDomains: string[]): http.Server {
   server.on("connect", (req, clientSocket, head) => {
     const [hostname, portStr] = (req.url ?? "").split(":")
     const port = Number(portStr) || 443
-    if (!hostname || !hostAllowed(hostname, allowedDomains)) {
-      clientSocket.write("HTTP/1.1 403 Forbidden\r\n\r\n")
+    if (!hostname || !hostAllowed(hostname, allowedDomains, opts, port)) {
+      const text = refusalText(hostname ?? "", opts)
+      clientSocket.write(
+        `HTTP/1.1 403 Forbidden\r\nX-Refusal-Code: host_not_allowed\r\nContent-Type: text/plain\r\nContent-Length: ${Buffer.byteLength(text)}\r\n\r\n${text}`,
+      )
       clientSocket.end()
       log.warn("blocked CONNECT to non-allowlisted host", { hostname })
       return
@@ -96,11 +123,15 @@ export namespace NetworkProxy {
   /** Internal TCP port socat bridges to, inside the sandbox's own network namespace (Linux only). */
   export const LINUX_BRIDGE_PORT = 3129
 
-  export async function start(sessionID: string, allowedDomains: string[]): Promise<NetworkProxyHandle> {
+  export async function start(
+    sessionID: string,
+    allowedDomains: string[],
+    opts: NetworkProxyOptions = {},
+  ): Promise<NetworkProxyHandle> {
     const existing = handles.get(sessionID)
     if (existing) return existing
 
-    const server = createProxyServer(allowedDomains)
+    const server = createProxyServer(allowedDomains, opts)
 
     if (process.platform === "darwin") {
       await new Promise<void>((resolve, reject) => {
