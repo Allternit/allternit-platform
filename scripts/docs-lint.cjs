@@ -242,7 +242,7 @@ for (const mdxPath of collectMdxFiles(DOCS_DIR)) {
       if (['guides/voice.mdx', 'surfaces/voice.mdx', 'api/voice-tickets.mdx', 'api/voice-keys.mdx'].some((p) => mdxPath.endsWith(p))) continue;
       // Self-Hosted Agents: the customer picks their own model provider, so these pages name the
       // supported providers, their settings ids (`provider: anthropic`) and example model_map keys.
-      if (['self-hosted/configuration.mdx', 'self-hosted/models.mdx', 'self-hosted/networking.mdx', 'self-hosted/overview.mdx', 'self-hosted/quickstart.mdx'].some((p) => mdxPath.endsWith(p))) continue;
+      if (['self-hosted/configuration.mdx', 'self-hosted/models.mdx', 'self-hosted/networking.mdx', 'self-hosted/operations.mdx', 'self-hosted/overview.mdx', 'self-hosted/quickstart.mdx'].some((p) => mdxPath.endsWith(p))) continue;
       // POST /v1/messages is a compatibility endpoint: the page has to name the request shape it accepts so SDK users can point at it.
       if (mdxPath.endsWith('api/platform/messages.mdx')) continue;
       // Managed connector auth: the connector gateway guide gives each AI app's setup steps, and the managed-auth pages name the outside issuers (Claude orgs) people trust.
