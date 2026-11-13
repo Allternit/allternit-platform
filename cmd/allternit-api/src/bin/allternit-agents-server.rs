@@ -15,7 +15,9 @@ use std::net::SocketAddr;
 use std::process::ExitCode;
 use std::sync::Arc;
 
+use allternit_api::selfhost::agent_loop::{ChildConfig, GizziTurnRunner};
 use allternit_api::selfhost::egress_guard::EgressGuard;
+use allternit_api::selfhost::routes_work::spawn_lease_sweeper;
 use allternit_api::selfhost::settings::{config_path, LogFormat, Settings};
 use allternit_api::selfhost::store::pg::PgStore;
 use allternit_api::selfhost::store::sqlite::SqliteStore;
@@ -153,20 +155,58 @@ async fn serve(args: Vec<String>) -> Result<(), String> {
     if state.setup_token.is_some() {
         info!("setup token set: POST /v1/api_keys can mint the first admin key while none exists");
     }
+
+    // The gizzi child reaches the internal routes on a loopback listener of
+    // its own, whatever `server.listen` is (a non-loopback bind address
+    // would not answer 127.0.0.1).
+    let internal = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .map_err(|e| format!("cannot open the internal loopback listener: {e}"))?;
+    let internal_addr = internal.local_addr().map_err(|e| e.to_string())?;
+    let runner = GizziTurnRunner::spawn(ChildConfig {
+        settings: state.settings.clone(),
+        tool_host_url: format!("http://{internal_addr}"),
+        internal_token: state.internal_token.to_string(),
+        bin: None,
+    })?;
+    let state = state.with_turn_runner(runner);
+    let sweeper = spawn_lease_sweeper(state.clone());
     let app = router(state);
 
     let listener = tokio::net::TcpListener::bind(&listen)
         .await
         .map_err(|e| format!("cannot listen on {listen}: {e}"))?;
     let local = listener.local_addr().map_err(|e| e.to_string())?;
-    info!(addr = %local, "listening");
-    axum::serve(
+    info!(addr = %local, internal = %internal_addr, "listening");
+
+    let (stop_tx, stop_rx) = tokio::sync::watch::channel(false);
+    let internal_app = app.clone();
+    let mut internal_stop = stop_rx.clone();
+    let internal_task = tokio::spawn(async move {
+        let r = axum::serve(
+            internal,
+            internal_app.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .with_graceful_shutdown(async move {
+            let _ = internal_stop.wait_for(|v| *v).await;
+        })
+        .await;
+        if let Err(e) = r {
+            error!(error = %e, "internal listener stopped with an error");
+        }
+    });
+
+    let result = axum::serve(
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),
     )
     .with_graceful_shutdown(shutdown_signal())
-    .await
-    .map_err(|e| {
+    .await;
+    let _ = stop_tx.send(true);
+    sweeper.abort();
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(5), internal_task).await;
+    drop(stop_rx);
+    result.map_err(|e| {
         error!(error = %e, "server stopped with an error");
         e.to_string()
     })?;

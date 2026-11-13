@@ -810,7 +810,7 @@ impl SelfHostStore for PgStore {
     async fn claim_work(&self, req: ClaimRequest) -> StoreResult<Option<WorkClaim>> {
         let cutoff: Option<DateTime<Utc>> = req
             .reclaim_older_than_ms
-            .map(|ms| req.now - Duration::milliseconds(ms.max(0)));
+            .map(|ms| req.now - Duration::milliseconds(ms));
         let secret = new_secret("ss");
         let mut tx = self.begin().await?;
         let row = sqlx::query(&format!(

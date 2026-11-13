@@ -1,9 +1,10 @@
 //! `/v1/sessions`: create, read, archive, messages, interrupt, events and
 //! the events SSE stream.
 //!
-//! Turns are run by a [`TurnRunner`]. This step ships
-//! [`NotImplementedTurnRunner`] (501 `not_implemented`); step 8 replaces it
-//! with the supervised gizzi child.
+//! Turns are run by a [`TurnRunner`]. The server binary uses
+//! `agent_loop::GizziTurnRunner` (the supervised gizzi child).
+//! [`NotImplementedTurnRunner`] (501 `not_implemented`) is the default of a
+//! bare [`SelfHostState`], for tests and tools.
 
 use std::convert::Infallible;
 use std::sync::Arc;
@@ -58,11 +59,17 @@ pub fn mount(book: RouteBook) -> RouteBook {
 ///   `waiting_for_worker` and the final `idle`/`error`. If it returns an
 ///   error, the route puts the status back and returns that error.
 /// - `interrupt` stops the running turn. The route then cancels open tool
-///   calls and work items and sets `interrupted`.
+///   calls and sets `interrupted`. The session's work item stays: its worker
+///   keeps serving the session until it is archived or idle.
 #[async_trait]
 pub trait TurnRunner: Send + Sync + 'static {
     fn available(&self) -> Result<(), ApiError> {
         Ok(())
+    }
+
+    /// For `/health/ready`.
+    fn loop_status(&self) -> LoopStatus {
+        LoopStatus::Disabled
     }
 
     async fn start_turn(
@@ -75,7 +82,35 @@ pub trait TurnRunner: Send + Sync + 'static {
     async fn interrupt(&self, state: &SelfHostState, session_id: &str) -> Result<(), ApiError>;
 }
 
-/// Placeholder until the agent loop lands (plan step 8): every turn is 501.
+/// The agent loop's readiness, as `/health/ready` reports it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LoopStatus {
+    /// This runner needs no child process (tests, the 501 stub).
+    Disabled,
+    Ready,
+    /// Starting or restarting the gizzi child.
+    Starting,
+    /// It cannot run (for example the gizzi binary is missing).
+    Unavailable(String),
+}
+
+impl LoopStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            LoopStatus::Disabled => "disabled",
+            LoopStatus::Ready => "ready",
+            LoopStatus::Starting => "starting",
+            LoopStatus::Unavailable(_) => "unavailable",
+        }
+    }
+
+    /// Does this status let `/health/ready` answer 200?
+    pub fn is_ready(&self) -> bool {
+        matches!(self, LoopStatus::Disabled | LoopStatus::Ready)
+    }
+}
+
+/// Every turn is 501. The default runner of a bare state.
 pub struct NotImplementedTurnRunner;
 
 const NO_LOOP: &str = "The agent loop is not built into this server yet.";
@@ -231,11 +266,24 @@ async fn get_session(
     Ok(Json(session_json(&s)))
 }
 
-/// Stop work for the session: runner, tool calls, work items.
+/// Stop the session's turn: runner and open tool calls. The work item is
+/// left alone; see [`end_session_work`].
 async fn stop_session_work(st: &SelfHostState, id: &str, why: &str) -> Result<(), ApiError> {
     st.turn_runner.interrupt(st, id).await?;
     st.store.cancel_open_tool_calls(id, why).await?;
-    st.store.cancel_open_work_for_session(id).await?;
+    Ok(())
+}
+
+/// The session was archived. A queued item nobody claimed is cancelled. A
+/// claimed one stays leased: its worker's next `tool_calls/next` answers
+/// 204 `X-Session-Closed: true` and the worker completes it.
+async fn end_session_work(st: &SelfHostState, id: &str) -> Result<(), ApiError> {
+    if let Some(w) = st.store.find_open_work_for_session(id).await? {
+        if w.status == super::store::WorkStatus::Ready {
+            st.store.cancel_open_work_for_session(id).await?;
+        }
+    }
+    st.work.notify_session(id);
     Ok(())
 }
 
@@ -250,6 +298,7 @@ async fn archive_session(
     }
     stop_session_work(&st, &id, "Cancelled: the session was archived.").await?;
     st.store.archive_session(&id).await?;
+    end_session_work(&st, &id).await?;
     st.append_event(&id, "status", json!({ "status": "archived", "reason": null }))
         .await?;
     let s = st.store.get_session(&id).await?;
@@ -279,7 +328,15 @@ async fn send_message(
         ));
     }
     // Ask before storing anything, so a server that cannot run turns does
-    // not leave an unanswered message in the log.
+    // not leave an unanswered message in the log. The model map may have
+    // changed since the session was made: an unmapped model is refused here,
+    // before any outbound call (the runner checks again).
+    let model = cur
+        .agent_snapshot
+        .get("model")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    check_model(&st.settings, model)?;
     st.turn_runner.available()?;
     let previous = cur.status.clone();
     let Some(session) = st

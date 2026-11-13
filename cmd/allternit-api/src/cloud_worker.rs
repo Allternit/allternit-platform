@@ -29,7 +29,9 @@ fn decide_cloud_worker(force: Option<&str>, has_desktop_token: bool) -> bool {
     }
 }
 
-fn gizzi_bin() -> Option<PathBuf> {
+/// The gizzi-code binary: `ALLTERNIT_GIZZI_BIN`, else next to this executable,
+/// else `gizzi-code` on PATH. Also used by the selfhost agent loop.
+pub fn gizzi_bin() -> Option<PathBuf> {
     if let Ok(p) = std::env::var("ALLTERNIT_GIZZI_BIN") {
         let path = PathBuf::from(p);
         if path.is_file() {

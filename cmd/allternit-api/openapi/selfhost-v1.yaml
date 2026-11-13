@@ -74,7 +74,11 @@ paths:
     get:
       operationId: getHealthReady
       summary: Readiness
-      description: 200 when the database answers, else 503 `store_unavailable`. No auth.
+      description: |
+        200 when the database answers and the agent loop (the gizzi child) is
+        ready. 503 `store_unavailable` when the database does not answer, 503
+        `agent_loop_unavailable` while the agent loop is starting or restarting,
+        or when it cannot run (for example the gizzi-code binary is missing). No auth.
       tags: [Server]
       security: []
       responses:
@@ -88,8 +92,12 @@ paths:
                 properties:
                   status: { type: string, const: ok }
                   store: { type: string, enum: [postgres, sqlite, memory] }
+                  agent_loop:
+                    type: string
+                    enum: [ready, disabled]
+                    description: "`ready` when the gizzi child answers. `disabled` for a server built without an agent loop."
         "503":
-          description: The database is not reachable. Code `store_unavailable`.
+          description: Not ready. Code `store_unavailable` or `agent_loop_unavailable`.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -485,8 +493,13 @@ paths:
         turn needs no worker. A turn that calls a tool waits until a worker
         for the environment is attached; the session shows `waiting_for_worker`.
         Returns 409 `session_busy` if a turn is already running, and 409
-        `session_archived` for an archived session. A server whose agent loop
-        cannot run turns answers 501 `not_implemented` and stores nothing.
+        `session_archived` for an archived session. The agent's model is checked
+        against the server's model map again here (it may have changed since the
+        session was made): an unmapped model is 422 `model_not_mapped`, with no
+        outbound request. While the agent loop is starting or cannot run, the
+        answer is 503 `agent_loop_unavailable`; a server built without an agent
+        loop answers 501 `not_implemented`. In those cases nothing is stored.
+        A turn that fails later ends with an `error` event and status `error`.
       tags: [Sessions]
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"
@@ -517,7 +530,7 @@ paths:
     post:
       operationId: interruptSession
       summary: Interrupt the running turn
-      description: Stops the current turn. Pending tool calls are cancelled. Does nothing if the session is idle.
+      description: Stops the current turn. Pending tool calls are cancelled. The session's work item stays with its worker, which keeps serving the session's next turns. Does nothing if the session is idle.
       tags: [Sessions]
       responses:
         "200":
@@ -595,14 +608,26 @@ paths:
       operationId: claimWork
       summary: Claim a work item
       description: |
-        Worker side. Claims the oldest ready work item for this environment and
-        starts a 60 second lease. Waits up to `block_ms` for work to appear.
-        Returns 204 when there is nothing. If `reclaim_older_than_ms` is set, the
-        worker may also take an item whose lease ran out that long ago (a worker
-        that died). Each claim raises the item's `lease_generation`. Auth: environment key of this environment.
+        Worker side. Claims the oldest claimable work item for this environment and
+        starts a 60 second lease. Waits up to `block_ms` for work to appear and
+        answers as soon as an item is queued. Returns 204 when there is nothing.
+
+        Claimable: an item that is ready, or one whose lease ran out (a worker that
+        died). With `reclaim_older_than_ms`, also an item whose lease is still live
+        but was last renewed at least that long ago; pick a value above the 20 s
+        renew interval. Each claim raises the item's `lease_generation`, so the old
+        worker gets 409 `lease_stale` on its next call. Tool calls the old worker
+        took but did not answer are handed out again.
+
+        The server also returns expired leases to the queue every 5 seconds.
+        Each session has at most one open work item, queued the first time a turn
+        needs a sandbox tool. Auth: environment key of this environment.
       tags: [Work]
       security:
         - EnvironmentKey: []
+      parameters:
+        - $ref: "#/components/parameters/WorkerHostname"
+        - $ref: "#/components/parameters/WorkerVersion"
       requestBody:
         required: true
         content:
@@ -625,7 +650,7 @@ paths:
                 reclaim_older_than_ms:
                   type: integer
                   minimum: 0
-                  description: Also claim items whose lease expired at least this long ago.
+                  description: Also claim items whose live lease was last renewed at least this long ago. Expired leases are claimable without it. Values of 60000 or more add nothing.
       responses:
         "200":
           description: A work item, with a 60 second lease.
@@ -645,6 +670,9 @@ paths:
       tags: [Work]
       security:
         - EnvironmentKey: []
+      parameters:
+        - $ref: "#/components/parameters/WorkerHostname"
+        - $ref: "#/components/parameters/WorkerVersion"
       requestBody:
         $ref: "#/components/requestBodies/LeaseBody"
       responses:
@@ -664,6 +692,9 @@ paths:
       tags: [Work]
       security:
         - EnvironmentKey: []
+      parameters:
+        - $ref: "#/components/parameters/WorkerHostname"
+        - $ref: "#/components/parameters/WorkerVersion"
       requestBody:
         $ref: "#/components/requestBodies/LeaseBody"
       responses:
@@ -735,6 +766,14 @@ paths:
         session. Returns 204 when none arrived. A tool call that was handed out but has no result yet
         is handed out again after the lease changes hands (at-least-once), with the
         same `tool_call_id`. Run it once per id. Auth: the session secret.
+
+        **Session finished.** When the session will send no more tool calls, the
+        server answers 204 with the header `X-Session-Closed: true`. That happens
+        when the session is archived, or when it has had no turn running and no
+        pending tool call for `sessions.idle_timeout` (default 1 hour). The worker
+        then calls `/complete` for the work item. The session's next turn that
+        needs a tool queues a new item. A 204 without the header only means
+        "nothing yet, poll again".
       tags: [Tool calls]
       security:
         - SessionSecret: []
@@ -758,7 +797,11 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ToolCall" }
         "204":
-          description: No tool call yet.
+          description: No tool call yet, or (with `X-Session-Closed`) the session is finished.
+          headers:
+            X-Session-Closed:
+              description: "`true` when the session is finished and will send no more tool calls. The worker completes the work item. Absent otherwise."
+              schema: { type: string, enum: ["true"] }
         default: { $ref: "#/components/responses/Error" }
   /v1/tool_calls/{id}/result:
     parameters:
@@ -889,10 +932,20 @@ paths:
       description: |
         Internal. Loopback only. Not part of the public API; SDK generation skips it.
         The agent loop (the gizzi child process) calls this to run a tool on a worker.
-        The call is queued for the session's worker, and the request blocks until a worker
-        posts the result or `timeout_ms` passes. Idempotent on `tool_call_id`: a repeat with the
-        same id waits for the same call and returns its result. Auth: the internal token set when the server started.
-        Returns 504 `no_worker` if no worker took the call, and 408 `timeout` if a worker took it but no result came in time.
+        The path `id` is the gizzi session id (the server maps it to its own session);
+        the server's own session id is accepted too.
+        The call is queued for the session's worker (queuing the session's work item if it
+        has none), and the request blocks until a worker posts the result or `timeout_ms`
+        passes. While no worker holds the session's item, the session shows
+        `waiting_for_worker` (reason `no_worker`) with a status event, and goes back to
+        `running` when a worker takes the call. Idempotent on `tool_call_id`: a repeat with
+        the same id waits for the same call and returns its result. Any tool name is
+        accepted: sandbox tools and the agent's custom tools use the same queue.
+        Auth: the internal token set when the server started.
+        Returns 504 `no_worker` if no worker took the call within `sessions.no_worker_timeout`
+        (default 10 minutes) or `timeout_ms`, 408 `timeout` if a worker took it but no
+        result came in time, and 409 `session_archived` for an archived session. On 504 and
+        408 the call is closed as an error, so a worker that attaches later does not run it.
       tags: [Internal]
       x-internal: true
       security:
@@ -996,6 +1049,18 @@ components:
       in: path
       required: true
       schema: { type: string, examples: ["work_0123456789abcdef01234567"] }
+    WorkerHostname:
+      name: X-Worker-Hostname
+      in: header
+      required: false
+      description: The worker's host name, shown in the environment's worker list. At most 200 characters are kept.
+      schema: { type: string, maxLength: 200 }
+    WorkerVersion:
+      name: X-Worker-Version
+      in: header
+      required: false
+      description: The worker's version (for example `gizzi 2.4.0`), shown in the environment's worker list.
+      schema: { type: string, maxLength: 200 }
   requestBodies:
     LeaseBody:
       required: true

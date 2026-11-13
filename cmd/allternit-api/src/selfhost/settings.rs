@@ -79,6 +79,8 @@ pub struct Settings {
     pub observability: ObservabilitySettings,
     #[serde(default)]
     pub health: HealthSettings,
+    #[serde(default)]
+    pub sessions: SessionsSettings,
 }
 
 /// For tests and tools: an ephemeral server on the anthropic provider.
@@ -97,6 +99,7 @@ impl Default for Settings {
             secrets: SecretsSettings::default(),
             observability: ObservabilitySettings::default(),
             health: HealthSettings::default(),
+            sessions: SessionsSettings::default(),
         }
     }
 }
@@ -430,6 +433,38 @@ fn default_check_interval() -> String {
     "60s".to_string()
 }
 
+/// Session and work item timing.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SessionsSettings {
+    /// A session with no turn running and no pending tool call for this long
+    /// ends its work item: `tool_calls/next` answers 204 with
+    /// `X-Session-Closed: true`. A later turn queues a new item.
+    #[serde(default = "default_idle_timeout")]
+    pub idle_timeout: String,
+    /// How long a tool call waits for a worker to take it before the
+    /// internal route answers 504 `no_worker`.
+    #[serde(default = "default_no_worker_timeout")]
+    pub no_worker_timeout: String,
+}
+
+impl Default for SessionsSettings {
+    fn default() -> Self {
+        Self {
+            idle_timeout: default_idle_timeout(),
+            no_worker_timeout: default_no_worker_timeout(),
+        }
+    }
+}
+
+fn default_idle_timeout() -> String {
+    "1h".to_string()
+}
+
+fn default_no_worker_timeout() -> String {
+    "10m".to_string()
+}
+
 // ─── Loading ────────────────────────────────────────────────────────────────
 
 /// `--config <path>` / `--config=<path>` from args, else the env var.
@@ -579,6 +614,15 @@ impl Settings {
         }
         parse_duration(&self.health.check_interval)
             .ok_or_else(|| invalid("health.check_interval", "use a number and ms, s, m or h"))?;
+        for (field, v) in [
+            ("sessions.idle_timeout", &self.sessions.idle_timeout),
+            ("sessions.no_worker_timeout", &self.sessions.no_worker_timeout),
+        ] {
+            match parse_duration(v) {
+                Some(d) if !d.is_zero() => {}
+                _ => return Err(invalid(field, "use a number above 0 and ms, s, m or h")),
+            }
+        }
         Ok(())
     }
 
@@ -605,6 +649,20 @@ impl Settings {
 
     pub fn health_check_interval(&self) -> std::time::Duration {
         parse_duration(&self.health.check_interval).unwrap_or(std::time::Duration::from_secs(60))
+    }
+
+    /// `sessions.idle_timeout`, default 1 hour.
+    pub fn idle_timeout(&self) -> std::time::Duration {
+        parse_duration(&self.sessions.idle_timeout)
+            .filter(|d| !d.is_zero())
+            .unwrap_or(std::time::Duration::from_secs(3600))
+    }
+
+    /// `sessions.no_worker_timeout`, default 10 minutes.
+    pub fn no_worker_timeout(&self) -> std::time::Duration {
+        parse_duration(&self.sessions.no_worker_timeout)
+            .filter(|d| !d.is_zero())
+            .unwrap_or(std::time::Duration::from_secs(600))
     }
 }
 
@@ -752,6 +810,22 @@ mod tests {
         assert!(!s.model_allowed("gpt-4o"));
         let open = Settings::from_str("inference: {provider: anthropic}\n").unwrap();
         assert!(open.model_allowed("anything"));
+    }
+
+    #[test]
+    fn session_timeouts_parse() {
+        let s = Settings::from_str("inference: {provider: anthropic}\n").unwrap();
+        assert_eq!(s.idle_timeout(), std::time::Duration::from_secs(3600));
+        assert_eq!(s.no_worker_timeout(), std::time::Duration::from_secs(600));
+        let s = Settings::from_str(
+            "inference: {provider: anthropic}\nsessions: {idle_timeout: 90s, no_worker_timeout: 250ms}\n",
+        )
+        .unwrap();
+        assert_eq!(s.idle_timeout(), std::time::Duration::from_secs(90));
+        assert_eq!(s.no_worker_timeout(), std::time::Duration::from_millis(250));
+        let err = Settings::from_str("inference: {provider: anthropic}\nsessions: {idle_timeout: 0s}\n")
+            .unwrap_err();
+        assert!(err.to_string().contains("sessions.idle_timeout"), "{err}");
     }
 
     #[test]

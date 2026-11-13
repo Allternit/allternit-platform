@@ -12,6 +12,7 @@ use tokio::sync::broadcast;
 use super::auth::OidcVerifier;
 use super::egress_guard::{EgressClient, EgressError, EgressGuard};
 use super::routes_sessions::{NotImplementedTurnRunner, TurnRunner};
+use super::routes_work::WorkHub;
 use super::settings::Settings;
 use super::store::{DynStore, EventRecord, StoreResult};
 
@@ -35,6 +36,8 @@ pub struct SelfHostState {
     /// Every stored event, for live SSE. Receivers filter by session.
     pub events: broadcast::Sender<Arc<EventRecord>>,
     pub turn_runner: Arc<dyn TurnRunner>,
+    /// Queue wake-ups and the gizzi session map (in memory, one replica).
+    pub work: Arc<WorkHub>,
     pub oidc: Option<Arc<OidcVerifier>>,
     pub started_at: DateTime<Utc>,
 }
@@ -64,6 +67,7 @@ impl SelfHostState {
             setup_token,
             events,
             turn_runner: Arc::new(NotImplementedTurnRunner),
+            work: Arc::new(WorkHub::new()),
             oidc,
             started_at: Utc::now(),
         })
