@@ -619,7 +619,7 @@ impl TurnLog {
     fn tool_items(&self) -> Vec<NewItem> {
         self.tools
             .iter()
-            .map(|t| NewItem::tool_call(&t.name, t.input.clone(), t.output.clone(), if t.status == "in_progress" { "incomplete" } else { t.status }, t.error.as_deref()))
+            .map(|t| NewItem::tool_call(&t.name, t.input.clone(), t.output.clone(), if t.status == "in_progress" { "incomplete" } else { t.status }, t.error.as_deref()).with_call_id(t.id.as_deref()))
             .collect()
     }
 }
@@ -1082,8 +1082,8 @@ mod tests {
         assert_eq!((log.text.as_str(), log.usage["inputTokens"].as_i64()), ("Looking Found it.", Some(5)));
         let tools = log.tool_items();
         assert_eq!(tools, vec![
-            NewItem::tool_call("websearch", json!({ "q": "x" }), json!("3 results"), "completed", None),
-            NewItem::tool_call("bash", Value::Null, Value::Null, "failed", Some("denied")),
+            NewItem::tool_call("websearch", json!({ "q": "x" }), json!("3 results"), "completed", None).with_call_id(Some("c1")),
+            NewItem::tool_call("bash", Value::Null, Value::Null, "failed", Some("denied")).with_call_id(Some("c2")),
             NewItem::tool_call("fetch", json!({ "url": "u" }), Value::Null, "incomplete", None),
         ]);
 

@@ -288,7 +288,9 @@ impl Exec<'_> {
             let detail = format!("Step {node} runs a template that stopped for a person:\n{}\nAnswering here answers the template's request; the run then picks up where it left off.",
                 np.attention["detail"].as_str().unwrap_or_default());
             self.s.park_attention(&self.run_id, CHILD_ATTENTION_REASON, title, &detail, json!({ "node_id": node, "child_run_id": np.child_run,
-                "child_attention_id": child_att, "consequential": np.attention["consequential"].as_bool().unwrap_or(false) })).await?;
+                "child_attention_id": child_att, "consequential": np.attention["consequential"].as_bool().unwrap_or(false),
+                // Same deadline as the child's request: both settle together.
+                "expires_at": np.attention["expires_at"] })).await?;
             Ok(())
         });
         match r { Ok(()) => StepErr::Stop, Err(e) => StepErr::Fail(e) }
@@ -343,7 +345,9 @@ impl Exec<'_> {
                         self.h.block_on(self.s.park_attention(&self.run_id, TASK_WAIT_REASON,
                             if kind == "wake" { "Waiting for an explicit trigger" } else { "Waiting for your acceptance" },
                             &format!("Step {cur} ({kind}) needs an answer. Approve to continue, reject to stop."),
-                            json!({ "node_id": cur, "wait_kind": kind, "consequential": false })))?;
+                            // A wake gate waits for an explicit trigger, however long; acceptance gets the default deadline.
+                            if kind == "wake" { json!({ "node_id": cur, "wait_kind": kind, "consequential": false, "expires_at": null }) }
+                            else { json!({ "node_id": cur, "wait_kind": kind, "consequential": false }) }))?;
                         return Err(StepErr::Stop);
                     }
                 }

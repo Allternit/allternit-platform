@@ -22,7 +22,7 @@ description: 'One call for a model or a hosted agent, with items in and items ou
 
 `id` (`resp_`), `status` (`in_progress`, `completed`, `failed`, `incomplete`, `requires_action`), `model`, `agent_id`, `conversation_id`, `previous_response_id`, `output` (items), `incomplete_details` (`{"reason": "max_output_tokens"}` when the model stopped at `max_output_tokens`, else `null`), `required_actions` (see below), `usage`, `error`, `metadata`, `created_at`, `completed_at`.
 
-Items have `object: "item"` and a `type`: `message`, `function_call`, `function_call_output`, `tool_call` (a hosted tool) or `approval_request`. Every item also carries `conversation_id`, `response_id` and `created_at`.
+Items have `object: "item"` and a `type`: `message`, `function_call`, `function_call_output`, `tool_call` (a hosted tool) or `approval_request`. Every item also carries `conversation_id`, `response_id` and `created_at`. A `tool_call` item has `name`, `input`, `output`, `status` and `error`, plus `call_id` when the agent's runtime gave the call an id. The same `call_id` is on that call's `response.tool_call.*` stream events and on the conversation's `tool.*` events (as `tool_call_id`), so you can match them.
 
 When an agent's action needs the owner's [approval](/api/platform/approvals), that tool call fails with a "try again once they approve" result and the turn ends. From then on, while the approval is pending, the stored response reads `status: "requires_action"` with one entry per pending approval, oldest first:
 

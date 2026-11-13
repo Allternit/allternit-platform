@@ -12,7 +12,7 @@
 //! | `message`              | array of parts `[{type: input_text\|output_text, text} \| {type: input_image, image_url?, file_id?, detail?}]` |
 //! | `function_call`        | `{call_id, name, arguments}` (`arguments` a JSON string) |
 //! | `function_call_output` | `{call_id, output}` (`output` a string)           |
-//! | `tool_call`            | `{name, input, output, error}` (hosted tool step) |
+//! | `tool_call`            | `{name, input, output, error, call_id?}` (hosted tool step; `call_id` = the runtime's `toolCallId` when it sent one) |
 //! | `approval_request`     | `{approval_id, proposed_action}`                  |
 //!
 //! `role` is set on messages only; `status` is `in_progress | completed | failed
@@ -145,6 +145,15 @@ impl NewItem {
     /// Set the status (`in_progress | completed | failed | incomplete`).
     pub fn with_status(mut self, status: &str) -> Self {
         self.status = status.into();
+        self
+    }
+
+    /// A hosted tool step's runtime id (`toolCallId`), so a client can match
+    /// the item to the stream's tool events and to an approval. None = unset.
+    pub fn with_call_id(mut self, call_id: Option<&str>) -> Self {
+        if let Some(id) = call_id.filter(|c| !c.is_empty()) {
+            self.content["call_id"] = json!(id);
+        }
         self
     }
 }
@@ -389,6 +398,9 @@ pub fn item_json(it: &Item) -> Value {
             v["output"] = field("output");
         }
         "tool_call" => {
+            if !c["call_id"].is_null() {
+                v["call_id"] = field("call_id");
+            }
             v["name"] = field("name");
             v["input"] = field("input");
             v["output"] = field("output");
@@ -534,6 +546,9 @@ mod tests {
         assert_eq!(fo, json!({ "id": "item_000000000000000000000001", "object": "item", "type": "function_call_output", "call_id": "call_1", "output": "42", "conversation_id": "conv_1", "response_id": null, "created_at": foi.created_at }));
         let tc = item_json(&stored(NewItem::tool_call("web_search", json!({ "q": "x" }), Value::Null, "failed", Some("timeout"))));
         assert_eq!((tc["name"].as_str(), tc["input"]["q"].as_str(), tc["status"].as_str(), tc["error"].as_str()), (Some("web_search"), Some("x"), Some("failed"), Some("timeout")));
+        assert!(tc.get("call_id").is_none(), "no runtime id, no call_id field");
+        let tci = item_json(&stored(NewItem::tool_call("bash", Value::Null, Value::Null, "completed", None).with_call_id(Some("toolu_9"))));
+        assert_eq!(tci["call_id"], "toolu_9");
         let ar = item_json(&stored(NewItem::approval_request("apr_1", json!({ "tool": "send_text" }))));
         assert_eq!((ar["approval_id"].as_str(), ar["proposed_action"]["tool"].as_str()), (Some("apr_1"), Some("send_text")));
     }
