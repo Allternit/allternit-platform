@@ -54,7 +54,7 @@ iOS and Gizzi Code make no browser calls and need no entry.
 In the iOS app, open **Settings**, then **Self-hosted server**:
 
 1. Enter the server's HTTPS address and an API key. iOS accepts HTTPS only.
-2. The key is stored in the iOS Keychain.
+2. Tap **Connect**. The app saves the address and key only after the server accepts the key. The key is stored in the iOS Keychain and then shows as **Saved in Keychain** with its last four characters. Tap **Change** to enter a different key, or **Disconnect** to remove both.
 3. The screen shows the connection, the server's agents and environments with their online workers, and lets you start a session. Replies and tool calls stream in.
 
 If your server uses a certificate from a private CA, install the CA profile on the device and trust it: Settings, General, About, Certificate Trust Settings. Until the CA is trusted, the app cannot connect.
