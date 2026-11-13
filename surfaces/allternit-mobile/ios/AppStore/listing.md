@@ -21,7 +21,50 @@ Note: entered for 1.0.1 on 2026-11-11 (Eoj approved). Old values: name `Allterni
 
 ## Promotional text (170)
 
-Talk to your bots, answer what they ask, and check on the work your computer is doing, from your iPhone.
+Allternit, the open source alternative: Apache 2.0 code, the AI models and subscriptions you already have, and your own computer. Your bots and chats on your iPhone.
+
+Entered in App Store Connect 2026-11-12 on 1.0.1 (live) and 1.0.2 (Eoj approved). Before that the field was empty in App Store Connect.
+
+## Queued for the next version: "Allternit, the open source alternative" (Eoj approved 2026-11-12)
+
+1.0.2 was in review on 2026-11-12, so these wait for the next editable version. The name stays `Allternit: AI Agents & Bots` (Eoj: keep the name; search ranks us high on it).
+
+| Field | Value |
+|---|---|
+| Subtitle (30) | The open source alternative |
+| Keywords (100) | assistant,chatbot,remote,computer,desktop,automation,workflow,approval,mac,pc,alternit,gizzi,llm |
+| Screenshot 1 | the tagline card, 1290x2796: `~/Desktop/Allternit/Marketing/Campaigns/2026-11-12-mobile-apps-live/out/store/appstore-1290x2796.png`; current screenshots move to 2 onward |
+
+Description (replaces the one below when entered):
+
+```
+Allternit, the open source alternative.
+
+WHY WE CALL IT THAT
+• Open source. The Allternit platform is open source under the Apache 2.0 license. You can read the code, run it and change it at github.com/Allternit.
+• Your models and subscriptions. Use the AI models and subscriptions you already have, or the models on Allternit Cloud. You are not tied to one AI company.
+• Your own computer. Code and automations run on a computer you choose: Allternit Desktop on your Mac or PC, or a cloud computer you add.
+• Open standards. Bots connect to apps and services through MCP, an open protocol, so a tool you add works across your workspace.
+
+CHAT
+Start a chat, attach files and see answers stream in. Artifacts made in a chat are saved to your library.
+
+BOTS
+Your bots are listed with their status. Open one for its threads, tasks, routines, memory and channels. Group chats let several bots work on one request. Bots ask before anything that matters, and you approve from your phone.
+
+YOUR COMPUTER
+The app reaches your computer through Allternit's cloud, so your phone doesn't need to be on the same network. You can watch a computer's screen and take control.
+
+NEEDS YOU
+The Inbox collects what your bots are waiting on: approvals, held messages, missed calls and failed runs. Notifications tell you when a bot needs you, and tapping one opens the right place.
+
+ACCOUNT
+Allternit for iPhone uses the same account as ai.allternit.com and Allternit Desktop, so your chats, bots, projects and settings are the same everywhere. Sign in with Apple or your Allternit account. You can export your data and delete your account in Settings.
+
+Allternit needs an Allternit account. Code and automation features need a computer paired to that account.
+```
+
+Google Play (same day, sent to Play review 2026-11-12): title unchanged (`Allternit`); short description `Allternit, the open source alternative. Open code, your models, your computer.`; full description opens with the same "WHY WE CALL IT THAT" section.
 
 ## Description (4000)
 
