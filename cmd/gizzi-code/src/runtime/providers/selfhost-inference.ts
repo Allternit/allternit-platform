@@ -29,6 +29,12 @@ export namespace SelfhostInference {
     model_map: Record<string, string>
   }
 
+  /** Stand-in google-auth-library client for vertex-raw-predict gateways: no ADC, no network. */
+  const STATIC_GATEWAY_AUTH = {
+    getAccessToken: async () => ({ token: "gateway" }),
+    getRequestHeaders: async () => new Headers(),
+  } as any
+
   export class ConfigError extends Error {
     readonly code = "invalid_inference_config"
     constructor(message: string) {
@@ -283,8 +289,18 @@ export namespace SelfhostInference {
               id: "gateway",
               name: "Gateway",
               npm: (apiID) => (isClaude(apiID) ? "@ai-sdk/google-vertex/anthropic" : "@ai-sdk/google-vertex"),
-              // Custom headers replace Google ADC token generation.
-              options: { project: "gateway", location: "global", baseURL: base, headers },
+              // A static auth client stops google-auth-library from looking up
+              // Application Default Credentials (which calls the GCE metadata
+              // server). The gateway's real auth comes from `headers`, which the
+              // SDK spreads after its own Authorization header.
+              options: {
+                project: "gateway",
+                location: "global",
+                baseURL: base,
+                headers,
+                googleAuthOptions: { authClient: STATIC_GATEWAY_AUTH },
+                generateAuthToken: async () => "gateway",
+              },
               url: base,
             }
           case "openai-chat":
