@@ -5,6 +5,13 @@ description: 'Changelog for the Allternit platform, SDKs, and Gizzi Code CLI'
 
 # Release Notes
 
+## 2026-11-13 — Desktop on Mac: Keychain prompt no longer freezes the app
+
+- **Fixed:** on Mac, Allternit Desktop reads its Keychain key off the main thread. If macOS asks for your password, the app keeps working. The startup window says "macOS is asking for permission. Click Always Allow."
+- **Choices:** **Allow** works for that launch. **Always Allow** stops future prompts. **Deny** shows **Try again** and **Quit**.
+- **Your data stays:** a slow or denied Keychain no longer discards your saved sign-in and keys.
+- **Where:** Desktop on Mac, in the next Desktop build. Windows and Linux are unchanged. See [Desktop](/surfaces/desktop#macos-signing).
+
 ## 2026-11-12 — Edit and resend, share a thread, Memory page, run code on files
 
 - **Edit a sent message:** change a message you sent and send it again. The earlier reply stays as a version you can flip back to, even after a reload. See [Edit and versions](/guides/chat-sessions#edit-and-versions).
