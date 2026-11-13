@@ -1,0 +1,29 @@
+name: Platform SDK is current
+
+# The SDKs are generated from openapi/platform-v1.yaml. A spec change merged
+# without regenerating them blocks the next SDK publish (publish-platform-sdks.yml
+# runs the same check), so catch it on the PR. Fix: python3 scripts/platform-sdk/generate.py
+
+on:
+  pull_request:
+    paths:
+      - 'openapi/platform-v1.yaml'
+      - 'scripts/platform-sdk/**'
+      - 'sdk/platform-ts/src/generated/**'
+      - 'sdk/platform-python/allternit_platform/_generated.py'
+      - '.github/workflows/ci-platform-sdk.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  generated-code:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install pyyaml==6.0.3
+      - run: python3 scripts/platform-sdk/generate.py --check

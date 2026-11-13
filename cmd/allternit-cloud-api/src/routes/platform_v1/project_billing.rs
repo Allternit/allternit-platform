@@ -121,7 +121,8 @@ async fn get_billing(State(state): State<Arc<ApiState>>, headers: HeaderMap, Pat
     let (who, _) = console::principal(&headers).await?;
     let project = projects::get_project(&state.db, &who, &id).await?;
     let row = billing_row(&state.db, &project.id).await?;
-    let on_file = row.stripe_customer_id.is_some() && billing::status_allows_work(row.billing_status.as_deref());
+    let on_file = (row.stripe_customer_id.is_some() && billing::status_allows_work(row.billing_status.as_deref()))
+        || billing::internal_test_project(&row.env, row.billing_status.as_deref());
     Ok(Json(json!({
         "object": "project_billing",
         "project_id": project.id,

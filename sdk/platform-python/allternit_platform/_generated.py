@@ -1583,16 +1583,31 @@ class PhonesResource:
         """
         return self._client.request("POST", f"/v1/phones/{_q(serial)}/live", idempotency_key=idempotency_key, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
 
-    def start_fleet_run(self, *, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+    def start_fleet_run(self, *, serials: List[str], goal: str = NOT_GIVEN, skill: str = NOT_GIVEN, inputs: Dict[str, Any] = NOT_GIVEN, max_steps: int = NOT_GIVEN, bot_id: str = NOT_GIVEN, brain: str = NOT_GIVEN, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "PhoneFleetRun":
         """Run one task or skill on many phones
 
         Starts one background run per listed phone: a task (`goal`) or a saved skill (`skill`). Answers 202 with the fleet run; phones whose run could not start are in `not_started` with the error. Every run counts against the plan's concurrent phone-run limit (Sandbox 1, Pay as you go 5, Growth 25, Enterprise by contract); asking for more than the room left is 429 `phone_run_limit` and starts nothing. Each run ends with `phone.run.completed`; the whole fleet run with `phone.fleet_run.completed`.
 
         ``POST /v1/phones/runs``
         """
-        return self._client.request("POST", f"/v1/phones/runs", idempotency_key=idempotency_key, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+        _body: Dict[str, Any] = {}
+        if serials is not NOT_GIVEN:
+            _body['serials'] = serials
+        if goal is not NOT_GIVEN:
+            _body['goal'] = goal
+        if skill is not NOT_GIVEN:
+            _body['skill'] = skill
+        if inputs is not NOT_GIVEN:
+            _body['inputs'] = inputs
+        if max_steps is not NOT_GIVEN:
+            _body['max_steps'] = max_steps
+        if bot_id is not NOT_GIVEN:
+            _body['bot_id'] = bot_id
+        if brain is not NOT_GIVEN:
+            _body['brain'] = brain
+        return self._client.request("POST", f"/v1/phones/runs", body=_body, idempotency_key=idempotency_key, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
 
-    def get_fleet_run(self, id: str, *, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+    def get_fleet_run(self, id: str, *, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "PhoneFleetRun":
         """A fleet run
 
         The fleet run and each phone's run (status, ok, start and end).
@@ -1727,7 +1742,7 @@ class MailboxesResource:
             _body['since'] = since
         return self._client.request("POST", f"/v1/mailboxes/{_q(id)}/otp", body=_body, idempotency_key=idempotency_key, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
 
-    def send_mail(self, id: str, *, serials: List[str], goal: str = NOT_GIVEN, skill: str = NOT_GIVEN, inputs: Dict[str, Any] = NOT_GIVEN, max_steps: int = NOT_GIVEN, bot_id: str = NOT_GIVEN, brain: str = NOT_GIVEN, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "PhoneFleetRun":
+    def send_mail(self, id: str, *, to: str, subject: str, text: str = NOT_GIVEN, html: str = NOT_GIVEN, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
         """Send an email from a mailbox
 
         Live projects only. The call is the approval, so the send is queued at once; `pending_approval` only when Allternit Mail held it and could not release it.
@@ -1735,20 +1750,14 @@ class MailboxesResource:
         ``POST /v1/mailboxes/{id}/send``
         """
         _body: Dict[str, Any] = {}
-        if serials is not NOT_GIVEN:
-            _body['serials'] = serials
-        if goal is not NOT_GIVEN:
-            _body['goal'] = goal
-        if skill is not NOT_GIVEN:
-            _body['skill'] = skill
-        if inputs is not NOT_GIVEN:
-            _body['inputs'] = inputs
-        if max_steps is not NOT_GIVEN:
-            _body['max_steps'] = max_steps
-        if bot_id is not NOT_GIVEN:
-            _body['bot_id'] = bot_id
-        if brain is not NOT_GIVEN:
-            _body['brain'] = brain
+        if to is not NOT_GIVEN:
+            _body['to'] = to
+        if subject is not NOT_GIVEN:
+            _body['subject'] = subject
+        if text is not NOT_GIVEN:
+            _body['text'] = text
+        if html is not NOT_GIVEN:
+            _body['html'] = html
         return self._client.request("POST", f"/v1/mailboxes/{_q(id)}/send", body=_body, idempotency_key=idempotency_key, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
 
 

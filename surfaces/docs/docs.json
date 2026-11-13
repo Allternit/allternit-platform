@@ -371,6 +371,7 @@
               "operations/cloud-computer-network",
               "operations/upstream-funding",
               "operations/database-migrations",
+              "operations/platform-test-projects",
               "operations/mail-triage-eval",
               "internal/channel-apps-owner-setup"
             ],
