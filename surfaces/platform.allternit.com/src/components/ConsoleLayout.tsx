@@ -13,7 +13,6 @@ import {
   PanelLeftIcon,
 } from "@hugeicons/core-free-icons";
 import { cn } from "@/lib/utils";
-import { api } from "@/lib/api-client";
 import { usePlatformOrganization } from "@/lib/platform-auth-client";
 import {
   consoleNav,
