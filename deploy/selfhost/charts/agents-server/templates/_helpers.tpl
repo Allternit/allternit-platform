@@ -54,9 +54,22 @@ app.kubernetes.io/part-of: allternit-selfhost
 {{/*
 The settings file. Starts from .Values.settings and fixes the parts the chart
 owns: the listen addresses (0.0.0.0 inside the pod) and the Prometheus switch.
+The Anthropic defaults (credentials.api_key, model_map) are added here, only
+for provider anthropic, so they never leak into another provider's settings
+through Helm's map merge.
 */}}
 {{- define "agents-server.settings" -}}
 {{- $s := deepCopy .Values.settings -}}
+{{- $inf := default (dict) $s.inference -}}
+{{- if eq (toString (default "anthropic" $inf.provider)) "anthropic" -}}
+{{- if not $inf.credentials -}}
+{{- $_ := set $inf "credentials" (dict "api_key" "env:ANTHROPIC_API_KEY") -}}
+{{- end -}}
+{{- if not $inf.model_map -}}
+{{- $_ := set $inf "model_map" (dict "claude-sonnet-4-5" "claude-sonnet-4-5") -}}
+{{- end -}}
+{{- end -}}
+{{- $_ := set $s "inference" $inf -}}
 {{- $server := merge (dict "listen" (printf "0.0.0.0:%d" (int .Values.service.port))) (default (dict) $s.server) -}}
 {{- $_ := set $s "server" $server -}}
 {{- $prom := dict "enabled" .Values.metrics.enabled "listen" (printf "0.0.0.0:%d" (int .Values.metrics.port)) -}}

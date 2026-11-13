@@ -61,6 +61,34 @@ kubectl -n allternit exec deploy/agents-server -- allternit-agents-server admin 
 
 `admin setup` prints the first admin API key (`ask_...`) once. Store it.
 
+## Another provider
+
+The values above use the default provider, `anthropic`. For that provider
+only, the chart adds `credentials.api_key: env:ANTHROPIC_API_KEY` and a
+`model_map` entry when you set none. For any other provider, set the provider,
+its credentials (or `gateway`) and a `model_map` under `settings.inference`.
+Nothing from the Anthropic defaults is added. For example, a gateway in
+Anthropic Messages format on port 8080:
+
+```yaml
+settings:
+  inference:
+    provider: gateway
+    gateway:
+      format: anthropic-messages
+      base_url: http://llm-gateway.example.internal:8080/v1
+    model_map:
+      claude-sonnet: sonnet-prod
+networkPolicy:
+  provider:
+    ports: [8080]                    # default [443]
+    to:
+      - ipBlock: { cidr: 10.30.0.20/32 }
+```
+
+Leave `ANTHROPIC_API_KEY` out of the Secret in that case. The providers and
+their credentials are listed in the self-hosted docs ("Models").
+
 ## Values that matter
 
 | Key | Default | What it does |
@@ -77,7 +105,9 @@ kubectl -n allternit exec deploy/agents-server -- allternit-agents-server admin 
 
 NetworkPolicy matches pods and IP ranges, not hostnames. Fill in
 `networkPolicy.database.to` and `networkPolicy.provider.to`, or the server
-cannot reach them (`helm install` prints a warning when they are empty). If
+cannot reach them (`helm install` prints a warning when they are empty).
+`networkPolicy.provider.ports` defaults to `[443]`; change it when your
+provider or gateway listens on another port. If
 your provider has no stable ranges, send provider traffic through an egress
 proxy and allow the proxy. The server also checks every outbound host against
 its settings file. NetworkPolicy is a second layer.

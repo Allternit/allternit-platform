@@ -94,6 +94,58 @@ kubectl -n allternit exec deploy/sandboxes-default -- \
   bwrap --unshare-all --die-with-parent --ro-bind / / --proc /proc --dev /dev true && echo ok
 ```
 
+### Trying it on kind (test clusters only)
+
+The default mode (`sandbox.userNamespace: true`) runs on kind, but a kind node
+needs changes that a real node does not. Checked with kind v0.33.0,
+Kubernetes 1.37.0 and containerd 2.3 on an Ubuntu 24.04 host (kernel 6.8).
+
+1. kind bind-mounts two files over `/sys/devices/virtual/dmi/id/` in the node.
+   The kernel then refuses a fresh sysfs mount in a pod user namespace, and
+   every `hostUsers: false` pod fails with `error mounting "sysfs" ...
+   operation not permitted`. Remove them after `kind create cluster`:
+
+   ```sh
+   docker exec <cluster>-control-plane sh -c \
+     'umount /sys/devices/virtual/dmi/id/product_uuid; umount /sys/devices/virtual/dmi/id/product_uuid; umount /sys/devices/virtual/dmi/id/product_name'
+   ```
+
+2. Hosts with `kernel.apparmor_restrict_unprivileged_userns=1` (Ubuntu
+   23.10+) also need the `Localhost` AppArmor profile in the node, and the kind
+   node image has no AppArmor support (`apparmor is not supported`). Mount the
+   host's securityfs in the node config:
+
+   ```yaml
+   nodes:
+     - role: control-plane
+       extraMounts:
+         - hostPath: /sys/kernel/security
+           containerPath: /sys/kernel/security
+   ```
+
+   Then load `deploy/selfhost/apparmor/allternit-selfhost-worker` on the host
+   with `apparmor_parser -r`, and give containerd in the node an
+   `/sbin/apparmor_parser` (it checks the file exists). Once containerd sees
+   AppArmor, it also applies its own default profile,
+   `cri-containerd.apparmor.d`, to every other pod. That profile must be loaded
+   on the host too. Make the stub copy the profile file containerd passes it,
+   then load that copy on the host:
+
+   ```sh
+   docker exec <cluster>-control-plane sh -c \
+     'printf "#!/bin/sh\nfor a; do f=\$a; done\ncp \"\$f\" /root/cri-profile\n" > /sbin/apparmor_parser && chmod +x /sbin/apparmor_parser && systemctl restart containerd'
+   # start any pod, then:
+   docker cp <cluster>-control-plane:/root/cri-profile ./cri-containerd.apparmor.d
+   sudo apparmor_parser -r ./cri-containerd.apparmor.d
+   ```
+
+   Unload both profiles (`apparmor_parser -R <file>`) when you delete the
+   cluster. Without the AppArmor profile, bash in the sandbox fails with
+   `bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted`.
+
+3. Load the images with `kind load docker-image` and set
+   `image.pullPolicy: Never` in both charts.
+
 ## Scaling
 
 `replicas` sets a fixed count. With `autoscaling.enabled`, an HPA scales on CPU
