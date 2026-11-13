@@ -4,88 +4,63 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import {
   Wallet01Icon,
   Search01Icon,
-  Notification01Icon,
   Rocket01Icon,
   ListIcon,
   Cancel01Icon,
-  LifebuoyIcon,
   CircleIcon,
-  ScrollIcon,
   ChevronRightIcon,
   ChevronDownIcon,
   PanelLeftIcon,
-  BookOpen02Icon,
 } from "@hugeicons/core-free-icons";
-import { OrganizationSwitcher, UserButton } from "@clerk/clerk-react";
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/api-client";
-import {
-  usePlatformOrganization,
-  usePlatformUser,
-  usePlatformAuth,
-  useClerk,
-} from "@/lib/platform-auth-client";
+import { usePlatformOrganization } from "@/lib/platform-auth-client";
 import {
   consoleNav,
-  consoleNavLabelForPath,
-  type ConsoleNavGroup,
+  consoleNavEntryForPath,
 } from "@/components/console-ui/navConfig";
 import { CommandPalette } from "@/components/console-ui/CommandPalette";
 import { AnnouncementModal } from "@/components/console-ui/AnnouncementModal";
+import { RailAccountAvatar, RailAccountRow } from "@/components/console-ui/RailAccountRow";
 import { AllternitWordmark } from "@/components/AllternitWordmark";
 import { ProjectProvider, ProjectSwitcher } from "@/lib/project-context";
 
-function groupContainsPath(group: ConsoleNavGroup, pathname: string): boolean {
-  return group.items.some(
-    (item) => pathname === item.to || pathname.startsWith(`${item.to}/`)
+/**
+ * The rail wordmark, picked by theme with CSS so it follows every theme change
+ * (html[data-theme] is the source of truth): the dark mark on the light theme,
+ * the cream mark on the dark theme. 17 px keeps the whole mark clear of the
+ * collapse button in the 256 px rail.
+ */
+function RailWordmark() {
+  return (
+    <span className="flex min-w-0 items-center">
+      <AllternitWordmark variant="dark" height={17} className="hidden [html[data-theme=light]_&]:block" />
+      <AllternitWordmark variant="light" height={17} className="block [html[data-theme=light]_&]:hidden" />
+    </span>
   );
 }
 
-/** Error boundary that renders nothing when Clerk organization features fail. */
-class ClerkSilentBoundary extends React.Component<
-  { children: React.ReactNode },
-  { hasError: boolean }
-> {
-  state = { hasError: false };
-
-  static getDerivedStateFromError() {
-    return { hasError: true };
-  }
-
-  componentDidCatch() {
-    // Clerk orgs unavailable (e.g. personal workspaces disabled) — stay silent.
-  }
-
-  render() {
-    return this.state.hasError ? null : this.props.children;
-  }
-}
-
-function SidebarOrgSwitcher() {
-  const auth = usePlatformAuth();
-  if (!auth.isSignedIn) return null;
+/** The A:/ part of the wordmark (same pixel grid), for the 68 px rail. */
+function RailMark() {
+  const cells: Array<[number, number]> = [
+    [0, 20], [0, 30], [0, 40], [10, 10], [10, 20], [20, 0], [30, 10], [30, 20],
+    [40, 20], [40, 30], [40, 40], [60, 10], [60, 30], [80, 30], [80, 40], [90, 20],
+    [100, 0], [100, 10],
+  ];
   return (
-    <ClerkSilentBoundary>
-      <OrganizationSwitcher
-        hidePersonal={false}
-        appearance={{
-          elements: {
-            rootBox: { width: "100%" },
-            organizationSwitcherTrigger: {
-              width: "100%",
-              justifyContent: "space-between",
-              border: "1px solid var(--border-subtle)",
-              borderRadius: "10px",
-              padding: "7px 10px",
-              background: "var(--bg-primary)",
-              color: "var(--text-primary)",
-              boxShadow: "none",
-              fontSize: "13px",
-            },
-          },
-        }}
-      />
-    </ClerkSilentBoundary>
+    <svg
+      viewBox="0 0 110 50"
+      height={14}
+      role="img"
+      aria-label="Allternit"
+      className="block text-[var(--text-primary)]"
+      style={{ width: "auto" }}
+    >
+      {cells.map(([x, y]) => (
+        <rect key={`${x}-${y}`} x={x + 0.75} y={y + 0.75} width={8.5} height={8.5} rx={1.5} fill="currentColor" />
+      ))}
+      <rect x={20.75} y={20.75} width={8.5} height={8.5} rx={1.5} fill="#D97757" />
+    </svg>
   );
 }
 
@@ -94,7 +69,7 @@ function SidebarOrgSwitcher() {
  * org change. Failure is hidden — the chip renders nothing rather than a
  * broken balance.
  */
-function CreditsChip() {
+function CreditsChip({ onNavigate }: { onNavigate?: () => void }) {
   const { organization } = usePlatformOrganization();
   const [balance, setBalance] = useState<string | null>(null);
 
@@ -126,89 +101,55 @@ function CreditsChip() {
   return (
     <NavLink
       to="/billing"
+      onClick={onNavigate}
       className={({ isActive }) =>
         cn(
-          "flex items-center justify-between rounded-lg px-2.5 py-2 text-[13px] font-medium transition-colors",
+          "mb-1 flex items-center justify-between rounded-lg px-2 py-1 text-[12px] transition-colors",
           isActive
             ? "bg-[var(--surface-hover)] text-[var(--text-primary)]"
             : "text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"
         )
       }
     >
-      <span className="flex items-center gap-3">
-        <HugeiconsIcon icon={Wallet01Icon} size={17} />
+      <span className="flex items-center gap-2">
+        <HugeiconsIcon icon={Wallet01Icon} size={14} />
         Credits
       </span>
-      <span className="text-[12px] text-[var(--text-tertiary)]">{balance}</span>
+      <span className="tabular-nums text-[var(--text-tertiary)]">{balance}</span>
     </NavLink>
   );
 }
 
-function RailUserCard({ collapsed }: { collapsed: boolean }) {
-  const clerk = useClerk();
-  const { user } = usePlatformUser();
-  const { organization, membership } = usePlatformOrganization();
+const footerLinkClass =
+  "inline-flex shrink-0 items-center gap-1 text-[11px] text-[var(--text-tertiary)] transition-colors hover:text-[var(--text-secondary)]";
 
-  const name =
-    [user?.firstName, user?.lastName].filter(Boolean).join(" ") ||
-    user?.primaryEmailAddress?.emailAddress ||
-    user?.userEmail ||
-    "Account";
-  const role = membership?.role
-    ? membership.role.replace(/^org:/, "")
-    : organization
-      ? "Member"
-      : "Personal";
-  const orgName = organization?.name || "Allternit";
-  const initials = name
-    .split(/\s+/)
-    .map((part) => part.charAt(0))
-    .slice(0, 2)
-    .join("")
-    .toUpperCase();
-
-  if (collapsed) {
-    return clerk ? (
-      <div className="flex justify-center px-2 py-2">
-        <UserButton
-          afterSignOutUrl="/sign-in"
-          appearance={{ elements: { userButtonAvatarBox: "size-8 rounded-lg" } }}
-        />
-      </div>
-    ) : (
-      <div className="flex justify-center px-2 py-2">
-        <div className="flex size-8 items-center justify-center rounded-lg bg-[var(--accent-primary)]/10 text-[10px] font-semibold text-[var(--accent-primary)]">
-          {initials.charAt(0)}
-        </div>
-      </div>
-    );
-  }
-
+/** One line of links under the account row. Must not wrap at 256 px. */
+function RailFooterLinks({ onNavigate }: { onNavigate?: () => void }) {
   return (
-    <div className="flex items-center gap-2.5 rounded-xl px-2.5 py-2 transition-colors hover:bg-[var(--surface-hover)]">
-      <div className="shrink-0">
-        {clerk ? (
-          <UserButton
-            afterSignOutUrl="/sign-in"
-            appearance={{ elements: { userButtonAvatarBox: "size-8 rounded-lg" } }}
-          />
-        ) : (
-          <div className="flex size-8 items-center justify-center rounded-lg bg-[var(--accent-primary)]/10 text-[10px] font-semibold text-[var(--accent-primary)]">
-            {initials.charAt(0)}
-          </div>
-        )}
-      </div>
-      <div className="min-w-0 flex-1">
-        <div className="truncate text-[13px] font-medium text-[var(--text-primary)]">{name}</div>
-        <div className="truncate text-[11px] capitalize text-[var(--text-tertiary)]">
-          {role} · {orgName}
-        </div>
-      </div>
-      <HugeiconsIcon
-        icon={ChevronDownIcon}
-        size={14}
-        className="shrink-0 text-[var(--text-tertiary)]"
-      />
+    <div className="mt-1 flex items-center gap-3 overflow-hidden whitespace-nowrap px-2 pt-1">
+      <NavLink to="/docs" onClick={onNavigate} className={footerLinkClass}>
+        Docs
+      </NavLink>
+      <a href="mailto:support@allternit.com" className={footerLinkClass}>
+        Support
+      </a>
+      <a
+        href="https://status.allternit.com"
+        target="_blank"
+        rel="noopener noreferrer"
+        className={footerLinkClass}
+      >
+        <SystemStatusDot />
+        Status
+      </a>
+      <a
+        href="https://allternit.com/changelog"
+        target="_blank"
+        rel="noopener noreferrer"
+        className={footerLinkClass}
+      >
+        Changelog
+      </a>
     </div>
   );
 }
@@ -225,21 +166,17 @@ function SidebarContent({
   onOpenPalette: () => void;
 }) {
   const location = useLocation();
-  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
+  const activeGroup = consoleNavEntryForPath(location.pathname)?.group ?? null;
+  // Only one group is open: the one holding the current page, until the user
+  // opens another (which closes the rest) or closes the open one.
+  const [openGroup, setOpenGroup] = useState<string | null>(activeGroup);
 
-  const isGroupOpen = (group: ConsoleNavGroup) => {
-    if (groupContainsPath(group, location.pathname)) return true;
-    return openGroups[group.label] ?? group.defaultOpen ?? false;
-  };
+  useEffect(() => {
+    setOpenGroup(activeGroup);
+  }, [activeGroup]);
 
   const toggleGroup = (label: string) => {
-    setOpenGroups((prev) => ({
-      ...prev,
-      [label]:
-        !(prev[label] ??
-          consoleNav.groups.find((g) => g.label === label)?.defaultOpen ??
-          false),
-    }));
+    setOpenGroup((prev) => (prev === label ? null : label));
   };
 
   if (collapsed) {
@@ -250,6 +187,7 @@ function SidebarContent({
             <NavLink
               key={item.to}
               to={item.to}
+              end={item.to === "/"}
               title={item.label}
               className={({ isActive }) =>
                 cn(
@@ -263,20 +201,29 @@ function SidebarContent({
               <HugeiconsIcon icon={item.icon} size={19} />
             </NavLink>
           ))}
+          <div className="my-1 h-px w-6 bg-[var(--border-subtle)]" />
           {consoleNav.groups.map((group) => (
             <button
               key={group.label}
               type="button"
               title={group.label}
-              onClick={onExpand}
-              className="flex size-10 items-center justify-center rounded-lg text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"
+              onClick={() => {
+                setOpenGroup(group.label);
+                onExpand?.();
+              }}
+              className={cn(
+                "flex size-10 items-center justify-center rounded-lg transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]",
+                group.label === activeGroup
+                  ? "bg-[var(--surface-hover)] text-[var(--text-primary)]"
+                  : "text-[var(--text-secondary)]"
+              )}
             >
               <HugeiconsIcon icon={group.icon} size={19} />
             </button>
           ))}
         </div>
         <div className="border-t border-[var(--border-subtle)] py-2">
-          <RailUserCard collapsed />
+          <RailAccountAvatar />
         </div>
       </>
     );
@@ -307,10 +254,11 @@ function SidebarContent({
           <NavLink
             key={item.to}
             to={item.to}
+            end={item.to === "/"}
             onClick={onNavigate}
             className={({ isActive }) =>
               cn(
-                "mb-1 flex items-center gap-3 rounded-lg px-3 py-2 text-[13px] font-medium transition-colors",
+                "mb-0.5 flex items-center gap-3 rounded-lg px-3 py-1.5 text-[13px] font-medium transition-colors",
                 isActive
                   ? "bg-[var(--surface-hover)] text-[var(--text-primary)]"
                   : "text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"
@@ -322,18 +270,20 @@ function SidebarContent({
           </NavLink>
         ))}
 
+        <div className="h-2" />
+
         {consoleNav.groups.map((group) => {
-          const open = isGroupOpen(group);
+          const open = openGroup === group.label;
+          const holdsPage = group.label === activeGroup;
           return (
-            <div key={group.label} className="mb-1">
+            <div key={group.label} className="mb-0.5">
               <button
                 type="button"
                 onClick={() => toggleGroup(group.label)}
+                aria-expanded={open}
                 className={cn(
-                  "flex w-full items-center gap-3 rounded-lg px-3 py-2 text-[13px] font-medium transition-colors",
-                  groupContainsPath(group, location.pathname)
-                    ? "text-[var(--text-primary)]"
-                    : "text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"
+                  "flex w-full items-center gap-3 rounded-lg px-3 py-1.5 text-[13px] font-medium transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]",
+                  holdsPage ? "text-[var(--text-primary)]" : "text-[var(--text-secondary)]"
                 )}
               >
                 <HugeiconsIcon icon={group.icon} size={17} />
@@ -350,7 +300,7 @@ function SidebarContent({
                 />
               </button>
               {open && (
-                <div className="mt-0.5 space-y-px pl-[38px]">
+                <div className="mb-1 mt-0.5 space-y-px pl-[38px]">
                   {group.items.map((item) => (
                     <NavLink
                       key={item.to}
@@ -358,14 +308,19 @@ function SidebarContent({
                       onClick={onNavigate}
                       className={({ isActive }) =>
                         cn(
-                          "block rounded-md px-3 py-1.5 text-[13px] transition-colors",
+                          "flex items-center justify-between gap-2 rounded-md px-3 py-1 text-[13px] transition-colors",
                           isActive
                             ? "bg-[var(--surface-hover)] font-medium text-[var(--text-primary)]"
                             : "text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"
                         )
                       }
                     >
-                      {item.label}
+                      <span className="truncate">{item.label}</span>
+                      {item.badge && (
+                        <span className="shrink-0 rounded-md bg-[var(--accent-highlight-subtle)] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--accent-highlight)]">
+                          {item.badge}
+                        </span>
+                      )}
                     </NavLink>
                   ))}
                 </div>
@@ -375,55 +330,11 @@ function SidebarContent({
         })}
       </nav>
 
-      {/* Footer — always visible above the collapse control */}
+      {/* Footer — credits, one account row, one line of links */}
       <div className="border-t border-[var(--border-subtle)] p-2.5">
-        <div className="mb-1.5">
-          <SidebarOrgSwitcher />
-        </div>
-        <NavLink
-          to="/docs"
-          onClick={onNavigate}
-          className={({ isActive }) =>
-            cn(
-              "flex items-center gap-3 rounded-lg px-2.5 py-2 text-[13px] font-medium transition-colors",
-              isActive
-                ? "bg-[var(--surface-hover)] text-[var(--text-primary)]"
-                : "text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"
-            )
-          }
-        >
-          <HugeiconsIcon icon={BookOpen02Icon} size={17} />
-          Documentation
-        </NavLink>
-        <CreditsChip />
-        <RailUserCard collapsed={false} />
-        <div className="mt-1 flex items-center gap-1 px-2.5">
-          <a
-            href="mailto:support@allternit.com"
-            className="inline-flex items-center gap-1 text-[11px] text-[var(--text-tertiary)] hover:text-[var(--text-secondary)] transition-colors"
-          >
-            <HugeiconsIcon icon={LifebuoyIcon} size={12} /> Support
-          </a>
-          <span className="text-[var(--border-default)]">·</span>
-          <a
-            href="https://status.allternit.com"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-1 text-[11px] text-[var(--text-tertiary)] hover:text-[var(--text-secondary)] transition-colors"
-          >
-            <SystemStatusDot />{" "}
-            System status
-          </a>
-          <span className="text-[var(--border-default)]">·</span>
-          <a
-            href="https://allternit.com/changelog"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-1 text-[11px] text-[var(--text-tertiary)] hover:text-[var(--text-secondary)] transition-colors"
-          >
-            <HugeiconsIcon icon={ScrollIcon} size={12} /> Changelog
-          </a>
-        </div>
+        <CreditsChip onNavigate={onNavigate} />
+        <RailAccountRow />
+        <RailFooterLinks onNavigate={onNavigate} />
       </div>
     </>
   );
@@ -479,7 +390,9 @@ export function ConsoleLayout({ children }: { children: React.ReactNode }) {
   );
   const [paletteOpen, setPaletteOpen] = useState(false);
   const location = useLocation();
-  const pageLabel = location.pathname === "/" ? "Overview" : consoleNavLabelForPath(location.pathname);
+  const pageEntry = consoleNavEntryForPath(location.pathname);
+  const pageLabel = pageEntry?.label ?? "Console";
+  const pageGroup = pageEntry?.group ?? null;
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -526,16 +439,19 @@ export function ConsoleLayout({ children }: { children: React.ReactNode }) {
       >
         <div
           className={cn(
-            "flex items-center border-b border-[var(--border-subtle)]",
-            collapsed ? "justify-center px-2 py-3.5" : "justify-between px-4 py-3.5"
+            "flex border-b border-[var(--border-subtle)]",
+            collapsed
+              ? "flex-col items-center gap-2 px-2 py-3"
+              : "h-[57px] items-center justify-between gap-3 pl-4 pr-3"
           )}
         >
-          {!collapsed && <AllternitWordmark variant="light" height={22} />}
+          {collapsed ? <RailMark /> : <RailWordmark />}
           <button
             type="button"
             onClick={toggleCollapsed}
             title={collapsed ? "Expand navigation" : "Collapse navigation"}
-            className="p-1.5 rounded-md text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)] transition-colors"
+            aria-label={collapsed ? "Expand navigation" : "Collapse navigation"}
+            className="shrink-0 p-1.5 rounded-md text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)] transition-colors"
           >
             <HugeiconsIcon icon={PanelLeftIcon} size={17} />
           </button>
@@ -557,8 +473,8 @@ export function ConsoleLayout({ children }: { children: React.ReactNode }) {
             aria-hidden="true"
           />
           <aside className="fixed inset-y-0 left-0 z-50 w-64 flex flex-col border-r border-[var(--border-subtle)] bg-[var(--bg-secondary)] lg:hidden">
-            <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--border-subtle)]">
-              <AllternitWordmark variant="light" height={24} />
+            <div className="flex h-[57px] items-center justify-between gap-3 pl-4 pr-3 border-b border-[var(--border-subtle)]">
+              <RailWordmark />
               <button
                 type="button"
                 onClick={() => setMobileOpen(false)}
@@ -587,8 +503,12 @@ export function ConsoleLayout({ children }: { children: React.ReactNode }) {
             </button>
 
             <nav className="hidden sm:flex min-w-0 items-center gap-2 text-[13px] text-[var(--text-secondary)]">
-              <span className="shrink-0 text-[var(--text-tertiary)]">Dashboard</span>
-              <HugeiconsIcon icon={ChevronRightIcon} size={14} className="shrink-0 text-[var(--text-tertiary)]" />
+              {pageGroup && (
+                <>
+                  <span className="shrink-0 text-[var(--text-tertiary)]">{pageGroup}</span>
+                  <HugeiconsIcon icon={ChevronRightIcon} size={14} className="shrink-0 text-[var(--text-tertiary)]" />
+                </>
+              )}
               <span className="truncate text-[var(--text-primary)] font-medium">{pageLabel}</span>
             </nav>
 
@@ -608,15 +528,6 @@ export function ConsoleLayout({ children }: { children: React.ReactNode }) {
               <HugeiconsIcon icon={Search01Icon} size={20} />
             </button>
 
-            <button
-              type="button"
-              className="relative p-2 rounded-xl text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)] transition-colors"
-              aria-label="Notifications"
-            >
-              <HugeiconsIcon icon={Notification01Icon} size={20} />
-              <span className="absolute top-1.5 right-1.5 size-2 rounded-full bg-[var(--status-error)] ring-2 ring-[var(--bg-primary)]" />
-            </button>
-
             <a
               href="https://ai.allternit.com/shell"
               target="_blank"
@@ -627,7 +538,7 @@ export function ConsoleLayout({ children }: { children: React.ReactNode }) {
             </a>
 
             <div className="lg:hidden shrink-0">
-              <RailUserCard collapsed />
+              <RailAccountAvatar />
             </div>
           </div>
         </header>

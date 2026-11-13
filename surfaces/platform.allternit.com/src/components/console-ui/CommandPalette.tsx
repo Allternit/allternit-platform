@@ -1,9 +1,15 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { Search01Icon, Cancel01Icon, ArrowRight01Icon } from "@hugeicons/core-free-icons";
+import { Search01Icon, Cancel01Icon, ArrowRight01Icon, BookOpen02Icon } from "@hugeicons/core-free-icons";
 import { cn } from "@/lib/utils";
-import { consoleNavEntries } from "./navConfig";
+import { consoleNavEntries, type ConsoleNavEntry } from "./navConfig";
+
+/** Pages reachable from the rail footer rather than the nav, still searchable. */
+const paletteEntries: ConsoleNavEntry[] = [
+  ...consoleNavEntries,
+  { to: "/docs", label: "Docs", group: null, icon: BookOpen02Icon },
+];
 
 interface CommandPaletteProps {
   open: boolean;
@@ -23,8 +29,8 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps): React.Re
 
   const results = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return consoleNavEntries;
-    return consoleNavEntries.filter((entry) => {
+    if (!q) return paletteEntries;
+    return paletteEntries.filter((entry) => {
       const haystack = entry.group
         ? `${entry.group} ${entry.label}`.toLowerCase()
         : entry.label.toLowerCase();

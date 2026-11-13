@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" shape-rendering="geometricPrecision">
+  <!-- Allternit favicon: A-only mark on the cream plate at 84%; A drawn 1.25x bigger 2026-11-04. Source: Brand/Allternit/app-icon (approved 2026-09-10). -->
+  <rect x="79" y="79" width="866" height="866" rx="196" fill="#FDF8F3"/>
+  <g transform="translate(226 226) scale(11.425)">
+    <g fill="#141413">
+    <rect x="20.75" y="0.75"  width="8.5" height="8.5" rx="1.5"/>
+    <rect x="10.75" y="10.75" width="8.5" height="8.5" rx="1.5"/>
+    <rect x="30.75" y="10.75" width="8.5" height="8.5" rx="1.5"/>
+    <rect x="0.75"  y="20.75" width="8.5" height="8.5" rx="1.5"/>
+    <rect x="10.75" y="20.75" width="8.5" height="8.5" rx="1.5"/>
+    <rect x="30.75" y="20.75" width="8.5" height="8.5" rx="1.5"/>
+    <rect x="40.75" y="20.75" width="8.5" height="8.5" rx="1.5"/>
+    <rect x="0.75"  y="30.75" width="8.5" height="8.5" rx="1.5"/>
+    <rect x="40.75" y="30.75" width="8.5" height="8.5" rx="1.5"/>
+    <rect x="0.75"  y="40.75" width="8.5" height="8.5" rx="1.5"/>
+    <rect x="40.75" y="40.75" width="8.5" height="8.5" rx="1.5"/>
+  </g>
+  <rect x="20.75" y="20.75" width="8.5" height="8.5" rx="1.5" fill="#D97757"/>
+  </g>
+</svg>
