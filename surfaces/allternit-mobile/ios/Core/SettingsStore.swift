@@ -50,17 +50,21 @@ enum ListeningPreference: String, CaseIterable, Sendable {
     case allternit
 }
 
-/// "Where voice runs" — which engine serves a voice conversation. Both run
-/// on this phone (Allternit hosts no voice); a stored "cloud" from older
-/// builds reads as Automatic.
+/// "Where voice runs" — which engine serves a voice conversation: this
+/// phone, or the user's own OpenAI / ElevenLabs account (Allternit hosts no
+/// voice); a stored "cloud" from older builds reads as Automatic.
 enum VoiceRoutePreference: String, CaseIterable, Sendable {
     case automatic
     case device
+    case openai
+    case elevenlabs
 
     var label: String {
         switch self {
         case .automatic: return "Automatic"
         case .device: return "This device"
+        case .openai: return "Your own OpenAI"
+        case .elevenlabs: return "Your own ElevenLabs"
         }
     }
 
@@ -68,6 +72,8 @@ enum VoiceRoutePreference: String, CaseIterable, Sendable {
         switch self {
         case .automatic: return "On this phone, with the iPhone's built-in voice as a backup"
         case .device: return "Your speech is transcribed on this phone; replies use the system voice"
+        case .openai: return "OpenAI listens and reads replies, with your API key"
+        case .elevenlabs: return "An ElevenLabs voice reads replies, with your API key; listening stays on this phone"
         }
     }
 }
@@ -140,7 +146,7 @@ final class SettingsStore: ObservableObject {
         didSet { defaults.set(voiceInteractionMode.rawValue, forKey: Keys.voiceInteractionMode) }
     }
 
-    /// Where voice runs (Automatic / This device).
+    /// Where voice runs (Automatic / This device / your own OpenAI or ElevenLabs).
     @Published var voiceRoute: VoiceRoutePreference {
         didSet { defaults.set(voiceRoute.rawValue, forKey: Keys.voiceRoute) }
     }
