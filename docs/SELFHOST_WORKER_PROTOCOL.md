@@ -40,6 +40,13 @@ know custom tools and answers them with `is_error: true`. A worker built on
 the SDK runs them with its own handlers and posts the result like any other.
 Run custom tools only on workers that have handlers for them.
 
+The agent loop offers the custom tools to the model on every turn, with
+their name, description and `input_schema`. A custom tool may not reuse the
+name of a built-in tool (compared without case, so `Bash` counts as `bash`),
+and its `input_schema` must describe an object. If either rule is broken, the
+turn fails with a clear error before any message is stored, and nothing is
+queued.
+
 ## Work items
 
 - A session has **at most one open work item**. The server queues it the

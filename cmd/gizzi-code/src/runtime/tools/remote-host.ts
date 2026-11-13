@@ -3,8 +3,8 @@
  *
  * When `GIZZI_TOOL_HOST=remote`, this gizzi is the agent loop child of
  * allternit-agents-server. Model calls and MCP stay here; every tool in the
- * sandbox set is handed to the server's loopback queue instead of running
- * locally:
+ * sandbox set, and every custom tool of the session's agent, is handed to the
+ * server's loopback queue instead of running locally:
  *
  *   POST ${GIZZI_TOOL_HOST_URL}/internal/v1/sessions/{gizzi session id}/tool_calls
  *   Authorization: Bearer ${GIZZI_TOOL_HOST_TOKEN}
@@ -85,9 +85,126 @@ export namespace RemoteToolHost {
     return (process.env.GIZZI_TOOL_HOST ?? "").trim().toLowerCase() === "remote"
   }
 
-  /** True when this call must not run locally (forwarded or refused). */
-  export function handles(toolID: string): boolean {
-    return enabled() && (SANDBOX_TOOLS.has(toolID) || SERVER_LOCAL_REFUSED.has(toolID))
+  /**
+   * True when this call must not run locally (forwarded or refused). With a
+   * session id, the session's custom tools count too.
+   */
+  export function handles(toolID: string, sessionID?: string): boolean {
+    if (!enabled()) return false
+    if (SANDBOX_TOOLS.has(toolID) || SERVER_LOCAL_REFUSED.has(toolID)) return true
+    return sessionID !== undefined && isCustomTool(sessionID, toolID)
+  }
+
+  // ─── Custom tools ─────────────────────────────────────────────────────────
+  //
+  // An agent's custom tools (`type: custom`) reach this child in each turn's
+  // prompt metadata, `metadata.selfhost.custom_tools` (loop.rs message_body):
+  // `[{ type: "custom", name, description?, input_schema }]`. They are offered
+  // to the model for that session (SessionPrompt.resolveTools), and a call to
+  // one goes to the same tool queue as a sandbox tool, where an SDK worker
+  // with a handler answers it. They never run here.
+
+  /** One custom tool, checked and ready to offer to the model. */
+  export interface CustomTool {
+    name: string
+    description: string
+    /** JSON Schema of the input; always `type: "object"`. */
+    inputSchema: Record<string, unknown>
+  }
+
+  /** The tool name shape every model provider accepts. */
+  const CUSTOM_TOOL_NAME = /^[a-zA-Z0-9_-]{1,64}$/
+  /** Sessions whose custom tools are remembered; the oldest is dropped past this. */
+  const MAX_CUSTOM_TOOL_SESSIONS = 1000
+  const customBySession = new Map<string, Map<string, CustomTool>>()
+
+  function isPlainObject(value: unknown): value is Record<string, unknown> {
+    return value !== null && typeof value === "object" && !Array.isArray(value)
+  }
+
+  /**
+   * The custom tools a turn's prompt metadata carries. Empty when remote mode
+   * is off or there are none. Throws a RemoteToolError (`invalid_custom_tool`)
+   * on an entry the model could not be given.
+   */
+  export function customToolsFrom(metadata: Record<string, unknown> | undefined): CustomTool[] {
+    if (!enabled()) return []
+    const selfhost = metadata?.["selfhost"]
+    const raw = isPlainObject(selfhost) ? selfhost["custom_tools"] : undefined
+    if (raw === undefined || raw === null) return []
+    if (!Array.isArray(raw)) {
+      throw new RemoteToolError("metadata.selfhost.custom_tools must be a list of custom tools.", "invalid_custom_tool")
+    }
+    const seen = new Set<string>()
+    return raw.map((entry, index) => {
+      const name = isPlainObject(entry) ? entry["name"] : undefined
+      if (typeof name !== "string" || !CUSTOM_TOOL_NAME.test(name)) {
+        throw new RemoteToolError(
+          `Custom tool #${index + 1} has the name ${JSON.stringify(name)}. A custom tool name must be 1 to 64 letters, ` +
+            "digits, underscores or hyphens.",
+          "invalid_custom_tool",
+        )
+      }
+      if (seen.has(name)) {
+        throw new RemoteToolError(`The agent has two custom tools named "${name}".`, "invalid_custom_tool")
+      }
+      seen.add(name)
+      const schema = (entry as Record<string, unknown>)["input_schema"]
+      if (!isPlainObject(schema)) {
+        throw new RemoteToolError(`The custom tool "${name}" needs an input_schema object.`, "invalid_custom_tool")
+      }
+      if (schema["type"] !== undefined && schema["type"] !== "object") {
+        throw new RemoteToolError(
+          `The custom tool "${name}" has an input_schema of type ${JSON.stringify(schema["type"])}. ` +
+            'Tool input is always a JSON object, so the schema must be type "object".',
+          "invalid_custom_tool",
+        )
+      }
+      const description = (entry as Record<string, unknown>)["description"]
+      return {
+        name,
+        description: typeof description === "string" ? description : "",
+        inputSchema: { ...schema, type: "object" },
+      }
+    })
+  }
+
+  /**
+   * Check a session's custom tools against the names already taken and make
+   * them the session's set (replacing the previous turn's; an empty list
+   * clears it). A custom tool may not shadow a built-in, MCP or sandbox tool:
+   * throws a RemoteToolError (`custom_tool_conflict`) and registers nothing.
+   * Names are compared without case so `Bash` cannot pass for `bash`.
+   */
+  export function registerCustomTools(sessionID: string, tools: CustomTool[], reserved: Iterable<string>): void {
+    if (tools.length) {
+      const taken = new Set<string>()
+      for (const name of [...reserved, ...SANDBOX_TOOLS, ...SERVER_LOCAL_REFUSED, ...Object.keys(ALIASES)]) {
+        taken.add(name.toLowerCase())
+      }
+      for (const tool of tools) {
+        if (taken.has(tool.name.toLowerCase())) {
+          throw new RemoteToolError(
+            `The custom tool "${tool.name}" has the same name as a built-in tool of the agent loop. ` +
+              "Custom tools may not replace built-in tools: rename it on the agent and try again.",
+            "custom_tool_conflict",
+          )
+        }
+      }
+    }
+    customBySession.delete(sessionID)
+    if (!tools.length) return
+    customBySession.set(sessionID, new Map(tools.map((tool) => [tool.name, tool])))
+    while (customBySession.size > MAX_CUSTOM_TOOL_SESSIONS) {
+      const oldest = customBySession.keys().next().value
+      if (oldest === undefined) break
+      customBySession.delete(oldest)
+    }
+  }
+
+  /** True when `name` is one of the session's registered custom tools. */
+  export function isCustomTool(sessionID: string, name: string): boolean {
+    return customBySession.get(sessionID)?.has(name) ?? false
   }
 
   export class RemoteToolError extends Error {

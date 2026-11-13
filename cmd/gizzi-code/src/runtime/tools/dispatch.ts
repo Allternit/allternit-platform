@@ -167,10 +167,11 @@ export namespace ToolDispatcher {
     }
 
     // 2. Self-hosted remote tool host (GIZZI_TOOL_HOST=remote): sandbox tools
-    // run on a worker through the Agents Server's queue, after the same
-    // hard-ban and hook checks. Never falls back to local execution; errors
-    // take the same PostToolUseFailure path as a local throw.
-    const run: (args: any, ctx: Tool.Context) => Promise<T> = RemoteToolHost.handles(toolID)
+    // and the session's custom tools run on a worker through the Agents
+    // Server's queue, after the same hard-ban and hook checks. Never falls
+    // back to local execution; errors take the same PostToolUseFailure path
+    // as a local throw.
+    const run: (args: any, ctx: Tool.Context) => Promise<T> = RemoteToolHost.handles(toolID, ctx.sessionID)
       ? (nextArgs, nextCtx) => RemoteToolHost.execute(toolID, nextArgs, nextCtx) as Promise<T>
       : execute;
 
