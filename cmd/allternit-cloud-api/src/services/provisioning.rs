@@ -71,8 +71,9 @@ use crate::ApiError;
 #[path = "provisioning_free.rs"]
 mod free;
 pub use free::{
-    note_runtime_attached, start_free_computer_task, touch_provisioned_activity, FreeDefaults,
-    HostedDriverDefaults, ProvisionedWakeOutcome, WakeReason, WakeResult, HOSTED_POOL_FULL,
+    is_capacity_message, note_runtime_attached, start_free_computer_task, touch_provisioned_activity,
+    FreeDefaults, HostedDriverDefaults, ProvisionedWakeOutcome, WakeReason, WakeResult,
+    CAPACITY_RETRY_AFTER_SECONDS, FREE_POOL_FULL, HOSTED_POOL_FULL,
 };
 
 /// Why a paid computer is suspended by the billing webhook.
@@ -90,6 +91,22 @@ impl SuspendReason {
             SuspendReason::Cancelled => "subscription_cancelled",
             SuspendReason::Unpaid => "subscription_unpaid",
         }
+    }
+}
+
+/// Incus states other than Running/Stopped read as `Busy`. Log each raw
+/// state at warn the first time it is seen (a state that is really new,
+/// not one warning per instance per pass).
+fn warn_unknown_state_once(raw: &str) {
+    static SEEN: std::sync::OnceLock<Mutex<std::collections::HashSet<String>>> =
+        std::sync::OnceLock::new();
+    let first = SEEN
+        .get_or_init(Default::default)
+        .lock()
+        .map(|mut seen| seen.insert(raw.to_string()))
+        .unwrap_or(false);
+    if first {
+        tracing::warn!(state = raw, "incus: unknown instance state, treating as busy");
     }
 }
 
@@ -916,7 +933,10 @@ impl ProvisionBackend for IncusHttpBackend {
         Ok(match payload.get("status").and_then(|value| value.as_str()) {
             Some("Running") => BackendStatus::Running,
             Some("Stopped") => BackendStatus::Stopped,
-            _ => BackendStatus::Busy,
+            other => {
+                warn_unknown_state_once(other.unwrap_or("<none>"));
+                BackendStatus::Busy
+            }
         })
     }
 
@@ -1488,11 +1508,37 @@ pub struct InstanceView {
     /// The ready signal: the computer's runtime device holds a live relay
     /// connection. Filled in by the routes from the relay hub; `false` here.
     pub runtime_online: bool,
+    /// Where it runs: "incus" today; read from the host endpoint scheme
+    /// (`e2b://...` reads "e2b"), see [`provider_for_endpoint`].
+    pub provider: String,
+    /// True for free computers (the idle sweep sleeps them); paid ones stay on.
+    pub sleeps_when_idle: bool,
+    /// "waking" while a start is in flight, "queued" when waiting for a slot;
+    /// null otherwise.
+    pub state_detail: Option<String>,
+    /// Seconds to wait when a start was refused for capacity; null otherwise
+    /// (a refusal is an error response, so a stored computer never has one).
+    pub retry_after_seconds: Option<u64>,
+}
+
+/// Provider name for a host endpoint: the URL scheme when it is not an HTTP
+/// one (`e2b://x` -> "e2b"), else "incus".
+pub fn provider_for_endpoint(endpoint: &str) -> String {
+    match endpoint.split_once("://").map(|(scheme, _)| scheme.to_ascii_lowercase()) {
+        Some(scheme) if !matches!(scheme.as_str(), "http" | "https" | "") => scheme,
+        _ => "incus".to_string(),
+    }
 }
 
 impl From<InstanceRow> for InstanceView {
     fn from(row: InstanceRow) -> Self {
+        let sleeps_when_idle = row.is_free();
+        let state_detail = matches!(row.status.as_str(), "waking" | "provisioning").then(|| "waking".to_string());
         Self {
+            provider: "incus".to_string(),
+            sleeps_when_idle,
+            state_detail,
+            retry_after_seconds: None,
             id: row.id,
             user_id: row.user_id,
             subscription_id: row.subscription_id,
@@ -2076,6 +2122,7 @@ impl ProvisioningService {
         // Developer computers (the hosted driver) ride the free lane with
         // their own image, size and pool cap.
         let hosted = free && is_hosted_driver_owner(user_id);
+        let platform = free && free::is_platform_runtime_owner(user_id);
         if let Some(row) = self.live_row_for(user_id, subscription_id, tier).await? {
             if row.status == "suspended" {
                 if let Some(view) = self.resume(row, subscription_id).await? {
@@ -2107,7 +2154,14 @@ impl ProvisioningService {
         }
 
         let (plan_id, size) = if free {
-            (None, if hosted { self.hosted.size() } else { self.free.size() })
+            let size = if hosted {
+                self.hosted.size()
+            } else if platform {
+                free::platform_runtime_spec(&self.free).1
+            } else {
+                self.free.size()
+            };
+            (None, size)
         } else {
             self.plan_size(subscription_id).await
         };
@@ -2144,6 +2198,9 @@ impl ProvisioningService {
 
         // 1. Allocate a host (best-free bin-pack under row locks). A restore
         //    is pinned to the host holding its snapshot image.
+        if free {
+            self.make_room_for_new_free(user_id, size.memory_mb).await?;
+        }
         let mut transaction = self.db.begin().await?;
         let host_rows = sqlx::query_as::<_, HostCapacityRow>(
             r#"
@@ -2177,6 +2234,15 @@ impl ProvisioningService {
             transaction.rollback().await?;
             return Err(self.hosted.full_error());
         }
+        // Awake free computers also need host memory (paid ones reserve theirs).
+        let mut memory_blocked: Vec<String> = Vec::new();
+        if free {
+            for host in &host_rows {
+                if !free::host_memory_fits(&mut *transaction, &host.id, size.memory_mb).await? {
+                    memory_blocked.push(host.id.clone());
+                }
+            }
+        }
         let hosts: Vec<HostCapacity> = host_rows
             .into_iter()
             .map(HostCapacityRow::into_capacity)
@@ -2185,6 +2251,7 @@ impl ProvisioningService {
                 None => true,
             })
             .filter(|host| !full_hosts.contains(&host.id))
+            .filter(|host| !memory_blocked.contains(&host.id))
             // Outside-developer computers (the hosted driver) get their own pool.
             .filter(|host| host_in_pool(&host.id, is_hosted_driver_owner(user_id)))
             .collect();
@@ -2192,6 +2259,9 @@ impl ProvisioningService {
             select_host(&hosts, allocation.cpu_cores, allocation.memory_mb, allocation.disk_gb)
         else {
             transaction.rollback().await?;
+            if free && !memory_blocked.is_empty() {
+                return Err(free::memory_full_error());
+            }
             return Err(ApiError::ServiceUnavailable(match &restore {
                 Some((_, snapshot_host, _)) => format!(
                     "Fleet host {snapshot_host} holding this account's snapshot has no capacity"
@@ -2263,6 +2333,7 @@ impl ProvisioningService {
         let image = match &restore {
             Some((_, _, alias)) => alias.clone(),
             None if hosted => self.hosted.image.clone(),
+            None if platform => free::platform_runtime_spec(&self.free).0,
             None if free => self.free.image.clone(),
             None => self.defaults.image.clone(),
         };
@@ -2886,7 +2957,24 @@ impl ProvisioningService {
 
     pub async fn get_for_user(&self, instance_id: &str, user_id: &str) -> Result<InstanceView, ApiError> {
         let row = self.fetch_row(instance_id, Some(user_id)).await?;
-        Ok(InstanceView::from(row))
+        let mut views = vec![InstanceView::from(row)];
+        self.fill_providers(&mut views).await;
+        Ok(views.remove(0))
+    }
+
+    /// Sets each view's `provider` from its host's endpoint (best effort:
+    /// a failed lookup leaves the "incus" default).
+    async fn fill_providers(&self, views: &mut [InstanceView]) {
+        let endpoints: Vec<(String, String)> =
+            sqlx::query_as("SELECT id, incus_endpoint FROM provisioned_hosts")
+                .fetch_all(&self.db)
+                .await
+                .unwrap_or_default();
+        for view in views {
+            if let Some((_, endpoint)) = endpoints.iter().find(|(id, _)| Some(id) == view.host_id.as_ref()) {
+                view.provider = provider_for_endpoint(endpoint);
+            }
+        }
     }
 
     pub async fn list_for_user(&self, user_id: &str) -> Result<Vec<InstanceView>, ApiError> {
@@ -2897,7 +2985,9 @@ impl ProvisioningService {
         .bind(user_id)
         .fetch_all(&self.db)
         .await?;
-        Ok(rows.into_iter().map(InstanceView::from).collect())
+        let mut views: Vec<InstanceView> = rows.into_iter().map(InstanceView::from).collect();
+        self.fill_providers(&mut views).await;
+        Ok(views)
     }
 
     /// Start a stopped instance: backend start first, then the row transition
@@ -3340,27 +3430,39 @@ impl ProvisioningService {
     pub async fn reconcile_all(&self) -> Result<(), ApiError> {
         let rows = sqlx::query_as::<_, InstanceRow>(&format!(
             "SELECT {INSTANCE_COLUMNS} FROM provisioned_instances \
-             WHERE status IN ('provisioning', 'running', 'stopped', 'sleeping', 'waking', 'suspended')"
+             WHERE status IN ('provisioning', 'running', 'stopped', 'sleeping', 'waking', 'suspended') \
+             ORDER BY id"
         ))
         .fetch_all(&self.db)
         .await?;
 
         for row in rows {
+            // One bad row (DB or backend failure) must not stop the pass.
+            if let Err(error) = self.reconcile_row(&row).await {
+                tracing::warn!(id = %row.id, %error, "reconcile: row failed, continuing with the next");
+            }
+        }
+        Ok(())
+    }
+
+    /// Converge one row from the backend's status (see [`Self::reconcile_all`]).
+    async fn reconcile_row(&self, row: &InstanceRow) -> Result<(), ApiError> {
+        {
             // A wake whose start task died with the process (restart while
             // `waking`): converge from the backend once it is clearly stale.
             let stale_wake = row.status == "waking"
                 && Utc::now() - row.updated_at > Duration::seconds(WAKE_STALE_SECONDS);
             let id = row.id.clone();
-            let backend = match self.backend_for_row(&row).await {
+            let backend = match self.backend_for_row(row).await {
                 Ok(backend) => backend,
                 Err(error) => {
                     tracing::warn!(%id, %error, "reconcile: backend unavailable, skipping");
-                    continue;
+                    return Ok(());
                 }
             };
             let status = row.status.as_str();
             match backend.status(&row.incus_name).await {
-                Ok(BackendStatus::NotFound) => self.mark_missing(&row).await?,
+                Ok(BackendStatus::NotFound) => self.mark_missing(row).await?,
                 Ok(BackendStatus::Running) if status == "provisioning" => {
                     sqlx::query(
                         "UPDATE provisioned_instances SET status = 'running', last_started_at = COALESCE(last_started_at, CURRENT_TIMESTAMP), updated_at = CURRENT_TIMESTAMP WHERE id = $1 AND status = 'provisioning'",
@@ -3395,7 +3497,7 @@ impl ProvisioningService {
                     record_instance_stopped(&self.db, &id, "provider_stopped").await?;
                 }
                 Ok(_) => {}
-                Err(ProvisionError::NotFound(_)) => self.mark_missing(&row).await?,
+                Err(ProvisionError::NotFound(_)) => self.mark_missing(row).await?,
                 Err(error) => {
                     tracing::warn!(%id, %error, "reconcile: status poll failed, skipping");
                 }
@@ -5675,5 +5777,47 @@ pub(crate) mod pg_tests {
         let error = service.wake(&mine.id, Some("user_1"), WakeReason::Owner).await.unwrap_err();
         assert!(matches!(error, ApiError::TooManyRequests(_)), "{error:?}");
         assert_eq!(service.fetch_row(&mine.id, None).await.unwrap().status, "sleeping");
+    }
+
+    #[test]
+    fn provider_reads_the_endpoint_scheme() {
+        assert_eq!(provider_for_endpoint("https://incus.example.com:8443"), "incus");
+        assert_eq!(provider_for_endpoint("unix:///var/lib/incus/unix.socket"), "unix");
+        assert_eq!(provider_for_endpoint("e2b://team"), "e2b");
+        assert_eq!(provider_for_endpoint("host.example.com:8443"), "incus");
+    }
+
+    #[tokio::test]
+    async fn one_failing_row_does_not_stop_the_reconcile_pass() {
+        let pool = migrated_pool().await;
+        insert_host(&pool, "host_a", 8, 32768, 200).await;
+        let backend = Arc::new(MockBackend::default());
+        let service = free_service(pool.clone(), backend.clone(), test_free_defaults());
+        let bad = service.create_free("user_1").await.unwrap();
+        let good = service.create_free("user_2").await.unwrap();
+        // Rows are visited in id order; make the first one's update fail in the DB.
+        let (first, second) = if bad.id < good.id { (&bad, &good) } else { (&good, &bad) };
+        for id in [&first.id, &second.id] {
+            set_status(&pool, id, "stopped").await;
+        }
+        sqlx::query(
+            "CREATE FUNCTION fail_bad_row() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'boom'; END $$ LANGUAGE plpgsql",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(&format!(
+            "CREATE TRIGGER fail_bad_row BEFORE UPDATE ON provisioned_instances \
+             FOR EACH ROW WHEN (OLD.id = '{}') EXECUTE FUNCTION fail_bad_row()",
+            first.id
+        ))
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // The backend says Running for both: each wants stopped -> running.
+        service.reconcile_all().await.unwrap();
+        assert_eq!(service.fetch_row(&first.id, None).await.unwrap().status, "stopped");
+        assert_eq!(service.fetch_row(&second.id, None).await.unwrap().status, "running");
     }
 }
