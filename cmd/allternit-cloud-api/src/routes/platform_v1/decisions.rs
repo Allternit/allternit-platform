@@ -1,4 +1,5 @@
-//! `POST /v1/decisions`, `GET /v1/decisions/{id}`, `PATCH /v1/decisions/{id}`
+//! `POST /v1/decisions`, `GET /v1/decisions` (list, newest first),
+//! `GET /v1/decisions/{id}`, `PATCH /v1/decisions/{id}`
 //! (scope `decisions`, meter `decision_questions`). Lane 1 of the Platform API
 //! parity program.
 //!
@@ -51,7 +52,9 @@ use futures::stream::{self, StreamExt};
 use serde_json::{json, Map, Value};
 use sqlx::{FromRow, PgPool};
 
-use super::{new_id, record_usage_priced, ApiJson, PlatformCaller, PlatformError, ProjectEnv, RouteTable, UsageEvent};
+use serde::Deserialize;
+
+use super::{build_page, new_id, Page, record_usage_priced, ApiJson, ApiQuery, PageParams, PlatformCaller, PlatformError, ProjectEnv, RouteTable, UsageEvent};
 use crate::routes::agency_forward::{AgencyForward, FORWARD_HOST};
 use crate::ApiState;
 
@@ -94,7 +97,7 @@ const OUTCOME_FORWARD_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub fn register(table: RouteTable) -> RouteTable {
     table
-        .add("/v1/decisions", &["POST"], post(create))
+        .add("/v1/decisions", &["GET", "POST"], get(list).post(create))
         .add("/v1/decisions/:id", &["GET", "PATCH"], get(fetch).patch(patch))
 }
 
@@ -1026,6 +1029,46 @@ async fn fetch(
 ) -> Result<Json<Value>, PlatformError> {
     caller.require(SCOPE)?;
     Ok(Json(decision_json(&load(&state.db, &caller, &id).await?)))
+}
+
+#[derive(Debug, Deserialize)]
+struct ListQuery {
+    #[serde(flatten)]
+    page: PageParams,
+    account_id: Option<String>,
+}
+
+/// `GET /v1/decisions`: the project's decisions, newest first, in the cursor
+/// envelope (`data`, `has_more`, `next_cursor`). An account-bound key sees only
+/// its account's; `account_id` narrows a project-wide key. Served by
+/// `idx_platform_decisions_project (project_id, created_at DESC)`.
+async fn list(
+    State(state): State<Arc<ApiState>>,
+    caller: PlatformCaller,
+    ApiQuery(q): ApiQuery<ListQuery>,
+) -> Result<Json<Page<Value>>, PlatformError> {
+    caller.require(SCOPE)?;
+    let account = caller.account_filter(q.account_id.as_deref().filter(|a| !a.is_empty()))?;
+    let limit = q.page.limit()?;
+    let (after_at, after_id) = match q.page.cursor()? {
+        Some((at, id)) => (Some(at), Some(id)),
+        None => (None, None),
+    };
+    let rows: Vec<Row> = sqlx::query_as(&format!(
+        "SELECT {COLUMNS} FROM platform_decisions WHERE project_id = $1 AND ($2::text IS NULL OR account_id = $2) \
+           AND ($3::timestamptz IS NULL OR (created_at, id) < ($3, $4)) \
+         ORDER BY created_at DESC, id DESC LIMIT $5"
+    ))
+    .bind(&caller.project_id)
+    .bind(&account)
+    .bind(after_at)
+    .bind(after_id)
+    .bind(limit + 1)
+    .fetch_all(&state.db)
+    .await?;
+    let keyed: Vec<(DateTime<Utc>, String, Value)> = rows.iter().map(|r| (r.created_at, r.id.clone(), decision_json(r))).collect();
+    let page = build_page(keyed, limit, |(at, id, _)| (*at, id.clone()));
+    Ok(Json(Page { data: page.data.into_iter().map(|(_, _, v)| v).collect(), has_more: page.has_more, next_cursor: page.next_cursor }))
 }
 
 /// `{outcomes: {<name>: {status, label?, detail?}}}` checked against the

@@ -8,6 +8,7 @@ description: 'Ask typed questions about some input and get back probabilities, a
 | Method | Path | |
 |---|---|---|
 | `POST` | `/v1/decisions` | Ask the questions |
+| `GET` | `/v1/decisions` | List decisions, newest first |
 | `GET` | `/v1/decisions/{id}` | Retrieve a decision |
 | `PATCH` | `/v1/decisions/{id}` | Record outcomes per question |
 
@@ -53,6 +54,10 @@ curl https://api.allternit.com/v1/decisions \
 ```
 
 A question that cannot be answered returns `{ "name", "type": "refusal", "reason" }` with `reason` one of `abstained`, `unavailable` or `budget_exhausted`.
+
+## List
+
+`GET /v1/decisions` returns the project's decisions, newest first, in the usual page envelope: `{ "data": [Decision, …], "has_more", "next_cursor" }`. `limit` is 1 to 100 (default 20); pass `next_cursor` as `after` for the next page. A key bound to an account sees only that account's decisions. `account_id` narrows a project-wide key, and a bound key that names a different account gets `403 account_mismatch`. Each item has the same shape as `GET /v1/decisions/{id}` returns.
 
 ## Outcomes
 

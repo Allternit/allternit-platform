@@ -1454,6 +1454,24 @@ export class DecisionsResource {
   }
 
   /**
+   * List decisions
+   *
+   * The project's stored decisions, newest first, in the usual cursor envelope (`limit` 1 to 100, default 20; pass `next_cursor` as `after`). A key bound to an account sees only that account's decisions; `account_id` narrows a project-wide key (`403 account_mismatch` for a bound key naming another account). Each item is the same `Decision` that `GET /v1/decisions/{id}` returns. Requires the `decisions` scope.
+   *
+   * `GET /v1/decisions`
+   */
+  list(query?: T.ListDecisionsQuery, options?: RequestOptions): Promise<T.ListDecisionsResponse> {
+    return this._client.request<T.ListDecisionsResponse>({ method: "GET", path: `/v1/decisions`, query: query, options });
+  }
+
+  /**
+   * Every item of `list`, fetching pages as you iterate.
+   */
+  listAll(query?: T.ListDecisionsQuery, options?: RequestOptions): AsyncIterable<T.Decision> {
+    return this._client.paginate<T.Decision>((after) => this.list({ ...(query ?? {}), after } as T.ListDecisionsQuery, options) as unknown as Promise<Page<T.Decision>>);
+  }
+
+  /**
    * Ask one or more questions about some input
    *
    * Answers up to 16 typed questions about one input (text or JSON), with a probability

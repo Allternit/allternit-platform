@@ -68,6 +68,7 @@ DecisionRequest = TypedDict('DecisionRequest', {'input': Union[str, List[Dict[st
 DecisionAnswer = TypedDict('DecisionAnswer', {'name': str, 'type': Literal['predicate', 'choice', 'score', 'refusal'], 'probability': float, 'choice': str, 'score': float, 'probabilities': List[Dict[str, Any]], 'confidence': float, 'backend': str, 'reason': Literal['abstained', 'unavailable', 'budget_exhausted']}, total=False)
 DecisionOutcome = TypedDict('DecisionOutcome', {'status': Literal['success', 'failure', 'error', 'skipped'], 'label': str, 'detail': str}, total=False)
 Decision = TypedDict('Decision', {'id': str, 'object': Literal['decision'], 'created_at': str, 'answers': List["DecisionAnswer"], 'backend': str, 'latency_ms': int, 'usage': Dict[str, Any], 'outcomes': Dict[str, Any], 'metadata': Dict[str, Any]}, total=False)
+DecisionList = Dict[str, Any]
 ContentPart = TypedDict('ContentPart', {'type': Literal['input_text', 'output_text', 'input_image'], 'text': str, 'image_url': str}, total=False)
 ItemInput = TypedDict('ItemInput', {'type': Literal['message', 'function_call_output'], 'role': Literal['user', 'assistant', 'system', 'developer'], 'content': Union[str, List["ContentPart"]], 'call_id': str, 'output': str}, total=False)
 Item = TypedDict('Item', {'id': str, 'object': Literal['item'], 'type': Literal['message', 'function_call', 'function_call_output', 'tool_call', 'approval_request'], 'conversation_id': Optional[str], 'response_id': Optional[str], 'status': Literal['in_progress', 'completed', 'failed', 'incomplete'], 'role': Optional[Literal['user', 'assistant', 'system', 'developer']], 'content': List["ContentPart"], 'call_id': str, 'name': str, 'arguments': str, 'output': Any, 'input': Any, 'error': Optional[str], 'approval_id': str, 'proposed_action': Dict[str, Any], 'created_at': str}, total=False)
@@ -1843,6 +1844,38 @@ class IdentitiesResource:
 class DecisionsResource:
     def __init__(self, client: Transport) -> None:
         self._client = client
+
+    def list(self, *, limit: int = NOT_GIVEN, after: str = NOT_GIVEN, account_id: str = NOT_GIVEN, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "DecisionList":
+        """List decisions
+
+        The project's stored decisions, newest first, in the usual cursor envelope (`limit` 1 to 100, default 20; pass `next_cursor` as `after`). A key bound to an account sees only that account's decisions; `account_id` narrows a project-wide key (`403 account_mismatch` for a bound key naming another account). Each item is the same `Decision` that `GET /v1/decisions/{id}` returns. Requires the `decisions` scope.
+
+        ``GET /v1/decisions``
+        """
+        _query: Dict[str, Any] = {}
+        if limit is not NOT_GIVEN:
+            _query['limit'] = limit
+        if after is not NOT_GIVEN:
+            _query['after'] = after
+        if account_id is not NOT_GIVEN:
+            _query['account_id'] = account_id
+        return self._client.request("GET", f"/v1/decisions", query=_query, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def list_all(self, *, limit: int = NOT_GIVEN, after: str = NOT_GIVEN, account_id: str = NOT_GIVEN, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Iterator["Decision"]:
+        """Every item of ``list``, fetching pages as you iterate."""
+        _query: Dict[str, Any] = {}
+        if limit is not NOT_GIVEN:
+            _query['limit'] = limit
+        if after is not NOT_GIVEN:
+            _query['after'] = after
+        if account_id is not NOT_GIVEN:
+            _query['account_id'] = account_id
+        def _fetch(cursor: Optional[str]) -> Page:
+            q = dict(_query)
+            if cursor is not None:
+                q['after'] = cursor
+            return self._client.request("GET", f"/v1/decisions", query=q, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+        return self._client.paginate(_fetch, after if after is not NOT_GIVEN else None)
 
     def create(self, *, input: Union[str, List[Dict[str, Any]]] = NOT_GIVEN, instructions: str = NOT_GIVEN, questions: Union[List["DecisionQuestion"], Dict[str, Any]] = NOT_GIVEN, latency_budget_ms: int = NOT_GIVEN, allow_abstain: bool = NOT_GIVEN, metadata: Dict[str, Any] = NOT_GIVEN, context: Any = NOT_GIVEN, options_: List[Dict[str, Any]] = NOT_GIVEN, kind: str = NOT_GIVEN, question: str = NOT_GIVEN, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "Decision":
         """Ask one or more questions about some input

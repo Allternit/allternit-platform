@@ -2345,6 +2345,22 @@ paths:
                   deleted: { type: boolean }
         default: { $ref: "#/components/responses/Error" }
   /v1/decisions:
+    get:
+      operationId: listDecisions
+      summary: List decisions
+      description: The project's stored decisions, newest first, in the usual cursor envelope (`limit` 1 to 100, default 20; pass `next_cursor` as `after`). A key bound to an account sees only that account's decisions; `account_id` narrows a project-wide key (`403 account_mismatch` for a bound key naming another account). Each item is the same `Decision` that `GET /v1/decisions/{id}` returns. Requires the `decisions` scope.
+      tags: [Decisions]
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/After"
+        - { name: account_id, in: query, schema: { type: string } }
+      responses:
+        "200":
+          description: A page of decisions.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DecisionList" }
+        default: { $ref: "#/components/responses/Error" }
     post:
       operationId: createDecision
       summary: Ask one or more questions about some input
@@ -3453,6 +3469,26 @@ components:
             input_tokens: { type: integer }
         outcomes: { type: object, additionalProperties: { $ref: "#/components/schemas/DecisionOutcome" } }
         metadata: { type: object, additionalProperties: true }
+    DecisionList:
+      allOf:
+        - $ref: "#/components/schemas/ListEnvelope"
+        - type: object
+          properties:
+            data: { type: array, items: { $ref: "#/components/schemas/Decision" } }
+      examples:
+        - data:
+            - id: dec_0123456789abcdef01234567
+              object: decision
+              created_at: "2026-11-12T15:04:05Z"
+              answers:
+                - { name: is_damaged, type: predicate, probability: 0.93, confidence: 0.86, backend: local }
+              backend: local
+              latency_ms: 4200
+              usage: { questions: 1, input_tokens: 38 }
+              outcomes: {}
+              metadata: { ticket: t_1 }
+          has_more: true
+          next_cursor: "313736323935393834353030303030307c6465635f303061613131626232326363333364643434656535356666"
     ContentPart:
       type: object
       required: [type]

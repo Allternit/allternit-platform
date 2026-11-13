@@ -747,6 +747,10 @@ export type Decision = {
   metadata?: Record<string, unknown>;
 };
 
+export type DecisionList = (ListEnvelope & {
+  data?: Array<Decision>;
+});
+
 export type ContentPart = {
   type: "input_text" | "output_text" | "input_image";
   text?: string;
@@ -1825,6 +1829,20 @@ export type DeleteIdentityResponse = {
   object?: "identity";
   deleted?: boolean;
 };
+
+export type ListDecisionsQuery = {
+  /**
+   * Page size, 1 to 100 (default 20).
+   */
+  limit?: number;
+  /**
+   * Opaque cursor from `next_cursor` of the previous page.
+   */
+  after?: string;
+  account_id?: string;
+};
+
+export type ListDecisionsResponse = DecisionList;
 
 export type CreateDecisionRequest = DecisionRequest;
 
