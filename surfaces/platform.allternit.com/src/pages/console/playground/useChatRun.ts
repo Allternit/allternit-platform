@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { formatApiError } from "@/lib/api-client";
 import { isCloudGateway } from "@/lib/availability";
+import { usePlatformAuth } from "@/lib/platform-auth-client";
+import { PROJECT_HEADER } from "@/lib/platform-v1";
 import {
   ensureConsoleGatewayKey,
   forgetPlaygroundKey,
@@ -102,6 +104,8 @@ export function useChatRun(): {
 } {
   const [state, setState] = useState<ChatRunState>(IDLE);
   const abortRef = useRef<AbortController | null>(null);
+  const auth = usePlatformAuth();
+  const getSessionToken = auth?.getToken;
 
   const stop = useCallback(() => abortRef.current?.abort(), []);
   const reset = useCallback(() => {
@@ -118,11 +122,27 @@ export function useChatRun(): {
     setState({ ...IDLE, running: true, mode, request: args.body });
 
     let acc: ModeAssembly = newModeAssembly();
+    // On cloud, /v1/responses and /v1/messages are Platform API routes: they take a
+    // project key (alt_live_/alt_test_) or the console session plus the project
+    // header, never the user-style playground key (that one is for chat completions).
+    // The session path bills the selected project, which these routes always do.
+    const sessionMode = isCloudGateway() && mode !== "chat";
     const attempt = async (force: boolean) => {
       acc = newModeAssembly();
-      const key = await acquireKey(args.projectId, force);
+      let key: string;
+      let headers: Record<string, string> | undefined;
+      if (sessionMode) {
+        if (!args.projectId) throw new Error("Select a project to use the Playground.");
+        const token = getSessionToken ? await getSessionToken() : null;
+        if (!token) throw new Error("Your console session has ended. Sign in again, then run.");
+        key = token;
+        headers = { [PROJECT_HEADER]: args.projectId };
+      } else {
+        key = await acquireKey(args.projectId, force);
+      }
       return gatewayPost(MODE_PATHS[mode], key, args.body, {
         signal: abort.signal,
+        headers,
         onEvent: (event, data) => {
           acc = mergeModeEvent(mode, acc, event, data);
           setState((prev) => ({
@@ -141,7 +161,7 @@ export function useChatRun(): {
         result = await attempt(false);
       } catch (err) {
         if (err instanceof GatewayHttpError && err.status === 401) {
-          if (isCloudGateway()) forgetPlaygroundKey();
+          if (isCloudGateway() && !sessionMode) forgetPlaygroundKey();
           result = await attempt(true);
         } else {
           throw err;
@@ -184,7 +204,7 @@ export function useChatRun(): {
     } finally {
       if (abortRef.current === abort) abortRef.current = null;
     }
-  }, []);
+  }, [getSessionToken]);
 
   useEffect(() => () => abortRef.current?.abort(), []);
 
