@@ -636,6 +636,18 @@
       "label": "phone runs",
       "kind": "module",
       "path": "allternit/cmd/allternit-api/src/phone_runs.rs"
+    },
+    {
+      "id": "allternit/cmd/gizzi-code/src/runtime/integrations/cli-bridge/index.ts",
+      "label": "cli-bridge",
+      "kind": "module",
+      "path": "allternit/cmd/gizzi-code/src/runtime/integrations/cli-bridge/index.ts"
+    },
+    {
+      "id": "allternit/cmd/gizzi-code/src/runtime/tools/builtins/run_code.ts",
+      "label": "run_code",
+      "kind": "module",
+      "path": "allternit/cmd/gizzi-code/src/runtime/tools/builtins/run_code.ts"
     }
   ],
   "edges": [
@@ -1466,6 +1478,17 @@
         "allternit/cmd/allternit-api/src/phone_runs.rs",
         "allternit/surfaces/allternit-mobile/ios/Features/Phones/RunStatusViews.swift",
         "allternit/surfaces/allternit-mobile/ios/Features/Chat/Views/MessageRow.swift"
+      ]
+    },
+    {
+      "source": "allternit/cmd/gizzi-code/src/runtime/integrations/cli-bridge/index.ts",
+      "target": "allternit/cmd/gizzi-code/src/runtime/tools/builtins/run_code.ts",
+      "kind": "MCP tool call: CLI brains (Claude Code, Codex...) call run_code through the allternit MCP bridge; the bridge stages the latest user message's attachments, stashes the result metadata (files[], runDir, exit_code), and the session processor normalizes the name to run_code and merges it into the tool part",
+      "evidence": [
+        "allternit/cmd/gizzi-code/src/runtime/integrations/cli-bridge/index.ts",
+        "allternit/cmd/gizzi-code/src/runtime/integrations/cli-bridge/results.ts",
+        "allternit/cmd/gizzi-code/src/runtime/session/processor.ts",
+        "allternit/cmd/gizzi-code/test/cli-bridge/cli-bridge-run-code.test.ts"
       ]
     }
   ]

@@ -4,7 +4,7 @@
  * (`/api/v1/uploads/<id>`; iOS does this, web sends data: URLs). The prompt
  * must not crash on them: gizzi fetches the bytes from the API it talks to
  * (with its credential) and stores the part as a data: URL, which the model
- * and code tools can both read.
+ * and run_code can both read.
  */
 import { describe, expect, mock, test } from "bun:test"
 import path from "path"
@@ -128,19 +128,32 @@ describe("data files on the stored message", () => {
     const parts = await userParts([{ id: Identifier.ascending("part"), type: "file", url, mime: "text/plain", filename: "big.txt" }])
     const texts = parts.filter((p: any) => p.type === "text" && p.synthetic).map((p: any) => p.text)
     expect(texts.some((t: string) => t.includes("line\nline"))).toBe(false)
-    expect(texts).toContain("Attached file big.txt (text/plain, 24.4 KB): too large to show inline; a code tool can read the file.")
+    expect(texts).toContain("Attached file big.txt (text/plain, 24.4 KB): too large to show inline; use run_code to read it.")
     expect(parts.filter((p: any) => p.type === "file")).toHaveLength(1)
   })
 
-  test("a CSV upload keeps its file part and the model gets its text, not a raw file", async () => {
-    const parts = await userParts([filePart("/api/v1/uploads/up1")])
-    expect(parts.filter((p: any) => p.type === "file")).toHaveLength(1)
-    const { MessageV2 } = await import("../../src/runtime/session/message-v2")
-    const messages = [{ info: { id: "msg_u", role: "user" }, parts }]
-    const [model] = MessageV2.toModelMessages(messages as any, {
-      id: "m", providerID: "p", api: { id: "m", url: "", npm: "@ai-sdk/anthropic" },
-    } as any)
-    expect((model.content as any[]).some((p) => p.type === "file")).toBe(false)
-    expect((model.content as any[]).some((p) => p.type === "text" && p.text.includes("[Attached file: data.csv]\na,b\n1,2\n"))).toBe(true)
-  })
+  test.skipIf(process.env.GIZZI_SKIP_RUN_CODE_E2E === "1" || process.platform === "win32")(
+    "a CSV upload keeps its file part: the model gets text and run_code stages the file",
+    async () => {
+      const parts = await userParts([filePart("/api/v1/uploads/up1")])
+      const { MessageV2 } = await import("../../src/runtime/session/message-v2")
+      const messages = [{ info: { id: "msg_u", role: "user" }, parts }]
+      const [model] = MessageV2.toModelMessages(messages as any, {
+        id: "m", providerID: "p", api: { id: "m", url: "", npm: "@ai-sdk/anthropic" },
+      } as any)
+      expect((model.content as any[]).some((p) => p.type === "file")).toBe(false)
+      expect((model.content as any[]).some((p) => p.type === "text" && p.text.includes("[Attached file: data.csv]\na,b\n1,2\n"))).toBe(true)
+
+      process.env.GIZZI_PYTHON_ENV_DIR ??= path.join((await import("os")).tmpdir(), "gizzi-run-code-test-python")
+      const { RunCodeTool } = await import("../../src/runtime/tools/builtins/run_code")
+      const tool = await RunCodeTool.init()
+      const result = await tool.execute({ language: "python", code: "print(open('in/data.csv').read().strip())" }, {
+        sessionID: "ses_upload", messageID: "msg_a", callID: "c1", agent: "build",
+        abort: AbortSignal.any([]), messages, metadata: () => {}, ask: async () => {},
+      } as any)
+      expect(result.metadata.inputs).toEqual(["data.csv"])
+      expect(result.metadata.stdout).toContain("a,b\n1,2")
+    },
+    15 * 60_000,
+  )
 })

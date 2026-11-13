@@ -22,6 +22,8 @@ struct ToolCallRecord: Identifiable, Equatable, Sendable {
     var finishedAt: Date? = nil
     /// The tool's result text (message_agent: where the delivery receipt comes from).
     var output: String? = nil
+    /// run_code: files the run produced + its summary (nil on old runtimes).
+    var runCode: RunCodeResult? = nil
 
     /// How long the call ran; live calls count up to `now`.
     func elapsed(now: Date = Date()) -> TimeInterval? {
@@ -80,7 +82,8 @@ extension ToolCallRecord {
                 error: part.state?.error,
                 startedAt: part.state?.startedAt,
                 finishedAt: part.state?.finishedAt,
-                output: part.state?.output?.value as? String
+                output: part.state?.output?.value as? String,
+                runCode: name == "run_code" ? RunCodeResult(files: part.files, run: part.run) : nil
             )
         }
     }
@@ -89,7 +92,7 @@ extension ToolCallRecord {
 extension MessageRecord {
     /// Inserts or updates one tool call from a stream frame. Keeps the
     /// first-seen start time when the runtime sends none.
-    mutating func upsertToolCall(id: String, name: String, state: ToolCallRecord.State, detail: AgentChatEvent.ToolDetail?) {
+    mutating func upsertToolCall(id: String, name: String, state: ToolCallRecord.State, detail: AgentChatEvent.ToolDetail?, runCode: RunCodeResult? = nil) {
         let now = Date()
         if let index = toolCalls.firstIndex(where: { $0.id == id }) {
             var call = toolCalls[index]
@@ -104,6 +107,7 @@ extension MessageRecord {
                 call.finishedAt = detail.finishedAt ?? call.finishedAt
             }
             if state != .running, call.finishedAt == nil { call.finishedAt = now }
+            if let runCode { call.runCode = runCode }
             toolCalls[index] = call
         } else {
             toolCalls.append(ToolCallRecord(
@@ -114,7 +118,8 @@ extension MessageRecord {
                 title: detail?.title,
                 error: detail?.error,
                 startedAt: detail?.startedAt ?? now,
-                finishedAt: detail?.finishedAt ?? (state == .running ? nil : now)
+                finishedAt: detail?.finishedAt ?? (state == .running ? nil : now),
+                runCode: runCode
             ))
         }
     }

@@ -8,6 +8,17 @@ import { SecretRedactor } from './environment/redactor';
 import { Bus } from '@/shared/bus';
 import { Identifier } from '@/shared/id/id';
 
+/**
+ * A chart or table the turn already delivered as run_code output files (the
+ * chat shows them as image and sheet cards). Such an answer is the analysis
+ * prose beside those cards, so it is not held to the openui envelope.
+ */
+const SHEET_TYPES = new Set(['text/csv', 'text/tab-separated-values', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'application/vnd.ms-excel']);
+const CODE_DELIVERS: Partial<Record<string, (mediaType: string) => boolean>> = {
+  chart: type => type.startsWith('image/'),
+  table: type => SHEET_TYPES.has(type),
+};
+
 export class AnswerTurnGuard {
   readonly policy: AnswerPolicy;
   readonly system: string | undefined;
@@ -75,10 +86,26 @@ export class AnswerTurnGuard {
     }
     await Session.updateMessage(message);
   }
+  /** A successful run_code call in this turn saved a file of the required kind. */
+  private async deliveredByCode(sessionID: string) {
+    const fits = this.policy.mode === 'template' ? CODE_DELIVERS[this.policy.template] : undefined;
+    if (!fits) return false;
+    for await (const message of MessageV2.stream(sessionID)) {
+      if (message.info.id === this.userID) break;
+      if (message.info.role !== 'assistant') continue;
+      for (const part of message.parts) {
+        if (part.type !== 'tool' || part.tool !== 'run_code' || part.state.status !== 'completed' || part.state.metadata?.exit_code !== 0) continue;
+        const files: unknown = part.state.metadata.files;
+        if (Array.isArray(files) && files.some(file => typeof file?.mediaType === 'string' && fits(file.mediaType))) return true;
+      }
+    }
+    return false;
+  }
   async complete(message: MessageV2.Assistant, allowRepair = true): Promise<'accepted' | 'repairing' | 'rejected'> {
     const parts = [...this.held.values()].filter(part => part.messageID === message.id);
     const text = SecretRedactor.text(this.text(message.id));
-    const checked = checkAnswerResponse(this.policy, text);
+    let checked = checkAnswerResponse(this.policy, text);
+    if (!checked.valid && await this.deliveredByCode(message.sessionID)) checked = { valid: true, returned: 'run_code', problems: [] };
     this.attempts++;
     const status = checked.valid ? 'accepted' : allowRepair && this.repairs < 1 ? 'repairing' : 'rejected';
     if (status === 'repairing') this.repairs++;

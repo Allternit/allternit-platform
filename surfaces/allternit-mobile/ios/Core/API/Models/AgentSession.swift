@@ -323,6 +323,26 @@ struct AgentSessionMessage: Decodable, Sendable, Identifiable {
         let tool: String?
         let id: String?
         let state: ToolState?
+        /// run_code parts only: produced files and the run summary.
+        let files: [RunCodeResult.File]?
+        let run: RunCodeResult.Run?
+
+        private enum CodingKeys: String, CodingKey {
+            case type, text, filename, url, tool, id, state, files, run
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            type = try c.decode(String.self, forKey: .type)
+            text = try c.decodeIfPresent(String.self, forKey: .text)
+            filename = try c.decodeIfPresent(String.self, forKey: .filename)
+            url = try c.decodeIfPresent(String.self, forKey: .url)
+            tool = try c.decodeIfPresent(String.self, forKey: .tool)
+            id = try c.decodeIfPresent(String.self, forKey: .id)
+            state = try c.decodeIfPresent(ToolState.self, forKey: .state)
+            files = (try? c.decodeIfPresent(LossyArray<RunCodeResult.File>.self, forKey: .files))??.elements
+            run = (try? c.decodeIfPresent(RunCodeResult.Run.self, forKey: .run)) ?? nil
+        }
 
         /// gizzi tool state, as much as the rail draws. Never throws.
         struct ToolState: Decodable, Sendable {

@@ -112,6 +112,8 @@ enum AgentChatEvent: Decodable, Sendable {
         let toolCallId: String
         let toolName: String
         var detail: ToolDetail? = nil
+        /// run_code: produced files + run summary (top-level `files` / `run`).
+        var runCode: RunCodeResult? = nil
     }
 
     struct ToolError: Sendable {
@@ -272,7 +274,8 @@ enum AgentChatEvent: Decodable, Sendable {
         case "tool_result":
             self = .toolResult(ToolResult(
                 toolCallId: try container.decodeIfPresent(String.self, forKey: .toolCallId) ?? "",
-                toolName: try container.decodeIfPresent(String.self, forKey: .toolName) ?? "Tool"
+                toolName: try container.decodeIfPresent(String.self, forKey: .toolName) ?? "Tool",
+                runCode: (try? RunCodeKeys(from: decoder))?.result
             ))
 
         case "tool_error":

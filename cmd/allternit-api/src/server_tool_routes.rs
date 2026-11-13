@@ -426,6 +426,7 @@ pub async fn execute_server_tool(
         resources: None,
         toolchains: vec![],
         network_enabled: false,
+        files: Vec::new(),
     };
 
     let result = execute_sandbox_or_subprocess(state, &request).await?;

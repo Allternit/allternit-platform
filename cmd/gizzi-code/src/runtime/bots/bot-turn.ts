@@ -162,6 +162,8 @@ const CLAUDE_TOOLS: Record<string, string[]> = {
   // Served by gizzi's own session tools over the CLI bridge (always allowed).
   memory: [],
   computer: [],
+  // gizzi's sandboxed Python tool, also over the CLI bridge; never Claude's Bash.
+  run_code: [],
 }
 
 /** Claude Code tool names for a list of platform / vendor tool ids. */

@@ -1,6 +1,14 @@
 import type { AgentTask } from "@/runtime/runtime-driver"
 import { claudeBotFlags } from "@/runtime/bots/bot-turn"
 
+/**
+ * MCP tool-call timeout for gizzi's bridge, seconds. A long run_code (first
+ * run installs Python, 60-120 s; runs up to 120 s) must not be cut off.
+ * Claude Code's per-server `timeout` (ms) and Codex's per-server
+ * `tool_timeout_sec`, both read from the CLIs' own binaries.
+ */
+export const CLI_BRIDGE_TOOL_TIMEOUT_SEC = 180
+
 /** The CLI bridge tool Claude Code's plan mode asks for permission (`--permission-prompt-tool`). */
 export const CLI_PERMISSION_TOOL = "permission_prompt"
 
@@ -75,7 +83,7 @@ export function claudeSessionFlags(ctx: {
   if (ctx.mcp) {
     flags.push(
       "--mcp-config",
-      JSON.stringify({ mcpServers: { [ctx.mcp.name]: { type: "http", url: ctx.mcp.url, headers: ctx.mcp.headers } } }),
+      JSON.stringify({ mcpServers: { [ctx.mcp.name]: { type: "http", url: ctx.mcp.url, headers: ctx.mcp.headers, timeout: CLI_BRIDGE_TOOL_TIMEOUT_SEC * 1000 } } }),
     )
   }
   return flags
@@ -87,6 +95,7 @@ export function codexMcpConfig(mcp: AgentTask["mcp"]): Record<string, unknown> |
   return {
     [`mcp_servers.${mcp.name}.url`]: mcp.url,
     [`mcp_servers.${mcp.name}.http_headers`]: mcp.headers,
+    [`mcp_servers.${mcp.name}.tool_timeout_sec`]: CLI_BRIDGE_TOOL_TIMEOUT_SEC,
   }
 }
 

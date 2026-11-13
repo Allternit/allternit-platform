@@ -148,9 +148,20 @@ struct AgentPermissionAsk: Decodable, Sendable, Equatable, Identifiable, Hashabl
     /// The tool call waiting on this permission — the rail draws Deny /
     /// Allow on that row (web inline-approvals.ts).
     let toolCallId: String?
+    /// run_code: the Python script the person is asked to approve (the
+    /// first ~4 KB, trimmed by gizzi), the language, and the attached files
+    /// it can read (`metadata.code / language / files`).
+    let code: String?
+    let language: String?
+    let files: [String]
 
-    private enum CodingKeys: String, CodingKey { case id, sessionID, sessionId, session_id, permission, patterns, tool }
+    private enum CodingKeys: String, CodingKey { case id, sessionID, sessionId, session_id, permission, patterns, tool, metadata }
     private struct ToolRef: Decodable { let callID: String? }
+    private struct Meta: Decodable {
+        let code: String?
+        let language: String?
+        let files: [String]?
+    }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -162,6 +173,10 @@ struct AgentPermissionAsk: Decodable, Sendable, Equatable, Identifiable, Hashabl
         permission = ((try? c.decodeIfPresent(String.self, forKey: .permission)) ?? nil) ?? "tool"
         patterns = ((try? c.decodeIfPresent([String].self, forKey: .patterns)) ?? nil) ?? []
         toolCallId = ((try? c.decodeIfPresent(ToolRef.self, forKey: .tool)) ?? nil)?.callID
+        let meta = (try? c.decodeIfPresent(Meta.self, forKey: .metadata)) ?? nil
+        code = meta?.code
+        language = meta?.language
+        files = meta?.files ?? []
     }
 
     /// "Run a command", "Edit files" — what the agent wants to do.
@@ -171,6 +186,7 @@ struct AgentPermissionAsk: Decodable, Sendable, Equatable, Identifiable, Hashabl
         case "edit", "write", "patch", "multiedit": return "Edit files"
         case "read": return "Read files"
         case "webfetch", "fetch": return "Open a web page"
+        case "run_code": return "Run Python code"
         case "external_directory": return "Work outside the project folder"
         default: return "Use \(permission)"
         }

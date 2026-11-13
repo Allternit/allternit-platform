@@ -37,6 +37,9 @@ struct PermissionAskView: View {
                         .foregroundColor(Color("TextSecondary"))
                         .lineLimit(3)
                 }
+                if ask.permission.lowercased() == "run_code" {
+                    RunCodeScript(code: ask.code ?? "", files: ask.files)
+                }
                 buttons
                 errorLine
             }
@@ -94,6 +97,51 @@ struct PermissionAskView: View {
                 self.error = "Couldn't send that. \(FriendlyErrorMessage.from(error.localizedDescription))"
             }
             busy = nil
+        }
+    }
+}
+
+/// The script a run_code ask wants to run: the attached file names, then the
+/// code in monospace, scrollable, collapsed after 15 lines ("Show all").
+private struct RunCodeScript: View {
+    let code: String
+    let files: [String]
+
+    private static let collapsedLines = 15
+    @State private var expanded = false
+
+    private var lines: [Substring] { code.split(separator: "\n", omittingEmptySubsequences: false) }
+    private var isLong: Bool { lines.count > Self.collapsedLines }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if !files.isEmpty {
+                Text("Files: " + files.joined(separator: ", "))
+                    .font(.caption)
+                    .foregroundColor(Color("TextSecondary"))
+            }
+            if !code.isEmpty {
+                ScrollView([.horizontal, .vertical]) {
+                    Text(isLong && !expanded ? lines.prefix(Self.collapsedLines).joined(separator: "\n") : code)
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundColor(Color("TextPrimary"))
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: true, vertical: true)
+                        .padding(8)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxHeight: expanded ? 360 : 260)
+                .background(Color("BgPrimary"))
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .accessibilityLabel("Script to run")
+                if isLong {
+                    Button(expanded ? "Show less" : "Show all (\(lines.count) lines)") {
+                        withAnimation(.easeInOut(duration: 0.15)) { expanded.toggle() }
+                    }
+                    .font(.caption.weight(.medium))
+                    .foregroundColor(Color("TextSecondary"))
+                }
+            }
         }
     }
 }

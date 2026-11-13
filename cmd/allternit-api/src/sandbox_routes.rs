@@ -50,6 +50,31 @@ pub struct SandboxExecuteRequest {
     /// Enable network
     #[serde(default)]
     pub network_enabled: bool,
+    /// Uploads to stage into the VM workdir as `in/<name>` before the code
+    /// runs. Files the code writes to `out/` come back as `files[]`.
+    #[serde(default)]
+    pub files: Vec<SandboxFileRef>,
+}
+
+/// An upload (`POST /api/v1/uploads`) staged into the sandbox as `in/<name>`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SandboxFileRef {
+    pub name: String,
+    pub upload_id: String,
+}
+
+/// A file the code wrote to `out/`, stored as an upload.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SandboxFileOut {
+    pub name: String,
+    pub media_type: String,
+    pub upload_id: String,
+    /// Bytes stored.
+    pub size: u64,
+    /// `GET /api/v1/uploads/<uploadId>`.
+    pub url: String,
 }
 
 fn default_timeout() -> u64 {
@@ -70,6 +95,9 @@ pub struct SandboxExecuteResponse {
     pub stderr: String,
     pub duration_ms: u64,
     pub session_id: Option<String>,
+    /// Files the code wrote to `out/` (only when the request staged `files`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub files: Vec<SandboxFileOut>,
 }
 
 /// Sandbox capabilities response
@@ -139,23 +167,12 @@ async fn execute_via_pool(
 ) -> Result<SandboxExecuteResponse, (StatusCode, String)> {
     use allternit_driver_interface::CommandSpec;
 
+    let (command_spec, marker) = sandbox_command(request)?;
+
     let checkout = pool
         .checkout()
         .await
         .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, e.message()))?;
-
-    let command_spec = CommandSpec {
-        command: vec![
-            get_interpreter(&request.language),
-            "-c".to_string(),
-            request.code.clone(),
-        ],
-        env_vars: request.env.clone(),
-        working_dir: request.workdir.clone(),
-        stdin_data: None,
-        capture_stdout: true,
-        capture_stderr: true,
-    };
 
     let result = pool
         .exec_on(&checkout, command_spec)
@@ -175,12 +192,14 @@ async fn execute_via_pool(
                 .stderr
                 .map(|v| String::from_utf8_lossy(&v).into_owned())
                 .unwrap_or_default();
+            let (stdout, files) = collect_out_files(stdout, marker.as_deref());
             Ok(SandboxExecuteResponse {
                 exit_code: exec_result.exit_code,
                 stdout,
                 stderr,
                 duration_ms: exec_result.duration_ms,
                 session_id: Some(checkout.vm_id.to_string()),
+                files,
             })
         }
         Err(message) => {
@@ -212,21 +231,9 @@ async fn execute_with_driver(
     request: &SandboxExecuteRequest,
 ) -> Result<SandboxExecuteResponse, String> {
     let spawn_spec = build_spawn_spec(request).map_err(|e| e.1)?;
+    let (command_spec, marker) = sandbox_command(request).map_err(|e| e.1)?;
 
     let handle = driver.spawn(spawn_spec).await.map_err(|e| format!("Failed to spawn: {e}"))?;
-
-    let command_spec = CommandSpec {
-        command: vec![
-            get_interpreter(&request.language),
-            "-c".to_string(),
-            request.code.clone(),
-        ],
-        env_vars: request.env.clone(),
-        working_dir: request.workdir.clone(),
-        stdin_data: None,
-        capture_stdout: true,
-        capture_stderr: true,
-    };
 
     let result = driver
         .exec(&handle, command_spec)
@@ -243,6 +250,7 @@ async fn execute_with_driver(
         .stderr
         .map(|v| String::from_utf8_lossy(&v).into_owned())
         .unwrap_or_default();
+    let (stdout, files) = collect_out_files(stdout, marker.as_deref());
 
     Ok(SandboxExecuteResponse {
         exit_code: result.exit_code,
@@ -250,6 +258,7 @@ async fn execute_with_driver(
         stderr,
         duration_ms: result.duration_ms,
         session_id: Some(handle.id.to_string()),
+        files,
     })
 }
 
@@ -270,6 +279,9 @@ pub async fn execute_sandbox_or_subprocess(
 async fn execute_subprocess_fallback(
     request: &SandboxExecuteRequest,
 ) -> Result<SandboxExecuteResponse, String> {
+    if !request.files.is_empty() {
+        return Err("files[] needs the VM sandbox; it is not available on this host".to_string());
+    }
     let interpreter = get_interpreter(&request.language);
     let mut cmd = tokio::process::Command::new(&interpreter);
     cmd.arg("-c").arg(&request.code);
@@ -290,6 +302,7 @@ async fn execute_subprocess_fallback(
         stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
         duration_ms: 0,
         session_id: None,
+        files: Vec::new(),
     })
 }
 
@@ -298,6 +311,13 @@ async fn execute_stream_handler(
     State(_state): State<Arc<AppState>>,
     Json(request): Json<SandboxExecuteRequest>,
 ) -> Response {
+    if !request.files.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "files_unsupported", "message": "files[] is supported on POST /sandbox/execute, not /execute/stream."})),
+        )
+            .into_response();
+    }
     let (cmd, args): (&str, Vec<&str>) = match request.language.as_str() {
         "python" | "python3" => ("python3", vec!["-c", &request.code]),
         "node" | "javascript" => ("node", vec!["-e", &request.code]),
@@ -483,6 +503,155 @@ fn build_spawn_spec(request: &SandboxExecuteRequest) -> Result<SpawnSpec, (Statu
 }
 
 /// Get interpreter for language
+/// Total bytes `files[]` may stage into, or bring back out of, one run.
+const SANDBOX_FILES_MAX_BYTES: usize = 20 * 1024 * 1024;
+
+/// The exec command for a request. Without `files` it is `<interp> -c code`.
+/// With `files` it is `sh -s` fed a script on stdin (argv can't carry 20 MB):
+/// the script writes each upload to `in/<name>` and the code to a file, runs
+/// it, then prints a random marker line and each regular file in `out/` as
+/// `name` + base64 lines. Returns the marker so the caller can split stdout.
+fn sandbox_command(
+    request: &SandboxExecuteRequest,
+) -> Result<(CommandSpec, Option<String>), (StatusCode, String)> {
+    if request.files.is_empty() {
+        return Ok((
+            CommandSpec {
+                command: vec![get_interpreter(&request.language), "-c".to_string(), request.code.clone()],
+                env_vars: request.env.clone(),
+                working_dir: request.workdir.clone(),
+                stdin_data: None,
+                capture_stdout: true,
+                capture_stderr: true,
+            },
+            None,
+        ));
+    }
+    let staged = request
+        .files
+        .iter()
+        .map(|file| {
+            let name = file.name.trim();
+            let safe = !name.is_empty()
+                && name != "."
+                && name != ".."
+                && !name.contains(['/', '\\', '\'', '\n', '\r', '\0']);
+            if !safe {
+                return Err((StatusCode::BAD_REQUEST, format!("invalid file name: {:?}", file.name)));
+            }
+            let (bytes, _, _) = crate::upload_routes::read_upload(&file.upload_id)
+                .ok_or((StatusCode::NOT_FOUND, format!("upload not found: {}", file.upload_id)))?;
+            Ok((name.to_string(), bytes))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    if staged.iter().map(|(_, b)| b.len()).sum::<usize>() > SANDBOX_FILES_MAX_BYTES {
+        return Err((StatusCode::PAYLOAD_TOO_LARGE, "files[] is limited to 20MB in total".to_string()));
+    }
+    let marker = format!("__ALLTERNIT_OUT_{}__", uuid::Uuid::new_v4().simple());
+    let script = staging_script(&staged, &request.code, &get_interpreter(&request.language), &marker);
+    Ok((
+        CommandSpec {
+            command: vec!["sh".to_string(), "-s".to_string()],
+            env_vars: request.env.clone(),
+            working_dir: request.workdir.clone(),
+            stdin_data: Some(script.into_bytes()),
+            capture_stdout: true,
+            capture_stderr: true,
+        },
+        Some(marker),
+    ))
+}
+
+fn staging_script(files: &[(String, Vec<u8>)], code: &str, interpreter: &str, marker: &str) -> String {
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+    let wrap = |bytes: &[u8]| {
+        let b64 = STANDARD.encode(bytes);
+        b64.as_bytes()
+            .chunks(76)
+            .map(|c| String::from_utf8_lossy(c).into_owned())
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let mut s = String::from("set -e\nmkdir -p in out\n");
+    for (name, bytes) in files {
+        s.push_str(&format!("base64 -d > 'in/{name}' <<'{marker}'\n{}\n{marker}\n", wrap(bytes)));
+    }
+    s.push_str(&format!("base64 -d > .allternit_main <<'{marker}'\n{}\n{marker}\n", wrap(code.as_bytes())));
+    s.push_str(&format!(
+        "set +e\n{interpreter} .allternit_main\ncode=$?\nprintf '\\n%s\\n' '{marker}'\n\
+         for f in out/*; do [ -f \"$f\" ] && [ ! -L \"$f\" ] || continue; \
+         printf '%s\\n' \"${{f#out/}}\"; base64 < \"$f\" | tr -d '\\n'; printf '\\n'; done\n\
+         exit $code\n"
+    ));
+    s
+}
+
+/// Split the marker section off stdout: `(clean stdout, [(name, bytes)])`.
+/// Without a marker (no `files` staged) stdout is returned as is.
+fn split_out_files(stdout: String, marker: Option<&str>) -> (String, Vec<(String, Vec<u8>)>) {
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+    let Some(marker) = marker else { return (stdout, Vec::new()) };
+    let Some(at) = stdout.rfind(&format!("\n{marker}\n")) else { return (stdout, Vec::new()) };
+    let (clean, tail) = stdout.split_at(at);
+    let mut files = Vec::new();
+    let mut total = 0usize;
+    let mut lines = tail[marker.len() + 2..].lines();
+    while let (Some(name), Some(b64)) = (lines.next(), lines.next()) {
+        let Ok(bytes) = STANDARD.decode(b64.trim()) else { continue };
+        total += bytes.len();
+        if total > SANDBOX_FILES_MAX_BYTES {
+            break;
+        }
+        files.push((name.to_string(), bytes));
+    }
+    (clean.to_string(), files)
+}
+
+/// `split_out_files`, then store each `out/` file as an upload.
+fn collect_out_files(stdout: String, marker: Option<&str>) -> (String, Vec<SandboxFileOut>) {
+    let (clean, raw) = split_out_files(stdout, marker);
+    let mut files = Vec::new();
+    for (name, bytes) in raw {
+        let media_type = media_type_for(&name);
+        let id = crate::upload_routes::new_upload_id();
+        if let Err(e) = crate::upload_routes::store_upload(&id, &name, media_type, &bytes) {
+            error!(error = %e, file = %name, "sandbox: failed to store out/ file");
+            continue;
+        }
+        files.push(SandboxFileOut {
+            url: crate::upload_routes::upload_url(&id),
+            name,
+            media_type: media_type.to_string(),
+            upload_id: id,
+            size: bytes.len() as u64,
+        });
+    }
+    (clean, files)
+}
+
+/// Media type from a file extension (the common run outputs).
+fn media_type_for(name: &str) -> &'static str {
+    let ext = name.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase()).unwrap_or_default();
+    match ext.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "svg" => "image/svg+xml",
+        "pdf" => "application/pdf",
+        "csv" => "text/csv",
+        "tsv" => "text/tab-separated-values",
+        "json" => "application/json",
+        "txt" | "log" => "text/plain",
+        "md" => "text/markdown",
+        "html" | "htm" => "text/html",
+        "xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "xls" => "application/vnd.ms-excel",
+        "zip" => "application/zip",
+        _ => "application/octet-stream",
+    }
+}
+
 fn get_interpreter(language: &str) -> String {
     match language.to_lowercase().as_str() {
         "python" | "py" => "python3".to_string(),
@@ -490,6 +659,100 @@ fn get_interpreter(language: &str) -> String {
         "bash" | "sh" => "bash".to_string(),
         "rust" | "rs" => "rustc".to_string(),
         _ => language.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod files_tests {
+    use super::*;
+
+    #[test]
+    fn request_parses_files_and_defaults_to_none() {
+        let with: SandboxExecuteRequest = serde_json::from_value(json!({
+            "code": "print(1)", "language": "python",
+            "files": [{ "name": "data.csv", "uploadId": "abc123" }]
+        }))
+        .unwrap();
+        assert_eq!(with.files.len(), 1);
+        assert_eq!(with.files[0].upload_id, "abc123");
+        let without: SandboxExecuteRequest =
+            serde_json::from_value(json!({ "code": "print(1)", "language": "python" })).unwrap();
+        assert!(without.files.is_empty());
+        let (spec, marker) = sandbox_command(&without).unwrap();
+        assert_eq!(spec.command, vec!["python3", "-c", "print(1)"]);
+        assert!(marker.is_none());
+    }
+
+    #[test]
+    fn rejects_path_like_names() {
+        for bad in ["../x", "a/b", "it's", ""] {
+            let req: SandboxExecuteRequest = serde_json::from_value(json!({
+                "code": "", "language": "python", "files": [{ "name": bad, "uploadId": "x" }]
+            }))
+            .unwrap();
+            assert_eq!(sandbox_command(&req).unwrap_err().0, StatusCode::BAD_REQUEST, "{bad}");
+        }
+    }
+
+    #[test]
+    fn response_omits_empty_files() {
+        let resp = SandboxExecuteResponse {
+            exit_code: 0, stdout: String::new(), stderr: String::new(),
+            duration_ms: 0, session_id: None, files: Vec::new(),
+        };
+        assert!(serde_json::to_value(&resp).unwrap().get("files").is_none());
+    }
+
+    #[test]
+    fn output_files_carry_size_and_url() {
+        let file = SandboxFileOut {
+            name: "total.txt".into(),
+            media_type: "text/plain".into(),
+            upload_id: "abc123".into(),
+            size: 2,
+            url: crate::upload_routes::upload_url("abc123"),
+        };
+        assert_eq!(
+            serde_json::to_value(&file).unwrap(),
+            json!({ "name": "total.txt", "mediaType": "text/plain", "uploadId": "abc123", "size": 2,
+                    "url": "/api/v1/uploads/abc123" })
+        );
+    }
+
+    /// The staging script really stages `in/`, runs the code, and returns
+    /// `out/` files after the marker (run with the host's `sh` + python3).
+    #[test]
+    fn staging_script_round_trip_through_sh() {
+        use std::io::Write;
+        if std::process::Command::new("python3").arg("--version").output().is_err() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let code = "import csv\nrows=list(csv.reader(open('in/data.csv')))\nprint('rows', len(rows))\n\
+                    open('out/total.txt','w').write(str(sum(int(r[1]) for r in rows[1:])))\n\
+                    open('out/empty.bin','wb').close()\n";
+        let marker = "__ALLTERNIT_OUT_test__";
+        let script = staging_script(
+            &[("data.csv".to_string(), b"a,b\nx,2\ny,40\n".to_vec())],
+            code,
+            "python3",
+            marker,
+        );
+        let mut child = std::process::Command::new("sh")
+            .arg("-s")
+            .current_dir(dir.path())
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        child.stdin.take().unwrap().write_all(script.as_bytes()).unwrap();
+        let out = child.wait_with_output().unwrap();
+        assert!(out.status.success());
+        let (clean, mut files) = split_out_files(String::from_utf8(out.stdout).unwrap(), Some(marker));
+        assert_eq!(clean.trim(), "rows 3");
+        files.sort();
+        assert_eq!(files, vec![("empty.bin".to_string(), vec![]), ("total.txt".to_string(), b"42".to_vec())]);
+        assert_eq!(media_type_for("chart.PNG"), "image/png");
     }
 }
 

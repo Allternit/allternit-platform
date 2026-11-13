@@ -133,15 +133,15 @@ allternit-apple-vf-driver = { path = "../../drivers/apple-vf" }
 # Firecracker is Unix-only (tokio::net::UnixStream, nix); the driver never
 # compiles for Windows and the api only mounts it under cfg(target_os = "linux").
 [target.'cfg(unix)'.dependencies]
+# PR_SET_PDEATHSIG for the cloud computer's mesh-node (cloud_computer_peer);
+# openat/O_NOFOLLOW/O_NONBLOCK for run_code output ingest (gizzi_chat_stream).
+libc = "0.2"
 allternit-firecracker-driver = { path = "../../drivers/firecracker" }
 
 # Windows Credential Manager (computer_v2 use_credential source "keychain").
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security_Credentials"] }
 
-# PR_SET_PDEATHSIG for the cloud computer's mesh-node (cloud_computer_peer).
-[target.'cfg(target_os = "linux")'.dependencies]
-libc = "0.2"
 
 [dev-dependencies]
 axum-test = "14"

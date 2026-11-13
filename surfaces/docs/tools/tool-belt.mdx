@@ -124,7 +124,7 @@ Execute a shell command with optional timeout (default 30s) and restart control.
 
 ### `code_execution`
 
-Run code in a sandboxed environment. Supports `python`, `node`, `bash`, and `rust`.
+Run code on the API host. Requires host control (`ALLTERNIT_HOST_CONTROL_ENABLED`, off by default). Not sandboxed. Supports `python`, `node`, `bash`, and `rust`. To run code on chat attachments in a sandbox, see [run_code](/tools/sandbox).
 
 ```json
 {

@@ -117,6 +117,14 @@ describe("claude-cli bot spawn args", () => {
     expect(args).not.toContain("--system-prompt")
   })
 
+  test("a code bot's run_code goes over the bridge, never as Claude's Bash or a raw name", () => {
+    const codeBot: BotTurn.BotTurnInfo = { id: "agent-code", allowedTools: ["file_read", "run_code"] }
+    const allowed = after(argv({ bot: codeBot }), "--allowedTools") ?? ""
+    expect(allowed.split(",")).not.toContain("run_code")
+    expect(allowed.split(",")).not.toContain("Bash")
+    expect(allowed).toContain("Read")
+  })
+
   test("a gated bot is isolated, gets its allowlist and no bypassPermissions", () => {
     const gatedBot: BotTurn.BotTurnInfo = {
       id: "agent-1",
