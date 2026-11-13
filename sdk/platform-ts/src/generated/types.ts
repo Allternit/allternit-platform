@@ -858,7 +858,10 @@ export type Response = {
    */
   id: string;
   object: "response";
-  status: "in_progress" | "completed" | "failed" | "incomplete";
+  /**
+   * `requires_action` while an approval the turn raised is pending (see `required_actions`); the stored status (`completed`, `failed` or `incomplete`) again once none is pending.
+   */
+  status: "in_progress" | "completed" | "failed" | "incomplete" | "requires_action";
   model?: (string | null);
   agent_id?: (string | null);
   conversation_id?: (string | null);
@@ -871,7 +874,7 @@ export type Response = {
     reason?: "max_output_tokens";
   } | null);
   /**
-   * Reserved; always empty in this release. Approvals are their own resource: subscribe to `approval.requested` / `approval.resolved`; after resolution send a new response in the same conversation.
+   * One entry per pending approval this response's turn raised, oldest first; empty when none is pending. Resolve each with `POST /v1/approvals/{id}`, then send a new response with `previous_response_id`.
    */
   required_actions?: Array<{
     type: "approval";

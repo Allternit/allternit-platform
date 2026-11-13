@@ -32,10 +32,13 @@
 //!   past `expires_at` and emits `approval.expired`; reads report such a row as
 //!   `expired` even before the sweep reaches it.
 //!
-//! Responses never pause on an approval: a Platform agent turn whose twin
-//! `call` needs one fails that tool call ("try again once they approve") and
-//! ends `completed`; the client follows `approval.requested` /
-//! `approval.resolved` and sends a new response afterwards.
+//! A Platform agent turn whose twin `call` needs an approval fails that tool
+//! call ("try again once they approve") and ends; the row links to that turn's
+//! response, and while it is pending `GET /v1/responses/{id}` reads
+//! `requires_action` ([`pending_for_response`]). The client resolves it here
+//! (or follows `approval.requested` / `approval.resolved`) and sends a new
+//! response with `previous_response_id`. Computer rows come from a developer's
+//! own `POST /v1/computers/{id}/toolset` call and link to no response.
 
 use std::sync::Arc;
 
@@ -352,6 +355,21 @@ pub async fn mark_consumed(db: &PgPool, project_id: &str, source: &str, source_r
         .execute(db)
         .await?;
     Ok(())
+}
+
+/// The approvals a response's turn raised that are still pending (a pending
+/// row past its deadline is `expired`, so it is left out), oldest first:
+/// `GET /v1/responses/{id}` reads `requires_action` while there are any.
+/// One query on `(project_id, status)`; rows are few per project.
+pub async fn pending_for_response(db: &PgPool, project_id: &str, response_id: &str) -> Result<Vec<String>, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT id FROM platform_approvals WHERE project_id = $1 AND status = 'pending' AND response_id = $2 \
+           AND (expires_at IS NULL OR expires_at > NOW()) ORDER BY created_at, id",
+    )
+    .bind(project_id)
+    .bind(response_id)
+    .fetch_all(db)
+    .await
 }
 
 /// The conversation (and its latest response) whose runtime session raised a
