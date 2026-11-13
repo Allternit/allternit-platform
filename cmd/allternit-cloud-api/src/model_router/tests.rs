@@ -672,3 +672,23 @@ fn openai_only_fields_are_dropped_for_other_upstreams() {
     openai.strip_openai_only_fields("openai");
     assert_eq!(serde_json::to_value(&openai).unwrap()["prompt_cache_key"], "ses_1");
 }
+
+/// A Platform agent on `"allternit"` runs on the model `/v1/models` flags as
+/// the default; without a flag, the first listed model; never an open-lane one.
+#[test]
+fn default_alias_is_the_flagged_listed_model() {
+    assert_eq!(ModelRouter::disabled(starter_catalog()).default_alias(), Some("kimi-k3"));
+    let entry = |alias: &str, provider: &str, listed: bool, default: bool| ModelAliasEntry {
+        alias: alias.to_string(),
+        provider: provider.to_string(),
+        upstream_id: format!("up/{alias}"),
+        listed,
+        default,
+        ..Default::default()
+    };
+    let open = super::catalog::OPEN_LANE_PROVIDER;
+    let unflagged = ModelAliasMap::new(vec![entry("open-1", open, true, false), entry("hidden", "openrouter", false, false), entry("first", "openrouter", true, false)]);
+    assert_eq!(ModelRouter::disabled(unflagged).default_alias(), Some("first"));
+    let only_open = ModelAliasMap::new(vec![entry("open-1", open, true, true)]);
+    assert_eq!(ModelRouter::disabled(only_open).default_alias(), None);
+}

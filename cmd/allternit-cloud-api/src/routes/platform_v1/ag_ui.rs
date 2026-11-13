@@ -239,7 +239,7 @@ async fn run_agent(
     let lock = TurnLock::take(&conv.id).ok_or_else(conversations::conversation_busy)?;
     let host = host_for(&state, layered);
     let (rt, session, own_key) = conversations::prepare(&state, host.as_ref(), &caller, &conv).await?;
-    let meter = TurnMeter::new(&caller, &conv, own_key)?;
+    let meter = TurnMeter::new(&caller, &conv, own_key)?.with_cloud_price(&state.model_router).await;
     let path = format!("/api/v1/platform/agents/{}/sessions/{}/turn", meter.agent_id, session);
     let mut upstream = host.stream(&rt, &path, &json!({ "text": content })).await?;
     conversations::store_user(&state.db, &caller.project_id, &conv.id, &content).await?;

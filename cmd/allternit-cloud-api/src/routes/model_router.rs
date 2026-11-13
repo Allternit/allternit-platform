@@ -114,6 +114,22 @@ pub(crate) async fn inference_attribution(
     }
 }
 
+/// The Platform project whose hosted runtime makes this completion: a device
+/// token (client `runtime`) owned by `platform:<project>`. Such a runtime runs
+/// the project's `"allternit"` agents on Allternit Cloud, and the project pays
+/// for those turns (`platform_v1::conversations::meter_turn` bills their tokens),
+/// so the consumer gates (verified email, the free allowance and its rate
+/// limit, the free-tier pool policy) don't apply and no user's credits are
+/// charged; the project's own spend gate applies instead. Without this every
+/// Cloud turn of a hosted agent was refused: `platform:…` has no Clerk email.
+pub(crate) fn platform_runtime_project<'a>(user_id: &'a str, client: Option<&str>) -> Option<&'a str> {
+    if client != Some("runtime") {
+        return None;
+    }
+    // The owner `platform_v1::hosting::runtime_owner` gives a project's runtime.
+    user_id.strip_prefix("platform:").filter(|project| !project.is_empty())
+}
+
 /// The request body to keep for the console Logs page (Decision D6): only
 /// with `PLATFORM_LOG_BODIES=1`, a key whose project has `log_bodies` on, and
 /// a body under the capture cap. `None` otherwise.
@@ -204,7 +220,8 @@ async fn chat_completions_attributed(
     // (check_inference_allowed below), so the project's card is not required.
     // `client` is `playground` only for an `api_keys` row of that kind.
     let playground = attribution.client.as_deref() == Some(crate::services::api_keys::KEY_KIND_PLAYGROUND);
-    if let Some(project_id) = attribution.project_id.as_deref().filter(|_| !playground) {
+    let platform_runtime = platform_runtime_project(&auth.user.user_id, attribution.client.as_deref()).map(str::to_string);
+    if let Some(project_id) = attribution.project_id.as_deref().filter(|_| !playground).or(platform_runtime.as_deref()) {
         if let Err(e) = crate::routes::platform_v1::billing::spend_allowed(&state.db, project_id).await {
             return Ok(e.into_response());
         }
@@ -251,8 +268,10 @@ async fn chat_completions_attributed(
     // spend upstream money; free users (no credits row) are bounded by the
     // monthly free allowance and a tight per-user rate limit.
     let balance = inference_settlement::credit_balance_row(&state.db, &user_id).await?;
-    inference_settlement::check_inference_allowed(&state.db, &user_id, balance).await?;
-    if balance.is_none() {
+    if platform_runtime.is_none() {
+        inference_settlement::check_inference_allowed(&state.db, &user_id, balance).await?;
+    }
+    if balance.is_none() && platform_runtime.is_none() {
         if let Err(info) = state.free_inference_rate_limiter.check(&user_id).await {
             tracing::warn!(user_id = %user_id, "free inference rate limit exceeded");
             let body = serde_json::json!({
@@ -307,7 +326,7 @@ async fn chat_completions_attributed(
     }
     inference_pool::check_free_tier_pool(
         inference_pool::free_tier_pool_policy(),
-        balance.is_none(),
+        balance.is_none() && platform_runtime.is_none(),
         pool.as_ref(),
     )?;
     let pool_id = pool.map(|pool| pool.id);
@@ -337,7 +356,7 @@ async fn chat_completions_attributed(
                 user_id,
                 model: alias,
                 pool_id,
-                charge_user: true,
+                charge_user: platform_runtime.is_none(),
                 prices,
                 prompt_token_estimate: (prompt_chars / 4) as u64,
                 attribution,
@@ -349,7 +368,7 @@ async fn chat_completions_attributed(
             &user_id,
             &alias,
             pool_id.as_deref(),
-            true,
+            platform_runtime.is_none(),
             &prices,
             prompt_chars,
             response,

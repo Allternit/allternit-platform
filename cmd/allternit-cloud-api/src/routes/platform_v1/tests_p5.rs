@@ -52,11 +52,14 @@ impl AgentHost for MeteredHost {
 }
 
 async fn ctx() -> Ctx {
+    ctx_on(Arc::new(MeteredHost)).await
+}
+
+async fn ctx_on(host: Arc<dyn AgentHost>) -> Ctx {
     let mut state = test_state(Arc::new(MockGateway::new(None, vec![]))).await;
     Arc::get_mut(&mut state).expect("fresh state").credential_cipher = Some(Arc::new(allternit_cloud_core::CredentialCipher::new("test cipher key material")));
     crate::routes::test_support::platform_schema(&state.db).await;
     super::tests_p2::items_schema(&state.db).await;
-    let host: Arc<dyn AgentHost> = Arc::new(MeteredHost);
     let app = router_gated(&state, Gate::Forced(true)).layer(axum::Extension(host)).with_state(state.clone());
     Ctx { state, app }
 }
@@ -163,6 +166,72 @@ async fn an_agent_on_the_projects_own_key_records_tokens_at_no_charge() {
     let rows = token_rows(&c, &p.id).await;
     assert_eq!(rows.iter().map(|r| (r.0.as_str(), r.1, r.2)).collect::<Vec<_>>(), vec![("tokens_in", 1000.0, Some(0)), ("tokens_out", 200.0, Some(0))]);
     assert_eq!(billing::month_spend(&c.state.db, &p.id, chrono::Utc::now()).await.unwrap(), 0);
+}
+
+/// A runtime that runs whatever model the agent definition names and, like a
+/// real runtime on Allternit Cloud, reports its tokens without a price.
+#[derive(Default)]
+struct CloudHost {
+    model: Mutex<String>,
+}
+
+#[async_trait::async_trait]
+impl AgentHost for CloudHost {
+    async fn runtime(&self, project_id: &str) -> Result<HostRuntime, PlatformError> {
+        Ok(HostRuntime { owner: hosting::runtime_owner(project_id), runtime_id: "rt_1".into() })
+    }
+    async fn call(&self, _rt: &HostRuntime, method: &str, path: &str, body: &Value) -> Result<(u16, Value), PlatformError> {
+        if method == "PUT" && path.starts_with("/api/v1/platform/agents/") {
+            *self.model.lock().unwrap() = body["model"].as_str().unwrap_or("").to_string();
+        }
+        Ok((200, json!({ "sessionId": "ses_1" })))
+    }
+    async fn stream(&self, _rt: &HostRuntime, _path: &str, _body: &Value) -> Result<RelayStream, PlatformError> {
+        let model = self.model.lock().unwrap().clone();
+        // A bare "allternit" leaves the runtime on the computer's own default
+        // brain, which on a hosted computer is an unsigned CLI.
+        let sse = if model.contains('/') {
+            let usage = json!({ "model": model, "inputTokens": 1000, "outputTokens": 200, "inputCostMicrousd": null, "outputCostMicrousd": null });
+            format!("data: {{\"type\":\"done\",\"text\":\"pong\",\"usage\":{usage}}}\n\n")
+        } else {
+            "data: {\"type\":\"error\",\"message\":\"Model not found: claude-cli/claude-sonnet-5.\"}\n\n".to_string()
+        };
+        Ok(Box::pin(futures::stream::iter(vec![Ok(bytes::Bytes::from(sse))])))
+    }
+}
+
+/// An agent on `"allternit"` runs on Allternit Cloud's default model, sent to
+/// the runtime as a concrete `allternit/<model>` (the bare default made a
+/// hosted runtime fall back to an unsigned coding CLI, and every turn failed),
+/// and its unpriced tokens are billed at that model's list price + 15%.
+#[tokio::test]
+async fn an_allternit_agent_runs_on_the_cloud_default_and_is_billed() {
+    let host = Arc::new(CloudHost::default());
+    let c = ctx_on(host.clone()).await;
+    let p = project(&c, "dev_m_cloud", ProjectEnv::Sandbox).await;
+    let key = mint(&c, &p, None, &["agents", "usage"]).await;
+    let conv = conversation(&c, &key, "allternit").await;
+
+    let (s, reply) = call(&c.app, "POST", &format!("/v1/conversations/{conv}/messages"), &key, Some(json!({ "content": "Reply with exactly: pong" }))).await;
+    assert_eq!(s, StatusCode::OK, "{reply}");
+    assert_eq!((reply["status"].as_str(), reply["content"].as_str()), (Some("completed"), Some("pong")), "{reply}");
+    let alias = c.state.model_router.default_alias().expect("the catalog flags a default").to_string();
+    let cloud_model = format!("allternit/{alias}");
+    assert_eq!(*host.model.lock().unwrap(), cloud_model);
+
+    // List price per 1M tokens of the Cloud model, + 15%.
+    let prices = c.state.model_router.retail_prices(&alias).await.unwrap();
+    let (list_in, list_out) = crate::model_router::items_bridge::list_per_1m(&prices);
+    let charge = |per_1m: f64, tokens: u64| billing::token_charge_microusd(crate::model_router::items_bridge::list_microusd(per_1m, tokens), false);
+    let msg = reply["id"].as_str().unwrap();
+    assert_eq!(
+        token_rows(&c, &p.id).await,
+        vec![
+            ("tokens_in".into(), 1000.0, Some(charge(list_in, 1000)), Some(cloud_model.clone()), Some(msg.into())),
+            ("tokens_out".into(), 200.0, Some(charge(list_out, 200)), Some(cloud_model), Some(msg.into())),
+        ]
+    );
+    assert!(charge(list_in, 1000) > 0 && charge(list_out, 200) > 0, "the Cloud model has a list price");
 }
 
 async fn sms(c: &Ctx, project: &str, segments: f64) {
