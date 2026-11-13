@@ -183,9 +183,33 @@ impl WorkHub {
     }
 }
 
-/// Wait for `notify` (already enabled by the caller) or `max`.
+static SHUTTING_DOWN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn shutdown_notify() -> &'static Notify {
+    static N: std::sync::OnceLock<Notify> = std::sync::OnceLock::new();
+    N.get_or_init(Notify::new)
+}
+
+/// Ends every open long-poll (claims and `tool_calls/next` answer 204 at
+/// once), so a graceful shutdown doesn't wait out a worker's `block_ms`.
+pub fn begin_shutdown() {
+    SHUTTING_DOWN.store(true, std::sync::atomic::Ordering::SeqCst);
+    shutdown_notify().notify_waiters();
+}
+
+pub fn shutting_down() -> bool {
+    SHUTTING_DOWN.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+/// Wait for `notify` (already enabled by the caller), `max`, or shutdown.
 async fn wait_on(notified: std::pin::Pin<&mut tokio::sync::futures::Notified<'_>>, max: StdDuration) {
-    let _ = tokio::time::timeout(max, notified).await;
+    if shutting_down() {
+        return;
+    }
+    tokio::select! {
+        _ = tokio::time::timeout(max, notified) => {}
+        _ = shutdown_notify().notified() => {}
+    }
 }
 
 // ─── Shared helpers (also used by the internal route) ───────────────────────
@@ -396,7 +420,7 @@ async fn claim(
         }
 
         let now = tokio::time::Instant::now();
-        if now >= deadline {
+        if now >= deadline || shutting_down() {
             return Ok(StatusCode::NO_CONTENT.into_response());
         }
         wait_on(notified, (deadline - now).min(POLL_EVERY)).await;
@@ -582,7 +606,7 @@ async fn next_tool_call(
         }
 
         let now = tokio::time::Instant::now();
-        if now >= deadline {
+        if now >= deadline || shutting_down() {
             return Ok(StatusCode::NO_CONTENT.into_response());
         }
         wait_on(notified, (deadline - now).min(POLL_EVERY)).await;

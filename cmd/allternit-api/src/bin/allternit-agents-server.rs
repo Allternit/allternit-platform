@@ -245,4 +245,5 @@ async fn shutdown_signal() {
         _ = term => {},
     }
     info!("shutdown signal received");
+    allternit_api::selfhost::routes_work::begin_shutdown();
 }
