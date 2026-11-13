@@ -1,0 +1,128 @@
+# Allternit Self-Hosted Agents: example settings for allternit-agents-server.
+#
+# Schema: cmd/allternit-api/openapi/selfhost-settings.schema.json
+# The server reads this file from --config <file> or ALLTERNIT_SELFHOST_CONFIG.
+# Copy it to settings.yaml and edit. Secrets never go in this file: use a
+# reference (env:NAME, file:/path or vault:path#key).
+#
+# OpenTelemetry export is not set here. Set the standard OTEL_* environment
+# variables instead (OTEL_EXPORTER_OTLP_ENDPOINT, OTEL_SERVICE_NAME, ...).
+#
+# This copy is the one the Docker Compose setup mounts. It listens on
+# 0.0.0.0:8400 inside the container; compose publishes the port on the host's
+# 127.0.0.1 only. On a bare host, set server.listen to 127.0.0.1:8400 and put a
+# TLS reverse proxy in front.
+
+server:
+  listen: 0.0.0.0:8400
+  # The URL your clients use. Shown in GET /v1/server/info.
+  public_url: http://127.0.0.1:8400
+  # Browser origins allowed to call the API. iOS and the gizzi CLI do not
+  # need CORS. Remove the ones you do not use.
+  cors_origins:
+    # The web app at ai.allternit.com. Desktop also uses this origin when it
+    # falls back to the hosted web app.
+    - https://ai.allternit.com
+    # The installable phone app (PWA) at m.allternit.com.
+    - https://m.allternit.com
+    # Packaged Allternit Desktop: the window is served by the local runtime
+    # on this origin.
+    - http://127.0.0.1:8013
+
+database:
+  # postgres://user:password@host:5432/db, set in the environment so the
+  # password is not in this file. Leave database out to use SQLite in data_dir.
+  url: env:ALLTERNIT_DATABASE_URL
+  max_connections: 20
+
+inference:
+  provider: anthropic
+  credentials:
+    api_key: env:ANTHROPIC_API_KEY
+  # Agent model name -> the provider's model id. When a map is set, a model
+  # that is not listed is refused with 422 model_not_mapped and no request
+  # leaves the server. Required for provider: gateway.
+  model_map:
+    claude-sonnet-4-5: claude-sonnet-4-5
+    claude-opus-4-1: claude-opus-4-1
+
+  # Other providers (pick one, and keep its credentials in env/file/vault):
+  #
+  # provider: bedrock
+  # credentials:
+  #   aws_region: us-east-1
+  #   aws_access_key_id: env:AWS_ACCESS_KEY_ID
+  #   aws_secret_access_key: env:AWS_SECRET_ACCESS_KEY
+  #
+  # provider: vertex
+  # credentials:
+  #   gcp_project: my-project
+  #   gcp_region: us-east5
+  #   gcp_service_account_json: file:/run/secrets/gcp-sa.json
+  #
+  # provider: foundry
+  # credentials:
+  #   foundry_endpoint: https://my-resource.services.ai.azure.com
+  #   foundry_api_key: env:FOUNDRY_API_KEY
+  #
+  # provider: gateway       # your own LLM gateway
+  # gateway:
+  #   format: anthropic-messages   # or bedrock-invoke, vertex-raw-predict, openai-chat
+  #   base_url: https://llm-gateway.internal.example/v1
+  #   headers:
+  #     x-api-key: env:LLM_GATEWAY_KEY
+  # model_map:
+  #   claude-sonnet-4-5: my-gateway-model-id
+
+mcp:
+  # MCP servers agents may use. Exact hostnames, HTTPS only, no wildcards.
+  # Empty means agents cannot use remote MCP servers.
+  allowed_hostnames: []
+  max_result_bytes: 102400
+
+git:
+  # Hosts the workers may clone from and push to. Exact match.
+  allowed_hostnames: []
+  # Refs a push may update. A push to any other ref is refused.
+  allowed_push_refs:
+    - refs/heads/agent/*
+
+web_tools:
+  enabled: false
+
+# Single sign-on. Without it, clients use server API keys (ask_...).
+# auth:
+#   oidc:
+#     issuer: https://login.example.com/
+#     audiences: [allternit-agents]
+#     role_claim: groups
+#     role_map:
+#       platform-admins: admin
+#       engineers: developer
+#       auditors: viewer
+#     default_role: none
+
+secrets:
+  backend: env
+  # The key that encrypts stored credentials (32 random bytes, base64).
+  # Rotate with: allternit-agents-server admin rotate-key
+  encryption_key_ref: env:ALLTERNIT_ENCRYPTION_KEY
+  # backend: vault
+  # vault:
+  #   address: https://vault.internal.example:8200
+  #   mount: secret
+  #   path: allternit/agents
+  #   auth:
+  #     method: kubernetes
+  #     role: allternit-agents-server
+
+observability:
+  log_format: json
+  prometheus:
+    enabled: false
+    # A separate listener. Port 8400 never serves /metrics. Use 0.0.0.0:9464
+    # only when something outside the container must scrape it.
+    listen: 127.0.0.1:9464
+
+health:
+  check_interval: 60s

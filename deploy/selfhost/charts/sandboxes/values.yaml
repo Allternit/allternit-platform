@@ -1,0 +1,159 @@
+# Allternit Self-Hosted Agents: sandboxes chart values.
+#
+# Each entry under `environments` becomes one worker Deployment (plus an
+# optional HPA and a NetworkPolicy). A worker serves exactly one environment.
+# Install this chart in the same namespace as the agents-server chart, so the
+# server's NetworkPolicy lets the workers in.
+
+nameOverride: ""
+fullnameOverride: ""
+
+image:
+  repository: ghcr.io/allternit/allternit-selfhost-worker
+  # Defaults to the chart's appVersion. Keep it equal to the server's version.
+  tag: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+server:
+  # The Agents Server URL as the workers reach it, e.g.
+  # http://agents-server.allternit.svc:8400
+  url: ""
+  # Pods the workers may reach on the server port (used by the NetworkPolicy).
+  # Defaults to the agents-server chart's pods in this namespace.
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: agents-server
+      app.kubernetes.io/component: server
+  port: 8400
+  # Use this instead of podSelector when the server is outside the cluster.
+  # cidr: 10.40.0.10/32
+
+# Defaults for every environment. Any field can be set again per environment.
+defaults:
+  replicas: 2
+  # Worker flags.
+  blockMs: 25000             # --block-ms: how long one claim long-polls
+  reclaimOlderThanMs: null   # --reclaim-older-than-ms: take over expired leases older than this
+  autoStop: null             # --auto-stop SECS: exit after this long with no work
+  extraArgs: []
+  autoscaling:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 20
+    # Workers mostly wait on a long-poll, so CPU is a rough signal. For scaling
+    # on queue depth, feed `queue_depth` from GET /v1/environments/{id} into an
+    # external metric (KEDA or a metrics adapter) and list it in `metrics`.
+    targetCPUUtilizationPercentage: 60
+    metrics: []
+  workspace:
+    # /workspace is an emptyDir: the files of a session live only as long as the pod.
+    sizeLimit: 10Gi
+    medium: ""               # "Memory" for tmpfs
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      memory: 2Gi
+
+environments: []
+# - name: default                  # used in resource names (lowercase, dashes)
+#   id: env_0123456789abcdef       # the environment id on the server
+#   # The environment key (aek_...) comes from a Secret you create:
+#   #   kubectl create secret generic allternit-env-default \
+#   #     --from-literal=ALLTERNIT_ENVIRONMENT_KEY=aek_...
+#   keySecret:
+#     name: allternit-env-default
+#     key: ALLTERNIT_ENVIRONMENT_KEY
+#   # Must match the environment's `network` on the server. The worker enforces
+#   # it per host inside the sandbox; this NetworkPolicy is a second layer.
+#   #   none    -> the pod reaches only the server and DNS
+#   #   limited -> also the CIDRs in allowedEgress (NetworkPolicy cannot match
+#   #              hostnames; list the addresses behind allowed_hosts)
+#   #   full    -> also the internet, minus fullEgressExcept
+#   network: none
+#   allowedEgress: []
+#   # - cidr: 140.82.112.0/20       # e.g. github.com for git
+#   #   ports: [443, 22]
+#   replicas: 4
+#   autoscaling:
+#     enabled: true
+#     maxReplicas: 40
+
+# Ranges a `full` environment still may not reach: cluster and private
+# networks and the cloud metadata service. Adjust to your cluster's ranges.
+fullEgressExcept:
+  - 10.0.0.0/8
+  - 172.16.0.0/12
+  - 192.168.0.0/16
+  - 100.64.0.0/10
+  - 169.254.0.0/16
+
+networkPolicy:
+  enabled: true
+  dns:
+    to:
+      - namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: kube-system
+        podSelector:
+          matchLabels:
+            k8s-app: kube-dns
+
+# ── bubblewrap ───────────────────────────────────────────────────────────────
+# Every bash call runs in bubblewrap with the environment's network policy.
+# `gizzi worker` always turns the sandbox on; it has no flag to turn it off,
+# and without a working bwrap the bash tool fails closed. bwrap runs
+# unprivileged (no setuid, no added capabilities). It needs:
+#   * unprivileged user namespaces: seccomp and AppArmor must allow unshare
+#     and mount -> seccompProfile/appArmorProfile Unconfined (or a custom
+#     Localhost profile that allows them);
+#   * a fresh /proc mount inside the sandbox -> procMount: Unmasked, which
+#     Kubernetes only allows in a pod with its own user namespace
+#     (hostUsers: false). That needs Kubernetes 1.30+ with user namespace
+#     support on the nodes (Linux 6.3+, containerd 2.0+ or CRI-O 1.25+), and
+#     the UserNamespacesSupport and ProcMountType feature gates where they are
+#     not on by default;
+#   * kernel.unprivileged_userns_clone=1 on the nodes (Debian kernels), and on
+#     Ubuntu 24.04+ nodes kernel.apparmor_restrict_unprivileged_userns=0.
+# Check from a running worker:
+#   kubectl exec deploy/<name> -- bwrap --unshare-all --ro-bind / / --proc /proc --dev /dev true
+sandbox:
+  # Unmasked /proc + own user namespace. Turn off only if your nodes cannot do
+  # user namespaces; then see `privileged`.
+  userNamespace: true
+  seccompProfile:
+    type: Unconfined
+  appArmorProfile:
+    type: Unconfined
+  # Last resort for clusters without user namespace support: run the worker
+  # container privileged. This gives the pod broad access to the node. Prefer
+  # dedicated nodes (see nodeSelector/tolerations) or a sandboxed runtime
+  # (runtimeClassName: gvisor / kata) if you turn it on.
+  privileged: false
+
+runtimeClassName: ""
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10002
+  runAsGroup: 10002
+  fsGroup: 10002
+
+# SIGTERM: the worker hands its item back (/release) and exits.
+terminationGracePeriodSeconds: 30
+
+extraEnv: []
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

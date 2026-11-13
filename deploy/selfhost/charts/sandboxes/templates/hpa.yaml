@@ -1,0 +1,38 @@
+{{- $root := . }}
+{{- range $env := .Values.environments }}
+{{- $e := mergeOverwrite (deepCopy $root.Values.defaults) $env }}
+{{- if $e.autoscaling.enabled }}
+{{- $ctx := dict "root" $root "env" $e }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "sandboxes.envFullname" $ctx }}
+  labels:
+    {{- include "sandboxes.labels" $root | nindent 4 }}
+    allternit.com/environment: {{ $e.name | quote }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "sandboxes.envFullname" $ctx }}
+  minReplicas: {{ $e.autoscaling.minReplicas }}
+  maxReplicas: {{ $e.autoscaling.maxReplicas }}
+  metrics:
+    {{- if $e.autoscaling.metrics }}
+    {{- toYaml $e.autoscaling.metrics | nindent 4 }}
+    {{- else }}
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ $e.autoscaling.targetCPUUtilizationPercentage }}
+    {{- end }}
+  behavior:
+    # Scale down slowly: a worker in the middle of a tool call releases its
+    # item on SIGTERM, and another worker has to pick it up.
+    scaleDown:
+      stabilizationWindowSeconds: 300
+{{- end }}
+{{- end }}
