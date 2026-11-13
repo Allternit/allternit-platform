@@ -7,6 +7,12 @@ edition = "2021"
 name = "allternit-api"
 path = "src/main.rs"
 
+# Self-hosted Agents Server: a thin second binary that mounts only the
+# `selfhost` router (no Clerk, Stripe or cloud init). See src/selfhost/mod.rs.
+[[bin]]
+name = "allternit-agents-server"
+path = "src/bin/allternit-agents-server.rs"
+
 [dependencies]
 jsonschema = { version = "0.58.6", default-features = false }
 # Vendored OpenSSL: allternit-api links openssl transitively (webauthn-rs-core),
