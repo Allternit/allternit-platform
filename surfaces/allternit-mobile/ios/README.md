@@ -36,6 +36,20 @@ To run tests:
 xcodebuild -scheme Allternit -destination 'platform=iOS Simulator,name=iPhone 16' test
 ```
 
+## Code intelligence (SourceKit-LSP)
+
+SourceKit-LSP (used by Claude Code's `swift-lsp` plugin, VS Code and other editors) can't read an Xcode project by itself. Without help it opens each `.swift` file alone, as a macOS file: `No such module 'UIKit'`, and go-to-definition across files finds nothing. `xcode-build-server` connects it to the project:
+
+```bash
+brew install xcode-build-server
+cd surfaces/allternit-mobile/ios
+xcode-build-server config -project Allternit.xcodeproj -scheme Allternit   # writes buildServer.json
+xcodebuild build -project Allternit.xcodeproj -scheme Allternit \
+  -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO     # gives it compile flags
+```
+
+`buildServer.json` holds absolute paths for one checkout, so it is gitignored. Run the steps again in each worktree, since every worktree path gets its own DerivedData folder. Build once more after you add files.
+
 ## Project structure
 
 ```
