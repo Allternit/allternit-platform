@@ -48,6 +48,19 @@ API_BINARY=/opt/allternit-api/bin/allternit-api bash cmd/allternit-computer-clou
 
 `bash cmd/allternit-computer-cloud/guest/validate-image.sh allternit-computer-headless` then proves the driver service, its `hello` capability report and a populated `read_ui` on the new image (it launches a throw-away local container; never run it against the fleet).
 
+## Internal service token (Desktop and cloud computers)
+
+gizzi adds its bundled `allternit-connectors` and `allternit-tools` MCP servers only when `ALLTERNIT_INTERNAL_SERVICE_TOKEN` is set (`cmd/gizzi-code/src/runtime/tools/mcp/bundled.ts`). Those servers carry the phone (`phone_text`, `phone_call`), mail (`allternit_mail_*`), `agent_knowledge_search` and `agent_channel_post` tools. allternit-api checks the same token on `/internal/connectors/mcp` and `/internal/tools/mcp` (`internal_auth.rs`). With no token, every call answers 401.
+
+The Allternit app sets it for every runtime it hosts: a personal Desktop, and every cloud computer, which runs the same app headless (this includes Orgo computers that host Platform API agents).
+
+- Desktop main makes one 32-byte token on first launch and saves it encrypted at `<userData>/auth/internal-service-token` (mode 0600). It reuses the token on every launch, so an API or gizzi that is already running and gets adopted still matches. An unreadable file is moved aside and replaced. An exported `ALLTERNIT_INTERNAL_SERVICE_TOKEN` takes priority over the saved one.
+- The same value goes to the allternit-api sidecar (first start, crash respawn and **Restart backend**) and to gizzi (`surfaces/allternit-desktop/src/main/internal-service-token.ts`).
+- gizzi also gets `ALLTERNIT_USER_ID` = the runtime's paired owner. That is the signed-in user's id on a personal Desktop and `platform:<project_id>` on a Platform API project computer. gizzi sends it as `x-allternit-user-id`. allternit-api lists `phone_text`/`phone_call` only for an owner who has a number, and finds Platform agents under that owner. Before the runtime is paired, the owner is not set, and gizzi falls back to `local-dev-user` until it restarts.
+- The fabric worker (`gizzi-code fabric-worker`) does not use MCP and does not get the token.
+
+To check it on a computer, run `curl -s 127.0.0.1:4096/mcp`. The output must list `allternit-connectors` and `allternit-tools`. If it shows `{}`, the runtime started without the token.
+
 ## Host setup (Mail VPS)
 
 `cmd/allternit-cloud-api/deploy/incus/dev-pool-mailvps.sh` does the one-time setup, after backing up the Incus config, iptables rules and the cloud-api `.env` to `/root/backups/dev-pool-<time>/`: the btrfs pool `cow`, the egress script below, the `host_mail` ledger row, and the cloud-api env. It restarts nothing; the next cloud-api deploy (or `systemctl restart allternit-cloud-api`) picks up the env.

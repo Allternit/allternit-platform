@@ -11,6 +11,7 @@ import {
 } from './auth-https-forward.js';
 import { PORTS } from './config.js';
 import { connectorSidecarManager } from './connector-sidecar-manager.js';
+import { internalServiceLaunchEnvironment, loadOrCreateInternalServiceToken } from './internal-service-token.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 import {
@@ -223,6 +224,7 @@ export class DesktopAuthManager {
   private readonly identityPath = path.join(app.getPath('userData'), 'auth', 'runtime-identity.json');
   private readonly platformKeyPath = path.join(app.getPath('userData'), 'auth', 'platform-encryption-key.bin');
   private readonly connectorSidecarTokensPath = path.join(app.getPath('userData'), 'auth', 'connector-sidecar-tokens.json');
+  private readonly internalServiceTokenPath = path.join(app.getPath('userData'), 'auth', 'internal-service-token');
   private readonly legacySessionPath = path.join(app.getPath('userData'), 'auth', 'desktop-session.json');
   private readonly accountsPath = path.join(app.getPath('userData'), 'auth', 'desktop-accounts.json');
   private signInResolver: ((session: DesktopAuthSession) => void) | null = null;
@@ -411,6 +413,33 @@ export class DesktopAuthManager {
       ALLTERNIT_CONNECTOR_SIDECAR_ADMIN_TOKEN: tokens.admin,
       ALLTERNIT_CONNECTOR_SIDECAR_RUNTIME_TOKEN: tokens.runtime,
     };
+  }
+
+  /**
+   * The shared ALLTERNIT_INTERNAL_SERVICE_TOKEN for allternit-api and gizzi
+   * (see internal-service-token.ts). Generated once, encrypted like the
+   * connector sidecar tokens, reused across restarts. An explicit env export
+   * wins so dev setups that already share a token keep working.
+   */
+  getInternalServiceToken(): string {
+    const explicit = process.env.ALLTERNIT_INTERNAL_SERVICE_TOKEN?.trim();
+    if (explicit) return explicit;
+    return loadOrCreateInternalServiceToken({
+      filePath: this.internalServiceTokenPath,
+      encode: (value) => this.encodeSecret(value),
+      decode: (raw) => this.decodeSecret(raw),
+      quarantine: (filePath) => this.quarantineCorruptFile(filePath),
+      warn: (message, error) => log.warn(message, error),
+    });
+  }
+
+  /**
+   * Launch env that lets gizzi's bundled `allternit-connectors` /
+   * `allternit-tools` MCP servers reach allternit-api's `/internal/*` routes:
+   * the same token for both, plus the runtime's paired owner for gizzi.
+   */
+  getInternalServiceLaunchEnvironment(): { api: Record<string, string>; gizzi: Record<string, string> } {
+    return internalServiceLaunchEnvironment(this.getInternalServiceToken(), this.session?.userId);
   }
 
   /** Main-process-only snapshot for narrow request brokering. */
