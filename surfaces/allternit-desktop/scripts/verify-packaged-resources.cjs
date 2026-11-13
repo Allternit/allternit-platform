@@ -229,6 +229,55 @@ if (process.platform === 'darwin') {
   }
 }
 
+// macOS Keychain addon: reads the Safe Storage password off the main thread so
+// a Keychain prompt can't freeze the app. One universal file serves both the
+// arm64 and x64 builds, and it only ships if the mac extraResources entry
+// copies it to Contents/Resources/native/keychain/keychain.node.
+if (process.platform === 'darwin') {
+  const addonPath = path.join(desktopDir, 'native', 'keychain', 'build', 'keychain.node');
+  const needArchs = ['arm64', 'x86_64'];
+  let archs = [];
+  if (fs.existsSync(addonPath)) {
+    try {
+      archs = require('child_process')
+        .execFileSync('lipo', ['-archs', addonPath], { encoding: 'utf8' })
+        .trim()
+        .split(/\s+/);
+    } catch {
+      archs = [];
+    }
+  }
+  if (!fs.existsSync(addonPath)) {
+    failed = true;
+    process.stderr.write(
+      `[verify-packaged-resources] ✗ Missing macOS Keychain addon (keychain.node)\n` +
+      `    Expected at: ${addonPath}\n` +
+      '    Build it with: npm run prepare:keychain-addon\n'
+    );
+  } else if (!needArchs.every((a) => archs.includes(a))) {
+    failed = true;
+    process.stderr.write(
+      `[verify-packaged-resources] ✗ Keychain addon has archs "${archs.join(' ')}", needs ${needArchs.join(' + ')}\n` +
+      '    Rebuild it with: npm run prepare:keychain-addon\n'
+    );
+  } else {
+    log(`✓ Keychain addon (${archs.join(' ')}) (${addonPath})`);
+  }
+  const pkg = JSON.parse(fs.readFileSync(path.join(desktopDir, 'package.json'), 'utf8'));
+  const macEntries = (pkg.build && pkg.build.mac && pkg.build.mac.extraResources) || [];
+  const shipped = macEntries.some(
+    (e) => e && e.from === 'native/keychain/build/keychain.node' && e.to === 'native/keychain/keychain.node'
+  );
+  if (!shipped) {
+    failed = true;
+    process.stderr.write(
+      '[verify-packaged-resources] ✗ package.json build.mac.extraResources does not ship native/keychain/build/keychain.node → native/keychain/keychain.node\n'
+    );
+  } else {
+    log('✓ mac extraResources ships native/keychain/keychain.node');
+  }
+}
+
 const catalogFiles = fs.existsSync(connectorCatalogDir)
   ? fs.readdirSync(connectorCatalogDir).filter((name) => name.endsWith('.json'))
   : [];
