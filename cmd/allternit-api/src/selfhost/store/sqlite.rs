@@ -1052,7 +1052,7 @@ impl SelfHostStore for SqliteStore {
             let tx = c.transaction_with_behavior(TransactionBehavior::Immediate)?;
             let cutoff: Option<String> = req
                 .reclaim_older_than_ms
-                .map(|ms| ts(req.now - Duration::milliseconds(ms.max(0))));
+                .map(|ms| ts(req.now - Duration::milliseconds(ms)));
             let candidate: Option<String> = tx
                 .query_row(
                     "SELECT id FROM work_items

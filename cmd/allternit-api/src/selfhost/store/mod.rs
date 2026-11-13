@@ -374,7 +374,10 @@ pub struct WorkClaim {
 pub struct ClaimRequest {
     pub environment_id: String,
     pub worker_id: String,
-    /// Also take leased items whose lease ran out at least this long ago.
+    /// Also take leased items with `lease_expires_at <= now - ms`. `Some(0)`
+    /// takes every expired lease. A negative value also takes live leases
+    /// that end within `-ms` (the work routes use this for the public
+    /// `reclaim_older_than_ms`, see `routes_work::reclaim_cutoff_ms`).
     pub reclaim_older_than_ms: Option<i64>,
     pub hostname: Option<String>,
     pub version: Option<String>,
@@ -587,7 +590,7 @@ pub trait SelfHostStore: Send + Sync {
     /// The newest ready or leased item for the session, if any.
     async fn find_open_work_for_session(&self, session_id: &str) -> StoreResult<Option<WorkItem>>;
     /// Oldest claimable item: ready, or (with `reclaim_older_than_ms`) leased
-    /// with a lease that ran out at least that long ago. Raises the
+    /// with `lease_expires_at <= now - reclaim_older_than_ms`. Raises the
     /// generation, starts a [`LEASE_TTL_SECS`] lease, issues a new session
     /// secret, hands the session's claimed-but-unfinished tool calls out
     /// again, and records the worker. None when there is nothing.

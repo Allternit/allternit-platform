@@ -3,7 +3,9 @@
 //! The `allternit-agents-server` binary mounts only [`router`]. It never
 //! builds the hosted `AppState`, never warms Clerk JWKS, and never touches
 //! Stripe or `cloud_api_url`. Outbound HTTP goes through
-//! [`egress_guard::EgressClient`] and nothing else.
+//! [`egress_guard::EgressClient`] and nothing else. The one exception is
+//! loopback traffic to the server's own gizzi child ([`agent_loop`]), which
+//! never leaves the host.
 //!
 //! Contract: `openapi/selfhost-v1.yaml` (routes, errors), with
 //! `openapi/selfhost-settings.schema.json` (settings) and
@@ -11,15 +13,19 @@
 //! checked against the OpenAPI paths by `tests/selfhost_routes.rs`.
 
 pub mod admin;
+#[path = "loop.rs"]
+pub mod agent_loop;
 pub mod auth;
 pub mod egress_guard;
 pub mod metrics_listener;
 pub mod routes_agents;
 pub mod routes_environments;
 pub mod routes_info;
+pub mod routes_internal;
 pub mod routes_keys;
 pub mod routes_sessions;
 pub mod secrets;
+pub mod routes_work;
 pub mod settings;
 pub mod state;
 pub mod store;
@@ -382,6 +388,8 @@ pub fn route_book() -> RouteBook {
     let book = routes_agents::mount(book);
     let book = routes_environments::mount(book);
     let book = routes_sessions::mount(book);
+    let book = routes_work::mount(book);
+    let book = routes_internal::mount(book);
     routes_keys::mount(book)
 }
 
@@ -462,12 +470,19 @@ async fn health_live() -> Json<Value> {
 }
 
 async fn health_ready(State(st): State<SelfHostState>) -> Response {
-    match st.store.health().await {
-        Ok(()) => Json(json!({ "status": "ok", "store": st.store.backend() })).into_response(),
-        Err(e) => {
-            tracing::warn!(error = %e, "readiness check failed");
-            ApiError::unavailable("store_unavailable", "The database is not reachable.")
-                .into_response()
-        }
+    if let Err(e) = st.store.health().await {
+        tracing::warn!(error = %e, "readiness check failed");
+        return ApiError::unavailable("store_unavailable", "The database is not reachable.")
+            .into_response();
     }
+    let lp = st.turn_runner.loop_status();
+    if !lp.is_ready() {
+        let message = match &lp {
+            routes_sessions::LoopStatus::Unavailable(why) => format!("The agent loop cannot run: {why}"),
+            _ => "The agent loop is starting.".to_string(),
+        };
+        return ApiError::unavailable("agent_loop_unavailable", message).into_response();
+    }
+    Json(json!({ "status": "ok", "store": st.store.backend(), "agent_loop": lp.as_str() }))
+        .into_response()
 }

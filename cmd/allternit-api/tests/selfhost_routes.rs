@@ -58,18 +58,13 @@ fn no_route_is_mounted_twice() {
 }
 
 #[test]
-fn client_contract_routes_are_mounted() {
-    // The step 3-6 surface. Work, tool call and internal routes come with
-    // steps 7 and 8.
+fn every_contract_route_is_mounted() {
+    // Client, worker (work and tool call) and internal routes alike.
     let mounted: BTreeSet<(String, String)> = route_table()
         .iter()
         .map(|(m, p)| (m.to_string(), to_openapi(p)))
         .collect();
-    let later = ["/work/", "/tool_calls", "/internal/"];
     for op in spec_operations() {
-        if later.iter().any(|l| op.1.contains(l)) {
-            continue;
-        }
         assert!(mounted.contains(&op), "{} {} is in the contract but not mounted", op.0, op.1);
     }
 }

@@ -222,6 +222,25 @@
       "properties": {
         "check_interval": { "type": "string", "pattern": "^[0-9]+(ms|s|m|h)$", "default": "60s" }
       }
+    },
+    "sessions": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Session and work item timing.",
+      "properties": {
+        "idle_timeout": {
+          "type": "string",
+          "pattern": "^[0-9]*[1-9][0-9]*(ms|s|m|h)$",
+          "default": "1h",
+          "description": "A session with no turn running and no pending tool call for this long ends its work item. The worker's next tool_calls/next answers 204 with X-Session-Closed: true, and the worker completes the item. The next turn that needs a tool queues a new item."
+        },
+        "no_worker_timeout": {
+          "type": "string",
+          "pattern": "^[0-9]*[1-9][0-9]*(ms|s|m|h)$",
+          "default": "10m",
+          "description": "How long a tool call waits for a worker to take it. After that the agent loop gets 504 no_worker and the model sees a tool error."
+        }
+      }
     }
   }
 }
