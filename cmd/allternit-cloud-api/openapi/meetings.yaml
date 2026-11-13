@@ -1,0 +1,754 @@
+openapi: 3.1.0
+info:
+  title: Allternit Meetings API
+  version: "1.0.0"
+  summary: Send Gizzi to Google Meet, Zoom and Microsoft Teams calls.
+  description: |
+    Gizzi joins a call as a bot participant named "Gizzi (Allternit)", takes
+    notes, answers in the meeting chat (voice is opt-in per meeting), and
+    makes docs, slides and canvases during the call. Contract:
+    `docs/meetings/CONTRACT.md`. Base URL `https://api.allternit.com`.
+
+    **User routes** authenticate with a Clerk session JWT, an `allternit_*`
+    API token with the `compute` scope, or a runtime device token
+    (`allternit_runtime_…`), which acts as its owner. Every user route except
+    `GET /api/v1/me/meeting-settings` answers
+    `402 {"error":"meetings_requires_paid_plan"}` on the free plan.
+
+    **Pod routes** (`/ingest`, `/tool-calls`, `/control-stream`) take only the
+    pod token (`Bearer mpt_…`) the launcher issues for one session. It is
+    valid while the session is open and for 5 minutes after it ends.
+
+    Errors are `{ "error": "<code>", "message": "<text>" }`. Codes:
+    `invalid_request`, `unsupported_link` (400); `unauthorized` (401);
+    `meetings_requires_paid_plan` (402); `meetings_disabled_by_org`,
+    `forbidden` (403); `meeting_not_found`, `session_not_found` (404);
+    `conflict`, `session_not_active`, `zoom_not_connected` (409);
+    `no_capacity` (429).
+
+    One bot per meeting URL: a second request for the same call attaches to
+    the running session. The view in the web app is behind the `meetings`
+    feature flag (`GET /api/v1/me/flags` → `flags.meetings`, read-only).
+servers:
+  - url: https://api.allternit.com
+security:
+  - bearerAuth: []
+tags:
+  - name: Meetings
+  - name: Sessions
+  - name: Settings
+  - name: Pod
+paths:
+  /api/v1/meetings:
+    get:
+      operationId: listMeetings
+      summary: List meetings
+      description: |
+        Agenda order: meetings with Gizzi in the call first, then by start
+        time (`past`: newest first). `today` and `week` use the caller's day
+        in `tz` (default UTC).
+      tags: [Meetings]
+      parameters:
+        - name: range
+          in: query
+          schema: { type: string, enum: [now, today, week, upcoming, past], default: upcoming }
+        - name: tz
+          in: query
+          description: IANA time zone for `today` and `week`, e.g. `America/Chicago`.
+          schema: { type: string }
+        - name: cursor
+          in: query
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+      responses:
+        "200":
+          description: Meetings.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [meetings, next_cursor]
+                properties:
+                  meetings: { type: array, items: { $ref: "#/components/schemas/Meeting" } }
+                  next_cursor: { type: [string, "null"] }
+        "401": { $ref: "#/components/responses/Error" }
+        "402": { $ref: "#/components/responses/Error" }
+    post:
+      operationId: addMeeting
+      summary: Add a meeting from a link
+      description: |
+        Parses a Meet, Zoom or Teams link. The same call (same normalised
+        `url_key`) and start time already on the caller's list answers 200
+        with that row; a deleted one is restored.
+      tags: [Meetings]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [url]
+              properties:
+                url: { type: string }
+                title: { type: string, maxLength: 300 }
+                starts_at: { type: string, format: date-time }
+                reply_mode: { type: string, enum: [chat, voice] }
+                source: { type: string, enum: [link, chat], default: link }
+      responses:
+        "200": { description: Already on the list., content: { application/json: { schema: { $ref: "#/components/schemas/Meeting" } } } }
+        "201": { description: Added., content: { application/json: { schema: { $ref: "#/components/schemas/Meeting" } } } }
+        "400": { $ref: "#/components/responses/Error" }
+        "402": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+  /api/v1/meetings/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: getMeeting
+      summary: Get a meeting
+      description: The meeting with its `gizzi` status and `latest_session` (null before Gizzi was sent).
+      tags: [Meetings]
+      responses:
+        "200":
+          description: Meeting.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Meeting"
+                  - type: object
+                    required: [latest_session]
+                    properties:
+                      latest_session:
+                        oneOf:
+                          - type: object
+                            required: [id, state, end_reason, live_at, ended_at, summary]
+                            properties:
+                              id: { type: string, format: uuid }
+                              state: { type: string }
+                              end_reason: { type: [string, "null"] }
+                              live_at: { type: [string, "null"], format: date-time }
+                              ended_at: { type: [string, "null"], format: date-time }
+                              summary: { type: [string, "null"] }
+                          - type: "null"
+        "404": { $ref: "#/components/responses/Error" }
+    patch:
+      operationId: updateMeeting
+      summary: Update a meeting
+      description: "`auto_join: null` clears the per-meeting override (follow the user's rule)."
+      tags: [Meetings]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                title: { type: string, maxLength: 300 }
+                auto_join: { type: [boolean, "null"] }
+                reply_mode: { type: string, enum: [chat, voice] }
+      responses:
+        "200": { description: Updated., content: { application/json: { schema: { $ref: "#/components/schemas/Meeting" } } } }
+        "400": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+    delete:
+      operationId: deleteMeeting
+      summary: Delete a meeting
+      description: Soft delete. Refused with 409 while Gizzi is in the call; a scheduled bot is cancelled.
+      tags: [Meetings]
+      responses:
+        "204": { description: Deleted. }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /api/v1/meetings/{id}/sessions:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      operationId: sendGizzi
+      summary: Send Gizzi to the meeting
+      description: |
+        Checks in order: plan (402), org enabled and role (403), outside
+        attendees vs the org's guest setting (403), a connected Zoom account
+        for a new Zoom bot (409 `zoom_not_connected`), capacity (429; only
+        when a new bot is needed), then dedupe: if a bot is already in this call
+        the session is returned with 200 (attach). `when: start` schedules
+        the join 2 minutes before `starts_at`.
+      tags: [Sessions]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [when]
+              properties:
+                when: { type: string, enum: [now, start] }
+                speak_replies: { type: boolean }
+      responses:
+        "200": { description: Attached to the running session., content: { application/json: { schema: { $ref: "#/components/schemas/MeetingSession" } } } }
+        "201": { description: Created., content: { application/json: { schema: { $ref: "#/components/schemas/MeetingSession" } } } }
+        "400": { $ref: "#/components/responses/Error" }
+        "402": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/Error" }
+  /api/v1/meeting-sessions/{sid}:
+    parameters:
+      - $ref: "#/components/parameters/SessionId"
+    get:
+      operationId: getMeetingSession
+      summary: Get a session
+      description: For the owner or a user attached to the same call. `pending_approvals` is empty for anyone but the owner.
+      tags: [Sessions]
+      responses:
+        "200":
+          description: Session.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [session, meeting, participants, pending_approvals]
+                properties:
+                  session: { $ref: "#/components/schemas/MeetingSession" }
+                  meeting: { $ref: "#/components/schemas/Meeting" }
+                  participants: { type: array, items: { $ref: "#/components/schemas/MeetingParticipant" } }
+                  pending_approvals: { type: array, items: { $ref: "#/components/schemas/ToolApproval" } }
+        "404": { $ref: "#/components/responses/Error" }
+    patch:
+      operationId: updateMeetingSession
+      summary: Turn spoken replies on or off
+      tags: [Sessions]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                speak_replies: { type: boolean }
+      responses:
+        "200": { description: Updated., content: { application/json: { schema: { $ref: "#/components/schemas/MeetingSession" } } } }
+        "403": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /api/v1/meeting-sessions/{sid}/transcript:
+    parameters:
+      - $ref: "#/components/parameters/SessionId"
+    get:
+      operationId: getMeetingTranscript
+      summary: Read the transcript
+      description: "Segments with `seq > after_seq`. Poll with `next_after_seq` (the last seq returned; null when the page is empty)."
+      tags: [Sessions]
+      parameters:
+        - { name: after_seq, in: query, schema: { type: integer, minimum: 0 } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 2000, default: 500 } }
+      responses:
+        "200":
+          description: Segments.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [segments, next_after_seq]
+                properties:
+                  segments: { type: array, items: { $ref: "#/components/schemas/TranscriptSegment" } }
+                  next_after_seq: { type: [integer, "null"] }
+  /api/v1/meeting-sessions/{sid}/artifacts:
+    parameters:
+      - $ref: "#/components/parameters/SessionId"
+    get:
+      operationId: listMeetingArtifacts
+      summary: List artifacts made in the call
+      tags: [Sessions]
+      responses:
+        "200":
+          description: Artifacts.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [artifacts]
+                properties:
+                  artifacts: { type: array, items: { $ref: "#/components/schemas/MeetingArtifact" } }
+  /api/v1/meeting-sessions/{sid}/events:
+    parameters:
+      - $ref: "#/components/parameters/SessionId"
+    get:
+      operationId: streamMeetingEvents
+      summary: Live events (SSE)
+      description: |
+        First frame: `meeting.session.state` with the current state (no
+        `id`). Then `id:`/`event:`/`data:` frames for `meeting.session.state`,
+        `meeting.participant.changed`, `meeting.transcript.delta`,
+        `meeting.chat.message`, `meeting.reply`, `meeting.approval.requested`,
+        `meeting.approval.resolved`, `meeting.artifact.created`,
+        `meeting.artifact.updated`, `meeting.ended`, `meeting.summary`. Data
+        is the types.ts `MeetingEvent` (it carries `type`). `: ping` every
+        20 s. `Last-Event-ID` replays up to the last 500 frames.
+      tags: [Sessions]
+      parameters:
+        - { name: Last-Event-ID, in: header, schema: { type: string } }
+      responses:
+        "200": { description: Event stream., content: { text/event-stream: { schema: { type: string } } } }
+  /api/v1/meeting-sessions/{sid}/control:
+    parameters:
+      - $ref: "#/components/parameters/SessionId"
+    post:
+      operationId: controlMeetingSession
+      summary: Stop listening, resume, leave or speak
+      description: |
+        Owner only. `stop_listening` needs a live call, `resume` a paused one;
+        `leave` ends the session (`left_by_user`) and tells the pod to leave;
+        `speak` needs `text` and Speak replies on.
+      tags: [Sessions]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action]
+              properties:
+                action: { type: string, enum: [stop_listening, resume, leave, speak] }
+                text: { type: string, maxLength: 2000 }
+      responses:
+        "200": { description: Session after the action., content: { application/json: { schema: { $ref: "#/components/schemas/MeetingSession" } } } }
+        "403": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /api/v1/meeting-sessions/{sid}/approvals/{aid}:
+    parameters:
+      - $ref: "#/components/parameters/SessionId"
+      - { name: aid, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      operationId: decideMeetingApproval
+      summary: Approve or deny a tool request
+      description: Session owner only. An approval covers later calls of that tool for the rest of the session; so does a denial.
+      tags: [Sessions]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision]
+              properties:
+                decision: { type: string, enum: [approve, deny] }
+      responses:
+        "200": { description: Decided., content: { application/json: { schema: { $ref: "#/components/schemas/ToolApproval" } } } }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /api/v1/me/meeting-settings:
+    get:
+      operationId: getMyMeetingSettings
+      summary: Your Meetings settings
+      description: Works on the free plan.
+      tags: [Settings]
+      responses:
+        "200": { description: Settings., content: { application/json: { schema: { $ref: "#/components/schemas/UserMeetingSettings" } } } }
+    put:
+      operationId: putMyMeetingSettings
+      summary: Change your Meetings settings
+      description: Partial updates are fine.
+      tags: [Settings]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UserMeetingSettings" }
+      responses:
+        "200": { description: Settings., content: { application/json: { schema: { $ref: "#/components/schemas/UserMeetingSettings" } } } }
+        "400": { $ref: "#/components/responses/Error" }
+        "402": { $ref: "#/components/responses/Error" }
+  /api/v1/me/meeting-usage:
+    get:
+      operationId: getMyMeetingUsage
+      summary: Bot minutes this month
+      tags: [Settings]
+      responses:
+        "200": { description: Usage., content: { application/json: { schema: { $ref: "#/components/schemas/MeetingUsage" } } } }
+        "402": { $ref: "#/components/responses/Error" }
+  /api/v1/orgs/{org}/meeting-settings:
+    parameters:
+      - { name: org, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: getOrgMeetingSettings
+      summary: Organization Meetings settings
+      description: For members of the org (the caller's active org). Defaults when never set.
+      tags: [Settings]
+      responses:
+        "200": { description: Settings., content: { application/json: { schema: { $ref: "#/components/schemas/OrgMeetingSettings" } } } }
+        "403": { $ref: "#/components/responses/Error" }
+    put:
+      operationId: putOrgMeetingSettings
+      summary: Change organization Meetings settings
+      description: Org admins only. Partial updates are fine. Roles are stored in the `org:` form.
+      tags: [Settings]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OrgMeetingSettings" }
+      responses:
+        "200": { description: Settings., content: { application/json: { schema: { $ref: "#/components/schemas/OrgMeetingSettings" } } } }
+        "400": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+  /api/v1/meeting-sessions/{sid}/ingest:
+    parameters:
+      - $ref: "#/components/parameters/SessionId"
+    post:
+      operationId: ingestMeetingBatch
+      summary: Pod batch (participants, transcript, chat, screen notes, state)
+      description: |
+        Every array is optional, at most 500 rows in all. Rows are idempotent
+        by `idempotency_key`. Screen notes: at most one per 30 s per session
+        (the rest count as `dropped`). `state` runs through the session state
+        machine; an illegal move answers 409 (with the counts) and is
+        ignored, the rows are kept. Ending writes the bot-minute meter once.
+      tags: [Pod]
+      security:
+        - podToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/IngestBatch" }
+      responses:
+        "200":
+          description: Counts.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [accepted, duplicates, dropped]
+                properties:
+                  accepted: { type: integer }
+                  duplicates: { type: integer }
+                  dropped: { type: integer }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /api/v1/meeting-sessions/{sid}/tool-calls:
+    parameters:
+      - $ref: "#/components/parameters/SessionId"
+    post:
+      operationId: meetingToolCall
+      summary: The in-pod agent asks to use a tool
+      description: |
+        `create_doc`, `create_slides`, `create_canvas` and `update_artifact`
+        run here (artifacts v2, once per `call_id`) and answer
+        `{status:"ok", result:{artifact}}`. Any other tool is personal: a low
+        `speaker_confidence` (< 0.5) gets `clarify`; otherwise it needs the
+        owner's approval (`approval_required`; re-send the same body, the
+        approval is re-checked each time). Once approved it runs here through
+        the owner's connectors (their runtime's connectors MCP server) and
+        the result is stored per `call_id`. Errors: `connectors_unavailable`
+        (no runtime reachable; retry later), `in_progress` (the same call is
+        running), `tool_failed`.
+      tags: [Pod]
+      security:
+        - podToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [call_id, tool]
+              properties:
+                call_id: { type: string, maxLength: 128 }
+                tool: { type: string, maxLength: 128 }
+                args: { type: object }
+                asked_by: { type: string }
+                speaker_confidence: { type: number, minimum: 0, maximum: 1 }
+      responses:
+        "200":
+          description: ToolCallResult.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - { type: object, required: [status, result], properties: { status: { const: ok }, result: { type: object } } }
+                  - { type: object, required: [status, approval_id], properties: { status: { const: approval_required }, approval_id: { type: string, format: uuid } } }
+                  - { type: object, required: [status], properties: { status: { const: denied } } }
+                  - { type: object, required: [status, question], properties: { status: { const: clarify }, question: { type: string } } }
+                  - { type: object, required: [status, error], properties: { status: { const: error }, error: { type: string, enum: [connectors_unavailable, in_progress, tool_failed] }, message: { type: string } } }
+        "401": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /api/v1/meeting-sessions/{sid}/control-stream:
+    parameters:
+      - $ref: "#/components/parameters/SessionId"
+    get:
+      operationId: meetingControlStream
+      summary: Control messages for the pod (SSE)
+      description: |
+        Starts with `set_speak_replies` and `set_guest_quiet` (and
+        `stop_listening` / `leave` when paused / ended), then live messages:
+        `stop_listening`, `resume`, `leave`, `speak {text}`,
+        `set_speak_replies {on}`, `set_guest_quiet {on}`,
+        `approval {approval_id, status}`. `event:` is the message type.
+      tags: [Pod]
+      security:
+        - podToken: []
+      responses:
+        "200": { description: Control stream., content: { text/event-stream: { schema: { type: string } } } }
+        "401": { $ref: "#/components/responses/Error" }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Clerk session JWT, `allternit_*` API token (compute scope), or runtime device token.
+    podToken:
+      type: http
+      scheme: bearer
+      description: The `mpt_…` token issued for one meeting session.
+  parameters:
+    SessionId:
+      name: sid
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+  responses:
+    Error:
+      description: Error.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [error, message]
+            properties:
+              error: { type: string }
+              message: { type: string }
+  schemas:
+    GizziState:
+      type: string
+      enum: [scheduled, "off", launching, joining, waiting_admit, live, paused, ended, not_admitted]
+    Meeting:
+      type: object
+      required: [id, user_id, platform, platform_label, title, join_url, url_key, source, is_one_on_one, reply_mode, gizzi, people_label, page_url, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        user_id: { type: string }
+        org_id: { type: [string, "null"] }
+        platform: { type: string, enum: [meet, zoom, teams] }
+        platform_label: { type: string, enum: [Google Meet, Zoom, Microsoft Teams] }
+        title: { type: string }
+        join_url: { type: string }
+        url_key: { type: string }
+        starts_at: { type: [string, "null"], format: date-time }
+        ends_at: { type: [string, "null"], format: date-time }
+        source: { type: string, enum: [calendar_google, calendar_microsoft, calendar_ics, link, chat, mcp] }
+        calendar_connection_id: { type: [string, "null"] }
+        external_event_id: { type: [string, "null"] }
+        attendee_count: { type: [integer, "null"] }
+        external_attendee_count: { type: [integer, "null"] }
+        is_one_on_one: { type: boolean }
+        auto_join: { type: [boolean, "null"] }
+        reply_mode: { type: string, enum: [chat, voice] }
+        gizzi: { $ref: "#/components/schemas/GizziState" }
+        people_label: { type: string, description: '"6 people", "8 people, 3 outside"; empty when unknown.' }
+        latest_session_id: { type: [string, "null"] }
+        live_at: { type: [string, "null"], format: date-time, description: When Gizzi went live in the current call; null unless a session is active. }
+        recap:
+          description: Present when the latest session ended; `ready` means a summary exists.
+          oneOf:
+            - type: object
+              required: [ready, decisions, action_items]
+              properties:
+                ready: { type: boolean }
+                decisions: { type: integer }
+                action_items: { type: integer }
+            - type: "null"
+        page_url: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    MeetingSession:
+      type: object
+      required: [id, meeting_id, state, gizzi, platform, speak_replies, listening, bot_identity, requested_by, decisions, action_items, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        meeting_id: { type: string, format: uuid }
+        state: { type: string, enum: [scheduled, launching, joining, waiting_admit, live, paused, ended] }
+        gizzi: { $ref: "#/components/schemas/GizziState" }
+        end_reason:
+          type: [string, "null"]
+          enum: [left_by_user, removed, not_admitted, empty_room, max_duration, other_notetaker, join_failed, guest_blocked, no_capacity, error, null]
+        platform: { type: string }
+        speak_replies: { type: boolean }
+        listening: { type: boolean }
+        bot_identity: { type: string }
+        requested_by: { type: string }
+        scheduled_join_at: { type: [string, "null"], format: date-time }
+        joined_at: { type: [string, "null"], format: date-time }
+        live_at: { type: [string, "null"], format: date-time }
+        ended_at: { type: [string, "null"], format: date-time }
+        summary: { type: [string, "null"] }
+        decisions: { type: array, items: { type: string } }
+        action_items:
+          type: array
+          items:
+            type: object
+            properties:
+              text: { type: string }
+              owner: { type: [string, "null"] }
+              due: { type: [string, "null"] }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    MeetingParticipant:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        session_id: { type: string, format: uuid }
+        display_name: { type: string }
+        email: { type: [string, "null"] }
+        user_id: { type: [string, "null"] }
+        class: { type: string, enum: [org_member, guest] }
+        joined_at: { type: string, format: date-time }
+        left_at: { type: [string, "null"], format: date-time }
+        notice_at: { type: [string, "null"], format: date-time }
+    TranscriptSegment:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        session_id: { type: string, format: uuid }
+        seq: { type: integer }
+        speaker: { type: [string, "null"] }
+        participant_id: { type: [string, "null"] }
+        confidence: { type: number, minimum: 0, maximum: 1 }
+        source: { type: string, enum: [audio, captions] }
+        start_ms: { type: integer }
+        end_ms: { type: integer }
+        text: { type: string }
+    MeetingArtifact:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        session_id: { type: string, format: uuid }
+        artifact_id: { type: string }
+        kind: { type: string, enum: [doc, slides, canvas] }
+        title: { type: string }
+        url: { type: string }
+        version: { type: integer }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    ToolApproval:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        session_id: { type: string, format: uuid }
+        tool: { type: string }
+        args_summary: { type: string }
+        asked_by: { type: [string, "null"] }
+        status: { type: string, enum: [pending, approved, denied, expired] }
+        requested_at: { type: string, format: date-time }
+        resolved_at: { type: [string, "null"], format: date-time }
+        expires_at: { type: string, format: date-time }
+    UserMeetingSettings:
+      type: object
+      properties:
+        auto_join: { type: string, enum: ["off", all, all_except_1on1] }
+        recap_email: { type: boolean }
+        default_reply_mode: { type: string, enum: [chat, voice] }
+    OrgMeetingSettings:
+      type: object
+      properties:
+        org_id: { type: string }
+        enabled: { type: boolean }
+        roles: { type: array, items: { type: string }, minItems: 1, maxItems: 20 }
+        allow_external_guests: { type: boolean }
+        guest_quiet: { type: boolean }
+        allow_member_connectors: { type: boolean }
+        retention_days: { type: integer, minimum: 1, maximum: 3650 }
+        updated_at: { type: [string, "null"], format: date-time, readOnly: true }
+    MeetingUsage:
+      type: object
+      properties:
+        period_start: { type: string, format: date-time }
+        period_end: { type: string, format: date-time }
+        used_minutes: { type: integer }
+        included_minutes: { type: integer }
+        overage_minutes: { type: integer }
+        concurrent_cap: { type: integer }
+        plan: { type: string, enum: [free, plus, super, ultra] }
+    IngestBatch:
+      type: object
+      properties:
+        batch_id: { type: string }
+        sent_at: { type: string, format: date-time }
+        state:
+          type: object
+          required: [state]
+          properties:
+            state: { type: string, enum: [scheduled, launching, joining, waiting_admit, live, paused, ended] }
+            end_reason: { type: [string, "null"] }
+            detail: { type: string }
+        participants:
+          type: array
+          items:
+            type: object
+            required: [platform_participant_id, display_name]
+            properties:
+              platform_participant_id: { type: string }
+              display_name: { type: string }
+              email: { type: [string, "null"] }
+              class: { type: string, enum: [org_member, guest] }
+              joined_at: { type: string, format: date-time }
+              left_at: { type: [string, "null"], format: date-time }
+        transcript:
+          type: array
+          items:
+            type: object
+            required: [seq, idempotency_key, start_ms, end_ms, text]
+            properties:
+              seq: { type: integer, minimum: 0 }
+              idempotency_key: { type: string }
+              speaker: { type: [string, "null"] }
+              confidence: { type: number, minimum: 0, maximum: 1 }
+              source: { type: string, enum: [audio, captions] }
+              start_ms: { type: integer, minimum: 0 }
+              end_ms: { type: integer, minimum: 0 }
+              text: { type: string }
+        chat:
+          type: array
+          items:
+            type: object
+            required: [idempotency_key, sender, text]
+            properties:
+              idempotency_key: { type: string }
+              direction: { type: string, enum: [in, out] }
+              sender: { type: string }
+              text: { type: string }
+              platform_message_id: { type: string }
+              visibility: { type: string, enum: [chat, page_only], default: chat }
+              at: { type: string, format: date-time }
+        screen_notes:
+          type: array
+          items:
+            type: object
+            required: [idempotency_key, at_ms, description]
+            properties:
+              idempotency_key: { type: string }
+              at_ms: { type: integer, minimum: 0 }
+              description: { type: string }
+        notice_at: { type: [string, "null"], format: date-time }
+        summary:
+          type: object
+          description: End-of-meeting summary; written to the session and emitted as `meeting.summary`.
+          required: [summary]
+          properties:
+            summary: { type: string }
+            decisions: { type: array, items: { type: string }, maxItems: 100 }
+            action_items:
+              type: array
+              maxItems: 100
+              items:
+                type: object
+                required: [text]
+                properties:
+                  text: { type: string }
+                  owner: { type: [string, "null"] }
+                  due: { type: [string, "null"] }

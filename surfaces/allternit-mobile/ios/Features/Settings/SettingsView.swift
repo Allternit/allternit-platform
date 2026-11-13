@@ -22,6 +22,17 @@ struct SettingsView: View {
     @AppStorage(WaitingGamesStore.enabledKey) private var waitingGames = true
     /// "Let your bots use this iPhone" status ("Paired · <computer>").
     @ObservedObject private var appPhone = AppPhoneService.shared
+    /// The Meetings row shows with the `meetings` account flag.
+    @ObservedObject private var meetings = MeetingsStore.shared
+
+    static func meetingsRuleLabel(_ rule: String?) -> String? {
+        switch rule {
+        case "all_except_1on1": return "All but 1:1s"
+        case "all": return "Every call"
+        case "off": return "When I ask"
+        default: return nil
+        }
+    }
 
     @State private var path = NavigationPath()
     /// Operator pages (models, infrastructure…) behind the Advanced row.
@@ -36,6 +47,7 @@ struct SettingsView: View {
     #if DEBUG
     @State private var isPlatformPresented = false
     @State private var isBrainSpikePresented = false
+    @State private var isMeetingsPresented = false
     #endif
 
     var body: some View {
@@ -76,12 +88,15 @@ struct SettingsView: View {
                 #if DEBUG
                 .navigationDestination(isPresented: $isPlatformPresented) { PlatformSettingsView() }
                 .navigationDestination(isPresented: $isBrainSpikePresented) { BrainSpikeView() }
+                .navigationDestination(isPresented: $isMeetingsPresented) { MeetingsSettingsView() }
                 #endif
                 .sheet(item: $safariURL) { item in SafariView(url: item.url) }
                 .sheet(isPresented: $isCustomizePresented) { CustomizeSheet() }
                 .sheet(isPresented: $isConnectorsPresented) { ConnectorsListView() }
                 .task {
                     PreferencesStore.shared.fetchIfNeeded()
+                    await meetings.refreshFlag()
+                    if meetings.isEnabled { await meetings.loadSettings() }
                     UsageStore.shared.fetchUsageIfNeeded()
                     if authManager.isSignedIn { AccountPlanStore.shared.load() }
                 }
@@ -95,6 +110,7 @@ struct SettingsView: View {
                         }
                     }
                     if launchArgumentEnabled("open-settings-brain-spike") { isBrainSpikePresented = true }
+                    if launchArgumentEnabled("open-settings-meetings") { isMeetingsPresented = true }
                     #endif
                 }
             }
@@ -170,6 +186,15 @@ struct SettingsView: View {
                     // Customize (skills, connectors, plugins) is its own screen on the phone.
                     actionRow("Customize", systemImage: "slider.horizontal.3") { isCustomizePresented = true }
                     PhoneCardDivider()
+                    if meetings.isEnabled {
+                        NavigationLink { MeetingsSettingsView() } label: {
+                            PhoneSettingsRowContent(title: "Meetings", systemImage: "video",
+                                                    value: Self.meetingsRuleLabel(meetings.settings?.autoJoin)) { PhoneRowChevron() }
+                        }
+                        .buttonStyle(PhoneRowButtonStyle())
+                        .accessibilityIdentifier("settingsMeetingsRow")
+                        PhoneCardDivider()
+                    }
                 }
                 rows(SettingsPageID.items(group))
                 switch group {

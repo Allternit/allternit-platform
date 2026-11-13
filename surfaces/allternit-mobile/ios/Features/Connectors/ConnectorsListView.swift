@@ -58,6 +58,8 @@ struct ConnectorsListView: View {
                 searchBar
                 Divider().background(Color("BorderSubtle"))
                 ScrollView {
+                    // Meetings: the calendar step, until a calendar is connected.
+                    MeetingsConnectorsPrompt()
                     content
                 }
                 .refreshable { await loadConnectors() }

@@ -11,6 +11,14 @@
 //! is an RFC 3339 time. Writes go through Clerk's metadata endpoint, which
 //! deep-merges, so other `unsafe_metadata` keys survive. A missing
 //! `CLERK_SECRET_KEY` or a Clerk failure answers 503 (fail closed).
+//!
+//! The `flags` object also carries server feature flags (booleans,
+//! read-only, never stored in Clerk; a PUT naming one is a 400).
+//! `flags.meetings` gates the Meetings view and is off by default: on for
+//! everyone with
+//! `ALLTERNIT_MEETINGS_ENABLED=1`, else for the user ids in
+//! `ALLTERNIT_MEETINGS_USER_IDS` (comma-separated) and for admins
+//! (`ALLTERNIT_ADMIN_USER_IDS`).
 
 use axum::{
     extract::State,
@@ -39,7 +47,8 @@ async fn get_my_flags(
     headers: HeaderMap,
 ) -> Result<Json<Value>, ApiError> {
     let user = auth::resolve_user_scoped(&state.db, &headers, "account").await?;
-    read_flags_with(&TrustConfig::from_env(), &user.id).await.map(Json)
+    let flags = read_flags_with(&TrustConfig::from_env(), &user.id).await?;
+    Ok(Json(with_features(flags, &user.id)))
 }
 
 async fn put_my_flags(
@@ -49,9 +58,35 @@ async fn put_my_flags(
 ) -> Result<Json<Value>, ApiError> {
     let user = auth::resolve_user_scoped(&state.db, &headers, "account").await?;
     let updates = validate_updates(&body)?;
-    write_flags_with(&TrustConfig::from_env(), &user.id, updates)
-        .await
-        .map(Json)
+    let flags = write_flags_with(&TrustConfig::from_env(), &user.id, updates).await?;
+    Ok(Json(with_features(flags, &user.id)))
+}
+
+/// Server feature flags for `user_id`, added to the `flags` object.
+fn with_features(mut flags: Value, user_id: &str) -> Value {
+    let meetings = feature_on(
+        std::env::var("ALLTERNIT_MEETINGS_ENABLED").ok().as_deref(),
+        std::env::var("ALLTERNIT_MEETINGS_USER_IDS").ok().as_deref(),
+        user_id,
+        auth::is_admin_user(user_id),
+    );
+    if let Some(map) = flags.get_mut("flags").and_then(Value::as_object_mut) {
+        map.insert("meetings".to_string(), Value::Bool(meetings));
+    }
+    flags
+}
+
+/// A default-off server feature: on for everyone when `all` is truthy,
+/// else for the ids in the comma-separated `allowlist`, and for admins.
+pub(crate) fn feature_on(all: Option<&str>, allowlist: Option<&str>, user_id: &str, is_admin: bool) -> bool {
+    let truthy = matches!(
+        all.map(|v| v.trim().to_ascii_lowercase()).as_deref(),
+        Some("1" | "true" | "yes" | "on")
+    );
+    truthy
+        || is_admin
+        || (!user_id.is_empty()
+            && allowlist.is_some_and(|list| list.split(',').any(|id| id.trim() == user_id)))
 }
 
 /// Check a PUT body: a non-empty object of allowlisted keys, each an
@@ -121,7 +156,7 @@ pub(crate) async fn write_flags_with(
     clerk_user(request, user_id).await.map(|user| flags_response(&user))
 }
 
-fn clerk_client<'a>(config: &'a TrustConfig) -> Result<(reqwest::Client, &'a str), ApiError> {
+fn clerk_client(config: &TrustConfig) -> Result<(reqwest::Client, &str), ApiError> {
     let Some(secret) = config.clerk_secret_key.as_deref().filter(|s| !s.is_empty()) else {
         return Err(ApiError::ServiceUnavailable(
             "Account flags are unavailable: CLERK_SECRET_KEY is not set".to_string(),
@@ -301,6 +336,24 @@ mod tests {
         ] {
             assert_eq!(flags_response(&user), json!({ "flags": { "botsIntroSeenAt": null } }));
         }
+    }
+
+    #[test]
+    fn meetings_feature_is_off_unless_enabled_listed_or_admin() {
+        assert!(!feature_on(None, None, "user_1", false), "default off");
+        assert!(!feature_on(Some("0"), Some("user_2, user_3"), "user_1", false));
+        assert!(!feature_on(None, Some(""), "", false), "empty id never matches");
+        assert!(feature_on(Some("true"), None, "user_1", false));
+        assert!(feature_on(None, Some("user_2, user_1"), "user_1", false));
+        assert!(feature_on(None, None, "user_1", true), "admins see it");
+        let flags = with_features(json!({ "flags": { "botsIntroSeenAt": null } }), "nobody-listed");
+        assert_eq!(flags["flags"]["botsIntroSeenAt"], Value::Null, "stored flags untouched");
+        assert!(flags["flags"]["meetings"].is_boolean());
+        // Read-only: a client can't switch its own feature on.
+        assert!(matches!(
+            validate_updates(&json!({ "meetings": "2026-11-13T00:00:00Z" })),
+            Err(ApiError::BadRequest(_))
+        ));
     }
 
     #[test]

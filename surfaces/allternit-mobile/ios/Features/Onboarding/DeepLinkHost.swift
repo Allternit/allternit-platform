@@ -30,6 +30,12 @@ struct DeepLinkHost: ViewModifier {
     @State private var inviteURL: IdentifiableURL?
     @State private var linkError: String?
     @State private var isResolving = false
+    @State private var meetingsLink: MeetingsLink?
+
+    struct MeetingsLink: Identifiable {
+        let id = UUID()
+        let meetingId: String?
+    }
 
     func body(content: Content) -> some View {
         content
@@ -51,6 +57,9 @@ struct DeepLinkHost: ViewModifier {
                     .padding(.top, 8)
                     .transition(.opacity)
                 }
+            }
+            .sheet(item: $meetingsLink) { link in
+                MeetingsView(focusMeetingId: link.meetingId)
             }
             .sheet(item: $botSheet) { agent in
                 NavigationStack {
@@ -121,6 +130,7 @@ struct DeepLinkHost: ViewModifier {
         routineSheet = nil
         runSheet = nil
         inviteURL = nil
+        meetingsLink = nil
         switch link {
         case .session(let id):
             openSession(id)
@@ -168,6 +178,8 @@ struct DeepLinkHost: ViewModifier {
             }
         case .routine(let id):
             Task { await openRoutine(id) }
+        case .meetings(let id):
+            meetingsLink = MeetingsLink(meetingId: id)
         case .handoff:
             // The bots launchpad composer hands a task to the team (a new bot
             // project + its coordinator), same as HandOffTaskIntent.

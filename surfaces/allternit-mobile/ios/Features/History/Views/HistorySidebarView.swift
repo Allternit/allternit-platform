@@ -75,6 +75,7 @@ struct HistorySidebarView: View {
     @State private var isComputersPresented = false
     @State private var isInboxPresented = false
     @State private var isPhonesPresented = false
+    @State private var isMeetingsPresented = false
     @State private var isCustomizePresented = false
     @State private var isConnectorsPresented = false
     /// "Continue CLI session": the surface the picked-up session opens in.
@@ -147,6 +148,9 @@ struct HistorySidebarView: View {
         .sheet(isPresented: $isPhonesPresented) {
             PhonesSheet { botId in openBotPhone(botId) }
         }
+        .sheet(isPresented: $isMeetingsPresented) {
+            MeetingsView()
+        }
         .sheet(isPresented: $isCustomizePresented) {
             CustomizeSheet()
         }
@@ -195,9 +199,17 @@ struct HistorySidebarView: View {
             if launchArgumentEnabled("open-settings")
                 || launchArgumentEnabled("open-settings-memory")
                 || launchArgumentEnabled("open-settings-brain-spike")
+                || launchArgumentEnabled("open-settings-meetings")
                 || launchArgumentEnabled("open-usage") {
                 isSettingsPresented = true
             }
+            // Meetings (lane 2.11): the sheet, its live page / recap / paste
+            // sheet, or the Connectors calendar prompt.
+            if launchArgumentEnabled("open-meetings") || launchArgumentEnabled("open-meeting-live")
+                || launchArgumentEnabled("open-meeting-recap") || launchArgumentEnabled("open-meetings-paste") {
+                isMeetingsPresented = true
+            }
+            if launchArgumentEnabled("open-connectors-meetings") { isConnectorsPresented = true }
             if launchArgumentEnabled("open-search") { isSearchPresented = true }
             if launchArgumentEnabled("open-quick-task") { isQuickTaskPresented = true }
             if launchArgumentEnabled("open-mode-dial") { isDialExpanded = true }
@@ -757,6 +769,7 @@ struct HistorySidebarView: View {
         HStack(spacing: 10) {
             accountAvatar
             PhonesDrawerButton { isPhonesPresented = true }
+            MeetingsDrawerButton { isMeetingsPresented = true }
             Spacer(minLength: 0)
             newPill
         }

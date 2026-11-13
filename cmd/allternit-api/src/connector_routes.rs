@@ -139,9 +139,34 @@ async fn mcp_proxy(
     let user_id = caller(&headers);
     let bot_conn = bot_connection_header(&headers);
     serve_connectors_mcp(&headers, body, |body| async move {
-        proxy_mcp_value(&state.db, user_id, body, bot_conn).await
+        if let Some(resp) = handle_meetings_mcp(&state, &body).await {
+            return Ok(resp);
+        }
+        let is_list = body.get("method").and_then(|m| m.as_str()) == Some("tools/list");
+        let mut resp = proxy_mcp_value(&state.db, user_id, body, bot_conn).await?;
+        if is_list {
+            crate::meetings_mcp::extend_list(&mut resp);
+        }
+        Ok(resp)
     })
     .await
+}
+
+/// `meetings__*` tools (docs/meetings/CONTRACT.md section 8): a `tools/call` is answered here with this
+/// runtime's device token against cloud-api; `tools/list` gets the tools appended by the callers.
+async fn handle_meetings_mcp(state: &Arc<AppState>, body: &Value) -> Option<Value> {
+    if body.get("method").and_then(|m| m.as_str()) != Some("tools/call") {
+        return None;
+    }
+    let name = body.get("params").and_then(|p| p.get("name")).and_then(|n| n.as_str())?;
+    if !crate::meetings_mcp::is_tool(name) {
+        return None;
+    }
+    let args = body.get("params").and_then(|p| p.get("arguments")).cloned().unwrap_or_else(|| json!({}));
+    let id = body.get("id").cloned().unwrap_or(Value::Null);
+    let base = state.config.cloud_api_url().unwrap_or_else(crate::phone_sync::cloud_base);
+    let token = crate::phone_sync::runtime_bearer();
+    Some(crate::meetings_mcp::call_rpc(&base, token.as_deref(), &id, name, &args).await)
 }
 
 fn connectors_server_spec() -> mcp_protocol::ServerSpec {
@@ -529,6 +554,9 @@ pub async fn mcp_proxy_internal(
     // inside the tool handlers, same as the REST surface).
     let bot_conn = bot_connection_header(&headers);
     serve_connectors_mcp(&headers, body, |body| async move {
+        if let Some(resp) = handle_meetings_mcp(&state, &body).await {
+            return Ok(resp);
+        }
         if let Some(resp) = handle_allternit_mail_mcp(&state, &user_id, &body).await {
             return Ok(resp);
         }
@@ -586,6 +614,7 @@ async fn handle_allternit_mail_mcp(
             }
             tools.extend(crate::platform_tools::mcp_tools(user_id));
             tools.extend(crate::messages_mac::mcp_tools(&state.db, user_id));
+            tools.extend(crate::meetings_mcp::tools());
             mcp_protocol::ordering::sort_tools(&mut tools);
             Some(rpc_ok(json!({ "tools": tools })))
         }
