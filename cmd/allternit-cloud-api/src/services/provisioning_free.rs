@@ -455,8 +455,11 @@ impl ProvisioningService {
 
     /// True when some host in the pool has memory for a free computer of `need_mb`.
     pub(crate) async fn free_memory_available(&self, user_id: &str, need_mb: i64) -> Result<bool, ApiError> {
+        // Hosts first: holding a connection while `free_pool_hosts` takes a
+        // second one deadlocks a small pool.
+        let hosts = self.free_pool_hosts(user_id).await?;
         let mut conn = self.db.acquire().await?;
-        for id in self.free_pool_hosts(user_id).await? {
+        for id in hosts {
             if host_memory_fits(&mut *conn, &id, need_mb).await? {
                 return Ok(true);
             }
