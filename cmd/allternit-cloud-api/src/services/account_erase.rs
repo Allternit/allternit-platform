@@ -51,6 +51,15 @@ pub const RETAIN: &[(&str, &str)] = &[
 /// `(table, condition)`, run in this order with the user id as `$1`. A table
 /// that another table references without a cascade comes after that table.
 pub const ERASE: &[(&str, &str)] = &[
+    // Meetings (migration 130), children first; sessions cascade from meetings.
+    ("meeting_tool_approvals", USER),
+    ("meeting_participants", "user_id = $1 OR session_id IN (SELECT id FROM meeting_sessions WHERE user_id = $1)"),
+    ("meeting_bot_minutes", USER),
+    ("meeting_sessions", USER),
+    ("meetings", USER),
+    ("calendar_connections", USER),
+    ("zoom_connections", USER),
+    ("user_meeting_settings", USER),
     // Platform API projects, children first.
     ("platform_webhook_deliveries", "webhook_id IN (SELECT id FROM platform_webhooks WHERE user_id = $1 OR project_id IN (SELECT id FROM platform_projects WHERE owner_user_id = $1)) OR event_id IN (SELECT id FROM platform_events WHERE user_id = $1 OR project_id IN (SELECT id FROM platform_projects WHERE owner_user_id = $1))"),
     ("platform_webhooks", "user_id = $1 OR project_id IN (SELECT id FROM platform_projects WHERE owner_user_id = $1)"),
