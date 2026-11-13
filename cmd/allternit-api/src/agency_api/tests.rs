@@ -1052,3 +1052,27 @@ async fn agency_executor_selects_the_passing_candidate_from_isolated_checkouts()
     assert!(!b.contains("\"step\":\"N17\""), "no repair round needed");
     assert_no_vendor(&b);
 }
+
+/// Known gap closed 2026-11-13: an expired child-template request left its
+/// parent run parked forever (`release_parents` ran only on a person's answer).
+#[tokio::test]
+async fn an_expired_child_request_releases_the_parent_run() {
+    use allternit_factory_engine::ledger::{Ledger, LedgerOptions};
+    let dir = tempfile::tempdir().unwrap();
+    let s = AgencyStore::new(Arc::new(Ledger::new(LedgerOptions { root_dir: Some(dir.path().to_path_buf()), ledger_dir: Some(std::path::PathBuf::from("ledger")) })));
+    let run = |id: &str, att: Value| store::RunRecord {
+        owner: "u1".into(), idempotency_key: None, run: json!({ "id": id, "status": "needs_attention", "version": 0 }), task_ir: json!({}), attention: vec![att],
+    };
+    s.save(run("run_child", json!({ "id": "att_child", "status": "open", "kind": "approval", "reason": executor::generic::TASK_WAIT_REASON, "expires_at": "2026-01-01T00:00:00Z" }))).await.unwrap();
+    // The parent's own item is not due: only the child's expiry can settle it.
+    s.save(run("run_parent", json!({ "id": "att_parent", "status": "open", "kind": "approval", "reason": effect_template::CHILD_ATTENTION_REASON,
+        "child_run_id": "run_child", "child_attention_id": "att_child", "expires_at": "2099-01-01T00:00:00Z" }))).await.unwrap();
+
+    let mut requeue = s.expire_attention().await.unwrap();
+    requeue.sort();
+    assert_eq!(requeue, vec!["run_child".to_string(), "run_parent".to_string()]);
+    let parent = s.load_run("run_parent").await.unwrap().unwrap();
+    assert_eq!(parent.run["status"], "waiting");
+    assert_eq!((parent.attention[0]["status"].as_str(), parent.attention[0]["resolution"]["outcome"].as_str()), (Some("expired"), Some("rejected")));
+    assert!(s.events("run_parent").await.unwrap().iter().any(|e| e["type"] == "attention.expired" && e["data"]["attention_id"] == "att_parent"));
+}

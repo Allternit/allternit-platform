@@ -3524,7 +3524,7 @@ components:
         status: { type: string, enum: [in_progress, completed, failed, incomplete] }
         role: { type: [string, "null"], enum: [user, assistant, system, developer, null] }
         content: { type: array, items: { $ref: "#/components/schemas/ContentPart" }, description: "message items." }
-        call_id: { type: string, description: "function_call, function_call_output." }
+        call_id: { type: string, description: "function_call, function_call_output; on tool_call, the runtime's tool call id when it sent one (also on the `response.tool_call.*` stream events)." }
         name: { type: string, description: "function_call, tool_call." }
         arguments: { type: string, description: "function_call: JSON text." }
         output: { description: "function_call_output (string) or tool_call (any)." }

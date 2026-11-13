@@ -527,12 +527,17 @@ impl OutputFold {
     async fn tool_started(&mut self, sink: &mut dyn ItemSink, e: &Value) -> Result<Vec<Ev>, PlatformError> {
         let mut out = self.close_text(sink, &End::Completed).await?;
         let name = e["name"].as_str().unwrap_or("tool");
-        let (index, added) = self.open(sink, NewItem::tool_call(name, cut(&e["input"]), Value::Null, "in_progress", None)).await?;
+        let call_id = e["toolCallId"].as_str().filter(|c| !c.is_empty());
+        let (index, added) = self.open(sink, NewItem::tool_call(name, cut(&e["input"]), Value::Null, "in_progress", None).with_call_id(call_id)).await?;
         out.extend(added);
-        if let Some(id) = e["toolCallId"].as_str() {
+        if let Some(id) = call_id {
             self.tools.insert(id.to_string(), index);
         }
-        out.push(ev("response.tool_call.started", json!({ "item_id": self.output[index].id, "output_index": index, "name": name, "input": cut(&e["input"]) })));
+        let mut data = json!({ "item_id": self.output[index].id, "output_index": index, "name": name, "input": cut(&e["input"]) });
+        if let Some(id) = call_id {
+            data["call_id"] = json!(id);
+        }
+        out.push(ev("response.tool_call.started", data));
         Ok(out)
     }
 
@@ -545,7 +550,8 @@ impl OutputFold {
             None => {
                 out.extend(self.close_text(sink, &End::Completed).await?);
                 let name = e["name"].as_str().unwrap_or("tool");
-                let (i, added) = self.open(sink, NewItem::tool_call(name, cut(&e["input"]), Value::Null, "in_progress", None)).await?;
+                let call_id = e["toolCallId"].as_str().filter(|c| !c.is_empty());
+                let (i, added) = self.open(sink, NewItem::tool_call(name, cut(&e["input"]), Value::Null, "in_progress", None).with_call_id(call_id)).await?;
                 out.extend(added);
                 i
             }
@@ -562,6 +568,9 @@ impl OutputFold {
         }
         let it = &self.output[index];
         let mut data = json!({ "item_id": it.id, "output_index": index, "name": it.content["name"], "input": it.content["input"] });
+        if !it.content["call_id"].is_null() {
+            data["call_id"] = it.content["call_id"].clone();
+        }
         if failed {
             data["error"] = json!(error);
             out.push(ev("response.tool_call.failed", data));

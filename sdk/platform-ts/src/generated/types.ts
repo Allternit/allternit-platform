@@ -784,7 +784,7 @@ export type Item = {
    */
   content?: Array<ContentPart>;
   /**
-   * function_call, function_call_output.
+   * function_call, function_call_output; on tool_call, the runtime's tool call id when it sent one (also on the `response.tool_call.*` stream events).
    */
   call_id?: string;
   /**
