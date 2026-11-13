@@ -703,7 +703,11 @@ jobs:
     if: github.event_name != 'workflow_dispatch' || inputs.platforms == 'all' || inputs.platforms == 'linux'
     name: Build Linux
     needs: [unit-tests, release-preflight]
-    runs-on: ubuntu-latest
+    # Pinned, not ubuntu-latest: the Rust sidecars link against the runner's
+    # glibc. ubuntu-latest moved to 26.04 (glibc 2.43) and the 1.1.14 .deb's
+    # allternit-api then refused to start on Ubuntu 24.04 (glibc 2.39), the
+    # cloud computer base. Build on the oldest Ubuntu we support.
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
 
@@ -727,7 +731,7 @@ jobs:
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
         with:
-          key: allternit-api-linux
+          key: allternit-api-linux-u2404
 
       # ── Step 2: Build gizzi-code for Linux ─────────────────────────────────
       - name: Setup Bun
@@ -778,8 +782,8 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: .prebuilt/rust-linux
-          key: prebuilt-rust-linux-${{ github.sha }}-${{ github.run_id }}
-          restore-keys: prebuilt-rust-linux-
+          key: prebuilt-rust-linux-u2404-${{ github.sha }}-${{ github.run_id }}
+          restore-keys: prebuilt-rust-linux-u2404-
 
       - name: Reuse prebuilt Rust binaries if unchanged
         id: prebuilt
@@ -807,7 +811,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: .prebuilt/rust-linux
-          key: prebuilt-rust-linux-${{ github.sha }}-${{ github.run_id }}
+          key: prebuilt-rust-linux-u2404-${{ github.sha }}-${{ github.run_id }}
 
       - name: Build voice service sidecar (Linux)
         # Same as macOS/Windows: allternit-voice-service (STT + API, no GPL)
