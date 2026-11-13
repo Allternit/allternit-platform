@@ -11,7 +11,7 @@ const CATALOG: CloudContinue.CatalogModel[] = [
   { id: "claude-sonnet-4.6", name: "Claude Sonnet 4.6", upstream_id: "anthropic/claude-sonnet-4.6", aliases: ["claude-sonnet"] },
   { id: "kimi-k3", name: "Kimi K3", upstream_id: "moonshotai/Kimi-K3", lane: "standard" },
   { id: "glm-5.3-open", name: "GLM 5.3 (open)", upstream_id: "zai-org/GLM-5.3", lane: "open" },
-  { id: "deepseek-v4-pro", name: "DeepSeek V4 Pro", upstream_id: "deepseek-ai/DeepSeek-V4-Pro-0813", lane: "standard" },
+  { id: "deepseek-v4.1-flash", name: "DeepSeek V4.1 Flash", upstream_id: "deepseek/deepseek-v4.1-flash", lane: "standard" },
 ]
 
 const prevToken = process.env.ALLTERNIT_API_TOKEN
@@ -39,10 +39,20 @@ describe("choosing the Cloud model", () => {
   })
 
   test("else the Cloud default; never an open-lane model", () => {
-    expect(CloudContinue.pickModel(CATALOG, "gpt-5.5")?.modelID).toBe("deepseek-v4-pro")
-    expect(CloudContinue.pickModel(CATALOG, "glm-5.3")?.modelID).toBe("deepseek-v4-pro")
-    expect(CloudContinue.pickModel(CATALOG)?.modelID).toBe("deepseek-v4-pro")
-    expect(CloudContinue.pickModel(CATALOG.filter((m) => m.id !== "deepseek-v4-pro"), "gpt-5.5")).toBeUndefined()
+    expect(CloudContinue.pickModel(CATALOG, "gpt-5.5")?.modelID).toBe("deepseek-v4.1-flash")
+    expect(CloudContinue.pickModel(CATALOG, "glm-5.3")?.modelID).toBe("deepseek-v4.1-flash")
+    expect(CloudContinue.pickModel(CATALOG)?.modelID).toBe("deepseek-v4.1-flash")
+    expect(CloudContinue.pickModel(CATALOG.filter((m) => m.id !== "deepseek-v4.1-flash"), "gpt-5.5")).toBeUndefined()
+  })
+
+  // 2026-11-13: the old fixed fallback (DeepSeek V4 Pro) left the list when
+  // its upstream ran out of money, so the offer vanished. The catalog's own
+  // default (it moves to a funded model) wins; a hidden row is never offered.
+  test("the model the catalog flags as default wins over the fixed fallback", () => {
+    const flagged = CATALOG.map((m) => (m.id === "kimi-k3" ? { ...m, default: true } : m))
+    expect(CloudContinue.pickModel(flagged, "gpt-5.5")?.modelID).toBe("kimi-k3")
+    const hiddenDefault = CATALOG.map((m) => (m.id === "kimi-k3" ? { ...m, default: true, hidden: true } : m))
+    expect(CloudContinue.pickModel(hiddenDefault, "gpt-5.5")?.modelID).toBe("deepseek-v4.1-flash")
   })
 
   test("funds: balance, then plan grant, then free allowance, else none", () => {
@@ -109,7 +119,7 @@ describe("keep going on Allternit Cloud", () => {
         SessionPause.pause(s.id, { until: Date.now() + 7_200_000, limit: "Codex 5-hour limit", reason: "limit_hit", providerID: "codex-cli" })
 
         const broke = await SessionPause.continueOnCloud(s.id, { fetch: fakeCloud({ balance_usd: 0, free_inference: { remaining_usd: 0 } }) })
-        expect(broke).toMatchObject({ resumed: false, reason: "no_funds", cloud: { modelID: "deepseek-v4-pro", funds: { kind: "none" } } })
+        expect(broke).toMatchObject({ resumed: false, reason: "no_funds", cloud: { modelID: "deepseek-v4.1-flash", funds: { kind: "none" } } })
         expect((await Session.get(s.id)).paused?.cloud?.funds.kind).toBe("none")
 
         // The Cloud turn itself (SessionPrompt) isn't run here; the switch is what matters.
@@ -118,18 +128,18 @@ describe("keep going on Allternit Cloud", () => {
           fetch: fakeCloud({ balance_usd: 4.2 }),
           resume: async (id, opts) => void resumed.push([id, opts]),
         })
-        expect(ok).toMatchObject({ resumed: true, cloud: { modelID: "deepseek-v4-pro", label: "DeepSeek V4 Pro", funds: { kind: "balance", usd: 4.2 } } })
+        expect(ok).toMatchObject({ resumed: true, cloud: { modelID: "deepseek-v4.1-flash", label: "DeepSeek V4.1 Flash", funds: { kind: "balance", usd: 4.2 } } })
         expect(resumed).toHaveLength(1)
         const [id, opts] = resumed[0]
         expect(id).toBe(s.id)
-        expect(opts?.model).toEqual({ providerID: "allternit", modelID: "deepseek-v4-pro" })
-        expect(opts?.note?.cloudContinue).toMatchObject({ modelID: "deepseek-v4-pro", limit: "Codex 5-hour limit", from: "codex-cli" })
+        expect(opts?.model).toEqual({ providerID: "allternit", modelID: "deepseek-v4.1-flash" })
+        expect(opts?.note?.cloudContinue).toMatchObject({ modelID: "deepseek-v4.1-flash", limit: "Codex 5-hour limit", from: "codex-cli" })
 
         // What the resumed turn sends: the visible note, then the synthetic carry-on.
         const parts = SessionPause.continueParts({ note: opts!.note, early: true, model: opts!.model! })
         expect(parts[0]).toMatchObject({
-          text: "Continued on Allternit Cloud (DeepSeek V4 Pro) after the Codex 5-hour limit was reached.",
-          metadata: { cloudContinue: { modelID: "deepseek-v4-pro" } },
+          text: "Continued on Allternit Cloud (DeepSeek V4.1 Flash) after the Codex 5-hour limit was reached.",
+          metadata: { cloudContinue: { modelID: "deepseek-v4.1-flash" } },
         })
         expect(parts[0]).not.toHaveProperty("synthetic")
         expect(parts[1]).toMatchObject({ synthetic: true, text: "Carry on where you left off; don't repeat finished work." })

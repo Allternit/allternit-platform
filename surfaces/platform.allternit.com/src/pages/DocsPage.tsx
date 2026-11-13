@@ -22,7 +22,7 @@ function snippet(lang: Lang, key: string): string {
   -H "Authorization: Bearer ${key}" \\
   -H "Content-Type: application/json" \\
   -d '{
-    "model": "kimi-k3",
+    "model": "deepseek-v4.1-flash",
     "messages": [{"role": "user", "content": "Hello, Allternit"}]
   }'`;
   }
@@ -31,7 +31,7 @@ function snippet(lang: Lang, key: string): string {
 
 client = OpenAI(base_url="https://api.allternit.com/v1", api_key="${key}")
 reply = client.chat.completions.create(
-    model="kimi-k3",
+    model="deepseek-v4.1-flash",
     messages=[{"role": "user", "content": "Hello, Allternit"}],
 )
 print(reply.choices[0].message.content)`;
@@ -43,7 +43,7 @@ print(reply.choices[0].message.content)`;
     "Content-Type": "application/json",
   },
   body: JSON.stringify({
-    model: "kimi-k3",
+    model: "deepseek-v4.1-flash",
     messages: [{ role: "user", content: "Hello, Allternit" }],
   }),
 });

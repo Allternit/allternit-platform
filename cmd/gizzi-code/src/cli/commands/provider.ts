@@ -68,7 +68,7 @@ const KNOWN_PROVIDERS: Array<{
   models_hint?: string // example model IDs
 }> = [
   // ── API key providers ────────────────────────────────────────────────────
-  { id: "allternit",   name: "Allternit",    auth_type: "api_key", base_url: "https://api.allternit.com/v1",        env: "ALLTERNIT_API_KEY",   key_url: "https://platform.allternit.com/api-keys", models_hint: "kimi-k3, deepseek-v4-pro, glm-5.3 (all: platform.allternit.com/models)" },
+  { id: "allternit",   name: "Allternit",    auth_type: "api_key", base_url: "https://api.allternit.com/v1",        env: "ALLTERNIT_API_KEY",   key_url: "https://platform.allternit.com/api-keys", models_hint: "claude-sonnet-5.5, deepseek-v4.1-flash, glm-5.3-flash (all: platform.allternit.com/models)" },
   { id: "openai",      name: "OpenAI",       auth_type: "api_key", base_url: "https://api.openai.com/v1",           env: "OPENAI_API_KEY",      key_url: "https://platform.openai.com/api-keys",   models_hint: "gpt-5, gpt-5-mini, gpt-4o" },
   { id: "google",      name: "Google AI",    auth_type: "api_key", base_url: "https://generativelanguage.googleapis.com/v1beta", env: "GEMINI_API_KEY", key_url: "https://aistudio.google.com/app/apikey", models_hint: "gemini-2.5-pro" },
   { id: "moonshot",    name: "Kimi (Moonshot)", auth_type: "api_key", base_url: "https://api.moonshot.ai/v1",      env: "MOONSHOT_API_KEY",    key_url: "https://platform.moonshot.cn/console",   models_hint: "kimi-k2, moonshot-v1-128k" },

@@ -85,7 +85,7 @@ export function ModelPicker({
             type="text"
             value={value}
             onChange={(e) => onChange(e.target.value)}
-            placeholder="model id, e.g. kimi-k3"
+            placeholder="model id, e.g. deepseek-v4.1-flash"
             className={INPUT_CLASS}
           />
         )}

@@ -49,7 +49,7 @@ const CACHE_CONTROL_CURL = `curl ${gatewayBase()}/v1/chat/completions \\
   -H "Authorization: Bearer $ALLTERNIT_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{
-    "model": "kimi-k3",
+    "model": "deepseek-v4.1-flash",
     "messages": [
       {
         "role": "system",

@@ -26,6 +26,8 @@ export interface ConsoleModel {
   completion_price?: number;
   supports_tools?: boolean;
   supports_vision?: boolean;
+  /** The model Cloud recommends (`default: true` on GET /v1/models). */
+  default?: boolean;
   /** Derived cents per 1M tokens (auto policy + dashboard cards). */
   pricing?: {
     input_cents_per_1m?: number;
@@ -48,6 +50,7 @@ interface ModelRowJson {
   supported_parameters?: string[];
   architecture?: { input_modalities?: string[] };
   hidden?: boolean;
+  default?: boolean;
   pricing?: {
     input_cents_per_1m?: number;
     output_cents_per_1m?: number;
@@ -70,6 +73,7 @@ export function normalizeModelRow(m: ModelRowJson): ConsoleModel {
     completion_price: m.completion_price,
     supports_tools: m.supports_tools === true || params.includes("tools"),
     supports_vision: m.supports_image_input === true || modalities.includes("image"),
+    ...(m.default === true ? { default: true } : {}),
     pricing: hasFlat
       ? {
           input_cents_per_1m: (m.prompt_price ?? 0) * 1e8,

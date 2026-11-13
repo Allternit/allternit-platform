@@ -692,3 +692,29 @@ fn default_alias_is_the_flagged_listed_model() {
     let only_open = ModelAliasMap::new(vec![entry("open-1", open, true, true)]);
     assert_eq!(ModelRouter::disabled(only_open).default_alias(), None);
 }
+
+/// 2026-11-13: Fireworks had no money, so its rows left `/v1/models`,
+/// including the catalog default (Kimi K3), and no row carried
+/// `default: true`. The flag must move to the model the server uses instead.
+#[tokio::test]
+async fn default_flag_moves_when_the_default_provider_is_out_of_credits() {
+    use crate::services::upstream_funding::mark_out_of_credits;
+    // A provider id used only by this test, so parallel tests are unaffected.
+    let unfunded = "test-unfunded-default-provider";
+    let entry = |alias: &str, provider: &str, default: bool| ModelAliasEntry {
+        alias: alias.to_string(),
+        provider: provider.to_string(),
+        upstream_id: format!("up/{alias}"),
+        default,
+        ..Default::default()
+    };
+    let catalog = ModelAliasMap::new(vec![entry("funded", "openrouter", false), entry("catalog-default", unfunded, true)]);
+    mark_out_of_credits(unfunded);
+    let router = ModelRouter::disabled(catalog);
+
+    let models = router.list_models().await;
+    let ids: Vec<&str> = models.iter().map(|m| m.id.as_str()).collect();
+    assert_eq!(ids, vec!["funded"]);
+    assert_eq!(models[0].extra["default"], true);
+    assert_eq!(router.default_alias(), Some("funded"));
+}

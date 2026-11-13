@@ -21,7 +21,7 @@ import { usePlatformAuth } from "@/lib/platform-auth-client";
 import { cn } from "@/lib/utils";
 
 const BASE_URL = "https://api.allternit.com/v1";
-const QUICKSTART_MODEL = "deepseek-v4-pro";
+const QUICKSTART_MODEL = "deepseek-v4.1-flash";
 const KEY_PATH = "/api-keys?create=inference";
 const BILLING_PATH = "/billing";
 const DOCS = "https://docs.allternit.com";

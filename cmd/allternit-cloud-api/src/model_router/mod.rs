@@ -297,12 +297,16 @@ impl ModelRouter {
     }
 
     /// List the models clients may pick, starting with the static catalog.
-    /// The default model comes first and every row carries `default:
-    /// true|false`; unlisted aliases come last with `hidden: true` (listed
+    /// The default model (`default_alias`) comes first and every row carries
+    /// `default: true|false`; unlisted aliases come last with `hidden: true` (listed
     /// rows have no `hidden` key). Live upstream metadata is merged in when a
     /// provider is healthy.
     pub async fn list_models(&self) -> Vec<ModelInfo> {
         let mut models = Vec::new();
+        // The flag goes on the model the server actually uses as its default:
+        // when the catalog default's provider is out of credits, its row is
+        // left out and the next funded listed model carries `default: true`.
+        let default_alias = self.default_alias();
 
         for entry in self.alias_map.ordered_entries() {
             // Open-lane models are listed only while their upstream is set.
@@ -396,8 +400,10 @@ impl ModelRouter {
                 );
             }
             // Set last so upstream extras can never override these flags.
-            info.extra
-                .insert("default".to_string(), serde_json::Value::Bool(entry.default));
+            info.extra.insert(
+                "default".to_string(),
+                serde_json::Value::Bool(default_alias == Some(entry.alias.as_str())),
+            );
             if entry.listed {
                 info.extra.remove("hidden");
             } else {
