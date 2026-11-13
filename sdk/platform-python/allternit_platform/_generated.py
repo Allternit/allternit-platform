@@ -68,12 +68,13 @@ DecisionRequest = TypedDict('DecisionRequest', {'input': Union[str, List[Dict[st
 DecisionAnswer = TypedDict('DecisionAnswer', {'name': str, 'type': Literal['predicate', 'choice', 'score', 'refusal'], 'probability': float, 'choice': str, 'score': float, 'probabilities': List[Dict[str, Any]], 'confidence': float, 'backend': str, 'reason': Literal['abstained', 'unavailable', 'budget_exhausted']}, total=False)
 DecisionOutcome = TypedDict('DecisionOutcome', {'status': Literal['success', 'failure', 'error', 'skipped'], 'label': str, 'detail': str}, total=False)
 Decision = TypedDict('Decision', {'id': str, 'object': Literal['decision'], 'created_at': str, 'answers': List["DecisionAnswer"], 'backend': str, 'latency_ms': int, 'usage': Dict[str, Any], 'outcomes': Dict[str, Any], 'metadata': Dict[str, Any]}, total=False)
+DecisionList = Dict[str, Any]
 ContentPart = TypedDict('ContentPart', {'type': Literal['input_text', 'output_text', 'input_image'], 'text': str, 'image_url': str}, total=False)
 ItemInput = TypedDict('ItemInput', {'type': Literal['message', 'function_call_output'], 'role': Literal['user', 'assistant', 'system', 'developer'], 'content': Union[str, List["ContentPart"]], 'call_id': str, 'output': str}, total=False)
 Item = TypedDict('Item', {'id': str, 'object': Literal['item'], 'type': Literal['message', 'function_call', 'function_call_output', 'tool_call', 'approval_request'], 'conversation_id': Optional[str], 'response_id': Optional[str], 'status': Literal['in_progress', 'completed', 'failed', 'incomplete'], 'role': Optional[Literal['user', 'assistant', 'system', 'developer']], 'content': List["ContentPart"], 'call_id': str, 'name': str, 'arguments': str, 'output': Any, 'input': Any, 'error': Optional[str], 'approval_id': str, 'proposed_action': Dict[str, Any], 'created_at': str}, total=False)
 ItemList = Dict[str, Any]
 ResponseRequest = TypedDict('ResponseRequest', {'model': str, 'agent': str, 'input': Union[str, List["ItemInput"]], 'instructions': str, 'tools': List[Dict[str, Any]], 'tool_choice': Any, 'stream': bool, 'store': bool, 'conversation': str, 'previous_response_id': str, 'metadata': Dict[str, Any], 'max_output_tokens': int, 'temperature': float}, total=False)
-Response = TypedDict('Response', {'id': str, 'object': Literal['response'], 'status': Literal['in_progress', 'completed', 'failed', 'incomplete'], 'model': Optional[str], 'agent_id': Optional[str], 'conversation_id': Optional[str], 'previous_response_id': Optional[str], 'output': List["Item"], 'incomplete_details': Optional[Dict[str, Any]], 'required_actions': List[Dict[str, Any]], 'usage': Dict[str, Any], 'error': Optional[Dict[str, Any]], 'metadata': Dict[str, Any], 'created_at': str, 'completed_at': Optional[str]}, total=False)
+Response = TypedDict('Response', {'id': str, 'object': Literal['response'], 'status': Literal['in_progress', 'completed', 'failed', 'incomplete', 'requires_action'], 'model': Optional[str], 'agent_id': Optional[str], 'conversation_id': Optional[str], 'previous_response_id': Optional[str], 'output': List["Item"], 'incomplete_details': Optional[Dict[str, Any]], 'required_actions': List[Dict[str, Any]], 'usage': Dict[str, Any], 'error': Optional[Dict[str, Any]], 'metadata': Dict[str, Any], 'created_at': str, 'completed_at': Optional[str]}, total=False)
 ModelMessageRequest = TypedDict('ModelMessageRequest', {'model': str, 'system': Union[str, List[Dict[str, Any]]], 'messages': List[Dict[str, Any]], 'tools': List[Dict[str, Any]], 'tool_choice': Dict[str, Any], 'max_tokens': int, 'temperature': float, 'stream': bool, 'metadata': Dict[str, Any], 'thread': Dict[str, Any]}, total=False)
 ModelMessage = TypedDict('ModelMessage', {'id': str, 'type': Literal['message'], 'role': Literal['assistant'], 'content': List[Dict[str, Any]], 'model': str, 'stop_reason': Literal['end_turn', 'tool_use', 'max_tokens'], 'usage': Dict[str, Any]}, total=False)
 Text = TypedDict('Text', {'id': str, 'object': Literal['text'], 'account_id': Optional[str], 'number_id': str, 'direction': Literal['inbound', 'outbound'], 'from': str, 'to': str, 'body': str, 'segments': int, 'status': Literal['sent', 'simulated', 'received', 'failed'], 'error_code': Optional[str], 'media': List[Dict[str, Any]], 'created_at': str}, total=False)
@@ -1844,6 +1845,38 @@ class DecisionsResource:
     def __init__(self, client: Transport) -> None:
         self._client = client
 
+    def list(self, *, limit: int = NOT_GIVEN, after: str = NOT_GIVEN, account_id: str = NOT_GIVEN, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "DecisionList":
+        """List decisions
+
+        The project's stored decisions, newest first, in the usual cursor envelope (`limit` 1 to 100, default 20; pass `next_cursor` as `after`). A key bound to an account sees only that account's decisions; `account_id` narrows a project-wide key (`403 account_mismatch` for a bound key naming another account). Each item is the same `Decision` that `GET /v1/decisions/{id}` returns. Requires the `decisions` scope.
+
+        ``GET /v1/decisions``
+        """
+        _query: Dict[str, Any] = {}
+        if limit is not NOT_GIVEN:
+            _query['limit'] = limit
+        if after is not NOT_GIVEN:
+            _query['after'] = after
+        if account_id is not NOT_GIVEN:
+            _query['account_id'] = account_id
+        return self._client.request("GET", f"/v1/decisions", query=_query, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def list_all(self, *, limit: int = NOT_GIVEN, after: str = NOT_GIVEN, account_id: str = NOT_GIVEN, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Iterator["Decision"]:
+        """Every item of ``list``, fetching pages as you iterate."""
+        _query: Dict[str, Any] = {}
+        if limit is not NOT_GIVEN:
+            _query['limit'] = limit
+        if after is not NOT_GIVEN:
+            _query['after'] = after
+        if account_id is not NOT_GIVEN:
+            _query['account_id'] = account_id
+        def _fetch(cursor: Optional[str]) -> Page:
+            q = dict(_query)
+            if cursor is not None:
+                q['after'] = cursor
+            return self._client.request("GET", f"/v1/decisions", query=q, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+        return self._client.paginate(_fetch, after if after is not NOT_GIVEN else None)
+
     def create(self, *, input: Union[str, List[Dict[str, Any]]] = NOT_GIVEN, instructions: str = NOT_GIVEN, questions: Union[List["DecisionQuestion"], Dict[str, Any]] = NOT_GIVEN, latency_budget_ms: int = NOT_GIVEN, allow_abstain: bool = NOT_GIVEN, metadata: Dict[str, Any] = NOT_GIVEN, context: Any = NOT_GIVEN, options_: List[Dict[str, Any]] = NOT_GIVEN, kind: str = NOT_GIVEN, question: str = NOT_GIVEN, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "Decision":
         """Ask one or more questions about some input
 
@@ -1933,12 +1966,13 @@ class ResponsesResource:
         (hosted tools, arguments and results cut at 8,000 characters),
         `response.output_item.done`, then `response.completed`, `response.incomplete` or `response.failed`, and `error`
         for failures before the stream starts. Clients should skip event names they don't know.
-        Approvals never pause a turn: when an agent's action needs the owner's approval, that
-        tool call fails with a "try again once they approve" result and the turn still ends
-        `completed`. `required_actions` is reserved and always empty in this release. Approvals
-        are their own resource: subscribe to the `approval.requested` / `approval.resolved`
-        webhooks (or read `GET /v1/approvals`), and after resolution send a new response in the
-        same conversation. Errors before the stream starts are
+        When an agent's action needs the owner's approval, that tool call fails with a "try
+        again once they approve" result and the turn ends; this answer (and its stream) still
+        ends `completed`, because the approval is raised after the turn finishes. While it is
+        pending, `GET /v1/responses/{id}` reads `status: requires_action` with one
+        `required_actions` entry per pending approval. Resolve it with `POST /v1/approvals/{id}`
+        (or follow the `approval.requested` / `approval.resolved` webhooks), then send a new
+        response with `previous_response_id`. Errors before the stream starts are
         plain errors: `400 invalid_request` for `agent` with `store: false`, `agent` with client
         `tools`, or mixing `model` and `agent` turns in one conversation;
         `400 missing_function_call_output` when a `function_call` of the previous response has no
@@ -2011,7 +2045,7 @@ class ResponsesResource:
     def get(self, id: str, *, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "Response":
         """Retrieve a response
 
-        A stored response (`store` was not false) with its output items. Requires the `inference` or `agents` scope.
+        A stored response (`store` was not false) with its output items. While an approval its turn raised is pending, `status` is `requires_action` and `required_actions` lists the pending approvals (one `approval` entry with its `approval_id` each, oldest first). Requires the `inference` or `agents` scope.
 
         ``GET /v1/responses/{id}``
         """

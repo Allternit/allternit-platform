@@ -2345,6 +2345,22 @@ paths:
                   deleted: { type: boolean }
         default: { $ref: "#/components/responses/Error" }
   /v1/decisions:
+    get:
+      operationId: listDecisions
+      summary: List decisions
+      description: The project's stored decisions, newest first, in the usual cursor envelope (`limit` 1 to 100, default 20; pass `next_cursor` as `after`). A key bound to an account sees only that account's decisions; `account_id` narrows a project-wide key (`403 account_mismatch` for a bound key naming another account). Each item is the same `Decision` that `GET /v1/decisions/{id}` returns. Requires the `decisions` scope.
+      tags: [Decisions]
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/After"
+        - { name: account_id, in: query, schema: { type: string } }
+      responses:
+        "200":
+          description: A page of decisions.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DecisionList" }
+        default: { $ref: "#/components/responses/Error" }
     post:
       operationId: createDecision
       summary: Ask one or more questions about some input
@@ -2443,12 +2459,13 @@ paths:
         (hosted tools, arguments and results cut at 8,000 characters),
         `response.output_item.done`, then `response.completed`, `response.incomplete` or `response.failed`, and `error`
         for failures before the stream starts. Clients should skip event names they don't know.
-        Approvals never pause a turn: when an agent's action needs the owner's approval, that
-        tool call fails with a "try again once they approve" result and the turn still ends
-        `completed`. `required_actions` is reserved and always empty in this release. Approvals
-        are their own resource: subscribe to the `approval.requested` / `approval.resolved`
-        webhooks (or read `GET /v1/approvals`), and after resolution send a new response in the
-        same conversation. Errors before the stream starts are
+        When an agent's action needs the owner's approval, that tool call fails with a "try
+        again once they approve" result and the turn ends; this answer (and its stream) still
+        ends `completed`, because the approval is raised after the turn finishes. While it is
+        pending, `GET /v1/responses/{id}` reads `status: requires_action` with one
+        `required_actions` entry per pending approval. Resolve it with `POST /v1/approvals/{id}`
+        (or follow the `approval.requested` / `approval.resolved` webhooks), then send a new
+        response with `previous_response_id`. Errors before the stream starts are
         plain errors: `400 invalid_request` for `agent` with `store: false`, `agent` with client
         `tools`, or mixing `model` and `agent` turns in one conversation;
         `400 missing_function_call_output` when a `function_call` of the previous response has no
@@ -2484,7 +2501,7 @@ paths:
     get:
       operationId: getResponse
       summary: Retrieve a response
-      description: A stored response (`store` was not false) with its output items. Requires the `inference` or `agents` scope.
+      description: "A stored response (`store` was not false) with its output items. While an approval its turn raised is pending, `status` is `requires_action` and `required_actions` lists the pending approvals (one `approval` entry with its `approval_id` each, oldest first). Requires the `inference` or `agents` scope."
       tags: [Responses]
       responses:
         "200":
@@ -3453,6 +3470,26 @@ components:
             input_tokens: { type: integer }
         outcomes: { type: object, additionalProperties: { $ref: "#/components/schemas/DecisionOutcome" } }
         metadata: { type: object, additionalProperties: true }
+    DecisionList:
+      allOf:
+        - $ref: "#/components/schemas/ListEnvelope"
+        - type: object
+          properties:
+            data: { type: array, items: { $ref: "#/components/schemas/Decision" } }
+      examples:
+        - data:
+            - id: dec_0123456789abcdef01234567
+              object: decision
+              created_at: "2026-11-12T15:04:05Z"
+              answers:
+                - { name: is_damaged, type: predicate, probability: 0.93, confidence: 0.86, backend: local }
+              backend: local
+              latency_ms: 4200
+              usage: { questions: 1, input_tokens: 38 }
+              outcomes: {}
+              metadata: { ticket: t_1 }
+          has_more: true
+          next_cursor: "313736323935393834353030303030307c6465635f303061613131626232326363333364643434656535356666"
     ContentPart:
       type: object
       required: [type]
@@ -3535,7 +3572,10 @@ components:
       properties:
         id: { type: string, description: "`resp_…`" }
         object: { type: string, const: response }
-        status: { type: string, enum: [in_progress, completed, failed, incomplete] }
+        status:
+          type: string
+          enum: [in_progress, completed, failed, incomplete, requires_action]
+          description: "`requires_action` while an approval the turn raised is pending (see `required_actions`); the stored status (`completed`, `failed` or `incomplete`) again once none is pending."
         model: { type: [string, "null"] }
         agent_id: { type: [string, "null"] }
         conversation_id: { type: [string, "null"] }
@@ -3548,7 +3588,8 @@ components:
             reason: { type: string, enum: [max_output_tokens] }
         required_actions:
           type: array
-          description: "Reserved; always empty in this release. Approvals are their own resource: subscribe to `approval.requested` / `approval.resolved`; after resolution send a new response in the same conversation."
+          description: "One entry per pending approval this response's turn raised, oldest first; empty when none is pending. Resolve each with `POST /v1/approvals/{id}`, then send a new response with `previous_response_id`."
+          examples: [[{ type: approval, approval_id: apr_0123456789abcdef01234567 }]]
           items:
             type: object
             required: [type, approval_id]
