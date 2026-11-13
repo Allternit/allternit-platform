@@ -122,6 +122,7 @@ pub mod platform_twin;
 pub mod voice_turn_stream;
 // Allternit Meetings: the in-call agent turn and its tools (plan step 2.6).
 pub mod meeting_tools;
+pub mod meetings_mcp;
 pub mod meeting_turn_stream;
 pub mod channel_relay;
 pub mod channel_discord_dm;

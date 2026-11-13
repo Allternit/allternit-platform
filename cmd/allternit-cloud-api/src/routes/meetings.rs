@@ -52,7 +52,7 @@ const DEFAULT_TRANSCRIPT_LIMIT: i64 = 500;
 const MAX_TRANSCRIPT_LIMIT: i64 = 2000;
 const MAX_SPEAK_CHARS: usize = 2000;
 /// Bot joins two minutes before the start (`when = start`).
-const JOIN_LEAD: chrono::Duration = chrono::Duration::minutes(2);
+pub(crate) const JOIN_LEAD: chrono::Duration = chrono::Duration::minutes(2);
 /// Sessions holding a pod across the whole service before `429 no_capacity`
 /// (placeholder until Eoj gate 5; `MEETINGS_GLOBAL_CONCURRENT_CAP`).
 const DEFAULT_GLOBAL_CAP: i64 = 20;
@@ -718,6 +718,7 @@ pub(crate) async fn set_state(
     .ok_or_else(|| MeetingError::conflict("The session changed state; reload and try again."))?;
 
     events::emit(sid, "meeting.session.state", state_event(&row));
+    super::meeting_notify::on_state(db.clone(), sid);
     if to == SessionState::Ended {
         on_ended(db, &row).await?;
     }
@@ -830,7 +831,7 @@ fn global_cap() -> i64 {
 
 /// `429 no_capacity` when the service or the user is at its concurrent bot
 /// cap (sessions that hold a pod: launching through paused).
-async fn check_capacity(db: &PgPool, user_id: &str, plan: &str) -> Result<()> {
+pub(crate) async fn check_capacity(db: &PgPool, user_id: &str, plan: &str) -> Result<()> {
     let (global, mine): (i64, i64) = sqlx::query_as(
         "SELECT COUNT(*), COUNT(*) FILTER (WHERE user_id = $1) FROM meeting_sessions \
          WHERE state IN ('launching', 'joining', 'waiting_admit', 'live', 'paused')",

@@ -292,6 +292,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Free computers (decision 16): sleep when idle, wake for scheduled jobs,
     // delete when abandoned. Acts on free rows only.
     services::start_free_computer_task(state.clone());
+    // Allternit Meetings: start pods for `launching` sessions, tear down
+    // ended or silent ones.
+    services::meeting_launcher::start_meeting_launcher_task(state.clone());
 
     // Start scheduler service (background task)
     let scheduler_enabled = std::env::var("SCHEDULER_ENABLED")

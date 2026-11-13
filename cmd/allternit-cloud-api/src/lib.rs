@@ -473,6 +473,13 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         // /api/v1/meeting-sessions, /api/v1/me/meeting-*,
         // /api/v1/orgs/:org/meeting-settings.
         .merge(routes::meetings::routes())
+        // Meetings calendar connections: Google OAuth start (Clerk session)
+        // and callback (state-verified, no session), ICS feeds. Unique prefix
+        // /api/v1/calendar.
+        .merge(routes::calendar_oauth::routes())
+        // Zoom for Meetings: /api/v1/zoom/* and the pod-token
+        // /api/v1/meeting-sessions/:sid/zoom-tokens (docs/meetings/ZOOM.md).
+        .merge(routes::zoom::routes())
         .merge(routes::web_search::routes())
         // Setup checklist: live checks for account, brain, computers, channels.
         .merge(routes::setup_checks::routes())

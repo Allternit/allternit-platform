@@ -709,6 +709,61 @@ pub fn spawn_computer_ready(db: PgPool, user_id: String, instance_id: String) {
     });
 }
 
+/// What the meeting recap email says (Allternit Meetings step 2.9).
+pub struct MeetingRecap<'a> {
+    pub title: &'a str,
+    /// Plain text date, e.g. "Friday, November 13, 2026".
+    pub date: &'a str,
+    pub summary: &'a str,
+    pub decisions: &'a [String],
+    /// `(text, owner)`.
+    pub action_items: &'a [(String, Option<String>)],
+    pub page_url: &'a str,
+}
+
+/// The recap email: title, date, summary, decisions, action items with owners, link to the meeting page.
+pub fn meeting_recap_email(recipient: &Recipient, recap: &MeetingRecap<'_>) -> Email {
+    let title = if recap.title.trim().is_empty() { "your meeting" } else { recap.title.trim() };
+    let items: Vec<String> = recap
+        .action_items
+        .iter()
+        .map(|(text, owner)| match owner.as_deref().map(str::trim).filter(|o| !o.is_empty()) {
+            Some(owner) => format!("{text} ({owner})"),
+            None => text.clone(),
+        })
+        .collect();
+    let mut body = format!("{}\n\nGizzi's recap of {title}, {}.\n\n{}\n", greeting(recipient), recap.date, recap.summary);
+    if !recap.decisions.is_empty() {
+        body.push_str("\nDecisions\n");
+        for d in recap.decisions {
+            body.push_str(&format!("- {d}\n"));
+        }
+    }
+    if !items.is_empty() {
+        body.push_str("\nAction items\n");
+        for i in &items {
+            body.push_str(&format!("- {i}\n"));
+        }
+    }
+    body.push_str(&format!("\nOpen the meeting page: {}\n\n— Allternit\n", recap.page_url));
+    let mut rows = vec![
+        html::heading(&format!("Recap: {title}")),
+        html::paragraph(&format!("{} · {}", recap.date, "Gizzi was in the call")),
+        html::paragraph(recap.summary),
+    ];
+    if !recap.decisions.is_empty() {
+        rows.push(html::paragraph("Decisions"));
+        rows.push(html::bullets(&recap.decisions.iter().map(String::as_str).collect::<Vec<_>>()));
+    }
+    if !items.is_empty() {
+        rows.push(html::paragraph("Action items"));
+        rows.push(html::bullets(&items.iter().map(String::as_str).collect::<Vec<_>>()));
+    }
+    rows.push(html::button("Open the meeting page", recap.page_url));
+    let html = html::layout(&format!("Recap of {title}"), &rows);
+    Email { subject: format!("Recap: {title}"), body, html }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

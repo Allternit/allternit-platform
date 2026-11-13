@@ -434,6 +434,7 @@ async fn ingest(
                 "action_items": action_items,
             }),
         );
+        super::meeting_notify::on_summary(db.clone(), sid);
     }
 
     if let Some((to, reason)) = requested {
