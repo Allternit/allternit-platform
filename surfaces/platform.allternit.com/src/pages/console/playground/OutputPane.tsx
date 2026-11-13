@@ -1,6 +1,13 @@
 import React, { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
+import type { PlaygroundMode } from "@/lib/playground-request";
 import type { ChatRunState } from "./useChatRun";
+
+const FINISH_LABEL: Record<PlaygroundMode, string> = {
+  chat: "finish reason",
+  responses: "status",
+  messages: "stop reason",
+};
 
 const OUTPUT_CLASS =
   "min-h-[160px] whitespace-pre-wrap rounded-xl border border-solid border-[var(--border-subtle)] bg-[var(--bg-secondary)] p-3 font-mono text-[12px] leading-relaxed text-[var(--text-primary)]";
@@ -89,7 +96,7 @@ export function OutputPane({
         </p>
       )}
 
-      {(state.usage || state.modelUsed) && !state.running && (
+      {(state.usage || state.modelUsed || state.finishReason) && !state.running && (
         <div className="flex flex-wrap gap-3 text-[11px] text-[var(--text-tertiary)]">
           {state.modelUsed && (
             <span>
@@ -107,6 +114,15 @@ export function OutputPane({
           )}
           {state.usage?.total_tokens !== undefined && (
             <span>total tokens: {state.usage.total_tokens}</span>
+          )}
+          {state.finishReason && (
+            <span>
+              {FINISH_LABEL[state.mode]}:{" "}
+              <code className="font-mono text-[var(--text-secondary)]">
+                {state.finishReason}
+                {state.incompleteReason ? ` (${state.incompleteReason})` : ""}
+              </code>
+            </span>
           )}
         </div>
       )}

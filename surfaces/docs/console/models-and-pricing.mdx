@@ -36,6 +36,19 @@ The listed price is what a request is billed. The console Models page shows thes
 - `tools` comes from a checked-in price file. The file ships empty, so the Models page hides the tools table until prices are added.
 - `deprecations` lists models with a retirement date and the model to move to.
 
+## Auto model policy
+
+New accounts start with the Auto model policy set to `balanced`. It picks the top quality tier, then the cheapest model in that tier. Builder and the Playground use it to pick a model when you have not chosen one.
+
+## Cloud credits and device credits
+
+| Credits | What they pay for | Route |
+|---|---|---|
+| Cloud credits | Requests to the Allternit API from your account | `GET /api/v1/billing/credits` |
+| Device credits | Work on a paired device's organization | `GET /api/v1/credits/balance` |
+
+The Dashboard and the rail show Cloud credits. Device credits appear only when a device is paired.
+
 ## Related
 
 - [Chat completions](/api/chat-completions)

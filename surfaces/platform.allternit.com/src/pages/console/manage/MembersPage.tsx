@@ -60,6 +60,17 @@ interface InvitationRow {
   createdAt: string | null;
 }
 
+function mapInvitations(data: Array<Record<string, any>>): InvitationRow[] {
+  return data
+    .filter((invitation) => invitation.status === "pending")
+    .map((invitation) => ({
+      id: invitation.id,
+      email: invitation.emailAddress,
+      role: normalizeRole(invitation.role),
+      createdAt: invitation.createdAt ? new Date(invitation.createdAt).toISOString() : null,
+    }));
+}
+
 /**
  * Organization membership management, on Clerk's organization API (the same
  * boundary the rest of the platform console uses for admin gating). Members
@@ -75,6 +86,10 @@ export function MembersPage(): React.ReactNode {
 
   const [members, setMembers] = useState<MemberRow[]>([]);
   const [invitations, setInvitations] = useState<InvitationRow[]>([]);
+  // Invitations load separately: a failure there (seen in Safari as
+  // "ClerkJS: Network error at …/invitations") must never hide the members.
+  const [invitationsError, setInvitationsError] = useState<string | null>(null);
+  const [invitationsLoading, setInvitationsLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
@@ -97,11 +112,20 @@ export function MembersPage(): React.ReactNode {
     if (!activeOrg) return;
     setLoading(true);
     setError(null);
+    setInvitationsError(null);
+    const [membershipSettled, invitationSettled] = await Promise.allSettled([
+      activeOrg.getMemberships({ pageSize: 100 }),
+      canManage ? activeOrg.getInvitations({ pageSize: 100 }) : Promise.resolve(null),
+    ]);
+    if (invitationSettled.status === "fulfilled") {
+      setInvitations(mapInvitations(invitationSettled.value?.data ?? []));
+    } else {
+      setInvitations([]);
+      setInvitationsError(clerkErrorMessage(invitationSettled.reason, "Unable to load invitations."));
+    }
     try {
-      const [membershipResult, invitationResult] = await Promise.all([
-        activeOrg.getMemberships({ pageSize: 100 }),
-        canManage ? activeOrg.getInvitations({ pageSize: 100 }) : Promise.resolve(null),
-      ]);
+      if (membershipSettled.status === "rejected") throw membershipSettled.reason;
+      const membershipResult = membershipSettled.value;
       setMembers(
         (membershipResult.data ?? []).map((membership: Record<string, any>) => ({
           id: membership.id,
@@ -117,16 +141,6 @@ export function MembersPage(): React.ReactNode {
           joinedAt: membership.createdAt ? new Date(membership.createdAt).toISOString() : null,
         }))
       );
-      setInvitations(
-        (invitationResult?.data ?? [])
-          .filter((invitation: Record<string, any>) => invitation.status === "pending")
-          .map((invitation: Record<string, any>) => ({
-            id: invitation.id,
-            email: invitation.emailAddress,
-            role: normalizeRole(invitation.role),
-            createdAt: invitation.createdAt ? new Date(invitation.createdAt).toISOString() : null,
-          }))
-      );
     } catch (err) {
       setError(clerkErrorMessage(err, "Unable to load organization members."));
       setMembers([]);
@@ -138,6 +152,20 @@ export function MembersPage(): React.ReactNode {
   useEffect(() => {
     void load();
   }, [load]);
+
+  const retryInvitations = useCallback(async () => {
+    if (!activeOrg || !canManage) return;
+    setInvitationsLoading(true);
+    setInvitationsError(null);
+    try {
+      const result = await activeOrg.getInvitations({ pageSize: 100 });
+      setInvitations(mapInvitations(result?.data ?? []));
+    } catch (err) {
+      setInvitationsError(clerkErrorMessage(err, "Unable to load invitations."));
+    } finally {
+      setInvitationsLoading(false);
+    }
+  }, [activeOrg, canManage]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -468,6 +496,24 @@ export function MembersPage(): React.ReactNode {
             </tbody>
           </table>
         </div>
+      )}
+
+      {canManage && invitationsError && (
+        <p
+          role="status"
+          className="mt-8 flex flex-wrap items-center gap-2 text-[12px] text-[var(--text-tertiary)]"
+        >
+          <HugeiconsIcon icon={AlertCircleIcon} size={13} />
+          Pending invitations could not be loaded.
+          <button
+            type="button"
+            onClick={() => void retryInvitations()}
+            disabled={invitationsLoading}
+            className={QUIET_BUTTON_CLASS}
+          >
+            {invitationsLoading ? "Retrying…" : "Retry"}
+          </button>
+        </p>
       )}
 
       {canManage && invitations.length > 0 && (

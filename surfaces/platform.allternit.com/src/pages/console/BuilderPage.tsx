@@ -234,7 +234,7 @@ export function BuilderPage(): React.ReactNode {
             </button>
             {model === "auto" && !resolvedModel && (
               <span className="text-[12px] text-[var(--status-error)]">
-                Auto policy resolves to no model.
+                No model matches the Auto policy. Pick a model from the list or change the policy.
               </span>
             )}
           </div>

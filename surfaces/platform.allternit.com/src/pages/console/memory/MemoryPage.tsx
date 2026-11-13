@@ -10,7 +10,8 @@ import {
   TrashIcon,
 } from "@hugeicons/core-free-icons";
 import { cn } from "@/lib/utils";
-import { formatApiError } from "@/lib/api-client";
+import { formatApiError, isNoRuntime } from "@/lib/api-client";
+import { NoRuntimeState } from "@/components/console-ui/NoRuntimeState";
 import {
   type MemoryEntryRecord,
   type MemoryStoreRecord,
@@ -119,12 +120,14 @@ export function MemoryPage(): React.ReactNode {
         />
       }
     >
-      {error && (
+      {error && (isNoRuntime(error) ? (
+        <NoRuntimeState className="mb-4" />
+      ) : (
         <p className="mb-4 flex items-center gap-2 rounded-lg border border-solid border-[var(--status-error)]/30 bg-[var(--status-error)]/10 px-3 py-2 text-[13px] text-[var(--status-error)]">
           <HugeiconsIcon icon={AlertCircleIcon} size={14} />
           {error}
         </p>
-      )}
+      ))}
 
       {showCreate && (
         <div className="mb-4 flex items-center gap-2 rounded-xl border border-solid border-[var(--border-subtle)] bg-[var(--bg-secondary)] p-4">
@@ -402,10 +405,14 @@ export function MemoryStorePage(): React.ReactNode {
           <HugeiconsIcon icon={ArrowLeft01Icon} size={14} />
           Back to memory
         </button>
-        <p className="flex items-center gap-2 rounded-lg border border-solid border-[var(--status-error)]/30 bg-[var(--status-error)]/10 px-3 py-2 text-[13px] text-[var(--status-error)]">
-          <HugeiconsIcon icon={AlertCircleIcon} size={14} />
-          {error}
-        </p>
+        {isNoRuntime(error) ? (
+          <NoRuntimeState />
+        ) : (
+          <p className="flex items-center gap-2 rounded-lg border border-solid border-[var(--status-error)]/30 bg-[var(--status-error)]/10 px-3 py-2 text-[13px] text-[var(--status-error)]">
+            <HugeiconsIcon icon={AlertCircleIcon} size={14} />
+            {error}
+          </p>
+        )}
       </div>
     );
   }
@@ -452,12 +459,14 @@ export function MemoryStorePage(): React.ReactNode {
         </label>
       </div>
 
-      {error && (
+      {error && (isNoRuntime(error) ? (
+        <NoRuntimeState />
+      ) : (
         <p className="flex items-center gap-2 rounded-lg border border-solid border-[var(--status-error)]/30 bg-[var(--status-error)]/10 px-3 py-2 text-[13px] text-[var(--status-error)]">
           <HugeiconsIcon icon={AlertCircleIcon} size={14} />
           {error}
         </p>
-      )}
+      ))}
 
       <div className="relative">
         <HugeiconsIcon

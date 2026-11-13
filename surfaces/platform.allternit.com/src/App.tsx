@@ -58,6 +58,7 @@ import { AuditLogPage } from "@/pages/console/manage/AuditLogPage";
 import { PlatformProjectsPage } from "@/pages/console/platform/ProjectsPage";
 import { PlatformAgentsPage } from "@/pages/console/platform/AgentsPage";
 import { PlatformConversationsPage } from "@/pages/console/platform/ConversationsPage";
+import { PlatformDecisionsPage } from "@/pages/console/platform/DecisionsPage";
 import { PlatformUsagePage } from "@/pages/console/platform/UsagePage";
 import { PlatformComputersPage } from "@/pages/console/platform/ComputersPage";
 import { PlatformPhonesPage } from "@/pages/console/platform/PhonesPage";
@@ -568,6 +569,14 @@ export default function App() {
         element={
           <ConsoleRoute>
             <PlatformConversationsPage />
+          </ConsoleRoute>
+        }
+      />
+      <Route
+        path="/platform/decisions"
+        element={
+          <ConsoleRoute>
+            <PlatformDecisionsPage />
           </ConsoleRoute>
         }
       />
