@@ -15,7 +15,7 @@ pub mod resolve;
 pub use middleware::{AuthContext, AuthLayer, AuthMiddleware};
 pub use models::{ApiToken, AuthenticatedUser, TokenInfo};
 pub use permissions::{Permission, PermissionChecker};
-pub use resolve::{resolve_user, resolve_user_id, resolve_user_scoped};
+pub use resolve::{require_session_user, resolve_user, resolve_user_id, resolve_user_scoped};
 
 /// Clerk user ids listed in `ALLTERNIT_ADMIN_USER_IDS` (comma-separated).
 /// Admins operate the platform and are treated as Ultra for Cloud default /

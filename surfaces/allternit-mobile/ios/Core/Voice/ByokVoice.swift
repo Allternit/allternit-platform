@@ -45,6 +45,122 @@ enum VoiceProviderKeys {
     static func masked(_ key: String) -> String {
         "\(key.hasPrefix("sk-") ? "sk-" : "")…\(key.suffix(4))"
     }
+
+    // MARK: Non-secret details (UserDefaults)
+
+    // The secrets stay in the Keychain under the accounts above, so
+    // `ByokVoiceTransport` reads them unchanged. Beside them, per vendor and
+    // not secret: the label from the last key check ("Creator plan · 9,500
+    // characters left"), when the key last changed (account sync: newer
+    // wins), and the opt-out a Disconnect sets so account sync won't put the
+    // key back on this phone.
+
+    private static func metaKey(_ vendor: VoiceVendor, _ name: String) -> String { "voice.byok.\(vendor.rawValue).\(name)" }
+
+    static func label(_ vendor: VoiceVendor) -> String? {
+        UserDefaults.standard.string(forKey: metaKey(vendor, "label"))
+    }
+
+    static func updatedAt(_ vendor: VoiceVendor) -> Date? {
+        UserDefaults.standard.object(forKey: metaKey(vendor, "updatedAt")) as? Date
+    }
+
+    static func isOptedOut(_ vendor: VoiceVendor) -> Bool {
+        UserDefaults.standard.bool(forKey: metaKey(vendor, "optOut"))
+    }
+
+    /// Saves a key (and, for ElevenLabs, the voice) with its label and change
+    /// time, and clears the vendor's opt-out: Connect, a QR handoff, and a
+    /// pull from the account all land here.
+    static func store(_ vendor: VoiceVendor, apiKey: String, voiceId: String? = nil, label: String?, updatedAt: Date = Date()) {
+        set(vendor.keyField, apiKey)
+        if vendor == .elevenlabs, let voiceId { set(.elevenlabsVoiceId, voiceId) }
+        let defaults = UserDefaults.standard
+        defaults.set(label, forKey: metaKey(vendor, "label"))
+        defaults.set(updatedAt, forKey: metaKey(vendor, "updatedAt"))
+        defaults.removeObject(forKey: metaKey(vendor, "optOut"))
+    }
+
+    /// The ElevenLabs voice changed on this phone (picker or voice ID field).
+    static func setVoice(_ voiceId: String?) {
+        set(.elevenlabsVoiceId, voiceId)
+        if value(.elevenlabs) != nil {
+            UserDefaults.standard.set(Date(), forKey: metaKey(.elevenlabs, "updatedAt"))
+        }
+    }
+
+    /// Stamps a key saved by an older build (no change time yet) so account
+    /// sync treats it as this phone's current copy.
+    static func stampIfNeeded(_ vendor: VoiceVendor, _ date: Date = Date()) {
+        if value(vendor.keyField) != nil, updatedAt(vendor) == nil {
+            UserDefaults.standard.set(date, forKey: metaKey(vendor, "updatedAt"))
+        }
+    }
+
+    /// Removes the key from this phone only and opts the vendor out of
+    /// account sync, so a pull doesn't bring it back.
+    static func disconnect(_ vendor: VoiceVendor) {
+        set(vendor.keyField, nil)
+        let defaults = UserDefaults.standard
+        defaults.removeObject(forKey: metaKey(vendor, "label"))
+        defaults.removeObject(forKey: metaKey(vendor, "updatedAt"))
+        defaults.set(true, forKey: metaKey(vendor, "optOut"))
+    }
+
+    /// This phone's copy of a vendor's key, for account sync.
+    static func local(_ vendor: VoiceVendor) -> VoiceKeyLocal? {
+        guard let key = value(vendor.keyField) else { return nil }
+        return VoiceKeyLocal(apiKey: key,
+                             voiceId: vendor == .elevenlabs ? value(.elevenlabsVoiceId) : nil,
+                             label: label(vendor),
+                             updatedAt: updatedAt(vendor))
+    }
+}
+
+/// A vendor the user can bring their own voice key for.
+enum VoiceVendor: String, CaseIterable, Sendable, Identifiable {
+    case openai, elevenlabs
+
+    var id: String { rawValue }
+
+    var name: String {
+        switch self {
+        case .openai: return "OpenAI"
+        case .elevenlabs: return "ElevenLabs"
+        }
+    }
+
+    var keyField: VoiceProviderKeys.Field {
+        switch self {
+        case .openai: return .openai
+        case .elevenlabs: return .elevenlabs
+        }
+    }
+
+    /// Where voice runs when this vendor is chosen.
+    var route: VoiceRoutePreference {
+        switch self {
+        case .openai: return .openai
+        case .elevenlabs: return .elevenlabs
+        }
+    }
+
+    /// The vendor's page that creates API keys (Connect opens it).
+    var keyPageURL: URL {
+        switch self {
+        case .openai: return URL(string: "https://platform.openai.com/api-keys")!
+        case .elevenlabs: return URL(string: "https://elevenlabs.io/app/settings/api-keys")!
+        }
+    }
+}
+
+/// One vendor key as this phone holds it.
+struct VoiceKeyLocal: Equatable, Sendable {
+    var apiKey: String
+    var voiceId: String?
+    var label: String?
+    /// nil for a key saved before account sync existed.
+    var updatedAt: Date?
 }
 
 // MARK: - Vendor errors

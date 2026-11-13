@@ -55,8 +55,8 @@ Allternit doesn't run voice on its own servers. Voice runs on your device, or on
 
 - **Automatic (recommended)**: voice runs on this device once its voice engine is ready. It's free, and your audio stays on this device.
 - **This device**: the same, chosen on purpose. In a browser, this starts the one-time voice download if it hasn't happened yet.
-- **Your own OpenAI**: OpenAI Realtime listens to you and OpenAI speech reads the replies, using your own OpenAI API key. Easier on slower devices. OpenAI bills you directly.
-- **Your own ElevenLabs**: an ElevenLabs voice reads the replies, using your own ElevenLabs API key. Listening stays on this device. ElevenLabs bills you directly.
+- **Your own OpenAI**: OpenAI Realtime listens to you and OpenAI speech reads the replies, using your own OpenAI account. Easier on slower devices. OpenAI bills you directly.
+- **Your own ElevenLabs**: an ElevenLabs voice reads the replies, using your own ElevenLabs account. Listening stays on this device. ElevenLabs bills you directly.
 
 If this device can't run voice yet, voice says so and points you to Settings › Voice, where you can download the voice to this device or connect your own provider.
 
@@ -64,12 +64,38 @@ In the Allternit iPhone app, **Automatic** and **This device** run on the phone:
 
 ### Your own provider
 
-Optional. Paste your **OpenAI API key** or **ElevenLabs API key**, then choose **Your own OpenAI** or **Your own ElevenLabs** under **Where voice runs**. For ElevenLabs you can also paste a **voice ID** from your ElevenLabs voice library; without one, replies use Rachel, a voice every ElevenLabs account has.
+Optional. Connect your **OpenAI** or **ElevenLabs** account, then choose **Your own OpenAI** or **Your own ElevenLabs** under **Where voice runs**. You don't type a voice ID: for ElevenLabs you pick a voice from a list with samples.
 
-- Your key is kept only on this device: in the app's local storage on the web and Desktop (the same way your image and video provider keys are), and in the iPhone's Keychain in the iPhone app. It's never sent to Allternit. **Remove** next to a saved key deletes it from this device.
+**Connect** (web, Desktop, the phone app at m.allternit.com and the iPhone app):
+
+1. Tap **Connect** next to the provider. Allternit opens the vendor's key page: OpenAI at platform.openai.com/api-keys, ElevenLabs at elevenlabs.io/app/settings/api-keys.
+2. Create a key there and copy it.
+3. Back in Allternit, tap **Paste**. On iPhone this is the system Paste button, so iOS doesn't ask for permission. On Desktop and the web it is a Paste button in the app. If pasting doesn't work, tap **Type it instead**.
+4. Allternit checks the key with the vendor. You see one of three results: **Connected** with your plan; **Restricted key**, which means the key works but the vendor hides some details such as your plan; or a message that the vendor rejected the key.
+5. A successful Connect turns that voice on. For ElevenLabs, pick a voice from the list and play its sample. If the list can't load, **Enter voice ID** is still there. Without a voice, replies use Rachel, a voice every ElevenLabs account has.
+
+On Android, use the phone app at m.allternit.com; it works the same way.
+
+**Send to my phone (QR code).** Set a key up once and move it to your phone without typing it:
+
+1. On Desktop, the web or the phone app, with a connected key, tap **Send to my phone**. The computer shows a code.
+2. On your iPhone, open **Settings › Voice › Scan from my computer** and point the camera at the code.
+3. Both screens show the same 6 digits. If they match, tap **Codes match** on the computer.
+4. A second code appears on the computer. The phone reads it, and the key is saved on the phone.
+
+The key goes from one screen to the other camera. It never passes through Allternit. You need to be signed in on both devices, and the code expires after 2 minutes. Sending from the iPhone to a computer isn't available: use **Save to my Allternit account** or **Connect** on the computer instead.
+
+**Save to my Allternit account** is off by default. Turn it on and your keys are stored, encrypted, in your Allternit account, so your other signed-in devices get them without Connect or a QR code.
+
+- Turning it off deletes the keys from your account. Devices that already have a key keep their copy.
+- **Disconnect** on one device removes the key from that device only.
+- To cut a key off everywhere, revoke it at OpenAI or ElevenLabs.
+
+Where keys live and what is sent:
+
+- On each device the key is kept locally: in the app's local storage on the web and the phone app, in Desktop's protected storage on Desktop, and in the Keychain on iPhone. **Disconnect** deletes it from this device.
 - Calls go straight from this device to OpenAI (api.openai.com) or ElevenLabs (api.elevenlabs.io). For OpenAI listening, the app uses your key to get a short-lived session key, and only that short-lived key opens the live connection.
 - You pay OpenAI or ElevenLabs for what you use, under your agreement with them. Allternit doesn't add a charge.
-- **Remove** deletes the key from this device. A key saved on one device isn't copied to your other devices.
 - The bot's own model still writes every reply, so what you hear is what's in the thread.
 
 ### Voice pack on this device
@@ -103,7 +129,7 @@ If the system recognizer is turned off, denied permission or stops working, voic
 
 ### Voice
 
-Pick how your bots sound. Voices have plain names that say how they sound — Gentle, Crisp, Calm, Warm — with the engine's voice id in small type under each. Press a voice's **Preview** button to hear one short sentence through the voice engine on this device; on the web the first preview downloads the voice models first (this happens once). Only one preview plays at a time. With **Your own OpenAI**, voices whose names match an OpenAI voice (Steady, Clear, Crisp, Low, Story) use that OpenAI voice; the others use Alloy. With **Your own ElevenLabs**, the ElevenLabs voice ID decides.
+Pick how your bots sound. Voices have plain names that say how they sound — Gentle, Crisp, Calm, Warm — with the engine's voice id in small type under each. Press a voice's **Preview** button to hear one short sentence through the voice engine on this device; on the web the first preview downloads the voice models first (this happens once). Only one preview plays at a time. With **Your own OpenAI**, voices whose names match an OpenAI voice (Steady, Clear, Crisp, Low, Story) use that OpenAI voice; the others use Alloy. With **Your own ElevenLabs**, the voice you picked from the list decides.
 
 ### Live mode
 
@@ -126,7 +152,7 @@ In the Allternit iPhone app, live mode with a bot shows the same avatar, all ten
 - **In Safari with Speech to text on Automatic**, Safari's own recognizer does the listening and Apple may process the audio. Choose **Allternit on-device** to keep it in the tab.
 - **With your own OpenAI**, your audio and the bot's replies go from your device to OpenAI over an encrypted connection.
 - **With your own ElevenLabs**, listening stays on your device; the bot's replies go to ElevenLabs to be read aloud.
-- Allternit never receives your audio or your provider key.
+- Allternit never receives your audio. Without **Save to my Allternit account**, Allternit never receives your provider key either. With it on, the key is stored encrypted in your account.
 - Either way, your spoken message is saved in the thread like any typed message.
 
 ## When something isn't working
@@ -137,8 +163,8 @@ In the Allternit iPhone app, live mode with a bot shows the same avatar, all ten
 | "Voice engine not installed" | Update Allternit Desktop, or connect your own OpenAI account in Settings › Voice. |
 | "The voice pack is still downloading." | Wait for the download in Settings › Voice. |
 | "Voice on this device needs a one-time download." | Choose **This device** in Settings › Voice to download it, or connect your own provider. |
-| "Add your OpenAI API key in Settings › Voice." | Paste your key under **Your own provider**, or switch back to **Automatic**. |
-| "OpenAI did not accept your API key." / "ElevenLabs did not accept your API key." | Check or replace the key under **Your own provider**. |
+| "Add your OpenAI API key in Settings › Voice." | Connect your key under **Your own provider**, or switch back to **Automatic**. |
+| "OpenAI did not accept your API key." / "ElevenLabs did not accept your API key." | Connect a new key under **Your own provider**. |
 | "Your … account is out of credit or over its rate limit." | Add credit or wait, in your OpenAI or ElevenLabs account. |
 | "Reconnecting…" | The connection dropped. Voice reconnects by itself; the bot's reply keeps appearing in the thread. |
 

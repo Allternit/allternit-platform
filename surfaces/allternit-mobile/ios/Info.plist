@@ -120,7 +120,7 @@
 	<key>NSContactsUsageDescription</key>
 	<string>Allternit lets your bots search your contacts by name (read only), only after you turn on Device Access.</string>
 	<key>NSCameraUsageDescription</key>
-	<string>Allternit uses the camera so you can take photos and attach them to your chat.</string>
+	<string>Allternit uses the camera so you can take photos and attach them to your chat, and to scan the QR code that moves your voice key from your computer to this phone.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Allternit uses the microphone so you can talk to your agent (voice chat) and dictate messages in chat. Voice runs on this phone; your speech isn't sent to Allternit.</string>
 	<key>NSPhotoLibraryUsageDescription</key>

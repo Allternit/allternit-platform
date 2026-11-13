@@ -23,7 +23,7 @@ There is no separate voice path to the model.
 | `pcm.ts` | PCM16 LE conversion, `MicFramer` (any context rate → 16 kHz, 20 ms frames), linear resampling for playback. |
 | `audio-io.ts` | Browser audio: one `AudioContext`, a mic-tap `AudioWorklet` and a jitter-buffered playback `AudioWorklet` (60 ms prime, silence + re-prime on underrun, immediate `flush`). Worklet sources are strings so tests evaluate the shipped code. |
 | `endpoint.ts` | Where a session connects (see below), `VoiceUnavailableError` codes. |
-| `byok/socket.ts`, `byok/keys.ts` | `ByokSocket`: the Voice Session protocol over the user's own OpenAI or ElevenLabs account, called from the device. Keys in localStorage `allternit_voice_api_keys`. |
+| `byok/socket.ts`, `byok/keys.ts` | `ByokSocket`: the Voice Session protocol over the user's own OpenAI or ElevenLabs account, called from the device. Keys behind a `KeyStore` (see [Your own key](#your-own-key-storage-sync-and-qr-handoff)). |
 | `session-client.ts` | `VoiceSessionClient`: the WebSocket, `session.start` first, mic starts after `session.ready`, speech audio routed to the utterance named by the latest `speak.started`, local flush on `speak.interrupted` and on `speakCancel()`, mute that survives reconnects, reconnect with exponential backoff (500 ms doubling to 8 s, 6 tries; a fresh endpoint each try), and a device speed (RTF) sample per utterance. |
 | `conversation.ts` | `VoiceConversation`: turn → send/steer/stop+queue, reply → `speak.delta` sentence by sentence (markdown flattened, code left on screen), barge-in → Stop, phase/caption/tool-step state for the UI. |
 | `replies.ts` | Reply adapters: `replyFromTranscript` (bot-chat transcript fold, used by threads and the phone's bots) and `useStoreReply` (the session store, used by Chat). |
@@ -153,3 +153,48 @@ The iPhone app (`surfaces/allternit-mobile/ios`) reads replies with Kokoro-82M o
 - [Talk to your bots](/guides/voice)
 - [Voice engine (local)](/tools/voice)
 - [Voice API](/api/voice)
+
+
+## Your own key: storage, sync and QR handoff
+
+Connect, the vendor checks (`vendors.ts`), the voice picker, the QR handoff (`handoff.ts`) and the account sync (`accountSync.ts`) are in `src/lib/voice/byok/` and `src/components/settings/` (`VoiceKeyConnect`, `VoicePicker`, `VoiceKeyHandoffCard`). The user flow is in [Talk to your bots](/guides/voice#your-own-provider).
+
+### Storage per surface
+
+| Surface | Where the key lives |
+| --- | --- |
+| Web and m.allternit.com PWA | localStorage `allternit_voice_api_keys` |
+| Desktop | Electron `safeStorage`, reached through preload IPC (`voice-keys-ipc.ts`, `desktopStore.ts`). An existing localStorage entry is moved there once and removed. |
+| iPhone | Keychain (`Core/Voice/ByokVoice.swift`) |
+
+Android uses the PWA.
+
+### Account sync (opt-in, off by default)
+
+With "Save to my Allternit account" on, the app sends keys to cloud-api and other signed-in devices read them. Turning it off calls `DELETE /api/v1/voice/keys`; devices keep their local copies. The routes (`routes/voice_keys.rs`) need a signed-in session. Platform API keys get 403. Responses are `Cache-Control: no-store`. See [Voice Keys API](/api/voice-keys).
+
+Migration `128_voice_keys.sql` adds two tables:
+
+- `user_voice_keys`: one row per user and provider (`openai` or `elevenlabs`). The key is sealed with AES-256-GCM through `CredentialCipher`, using `ALLTERNIT_CREDENTIALS_KEY` (the same cipher as `user_inference_keys`). `key_nonce` is the 12-byte nonce.
+- `voice_key_handoffs`: the QR relay. It holds `sid`, the owner and the receiver's one-time public key, and lives 120 seconds. Expired rows read as not found and are pruned on insert.
+
+### QR handoff protocol (v1)
+
+The key travels screen to camera; cloud-api only relays the session id and the receiver's public key, so it never sees the key.
+
+1. The sender (computer) calls `POST /api/v1/voice/handoff` and gets `sid`.
+2. The receiver (iPhone) generates a P-256 key pair. The sender shows QR1; the receiver scans it and `PUT`s its public key to `/handoff/:sid/receiver`.
+3. The sender polls `GET /handoff/:sid` until `receiver_pubkey` appears.
+4. Both sides show the confirm code. The user taps **Codes match** on the sender.
+5. The sender generates its own P-256 key pair, derives the shared key, encrypts and shows QR2. The receiver scans it and decrypts.
+
+Wire details:
+
+- Curve P-256. Public keys are uncompressed SEC1 points (65 bytes, `0x04 || X || Y`), base64url without padding.
+- Key derivation: ECDH, then HKDF-SHA256 over the shared x coordinate with `info` = `allternit-voice-key-handoff-v1`, `salt` = `sid` (UTF-8), 32 bytes out.
+- Encryption: AES-256-GCM, 12-byte nonce, 16-byte tag, no AAD. The plaintext is JSON `{"provider","api_key","voice_id"?}`.
+- Confirm code: SHA-256 of `utf8(sid) || pubA_raw || pubB_raw`; the first 4 bytes as a big-endian uint32, mod 1000000, zero-padded to 6 digits.
+- QR1: `allternit-voice:1:<sid>:<senderPub>`. QR2: `allternit-voice:2:<sid>:<nonce>:<ciphertext+tag>`. All fields base64url.
+- Sending from the iPhone to a computer isn't offered.
+
+`docs/voice-handoff-vectors.json` in the platform repo is the shared test vector (keys, confirm code, HKDF output, ciphertext, QR strings). The web, iOS and cloud-api tests all check it; the file is generated by `docs/voice-handoff-vectors.gen.mjs`, so don't edit it by hand.

@@ -660,8 +660,29 @@
           "on": "2026-11-04",
           "note": "No hosted Cloud Voice minutes: Automatic = the device engine on web, PWA, Desktop and iOS; no cloud fallback. Optional BYOK in Settings > Voice (web/PWA/Desktop and iOS): your own OpenAI (Realtime transcription + speech) or ElevenLabs (TTS, listening on device), key kept on the device and sent only to the vendor (allternit-ai src/lib/voice/byok; iOS Core/Voice/ByokVoice.swift, keys in the Keychain)."
         }
-      ],
+,
+        {
+          "on": "2026-11-13",
+          "note": "Voice keys: Connect + one-tap Paste with a live vendor check and an ElevenLabs voice picker; Send to my phone QR handoff (P-256 ECDH, two QR codes, 6-digit match, key never through Allternit); opt-in Save to my Allternit account (encrypted, account-wide). Eoj picked the B+C hybrid from mockups."
+        }      ],
       "evidence": [
+        "allternit/cmd/allternit-cloud-api/src/routes/voice_keys.rs",
+        "allternit/cmd/allternit-cloud-api/src/services/voice_keys.rs",
+        "allternit/cmd/allternit-cloud-api/migrations_pg/128_voice_keys.sql",
+        "allternit/surfaces/allternit-mobile/ios/Core/Voice/VoiceVendorClient.swift",
+        "allternit/surfaces/allternit-mobile/ios/Core/Voice/VoiceKeyHandoff.swift",
+        "allternit/surfaces/allternit-mobile/ios/Core/Voice/VoiceKeySync.swift",
+        "allternit/surfaces/allternit-mobile/ios/Features/Settings/VoiceKeyScannerView.swift",
+        "allternit/surfaces/allternit-desktop/src/main/voice-keys-ipc.ts",
+        "allternit-ai/src/lib/voice/byok/keys.ts",
+        "allternit-ai/src/lib/voice/byok/vendors.ts",
+        "allternit-ai/src/lib/voice/byok/handoff.ts",
+        "allternit-ai/src/lib/voice/byok/accountSync.ts",
+        "allternit-ai/src/lib/voice/byok/desktopStore.ts",
+        "allternit-ai/src/components/settings/VoiceKeyConnect.tsx",
+        "allternit-ai/src/components/settings/VoicePicker.tsx",
+        "allternit-ai/src/components/settings/VoiceKeyHandoffCard.tsx",
+        "allternit-ai/scripts/fake-voice-vendor.mjs",
         "allternit/surfaces/docs/guides/voice.mdx",
         "allternit/surfaces/docs/api/voice-tickets.mdx",
         "allternit/surfaces/docs/surfaces/voice.mdx",

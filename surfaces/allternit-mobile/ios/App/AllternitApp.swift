@@ -90,6 +90,8 @@ struct AllternitApp: App {
                 if newPhase == .active {
                     authManager.refreshAuthState()
                     PushNotificationManager.shared.clearBadge()
+                    // Voice keys saved to the account: newer copy wins (no-op while off).
+                    Task { await VoiceKeySync.shared.sync() }
                 } else if newPhase == .background {
                     BackgroundRefreshManager.scheduleNextRefresh()
                 }

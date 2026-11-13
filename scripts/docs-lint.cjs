@@ -238,8 +238,8 @@ for (const mdxPath of collectMdxFiles(DOCS_DIR)) {
       if (['api/platform/sdks/claude-code-codex.mdx', 'api/mcp-servers.mdx'].some((p) => mdxPath.endsWith(p))) continue;
       // The chat bridge reads `.claude/CLAUDE.md` by name; the Skills note names Claude CLI brains and their own skills.
       if (['api/bot-hub.mdx', 'guides/memory-and-learning.mdx'].some((p) => mdxPath.endsWith(p))) continue;
-      // Voice: bring-your-own-key voice names the two providers whose keys people paste (OpenAI, ElevenLabs).
-      if (['guides/voice.mdx', 'surfaces/voice.mdx', 'api/voice-tickets.mdx'].some((p) => mdxPath.endsWith(p))) continue;
+      // Voice: bring-your-own-key voice names the two providers whose keys people connect (OpenAI, ElevenLabs), including the saved-key API.
+      if (['guides/voice.mdx', 'surfaces/voice.mdx', 'api/voice-tickets.mdx', 'api/voice-keys.mdx'].some((p) => mdxPath.endsWith(p))) continue;
       // Self-Hosted Agents: the customer picks their own model provider, so these pages name the
       // supported providers, their settings ids (`provider: anthropic`) and example model_map keys.
       if (['self-hosted/configuration.mdx', 'self-hosted/models.mdx', 'self-hosted/networking.mdx', 'self-hosted/overview.mdx', 'self-hosted/quickstart.mdx'].some((p) => mdxPath.endsWith(p))) continue;
