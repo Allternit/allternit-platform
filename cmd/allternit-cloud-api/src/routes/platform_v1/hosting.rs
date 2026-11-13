@@ -76,8 +76,8 @@ fn provision_failed(owner: &str, error: crate::error::ApiError) -> PlatformError
 /// A relay failure string that carries a capacity refusal (a relay wake that
 /// found the host full) is `computer_capacity` too.
 fn relay_failed(detail: &str) -> PlatformError {
-    use crate::services::provisioning::{FREE_POOL_FULL, HOSTED_POOL_FULL};
-    if detail.contains(FREE_POOL_FULL) || detail.contains(HOSTED_POOL_FULL) {
+    use crate::services::provisioning::{CLOUD_POOL_FULL, FREE_POOL_FULL, HOSTED_POOL_FULL};
+    if detail.contains(FREE_POOL_FULL) || detail.contains(HOSTED_POOL_FULL) || detail.contains(CLOUD_POOL_FULL) {
         return PlatformError::service_unavailable("computer_capacity", "No hosted runtime capacity right now. Retry shortly.");
     }
     unavailable(detail)
@@ -312,6 +312,10 @@ mod unit {
         let other = ApiError::ServiceUnavailable("Fleet host h no longer exists".into());
         assert_eq!(provision_failed("platform:p", other).code, "runtime_unavailable");
         assert_eq!(relay_failed("Service unavailable: Free computers are at capacity right now").code, "computer_capacity");
+        // The Orgo pool (running cap / daily budget) is capacity too, on both paths.
+        let orgo_full = ApiError::ServiceUnavailable(format!("{}; retry in 30 seconds", crate::services::provisioning::CLOUD_POOL_FULL));
+        assert_eq!(provision_failed("platform:p", orgo_full).code, "computer_capacity");
+        assert_eq!(relay_failed("Service unavailable: Cloud computers are at capacity; retry in 30 seconds").code, "computer_capacity");
     }
 
     #[test]

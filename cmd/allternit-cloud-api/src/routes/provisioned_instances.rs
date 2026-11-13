@@ -539,6 +539,14 @@ async fn register_host(
             "name and incusEndpoint are required".to_string(),
         ));
     }
+    let endpoint = request.incus_endpoint.trim();
+    if crate::services::provisioning::is_orgo_endpoint(endpoint)
+        && endpoint.split_once("://").map(|(_, workspace)| workspace.trim_matches('/')).unwrap_or("").is_empty()
+    {
+        return Err(ApiError::BadRequest(
+            "an Orgo host endpoint is orgo://<workspace_id>".to_string(),
+        ));
+    }
     if request.cpu_cores <= 0 || request.memory_mb <= 0 || request.disk_gb <= 0 {
         return Err(ApiError::BadRequest(
             "capacity must be positive in every dimension".to_string(),
