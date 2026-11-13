@@ -298,6 +298,26 @@ export interface V1TracingTest {
   message: string;
 }
 
+export type ApprovalStatus = "pending" | "approved" | "denied" | "expired" | "consumed";
+export type ApprovalSource = "twin" | "computer";
+
+export interface V1Approval {
+  id: string;
+  object: "approval";
+  source: ApprovalSource;
+  source_ref: string;
+  account_id: string | null;
+  conversation_id?: string | null;
+  response_id?: string | null;
+  kind: string;
+  proposed_action: Record<string, unknown>;
+  status: ApprovalStatus;
+  expires_at: string | null;
+  created_at: string;
+  resolved_at: string | null;
+  resolved_by: string | null;
+}
+
 /** A `/v1` client bound to one project. */
 export function v1(projectId: string) {
   const headers = { [PROJECT_HEADER]: projectId };
@@ -323,6 +343,11 @@ export function v1(projectId: string) {
     listConversations: (agentId: string, after?: string | null) =>
       api.get<V1Page<V1Conversation>>(`/v1/agents/${enc(agentId)}/conversations${qs({ limit: 50, after })}`, opts),
     getConversation: (id: string) => api.get<V1Conversation>(`/v1/conversations/${enc(id)}`, opts),
+
+    listApprovals: (params: { status?: ApprovalStatus; source?: ApprovalSource; after?: string | null } = {}) =>
+      api.get<V1Page<V1Approval>>(`/v1/approvals${qs({ limit: 50, ...params })}`, opts),
+    decideApproval: (id: string, decision: "approve" | "deny", reason?: string) =>
+      api.post<V1Approval>(`/v1/approvals/${enc(id)}`, { decision, ...(reason ? { reason } : {}) }, opts),
 
     listModelKeys: () => api.get<{ data: V1ModelKey[] }>("/v1/model_keys", opts),
     putModelKey: (provider: ModelProvider, apiKey: string) =>
