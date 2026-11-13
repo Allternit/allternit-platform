@@ -39,7 +39,7 @@ test("an Allternit Cloud turn is signed with the device token when there is no A
       const model = await Provider.getModel("allternit", "kimi-k3")
       const language: any = await Provider.getLanguage(model, plan)
       expect(String(language.config.url({ path: "/chat/completions", modelId: "kimi-k3" }))).toBe("https://cloud.test/v1/chat/completions")
-      expect(language.config.headers().Authorization).toBe("Bearer allternit_runtime_platform_device")
+      expect(language.config.headers().authorization).toBe("Bearer allternit_runtime_platform_device")
     },
   })
 })
