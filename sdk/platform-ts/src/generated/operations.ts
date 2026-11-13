@@ -258,7 +258,8 @@ export class ConversationsResource {
    * then `RUN_FINISHED` or `RUN_ERROR` (`{message, code}`). `runId` is echoed (generated when
    * missing). Refusals before the stream starts are plain errors, as for messages:
    * `402 spend_cap_reached` / `payment_method_required`, `409 conversation_busy`,
-   * `503 runtime_starting`. The reply is stored and metered like any conversation message.
+   * `503 runtime_starting` or `503 computer_capacity` (the host has no memory for another awake
+   * runtime). Both carry `Retry-After: 30`. The reply is stored and metered like any conversation message.
    *
    * `POST /v1/agents/{id}/ag-ui`
    */
@@ -309,7 +310,8 @@ export class ConversationsResource {
    * "output"?, "error"?}`; arguments and results are cut at 8,000 characters) as it uses
    * tools, then `message.completed` (the stored reply) or `error`. Clients should skip
    * event names they don't know. The first message starts the
-   * project's hosted runtime: `503 runtime_starting` means retry in a few seconds.
+   * project's hosted runtime: `503 runtime_starting` (or `503 computer_capacity` when the host is full)
+   * means retry after the `Retry-After` header (30 seconds).
    * One message at a time per conversation (`409 conversation_busy`). A project at its
    * monthly spend cap gets `402 spend_cap_reached`; one with no card on file gets
    * `402 payment_method_required`. Each reply records `tokens_in` and
@@ -1557,7 +1559,7 @@ export class ResponsesResource {
    * matching `function_call_output` in `input`; `409 previous_response_not_latest` when
    * `previous_response_id` is not the latest response of its conversation;
    * `402 spend_cap_reached`, `402 payment_method_required`, `409 conversation_busy`,
-   * `503 runtime_starting`. Token usage is recorded as
+   * `503 runtime_starting` / `computer_capacity` (both with `Retry-After: 30`). Token usage is recorded as
    * `tokens_in` and `tokens_out`. Requires the `inference` scope with `model`, or the
    * `agents` scope with `agent`.
    *
