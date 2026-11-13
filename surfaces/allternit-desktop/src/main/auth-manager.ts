@@ -444,7 +444,7 @@ export class DesktopAuthManager {
     if (explicit) return explicit;
     return loadOrCreateInternalServiceToken({
       filePath: this.internalServiceTokenPath,
-      encode: (value) => this.encodeSecret(value),
+      encode: (value) => this.encodeSecret(value, this.internalServiceTokenPath),
       decode: (raw) => this.decodeSecret(raw),
       quarantine: (filePath) => this.quarantineCorruptFile(filePath),
       warn: (message, error) => log.warn(message, error),
