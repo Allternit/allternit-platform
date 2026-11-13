@@ -210,19 +210,6 @@ pub const ERASE: &[(&str, &str)] = &[
     ("user_runtime_quotas", USER),
     ("user_open_lane", USER),
     ("open_lane_blocks", USER),
-    // Meetings: the user's own calls (transcripts, chat, artifacts, tool calls
-    // and screen notes cascade from meeting_sessions), their calendar and Zoom
-    // connections, settings and bot-minute meter rows. Pods are deleted first
-    // (`meeting_launcher::Launcher::stop_all_for_user`). Bot minutes cascade
-    // from sessions, so they cannot be kept; charges live in the credit ledger.
-    ("meeting_tool_approvals", "user_id = $1 OR session_id IN (SELECT id FROM meeting_sessions WHERE user_id = $1)"),
-    ("meeting_participants", "session_id IN (SELECT id FROM meeting_sessions WHERE user_id = $1)"),
-    ("meeting_bot_minutes", USER),
-    ("meeting_sessions", USER),
-    ("meetings", USER),
-    ("calendar_connections", USER),
-    ("zoom_connections", USER),
-    ("user_meeting_settings", USER),
 ];
 
 /// Clears the user from rows that stay: kept records, and work that belongs to
