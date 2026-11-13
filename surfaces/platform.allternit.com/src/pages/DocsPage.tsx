@@ -81,7 +81,12 @@ const ENDPOINTS = [
   {
     method: "GET",
     path: "/api/v1/billing/credits",
-    description: "Check prepaid credit balance and recent transactions.",
+    description: "Check the console's Cloud credit balance and recent transactions.",
+  },
+  {
+    method: "GET",
+    path: "/api/v1/credits/balance",
+    description: "Device credits: the paired device's organization credits.",
   },
   {
     method: "GET",
