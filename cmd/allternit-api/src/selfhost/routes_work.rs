@@ -202,6 +202,9 @@ pub async fn ensure_work(st: &SelfHostState, session: &SessionRecord) -> Result<
         .enqueue_work(&session.environment_id, &session.id)
         .await?;
     tracing::info!(session_id = %session.id, work_id = %w.id, "work item queued");
+    if let Some(parent) = super::agent_loop::current_turn_trace(&st.store, &session.id).await {
+        super::telemetry::record_work_enqueued(&st.store, &w.id, &parent).await;
+    }
     st.work.notify_work();
     Ok(w)
 }
@@ -243,6 +246,7 @@ pub fn spawn_lease_sweeper(st: SelfHostState) -> tokio::task::JoinHandle<()> {
             match st.store.requeue_expired_work(Utc::now(), Duration::zero()).await {
                 Ok(0) => {}
                 Ok(n) => {
+                    super::telemetry::record_expired_leases(n as u64);
                     tracing::info!(count = n, "expired leases returned to the queue");
                     st.work.notify_work();
                 }
@@ -387,6 +391,7 @@ async fn claim(
             // Pending calls may now be served, and the loop may stop waiting
             // for a worker.
             st.work.notify_session(&c.item.session_id);
+            let _claim_span = super::telemetry::work_claim_span(&st.store, &c.item, &body.worker_id).await;
             return Ok((StatusCode::OK, Json(claim_json(&c, policy_json(&env)))).into_response());
         }
 
@@ -615,6 +620,7 @@ async fn submit_result(
         .submit_tool_result(&id, &body.output, body.is_error)
         .await?;
     if outcome.stored {
+        let _result_span = super::telemetry::work_result_span(&st.store, &outcome.call).await;
         st.work.notify_call(&id);
     }
     let status = if outcome.call.is_error { "errored" } else { "completed" };

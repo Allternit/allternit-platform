@@ -40,6 +40,7 @@
 //! through the same tool call queue as a sandbox tool; the gizzi CLI worker
 //! answers it with an error, SDK workers run it with their handlers.
 
+use super::telemetry::{self, Traced, TurnOutcome, TurnSpan};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -345,6 +346,7 @@ impl TurnRunner for GizziTurnRunner {
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_string();
+        let turn = super::telemetry::start_turn(&st.store, &session.id, &model).await;
         let turn_id = self.inner.next_turn.fetch_add(1, Ordering::Relaxed);
         let interrupted = Arc::new(AtomicBool::new(false));
         let slot = Arc::new(Mutex::new(session.gizzi_session_id.clone()));
@@ -357,11 +359,16 @@ impl TurnRunner for GizziTurnRunner {
             interrupted: interrupted.clone(),
             slot: slot.clone(),
             turn_id,
+            traceparent: turn.traced.header(),
         };
+        TURN_TRACES
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(session.id.clone(), turn.traced.traceparent.clone());
         // Hold the lock across the spawn so the task cannot finish (and
         // remove its entry) before the entry exists.
         let mut turns = self.inner.turns.lock().unwrap_or_else(|e| e.into_inner());
-        let task = tokio::spawn(run_turn(ctx));
+        let task = tokio::spawn(run_turn(ctx, turn));
         turns.insert(
             session.id.clone(),
             TurnHandle {
@@ -436,7 +443,23 @@ impl Inner {
         body: Option<&Value>,
         timeout: Option<Duration>,
     ) -> Result<Value, GizziError> {
+        self.call_tp(method, path, dir, body, timeout, None).await
+    }
+
+    /// Like `call`, with a `traceparent` header for the gizzi child.
+    async fn call_tp(
+        &self,
+        method: &str,
+        path: &str,
+        dir: Option<&Path>,
+        body: Option<&Value>,
+        timeout: Option<Duration>,
+        traceparent: Option<&str>,
+    ) -> Result<Value, GizziError> {
         let mut rb = self.request(method, path, dir);
+        if let Some(tp) = traceparent {
+            rb = rb.header("traceparent", tp);
+        }
         if let Some(b) = body {
             rb = rb.json(b);
         }
@@ -812,6 +835,29 @@ fn session_title(session: &SessionRecord) -> String {
 
 // ─── A turn ─────────────────────────────────────────────────────────────────
 
+/// Trace of the running turn per session, so the tool call and work routes
+/// (which run in other requests) can parent their spans on it.
+static TURN_TRACES: once_cell::sync::Lazy<Mutex<HashMap<String, crate::netops::hops::TraceParent>>> =
+    once_cell::sync::Lazy::new(|| Mutex::new(HashMap::new()));
+
+/// The span to parent a tool call or work item on: the session's running
+/// turn, else the session's root trace.
+pub async fn current_turn_trace(store: &super::store::DynStore, session_id: &str) -> Option<Traced> {
+    let live = TURN_TRACES
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(session_id)
+        .cloned();
+    let traceparent = match live {
+        Some(tp) => tp,
+        None => telemetry::session_trace(store, session_id).await.ok()?,
+    };
+    Some(Traced {
+        span: tracing::Span::none(),
+        traceparent,
+    })
+}
+
 struct TurnCtx {
     st: SelfHostState,
     inner: Arc<Inner>,
@@ -821,6 +867,8 @@ struct TurnCtx {
     interrupted: Arc<AtomicBool>,
     slot: Arc<Mutex<Option<String>>>,
     turn_id: u64,
+    /// W3C `traceparent` of the turn span, sent to the gizzi child.
+    traceparent: String,
 }
 
 enum TurnEnd {
@@ -828,21 +876,37 @@ enum TurnEnd {
     ModelError(String),
 }
 
-async fn run_turn(ctx: TurnCtx) {
-    let result = drive(&ctx).await;
+async fn run_turn(ctx: TurnCtx, turn: TurnSpan) {
+    use tracing::Instrument;
+    let result = drive(&ctx).instrument(turn.span().clone()).await;
     let st = &ctx.st;
     let id = ctx.session.id.as_str();
-    if ctx.interrupted.load(Ordering::SeqCst) {
+    let outcome = if ctx.interrupted.load(Ordering::SeqCst) {
         // The interrupt route owns the status now.
+        TurnOutcome::Interrupted
     } else {
         match result {
-            Ok(TurnEnd::Done) => finish(st, id, "idle", None).await,
+            Ok(TurnEnd::Done) => {
+                finish(st, id, "idle", None).await;
+                TurnOutcome::Completed
+            }
             Ok(TurnEnd::ModelError(message)) => {
                 fail(st, id, Failure::new("model_error", message)).await;
+                TurnOutcome::Error
             }
-            Err(f) => fail(st, id, f).await,
+            Err(f) => {
+                fail(st, id, f).await;
+                TurnOutcome::Error
+            }
+        }
+    };
+    {
+        let mut t = TURN_TRACES.lock().unwrap_or_else(|e| e.into_inner());
+        if t.get(id).is_some_and(|tp| tp.span_id == turn.traced.traceparent.span_id) {
+            t.remove(id);
         }
     }
+    turn.finish(outcome);
     let mut turns = ctx.inner.turns.lock().unwrap_or_else(|e| e.into_inner());
     if turns.get(id).is_some_and(|h| h.turn_id == ctx.turn_id) {
         turns.remove(id);
@@ -893,13 +957,13 @@ async fn drive(ctx: &TurnCtx) -> Result<TurnEnd, Failure> {
 
     let mut sub = Subscription::start(ctx, &gsid, &dir).await;
     let path = |g: &str| format!("/v1/session/{}/message", urlencoding::encode(g));
-    let reply = match ctx.inner.call("POST", &path(&gsid), Some(&dir), Some(&body), None).await {
+    let reply = match ctx.inner.call_tp("POST", &path(&gsid), Some(&dir), Some(&body), None, Some(&ctx.traceparent)).await {
         Err(GizziError::Http(404, _)) => {
             // The child restarted between the check and the post.
             sub.stop().await;
             gsid = rehydrate(ctx, &dir, &mcp).await?;
             sub = Subscription::start(ctx, &gsid, &dir).await;
-            ctx.inner.call("POST", &path(&gsid), Some(&dir), Some(&body), None).await
+            ctx.inner.call_tp("POST", &path(&gsid), Some(&dir), Some(&body), None, Some(&ctx.traceparent)).await
         }
         other => other,
     };

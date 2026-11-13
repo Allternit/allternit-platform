@@ -205,12 +205,24 @@ async fn serve(args: Vec<String>) -> Result<(), String> {
     sweeper.abort();
     let _ = tokio::time::timeout(std::time::Duration::from_secs(5), internal_task).await;
     drop(stop_rx);
-    result.map_err(|e| {
+    if let Err(e) = result {
         error!(error = %e, "server stopped with an error");
-        e.to_string()
-    })?;
+        flush_traces().await;
+        return Err(e.to_string());
+    }
     info!("stopped");
+    flush_traces().await;
     Ok(())
+}
+
+/// Send the spans still in the exporter's batch queue before the process
+/// exits. Runs off the async workers because the shutdown call blocks.
+async fn flush_traces() {
+    if !allternit_api::otel::enabled() {
+        return;
+    }
+    let flush = tokio::task::spawn_blocking(opentelemetry::global::shutdown_tracer_provider);
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(5), flush).await;
 }
 
 async fn shutdown_signal() {

@@ -454,7 +454,30 @@ async fn log_requests(req: Request, next: Next) -> Response {
     let method = req.method().clone();
     let path = req.uri().path().to_string();
     let started = std::time::Instant::now();
-    let res = next.run(req).await;
+    // One span per request, parented on an incoming `traceparent` header.
+    let incoming = req
+        .headers()
+        .get("traceparent")
+        .and_then(|v| v.to_str().ok())
+        .and_then(crate::netops::hops::parse);
+    let span = tracing::info_span!(
+        "http.request",
+        otel.name = %format!("{method} {path}"),
+        otel.kind = "server",
+        otel.status_code = tracing::field::Empty,
+        http.request.method = %method,
+        url.path = %path,
+        http.response.status_code = tracing::field::Empty,
+        trace_id = tracing::field::Empty,
+        span_id = tracing::field::Empty,
+    );
+    let span = telemetry::attach(span, incoming.as_ref()).span;
+    let res = tracing::Instrument::instrument(next.run(req), span.clone()).await;
+    span.record("http.response.status_code", res.status().as_u16());
+    if res.status().is_server_error() {
+        span.record("otel.status_code", "ERROR");
+    }
+    let _in = span.enter();
     tracing::info!(
         method = %method,
         path = %path,

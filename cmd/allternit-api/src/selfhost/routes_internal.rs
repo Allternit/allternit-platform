@@ -180,6 +180,9 @@ async fn submit_tool_call(
     }
     if created {
         tracing::info!(session_id = %session.id, tool_call_id = %call.id, name = %call.name, "tool call queued");
+        if let Some(turn) = super::agent_loop::current_turn_trace(&st.store, &session.id).await {
+            super::telemetry::start_tool_call(&st.store, &turn, &session.id, &call.id, &call.name).await;
+        }
     }
 
     let _in_flight = InFlight::new(st.work.clone(), &session.id);

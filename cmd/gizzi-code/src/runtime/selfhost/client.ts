@@ -9,6 +9,8 @@
  *     and tool_calls/{id}/result.
  * Neither is ever logged; errors carry only status, code and message.
  */
+import os from "node:os"
+import { Installation } from "@/shared/installation"
 import type { EnvironmentPolicy } from "./egress"
 
 export interface WorkClaim {
@@ -72,6 +74,9 @@ export function createWorkerClient(opts: WorkerClientOptions) {
     if (init.auth === "env") {
       if (!opts.environmentKey) throw new Error("an environment key is required for this call")
       headers.Authorization = `Bearer ${opts.environmentKey}`
+      // Shown on the server's worker list (claim, heartbeat, renew).
+      headers["X-Worker-Hostname"] = os.hostname()
+      headers["X-Worker-Version"] = Installation.VERSION
     } else {
       headers["X-Session-Secret"] = init.auth.secret
     }
