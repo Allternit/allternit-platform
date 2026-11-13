@@ -243,6 +243,39 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Deleted" }
         default: { $ref: "#/components/responses/Error" }
+  /v1/environments/{id}/workers:
+    parameters:
+      - $ref: "#/components/parameters/EnvironmentId"
+    get:
+      operationId: listEnvironmentWorkers
+      summary: List workers seen for an environment
+      description: Workers that claimed, heartbeat or renewed in the last 10 minutes, newest first. `online` is true when the worker was seen in the last 60 seconds.
+      tags: [Environments]
+      security:
+        - ServerApiKey: []
+        - OIDC: []
+      responses:
+        "200":
+          description: Workers.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      required: [worker_id, last_seen_at, online]
+                      properties:
+                        worker_id: { type: string }
+                        last_seen_at: { type: string, format: date-time }
+                        online: { type: boolean }
+                        current_work_id: { type: [string, "null"] }
+                        hostname: { type: [string, "null"] }
+                        version: { type: [string, "null"] }
+        default: { $ref: "#/components/responses/Error" }
   /v1/environments/{id}/keys:
     parameters:
       - $ref: "#/components/parameters/EnvironmentId"
@@ -630,13 +663,13 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Lease" }
         default: { $ref: "#/components/responses/Error" }
-  /v1/work/{work_id}/drain:
+  /v1/work/{work_id}/release:
     parameters:
       - $ref: "#/components/parameters/WorkId"
     post:
-      operationId: drainWork
+      operationId: releaseWork
       summary: Hand a work item back
-      description: The worker is shutting down and gives the item back. The lease ends, the item goes back to ready, and another worker can claim it without waiting for the lease to run out. Tool calls that were running are retried (at-least-once). 409 `lease_stale` if the generation is old.
+      description: The worker is shutting down (or was started with `--drain` and is done) and gives the item back. The lease ends, the item goes back to ready, and another worker can claim it without waiting for the lease to run out. Tool calls that were running are retried (at-least-once). 409 `lease_stale` if the generation is old.
       tags: [Work]
       security:
         - EnvironmentKey: []

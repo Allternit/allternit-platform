@@ -35,13 +35,13 @@ Other flags: `--block-ms`, `--reclaim-older-than-ms`, `--auto-stop`.
 - A claim gives a **60 second lease**.
 - **Renew every 20 seconds** (`/renew`). Use `/heartbeat` between renewals if you want.
 - Every claim raises the item's **`lease_generation`**. Every call about the item
-  (`heartbeat`, `renew`, `complete`, `drain`) carries the generation from the claim.
+  (`heartbeat`, `renew`, `complete`, `release`) carries the generation from the claim.
 - If the generation is old, the server answers **409 `lease_stale`**. That means
   another worker owns the item. The worker must stop the work at once, discard
   its results, and not post a result.
 - If a lease runs out, the item becomes ready again. Another worker may take it
   with `reclaim_older_than_ms`. This is how work from a dead worker comes back.
-- On shutdown, call `/drain`. The item goes back to ready now, with no wait.
+- On shutdown, call `/release`. The item goes back to ready now, with no wait.
 - Finish with `/complete`. Completing twice with the current generation is safe.
 
 ## Tool calls: at least once
