@@ -142,7 +142,10 @@ mkdir -p "$RESOURCES_DIR/bin"
 if ! reuse "gizzi-code-$GIZZI_TARGET" "$RESOURCES_DIR/bin/gizzi-code"; then
   # bun install inside cmd/gizzi-code fails: it is a pnpm workspace package
   # (workspace:* deps). Match CI (gizzi-code-quality.yml): install/build from
-  # the repo root, then compile the binary.
+  # the repo root, then compile the binary. Install first: when main adds a
+  # gizzi-code dependency, a reused build worktree's node_modules lacks it and
+  # bundling fails ("Could not resolve: @ai-sdk/amazon-bedrock", 2026-11-13).
+  pnpm install --frozen-lockfile --config.confirmModulesPurge=false
   pnpm --filter "@allternit/gizzi-code^..." run build
   pnpm --filter "@allternit/gizzi-sdk" run build
   (cd "$GIZZI_DIR" && bun run script/build-production.js --target="$GIZZI_TARGET")
