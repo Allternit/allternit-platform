@@ -190,6 +190,14 @@ pub fn is_capacity_message(message: &str) -> bool {
         || message.starts_with(orgo::CLOUD_POOL_FULL)
 }
 
+/// True for a stored or relayed failure string that carries a capacity refusal
+/// anywhere in it (e.g. "wake failed: ... Cloud computers are at capacity").
+pub fn mentions_capacity(detail: &str) -> bool {
+    detail.contains(HOSTED_POOL_FULL)
+        || detail.contains(FREE_POOL_FULL)
+        || detail.contains(orgo::CLOUD_POOL_FULL)
+}
+
 /// Memory kept free on every host for the host itself (`ALLTERNIT_HOST_MEMORY_HEADROOM_MB`).
 fn host_memory_headroom_mb() -> i64 {
     env_i64(ENV_HOST_MEMORY_HEADROOM_MB, DEFAULT_HOST_MEMORY_HEADROOM_MB).max(0)
@@ -726,6 +734,31 @@ impl ProvisioningService {
                 .await?;
                 Err(error.to_api_error())
             }
+        }
+    }
+
+    /// The capacity refusal that failed a wake of this device's computer, if the
+    /// last wake did (the row is back to `sleeping` with `wake failed: ...`;
+    /// a new wake clears it when it claims the row).
+    pub async fn wake_capacity_failure_for_device(&self, device_id: &str) -> Option<String> {
+        let row: Option<(String, Option<String>)> = sqlx::query_as(
+            "SELECT status, error_message FROM provisioned_instances \
+             WHERE device_id = $1 AND status <> 'deleted' ORDER BY created_at DESC LIMIT 1",
+        )
+        .bind(device_id)
+        .fetch_optional(&self.db)
+        .await
+        .ok()
+        .flatten();
+        match row {
+            Some((status, Some(message)))
+                if status == "sleeping"
+                    && message.starts_with("wake failed:")
+                    && mentions_capacity(&message) =>
+            {
+                Some(message)
+            }
+            _ => None,
         }
     }
 
