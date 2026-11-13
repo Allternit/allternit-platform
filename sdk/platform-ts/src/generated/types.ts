@@ -861,6 +861,12 @@ export type Response = {
   previous_response_id?: (string | null);
   output: Array<Item>;
   /**
+   * Why the response is `incomplete`; null otherwise.
+   */
+  incomplete_details?: ({
+    reason?: "max_output_tokens";
+  } | null);
+  /**
    * Reserved; always empty in this release. Approvals are their own resource: subscribe to `approval.requested` / `approval.resolved`; after resolution send a new response in the same conversation.
    */
   required_actions?: Array<{

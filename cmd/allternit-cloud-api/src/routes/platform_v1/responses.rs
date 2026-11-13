@@ -259,12 +259,16 @@ impl RespRow {
 }
 
 /// The public response object. `required_actions` is reserved and always empty
-/// in this release (approvals never pause a turn).
+/// in this release (approvals never pause a turn). `incomplete_details` says why
+/// a response is `incomplete`, as OpenAI's does; the only cause is the model
+/// stopping at `max_output_tokens` ([`model_end`]).
 fn response_json(r: &RespRow) -> Value {
+    let incomplete = (r.status == "incomplete").then(|| json!({ "reason": "max_output_tokens" }));
     json!({
         "id": r.id, "object": "response", "status": r.status, "model": r.model, "agent_id": r.agent_id,
         "conversation_id": r.conversation_id, "previous_response_id": r.previous_response_id,
         "output": r.output,
+        "incomplete_details": incomplete,
         "required_actions": [],
         "usage": { "input_tokens": r.usage["input_tokens"].as_i64().unwrap_or(0), "output_tokens": r.usage["output_tokens"].as_i64().unwrap_or(0) },
         "error": r.error, "metadata": r.metadata, "created_at": r.created_at, "completed_at": r.completed_at,
@@ -683,7 +687,11 @@ impl Finish {
             }
         }
         let body = response_json(&self.row);
-        let last = if matches!(end, End::Failed(_)) { "response.failed" } else { "response.completed" };
+        let last = match end {
+            End::Completed => "response.completed",
+            End::Incomplete => "response.incomplete",
+            End::Failed(_) => "response.failed",
+        };
         emit.send(vec![ev(last, json!({ "response": body }))]);
         body
     }
@@ -1154,6 +1162,9 @@ mod tests {
         row.status = "completed".into();
         let v = response_json(&row);
         assert_eq!((v["status"].as_str(), v["required_actions"].as_array().map(Vec::len)), (Some("completed"), Some(0)));
+        assert!(v["incomplete_details"].is_null());
+        row.status = "incomplete".into();
+        assert_eq!(response_json(&row)["incomplete_details"], json!({ "reason": "max_output_tokens" }));
         row.status = "failed".into();
         assert_eq!(response_json(&row)["status"], "failed");
     }
