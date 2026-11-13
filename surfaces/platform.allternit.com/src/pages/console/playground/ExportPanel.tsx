@@ -1,7 +1,12 @@
 import React, { useState } from "react";
 import { CodeTemplateBlock } from "@/components/console-ui";
 import { cn } from "@/lib/utils";
-import { exportRequest, KEY_PLACEHOLDER, type ExportLanguage } from "@/lib/playground-request";
+import {
+  exportModeRequest,
+  KEY_PLACEHOLDER,
+  type ExportLanguage,
+  type PlaygroundMode,
+} from "@/lib/playground-request";
 
 const LANGS: { id: ExportLanguage; label: string; block: string }[] = [
   { id: "curl", label: "curl", block: "bash" },
@@ -9,13 +14,19 @@ const LANGS: { id: ExportLanguage; label: string; block: string }[] = [
   { id: "typescript", label: "TypeScript", block: "typescript" },
 ];
 
-/** curl / Python (openai SDK) / TypeScript for the current request. The key is always a placeholder. */
+/**
+ * curl / Python / TypeScript for the current request. Chat mode uses the openai
+ * SDKs; Responses and Messages use allternit-platform / @allternit/platform.
+ * The key is always a placeholder.
+ */
 export function ExportPanel({
   body,
   baseUrl,
   errors,
+  mode = "chat",
 }: {
   body: Record<string, unknown>;
+  mode?: PlaygroundMode;
   baseUrl: string;
   errors: string[];
 }): React.ReactNode {
@@ -37,7 +48,7 @@ export function ExportPanel({
       {errors.map((e) => (
         <p key={e} className="m-0 text-[12px] text-[var(--status-error)]">{e}</p>
       ))}
-      <CodeTemplateBlock language={current.block} code={exportRequest(lang, body, baseUrl)} />
+      <CodeTemplateBlock language={current.block} code={exportModeRequest(mode, lang, body, baseUrl)} />
       <p className="m-0 text-[12px] text-[var(--text-tertiary)]">
         Create a key on the API keys page and export it as <code className="font-mono">{KEY_PLACEHOLDER}</code>.
         The Playground key is temporary and is never included here.

@@ -5,18 +5,19 @@ import {
   ensureConsoleGatewayKey,
   forgetPlaygroundKey,
   forgetStoredGatewayKey,
-  gatewayChat,
+  gatewayPost,
   GatewayHttpError,
   getPlaygroundKey,
-  type ChatCompletionRequest,
   type ChatToolCall,
 } from "@/lib/console-gateway";
 import {
-  assembledToJson,
-  mergeChunk,
-  newAssembly,
-  readCompletion,
-  type AssembledResponse,
+  MODE_PATHS,
+  mergeModeEvent,
+  modeAssemblyToJson,
+  newModeAssembly,
+  readModeReply,
+  type ModeAssembly,
+  type PlaygroundMode,
 } from "@/lib/playground-request";
 
 export interface ChatRunUsage {
@@ -33,7 +34,14 @@ export interface ChatRunState {
   modelUsed: string | null;
   stopped: boolean;
   toolCalls: ChatToolCall[];
+  /** Chat finish_reason, Responses status, or Messages stop_reason. */
   finishReason: string | null;
+  /** The route the last run used. */
+  mode: PlaygroundMode;
+  /** Responses `incomplete_details.reason`. */
+  incompleteReason: string | null;
+  /** The reply id (`chatcmpl_…`, `resp_…`, `mdl_…`). */
+  responseId: string | null;
   /** Inspector data. */
   request: Record<string, unknown> | null;
   responseJson: unknown;
@@ -52,6 +60,9 @@ const IDLE: ChatRunState = {
   stopped: false,
   toolCalls: [],
   finishReason: null,
+  mode: "chat",
+  incompleteReason: null,
+  responseId: null,
   request: null,
   responseJson: null,
   responseHeaders: null,
@@ -61,8 +72,10 @@ const IDLE: ChatRunState = {
 };
 
 export interface ChatRunArgs {
-  /** Full OpenAI-compatible request body (see buildRequestBody). */
+  /** Full request body for `mode` (see buildModeRequestBody). */
   body: Record<string, unknown>;
+  /** Route to call; chat completions when omitted. */
+  mode?: PlaygroundMode;
   /** Selected project; required on cloud to mint the playground key. */
   projectId: string | null;
 }
@@ -77,7 +90,7 @@ async function acquireKey(projectId: string | null, force: boolean): Promise<str
 }
 
 /**
- * One runnable chat-completion lane. Cloud: a 15-minute project key held in
+ * One runnable Playground lane (chat completions, Responses or Messages). Cloud: a 15-minute project key held in
  * memory (re-minted on expiry or 401). Runtime: the stored console key.
  * `stop()` aborts the stream. Compare lanes are independent instances.
  */
@@ -100,17 +113,18 @@ export function useChatRun(): {
     abortRef.current?.abort();
     const abort = new AbortController();
     abortRef.current = abort;
-    const request = args.body as unknown as ChatCompletionRequest;
-    setState({ ...IDLE, running: true, request: args.body });
+    const mode: PlaygroundMode = args.mode ?? "chat";
+    const streaming = args.body.stream === true;
+    setState({ ...IDLE, running: true, mode, request: args.body });
 
-    let acc: AssembledResponse = newAssembly();
+    let acc: ModeAssembly = newModeAssembly();
     const attempt = async (force: boolean) => {
-      acc = newAssembly();
+      acc = newModeAssembly();
       const key = await acquireKey(args.projectId, force);
-      return gatewayChat(key, request, {
+      return gatewayPost(MODE_PATHS[mode], key, args.body, {
         signal: abort.signal,
-        onChunk: (chunk) => {
-          acc = mergeChunk(acc, chunk);
+        onEvent: (event, data) => {
+          acc = mergeModeEvent(mode, acc, event, data);
           setState((prev) => ({
             ...prev,
             text: acc.content,
@@ -133,7 +147,7 @@ export function useChatRun(): {
           throw err;
         }
       }
-      const final = request.stream ? acc : readCompletion(result.json);
+      const final = streaming ? acc : readModeReply(mode, result.json);
       setState({
         ...IDLE,
         text: final.content,
@@ -141,8 +155,12 @@ export function useChatRun(): {
         usage: final.usage,
         modelUsed: final.model ?? null,
         finishReason: final.finishReason,
+        mode,
+        incompleteReason: final.incompleteReason,
+        responseId: final.id ?? null,
+        error: final.error,
         request: args.body,
-        responseJson: request.stream ? assembledToJson(final) : result.json,
+        responseJson: streaming ? modeAssemblyToJson(mode, final) : result.json,
         responseHeaders: result.headers,
         status: result.status,
         latencyMs: result.latencyMs,

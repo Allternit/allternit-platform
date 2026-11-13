@@ -15,11 +15,14 @@ import { useProjectContext } from "@/lib/project-context";
 import { getPlaygroundKey, gatewayBaseUrl } from "@/lib/console-gateway";
 import {
   DEFAULT_PARAMS,
-  buildRequestBody,
+  PLAYGROUND_MODES,
+  buildModeRequestBody,
   imageContent,
+  isPlaygroundMode,
   messagesToEditable,
   paramsFromBody,
   redactImages,
+  type PlaygroundMode,
   type PlaygroundParams,
 } from "@/lib/playground-request";
 import { fetchReplayRequest, getSharedPrompt, type PromptBody, type SavedPrompt } from "@/lib/saved-prompts";
@@ -50,6 +53,8 @@ const SEGMENT_CLASS =
   "inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-[12px] font-semibold transition-colors";
 
 interface PersistedState {
+  /** Which route Run calls: chat completions, Responses or Messages. */
+  mode: PlaygroundMode;
   model: string;
   systemPrompt: string;
   messages: EditableMessage[];
@@ -58,6 +63,7 @@ interface PersistedState {
 
 function loadPersisted(): PersistedState {
   const fallback: PersistedState = {
+    mode: "chat",
     model: "auto",
     systemPrompt: "",
     messages: [{ id: "msg-initial", role: "user", content: "" }],
@@ -74,6 +80,7 @@ function loadPersisted(): PersistedState {
     if (typeof parsed.temperature === "number") legacy.temperature = parsed.temperature;
     if (typeof parsed.maxTokens === "number") legacy.maxTokens = parsed.maxTokens;
     return {
+      mode: isPlaygroundMode(parsed.mode) ? parsed.mode : fallback.mode,
       model: typeof parsed.model === "string" ? parsed.model : fallback.model,
       systemPrompt: typeof parsed.systemPrompt === "string" ? parsed.systemPrompt : "",
       // Images and tool turns are not persisted: data URLs are large and stale tool ids are useless.
@@ -140,6 +147,32 @@ export function PlaygroundPage(): React.ReactNode {
   const single = useChatRun();
   const laneA = useChatRun();
   const laneB = useChatRun();
+
+  // Responses mode: the next single run continues this stored response.
+  const [lastResponseId, setLastResponseId] = useState<string | null>(null);
+  const mode = persisted.mode;
+  const previousResponseId = mode === "responses" ? lastResponseId : null;
+
+  useEffect(() => {
+    const s = single.state;
+    if (
+      s.mode === "responses" &&
+      s.responseId?.startsWith("resp_") &&
+      (s.finishReason === "completed" || s.finishReason === "incomplete")
+    ) {
+      setLastResponseId(s.responseId);
+    }
+    // Only a new reply id should set it; clearing it by hand must stick.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [single.state.responseId]);
+
+  const setMode = useCallback(
+    (next: PlaygroundMode) => {
+      setPersisted((p) => (p.mode === next ? p : { ...p, mode: next }));
+      setLastResponseId(null);
+    },
+    []
+  );
 
   const [laneBConfig, setLaneBConfig] = useState({
     model: "auto",
@@ -230,32 +263,29 @@ export function PlaygroundPage(): React.ReactNode {
 
   const anyRunning = single.state.running || laneA.state.running || laneB.state.running;
 
-  const requestFor = useCallback(
-    (model: string, messages: ChatCompletionMessage[], params: PlaygroundParams) =>
-      buildRequestBody(model, messages, params),
-    []
-  );
-
   const runLane = useCallback(
     async (
       lane: typeof single,
       model: string,
       messages: ChatCompletionMessage[],
-      params: PlaygroundParams
+      params: PlaygroundParams,
+      previous: string | null = null
     ) => {
-      const { body, errors } = requestFor(model, messages, params);
+      const { body, errors } = buildModeRequestBody(mode, model, messages, params, {
+        previousResponseId: previous,
+      });
       setFormErrors(errors);
       if (errors.length > 0) return;
-      await lane.run({ body, projectId });
+      await lane.run({ body, mode, projectId });
     },
-    [requestFor, projectId]
+    [mode, projectId]
   );
 
   const handleRunSingle = useCallback(async () => {
     const model = resolveModel(persisted.model);
     if (!model) return;
-    await runLane(single, model, effectiveMessages, persisted.params);
-  }, [resolveModel, persisted, effectiveMessages, single, runLane]);
+    await runLane(single, model, effectiveMessages, persisted.params, previousResponseId);
+  }, [resolveModel, persisted, effectiveMessages, single, runLane, previousResponseId]);
 
   const handleToolResults = useCallback(
     async (results: Record<string, string>) => {
@@ -282,10 +312,11 @@ export function PlaygroundPage(): React.ReactNode {
         single,
         model,
         buildMessages(persisted.systemPrompt, nextMessages, supportsVision),
-        persisted.params
+        persisted.params,
+        previousResponseId
       );
     },
-    [resolveModel, persisted, single, runLane, supportsVision]
+    [resolveModel, persisted, single, runLane, supportsVision, previousResponseId]
   );
 
   const handleRunCompare = useCallback(async () => {
@@ -310,13 +341,16 @@ export function PlaygroundPage(): React.ReactNode {
 
   const exportBuild = useMemo(
     () =>
-      buildRequestBody(
+      buildModeRequestBody(
+        mode,
         resolveModel(persisted.model) ?? persisted.model,
         redactImages(effectiveMessages),
-        persisted.params
+        persisted.params,
+        { previousResponseId }
       ),
-    [resolveModel, persisted, effectiveMessages]
+    [mode, resolveModel, persisted, effectiveMessages, previousResponseId]
   );
+  const modeLabel = PLAYGROUND_MODES.find((m) => m.id === mode)?.label ?? mode;
 
   const applyTemplate = useCallback(
     (templateId: string) => {
@@ -329,6 +363,7 @@ export function PlaygroundPage(): React.ReactNode {
           { id: `msg-${Date.now()}`, role: "user", content: template.starterMessage },
         ],
       }));
+      setLastResponseId(null);
       single.reset();
     },
     [single]
@@ -340,6 +375,7 @@ export function PlaygroundPage(): React.ReactNode {
       const { systemPrompt, messages } = messagesToEditable(rec.messages);
       const hasParams = typeof rec.params === "object" && rec.params !== null;
       setPersisted((prev) => ({
+        mode: prev.mode,
         model: typeof rec.model === "string" ? rec.model : prev.model,
         systemPrompt: typeof rec.systemPrompt === "string" ? rec.systemPrompt : systemPrompt,
         messages: messages.length > 0 ? messages : prev.messages,
@@ -347,6 +383,7 @@ export function PlaygroundPage(): React.ReactNode {
           ? { ...DEFAULT_PARAMS, ...(rec.params as Partial<PlaygroundParams>) }
           : paramsFromBody(rec),
       }));
+      setLastResponseId(null);
       single.reset();
       setView("form");
     },
@@ -439,7 +476,31 @@ export function PlaygroundPage(): React.ReactNode {
             </p>
           ) : null}
         </div>
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2">
+          <div
+            role="group"
+            aria-label="API"
+            className="inline-flex max-w-full overflow-x-auto rounded-lg border border-solid border-[var(--border-subtle)] bg-[var(--bg-secondary)] p-0.5"
+          >
+            {PLAYGROUND_MODES.map((m) => (
+              <button
+                key={m.id}
+                type="button"
+                aria-pressed={mode === m.id}
+                disabled={anyRunning}
+                onClick={() => setMode(m.id)}
+                className={cn(
+                  SEGMENT_CLASS,
+                  "shrink-0 whitespace-nowrap disabled:cursor-not-allowed",
+                  mode === m.id
+                    ? "bg-[var(--accent-primary)] text-[var(--ui-text-inverse)]"
+                    : "text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                )}
+              >
+                {m.label}
+              </button>
+            ))}
+          </div>
           <div className="inline-flex rounded-lg border border-solid border-[var(--border-subtle)] bg-[var(--bg-secondary)] p-0.5">
             <button
               type="button"
@@ -499,6 +560,11 @@ export function PlaygroundPage(): React.ReactNode {
           {e}
         </p>
       ))}
+      {exportBuild.ignored.length > 0 && (
+        <p className="m-0 text-[12px] text-[var(--text-tertiary)]">
+          Not sent in {modeLabel} mode: {exportBuild.ignored.join(", ")}.
+        </p>
+      )}
       {imagesBlocked && (
         <p className="m-0 text-[12px] text-[var(--status-error)]">
           The selected model does not accept images. Pick a model with vision or remove the images.
@@ -510,7 +576,7 @@ export function PlaygroundPage(): React.ReactNode {
           <p className="m-0 text-[13px] text-[var(--text-secondary)]">
             This is the exact request the form sends, as code you can run.
           </p>
-          <ExportPanel body={exportBuild.body} baseUrl={gatewayBaseUrl()} errors={exportBuild.errors} />
+          <ExportPanel mode={mode} body={exportBuild.body} baseUrl={gatewayBaseUrl()} errors={exportBuild.errors} />
         </div>
       ) : compare ? (
         <div className="space-y-5">
@@ -622,6 +688,23 @@ export function PlaygroundPage(): React.ReactNode {
               </div>
             </details>
 
+            {previousResponseId && (
+              <p className="m-0 flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px] text-[var(--text-tertiary)]">
+                <span>
+                  Continues{" "}
+                  <code className="break-all font-mono text-[var(--text-secondary)]">{previousResponseId}</code>
+                  . Only the messages after the last assistant turn are sent.
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setLastResponseId(null)}
+                  className="rounded-md px-1.5 py-0.5 font-semibold text-[var(--accent-primary)] hover:bg-[var(--surface-hover)]"
+                >
+                  Start fresh
+                </button>
+              </p>
+            )}
+
             <div className="flex flex-wrap items-center gap-2">
               <RunButton
                 running={single.state.running}
@@ -649,7 +732,7 @@ export function PlaygroundPage(): React.ReactNode {
             <details className={detailsClass}>
               <summary className={summaryClass}>Export code</summary>
               <div className="pt-3">
-                <ExportPanel body={exportBuild.body} baseUrl={gatewayBaseUrl()} errors={exportBuild.errors} />
+                <ExportPanel mode={mode} body={exportBuild.body} baseUrl={gatewayBaseUrl()} errors={exportBuild.errors} />
               </div>
             </details>
 
