@@ -329,6 +329,13 @@ fn env_opt(name: &str) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
+/// "30m" / "1h" / "45" (minutes) → whole minutes for Orgo; unparseable → 30.
+fn auto_stop_minutes(idle: &str) -> i64 {
+    let t = idle.trim().to_ascii_lowercase();
+    let (num, mult) = if let Some(h) = t.strip_suffix('h') { (h, 60) } else { (t.strip_suffix('m').unwrap_or(&t), 1) };
+    num.trim().parse::<i64>().map(|n| (n * mult).max(0)).unwrap_or(30)
+}
+
 /// Unset = `default`; set but empty = do not set Orgo's auto-stop.
 fn auto_stop_env(name: &str, default: &str) -> Option<String> {
     match std::env::var(name) {
@@ -788,10 +795,11 @@ impl OrgoBackend {
         Ok(())
     }
 
-    /// Best effort: Orgo's own idle auto-stop. The body shape is not
-    /// documented, so a failure only logs.
+    /// Best effort: Orgo's own idle auto-stop (`PATCH /computers/{id}/auto-stop`
+    /// `{"auto_stop_minutes": N}`, 0 = never). Orgo's free plan fixes it at
+    /// 15 minutes and refuses changes, so a failure only logs.
     async fn set_auto_stop(&self, id: &str, idle: &str) {
-        let body = serde_json::json!({ "idle_timeout": idle });
+        let body = serde_json::json!({ "auto_stop_minutes": auto_stop_minutes(idle) });
         match self
             .send(
                 reqwest::Method::PATCH,
@@ -1941,7 +1949,7 @@ mod tests {
             .iter()
             .find(|s| s.path.ends_with("/auto-stop"))
             .expect("auto-stop set");
-        assert_eq!(auto_stop.body["idle_timeout"], "30m");
+        assert_eq!(auto_stop.body["auto_stop_minutes"], 30);
 
         let position = |needle: &str| {
             fake.bash
