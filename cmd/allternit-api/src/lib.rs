@@ -318,6 +318,9 @@ pub mod commerce_routes;
 pub mod marketplace_routes;
 pub mod me_routes;
 pub mod setup_routes;
+/// Self-hosted Agents Server (the `allternit-agents-server` binary). Never
+/// mounted by the main `allternit-api` router.
+pub mod selfhost;
 pub mod mailflare_client;
 pub mod media;
 pub mod model_training_routes;

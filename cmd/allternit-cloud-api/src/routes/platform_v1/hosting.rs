@@ -15,10 +15,12 @@
 //! [`AgentHost`] is the seam: production is [`ProdHost`]; tests layer a fake as
 //! an `Extension<Arc<dyn AgentHost>>`.
 
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, OnceLock};
 
 use async_trait::async_trait;
 use axum::http::StatusCode;
+use chrono::{DateTime, Duration, Utc};
 use serde_json::Value;
 
 use super::PlatformError;
@@ -59,6 +61,60 @@ fn unavailable(detail: &str) -> PlatformError {
     }
 }
 
+/// A provisioning failure: a full host is `computer_capacity` (503, with
+/// `Retry-After`); anything else is `runtime_unavailable`.
+fn provision_failed(owner: &str, error: crate::error::ApiError) -> PlatformError {
+    let full = matches!(&error, crate::error::ApiError::ServiceUnavailable(m)
+        if crate::services::provisioning::is_capacity_message(m));
+    if full {
+        PlatformError::from(error)
+    } else {
+        unavailable(&format!("provision {owner}: {error}"))
+    }
+}
+
+/// A relay failure string that carries a capacity refusal (a relay wake that
+/// found the host full) is `computer_capacity` too.
+fn relay_failed(detail: &str) -> PlatformError {
+    use crate::services::provisioning::{CLOUD_POOL_FULL, FREE_POOL_FULL, HOSTED_POOL_FULL};
+    if detail.contains(FREE_POOL_FULL) || detail.contains(HOSTED_POOL_FULL) || detail.contains(CLOUD_POOL_FULL) {
+        return PlatformError::service_unavailable("computer_capacity", "No hosted runtime capacity right now. Retry shortly.");
+    }
+    unavailable(detail)
+}
+
+/// Replacing a runtime that never connected: at most [`REPLACE_AFTER_MINUTES`]`.len()`
+/// times per project, each only once the stuck runtime is that old (5, 15, 45
+/// minutes). The count is in memory (a restart forgets it: at most three more
+/// replacements per project, never a loop); the clock is the stuck row's own
+/// `created_at`, so it survives restarts.
+const REPLACE_AFTER_MINUTES: [i64; 3] = [5, 15, 45];
+
+#[derive(Default)]
+struct ReplaceLedger(Mutex<HashMap<String, usize>>);
+
+impl ReplaceLedger {
+    /// True (and recorded) when the project's stuck runtime, created at
+    /// `created_at`, may be replaced at `now`.
+    fn may_replace(&self, project_id: &str, created_at: DateTime<Utc>, now: DateTime<Utc>) -> bool {
+        let mut counts = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        let done = counts.entry(project_id.to_string()).or_insert(0);
+        let Some(minutes) = REPLACE_AFTER_MINUTES.get(*done) else {
+            return false;
+        };
+        if now - created_at < Duration::minutes(*minutes) {
+            return false;
+        }
+        *done += 1;
+        true
+    }
+}
+
+fn replace_ledger() -> &'static ReplaceLedger {
+    static LEDGER: OnceLock<ReplaceLedger> = OnceLock::new();
+    LEDGER.get_or_init(ReplaceLedger::default)
+}
+
 #[async_trait]
 pub trait AgentHost: Send + Sync {
     /// The project's runtime, created on first use. `runtime_starting` (503)
@@ -97,9 +153,23 @@ impl AgentHost for ProdHost {
             .execute(&self.0.db)
             .await
             .map_err(|e| unavailable(&format!("runtime owner {owner}: {e}")))?;
-        let mut view = self.0.provisioning_service.create_free(&owner).await.map_err(|e| unavailable(&format!("provision {owner}: {e}")))?;
+        // Read the runtime first: this runs on every agent call, and only a
+        // missing one is created (create_free would also return the live one,
+        // but a stuck one is only replaced under the backoff below).
+        let provisioning = &self.0.provisioning_service;
+        let existing = provisioning
+            .list_for_user(&owner)
+            .await
+            .map_err(|e| unavailable(&format!("runtime {owner}: {e}")))?
+            .into_iter()
+            .find(|v| v.tier == "free" && v.replaced_by.is_none() && !matches!(v.status.as_str(), "error" | "deleted"));
+        let mut view = match existing {
+            Some(view) => view,
+            None => provisioning.create_free(&owner).await.map_err(|e| provision_failed(&owner, e))?,
+        };
         // A runtime that paired but was never seen again (its pairing failed after
-        // the one-time code was used) stays offline forever: replace it.
+        // the one-time code was used) stays offline forever: replace it, with
+        // backoff, and never while a new one would be refused for capacity.
         if let Some(device) = view.device_id.as_deref() {
             let never: Option<(bool,)> = sqlx::query_as(
                 // Never seen after it was created (a sleeping runtime has heartbeats behind it;
@@ -111,10 +181,13 @@ impl AgentHost for ProdHost {
             .fetch_optional(&self.0.db)
             .await
             .map_err(|e| unavailable(&format!("runtime {device}: {e}")))?;
-            if never.is_some_and(|(stuck,)| stuck) {
+            if never.is_some_and(|(stuck,)| stuck)
+                && provisioning.platform_runtime_admissible(&owner).await.unwrap_or(false)
+                && replace_ledger().may_replace(project_id, view.created_at, Utc::now())
+            {
                 tracing::warn!(%owner, instance = %view.id, %device, "platform hosting: runtime never connected; replacing it");
-                self.0.provisioning_service.delete(&view.id, &owner).await.map_err(|e| unavailable(&format!("replace {}: {e}", view.id)))?;
-                view = self.0.provisioning_service.create_free(&owner).await.map_err(|e| unavailable(&format!("provision {owner}: {e}")))?;
+                provisioning.delete(&view.id, &owner).await.map_err(|e| unavailable(&format!("replace {}: {e}", view.id)))?;
+                view = provisioning.create_free(&owner).await.map_err(|e| provision_failed(&owner, e))?;
             }
         }
         if matches!(view.status.as_str(), "error" | "deleted") {
@@ -131,7 +204,7 @@ impl AgentHost for ProdHost {
         let (status, out) = ProdCallRelay { state: &self.0 }
             .relay_with(method, &rt.owner, &rt.runtime_id, path, &bytes)
             .await
-            .map_err(|e| unavailable(&e))?;
+            .map_err(|e| relay_failed(&e))?;
         let value: Value = serde_json::from_slice(&out).unwrap_or(Value::Null);
         map_status(status, &value)?;
         Ok((status, value))
@@ -142,7 +215,7 @@ impl AgentHost for ProdHost {
         let (status, stream) = ProdCallRelay { state: &self.0 }
             .stream(&rt.owner, &rt.runtime_id, path, &bytes)
             .await
-            .map_err(|e| unavailable(&e))?;
+            .map_err(|e| relay_failed(&e))?;
         if status >= 400 {
             map_status(status, &Value::Null)?;
             return Err(unavailable(&format!("turn refused with {status}")));
@@ -204,6 +277,45 @@ mod unit {
         assert_eq!(code(502, serde_json::json!({ "error": "gizzi runtime refused session create" })).as_deref(), Some("runtime_unavailable"));
         assert_eq!(code(500, Value::Null).as_deref(), Some("runtime_unavailable"));
         assert_eq!(code(200, Value::Null), None);
+    }
+
+    #[test]
+    fn a_never_connecting_runtime_is_replaced_once_per_window_and_at_most_three_times() {
+        let ledger = ReplaceLedger::default();
+        let t0 = Utc::now();
+        // 20 calls, 10 s apart, against a runtime that never connects: only the
+        // first (stuck for 11 minutes) deletes; the new row is too young after.
+        let mut created = t0;
+        let mut deletes = 0;
+        for i in 0..20 {
+            let now = t0 + Duration::minutes(11) + Duration::seconds(10 * i);
+            if ledger.may_replace("proj_1", created, now) {
+                deletes += 1;
+                created = now;
+            }
+        }
+        assert_eq!(deletes, 1);
+        // Later windows: 15 then 45 minutes of age, then never again.
+        assert!(!ledger.may_replace("proj_1", created, created + Duration::minutes(14)));
+        assert!(ledger.may_replace("proj_1", created, created + Duration::minutes(15)));
+        assert!(ledger.may_replace("proj_1", created, created + Duration::minutes(45)));
+        assert!(!ledger.may_replace("proj_1", created, created + Duration::days(1)));
+        // Another project has its own count.
+        assert!(ledger.may_replace("proj_2", created, created + Duration::minutes(5)));
+    }
+
+    #[test]
+    fn a_capacity_refusal_is_computer_capacity_not_unavailable() {
+        use crate::error::ApiError;
+        let full = ApiError::ServiceUnavailable(format!("{}: host memory is full", crate::services::provisioning::FREE_POOL_FULL));
+        assert_eq!(provision_failed("platform:p", full).code, "computer_capacity");
+        let other = ApiError::ServiceUnavailable("Fleet host h no longer exists".into());
+        assert_eq!(provision_failed("platform:p", other).code, "runtime_unavailable");
+        assert_eq!(relay_failed("Service unavailable: Free computers are at capacity right now").code, "computer_capacity");
+        // The Orgo pool (running cap / daily budget) is capacity too, on both paths.
+        let orgo_full = ApiError::ServiceUnavailable(format!("{}; retry in 30 seconds", crate::services::provisioning::CLOUD_POOL_FULL));
+        assert_eq!(provision_failed("platform:p", orgo_full).code, "computer_capacity");
+        assert_eq!(relay_failed("Service unavailable: Cloud computers are at capacity; retry in 30 seconds").code, "computer_capacity");
     }
 
     #[test]

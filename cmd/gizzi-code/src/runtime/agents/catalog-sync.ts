@@ -16,6 +16,7 @@
 import fs from "fs/promises"
 import path from "path"
 import { CLOUD_URLS } from "@/shared/constants/cloudUrls"
+import { isSelfHosted } from "@/shared/selfhost/offline"
 import { Global } from "@/runtime/context/global"
 import { Log } from "@/shared/util/log"
 import { catalogAgent, isModelClass, permissionFromTools, type ModelClass } from "./builtin-catalog"
@@ -92,6 +93,8 @@ export namespace CatalogSync {
 
   /** undefined = signed out / offline / rejected: leave everything as is. */
   async function fetchRows(): Promise<Row[] | undefined> {
+    // Self-hosted: keep the bundled catalog; never call api.allternit.com.
+    if (isSelfHosted()) return undefined
     const list = await tokens()
     for (const token of list) {
       let response: Response

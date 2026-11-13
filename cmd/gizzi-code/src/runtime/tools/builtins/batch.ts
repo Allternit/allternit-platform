@@ -1,5 +1,6 @@
 import z from "zod/v4"
 import { Tool } from "@/runtime/tools/builtins/tool"
+import { RemoteToolHost } from "@/runtime/tools/remote-host"
 import DESCRIPTION from "@/runtime/tools/builtins/batch.txt"
 
 const DISALLOWED = new Set(["batch"])
@@ -76,7 +77,11 @@ export const BatchTool = Tool.define("batch", async () => {
             },
           })
 
-          const result = await tool.execute(validatedParams, { ...ctx, callID: partID })
+          // Self-hosted remote tool host: batch calls tools directly (not via
+          // ToolDispatcher), so sandbox tools are routed to the worker here too.
+          const result: Awaited<ReturnType<typeof tool.execute>> = RemoteToolHost.handles(tool.id)
+            ? await RemoteToolHost.execute(tool.id, validatedParams, { ...ctx, callID: partID })
+            : await tool.execute(validatedParams, { ...ctx, callID: partID })
           const attachments = result.attachments?.map((attachment) => ({
             ...attachment,
             id: Identifier.ascending("part"),

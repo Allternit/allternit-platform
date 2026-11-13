@@ -512,30 +512,63 @@ export namespace Session {
         title,
       })
       const msgs = await messages({ sessionID: input.sessionID })
-      const idMap = new Map<string, string>()
+      await copyMessages(session.id, msgs, input.messageID)
+      return session
+    },
+  )
 
-      for (const msg of msgs) {
-        if (input.messageID && msg.info.id >= input.messageID) break
-        const newID = Identifier.ascending("message")
-        idMap.set(msg.info.id, newID)
+  /**
+   * Write `msgs` (gizzi's stored message + parts shape) into `sessionID`
+   * with fresh, ascending message and part ids, keeping each assistant
+   * message's link to its user message. Stops before `stopBefore` when given.
+   * Shared by `fork` and `importSession`.
+   */
+  async function copyMessages(sessionID: string, msgs: MessageV2.WithParts[], stopBefore?: string) {
+    const idMap = new Map<string, string>()
+    for (const msg of msgs) {
+      if (stopBefore && msg.info.id >= stopBefore) break
+      const newID = Identifier.ascending("message")
+      idMap.set(msg.info.id, newID)
 
-        const parentID = msg.info.role === "assistant" && msg.info.parentID ? idMap.get(msg.info.parentID) : undefined
-        const cloned = await updateMessage({
-          ...msg.info,
-          sessionID: session.id,
-          id: newID,
-          ...(parentID && { parentID }),
+      const parentID = msg.info.role === "assistant" && msg.info.parentID ? idMap.get(msg.info.parentID) : undefined
+      const cloned = await updateMessage({
+        ...msg.info,
+        sessionID,
+        id: newID,
+        ...(parentID && { parentID }),
+      })
+
+      for (const part of msg.parts) {
+        await updatePart({
+          ...part,
+          id: Identifier.ascending("part"),
+          messageID: cloned.id,
+          sessionID,
         })
-
-        for (const part of msg.parts) {
-          await updatePart({
-            ...part,
-            id: Identifier.ascending("part"),
-            messageID: cloned.id,
-            sessionID: session.id,
-          })
-        }
       }
+    }
+  }
+
+  /**
+   * Create a session from a transcript in gizzi's own stored shape (POST
+   * /session/import). The self-hosted Agents Server uses it to rebuild a
+   * session from its Postgres events after a restart, so the next turn sees
+   * the earlier messages. Messages are written in the order given, with new
+   * ids, through the same writer `fork` uses.
+   */
+  export const importSession = fn(
+    z.object({
+      title: z.string().optional(),
+      agentID: z.string().optional(),
+      messages: z.array(MessageV2.WithParts),
+    }),
+    async (input) => {
+      const session = await createNext({
+        directory: Instance.directory,
+        title: input.title,
+        agentID: input.agentID,
+      })
+      await copyMessages(session.id, input.messages)
       return session
     },
   )

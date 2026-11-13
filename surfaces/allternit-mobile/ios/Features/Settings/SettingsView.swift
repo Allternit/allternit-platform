@@ -445,6 +445,7 @@ struct SettingsView: View {
         case .agents: agentsPage
         case .webhooks: WebhooksSettingsView()
         case .deviceAccess: DeviceAccessSettingsView()
+        case .selfHosted: SelfHostedSettingsView()
         }
     }
 

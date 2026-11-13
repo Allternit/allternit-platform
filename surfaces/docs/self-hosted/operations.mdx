@@ -1,0 +1,100 @@
+---
+title: 'Operations'
+description: 'Run the Agents Server day to day: migrations, backups, key rotation, upgrades, doctor, and the Helm charts.'
+---
+
+<Note>
+**Status: Private beta.** The commands below were checked in an end-to-end run on 2026-11-13. Flags can still change. Check `allternit-agents-server admin help` on your build.
+</Note>
+
+## Admin commands
+
+The admin CLI is part of the server binary. With Docker Compose, run it inside the server container: `docker compose exec server allternit-agents-server admin ...`.
+
+Every command takes `--config <path>` (or `-c`) to point at the settings file.
+
+| Command | What it does |
+|---|---|
+| `admin setup [--name N] [--force-new-admin]` | Runs migrations, mints the first admin API key and prints it once. Refuses when a key exists, unless `--force-new-admin`. |
+| `admin migrate` | Applies database migrations. Safe to run again: it does nothing when the schema is current. |
+| `admin keys list` | Lists server API keys with role and status. |
+| `admin keys create --role admin\|developer\|viewer [--name N]` | Creates a server API key and prints it once. |
+| `admin keys revoke <key id>` | Revokes a key. The last active admin key cannot be revoked. |
+| `admin env-keys list --environment <env id>` | Lists the environment's keys. |
+| `admin env-keys create --environment <env id> [--name N]` | Creates an environment key (`aek_...`) and prints it once. |
+| `admin env-keys revoke --environment <env id> <key id>` | Revokes an environment key. |
+| `admin rotate-key` | Re-seals every stored credential with `secrets.encryption_key_ref`. See [Rotate keys](#rotate-keys). |
+| `admin doctor [--offline]` | Checks settings, database, gizzi, inference, egress and OpenTelemetry. `--offline` skips the checks that call out. |
+
+```bash
+docker compose exec server allternit-agents-server admin keys create --role developer --name ci --config /etc/allternit/settings.yaml
+```
+
+## Migrate
+
+The compose bundle runs a one-shot `migrate` container before the server starts. Run it again after every upgrade:
+
+```bash
+docker compose run --rm migrate
+```
+
+The self-hosted schema is its own small PostgreSQL schema. It is not shared with any other Allternit product.
+
+## Backups
+
+**PostgreSQL.** All state lives in the database: agents, environments, sessions, the event log, the work queue, tool calls, key hashes and encrypted credentials. Back it up with your usual PostgreSQL tooling, for example:
+
+```bash
+# use the user and database names from your .env
+docker compose exec postgres pg_dump -U "$POSTGRES_USER" -Fc "$POSTGRES_DB" > agents-$(date +%F).dump
+```
+
+Back up these too:
+
+- The settings file.
+- The encryption key that `secrets.encryption_key_ref` points to. Without it, stored credentials in a restored database cannot be read.
+
+**SQLite mode** (no `database.url`): stop the server, then copy `data_dir`.
+
+Test a restore before you need one.
+
+## Rotate keys
+
+**Encryption key for stored credentials.**
+
+1. Add the new key in your secret store.
+2. In the settings file, point `secrets.encryption_key_ref` at the new key and move the old key's reference into `secrets.previous_key_refs`.
+3. Stop the server.
+4. Run `admin rotate-key --config <path>`. It re-seals every stored credential with the new key. Values sealed with the old key stay readable because it is in `previous_key_refs`.
+5. Start the server again.
+6. Remove the old key from your secret store and from `previous_key_refs`.
+
+If the command reports credentials that did not open with any key, add the key that sealed them to `previous_key_refs` and run it again.
+
+**Server API keys.** Create a new key, switch the client to it, then revoke the old key (`DELETE /v1/api_keys/{id}`). The last admin key cannot be revoked.
+
+**Environment keys.** Create a new key for the environment, roll it out to the workers, then revoke the old one. Workers still using the old key get `401` on their next call.
+
+## Upgrades
+
+v1 runs one server replica.
+
+1. Back up the database.
+2. Pull the new images.
+3. Run `migrate`.
+4. Restart the server, then the workers.
+
+On a graceful shutdown the server ends open long-polls at once, so workers and clients reconnect without waiting for their poll to time out. Sessions continue after a restart: the server rebuilds each session from its event log in PostgreSQL, and the next turn sees the earlier messages. Leases are stored in the database, so workers keep renewing once the server is back. An item whose lease ran out during the restart is claimed again.
+
+## Doctor
+
+`admin doctor` prints one line per check and exits non-zero when one fails. It covers the settings file and secret references, the database (and migrations on PostgreSQL), the gizzi binary, reachability of the inference host, the egress rules and the OpenTelemetry setup. `admin doctor --offline` skips the checks that make network calls. Run it after any change to the settings or the deployment.
+
+## Kubernetes
+
+Helm charts live at `deploy/selfhost/charts/`:
+
+- `agents-server`: the server, its migrate job and its settings.
+- `sandboxes`: the workers.
+
+Use your own PostgreSQL (managed or operator-run) and give the server its URL through a secret reference.

@@ -18,6 +18,7 @@ import { Provider } from "@/runtime/providers/provider"
 import { CLOUD_PROVIDER_ID, consumeHandoff, handoffTarget, isRefusal } from "@/runtime/providers/handoff"
 import { type Tool as AITool, tool, jsonSchema, type ToolCallOptions, asSchema } from "ai"
 import { ToolDispatcher } from "@/runtime/tools/dispatch"
+import { RemoteToolHost } from "@/runtime/tools/remote-host"
 import { ToolDedupe } from "@/runtime/tools/dedupe"
 import { ToolSelection } from "@/runtime/tools/selection"
 import { SessionCompaction } from "@/runtime/session/compaction"
@@ -280,6 +281,15 @@ export namespace SessionPrompt {
     // through here, so no client can talk to a closed window.
     input.sessionID = await beforeTurnHandoff(input)
     const session = await Session.get(input.sessionID)
+    // Self-hosted: refuse the turn before anything is stored when the agent's
+    // custom tools are malformed or shadow a built-in (resolveTools registers them).
+    const customTools = RemoteToolHost.customToolsFrom(input.metadata)
+    if (customTools.length) {
+      RemoteToolHost.registerCustomTools(input.sessionID, customTools, [
+        ...(await ToolRegistry.ids({ computer: true })),
+        "StructuredOutput",
+      ])
+    }
     await SessionRevert.cleanup(session)
 
     const submittedText = input.parts
@@ -1974,6 +1984,9 @@ const message = await createUserMessage(input)
       tools[key] = item
     }
 
+    // Self-hosted Agents Server: the agent's custom tools (metadata.selfhost.custom_tools).
+    await addSelfhostCustomTools(tools, { ...input, context })
+
     // Per-message mobile composer gating (metadata.tools) — applied last so it
     // wins over agent/config tool assembly for this turn only.
     if (mobileOptions) {
@@ -2028,6 +2041,78 @@ const message = await createUserMessage(input)
     }
 
     return tools
+  }
+
+  /**
+   * Offer the agent's custom tools to the model (self-hosted Agents Server,
+   * `GIZZI_TOOL_HOST=remote`). The server sends them in every turn's
+   * `metadata.selfhost.custom_tools`; they become this session's custom tools
+   * (replacing the last turn's), and a call to one goes through the remote
+   * tool host to the server's queue, where an SDK worker runs it. A custom
+   * tool named like a built-in, MCP or sandbox tool is refused: the turn
+   * fails with a `custom_tool_conflict` error.
+   *
+   * @internal Exported for testing
+   */
+  export async function addSelfhostCustomTools(
+    tools: Record<string, AITool>,
+    input: {
+      session: Session.Info
+      model: Provider.Model
+      agent: Agent.Info
+      metadata?: Record<string, unknown>
+      context: (args: Record<string, unknown>, options: ToolCallOptions) => Tool.Context
+    },
+  ) {
+    if (!RemoteToolHost.enabled()) return
+    const custom = RemoteToolHost.customToolsFrom(input.metadata)
+    const reserved = custom.length
+      ? [...Object.keys(tools), ...(await ToolRegistry.ids({ computer: true })), "StructuredOutput"]
+      : []
+    RemoteToolHost.registerCustomTools(input.session.id, custom, reserved)
+    for (const def of custom) {
+      tools[def.name] = tool({
+        id: def.name as any,
+        description: def.description,
+        inputSchema: jsonSchema(ProviderTransform.schema(input.model, def.inputSchema as any) as any),
+        async execute(args: Record<string, unknown>, options: ToolCallOptions) {
+          const ctx = input.context(args, options)
+          await Plugin.trigger(
+            "tool.execute.before",
+            { tool: def.name, sessionID: ctx.sessionID, callID: ctx.callID },
+            { args },
+          )
+          const result = await ToolDedupe.execute({
+            sessionID: ctx.sessionID,
+            messageID: ctx.messageID,
+            tool: def.name,
+            args,
+            // The dispatcher forwards it too (RemoteToolHost.handles); it never runs here.
+            run: () =>
+              ToolDispatcher.executeInitialized(def.name, args, ctx, (nextArgs, nextCtx) =>
+                RemoteToolHost.execute(def.name, nextArgs, nextCtx),
+              ),
+          })
+          const truncated = await Truncate.output(SecretRedactor.text(result.output), {}, input.agent)
+          const output = {
+            title: result.title,
+            metadata: {
+              ...SecretRedactor.deep(result.metadata),
+              custom: true,
+              truncated: truncated.truncated,
+              ...(truncated.truncated && { outputPath: truncated.outputPath }),
+            },
+            output: truncated.content,
+          }
+          await Plugin.trigger(
+            "tool.execute.after",
+            { tool: def.name, sessionID: ctx.sessionID, callID: ctx.callID, args },
+            output,
+          )
+          return output
+        },
+      })
+    }
   }
 
   const MobileTools = z.object({

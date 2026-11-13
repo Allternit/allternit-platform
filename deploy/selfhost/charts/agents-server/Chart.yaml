@@ -1,0 +1,11 @@
+apiVersion: v2
+name: agents-server
+description: Allternit Self-Hosted Agents server (allternit-agents-server). API, agent loop and PostgreSQL-backed state. Runs one replica.
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+kubeVersion: ">=1.27.0-0"
+keywords: [allternit, agents, self-hosted]
+home: https://docs.allternit.com/self-hosted
+sources:
+  - https://github.com/Allternit/allternit/tree/main/deploy/selfhost

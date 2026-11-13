@@ -368,6 +368,7 @@
               "operations/owned-downloads",
               "operations/screen-capture",
               "operations/hosted-driver",
+              "operations/compute-providers",
               "operations/cloud-computer-network",
               "operations/upstream-funding",
               "operations/database-migrations",
@@ -559,6 +560,24 @@
               "byoc/vm-executor"
             ],
             "icon": "/icons/stack.svg"
+          },
+          {
+            "group": "Self-Hosted Agents",
+            "pages": [
+              "self-hosted/overview",
+              "self-hosted/quickstart",
+              "self-hosted/configuration",
+              "self-hosted/workers",
+              "self-hosted/auth",
+              "self-hosted/models",
+              "self-hosted/networking",
+              "self-hosted/observability",
+              "self-hosted/operations",
+              "self-hosted/client-apps",
+              "self-hosted/sdks",
+              "self-hosted/api-reference"
+            ],
+            "icon": "/icons/shield.svg"
           },
           {
             "group": "Surfaces",
@@ -817,6 +836,7 @@
                   "api/web-proxy",
                   "api/usage",
                   "api/cloud-billing",
+                  "api/account-compute-status",
                   "api/analytics",
                   "api/audit-logs",
                   "api/runtime-backend",
@@ -962,6 +982,10 @@
           {
             "group": "Inference API reference",
             "openapi": "api-reference/inference-v1.yaml"
+          },
+          {
+            "group": "Self-Hosted Agents API reference",
+            "openapi": "api-reference/selfhost-v1.yaml"
           },
           {
             "group": "Platform API",

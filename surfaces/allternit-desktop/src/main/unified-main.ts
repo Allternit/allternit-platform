@@ -113,6 +113,7 @@ import { phoneService } from './phone-service.js';
 import { registerPhoneIpc } from './phone-ipc.js';
 import { registerPhoneLinkIpc } from './phone-link-ipc.js';
 import { registerVoiceKeysIpc } from './voice-keys-ipc.js';
+import { registerSelfHostCredentialsIpc } from './selfhost-credentials-ipc.js';
 import {
   createCaptureSession,
   stopCaptureSession,
@@ -3192,6 +3193,7 @@ registerPhoneIpc(handleGuarded);
 registerPhoneLinkIpc(handleGuarded);
 // Voice provider keys (Settings › Voice) in secure-store, plus the Paste button's clipboard read.
 registerVoiceKeysIpc(handleGuarded);
+registerSelfHostCredentialsIpc(handleGuarded);
 
 // System One (S1) + Laya (install / repair / lifecycle / checkpoint swap)
 ipcMain.handle('system-one:get-status', () => systemOne.getStatus());

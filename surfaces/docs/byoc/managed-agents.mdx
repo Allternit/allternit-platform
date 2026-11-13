@@ -7,6 +7,10 @@ description: 'Run Allternit agents on a runtime you control'
 **Status:** Implementation IMPLEMENTED (pairing and relay) × Exposure PUBLIC PREVIEW. Earlier versions of this page described `allternit-runtime register`, `POST /v1/deployments` with `runtime_type: "byoc"`, a `deployment_id` on agents, `GET /v1/deployments/{id}/runs`, and mTLS daemon auth. None of these exist on main.
 </Note>
 
+<Tip>
+**Need no Allternit account and no relay?** [Self-Hosted Agents](/self-hosted/overview) (private beta) is a separate product: you run the whole agent server, its PostgreSQL state and the sandbox workers yourself. Clients call your server directly, there is no pairing or WSS relay, and the server makes no calls to `*.allternit.com`. The only outside call is to your model provider.
+</Tip>
+
 ## What actually happens
 
 Agents are records on the Allternit API ([Agents API](/api/agents)). When you pair a node ([BYOC Overview](/byoc/overview)), the Cloud API relays agent-session, office and beta calls to that node over an outbound WebSocket, so the agent runs on your data plane against its SQLite state and the local Gizzi runtime (`:4096`).

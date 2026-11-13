@@ -1,0 +1,1494 @@
+openapi: 3.1.0
+info:
+  title: Allternit Self-Hosted Agents Server API
+  version: "1.0.0"
+  summary: The API of the customer-run Agents Server (allternit-agents-server).
+  description: |
+    The API of the self-hosted Agents Server. You run it. It makes no calls to
+    `*.allternit.com`. Default base URL: `http://127.0.0.1:8400`.
+
+    Agent shapes follow the Allternit Platform API (`platform-v1.yaml`) so the
+    SDKs stay the same. Fields that only make sense for hosted voice and
+    phone agents are left out.
+
+    **Four kinds of credential**
+
+    | Scheme | Looks like | Who uses it |
+    |---|---|---|
+    | `ServerApiKey` | `Authorization: Bearer ask_...` | Admins, developers, viewers (clients, SDKs, CLI). |
+    | `EnvironmentKey` | `Authorization: Bearer aek_...` | Workers. Scoped to one environment. |
+    | `SessionSecret` | `X-Session-Secret: <secret>` | A worker, for one session only. Handed out by a work claim. |
+    | `OIDC` | `Authorization: Bearer <id token>` | People signing in with your identity provider. The role comes from a claim, set in the settings file. |
+
+    **Roles.** `admin` can do everything. `developer` can do everything except
+    manage API keys. `viewer` can only read.
+
+    **Errors.** Every error is `{"error": {"type", "message", "code"}}`.
+    The HTTP status says the kind of error. The `code` says what went wrong.
+
+    Worker protocol notes (leases, fencing, egress): see
+    `docs/SELFHOST_WORKER_PROTOCOL.md`. Server settings: see
+    `selfhost-settings.schema.json`.
+  license:
+    name: Proprietary
+    identifier: LicenseRef-Allternit-Proprietary
+servers:
+  - url: http://127.0.0.1:8400
+    description: Default listen address. Change it with `server.listen` in the settings file.
+security:
+  - ServerApiKey: []
+  - OIDC: []
+tags:
+  - name: Server
+  - name: Agents
+  - name: Environments
+  - name: Sessions
+  - name: Events
+  - name: Work
+    description: Worker side. Environment-key auth.
+  - name: Tool calls
+    description: Worker side. Session-secret auth.
+  - name: API keys
+  - name: Environment keys
+  - name: Internal
+    description: Loopback only. Skipped by SDK generation.
+paths:
+  /health/live:
+    get:
+      operationId: getHealthLive
+      summary: Liveness
+      description: 200 while the process serves requests. No auth. For container and load-balancer probes.
+      tags: [Server]
+      security: []
+      responses:
+        "200":
+          description: Alive.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: { type: string, const: ok }
+  /health/ready:
+    get:
+      operationId: getHealthReady
+      summary: Readiness
+      description: |
+        200 when the database answers and the agent loop (the gizzi child) is
+        ready. 503 `store_unavailable` when the database does not answer, 503
+        `agent_loop_unavailable` while the agent loop is starting or restarting,
+        or when it cannot run (for example the gizzi-code binary is missing). No auth.
+      tags: [Server]
+      security: []
+      responses:
+        "200":
+          description: Ready.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, store]
+                properties:
+                  status: { type: string, const: ok }
+                  store: { type: string, enum: [postgres, sqlite, memory] }
+                  agent_loop:
+                    type: string
+                    enum: [ready, disabled]
+                    description: "`ready` when the gizzi child answers. `disabled` for a server built without an agent loop."
+        "503":
+          description: Not ready. Code `store_unavailable` or `agent_loop_unavailable`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /v1/server/info:
+    get:
+      operationId: getServerInfo
+      summary: Server info
+      description: Version, inference provider, enabled features and accepted auth modes. Safe to call before you sign in, so a client can show the right sign-in screen. Reveals no secrets.
+      tags: [Server]
+      security: []
+      responses:
+        "200":
+          description: Server info.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ServerInfo" }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/agents:
+    get:
+      operationId: listAgents
+      summary: List agents
+      description: Agents, oldest first.
+      tags: [Agents]
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/After"
+      responses:
+        "200":
+          description: A page of agents.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ListEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: "#/components/schemas/Agent" }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      operationId: createAgent
+      summary: Create an agent
+      description: |
+        An agent is a model, a system prompt and a set of tools. If the server
+        uses a gateway provider, `model` must be in the settings `model_map`
+        (else `422 model_not_mapped`). Needs role `developer` or `admin`.
+      tags: [Agents]
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateAgentRequest" }
+      responses:
+        "201":
+          description: The new agent.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Agent" }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/agents/{id}:
+    parameters:
+      - $ref: "#/components/parameters/AgentId"
+    get:
+      operationId: getAgent
+      summary: Retrieve an agent
+      tags: [Agents]
+      responses:
+        "200":
+          description: The agent.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Agent" }
+        default: { $ref: "#/components/responses/Error" }
+    patch:
+      operationId: updateAgent
+      summary: Update an agent
+      description: Absent fields are unchanged. Arrays and `metadata` replace the old value. Running sessions keep the agent version they started with.
+      tags: [Agents]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateAgentRequest" }
+      responses:
+        "200":
+          description: The updated agent.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Agent" }
+        default: { $ref: "#/components/responses/Error" }
+    delete:
+      operationId: deleteAgent
+      summary: Delete an agent
+      description: Fails with 409 `agent_in_use` while the agent has a non-archived session.
+      tags: [Agents]
+      responses:
+        "200":
+          description: Deleted.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Deleted" }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/environments:
+    get:
+      operationId: listEnvironments
+      summary: List environments
+      description: An environment is the place where an agent's tools run, with its own network rules. Oldest first.
+      tags: [Environments]
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/After"
+      responses:
+        "200":
+          description: A page of environments.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ListEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: "#/components/schemas/Environment" }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      operationId: createEnvironment
+      summary: Create an environment
+      description: |
+        Network defaults to `none`. Workers enforce the policy on every
+        outbound connection. An environment's `git` and `mcp` lists can only
+        narrow the server-wide lists in the settings file, never widen them.
+      tags: [Environments]
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateEnvironmentRequest" }
+      responses:
+        "201":
+          description: The new environment.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Environment" }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/environments/{id}:
+    parameters:
+      - $ref: "#/components/parameters/EnvironmentId"
+    get:
+      operationId: getEnvironment
+      summary: Retrieve an environment
+      tags: [Environments]
+      responses:
+        "200":
+          description: The environment.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Environment" }
+        default: { $ref: "#/components/responses/Error" }
+    patch:
+      operationId: updateEnvironment
+      summary: Update an environment
+      description: Policy changes reach a worker on its next claim. Work already claimed keeps the policy it was claimed with.
+      tags: [Environments]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateEnvironmentRequest" }
+      responses:
+        "200":
+          description: The updated environment.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Environment" }
+        default: { $ref: "#/components/responses/Error" }
+    delete:
+      operationId: deleteEnvironment
+      summary: Delete an environment
+      description: Fails with 409 `environment_in_use` while a non-archived session uses it. Revokes the environment's keys.
+      tags: [Environments]
+      responses:
+        "200":
+          description: Deleted.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Deleted" }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/environments/{id}/workers:
+    parameters:
+      - $ref: "#/components/parameters/EnvironmentId"
+    get:
+      operationId: listEnvironmentWorkers
+      summary: List workers seen for an environment
+      description: Workers that claimed, heartbeat or renewed in the last 10 minutes, newest first. `online` is true when the worker was seen in the last 60 seconds.
+      tags: [Environments]
+      security:
+        - ServerApiKey: []
+        - OIDC: []
+      responses:
+        "200":
+          description: Workers.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      required: [worker_id, last_seen_at, online]
+                      properties:
+                        worker_id: { type: string }
+                        last_seen_at: { type: string, format: date-time }
+                        online: { type: boolean }
+                        current_work_id: { type: [string, "null"] }
+                        hostname: { type: [string, "null"] }
+                        version: { type: [string, "null"] }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/environments/{id}/keys:
+    parameters:
+      - $ref: "#/components/parameters/EnvironmentId"
+    get:
+      operationId: listEnvironmentKeys
+      summary: List environment keys
+      description: Keys for this environment. The secret is never shown again. Needs role `admin`.
+      tags: [Environment keys]
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/After"
+      responses:
+        "200":
+          description: A page of environment keys.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ListEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: "#/components/schemas/EnvironmentKey" }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      operationId: createEnvironmentKey
+      summary: Create an environment key
+      description: Returns the `aek_...` secret once. Give it to the workers of this environment. Needs role `admin`.
+      tags: [Environment keys]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                name: { type: string, maxLength: 100 }
+                expires_at: { type: [string, "null"], format: date-time }
+      responses:
+        "201":
+          description: The key, with its secret.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EnvironmentKeyWithSecret" }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/environments/{id}/keys/{key_id}:
+    parameters:
+      - $ref: "#/components/parameters/EnvironmentId"
+      - name: key_id
+        in: path
+        required: true
+        schema: { type: string }
+    delete:
+      operationId: revokeEnvironmentKey
+      summary: Revoke an environment key
+      description: Takes effect at once. Workers using the key get 401 on their next call. Needs role `admin`.
+      tags: [Environment keys]
+      responses:
+        "200":
+          description: Revoked.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Deleted" }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/sessions:
+    get:
+      operationId: listSessions
+      summary: List sessions
+      description: Newest first. Archived sessions are hidden unless `include_archived` is true.
+      tags: [Sessions]
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/After"
+        - name: agent_id
+          in: query
+          schema: { type: string }
+        - name: environment_id
+          in: query
+          schema: { type: string }
+        - name: status
+          in: query
+          schema: { $ref: "#/components/schemas/SessionStatus" }
+        - name: include_archived
+          in: query
+          schema: { type: boolean, default: false }
+      responses:
+        "200":
+          description: A page of sessions.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ListEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: "#/components/schemas/Session" }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      operationId: createSession
+      summary: Create a session
+      description: A session pairs one agent with one environment. Creating it does not start a turn. Send a message to do that. Returns 422 `model_not_mapped` when the agent's model is not in the model map, with no outbound request made.
+      tags: [Sessions]
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [agent_id, environment_id]
+              additionalProperties: false
+              properties:
+                agent_id: { type: string }
+                environment_id: { type: string }
+                title: { type: string, maxLength: 200 }
+                metadata: { type: object, additionalProperties: true }
+      responses:
+        "201":
+          description: The new session.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Session" }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/sessions/{id}:
+    parameters:
+      - $ref: "#/components/parameters/SessionId"
+    get:
+      operationId: getSession
+      summary: Retrieve a session
+      tags: [Sessions]
+      responses:
+        "200":
+          description: The session.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Session" }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/sessions/{id}/archive:
+    parameters:
+      - $ref: "#/components/parameters/SessionId"
+    post:
+      operationId: archiveSession
+      summary: Archive a session
+      description: Stops the session and hides it from the default list. Events stay readable. Archiving cannot be undone.
+      tags: [Sessions]
+      responses:
+        "200":
+          description: The archived session.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Session" }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/sessions/{id}/messages:
+    parameters:
+      - $ref: "#/components/parameters/SessionId"
+    post:
+      operationId: sendSessionMessage
+      summary: Send a user message
+      description: |
+        Adds a user turn and starts the agent loop. Returns at once with the
+        event that was stored. Follow progress on the events stream. A model-only
+        turn needs no worker. A turn that calls a tool waits until a worker
+        for the environment is attached; the session shows `waiting_for_worker`.
+        Returns 409 `session_busy` if a turn is already running, and 409
+        `session_archived` for an archived session. The agent's model is checked
+        against the server's model map again here (it may have changed since the
+        session was made): an unmapped model is 422 `model_not_mapped`, with no
+        outbound request. While the agent loop is starting or cannot run, the
+        answer is 503 `agent_loop_unavailable`; a server built without an agent
+        loop answers 501 `not_implemented`. In those cases nothing is stored.
+        A turn that fails later ends with an `error` event and status `error`.
+      tags: [Sessions]
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content]
+              additionalProperties: false
+              properties:
+                content:
+                  type: string
+                  minLength: 1
+                  maxLength: 200000
+                metadata: { type: object, additionalProperties: true }
+      responses:
+        "202":
+          description: Accepted. The stored user message event.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Event" }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/sessions/{id}/interrupt:
+    parameters:
+      - $ref: "#/components/parameters/SessionId"
+    post:
+      operationId: interruptSession
+      summary: Interrupt the running turn
+      description: Stops the current turn. Pending tool calls are cancelled. The session's work item stays with its worker, which keeps serving the session's next turns. Does nothing if the session is idle.
+      tags: [Sessions]
+      responses:
+        "200":
+          description: The session after the interrupt.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Session" }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/sessions/{id}/events:
+    parameters:
+      - $ref: "#/components/parameters/SessionId"
+    get:
+      operationId: listSessionEvents
+      summary: List session events
+      description: The session log, oldest first, in pages. Events are never edited or removed. `seq` rises by one for each event in a session.
+      tags: [Events]
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/After"
+        - name: after_seq
+          in: query
+          description: Only events with a larger `seq`. Use it instead of `after` to resume from a known point.
+          schema: { type: integer, minimum: 0 }
+        - name: types
+          in: query
+          description: Comma-separated event types to keep.
+          schema: { type: string, examples: ["message,tool_call"] }
+      responses:
+        "200":
+          description: A page of events.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ListEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: "#/components/schemas/Event" }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/sessions/{id}/events/stream:
+    parameters:
+      - $ref: "#/components/parameters/SessionId"
+    get:
+      operationId: streamSessionEvents
+      summary: Stream session events (SSE)
+      description: |
+        Server-sent events. Each frame has `id: <seq>`, `event: <type>` and
+        `data: <Event JSON>`. Event types: `message`, `tool_call`,
+        `tool_result`, `status`, `error`. A `: keepalive` comment goes out every
+        15 seconds. To resume after a dropped connection, send `Last-Event-ID`
+        (or `after_seq`); the server replays everything after it, then goes live.
+      tags: [Events]
+      parameters:
+        - name: after_seq
+          in: query
+          schema: { type: integer, minimum: 0 }
+        - name: Last-Event-ID
+          in: header
+          schema: { type: string }
+      responses:
+        "200":
+          description: An event stream.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: SSE frames. The `data` line of each frame is an Event object.
+        default: { $ref: "#/components/responses/Error" }
+  /v1/environments/{id}/work/claim:
+    parameters:
+      - $ref: "#/components/parameters/EnvironmentId"
+    post:
+      operationId: claimWork
+      summary: Claim a work item
+      description: |
+        Worker side. Claims the oldest claimable work item for this environment and
+        starts a 60 second lease. Waits up to `block_ms` for work to appear and
+        answers as soon as an item is queued. Returns 204 when there is nothing.
+
+        Claimable: an item that is ready, or one whose lease ran out (a worker that
+        died). With `reclaim_older_than_ms`, also an item whose lease is still live
+        but was last renewed at least that long ago; pick a value above the 20 s
+        renew interval. Each claim raises the item's `lease_generation`, so the old
+        worker gets 409 `lease_stale` on its next call. Tool calls the old worker
+        took but did not answer are handed out again.
+
+        The server also returns expired leases to the queue every 5 seconds.
+        Each session has at most one open work item, queued the first time a turn
+        needs a sandbox tool. Auth: environment key of this environment.
+      tags: [Work]
+      security:
+        - EnvironmentKey: []
+      parameters:
+        - $ref: "#/components/parameters/WorkerHostname"
+        - $ref: "#/components/parameters/WorkerVersion"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [worker_id]
+              additionalProperties: false
+              properties:
+                worker_id:
+                  type: string
+                  maxLength: 200
+                  description: A stable name for this worker process. Shown in status.
+                block_ms:
+                  type: integer
+                  minimum: 0
+                  maximum: 30000
+                  default: 0
+                  description: How long to wait for work before answering 204.
+                reclaim_older_than_ms:
+                  type: integer
+                  minimum: 0
+                  description: Also claim items whose live lease was last renewed at least this long ago. Expired leases are claimable without it. Values of 60000 or more add nothing.
+      responses:
+        "200":
+          description: A work item, with a 60 second lease.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkClaim" }
+        "204":
+          description: No work available.
+        default: { $ref: "#/components/responses/Error" }
+  /v1/work/{work_id}/heartbeat:
+    parameters:
+      - $ref: "#/components/parameters/WorkId"
+    post:
+      operationId: heartbeatWork
+      summary: Heartbeat a work item
+      description: Tells the server the worker is alive, without moving the lease. Send it between renewals. 409 `lease_stale` if the generation is old.
+      tags: [Work]
+      security:
+        - EnvironmentKey: []
+      parameters:
+        - $ref: "#/components/parameters/WorkerHostname"
+        - $ref: "#/components/parameters/WorkerVersion"
+      requestBody:
+        $ref: "#/components/requestBodies/LeaseBody"
+      responses:
+        "200":
+          description: The lease state.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Lease" }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/work/{work_id}/renew:
+    parameters:
+      - $ref: "#/components/parameters/WorkId"
+    post:
+      operationId: renewWork
+      summary: Renew a lease
+      description: Moves `lease_expires_at` to 60 seconds from now. Renew every 20 seconds. 409 `lease_stale` if the generation is old, which means another worker owns the item now. Stop at once.
+      tags: [Work]
+      security:
+        - EnvironmentKey: []
+      parameters:
+        - $ref: "#/components/parameters/WorkerHostname"
+        - $ref: "#/components/parameters/WorkerVersion"
+      requestBody:
+        $ref: "#/components/requestBodies/LeaseBody"
+      responses:
+        "200":
+          description: The renewed lease.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Lease" }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/work/{work_id}/complete:
+    parameters:
+      - $ref: "#/components/parameters/WorkId"
+    post:
+      operationId: completeWork
+      summary: Complete a work item
+      description: Marks the item done and ends the lease. 409 `lease_stale` if the generation is old. Completing twice with the current generation returns 200 both times.
+      tags: [Work]
+      security:
+        - EnvironmentKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [lease_generation]
+              additionalProperties: false
+              properties:
+                lease_generation: { type: integer }
+                outcome:
+                  type: string
+                  enum: [success, failed, cancelled]
+                  default: success
+                error_message: { type: string, maxLength: 2000 }
+      responses:
+        "200":
+          description: The lease state, now closed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Lease" }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/work/{work_id}/release:
+    parameters:
+      - $ref: "#/components/parameters/WorkId"
+    post:
+      operationId: releaseWork
+      summary: Hand a work item back
+      description: The worker is shutting down (or was started with `--drain` and is done) and gives the item back. The lease ends, the item goes back to ready, and another worker can claim it without waiting for the lease to run out. Tool calls that were running are retried (at-least-once). 409 `lease_stale` if the generation is old.
+      tags: [Work]
+      security:
+        - EnvironmentKey: []
+      requestBody:
+        $ref: "#/components/requestBodies/LeaseBody"
+      responses:
+        "200":
+          description: The item is ready again.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Lease" }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/work/{work_id}/tool_calls/next:
+    parameters:
+      - $ref: "#/components/parameters/WorkId"
+    post:
+      operationId: nextToolCall
+      summary: Get the next tool call
+      description: |
+        Worker side. Long-polls up to `block_ms` for the next tool call of the
+        session. Returns 204 when none arrived. A tool call that was handed out but has no result yet
+        is handed out again after the lease changes hands (at-least-once), with the
+        same `tool_call_id`. Run it once per id. Auth: the session secret.
+
+        **Session finished.** When the session will send no more tool calls, the
+        server answers 204 with the header `X-Session-Closed: true`. That happens
+        when the session is archived, or when it has had no turn running and no
+        pending tool call for `sessions.idle_timeout` (default 1 hour). The worker
+        then calls `/complete` for the work item. The session's next turn that
+        needs a tool queues a new item. A 204 without the header only means
+        "nothing yet, poll again".
+      tags: [Tool calls]
+      security:
+        - SessionSecret: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                block_ms:
+                  type: integer
+                  minimum: 0
+                  maximum: 30000
+                  default: 0
+      responses:
+        "200":
+          description: A tool call to run.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ToolCall" }
+        "204":
+          description: No tool call yet, or (with `X-Session-Closed`) the session is finished.
+          headers:
+            X-Session-Closed:
+              description: "`true` when the session is finished and will send no more tool calls. The worker completes the work item. Absent otherwise."
+              schema: { type: string, enum: ["true"] }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/tool_calls/{id}/result:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: The `tool_call_id`.
+        schema: { type: string }
+    post:
+      operationId: submitToolResult
+      summary: Submit a tool result
+      description: Posts the output of a tool call. Sending the same id again stores nothing new and returns 200 (idempotent on `tool_call_id`). Output over 100 KiB is refused with 413 `result_too_large`; the worker should truncate and retry with `is_error` as needed. Auth is the session secret of the session that owns the call.
+      tags: [Tool calls]
+      security:
+        - SessionSecret: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [output]
+              additionalProperties: false
+              properties:
+                output:
+                  type: string
+                  description: Tool output as text. At most 102400 bytes (100 KiB).
+                is_error: { type: boolean, default: false }
+      responses:
+        "200":
+          description: Stored.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [tool_call_id, status]
+                properties:
+                  tool_call_id: { type: string }
+                  status: { type: string, enum: [completed, errored] }
+        "413":
+          description: Output over 100 KiB. Code `result_too_large`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/api_keys:
+    get:
+      operationId: listApiKeys
+      summary: List server API keys
+      description: Prefix and metadata only. The secret is never shown again. Needs role `admin`.
+      tags: [API keys]
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/After"
+      responses:
+        "200":
+          description: A page of API keys.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ListEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: "#/components/schemas/ApiKey" }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      operationId: createApiKey
+      summary: Create a server API key
+      description: |
+        Returns the `ask_...` secret once. The server stores only a hash. Needs role `admin`.
+
+        First key: run `allternit-agents-server admin setup`, or call this route
+        with the setup token (the `ALLTERNIT_SELF_HOSTED_SETUP_TOKEN` environment
+        variable of the server) while no API key exists. The first key must have
+        role `admin` (else 400 `first_key_must_be_admin`). Once any key exists, the
+        setup token is refused.
+      tags: [API keys]
+      security:
+        - ServerApiKey: []
+        - OIDC: []
+        - SetupToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, role]
+              additionalProperties: false
+              properties:
+                name: { type: string, minLength: 1, maxLength: 100 }
+                role: { $ref: "#/components/schemas/Role" }
+                expires_at: { type: [string, "null"], format: date-time }
+      responses:
+        "201":
+          description: The key, with its secret.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiKeyWithSecret" }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/api_keys/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    delete:
+      operationId: revokeApiKey
+      summary: Revoke a server API key
+      description: Takes effect at once. The last admin key cannot be revoked (409 `last_admin_key`). Needs role `admin`.
+      tags: [API keys]
+      responses:
+        "200":
+          description: Revoked.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Deleted" }
+        default: { $ref: "#/components/responses/Error" }
+  /internal/v1/sessions/{id}/tool_calls:
+    parameters:
+      - $ref: "#/components/parameters/SessionId"
+    post:
+      operationId: internalSubmitToolCall
+      summary: Hand a tool call to the queue (internal)
+      description: |
+        Internal. Loopback only. Not part of the public API; SDK generation skips it.
+        The agent loop (the gizzi child process) calls this to run a tool on a worker.
+        The path `id` is the gizzi session id (the server maps it to its own session);
+        the server's own session id is accepted too.
+        The call is queued for the session's worker (queuing the session's work item if it
+        has none), and the request blocks until a worker posts the result or `timeout_ms`
+        passes. While no worker holds the session's item, the session shows
+        `waiting_for_worker` (reason `no_worker`) with a status event, and goes back to
+        `running` when a worker takes the call. Idempotent on `tool_call_id`: a repeat with
+        the same id waits for the same call and returns its result. Any tool name is
+        accepted: sandbox tools and the agent's custom tools use the same queue.
+        Auth: the internal token set when the server started.
+        Returns 504 `no_worker` if no worker took the call within `sessions.no_worker_timeout`
+        (default 10 minutes) or `timeout_ms`, 408 `timeout` if a worker took it but no
+        result came in time, and 409 `session_archived` for an archived session. On 504 and
+        408 the call is closed as an error, so a worker that attaches later does not run it.
+      tags: [Internal]
+      x-internal: true
+      x-excluded: true
+      security:
+        - InternalToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tool_call_id, name, input]
+              additionalProperties: false
+              properties:
+                tool_call_id: { type: string }
+                name: { type: string }
+                input: { type: object, additionalProperties: true }
+                timeout_ms: { type: integer, minimum: 1, default: 120000 }
+      responses:
+        "200":
+          description: The tool result.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [output, is_error]
+                properties:
+                  output: { type: string }
+                  is_error: { type: boolean }
+        "408":
+          description: Timeout. Code `timeout`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "504":
+          description: No worker took the call. Code `no_worker`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        default: { $ref: "#/components/responses/Error" }
+components:
+  securitySchemes:
+    ServerApiKey:
+      type: http
+      scheme: bearer
+      description: A server API key, `ask_...`. Carries a role.
+    EnvironmentKey:
+      type: http
+      scheme: bearer
+      description: An environment key, `aek_...`. Only works on the worker routes of its own environment.
+    InternalToken:
+      type: http
+      scheme: bearer
+      description: Random token made at server start and passed to the agent loop child. Accepted only from loopback addresses.
+    SetupToken:
+      type: apiKey
+      in: header
+      name: X-Allternit-Self-Hosted-Token
+      description: The server's `ALLTERNIT_SELF_HOSTED_SETUP_TOKEN`. Accepted only by `POST /v1/api_keys`, and only while no API key exists. May also be sent as the Bearer token.
+    SessionSecret:
+      type: apiKey
+      in: header
+      name: X-Session-Secret
+      description: The per-session secret returned by a work claim. Works for one session only. Ends when the lease ends.
+    OIDC:
+      type: openIdConnect
+      openIdConnectUrl: https://idp.example.com/.well-known/openid-configuration
+      description: Your identity provider. The real issuer URL is `auth.oidc.issuer` in the settings file. The role comes from the claim named in `auth.oidc.role_claim`.
+  parameters:
+    Limit:
+      name: limit
+      in: query
+      description: Page size, 1 to 100 (default 20).
+      schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+    After:
+      name: after
+      in: query
+      description: Opaque cursor from `next_cursor` of the previous page.
+      schema: { type: string }
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      description: Up to 255 characters. Repeating a request with the same key replays the stored response for 24 hours.
+      schema: { type: string, maxLength: 255 }
+    AgentId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, examples: ["agent_0123456789abcdef01234567"] }
+    EnvironmentId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, examples: ["env_0123456789abcdef01234567"] }
+    SessionId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, examples: ["sess_0123456789abcdef01234567"] }
+    WorkId:
+      name: work_id
+      in: path
+      required: true
+      schema: { type: string, examples: ["work_0123456789abcdef01234567"] }
+    WorkerHostname:
+      name: X-Worker-Hostname
+      in: header
+      required: false
+      description: The worker's host name, shown in the environment's worker list. At most 200 characters are kept.
+      schema: { type: string, maxLength: 200 }
+    WorkerVersion:
+      name: X-Worker-Version
+      in: header
+      required: false
+      description: The worker's version (for example `gizzi 2.4.0`), shown in the environment's worker list.
+      schema: { type: string, maxLength: 200 }
+  requestBodies:
+    LeaseBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [lease_generation]
+            additionalProperties: false
+            properties:
+              lease_generation:
+                type: integer
+                description: The generation from the claim. A lower number than the server holds is stale.
+  responses:
+    Error:
+      description: Error. The HTTP status says the kind. The body is the Error object.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [type, message, code]
+          properties:
+            type:
+              type: string
+              enum:
+                - invalid_request_error
+                - authentication_error
+                - permission_error
+                - not_found_error
+                - conflict_error
+                - payload_too_large_error
+                - unprocessable_error
+                - api_error
+            message: { type: string }
+            code:
+              type: string
+              description: |
+                Stable code. Known codes:
+                `model_not_mapped` (422, the model has no entry in the model map; no outbound request was made),
+                `host_not_allowed` (403, a host is not on the allowlist),
+                `lease_stale` (409, the lease generation is old),
+                `result_too_large` (413, tool output over 100 KiB),
+                `no_worker` (a session status reason, not an HTTP error: no worker is attached for the environment),
+                `session_busy` (409), `agent_in_use` (409), `environment_in_use` (409),
+                `last_admin_key` (409), `timeout` (408, internal route), `no_worker` is also 504 on the internal route, `unauthorized` (401), `forbidden` (403), `not_found` (404),
+                `session_archived` (409, the session takes no new messages), `setup_already_done` (409),
+                `first_key_must_be_admin` (400), `tool_call_conflict` (409, the tool_call_id belongs to another session),
+                `invalid_body`, `invalid_query`, `invalid_field`, `invalid_limit`, `invalid_cursor`, `invalid_host` (400),
+                `not_implemented` (501, the agent loop is not available), `store_unavailable` (503),
+                `oidc_unavailable` (503, the identity provider is not reachable), `internal_error` (500).
+              examples: [model_not_mapped]
+    ListEnvelope:
+      type: object
+      required: [data, has_more, next_cursor]
+      properties:
+        data: { type: array, items: {} }
+        has_more: { type: boolean }
+        next_cursor:
+          type: [string, "null"]
+          description: Pass as `after` to get the next page. Null on the last page.
+    Deleted:
+      type: object
+      required: [id, deleted]
+      properties:
+        id: { type: string }
+        deleted: { type: boolean, const: true }
+    ServerInfo:
+      type: object
+      required: [version, provider, features, auth_modes]
+      properties:
+        version: { type: string, examples: ["1.0.0"] }
+        provider:
+          type: string
+          enum: [anthropic, bedrock, vertex, foundry, gateway]
+        features:
+          type: object
+          required: [web_tools, prometheus, oidc, vault_secrets, postgres]
+          properties:
+            web_tools: { type: boolean }
+            prometheus: { type: boolean }
+            oidc: { type: boolean }
+            vault_secrets: { type: boolean }
+            postgres: { type: boolean, description: False when the server runs on SQLite or memory. }
+        auth_modes:
+          type: array
+          items: { type: string, enum: [api_key, oidc] }
+        public_url: { type: [string, "null"] }
+        max_tool_result_bytes: { type: integer, examples: [102400] }
+    McpServer:
+      type: object
+      required: [name, url]
+      additionalProperties: false
+      properties:
+        name: { type: string, maxLength: 100 }
+        url:
+          type: string
+          format: uri
+          description: HTTPS only. The host must match `mcp.allowed_hostnames` exactly (no subdomain matching).
+        headers:
+          type: object
+          additionalProperties: { type: string }
+          description: Header values may be a secret reference such as `secret://name`. They are never returned in plain text.
+    AgentTool:
+      type: object
+      required: [type, name]
+      additionalProperties: false
+      properties:
+        type:
+          type: string
+          enum: [builtin, custom]
+          description: "`builtin` is a tool of the agent loop (bash, file read and write, edit, search). `custom` is a tool your worker or client runs."
+        name: { type: string, maxLength: 100, examples: [bash] }
+        description: { type: string, maxLength: 2000 }
+        input_schema:
+          type: object
+          additionalProperties: true
+          description: JSON Schema of the input. Required for `custom` tools.
+    Agent:
+      type: object
+      required: [id, object, name, instructions, model, tools, mcp_servers, skills, metadata, status, created_at, updated_at]
+      properties:
+        id: { type: string }
+        object: { type: string, const: agent }
+        name: { type: string }
+        instructions: { type: string, description: The system prompt. }
+        model: { type: string, description: A model id. Under a gateway provider it must be a key of the model map. }
+        tools:
+          type: array
+          items: { $ref: "#/components/schemas/AgentTool" }
+        mcp_servers:
+          type: array
+          items: { $ref: "#/components/schemas/McpServer" }
+        skills:
+          type: array
+          items: { type: string }
+          description: Skill names to load for the agent.
+        metadata: { type: object, additionalProperties: true }
+        status: { type: string, enum: [ready] }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    CreateAgentRequest:
+      type: object
+      required: [name, model]
+      additionalProperties: false
+      properties:
+        name: { type: string, minLength: 1, maxLength: 100 }
+        instructions: { type: string, maxLength: 32000 }
+        model: { type: string }
+        tools:
+          type: array
+          items: { $ref: "#/components/schemas/AgentTool" }
+        mcp_servers:
+          type: array
+          items: { $ref: "#/components/schemas/McpServer" }
+        skills:
+          type: array
+          items: { type: string }
+        metadata: { type: object, additionalProperties: true }
+    UpdateAgentRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        name: { type: string, minLength: 1, maxLength: 100 }
+        instructions: { type: string, maxLength: 32000 }
+        model: { type: string }
+        tools:
+          type: array
+          items: { $ref: "#/components/schemas/AgentTool" }
+        mcp_servers:
+          type: array
+          items: { $ref: "#/components/schemas/McpServer" }
+        skills:
+          type: array
+          items: { type: string }
+        metadata: { type: object, additionalProperties: true }
+    NetworkMode:
+      type: string
+      enum: [none, limited, full]
+      description: "`none` blocks all outbound traffic. `limited` allows only `allowed_hosts`. `full` allows any host."
+    GitPolicy:
+      type: object
+      additionalProperties: false
+      properties:
+        allowed_hostnames:
+          type: array
+          items: { type: string }
+          description: Git hosts the worker may clone from and push to. Exact match.
+        allowed_push_refs:
+          type: array
+          items: { type: string }
+          description: Ref patterns a push may update, for example `refs/heads/agent/*`. A push to any other ref is refused.
+    McpPolicy:
+      type: object
+      additionalProperties: false
+      properties:
+        allowed_hostnames:
+          type: array
+          items: { type: string }
+          description: MCP hosts for sessions in this environment. Exact match, HTTPS only. Can only narrow the server-wide list.
+    EnvironmentImage:
+      type: object
+      additionalProperties: false
+      properties:
+        image:
+          type: string
+          description: Container image for the sandbox, when the worker runs sandboxes as containers.
+        packages:
+          type: object
+          additionalProperties: false
+          properties:
+            apt: { type: array, items: { type: string } }
+            pip: { type: array, items: { type: string } }
+            npm: { type: array, items: { type: string } }
+    Environment:
+      type: object
+      required: [id, object, name, network, allowed_hosts, git, mcp, image, packages, metadata, created_at, updated_at]
+      properties:
+        id: { type: string }
+        object: { type: string, const: environment }
+        name: { type: string }
+        network: { $ref: "#/components/schemas/NetworkMode" }
+        allowed_hosts: { type: array, items: { type: string } }
+        git: { $ref: "#/components/schemas/GitPolicy" }
+        mcp: { $ref: "#/components/schemas/McpPolicy" }
+        image: { type: [string, "null"] }
+        packages:
+          type: object
+          properties:
+            apt: { type: array, items: { type: string } }
+            pip: { type: array, items: { type: string } }
+            npm: { type: array, items: { type: string } }
+        worker_count: { type: integer, description: Workers that claimed or heartbeat in the last 60 seconds. }
+        queue_depth: { type: integer, description: Work items waiting to be claimed. }
+        metadata: { type: object, additionalProperties: true }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    CreateEnvironmentRequest:
+      type: object
+      required: [name]
+      additionalProperties: false
+      properties:
+        name: { type: string, minLength: 1, maxLength: 100 }
+        network: { $ref: "#/components/schemas/NetworkMode" }
+        allowed_hosts:
+          type: array
+          items: { type: string }
+          description: Used when `network` is `limited`. Exact hostnames, optionally with a port.
+        git: { $ref: "#/components/schemas/GitPolicy" }
+        mcp: { $ref: "#/components/schemas/McpPolicy" }
+        image: { type: string }
+        packages: { $ref: "#/components/schemas/EnvironmentImage/properties/packages" }
+        metadata: { type: object, additionalProperties: true }
+    UpdateEnvironmentRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        name: { type: string, minLength: 1, maxLength: 100 }
+        network: { $ref: "#/components/schemas/NetworkMode" }
+        allowed_hosts: { type: array, items: { type: string } }
+        git: { $ref: "#/components/schemas/GitPolicy" }
+        mcp: { $ref: "#/components/schemas/McpPolicy" }
+        image: { type: [string, "null"] }
+        packages: { $ref: "#/components/schemas/EnvironmentImage/properties/packages" }
+        metadata: { type: object, additionalProperties: true }
+    EnvironmentPolicy:
+      type: object
+      description: The environment's rules, as they were when the work was claimed. The worker must enforce them.
+      required: [network, allowed_hosts, git, mcp]
+      properties:
+        network: { $ref: "#/components/schemas/NetworkMode" }
+        allowed_hosts: { type: array, items: { type: string } }
+        git: { $ref: "#/components/schemas/GitPolicy" }
+        mcp: { $ref: "#/components/schemas/McpPolicy" }
+        image: { type: [string, "null"] }
+        packages:
+          type: object
+          properties:
+            apt: { type: array, items: { type: string } }
+            pip: { type: array, items: { type: string } }
+            npm: { type: array, items: { type: string } }
+    SessionStatus:
+      type: string
+      enum: [idle, running, waiting_for_worker, interrupted, error, archived]
+    Session:
+      type: object
+      required: [id, object, agent_id, environment_id, status, metadata, created_at, updated_at]
+      properties:
+        id: { type: string }
+        object: { type: string, const: session }
+        agent_id: { type: string }
+        environment_id: { type: string }
+        title: { type: [string, "null"] }
+        status: { $ref: "#/components/schemas/SessionStatus" }
+        status_reason:
+          type: [string, "null"]
+          description: A code that says why, for example `no_worker` while status is `waiting_for_worker`.
+        last_seq: { type: integer, description: The `seq` of the newest event. }
+        metadata: { type: object, additionalProperties: true }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        archived_at: { type: [string, "null"], format: date-time }
+    EventType:
+      type: string
+      enum: [message, tool_call, tool_result, status, error]
+    Event:
+      type: object
+      required: [id, object, session_id, seq, type, data, created_at]
+      properties:
+        id: { type: string }
+        object: { type: string, const: event }
+        session_id: { type: string }
+        seq: { type: integer, description: Rises by one for each event in the session. }
+        type: { $ref: "#/components/schemas/EventType" }
+        data:
+          description: Depends on `type`.
+          oneOf:
+            - $ref: "#/components/schemas/MessageData"
+            - $ref: "#/components/schemas/ToolCallData"
+            - $ref: "#/components/schemas/ToolResultData"
+            - $ref: "#/components/schemas/StatusData"
+            - $ref: "#/components/schemas/ErrorData"
+        created_at: { type: string, format: date-time }
+    MessageData:
+      type: object
+      required: [role, content]
+      properties:
+        role: { type: string, enum: [user, assistant] }
+        content: { type: string }
+    ToolCallData:
+      type: object
+      required: [tool_call_id, name, input]
+      properties:
+        tool_call_id: { type: string }
+        name: { type: string }
+        input: { type: object, additionalProperties: true }
+    ToolResultData:
+      type: object
+      required: [tool_call_id, output, is_error]
+      properties:
+        tool_call_id: { type: string }
+        output: { type: string }
+        is_error: { type: boolean }
+    StatusData:
+      type: object
+      required: [status]
+      properties:
+        status: { $ref: "#/components/schemas/SessionStatus" }
+        reason: { type: [string, "null"] }
+    ErrorData:
+      type: object
+      required: [code, message]
+      properties:
+        code: { type: string }
+        message: { type: string }
+    WorkClaim:
+      type: object
+      required: [work_id, session_id, session_secret, lease_generation, lease_expires_at, environment]
+      properties:
+        work_id: { type: string }
+        session_id: { type: string }
+        session_secret:
+          type: string
+          description: Secret for this session only. Send it as `X-Session-Secret` on tool call routes. Valid until the lease ends. Never log it.
+        lease_generation: { type: integer }
+        lease_expires_at: { type: string, format: date-time }
+        environment: { $ref: "#/components/schemas/EnvironmentPolicy" }
+    Lease:
+      type: object
+      required: [work_id, lease_generation, lease_expires_at, status]
+      properties:
+        work_id: { type: string }
+        lease_generation: { type: integer }
+        lease_expires_at: { type: [string, "null"], format: date-time }
+        status: { type: string, enum: [claimed, ready, completed] }
+    ToolCall:
+      type: object
+      required: [tool_call_id, name, input]
+      properties:
+        tool_call_id: { type: string, description: Stable. Use it to avoid running a call twice. }
+        name: { type: string }
+        input: { type: object, additionalProperties: true }
+    Role:
+      type: string
+      enum: [admin, developer, viewer]
+    ApiKey:
+      type: object
+      required: [id, object, name, role, prefix, created_at]
+      properties:
+        id: { type: string }
+        object: { type: string, const: api_key }
+        name: { type: string }
+        role: { $ref: "#/components/schemas/Role" }
+        prefix: { type: string, description: "The first characters of the key, for recognition." }
+        created_at: { type: string, format: date-time }
+        expires_at: { type: [string, "null"], format: date-time }
+        last_used_at: { type: [string, "null"], format: date-time }
+        revoked_at: { type: [string, "null"], format: date-time }
+    ApiKeyWithSecret:
+      allOf:
+        - $ref: "#/components/schemas/ApiKey"
+        - type: object
+          required: [secret]
+          properties:
+            secret: { type: string, description: "The `ask_...` key. Shown once." }
+    EnvironmentKey:
+      type: object
+      required: [id, object, environment_id, name, prefix, created_at]
+      properties:
+        id: { type: string }
+        object: { type: string, const: environment_key }
+        environment_id: { type: string }
+        name: { type: [string, "null"] }
+        prefix: { type: string }
+        created_at: { type: string, format: date-time }
+        expires_at: { type: [string, "null"], format: date-time }
+        last_used_at: { type: [string, "null"], format: date-time }
+        revoked_at: { type: [string, "null"], format: date-time }
+    EnvironmentKeyWithSecret:
+      allOf:
+        - $ref: "#/components/schemas/EnvironmentKey"
+        - type: object
+          required: [secret]
+          properties:
+            secret: { type: string, description: "The `aek_...` key. Shown once." }

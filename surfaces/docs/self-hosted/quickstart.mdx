@@ -1,0 +1,129 @@
+---
+title: 'Quickstart'
+description: 'Start the self-hosted Agents Server with Docker Compose, mint the first admin key, run a session and attach a worker.'
+---
+
+<Note>
+**Status: Private beta.** The compose bundle, images and admin commands are still being built. The steps below are the intended flow. Check `allternit-agents-server --help` on your build for exact flags.
+</Note>
+
+## Before you start
+
+- A Linux host with Docker and Docker Compose.
+- Credentials for one model provider. See [Models](/self-hosted/models).
+- The release archive and images from your private-beta order.
+
+## 1. Unpack the compose bundle
+
+The bundle lives at `deploy/selfhost/compose/`:
+
+| File | What it is |
+|---|---|
+| `docker-compose.yml` | PostgreSQL 16, a one-shot `migrate` container, the server on `127.0.0.1:8400`, and 10 workers. |
+| `compose.airgap.yml` | An override that puts everything on an internal network with no route out, plus a mock provider. Use it to check that nothing calls out. |
+| `.env.example` | The variables the compose file reads. Copy it to `.env`. |
+
+```bash
+cd deploy/selfhost/compose
+cp .env.example .env
+```
+
+## 2. Write the settings file
+
+The server reads one settings file (YAML or JSON). The smallest useful one picks a provider and points at a secret:
+
+```yaml
+inference:
+  provider: anthropic
+  credentials:
+    api_key: env:ANTHROPIC_API_KEY
+database:
+  url: env:DATABASE_URL
+```
+
+Secrets are never written in the file. Use `env:NAME`, `file:/path` or `vault:path#key`. Every key is listed in [Configuration](/self-hosted/configuration).
+
+## 3. Start it
+
+```bash
+docker compose up -d
+docker compose ps        # migrate exits 0, server is healthy, workers are up
+curl -s http://127.0.0.1:8400/v1/server/info
+```
+
+`/v1/server/info` needs no key. It returns the version, the provider, the enabled features and the accepted sign-in modes.
+
+## 4. Mint the first admin key
+
+```bash
+docker compose exec server allternit-agents-server admin setup
+```
+
+`admin setup` prints an `ask_...` admin key once. The server stores only a hash. Save it in your password manager or secret store.
+
+```bash
+export ALLTERNIT_SERVER_URL=http://127.0.0.1:8400
+export ALLTERNIT_SERVER_API_KEY=ask_...
+```
+
+## 5. Create an agent, an environment and a session
+
+```bash
+H="Authorization: Bearer $ALLTERNIT_SERVER_API_KEY"
+
+curl -s -X POST $ALLTERNIT_SERVER_URL/v1/agents -H "$H" -H 'Content-Type: application/json' \
+  -d '{"name":"Helper","model":"YOUR_MODEL","instructions":"Be brief.","tools":[{"type":"builtin","name":"bash"}]}'
+# -> {"id":"agent_...", ...}
+
+curl -s -X POST $ALLTERNIT_SERVER_URL/v1/environments -H "$H" -H 'Content-Type: application/json' \
+  -d '{"name":"default","network":"none"}'
+# -> {"id":"env_...", ...}
+
+curl -s -X POST $ALLTERNIT_SERVER_URL/v1/sessions -H "$H" -H 'Content-Type: application/json' \
+  -d '{"agent_id":"agent_...","environment_id":"env_..."}'
+# -> {"id":"sess_...", "status":"idle", ...}
+```
+
+With a gateway provider, `model` must be a key of `inference.model_map`, or the server answers `422 model_not_mapped`.
+
+## 6. Send a message and follow the events
+
+In one terminal, follow the stream:
+
+```bash
+curl -N $ALLTERNIT_SERVER_URL/v1/sessions/sess_.../events/stream -H "$H"
+```
+
+In another, send a message:
+
+```bash
+curl -s -X POST $ALLTERNIT_SERVER_URL/v1/sessions/sess_.../messages -H "$H" -H 'Content-Type: application/json' \
+  -d '{"content":"Run: echo ok > /workspace/a && cat /workspace/a"}'
+```
+
+The stream shows `message`, `tool_call`, `tool_result` and `status` events. If no worker serves the environment yet, the session shows `waiting_for_worker` with reason `no_worker` until one attaches.
+
+## 7. Attach a worker
+
+Workers need an environment key for the environment they serve:
+
+```bash
+curl -s -X POST $ALLTERNIT_SERVER_URL/v1/environments/env_.../keys -H "$H" -H 'Content-Type: application/json' \
+  -d '{"name":"compose-workers"}'
+# -> {"secret":"aek_...", ...}   shown once
+```
+
+Put the key in `.env` under the variable `.env.example` names for workers, then `docker compose up -d` again. Or start one worker by hand on any host that can reach the server:
+
+```bash
+gizzi worker --server http://127.0.0.1:8400 --environment-key aek_...
+```
+
+The waiting tool call runs, and the stream shows its result. See [Workers](/self-hosted/workers) for modes and flags.
+
+## Next
+
+- Turn on OIDC sign-in and per-role keys: [Authentication](/self-hosted/auth).
+- Set network rules per environment: [Networking](/self-hosted/networking).
+- Connect the apps: [Client apps](/self-hosted/client-apps).
+- Use the SDKs instead of curl: [SDKs](/self-hosted/sdks).

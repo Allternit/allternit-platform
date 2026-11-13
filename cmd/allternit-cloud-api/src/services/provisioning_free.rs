@@ -171,6 +171,93 @@ pub struct HostedDriverDefaults {
 /// API turns it into a 503 `computer_capacity`.
 pub const HOSTED_POOL_FULL: &str = "Developer computers are at capacity";
 
+/// Start of the error message when a free computer cannot start because the
+/// host's memory is spoken for (or the awake cap is hit). The Platform API
+/// turns it into a 503 `computer_capacity`.
+pub const FREE_POOL_FULL: &str = "Free computers are at capacity";
+/// `Retry-After` on capacity refusals and `runtime_starting`.
+pub const CAPACITY_RETRY_AFTER_SECONDS: u64 = 30;
+const ENV_HOST_MEMORY_HEADROOM_MB: &str = "ALLTERNIT_HOST_MEMORY_HEADROOM_MB";
+const DEFAULT_HOST_MEMORY_HEADROOM_MB: i64 = 2048;
+/// A running free computer is only slept to make room after this much idle.
+const POOL_FULL_MIN_IDLE_MINUTES: i64 = 2;
+
+/// True for a 503 message that means "no capacity, retry" (free, developer
+/// or Orgo pool).
+pub fn is_capacity_message(message: &str) -> bool {
+    message.starts_with(HOSTED_POOL_FULL)
+        || message.starts_with(FREE_POOL_FULL)
+        || message.starts_with(orgo::CLOUD_POOL_FULL)
+}
+
+/// Memory kept free on every host for the host itself (`ALLTERNIT_HOST_MEMORY_HEADROOM_MB`).
+fn host_memory_headroom_mb() -> i64 {
+    env_i64(ENV_HOST_MEMORY_HEADROOM_MB, DEFAULT_HOST_MEMORY_HEADROOM_MB).max(0)
+}
+
+/// Host memory in use: what paid computers reserve plus the memory of free
+/// computers that are awake (`running`, `waking`, or still `provisioning`).
+/// `free_rows` is `(status, memory_mb)`; sleeping ones do not count.
+fn free_memory_in_use_mb(paid_reserved_mb: i64, free_rows: &[(&str, i64)]) -> i64 {
+    paid_reserved_mb
+        + free_rows
+            .iter()
+            .filter(|(status, _)| matches!(*status, "running" | "waking" | "provisioning"))
+            .map(|(_, memory_mb)| memory_mb)
+            .sum::<i64>()
+}
+
+/// Admit a free computer of `need_mb` only if it fits under the host total
+/// minus headroom.
+fn free_memory_admits(total_mb: i64, headroom_mb: i64, in_use_mb: i64, need_mb: i64) -> bool {
+    in_use_mb + need_mb <= total_mb - headroom_mb
+}
+
+/// Whether a free computer of `need_mb` fits on `host_id` right now. Call it
+/// inside the transaction that holds the host row lock to make it binding.
+pub(crate) async fn host_memory_fits(
+    conn: &mut sqlx::PgConnection,
+    host_id: &str,
+    need_mb: i64,
+) -> Result<bool, ApiError> {
+    let host: Option<(i64, i64, String)> = sqlx::query_as(
+        "SELECT memory_mb_total, memory_mb_allocated, incus_endpoint FROM provisioned_hosts WHERE id = $1",
+    )
+    .bind(host_id)
+    .fetch_optional(&mut *conn)
+    .await?;
+    let Some((total_mb, paid_reserved_mb, endpoint)) = host else {
+        return Ok(false);
+    };
+    // Orgo computers use none of our memory (the Orgo guards apply instead).
+    if orgo::is_orgo_endpoint(&endpoint) {
+        return Ok(true);
+    }
+    // Free rows reserve no memory in the ledger (`allocation_for`), so the
+    // ledger's memory column is the paid reservation.
+    let free_rows: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT status, memory_mb FROM provisioned_instances \
+         WHERE tier = 'free' AND host_id = $1 AND status IN ('provisioning', 'running', 'waking')",
+    )
+    .bind(host_id)
+    .fetch_all(&mut *conn)
+    .await?;
+    let free_rows: Vec<(&str, i64)> = free_rows.iter().map(|(s, m)| (s.as_str(), *m)).collect();
+    Ok(free_memory_admits(
+        total_mb,
+        host_memory_headroom_mb(),
+        free_memory_in_use_mb(paid_reserved_mb, &free_rows),
+        need_mb,
+    ))
+}
+
+/// The 503 for a free start that does not fit in host memory.
+pub(crate) fn memory_full_error() -> ApiError {
+    ApiError::ServiceUnavailable(format!(
+        "{FREE_POOL_FULL}: host memory is full; retry in {CAPACITY_RETRY_AFTER_SECONDS} seconds"
+    ))
+}
+
 impl HostedDriverDefaults {
     pub fn from_env() -> Self {
         Self {
@@ -193,6 +280,30 @@ impl HostedDriverDefaults {
             self.max_running
         ))
     }
+}
+
+/// Synthetic owners of a Platform API project's hosted runtime
+/// (`routes::platform_v1::hosting::runtime_owner`). Not `platform-drv:`.
+pub const PLATFORM_RUNTIME_OWNER_PREFIX: &str = "platform:";
+
+pub fn is_platform_runtime_owner(user_id: &str) -> bool {
+    user_id.starts_with(PLATFORM_RUNTIME_OWNER_PREFIX)
+}
+
+/// Image and size for a Platform API project runtime. Each defaults to the
+/// free value, so with no env set nothing changes:
+/// `ALLTERNIT_PLATFORM_RUNTIME_IMAGE` (e.g. `allternit-computer-headless`),
+/// `ALLTERNIT_PLATFORM_RUNTIME_CPU`, `ALLTERNIT_PLATFORM_RUNTIME_MEMORY_MB`,
+/// `ALLTERNIT_PLATFORM_RUNTIME_DISK_GB`.
+pub(crate) fn platform_runtime_spec(free: &FreeDefaults) -> (String, ComputerSize) {
+    (
+        env_string("ALLTERNIT_PLATFORM_RUNTIME_IMAGE", &free.image),
+        ComputerSize {
+            cpu_cores: env_i64("ALLTERNIT_PLATFORM_RUNTIME_CPU", free.cpu_cores).max(1),
+            memory_mb: env_i64("ALLTERNIT_PLATFORM_RUNTIME_MEMORY_MB", free.memory_mb).max(512),
+            disk_gb: env_i64("ALLTERNIT_PLATFORM_RUNTIME_DISK_GB", free.disk_gb).max(4),
+        },
+    )
 }
 
 /// Awake hosted-driver computers across the whole pool.
@@ -272,9 +383,10 @@ pub async fn touch_provisioned_activity(db: &PgPool, device_id: &str) -> Result<
     Ok(())
 }
 
-/// The runtime behind `device_id` attached to the relay. A free computer that
-/// was `waking` (or `sleeping`, started outside the wake path) is `running`
-/// now, and gets a fresh idle window so it is not slept right after a wake.
+/// The runtime behind `device_id` attached to the relay. A free computer (or
+/// a paid one on Orgo) that was `waking` (or `sleeping`, started outside the
+/// wake path) is `running` now, and gets a fresh idle window so it is not
+/// slept right after a wake.
 pub async fn note_runtime_attached(db: &PgPool, device_id: &str) -> Result<(), ApiError> {
     let woke: Vec<String> = sqlx::query_scalar(
         r#"
@@ -283,7 +395,9 @@ pub async fn note_runtime_attached(db: &PgPool, device_id: &str) -> Result<(), A
             last_started_at = CASE WHEN status = 'running' THEN last_started_at ELSE CURRENT_TIMESTAMP END,
             last_activity_at = CURRENT_TIMESTAMP,
             updated_at = CURRENT_TIMESTAMP
-        WHERE device_id = $1 AND tier = 'free' AND status IN ('running', 'waking', 'sleeping')
+        WHERE device_id = $1
+          AND (tier = 'free' OR status IN ('waking', 'sleeping'))
+          AND status IN ('running', 'waking', 'sleeping')
         RETURNING id
         "#,
     )
@@ -301,6 +415,96 @@ impl ProvisioningService {
     /// live one, whatever its status). The caller checks the account is free.
     pub async fn create_free(&self, user_id: &str) -> Result<InstanceView, ApiError> {
         self.create_tier(user_id, None, TIER_FREE).await
+    }
+
+    /// Before starting a free computer of `need_mb` on `host_id`: when it does
+    /// not fit, sleep the longest-idle running free computer there (never
+    /// `exclude_id`, and only one idle at least two minutes). One attempt;
+    /// the caller re-checks under the host lock and refuses if still full.
+    pub(crate) async fn make_room_for_free(
+        &self,
+        host_id: &str,
+        need_mb: i64,
+        exclude_id: Option<&str>,
+    ) -> Result<(), ApiError> {
+        let mut conn = self.db.acquire().await?;
+        if host_memory_fits(&mut *conn, host_id, need_mb).await? {
+            return Ok(());
+        }
+        drop(conn);
+        let victim = sqlx::query_as::<_, InstanceRow>(&format!(
+            "SELECT {INSTANCE_COLUMNS} FROM provisioned_instances \
+             WHERE tier = 'free' AND host_id = $1 AND status = 'running' AND id <> $2 \
+               AND COALESCE(last_activity_at, last_started_at, created_at) <= $3 \
+             ORDER BY COALESCE(last_activity_at, last_started_at, created_at) ASC LIMIT 1"
+        ))
+        .bind(host_id)
+        .bind(exclude_id.unwrap_or(""))
+        .bind(Utc::now() - Duration::minutes(POOL_FULL_MIN_IDLE_MINUTES))
+        .fetch_optional(&self.db)
+        .await?;
+        if let Some(victim) = victim {
+            if let Err(error) = self.sleep_row(&victim, "pool_full").await {
+                tracing::warn!(id = %victim.id, %host_id, %error, "pool full: idle computer not slept");
+            }
+        }
+        Ok(())
+    }
+
+    /// Incus hosts a new free computer of `user_id` may land on (enabled, in
+    /// its pool). Orgo hosts have no memory to admit against.
+    async fn free_pool_hosts(&self, user_id: &str) -> Result<Vec<String>, ApiError> {
+        let hosts: Vec<(String, String)> = sqlx::query_as(
+            "SELECT id, incus_endpoint FROM provisioned_hosts WHERE enabled = TRUE ORDER BY id",
+        )
+        .fetch_all(&self.db)
+        .await?;
+        Ok(hosts
+            .into_iter()
+            .filter(|(_, endpoint)| !orgo::is_orgo_endpoint(endpoint))
+            .map(|(id, _)| id)
+            .filter(|id| host_in_pool(id, is_hosted_driver_owner(user_id)))
+            .collect())
+    }
+
+    /// True when some host in the pool has memory for a free computer of `need_mb`.
+    pub(crate) async fn free_memory_available(&self, user_id: &str, need_mb: i64) -> Result<bool, ApiError> {
+        // Hosts first: holding a connection while `free_pool_hosts` takes a
+        // second one deadlocks a small pool.
+        let hosts = self.free_pool_hosts(user_id).await?;
+        let mut conn = self.db.acquire().await?;
+        for id in hosts {
+            if host_memory_fits(&mut *conn, &id, need_mb).await? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// Whether a new Platform API project runtime would be admitted now
+    /// (the churn guard checks this before replacing a stuck runtime).
+    pub async fn platform_runtime_admissible(&self, owner: &str) -> Result<bool, ApiError> {
+        if self.routing.provider_for(ComputeClass::Platform) == ComputeProvider::Orgo {
+            let mut conn = self.db.acquire().await?;
+            return Ok(orgo::orgo_admits(&mut *conn, &self.routing).await.is_ok());
+        }
+        self.free_memory_available(owner, platform_runtime_spec(&self.free).1.memory_mb).await
+    }
+
+    /// `make_room_for_free` for a new computer: the host is not chosen yet, so
+    /// when no host in the pool has the memory, make room on the first one.
+    pub(crate) async fn make_room_for_new_free(
+        &self,
+        user_id: &str,
+        need_mb: i64,
+    ) -> Result<(), ApiError> {
+        if self.free_memory_available(user_id, need_mb).await? {
+            return Ok(());
+        }
+        match self.free_pool_hosts(user_id).await?.first() {
+            Some(id) => self.make_room_for_free(id, need_mb, None).await,
+            None => Ok(()),
+        }
     }
 
     /// True when the user holds an active or trialing paid subscription.
@@ -330,7 +534,12 @@ impl ProvisioningService {
         reason: WakeReason,
     ) -> Result<WakeResult, ApiError> {
         let row = self.fetch_row(instance_id, user_id).await?;
-        if !row.is_free() {
+        // Free computers sleep; so does every computer on Orgo (paid too).
+        let on_orgo = match row.host_id.as_deref() {
+            Some(host_id) => orgo::host_is_orgo(&self.db, host_id).await?,
+            None => false,
+        };
+        if !row.is_free() && !on_orgo {
             return Err(ApiError::BadRequest(
                 "Only free computers sleep; start a paid computer with /start".to_string(),
             ));
@@ -346,8 +555,9 @@ impl ProvisioningService {
                     .execute(&self.db)
                     .await?;
                 }
+                let current = self.fetch_row(&row.id, None).await?;
                 return Ok(WakeResult {
-                    view: self.fetch_row(&row.id, None).await?.into(),
+                    view: self.view_of(current).await,
                     woke: false,
                     task: None,
                 });
@@ -364,6 +574,9 @@ impl ProvisioningService {
             ));
         };
 
+        if !on_orgo {
+            self.make_room_for_free(&host_id, row.memory_mb, Some(&row.id)).await?;
+        }
         let now = Utc::now();
         let mut transaction = self.db.begin().await?;
         // Serializes the awake-cap check per host.
@@ -371,38 +584,55 @@ impl ProvisioningService {
             .bind(&host_id)
             .execute(&mut *transaction)
             .await?;
-        let wakes_last_hour: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM provisioned_instance_wakes WHERE user_id = $1 AND created_at > $2",
-        )
-        .bind(&row.user_id)
-        .bind(now - Duration::hours(1))
-        .fetch_one(&mut *transaction)
-        .await?;
-        if wakes_last_hour >= self.free.max_wakes_per_hour {
-            transaction.rollback().await?;
-            return Err(ApiError::TooManyRequests(format!(
-                "Free computer wake limit reached ({} per hour); try again later",
-                self.free.max_wakes_per_hour
-            )));
+        // The hourly wake limit is a free-tier guard; paid owners are not capped.
+        if row.is_free() {
+            let wakes_last_hour: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM provisioned_instance_wakes WHERE user_id = $1 AND created_at > $2",
+            )
+            .bind(&row.user_id)
+            .bind(now - Duration::hours(1))
+            .fetch_one(&mut *transaction)
+            .await?;
+            if wakes_last_hour >= self.free.max_wakes_per_hour {
+                transaction.rollback().await?;
+                return Err(ApiError::TooManyRequests(format!(
+                    "Free computer wake limit reached ({} per hour); try again later",
+                    self.free.max_wakes_per_hour
+                )));
+            }
         }
-        let awake: i64 = sqlx::query_scalar(
-            r#"
-            SELECT COUNT(*) FROM provisioned_instances
-            WHERE tier = 'free' AND host_id = $1 AND status IN ('provisioning', 'running', 'waking')
-            "#,
-        )
-        .bind(&host_id)
-        .fetch_one(&mut *transaction)
-        .await?;
-        if is_hosted_driver_owner(&row.user_id) && hosted_awake(&mut *transaction).await? >= self.hosted.max_running {
-            transaction.rollback().await?;
-            return Err(self.hosted.full_error());
-        }
-        if awake >= self.free.max_awake_per_host {
-            transaction.rollback().await?;
-            return Err(ApiError::ServiceUnavailable(
-                "Free computers are at capacity right now; retry in a few minutes".to_string(),
-            ));
+        if on_orgo {
+            // Orgo: the running cap and daily budget, not host memory.
+            if let Err(error) = orgo::orgo_admits(&mut *transaction, &self.routing).await {
+                transaction.rollback().await?;
+                return Err(error);
+            }
+        } else {
+            let awake: i64 = sqlx::query_scalar(
+                r#"
+                SELECT COUNT(*) FROM provisioned_instances
+                WHERE tier = 'free' AND host_id = $1 AND status IN ('provisioning', 'running', 'waking')
+                "#,
+            )
+            .bind(&host_id)
+            .fetch_one(&mut *transaction)
+            .await?;
+            if is_hosted_driver_owner(&row.user_id)
+                && hosted_awake(&mut *transaction).await? >= self.hosted.max_running
+            {
+                transaction.rollback().await?;
+                return Err(self.hosted.full_error());
+            }
+            if awake >= self.free.max_awake_per_host {
+                transaction.rollback().await?;
+                return Err(ApiError::ServiceUnavailable(
+                    "Free computers are at capacity right now; retry in a few minutes".to_string(),
+                ));
+            }
+            if !host_memory_fits(&mut *transaction, &host_id, row.memory_mb).await? {
+                transaction.rollback().await?;
+                return Err(memory_full_error());
+            }
         }
         let claimed = sqlx::query(
             r#"
@@ -425,8 +655,9 @@ impl ProvisioningService {
         if claimed != 1 {
             // A concurrent wake won the claim.
             transaction.rollback().await?;
+            let current = self.fetch_row(&row.id, None).await?;
             return Ok(WakeResult {
-                view: self.fetch_row(&row.id, None).await?.into(),
+                view: self.view_of(current).await,
                 woke: false,
                 task: None,
             });
@@ -442,7 +673,7 @@ impl ProvisioningService {
         .execute(&mut *transaction)
         .await?;
         transaction.commit().await?;
-        tracing::info!(id = %row.id, reason = reason.as_str(), "free computer waking");
+        tracing::info!(id = %row.id, reason = reason.as_str(), on_orgo, "computer waking");
 
         let service = Arc::clone(self);
         let task_row = row.clone();
@@ -451,8 +682,9 @@ impl ProvisioningService {
                 tracing::warn!(id = %task_row.id, %error, "free computer wake failed");
             }
         });
+        let current = self.fetch_row(&row.id, None).await?;
         Ok(WakeResult {
-            view: self.fetch_row(&row.id, None).await?.into(),
+            view: self.view_of(current).await,
             woke: true,
             task: Some(task),
         })
@@ -515,7 +747,8 @@ impl ProvisioningService {
         Ok(match row.status.as_str() {
             "running" => ProvisionedWakeOutcome::AlreadyActive,
             "waking" | "provisioning" => ProvisionedWakeOutcome::Waking,
-            "sleeping" if row.is_free() => {
+            // Only free computers and computers on Orgo ever sleep.
+            "sleeping" => {
                 self.wake(&row.id, None, WakeReason::Relay).await?;
                 ProvisionedWakeOutcome::Waking
             }
@@ -523,8 +756,8 @@ impl ProvisioningService {
         })
     }
 
-    /// Put a running free computer to sleep: backend stop, `sleeping`,
-    /// metering interval closed with `reason`.
+    /// Put a running free (or Orgo) computer to sleep: backend stop,
+    /// `sleeping`, metering interval closed with `reason`.
     pub(crate) async fn sleep_row(&self, row: &InstanceRow, reason: &str) -> Result<(), ApiError> {
         let backend = self.backend_for_row(row).await?;
         match backend.stop(&row.incus_name).await {
@@ -545,7 +778,7 @@ impl ProvisioningService {
         .execute(&self.db)
         .await?;
         record_instance_stopped(&self.db, &row.id, reason).await?;
-        tracing::info!(id = %row.id, %reason, "free computer asleep");
+        tracing::info!(id = %row.id, %reason, "computer asleep");
         Ok(())
     }
 
@@ -583,7 +816,8 @@ impl ProvisioningService {
                 .execute(&self.db)
                 .await?;
         }
-        Ok(Some(self.fetch_row(&row.id, None).await?.into()))
+        let current = self.fetch_row(&row.id, None).await?;
+        Ok(Some(self.view_of(current).await))
     }
 
     /// Upgrade (decision 16): mark the account's live free computer replaced
@@ -632,6 +866,10 @@ impl ProvisioningService {
             if let Err(error) = self.sleep_row(&row, "idle").await {
                 tracing::warn!(id = %row.id, %error, "free sweep: idle sleep failed");
             }
+        }
+        // 1b. Paid computers on Orgo sleep too (after their own idle window).
+        if let Err(error) = self.sleep_idle_orgo_paid(now).await {
+            tracing::warn!(%error, "free sweep: idle Orgo paid computers not slept");
         }
 
         // 2. Scheduled job due soon → wake.
@@ -698,4 +936,49 @@ pub fn start_free_computer_task(state: Arc<crate::ApiState>) {
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // A host with 5 GB usable after headroom (7168 total, 2048 headroom).
+    const TOTAL: i64 = 7168;
+    const HEADROOM: i64 = 2048;
+    const NEED: i64 = 2048;
+
+    #[test]
+    fn third_wake_on_a_five_gb_host_is_refused() {
+        let awake = |n: usize| vec![("running", NEED); n];
+        let fits = |n: usize| {
+            free_memory_admits(TOTAL, HEADROOM, free_memory_in_use_mb(0, &awake(n)), NEED)
+        };
+        assert!(fits(0));
+        assert!(fits(1), "second 2 GB computer fits in 5 GB");
+        assert!(!fits(2), "third does not");
+        // `waking` and `provisioning` hold memory too.
+        let rows = [("running", NEED), ("waking", NEED)];
+        assert!(!free_memory_admits(TOTAL, HEADROOM, free_memory_in_use_mb(0, &rows), NEED));
+    }
+
+    #[test]
+    fn paid_reservations_count() {
+        let rows = [("running", NEED)];
+        assert!(free_memory_admits(TOTAL, HEADROOM, free_memory_in_use_mb(0, &rows), NEED));
+        assert!(!free_memory_admits(TOTAL, HEADROOM, free_memory_in_use_mb(4096, &rows), NEED));
+    }
+
+    #[test]
+    fn sleeping_free_rows_do_not_count() {
+        let rows = vec![("sleeping", NEED); 5];
+        assert_eq!(free_memory_in_use_mb(0, &rows), 0);
+        assert!(free_memory_admits(TOTAL, HEADROOM, free_memory_in_use_mb(0, &rows), NEED));
+    }
+
+    #[test]
+    fn capacity_messages_are_recognised() {
+        assert!(is_capacity_message(&memory_full_error().to_string().replace("Service unavailable: ", "")));
+        assert!(is_capacity_message(HOSTED_POOL_FULL));
+        assert!(!is_capacity_message("Fleet host h no longer exists"));
+    }
 }

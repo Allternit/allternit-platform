@@ -3,6 +3,7 @@ import { Log } from "@/shared/util/log"
 import path from "path"
 import z from "zod/v4"
 import { Installation } from "@/shared/installation"
+import { SelfhostInference } from "@/runtime/providers/selfhost-inference"
 import { Flag } from "@/runtime/context/flag/flag"
 import { lazy } from "@/shared/util/lazy"
 import { Filesystem } from "@/shared/util/filesystem"
@@ -141,11 +142,14 @@ export namespace ModelsDev {
   })
 
   export async function get() {
+    // Self-hosted inference: no remote catalog, the server's model_map is the model list.
+    if (SelfhostInference.enabled()) return {} as Record<string, Provider>
     const result = await Data()
     return result as Record<string, Provider>
   }
 
   export async function refresh() {
+    if (SelfhostInference.enabled()) return
     try {
       const result = await fetch(`${url()}/api.json`, {
         headers: {
@@ -164,7 +168,7 @@ export namespace ModelsDev {
   }
 }
 
-if (!Flag.GIZZI_DISABLE_MODELS_FETCH && !process.argv.includes("--get-yargs-completions")) {
+if (!Flag.GIZZI_DISABLE_MODELS_FETCH && !SelfhostInference.enabled() && !process.argv.includes("--get-yargs-completions")) {
   ModelsDev.refresh()
   setInterval(
     async () => {

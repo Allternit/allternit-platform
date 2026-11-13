@@ -15,7 +15,11 @@
 //!   exporter serializes the OTLP JSON mapping directly over the
 //!   `opentelemetry-http` reqwest client).
 //! - `OTEL_SERVICE_NAME` overrides the resource `service.name`
-//!   (default `allternit-api`).
+//!   (default `allternit-api`; the selfhost binary passes its own default to
+//!   [`layer_from_env_with_default`]).
+//! - `OTEL_RESOURCE_ATTRIBUTES` (`key=value,key2=value2`, values
+//!   percent-decoded) adds resource attributes. Its `service.name` is used
+//!   only when `OTEL_SERVICE_NAME` is unset, per the OTel spec.
 //!
 //! [`enabled`] lets hot paths skip span-field recording entirely when no
 //! exporter is configured, keeping text/JSON logs byte-identical in the
@@ -38,6 +42,7 @@ use tracing_subscriber::registry::LookupSpan;
 
 pub const ENV_OTLP_ENDPOINT: &str = "OTEL_EXPORTER_OTLP_ENDPOINT";
 pub const ENV_SERVICE_NAME: &str = "OTEL_SERVICE_NAME";
+pub const ENV_RESOURCE_ATTRIBUTES: &str = "OTEL_RESOURCE_ATTRIBUTES";
 pub const DEFAULT_SERVICE_NAME: &str = "allternit-api";
 
 static OTEL_ENABLED: AtomicBool = AtomicBool::new(false);
@@ -55,29 +60,82 @@ pub fn layer_from_env<S>() -> Option<tracing_opentelemetry::OpenTelemetryLayer<S
 where
     S: Subscriber + for<'span> LookupSpan<'span>,
 {
+    layer_from_env_with_default(DEFAULT_SERVICE_NAME)
+}
+
+/// [`layer_from_env`] with a different default `service.name`.
+pub fn layer_from_env_with_default<S>(
+    default_service_name: &str,
+) -> Option<tracing_opentelemetry::OpenTelemetryLayer<S, Tracer>>
+where
+    S: Subscriber + for<'span> LookupSpan<'span>,
+{
     let endpoint = std::env::var(ENV_OTLP_ENDPOINT)
         .ok()
         .map(|v| v.trim().trim_end_matches('/').to_string())
         .filter(|v| !v.is_empty())?;
-    let service_name = std::env::var(ENV_SERVICE_NAME)
-        .ok()
-        .map(|v| v.trim().to_string())
-        .filter(|v| !v.is_empty())
-        .unwrap_or_else(|| DEFAULT_SERVICE_NAME.to_string());
+    let attrs = parse_resource_attributes(
+        &std::env::var(ENV_RESOURCE_ATTRIBUTES).unwrap_or_default(),
+    );
+    let service_name = resolve_service_name(
+        std::env::var(ENV_SERVICE_NAME).ok().as_deref(),
+        &attrs,
+        default_service_name,
+    );
+    let extra: Vec<(String, String)> =
+        attrs.into_iter().filter(|(k, _)| k != "service.name").collect();
 
-    let exporter = OtlpJsonExporter::new(format!("{endpoint}/v1/traces"), &service_name);
+    let exporter = OtlpJsonExporter::new(format!("{endpoint}/v1/traces"), &service_name)
+        .with_resource_attributes(extra.clone());
+    let mut resource = vec![opentelemetry::KeyValue::new("service.name", service_name)];
+    resource.extend(
+        extra
+            .into_iter()
+            .map(|(k, v)| opentelemetry::KeyValue::new(k, v)),
+    );
     let provider = opentelemetry_sdk::trace::TracerProvider::builder()
         .with_batch_exporter(exporter, opentelemetry_sdk::runtime::Tokio)
         .with_config(
-            opentelemetry_sdk::trace::Config::default().with_resource(Resource::new(vec![
-                opentelemetry::KeyValue::new("service.name", service_name),
-            ])),
+            opentelemetry_sdk::trace::Config::default().with_resource(Resource::new(resource)),
         )
         .build();
     let tracer = provider.tracer("allternit-api");
     opentelemetry::global::set_tracer_provider(provider);
     OTEL_ENABLED.store(true, Ordering::Relaxed);
     Some(tracing_opentelemetry::layer().with_tracer(tracer))
+}
+
+/// `OTEL_RESOURCE_ATTRIBUTES`: `k=v` pairs split on `,`, keys and values
+/// trimmed and percent-decoded. Malformed pairs are skipped.
+pub fn parse_resource_attributes(raw: &str) -> Vec<(String, String)> {
+    raw.split(',')
+        .filter_map(|pair| {
+            let (k, v) = pair.split_once('=')?;
+            let k = urlencoding::decode(k.trim()).ok()?.into_owned();
+            let v = urlencoding::decode(v.trim()).ok()?.into_owned();
+            (!k.is_empty()).then_some((k, v))
+        })
+        .collect()
+}
+
+/// `OTEL_SERVICE_NAME`, else `service.name` from the resource attributes,
+/// else the default.
+pub fn resolve_service_name(
+    env_service_name: Option<&str>,
+    attrs: &[(String, String)],
+    default: &str,
+) -> String {
+    env_service_name
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            attrs
+                .iter()
+                .find(|(k, v)| k == "service.name" && !v.is_empty())
+                .map(|(_, v)| v.clone())
+        })
+        .unwrap_or_else(|| default.to_string())
 }
 
 #[derive(Debug)]
@@ -143,6 +201,7 @@ pub struct OtlpJsonExporter {
     client: ReqwestHttpClient,
     traces_url: String,
     service_name: String,
+    resource_attributes: Vec<(String, String)>,
 }
 
 impl OtlpJsonExporter {
@@ -151,7 +210,14 @@ impl OtlpJsonExporter {
             client: ReqwestHttpClient(crate::net_client::client()),
             traces_url,
             service_name: service_name.to_string(),
+            resource_attributes: Vec::new(),
         }
+    }
+
+    /// Extra resource attributes sent with every batch (not `service.name`).
+    pub fn with_resource_attributes(mut self, attrs: Vec<(String, String)>) -> Self {
+        self.resource_attributes = attrs;
+        self
     }
 }
 
@@ -159,7 +225,8 @@ impl SpanExporter for OtlpJsonExporter {
     fn export(&mut self, batch: Vec<SpanData>) -> BoxFuture<'static, ExportResult> {
         let client = self.client.clone();
         let url = self.traces_url.clone();
-        let payload = export_payload(&batch, &self.service_name);
+        let payload =
+            export_payload_with_resource(&batch, &self.service_name, &self.resource_attributes);
         Box::pin(async move {
             let body = serde_json::to_vec(&payload)
                 .map_err(|e| TraceError::from(OtlpError(e.to_string())))?;
@@ -226,6 +293,22 @@ fn attribute_json(key: &Key, value: &Value) -> Json {
 /// Serialize a span batch into the OTLP/JSON `ExportTraceServiceRequest`
 /// body. Kept separate from I/O so it is unit-testable without a collector.
 pub fn export_payload(batch: &[SpanData], service_name: &str) -> Json {
+    export_payload_with_resource(batch, service_name, &[])
+}
+
+/// [`export_payload`] plus extra resource attributes.
+pub fn export_payload_with_resource(
+    batch: &[SpanData],
+    service_name: &str,
+    resource_attributes: &[(String, String)],
+) -> Json {
+    let mut resource_attrs =
+        vec![json!({ "key": "service.name", "value": { "stringValue": service_name } })];
+    resource_attrs.extend(
+        resource_attributes
+            .iter()
+            .map(|(k, v)| json!({ "key": k, "value": { "stringValue": v } })),
+    );
     let spans: Vec<Json> = batch
         .iter()
         .map(|span| {
@@ -263,9 +346,7 @@ pub fn export_payload(batch: &[SpanData], service_name: &str) -> Json {
     json!({
         "resourceSpans": [{
             "resource": {
-                "attributes": [
-                    { "key": "service.name", "value": { "stringValue": service_name } },
-                ],
+                "attributes": resource_attrs,
             },
             "scopeSpans": [{
                 "scope": { "name": "allternit-api" },
@@ -338,6 +419,34 @@ mod tests {
             payload["resourceSpans"][0]["resource"]["attributes"][0]["value"]["stringValue"],
             "allternit-api"
         );
+    }
+
+    #[test]
+    fn resource_attributes_and_service_name() {
+        let attrs = parse_resource_attributes(
+            "deployment.environment=prod, service.name=from-attrs ,team=a%2Cb,broken",
+        );
+        assert_eq!(
+            attrs,
+            vec![
+                ("deployment.environment".to_string(), "prod".to_string()),
+                ("service.name".to_string(), "from-attrs".to_string()),
+                ("team".to_string(), "a,b".to_string()),
+            ]
+        );
+        assert_eq!(resolve_service_name(Some("env-name"), &attrs, "dflt"), "env-name");
+        assert_eq!(resolve_service_name(None, &attrs, "dflt"), "from-attrs");
+        assert_eq!(resolve_service_name(Some("  "), &[], "dflt"), "dflt");
+
+        let payload = export_payload_with_resource(
+            &[sample_span()],
+            "allternit-agents-server",
+            &[("deployment.environment".into(), "prod".into())],
+        );
+        let res = &payload["resourceSpans"][0]["resource"]["attributes"];
+        assert_eq!(res[0]["value"]["stringValue"], "allternit-agents-server");
+        assert_eq!(res[1]["key"], "deployment.environment");
+        assert_eq!(res[1]["value"]["stringValue"], "prod");
     }
 
     #[test]

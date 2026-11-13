@@ -2,6 +2,7 @@ import { existsSync } from "node:fs"
 import { BusEvent } from "@/shared/bus/bus-event"
 import { Bus } from "@/shared/bus"
 import { Log } from "@/shared/util/log"
+import { isSelfHosted } from "@/shared/selfhost/offline"
 import { describeRoute, generateSpecs, validator, resolver, openAPIRouteHandler } from "@/runtime/server/openapi"
 import { Hono } from "hono"
 import { cors } from "hono/cors"
@@ -555,9 +556,10 @@ export namespace Server {
             .route("/workspace", WorkspaceRoutes()) as unknown as Hono,
         )
         .all("/*", async (c) => {
+          // Never forwards in self-hosted mode (ALLTERNIT_SELF_HOSTED=1), whatever the env says.
           const cloudProxyEnabled =
-            process.env.GIZZI_ENABLE_CLOUD_PROXY === "true" ||
-            process.env.GIZZI_ENABLE_CLOUD_PROXY === "1"
+            !isSelfHosted() &&
+            (process.env.GIZZI_ENABLE_CLOUD_PROXY === "true" || process.env.GIZZI_ENABLE_CLOUD_PROXY === "1")
 
           if (!cloudProxyEnabled) {
             log.warn(
