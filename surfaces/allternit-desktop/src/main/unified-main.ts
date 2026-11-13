@@ -112,6 +112,7 @@ import { phoneRemoteManager } from './phone-remote-manager.js';
 import { phoneService } from './phone-service.js';
 import { registerPhoneIpc } from './phone-ipc.js';
 import { registerPhoneLinkIpc } from './phone-link-ipc.js';
+import { registerSelfHostCredentialsIpc } from './selfhost-credentials-ipc.js';
 import {
   createCaptureSession,
   stopCaptureSession,
@@ -3189,6 +3190,7 @@ ipcMain.handle('decision-runtime:get-status', () => decisionRuntimeManager.getSt
 registerPhoneIpc(handleGuarded);
 // Phone Link: setup for using the AI apps signed in on the user's phone.
 registerPhoneLinkIpc(handleGuarded);
+registerSelfHostCredentialsIpc(handleGuarded);
 
 // System One (S1) + Laya (install / repair / lifecycle / checkpoint swap)
 ipcMain.handle('system-one:get-status', () => systemOne.getStatus());
