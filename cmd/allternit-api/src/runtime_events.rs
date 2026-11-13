@@ -67,6 +67,9 @@ const DATA_KEYS: &[&str] = &[
     "loginId", "health", "previous", "label",
     "taskId", "capability", "detail", "threadId",
     "attentionId", "botName",
+    // The agent session whose turn raised an approval (`gateway_runner::create_approval`):
+    // cloud-api links the approval to that turn's Platform API response.
+    "session_id",
     // "urgent" when a bot marked it so: it reaches the owner during quiet hours (cloud-api notifications::level).
     "urgency",
     // iPhone system surfaces: which inbox item an approval is, and what the

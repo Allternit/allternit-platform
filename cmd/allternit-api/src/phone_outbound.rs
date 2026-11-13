@@ -20,6 +20,9 @@
 //!
 //! Bot tools (the internal MCP endpoint, next to `allternit_mail.*`; listed only for owners with a
 //! number): `phone_text {to, text}` and `phone_call {to, purpose}`, each with an optional `agent_id`.
+//! gizzi (>= 2.2.4) names the calling session in the call's `_meta["allternit/session"]`; then the
+//! session's bot acts and a disagreeing `agent_id` is ignored, and a held call's approval carries
+//! that session id (its thread stays the contact's thread). With no session the `agent_id` is used.
 
 use std::sync::Arc;
 
@@ -167,6 +170,13 @@ pub async fn text<R: ThreadRuntime>(db: &DbHandle, rt: &R, http: Arc<dyn HttpSen
 /// [`text`] with an optional attribution line appended ("(Sent by …)"), for a vendor bot
 /// acting through its directing bot's number. Same gates, same thread writes.
 pub async fn text_attributed<R: ThreadRuntime>(db: &DbHandle, rt: &R, http: Arc<dyn HttpSend>, n: &PhoneNumber, to: &str, text: &str, attribution: Option<&str>) -> Result<(String, String), OutError> {
+    text_in_session(db, rt, http, n, to, text, attribution, None).await
+}
+
+/// [`text_attributed`] from an agent turn: a held text's approval names `session`
+/// (the gizzi session whose turn asked), like [`call_in_session`].
+#[allow(clippy::too_many_arguments)]
+pub async fn text_in_session<R: ThreadRuntime>(db: &DbHandle, rt: &R, http: Arc<dyn HttpSend>, n: &PhoneNumber, to: &str, text: &str, attribution: Option<&str>, session: Option<&str>) -> Result<(String, String), OutError> {
     if !is_e164(to) {
         return Err(OutError::BadRequest("The number to text must look like +14155550123.".into()));
     }
@@ -204,7 +214,7 @@ pub async fn text_attributed<R: ThreadRuntime>(db: &DbHandle, rt: &R, http: Arc<
     };
     ensure_binding_on(db, &n.owner, &thread_id, "sms", &ev, account.as_deref()).map_err(|e| OutError::Failed(e.to_string()))?;
     let tx = build_sms(http, &secret);
-    match send(db, &tx, &n.owner, &thread_id, &SendReq { text: body, ..Default::default() }).await {
+    match send(db, &tx, &n.owner, &thread_id, &SendReq { text: body, calling_session: session.map(str::to_string), ..Default::default() }).await {
         Ok(SendOutcome::Sent { remote_id, .. }) => Ok((thread_id, remote_id)),
         Ok(SendOutcome::Rejected(m)) => Err(match plain_slug(&m) {
             "no_consent" => OutError::NoTextConsent(to.to_string()),
@@ -225,6 +235,14 @@ pub async fn text_attributed<R: ThreadRuntime>(db: &DbHandle, rt: &R, http: Arc<
 
 /// Ask the cloud to ring `to`; returns the thread and the call room.
 pub async fn call<R: ThreadRuntime>(db: &DbHandle, rt: &R, http: Arc<dyn HttpSend>, n: &PhoneNumber, to: &str, purpose: &str) -> Result<(String, String), OutError> {
+    call_in_session(db, rt, http, n, to, purpose, None).await
+}
+
+/// [`call`] from an agent turn: a held call's approval names `session` (the
+/// gizzi session whose turn asked), so the cloud can tie it to that turn's
+/// Platform API response. The approval stays on the contact's thread, where
+/// the owner's apps show it.
+pub async fn call_in_session<R: ThreadRuntime>(db: &DbHandle, rt: &R, http: Arc<dyn HttpSend>, n: &PhoneNumber, to: &str, purpose: &str, session: Option<&str>) -> Result<(String, String), OutError> {
     if !is_e164(to) {
         return Err(OutError::BadRequest("The number to call must look like +14155550123.".into()));
     }
@@ -263,7 +281,7 @@ pub async fn call<R: ThreadRuntime>(db: &DbHandle, rt: &R, http: Arc<dyn HttpSen
                     .query_row("SELECT id FROM gateway_approvals WHERE owner = ?1 AND thread_id = ?2 AND authority = 'allternit' AND state = 'pending' AND correlation_id = ?3", params![n.owner, thread_id, corr], |r| r.get(0))
                     .ok();
                 if pending.is_none() {
-                    let cx = crate::gateway_runner::Cx { owner: n.owner.clone(), thread_id: thread_id.clone(), bot_id: n.bot_id.clone(), generation: 1, session_id: String::new(), exec: json!({ "vendor": "call" }) };
+                    let cx = crate::gateway_runner::Cx { owner: n.owner.clone(), thread_id: thread_id.clone(), bot_id: n.bot_id.clone(), generation: 1, session_id: session.unwrap_or_default().to_string(), exec: json!({ "vendor": "call" }) };
                     let aid = crate::gateway_runner::create_approval(db, &cx, "allternit", &format!("call {to}"), None, json!({ "to": to, "purpose": purpose }), Some(&corr)).map_err(|e| OutError::Failed(e.message))?;
                     crate::autonomy::finish(db, &act, aut.as_ref(), "held", &aid, purpose, &reason, Some(&thread_id), json!({ "approvalId": aid, "to": to, "purpose": purpose }));
                 }
@@ -415,21 +433,63 @@ pub fn is_tool(name: &str) -> bool {
     matches!(name, "phone_text" | "phone_call")
 }
 
-/// Run a tool. A refusal is an `ok:false` result with a plain sentence, not a tool error.
-pub async fn call_mcp_tool(state: &Arc<AppState>, owner: &str, name: &str, args: Value) -> Result<Value, (StatusCode, Json<Value>)> {
-    call_mcp_tool_with(&state.db, &runtime(state), Arc::new(ReqwestSend), owner, name, args).await
+/// The calling session's id, from the MCP call's `_meta` (gizzi >= 2.2.4 sends it).
+fn meta_session(meta: Option<&Value>) -> Option<&str> {
+    meta.and_then(|m| m.get(crate::platform_tools::SESSION_META)).and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty())
 }
 
-pub async fn call_mcp_tool_with<R: ThreadRuntime>(db: &DbHandle, rt: &R, http: Arc<dyn HttpSend>, owner: &str, name: &str, args: Value) -> Result<Value, (StatusCode, Json<Value>)> {
+/// The bot a session belongs to (its metadata's `agentId` / `botCanonicalFor` /
+/// `botThreadOf`), when that bot is one of `owner`'s.
+fn session_agent(db: &DbHandle, owner: &str, session_id: &str) -> Option<String> {
+    let bag = db.get_session_metadata(session_id).ok().flatten()?;
+    let agent = ["agentId", "botCanonicalFor", "botThreadOf"]
+        .iter()
+        .find_map(|k| bag.get(*k).and_then(Value::as_str).filter(|v| !v.is_empty()))?
+        .to_string();
+    let bot_owner: String = db.connect().ok()?.query_row("SELECT user_id FROM agents WHERE id = ?1", params![agent], |r| r.get(0)).ok()?;
+    (bot_owner == owner).then_some(agent)
+}
+
+/// Run a tool. A refusal is an `ok:false` result with a plain sentence, not a tool error.
+pub async fn call_mcp_tool(state: &Arc<AppState>, owner: &str, name: &str, args: Value, meta: Option<&Value>) -> Result<Value, (StatusCode, Json<Value>)> {
+    call_mcp_tool_with(&state.db, &runtime(state), Arc::new(ReqwestSend), owner, name, args, meta).await
+}
+
+/// Which bot acts: the calling session's bot when gizzi names the session (a
+/// model-supplied `agent_id` can't make one bot act as another), else the
+/// `agent_id` argument, as before gizzi 2.2.4.
+pub async fn call_mcp_tool_with<R: ThreadRuntime>(db: &DbHandle, rt: &R, http: Arc<dyn HttpSend>, owner: &str, name: &str, args: Value, meta: Option<&Value>) -> Result<Value, (StatusCode, Json<Value>)> {
     let arg = |k: &str| args.get(k).and_then(Value::as_str).unwrap_or("").to_string();
     let refuse = |e: OutError| Ok(json!({ "ok": false, "error": e.code(), "message": e.sentence() }));
-    let n = match pick_number(db, owner, Some(arg("agent_id").as_str()), None) {
+    let asked = arg("agent_id");
+    let session = meta_session(meta);
+    let agent = match session {
+        Some(s) => match session_agent(db, owner, s) {
+            Some(a) => {
+                if !asked.is_empty() && asked != a {
+                    tracing::warn!(session = %s, agent = %a, asked = %asked, tool = %name, "phone tool: ignoring an agent_id that isn't the calling session's bot");
+                }
+                a
+            }
+            // A Platform project runtime serves many accounts: only the session's own agent may act.
+            None if owner.starts_with("platform:") => {
+                return refuse(OutError::NotFound("This tool only works inside a hosted agent's conversation.".into()));
+            }
+            // The owner's own (non-bot) session: they may pick any of their bots.
+            None => asked,
+        },
+        None => {
+            tracing::warn!(owner = %owner, tool = %name, "phone tool called without a session in _meta (gizzi older than 2.2.4); trusting agent_id");
+            asked
+        }
+    };
+    let n = match pick_number(db, owner, Some(agent.as_str()), None) {
         Ok(n) => n,
         Err(e) => return refuse(e),
     };
     let out = match name {
-        "phone_text" => text(db, rt, http, &n, &arg("to"), &arg("text")).await.map(|(thread_id, message_id)| json!({ "ok": true, "threadId": thread_id, "messageId": message_id })),
-        "phone_call" => call(db, rt, http, &n, &arg("to"), &arg("purpose")).await.map(|(thread_id, room)| json!({ "ok": true, "threadId": thread_id, "room": room, "message": "Calling now." })),
+        "phone_text" => text_in_session(db, rt, http, &n, &arg("to"), &arg("text"), None, session).await.map(|(thread_id, message_id)| json!({ "ok": true, "threadId": thread_id, "messageId": message_id })),
+        "phone_call" => call_in_session(db, rt, http, &n, &arg("to"), &arg("purpose"), session).await.map(|(thread_id, room)| json!({ "ok": true, "threadId": thread_id, "room": room, "message": "Calling now." })),
         other => return Err((StatusCode::NOT_FOUND, Json(json!({ "error": format!("unknown tool {other}") })))),
     };
     match out {
@@ -529,7 +589,7 @@ mod tests {
         assert_eq!(delivery, "failed", "a refused text isn't a delivered bot message");
         // The tool surfaces it as an ok:false result, not a tool error.
         let http = fake(vec![(403, json!({ "error": "no_consent" }))]);
-        let out = call_mcp_tool_with(&st.db, &Rt, http, "user-a", "phone_call", json!({ "to": "+14155550123", "purpose": "remind" })).await.unwrap();
+        let out = call_mcp_tool_with(&st.db, &Rt, http, "user-a", "phone_call", json!({ "to": "+14155550123", "purpose": "remind" }), None).await.unwrap();
         assert_eq!((out["ok"].clone(), out["error"].clone()), (json!(false), json!("no_consent")));
     }
 
@@ -583,5 +643,76 @@ mod tests {
         assert_eq!(mcp_tools(&st.db, "user-a").len(), 2);
         assert!(mcp_tools(&st.db, "user-b").is_empty());
         assert!(matches!(pick_number(&st.db, "user-b", None, None), Err(OutError::NotFound(_))));
+    }
+
+    /// Ask first on calls for bot-1; session `ses-1` is bot-1's (the agent turn calling the tool).
+    fn hold_calls_in_session(st: &Arc<AppState>) {
+        st.db
+            .connect()
+            .unwrap()
+            .execute("INSERT INTO autonomy_policies (id, owner, bot_id, channel, person, level, limits_json, created_at, updated_at) VALUES ('pol-1','user-a','bot-1','call','','ask','{}','t','t')", [])
+            .unwrap();
+        st.db.set_session_metadata("ses-1", &json!({ "isBot": true, "agentId": "bot-1" })).unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_held_call_files_its_approval_under_the_calling_session_on_the_contact_thread() {
+        let st = setup("held-sess").await;
+        hold_calls_in_session(&st);
+        let meta = json!({ "allternit/session": "ses-1" });
+        let http = fake(vec![]);
+        let out = call_mcp_tool_with(&st.db, &Rt, http.clone(), "user-a", "phone_call", json!({ "to": "+14155550123", "purpose": "confirm" }), Some(&meta)).await.unwrap();
+        assert_eq!(out["ok"], json!(false));
+        assert!(out["message"].as_str().unwrap().contains("The owner has been asked"), "{out}");
+        assert!(http.sent.lock().unwrap().is_empty(), "a held call never dials");
+        let (contact_thread, _) = crate::channel_phone::resolve_thread_async(&st.db, &Rt, "num-1", "+14155550123").await.unwrap();
+        let conn = st.db.connect().unwrap();
+        let (aid, approval_thread): (String, String) = conn.query_row("SELECT id, thread_id FROM gateway_approvals WHERE owner = 'user-a' AND correlation_id = 'call:+14155550123'", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+        assert_eq!(approval_thread, contact_thread, "the card stays on the contact's thread");
+        let (session, thread, payload): (Option<String>, String, String) = conn
+            .query_row("SELECT session_id, thread_id, payload FROM bot_events WHERE event_type = 'approval.requested' AND bot_id = 'bot-1'", [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .unwrap();
+        let payload: Value = serde_json::from_str(&payload).unwrap();
+        assert_eq!((session.as_deref(), thread.as_str()), (Some("ses-1"), contact_thread.as_str()));
+        assert_eq!((payload["approvalId"].as_str(), payload["session_id"].as_str()), (Some(aid.as_str()), Some("ses-1")));
+    }
+
+    #[tokio::test]
+    async fn a_forged_agent_id_is_ignored_when_the_session_names_the_bot() {
+        let st = setup("forged").await;
+        st.db.connect().unwrap().execute("INSERT INTO agents (id, user_id, name, model, provider, is_bot, config) VALUES ('bot-2','user-a','c','m','p',1,'{}')", []).unwrap();
+        crate::channel_phone::upsert_number(&st.db, "num-2", "user-a", "bot-2", "+14155550200", None).unwrap();
+        st.db.set_session_metadata("ses-1", &json!({ "isBot": true, "agentId": "bot-1" })).unwrap();
+        let meta = json!({ "allternit/session": "ses-1" });
+        let http = fake(vec![(200, json!({ "room": "call-out-1", "dialing": true }))]);
+        let out = call_mcp_tool_with(&st.db, &Rt, http.clone(), "user-a", "phone_call", json!({ "to": "+14155550123", "purpose": "x", "agent_id": "bot-2" }), Some(&meta)).await.unwrap();
+        assert_eq!(out["ok"], json!(true), "{out}");
+        let sent = http.sent.lock().unwrap();
+        assert_eq!((sent[0].1["botId"].as_str(), sent[0].1["numberId"].as_str()), (Some("bot-1"), Some("num-1")), "the session's bot calls, from its own number");
+        // Someone else's bot in the session: a Platform runtime refuses instead of trusting agent_id.
+        drop(sent);
+        st.db.connect().unwrap().execute("UPDATE agents SET user_id = 'platform:p1' WHERE id = 'bot-2'", []).unwrap();
+        let out = call_mcp_tool_with(&st.db, &Rt, fake(vec![]), "platform:p1", "phone_call", json!({ "to": "+14155550123", "purpose": "x", "agent_id": "bot-2" }), Some(&meta)).await.unwrap();
+        assert_eq!((out["ok"].clone(), out["error"].clone()), (json!(false), json!("not_found")));
+    }
+
+    #[tokio::test]
+    async fn without_a_session_agent_id_picks_the_bot_and_the_approval_has_no_session() {
+        let st = setup("legacy").await;
+        hold_calls_in_session(&st);
+        st.db.connect().unwrap().execute("INSERT INTO agents (id, user_id, name, model, provider, is_bot, config) VALUES ('bot-2','user-a','c','m','p',1,'{}')", []).unwrap();
+        crate::channel_phone::upsert_number(&st.db, "num-2", "user-a", "bot-2", "+14155550200", None).unwrap();
+        // agent_id is trusted as before gizzi 2.2.4: bot-2's number (not connected here) is picked.
+        let out = call_mcp_tool_with(&st.db, &Rt, fake(vec![]), "user-a", "phone_call", json!({ "to": "+14155550123", "purpose": "x", "agent_id": "bot-2" }), None).await.unwrap();
+        assert_eq!(out["message"], json!("This phone number isn't connected here yet."));
+        // bot-1's held call still files its approval on the contact thread, with no session.
+        let out = call_mcp_tool_with(&st.db, &Rt, fake(vec![]), "user-a", "phone_call", json!({ "to": "+14155550123", "purpose": "x", "agent_id": "bot-1" }), None).await.unwrap();
+        assert!(out["message"].as_str().unwrap().contains("The owner has been asked"), "{out}");
+        let (contact_thread, _) = crate::channel_phone::resolve_thread_async(&st.db, &Rt, "num-1", "+14155550123").await.unwrap();
+        let (session, thread, payload): (Option<String>, String, String) = st.db.connect().unwrap()
+            .query_row("SELECT session_id, thread_id, payload FROM bot_events WHERE event_type = 'approval.requested' AND bot_id = 'bot-1'", [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .unwrap();
+        assert_eq!((session, thread), (None, contact_thread));
+        assert!(serde_json::from_str::<Value>(&payload).unwrap().get("session_id").is_none());
     }
 }

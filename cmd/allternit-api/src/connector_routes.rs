@@ -608,7 +608,9 @@ async fn handle_allternit_mail_mcp(
                 .cloned()
                 .unwrap_or_else(|| json!({}));
             if phone {
-                return Some(rpc_tool(crate::phone_outbound::call_mcp_tool(state, user_id, name, args).await));
+                // The calling session (set by gizzi) names the acting bot and goes on held calls' approvals.
+                let meta = body.get("params").and_then(|p| p.get("_meta"));
+                return Some(rpc_tool(crate::phone_outbound::call_mcp_tool(state, user_id, name, args, meta).await));
             }
             if people && user_id.starts_with("platform:") {
                 // A Platform API project runtime holds many accounts' people; these
