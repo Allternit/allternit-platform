@@ -12,7 +12,7 @@ description: 'Audit log, key expiry and IP allowlist, roles, and organization po
 Project keys accept two optional fields when created:
 
 - `expires_at`: after this time the key returns 401 and the console shows it as Expired.
-- `allowed_cidrs`: a list of CIDR ranges. Calls from other addresses are refused. The client address is read from the trusted proxy header only. Console sessions are exempt.
+- `allowed_cidrs`: a list of CIDR ranges. A call from any other address returns 403 `ip_not_allowed`. The address is the one Cloudflare sees for your client, so list your egress IPs (the public addresses of your servers or office NAT), not private ranges. Console sessions are exempt.
 
 `PATCH /api/v1/platform/projects/:id/keys/:key_id` changes a key after creation. Both fields apply to project keys, not to the user-level keys in Settings.
 
@@ -32,11 +32,13 @@ Organization roles map to console access: `org:developer`, billing and viewer. M
 | `ip_allowlist` | Organization-wide CIDR allowlist |
 | `spend_alert_email` | Address for spend alerts |
 
-## Off by default
+## Spend alerts
 
-- SSO, SCIM and custom roles are behind the console flag `VITE_ORG_SSO`.
-- Spend alert emails are sent only when `PLATFORM_SPEND_ALERT_EMAILS` and `ALLTERNIT_CUSTOMER_EMAILS` are set.
-- Request body logging needs `log_bodies` and `PLATFORM_LOG_BODIES` (see [usage and logs](/console/usage-and-logs)).
+When a project passes 50%, 80% and 100% of its monthly spend cap, the organization's `spend_alert_email` gets one email for each threshold, once a month. The same events go to webhooks as `usage.threshold`. With no address set, only the webhook fires.
+
+## Not offered yet
+
+SSO, SCIM and custom roles are not available. Sign-in uses your Allternit account.
 
 ## Related
 

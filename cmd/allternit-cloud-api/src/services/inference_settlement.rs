@@ -87,7 +87,7 @@ fn json_len(value: &Value) -> usize {
 }
 
 /// Keep a settled completion's request and response bodies for 30 days
-/// (`inference_request_bodies`, migrations_pg/121). A no-op unless the
+/// (`inference_request_bodies`, migrations_pg/125). A no-op unless the
 /// attribution carries a captured request, a request id and a project. The
 /// pair must fit [`MAX_CAPTURED_BODY_BYTES`]. A second settlement under the
 /// same request id (open-lane handoff) replaces the response. Failures are
@@ -124,6 +124,35 @@ pub async fn record_request_bodies(
     {
         error!(%error, request_id, "failed to keep request bodies");
     }
+}
+
+/// How often [`start_request_body_purge_task`] deletes expired bodies.
+pub const BODY_PURGE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60 * 60);
+
+/// Delete kept bodies past their 30 days. Reads already skip them; this makes
+/// "kept for 30 days" true in storage too. Returns the rows deleted.
+pub async fn purge_expired_request_bodies(db: &PgPool) -> Result<u64, sqlx::Error> {
+    Ok(sqlx::query("DELETE FROM inference_request_bodies WHERE expires_at <= NOW()")
+        .execute(db)
+        .await?
+        .rows_affected())
+}
+
+/// Hourly sweep for [`purge_expired_request_bodies`]; the first tick runs at startup.
+pub fn start_request_body_purge_task(db: PgPool) {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(BODY_PURGE_INTERVAL);
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            interval.tick().await;
+            match purge_expired_request_bodies(&db).await {
+                Ok(0) => {}
+                Ok(deleted) => tracing::info!(deleted, "expired request bodies deleted"),
+                // A schema without migration 125 has no table: nothing to purge.
+                Err(error) => debug!(%error, "request body purge skipped"),
+            }
+        }
+    });
 }
 
 /// Raw SSE bytes of a streamed response kept for body capture, up to the cap.

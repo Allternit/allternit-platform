@@ -32,7 +32,11 @@ The `request_id` is the `x-request-id` header of the original response. The log 
 
 ## Request and response bodies
 
-Bodies are off by default. The log keeps metadata (model, tokens, cost, latency, key, project, client) for every request. A request detail includes the request and response bodies only when both conditions hold: the project has `log_bodies` turned on (`PATCH` on the project), and the deployment flag `PLATFORM_LOG_BODIES` is set. Captured bodies are kept for 30 days. In the console, the toggle "Keep request and response bodies for 30 days (for Logs replay)" is on the project's Edit panel. It appears only when the console build has `VITE_LOG_BODIES=1` and the server has `PLATFORM_LOG_BODIES=1`; both are needed, and both are off by default.
+Bodies are off by default. The log keeps metadata (model, tokens, cost, latency, key, project, client) for every request. To keep bodies too, turn on "Keep request and response bodies for 30 days (for Logs replay)" in the project's Edit panel, or `PATCH` the project with `log_bodies: true`. From then on, a request detail includes the request and response bodies.
+
+- Bodies are deleted 30 days after the request.
+- A request and response larger than 1 MB together are not kept.
+- Turning `log_bodies` off deletes every body already kept for that project.
 
 ## Gizzi
 

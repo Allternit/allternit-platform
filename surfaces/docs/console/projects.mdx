@@ -15,7 +15,7 @@ The console shows a project switcher next to the organization switcher. The proj
 - Usage and logs: filter or group by `project_id`. See [usage and logs](/console/usage-and-logs).
 - Limits: `GET /api/v1/platform/projects/:id/limits` returns the project's effective limits and whether each comes from the plan or an override.
 - Prompts: saved per project ([Playground](/console/playground)).
-- Body logging: `log_bodies` on the project, off by default. The Edit panel shows the toggle ("Keep request and response bodies for 30 days") only when both the server (`PLATFORM_LOG_BODIES=1`) and the console (`VITE_LOG_BODIES=1`) flags are set. Bodies are kept 30 days.
+- Body logging: `log_bodies` on the project, off by default. The toggle is on the Edit panel ("Keep request and response bodies for 30 days"). Bodies are deleted after 30 days, and turning it off deletes the ones already kept. See [usage and logs](/console/usage-and-logs).
 
 ## Access
 

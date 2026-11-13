@@ -433,3 +433,49 @@ async fn log_bodies_is_set_by_the_project_owner_only() {
     projects::load_log_bodies(&state.db, &mut loaded).await;
     assert!(loaded.log_bodies);
 }
+
+#[tokio::test]
+async fn expired_bodies_are_purged_and_live_ones_kept() {
+    let (state, _) = setup().await;
+    project(&state, "proj_a", "user_a", None).await;
+    sqlx::query(
+        "INSERT INTO inference_request_bodies (request_id, project_id, request, response, expires_at) VALUES \
+         ('req_old', 'proj_a', '{}', '{}', NOW() - INTERVAL '1 second'), \
+         ('req_live', 'proj_a', '{}', '{}', NOW() + INTERVAL '29 days')",
+    )
+    .execute(&state.db)
+    .await
+    .unwrap();
+
+    let deleted = crate::services::inference_settlement::purge_expired_request_bodies(&state.db).await.unwrap();
+    assert_eq!(deleted, 1);
+    let left: Vec<String> = sqlx::query_scalar("SELECT request_id FROM inference_request_bodies").fetch_all(&state.db).await.unwrap();
+    assert_eq!(left, ["req_live"]);
+}
+
+#[tokio::test]
+async fn turning_log_bodies_off_deletes_that_projects_bodies() {
+    let (state, _) = setup().await;
+    project(&state, "proj_a", "user_a", None).await;
+    project(&state, "proj_b", "user_a", None).await;
+    let owner = Principal { user_id: "user_a".into(), org_id: None, org_admin: false };
+    sqlx::query(
+        "INSERT INTO inference_request_bodies (request_id, project_id, request, response, expires_at) VALUES \
+         ('req_a', 'proj_a', '{}', '{}', NOW() + INTERVAL '30 days'), \
+         ('req_b', 'proj_b', '{}', '{}', NOW() + INTERVAL '30 days')",
+    )
+    .execute(&state.db)
+    .await
+    .unwrap();
+
+    // A stranger's "off" changes nothing and deletes nothing.
+    let stranger = Principal { user_id: "user_b".into(), org_id: None, org_admin: false };
+    assert!(projects::set_log_bodies(&state.db, &stranger, "proj_a", false).await.is_err());
+    projects::set_log_bodies(&state.db, &owner, "proj_a", true).await.unwrap();
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM inference_request_bodies").fetch_one(&state.db).await.unwrap();
+    assert_eq!(count, 2, "turning it on keeps everything");
+
+    projects::set_log_bodies(&state.db, &owner, "proj_a", false).await.unwrap();
+    let left: Vec<String> = sqlx::query_scalar("SELECT request_id FROM inference_request_bodies").fetch_all(&state.db).await.unwrap();
+    assert_eq!(left, ["req_b"]);
+}
