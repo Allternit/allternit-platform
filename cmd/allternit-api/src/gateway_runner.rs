@@ -1086,7 +1086,13 @@ pub(crate) fn create_approval(db: &DbHandle, cx: &Cx, authority: &str, action: &
     // `session_id`: the agent session whose turn asked, so the cloud can tie the
     // approval to that turn (Platform API `requires_action`); the thread stays
     // where the owner sees the card.
-    let session = Some(cx.session_id.as_str()).filter(|s| !s.is_empty());
+    // A tool call's own session (`detail.callingSession`, e.g. `phone_text`) wins over
+    // the contact thread's session, which a Platform conversation never matches.
+    let session = detail
+        .get("callingSession")
+        .and_then(Value::as_str)
+        .or(Some(cx.session_id.as_str()))
+        .filter(|s| !s.is_empty());
     let mut payload = json!({ "approvalId": aid, "authority": authority, "action": action, "remoteRef": remote_ref, "provenance": detail.get("provenance") });
     if let Some(sid) = session {
         payload["session_id"] = json!(sid);
@@ -1585,6 +1591,25 @@ mod tests {
     fn done(id: &str, text: &str) -> Value {
         json!({ "type": "agent.message.completed", "remote_event_id": id, "guarantee": "exact", "payload": { "text": text } })
     }
+    /// Platform API `requires_action`: a held tool call (a `phone_text` send) names the
+    /// agent session whose turn asked; the contact thread's own session must not win,
+    /// since no Platform conversation ever matches it.
+    #[tokio::test]
+    async fn approval_event_names_the_calling_session_over_the_thread_session() {
+        let st = setup("calling-session").await;
+        let cx = Cx { owner: "user-a".into(), thread_id: "th-native".into(), bot_id: "bot-native".into(), generation: 1, session_id: "s-th-native".into(), exec: json!({}) };
+        let payload = |corr: &str| -> Value {
+            let raw: String = st.db.connect().unwrap()
+                .query_row("SELECT payload FROM bot_events WHERE event_type = 'approval.requested' AND payload LIKE ?1", params![format!("%{corr}%")], |r| r.get(0))
+                .unwrap();
+            serde_json::from_str(&raw).unwrap()
+        };
+        let with = create_approval(&st.db, &cx, "allternit", "post to sms", None, json!({ "text": "hi", "callingSession": "ses-agent" }), Some("c-with")).unwrap();
+        assert_eq!(payload(&with)["session_id"], json!("ses-agent"));
+        let without = create_approval(&st.db, &cx, "allternit", "post to sms", None, json!({ "text": "hi" }), Some("c-without")).unwrap();
+        assert_eq!(payload(&without)["session_id"], json!("s-th-native"));
+    }
+
     #[tokio::test]
     async fn template_vendor_reply_is_gated_before_ledger_stream_and_transcript() {
         let st=setup("template-gate").await;let f=Fake::default();

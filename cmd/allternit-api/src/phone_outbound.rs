@@ -170,6 +170,13 @@ pub async fn text<R: ThreadRuntime>(db: &DbHandle, rt: &R, http: Arc<dyn HttpSen
 /// [`text`] with an optional attribution line appended ("(Sent by …)"), for a vendor bot
 /// acting through its directing bot's number. Same gates, same thread writes.
 pub async fn text_attributed<R: ThreadRuntime>(db: &DbHandle, rt: &R, http: Arc<dyn HttpSend>, n: &PhoneNumber, to: &str, text: &str, attribution: Option<&str>) -> Result<(String, String), OutError> {
+    text_in_session(db, rt, http, n, to, text, attribution, None).await
+}
+
+/// [`text_attributed`] from an agent turn: a held text's approval names `session`
+/// (the gizzi session whose turn asked), like [`call_in_session`].
+#[allow(clippy::too_many_arguments)]
+pub async fn text_in_session<R: ThreadRuntime>(db: &DbHandle, rt: &R, http: Arc<dyn HttpSend>, n: &PhoneNumber, to: &str, text: &str, attribution: Option<&str>, session: Option<&str>) -> Result<(String, String), OutError> {
     if !is_e164(to) {
         return Err(OutError::BadRequest("The number to text must look like +14155550123.".into()));
     }
@@ -207,7 +214,7 @@ pub async fn text_attributed<R: ThreadRuntime>(db: &DbHandle, rt: &R, http: Arc<
     };
     ensure_binding_on(db, &n.owner, &thread_id, "sms", &ev, account.as_deref()).map_err(|e| OutError::Failed(e.to_string()))?;
     let tx = build_sms(http, &secret);
-    match send(db, &tx, &n.owner, &thread_id, &SendReq { text: body, ..Default::default() }).await {
+    match send(db, &tx, &n.owner, &thread_id, &SendReq { text: body, calling_session: session.map(str::to_string), ..Default::default() }).await {
         Ok(SendOutcome::Sent { remote_id, .. }) => Ok((thread_id, remote_id)),
         Ok(SendOutcome::Rejected(m)) => Err(match plain_slug(&m) {
             "no_consent" => OutError::NoTextConsent(to.to_string()),
@@ -481,7 +488,7 @@ pub async fn call_mcp_tool_with<R: ThreadRuntime>(db: &DbHandle, rt: &R, http: A
         Err(e) => return refuse(e),
     };
     let out = match name {
-        "phone_text" => text(db, rt, http, &n, &arg("to"), &arg("text")).await.map(|(thread_id, message_id)| json!({ "ok": true, "threadId": thread_id, "messageId": message_id })),
+        "phone_text" => text_in_session(db, rt, http, &n, &arg("to"), &arg("text"), None, session).await.map(|(thread_id, message_id)| json!({ "ok": true, "threadId": thread_id, "messageId": message_id })),
         "phone_call" => call_in_session(db, rt, http, &n, &arg("to"), &arg("purpose"), session).await.map(|(thread_id, room)| json!({ "ok": true, "threadId": thread_id, "room": room, "message": "Calling now." })),
         other => return Err((StatusCode::NOT_FOUND, Json(json!({ "error": format!("unknown tool {other}") })))),
     };
