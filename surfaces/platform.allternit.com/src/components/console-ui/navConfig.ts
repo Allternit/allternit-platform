@@ -81,7 +81,7 @@ export interface ConsoleNavConfig {
 }
 
 /**
- * Rail layout (approved 2026-11-13): four top items, then groups that open one
+ * Rail layout (approved 2026-11-13): five top items, then groups that open one
  * at a time. Labels can repeat across groups (Computers, Usage) because the
  * rail, palette and breadcrumb always show them with their group.
  * `/docs` is not here: it lives in the rail footer's link line.
@@ -92,6 +92,8 @@ const baseConsoleNav: ConsoleNavConfig = {
     { to: "/playground", label: "Playground", icon: PlayIcon },
     { to: "/api-keys", label: "API keys", icon: Key01Icon },
     { to: "/models", label: "Models", icon: SparklesIcon },
+    // Gizzi Code signed in to Allternit Cloud: its requests, tokens and spend (live, not "soon").
+    { to: "/gizzi/usage", label: "Gizzi Code", icon: SourceCodeIcon },
   ],
   groups: [
     {
@@ -135,7 +137,6 @@ const baseConsoleNav: ConsoleNavConfig = {
         { to: "/analytics/cost", label: "Cost", icon: Dollar01Icon },
         { to: "/analytics/rate-limits", label: "Rate limits", icon: Timer01Icon },
         { to: "/analytics/caching", label: "Caching", icon: GaugeIcon, cloudHidden: "caching" },
-        { to: "/gizzi/usage", label: "Gizzi Code", icon: CoinsDollarIcon, badge: "soon" },
       ],
     },
     {

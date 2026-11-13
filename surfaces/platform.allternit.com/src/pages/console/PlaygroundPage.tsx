@@ -141,6 +141,8 @@ export function PlaygroundPage(): React.ReactNode {
   const [formErrors, setFormErrors] = useState<string[]>([]);
 
   const [models, setModels] = useState<ConsoleModel[]>([]);
+  // Until the catalog arrives, "auto" can't resolve yet: not an error.
+  const [modelsLoaded, setModelsLoaded] = useState(false);
   const [modelsError, setModelsError] = useState<string | null>(null);
   const [policy, setPolicy] = useState<ModelAutoPolicy>(loadModelAutoPolicy);
 
@@ -228,6 +230,9 @@ export function PlaygroundPage(): React.ReactNode {
       })
       .catch((err) => {
         if (active) setModelsError(formatApiError(err, "model catalog"));
+      })
+      .finally(() => {
+        if (active) setModelsLoaded(true);
       });
     return () => {
       active = false;
@@ -445,7 +450,7 @@ export function PlaygroundPage(): React.ReactNode {
     [persisted]
   );
 
-  const autoUnresolved = persisted.model === "auto" && resolveModel("auto") === null;
+  const autoUnresolved = modelsLoaded && persisted.model === "auto" && resolveModel("auto") === null;
   const cloudNeedsProject = cloud && !projectId;
   const runDisabled =
     effectiveMessages.length === 0 || autoUnresolved || imagesBlocked || cloudNeedsProject;
