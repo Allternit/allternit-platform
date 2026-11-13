@@ -1,0 +1,86 @@
+---
+title: 'Operations'
+description: 'Run the Agents Server day to day: migrations, backups, key rotation, upgrades, doctor, and the Helm charts.'
+---
+
+<Note>
+**Status: Private beta.** The admin commands below are planned subcommands of `allternit-agents-server`. They are still being built, and flags can change. Check `allternit-agents-server admin --help` on your build.
+</Note>
+
+## Admin commands
+
+The admin CLI is part of the server binary. With Docker Compose, run it inside the server container: `docker compose exec server allternit-agents-server admin ...`.
+
+| Command | What it does |
+|---|---|
+| `admin setup` | Mints the first admin API key and prints it once. |
+| `admin migrate` | Applies database migrations. Safe to run again: it does nothing when the schema is current. |
+| `admin keys` | Lists, creates and revokes server API keys. |
+| `admin env-keys` | Lists, creates and revokes environment keys. |
+| `admin rotate-key` | Rotates the encryption key for stored credentials. |
+| `admin doctor` | Runs checks on the deployment and reports problems. |
+
+## Migrate
+
+The compose bundle runs a one-shot `migrate` container before the server starts. Run it again after every upgrade:
+
+```bash
+docker compose run --rm migrate
+```
+
+The self-hosted schema is its own small PostgreSQL schema. It is not shared with any other Allternit product.
+
+## Backups
+
+**PostgreSQL.** All state lives in the database: agents, environments, sessions, the event log, the work queue, tool calls, key hashes and encrypted credentials. Back it up with your usual PostgreSQL tooling, for example:
+
+```bash
+# use the user and database names from your .env
+docker compose exec postgres pg_dump -U "$POSTGRES_USER" -Fc "$POSTGRES_DB" > agents-$(date +%F).dump
+```
+
+Back up these too:
+
+- The settings file.
+- The encryption key that `secrets.encryption_key_ref` points to. Without it, stored credentials in a restored database cannot be read.
+
+**SQLite mode** (no `database.url`): stop the server, then copy `data_dir`.
+
+Test a restore before you need one.
+
+## Rotate keys
+
+**Encryption key for stored credentials.**
+
+1. Add the new key in your secret store and point `secrets.encryption_key_ref` at it.
+2. Run `admin rotate-key`. It re-encrypts stored rows with the new key.
+3. Rows encrypted with the old key stay readable while the rotation runs.
+4. Remove the old key once the command finishes.
+
+**Server API keys.** Create a new key, switch the client to it, then revoke the old key (`DELETE /v1/api_keys/{id}`). The last admin key cannot be revoked.
+
+**Environment keys.** Create a new key for the environment, roll it out to the workers, then revoke the old one. Workers still using the old key get `401` on their next call.
+
+## Upgrades
+
+v1 runs one server replica.
+
+1. Back up the database.
+2. Pull the new images.
+3. Run `migrate`.
+4. Restart the server, then the workers.
+
+Sessions continue after a restart: the server rebuilds each session from its event log in PostgreSQL, and the next turn sees the earlier messages. Leases are stored in the database, so workers keep renewing once the server is back. An item whose lease ran out during the restart is claimed again.
+
+## Doctor
+
+`admin doctor` runs a set of checks on the settings file, the database and the secret references, and prints what it finds. Run it after any change to the settings or the deployment. The exact checks are still being built.
+
+## Kubernetes
+
+Helm charts live at `deploy/selfhost/charts/`:
+
+- `agents-server`: the server, its migrate job and its settings.
+- `sandboxes`: the workers.
+
+Use your own PostgreSQL (managed or operator-run) and give the server its URL through a secret reference.

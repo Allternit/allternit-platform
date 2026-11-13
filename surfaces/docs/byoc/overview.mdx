@@ -18,6 +18,10 @@ You get:
 **Status:** Implementation IMPLEMENTED × Exposure PUBLIC PREVIEW. `allternit-api` binds `0.0.0.0` on `ALLTERNIT_API_PORT` (default dev `18013`; pin `8013` in production), not loopback. Firewall it.
 </Note>
 
+<Tip>
+BYOC still uses `api.allternit.com` for sign-in, pairing and the relay. To run agents with no Allternit account and no relay, see [Self-Hosted Agents](/self-hosted/overview) (private beta): your own API server, PostgreSQL and polling workers, with the model provider as the only outside call.
+</Tip>
+
 ## Architecture
 
 ```

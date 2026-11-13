@@ -1,0 +1,93 @@
+---
+title: 'API reference'
+description: 'Every route of the self-hosted Agents Server API, with its credential, plus error codes and conventions.'
+---
+
+<Note>
+**Status: Private beta.** The contract is `cmd/allternit-api/openapi/selfhost-v1.yaml`, version 1.0.0. The server that implements it is still being built.
+</Note>
+
+The full, interactive reference is the **Self-Hosted Agents API reference** group in the API Reference tab, generated from the same OpenAPI file. You can also [download the OpenAPI file](/api-reference/selfhost-v1.yaml) and load it into your own tools, or generate a client from it.
+
+Default base URL: `http://127.0.0.1:8400`. Agent shapes follow the [Platform API](/api/platform/overview), without the fields that only apply to hosted voice and phone agents.
+
+## Conventions
+
+- JSON in and out. IDs are prefixed: `agent_`, `env_`, `sess_`, `work_`, `evt_`.
+- Lists use cursor pagination: `?limit=` (1 to 100, default 20) and `?after=`, answered with `{"data": [...], "has_more": ..., "next_cursor": ...}`.
+- Create routes accept an `Idempotency-Key` header (up to 255 characters). A repeat with the same key replays the stored response for 24 hours.
+- Every error is `{"error": {"type", "message", "code"}}`. The HTTP status says the kind of error; `code` says what went wrong.
+
+## Routes
+
+**Server and resources** (server API key or OIDC; `viewer` can only read):
+
+| Method | Path | What it does |
+|---|---|---|
+| `GET` | `/v1/server/info` | Version, provider, features, sign-in modes. No credential needed. |
+| `GET`, `POST` | `/v1/agents` | List or create agents. |
+| `GET`, `PATCH`, `DELETE` | `/v1/agents/{id}` | Read, update or delete an agent. Delete fails with `409 agent_in_use` while a session uses it. |
+| `GET`, `POST` | `/v1/environments` | List or create environments. |
+| `GET`, `PATCH`, `DELETE` | `/v1/environments/{id}` | Read, update or delete an environment. Delete fails with `409 environment_in_use` and revokes its keys. |
+| `GET` | `/v1/environments/{id}/workers` | Workers seen in the last 10 minutes. |
+| `GET`, `POST` | `/v1/sessions` | List (filter by `agent_id`, `environment_id`, `status`, `include_archived`) or create sessions. |
+| `GET` | `/v1/sessions/{id}` | Read a session. |
+| `POST` | `/v1/sessions/{id}/messages` | Send a user message and start a turn. Answers `202` with the stored event. `409 session_busy` while a turn runs. |
+| `POST` | `/v1/sessions/{id}/interrupt` | Stop the running turn and cancel its pending tool calls. |
+| `POST` | `/v1/sessions/{id}/archive` | Stop the session and hide it from the default list. Cannot be undone. |
+| `GET` | `/v1/sessions/{id}/events` | The event log, oldest first. Filter with `after_seq` and `types`. |
+| `GET` | `/v1/sessions/{id}/events/stream` | Server-sent events. Resume with `Last-Event-ID` or `after_seq`. |
+
+**Keys** (role `admin`):
+
+| Method | Path | What it does |
+|---|---|---|
+| `GET`, `POST` | `/v1/api_keys` | List or create server API keys. The secret is returned once. |
+| `DELETE` | `/v1/api_keys/{id}` | Revoke a key. `409 last_admin_key` for the last admin key. |
+| `GET`, `POST` | `/v1/environments/{id}/keys` | List or create environment keys. The secret is returned once. |
+| `DELETE` | `/v1/environments/{id}/keys/{key_id}` | Revoke an environment key. |
+
+**Worker side** (environment key, then the session secret):
+
+| Method | Path | Credential | What it does |
+|---|---|---|---|
+| `POST` | `/v1/environments/{id}/work/claim` | Environment key | Claim the oldest ready item, with a 60 second lease. `204` when there is none. |
+| `POST` | `/v1/work/{work_id}/heartbeat` | Environment key | Say the worker is alive. |
+| `POST` | `/v1/work/{work_id}/renew` | Environment key | Move the lease to 60 seconds from now. |
+| `POST` | `/v1/work/{work_id}/complete` | Environment key | Mark the item done (`success`, `failed` or `cancelled`). |
+| `POST` | `/v1/work/{work_id}/release` | Environment key | Hand the item back to the queue. |
+| `POST` | `/v1/work/{work_id}/tool_calls/next` | Session secret | Long-poll for the next tool call. `204` when none arrived. |
+| `POST` | `/v1/tool_calls/{id}/result` | Session secret | Post a tool result, at most 100 KiB. |
+
+The route the agent loop uses to queue tool calls is loopback only, uses an internal token, and is not part of the public API.
+
+## Session events
+
+| Type | `data` |
+|---|---|
+| `message` | `role` (`user` or `assistant`), `content` |
+| `tool_call` | `tool_call_id`, `name`, `input` |
+| `tool_result` | `tool_call_id`, `output`, `is_error` |
+| `status` | `status`, `reason` |
+| `error` | `code`, `message` |
+
+`seq` rises by one for each event in a session, and events are never edited or removed. On the stream, each frame has `id: <seq>`, `event: <type>` and `data: <event JSON>`, with a keepalive comment every 15 seconds.
+
+Session statuses: `idle`, `running`, `waiting_for_worker`, `interrupted`, `error`, `archived`.
+
+## Error codes
+
+| Code | Status | Meaning |
+|---|---|---|
+| `unauthorized` | 401 | No valid credential. |
+| `forbidden` | 403 | The credential or role does not allow this. |
+| `not_found` | 404 | No such resource. |
+| `host_not_allowed` | 403 | A host is not on the allowlist. |
+| `model_not_mapped` | 422 | The model has no entry in the model map. No outbound request was made. |
+| `lease_stale` | 409 | The lease generation is old. Another worker owns the item. |
+| `result_too_large` | 413 | Tool output over 100 KiB. |
+| `session_busy` | 409 | A turn is already running. |
+| `agent_in_use` | 409 | The agent has a non-archived session. |
+| `environment_in_use` | 409 | The environment has a non-archived session. |
+| `last_admin_key` | 409 | The last admin key cannot be revoked. |
+| `no_worker` | (status reason) | No worker is attached for the environment. Shown as the session's `status_reason`. |

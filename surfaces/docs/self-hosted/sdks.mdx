@@ -1,0 +1,110 @@
+---
+title: 'SDKs'
+description: 'SelfHostClient in the TypeScript and Python SDKs: agents, environments, sessions, the event stream, and a worker helper for custom tools.'
+---
+
+<Note>
+**Status: Private beta.** The self-hosted client ships inside `@allternit/platform` and `allternit-platform`, which are not yet published to npm or PyPI. Install them from the repo (`sdk/platform-ts`, `sdk/platform-python`). The client is tested against a mock server; the real server is still being built.
+</Note>
+
+Both SDKs have a `SelfHostClient` generated from `selfhost-v1.yaml`. It talks only to the server URL you give it.
+
+| Setting | Environment variable | Default |
+|---|---|---|
+| Server URL | `ALLTERNIT_SERVER_URL` | `http://127.0.0.1:8400` |
+| Key | `ALLTERNIT_SERVER_API_KEY` | none (required): an `ask_...` key, an `aek_...` key for workers, or an OIDC id token |
+
+## TypeScript
+
+```ts
+import { SelfHostClient, isTurnEnd } from "@allternit/platform";
+
+const client = new SelfHostClient(); // or { baseUrl, apiKey }
+
+const agent = await client.agents.create({ name: "Helper", model: "claude-sonnet" });
+const env = await client.environments.create({ name: "default", network: "none" });
+const session = await client.sessions.create({ agent_id: agent.id, environment_id: env.id });
+
+const sent = await client.sessions.sendMessage(session.id, { content: "Hello" });
+for await (const ev of client.sessions.streamEvents(session.id, { afterSeq: sent.seq, until: isTurnEnd })) {
+  console.log(ev.type, ev.data);
+}
+```
+
+Every API area is a property: `client.server`, `client.agents`, `client.environments`, `client.environmentKeys`, `client.sessions`, `client.events`, `client.apiKeys`, plus the worker routes `client.work` and `client.toolCalls`. The generated types are under the `selfhost` namespace (`import { selfhost } from "@allternit/platform"`) or from `@allternit/platform/selfhost`.
+
+`streamEvents` yields typed events, skips keepalive comments and, after a dropped connection, reconnects with `Last-Event-ID`, so no event is missed or repeated. A full script is in `sdk/platform-ts/examples/selfhost-session.ts`.
+
+## Python
+
+```python
+from allternit_platform.selfhost import SelfHostClient, is_turn_end
+
+client = SelfHostClient()  # or SelfHostClient("ask_...", base_url="https://...")
+
+agent = client.agents.create(name="Helper", model="claude-sonnet")
+env = client.environments.create(name="default", network="none")
+session = client.sessions.create(agent_id=agent["id"], environment_id=env["id"])
+
+sent = client.sessions.send_message(session["id"], content="Hello")
+for ev in client.sessions.stream_events(session["id"], after_seq=sent["seq"], until=is_turn_end):
+    print(ev["type"], ev["data"])
+```
+
+Attributes use snake case: `client.environment_keys`, `client.tool_calls`, `client.api_keys`. A full script is in `sdk/platform-python/examples/selfhost_session.py`.
+
+## Custom-tool worker
+
+An agent tool with `"type": "custom"` is run by your code. The worker helper does the protocol work for you:
+
+1. Claims work for one environment with an environment key.
+2. Renews the lease every 20 seconds.
+3. Takes the session's tool calls with the per-session secret.
+4. Runs your handler for each tool and posts the result, cut to 100 KiB.
+
+It answers a call that is handed out again (same `tool_call_id`) from memory instead of running it twice. When the lease turns stale it stops and posts nothing. When you stop it, it hands the item back with `/release`. A thrown error becomes an error result. A tool with no handler gets an error result.
+
+```ts
+import { runCustomToolWorker } from "@allternit/platform";
+
+const stop = new AbortController();
+await runCustomToolWorker({
+  environmentId: "env_...",
+  environmentKey: process.env.ALLTERNIT_ENVIRONMENT_KEY, // aek_...
+  tools: {
+    lookup_order: async (input, ctx) => ({ id: input.order_id, status: "shipped" }),
+  },
+  signal: stop.signal,
+  // drain: true  -> one item, then return
+});
+```
+
+```python
+from allternit_platform.selfhost import run_custom_tool_worker
+
+def lookup_order(inp, ctx):
+    return {"id": inp["order_id"], "status": "shipped"}
+
+run_custom_tool_worker(
+    "env_...",
+    {"lookup_order": lookup_order},
+    environment_key=os.environ["ALLTERNIT_ENVIRONMENT_KEY"],
+    # drain=True  -> one item, then return; stop=threading.Event() to stop from another thread
+)
+```
+
+Built-in sandbox tools (bash, file edits) are run by `gizzi worker`, not by this helper. Give agents whose tools your code runs their own environment, so the two kinds of worker don't take each other's work. The server's routing of custom tools to workers is part of the server build still in progress.
+
+## Regenerate
+
+The clients are generated with the Platform SDK generator:
+
+```bash
+python3 scripts/platform-sdk/generate.py \
+  --spec cmd/allternit-api/openapi/selfhost-v1.yaml \
+  --out sdk/platform-ts/src/selfhost \
+  --out-py sdk/platform-python/allternit_platform/_selfhost_generated.py \
+  --client-name SelfHostClient
+```
+
+The internal loopback route (marked `x-internal`) is skipped.
