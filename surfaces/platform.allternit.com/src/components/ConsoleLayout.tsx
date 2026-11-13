@@ -24,6 +24,7 @@ import { AnnouncementModal } from "@/components/console-ui/AnnouncementModal";
 import { RailAccountAvatar, RailAccountRow } from "@/components/console-ui/RailAccountRow";
 import { AllternitWordmark } from "@/components/AllternitWordmark";
 import { ProjectProvider, ProjectSwitcher } from "@/lib/project-context";
+import { getCreditsChipLabel } from "@/lib/credits";
 
 /**
  * The rail wordmark, picked by theme with CSS so it follows every theme change
@@ -77,16 +78,10 @@ function CreditsChip({ onNavigate }: { onNavigate?: () => void }) {
     let active = true;
     (async () => {
       try {
-        const data = await api.get<{
-          balance_usd?: number;
-          balance_cents?: number;
-        }>("/api/v1/credits/balance");
-        if (!active) return;
-        const usd =
-          typeof data.balance_usd === "number"
-            ? data.balance_usd
-            : (data.balance_cents ?? 0) / 100;
-        setBalance(`$${usd.toFixed(2)}`);
+        // Cloud wallet (/api/v1/billing/credits). The old /api/v1/credits/balance
+        // lives on a paired device and answered 428 for accounts without one.
+        const label = await getCreditsChipLabel();
+        if (active) setBalance(label);
       } catch {
         // Fail hidden: never render a broken chip.
       }
