@@ -1,0 +1,110 @@
+---
+title: "Compute providers (operations)"
+description: "Where cloud computers run: our Incus hosts or Orgo, how to route each class, guards, and first boot"
+---
+
+Cloud computers run on one of two providers. Both are driven by cloud-api (`cmd/allternit-cloud-api/src/services/provisioning.rs`), share one state machine, one metering table and one admin route, and boot the same Allternit Desktop app in provisioned mode, which pairs itself and holds the relay.
+
+| Provider | Host row endpoint | What it is |
+|---|---|---|
+| `incus` | `https://<host>:8443` | Our own servers (allternit-standby, the Mail VPS) running Incus containers from the `allternit-cloud-computer` image. |
+| `orgo` | `orgo://<workspace_id>` | Computers rented pay-as-you-go from [Orgo](https://orgo.ai), billed hourly. We use it until subscriptions pay for our own hosts (Eoj, 2026-11-13). |
+
+The `provider` field on every computer (`GET /api/v1/provisioned-instances`) reads `incus` or `orgo`.
+
+What users are told about an Orgo computer: "Runs on a third-party cloud provider, managed by Allternit. It sleeps when idle."
+
+## Route a class to a provider
+
+Three classes of computers can be routed separately. Each variable is `incus` (the default) or `orgo`:
+
+| Variable | Class |
+|---|---|
+| `ALLTERNIT_COMPUTE_PROVIDER_PLATFORM` | The hosted runtime behind each Platform API project (owner `platform:<project_id>`). |
+| `ALLTERNIT_COMPUTE_PROVIDER_PAID` | Paid subscription computers. |
+| `ALLTERNIT_COMPUTE_PROVIDER_FREE` | Free sleeping computers. |
+
+A class routed to Orgo lands only on an enabled `orgo://` host; every other class never lands on one. If no `orgo://` host is enabled, the create fails with "No enabled orgo:// host is registered" and does not fall back to Incus.
+
+Two exceptions:
+
+- Developer computers (`/v1/computers`, see [Hosted computer driver](/operations/hosted-driver)) always stay on Incus. They need the egress-filtered network profile, and Orgo has nothing like it.
+- A paid re-subscribe that restores a cancel snapshot stays on the Incus host that holds the snapshot image.
+
+Computers that already exist stay where they are. Changing a variable only affects new computers.
+
+## Add the Orgo host
+
+1. Put the Orgo API key in the cloud-api env as `ORGO_API_KEY` (`sk_live_…`). It is never logged. `ORGO_API_BASE` overrides `https://www.orgo.ai/api` (tests only).
+2. Set `ALLTERNIT_ORGO_DESKTOP_DEB_URL` to an https URL of the Allternit Desktop linux-x64 `.deb`, and `ALLTERNIT_ORGO_DESKTOP_DEB_SHA256` to its sha256. Without the URL no Orgo computer is created, so none is billed.
+3. Register one host row for your Orgo workspace with the existing admin route:
+
+```bash
+curl -X POST https://api.allternit.com/api/v1/provisioned-hosts \
+  -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" \
+  -d '{"name":"orgo","incusEndpoint":"orgo://<workspace_id>","cpuCores":40,"memoryMb":163840,"diskGb":800}'
+```
+
+The capacity numbers are the pool size, counted exactly like an Incus host: a paid computer reserves its full plan size, a free or platform computer reserves only its disk.
+
+4. Restart cloud-api (or deploy) so it reads the env, then set the `ALLTERNIT_COMPUTE_PROVIDER_*` variable for the class you want on Orgo.
+
+## Guards
+
+Orgo computers reserve nothing in the host memory admission that Incus free computers use. These limits apply instead, to creates, wakes and paid starts:
+
+| Variable | Default | What it does |
+|---|---|---|
+| `ALLTERNIT_ORGO_MAX_RUNNING` | `10` | Orgo computers provisioning, running or waking at once. |
+| `ALLTERNIT_ORGO_DAILY_BUDGET_USD` | `5` | Estimated Orgo spend per UTC day. `0` refuses every new start. |
+| `ALLTERNIT_ORGO_MIN_HOURLY_USD` | `0.055` | Lowest hourly price the estimate uses per computer. The pay-as-you-go account bills every computer as Medium, whatever size is asked for. |
+
+Past either limit the answer is `503 computer_capacity` with `Retry-After: 30`. The message starts "Cloud computers are at capacity" and does not show the spend; the reason is in the cloud-api log. A paid computer that can't be created for this reason sends the team an ops alert.
+
+The spend estimate is the running time in today's metering sessions plus the time computers spend in first boot, times the hourly price of the computer's Orgo size:
+
+| Orgo size | cpu / ram | $ per running hour |
+|---|---|---|
+| Small | 0.5 / 4 GB | 0.023 |
+| Medium | 2 / 8 GB | 0.055 |
+| Large | 4 / 16 GB | 0.11 |
+| XL | 6 / 32 GB | 0.202 |
+
+A computer's size is the smallest Orgo cpu and ram at or above what it asks for. A Platform API runtime asks for Small. Stopped computers cost about 5% of the running price; the estimate leaves that out.
+
+## First boot
+
+Orgo computers boot Orgo's own Ubuntu 24.04 desktop image (custom images need Orgo's top plan). They have no systemd and accept shell commands through Orgo's bash API, at most 300 seconds per call. So cloud-api sets each one up after it is created:
+
+1. `POST /computers` with hourly billing, the computer name set to our instance name, and our instance id as the `Idempotency-Key`.
+2. Wait for `running`, set Orgo's idle auto-stop (best effort), and write `/etc/allternit/bootstrap.json` (the one-time pairing contract).
+3. Write `cmd/allternit-computer-cloud/guest/orgo/setup.sh` to the computer and start it detached. cloud-api checks its state file every few seconds until it reads `done` or `failed`.
+4. The script installs supervisor if it is missing, downloads and installs the `.deb` (checking the sha256), and replaces bundled sidecars that need a newer glibc than the computer has with the ones from the runtime feed. It then runs the app as the supervisord program `allternit-desktop` (`ALLTERNIT_PROVISIONED=1 /usr/bin/allternit --no-sandbox`, as root) on the X display Orgo's desktop uses.
+5. The app reads the bootstrap file and pairs. The computer then shows `runtimeOnline: true`.
+
+This takes a few minutes, so it runs in the background. The computer stays `provisioning` until then, and the Platform API answers `runtime_starting` for a project runtime that is still being set up. The script can run again safely. Its log is `/var/log/allternit-orgo/setup.log` on the computer.
+
+If first boot fails, the computer is stopped, its row goes to `error` with the reason (including the end of the setup log), its capacity is released, and the team gets an ops alert. That owner's next create waits 15 minutes, then deletes the failed computer and makes a new one.
+
+| Variable | Default | What it does |
+|---|---|---|
+| `ALLTERNIT_ORGO_SETUP_TIMEOUT_SECONDS` | `1500` | How long the setup script may run. |
+| `ALLTERNIT_ORGO_CREATE_WAIT_SECONDS` | `600` | How long a new computer may take to reach `running`. |
+| `ALLTERNIT_ORGO_START_WAIT_SECONDS` | `180` | How long a start or stop may take. |
+| `ALLTERNIT_ORGO_RESOLUTION` | unset | Passed to Orgo's create as `resolution`. |
+
+## Idle, sleep and wake
+
+Every computer on Orgo sleeps when idle, paid ones too:
+
+- Free computers and Platform API runtimes sleep after the free idle window (`ALLTERNIT_FREE_IDLE_MINUTES`, 15 by default), as on Incus.
+- Paid computers sleep after `ALLTERNIT_ORGO_PAID_IDLE_MINUTES` (30 by default) with no relay activity.
+- Orgo's own auto-stop is also set as a backstop: `ALLTERNIT_ORGO_AUTO_STOP_PAID` (`30m`), `_PLATFORM` (`15m`) and `_FREE` (`15m`). Set one to empty to leave Orgo's default.
+
+Sleeping is an Orgo stop: the disk is kept and memory is lost. The next relay request (or `POST /api/v1/provisioned-instances/:id/wake`, or `/start` for a paid one) starts it again. The relay waits up to 90 seconds for an Orgo computer, because Orgo restores the disk from storage first. After the start, cloud-api runs `/usr/local/sbin/allternit-orgo-ensure` on the computer, which brings the app back under supervisord. A paid computer the owner stopped by hand stays stopped until they start it.
+
+## What Orgo computers don't support
+
+- **Cancel snapshots.** A cancelled paid computer on Orgo is stopped and kept, because it is the only copy of the disk. The 30-day sweep never deletes it. Delete it by hand (or through account erase) when it should go.
+- **Restore points and downloadable copies.** These answer `501`.
+- **Resize while stopped.** Orgo resizes only a running computer, and the disk only grows. A plan change on a stopped or sleeping computer applies at the next resize while it runs.

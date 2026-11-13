@@ -1,0 +1,88 @@
+---
+title: "Account compute status API"
+description: "The compute gate: what computer an account has, which paths it can take, and the error agents get without one."
+---
+
+These routes live in `allternit-cloud-api` and are served at `https://api.allternit.com`. They take a Clerk session or an `allternit_*` API token.
+
+A signed-in account with no computer does not reach agent work until it links its own Desktop app, subscribes, or buys credits for a hosted computer. Chat with Allternit Cloud models stays open. Hosted computers run on a third-party cloud provider, managed by Allternit. They sleep when idle.
+
+## Get compute status
+
+`GET /api/v1/account/compute-status`
+
+```json
+{
+  "state": "none",
+  "online": false,
+  "gate": true,
+  "acknowledged_at": null,
+  "computer": null,
+  "paths": {
+    "own": { "download_url": "https://www.allternit.com/download", "pairing_supported": true },
+    "plan": { "plans": [
+      { "id": "plus", "name": "Plus", "price_usd_month": 20,
+        "computer": { "cpu": 2, "memory_gb": 8, "disk_gb": 50 }, "included_hours": 200 }
+    ] },
+    "credits": {
+      "price_per_hour_usd": 0.10, "stopped_price_per_hour_usd": 0.005,
+      "balance_usd": 0.0, "min_start_usd": 5,
+      "sizes": [ { "id": "medium", "cpu": 2, "memory_gb": 8, "disk_gb": 50 } ]
+    }
+  },
+  "docs_url": "https://docs.allternit.com/api/account-compute-status"
+}
+```
+
+Prices and included hours shown here are not final. Read them from `paths`, do not hard-code them.
+
+| Field | Meaning |
+| --- | --- |
+| `state` | `none`, `paired`, `provisioning`, `hosted` or `suspended`. |
+| `online` | The computer is reachable now. |
+| `gate` | True when `state` is `none` or `suspended`. Agent entry is refused while true. |
+| `acknowledged_at` | When the user confirmed chat-only. Does not lift the gate. |
+| `computer` | `{id, kind, provider, status, sleeps_when_idle}` or null. `kind` is `own`, `plan` or `credits`. `provider` is `incus`, `orgo` or null. |
+| `paths.credits` | Null when credit computers are not enabled. |
+
+## Acknowledge chat-only
+
+`POST /api/v1/account/compute-status/acknowledge` with `{"choice":"chat_only"}` returns `{"acknowledged_at":"2026-11-13T15:04:05Z"}`. It is safe to repeat. Any other choice returns `400` with `error.code` of `invalid_choice`.
+
+## The compute_required error
+
+Relay and agent-entry routes answer `409 Conflict` when the account has no computer:
+
+```json
+{
+  "error": {
+    "code": "compute_required",
+    "message": "Agents need a computer. Link your own, subscribe, or buy credits.",
+    "docs_url": "https://docs.allternit.com/api/account-compute-status",
+    "paths": {}
+  }
+}
+```
+
+`paths` is the same object as in compute status. Switch on `error.code`, not on the status alone.
+
+## Link your own computer
+
+Create a code with `POST /api/v1/runtime-pairings`, open the download page with `?pair=CODE`, and the Desktop app handles the existing link `allternit://pair?code=CODE`. Poll `GET /api/v1/runtime-pairings/code/{code}` until it is approved.
+
+## Credit computers
+
+| Method | Path | Notes |
+| --- | --- | --- |
+| POST | `/api/v1/provisioned-instances/credit` | Create or start a hosted computer billed from the credit wallet. |
+| POST | `/api/v1/provisioned-instances/credit/stop` | Stop it. The stopped rate applies. |
+| POST | `/api/v1/provisioned-instances/free` | Always `410` with `error.code` of `free_computers_retired`. |
+
+Billing is per minute while running. Starting needs at least `min_start_usd`, otherwise the API answers `402` with `error.code` of `insufficient_credits` and `min_start_usd`. Warnings come at 24 hours and 2 hours of runway. The computer stops at $0 and the state becomes `suspended`.
+
+## Flags
+
+| Flag | Values | Effect |
+| --- | --- | --- |
+| `ALLTERNIT_COMPUTE_GATE` | `off`, `on` | Turns enforcement on. Default off. |
+| `ALLTERNIT_CREDIT_COMPUTERS` | `0`, `1` | Turns the credits path on. Default off. |

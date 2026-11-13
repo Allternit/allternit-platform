@@ -454,6 +454,9 @@ pub(crate) async fn connect_or_wake_runtime(
     )
     .await?;
     // Not a hosted runtime: a provisioned (free, sleeping) computer?
+    // A waking computer on Orgo restores its disk from storage first, so the
+    // wait for it is longer (`ProvisioningService::wake_wait_for_device`).
+    let mut wake_wait = WAKE_WAIT_TIMEOUT;
     let waking = match outcome {
         crate::services::HostedWakeOutcome::NotWakeable => return Ok(RelayConnect::Offline),
         crate::services::HostedWakeOutcome::NotHosted => {
@@ -463,7 +466,12 @@ pub(crate) async fn connect_or_wake_runtime(
                     return Ok(RelayConnect::Offline)
                 }
                 crate::services::ProvisionedWakeOutcome::AlreadyActive => false,
-                crate::services::ProvisionedWakeOutcome::Waking => true,
+                crate::services::ProvisionedWakeOutcome::Waking => {
+                    if let Some(longer) = provisioning.wake_wait_for_device(runtime_id).await {
+                        wake_wait = longer;
+                    }
+                    true
+                }
             }
         }
         crate::services::HostedWakeOutcome::Waking => true,
@@ -471,7 +479,7 @@ pub(crate) async fn connect_or_wake_runtime(
     };
     // The machine is (or was already) starting: poll the hub until the daemon
     // reconnects, bounded so a wedged boot does not pin the request.
-    let deadline = Instant::now() + WAKE_WAIT_TIMEOUT;
+    let deadline = Instant::now() + wake_wait;
     loop {
         if let Some(connection) = relay_hub()
             .read()
