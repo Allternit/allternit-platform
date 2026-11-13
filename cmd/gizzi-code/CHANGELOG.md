@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 2.9.0 (2026-11-12)
+
+- **Run code on attached files:** the new `run_code` tool runs Python on attached CSV, XLSX and JSON files in a strict OS sandbox (no network, no access to your home folder) and returns tables, charts and files. Claude Code and Codex brains reach it through the bridge.
+- **Edit a sent message:** `/edit` (alias `/edit-last`) rewinds to your last message and puts its text back in the composer. On Desktop and the web, replaced replies are kept as versions you can flip between after a reload.
+- **Share a thread:** `/share` publishes a read-only link to the current thread; `/share off` turns it off.
+- **Memory:** `gizzi memory list`, `gizzi memory edit <id> "<text>"` and `gizzi memory forget <id>`.
+- `gizzi usage` shows your Allternit Cloud inference usage (`--days`, `--group-by`, `--project`).
+- **Fixed:** an attached upload no longer crashes the turn; CSV, JSON and spreadsheet attachments reach the model as text instead of being rejected by the provider.
+
 ## 2.8.0 (2026-11-12)
 
 - **Service status:** `gizzi status --services` shows status.allternit.com's components; `gizzi doctor` checks it; `/status` has a Services line.
