@@ -269,7 +269,7 @@ export function describeGatewayError(status: number, serverMessage?: string): st
   const detail = serverMessage ? ` (${serverMessage})` : "";
   switch (status) {
     case 401:
-      return `The Playground key was rejected. Run again to get a fresh key.${detail}`;
+      return `The request wasn't authorized. Run again; if it keeps failing, sign in again.${detail}`;
     case 403:
       return `This project's key is not allowed to use that model or feature.${detail}`;
     case 402:
@@ -331,7 +331,12 @@ export async function gatewayPost(
   path: string,
   key: string,
   body: Record<string, unknown>,
-  opts: { signal?: AbortSignal; onEvent?: (event: string, data: unknown) => void }
+  opts: {
+    signal?: AbortSignal;
+    onEvent?: (event: string, data: unknown) => void;
+    /** Extra request headers (the console session's `X-Allternit-Project`). */
+    headers?: Record<string, string>;
+  }
 ): Promise<GatewayChatResult> {
   const started = performance.now();
   const response = await fetch(`${gatewayBaseUrl()}${path}`, {
@@ -340,6 +345,7 @@ export async function gatewayPost(
       Authorization: `Bearer ${key}`,
       "Content-Type": "application/json",
       Accept: body.stream ? "text/event-stream" : "application/json",
+      ...(opts.headers ?? {}),
     },
     body: JSON.stringify(body),
     signal: opts.signal,

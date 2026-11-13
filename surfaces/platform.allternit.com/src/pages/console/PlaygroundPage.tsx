@@ -477,7 +477,9 @@ export function PlaygroundPage(): React.ReactNode {
           </p>
           {isCloudGateway() ? (
             <p className="m-0 mt-1 text-[12px] text-[var(--text-tertiary)]">
-              Playground runs use your Allternit credits. The project spend cap does not apply.
+              {mode === "chat"
+                ? "Chat completions runs use your Allternit credits. The project spend cap does not apply."
+                : "Responses and Messages runs bill the selected project and count toward its spend cap."}
             </p>
           ) : null}
         </div>
