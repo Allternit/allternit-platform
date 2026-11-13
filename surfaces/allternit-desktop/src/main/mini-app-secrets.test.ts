@@ -1,7 +1,8 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { app } from 'electron';
+import { __setOsCryptTestSeam, osCryptReady } from './os-crypt.js';
 import {
   deleteAllMiniAppSecrets,
   deleteMiniAppSecret,
@@ -11,6 +12,19 @@ import {
 } from './mini-app-secrets.js';
 
 const secretsFile = () => path.join(app.getPath('userData'), 'mini-app-secrets.json');
+
+// Real os-crypt codec (macOS mode) over an in-memory Keychain item.
+beforeAll(async () => {
+  __setOsCryptTestSeam({
+    platform: 'darwin',
+    appName: 'Test',
+    loadAddon: () => ({
+      getPassword: async () => ({ status: 'ok', password: Buffer.from('test-keychain-password') }),
+      addPassword: async () => ({ status: 'ok' }),
+    }),
+  });
+  expect(await osCryptReady()).toBe('ready');
+});
 
 afterEach(() => {
   try { fs.unlinkSync(secretsFile()); } catch { /* absent */ }

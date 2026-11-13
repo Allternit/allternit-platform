@@ -8,7 +8,7 @@
  * and adb is only fetched the first time an Android phone is used.
  */
 
-import { app, dialog, nativeImage, Notification, safeStorage } from 'electron';
+import { app, dialog, nativeImage, Notification } from 'electron';
 import log from 'electron-log';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
@@ -84,7 +84,8 @@ import { PhoneChannelReader, type ChannelConversation, type ReaderResult, type S
 import type { PhoneLinkDevice, PhoneLinkHandoverResult, PhoneLinkHandoverTarget } from './phone-link-types.js';
 import { checkLinkedApp, openLinkedApp, type PhoneLinkAppResult } from './phone-app-signin.js';
 import { onHomeScreen, PhoneAccountScheduler, readLinkedAccount, type PhoneLinkAccountResult } from './phone-account-reader.js';
-import { readSecret, writeSecret, deleteSecret } from './secure-store.js';
+import { readSecret, writeSecret, deleteSecret, keychainSettled, keychainUnavailable, secretsReady } from './secure-store.js';
+import { decryptString, encryptString, isEncryptionAvailable } from './os-crypt.js';
 import {
   PhoneToolRunner,
   type AdbCall,
@@ -226,12 +227,21 @@ export function fileUsbAgentStore(dir: string): UsbAgentStore {
   };
 }
 
-/** Board keys sealed with the OS keychain; plain (0600 file) only where the OS offers no keychain. */
+/**
+ * Board keys sealed with the OS keychain; plain (0600 file) only where the OS
+ * offers no keychain (or the user denied it). Never plain just because the
+ * macOS Keychain unlock is still pending: that throws KeychainUnavailableError.
+ */
 export function keychainSealer(): Sealer {
   return {
-    seal: (hex) => (safeStorage.isEncryptionAvailable() ? `v1:${safeStorage.encryptString(hex).toString('base64')}` : `plain:${hex}`),
+    seal: (hex) => {
+      if (isEncryptionAvailable()) return `v1:${encryptString(hex).toString('base64')}`;
+      const blocked = keychainUnavailable();
+      if (blocked?.reason === 'pending') throw blocked;
+      return `plain:${hex}`;
+    },
     open: (sealed) => {
-      if (sealed.startsWith('v1:')) return safeStorage.decryptString(Buffer.from(sealed.slice(3), 'base64'));
+      if (sealed.startsWith('v1:')) return decryptString(Buffer.from(sealed.slice(3), 'base64'));
       if (sealed.startsWith('plain:')) return sealed.slice(6);
       throw new Error('unknown key format');
     },
@@ -708,6 +718,9 @@ class PhoneService {
 
   /** The tool runner, loopback gateway and MCP shim that every bot reaches phones through. */
   private async ensureGateway(): Promise<void> {
+    // Every phone lane starts here and then reads Keychain-sealed link keys
+    // (secure-store) synchronously: wait for the unlock first (packaged builds).
+    await secretsReady();
     await this.ensureGatewayServer();
     if (!this.shimRegistered) {
       this.shimRegistered = true;
@@ -1306,6 +1319,8 @@ class PhoneService {
 
   /** iPhone lane: the USB Agent link, its mDNS advert and the AirPlay receivers. No adb involved. */
   async ensureUsbReady(): Promise<UsbAgentManager> {
+    // Board keys are Keychain-sealed in every build; open them only once unlocked.
+    await keychainSettled();
     await this.ensureGateway();
     if (!this.usbAgents) {
       const uxplay = findUxplay();
@@ -1576,6 +1591,7 @@ class PhoneService {
 
   /** Called at launch: only brings a lane up if something was ever paired on it (zero cost for everyone else). */
   async initIfPaired(): Promise<void> {
+    await secretsReady();
     this.ensureIosRecovery();
     // The loopback gateway alone (no phone tools for bots): lets this computer
     // receive a phone handed over from the person's Mac before it has one.
