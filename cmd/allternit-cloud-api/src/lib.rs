@@ -491,6 +491,10 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         // BYOK inference keys verify the Clerk session per-request and answer
         // 503 inference_keys_not_configured when ALLTERNIT_CREDENTIALS_KEY is unset.
         .merge(routes::inference_keys::routes())
+        // Voice keys saved to the account + the QR handoff relay: signed-in
+        // Clerk session only (API tokens 403), keys returned decrypted to their
+        // owner, sealed at rest with the credential cipher.
+        .merge(routes::voice_keys::routes())
         // API keys verify the Clerk session per-request and store only hashes.
         .merge(routes::api_keys::routes())
         // Allternit Platform API (/v1/accounts, /v1/usage, … plus console

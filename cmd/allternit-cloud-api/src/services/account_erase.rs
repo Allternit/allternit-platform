@@ -179,6 +179,8 @@ pub const ERASE: &[(&str, &str)] = &[
     ("vendor_bot_keys", USER),
     ("provider_tokens", USER),
     ("user_inference_keys", USER),
+    ("user_voice_keys", USER),
+    ("voice_key_handoffs", USER),
     ("mcp_oauth_approvals", USER),
     ("idjag_issuance_log", USER),
     ("user_sessions", USER),
@@ -223,6 +225,7 @@ const REVOKE: &[&str] = &[
     "DELETE FROM vendor_bot_keys WHERE user_id = $1",
     "DELETE FROM floor_shares WHERE user_id = $1",
     "DELETE FROM thread_shares WHERE user_id = $1",
+    "DELETE FROM user_voice_keys WHERE user_id = $1",
     "UPDATE runtime_devices SET status = 'revoked', revoked_at = CURRENT_TIMESTAMP WHERE user_id = $1 AND revoked_at IS NULL",
 ];
 

@@ -14,6 +14,7 @@ pub mod fabric_ledger;
 pub mod executor_service;
 pub mod hosted_runtime_lifecycle;
 pub mod inference_keys;
+pub mod voice_keys;
 pub mod inference_pool;
 pub mod inference_settlement;
 pub mod node_resolution;

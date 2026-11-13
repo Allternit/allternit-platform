@@ -74,6 +74,26 @@ pub async fn resolve_user_scoped(
     Ok(user)
 }
 
+/// Resolve the caller and require a signed-in Clerk session. API tokens
+/// (`allternit_*`, `alt_…` platform keys, the gated dev token) are refused
+/// with 403 whatever their scopes: for routes that hand back secrets in
+/// plaintext (voice keys), where a leaked automation key must not be enough.
+/// No credentials at all stays 401.
+pub async fn require_session_user(db: &PgPool, headers: &HeaderMap) -> Result<ResolvedUser, ApiError> {
+    session_only(resolve_user(db, headers).await?)
+}
+
+/// The decision half of [`require_session_user`]: a session has no token
+/// permissions; anything with them came from an API token.
+pub fn session_only(user: ResolvedUser) -> Result<ResolvedUser, ApiError> {
+    if user.token_permissions.is_some() {
+        return Err(ApiError::Forbidden(
+            "This endpoint needs a signed-in session; API keys are not accepted.".to_string(),
+        ));
+    }
+    Ok(user)
+}
+
 /// Resolve the caller from a Clerk session JWT, falling back to an
 /// `allternit_*` Bearer API token. When neither authenticates, the Clerk
 /// error wins (it is the primary surface and carries the more useful
@@ -337,5 +357,43 @@ mod tests {
             ..clerk
         };
         assert!(!empty.has_scope("inference"), "empty list means no scopes");
+    }
+
+    fn resolved(token_permissions: Option<Vec<String>>) -> ResolvedUser {
+        ResolvedUser {
+            id: "user_1".to_string(),
+            email: None,
+            name: None,
+            image_url: None,
+            organization_id: None,
+            org_role: None,
+            token_permissions,
+        }
+    }
+
+    #[test]
+    fn session_only_admits_sessions_and_refuses_every_api_token() {
+        assert_eq!(session_only(resolved(None)).unwrap().id, "user_1");
+        for perms in [vec!["*".to_string()], vec!["account".to_string()], vec![]] {
+            let error = session_only(resolved(Some(perms))).err().expect("API token refused");
+            assert!(matches!(error, ApiError::Forbidden(_)), "{error}");
+        }
+    }
+
+    #[tokio::test]
+    async fn require_session_user_is_403_for_a_valid_wildcard_token_and_401_without_one() {
+        let pool = test_pool().await;
+        let token = "allternit_wildcard_token_0123456789";
+        sqlx::query(
+            "INSERT INTO api_tokens (id, token_hash, name, user_id, permissions) VALUES ('tok_w', $1, 'w', 'user_w', '[\"*\"]')",
+        )
+        .bind(crate::services::api_keys::hash_token(token))
+        .execute(&pool)
+        .await
+        .unwrap();
+        let error = require_session_user(&pool, &headers_with_bearer(token)).await.err().unwrap();
+        assert!(matches!(error, ApiError::Forbidden(_)), "{error}");
+        let error = require_session_user(&pool, &HeaderMap::new()).await.err().unwrap();
+        assert!(matches!(error, ApiError::Unauthorized(_)), "{error}");
     }
 }

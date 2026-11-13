@@ -78,10 +78,10 @@ const CIPHER_VERSION_PREFIX: &str = "v1:";
 
 /// Encrypt with the platform cipher, returning (ciphertext, nonce) parts for
 /// the BYTEA columns. The plaintext never appears in error text.
-fn encrypt_parts(cipher: &CredentialCipher, plaintext: &str) -> Result<(Vec<u8>, Vec<u8>), ApiError> {
+pub(crate) fn encrypt_parts(cipher: &CredentialCipher, plaintext: &str) -> Result<(Vec<u8>, Vec<u8>), ApiError> {
     let encoded = cipher
         .encrypt(plaintext)
-        .map_err(|_| ApiError::Internal("Failed to encrypt the inference key".to_string()))?;
+        .map_err(|_| ApiError::Internal("Failed to encrypt the stored key".to_string()))?;
     let blob_b64 = encoded
         .strip_prefix(CIPHER_VERSION_PREFIX)
         .ok_or_else(|| ApiError::Internal("Unexpected cipher output format".to_string()))?;
@@ -96,7 +96,7 @@ fn encrypt_parts(cipher: &CredentialCipher, plaintext: &str) -> Result<(Vec<u8>,
 }
 
 /// Reassemble the cipher's serialized blob from the BYTEA columns and decrypt.
-fn decrypt_parts(
+pub(crate) fn decrypt_parts(
     cipher: &CredentialCipher,
     ciphertext: &[u8],
     nonce: &[u8],
@@ -106,7 +106,7 @@ fn decrypt_parts(
     let encoded = format!("{}{}", CIPHER_VERSION_PREFIX, BASE64.encode(blob));
     cipher
         .decrypt(&encoded)
-        .map_err(|_| ApiError::Internal("Failed to decrypt the inference key".to_string()))
+        .map_err(|_| ApiError::Internal("Failed to decrypt the stored key".to_string()))
 }
 
 /// The BYOK key-validation call, abstracted so tests can stub it (the crate's
