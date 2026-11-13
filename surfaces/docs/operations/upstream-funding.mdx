@@ -40,13 +40,19 @@ The public model list also honors `inference_pools.enabled = FALSE`. Disabling a
 
 For the 2026-11-05 review preparation, the shared Groq pool is disabled: its current account tier permits 8,000 tokens per minute, while a normal app turn sent about 41,000 tokens of instructions and tools. Short API probes passed but the app chat failed. Re-enable only after the account limit can serve a real app turn and that turn passes. No credits or billing settings were changed.
 
-Cloud omits providers that have no credits from `/v1/models`. A provider below its funding floor can still serve requests; the router first looks for a funded route to the same model. An HTTP 402 hides that provider's models for 15 minutes before retrying. This applies to the shared catalog used by Desktop, the web workspace, the phone PWA and iPhone.
+Cloud omits providers that have no credits from `/v1/models`. When the catalog's default model is on one of them, `default: true` moves to the first funded listed model, the same one a Platform agent on `"allternit"` uses. Clients that follow the flag (the console agent form, Gizzi's "Keep going on Cloud") move with it. A provider below its funding floor can still serve requests; the router first looks for a funded route to the same model. An HTTP 402 hides that provider's models for 15 minutes before retrying. This applies to the shared catalog used by Desktop, the web workspace, the phone PWA and iPhone.
 
 Together's dedicated-only Llama 3.3 70B Turbo and Qwen 2.5 72B routes are removed from the starter catalog. They cannot run on the shared serverless key. Removing those routes also keeps funding fallback from selecting them. The retired Groq Qwen 3.6, unlisted Together Qwen3.8 2.4T and undeployed Fireworks DeepSeek V4 Pro routes are also removed. Saved `kimi-k3` chats use the same Kimi K3 model on Fireworks because Together's endpoint repeatedly returned capacity errors.
 
 On 2026-11-10 the Cloud list was checked against the real provider accounts. Three rows were added, each checked with a real request first: `claude-sonnet-5.5` and `gpt-6.1-sol` on OpenRouter, and `kimi-k3.1-pro` on Together (Fireworks does not serve it for chat). `claude-sonnet-4.6` is now hidden. It still routes, and saved `claude-sonnet` and `claude-sonnet-4` ids still use it at the same price. Fireworks rows now get the retail markup. Fireworks' model list has no pricing, so these rows used to be billed at Fireworks' own price. Now they are billed at the static catalog price × `INFERENCE_MARKUP`, and the static price is recorded as the wholesale cost. Rows on other providers are unchanged. Because the wholesale cost is now recorded, Fireworks requests also count toward the Fireworks pool's monthly budget (`inference_pools.monthly_budget_usd`); before, they counted as 0.
 
 Groq does not accept the AI SDK's `prompt_cache_key`. Cloud strips OpenAI-only cache and safety hints for non-OpenAI upstreams, for both streaming and buffered chat (#2119). Tool definitions and streaming usage options still pass through. Real OpenAI upstreams retain those hints.
+
+### Hide a provider that has no money
+
+To hide every model on a provider until it is funded, enter a balance of 0 for it (`PUT /api/v1/admin/funding/<provider>` with `{"balanceUsd": 0}`). Within 10 minutes its rows leave `/v1/models`, requests for them get "model unavailable", and the default moves to a funded model. Saved chats and bots on those models get the same "model unavailable" until the provider is back. Do not remove catalog rows for this.
+
+To bring the provider back, enter its real balance the same way. Its models return within 10 minutes. On 2026-11-13 Fireworks, Together, DeepInfra and Groq were set to 0 this way, leaving only the OpenRouter models listed.
 
 ## Admin routes
 

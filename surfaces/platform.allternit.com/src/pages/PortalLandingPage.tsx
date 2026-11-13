@@ -109,7 +109,7 @@ const CODE_SNIPPET = `curl https://api.allternit.com/v1/chat/completions \\
   -H "Authorization: Bearer $ALLTERNIT_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{
-    "model": "kimi-k3",
+    "model": "deepseek-v4.1-flash",
     "messages": [{"role": "user", "content": "Hello"}]
   }'`;
 

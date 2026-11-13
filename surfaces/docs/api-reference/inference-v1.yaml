@@ -51,7 +51,7 @@ paths:
             schema:
               $ref: "#/components/schemas/ChatCompletionRequest"
             example:
-              model: kimi-k3
+              model: deepseek-v4.1-flash
               messages:
                 - role: user
                   content: Hello, Allternit

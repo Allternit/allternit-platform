@@ -12,8 +12,12 @@ import { allternitCredentials } from "@/runtime/providers/quota"
  */
 export namespace CloudContinue {
   export const PROVIDER_ID = "allternit"
-  /** Used when the paused model has no Cloud counterpart. */
-  export const DEFAULT_MODEL = "deepseek-v4-pro"
+  /**
+   * Used when the paused model has no Cloud counterpart and no catalog row
+   * is flagged `default: true` (an older Cloud). Normally the catalog's own
+   * default wins: it moves to a funded model when an upstream runs dry.
+   */
+  export const DEFAULT_MODEL = "deepseek-v4.1-flash"
 
   /** A row of `GET /v1/models`. */
   export interface CatalogModel {
@@ -22,6 +26,8 @@ export namespace CloudContinue {
     upstream_id?: string
     aliases?: string[]
     lane?: string
+    default?: boolean
+    hidden?: boolean
   }
 
   export type Funds = { kind: "balance" | "plan" | "free"; usd: number } | { kind: "none" }
@@ -48,8 +54,9 @@ export namespace CloudContinue {
 
   /**
    * The Cloud model to continue on: the same model when the catalog lists it
-   * (by id, alias or upstream id), else the Cloud default. Open-lane models
-   * are never picked.
+   * (by id, alias or upstream id), else the row the catalog flags as its
+   * default, else `DEFAULT_MODEL`. Open-lane models are never picked, and
+   * hidden rows only as the same model.
    */
   export function pickModel(models: CatalogModel[], currentModelID?: string): { modelID: string; label: string } | undefined {
     const usable = models.filter((m): m is CatalogModel & { id: string } => Boolean(m.id) && m.lane !== "open")
@@ -64,7 +71,8 @@ export namespace CloudContinue {
       )
       if (same) return label(same)
     }
-    const fallback = usable.find((m) => m.id === DEFAULT_MODEL)
+    const offered = usable.filter((m) => m.hidden !== true)
+    const fallback = offered.find((m) => m.default === true) ?? offered.find((m) => m.id === DEFAULT_MODEL)
     return fallback ? label(fallback) : undefined
   }
 

@@ -30,8 +30,10 @@ import {
 import { fetchConsoleModels, type ConsoleModel } from "@/lib/console-models";
 import { FormPage } from "@/components/console-ui";
 
-// Cloud default (the `default: true` row of GET /v1/models), sent when the form leaves the model blank.
-const DEFAULT_MODEL_ID = "kimi-k3";
+// Sent when the form leaves the model blank: the Cloud default (the
+// `default: true` row of GET /v1/models; it moves to a funded model when an
+// upstream runs out of credits), else this id while the catalog loads.
+const FALLBACK_MODEL_ID = "deepseek-v4.1-flash";
 
 const INPUT_CLASS =
   "w-full rounded-lg border border-solid border-[var(--border-subtle)] bg-[var(--bg-secondary)] px-3 py-2 text-[13px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-tertiary)] focus:border-[var(--border-default)]";
@@ -68,6 +70,7 @@ export function AgentFormPage(): React.ReactNode {
   const [rawJson, setRawJson] = useState("");
   const [models, setModels] = useState<ConsoleModel[]>([]);
   const [modelsError, setModelsError] = useState<string | null>(null);
+  const defaultModelId = models.find((m) => m.default)?.id ?? models[0]?.id ?? FALLBACK_MODEL_ID;
 
   // Tools section.
   const [tools, setTools] = useState<unknown[]>([]);
@@ -188,7 +191,7 @@ export function AgentFormPage(): React.ReactNode {
         JSON.stringify(
           {
             name: name || "my-agent",
-            model: model || DEFAULT_MODEL_ID,
+            model: model || defaultModelId,
             description: description || undefined,
             system_prompt: systemPrompt || undefined,
             temperature: Number(temperature) || 0.7,
@@ -201,7 +204,7 @@ export function AgentFormPage(): React.ReactNode {
         )
       );
     }
-  }, [view, isEdit, agent, name, model, description, systemPrompt, temperature, maxIterations, tools, allowedSkills, toolPermissions, boundMcpIds]);
+  }, [view, isEdit, agent, name, model, defaultModelId, description, systemPrompt, temperature, maxIterations, tools, allowedSkills, toolPermissions, boundMcpIds]);
 
   const addTool = useCallback(() => {
     const trimmed = newToolName.trim();
@@ -228,7 +231,7 @@ export function AgentFormPage(): React.ReactNode {
     try {
       await createSubagent(id, {
         name: subName.trim(),
-        model: subModel.trim() || model || DEFAULT_MODEL_ID,
+        model: subModel.trim() || model || defaultModelId,
         provider: deriveProvider(subModel.trim() || model),
         description: undefined,
         system_prompt: subPrompt.trim() || undefined,
@@ -242,7 +245,7 @@ export function AgentFormPage(): React.ReactNode {
     } finally {
       setAddingSubagent(false);
     }
-  }, [id, subName, subModel, subPrompt, model]);
+  }, [id, subName, subModel, subPrompt, model, defaultModelId]);
 
   const handleSubmit = useCallback(
     async (event: React.FormEvent<HTMLFormElement>) => {
@@ -440,7 +443,7 @@ export function AgentFormPage(): React.ReactNode {
                       type="text"
                       value={model}
                       onChange={(e) => setModel(e.target.value)}
-                      placeholder="model id, e.g. kimi-k3"
+                      placeholder="model id, e.g. deepseek-v4.1-flash"
                       className={INPUT_CLASS}
                     />
                   )}
