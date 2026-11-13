@@ -7,8 +7,10 @@
 //! schema.
 //!
 //! Secrets never sit in the file. A secret field holds a reference:
-//! `env:NAME`, `file:/path` or `vault:path#key`. [`resolve_secret`] reads
-//! one. Vault is not wired yet and returns a clear "not configured" error.
+//! `env:NAME`, `file:/path` or `vault:path#key`. [`Settings::secret`] reads
+//! any of them through [`super::secrets::SecretResolver`] (Vault KV v2 over
+//! the egress client). The sync [`resolve_secret`] reads only `env:` and
+//! `file:`, since a Vault read needs the network.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -40,8 +42,12 @@ pub enum SettingsError {
     EnvMissing { reference: String, name: String },
     #[error("secret {reference}: cannot read file: {message}")]
     FileUnreadable { reference: String, message: String },
-    #[error("secret {0}: the Vault secret backend is not configured in this build yet")]
+    #[error("secret {0}: secrets.vault is not set in the settings file")]
     VaultNotConfigured(String),
+    #[error("secret {0}: a vault: reference needs the async resolver (Settings::secret)")]
+    VaultNeedsResolver(String),
+    #[error("secret {reference}: Vault: {message}")]
+    Vault { reference: String, message: String },
 }
 
 fn invalid(field: &str, message: impl Into<String>) -> SettingsError {
@@ -370,6 +376,10 @@ pub struct SecretsSettings {
     pub vault: Option<VaultSettings>,
     #[serde(default)]
     pub encryption_key_ref: Option<String>,
+    /// Earlier keys, still accepted when opening values sealed before a
+    /// rotation. `admin rotate-key` re-seals those with the current key.
+    #[serde(default)]
+    pub previous_key_refs: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -577,6 +587,15 @@ impl Settings {
         if let Some(k) = &self.secrets.encryption_key_ref {
             check_secret_ref("secrets.encryption_key_ref", k)?;
         }
+        for k in &self.secrets.previous_key_refs {
+            check_secret_ref("secrets.previous_key_refs", k)?;
+        }
+        if !self.secrets.previous_key_refs.is_empty() && self.secrets.encryption_key_ref.is_none() {
+            return Err(invalid(
+                "secrets.previous_key_refs",
+                "needs secrets.encryption_key_ref (the current key)",
+            ));
+        }
         parse_duration(&self.health.check_interval)
             .ok_or_else(|| invalid("health.check_interval", "use a number and ms, s, m or h"))?;
         Ok(())
@@ -591,8 +610,28 @@ impl Settings {
         }
     }
 
-    /// The Postgres URL, with a secret reference resolved. None means SQLite
-    /// or memory.
+    /// Read a secret reference of any kind (`env:`, `file:`, `vault:`).
+    /// Vault reads go through an egress client built from these settings.
+    pub async fn secret(&self, reference: &str) -> Result<String, SettingsError> {
+        super::secrets::SecretResolver::from_settings(self)?
+            .resolve(reference)
+            .await
+    }
+
+    /// Like [`Settings::database_url`], but a `vault:` reference is read too.
+    pub async fn database_url_resolved(&self) -> Result<Option<String>, SettingsError> {
+        match &self.database.url {
+            None => Ok(None),
+            Some(u) if u.starts_with("postgres://") || u.starts_with("postgresql://") => {
+                Ok(Some(u.clone()))
+            }
+            Some(r) => self.secret(r).await.map(Some),
+        }
+    }
+
+    /// The Postgres URL, with an `env:`/`file:` reference resolved. None
+    /// means SQLite or memory. Use [`Settings::database_url_resolved`] when
+    /// the reference may be `vault:`.
     pub fn database_url(&self) -> Result<Option<String>, SettingsError> {
         match &self.database.url {
             None => Ok(None),
@@ -673,9 +712,10 @@ pub fn parse_duration(s: &str) -> Option<std::time::Duration> {
 
 // ─── Secret references ──────────────────────────────────────────────────────
 
-/// Read a secret reference. `env:NAME` reads the variable, `file:/path`
-/// reads the file (one trailing newline trimmed), `vault:path#key` is not
-/// wired yet.
+/// Read an `env:` or `file:` secret reference without the network.
+/// `env:NAME` reads the variable, `file:/path` reads the file (one trailing
+/// newline trimmed). A `vault:path#key` reference is refused with
+/// [`SettingsError::VaultNeedsResolver`]; read it with [`Settings::secret`].
 pub fn resolve_secret(reference: &str) -> Result<String, SettingsError> {
     if let Some(name) = reference.strip_prefix("env:").filter(|n| !n.is_empty()) {
         return std::env::var(name)
@@ -698,7 +738,7 @@ pub fn resolve_secret(reference: &str) -> Result<String, SettingsError> {
         return Ok(trimmed.to_string());
     }
     if reference.strip_prefix("vault:").is_some_and(|r| !r.is_empty()) {
-        return Err(SettingsError::VaultNotConfigured(reference.to_string()));
+        return Err(SettingsError::VaultNeedsResolver(reference.to_string()));
     }
     Err(SettingsError::BadSecretRef(reference.to_string()))
 }
@@ -742,6 +782,26 @@ mod tests {
             .expect("null and exact origins are fine");
     }
 
+    #[tokio::test]
+    async fn vault_ref_without_vault_settings_is_a_clear_error() {
+        let s = Settings::from_str("inference: {provider: anthropic}\n").unwrap();
+        let err = s.secret("vault:db#password").await.unwrap_err();
+        assert!(matches!(err, SettingsError::VaultNotConfigured(_)), "{err}");
+    }
+
+    #[test]
+    fn previous_keys_need_a_current_key() {
+        let err = Settings::from_str(
+            "inference: {provider: anthropic}\nsecrets: {previous_key_refs: ['env:OLD_KEY']}\n",
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("previous_key_refs"), "{err}");
+        Settings::from_str(
+            "inference: {provider: anthropic}\nsecrets: {encryption_key_ref: 'env:NEW_KEY', previous_key_refs: ['env:OLD_KEY']}\n",
+        )
+        .expect("current plus previous is fine");
+    }
+
     #[test]
     fn model_map_gates_models() {
         let s = Settings::from_str(
@@ -762,7 +822,7 @@ mod tests {
         assert_eq!(resolve_secret(&format!("file:{}", p.display())).unwrap(), "hunter2");
         assert!(matches!(
             resolve_secret("vault:kv/db#password"),
-            Err(SettingsError::VaultNotConfigured(_))
+            Err(SettingsError::VaultNeedsResolver(_))
         ));
         assert!(matches!(
             resolve_secret("env:SELFHOST_TEST_SURELY_UNSET_VAR"),

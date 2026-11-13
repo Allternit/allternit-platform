@@ -487,6 +487,7 @@ impl SqliteStore {
         conn.busy_timeout(std::time::Duration::from_secs(5))?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
         conn.execute_batch(SCHEMA)?;
+        add_trace_columns(&conn)?;
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
             kind,
@@ -508,6 +509,25 @@ impl SqliteStore {
         .await
         .map_err(|e| StoreError::Backend(format!("blocking task failed: {e}")))?
     }
+}
+
+/// Step 13: a nullable `traceparent` on sessions, work items and tool calls.
+/// SQLite has no `ADD COLUMN IF NOT EXISTS`, so look first. Safe to run on
+/// every open.
+fn add_trace_columns(conn: &Connection) -> StoreResult<()> {
+    for target in [TraceTarget::Session, TraceTarget::Work, TraceTarget::ToolCall] {
+        let table = target.table();
+        let cols: Vec<String> = {
+            let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})"))?;
+            let rows = stmt.query_map([], |r| r.get::<_, String>(1))?;
+            rows.collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        let has = cols.iter().any(|c| c == "traceparent");
+        if !has {
+            conn.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN traceparent TEXT"))?;
+        }
+    }
+    Ok(())
 }
 
 /// Leased, matching generation, or LeaseStale (NotFound when missing).
@@ -1699,6 +1719,51 @@ impl SelfHostStore for SqliteStore {
                 return Err(StoreError::NotFound);
             }
             Ok(())
+        })
+        .await
+    }
+
+    // ── Observability ──
+
+    async fn set_traceparent(
+        &self,
+        target: TraceTarget,
+        id: &str,
+        traceparent: &str,
+    ) -> StoreResult<()> {
+        check_traceparent(traceparent)?;
+        let (id, tp) = (id.to_string(), traceparent.to_string());
+        self.call(move |c| {
+            let n = c.execute(
+                &format!("UPDATE {} SET traceparent = ?2 WHERE id = ?1", target.table()),
+                params![id, tp],
+            )?;
+            if n == 0 {
+                return Err(StoreError::NotFound);
+            }
+            Ok(())
+        })
+        .await
+    }
+
+    async fn get_traceparent(&self, target: TraceTarget, id: &str) -> StoreResult<Option<String>> {
+        let id = id.to_string();
+        self.call(move |c| {
+            Ok(c.query_row(
+                &format!("SELECT traceparent FROM {} WHERE id = ?1", target.table()),
+                params![id],
+                |r| r.get::<_, Option<String>>(0),
+            )?)
+        })
+        .await
+    }
+
+    async fn count_sessions_by_status(&self) -> StoreResult<Vec<(String, i64)>> {
+        self.call(|c| {
+            let mut stmt =
+                c.prepare("SELECT status, COUNT(*) FROM sessions GROUP BY status ORDER BY status")?;
+            let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
+            Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
         })
         .await
     }

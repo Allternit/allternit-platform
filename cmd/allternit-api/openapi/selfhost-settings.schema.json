@@ -186,6 +186,12 @@
         "encryption_key_ref": {
           "$ref": "#/$defs/secretRef",
           "description": "The key that encrypts stored credentials. Rotate with `admin rotate-key`."
+        },
+        "previous_key_refs": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/secretRef" },
+          "default": [],
+          "description": "Earlier encryption keys. Values sealed with them stay readable until `admin rotate-key` re-seals them with encryption_key_ref. Needs encryption_key_ref."
         }
       },
       "allOf": [
