@@ -73,7 +73,7 @@ mod free;
 #[path = "provision_orgo.rs"]
 mod orgo;
 pub use free::{
-    is_capacity_message, note_runtime_attached, start_free_computer_task, touch_provisioned_activity,
+    is_capacity_message, mentions_capacity, note_runtime_attached, start_free_computer_task, touch_provisioned_activity,
     FreeDefaults, HostedDriverDefaults, ProvisionedWakeOutcome, WakeReason, WakeResult,
     CAPACITY_RETRY_AFTER_SECONDS, FREE_POOL_FULL, HOSTED_POOL_FULL,
 };
@@ -506,6 +506,11 @@ impl ProvisionError {
     pub fn to_api_error(&self) -> ApiError {
         match self {
             ProvisionError::NotFound(message) => ApiError::NotFound(message.clone()),
+            // A capacity refusal keeps its message (it must start with the
+            // pool-full text so it maps to `computer_capacity`).
+            ProvisionError::Api { message, .. } if free::is_capacity_message(message) => {
+                ApiError::ServiceUnavailable(message.clone())
+            }
             other => ApiError::ServiceUnavailable(other.to_string()),
         }
     }

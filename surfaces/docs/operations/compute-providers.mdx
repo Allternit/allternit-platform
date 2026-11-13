@@ -61,6 +61,8 @@ Orgo computers reserve nothing in the host memory admission that Incus free comp
 
 Past either limit the answer is `503 computer_capacity` with `Retry-After: 30`. The message starts "Cloud computers are at capacity" and does not show the spend; the reason is in the cloud-api log. A paid computer that can't be created for this reason sends the team an ops alert.
 
+Orgo's own refusal is the same answer. When Orgo returns HTTP 500 with code `insufficient_memory` (its host has no room for the size), a create or wake answers `503 computer_capacity` with `Retry-After: 30`, and the Platform API relay answers it right away instead of `runtime_starting` after a long wait. The raw Orgo text stays in the cloud-api log.
+
 The spend estimate is the running time in today's metering sessions plus the time computers spend in first boot, times the hourly price of the computer's Orgo size:
 
 | Orgo size | cpu / ram | $ per running hour |

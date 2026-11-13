@@ -481,6 +481,13 @@ pub(crate) async fn connect_or_wake_runtime(
     // reconnects, bounded so a wedged boot does not pin the request.
     let deadline = Instant::now() + wake_wait;
     loop {
+        // A wake the host refused for capacity will not finish: say so now
+        // instead of waiting out the deadline and answering "starting".
+        if waking {
+            if let Some(message) = provisioning.wake_capacity_failure_for_device(runtime_id).await {
+                return Err(ApiError::ServiceUnavailable(message));
+            }
+        }
         if let Some(connection) = relay_hub()
             .read()
             .await

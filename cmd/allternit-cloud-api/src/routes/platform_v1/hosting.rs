@@ -76,8 +76,7 @@ fn provision_failed(owner: &str, error: crate::error::ApiError) -> PlatformError
 /// A relay failure string that carries a capacity refusal (a relay wake that
 /// found the host full) is `computer_capacity` too.
 fn relay_failed(detail: &str) -> PlatformError {
-    use crate::services::provisioning::{CLOUD_POOL_FULL, FREE_POOL_FULL, HOSTED_POOL_FULL};
-    if detail.contains(FREE_POOL_FULL) || detail.contains(HOSTED_POOL_FULL) || detail.contains(CLOUD_POOL_FULL) {
+    if crate::services::provisioning::mentions_capacity(detail) {
         return PlatformError::service_unavailable("computer_capacity", "No hosted runtime capacity right now. Retry shortly.");
     }
     unavailable(detail)

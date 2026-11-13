@@ -35,7 +35,10 @@
 //! Orgo sells cpu in 0.5/1/2/4/6/8/16 and ram in 4/8/16/32/64 GB. A request
 //! maps to the smallest allowed cpu and ram at or above it (cpu cores and
 //! ceil(memory_mb / 1024) GB, capped at 16 cpu / 64 GB). A Platform API
-//! project runtime is always 0.5 cpu / 4 GB (Orgo Small). Price estimate: the
+//! project runtime is always requested as 0.5 cpu / 4 GB (Orgo Small); a
+//! pay-as-you-go Orgo account creates it as Medium (2 cpu / 8 GB) anyway, see
+//! the price floor below. An Orgo `insufficient_memory` refusal is the
+//! `computer_capacity` 503. Price estimate: the
 //! smallest named size that covers both numbers (Small 0.5c/4GB $0.023/h,
 //! Medium 2c/8GB $0.055, Large 4c/16GB $0.11, XL 6c/32GB $0.202); above XL,
 //! XL scaled by the larger of the cpu and ram ratios, and never below
@@ -397,6 +400,16 @@ impl std::fmt::Debug for OrgoBackend {
     }
 }
 
+/// An Orgo answer that says its host has no room (`code: insufficient_memory`,
+/// or the VMM's "insufficient memory" text in the error).
+fn is_orgo_capacity_refusal(json: &serde_json::Value) -> bool {
+    json.get("code").and_then(|v| v.as_str()) == Some("insufficient_memory")
+        || json
+            .get("error")
+            .and_then(|v| v.as_str())
+            .is_some_and(|e| e.to_ascii_lowercase().contains("insufficient memory"))
+}
+
 fn orgo_error(status: u16, json: &serde_json::Value) -> ProvisionError {
     let message = json
         .get("error")
@@ -407,7 +420,16 @@ fn orgo_error(status: u16, json: &serde_json::Value) -> ProvisionError {
         Some(code) => format!("orgo: {message} ({code})"),
         None => format!("orgo: {message}"),
     };
-    if status == 404 {
+    if is_orgo_capacity_refusal(json) {
+        // Orgo's host is out of memory (HTTP 500, code `insufficient_memory`):
+        // the same `computer_capacity` 503 as a full standby host. The raw
+        // reason is logged, not shown.
+        tracing::warn!(status, %message, "orgo: out of capacity");
+        ProvisionError::Api {
+            status: 503,
+            message: format!("{CLOUD_POOL_FULL}; retry in {CAPACITY_RETRY_AFTER_SECONDS} seconds"),
+        }
+    } else if status == 404 {
         ProvisionError::NotFound(message)
     } else {
         ProvisionError::Api { status, message }
@@ -1675,6 +1697,8 @@ mod tests {
         /// Answer the next N requests with 429 (Retry-After: 0).
         rate_limit_next: usize,
         workspace_status: u16,
+        /// Answer `POST /computers` with HTTP 500 and this body.
+        create_refusal: Option<serde_json::Value>,
     }
 
     type FakeState = Arc<Mutex<Fake>>;
@@ -1734,6 +1758,9 @@ mod tests {
                 )
             }
             ("POST", ["computers"]) => {
+                if let Some(body) = fake.create_refusal.clone() {
+                    return reply(StatusCode::INTERNAL_SERVER_ERROR, body);
+                }
                 let name = json_body["name"].as_str().unwrap_or("").to_string();
                 if fake.computers.iter().any(|(_, n, _)| *n == name) {
                     return reply(
@@ -1970,6 +1997,43 @@ mod tests {
             "ALLTERNIT_ORGO_DESKTOP_DEB_URL='https://downloads.example.com/allternit desktop.deb'"
         ));
         assert!(fake.bash[launch].contains("ALLTERNIT_ORGO_DESKTOP_DEB_SHA256='ab12'"));
+    }
+
+    #[tokio::test]
+    async fn orgo_insufficient_memory_is_the_computer_capacity_refusal() {
+        let (base, _fake) = serve(Fake {
+            create_refusal: Some(serde_json::json!({
+                "code": "insufficient_memory",
+                "error": "Failed to create computer: VMM returned 503: insufficient memory: need 8192 MB, have 3624 MB available"
+            })),
+            ..Fake::default()
+        })
+        .await;
+        let error = backend(&base).create(&paid_spec("allternit-u-full")).await.unwrap_err();
+        // Orgo's full host reads as a capacity 503, not a generic backend error.
+        let api = error.to_api_error();
+        assert!(
+            matches!(&api, ApiError::ServiceUnavailable(m) if crate::services::provisioning::is_capacity_message(m)),
+            "{api:?}"
+        );
+        assert!(!api.to_string().contains("8192"), "the raw reason is not shown: {api}");
+        let json = serde_json::json!({ "code": "insufficient_memory", "error": "x" });
+        assert!(is_orgo_capacity_refusal(&json));
+        assert!(!is_orgo_capacity_refusal(&serde_json::json!({ "error": "name taken" })));
+    }
+
+    #[tokio::test]
+    async fn a_platform_runtime_is_created_at_half_a_cpu_and_4_gb() {
+        let (base, fake) = serve(Fake::default()).await;
+        let mut spec = paid_spec("allternit-free-platform-proj-x");
+        spec.class = ComputeClass::Platform;
+        spec.cpu_cores = 2;
+        spec.memory_mb = 2048;
+        backend(&base).create(&spec).await.unwrap();
+        let fake = fake.lock().unwrap();
+        let create = fake.seen.iter().find(|s| s.method == "POST" && s.path == "/computers").unwrap();
+        assert_eq!(create.body["ram"], 4);
+        assert_eq!(create.body["cpu"], 0.5);
     }
 
     #[tokio::test]
