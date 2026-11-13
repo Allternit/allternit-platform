@@ -410,6 +410,23 @@ impl ModelRouter {
         models
     }
 
+    /// The model Allternit Cloud recommends, as `GET /v1/models` flags it: the
+    /// catalog's default model, else its first listed one. Open-lane models
+    /// (they need their own terms and credits) and models `GET /v1/models`
+    /// leaves out while their provider is out of credits are never picked. A
+    /// Platform agent on `"allternit"` runs on this model.
+    pub fn default_alias(&self) -> Option<&str> {
+        self.alias_map
+            .ordered_entries()
+            .into_iter()
+            .find(|entry| {
+                entry.listed
+                    && !catalog::is_open_lane(entry)
+                    && !crate::services::upstream_funding::provider_out_of_credits(&entry.provider)
+            })
+            .map(|entry| entry.alias.as_str())
+    }
+
     /// The provider id a model alias routes to, without dispatching.
     pub fn provider_for_alias(&self, alias: &str) -> Option<&str> {
         self.alias_map.resolve(alias).map(|entry| entry.provider.as_str())

@@ -823,7 +823,7 @@ async fn agent_turn(state: &Arc<ApiState>, caller: &PlatformCaller, host: Arc<dy
     let started = async {
         let lock = TurnLock::take(&conv.id).ok_or_else(|| PlatformError::conflict("conversation_busy", "The agent is still answering the previous turn in this conversation."))?;
         let (rt, session, own_key) = conversations::prepare(state, host.as_ref(), caller, &conv).await?;
-        let meter = TurnMeter::new(caller, &conv, own_key)?;
+        let meter = TurnMeter::new(caller, &conv, own_key)?.with_cloud_price(&state.model_router).await;
         let path = format!("/api/v1/platform/agents/{}/sessions/{}/turn", meter.agent_id, session);
         let upstream = host.stream(&rt, &path, &json!({ "text": text })).await?;
         Ok::<_, PlatformError>((lock, meter, upstream))
@@ -1247,6 +1247,9 @@ mod billing_tests {
         db: PgPool,
         app: Router,
         upstream: Arc<FakeUpstream>,
+        /// The model gateway as production mounts it: `auth_middleware` in front
+        /// of the real `/v1/chat/completions` handler.
+        gateway: Router,
     }
 
     async fn ctx() -> Ctx {
@@ -1262,7 +1265,11 @@ mod billing_tests {
             sqlx::raw_sql(&sql.replace("public.", "")).execute(&state.db).await.expect("migration applies");
         }
         let app = router_gated(&state, Gate::Forced(true)).with_state(state.clone());
-        Ctx { db: state.db.clone(), app, upstream }
+        let gateway = Router::new()
+            .route("/v1/chat/completions", axum::routing::post(crate::routes::model_router::chat_completions))
+            .layer(axum::middleware::from_fn_with_state(state.clone(), crate::auth::middleware::auth_middleware))
+            .with_state(state.clone());
+        Ctx { db: state.db.clone(), app, upstream, gateway }
     }
 
     async fn key(c: &Ctx) -> (String, String) {
@@ -1408,5 +1415,77 @@ mod billing_tests {
         sqlx::query("UPDATE platform_approvals SET status = 'approved', resolved_at = NOW() WHERE id IN ('apr_old', 'apr_new')").execute(&c.db).await.unwrap();
         let (s, v) = get(&c, &token, "/v1/responses/resp_wait").await;
         assert_eq!((s, v["status"].as_str(), v["required_actions"].clone()), (200, Some("completed"), json!([])), "{v}");
+    }
+
+    /// A project's hosted runtime runs its `"allternit"` agents on Allternit
+    /// Cloud with its own device token (owner `platform:<project>`). The project
+    /// pays for those turns, so the consumer gates must not refuse it: they did
+    /// (no verified email, no free allowance left) and every hosted agent turn
+    /// failed. Nothing is charged to a user's credits; a project that can't pay
+    /// is refused, and a consumer computer keeps every gate.
+    #[tokio::test]
+    async fn a_platform_runtime_runs_cloud_inference_for_its_project() {
+        let c = ctx().await;
+        sqlx::raw_sql(&include_str!("../../../migrations_pg/125_inference_attribution.sql").replace("public.", "")).execute(&c.db).await.expect("migration 125 applies");
+        // The personal credit balance the gateway reads (migrations_pg/001, minimal).
+        sqlx::query("CREATE TABLE IF NOT EXISTS user_credits (user_id TEXT PRIMARY KEY, balance_usd DOUBLE PRECISION)").execute(&c.db).await.unwrap();
+        sqlx::raw_sql(&include_str!("../../../migrations_pg/011_user_trust.sql").replace("public.", "")).execute(&c.db).await.expect("migration 011 applies");
+        let (project_id, _) = key(&c).await;
+        let device = |id: &str, owner: String| {
+            let db = c.db.clone();
+            let token = format!("allternit_runtime_{id}_secret");
+            let id = id.to_string();
+            async move {
+                sqlx::query("INSERT INTO users (id) VALUES ($1)").bind(&owner).execute(&db).await.unwrap();
+                sqlx::query("INSERT INTO runtime_devices (id, user_id, name, status, credential_expires_at, credential_hash) VALUES ($1, $2, 'rt', 'online', '2999-01-01', $3)")
+                    .bind(&id)
+                    .bind(&owner)
+                    .bind(crate::routes::runtime_pairing::sha256_hex(token.as_bytes()))
+                    .execute(&db)
+                    .await
+                    .unwrap();
+                // Its free allowance is long used up: the consumer path would refuse it.
+                sqlx::query("INSERT INTO inference_usage (id, user_id, model, prompt_tokens, completion_tokens, cost_usd) VALUES ($1, $2, 'gpt-4o', 1, 1, 100.0)")
+                    .bind(format!("old_{id}"))
+                    .bind(&owner)
+                    .execute(&db)
+                    .await
+                    .unwrap();
+                token
+            }
+        };
+        let runtime = device("rt_proj", format!("platform:{project_id}")).await;
+        let consumer = device("rt_user", "user_free".to_string()).await;
+        // The consumer's email is verified, so only its spent allowance refuses it.
+        sqlx::query("INSERT INTO user_trust (user_id, email_verified) VALUES ('user_free', TRUE)").execute(&c.db).await.unwrap();
+        let complete = |token: String| {
+            let gateway = c.gateway.clone();
+            async move {
+                let body = json!({ "model": "gpt-4o", "messages": [{ "role": "user", "content": "Reply with exactly: pong" }] });
+                let req = Request::builder().method("POST").uri("/v1/chat/completions").header("authorization", format!("Bearer {token}")).header("content-type", "application/json").body(Body::from(body.to_string())).unwrap();
+                let resp = gateway.oneshot(req).await.unwrap();
+                let status = resp.status().as_u16();
+                let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20).await.unwrap();
+                (status, String::from_utf8_lossy(&bytes).into_owned())
+            }
+        };
+
+        let (s, b) = complete(runtime.clone()).await;
+        assert_eq!(s, 200, "{b}");
+        assert!(b.contains("hello"), "{b}");
+        let (client, credits): (Option<String>, i64) = sqlx::query_as(
+            "SELECT (SELECT client FROM inference_usage WHERE user_id = $1 AND id NOT LIKE 'old_%'), (SELECT COUNT(*) FROM user_credits WHERE user_id = $1)",
+        )
+        .bind(format!("platform:{project_id}"))
+        .fetch_one(&c.db)
+        .await
+        .unwrap();
+        assert_eq!((client.as_deref(), credits), (Some("runtime"), 0), "recorded as the runtime's call, no credits involved");
+
+        assert_eq!(complete(consumer).await.0, 403, "a consumer computer still needs its allowance");
+
+        sqlx::query("UPDATE platform_projects SET stripe_customer_id = NULL, stripe_subscription_id = NULL, billing_status = NULL WHERE id = $1").bind(&project_id).execute(&c.db).await.unwrap();
+        let (s, b) = complete(runtime).await;
+        assert_eq!(s, 402, "a project that can't pay gets no Cloud inference: {b}");
     }
 }

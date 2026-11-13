@@ -39,7 +39,10 @@
 //! carries the turn's token usage; it is recorded as `tokens_in` / `tokens_out`
 //! usage rows (ref = the reply's item id) billed at the provider's list price
 //! + 15%, or at 0 when the agent runs on the project's own model key. A turn
-//! the runtime reports no usage for records nothing.
+//! the runtime reports no usage for records nothing. An agent on `"allternit"`
+//! runs on Allternit Cloud's recommended model (sent to the runtime as
+//! `allternit/<model>`, see [`runtime_model`]); the runtime can't price it, so
+//! its tokens are priced here at that model's list price + 15%.
 
 use std::{collections::HashSet, convert::Infallible, sync::Arc, sync::Mutex};
 
@@ -655,13 +658,31 @@ struct SendBody {
     stream: bool,
 }
 
+/// gizzi's provider id for Allternit Cloud inference (`allternit/<model>`).
+pub(crate) const CLOUD_PROVIDER: &str = "allternit";
+
+/// The model the runtime runs an agent on. `"allternit"` (the default) is
+/// Allternit Cloud's recommended model, sent as a concrete `allternit/<model>`:
+/// the runtime has no Allternit plan and no signed-in CLI, so a bare
+/// `"allternit"` fell back to the computer's own default brain (an unsigned
+/// coding CLI) and every turn failed with "Model not found". The runtime calls
+/// Cloud with its device token; the project pays through [`meter_turn`].
+/// `provider/model` (the project's own key) is sent as it is.
+pub(crate) fn runtime_model(router: &crate::model_router::ModelRouter, model: &str) -> String {
+    match router.default_alias() {
+        Some(alias) if model == agents::DEFAULT_MODEL => format!("{CLOUD_PROVIDER}/{alias}"),
+        _ => model.to_string(),
+    }
+}
+
 /// The agent's definition as the runtime takes it (`PUT /api/v1/platform/agents/{id}`):
 /// its settings plus the twin settings kept here (autonomy rules, the account's memory).
-async fn runtime_spec(db: &PgPool, a: &agents::Agent) -> Result<Value, PlatformError> {
+async fn runtime_spec(state: &ApiState, a: &agents::Agent) -> Result<Value, PlatformError> {
+    let db = &state.db;
     let (rules,): (Value,) = sqlx::query_as("SELECT autonomy_rules FROM platform_agents WHERE id = $1").bind(&a.id).fetch_one(db).await?;
     let memory = super::twin::account_memory_for_runtime(db, &a.account_id).await?;
     Ok(json!({
-        "name": a.name, "instructions": a.instructions, "greeting": a.greeting, "model": a.model,
+        "name": a.name, "instructions": a.instructions, "greeting": a.greeting, "model": runtime_model(&state.model_router, &a.model),
         "voice": a.voice, "tools": a.tools, "autonomy": a.autonomy, "transferTargets": a.transfer_targets,
         "accountId": a.account_id, "autonomyRules": rules, "accountMemory": memory,
     }))
@@ -702,7 +723,7 @@ async fn ensure_agent_key(state: &ApiState, host: &dyn AgentHost, caller: &Platf
                 return Err(PlatformError::api_error("model_key_sync_failed", "The hosted runtime refused the project's model key."));
             }
         }
-        let (status, body) = host.call(&rt, "PUT", &format!("/api/v1/platform/agents/{}", agent.id), &runtime_spec(&state.db, &agent).await?).await?;
+        let (status, body) = host.call(&rt, "PUT", &format!("/api/v1/platform/agents/{}", agent.id), &runtime_spec(state, &agent).await?).await?;
         if status >= 400 {
             tracing::warn!(agent = %agent.id, status, %body, "platform: runtime refused the agent");
             return Err(PlatformError::api_error("agent_sync_failed", "The hosted runtime refused this agent's definition."));
@@ -753,6 +774,10 @@ pub(crate) struct TurnMeter {
     pub(crate) agent_id: String,
     pub(crate) conversation_id: String,
     pub(crate) started_at: chrono::DateTime<chrono::Utc>,
+    /// For an agent on Allternit Cloud: its `allternit/<model>` and that model's
+    /// list price per 1M tokens (input, output). The runtime can't price Cloud
+    /// models, so its usage arrives without a cost; this prices it.
+    pub(crate) cloud_price: Option<(String, f64, f64)>,
 }
 
 impl TurnMeter {
@@ -766,7 +791,29 @@ impl TurnMeter {
             agent_id: conv.agent_id.clone().ok_or_else(no_agent)?,
             conversation_id: conv.id.clone(),
             started_at: chrono::Utc::now(),
+            cloud_price: None,
         })
+    }
+
+    /// Look up Allternit Cloud's list price for the model an agent not on the
+    /// project's own key runs on (see [`runtime_model`]).
+    pub(crate) async fn with_cloud_price(mut self, router: &crate::model_router::ModelRouter) -> Self {
+        if self.own_key {
+            return self;
+        }
+        if let Some(alias) = router.default_alias() {
+            if let Ok(prices) = router.retail_prices(alias).await {
+                let (input, output) = crate::model_router::items_bridge::list_per_1m(&prices);
+                self.cloud_price = Some((format!("{CLOUD_PROVIDER}/{alias}"), input, output));
+            }
+        }
+        self
+    }
+
+    /// The list price per 1M tokens of `model` on Allternit Cloud, input or output side.
+    fn cloud_per_1m(&self, model: Option<&str>, output: bool) -> Option<f64> {
+        let (cloud_model, input_price, output_price) = self.cloud_price.as_ref()?;
+        (model == Some(cloud_model.as_str())).then_some(if output { *output_price } else { *input_price })
     }
 }
 
@@ -797,10 +844,11 @@ pub(crate) async fn meter_turn(db: &PgPool, m: &TurnMeter, message_id: &str, usa
         if quantity == 0 {
             continue;
         }
-        let amount = match usage[cost].as_i64() {
-            Some(list) => Some(billing::token_charge_microusd(list, m.own_key)),
-            None if m.own_key => Some(0),
-            None => {
+        let amount = match (usage[cost].as_i64(), m.cloud_per_1m(model, meter == "tokens_out")) {
+            (Some(list), _) => Some(billing::token_charge_microusd(list, m.own_key)),
+            (None, _) if m.own_key => Some(0),
+            (None, Some(per_1m)) => Some(billing::token_charge_microusd(crate::model_router::items_bridge::list_microusd(per_1m, quantity as u64), false)),
+            (None, None) => {
                 tracing::warn!(message_id, model, "platform: no list price for this turn's model; tokens recorded unpriced");
                 None
             }
@@ -900,7 +948,7 @@ async fn send_message(
     let lock = TurnLock::take(&conv.id).ok_or_else(conversation_busy)?;
     let host = host_for(&state, layered);
     let (rt, session, own_key) = prepare(&state, host.as_ref(), &caller, &conv).await?;
-    let meter = TurnMeter::new(&caller, &conv, own_key)?;
+    let meter = TurnMeter::new(&caller, &conv, own_key)?.with_cloud_price(&state.model_router).await;
     let path = format!("/api/v1/platform/agents/{}/sessions/{}/turn", meter.agent_id, session);
     let mut upstream = host.stream(&rt, &path, &json!({ "text": content })).await?;
     // Stored once the runtime took the turn: a refused turn (still starting) leaves nothing behind.
