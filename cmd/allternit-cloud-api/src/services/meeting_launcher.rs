@@ -771,6 +771,36 @@ impl Launcher {
         }
     }
 
+    /// Account erase: end every active session the user owns (so the launcher
+    /// never starts a pod for it) and delete every pod they still hold, now,
+    /// before their rows go. `Err` lists what is left; the erase retries.
+    pub async fn stop_all_for_user(&self, user_id: &str) -> Result<usize, String> {
+        let rows: Vec<(Uuid, String, Option<String>)> =
+            sqlx::query_as("SELECT id, state, pod_ref FROM meeting_sessions WHERE user_id = $1 AND (state <> 'ended' OR pod_ref IS NOT NULL)")
+                .bind(user_id)
+                .fetch_all(&self.db)
+                .await
+                .map_err(|e| e.to_string())?;
+        let mut torn = 0;
+        let mut left = Vec::new();
+        for (sid, state, pod_ref) in rows {
+            if state != "ended" {
+                if let Err(error) = self.end_active(sid, &state, EndReason::LeftByUser).await {
+                    left.push(format!("{sid}: {}", error.message));
+                    continue;
+                }
+            }
+            let Some(raw) = pod_ref else { continue };
+            let Some(pod) = PodRef::parse(&raw) else { continue };
+            match self.teardown(sid, &raw, &pod).await {
+                Ok(true) => torn += 1,
+                Ok(false) => left.push(format!("{sid}: pod not deleted yet")),
+                Err(error) => left.push(format!("{sid}: {}", error.message)),
+            }
+        }
+        if left.is_empty() { Ok(torn) } else { Err(left.join("; ")) }
+    }
+
     /// One reap pass. Returns how many pods were torn down.
     ///
     /// - Ended sessions: the pod goes once the end is older than 5 minutes

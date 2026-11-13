@@ -201,6 +201,19 @@ pub const ERASE: &[(&str, &str)] = &[
     ("user_runtime_quotas", USER),
     ("user_open_lane", USER),
     ("open_lane_blocks", USER),
+    // Meetings: the user's own calls (transcripts, chat, artifacts, tool calls
+    // and screen notes cascade from meeting_sessions), their calendar and Zoom
+    // connections, settings and bot-minute meter rows. Pods are deleted first
+    // (`meeting_launcher::Launcher::stop_all_for_user`). Bot minutes cascade
+    // from sessions, so they cannot be kept; charges live in the credit ledger.
+    ("meeting_tool_approvals", "user_id = $1 OR session_id IN (SELECT id FROM meeting_sessions WHERE user_id = $1)"),
+    ("meeting_participants", "session_id IN (SELECT id FROM meeting_sessions WHERE user_id = $1)"),
+    ("meeting_bot_minutes", USER),
+    ("meeting_sessions", USER),
+    ("meetings", USER),
+    ("calendar_connections", USER),
+    ("zoom_connections", USER),
+    ("user_meeting_settings", USER),
 ];
 
 /// Clears the user from rows that stay: kept records, and work that belongs to
@@ -214,6 +227,9 @@ const SCRUB: &[&str] = &[
     "UPDATE mcp_trusted_issuers SET created_by = 'deleted' WHERE created_by = $1",
     "UPDATE audit_log SET user_email = NULL, ip_address = NULL, user_agent = NULL WHERE user_id = $1",
     "UPDATE audit_logs SET ip_address = NULL WHERE user_id = $1",
+    // The user as a participant in someone else's meeting: the owner keeps the
+    // record of what was said, without the link to the account or the address.
+    "UPDATE meeting_participants SET user_id = NULL, email = NULL WHERE user_id = $1",
     "UPDATE users SET email = NULL, name = NULL, avatar_url = NULL, tenant_id = NULL, status = 'inactive' WHERE id = $1",
 ];
 
@@ -226,6 +242,9 @@ const REVOKE: &[&str] = &[
     "DELETE FROM floor_shares WHERE user_id = $1",
     "DELETE FROM thread_shares WHERE user_id = $1",
     "DELETE FROM user_voice_keys WHERE user_id = $1",
+    // Calendar and Zoom tokens stop working at once.
+    "DELETE FROM calendar_connections WHERE user_id = $1",
+    "DELETE FROM zoom_connections WHERE user_id = $1",
     "UPDATE runtime_devices SET status = 'revoked', revoked_at = CURRENT_TIMESTAMP WHERE user_id = $1 AND revoked_at IS NULL",
 ];
 
@@ -251,6 +270,9 @@ pub async fn erase_account(state: &ApiState, user_id: &str) -> Result<(), ApiErr
     }
     if let Err(e) = release_computers(state, user_id).await {
         failures.push(format!("computers: {e}"));
+    }
+    if let Err(e) = crate::services::meeting_launcher::Launcher::from_state(state).stop_all_for_user(user_id).await {
+        failures.push(format!("meeting pods: {e}"));
     }
     if let Err(e) = release_numbers(db, user_id).await {
         failures.push(format!("numbers: {e}"));
