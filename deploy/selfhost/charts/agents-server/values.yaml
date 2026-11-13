@@ -1,0 +1,214 @@
+# Allternit Self-Hosted Agents: agents-server chart values.
+
+nameOverride: ""
+fullnameOverride: ""
+
+image:
+  repository: ghcr.io/allternit/allternit-agents-server
+  # Defaults to the chart's appVersion.
+  tag: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+# - name: ghcr-allternit
+
+# Version 1 runs ONE replica. The agent loop for a session lives in one server
+# process; after a restart, sessions are rebuilt from the events in PostgreSQL.
+# Do not raise this.
+replicaCount: 1
+
+# The settings file, rendered into a ConfigMap and mounted at
+# /etc/allternit/settings.yaml. Schema:
+# cmd/allternit-api/openapi/selfhost-settings.schema.json
+# The chart sets server.listen and observability.prometheus itself (from
+# service.port and metrics.*). Secrets stay out of here: use env:NAME
+# references and put the values in the Secret below.
+settings:
+  server:
+    # The URL clients use, e.g. https://agents.example.internal
+    public_url: ""
+    # Browser origins allowed to call the API. iOS and the gizzi CLI do not need CORS.
+    cors_origins:
+      - https://ai.allternit.com   # web app; also Desktop's hosted fallback
+      - https://m.allternit.com    # phone app (PWA)
+      - http://127.0.0.1:8013      # packaged Desktop (window served by the local runtime)
+  database:
+    url: env:ALLTERNIT_DATABASE_URL
+    max_connections: 20
+  inference:
+    provider: anthropic
+    credentials:
+      api_key: env:ANTHROPIC_API_KEY
+    model_map:
+      claude-sonnet-4-5: claude-sonnet-4-5
+  mcp:
+    allowed_hostnames: []
+  git:
+    allowed_hostnames: []
+    allowed_push_refs: [refs/heads/agent/*]
+  web_tools:
+    enabled: false
+  secrets:
+    backend: env
+    encryption_key_ref: env:ALLTERNIT_ENCRYPTION_KEY
+  observability:
+    log_format: json
+  health:
+    check_interval: 60s
+
+# Secret environment variables. Each name in `keys` is read from the Secret
+# key of the same name and set as an environment variable.
+secret:
+  # Recommended: create the Secret yourself (or with External Secrets / Vault
+  # Agent) and name it here.
+  #   kubectl create secret generic allternit-agents-env \
+  #     --from-literal=ALLTERNIT_DATABASE_URL='postgres://...' \
+  #     --from-literal=ALLTERNIT_ENCRYPTION_KEY="$(openssl rand -base64 32)" \
+  #     --from-literal=ANTHROPIC_API_KEY='...' \
+  #     --from-literal=ALLTERNIT_SELF_HOSTED_SETUP_TOKEN="$(openssl rand -hex 32)"
+  existingSecret: ""
+  # For tests only: let the chart create the Secret from `values` below. It is
+  # created as a pre-install/pre-upgrade hook (the migrate Job needs it first),
+  # so `helm uninstall` leaves it behind. Values end up in Helm's release data.
+  create: false
+  values: {}
+  #  ALLTERNIT_DATABASE_URL: postgres://allternit:...@postgres:5432/allternit
+  #  ALLTERNIT_ENCRYPTION_KEY: ...
+  #  ANTHROPIC_API_KEY: ...
+  #  ALLTERNIT_SELF_HOSTED_SETUP_TOKEN: ...
+  keys:
+    - ALLTERNIT_DATABASE_URL
+    - ALLTERNIT_ENCRYPTION_KEY
+    - ANTHROPIC_API_KEY
+    - ALLTERNIT_SELF_HOSTED_SETUP_TOKEN
+  # Keys that may be missing from the Secret (the pod still starts).
+  optionalKeys:
+    - ANTHROPIC_API_KEY
+    - ALLTERNIT_SELF_HOSTED_SETUP_TOKEN
+
+# OpenTelemetry. Leave endpoint empty to export nothing.
+otel:
+  endpoint: ""          # e.g. http://otel-collector.observability:4317
+  serviceName: allternit-agents-server
+  extraEnv: []
+  # - name: OTEL_TRACES_SAMPLER
+  #   value: parentbased_traceidratio
+  # - name: OTEL_TRACES_SAMPLER_ARG
+  #   value: "0.25"
+
+extraEnv: []
+
+service:
+  type: ClusterIP
+  port: 8400
+  annotations: {}
+
+# Prometheus metrics on a separate port. Port 8400 never serves /metrics.
+metrics:
+  enabled: false
+  port: 9464
+  serviceMonitor:
+    # Needs the Prometheus Operator CRDs.
+    enabled: false
+    interval: 30s
+    scrapeTimeout: 10s
+    labels: {}
+
+# Schema migration as a Helm hook Job (pre-install and pre-upgrade). The server
+# Deployment only rolls out after it succeeds. Safe to run again.
+migrate:
+  enabled: true
+  backoffLimit: 3
+  activeDeadlineSeconds: 600
+  resources: {}
+
+# Allow traffic only where the server needs it. NetworkPolicy matches IPs and
+# pods, not hostnames: list your provider's and database's addresses as CIDRs,
+# or route provider traffic through an egress proxy you allow here. The server
+# also checks every outbound host against the settings file itself.
+networkPolicy:
+  enabled: true
+  # Who may call the API on service.port. The sandboxes chart's workers are
+  # always allowed (same namespace, label app.kubernetes.io/part-of: allternit-selfhost).
+  ingressFrom: []
+  # - namespaceSelector:
+  #     matchLabels:
+  #       kubernetes.io/metadata.name: ingress-nginx
+  # Who may scrape metrics.port.
+  metricsFrom: []
+  # - namespaceSelector:
+  #     matchLabels:
+  #       kubernetes.io/metadata.name: monitoring
+  dns:
+    enabled: true
+    # Matches kube-dns / CoreDNS in kube-system on most clusters.
+    to:
+      - namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: kube-system
+        podSelector:
+          matchLabels:
+            k8s-app: kube-dns
+  database:
+    port: 5432
+    to: []
+    # - podSelector:
+    #     matchLabels:
+    #       app.kubernetes.io/name: postgresql
+    # - ipBlock:
+    #     cidr: 10.20.0.15/32
+  provider:
+    ports: [443]
+    to: []
+    # - ipBlock:
+    #     cidr: 203.0.113.0/24      # your provider endpoint, gateway or egress proxy
+  otel:
+    ports: [4317, 4318]
+    to: []
+    # - namespaceSelector:
+    #     matchLabels:
+    #       kubernetes.io/metadata.name: observability
+  # Anything else the server must reach (Vault, your OIDC issuer, MCP hosts).
+  extraEgress: []
+  # - to:
+  #     - ipBlock:
+  #         cidr: 10.30.0.0/24
+  #   ports:
+  #     - port: 8200
+  #       protocol: TCP
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: [ALL]
+
+# Scratch space for the gizzi child (its own session cache). Durable state is in PostgreSQL.
+dataVolume:
+  sizeLimit: 5Gi
+
+resources:
+  requests:
+    cpu: 500m
+    memory: 1Gi
+  limits:
+    memory: 4Gi
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

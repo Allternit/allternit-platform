@@ -1,0 +1,137 @@
+# syntax=docker/dockerfile:1.7
+#
+# Allternit Self-Hosted Agents: the Agents Server image.
+#
+# Contains allternit-agents-server (Rust, bin target of cmd/allternit-api) and
+# the gizzi CLI, which the server runs as a child process for the agent loop.
+# The same image runs the one-shot `admin migrate` container.
+#
+# Build context: repository root.
+#   docker build -f deploy/selfhost/Dockerfile.server -t allternit-agents-server .
+# The context filter is Dockerfile.server.dockerignore (next to this file), not
+# the root .dockerignore: the root one leaves out cmd/gizzi-code, sdk, packages
+# and surfaces, which the gizzi build needs.
+#
+# Build args:
+#   GIT_SHA           embedded in the gizzi binary (there is no .git in the context)
+#   CARGO_BUILD_JOBS  parallel rustc jobs. allternit-api's release build can run
+#                     out of memory on small builders; 2 is safe on a 16 GB box.
+
+ARG RUST_VERSION=1.94.1
+ARG BUN_VERSION=1.3.14
+ARG DEBIAN_RELEASE=bookworm
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Stage 1: the Rust server binary.
+FROM rust:${RUST_VERSION}-slim-${DEBIAN_RELEASE} AS server-build
+
+ARG CARGO_BUILD_JOBS=2
+ENV CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS} \
+    CARGO_TERM_COLOR=never \
+    # Use checked-in sqlx query data (.sqlx/) if the crate has it; no live DB at build time.
+    SQLX_OFFLINE=true
+
+# protobuf-compiler: tonic-build in factory/engine/build.rs.
+# perl + make: openssl is vendored (built from source) in allternit-api.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+       pkg-config libssl-dev protobuf-compiler perl make git ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+COPY . .
+
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,target=/src/target,id=selfhost-server-target,sharing=locked \
+    cargo build --release -p allternit-api --bin allternit-agents-server \
+    && install -D -m 0755 target/release/allternit-agents-server /out/allternit-agents-server
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Stage 2: the gizzi CLI (same recipe as .github/workflows/publish-gizzi-code-npm.yml).
+FROM oven/bun:${BUN_VERSION}-debian AS gizzi-build
+
+ARG TARGETARCH
+ARG GIT_SHA=unknown
+# build-production.js falls back to GITHUB_SHA when `git rev-parse` fails.
+ENV GITHUB_SHA=${GIT_SHA} \
+    ELECTRON_SKIP_BINARY_DOWNLOAD=1 \
+    PUPPETEER_SKIP_DOWNLOAD=1 \
+    PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 \
+    CI=1
+
+# nodejs/npm: pnpm. python3/make/g++: native modules (better-sqlite3) during install.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates git nodejs npm python3 make g++ \
+    && rm -rf /var/lib/apt/lists/* \
+    && npm install -g pnpm@10.28.0
+
+WORKDIR /src
+COPY . .
+
+# Full workspace install: gizzi-code imports workspace packages it does not
+# declare, so a filtered install leaves imports unresolved.
+RUN --mount=type=cache,target=/root/.local/share/pnpm/store,sharing=locked \
+    pnpm install --frozen-lockfile \
+    && pnpm --filter "@allternit/gizzi-code^..." run build \
+    && pnpm --filter "@allternit/gizzi-sdk" run build
+
+RUN case "${TARGETARCH:-amd64}" in \
+      amd64) GZ=linux-x64 ;; \
+      arm64) GZ=linux-arm64 ;; \
+      *) echo "unsupported TARGETARCH ${TARGETARCH}" >&2; exit 1 ;; \
+    esac \
+    && cd cmd/gizzi-code \
+    && bun run build --target="${GZ}" \
+    && mkdir -p /out/gizzi \
+    && cp "dist/gizzi-code-${GZ}" /out/gizzi/gizzi-code \
+    && if [ -d dist/native-assets ]; then cp -r dist/native-assets /out/gizzi/; fi \
+    && chmod 0755 /out/gizzi/gizzi-code
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Stage 3: runtime.
+FROM debian:${DEBIAN_RELEASE}-slim AS runtime
+
+# libstdc++6: the compiled gizzi binary. ripgrep: gizzi's grep tool.
+# curl: the container health check. tini: PID 1 that reaps the gizzi child.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates libstdc++6 ripgrep curl tini \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN groupadd --system --gid 10001 allternit \
+    && useradd --system --uid 10001 --gid allternit --home-dir /var/lib/allternit-agents-server \
+       --shell /usr/sbin/nologin allternit \
+    && install -d -o allternit -g allternit -m 0750 /var/lib/allternit-agents-server \
+    && install -d -m 0755 /etc/allternit
+
+COPY --from=server-build /out/allternit-agents-server /usr/local/bin/allternit-agents-server
+COPY --from=gizzi-build /out/gizzi /opt/gizzi
+RUN ln -s /opt/gizzi/gizzi-code /usr/local/bin/gizzi-code \
+    && ln -s /opt/gizzi/gizzi-code /usr/local/bin/gizzi \
+    && gizzi-code --version \
+    && allternit-agents-server --help >/dev/null
+
+ENV ALLTERNIT_SELF_HOSTED=1 \
+    ALLTERNIT_GIZZI_BIN=/usr/local/bin/gizzi-code \
+    ALLTERNIT_SELFHOST_CONFIG=/etc/allternit/settings.yaml \
+    GIZZI_DISABLE_AUTOUPDATE=1 \
+    ALLTERNIT_SIDECAR_DISABLED=1 \
+    HOME=/var/lib/allternit-agents-server \
+    XDG_DATA_HOME=/var/lib/allternit-agents-server/data \
+    XDG_CONFIG_HOME=/var/lib/allternit-agents-server/config \
+    XDG_STATE_HOME=/var/lib/allternit-agents-server/state \
+    XDG_CACHE_HOME=/var/lib/allternit-agents-server/cache
+
+USER 10001:10001
+WORKDIR /var/lib/allternit-agents-server
+VOLUME ["/var/lib/allternit-agents-server"]
+
+# 8400: API. 9464: Prometheus (only when observability.prometheus.enabled and
+# its listen address is not loopback).
+EXPOSE 8400 9464
+
+HEALTHCHECK --interval=10s --timeout=3s --start-period=20s --retries=6 \
+  CMD curl -fsS http://127.0.0.1:8400/health/ready || exit 1
+
+ENTRYPOINT ["/usr/bin/tini", "--", "allternit-agents-server"]
+CMD ["serve"]

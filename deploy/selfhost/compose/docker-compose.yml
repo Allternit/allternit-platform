@@ -1,0 +1,150 @@
+# Allternit Self-Hosted Agents: Docker Compose setup.
+#
+#   cp .env.example .env        # fill in the passwords and keys
+#   docker compose up -d        # postgres, migrate (one-shot), server
+#   docker compose exec server allternit-agents-server admin setup
+#   ... create an environment and an environment key (OPERATOR-GUIDE.md) ...
+#   set ALLTERNIT_ENVIRONMENT_ID / ALLTERNIT_ENVIRONMENT_KEY and COMPOSE_PROFILES=workers in .env
+#   docker compose up -d        # now also starts the workers
+#
+# The workers sit in the `workers` profile because they need an environment key,
+# and that key only exists after the first setup.
+#
+# Optional local trace check: COMPOSE_PROFILES=workers,otel and
+# OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317 in .env, then
+# `docker compose logs -f otel-collector`.
+#
+# Air-gap test: docker compose -f docker-compose.yml -f compose.airgap.yml ...
+# (see verify-airgap.sh).
+
+name: allternit-selfhost
+
+x-server-image: &server-image
+  image: ${ALLTERNIT_SERVER_IMAGE:-ghcr.io/allternit/allternit-agents-server}:${ALLTERNIT_VERSION:-latest}
+  build:
+    context: ../../..
+    dockerfile: deploy/selfhost/Dockerfile.server
+
+x-server-env: &server-env
+  ALLTERNIT_SELFHOST_CONFIG: /etc/allternit/settings.yaml
+  ALLTERNIT_SELF_HOSTED: "1"
+  ALLTERNIT_DATABASE_URL: postgres://allternit:${ALLTERNIT_PG_PASSWORD:?set ALLTERNIT_PG_PASSWORD in .env}@postgres:5432/allternit
+  ALLTERNIT_ENCRYPTION_KEY: ${ALLTERNIT_ENCRYPTION_KEY:?set ALLTERNIT_ENCRYPTION_KEY in .env}
+  ALLTERNIT_SELF_HOSTED_SETUP_TOKEN: ${ALLTERNIT_SELF_HOSTED_SETUP_TOKEN:-}
+  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+  OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+  OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-allternit-agents-server}
+  OTEL_TRACES_SAMPLER: ${OTEL_TRACES_SAMPLER:-parentbased_always_on}
+
+x-settings-mount: &settings-mount
+  type: bind
+  source: ${ALLTERNIT_SETTINGS_FILE:-../settings.example.yaml}
+  target: /etc/allternit/settings.yaml
+  read_only: true
+
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: allternit
+      POSTGRES_DB: allternit
+      POSTGRES_PASSWORD: ${ALLTERNIT_PG_PASSWORD:?set ALLTERNIT_PG_PASSWORD in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U allternit -d allternit"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks: [backend]
+
+  # One-shot schema migration. Safe to run again: it only applies what is missing.
+  migrate:
+    <<: *server-image
+    command: ["admin", "migrate"]
+    restart: "no"
+    environment: *server-env
+    volumes:
+      - *settings-mount
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [backend]
+
+  server:
+    <<: *server-image
+    command: ["serve"]
+    restart: unless-stopped
+    environment: *server-env
+    volumes:
+      - *settings-mount
+      - server-data:/var/lib/allternit-agents-server
+    ports:
+      # Loopback only. Put a TLS reverse proxy in front to reach it from other hosts.
+      - "127.0.0.1:8400:8400"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8400/health/ready"]
+      interval: 10s
+      timeout: 3s
+      start_period: 20s
+      retries: 6
+    networks: [backend]
+
+  worker:
+    image: ${ALLTERNIT_WORKER_IMAGE:-ghcr.io/allternit/allternit-selfhost-worker}:${ALLTERNIT_VERSION:-latest}
+    build:
+      context: ../../..
+      dockerfile: deploy/selfhost/Dockerfile.worker
+    profiles: ["workers"]
+    restart: unless-stopped
+    environment:
+      ALLTERNIT_SERVER_URL: http://server:8400
+      ALLTERNIT_ENVIRONMENT_ID: ${ALLTERNIT_ENVIRONMENT_ID:-}
+      ALLTERNIT_ENVIRONMENT_KEY: ${ALLTERNIT_ENVIRONMENT_KEY:-}
+      ALLTERNIT_SELF_HOSTED: "1"
+    # bubblewrap sandboxes every bash call and needs unprivileged user
+    # namespaces and a fresh /proc mount. These options allow that without
+    # --privileged or added capabilities. See Dockerfile.worker for details.
+    security_opt:
+      - seccomp=unconfined
+      - apparmor=unconfined
+      - systempaths=unconfined
+    # SIGTERM makes the worker hand its item back (/release) and exit.
+    stop_signal: SIGTERM
+    stop_grace_period: 30s
+    # Each replica gets its own anonymous /workspace volume (declared in the image).
+    deploy:
+      replicas: ${ALLTERNIT_WORKER_REPLICAS:-10}
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 2g
+    depends_on:
+      server:
+        condition: service_healthy
+    networks: [backend]
+
+  # Local trace check only. Prints every span it receives to its own log.
+  otel-collector:
+    image: otel/opentelemetry-collector:0.114.0
+    profiles: ["otel"]
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      - type: bind
+        source: ./otel/collector.yaml
+        target: /etc/otelcol/config.yaml
+        read_only: true
+    networks: [backend]
+
+networks:
+  backend: {}
+
+volumes:
+  pgdata: {}
+  server-data: {}

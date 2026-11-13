@@ -1,0 +1,11 @@
+# CoreDNS for the air-gap test (compose.airgap.yml, service dns-logger).
+# Logs every query it receives and answers NXDOMAIN for all of them: nothing
+# on the air-gapped network may resolve a public name. Compose service names
+# are still answered by Docker's own resolver before a query reaches here.
+.:53 {
+    log
+    errors
+    template ANY ANY {
+        rcode NXDOMAIN
+    }
+}

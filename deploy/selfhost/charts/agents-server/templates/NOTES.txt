@@ -1,0 +1,24 @@
+Allternit Agents Server {{ .Chart.AppVersion }} is installed as {{ include "agents-server.fullname" . }}.
+
+In-cluster URL: http://{{ include "agents-server.fullname" . }}.{{ .Release.Namespace }}.svc:{{ .Values.service.port }}
+
+First run (once):
+  kubectl -n {{ .Release.Namespace }} exec deploy/{{ include "agents-server.fullname" . }} -- \
+    allternit-agents-server admin setup
+  The admin API key (ask_...) is printed once. Store it in your secret manager.
+
+Then make an environment and its worker key, and install the sandboxes chart:
+  see deploy/selfhost/charts/sandboxes/README.md
+
+Check it:
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "agents-server.fullname" . }} 8400:{{ .Values.service.port }}
+  curl -fsS http://127.0.0.1:8400/health/ready
+{{- if .Values.networkPolicy.enabled }}
+{{- if not .Values.networkPolicy.database.to }}
+
+WARNING: networkPolicy.database.to is empty, so the server cannot reach PostgreSQL.
+{{- end }}
+{{- if not .Values.networkPolicy.provider.to }}
+WARNING: networkPolicy.provider.to is empty, so the server cannot reach the model provider.
+{{- end }}
+{{- end }}

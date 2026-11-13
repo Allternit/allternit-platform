@@ -1,0 +1,45 @@
+# Context filter for deploy/selfhost/Dockerfile.server (BuildKit picks up
+# <Dockerfile>.dockerignore next to the Dockerfile in place of the root
+# .dockerignore). The selfhost images build the Rust server and the gizzi CLI
+# from the whole workspace, so only generated output, dependencies and media are left out.
+# Keep this file identical to Dockerfile.worker.dockerignore.
+
+.git
+**/.git
+**/node_modules
+.pnpm-store
+**/target
+**/.build
+**/.next
+**/.turbo
+**/.cache
+**/.venv
+**/venv
+**/__pycache__
+.references
+archive
+allternit-session-*
+tmp
+output
+.agents
+.beads
+.claude
+.codex-logs
+.gizzi
+.logs
+.pids
+.pipeline
+.steering
+.tmp-*
+**/*.log
+**/*.mp4
+**/*.mov
+**/*.zip
+**/*.tar.gz
+**/.DS_Store
+# gizzi-code's own build output; rebuilt inside the image.
+cmd/gizzi-code/dist
+# Local settings and secrets never go into an image.
+deploy/selfhost/compose/.env
+deploy/selfhost/compose/settings.yaml
+deploy/selfhost/settings.yaml

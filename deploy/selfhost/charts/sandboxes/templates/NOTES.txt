@@ -1,0 +1,20 @@
+Allternit sandbox workers {{ .Chart.AppVersion }} are installed as {{ include "sandboxes.fullname" . }}.
+{{- if not .Values.environments }}
+
+No environments are listed, so no workers run. Add one under `environments`
+(id, keySecret, network) and upgrade.
+{{- else }}
+
+Workers per environment:
+{{- range .Values.environments }}
+  {{ .name }} ({{ .id }}): network {{ default "none" .network }}
+{{- end }}
+
+Check they are online (from a machine with the admin API key):
+  curl -fsS -H "Authorization: Bearer $ALLTERNIT_API_KEY" \
+    {{ .Values.server.url }}/v1/environments/<id>/workers
+
+Check the sandbox works in a worker pod:
+  kubectl -n {{ .Release.Namespace }} exec deploy/<worker deployment> -- \
+    bwrap --unshare-all --die-with-parent --ro-bind / / --proc /proc --dev /dev true
+{{- end }}
