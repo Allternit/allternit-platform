@@ -1473,6 +1473,9 @@ async fn main() {
         // peer gateways carry the internal service token, not a Clerk JWT —
         // the inbox handler gates itself per-handler, same as internal_routes.
         .merge(allternit_api::content_artifact_relay::content_artifact_relay_inbox_router())
+        // Allternit Meetings in-call turns (/api/v1/meeting-turns/*): the pod's runner
+        // has no Clerk session; each handler checks the internal service token.
+        .merge(allternit_api::meeting_turn_stream::meeting_turns_router())
         // Desktop Cloud host self-registration from bootstrap cloud-init.
         .merge(allternit_api::desktop_host_admin::public_router())
         // Private Fabric node daemon enrollment and heartbeat.

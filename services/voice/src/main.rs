@@ -5,6 +5,9 @@
 //! - `allternit-voice-service worker`: the phone call worker (LiveKit agent
 //!   `allternit-voice`); needs a build with `--features call-worker`. See
 //!   `services/voice/spec/CALL_WORKER.md`.
+//! - `allternit-voice-service meeting-worker`: the meeting transcription
+//!   worker (LiveKit agent `allternit-meeting`), same feature. See
+//!   `services/voice/spec/MEETING_WORKER.md`.
 
 use std::net::SocketAddr;
 use tracing::info;
@@ -20,7 +23,8 @@ async fn main() -> anyhow::Result<()> {
     match std::env::args().nth(1).as_deref() {
         None | Some("serve") => {}
         Some("worker") => return voice_service::call_worker::run_worker().await,
-        Some(other) => anyhow::bail!("unknown subcommand `{other}` (expected `serve` or `worker`)"),
+        Some("meeting-worker") => return voice_service::meeting_worker::run_worker().await,
+        Some(other) => anyhow::bail!("unknown subcommand `{other}` (expected `serve`, `worker` or `meeting-worker`)"),
     }
 
     let port: u16 = std::env::var("PORT")

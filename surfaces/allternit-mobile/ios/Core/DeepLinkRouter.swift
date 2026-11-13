@@ -56,6 +56,9 @@ enum DeepLink: Equatable, Sendable {
     /// (`allternit://phone-run/<runId>`, the iMessage card's
     /// `https://ai.allternit.com/?allternit_phone_run=<runId>`).
     case phoneRun(String)
+    /// Meetings (`/meetings`), or one meeting's live page / recap
+    /// (`/meetings/<id>`: the MCP `page_url`, notification taps, the Live Activity).
+    case meetings(String?)
 
     static let webHosts: Set<String> = ["ai.allternit.com", "m.allternit.com"]
 
@@ -156,6 +159,10 @@ enum DeepLink: Equatable, Sendable {
             return .routine(segments[1])
         case "handoff":
             return .handoff
+        case "meetings":
+            let id = segments.count >= 2 ? segments[1].removingPercentEncoding : nil
+            // `allternit://meetings/calendar-connected` is the calendar consent return.
+            return .meetings(id == "calendar-connected" || id == "zoom-connected" ? nil : id)
         default:
             return nil
         }

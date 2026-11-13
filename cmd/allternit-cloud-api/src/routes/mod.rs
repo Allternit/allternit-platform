@@ -43,6 +43,14 @@ pub mod jobs;
 pub mod live_activity;
 pub mod livekit_admin;
 pub mod me_flags;
+/// Allternit Meetings (docs/meetings/CONTRACT.md): user routes, settings,
+/// pod-token routes, link parsing, the session state machine, SSE fan-out.
+pub mod meetings;
+pub mod meeting_events;
+pub mod meeting_links;
+pub mod meeting_pod;
+pub mod meeting_state;
+pub mod org_meeting_settings;
 pub mod web_search;
 pub mod me_usage;
 pub mod setup_checks;

@@ -1,0 +1,178 @@
+---
+title: Meetings
+description: "Beta. Send Gizzi to a Google Meet, Zoom or Microsoft Teams call to take notes, answer questions and make documents, then get a recap."
+---
+
+<Note>
+Meetings is in **beta**. It is for paid plans only. Details can change.
+</Note>
+
+Gizzi can join a video call for you. It listens, writes a transcript, answers when someone asks it a question, makes documents or slides on request, and sends you a recap when the call ends. It works with Google Meet, Zoom and Microsoft Teams.
+
+## What Gizzi does in a call
+
+- **Joins as a guest.** Its name in the call is **Gizzi (Allternit)**. Teams does not allow brackets in guest names, so in Teams calls the name is **Gizzi - Allternit**.
+- **Tells people it takes notes.** When it joins, it posts a notice in the meeting chat that it is taking notes.
+- **Listens and writes a transcript.** You can read the transcript live.
+- **Answers when asked.** Say "Gizzi, …" and Gizzi answers in the meeting chat.
+- **Makes things.** Ask for a doc, slides or a canvas. It shows in the Artifacts tab of the live page.
+- **Asks you before it uses a tool.** See [Approvals](#approvals).
+- **Writes a recap.** The recap has a summary, the decisions and the action items.
+
+By default Gizzi replies in the meeting chat only. It speaks aloud only if you turn on **Speak replies** for that meeting.
+
+## Connect your calendar
+
+Connect a calendar so Gizzi can find your meetings. You can do this in first-run setup, in **Connectors**, and in the Meetings settings. It is the same step in each place.
+
+- **Google Calendar.** Choose **Connect Google Calendar** and sign in. Allternit asks to read your calendar events. It does not change them.
+- **Any other calendar.** Choose **Paste a calendar link**. For Outlook, use the "Publish calendar" ICS link. For iCloud, use a public calendar link. Any `https` link to an `.ics` calendar works. Allternit checks the link once when you add it.
+
+To disconnect, remove the connection in the Meetings settings. Allternit revokes the access with Google when it can, and deletes the connection.
+
+### Pick the auto-join rule
+
+After you connect, Allternit asks which meetings Gizzi should join by itself:
+
+| Rule | What Gizzi does |
+| --- | --- |
+| All except 1:1s | Joins every meeting with a call link, except meetings with exactly two people. This is the default. |
+| All | Joins every meeting with a call link. |
+| Off | Joins only the meetings you send it to. |
+
+A meeting is a 1:1 when its invite lists two attendees, you and one other person. A meeting with no attendee list is not a 1:1.
+
+You can change the rule in the Meetings settings at any time.
+
+### Switch Gizzi on or off for one meeting
+
+Each meeting in the list has a **Gizzi** switch. The switch overrides the rule for that one meeting. Turn it on to send Gizzi to a meeting the rule skips. Turn it off to keep Gizzi out of a meeting the rule would join.
+
+Gizzi joins about two minutes before the meeting starts.
+
+## Send Gizzi to a call
+
+There are three ways, besides auto-join.
+
+- **Paste a call link in any chat.** A pasted Google Meet, Zoom or Teams link shows a **Meetings** card with the time and platform. Choose to join now or when the meeting starts.
+- **Home > Meetings.** Add a call link there, or switch Gizzi on for a meeting in your list.
+- **Ask Gizzi in chat.** The `meetings` connector gives your bots the tools to list, add, join and leave meetings. See the [Meetings API](/api/meetings).
+
+Only one Gizzi joins a call. If a second person sends Gizzi to the same call, they connect to the Gizzi that is already there.
+
+## What people in the call see
+
+- A participant named **Gizzi (Allternit)**.
+- A chat message that says Gizzi is taking notes. People who join later also get the notice.
+- Gizzi's replies in the meeting chat. If you turned on **Speak replies**, Gizzi also speaks.
+
+Gizzi does not know who a speaker is for sure. Names in the call are not checked. Because of this, Gizzi asks you, the signed-in owner, to approve a tool before it runs.
+
+## Ask Gizzi a question
+
+Say or type "Gizzi, …" in the call. For example, "Gizzi, what did we decide about the launch date?" Gizzi answers in the meeting chat.
+
+You can also ask about a past call from any chat, for example "what did we decide in the 2pm?"
+
+## The live page
+
+Open a live meeting from **Home > Meetings** to see the live page. It has a stage on the left and a side panel with three tabs.
+
+- **Transcript.** What people say, with the speaker's name.
+- **Artifacts.** Documents, slides and canvases Gizzi made in this call. Choose one to open it in its editor.
+- **Approvals.** Tool requests that wait for you.
+
+The controls are:
+
+- **Stop listening.** Gizzi stops writing the transcript and stops answering. Choose **Resume** to start again. Gizzi stays in the call.
+- **Speak replies.** Turn voice replies on or off for this call.
+- **Leave.** Gizzi leaves the call.
+
+### Approvals
+
+When Gizzi needs a tool, such as a connector, it asks first. A request appears in the **Approvals** tab. You choose **Approve** or **Deny**. Only the person who sent Gizzi to the meeting can approve.
+
+An approval covers that tool for the rest of that meeting. A request you do not answer in 10 minutes expires.
+
+## States
+
+| State | What it means | What to do |
+| --- | --- | --- |
+| Joining | Gizzi is starting up and opening the call. | Nothing. |
+| Waiting to be let in | Gizzi is in the lobby. | Ask the host to let in **Gizzi (Allternit)**. |
+| Live | Gizzi is in the call and listening. | Nothing. Use the live page if you want to see the transcript. |
+| Not listening | You chose **Stop listening**. Gizzi is still in the call. | Choose **Resume** to start again. |
+| Not let in | The host did not let Gizzi in, or the call refused it. | Ask the host to admit Gizzi, then send Gizzi again. Some calls block outside participants. See [Limits](#limits). |
+| Recap ready | The call ended and the recap is done. | Open the recap. |
+
+If a call ends for another reason, for example Gizzi could not join or there was no free capacity, the meeting shows that it ended, with the reason. Send Gizzi again if the call is still going.
+
+Gizzi also leaves a call by itself when:
+
+- you choose **Leave**, or the host removes it or ends the meeting;
+- it is not let in within 10 minutes;
+- it is alone in the call for 5 minutes;
+- the call reaches 8 hours;
+- another company's note-taker joins the call.
+
+## The recap
+
+When the call ends, Gizzi writes a recap with a summary, the decisions and the action items. The recap shows in the meeting, in your chat thread and in your project. It is also sent by email unless you turn that off in the Meetings settings. Guests in the call do not get the email.
+
+Artifacts that Gizzi made stay linked to the meeting.
+
+## Limits
+
+- **The host must let Gizzi in.** Gizzi joins as a guest. If the call has a lobby, the host lets it in.
+- **Some organizations block outside participants.** If the call refuses Gizzi, the state is **Not let in**. Ask the host or the IT team to allow it.
+- **Zoom needs your Zoom account.** To send Gizzi to Zoom calls, connect your Zoom account once. Gizzi joins with it.
+- **One Gizzi per meeting.**
+- **Google Meet and the Gizzi account.** Gizzi joins Google Meet with its own signed-in Google account. A Meet call that does not allow outside accounts refuses it.
+- **Beta.** Gizzi can mishear. Check the transcript and recap before you act on them.
+
+## Plans and bot minutes
+
+Meetings is for paid plans. On the free plan, Meetings shows an upgrade message. Time that Gizzi spends in a call uses bot minutes. See your plan for what is included. You can see your use in the Meetings settings.
+
+## Privacy
+
+- Allternit does not store the audio of a call. Gizzi turns speech into text and keeps the text.
+- Your organization sets how long transcripts are kept.
+- Calendar access is read-only. Allternit stores your calendar tokens encrypted.
+- Gizzi tells people in the call that it takes notes.
+
+## Settings for organization admins
+
+An organization admin can set these for everyone in the organization:
+
+| Setting | What it does |
+| --- | --- |
+| Meetings on or off | Turns Meetings on or off for the organization. |
+| Roles | Which organization roles can use Meetings. |
+| Allow outside guests | Allows Gizzi in meetings that have people from outside the organization. If this is off, Gizzi does not join those meetings. |
+| Guests quiet | Gizzi does not answer questions from guests. |
+| Members can use connectors | Allows members to approve connector tools in meetings. Off by default. |
+| Transcript retention | How many days transcripts are kept. |
+
+## On iPhone
+
+On iPhone, open the side drawer and tap **Meetings**. It has the list, the live page, the controls and recaps. Settings for meetings are in **Settings > Meetings**. While Gizzi is in a call, a Live Activity on the Lock Screen shows its state and how long the call has run. You can connect a calendar from **Connectors**. A meeting link from the web (`/meetings/...`) opens the same meeting in the app. Android uses the same pages as the m.allternit.com app.
+
+## In Gizzi Code
+
+Use `gizzi meetings` in the terminal. The commands are `list`, `add`, `status`, `transcript` and `leave`. They show the same states as the app.
+
+```bash
+gizzi meetings list
+gizzi meetings add <call-link>
+```
+
+Run `gizzi meetings --help` for the options.
+
+## Related
+
+- [Meetings API](/api/meetings) (for developers)
+- [Connections](/guides/connections)
+- [Voice](/guides/voice)
+- [Live sessions](/guides/live-sessions)
+- [Meet your bots](/guides/meet-your-bots)

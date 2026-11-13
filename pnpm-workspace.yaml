@@ -62,6 +62,9 @@ packages:
   # OpenNext/Cloudflare build. Managed via plain npm, not pnpm.
   - '!services/mailflare'
   - '!services/mailflare/**'
+  # Meetings bot spike (step 0.3) — own npm package-lock, not a workspace package.
+  - '!services/meeting-bot/spike'
+  - '!services/meeting-bot/spike/**'
   # Embeddable live-computer widget (Phase 5) — dependency-light static
   # package served as-is; own npm lockfile (typescript/vitest/ws devDeps).
   # See surfaces/computer-embed/README.md.

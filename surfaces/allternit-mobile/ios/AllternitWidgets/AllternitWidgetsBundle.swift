@@ -19,6 +19,7 @@ struct AllternitWidgetsBundle: WidgetBundle {
     var body: some Widget {
         LoopLiveActivityWidget()
         BotLiveActivityWidget()
+        MeetingLiveActivityWidget()
         StatusWidget()
         if #available(iOS 18.0, *) {
             AllternitControlsBundle().body
@@ -31,6 +32,7 @@ struct AllternitWidgetsBundlePush: WidgetBundle {
     var body: some Widget {
         LoopLiveActivityWidget()
         BotLiveActivityWidget()
+        MeetingLiveActivityWidget()
         StatusWidgetWithPush()
         AllternitControlsBundle().body
     }

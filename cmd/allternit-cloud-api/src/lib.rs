@@ -467,6 +467,12 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         // Clerk session or `account` API token per-request, 503 without
         // CLERK_SECRET_KEY. Desktop's way to share what web writes directly.
         .merge(routes::me_flags::routes())
+        // Allternit Meetings: user routes (Clerk session, `compute` API
+        // token or device token, checked per request), settings and usage,
+        // and the pod-token routes. Unique prefixes /api/v1/meetings,
+        // /api/v1/meeting-sessions, /api/v1/me/meeting-*,
+        // /api/v1/orgs/:org/meeting-settings.
+        .merge(routes::meetings::routes())
         .merge(routes::web_search::routes())
         // Setup checklist: live checks for account, brain, computers, channels.
         .merge(routes::setup_checks::routes())

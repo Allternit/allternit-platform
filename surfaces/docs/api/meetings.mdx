@@ -1,0 +1,123 @@
+---
+title: Meetings API
+description: "Beta. The REST routes, live events and MCP connector tools behind Allternit Meetings."
+---
+
+<Note>
+Meetings is in **beta**. The user guide is [Meetings](/guides/meetings). This page covers the routes your signed-in user can call. It does not cover the routes that the meeting pod uses.
+</Note>
+
+All routes are under `/api/v1` and use the Clerk JWT of the signed-in user. Ids are UUIDs. Timestamps are ISO-8601 UTC. Offsets are whole milliseconds.
+
+## Plans and errors
+
+On the free plan, every Meetings route returns `402 meetings_requires_paid_plan`, except `GET /me/meeting-settings` and the calendar OAuth routes.
+
+Errors have this shape:
+
+```json
+{ "error": "invalid_request", "message": "text" }
+```
+
+| Status | `error` |
+| --- | --- |
+| 400 | `invalid_request`, `unsupported_link` |
+| 401 | no or invalid token |
+| 402 | `meetings_requires_paid_plan` |
+| 403 | `meetings_disabled_by_org`, `forbidden` |
+| 404 | `meeting_not_found`, `session_not_found` |
+| 409 | `conflict` (for example a session is already active), `session_not_active` |
+| 412 | `calendar_not_connected` |
+| 429 | `no_capacity` |
+
+When you start a session, checks run in this order: plan, organization setting and role, outside guests allowed, capacity, then a check for an active session on the same call.
+
+## Meetings
+
+| Route | Body | Response |
+| --- | --- | --- |
+| `GET /meetings?range=&cursor=&limit=` | | `200 { meetings, next_cursor }`. `range` is `now`, `today`, `week`, `upcoming` or `past`. Live meetings come first, then by `starts_at`. |
+| `POST /meetings` | `{ url, title?, starts_at?, reply_mode? }` | `201` with the meeting. If the same call and start time exist, `200` with that meeting. |
+| `PATCH /meetings/:id` | `{ title?, auto_join?, reply_mode? }` | `200` with the meeting. `auto_join` set to `null` follows your rule. |
+| `DELETE /meetings/:id` | | `204`. Returns `409` while a session is active. |
+
+`reply_mode` is `chat` or `voice`. `url` must be a Google Meet, Zoom or Teams link, otherwise `400 unsupported_link`.
+
+The `gizzi` field of a meeting is one of `scheduled`, `off`, `launching`, `joining`, `waiting_admit`, `live`, `paused`, `ended`, `not_admitted`.
+
+## Sessions
+
+A session is one visit of Gizzi to one call.
+
+| Route | Body | Response |
+| --- | --- | --- |
+| `POST /meetings/:id/sessions` | `{ when, speak_replies? }` | `201` with the session. `when` is `now` or `start`. If a session for the same call is already active, `200` with that session. `429 no_capacity` creates nothing. |
+| `GET /meeting-sessions/:sid` | | `200 { session, meeting, participants, pending_approvals }` |
+| `GET /meeting-sessions/:sid/transcript?after_seq=&limit=` | | `200 { segments, next_after_seq }`. `limit` is 500 by default, 2000 at most. |
+| `GET /meeting-sessions/:sid/artifacts` | | `200 { artifacts }` |
+| `POST /meeting-sessions/:sid/control` | `{ action, text? }` | `200` with the session. `action` is `stop_listening`, `resume`, `leave` or `speak`. `speak` needs `text` and works only when `speak_replies` is on, otherwise `409`. |
+| `PATCH /meeting-sessions/:sid` | `{ speak_replies? }` | `200` with the session. |
+| `POST /meeting-sessions/:sid/approvals/:aid` | `{ decision }` | `200` with the approval. `decision` is `approve` or `deny`. Only the session owner can call it. |
+
+Session `state` is one of `scheduled`, `launching`, `joining`, `waiting_admit`, `live`, `paused`, `ended`. A session moves forward through these states. `live` and `paused` switch back and forth. Open calls can go from `joining` straight to `live`, and any state can go to `ended`.
+
+When a session ends, `end_reason` is one of `left_by_user`, `removed`, `not_admitted`, `empty_room`, `max_duration`, `other_notetaker`, `join_failed`, `guest_blocked`, `no_capacity`, `error`.
+
+## Live events
+
+`GET /meeting-sessions/:sid/events` is a Server-Sent Events stream. Each frame has `id`, `event` and `data` (JSON). A `: ping` comment arrives every 20 seconds. The first event is `meeting.session.state` with the current state. Send `Last-Event-ID` to replay up to the last 500 events.
+
+| Event | Data |
+| --- | --- |
+| `meeting.session.state` | `{ session_id, state, gizzi, end_reason, at }` |
+| `meeting.participant.changed` | `{ session_id, participant, change }`. `change` is `joined`, `left` or `updated`. |
+| `meeting.transcript.delta` | `{ session_id, segments }` |
+| `meeting.chat.message` | `{ session_id, message }` |
+| `meeting.reply` | `{ session_id, channel, text, at }`. `channel` is `chat` or `voice`. |
+| `meeting.approval.requested` | `{ session_id, approval }` |
+| `meeting.approval.resolved` | `{ session_id, approval }` |
+| `meeting.artifact.created` | `{ session_id, artifact }` |
+| `meeting.artifact.updated` | `{ session_id, artifact }` |
+| `meeting.ended` | `{ session_id, end_reason, ended_at }` |
+| `meeting.summary` | `{ session_id, summary, decisions, action_items }` |
+
+A transcript segment has `seq`, `speaker`, `confidence` (0 to 1), `source` (`audio` or `captions`), `start_ms`, `end_ms` and `text`. An action item is `{ text, owner, due }`.
+
+## Settings and usage
+
+| Route | Notes |
+| --- | --- |
+| `GET /me/meeting-settings` | Allowed on the free plan. Returns `auto_join` (`off`, `all`, `all_except_1on1`), `recap_email` and `default_reply_mode`. |
+| `PUT /me/meeting-settings` | Partial body allowed. |
+| `GET /orgs/:org/meeting-settings` | Members of the organization. Returns `enabled`, `roles`, `allow_external_guests`, `guest_quiet`, `allow_member_connectors` and `retention_days`. |
+| `PUT /orgs/:org/meeting-settings` | Organization admins only. Partial body allowed. |
+| `GET /me/meeting-usage` | Your bot minutes use. |
+
+## Calendar
+
+| Route | Notes |
+| --- | --- |
+| `GET /calendar/connections` | `200 { connections }`. Tokens are never returned. |
+| `POST /calendar/connections` | Body `{ provider: "ics", feed_url, label? }`. Allternit fetches the link once and it must parse as a calendar. Returns the connection. |
+| `DELETE /calendar/connections/:id` | `204`. Revokes the access with the provider when it can, then deletes the connection. |
+| `GET /calendar/oauth/google/start?return_to=` | `200 { url }`, the Google consent URL for the client to open. |
+| `GET /calendar/oauth/google/callback?code=&state=` | No sign-in header. Redirects to `return_to` with `?calendar=connected` or `?calendar=error`. On a first connection it adds `&pick_rule=1`. |
+
+The Google scope is `calendar.events.readonly` plus `openid email`. Calendar links that are not Google use the `ics` provider.
+
+## The `meetings` connector
+
+The `meetings` connector is served through the connectors MCP proxy for the calling user. On the free plan every tool returns the error `meetings_requires_paid_plan`.
+
+| Tool | Input | Output |
+| --- | --- | --- |
+| `list_meetings` | `range`: `now`, `today` (default), `week` or `past` | `{ meetings: [{ id, title, platform_label, people_label, gizzi, starts_at, page_url }] }` |
+| `get_meeting` | `url` or `meeting_id` (one is required). A `url` creates nothing. | `{ id, title, platform_label, people_label, gizzi, starts_at, join_url, notice }` |
+| `add_meeting` | `url` (required), `title`, `starts_at` | Same as `get_meeting` |
+| `join_meeting` | `meeting_id`, `when` (`now` or `start`), both required | `{ id, gizzi, session_id, page_url }` |
+| `set_auto_join` | `meeting_id`, `on`, both required | `{ id, gizzi, auto_join }` |
+| `get_recap` | `meeting_id` | `{ id, title, platform_label, gizzi, starts_at, decisions, action_items, artifacts, page_url, summary }`. `decisions`, `action_items` and `artifacts` are counts. |
+| `get_transcript` | `meeting_id`, `after_seq`, `limit` (1 to 2000, default 500) | `{ id, segments: [{ seq, speaker, start_ms, text }], next_after_seq }` |
+| `leave_meeting` | `meeting_id` | `{ id, gizzi }` |
+
+`page_url` is `https://ai.allternit.com/meetings/<meeting_id>`. `notice` is the text Gizzi posts in the call to say it takes notes.

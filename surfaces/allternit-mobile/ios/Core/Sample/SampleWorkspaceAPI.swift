@@ -47,6 +47,11 @@ enum SampleWorkspaceAPI {
             uniquingKeysWith: { first, _ in first }
         )
 
+        // Meetings (lane 2.11): agenda, live session, recap, settings, calendars.
+        if namespace == .v1, let meetings = SampleMeetings.answer(method: method, parts: parts, query: query, body: body) {
+            return meetings
+        }
+
         if method != "GET" {
             return write(method: method, namespace: namespace, parts: parts, body: body)
         }
