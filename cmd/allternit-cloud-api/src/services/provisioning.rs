@@ -4590,7 +4590,7 @@ pub(crate) mod pg_tests {
     const MIGRATION_017: &str = include_str!("../../migrations_pg/017_paired_computers.sql");
     const MIGRATION_066: &str = include_str!("../../migrations_pg/066_paired_computer_orgs.sql");
     const MIGRATION_081: &str = include_str!("../../migrations_pg/081_paired_cloud_computers.sql");
-    const MIGRATION_128: &str = include_str!("../../migrations_pg/129_credit_computers.sql");
+    const MIGRATION_128: &str = include_str!("../../migrations_pg/130_credit_computers.sql");
 
     async fn test_pool() -> PgPool {
         let url = "postgres://allternit:allternit_pg_2026@localhost:5432/allternit_test";

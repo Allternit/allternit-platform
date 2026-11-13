@@ -545,8 +545,8 @@ pub(crate) mod tests {
             include_str!("../../migrations_pg/014_provisioned_fleet.sql"),
             include_str!("../../migrations_pg/018_cloud_computer_provisioning.sql"),
             include_str!("../../migrations_pg/019_free_sleeping_computer.sql"),
-            include_str!("../../migrations_pg/129_credit_computers.sql"),
-            include_str!("../../migrations_pg/130_compute_gate.sql"),
+            include_str!("../../migrations_pg/130_credit_computers.sql"),
+            include_str!("../../migrations_pg/131_compute_gate.sql"),
         ] {
             sqlx::raw_sql(&sql.replace("public.", "")).execute(db).await.expect("migration applies");
         }
