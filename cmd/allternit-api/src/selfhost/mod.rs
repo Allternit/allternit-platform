@@ -10,16 +10,20 @@
 //! `docs/SELFHOST_WORKER_PROTOCOL.md` (workers). Every route mounted here is
 //! checked against the OpenAPI paths by `tests/selfhost_routes.rs`.
 
+pub mod admin;
 pub mod auth;
 pub mod egress_guard;
+pub mod metrics_listener;
 pub mod routes_agents;
 pub mod routes_environments;
 pub mod routes_info;
 pub mod routes_keys;
 pub mod routes_sessions;
+pub mod secrets;
 pub mod settings;
 pub mod state;
 pub mod store;
+pub mod telemetry;
 
 use std::borrow::Cow;
 use std::time::Duration;

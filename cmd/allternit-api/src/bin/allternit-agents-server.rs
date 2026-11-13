@@ -7,7 +7,7 @@
 //!
 //! ```text
 //! allternit-agents-server [serve] [--config <path>]
-//! allternit-agents-server admin <command>     (coming in a later build)
+//! allternit-agents-server admin <command>     (see `admin help`)
 //! allternit-agents-server --version | --help
 //! ```
 
@@ -59,7 +59,9 @@ fn init_logging(format: LogFormat) {
     use tracing_subscriber::prelude::*;
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
-    let otel = allternit_api::otel::layer_from_env();
+    let otel = allternit_api::otel::layer_from_env_with_default(
+        allternit_api::selfhost::telemetry::DEFAULT_SERVICE_NAME,
+    );
     let registry = tracing_subscriber::registry().with(filter).with(otel);
     match format {
         LogFormat::Json => registry
@@ -88,11 +90,7 @@ async fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         Ok(Command::Admin(rest)) => {
-            eprintln!(
-                "`admin {}` is not available in this build yet. Use the setup token at POST /v1/api_keys for the first admin key.",
-                rest.join(" ")
-            );
-            ExitCode::from(2)
+            ExitCode::from(allternit_api::selfhost::admin::run(rest).await)
         }
         Ok(Command::Serve(rest)) => match serve(rest).await {
             Ok(()) => ExitCode::SUCCESS,
@@ -110,7 +108,7 @@ async fn main() -> ExitCode {
 }
 
 async fn open_store(settings: &Settings) -> Result<DynStore, String> {
-    if let Some(url) = settings.database_url().map_err(|e| e.to_string())? {
+    if let Some(url) = settings.database_url_resolved().await.map_err(|e| e.to_string())? {
         let pg = PgStore::connect(&url, settings.database.max_connections)
             .await
             .map_err(|e| format!("cannot connect to PostgreSQL: {e}"))?;
@@ -153,6 +151,7 @@ async fn serve(args: Vec<String>) -> Result<(), String> {
     if state.setup_token.is_some() {
         info!("setup token set: POST /v1/api_keys can mint the first admin key while none exists");
     }
+    allternit_api::selfhost::metrics_listener::spawn(state.clone()).await?;
     let app = router(state);
 
     let listener = tokio::net::TcpListener::bind(&listen)

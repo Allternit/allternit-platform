@@ -263,6 +263,22 @@ impl PgStore {
         Ok(())
     }
 
+    /// `(applied, latest)` migration versions. `applied` is 0 before the
+    /// first migrate. For `admin doctor` and `admin migrate`.
+    pub async fn migration_level(&self) -> StoreResult<(i64, i64)> {
+        let latest = sqlx::migrate!("./migrations_selfhost_pg")
+            .iter()
+            .map(|m| m.version)
+            .max()
+            .unwrap_or(0);
+        let applied: Option<i64> =
+            sqlx::query_scalar("SELECT MAX(version) FROM _sqlx_migrations WHERE success")
+                .fetch_one(&self.pool)
+                .await
+                .unwrap_or(None);
+        Ok((applied.unwrap_or(0), latest))
+    }
+
     pub fn pool(&self) -> &PgPool {
         &self.pool
     }
@@ -1417,6 +1433,46 @@ impl SelfHostStore for PgStore {
             return Err(StoreError::NotFound);
         }
         Ok(())
+    }
+
+    // ── Observability ──
+
+    async fn set_traceparent(
+        &self,
+        target: TraceTarget,
+        id: &str,
+        traceparent: &str,
+    ) -> StoreResult<()> {
+        check_traceparent(traceparent)?;
+        let res = sqlx::query(&format!(
+            "UPDATE {} SET traceparent = $2 WHERE id = $1",
+            target.table()
+        ))
+        .bind(id)
+        .bind(traceparent)
+        .execute(&self.pool)
+        .await?;
+        if res.rows_affected() == 0 {
+            return Err(StoreError::NotFound);
+        }
+        Ok(())
+    }
+
+    async fn get_traceparent(&self, target: TraceTarget, id: &str) -> StoreResult<Option<String>> {
+        let row = sqlx::query(&format!("SELECT traceparent FROM {} WHERE id = $1", target.table()))
+            .bind(id)
+            .fetch_one(&self.pool)
+            .await?;
+        Ok(row.try_get("traceparent")?)
+    }
+
+    async fn count_sessions_by_status(&self) -> StoreResult<Vec<(String, i64)>> {
+        let rows = sqlx::query("SELECT status, COUNT(*) AS n FROM sessions GROUP BY status ORDER BY status")
+            .fetch_all(&self.pool)
+            .await?;
+        rows.iter()
+            .map(|r| -> StoreResult<(String, i64)> { Ok((r.try_get("status")?, r.try_get("n")?)) })
+            .collect()
     }
 }
 

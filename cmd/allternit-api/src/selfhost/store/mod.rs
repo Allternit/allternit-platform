@@ -724,6 +724,76 @@ pub trait SelfHostStore: Send + Sync {
     async fn get_credential(&self, name: &str) -> StoreResult<CredentialRecord>;
     async fn list_credentials(&self) -> StoreResult<Vec<CredentialRecord>>;
     async fn delete_credential(&self, name: &str) -> StoreResult<()>;
+
+    // Observability (step 13). Defaults keep other implementations building;
+    // both real stores override them.
+    /// Store the W3C `traceparent` of the span that owns this row, so a
+    /// later span (another request, another worker) can join the same
+    /// trace. NotFound when the row is missing; Invalid for a malformed
+    /// value.
+    async fn set_traceparent(
+        &self,
+        target: TraceTarget,
+        id: &str,
+        traceparent: &str,
+    ) -> StoreResult<()> {
+        let _ = (target, id, traceparent);
+        Ok(())
+    }
+    /// The stored `traceparent`, if any. NotFound when the row is missing.
+    async fn get_traceparent(&self, target: TraceTarget, id: &str) -> StoreResult<Option<String>> {
+        let _ = (target, id);
+        Ok(None)
+    }
+    /// `(status, count)` for every session status in use, archived included.
+    /// For the metrics listener.
+    async fn count_sessions_by_status(&self) -> StoreResult<Vec<(String, i64)>> {
+        let mut counts = std::collections::BTreeMap::<String, i64>::new();
+        let filter = SessionFilter {
+            include_archived: true,
+            ..Default::default()
+        };
+        let mut after: Option<String> = None;
+        loop {
+            let page = self.list_sessions(&filter, 500, after.as_deref()).await?;
+            for s in &page {
+                *counts.entry(s.status.clone()).or_default() += 1;
+            }
+            match page.last() {
+                Some(last) if page.len() == 500 => after = Some(last.id.clone()),
+                _ => break,
+            }
+        }
+        Ok(counts.into_iter().collect())
+    }
+}
+
+/// A row that carries a `traceparent` column.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TraceTarget {
+    Session,
+    Work,
+    ToolCall,
+}
+
+impl TraceTarget {
+    /// The table, a constant (safe to format into SQL).
+    pub fn table(self) -> &'static str {
+        match self {
+            TraceTarget::Session => "sessions",
+            TraceTarget::Work => "work_items",
+            TraceTarget::ToolCall => "tool_calls",
+        }
+    }
+}
+
+/// A `traceparent` must parse as W3C version 00 before it is stored.
+pub(crate) fn check_traceparent(tp: &str) -> StoreResult<()> {
+    if crate::netops::hops::parse(tp).is_some() {
+        Ok(())
+    } else {
+        Err(StoreError::Invalid(format!("not a W3C traceparent: {tp}")))
+    }
 }
 
 /// Lease end for a claim or renew at `now`.
