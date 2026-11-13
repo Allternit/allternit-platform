@@ -98,3 +98,7 @@ Helm charts live at `deploy/selfhost/charts/`:
 - `sandboxes`: the workers.
 
 Use your own PostgreSQL (managed or operator-run) and give the server its URL through a secret reference.
+
+The agents-server chart writes the settings file from `settings` in its values. With the default provider, `anthropic`, it adds `credentials.api_key: env:ANTHROPIC_API_KEY` and a model map entry when you set none. With any other provider (see [Models](/self-hosted/models)), set `settings.inference` in full: the provider, its credentials or `gateway`, and `model_map`. Nothing from the Anthropic defaults is added. If the provider or gateway listens on a port other than 443, also set `networkPolicy.provider.ports`.
+
+The sandboxes chart's README has the pod settings bubblewrap needs, and the extra node changes for a test cluster on kind.

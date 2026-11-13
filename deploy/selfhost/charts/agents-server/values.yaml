@@ -36,10 +36,14 @@ settings:
     max_connections: 20
   inference:
     provider: anthropic
-    credentials:
-      api_key: env:ANTHROPIC_API_KEY
-    model_map:
-      claude-sonnet-4-5: claude-sonnet-4-5
+    # With provider anthropic and no credentials or model_map set here, the
+    # chart fills in credentials.api_key: env:ANTHROPIC_API_KEY and
+    # model_map: {claude-sonnet-4-5: claude-sonnet-4-5}. They are not written
+    # out in this file on purpose: Helm merges maps, so defaults here would
+    # end up in the settings of a gateway, bedrock, vertex or foundry setup,
+    # and the server refuses to start when env:ANTHROPIC_API_KEY is unset.
+    # For another provider, set provider, its credentials (or gateway) and
+    # model_map. See surfaces/docs/self-hosted/models.mdx.
   mcp:
     allowed_hostnames: []
   git:
