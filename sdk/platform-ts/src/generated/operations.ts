@@ -1454,6 +1454,24 @@ export class DecisionsResource {
   }
 
   /**
+   * List decisions
+   *
+   * The project's stored decisions, newest first, in the usual cursor envelope (`limit` 1 to 100, default 20; pass `next_cursor` as `after`). A key bound to an account sees only that account's decisions; `account_id` narrows a project-wide key (`403 account_mismatch` for a bound key naming another account). Each item is the same `Decision` that `GET /v1/decisions/{id}` returns. Requires the `decisions` scope.
+   *
+   * `GET /v1/decisions`
+   */
+  list(query?: T.ListDecisionsQuery, options?: RequestOptions): Promise<T.ListDecisionsResponse> {
+    return this._client.request<T.ListDecisionsResponse>({ method: "GET", path: `/v1/decisions`, query: query, options });
+  }
+
+  /**
+   * Every item of `list`, fetching pages as you iterate.
+   */
+  listAll(query?: T.ListDecisionsQuery, options?: RequestOptions): AsyncIterable<T.Decision> {
+    return this._client.paginate<T.Decision>((after) => this.list({ ...(query ?? {}), after } as T.ListDecisionsQuery, options) as unknown as Promise<Page<T.Decision>>);
+  }
+
+  /**
    * Ask one or more questions about some input
    *
    * Answers up to 16 typed questions about one input (text or JSON), with a probability
@@ -1526,12 +1544,13 @@ export class ResponsesResource {
    * (hosted tools, arguments and results cut at 8,000 characters),
    * `response.output_item.done`, then `response.completed`, `response.incomplete` or `response.failed`, and `error`
    * for failures before the stream starts. Clients should skip event names they don't know.
-   * Approvals never pause a turn: when an agent's action needs the owner's approval, that
-   * tool call fails with a "try again once they approve" result and the turn still ends
-   * `completed`. `required_actions` is reserved and always empty in this release. Approvals
-   * are their own resource: subscribe to the `approval.requested` / `approval.resolved`
-   * webhooks (or read `GET /v1/approvals`), and after resolution send a new response in the
-   * same conversation. Errors before the stream starts are
+   * When an agent's action needs the owner's approval, that tool call fails with a "try
+   * again once they approve" result and the turn ends; this answer (and its stream) still
+   * ends `completed`, because the approval is raised after the turn finishes. While it is
+   * pending, `GET /v1/responses/{id}` reads `status: requires_action` with one
+   * `required_actions` entry per pending approval. Resolve it with `POST /v1/approvals/{id}`
+   * (or follow the `approval.requested` / `approval.resolved` webhooks), then send a new
+   * response with `previous_response_id`. Errors before the stream starts are
    * plain errors: `400 invalid_request` for `agent` with `store: false`, `agent` with client
    * `tools`, or mixing `model` and `agent` turns in one conversation;
    * `400 missing_function_call_output` when a `function_call` of the previous response has no
@@ -1558,7 +1577,7 @@ export class ResponsesResource {
   /**
    * Retrieve a response
    *
-   * A stored response (`store` was not false) with its output items. Requires the `inference` or `agents` scope.
+   * A stored response (`store` was not false) with its output items. While an approval its turn raised is pending, `status` is `requires_action` and `required_actions` lists the pending approvals (one `approval` entry with its `approval_id` each, oldest first). Requires the `inference` or `agents` scope.
    *
    * `GET /v1/responses/{id}`
    */

@@ -28,12 +28,14 @@
 //! output items are appended `in_progress` when they open (so streamed item ids
 //! are the stored ids) and updated once when they close.
 //!
-//! **Approvals** never pause a turn. When an agent's twin `call` tool needs the
-//! owner's approval, that tool call fails ("try again once they approve") and
-//! the turn ends `completed`. `required_actions` is reserved and always `[]`;
-//! approvals are their own resource (`approval.requested` /
-//! `approval.resolved`), and after one resolves the client sends a new response
-//! in the same conversation.
+//! **Approvals.** When an agent's twin `call` tool needs the owner's approval,
+//! that tool call fails ("try again once they approve") and the turn ends
+//! `completed`. The approval arrives after `done` (its row links to this
+//! response), so the live answer can't know; reads derive it instead: while a
+//! linked approval is pending, `GET` returns `status: requires_action` and
+//! `required_actions: [{type: approval, approval_id}]` ([`response_json_with`]).
+//! The client resolves it (`POST /v1/approvals/{id}`) and sends a new response
+//! with `previous_response_id`.
 
 use std::{collections::HashMap, convert::Infallible, sync::Arc};
 
@@ -258,18 +260,29 @@ impl RespRow {
     }
 }
 
-/// The public response object. `required_actions` is reserved and always empty
-/// in this release (approvals never pause a turn). `incomplete_details` says why
-/// a response is `incomplete`, as OpenAI's does; the only cause is the model
+/// The public response object as the turn itself reports it (no pending
+/// approvals yet: they arrive after `done`). `incomplete_details` says why a
+/// response is `incomplete`, as OpenAI's does; the only cause is the model
 /// stopping at `max_output_tokens` ([`model_end`]).
 fn response_json(r: &RespRow) -> Value {
+    response_json_with(r, &[])
+}
+
+/// The public response object with `pending` = the ids of the approvals its
+/// turn raised that are still pending, oldest first
+/// (`approvals::pending_for_response`). Any → `status: requires_action` and one
+/// `required_actions` entry each, once the turn is over; none → the stored status.
+fn response_json_with(r: &RespRow, pending: &[String]) -> Value {
     let incomplete = (r.status == "incomplete").then(|| json!({ "reason": "max_output_tokens" }));
+    let waiting = !pending.is_empty() && r.status != "in_progress";
+    let status = if waiting { "requires_action" } else { r.status.as_str() };
+    let actions: Vec<Value> = if waiting { pending.iter().map(|id| json!({ "type": "approval", "approval_id": id })).collect() } else { Vec::new() };
     json!({
-        "id": r.id, "object": "response", "status": r.status, "model": r.model, "agent_id": r.agent_id,
+        "id": r.id, "object": "response", "status": status, "model": r.model, "agent_id": r.agent_id,
         "conversation_id": r.conversation_id, "previous_response_id": r.previous_response_id,
         "output": r.output,
         "incomplete_details": incomplete,
-        "required_actions": [],
+        "required_actions": actions,
         "usage": { "input_tokens": r.usage["input_tokens"].as_i64().unwrap_or(0), "output_tokens": r.usage["output_tokens"].as_i64().unwrap_or(0) },
         "error": r.error, "metadata": r.metadata, "created_at": r.created_at, "completed_at": r.completed_at,
     })
@@ -1046,7 +1059,8 @@ fn require_read(caller: &PlatformCaller) -> Result<(), PlatformError> {
 async fn fetch(State(state): State<Arc<ApiState>>, caller: PlatformCaller, Path(id): Path<String>) -> Result<Json<Value>, PlatformError> {
     require_read(&caller)?;
     let row = load_row(&state.db, &caller, &id).await?;
-    Ok(Json(response_json(&row)))
+    let pending = super::approvals::pending_for_response(&state.db, &caller.project_id, &row.id).await?;
+    Ok(Json(response_json_with(&row, &pending)))
 }
 
 async fn input_items(
@@ -1162,6 +1176,14 @@ mod tests {
         row.status = "completed".into();
         let v = response_json(&row);
         assert_eq!((v["status"].as_str(), v["required_actions"].as_array().map(Vec::len)), (Some("completed"), Some(0)));
+        // Pending approvals turn a finished response into `requires_action`, never a running one.
+        let pending = vec!["apr_1".to_string(), "apr_2".to_string()];
+        let v = response_json_with(&row, &pending);
+        assert_eq!(v["status"], "requires_action");
+        assert_eq!(v["required_actions"], json!([{ "type": "approval", "approval_id": "apr_1" }, { "type": "approval", "approval_id": "apr_2" }]));
+        let mut running = RespRow::new("resp_2".into(), None, Some("agt_1".into()), None, Some("conv_1".into()), None, json!({}));
+        running.status = "in_progress".into();
+        assert_eq!((response_json_with(&running, &pending)["status"].as_str(), response_json_with(&running, &pending)["required_actions"].as_array().map(Vec::len)), (Some("in_progress"), Some(0)));
         assert!(v["incomplete_details"].is_null());
         row.status = "incomplete".into();
         assert_eq!(response_json(&row)["incomplete_details"], json!({ "reason": "max_output_tokens" }));
@@ -1335,5 +1357,56 @@ mod billing_tests {
         // No double billing: nothing settled against the key creator's credits.
         let personal: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM inference_usage").fetch_one(&c.db).await.unwrap();
         assert_eq!(personal, 0);
+    }
+
+    async fn get(c: &Ctx, token: &str, path: &str) -> (u16, Value) {
+        let req = Request::builder().method("GET").uri(path).header("authorization", format!("Bearer {token}")).body(Body::empty()).unwrap();
+        let resp = c.app.clone().oneshot(req).await.unwrap();
+        let status = resp.status().as_u16();
+        let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20).await.unwrap();
+        (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
+    }
+
+    async fn approval(c: &Ctx, project: &str, id: &str, response: &str, minutes_ago: i64, expires_in_secs: Option<i64>) {
+        sqlx::query(
+            "INSERT INTO platform_approvals (id, project_id, source, source_ref, response_id, kind, status, expires_at, created_at) \
+             VALUES ($1, $2, 'twin', $1, $3, 'send_email', 'pending', CASE WHEN $4::bigint IS NULL THEN NULL ELSE NOW() + make_interval(secs => $4::float8) END, NOW() - make_interval(mins => $5::int))",
+        )
+        .bind(id)
+        .bind(project)
+        .bind(response)
+        .bind(expires_in_secs)
+        .bind(minutes_ago as i32)
+        .execute(&c.db)
+        .await
+        .unwrap();
+    }
+
+    /// `GET /v1/responses/{id}` reads `requires_action` while an approval its
+    /// turn raised is pending, and the stored status again once none is.
+    #[tokio::test]
+    async fn pending_approvals_make_a_stored_response_require_action() {
+        let c = ctx().await;
+        let (project, token) = key(&c).await;
+        sqlx::query("INSERT INTO platform_responses (id, project_id, status, store, completed_at) VALUES ('resp_wait', $1, 'completed', true, NOW())")
+            .bind(&project)
+            .execute(&c.db)
+            .await
+            .unwrap();
+        let (s, v) = get(&c, &token, "/v1/responses/resp_wait").await;
+        assert_eq!((s, v["status"].as_str(), v["required_actions"].clone()), (200, Some("completed"), json!([])), "{v}");
+
+        // Two pending (oldest first), one already past its deadline (expired, so left out).
+        approval(&c, &project, "apr_new", "resp_wait", 1, None).await;
+        approval(&c, &project, "apr_old", "resp_wait", 5, Some(600)).await;
+        approval(&c, &project, "apr_late", "resp_wait", 9, Some(-1)).await;
+        let (s, v) = get(&c, &token, "/v1/responses/resp_wait").await;
+        assert_eq!((s, v["status"].as_str()), (200, Some("requires_action")), "{v}");
+        assert_eq!(v["required_actions"], json!([{ "type": "approval", "approval_id": "apr_old" }, { "type": "approval", "approval_id": "apr_new" }]));
+
+        // Resolved: back to the stored status.
+        sqlx::query("UPDATE platform_approvals SET status = 'approved', resolved_at = NOW() WHERE id IN ('apr_old', 'apr_new')").execute(&c.db).await.unwrap();
+        let (s, v) = get(&c, &token, "/v1/responses/resp_wait").await;
+        assert_eq!((s, v["status"].as_str(), v["required_actions"].clone()), (200, Some("completed"), json!([])), "{v}");
     }
 }
