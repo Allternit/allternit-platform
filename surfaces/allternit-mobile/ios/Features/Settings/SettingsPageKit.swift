@@ -14,6 +14,7 @@ enum SettingsPageID: String, CaseIterable, Hashable, Identifiable {
     case apiKeys = "api-keys", permissions, remoteControl = "remote-control", infrastructure
     case security, agents, webhooks, about
     case deviceAccess = "device-access"
+    case selfHosted = "self-hosted"
 
     var id: String { rawValue }
 
@@ -64,6 +65,7 @@ enum SettingsPageID: String, CaseIterable, Hashable, Identifiable {
         case .webhooks: return "Webhooks"
         case .about: return "About"
         case .deviceAccess: return "Device Access"
+        case .selfHosted: return "Self-hosted server"
         }
     }
 
@@ -110,6 +112,7 @@ enum SettingsPageID: String, CaseIterable, Hashable, Identifiable {
         case .webhooks: return "arrow.triangle.branch"
         case .about: return "info.circle"
         case .deviceAccess: return "hand.raised"
+        case .selfHosted: return "server.rack"
         }
     }
 
@@ -144,6 +147,7 @@ enum SettingsPageID: String, CaseIterable, Hashable, Identifiable {
         case .desktopPet: return (.computers, 3)
         case .extensions: return (.computers, 4)
         case .remoteControl: return (.computers, 5)
+        case .selfHosted: return (.computers, 6)
         case .gizziCode: return (.advanced, 1)
         case .cowork: return (.advanced, 2)
         case .diagnostics: return (.advanced, 3)
