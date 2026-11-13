@@ -27,6 +27,8 @@ A worker serves one session at a time. Run as many workers as you want concurren
 
 `bash` runs in a sandbox with the environment's network rules. On macOS the sandbox is `sandbox-exec`. On Linux it is bubblewrap, plus `socat` for the `limited` network mode. A Linux worker without bubblewrap refuses bash calls. It does not run them unsandboxed.
 
+On Ubuntu 23.10 and later, the kernel setting `kernel.apparmor_restrict_unprivileged_userns=1` stops bubblewrap from starting inside a container, and every bash call fails. Keep the setting on. Instead, load the AppArmor profile in `deploy/selfhost/apparmor/allternit-selfhost-worker` on each worker host and start the workers with it: `ALLTERNIT_WORKER_APPARMOR=allternit-selfhost-worker` for Docker Compose, or `sandbox.appArmorProfile` set to `Localhost` for the Helm chart. The operator guide has the commands.
+
 ## How a work item ends
 
 A session has at most one open work item. A work item ends only when `POST /v1/work/{work_id}/tool_calls/next` answers **204 with the header `X-Session-Closed: true`**. That happens when the session is archived or has been idle for `sessions.idle_timeout` (default `1h`). Then the worker calls `/complete`.

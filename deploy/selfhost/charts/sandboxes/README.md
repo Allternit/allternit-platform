@@ -77,7 +77,7 @@ fails closed with an error. bwrap runs unprivileged, so the pod needs:
 | Unprivileged user namespaces (seccomp and AppArmor must allow `unshare` and `mount`) | `sandbox.seccompProfile.type: Unconfined`, `sandbox.appArmorProfile.type: Unconfined` |
 | A fresh `/proc` mount inside the sandbox | `procMount: Unmasked`, which needs `hostUsers: false` (`sandbox.userNamespace: true`) |
 | Node support for pod user namespaces | Kubernetes 1.30+, Linux 6.3+, containerd 2.0+ or CRI-O 1.25+; the `UserNamespacesSupport` and `ProcMountType` feature gates where they are off by default |
-| Kernel settings on the nodes | `kernel.unprivileged_userns_clone=1` (Debian); on Ubuntu 24.04+ also `kernel.apparmor_restrict_unprivileged_userns=0` |
+| Kernel settings on the nodes | `kernel.unprivileged_userns_clone=1` (Debian); on Ubuntu 23.10+ load `deploy/selfhost/apparmor/allternit-selfhost-worker` on each node and set `sandbox.appArmorProfile` to `{type: Localhost, localhostProfile: allternit-selfhost-worker}` |
 
 The container drops all capabilities and sets `allowPrivilegeEscalation: false`.
 

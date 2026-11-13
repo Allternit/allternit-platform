@@ -37,6 +37,21 @@ PROJECT="allternit-selfhost-airgap"
 ENVF="$(mktemp -t allternit-airgap-env.XXXXXX)"
 chmod 600 "$ENVF"
 REPLICAS="${ALLTERNIT_WORKER_REPLICAS:-10}"
+
+# Ubuntu 23.10+ restricts unprivileged user namespaces through AppArmor; the
+# worker's bubblewrap sandbox then needs the allternit-selfhost-worker profile.
+WORKER_APPARMOR="${ALLTERNIT_WORKER_APPARMOR:-unconfined}"
+if [ "$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns 2>/dev/null || echo 0)" = 1 ] \
+   && [ "$WORKER_APPARMOR" = unconfined ]; then
+  if grep -q '^allternit-selfhost-worker ' /sys/kernel/security/apparmor/profiles 2>/dev/null; then
+    WORKER_APPARMOR=allternit-selfhost-worker
+  else
+    echo "This host sets kernel.apparmor_restrict_unprivileged_userns=1, so bash in the workers would fail." >&2
+    echo "Load the worker AppArmor profile first:" >&2
+    echo "  sudo apparmor_parser -r $(cd .. && pwd)/apparmor/allternit-selfhost-worker" >&2
+    exit 2
+  fi
+fi
 SETUP_TOKEN="$(openssl rand -hex 32)"
 cat >"$ENVF" <<EOF
 ALLTERNIT_VERSION=${ALLTERNIT_VERSION:-latest}
@@ -45,6 +60,7 @@ ALLTERNIT_ENCRYPTION_KEY=$(openssl rand -base64 32)
 ALLTERNIT_SELF_HOSTED_SETUP_TOKEN=${SETUP_TOKEN}
 ALLTERNIT_SETTINGS_FILE=./airgap/settings.airgap.yaml
 ALLTERNIT_WORKER_REPLICAS=${REPLICAS}
+ALLTERNIT_WORKER_APPARMOR=${WORKER_APPARMOR}
 EOF
 
 dc() { docker compose -p "$PROJECT" --env-file "$ENVF" -f docker-compose.yml -f compose.airgap.yml "$@"; }

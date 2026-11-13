@@ -115,8 +115,10 @@ networkPolicy:
 #     support on the nodes (Linux 6.3+, containerd 2.0+ or CRI-O 1.25+), and
 #     the UserNamespacesSupport and ProcMountType feature gates where they are
 #     not on by default;
-#   * kernel.unprivileged_userns_clone=1 on the nodes (Debian kernels), and on
-#     Ubuntu 24.04+ nodes kernel.apparmor_restrict_unprivileged_userns=0.
+#   * kernel.unprivileged_userns_clone=1 on the nodes (Debian kernels). Ubuntu
+#     23.10+ nodes restrict user namespaces through AppArmor: load
+#     deploy/selfhost/apparmor/allternit-selfhost-worker on each node and set
+#     appArmorProfile: {type: Localhost, localhostProfile: allternit-selfhost-worker}.
 # Check from a running worker:
 #   kubectl exec deploy/<name> -- bwrap --unshare-all --ro-bind / / --proc /proc --dev /dev true
 sandbox:

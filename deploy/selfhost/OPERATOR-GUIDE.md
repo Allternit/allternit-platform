@@ -235,8 +235,21 @@ security_opt:
 The host kernel must allow unprivileged user namespaces:
 
 - Debian kernels: `sysctl kernel.unprivileged_userns_clone=1`
-- Ubuntu 24.04 and later: also `sysctl kernel.apparmor_restrict_unprivileged_userns=0`,
-  or an AppArmor profile for `bwrap`.
+- Ubuntu 23.10 and later set `kernel.apparmor_restrict_unprivileged_userns=1`.
+  Then bash fails in every worker (`bwrap: loopback: Failed RTM_NEWADDR:
+  Operation not permitted`). Do not turn the restriction off for the whole
+  host. Load the worker profile shipped in `deploy/selfhost/apparmor/` and
+  point the workers at it:
+
+  ```sh
+  sudo install -m 0644 deploy/selfhost/apparmor/allternit-selfhost-worker /etc/apparmor.d/
+  sudo apparmor_parser -r /etc/apparmor.d/allternit-selfhost-worker
+  echo ALLTERNIT_WORKER_APPARMOR=allternit-selfhost-worker >> deploy/selfhost/compose/.env
+  ```
+
+  The profile allows what `apparmor=unconfined` allows, plus user namespaces,
+  and applies only to containers started with it. `verify-airgap.sh` uses it
+  when it is loaded and stops with this hint when it is not.
 
 To check from a running worker:
 

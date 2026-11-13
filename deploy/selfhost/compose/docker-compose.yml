@@ -113,7 +113,9 @@ services:
     # --privileged or added capabilities. See Dockerfile.worker for details.
     security_opt:
       - seccomp=unconfined
-      - apparmor=unconfined
+      # Ubuntu 24.04+ hosts: load deploy/selfhost/apparmor/allternit-selfhost-worker
+      # and set ALLTERNIT_WORKER_APPARMOR=allternit-selfhost-worker (see OPERATOR-GUIDE.md).
+      - apparmor=${ALLTERNIT_WORKER_APPARMOR:-unconfined}
       - systempaths=unconfined
     # SIGTERM makes the worker hand its item back (/release) and exit.
     stop_signal: SIGTERM

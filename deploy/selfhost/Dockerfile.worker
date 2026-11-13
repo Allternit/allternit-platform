@@ -33,8 +33,8 @@
 #      the UserNamespacesSupport and ProcMountType feature gates on older clusters).
 #   3. The host kernel must allow unprivileged user namespaces
 #      (kernel.unprivileged_userns_clone=1 on Debian kernels; on Ubuntu 24.04+
-#      also kernel.apparmor_restrict_unprivileged_userns=0, or an AppArmor
-#      profile for bwrap).
+#      load deploy/selfhost/apparmor/allternit-selfhost-worker and run the
+#      container with --security-opt apparmor=allternit-selfhost-worker).
 # Do not use --privileged. Nothing here needs CAP_SYS_ADMIN in the init namespace.
 # The compose file and the sandboxes Helm chart already set these options.
 # Quick check from inside a running worker:
