@@ -90,7 +90,7 @@ import { installTeachRecorder, registerTeachHotkey, abortTeach } from './teach-r
 import { onWebRequest } from './web-request-hub.js';
 import { PLATFORM_MANIFEST, shouldUpdateBackend } from './manifest.js';
 import { runtimePackages, runtimeResource } from './runtime-home.js';
-import { DEFAULT_RUNTIME_FEED } from './runtime-package.js';
+import { DEFAULT_RUNTIME_FEED, timerLateMs } from './runtime-package.js';
 import {
   checkPermissions,
   presentGuide,
@@ -368,7 +368,7 @@ async function checkRuntimeNow(): Promise<string | null> {
     return staged;
   } catch (err) {
     runtimeFailures += 1;
-    log.warn('[Runtime] update check failed:', (err as Error).message ?? err);
+    log.error(`[Runtime] update check failed (${runtimeFailures} in a row):`, (err as Error).message ?? err);
     return null;
   }
 }
@@ -395,14 +395,34 @@ function startProvisionedRuntimeApply() {
   });
 }
 
+const RUNTIME_FIRST_CHECK_MS = 60 * 1000;
+/** A runtime check timer this late means the main thread was blocked. */
+const RUNTIME_LATE_WARN_MS = 30 * 1000;
+let runtimeScheduleLogged = false;
+
 function scheduleRuntimeUpdates() {
   startProvisionedRuntimeApply();
-  if (!runtimeFeed() || runtimeUpdateTimer) return;
+  if (runtimeUpdateTimer) return;
+  if (!runtimeFeed()) {
+    if (!runtimeScheduleLogged) {
+      runtimeScheduleLogged = true;
+      log.info(`[Runtime] background updates off (${app.isPackaged ? 'ALLTERNIT_RUNTIME_FEED=off' : 'unpackaged build'})`);
+    }
+    return;
+  }
+  let expectedAt = Date.now() + RUNTIME_FIRST_CHECK_MS;
+  log.info(`[Runtime] first update check in ${RUNTIME_FIRST_CHECK_MS / 1000}s, then every ${RUNTIME_CHECK_EVERY_MS / 3_600_000}h (feed ${runtimeFeed()})`);
   runtimeUpdateTimer = setTimeout(async function tick() {
+    const late = timerLateMs(expectedAt);
+    if (late > RUNTIME_LATE_WARN_MS) {
+      log.warn(`[Runtime] update check ran ${Math.round(late / 1000)}s late: the main process was blocked (often an unanswered Keychain prompt)`);
+    }
     await checkRuntimeNow();
     const wait = runtimeFailures ? RUNTIME_RETRY_MS[Math.min(runtimeFailures, RUNTIME_RETRY_MS.length) - 1] : RUNTIME_CHECK_EVERY_MS;
+    if (runtimeFailures) log.warn(`[Runtime] retrying the update check in ${Math.round(wait / 60_000)} min`);
+    expectedAt = Date.now() + wait;
     runtimeUpdateTimer = setTimeout(tick, wait);
-  }, 60 * 1000);
+  }, RUNTIME_FIRST_CHECK_MS);
 }
 
 function broadcastUpdateStatus(status: UpdateStatus) {
