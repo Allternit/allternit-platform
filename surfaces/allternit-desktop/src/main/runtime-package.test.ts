@@ -5,7 +5,7 @@ import path from 'node:path';
 import zlib from 'node:zlib';
 import { execFileSync } from 'node:child_process';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { RuntimePackages, type RuntimeManifest } from './runtime-package.js';
+import { RuntimePackages, timerLateMs, type RuntimeManifest } from './runtime-package.js';
 
 const { privateKey, publicKey } = crypto.generateKeyPairSync('ed25519');
 const PUB = publicKey.export({ type: 'spki', format: 'pem' }).toString();
@@ -259,5 +259,50 @@ describe('per-file delta updates (feed format 2)', () => {
     const [a, b] = await Promise.all([s.checkForUpdate('https://feed.test', fetchImpl), s.checkForUpdate('https://feed.test', fetchImpl)]);
     expect([a, b]).toEqual(['r2', 'r2']);
     expect(fetched).toEqual([sha('api v2')]);
+  });
+});
+
+describe('every check outcome is logged (a silent check looks like one that never ran)', () => {
+  function logged() {
+    const lines: Array<[string, string]> = [];
+    const log = {
+      info: (...a: unknown[]) => lines.push(['info', a.join(' ')]),
+      warn: (...a: unknown[]) => lines.push(['warn', a.join(' ')]),
+    };
+    const s = new RuntimePackages({ root, resourcesPath: resources, publicKey: PUB, platform: 'test-x', shellApi: 1, log });
+    return { s, lines };
+  }
+
+  it('logs the check and the up-to-date result', async () => {
+    const { s, lines } = logged();
+    expect(await s.checkForUpdate('https://feed.test', feed('r1', 100, makePackage('r1', 100)))).toBeNull();
+    expect(lines).toContainEqual(['info', '[Runtime] checking https://feed.test/stable/test-x/latest.json']);
+    expect(lines.some(([lvl, l]) => lvl === 'info' && l.includes('up to date') && l.includes('r1') && l.includes('build 100'))).toBe(true);
+  });
+
+  it('warns when the feed needs a newer shell', async () => {
+    const { s, lines } = logged();
+    expect(await s.checkForUpdate('https://feed.test', feed('r4', 400, makePackage('r4', 400, { shellApi: 2 }), 2))).toBeNull();
+    expect(lines.some(([lvl, l]) => lvl === 'warn' && l.includes('r4') && l.includes('shell API 2'))).toBe(true);
+  });
+
+  it('warns when the feed version is marked bad', async () => {
+    fs.mkdirSync(root, { recursive: true });
+    fs.writeFileSync(path.join(root, 'state.json'), JSON.stringify({ bad: ['r5'] }));
+    const { s, lines } = logged();
+    expect(await s.checkForUpdate('https://feed.test', feed('r5', 500, makePackage('r5', 500)))).toBeNull();
+    expect(lines.some(([lvl, l]) => lvl === 'warn' && l.includes('r5') && l.includes('marked bad'))).toBe(true);
+  });
+
+  it('logs staging start and the staged version', async () => {
+    const { s, lines } = logged();
+    expect(await s.checkForUpdate('https://feed.test', feed('r2', 200, makePackage('r2', 200)))).toBe('r2');
+    expect(lines.some(([lvl, l]) => lvl === 'info' && l.startsWith('[Runtime] staging r2'))).toBe(true);
+    expect(lines).toContainEqual(['info', '[Runtime] staged r2 for next launch']);
+  });
+
+  it('measures how late a timer fired', () => {
+    expect(timerLateMs(1_000, 900)).toBe(0);
+    expect(timerLateMs(1_000, 411_000)).toBe(410_000);
   });
 });
