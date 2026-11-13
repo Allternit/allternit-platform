@@ -4,6 +4,7 @@ import { SettingsHooksBridge } from "@/runtime/hooks/settings-bridge";
 import { Instance } from "@/runtime/context/project/instance";
 import { Log } from "@/shared/util/log";
 import { checkToolHardBan, formatHardBanDenial } from "@/shared/utils/agentHardBans";
+import { RemoteToolHost } from "./remote-host";
 
 export namespace ToolDispatcher {
   const log = Log.create({ service: "tool.dispatcher" });
@@ -165,8 +166,16 @@ export namespace ToolDispatcher {
       }
     }
 
+    // 2. Self-hosted remote tool host (GIZZI_TOOL_HOST=remote): sandbox tools
+    // run on a worker through the Agents Server's queue, after the same
+    // hard-ban and hook checks. Never falls back to local execution; errors
+    // take the same PostToolUseFailure path as a local throw.
+    const run: (args: any, ctx: Tool.Context) => Promise<T> = RemoteToolHost.handles(toolID)
+      ? (nextArgs, nextCtx) => RemoteToolHost.execute(toolID, nextArgs, nextCtx) as Promise<T>
+      : execute;
+
     try {
-      const result = await execute(args, ctx);
+      const result = await run(args, ctx);
 
       // 3. Emit PostToolUse Hook
       await HookDispatcher.emit({

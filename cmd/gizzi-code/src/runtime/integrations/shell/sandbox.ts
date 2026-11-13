@@ -49,6 +49,11 @@ export interface SandboxPolicy {
    */
   allowedDomains?: string[]
   /**
+   * Match `allowedDomains` exactly (no subdomains; an entry with a port must
+   * match the port). Self-hosted environments with `network: limited` set it.
+   */
+  allowedDomainsExact?: boolean
+  /**
    * Extra paths the subprocess may READ but not write. Seatbelt already
    * allows reads everywhere; bwrap only sees what is bound, so these are
    * bound read-only (e.g. run_code's Python env under the gizzi data dir).
@@ -429,7 +434,9 @@ ${subpaths(writable)}
             "or drop allowedDomains to fall back to a full network block/allow.",
         )
       }
-      proxyHandle = await NetworkProxy.start(opts.sessionID, opts.policy.allowedDomains)
+      proxyHandle = await NetworkProxy.start(opts.sessionID, opts.policy.allowedDomains, {
+        exact: opts.policy.allowedDomainsExact === true,
+      })
     }
 
     if (driver === "bwrap") {

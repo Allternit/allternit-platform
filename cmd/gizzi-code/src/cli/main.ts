@@ -1,3 +1,6 @@
+// Self-hosted offline switch (ALLTERNIT_SELF_HOSTED=1): must run before any
+// other module can open a connection. See src/shared/selfhost/offline.ts.
+import "@/shared/selfhost/install-guard"
 import "./devMacro"
 import "drizzle-orm/sqlite-core/db.js"
 import "drizzle-orm/sqlite-core/session.js"
@@ -256,6 +259,7 @@ function isLongLivedCommand(argv: { _: (string | number)[]; print?: boolean }): 
     case "assistant": // future interactive assistant REPL
     case "remote-control": // future remote control session
     case "fabric-worker": // Fabric Transport worker daemon; runs until SIGTERM/SIGINT
+    case "worker": // self-hosted sandbox worker (and `worker attach`); runs until SIGTERM/SIGINT or drain
       return true
     case "mcp":
       // `mcp serve` runs an MCP server; add/remove/list/auth/logout/debug
@@ -281,6 +285,9 @@ function isLongLivedCommand(argv: { _: (string | number)[]; print?: boolean }): 
       const [, , third] = argv._ as string[]
       return sub === "tasks" && third === "attach"
     }
+    case "runtime":
+      // Top-level alias of `agents harness`: only `runtime daemon` stays up.
+      return sub === "daemon"
     case "cron":
       // Hidden: `cron start` as written into older launchd/systemd units.
       return sub === "start"
