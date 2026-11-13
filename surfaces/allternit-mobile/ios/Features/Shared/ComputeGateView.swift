@@ -80,8 +80,8 @@ struct ComputeGateView: View {
 
     @State private var confirmingChatOnly = false
     @State private var working = false
-    @State private var pairing: SetupPairingCode?
-    @State private var pairingError: String?
+    @State private var linking = false
+    @State private var copied = false
     @State private var startError: String?
     @State private var waitingRegistered = false
 
@@ -185,43 +185,38 @@ struct ComputeGateView: View {
     }
 
     private func cardA(_ s: ComputeStatus) -> some View {
-        let base = s.paths?.own?.downloadUrl ?? "https://www.allternit.com/download"
+        let link = s.paths?.own?.downloadUrl ?? "https://www.allternit.com/download"
+        let shown = link.replacingOccurrences(of: "https://www.", with: "").replacingOccurrences(of: "https://", with: "")
         return card(ComputeGateCopy.cardATitle, cost: ComputeGateCopy.cardACost) {
-            if let code = pairing {
-                let link = "\(base)?pair=\(code.code)"
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("On your computer, open").font(.footnote).foregroundStyle(SetupPalette.sub)
-                    Text(link)
-                        .font(.footnote.monospaced())
-                        .foregroundStyle(SetupPalette.ink)
-                        .textSelection(.enabled)
+            if linking {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("1. On your computer, open \(shown)")
+                        .font(.subheadline).foregroundStyle(SetupPalette.ink)
                         .fixedSize(horizontal: false, vertical: true)
-                    Text("Pairing code").font(.footnote).foregroundStyle(SetupPalette.sub)
-                    Text(code.code)
-                        .font(.title3.monospaced().weight(.semibold))
-                        .foregroundStyle(SetupPalette.ink)
-                        .textSelection(.enabled)
-                        .accessibilityLabel("Pairing code \(code.code.map(String.init).joined(separator: " "))")
+                    HStack(spacing: 8) {
+                        Button(copied ? "Copied" : "Copy link") {
+                            UIPasteboard.general.string = link
+                            copied = true
+                        }
+                        .buttonStyle(SetupInlineButtonStyle())
+                        if let url = URL(string: link) {
+                            ShareLink(item: url) { Text("Share") }
+                                .buttonStyle(SetupInlineButtonStyle())
+                        }
+                    }
+                    Text("2. Open Allternit and approve the link it opens in your browser.")
+                        .font(.subheadline).foregroundStyle(SetupPalette.ink)
+                        .fixedSize(horizontal: false, vertical: true)
                     HStack(spacing: 8) {
                         ProgressView().controlSize(.small)
-                        Text(ComputeGateCopy.waiting)
-                            .font(.footnote)
-                            .foregroundStyle(SetupPalette.sub)
-                            .fixedSize(horizontal: false, vertical: true)
+                        Text("3. Waiting for your computer…")
+                            .font(.subheadline).foregroundStyle(SetupPalette.sub)
                     }
                     .accessibilityElement(children: .combine)
-                    if code.expiresAt < Date() {
-                        Button("Make a new code") { Task { await makeCode() } }
-                            .buttonStyle(SetupInlineButtonStyle())
-                    }
                 }
             } else {
-                Button(working ? "Making a code …" : ComputeGateCopy.cardAButton) { Task { await makeCode() } }
+                Button(ComputeGateCopy.cardAButton) { linking = true; startWaiting() }
                     .buttonStyle(SetupPrimaryButtonStyle())
-                    .disabled(working)
-                if let pairingError {
-                    Text(pairingError).font(.footnote).foregroundStyle(.red)
-                }
             }
         }
     }
@@ -283,18 +278,6 @@ struct ComputeGateView: View {
     }
 
     // MARK: - Actions
-
-    private func makeCode() async {
-        working = true
-        pairingError = nil
-        defer { working = false }
-        do {
-            pairing = try await SetupAPI.createPairingCode()
-            startWaiting()
-        } catch {
-            pairingError = "Couldn't make a pairing code. Try again."
-        }
-    }
 
     private func start(size: String) async {
         working = true
