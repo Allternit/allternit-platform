@@ -357,6 +357,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Start stale gizzi-instance garbage collection (startup sweep + hourly)
     allternit_cloud_api::routes::gizzi_instances::start_gizzi_instance_gc_task(state.db.clone());
+    allternit_cloud_api::services::inference_settlement::start_request_body_purge_task(state.db.clone());
 
     // Start executor service (background task): claims queued runs and
     // dispatches them to online registered gizzi instances.

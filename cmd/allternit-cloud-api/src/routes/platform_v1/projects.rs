@@ -36,7 +36,7 @@ pub struct Project {
     pub created_at: DateTime<Utc>,
     pub archived_at: Option<DateTime<Utc>>,
     /// Keep request/response bodies for the console Logs page
-    /// (migrations_pg/121; also needs `PLATFORM_LOG_BODIES=1`). Not in
+    /// (migrations_pg/125; also needs `PLATFORM_LOG_BODIES=1`). Not in
     /// [`COLUMNS`]: [`load_log_bodies`] fills it where the console shows it.
     #[sqlx(default)]
     pub log_bodies: bool,
@@ -206,6 +206,7 @@ pub async fn update_project(
 }
 
 /// Turn body capture on or off for a project the principal may manage.
+/// Turning it off also deletes the bodies already kept for the project.
 pub async fn set_log_bodies(db: &PgPool, who: &Principal, id: &str, on: bool) -> Result<(), PlatformError> {
     let done = sqlx::query(&format!(
         "UPDATE platform_projects SET log_bodies = $4 WHERE id = $5 AND {ACCESS}"
@@ -219,6 +220,12 @@ pub async fn set_log_bodies(db: &PgPool, who: &Principal, id: &str, on: bool) ->
     .await?;
     if done.rows_affected() == 0 {
         return Err(not_found());
+    }
+    if !on {
+        sqlx::query("DELETE FROM inference_request_bodies WHERE project_id = $1")
+            .bind(id)
+            .execute(db)
+            .await?;
     }
     Ok(())
 }
