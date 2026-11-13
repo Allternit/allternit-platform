@@ -1004,6 +1004,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial]
     async fn create_is_subscription_gated() {
         let _guard = DEV_TOKEN_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var(ALLOW_DEV_TOKEN_ENV, "true");
@@ -1085,6 +1086,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial]
     async fn create_without_fleet_capacity_is_a_clean_503() {
         let _guard = DEV_TOKEN_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var(ALLOW_DEV_TOKEN_ENV, "true");
@@ -1107,6 +1109,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial]
     async fn wake_endpoint_answers_202_with_the_poll_contract() {
         let _guard = DEV_TOKEN_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var(ALLOW_DEV_TOKEN_ENV, "true");
@@ -1158,6 +1161,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial]
     async fn lifecycle_status_usage_and_ownership_are_owner_scoped() {
         let _guard = DEV_TOKEN_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var(ALLOW_DEV_TOKEN_ENV, "true");
@@ -1335,6 +1339,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial]
     async fn host_routes_are_admin_only() {
         let _guard = DEV_TOKEN_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var(ALLOW_DEV_TOKEN_ENV, "true");
