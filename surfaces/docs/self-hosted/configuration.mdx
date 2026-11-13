@@ -17,7 +17,10 @@ Secrets never go in the file. Wherever a key takes a secret, give a reference:
 |---|---|
 | `env:NAME` | The environment variable `NAME`. |
 | `file:/path` | The contents of a file, for example a mounted Kubernetes or Docker secret. |
-| `vault:path#key` | Field `key` of a HashiCorp Vault KV v2 secret at `path` (needs `secrets.backend: vault`). |
+| `vault:path#key` | Field `key` of a HashiCorp Vault KV v2 secret at `{mount}/data/{vault.path}/{path}` (needs `secrets.backend: vault`). |
+| `vault:#key` | Field `key` of the secret at `vault.path` itself, with no extra path. |
+
+For example, with `mount: secret` and `path: allternit/agents`, `vault:db#password` reads `secret/data/allternit/agents/db`, and `vault:#encryption_key` reads `secret/data/allternit/agents`.
 
 ## Example
 
@@ -62,7 +65,11 @@ secrets:
       method: approle
       role_id: allternit-agents
       secret_id: file:/run/secrets/vault_secret_id
-  encryption_key_ref: vault:allternit/agents#encryption_key
+  encryption_key_ref: vault:#encryption_key
+  previous_key_refs: []
+sessions:
+  idle_timeout: 1h
+  no_worker_timeout: 10m
 observability:
   log_format: json
   prometheus:
@@ -76,7 +83,7 @@ health:
 
 | Key | Type | Default | What it does |
 |---|---|---|---|
-| `data_dir` | string | `/var/lib/allternit-agents-server` | Where SQLite and local files live when `database.url` is not set. |
+| `data_dir` | string | `/var/lib/allternit-agents-server` | Where SQLite and local files live when `database.url` is not set. This is a **top-level** key. Do not put it under `server`: the schema is strict and refuses it there. |
 | `ephemeral` | boolean | `false` | Keep state in memory only. For tests. Ignored when `database.url` is set. |
 | `database.url` | string or secret reference | none | PostgreSQL URL (`postgres://` or `postgresql://`), or a reference to one. Without it the server uses SQLite in `data_dir`, or memory when `ephemeral` is true. |
 | `database.max_connections` | integer, 1 or more | `20` | Size of the connection pool. |
@@ -87,17 +94,17 @@ health:
 |---|---|---|---|
 | `server.listen` | string | `127.0.0.1:8400` | `host:port` to bind. |
 | `server.public_url` | URI | none | The URL clients use. Shown in `/v1/server/info`. |
-| `server.cors_origins` | list of URIs | `[]` | Browser origins allowed to call the API. Empty means no CORS headers. The web app and PWA need their origins here. See [Client apps](/self-hosted/client-apps). |
+| `server.cors_origins` | list of URIs | `[]` | Browser origins allowed to call the API. Empty means no CORS headers. List `https://ai.allternit.com` (web app), `https://m.allternit.com` (PWA) and `http://127.0.0.1:8013` (packaged Desktop). iOS and Gizzi Code need no entry. See [Client apps](/self-hosted/client-apps). |
 
 ## Inference
 
 | Key | Type | Default | What it does |
 |---|---|---|---|
 | `inference.provider` | `anthropic`, `bedrock`, `vertex`, `foundry` or `gateway` | required | Which model provider the server calls. |
-| `inference.gateway.format` | `anthropic-messages`, `bedrock-invoke`, `vertex-raw-predict` or `openai-chat` | required with `gateway` | The request format your gateway speaks. |
+| `inference.gateway.format` | `anthropic-messages`, `bedrock-invoke`, `vertex-raw-predict` or `openai-chat` | required with `gateway` | The request format your gateway speaks. `bedrock-invoke` sends Bedrock Converse API paths (`/model/{id}/converse`), not InvokeModel. |
 | `inference.gateway.base_url` | URI | required with `gateway` | The gateway's base URL. |
 | `inference.gateway.headers` | map of string to string | none | Extra request headers. Values may be secret references. |
-| `inference.model_map` | map of string to string | none | Agent model name to the provider's model id. A model not listed is refused with `422 model_not_mapped`. Required with `gateway`. |
+| `inference.model_map` | map of string to string | none | Model name to the provider's model id. Clients use the keys as model names. The server and gizzi map them to provider ids. A model not listed is refused with `422 model_not_mapped` before any outbound call. Required with `gateway`. |
 | `inference.credentials.api_key` | secret reference | none | Anthropic API key. |
 | `inference.credentials.aws_access_key_id` | secret reference | none | Bedrock access key id. |
 | `inference.credentials.aws_secret_access_key` | secret reference | none | Bedrock secret access key. |
@@ -142,13 +149,21 @@ Server API keys and environment keys are not set here. They live in the database
 | `secrets.backend` | `env`, `file` or `vault` | `env` | Where secret references are resolved. |
 | `secrets.vault.address` | URI | required with `vault` | Vault address. |
 | `secrets.vault.mount` | string | `secret` | KV v2 mount. |
-| `secrets.vault.path` | string | required with `vault` | Base path for the server's secrets. |
-| `secrets.vault.auth.method` | `token`, `approle` or `kubernetes` | required when `auth` is set | How the server signs in to Vault. |
+| `secrets.vault.path` | string | required with `vault` | Base path for the server's secrets. A `vault:path#key` reference reads `{mount}/data/{path}/...` under it; `vault:#key` reads this path itself. |
+| `secrets.vault.auth.method` | `token`, `approle` or `kubernetes` | required when `auth` is set | How the server signs in to Vault: a token, AppRole (`role_id` and `secret_id`) or the Kubernetes service account (`role`). |
 | `secrets.vault.auth.token` | secret reference | none | Vault token, for `token`. |
 | `secrets.vault.auth.role_id` | string | none | AppRole role id, for `approle`. |
 | `secrets.vault.auth.secret_id` | secret reference | none | AppRole secret id, for `approle`. |
 | `secrets.vault.auth.role` | string | none | Vault role, for `kubernetes`. |
 | `secrets.encryption_key_ref` | secret reference | none | The key that encrypts stored credentials. Rotate it with `admin rotate-key`. See [Operations](/self-hosted/operations#rotate-keys). |
+| `secrets.previous_key_refs` | list of secret references | `[]` | Earlier encryption keys. Values sealed with them stay readable until `admin rotate-key` re-seals them with `encryption_key_ref`. Needs `encryption_key_ref`. |
+
+## Sessions
+
+| Key | Type | Default | What it does |
+|---|---|---|---|
+| `sessions.idle_timeout` | duration (`ms`, `s`, `m`, `h`) | `1h` | A session with no turn running and no pending tool call for this long ends its work item. The worker's next `tool_calls/next` answers 204 with `X-Session-Closed: true`, and the worker completes the item. The next turn that needs a tool queues a new item. |
+| `sessions.no_worker_timeout` | duration | `10m` | How long a tool call waits for a worker to take it. After that the call fails with `no_worker` and the model sees a tool error. While it waits, the session shows `waiting_for_worker`. |
 
 ## Observability and health
 
@@ -156,7 +171,7 @@ Server API keys and environment keys are not set here. They live in the database
 |---|---|---|---|
 | `observability.log_format` | `json` or `text` | `json` | Log format. Logs go to stderr. |
 | `observability.prometheus.enabled` | boolean | `false` | Serve Prometheus metrics. |
-| `observability.prometheus.listen` | string | `127.0.0.1:9464` | A separate listener for metrics. The main API port never serves `/metrics`. |
+| `observability.prometheus.listen` | string | `127.0.0.1:9464` | A separate listener for metrics, on loopback by default. A non-loopback address logs a warning (the listener has no login). The main API port never serves `/metrics`. |
 | `health.check_interval` | duration (`ms`, `s`, `m`, `h`) | `60s` | How often the server runs its health checks. |
 
-OpenTelemetry export is not set in this file. It comes from the standard `OTEL_*` environment variables. See [Observability](/self-hosted/observability).
+OpenTelemetry export is not set in this file. It comes from `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_SERVICE_NAME` and `OTEL_RESOURCE_ATTRIBUTES`. See [Observability](/self-hosted/observability).

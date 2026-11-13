@@ -20,12 +20,15 @@ const state = {
   secretHeaders: [] as Array<string | undefined>,
   lastEventIds: [] as Array<string | undefined>,
   streamRound: 0,
+  emptyWaits: 0, // plain 204s to send before the closing one
+  workerHeaders: [] as Array<[string | undefined, string | undefined]>,
+  completesBeforeClose: 0,
 };
 
 function reset(p: Partial<typeof state> = {}) {
   Object.assign(state, {
     claims: [], calls: [], staleOnNext: false, results: [], completed: [], released: [],
-    secretHeaders: [], lastEventIds: [], streamRound: 0, ...p,
+    secretHeaders: [], lastEventIds: [], streamRound: 0, emptyWaits: 0, workerHeaders: [], completesBeforeClose: 0, ...p,
   });
 }
 
@@ -51,6 +54,9 @@ before(async () => {
       const body = raw ? JSON.parse(raw) : {};
       const path = new URL(req.url ?? "/", "http://x").pathname;
       const id = path.split("/")[3]!;
+      if (/\/(claim|renew|heartbeat|complete|release)$/.test(path)) {
+        state.workerHeaders.push([req.headers["x-worker-hostname"] as string | undefined, req.headers["x-worker-version"] as string | undefined]);
+      }
       if (req.method === "GET" && path === "/v1/sessions/sess_1/events/stream") {
         state.lastEventIds.push(req.headers["last-event-id"] as string | undefined);
         state.streamRound += 1;
@@ -78,7 +84,13 @@ before(async () => {
         state.secretHeaders.push(req.headers["x-session-secret"] as string | undefined);
         if (state.staleOnNext) return json(res, 409, { error: { type: "conflict_error", message: "stale", code: "lease_stale" } });
         const c = state.calls.shift();
-        return c ? json(res, 200, c) : json(res, 204);
+        if (c) return json(res, 200, c);
+        if (state.emptyWaits > 0) {
+          state.emptyWaits -= 1;
+          return json(res, 204); // plain 204: empty wait, poll again
+        }
+        res.writeHead(204, { "x-session-closed": "true" });
+        return res.end();
       }
       if (path.startsWith("/v1/tool_calls/") && path.endsWith("/result")) {
         state.secretHeaders.push(req.headers["x-session-secret"] as string | undefined);
@@ -89,6 +101,7 @@ before(async () => {
         return json(res, 200, { tool_call_id: id, status: "completed" });
       }
       if (path.endsWith("/complete")) {
+        if (state.emptyWaits > 0) state.completesBeforeClose += 1;
         state.completed.push([id, body]);
         return json(res, 200, { work_id: id, lease_generation: body.lease_generation, lease_expires_at: null, status: "completed" });
       }
@@ -133,6 +146,27 @@ test("drain runs each custom tool call once per id, errors unknown tools, comple
   assert.match(state.results[1]![1].output, /No handler for tool "bash"/);
   assert.deepEqual(state.completed, [["work_1", { lease_generation: 3, outcome: "success" }]]);
   assert.ok(state.secretHeaders.every((h) => h === SECRET));
+});
+
+test("a plain 204 means poll again; only 204 with X-Session-Closed ends the item", async () => {
+  reset({ claims: [claim()], emptyWaits: 3, calls: [{ tool_call_id: "tc_a", name: "t", input: {} }] });
+  await runCustomToolWorker({ environmentId: "env_1", client: client(), blockMs: 0, drain: true, tools: { t: () => "ok" } });
+  assert.equal(state.emptyWaits, 0); // all three empty waits were polled through
+  assert.equal(state.completesBeforeClose, 0);
+  assert.equal(state.results.length, 1);
+  assert.deepEqual(state.completed, [["work_1", { lease_generation: 3, outcome: "success" }]]);
+});
+
+test("claim, renew, complete and release carry worker hostname and version", async () => {
+  reset({ claims: [claim()] });
+  await runCustomToolWorker({ environmentId: "env_1", client: client(), blockMs: 0, drain: true, hostname: "box-1", tools: {} });
+  assert.ok(state.workerHeaders.length >= 2); // claim + complete
+  assert.ok(state.workerHeaders.every(([h, v]) => h === "box-1" && /^allternit-platform-ts-worker\//.test(v ?? "")));
+  const stop = new AbortController();
+  reset({ claims: [claim()], calls: [{ tool_call_id: "tc_r", name: "t", input: {} }] });
+  await runCustomToolWorker({ environmentId: "env_1", client: client(), blockMs: 0, hostname: "box-1", signal: stop.signal, tools: { t: () => { stop.abort(); return "ok"; } } });
+  assert.deepEqual(state.released, ["work_1"]);
+  assert.ok(state.workerHeaders.every(([h]) => h === "box-1")); // includes release
 });
 
 test("a thrown handler error becomes an error result", async () => {

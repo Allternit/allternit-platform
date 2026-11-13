@@ -17,7 +17,25 @@ Workers only make outbound HTTPS calls to the server. The server never connects 
 
 `bash`, `read`, `write`, `edit`, `multiedit`, `apply_patch`, `notebook`, `grep`, `glob`, `ls`, `symbol-edit`, `background-task`, `scratchpad`.
 
-For tools your own code runs (`custom` tools on an agent), use the worker helper in the SDKs. See [SDKs](/self-hosted/sdks#custom-tool-worker).
+For tools your own code runs (`custom` tools on an agent), use the worker helper in the SDKs. See [SDKs](/self-hosted/sdks#custom-tool-worker). The `gizzi worker` CLI does not know custom tools and answers them with an error result, so SDK workers run them.
+
+## One worker, one session
+
+A worker serves one session at a time. Run as many workers as you want concurrent sessions. The compose bundle runs 10.
+
+## The sandbox
+
+`bash` runs in a sandbox with the environment's network rules. On macOS the sandbox is `sandbox-exec`. On Linux it is bubblewrap, plus `socat` for the `limited` network mode. A Linux worker without bubblewrap refuses bash calls. It does not run them unsandboxed.
+
+## How a work item ends
+
+A session has at most one open work item. A work item ends only when `POST /v1/work/{work_id}/tool_calls/next` answers **204 with the header `X-Session-Closed: true`**. That happens when the session is archived or has been idle for `sessions.idle_timeout` (default `1h`). Then the worker calls `/complete`.
+
+A plain 204 (no header) is an empty wait, not the end. Poll again. Never complete after an empty wait: the session may send a tool call later.
+
+While a tool call has no worker, the session shows `waiting_for_worker`. After `sessions.no_worker_timeout` (default `10m`) the call fails with `no_worker` and the model sees a tool error.
+
+On a graceful server shutdown, open long-polls end at once.
 
 ## Modes
 
@@ -48,11 +66,12 @@ The repo also ships a systemd unit, `gizzi-worker.service`, for always-on worker
 - An old generation gets **409 `lease_stale`**. Another worker owns the item now. The worker stops at once, discards its results and posts nothing.
 - If a lease runs out, the item becomes ready again, and another worker can take it with `reclaim_older_than_ms`.
 - On shutdown, a worker calls `/release`. The item goes back to ready at once.
-- A worker finishes with `/complete`. Completing twice with the current generation is safe.
+- A worker finishes with `/complete`, after the session-closed signal above. Completing twice with the current generation is safe.
+- Send `X-Worker-Hostname` and `X-Worker-Version` on claim, heartbeat, renew, complete and release. They show in the worker list below.
 
 ## Tool calls are at least once
 
-- A worker asks for the next call with `POST /v1/work/{work_id}/tool_calls/next` (long-poll).
+- A worker asks for the next call with `POST /v1/work/{work_id}/tool_calls/next` (long-poll). A plain 204 means poll again; 204 with `X-Session-Closed: true` means the item is finished.
 - A call that was handed out but has no result is handed out again after the lease changes hands. So a call can run more than once.
 - Each call has a stable `tool_call_id`. A worker runs each id once and remembers it. The server stores one result per id and ignores a second post.
 - A result is at most **100 KiB**. A larger one gets **413 `result_too_large`**. Truncate and post again.
@@ -103,5 +122,6 @@ sequenceDiagram
     W->>S: POST /v1/tool_calls/{id}/result
     S-->>L: output, is_error
     S-->>U: events on /events/stream
+    S-->>W: 204, X-Session-Closed: true (session idle or archived)
     W->>S: POST /v1/work/{work_id}/complete
 ```

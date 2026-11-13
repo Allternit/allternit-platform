@@ -9,15 +9,24 @@ description: 'OpenTelemetry traces through OTEL_* environment variables, Prometh
 
 ## Traces (OpenTelemetry)
 
-Trace export is set with the standard OpenTelemetry environment variables, not in the settings file:
+Trace export is set with environment variables, not in the settings file:
 
 | Variable | Example | What it does |
 |---|---|---|
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://otel-collector:4318` | Where spans are sent. Unset means no export. |
-| `OTEL_SERVICE_NAME` | `allternit-agents-server` | The service name on every span. |
-| `OTEL_TRACES_SAMPLER` | `parentbased_traceidratio` | Which traces are kept. |
+| `OTEL_SERVICE_NAME` | `allternit-agents-server` | The service name on every span. Default `allternit-agents-server`. |
+| `OTEL_RESOURCE_ATTRIBUTES` | `deployment.environment=prod` | Extra resource attributes, as comma-separated `key=value` pairs. |
 
-Other standard `OTEL_*` variables follow the OpenTelemetry SDK conventions.
+Span names:
+
+| Span | What it covers |
+|---|---|
+| `http.request` | One request on a request route. |
+| `session` | A session. |
+| `session.turn` | One agent turn. |
+| `tool_call` | One tool call, from queueing to its result. |
+| `work.claim` | A worker's claim of a work item. |
+| `work.result` | A worker posting a tool result. |
 
 A trace links the session, each turn and each tool call, so you can follow one turn from the client request through the model call and the worker's tool run.
 
@@ -34,11 +43,25 @@ observability:
     listen: 127.0.0.1:9464
 ```
 
-- Metrics are served on their own listener, `127.0.0.1:9464` by default.
+- Metrics are served on their own listener, `127.0.0.1:9464` by default. Prometheus listens on `127.0.0.1:9464` only unless you change `listen`. A `listen` address that is not on loopback starts, but the server logs a warning, because the listener has no login.
 - The main API port never serves `/metrics`. A request for it there gets `404`.
-- Outbound requests are counted per host, so you can see exactly which hosts the server called.
+- The series are separate from any hosted Allternit API metrics. All names start with `allternit_selfhost_`.
 
-To scrape from another machine, change `listen` or put a proxy in front, and limit who can reach it.
+| Series | Type | Labels | Meaning |
+|---|---|---|---|
+| `sessions` | gauge | `status` | Sessions by status, read at scrape time. |
+| `turns_total` | counter | `outcome` | Agent turns that ended. |
+| `turn_duration_seconds` | histogram | `outcome` | Agent turn duration. |
+| `tool_calls_total` | counter | `name`, `outcome` | Tool calls a worker finished. |
+| `queue_depth` | gauge | `environment` | Work waiting for a worker. |
+| `workers_online` | gauge | `environment` | Workers seen in the last 60 seconds. |
+| `work_reclaims_total` | counter | none | Claims of an item an earlier lease had held (expired, swept or released). |
+| `leases_expired_total` | counter | none | Leases that ran out. |
+| `egress_requests_total` | counter | `host`, `result` | Outbound requests by host, so you can see which hosts the server called. |
+| `egress_refusals_total` | counter | `host` | Outbound requests the egress guard refused. |
+| `store_up` | gauge | none | 1 when the scrape-time store reads worked. |
+
+The listener has no TLS or login. To scrape from another machine, run a Prometheus agent on the same host or put a proxy in front, and limit who can reach it.
 
 ## Logs
 

@@ -26,6 +26,8 @@ import type { EnvironmentPolicy, ToolCall, WorkClaim } from "./types.ts";
 
 /** Tool results above this many bytes are refused by the server (413 `result_too_large`). */
 export const MAX_TOOL_RESULT_BYTES = 102_400;
+/** Sent as `X-Worker-Version` on every worker call. */
+export const WORKER_VERSION = "allternit-platform-ts-worker/1";
 /** The protocol says: renew every 20 seconds (the lease lasts 60). */
 export const RENEW_EVERY_MS = 20_000;
 
@@ -61,6 +63,8 @@ export interface CustomToolWorkerOptions {
   workerId?: string;
   /** Long-poll wait for claims and tool calls, 0 to 30 000 ms. Default 30 000. */
   blockMs?: number;
+  /** Sent as `X-Worker-Hostname`. Defaults to the HOSTNAME environment variable. */
+  hostname?: string;
   /** Claim one item, run it, complete it and return. Return after one empty claim too. */
   drain?: boolean;
   /** Also claim items whose lease ran out at least this long ago (work from a worker that died). */
@@ -79,6 +83,11 @@ interface ToolResult {
 function env(name: string): string | undefined {
   const p = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process;
   return p?.env?.[name];
+}
+
+function hostName(): string {
+  const p = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process;
+  return p?.env?.HOSTNAME ?? p?.env?.COMPUTERNAME ?? "unknown";
 }
 
 function randomId(): string {
@@ -119,8 +128,10 @@ export function truncateUtf8(text: string, maxBytes: number = MAX_TOOL_RESULT_BY
 
 /**
  * Claim work for one environment and run custom tools until `signal` aborts
- * (or after one item with `drain`). Work items run one at a time; start more
- * processes for more at once.
+ * (or after one item with `drain`). A work item ends only when the server
+ * answers `tool_calls/next` with 204 and `X-Session-Closed: true`; a plain 204
+ * means poll again. One worker serves one session at a time; start more
+ * processes for more concurrent sessions.
  */
 export async function runCustomToolWorker(options: CustomToolWorkerOptions): Promise<void> {
   const log = options.log ?? (() => undefined);
@@ -140,6 +151,10 @@ export async function runCustomToolWorker(options: CustomToolWorkerOptions): Pro
     if (done.size > 1000) done.delete(done.keys().next().value as string);
   };
   const requestTimeout = blockMs + 30_000;
+  const workerHeaders: Record<string, string> = {
+    "X-Worker-Hostname": options.hostname ?? hostName(),
+    "X-Worker-Version": WORKER_VERSION,
+  };
 
   while (!outer?.aborted) {
     let claim: WorkClaim | undefined;
@@ -147,7 +162,7 @@ export async function runCustomToolWorker(options: CustomToolWorkerOptions): Pro
       claim = await client.work.claim(
         options.environmentId,
         { worker_id: workerId, block_ms: blockMs, ...(options.reclaimOlderThanMs !== undefined ? { reclaim_older_than_ms: options.reclaimOlderThanMs } : {}) },
-        { signal: outer, timeout: requestTimeout },
+        { signal: outer, timeout: requestTimeout, headers: workerHeaders },
       );
     } catch (err) {
       if (outer?.aborted) return;
@@ -169,10 +184,11 @@ export async function runCustomToolWorker(options: CustomToolWorkerOptions): Pro
     outer?.addEventListener("abort", onOuterAbort, { once: true });
     let lost = false;
     let failure: string | undefined;
+    let sessionClosed = false;
     log(`claimed ${workId} (session ${claim.session_id}, generation ${generation})`);
 
     const renew = setInterval(() => {
-      c.work.renew(workId, { lease_generation: generation }, { timeout: 15_000 }).catch((err) => {
+      c.work.renew(workId, { lease_generation: generation }, { timeout: 15_000, headers: workerHeaders }).catch((err) => {
         if (isLeaseStale(err)) {
           log(`lease on ${workId} is stale; another worker owns it. Stopping.`);
           lost = true;
@@ -188,8 +204,12 @@ export async function runCustomToolWorker(options: CustomToolWorkerOptions): Pro
     try {
       while (!item.signal.aborted) {
         let call: ToolCall | undefined;
+        let closed = false;
         try {
-          call = await c.toolCalls.next(workId, { block_ms: blockMs }, { headers, signal: item.signal, timeout: requestTimeout });
+          call = await c.toolCalls.next(workId, { block_ms: blockMs }, {
+            headers, signal: item.signal, timeout: requestTimeout,
+            onResponse: (r) => { closed = r.status === 204 && r.headers.get("x-session-closed") === "true"; },
+          });
         } catch (err) {
           if (item.signal.aborted) break;
           if (isLeaseGone(err)) {
@@ -198,8 +218,15 @@ export async function runCustomToolWorker(options: CustomToolWorkerOptions): Pro
           }
           throw err;
         }
-        // No tool call in a whole wait window: this item is finished.
-        if (!call) break;
+        if (!call) {
+          // 204 + X-Session-Closed: true is the only end of a work item.
+          // A plain 204 is an empty wait: poll again, never complete.
+          if (closed) {
+            sessionClosed = true;
+            break;
+          }
+          continue;
+        }
         const result = await runCall(claim, call, item.signal);
         if (item.signal.aborted) break; // lease lost or stopping: discard
         try {
@@ -222,8 +249,9 @@ export async function runCustomToolWorker(options: CustomToolWorkerOptions): Pro
     }
 
     if (lost) return; // another worker owns it: post nothing more
+    if (!sessionClosed && !failure && !outer?.aborted) return; // stopped without a close signal: do not complete
     if (outer?.aborted) {
-      await c.work.release(workId, { lease_generation: generation }, { timeout: 15_000 }).catch(() => undefined);
+      await c.work.release(workId, { lease_generation: generation }, { timeout: 15_000, headers: workerHeaders }).catch(() => undefined);
       log(`released ${workId}`);
       return;
     }
@@ -231,7 +259,7 @@ export async function runCustomToolWorker(options: CustomToolWorkerOptions): Pro
       await c.work.complete(
         workId,
         failure ? { lease_generation: generation, outcome: "failed", error_message: failure.slice(0, 2000) } : { lease_generation: generation, outcome: "success" },
-        { timeout: 15_000 },
+        { timeout: 15_000, headers: workerHeaders },
       );
       log(`completed ${workId}`);
     } catch (err) {

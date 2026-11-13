@@ -39,7 +39,7 @@ With `provider: gateway`, the server sends requests to `inference.gateway.base_u
 | `inference.gateway.format` | Request shape |
 |---|---|
 | `anthropic-messages` | Anthropic Messages API |
-| `bedrock-invoke` | Bedrock InvokeModel |
+| `bedrock-invoke` | Bedrock Converse API (`/model/{id}/converse`). It does not send InvokeModel requests. |
 | `vertex-raw-predict` | Vertex AI rawPredict |
 | `openai-chat` | OpenAI-style chat completions |
 
@@ -60,10 +60,10 @@ inference:
 
 ## The model map
 
-`inference.model_map` maps the model name on an agent to the provider's model id. Agents use short, stable names, and the map says what each one means on your provider.
+`inference.model_map` maps a model name to the provider's model id. Clients use the **map keys** as model names (for example `claude-sonnet`). The server and gizzi translate them to provider ids, so a client never needs the provider's id.
 
 - With `gateway`, the map is required.
-- A model that is not in the map is refused with **`422 model_not_mapped`**. The server makes no outbound request for it.
+- A model that is not in the map is refused with **`422 model_not_mapped`** before any outbound call.
 - The check runs when you create an agent (gateway provider) and when you create a session.
 
 ```json

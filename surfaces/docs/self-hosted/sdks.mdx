@@ -62,6 +62,8 @@ An agent tool with `"type": "custom"` is run by your code. The worker helper doe
 3. Takes the session's tool calls with the per-session secret.
 4. Runs your handler for each tool and posts the result, cut to 100 KiB.
 
+A work item ends only when `tool_calls/next` answers 204 with `X-Session-Closed: true`; the helper then calls `/complete`. A plain 204 means the wait was empty, so it polls again and never completes after it. It sends `X-Worker-Hostname` and `X-Worker-Version` on claim, renew, complete and release (set the hostname with `hostname`, otherwise the machine's). One worker serves one session at a time, so run as many workers as you want concurrent sessions.
+
 It answers a call that is handed out again (same `tool_call_id`) from memory instead of running it twice. When the lease turns stale it stops and posts nothing. When you stop it, it hands the item back with `/release`. A thrown error becomes an error result. A tool with no handler gets an error result.
 
 ```ts
@@ -93,7 +95,7 @@ run_custom_tool_worker(
 )
 ```
 
-Built-in sandbox tools (bash, file edits) are run by `gizzi worker`, not by this helper. Give agents whose tools your code runs their own environment, so the two kinds of worker don't take each other's work. The server's routing of custom tools to workers is part of the server build still in progress.
+Built-in sandbox tools (bash, file edits) are run by `gizzi worker`, not by this helper. Give agents whose tools your code runs their own environment, so the two kinds of worker don't take each other's work. The `gizzi worker` CLI answers custom tools with an error, so custom tools only run on SDK workers.
 
 ## Regenerate
 

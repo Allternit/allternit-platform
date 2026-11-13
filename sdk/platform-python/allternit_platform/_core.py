@@ -125,10 +125,15 @@ class Transport:
         idempotency_key: Optional[str] = None,
         timeout: Optional[float] = None,
         extra_headers: Optional[Dict[str, str]] = None,
+        on_response: Optional[Callable[[int, Dict[str, str]], None]] = None,
     ) -> Any:
+        """``on_response(status, headers)`` is called for a successful response (204 too) before the body is read.
+        Header names are lower-case."""
         resp = self._open(method, path, query=query, body=body, accept="application/json",
                           idempotency_key=idempotency_key, timeout=timeout, extra_headers=extra_headers)
         with resp:
+            if on_response is not None:
+                on_response(resp.status, {k.lower(): v for k, v in resp.headers.items()})
             raw = resp.read()
         return json.loads(raw) if raw else None
 

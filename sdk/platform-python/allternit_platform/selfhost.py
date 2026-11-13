@@ -19,13 +19,14 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 import threading
 import time
 import uuid
 from collections import OrderedDict
 from typing import Any, Callable, Dict, Iterator, Mapping, Optional
 
-from ._core import DEFAULT_TIMEOUT, Transport
+from ._core import DEFAULT_TIMEOUT, Transport, _sdk_version
 from ._errors import APIConnectionError, APIError, AuthenticationError, ConflictError, PermissionDeniedError
 from ._selfhost_generated import NOT_GIVEN, GeneratedResources, SessionsResource
 
@@ -192,6 +193,7 @@ def run_custom_tool_worker(
     client: Optional[SelfHostClient] = None,
     worker_id: Optional[str] = None,
     block_ms: int = 30_000,
+    hostname: Optional[str] = None,
     drain: bool = False,
     reclaim_older_than_ms: Optional[int] = None,
     stop: Optional[threading.Event] = None,
@@ -204,7 +206,9 @@ def run_custom_tool_worker(
     session's tool calls with the per-session secret, runs ``tools[name]`` and
     posts the result (truncated to 100 KiB). Runs until ``stop`` is set or
     Ctrl-C (a held item is handed back with ``/release``), or after one item
-    with ``drain=True`` (which also returns after one empty claim).
+    with ``drain=True`` (which also returns after one empty claim). A work item ends only when
+    ``tool_calls/next`` answers 204 with ``X-Session-Closed: true``; a plain 204
+    means poll again. One worker serves one session at a time.
 
     Built-in sandbox tools (bash, file edits) are run by ``gizzi worker``, not
     here. Give agents whose tools this worker runs their own environment. A
@@ -221,6 +225,11 @@ def run_custom_tool_worker(
             raise ValueError("No environment key. Pass environment_key=... or set ALLTERNIT_ENVIRONMENT_KEY (aek_...).")
         client = SelfHostClient(key, base_url=base_url)
     request_timeout = block_ms / 1000 + 30
+    # Sent on claim, renew, complete and release so the server can show the worker.
+    worker_headers = {
+        "X-Worker-Hostname": hostname or socket.gethostname(),
+        "X-Worker-Version": f"allternit-platform-python-worker/{_sdk_version()}",
+    }
     # One result per tool_call_id: a call handed out again (at-least-once) is
     # answered from here instead of running twice.
     done: "OrderedDict[str, Dict[str, Any]]" = OrderedDict()
@@ -264,7 +273,7 @@ def run_custom_tool_worker(
         def renew_loop() -> None:
             while not item_stopped.wait(RENEW_EVERY_S):
                 try:
-                    client.work.renew(work_id, lease_generation=generation, timeout=15)
+                    client.work.renew(work_id, lease_generation=generation, timeout=15, extra_headers=worker_headers)
                 except Exception as e:  # keep renewing unless the lease is gone
                     if _lease_stale(e):
                         say(f"lease on {work_id} is stale; another worker owns it. Stopping.")
@@ -278,17 +287,31 @@ def run_custom_tool_worker(
         # Only the worker holds the secret.
         headers = {"X-Session-Secret": claim["session_secret"]}
         interrupted = False
+        session_closed = False
         try:
             while not item_stopped.is_set() and not stop.is_set():
+                closed = {"v": False}
+
+                def on_response(status: int, resp_headers: Dict[str, str], closed=closed) -> None:
+                    closed["v"] = status == 204 and resp_headers.get("x-session-closed") == "true"
+
                 try:
-                    call = client.tool_calls.next(work_id, block_ms=block_ms, timeout=request_timeout, extra_headers=headers)
+                    call = client.http.request(
+                        "POST", f"/v1/work/{_q(work_id)}/tool_calls/next", body={"block_ms": block_ms},
+                        timeout=request_timeout, extra_headers=headers, on_response=on_response,
+                    )
                 except Exception as e:
                     if _lease_gone(e):
                         state["lost"] = True
                         break
                     raise
                 if not call:
-                    break  # no tool call in a whole wait window: this item is finished
+                    # 204 + X-Session-Closed: true is the only end of a work item.
+                    # A plain 204 is an empty wait: poll again, never complete.
+                    if closed["v"]:
+                        session_closed = True
+                        break
+                    continue
                 result = run_call(claim, call, item_stopped)
                 if item_stopped.is_set() or stop.is_set():
                     break  # lease lost or stopping: discard
@@ -311,9 +334,11 @@ def run_custom_tool_worker(
 
         if state["lost"]:
             return  # another worker owns it: post nothing more
+        if not session_closed and not failure and not stop.is_set():
+            return  # stopped without a close signal: do not complete
         if stop.is_set():
             try:
-                client.work.release(work_id, lease_generation=generation, timeout=15)
+                client.work.release(work_id, lease_generation=generation, timeout=15, extra_headers=worker_headers)
                 say(f"released {work_id}")
             except Exception:
                 pass
@@ -323,9 +348,9 @@ def run_custom_tool_worker(
         try:
             if failure:
                 client.work.complete(work_id, lease_generation=generation, outcome="failed",
-                                     error_message=failure[:2000], timeout=15)
+                                     error_message=failure[:2000], timeout=15, extra_headers=worker_headers)
             else:
-                client.work.complete(work_id, lease_generation=generation, outcome="success", timeout=15)
+                client.work.complete(work_id, lease_generation=generation, outcome="success", timeout=15, extra_headers=worker_headers)
             say(f"completed {work_id}")
         except ConflictError as e:
             if not _lease_stale(e):
@@ -336,7 +361,7 @@ def run_custom_tool_worker(
             claim = client.work.claim(
                 environment_id, worker_id=worker_id, block_ms=block_ms,
                 reclaim_older_than_ms=reclaim_older_than_ms if reclaim_older_than_ms is not None else NOT_GIVEN,
-                timeout=request_timeout,
+                timeout=request_timeout, extra_headers=worker_headers,
             )
             if not claim:
                 if drain:

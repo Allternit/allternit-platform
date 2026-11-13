@@ -29,10 +29,13 @@ class Server:
         self.lock = threading.Lock()
         self.reset()
 
-    def reset(self, claims=None, calls=None, stale_on_next=False):
+    def reset(self, claims=None, calls=None, stale_on_next=False, empty_waits=0):
         self.claims = list(claims or [])
         self.calls = list(calls or [])
         self.stale_on_next = stale_on_next
+        self.empty_waits = empty_waits  # plain 204s before the closing one
+        self.completes_before_close = 0
+        self.worker_headers = []
         self.results = []
         self.completed = []
         self.released = []
@@ -50,9 +53,11 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, *args):
         pass
 
-    def _json(self, status, body=None):
+    def _json(self, status, body=None, headers=None):
         raw = json.dumps(body).encode() if body is not None else b""
         self.send_response(status)
+        for k, v in (headers or {}).items():
+            self.send_header(k, v)
         self.send_header("content-type", "application/json")
         self.send_header("content-length", str(len(raw)))
         self.end_headers()
@@ -91,6 +96,8 @@ class Handler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         body = self._body()
         with STATE.lock:
+            if path.endswith(("/claim", "/renew", "/heartbeat", "/complete", "/release")):
+                STATE.worker_headers.append((self.headers.get("X-Worker-Hostname"), self.headers.get("X-Worker-Version")))
             if path == "/v1/environments/env_1/work/claim":
                 if not STATE.claims:
                     return self._json(204)
@@ -99,9 +106,12 @@ class Handler(BaseHTTPRequestHandler):
                 STATE.secret_headers.append(self.headers.get("X-Session-Secret"))
                 if STATE.stale_on_next:
                     return self._json(409, {"error": {"type": "conflict_error", "message": "stale", "code": "lease_stale"}})
-                if not STATE.calls:
-                    return self._json(204)
-                return self._json(200, STATE.calls.pop(0))
+                if STATE.calls:
+                    return self._json(200, STATE.calls.pop(0))
+                if STATE.empty_waits > 0:
+                    STATE.empty_waits -= 1
+                    return self._json(204)  # plain 204: empty wait, poll again
+                return self._json(204, headers={"X-Session-Closed": "true"})
             if path.startswith("/v1/tool_calls/") and path.endswith("/result"):
                 STATE.secret_headers.append(self.headers.get("X-Session-Secret"))
                 if len(body["output"].encode()) > MAX_TOOL_RESULT_BYTES:
@@ -109,6 +119,8 @@ class Handler(BaseHTTPRequestHandler):
                 STATE.results.append((path.split("/")[3], body))
                 return self._json(200, {"tool_call_id": path.split("/")[3], "status": "completed"})
             if path.endswith("/complete"):
+                if STATE.empty_waits > 0:
+                    STATE.completes_before_close += 1
                 STATE.completed.append((path.split("/")[3], body))
                 return self._json(200, {"work_id": path.split("/")[3], "lease_generation": body["lease_generation"],
                                         "lease_expires_at": None, "status": "completed"})
@@ -163,6 +175,30 @@ class SelfHostTests(unittest.TestCase):
         self.assertIn('No handler for tool "bash"', STATE.results[1][1]["output"])
         self.assertEqual(STATE.completed, [("work_1", {"lease_generation": 3, "outcome": "success"})])
         self.assertTrue(all(h == SECRET for h in STATE.secret_headers))
+
+    def test_plain_204_means_poll_again_only_session_closed_ends_item(self):
+        STATE.reset(claims=[claim()], empty_waits=3, calls=[{"tool_call_id": "tc_a", "name": "t", "input": {}}])
+        run_custom_tool_worker("env_1", {"t": lambda i, c: "ok"}, client=self.client(), block_ms=0, drain=True)
+        self.assertEqual(STATE.empty_waits, 0)
+        self.assertEqual(STATE.completes_before_close, 0)
+        self.assertEqual(len(STATE.results), 1)
+        self.assertEqual(STATE.completed, [("work_1", {"lease_generation": 3, "outcome": "success"})])
+
+    def test_worker_headers_on_claim_renew_complete_release(self):
+        STATE.reset(claims=[claim()])
+        run_custom_tool_worker("env_1", {}, client=self.client(), block_ms=0, drain=True, hostname="box-1")
+        self.assertGreaterEqual(len(STATE.worker_headers), 2)
+        self.assertTrue(all(h == "box-1" and (v or "").startswith("allternit-platform-python-worker/") for h, v in STATE.worker_headers))
+        stop = threading.Event()
+
+        def handler(inp, ctx):
+            stop.set()
+            return "ok"
+
+        STATE.reset(claims=[claim()], calls=[{"tool_call_id": "tc_r", "name": "t", "input": {}}])
+        run_custom_tool_worker("env_1", {"t": handler}, client=self.client(), block_ms=0, stop=stop, hostname="box-1")
+        self.assertEqual(STATE.released, ["work_1"])
+        self.assertTrue(all(h == "box-1" for h, _ in STATE.worker_headers))
 
     def test_handler_error_becomes_error_result(self):
         def boom(inp, ctx):

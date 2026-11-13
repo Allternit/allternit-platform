@@ -34,15 +34,18 @@ Desktop calls your server directly. It does not need an Allternit account for th
 The web app (including its phone layout) and the PWA at m.allternit.com have the same panel.
 
 - The server URL must be `https://`. Browsers block calls from an HTTPS page to `http://` hosts, so the app refuses an `http://` URL with a clear error instead of failing silently.
-- Add the app's origins to `server.cors_origins` in the settings file, or the browser blocks the calls:
+- Add the app's origins to `server.cors_origins` in the settings file, or the browser blocks the calls. List all three clients that run in a browser engine:
 
 ```yaml
 server:
   public_url: https://agents.example.internal
   cors_origins:
-    - https://ai.allternit.com
-    - https://m.allternit.com
+    - https://ai.allternit.com    # web app
+    - https://m.allternit.com     # PWA
+    - http://127.0.0.1:8013       # packaged Desktop
 ```
+
+iOS and Gizzi Code make no browser calls and need no entry.
 
 - The page itself loads from `allternit.com`, but API calls go straight from the browser to your server. Your agents, sessions and keys do not pass through Allternit. If no part of the flow may touch an Allternit domain, use Desktop, the iOS app or Gizzi Code instead.
 
@@ -50,9 +53,11 @@ server:
 
 In the iOS app, open **Settings**, then **Self-hosted server**:
 
-1. Enter the server's HTTPS address and an API key.
+1. Enter the server's HTTPS address and an API key. iOS accepts HTTPS only.
 2. The key is stored in the iOS Keychain.
 3. The screen shows the connection, the server's agents and environments with their online workers, and lets you start a session. Replies and tool calls stream in.
+
+If your server uses a certificate from a private CA, install the CA profile on the device and trust it: Settings, General, About, Certificate Trust Settings. Until the CA is trusted, the app cannot connect.
 
 ## Android
 

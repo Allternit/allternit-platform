@@ -60,6 +60,27 @@ class ServerResource:
     def __init__(self, client: Transport) -> None:
         self._client = client
 
+    def get_health_live(self, *, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+        """Liveness
+
+        200 while the process serves requests. No auth. For container and load-balancer probes.
+
+        ``GET /health/live``
+        """
+        return self._client.request("GET", f"/health/live", timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def get_health_ready(self, *, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+        """Readiness
+
+        200 when the database answers and the agent loop (the gizzi child) is
+        ready. 503 `store_unavailable` when the database does not answer, 503
+        `agent_loop_unavailable` while the agent loop is starting or restarting,
+        or when it cannot run (for example the gizzi-code binary is missing). No auth.
+
+        ``GET /health/ready``
+        """
+        return self._client.request("GET", f"/health/ready", timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
     def get_info(self, *, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "ServerInfo":
         """Server info
 
@@ -426,7 +447,14 @@ class SessionsResource:
         event that was stored. Follow progress on the events stream. A model-only
         turn needs no worker. A turn that calls a tool waits until a worker
         for the environment is attached; the session shows `waiting_for_worker`.
-        Returns 409 `session_busy` if a turn is already running.
+        Returns 409 `session_busy` if a turn is already running, and 409
+        `session_archived` for an archived session. The agent's model is checked
+        against the server's model map again here (it may have changed since the
+        session was made): an unmapped model is 422 `model_not_mapped`, with no
+        outbound request. While the agent loop is starting or cannot run, the
+        answer is 503 `agent_loop_unavailable`; a server built without an agent
+        loop answers 501 `not_implemented`. In those cases nothing is stored.
+        A turn that fails later ends with an `error` event and status `error`.
 
         ``POST /v1/sessions/{id}/messages``
         """
@@ -440,7 +468,7 @@ class SessionsResource:
     def interrupt(self, id: str, *, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "Session":
         """Interrupt the running turn
 
-        Stops the current turn. Pending tool calls are cancelled. Does nothing if the session is idle.
+        Stops the current turn. Pending tool calls are cancelled. The session's work item stays with its worker, which keeps serving the session's next turns. Does nothing if the session is idle.
 
         ``POST /v1/sessions/{id}/interrupt``
         """
@@ -511,11 +539,20 @@ class WorkResource:
     def claim(self, id: str, *, worker_id: str, block_ms: int = NOT_GIVEN, reclaim_older_than_ms: int = NOT_GIVEN, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Optional["WorkClaim"]:
         """Claim a work item
 
-        Worker side. Claims the oldest ready work item for this environment and
-        starts a 60 second lease. Waits up to `block_ms` for work to appear.
-        Returns 204 when there is nothing. If `reclaim_older_than_ms` is set, the
-        worker may also take an item whose lease ran out that long ago (a worker
-        that died). Each claim raises the item's `lease_generation`. Auth: environment key of this environment.
+        Worker side. Claims the oldest claimable work item for this environment and
+        starts a 60 second lease. Waits up to `block_ms` for work to appear and
+        answers as soon as an item is queued. Returns 204 when there is nothing.
+
+        Claimable: an item that is ready, or one whose lease ran out (a worker that
+        died). With `reclaim_older_than_ms`, also an item whose lease is still live
+        but was last renewed at least that long ago; pick a value above the 20 s
+        renew interval. Each claim raises the item's `lease_generation`, so the old
+        worker gets 409 `lease_stale` on its next call. Tool calls the old worker
+        took but did not answer are handed out again.
+
+        The server also returns expired leases to the queue every 5 seconds.
+        Each session has at most one open work item, queued the first time a turn
+        needs a sandbox tool. Auth: environment key of this environment.
 
         ``POST /v1/environments/{id}/work/claim``
         """
@@ -593,6 +630,14 @@ class ToolCallsResource:
         is handed out again after the lease changes hands (at-least-once), with the
         same `tool_call_id`. Run it once per id. Auth: the session secret.
 
+        **Session finished.** When the session will send no more tool calls, the
+        server answers 204 with the header `X-Session-Closed: true`. That happens
+        when the session is archived, or when it has had no turn running and no
+        pending tool call for `sessions.idle_timeout` (default 1 hour). The worker
+        then calls `/complete` for the work item. The session's next turn that
+        needs a tool queues a new item. A 204 without the header only means
+        "nothing yet, poll again".
+
         ``POST /v1/work/{work_id}/tool_calls/next``
         """
         _body: Dict[str, Any] = {}
@@ -650,7 +695,13 @@ class APIKeysResource:
     def create(self, *, name: str, role: "Role", expires_at: Optional[str] = NOT_GIVEN, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "ApiKeyWithSecret":
         """Create a server API key
 
-        Returns the `ask_...` secret once. The server stores only a hash. The first key is minted by `allternit-agents-server admin setup`, not by this route. Needs role `admin`.
+        Returns the `ask_...` secret once. The server stores only a hash. Needs role `admin`.
+
+        First key: run `allternit-agents-server admin setup`, or call this route
+        with the setup token (the `ALLTERNIT_SELF_HOSTED_SETUP_TOKEN` environment
+        variable of the server) while no API key exists. The first key must have
+        role `admin` (else 400 `first_key_must_be_admin`). Once any key exists, the
+        setup token is refused.
 
         ``POST /v1/api_keys``
         """

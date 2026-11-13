@@ -91,11 +91,28 @@ The settings file is YAML. Secrets never go in it. Use a reference instead:
 - `mcp.allowed_hostnames`: MCP servers agents may use. Exact hostnames, HTTPS only.
 - `git.allowed_hostnames` and `git.allowed_push_refs`: where workers may clone and push.
 - `auth.oidc`: sign-in with your identity provider, with roles from a token claim.
-- `secrets`: where secrets come from (`env`, `file` or `vault`) and the encryption key reference.
-- `observability`: log format and the Prometheus listener (separate port, off by default).
+- `data_dir`: a top-level key (default `/var/lib/allternit-agents-server`), not
+  under `server`. Used for SQLite when no `database.url` is set.
+- `secrets`: where secrets come from (`env`, `file` or `vault`), the encryption
+  key reference (`encryption_key_ref`) and earlier keys (`previous_key_refs`).
+  With Vault, `vault:path#key` reads `{mount}/data/{vault.path}/{path}`, and
+  `vault:#key` reads `vault.path` itself. Vault auth is `token`, `approle` or
+  `kubernetes`.
+- `sessions`: `idle_timeout` (default 1h; after it the worker's item closes)
+  and `no_worker_timeout` (default 10m; then a tool call fails with
+  `no_worker`). A session shows `waiting_for_worker` while a tool call has no
+  worker.
+- `observability`: log format and the Prometheus listener (off by default;
+  `127.0.0.1:9464`, never the main port).
 
 OpenTelemetry is set with the standard `OTEL_*` environment variables, not in
-the settings file. For a local check, set `COMPOSE_PROFILES=otel` and
+the settings file: `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_SERVICE_NAME`
+(default `allternit-agents-server`) and `OTEL_RESOURCE_ATTRIBUTES`. Span names:
+`http.request`, `session`, `session.turn`, `tool_call`, `work.claim`,
+`work.result`. Prometheus series (all `allternit_selfhost_`): `sessions`,
+`turns_total`, `turn_duration_seconds`, `tool_calls_total`, `queue_depth`,
+`workers_online`, `work_reclaims_total`, `leases_expired_total`,
+`egress_requests_total`, `egress_refusals_total`, `store_up`. For a local check, set `COMPOSE_PROFILES=otel` and
 `OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317` in `.env`, then run
 `docker compose logs -f otel-collector`.
 
@@ -110,7 +127,13 @@ Browser clients need their origin in `server.cors_origins`. The example lists:
 | `http://127.0.0.1:8013` | Packaged Allternit Desktop. Its window is served by the local runtime on this origin. |
 
 Remove the ones you do not use. The iOS app and the gizzi CLI do not need CORS.
-The web app and the PWA can only connect to an `https://` server URL.
+The web app and the PWA can only connect to an `https://` server URL. The iOS
+app is HTTPS only too: with a private CA, install the CA profile on the device
+and trust it (Settings, General, About, Certificate Trust Settings).
+
+The `bedrock-invoke` gateway format sends Bedrock Converse API paths
+(`/model/{id}/converse`), not InvokeModel. Clients use the `model_map` keys as
+model names; the server and gizzi map them to provider ids.
 
 ### TLS
 
@@ -156,7 +179,11 @@ curl -fsS -X POST $API/v1/environments/env_.../keys \
 # note the "secret": "aek_..." (shown once)
 ```
 
-Or, from the server container: `allternit-agents-server admin env-keys create <env id>`.
+Or, from the server container:
+`allternit-agents-server admin env-keys create --environment <env id> --config <path>`.
+The admin CLI: `admin setup | migrate | keys list|create --role|revoke |
+env-keys list|create --environment|revoke --environment | rotate-key |
+doctor [--offline]`, all with `--config`.
 
 The environment's `network` is `none` (no outbound traffic from the sandbox),
 `limited` (only `allowed_hosts`, exact match) or `full`.
@@ -181,11 +208,16 @@ curl -fsS -H "Authorization: Bearer $ALLTERNIT_API_KEY" \
 ```
 
 Ten workers start by default (`ALLTERNIT_WORKER_REPLICAS`). A worker shows as
-`online` when the server has seen it in the last 60 seconds.
+`online` when the server has seen it in the last 60 seconds. One worker serves
+one session at a time, so run as many workers as you want concurrent sessions.
+Custom tools are run by SDK workers (the gizzi CLI worker answers them with an
+error).
 
 ### The sandbox
 
-Every bash call runs in bubblewrap with the environment's network rules. The
+Every bash call runs in a sandbox with the environment's network rules:
+bubblewrap on Linux (plus `socat` for `limited` networking), `sandbox-exec` on
+macOS. The
 worker always turns the sandbox on and has no option to turn it off. If
 bubblewrap cannot start, bash calls fail with an error. They do not fall back
 to running without the sandbox.
@@ -234,6 +266,7 @@ exit), `--block-ms`, `--reclaim-older-than-ms`, `--auto-stop SECS`,
 `--on-work SCRIPT`. See `docs/SELFHOST_WORKER_PROTOCOL.md` in the server source.
 
 On SIGTERM, a worker hands its item back and exits, and another worker takes it.
+On a graceful server shutdown, open long-polls end at once.
 
 ## 4. Kubernetes
 
@@ -311,7 +344,7 @@ Test a restore on a separate host from time to time.
 |---|---|
 | Server API keys (`ask_...`) | Create a new key (`POST /v1/api_keys`, admin role), switch your clients to it, then revoke the old one (`DELETE /v1/api_keys/{id}`). `admin keys` lists and revokes keys from the server container. |
 | Environment keys (`aek_...`) | Create a new key for the environment, update the workers' `ALLTERNIT_ENVIRONMENT_KEY` (`.env` or the Kubernetes Secret), restart the workers, then revoke the old key (`DELETE /v1/environments/{id}/keys/{key_id}`). |
-| Encryption key | Back up the database first. Then run `allternit-agents-server admin rotate-key`. It re-encrypts the stored credentials with the new key. Data encrypted with the old key stays readable while rotation runs. Run `admin rotate-key --help` for how your version takes the new key. After it finishes, update `ALLTERNIT_ENCRYPTION_KEY` everywhere it is stored, and keep the old key with the backups taken before the rotation. |
+| Encryption key | Back up the database first. Add the new key, point `secrets.encryption_key_ref` at it and move the old key's reference into `secrets.previous_key_refs`. Stop the server, run `allternit-agents-server admin rotate-key --config <path>`, start the server, then remove the old key from `previous_key_refs` and your secret store. Keep the old key with the backups taken before the rotation. |
 | Provider credentials | Change the value behind the reference (the env var, file or Vault secret) and restart the server. |
 | Session secrets | Nothing to do. Each work claim gets a new one, and it ends with the lease. |
 
@@ -332,7 +365,7 @@ Server logs are JSON lines on stderr.
 | `migrate` exits with a non-zero code | The database is unreachable or the password is wrong. Check `ALLTERNIT_PG_PASSWORD` and `docker compose logs migrate`. The server does not start until the migration succeeds. |
 | `/health/live` answers but `/health/ready` does not | The server is up but cannot use the database or its settings. The server log names the check that failed. |
 | Workers missing from the worker list | Check `docker compose logs worker`. A 401 means the environment key is wrong or revoked. A 403 means the key belongs to another environment. A connection error means the worker cannot reach `ALLTERNIT_SERVER_URL`. |
-| Session stays `waiting_for_worker` | No worker is online for that session's environment. Start workers for that environment. |
+| Session stays `waiting_for_worker` | No worker is online for that session's environment, or all are busy (one worker serves one session). Start more workers for that environment. After `sessions.no_worker_timeout` the call fails with `no_worker`. |
 | bash calls fail with "no isolation driver" or bwrap "Operation not permitted" | The sandbox cannot start. Check the worker's security options and the host's user-namespace settings (section 3). |
 | `422 model_not_mapped` | The agent's model is not a key in `inference.model_map`. Add it, or change the agent's model. |
 | `host_not_allowed` | The host is not on the allowlist: `mcp.allowed_hostnames`, `git.allowed_hostnames`, or the environment's `allowed_hosts`. Lists are exact match. A subdomain does not match its parent. |

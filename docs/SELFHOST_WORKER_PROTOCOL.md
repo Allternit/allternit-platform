@@ -18,7 +18,7 @@ call is the gizzi tool id: `bash`, `read`, `write`, `edit`, `multiedit`,
 `scratchpad_list`, `scratchpad_read`, `scratchpad_write`, `scratchpad_remove`.
 The worker also accepts the short names `ls`, `notebook` and `symbol-edit`.
 The working directory is `/workspace`. `bash` runs inside bubblewrap on Linux
-(sandbox-exec on macOS). A Linux worker without bubblewrap refuses bash calls.
+(sandbox-exec on macOS; Linux also needs `socat` for `limited` networking). A Linux worker without bubblewrap refuses bash calls.
 
 In the agent loop, `GIZZI_TOOL_HOST=remote` (with `GIZZI_TOOL_HOST_URL` and
 `GIZZI_TOOL_HOST_TOKEN`) sends these tools to the queue. They never run in the
@@ -55,8 +55,11 @@ Run custom tools only on workers that have handlers for them.
   (default 1 hour). From then on `tool_calls/next` answers 204 with
   `X-Session-Closed: true`, and the worker completes the item. The next turn
   that needs a tool queues a new item. An interrupt does not end the item.
-- Send `X-Worker-Hostname` and `X-Worker-Version` on claim, heartbeat and
-  renew. They show in `GET /v1/environments/{id}/workers`.
+- A worker serves one session at a time. Run one worker per concurrent session.
+- Only 204 with `X-Session-Closed: true` ends the item. A plain 204 is an
+  empty wait: poll again, never complete.
+- Send `X-Worker-Hostname` and `X-Worker-Version` on claim, heartbeat, renew,
+  complete and release. They show in `GET /v1/environments/{id}/workers`.
 
 ## Modes
 

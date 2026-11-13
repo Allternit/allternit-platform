@@ -13,7 +13,12 @@ export type Error = {
      * `result_too_large` (413, tool output over 100 KiB),
      * `no_worker` (a session status reason, not an HTTP error: no worker is attached for the environment),
      * `session_busy` (409), `agent_in_use` (409), `environment_in_use` (409),
-     * `last_admin_key` (409), `timeout` (408, internal route), `no_worker` is also 504 on the internal route, `unauthorized` (401), `forbidden` (403), `not_found` (404).
+     * `last_admin_key` (409), `timeout` (408, internal route), `no_worker` is also 504 on the internal route, `unauthorized` (401), `forbidden` (403), `not_found` (404),
+     * `session_archived` (409, the session takes no new messages), `setup_already_done` (409),
+     * `first_key_must_be_admin` (400), `tool_call_conflict` (409, the tool_call_id belongs to another session),
+     * `invalid_body`, `invalid_query`, `invalid_field`, `invalid_limit`, `invalid_cursor`, `invalid_host` (400),
+     * `not_implemented` (501, the agent loop is not available), `store_unavailable` (503),
+     * `oidc_unavailable` (503, the identity provider is not reachable), `internal_error` (500).
      */
     code: string;
   };
@@ -370,6 +375,19 @@ export type EnvironmentKeyWithSecret = (EnvironmentKey & {
   secret: string;
 });
 
+export type GetHealthLiveResponse = {
+  status: "ok";
+};
+
+export type GetHealthReadyResponse = {
+  status: "ok";
+  store: "postgres" | "sqlite" | "memory";
+  /**
+   * `ready` when the gizzi child answers. `disabled` for a server built without an agent loop.
+   */
+  agent_loop?: "ready" | "disabled";
+};
+
 export type GetServerInfoResponse = ServerInfo;
 
 export type ListAgentsQuery = {
@@ -533,7 +551,7 @@ export type ClaimWorkRequest = {
    */
   block_ms?: number;
   /**
-   * Also claim items whose lease expired at least this long ago.
+   * Also claim items whose live lease was last renewed at least this long ago. Expired leases are claimable without it. Values of 60000 or more add nothing.
    */
   reclaim_older_than_ms?: number;
 };
