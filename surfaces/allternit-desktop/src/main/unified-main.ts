@@ -628,7 +628,12 @@ async function startGizziRuntime(): Promise<string> {
     existingPassword,
     apiToken: session?.accessToken,
     runtimeId: session?.runtimeId,
-    extraEnv: authManager.getConnectorSidecarEnvironment(),
+    extraEnv: {
+      ...authManager.getConnectorSidecarEnvironment(),
+      // Same token the API gets below: without it gizzi never registers the
+      // bundled allternit-connectors / allternit-tools MCP servers.
+      ...authManager.getInternalServiceLaunchEnvironment().gizzi,
+    },
   });
 }
 
@@ -1668,6 +1673,7 @@ async function initializeBundledMode(): Promise<void> {
           ...acuGatewayManager.getLaunchEnvironment(),
           ...authManager.getPlatformEncryptionEnvironment(),
           ...authManager.getConnectorSidecarEnvironment(),
+          ...authManager.getInternalServiceLaunchEnvironment().api,
         },
       });
     } catch (apiErr) {
@@ -3319,6 +3325,7 @@ handleGuarded('backend:restart', async () => {
       ...decisionRuntimeManager.getLaunchEnvironment(),
       ...authManager.getPlatformEncryptionEnvironment(),
       ...authManager.getConnectorSidecarEnvironment(),
+      ...authManager.getInternalServiceLaunchEnvironment().api,
     },
   });
 });

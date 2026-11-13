@@ -139,12 +139,12 @@ cmd/gizzi-code/packages/sdk/dist/
 cmd/gizzi-code/vendor/cloudflared/
 cmd/gizzi-code/vendor/mesh-node/
 cmd/gizzi-code/vendor/allternit-factory/
-surfaces/allternit-mobile/ios/Frameworks/Mesh.xcframework/
+surfaces/allternit-mobile/ios/Frameworks/Mesh.xcframework
 infrastructure/mesh/tsnet-ios/Mesh.xcframework/
 # D3 spike: prebuilt libgit2.xcframework — fetch via Frameworks/fetch-libgit2.sh
-surfaces/allternit-mobile/ios/Frameworks/libgit2.xcframework/
+surfaces/allternit-mobile/ios/Frameworks/libgit2.xcframework
 # Voice: sherpa-onnx iOS xcframework — fetch via Frameworks/fetch-sherpa-onnx.sh
-surfaces/allternit-mobile/ios/Frameworks/SherpaOnnxC.xcframework/
+surfaces/allternit-mobile/ios/Frameworks/SherpaOnnxC.xcframework
 infrastructure/mesh/tsnet-ios/Harness/harness
 
 # Publication edition photos are pipeline artifacts and deploy with the site
@@ -163,3 +163,7 @@ docs/desktop-cloud-mvp/*.mov
 
 # Downloaded by build-desktop.sh; left untracked it trips the release guard
 surfaces/allternit-desktop/resources/lume/
+
+# SourceKit-LSP build server config (machine-specific absolute paths; run `xcode-build-server config` locally)
+buildServer.json
+.sourcekit-lsp/

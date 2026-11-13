@@ -28,6 +28,14 @@ cp Config/Secrets.xcconfig.example Config/Secrets.xcconfig
 
 `Config/Secrets.xcconfig` is gitignored so the key is never committed.
 
+The vendored binaries `Frameworks/Mesh.xcframework`, `Frameworks/libgit2.xcframework` and `Frameworks/SherpaOnnxC.xcframework` aren't in git either; their build scripts are listed in the repo `.gitignore`. In a new worktree, symlink them and copy `Secrets.xcconfig` from a checkout that already has them. Without them, `xcodebuild` fails with "There is no XCFramework found":
+
+```bash
+SRC=<checkout that builds>/surfaces/allternit-mobile/ios
+for f in Mesh libgit2 SherpaOnnxC; do ln -s "$SRC/Frameworks/$f.xcframework" Frameworks/; done
+cp "$SRC/Config/Secrets.xcconfig" Config/
+```
+
 DEBUG builds also expose a **"Continue without signing in"** button on the login gate when the Clerk key is missing, so you can open the workspace UI without a configured Clerk app.
 
 To run tests:
@@ -35,6 +43,20 @@ To run tests:
 ```bash
 xcodebuild -scheme Allternit -destination 'platform=iOS Simulator,name=iPhone 16' test
 ```
+
+## Code intelligence (SourceKit-LSP)
+
+SourceKit-LSP (used by Claude Code's `swift-lsp` plugin, VS Code and other editors) can't read an Xcode project by itself. Without help it opens each `.swift` file alone, as a macOS file: `No such module 'UIKit'`, and go-to-definition across files finds nothing. `xcode-build-server` connects it to the project:
+
+```bash
+brew install xcode-build-server
+cd surfaces/allternit-mobile/ios
+xcode-build-server config -project Allternit.xcodeproj -scheme Allternit   # writes buildServer.json
+xcodebuild build -project Allternit.xcodeproj -scheme Allternit \
+  -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO     # gives it compile flags
+```
+
+`buildServer.json` holds absolute paths for one checkout, so it is gitignored. Run the steps again in each worktree, since every worktree path gets its own DerivedData folder. Build once more after you add files.
 
 ## Project structure
 
