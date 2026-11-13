@@ -750,6 +750,18 @@ const phoneLinkAPI = {
   },
 };
 
+// ─── Voice provider keys (voice-keys-ipc.ts) ──────────────────────────────────
+// The renderer's KeyStore (allternit-ai src/lib/voice/byok/desktopStore.ts) caches
+// these in memory; main keeps them in secure-store. readClipboard backs the
+// Paste button (renderer clipboard-read permission stays denied).
+
+const voiceKeysAPI = {
+  get: (): Promise<string | null> => ipcRenderer.invoke('voiceKeys:get'),
+  set: (json: string): Promise<boolean> => ipcRenderer.invoke('voiceKeys:set', json),
+  clear: (): Promise<boolean> => ipcRenderer.invoke('voiceKeys:clear'),
+  readClipboard: (): Promise<string | null> => ipcRenderer.invoke('voiceKeys:readClipboard'),
+};
+
 const phonesAPI = {
   status: (): Promise<unknown> => ipcRenderer.invoke('phone:status'),
   startQrPairing: (): Promise<{ payload: string }> => ipcRenderer.invoke('phone:pair-qr-start'),
@@ -1287,6 +1299,7 @@ const allternitDesktopAPI = {
   teach: teachAPI,
   artifactPreview: artifactPreviewAPI,
   voice: voiceAPI,
+  voiceKeys: voiceKeysAPI,
 };
 
 contextBridge.exposeInMainWorld('allternit', allternitDesktopAPI);
