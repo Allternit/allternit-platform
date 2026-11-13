@@ -702,13 +702,15 @@ pub fn write_private_json(path: &Path, value: &Value) -> Result<(), String> {
     std::fs::rename(&tmp, path).map_err(|e| format!("cannot write {}: {e}", path.display()))
 }
 
-/// `(providerID, modelID)` for gizzi. A mapped name uses the provider and
-/// the mapped id. An unmapped `provider/model` name is split. Anything else
-/// goes to the configured provider as is.
+/// `(providerID, modelID)` for gizzi. A mapped name is sent as the public
+/// name (the `model_map` key): gizzi loads the same `model_map` from
+/// `GIZZI_INFERENCE_CONFIG`, lists exactly those keys as its models, and does
+/// the key → provider id mapping itself. An unmapped `provider/model` name is
+/// split. Anything else goes to the configured provider as is.
 pub fn gizzi_model(s: &Settings, model: &str) -> (String, String) {
     let provider = s.inference.provider.as_str().to_string();
-    if let Some(id) = s.inference.model_map.as_ref().and_then(|m| m.get(model)) {
-        return (provider, id.clone());
+    if s.inference.model_map.as_ref().is_some_and(|m| m.contains_key(model)) {
+        return (provider, model.to_string());
     }
     if let Some((p, m)) = model.split_once('/') {
         if !p.is_empty() && !m.is_empty() {
@@ -1587,7 +1589,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             gizzi_model(&s, "claude-sonnet"),
-            ("bedrock".to_string(), "anthropic.claude-sonnet-v1".to_string())
+            ("bedrock".to_string(), "claude-sonnet".to_string())
         );
     }
 

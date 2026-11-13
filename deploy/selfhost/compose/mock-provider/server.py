@@ -22,7 +22,7 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 PORT = int(os.environ.get("PORT", "8080"))
-BASH_COMMAND = "echo ok > /workspace/a && cat /workspace/a"
+BASH_COMMAND = os.environ.get("MOCK_BASH_COMMAND", "echo ok > /workspace/a && cat /workspace/a")
 CANNED_TEXT = "Hello from the mock provider."
 
 
