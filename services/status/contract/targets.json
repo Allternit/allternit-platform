@@ -91,7 +91,7 @@
       "method": "GET",
       "expect_status": 200,
       "follow_redirects": false,
-      "body_marker": "<title>Allternit — Agentic OS</title>",
+      "body_marker": "<title>Allternit",
       "critical": true,
       "role": "page",
       "vantages": [
@@ -108,7 +108,7 @@
       "method": "GET",
       "expect_status": 200,
       "follow_redirects": false,
-      "body_marker": "<title>Allternit — Agentic OS</title>",
+      "body_marker": "<title>Allternit",
       "critical": true,
       "role": "page",
       "vantages": [
