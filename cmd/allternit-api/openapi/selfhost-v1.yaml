@@ -53,6 +53,46 @@ tags:
   - name: Internal
     description: Loopback only. Skipped by SDK generation.
 paths:
+  /health/live:
+    get:
+      operationId: getHealthLive
+      summary: Liveness
+      description: 200 while the process serves requests. No auth. For container and load-balancer probes.
+      tags: [Server]
+      security: []
+      responses:
+        "200":
+          description: Alive.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: { type: string, const: ok }
+  /health/ready:
+    get:
+      operationId: getHealthReady
+      summary: Readiness
+      description: 200 when the database answers, else 503 `store_unavailable`. No auth.
+      tags: [Server]
+      security: []
+      responses:
+        "200":
+          description: Ready.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, store]
+                properties:
+                  status: { type: string, const: ok }
+                  store: { type: string, enum: [postgres, sqlite, memory] }
+        "503":
+          description: The database is not reachable. Code `store_unavailable`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
   /v1/server/info:
     get:
       operationId: getServerInfo
@@ -444,7 +484,9 @@ paths:
         event that was stored. Follow progress on the events stream. A model-only
         turn needs no worker. A turn that calls a tool waits until a worker
         for the environment is attached; the session shows `waiting_for_worker`.
-        Returns 409 `session_busy` if a turn is already running.
+        Returns 409 `session_busy` if a turn is already running, and 409
+        `session_archived` for an archived session. A server whose agent loop
+        cannot run turns answers 501 `not_implemented` and stores nothing.
       tags: [Sessions]
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"
@@ -788,8 +830,19 @@ paths:
     post:
       operationId: createApiKey
       summary: Create a server API key
-      description: Returns the `ask_...` secret once. The server stores only a hash. The first key is minted by `allternit-agents-server admin setup`, not by this route. Needs role `admin`.
+      description: |
+        Returns the `ask_...` secret once. The server stores only a hash. Needs role `admin`.
+
+        First key: run `allternit-agents-server admin setup`, or call this route
+        with the setup token (the `ALLTERNIT_SELF_HOSTED_SETUP_TOKEN` environment
+        variable of the server) while no API key exists. The first key must have
+        role `admin` (else 400 `first_key_must_be_admin`). Once any key exists, the
+        setup token is refused.
       tags: [API keys]
+      security:
+        - ServerApiKey: []
+        - OIDC: []
+        - SetupToken: []
       requestBody:
         required: true
         content:
@@ -893,6 +946,11 @@ components:
       type: http
       scheme: bearer
       description: Random token made at server start and passed to the agent loop child. Accepted only from loopback addresses.
+    SetupToken:
+      type: apiKey
+      in: header
+      name: X-Allternit-Self-Hosted-Token
+      description: The server's `ALLTERNIT_SELF_HOSTED_SETUP_TOKEN`. Accepted only by `POST /v1/api_keys`, and only while no API key exists. May also be sent as the Bearer token.
     SessionSecret:
       type: apiKey
       in: header
@@ -988,7 +1046,12 @@ components:
                 `result_too_large` (413, tool output over 100 KiB),
                 `no_worker` (a session status reason, not an HTTP error: no worker is attached for the environment),
                 `session_busy` (409), `agent_in_use` (409), `environment_in_use` (409),
-                `last_admin_key` (409), `timeout` (408, internal route), `no_worker` is also 504 on the internal route, `unauthorized` (401), `forbidden` (403), `not_found` (404).
+                `last_admin_key` (409), `timeout` (408, internal route), `no_worker` is also 504 on the internal route, `unauthorized` (401), `forbidden` (403), `not_found` (404),
+                `session_archived` (409, the session takes no new messages), `setup_already_done` (409),
+                `first_key_must_be_admin` (400), `tool_call_conflict` (409, the tool_call_id belongs to another session),
+                `invalid_body`, `invalid_query`, `invalid_field`, `invalid_limit`, `invalid_cursor`, `invalid_host` (400),
+                `not_implemented` (501, the agent loop is not available), `store_unavailable` (503),
+                `oidc_unavailable` (503, the identity provider is not reachable), `internal_error` (500).
               examples: [model_not_mapped]
     ListEnvelope:
       type: object

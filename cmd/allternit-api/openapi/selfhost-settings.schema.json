@@ -38,9 +38,9 @@
         "public_url": { "type": "string", "format": "uri", "description": "The URL clients use. Shown in /v1/server/info." },
         "cors_origins": {
           "type": "array",
-          "items": { "type": "string", "format": "uri" },
+          "items": { "type": "string", "anyOf": [{ "format": "uri" }, { "const": "null" }], "not": { "const": "*" } },
           "default": [],
-          "description": "Browser origins allowed to call the API. Empty means no CORS headers."
+          "description": "Exact browser origins allowed to call the API, as scheme://host[:port]. Empty means no CORS headers. \"*\" is refused. The literal \"null\" allows Origin: null (the Desktop app's file:/app: renderer) and is never implied by another entry. Allowed methods: GET, POST, PATCH, DELETE, OPTIONS. Allowed headers: Authorization, Content-Type, Idempotency-Key, Last-Event-ID, X-Session-Secret. Exposed: Last-Event-ID. Preflight max age 600 s. No credentials mode: clients send the key in Authorization."
         }
       }
     },
@@ -144,6 +144,7 @@
           "properties": {
             "issuer": { "type": "string", "format": "uri" },
             "audiences": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+            "jwks_uri": { "type": "string", "format": "uri", "description": "Where the signing keys are. When absent, the server reads it from the issuer's discovery document and accepts it only on the issuer's own host. Set it when the keys live on another host; that host is then added to the egress allowlist." },
             "role_claim": { "type": "string", "default": "groups", "description": "The token claim that holds the user's groups or role." },
             "role_map": {
               "type": "object",
