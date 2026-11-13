@@ -6,7 +6,7 @@
  * (with its credential) and stores the part as a data: URL, which the model
  * and run_code can both read.
  */
-import { describe, expect, mock, test } from "bun:test"
+import { afterAll, describe, expect, mock, test } from "bun:test"
 import path from "path"
 
 const seen: { path: string; auth: string | null }[] = []
@@ -25,6 +25,18 @@ process.env.ALLTERNIT_API_TOKEN = "tok-test"
 
 const { Log } = await import("../../src/shared/util/log")
 Log.init({ print: false })
+
+// Bun keeps a mock.module override for the rest of the run, other test files
+// included, so the real modules go back (and the server stops) once this file
+// is done.
+const realLLMModule = { ...(await import("../../src/runtime/session/llm")) }
+const realProviderModule = { ...(await import("../../src/runtime/providers/provider")) }
+afterAll(() => {
+  mock.module("../../src/runtime/session/llm", () => realLLMModule)
+  mock.module("../../src/runtime/providers/provider", () => realProviderModule)
+  server.stop(true)
+})
+
 mock.module("../../src/runtime/session/llm", () => ({
   LLM: {
     stream: async () => ({
