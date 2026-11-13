@@ -1107,6 +1107,21 @@ export namespace Provider {
       }
     }
 
+    // 5c. Allternit Cloud: ALLTERNIT_API_TOKEN (the device token Desktop and every
+    // cloud computer hand gizzi) or this runtime's own paired device token. The
+    // provider was loaded with this key, but a turn always carries a plan and the
+    // SDK takes only the plan's key, so without this every Cloud turn on a computer
+    // with no ALLTERNIT_API_KEY (a Platform runtime, a cloud computer) went out
+    // unsigned and failed "Unauthorized". Read fresh: device tokens rotate.
+    if (!plan.source && ref.providerID === "allternit") {
+      const token = await cloudInferenceToken()
+      if (token) {
+        plan.source = "env"
+        plan.authType = "api_key"
+        plan.apiKey = token
+      }
+    }
+
     // 6. Plugin OAuth loaders
     if (!plan.source && provider) {
       for (const plugin of await Plugin.list()) {
