@@ -404,6 +404,12 @@ pub trait ProvisionBackend: Send + Sync + std::fmt::Debug {
     /// Used for the bootstrap contract: it does not depend on cloud-init
     /// running inside the image.
     async fn push_file(&self, name: &str, file: &InstanceFile) -> Result<(), ProvisionError>;
+    /// Read one file out of a (stopped or running) instance, at most
+    /// `max_bytes`. `Ok(None)` when the file does not exist. Used by the
+    /// meeting reaper to save a bot account's Chrome profile back.
+    async fn pull_file(&self, _name: &str, _path: &str, _max_bytes: usize) -> Result<Option<Vec<u8>>, ProvisionError> {
+        Err(unsupported("file reads"))
+    }
 
     // -- Customer restore points and downloadable copies -------------------
     // Defaults report "unsupported" so backends without them still compile.
@@ -1358,6 +1364,32 @@ impl ProvisionBackend for IncusHttpBackend {
             return Err(error_from_status(status, &json));
         }
         Ok(())
+    }
+
+    async fn pull_file(&self, name: &str, path: &str, max_bytes: usize) -> Result<Option<Vec<u8>>, ProvisionError> {
+        let url = format!("/1.0/instances/{name}/files?path={}", urlencoding::encode(path));
+        let mut response = match self.transport.stream(&url).await {
+            Ok(response) => response,
+            Err(ProvisionError::NotFound(_)) => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        let too_big = || ProvisionError::Api { status: 413, message: format!("{path} is over {max_bytes} bytes") };
+        if response.content_length().is_some_and(|len| len > max_bytes as u64) {
+            return Err(too_big());
+        }
+        let mut out = Vec::new();
+        let read = async {
+            while let Some(chunk) = response.chunk().await.map_err(|error| ProvisionError::Request(error.to_string()))? {
+                if out.len() + chunk.len() > max_bytes {
+                    return Err(too_big());
+                }
+                out.extend_from_slice(&chunk);
+            }
+            Ok(())
+        };
+        // The stream client has no whole-request timeout.
+        tokio::time::timeout(std::time::Duration::from_secs(300), read).await.map_err(|_| ProvisionError::Timeout)??;
+        Ok(Some(out))
     }
 }
 

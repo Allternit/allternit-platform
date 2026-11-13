@@ -6,8 +6,12 @@ Why native: since 2026-03-02 Zoom requires apps that join meetings hosted by oth
 
 ## Status
 
-- **Not compiled against the real SDK yet.** You can download the SDK only while signed in to the Zoom App Marketplace with a registered app ([download page](https://developers.zoom.us/docs/meeting-sdk/linux/get-started/download/): "To access the SDK download files, you must be logged in to your Zoom App Marketplace developer account"). So it was not fetched here.
-- What was checked: the code compiles (`clang++ -fsyntax-only -Wall -Wextra`) against stub headers. The stubs copy the SDK API as Zoom's MIT [headless Linux sample](https://github.com/zoom/meetingsdk-headless-linux-sample) uses it. Every SDK call here (`InitSDK`, `SDKAuth` with `AuthContext.jwt_token`, `JoinParam4WithoutLogin.onBehalfToken` / `app_privilege_token`, `StartRawRecording`, `GetAudioRawdataHelper()->subscribe`, `onMixedAudioRawDataReceived`, `setExternalVideoSource`) appears in that sample or in the [Linux raw-data guide](https://developers.zoom.us/docs/meeting-sdk/linux/custom-ui/advanced-features/raw-data/).
+- **Built against the real SDK on 2026-11-13:** Meeting SDK for Linux x86_64 **7.1.5.4432**, Ubuntu 24.04 (inside the `allternit-cloud-computer` image, so glibc matches the pod). `ldd` finds every library, and the binary initializes the SDK and exits cleanly when fd 3 closes. The installed tree is 534 MB. Not yet run in a real call.
+- The real headers rejected three things that the stub headers had accepted. All are fixed:
+  - `RawDataOptions` spells the fields `audioRawdataMemoryMode` / `shareRawdataMemoryMode` (lower-case "data").
+  - `setExternalVideoSource` takes a second argument, `FrameDataFormat`. It is probed as `HAVE_FrameDataFormat_I420_LIMITED`, and we send limited-range I420.
+- 7.1.5 has no `MEETING_FAIL_NETWORK_ERR` or `EndMeetingReason_NetworkBroken`. Those codes are reported by number only.
+- Where the SDK lives: Zoom licenses it for use inside our app only, so it is not in git. The tarball is in `/root/meetings-build/` on allternit-standby, together with the built tree (`zoom-sidecar-7.1.5.4432.tgz`, which unpacks to `zoom/`). The meeting-bot image script installs that tree with `ZOOM_SIDECAR_TGZ`.
 - The chat, virtual mic and `IUserInfo::IsTalking` calls come from the SDK reference, not the sample. Check them on the first real build.
 - Event interfaces gain pure virtual methods between SDK versions. If the build says a sink class is abstract, add the missing method as an empty override in `src/bot.h`.
 - Enum names that differ between versions (fail codes, end reasons, recording-request states) are probed by CMake and turned into `HAVE_<NAME>` macros. A missing name is reported by number only and does not break the build.

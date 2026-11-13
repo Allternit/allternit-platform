@@ -238,10 +238,13 @@ struct MeetingLiveCard: View {
                         .foregroundColor(Color("TextPrimary"))
                         .lineLimit(1)
                     MeetingStateChip(status: session?.status ?? meeting.status, session: session, meeting: meeting)
-                    Text(detail)
-                        .font(.system(size: 13))
-                        .foregroundColor(Color("TextSecondary"))
-                        .lineLimit(1)
+                    HStack(spacing: 6) {
+                        MeetingPlatformMark(platform: meeting.platform)
+                        Text(detail)
+                            .font(.system(size: 13))
+                            .foregroundColor(Color("TextSecondary"))
+                            .lineLimit(1)
+                    }
                 }
                 Spacer(minLength: 8)
                 Text("Open")
@@ -265,7 +268,7 @@ struct MeetingLiveCard: View {
     private var detail: String {
         let status = session?.status ?? meeting.status
         switch status {
-        case .live: return (session?.listening ?? true) ? "Gizzi is listening" : "Gizzi stopped listening"
+        case .live: return ((session?.listening ?? true) ? "Gizzi is listening" : "Gizzi stopped listening") + " · \(meeting.platformName)"
         case .paused: return "Gizzi stopped listening · \(meeting.platformName)"
         case .waitingAdmit where meeting.platform == "zoom": return "Join the Zoom call so Gizzi can come in"
         case .waitingAdmit: return "Let “Gizzi (Allternit)” in from \(meeting.platformName)"
@@ -295,7 +298,7 @@ struct MeetingAgendaRow: View {
                             .foregroundColor(Color("TextPrimary"))
                             .lineLimit(1)
                         HStack(spacing: 6) {
-                            MeetingPlatformDot(platform: meeting.platform)
+                            MeetingPlatformMark(platform: meeting.platform)
                             Text(subtitle)
                                 .font(.system(size: 13))
                                 .foregroundColor(Color("TextSecondary"))
@@ -479,22 +482,28 @@ struct MeetingStateChip: View {
     private var tint: Color { MeetingFormat.tint(status, session: session) }
 }
 
-struct MeetingPlatformDot: View {
+/// Small real brand mark placed inline before the platform name. The visible text carries the meaning.
+struct MeetingPlatformMark: View {
     let platform: String
+    var size: CGFloat = 14
 
     var body: some View {
-        Circle()
-            .fill(color)
-            .frame(width: 8, height: 8)
-            .accessibilityHidden(true)
+        if let name = asset {
+            Image(name)
+                .resizable()
+                .scaledToFit()
+                .frame(width: size, height: size)
+                .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
+                .accessibilityHidden(true)
+        }
     }
 
-    private var color: Color {
+    private var asset: String? {
         switch platform {
-        case "meet": return Color(hex: "#1E8E3E")
-        case "zoom": return Color(hex: "#2D8CFF")
-        case "teams": return Color(hex: "#5B5FC7")
-        default: return Color("TextTertiary")
+        case "meet": return "applogo-googlemeet"
+        case "zoom": return "applogo-zoom"
+        case "teams": return "applogo-microsoftteams"
+        default: return nil
         }
     }
 }

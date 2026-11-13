@@ -15,6 +15,12 @@ name = "platform-stripe-plan"
 path = "src/bin/platform_stripe_plan.rs"
 required-features = ["stripe-plan-cli"]
 
+# Operator tool for the Meet bot account profiles (docs/meetings/BOT-ACCOUNTS.md),
+# run on the cloud-api host with MEETINGS_BOT_PROFILE_KEY in env.
+[[bin]]
+name = "meetings-bot-profile"
+path = "src/bin/meetings_bot_profile.rs"
+
 [features]
 stripe-plan-cli = []
 triage-eval = []
@@ -76,6 +82,8 @@ urlencoding = { workspace = true }
 url = "2"
 hmac = { workspace = true }
 hex = { workspace = true }
+# Meet bot profile sealing (services::bot_profiles; ChaCha20-Poly1305).
+ring = { workspace = true }
 ed25519-dalek = { workspace = true }
 jsonwebtoken = { version = "10", features = ["aws_lc_rs"] }
 aws-lc-rs = "1"

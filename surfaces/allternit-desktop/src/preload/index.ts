@@ -760,6 +760,23 @@ const phoneLinkAPI = {
   },
 };
 
+// ─── Meetings presence (allternit-ai src/views/meetings/MeetingsHost.tsx) ──────
+// The app window reports which calls Gizzi is in; main shows them in the tray
+// menu and the macOS menu bar, and a tray click asks the app to open that
+// meeting. A bridge call, not the window event: under context isolation a
+// CustomEvent's detail does not reach the preload.
+
+const meetingsAPI = {
+  reportPresence: (detail: unknown): void => ipcRenderer.send('meetings:presence', detail),
+  onOpen: (callback: (meetingId: string) => void): (() => void) => {
+    const listener = (_event: IpcRendererEvent, meetingId: unknown) => {
+      if (typeof meetingId === 'string') callback(meetingId);
+    };
+    ipcRenderer.on('meetings:open', listener);
+    return () => { ipcRenderer.removeListener('meetings:open', listener); };
+  },
+};
+
 // ─── Voice provider keys (voice-keys-ipc.ts) ──────────────────────────────────
 // The renderer's KeyStore (allternit-ai src/lib/voice/byok/desktopStore.ts) caches
 // these in memory; main keeps them in secure-store. readClipboard backs the
@@ -1311,6 +1328,7 @@ const allternitDesktopAPI = {
   artifactPreview: artifactPreviewAPI,
   voice: voiceAPI,
   voiceKeys: voiceKeysAPI,
+  meetings: meetingsAPI,
 };
 
 contextBridge.exposeInMainWorld('allternit', allternitDesktopAPI);

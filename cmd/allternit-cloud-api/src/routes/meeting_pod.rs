@@ -221,6 +221,13 @@ async fn ingest(
     if participants.len() + transcript.len() + chat.len() + notes.len() > MAX_BATCH_ROWS {
         return Err(MeetingError::invalid(format!("A batch holds at most {MAX_BATCH_ROWS} rows.")));
     }
+    // The Meet adapter's end detail carries `bot_profile_signed_out` when the
+    // bot account's profile was signed out (docs/meetings/BOT-ACCOUNTS.md).
+    let profile_signed_out = body
+        .get("state")
+        .and_then(|v| v.get("detail"))
+        .and_then(Value::as_str)
+        .is_some_and(|d| d.contains(crate::services::meeting_launcher::SIGNED_OUT_DETAIL));
     // Validate the requested state up front so a malformed one fails the
     // batch before anything is written.
     let requested = match body.get("state") {
@@ -437,6 +444,14 @@ async fn ingest(
         super::meeting_notify::on_summary(db.clone(), sid);
     }
 
+    if profile_signed_out {
+        crate::services::meeting_launcher::note_bot_profile_signed_out(
+            db,
+            &crate::services::bot_profiles::ProfileStore::shared(),
+            sid,
+        )
+        .await;
+    }
     if let Some((to, reason)) = requested {
         // Re-read: a user control may have moved the session since auth.
         let current = fetch_session(db, sid).await?.ok_or_else(MeetingError::session_not_found)?.state();

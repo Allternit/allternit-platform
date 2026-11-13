@@ -19,6 +19,8 @@ pub mod inference_pool;
 pub mod inference_settlement;
 /// Allternit Meetings: calendar sync (Google + ICS) and the `meeting_join` auto-join run.
 pub mod meeting_calendar;
+/// Allternit Meetings: sealed Chrome profiles of the Meet bot accounts (docs/meetings/BOT-ACCOUNTS.md).
+pub mod bot_profiles;
 /// Allternit Meetings: one pod per meeting session (docs/meetings/CONTRACT.md).
 pub mod meeting_launcher;
 pub mod node_resolution;

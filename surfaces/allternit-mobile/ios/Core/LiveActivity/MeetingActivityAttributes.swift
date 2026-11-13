@@ -6,9 +6,10 @@ import Foundation
 /// draws it); both compile `Core/LiveActivity` via `project.yml`.
 ///
 /// One activity per active meeting session: Gizzi's state in the call, how
-/// long it has been live, and whether Gizzi is listening. Local only today:
-/// cloud-api's `routes/live_activity.rs` has no meeting attributes yet, so
-/// the app updates it while it runs (SSE / agenda refresh).
+/// long it has been live, and whether Gizzi is listening. The app updates it
+/// while it runs; cloud-api (`routes/meeting_notify.rs`) starts, updates and
+/// ends it by APNs push while the app is suspended. A test there decodes this
+/// file, so the field names must match its `content_state`.
 struct MeetingActivityAttributes: ActivityAttributes {
     struct ContentState: Codable, Hashable {
         /// CONTRACT §3 `gizzi`: `launching|joining|waiting_admit|live|paused|ended|not_admitted`.

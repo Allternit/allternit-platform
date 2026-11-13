@@ -371,7 +371,7 @@ export function createMeetAdapter(cfg: Pick<PodConfig, "displayName" | "identity
         const liveAt = Date.now();
         setPhase("live");
         startPolls();
-        return { ok: true, liveAt };
+        return { ok: true, liveAt, detail: signedOutReported ? "bot_profile_signed_out" : undefined };
       } catch (e) {
         return { ok: false, reason: "error", detail: String(e).slice(0, 300), screenshot: await shot("error") };
       }

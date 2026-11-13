@@ -507,6 +507,8 @@ let pushServiceState = () => {
 let miniWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let trayMenu: Menu | null = null;
+/** Calls Gizzi is in, as the app window last reported them (meetings:presence). */
+let meetingPresence: MeetingPresence[] = [];
 let activePlatformUrl: string = isDev ? URLS.DEV_UI : URLS.PRODUCTION_UI;
 // False until startup has picked the UI to load. Until then activePlatformUrl
 // is only its default (the hosted ai.allternit.com), which the desktop shell
@@ -2454,6 +2456,64 @@ function openSystemDrawer(tab?: SystemTab): void {
   mainWindow?.webContents.send('companion:system-open', tab ?? null);
 }
 
+// ─── Meetings presence (tray + macOS menu bar) ──────────────────────────────
+// allternit-ai MeetingsHost polls the calls Gizzi is in and reports them
+// through window.allternit.meetings.reportPresence; only the main window's top
+// frame is trusted, and the payload is reduced to known states and short text.
+
+type MeetingGizzi = 'launching' | 'joining' | 'waiting_admit' | 'live' | 'paused';
+interface MeetingPresence { id: string; title: string; gizzi: MeetingGizzi }
+
+const MEETING_STATE_LABEL: Record<MeetingGizzi, string> = {
+  launching: 'Joining',
+  joining: 'Joining',
+  waiting_admit: 'Waiting to be let in',
+  live: 'Live',
+  paused: 'Not listening',
+};
+const MEETING_STATE_DOT: Record<MeetingGizzi, string> = {
+  launching: '🟡',
+  joining: '🟡',
+  waiting_admit: '🟠',
+  live: '🟢',
+  paused: '⚪️',
+};
+
+function sanitizeMeetingPresence(value: unknown): MeetingPresence[] {
+  const list = (value as { meetings?: unknown } | null)?.meetings;
+  if (!Array.isArray(list)) return [];
+  const out: MeetingPresence[] = [];
+  for (const raw of list.slice(0, 5)) {
+    const m = raw as { id?: unknown; title?: unknown; gizzi?: unknown };
+    if (typeof m?.id !== 'string' || !/^[A-Za-z0-9-]{1,64}$/.test(m.id)) continue;
+    if (typeof m.gizzi !== 'string' || !(m.gizzi in MEETING_STATE_LABEL)) continue;
+    const title = typeof m.title === 'string' ? m.title.replace(/\s+/g, ' ').trim() : '';
+    out.push({ id: m.id, gizzi: m.gizzi as MeetingGizzi, title: (title || 'Your call').slice(0, 60) });
+  }
+  return out;
+}
+
+/** "Waiting" beats "Live" beats "Joining": the state that needs the person first. */
+function meetingMenuBarTitle(list: MeetingPresence[]): string {
+  if (list.some((m) => m.gizzi === 'waiting_admit')) return 'Gizzi waiting';
+  if (list.some((m) => m.gizzi === 'live' || m.gizzi === 'paused')) return 'Gizzi live';
+  if (list.length) return 'Gizzi joining';
+  return '';
+}
+
+function openMeetingFromTray(meetingId: string): void {
+  showOrReopenMainWindow();
+  mainWindow?.webContents.send('meetings:open', meetingId);
+}
+
+ipcMain.on('meetings:presence', (event, value: unknown) => {
+  if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents || event.senderFrame !== event.sender.mainFrame) return;
+  const next = sanitizeMeetingPresence(value);
+  if (JSON.stringify(next) === JSON.stringify(meetingPresence)) return;
+  meetingPresence = next;
+  void updateTrayMenu();
+});
+
 async function updateTrayMenu(): Promise<void> {
   if (!tray) return;
 
@@ -2499,9 +2559,22 @@ async function updateTrayMenu(): Promise<void> {
       ]
     : [];
 
+  // Meetings (behind the web app's `meetings` flag; empty when it is off).
+  const meetingsSection: Electron.MenuItemConstructorOptions[] = meetingPresence.length
+    ? [
+        { label: 'Meetings', enabled: false },
+        ...meetingPresence.map((m): Electron.MenuItemConstructorOptions => ({
+          label: `${MEETING_STATE_DOT[m.gizzi]} ${MEETING_STATE_LABEL[m.gizzi]}: ${m.title}`,
+          click: () => openMeetingFromTray(m.id),
+        })),
+        { type: 'separator' },
+      ]
+    : [];
+
   const template: Electron.MenuItemConstructorOptions[] = [
     { label: 'Allternit Desktop', enabled: false },
     { type: 'separator' },
+    ...meetingsSection,
     ...systemSection,
     { label: `${statusIcon} ${status.running ? 'Running' : 'Stopped'}`, enabled: false },
     { label: `Mode: ${modeLabel}`, enabled: false },
@@ -2536,6 +2609,8 @@ async function updateTrayMenu(): Promise<void> {
   ];
 
   trayMenu = Menu.buildFromTemplate(template);
+  // macOS menu bar: a short word next to the icon while Gizzi is in a call.
+  if (process.platform === 'darwin') tray.setTitle(meetingMenuBarTitle(meetingPresence));
   // macOS: left click is the HUD, so the menu pops up on right-click only.
   if (process.platform !== 'darwin') tray.setContextMenu(trayMenu);
 }

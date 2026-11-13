@@ -48,6 +48,8 @@ export const BASE_CHROME_ARGS = [
   "--no-first-run",
   "--no-default-browser-check",
   "--lang=en-US",
+  // macOS dev runs: without it every launch leaves a code_sign_clone copy in $TMPDIR (workspace AGENTS.md).
+  "--disable-features=MacAppCodeSignClone",
 ];
 
 export async function launchChrome(opts: ChromeOptions = {}): Promise<ChromeSession> {

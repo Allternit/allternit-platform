@@ -48,6 +48,7 @@ final class BotLiveActivityManager {
         LiveActivityActions.handler = AppLiveActivityActions()
         shared.startObserving()
         LoopLiveActivityManager.shared.startObserving()
+        MeetingLiveActivityManager.shared.startObserving()
     }
 
     func startObserving() {
@@ -296,6 +297,7 @@ final class BotLiveActivityManager {
         await ActivityTokenRegistry.shared.deleteAll()
         shared.endAllNow()
         LoopLiveActivityManager.shared.endAllNow()
+        MeetingLiveActivityManager.shared.endAll()
     }
 
     private func endAllNow() {
