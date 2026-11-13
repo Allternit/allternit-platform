@@ -59,14 +59,14 @@ fn zoom_webhook_signature_checks_secret_body_and_window() {
 async fn zoom_webhook_url_validation_and_rejections() {
     let (_state, db) = db_with_meetings().await;
     let now = Utc::now().timestamp();
-    let body = r#"{"event":"endpoint.url_validation","payload":{"plainToken":"qgg8vlvZRS6UYooatFL8Aw"}}"#;
+    let body = r#"{"event":"endpoint.url_validation","payload":{"plainToken":"test-plain-token"}}"#;
     let ok = handle_webhook(&db, Some(SECRET), &headers(&sign(SECRET, now, body), now), body.as_bytes(), now)
         .await
         .unwrap();
     let (status, json) = body_json(ok).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(json["plainToken"], "qgg8vlvZRS6UYooatFL8Aw");
-    assert_eq!(json["encryptedToken"], hmac_hex(SECRET, b"qgg8vlvZRS6UYooatFL8Aw"));
+    assert_eq!(json["plainToken"], "test-plain-token");
+    assert_eq!(json["encryptedToken"], hmac_hex(SECRET, b"test-plain-token"));
 
     let unsigned = handle_webhook(&db, Some(SECRET), &HeaderMap::new(), body.as_bytes(), now).await.unwrap_err();
     assert_eq!(unsigned.status, StatusCode::UNAUTHORIZED);
