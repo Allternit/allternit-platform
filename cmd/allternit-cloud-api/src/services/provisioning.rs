@@ -6168,6 +6168,8 @@ pub(crate) mod pg_tests {
         // The account bills every computer at least as Medium: the floor applies.
         let floored = orgo::orgo_spend_today_usd(&mut conn, noon, 0.1).await.unwrap();
         assert!((floored - 6.0 * 0.1).abs() < 1e-6, "{floored}");
+        // The test pool has one connection: give it back before the next query.
+        drop(conn);
 
         // Time in first boot is billed by Orgo too: provisioning since 11:00.
         sqlx::query("UPDATE provisioned_instances SET status = 'provisioning', created_at = $2 WHERE id = $1")
@@ -6176,6 +6178,7 @@ pub(crate) mod pg_tests {
             .execute(&pool)
             .await
             .unwrap();
+        let mut conn = pool.acquire().await.unwrap();
         let spent = orgo::orgo_spend_today_usd(&mut conn, noon, 0.0).await.unwrap();
         assert!((spent - 7.0 * 0.055).abs() < 1e-6, "{spent}");
         drop(conn);
