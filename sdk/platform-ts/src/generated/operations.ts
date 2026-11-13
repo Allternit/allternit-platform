@@ -1524,7 +1524,7 @@ export class ResponsesResource {
    * `response.output_text.done`, `response.function_call_arguments.done`,
    * `response.tool_call.started` / `response.tool_call.completed` / `response.tool_call.failed`
    * (hosted tools, arguments and results cut at 8,000 characters),
-   * `response.output_item.done`, then `response.completed` or `response.failed`, and `error`
+   * `response.output_item.done`, then `response.completed`, `response.incomplete` or `response.failed`, and `error`
    * for failures before the stream starts. Clients should skip event names they don't know.
    * Approvals never pause a turn: when an agent's action needs the owner's approval, that
    * tool call fails with a "try again once they approve" result and the turn still ends

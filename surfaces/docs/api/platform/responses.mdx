@@ -20,7 +20,7 @@ description: 'One call for a model or a hosted agent, with items in and items ou
 
 ## Response object
 
-`id` (`resp_`), `status` (`in_progress`, `completed`, `failed`, `incomplete`), `model`, `agent_id`, `conversation_id`, `previous_response_id`, `output` (items), `required_actions`, `usage`, `error`, `metadata`, `created_at`, `completed_at`.
+`id` (`resp_`), `status` (`in_progress`, `completed`, `failed`, `incomplete`), `model`, `agent_id`, `conversation_id`, `previous_response_id`, `output` (items), `incomplete_details` (`{"reason": "max_output_tokens"}` when the model stopped at `max_output_tokens`, else `null`), `required_actions`, `usage`, `error`, `metadata`, `created_at`, `completed_at`.
 
 Items have `object: "item"` and a `type`: `message`, `function_call`, `function_call_output`, `tool_call` (a hosted tool) or `approval_request`. Every item also carries `conversation_id`, `response_id` and `created_at`.
 
@@ -28,7 +28,7 @@ An agent turn never pauses for an [approval](/api/platform/approvals). When an a
 
 ## Streaming
 
-With `stream: true`: `response.created`, `response.output_item.added`, `response.output_text.delta`, `response.output_text.done`, `response.function_call_arguments.done`, `response.tool_call.started`, `response.tool_call.completed`, `response.tool_call.failed`, `response.output_item.done`, `response.completed`, `response.failed`, `error`. Skip event names you do not know.
+With `stream: true`: `response.created`, `response.output_item.added`, `response.output_text.delta`, `response.output_text.done`, `response.function_call_arguments.done`, `response.tool_call.started`, `response.tool_call.completed`, `response.tool_call.failed`, `response.output_item.done`, `response.completed`, `response.incomplete`, `response.failed`, `error`. Skip event names you do not know.
 
 ## Billing
 
