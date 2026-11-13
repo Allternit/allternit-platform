@@ -119,7 +119,7 @@ export function PlatformProjectsPage() {
           <EmptyState
             icon={<Cube size={32} aria-hidden />}
             title="No projects yet"
-            caption="Start with a sandbox project. It is free and uses test keys."
+            caption="Start with a sandbox project. It uses test keys and its usage is not charged; a card is still needed before billable calls."
             ctaLabel="New project"
             onCtaClick={() => setShowNew(true)}
             primaryCta
