@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 2.10.0 (2026-11-13)
+
+- **Fixed: the bash tool works again in the installed binary.** Since the compiled builds embedded the shell parser, every bash call in gizzi 2.9.0 (including the copy inside Allternit Desktop) failed with "asset.startsWith is not a function". Running from source was not affected.
+- **`gizzi worker`:** runs sandboxed tools for a self-hosted Allternit Agents Server. It polls the server over outbound HTTPS, claims work for one environment, and runs bash and file tools in `/workspace` (sandbox-exec on macOS, bubblewrap on Linux) with the environment's network rule (`none`, `limited` or `full`). Flags: `--server`, `--environment`, `--environment-key`, `--block-ms`, `--drain`, `--reclaim-older-than-ms`, `--auto-stop`, `--on-work`.
+- **`gizzi runtime register --self-hosted`** and **`gizzi runtime status`** connect the CLI to your own Agents Server and show its workers and queue depth.
+- **Self-hosted model providers:** Amazon Bedrock, Google Vertex AI, Microsoft Foundry and an HTTP gateway (Anthropic Messages, Bedrock, Vertex or OpenAI-chat format), picked by the server's settings.
+- With `ALLTERNIT_SELF_HOSTED=1`, gizzi makes no calls to allternit.com.
+
 ## 2.9.0 (2026-11-12)
 
 - **Run code on attached files:** the new `run_code` tool runs Python on attached CSV, XLSX and JSON files in a strict OS sandbox (no network, no access to your home folder) and returns tables, charts and files. Claude Code and Codex brains reach it through the bridge.
