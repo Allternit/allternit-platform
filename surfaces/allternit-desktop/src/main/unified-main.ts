@@ -7,7 +7,7 @@
  * - Version-locked: Desktop 1.2.3 = Backend 1.2.3
  */
 
-import { app, shell, autoUpdater, BrowserWindow, desktopCapturer, ipcMain, nativeTheme, Notification, safeStorage, session, Tray, webContents, Menu, dialog, globalShortcut, screen, protocol, nativeImage, type WebContents } from 'electron';
+import { app, shell, autoUpdater, BrowserWindow, desktopCapturer, ipcMain, nativeTheme, Notification, session, Tray, webContents, Menu, dialog, globalShortcut, screen, protocol, nativeImage, type WebContents } from 'electron';
 import { fileURLToPath } from 'node:url';
 import { openPrivacySettings as openPrivacySettingsHelper, messagesAccessHint as messagesAccessHintHelper } from './messages-permissions.js';
 import { dirname, join, resolve, basename } from 'node:path';
@@ -45,7 +45,14 @@ import { applyDesktopHumanProof, applyDesktopHumanProofTo, DESKTOP_PROOF_MARKER,
 import { officeEngineManager } from './office-engine-manager.js';
 import { factoryEngineManager, bundledGizziBinary } from './factory-engine-manager.js';
 import { fabricWorkerManager, type FabricWorkerState } from './fabric-worker-manager.js';
-import { readSecret, writeSecret, deleteSecret, FABRIC_WORKER_TOKEN_KEY } from './secure-store.js';
+import {
+  writeSecret,
+  FABRIC_WORKER_TOKEN_KEY,
+  hasKeychainSealedSecrets,
+  keychainSettled,
+  secretsReady,
+} from './secure-store.js';
+import { decryptString, encryptString, isEncryptionAvailable, osCryptReady, osCryptState } from './os-crypt.js';
 import { localEngineManager } from './local-engine-manager.js';
 import { installWindowsGizziOnPath } from './windows-gizzi-path.js';
 import {
@@ -536,6 +543,32 @@ function handleGuarded(
   });
 }
 
+/**
+ * handleGuarded for channels that read or write secure-store secrets (local
+ * envelope in dev, OS encryption when packaged): waits for the Keychain unlock
+ * first so a handler never hits an unlock that is still pending.
+ */
+function handleGuardedSecrets(
+  channel: string,
+  fn: (event: Electron.IpcMainInvokeEvent, ...args: any[]) => unknown,
+): void {
+  handleGuarded(channel, async (event, ...args) => {
+    await secretsReady();
+    return fn(event, ...args);
+  });
+}
+
+/** handleGuarded for channels whose secrets use OS encryption in every build (mini-apps, OAuth vault). */
+function handleGuardedKeychain(
+  channel: string,
+  fn: (event: Electron.IpcMainInvokeEvent, ...args: any[]) => unknown,
+): void {
+  handleGuarded(channel, async (event, ...args) => {
+    await keychainSettled();
+    return fn(event, ...args);
+  });
+}
+
 const QUICK_CHAT_HOTKEY = 'CommandOrControl+Shift+A';
 // Hermes Desktop uses ⌘/Ctrl+Shift+H for its global HUD toggle.  Register that
 // as the primary shortcut and keep Alt+Shift+H as a fallback for users whose
@@ -638,6 +671,7 @@ async function startManagedFabricWorker(): Promise<void> {
     throw new Error(`worker credential provision failed: ${ensureRes.status} ${body.slice(0, 200)}`);
   }
   const ensured = (await ensureRes.json()) as { principal_id: string; token: string };
+  await secretsReady();
   writeSecret(FABRIC_WORKER_TOKEN_KEY, ensured.token);
   log.info(`[Main] Fabric worker credential provisioned for ${ensured.principal_id} (stored in Keychain)`);
   // P2.2/2.3: the worker's agentic jobs use the existing model router (the
@@ -1335,6 +1369,9 @@ function initializeAppOnce(): Promise<void> {
 
 async function initializeApp(): Promise<void> {
   log.info('[Main] Initializing Allternit Desktop v' + app.getVersion());
+  // Reached from whenReady (after the Keychain gate) and from a dock click
+  // (activate); either way nothing below may read a secret mid-unlock.
+  await secretsReady();
   // Voice is an optional local capability: start it automatically, but never
   // prevent the rest of the desktop from opening if model initialization fails.
   if (!process.env.ALLTERNIT_DISABLE_VOICE) {
@@ -2690,6 +2727,79 @@ app.on('open-file', (event, filePath) => {
   }
 });
 
+const KEYCHAIN_PROMPT_TEXT = 'macOS is asking for permission. Click Always Allow.';
+const KEYCHAIN_WINDOW_DELAY_MS = 1_500;
+const KEYCHAIN_LOG_INTERVAL_MS = 10_000;
+/** True while startup waits on the Keychain: nothing has started, so quit must not wait on cleanup. */
+let keychainGateOpen = false;
+
+/**
+ * One Keychain unlock attempt. The addon reads the item on its own thread, so
+ * the event loop (timers, windows, Quit) keeps running while macOS shows its
+ * prompt. A small window explains the prompt if it hasn't resolved in 1.5 s.
+ */
+async function waitForKeychainUnlock(): Promise<'ready' | 'unavailable'> {
+  const started = Date.now();
+  let early: BrowserWindow | null = null;
+  const showTimer = setTimeout(() => {
+    early = keepHiddenIfHeadless(createStartupWindow({ initialStep: 'loading' }));
+    // Never float above the macOS permission dialog.
+    early.setAlwaysOnTop(false);
+    early.webContents.on('did-finish-load', () => {
+      if (early && !early.isDestroyed()) early.webContents.send('status', KEYCHAIN_PROMPT_TEXT);
+    });
+  }, KEYCHAIN_WINDOW_DELAY_MS);
+  const heartbeat = setInterval(() => {
+    log.info(`[Keychain] waiting for macOS permission (${Math.round((Date.now() - started) / 1000)}s)`);
+  }, KEYCHAIN_LOG_INTERVAL_MS);
+  try {
+    return await osCryptReady();
+  } finally {
+    clearTimeout(showTimer);
+    clearInterval(heartbeat);
+    const win = early as BrowserWindow | null;
+    if (win && !win.isDestroyed()) win.destroy();
+  }
+}
+
+/**
+ * Startup Keychain gate (packaged macOS only; dev and other platforms unlock
+ * lazily). Returns false when the user chose Quit. When the Keychain stays
+ * unavailable and sealed secrets exist, continuing would make them look
+ * missing (re-pair, new keys), so the user picks Try again or Quit. With
+ * nothing sealed on disk the app continues without OS encryption, as before.
+ */
+async function passKeychainGate(): Promise<boolean> {
+  if (!app.isPackaged || !isMac) return true;
+  keychainGateOpen = true;
+  try {
+    for (;;) {
+      if ((await waitForKeychainUnlock()) === 'ready') return true;
+      const state = osCryptState();
+      if (!hasKeychainSealedSecrets()) {
+        log.warn(`[Keychain] unavailable (${state}); nothing sealed on disk, continuing without OS encryption`);
+        return true;
+      }
+      log.warn(`[Keychain] unavailable (${state}) with sealed secrets on disk; asking the user`);
+      const { response } = await dialog.showMessageBox({
+        type: 'warning',
+        buttons: ['Try again', 'Quit'],
+        defaultId: 0,
+        cancelId: 1,
+        message: 'Allternit needs access to the macOS Keychain',
+        detail:
+          'Your sign-in and saved keys are locked in the Keychain. Click Try again, then click Always Allow when macOS asks. Nothing has been changed.',
+      });
+      if (response !== 0) {
+        app.quit();
+        return false;
+      }
+    }
+  } finally {
+    keychainGateOpen = false;
+  }
+}
+
 app.whenReady().then(async () => {
   console.log('[Main] App is ready...');
 
@@ -2705,6 +2815,11 @@ app.whenReady().then(async () => {
   if (officeFileArg) {
     openOfficeWithFile(officeFileArg);
   }
+
+  // Packaged macOS: unlock the Keychain (off the main thread) before anything
+  // reads a sealed secret. Must precede authManager.initialize() and, through
+  // initializeAppOnce(), runtimePackages().prepareForLaunch().
+  if (!(await passKeychainGate())) return;
 
   console.log('[Main] Initializing auth manager...');
   await authManager.initialize();
@@ -3092,7 +3207,10 @@ app.on('will-quit', () => {
 });
 
 async function shutdownAllServices(): Promise<void> {
-  await handoffInFlightToCloud();
+  // Before authManager.initialize() (e.g. Quit while the Keychain prompt is
+  // open) no backend or job exists to hand off, and the Clerk wait would hold
+  // the quit for the full deadline.
+  if (authManagerReady && !keychainGateOpen) await handoffInFlightToCloud();
   gizziManager.stop({ reapExternal: true });
   try {
     gizziDaemonManager.stopSync();
@@ -3190,6 +3308,7 @@ ipcMain.handle('startup:save-folders', async (_event, folders: unknown) => {
   return { saved: list.length };
 });
 handleGuarded('backend:restart', async () => {
+  await secretsReady();
   await backendManager.stopBackend();
 
   await computerUseDriverManager.start();
@@ -3208,12 +3327,14 @@ ipcMain.handle('computer-use-driver:get-status', () => computerUseDriverManager.
 ipcMain.handle('decision-runtime:get-status', () => decisionRuntimeManager.getStatus());
 
 // Phones (Lane 2a): Android over Wi-Fi, no cable — see phone-device-manager.ts
-registerPhoneIpc(handleGuarded);
+// Phone, Phone Link, voice keys and self-host credentials all read secure-store
+// secrets, so their handlers wait for the Keychain unlock first.
+registerPhoneIpc(handleGuardedSecrets);
 // Phone Link: setup for using the AI apps signed in on the user's phone.
-registerPhoneLinkIpc(handleGuarded);
+registerPhoneLinkIpc(handleGuardedSecrets);
 // Voice provider keys (Settings › Voice) in secure-store, plus the Paste button's clipboard read.
-registerVoiceKeysIpc(handleGuarded);
-registerSelfHostCredentialsIpc(handleGuarded);
+registerVoiceKeysIpc(handleGuardedSecrets);
+registerSelfHostCredentialsIpc(handleGuardedSecrets);
 
 // System One (S1) + Laya (install / repair / lifecycle / checkpoint swap)
 ipcMain.handle('system-one:get-status', () => systemOne.getStatus());
@@ -5208,13 +5329,13 @@ handleGuarded('motion:abort', (_event, id: string) => motionRender.abort(id));
 
 // ─── Mini-apps: install / start / stop / status ───────────────────────────────
 
-handleGuarded('miniApps:install', async (event, id: string) => {
+handleGuardedKeychain('miniApps:install', async (event, id: string) => {
   return installMiniApp(id, (progress) => {
     event.sender.send('miniApps:install-progress', progress);
   });
 });
 
-handleGuarded('miniApps:start', async (event, id: string) => {
+handleGuardedKeychain('miniApps:start', async (event, id: string) => {
   return startMiniApp(id, (progress) => {
     event.sender.send('miniApps:install-progress', progress);
   });
@@ -5226,29 +5347,32 @@ handleGuarded('miniApps:stop', (_event, id: string) => {
 });
 
 ipcMain.handle('miniApps:getStatus', (_event, id: string) => getMiniAppStatus(id));
-ipcMain.handle('miniApps:launchDesktop', (_event, id: string) => launchMiniAppDesktop(id));
+ipcMain.handle('miniApps:launchDesktop', async (_event, id: string) => {
+  await keychainSettled();
+  return launchMiniAppDesktop(id);
+});
 ipcMain.handle('miniApps:getApproval', (_event, id: string, registration) => getMiniAppApproval(id, registration));
 handleGuarded('miniApps:reviewAndApprove', (_event, registration) => reviewAndApproveMiniApp(registration));
 handleGuarded('miniApps:revokeApproval', (_event, id: string) => {
   revokeMiniAppApproval(id);
   return { success: true };
 });
-handleGuarded('miniApps:setSecret', (_event, id: string, name: string, value: string) => setMiniAppSecret(id, name, value));
+handleGuardedKeychain('miniApps:setSecret', (_event, id: string, name: string, value: string) => setMiniAppSecret(id, name, value));
 ipcMain.handle('miniApps:listSecrets', (_event, id: string) => listMiniAppSecrets(id));
 // ACI export bridge: write a gateway-generated provider_routing section into
 // the Hermes mini-app's ~/.hermes/config.yaml (backs up the previous file).
 handleGuarded('hermesRouting:export', (_event, routingYaml: string) => exportHermesRouting(routingYaml));
 handleGuarded('miniApps:deleteSecret', (_event, id: string, name: string) => deleteMiniAppSecret(id, name));
 handleGuarded('miniApps:removeRuntime', (_event, id: string) => removeMiniAppRuntime(id));
-handleGuarded('miniApps:rollbackRuntime', (_event, id: string) => rollbackMiniAppRuntime(id));
+handleGuardedKeychain('miniApps:rollbackRuntime', (_event, id: string) => rollbackMiniAppRuntime(id));
 
 // Versioned marketplace releases (atomic install / rollback / uninstall)
-handleGuarded('miniApps:installRelease', async (event, options: { registryUrl: string; id: string; version?: string }) => {
+handleGuardedKeychain('miniApps:installRelease', async (event, options: { registryUrl: string; id: string; version?: string }) => {
   return installReleaseFromRegistry(options, (progress) => {
     event.sender.send('miniApps:install-progress', progress);
   });
 });
-handleGuarded('miniApps:rollbackRelease', (_event, id: string, registryUrl?: string) => rollbackReleaseInstall(id, registryUrl));
+handleGuardedKeychain('miniApps:rollbackRelease', (_event, id: string, registryUrl?: string) => rollbackReleaseInstall(id, registryUrl));
 handleGuarded('miniApps:removeRelease', (_event, id: string, registryUrl?: string) => {
   stopMiniApp(id);
   return removeReleaseInstall(id, registryUrl);
@@ -5262,11 +5386,13 @@ let miniAppOAuthBroker: MiniAppOAuthBroker | null = null;
 function oauthBroker(): MiniAppOAuthBroker {
   if (miniAppOAuthBroker) return miniAppOAuthBroker;
   const broker = createMiniAppOAuthBroker({
+    // Callers await keychainSettled() first; a locked Keychain throws
+    // KeychainUnavailableError from os-crypt instead of looking like bad data.
     encrypt: (value) => {
-      if (!safeStorage.isEncryptionAvailable()) throw new Error('Operating-system encryption is unavailable');
-      return safeStorage.encryptString(value).toString('base64');
+      if (!isEncryptionAvailable()) throw new Error('Operating-system encryption is unavailable');
+      return encryptString(value).toString('base64');
     },
-    decrypt: (value) => safeStorage.decryptString(Buffer.from(value, 'base64')),
+    decrypt: (value) => decryptString(Buffer.from(value, 'base64')),
     openExternal: (url) => {
       openExternalAllowlisted(url);
     },
@@ -5287,15 +5413,19 @@ function oauthBroker(): MiniAppOAuthBroker {
 // refreshes when needed, and a missing/unauthorized account simply means the
 // variable is absent — tokens never cross IPC.
 setMiniAppOAuthTokenResolver(async (appId, providerId) => {
+  await keychainSettled();
   const result = await oauthBroker().getValidAccessToken(appId, providerId, 'default');
   return result.token ?? null;
 });
 
-handleGuarded('miniApps:oauthStart', (_event, appId: string, providerId: string, provider: MiniAppOAuthProvider, accountId: string) =>
+handleGuardedKeychain('miniApps:oauthStart', (_event, appId: string, providerId: string, provider: MiniAppOAuthProvider, accountId: string) =>
   oauthBroker().startFlow(appId, providerId, provider, accountId));
 ipcMain.handle('miniApps:oauthCancel', (_event, flowId: string) => oauthBroker().cancelFlow(flowId));
-ipcMain.handle('miniApps:oauthAccounts', (_event, appId: string) => oauthBroker().listAccounts(appId));
-handleGuarded('miniApps:oauthDisconnect', (_event, appId: string, providerId: string, accountId: string) =>
+ipcMain.handle('miniApps:oauthAccounts', async (_event, appId: string) => {
+  await keychainSettled();
+  return oauthBroker().listAccounts(appId);
+});
+handleGuardedKeychain('miniApps:oauthDisconnect', (_event, appId: string, providerId: string, accountId: string) =>
   oauthBroker().disconnect(appId, providerId, accountId));
 
 // ─── Artifact preview capture ────────────────────────────────────────────────
