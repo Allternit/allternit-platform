@@ -13,6 +13,9 @@ struct AppPhonesSettingsView: View {
     @State private var phoneName = UIDevice.current.name
     @State private var isUnpairConfirmPresented = false
     @State private var boardsState: BoardsState = .loading
+    /// True once this phone has seen at least one board. Until then the
+    /// section stays hidden, so people without a board never see it.
+    @AppStorage("linkBoardsSeen") private var hasSeenBoards = false
     @State private var stopping: Set<String> = []
     @State private var stopNotes: [String: String] = [:]
 
@@ -199,25 +202,29 @@ struct AppPhonesSettingsView: View {
         case .unsupported:
             EmptyView()
         case .loading:
-            Section {
-                HStack(spacing: 8) {
-                    ProgressView()
-                    Text("Looking for Allternit Link boards…")
-                        .font(.subheadline)
-                        .foregroundColor(Color("TextSecondary"))
+            if hasSeenBoards {
+                Section {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                        Text("Looking for Allternit Link boards…")
+                            .font(.subheadline)
+                            .foregroundColor(Color("TextSecondary"))
+                    }
+                } header: {
+                    Text("Allternit Link")
                 }
-            } header: {
-                Text("Allternit Link")
             }
         case .unreachable:
-            Section {
-                Text("Couldn't reach \(c.runtimeName) to check your boards.")
-                    .font(.subheadline)
-                    .foregroundColor(Theme.statusError)
-                Button("Try again") { Task { await loadBoards() } }
-                    .font(.subheadline)
-            } header: {
-                Text("Allternit Link")
+            if hasSeenBoards {
+                Section {
+                    Text("Couldn't reach \(c.runtimeName) to check your boards.")
+                        .font(.subheadline)
+                        .foregroundColor(Theme.statusError)
+                    Button("Try again") { Task { await loadBoards() } }
+                        .font(.subheadline)
+                } header: {
+                    Text("Allternit Link")
+                }
             }
         case .loaded(let boards):
             if !boards.isEmpty {
@@ -307,7 +314,9 @@ struct AppPhonesSettingsView: View {
     private func loadBoards() async {
         if case .loaded = boardsState {} else { boardsState = .loading }
         switch await LinkBoardsClient.shared.boards() {
-        case .boards(let boards): boardsState = .loaded(boards)
+        case .boards(let boards):
+            boardsState = .loaded(boards)
+            if !boards.isEmpty { hasSeenBoards = true }
         case .unsupported: boardsState = .unsupported
         case .unreachable: boardsState = .unreachable
         }
