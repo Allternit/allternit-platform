@@ -796,8 +796,7 @@ function RunButton({
 function AutoUnresolvedNote(): React.ReactNode {
   return (
     <span className="text-[12px] text-[var(--status-error)]">
-      Auto policy resolves to no model — adjust the policy or pick a concrete
-      model.
+      No model matches the Auto policy. Pick a model from the list or change the policy.
     </span>
   );
 }

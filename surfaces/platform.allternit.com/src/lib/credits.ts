@@ -1,4 +1,4 @@
-import { api } from "@/lib/api-client";
+import { AllternitApiError, api } from "@/lib/api-client";
 
 export interface FreeInferenceUsage {
   monthly_allowance_usd: number;
@@ -6,9 +6,16 @@ export interface FreeInferenceUsage {
   remaining_usd: number;
 }
 
+export interface CreditsTransaction {
+  amount_usd: number;
+  source: string;
+  created_at: string;
+}
+
 export interface CreditsBalance {
   balance_usd: number;
   month_to_date_usage_usd: number;
+  recent_transactions?: CreditsTransaction[];
   free_inference?: FreeInferenceUsage;
 }
 
@@ -41,6 +48,16 @@ export async function getCreditsBalance(
   return (await response.json()) as CreditsBalance;
 }
 
+/**
+ * The signed-in user's Allternit Cloud wallet (cloud-api
+ * `/api/v1/billing/credits`, USD). Served by cloud-api itself, so it works
+ * for every account, paired device or not. Goes through the shared api client
+ * so it gets a fresh Clerk token and the 401 retry.
+ */
+export async function getCloudCreditsBalance(): Promise<CreditsBalance> {
+  return api.get<CreditsBalance>("/api/v1/billing/credits");
+}
+
 export function formatCreditsUsd(value: number): string {
   return `$${value.toFixed(2)}`;
 }
@@ -61,18 +78,56 @@ export interface TransferFromWalletResult {
 }
 
 /**
- * Organization compute-credits balance (the fabric ledger in allternit-api,
- * served through the gateway). Personal users without an org get null.
+ * Organization compute-credits balance (the fabric ledger in allternit-api on
+ * the paired node, relayed by cloud-api). Returns null when there is no such
+ * ledger to show: no active org (403/404) or no paired node (428).
  */
 export async function getOrgCreditsBalance(): Promise<OrgCreditsBalance | null> {
   try {
     return await api.get<OrgCreditsBalance>("/api/v1/credits/balance");
   } catch (err) {
-    if (err instanceof Error && "statusCode" in err) {
-      const status = (err as { statusCode?: number }).statusCode;
-      if (status === 403 || status === 404) return null; // no active org
+    if (err instanceof AllternitApiError) {
+      const status = err.statusCode;
+      if (status === 403 || status === 404 || status === 428) return null;
     }
     throw err;
+  }
+}
+
+export interface ConsoleCredits {
+  /** Cloud wallet (USD). null only when that call failed. */
+  cloud: CreditsBalance | null;
+  /** Device (org fabric) ledger. null unless a node is paired and answered. */
+  device: OrgCreditsBalance | null;
+}
+
+/**
+ * Both balances for the dashboard and the rail chip. The Cloud wallet is the
+ * default; the device ledger is added only when its call succeeds. A failed
+ * device call is never an error the user sees.
+ */
+export async function getConsoleCredits(): Promise<ConsoleCredits> {
+  const [cloud, device] = await Promise.allSettled([
+    getCloudCreditsBalance(),
+    getOrgCreditsBalance(),
+  ]);
+  return {
+    cloud: cloud.status === "fulfilled" ? cloud.value : null,
+    device: device.status === "fulfilled" ? device.value : null,
+  };
+}
+
+/**
+ * Text for the rail Credits chip: the Cloud wallet balance, e.g. "$12.50".
+ * Returns null when it cannot be loaded so the chip hides instead of
+ * showing an error. Never calls the node-only `/api/v1/credits/balance`.
+ */
+export async function getCreditsChipLabel(): Promise<string | null> {
+  try {
+    const cloud = await getCloudCreditsBalance();
+    return typeof cloud.balance_usd === "number" ? formatCreditsUsd(cloud.balance_usd) : null;
+  } catch {
+    return null;
   }
 }
 
