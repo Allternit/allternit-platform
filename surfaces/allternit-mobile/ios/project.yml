@@ -84,8 +84,8 @@ targets:
         SWIFT_VERSION: "6.0"
         IPHONEOS_DEPLOYMENT_TARGET: "17.0"
         TARGETED_DEVICE_FAMILY: "1"
-        MARKETING_VERSION: "1.0.2"
-        CURRENT_PROJECT_VERSION: "33"
+        MARKETING_VERSION: "1.0.3"
+        CURRENT_PROJECT_VERSION: "34"
         CODE_SIGN_ENTITLEMENTS: Allternit.entitlements
         SWIFT_OBJC_BRIDGING_HEADER: Core/Voice/Voice-Bridging-Header.h
         # Clerk publishable key (client-public by design) — the production
@@ -222,8 +222,8 @@ targets:
         SWIFT_VERSION: "6.0"
         IPHONEOS_DEPLOYMENT_TARGET: "17.0"
         TARGETED_DEVICE_FAMILY: "1"
-        MARKETING_VERSION: "1.0.2"
-        CURRENT_PROJECT_VERSION: "33"
+        MARKETING_VERSION: "1.0.3"
+        CURRENT_PROJECT_VERSION: "34"
         # Same placeholder as the main app — set your team for device builds.
         DEVELOPMENT_TEAM: MQ85968PQP
         CODE_SIGN_STYLE: Automatic
@@ -246,8 +246,8 @@ targets:
         SWIFT_VERSION: "6.0"
         IPHONEOS_DEPLOYMENT_TARGET: "17.0"
         TARGETED_DEVICE_FAMILY: "1"
-        MARKETING_VERSION: "1.0.2"
-        CURRENT_PROJECT_VERSION: "33"
+        MARKETING_VERSION: "1.0.3"
+        CURRENT_PROJECT_VERSION: "34"
         CODE_SIGN_ENTITLEMENTS: AllternitNotifications/AllternitNotifications.entitlements
         DEVELOPMENT_TEAM: MQ85968PQP
         CODE_SIGN_STYLE: Automatic
@@ -269,8 +269,8 @@ targets:
         SWIFT_VERSION: "6.0"
         IPHONEOS_DEPLOYMENT_TARGET: "17.0"
         TARGETED_DEVICE_FAMILY: "1"
-        MARKETING_VERSION: "1.0.2"
-        CURRENT_PROJECT_VERSION: "33"
+        MARKETING_VERSION: "1.0.3"
+        CURRENT_PROJECT_VERSION: "34"
         CODE_SIGN_ENTITLEMENTS: AllternitShare/AllternitShare.entitlements
         DEVELOPMENT_TEAM: MQ85968PQP
         CODE_SIGN_STYLE: Automatic
@@ -300,8 +300,8 @@ targets:
         SWIFT_VERSION: "5.0"
         IPHONEOS_DEPLOYMENT_TARGET: "17.0"
         TARGETED_DEVICE_FAMILY: "1"
-        MARKETING_VERSION: "1.0.2"
-        CURRENT_PROJECT_VERSION: "33"
+        MARKETING_VERSION: "1.0.3"
+        CURRENT_PROJECT_VERSION: "34"
         CODE_SIGN_ENTITLEMENTS: AllternitScreen/AllternitScreen.entitlements
         # Same placeholder as the main app — set your team for device builds.
         DEVELOPMENT_TEAM: MQ85968PQP
@@ -331,8 +331,8 @@ targets:
         SWIFT_VERSION: "6.0"
         IPHONEOS_DEPLOYMENT_TARGET: "17.0"
         TARGETED_DEVICE_FAMILY: "1"
-        MARKETING_VERSION: "1.0.2"
-        CURRENT_PROJECT_VERSION: "33"
+        MARKETING_VERSION: "1.0.3"
+        CURRENT_PROJECT_VERSION: "34"
         CODE_SIGN_ENTITLEMENTS: AllternitMessages/AllternitMessages.entitlements
         # The iMessage icon (4:3 slots + App Store image) lives in its own
         # catalog; actool writes MSMessagesExtensionStoreIconName from it.
@@ -356,8 +356,8 @@ targets:
         SWIFT_VERSION: "6.0"
         IPHONEOS_DEPLOYMENT_TARGET: "17.0"
         TARGETED_DEVICE_FAMILY: "1"
-        MARKETING_VERSION: "1.0.2"
-        CURRENT_PROJECT_VERSION: "33"
+        MARKETING_VERSION: "1.0.3"
+        CURRENT_PROJECT_VERSION: "34"
         DEVELOPMENT_TEAM: MQ85968PQP
         CODE_SIGN_STYLE: Automatic
         GENERATE_INFOPLIST_FILE: YES

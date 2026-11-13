@@ -199,7 +199,6 @@
 		4A4923C4990E8032A0077A23 /* CapabilitiesSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1DA92D45376B4BE6591BCD44 /* CapabilitiesSettingsView.swift */; };
 		4A6DA03235EB395C90F12CB0 /* OutboxStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 134EECE81F53DFAD7A3B0703 /* OutboxStore.swift */; };
 		4AACE2FD1808211A434428CB /* AgentMarketplace.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4697ED76511B667A26C4A0F /* AgentMarketplace.swift */; };
-		4B91E67BB17685FCD066A5C5 /* Secrets.xcconfig.placeholder-bak in Resources */ = {isa = PBXBuildFile; fileRef = B88F98F4F20E229BAB988277 /* Secrets.xcconfig.placeholder-bak */; };
 		4C1990485C082C353AAFCFB0 /* PDFTemplateRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 77D2052483EF36F831F16799 /* PDFTemplateRenderer.swift */; };
 		4C1C71AB5E2F246232F1989B /* Entities.swift in Sources */ = {isa = PBXBuildFile; fileRef = B79C58B39750008BDE881C8B /* Entities.swift */; };
 		4D0FEE872103578BC1DD234B /* CoworkSessionWorkspaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 84FC33C4E8CA18AFE3DD8E0E /* CoworkSessionWorkspaceView.swift */; };
@@ -1233,7 +1232,6 @@
 		B85F6678BE960D0995556FE6 /* MeshEnrollClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeshEnrollClient.swift; sourceTree = "<group>"; };
 		B88709AC7BC1F72F5AB364B7 /* BotHomeTabsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotHomeTabsView.swift; sourceTree = "<group>"; };
 		B88B65FA4B5A3288485C10A4 /* MeshClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeshClient.swift; sourceTree = "<group>"; };
-		B88F98F4F20E229BAB988277 /* Secrets.xcconfig.placeholder-bak */ = {isa = PBXFileReference; path = "Secrets.xcconfig.placeholder-bak"; sourceTree = "<group>"; };
 		B956454065B71CF6860BD416 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		B9BE54FA8D5553D022653635 /* V2ArtifactEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = V2ArtifactEditorView.swift; sourceTree = "<group>"; };
 		BA1F5C46AE2770C71DDB998A /* LoopDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoopDetailView.swift; sourceTree = "<group>"; };
@@ -2652,7 +2650,6 @@
 			children = (
 				8E94E901486FE16F1874839C /* Secrets.xcconfig */,
 				68BF3618C7C2C6ECEA25A40C /* Secrets.xcconfig.example */,
-				B88F98F4F20E229BAB988277 /* Secrets.xcconfig.placeholder-bak */,
 			);
 			path = Config;
 			sourceTree = "<group>";
@@ -3113,7 +3110,6 @@
 				3EE0E044F4077F8DB8B11647 /* Assets.xcassets in Resources */,
 				D2757DF1F237E7AACF033950 /* PrivacyInfo.xcprivacy in Resources */,
 				ACEBA10DB133793B777D5B2F /* Secrets.xcconfig.example in Resources */,
-				4B91E67BB17685FCD066A5C5 /* Secrets.xcconfig.placeholder-bak in Resources */,
 				E264A972657C5DCE8EF5153B /* login-arrival.html in Resources */,
 				EC2E5A23445F91AC26F66304 /* meet-team-network.mp4 in Resources */,
 				6C1DE4AF9E06DFE2EF88FC26 /* pdf-templates.js in Resources */,
@@ -3900,7 +3896,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = AllternitNotifications/AllternitNotifications.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 33;
+				CURRENT_PROJECT_VERSION = 34;
 				DEVELOPMENT_TEAM = MQ85968PQP;
 				INFOPLIST_FILE = AllternitNotifications/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
@@ -3909,7 +3905,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.0.2;
+				MARKETING_VERSION = 1.0.3;
 				PRODUCT_BUNDLE_IDENTIFIER = com.allternit.mobile.notifications;
 				PRODUCT_NAME = AllternitNotifications;
 				SDKROOT = iphoneos;
@@ -3987,7 +3983,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = AllternitShare/AllternitShare.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 33;
+				CURRENT_PROJECT_VERSION = 34;
 				DEVELOPMENT_TEAM = MQ85968PQP;
 				INFOPLIST_FILE = AllternitShare/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
@@ -3996,7 +3992,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.0.2;
+				MARKETING_VERSION = 1.0.3;
 				PRODUCT_BUNDLE_IDENTIFIER = com.allternit.mobile.share;
 				PRODUCT_NAME = AllternitShare;
 				SDKROOT = iphoneos;
@@ -4011,7 +4007,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = AllternitShare/AllternitShare.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 33;
+				CURRENT_PROJECT_VERSION = 34;
 				DEVELOPMENT_TEAM = MQ85968PQP;
 				INFOPLIST_FILE = AllternitShare/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
@@ -4020,7 +4016,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.0.2;
+				MARKETING_VERSION = 1.0.3;
 				PRODUCT_BUNDLE_IDENTIFIER = com.allternit.mobile.share;
 				PRODUCT_NAME = AllternitShare;
 				SDKROOT = iphoneos;
@@ -4036,7 +4032,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = "iMessage App Icon";
 				CODE_SIGN_ENTITLEMENTS = AllternitMessages/AllternitMessages.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 33;
+				CURRENT_PROJECT_VERSION = 34;
 				DEVELOPMENT_TEAM = MQ85968PQP;
 				INFOPLIST_FILE = AllternitMessages/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
@@ -4045,7 +4041,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.0.2;
+				MARKETING_VERSION = 1.0.3;
 				PRODUCT_BUNDLE_IDENTIFIER = com.allternit.mobile.messages;
 				PRODUCT_NAME = AllternitMessages;
 				SDKROOT = iphoneos;
@@ -4060,7 +4056,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = AllternitWidgets/AllternitWidgets.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 33;
+				CURRENT_PROJECT_VERSION = 34;
 				DEVELOPMENT_TEAM = MQ85968PQP;
 				INFOPLIST_FILE = AllternitWidgets/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
@@ -4069,7 +4065,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.0.2;
+				MARKETING_VERSION = 1.0.3;
 				PRODUCT_BUNDLE_IDENTIFIER = com.allternit.mobile.widgets;
 				PRODUCT_NAME = AllternitWidgets;
 				SDKROOT = iphoneos;
@@ -4084,7 +4080,7 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 33;
+				CURRENT_PROJECT_VERSION = 34;
 				DEVELOPMENT_TEAM = MQ85968PQP;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
@@ -4093,7 +4089,7 @@
 					"@executable_path/Frameworks",
 					"@loader_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0.2;
+				MARKETING_VERSION = 1.0.3;
 				PRODUCT_BUNDLE_IDENTIFIER = com.allternit.mobile.tests;
 				PRODUCT_NAME = AllternitTests;
 				SDKROOT = iphoneos;
@@ -4108,7 +4104,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = AllternitScreen/AllternitScreen.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 33;
+				CURRENT_PROJECT_VERSION = 34;
 				DEVELOPMENT_TEAM = MQ85968PQP;
 				INFOPLIST_FILE = AllternitScreen/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
@@ -4117,7 +4113,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.0.2;
+				MARKETING_VERSION = 1.0.3;
 				PRODUCT_BUNDLE_IDENTIFIER = com.allternit.mobile.screen;
 				PRODUCT_NAME = AllternitScreen;
 				SDKROOT = iphoneos;
@@ -4133,7 +4129,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = "iMessage App Icon";
 				CODE_SIGN_ENTITLEMENTS = AllternitMessages/AllternitMessages.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 33;
+				CURRENT_PROJECT_VERSION = 34;
 				DEVELOPMENT_TEAM = MQ85968PQP;
 				INFOPLIST_FILE = AllternitMessages/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
@@ -4142,7 +4138,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.0.2;
+				MARKETING_VERSION = 1.0.3;
 				PRODUCT_BUNDLE_IDENTIFIER = com.allternit.mobile.messages;
 				PRODUCT_NAME = AllternitMessages;
 				SDKROOT = iphoneos;
@@ -4157,7 +4153,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = AllternitScreen/AllternitScreen.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 33;
+				CURRENT_PROJECT_VERSION = 34;
 				DEVELOPMENT_TEAM = MQ85968PQP;
 				INFOPLIST_FILE = AllternitScreen/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
@@ -4166,7 +4162,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.0.2;
+				MARKETING_VERSION = 1.0.3;
 				PRODUCT_BUNDLE_IDENTIFIER = com.allternit.mobile.screen;
 				PRODUCT_NAME = AllternitScreen;
 				SDKROOT = iphoneos;
@@ -4188,7 +4184,7 @@
 				CODE_SIGN_ENTITLEMENTS = Allternit.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 33;
+				CURRENT_PROJECT_VERSION = 34;
 				DEVELOPMENT_TEAM = MQ85968PQP;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(inherited)",
@@ -4203,7 +4199,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0.2;
+				MARKETING_VERSION = 1.0.3;
 				PRODUCT_BUNDLE_IDENTIFIER = com.allternit.mobile;
 				PRODUCT_NAME = Allternit;
 				SDKROOT = iphoneos;
@@ -4218,7 +4214,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = AllternitWidgets/AllternitWidgets.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 33;
+				CURRENT_PROJECT_VERSION = 34;
 				DEVELOPMENT_TEAM = MQ85968PQP;
 				INFOPLIST_FILE = AllternitWidgets/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
@@ -4227,7 +4223,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.0.2;
+				MARKETING_VERSION = 1.0.3;
 				PRODUCT_BUNDLE_IDENTIFIER = com.allternit.mobile.widgets;
 				PRODUCT_NAME = AllternitWidgets;
 				SDKROOT = iphoneos;
@@ -4242,7 +4238,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = AllternitNotifications/AllternitNotifications.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 33;
+				CURRENT_PROJECT_VERSION = 34;
 				DEVELOPMENT_TEAM = MQ85968PQP;
 				INFOPLIST_FILE = AllternitNotifications/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
@@ -4251,7 +4247,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.0.2;
+				MARKETING_VERSION = 1.0.3;
 				PRODUCT_BUNDLE_IDENTIFIER = com.allternit.mobile.notifications;
 				PRODUCT_NAME = AllternitNotifications;
 				SDKROOT = iphoneos;
@@ -4273,7 +4269,7 @@
 				CODE_SIGN_ENTITLEMENTS = Allternit.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 33;
+				CURRENT_PROJECT_VERSION = 34;
 				DEVELOPMENT_TEAM = MQ85968PQP;
 				ENABLE_DEBUG_DYLIB = NO;
 				FRAMEWORK_SEARCH_PATHS = (
@@ -4289,7 +4285,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0.2;
+				MARKETING_VERSION = 1.0.3;
 				PRODUCT_BUNDLE_IDENTIFIER = com.allternit.mobile;
 				PRODUCT_NAME = Allternit;
 				SDKROOT = iphoneos;
@@ -4304,7 +4300,7 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 33;
+				CURRENT_PROJECT_VERSION = 34;
 				DEVELOPMENT_TEAM = MQ85968PQP;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
@@ -4313,7 +4309,7 @@
 					"@executable_path/Frameworks",
 					"@loader_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0.2;
+				MARKETING_VERSION = 1.0.3;
 				PRODUCT_BUNDLE_IDENTIFIER = com.allternit.mobile.tests;
 				PRODUCT_NAME = AllternitTests;
 				SDKROOT = iphoneos;
