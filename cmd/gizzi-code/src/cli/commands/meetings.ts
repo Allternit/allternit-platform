@@ -86,7 +86,7 @@ async function api<T>(method: string, route: string, body?: unknown): Promise<T>
   return (await res.json()) as T
 }
 
-async function guard(fn: () => Promise<void>): Promise<void> {
+async function guard(fn: () => Promise<unknown>): Promise<void> {
   try {
     await fn()
   } catch (e) {
