@@ -21,7 +21,7 @@ import { SelfHostClient, isTurnEnd } from "@allternit/platform";
 
 const client = new SelfHostClient(); // or { baseUrl, apiKey }
 
-const agent = await client.agents.create({ name: "Helper", model: "claude-sonnet" });
+const agent = await client.agents.create({ name: "Helper", model: "YOUR_MODEL" });
 const env = await client.environments.create({ name: "default", network: "none" });
 const session = await client.sessions.create({ agent_id: agent.id, environment_id: env.id });
 
@@ -42,7 +42,7 @@ from allternit_platform.selfhost import SelfHostClient, is_turn_end
 
 client = SelfHostClient()  # or SelfHostClient("ask_...", base_url="https://...")
 
-agent = client.agents.create(name="Helper", model="claude-sonnet")
+agent = client.agents.create(name="Helper", model="YOUR_MODEL")
 env = client.environments.create(name="default", network="none")
 session = client.sessions.create(agent_id=agent["id"], environment_id=env["id"])
 

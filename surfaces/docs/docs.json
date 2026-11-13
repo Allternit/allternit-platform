@@ -980,10 +980,7 @@
           },
           {
             "group": "Self-Hosted Agents API reference",
-            "openapi": {
-              "source": "api-reference/selfhost-v1.yaml",
-              "directory": "api-reference/selfhost"
-            }
+            "openapi": "api-reference/selfhost-v1.yaml"
           },
           {
             "group": "Platform API",
