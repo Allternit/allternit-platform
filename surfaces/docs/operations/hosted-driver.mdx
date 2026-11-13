@@ -73,6 +73,20 @@ The public launch and the prices are Eoj's call.
 | `ALLTERNIT_HOSTED_DRIVER_PER_KEY` | `2` | Default cap on live computers per API key. Projects can lower or raise it in settings, up to the max. |
 | `ALLTERNIT_HOSTED_DRIVER_MAX_PER_KEY` | `10` | Upper bound for that setting. |
 
+## Free pool memory and capacity
+
+Free computers, and the hosted runtime behind each Platform API project (owner `platform:<project_id>`), reserve only disk in the host ledger, so awake free computers are checked against host memory when they start. A create or wake is admitted only if the memory of paid computers on the host, plus the free computers that are running, waking or provisioning, plus this one, fits under the host total minus headroom. If it does not, the longest-idle running free computer on that host (idle at least 2 minutes, never the one being started) is put to sleep with reason `pool_full`, and the check runs once more. Still full: `503 computer_capacity` with `Retry-After: 30`. The Platform API sends the same code and header for `runtime_starting`.
+
+A project runtime that never connected is replaced at most three times (after 5, 15 and 45 minutes), and not while a new one would be refused for capacity.
+
+| Env | Default | Meaning |
+|---|---|---|
+| `ALLTERNIT_HOST_MEMORY_HEADROOM_MB` | `2048` | Memory kept free on each host. |
+| `ALLTERNIT_PLATFORM_RUNTIME_IMAGE` | the free image | Image for project runtimes (for example `allternit-computer-headless`). |
+| `ALLTERNIT_PLATFORM_RUNTIME_CPU` / `_MEMORY_MB` / `_DISK_GB` | the free size (`2` / `2048` / `10`) | Size of project runtimes. |
+
+The provisioned-instance view also returns `provider` (`incus`, or the endpoint scheme), `sleeps_when_idle`, `state_detail` (`waking` or null) and `retry_after_seconds` (null).
+
 ## Egress rules
 
 Hosted-driver computers must not reach private networks: RFC1918, `100.64.0.0/10` (our mesh), link-local `169.254.0.0/16` (this includes the metadata address `169.254.169.254`), loopback, IPv6 ULA and link-local ranges, and the host's own addresses.
