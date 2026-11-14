@@ -531,15 +531,6 @@ impl ProvisioningService {
         Ok(count > 0)
     }
 
-    /// Wake a free computer. `user_id` scopes the lookup to the owner (the
-    /// wake endpoint); `None` is the system (relay / scheduled) path.
-    ///
-    /// Idempotent: a `running`, `waking` or `provisioning` computer is
-    /// returned as-is (`woke: false`) and counts no wake. A `sleeping` one
-    /// is claimed `waking` under the host row lock — after the per-user
-    /// hourly wake limit (429) and the per-host awake cap (503) — and its
-    /// start runs in the background. The start task moves it to `running`;
-    /// the runtime attaching to the relay is the ready signal.
     /// Raise a sleeping free / Platform Incus computer below
     /// `MIN_COMPUTER_MEMORY_MB` to the floor before it starts. On a resize
     /// failure the old size is kept (logged); never called for Orgo or paid.
@@ -583,6 +574,16 @@ impl ProvisioningService {
         }
     }
 
+
+    /// Wake a free computer. `user_id` scopes the lookup to the owner (the
+    /// wake endpoint); `None` is the system (relay / scheduled) path.
+    ///
+    /// Idempotent: a `running`, `waking` or `provisioning` computer is
+    /// returned as-is (`woke: false`) and counts no wake. A `sleeping` one
+    /// is claimed `waking` under the host row lock — after the per-user
+    /// hourly wake limit (429) and the per-host awake cap (503) — and its
+    /// start runs in the background. The start task moves it to `running`;
+    /// the runtime attaching to the relay is the ready signal.
     pub async fn wake(
         self: &Arc<Self>,
         instance_id: &str,
@@ -1024,6 +1025,8 @@ pub fn start_free_computer_task(state: Arc<crate::ApiState>) {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
     fn platform_runtime_spec_floors_a_small_free_default() {
         let mut free = FreeDefaults::from_env();
@@ -1031,8 +1034,6 @@ mod tests {
         assert_eq!(platform_runtime_spec(&free).1.memory_mb, MIN_COMPUTER_MEMORY_MB);
         assert_eq!(MIN_COMPUTER_MEMORY_MB, 4096);
     }
-
-    use super::*;
 
     // A host with 5 GB usable after headroom (7168 total, 2048 headroom).
     const TOTAL: i64 = 7168;
