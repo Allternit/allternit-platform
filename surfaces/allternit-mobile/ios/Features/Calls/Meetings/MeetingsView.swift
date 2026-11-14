@@ -133,6 +133,11 @@ struct MeetingsView: View {
                 .padding(.top, 8)
         }
 
+        if let runner = store.runner {
+            MeetingRunnerNote(runner: runner)
+                .padding(.top, 12)
+        }
+
         ForEach(store.live) { meeting in
             MeetingLiveCard(meeting: meeting, session: store.session(for: meeting)) {
                 if let sid = store.session(for: meeting)?.id ?? meeting.sessionId {
@@ -223,6 +228,29 @@ struct MeetingsView: View {
 // MARK: - Rows
 
 /// The live call on top: mascot, title, chip with elapsed time, Open.
+/// One line above the agenda: which computer Gizzi joins from. When none is
+/// online it also offers a cloud computer.
+struct MeetingRunnerNote: View {
+    let runner: MeetingRunner
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(runner.text)
+                .font(.system(size: 13))
+                .foregroundColor(Color("TextSecondary"))
+                .fixedSize(horizontal: false, vertical: true)
+            if runner.isNone {
+                Link(MeetingRunner.noneAction, destination: MeetingRunner.noneActionURL)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(Color("TextPrimary"))
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 4)
+        .accessibilityIdentifier("meetingsRunnerNote")
+    }
+}
+
 struct MeetingLiveCard: View {
     let meeting: Meeting
     let session: MeetingSession?
@@ -605,6 +633,7 @@ enum MeetingFormat {
         case "join_failed": return "Gizzi couldn't join the call."
         case "guest_blocked": return "The call doesn't let guests like Gizzi in."
         case "no_capacity": return "Gizzi was in too many calls to join."
+        case "no_runtime": return "Gizzi could not join. None of your computers was online. Open Allternit on your computer or start your cloud computer, then send Gizzi again."
         case "error": return "Something went wrong in the call."
         default: return "Gizzi left the call."
         }
@@ -709,6 +738,9 @@ struct MeetingPasteLinkSheet: View {
                         .font(.system(size: 13))
                         .foregroundColor(Theme.statusError)
                 }
+                if error == nil, let runner = store.runner, runner.isNone {
+                    MeetingRunnerNote(runner: runner)
+                }
                 if let error {
                     SettingsErrorBanner(message: error)
                     if error == MeetingsError.zoomNotConnected.localizedDescription {
@@ -764,6 +796,7 @@ struct MeetingPasteLinkSheet: View {
                 onDone(meeting, session)
             } catch {
                 if case .paidPlanRequired? = error as? MeetingsError { store.handle(error); dismiss(); return }
+                if case .noRuntime? = error as? MeetingsError { self.error = MeetingRunner.noneText; return }
                 self.error = (error as? MeetingsError)?.localizedDescription ?? FriendlyErrorMessage.from(error.localizedDescription)
             }
         }

@@ -26,6 +26,7 @@ export const END_REASON_LABELS: Record<string, string> = {
   join_failed: "Gizzi could not join",
   guest_blocked: "The platform refused Gizzi's identity",
   no_capacity: "No capacity right now",
+  no_runtime: "Gizzi could not join. None of your computers was online. Open Allternit on your computer or start your cloud computer, then send Gizzi again.",
   error: "Error",
 }
 
@@ -84,4 +85,16 @@ export function parseSse(buf: string): { events: { id?: string; event: string; d
 export function mmss(ms: number): string {
   const s = Math.max(0, Math.floor(ms / 1000))
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`
+}
+
+export type Runner = { state: "ready" | "asleep" | "none"; runtime: { id: string; name: string; kind: "cloud_computer" | "desktop" } | null }
+
+/** Where Gizzi joins from (same words as the web). Gizzi runs on the person's own computer, not Allternit's servers. */
+export function runnerLine(runner: Runner): string {
+  const name = runner.runtime?.name?.trim()
+  if (runner.state === "ready" && runner.runtime?.kind === "cloud_computer")
+    return `Gizzi joins from your cloud computer${name ? ` (${name})` : ""}. It can join while your own computer is off.`
+  if (runner.state === "ready") return `Gizzi joins from ${name || "this computer"}. Keep Allternit open and the computer awake during the call.`
+  if (runner.state === "asleep") return "Your cloud computer is asleep. It starts when Gizzi joins a call. That takes about a minute."
+  return "No computer is online. Gizzi joins calls from your own computer, not from Allternit's servers. Open Allternit on a computer that has Google Chrome, or add a cloud computer (https://ai.allternit.com/settings/billing)."
 }

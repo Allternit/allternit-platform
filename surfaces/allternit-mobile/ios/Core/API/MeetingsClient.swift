@@ -124,6 +124,42 @@ struct MeetingSession: Codable, Identifiable, Hashable, Sendable {
     var endedDate: Date? { MeetingDates.parse(endedAt) }
 }
 
+/// `GET /meetings/runner`: which of the person's computers Gizzi joins from
+/// (presence only). Gizzi runs on their own cloud computer or Desktop, never
+/// on Allternit's servers.
+struct MeetingRunner: Codable, Hashable, Sendable {
+    /// `ready|asleep|none`.
+    var state: String
+    var runtime: Runtime?
+
+    struct Runtime: Codable, Hashable, Sendable {
+        var id: String
+        var name: String
+        /// `cloud_computer|desktop`.
+        var kind: String
+    }
+
+    static let noneText = "No computer is online. Gizzi joins calls from your own computer, not from Allternit\u{2019}s servers. Open Allternit on a computer that has Google Chrome, or add a cloud computer."
+    static let noneAction = "Get a cloud computer"
+    static let noneActionURL = URL(string: "https://ai.allternit.com/settings/billing")!
+    static let autoJoinHint = "Auto-join needs one of your computers online at the start time."
+
+    var isNone: Bool { state != "ready" && state != "asleep" }
+
+    /// The one-line note, same words as the web.
+    var text: String {
+        let name = runtime?.name.trimmingCharacters(in: .whitespaces) ?? ""
+        if state == "ready", runtime?.kind == "cloud_computer" {
+            return "Gizzi joins from your cloud computer\(name.isEmpty ? "" : " (\(name))"). It can join while your own computer is off."
+        }
+        if state == "ready" {
+            return "Gizzi joins from \(name.isEmpty ? "this computer" : name). Keep Allternit open and the computer awake during the call."
+        }
+        if state == "asleep" { return "Your cloud computer is asleep. It starts when Gizzi joins a call. That takes about a minute." }
+        return Self.noneText
+    }
+}
+
 struct MeetingParticipant: Codable, Identifiable, Hashable, Sendable {
     let id: String
     var displayName: String
@@ -312,6 +348,8 @@ enum MeetingsError: Error, LocalizedError, Equatable, Sendable {
     case unsupportedLink
     /// 429 `no_capacity`.
     case noCapacity
+    /// No computer of the person's is online (the runner is `none`): nothing is sent.
+    case noRuntime
     /// 409 `zoom_not_connected`: Zoom calls need the user's Zoom account (OBF).
     case zoomNotConnected
     case server(status: Int, code: String?, message: String?)
@@ -324,6 +362,7 @@ enum MeetingsError: Error, LocalizedError, Equatable, Sendable {
         case .forbidden(let message): return message
         case .unsupportedLink: return "That isn't a Google Meet, Zoom or Microsoft Teams link."
         case .noCapacity: return "Gizzi is in too many calls right now. Try again in a minute."
+        case .noRuntime: return MeetingRunner.noneText
         case .zoomNotConnected: return "Connect your Zoom account first. Zoom only lets Gizzi in through the account of someone in the call."
         case .server(let status, _, let message): return message ?? "Meetings answered \(status). Try again."
         case .offline(let message): return message
@@ -416,6 +455,11 @@ final class MeetingsClient: Sendable {
     /// `GET /meetings/:id` — one row with `gizzi` and the latest summary.
     func meeting(_ id: String) async throws -> Meeting {
         try await get(Meeting.self, url("meetings/\(id)"))
+    }
+
+    /// `GET /meetings/runner`.
+    func runner() async throws -> MeetingRunner {
+        try await get(MeetingRunner.self, url("meetings/runner"))
     }
 
     func create(url link: String, title: String? = nil) async throws -> Meeting {

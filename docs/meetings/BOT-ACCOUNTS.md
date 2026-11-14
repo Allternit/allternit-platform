@@ -1,17 +1,19 @@
-# Bot Google accounts for Meet pods (lane 2.1/2.2, 2026-11-13)
+# Bot Google accounts for Meet (lane 2.1/2.2, 2026-11-13; runtime delivery 2026-11-14)
 
-Google Meet lets the bot in only when it is signed in to a Google account. Free-Gmail calls refuse guests and refuse browsers in automation mode (spike result 3, CONTRACT section 1). The spike also found that the sign-in is bound to one device and one Chrome profile: you cannot copy a password or a cookie export into a new browser. A pod therefore needs a whole Chrome profile that a person has already signed in.
+Google Meet lets the bot in only when it is signed in to a Google account. Free-Gmail calls refuse guests and refuse browsers in automation mode (spike result 3, CONTRACT section 1). The spike also found that the sign-in is bound to one device and one Chrome profile: you cannot copy a password or a cookie export into a new browser. The bot therefore needs a whole Chrome profile that a person has already signed in.
 
-This document describes how pods get that profile. **Google sign-in is never automated.** A person signs in by hand, and pods only reuse the profile that sign-in produced.
+This document describes how the bot gets that profile. **Google sign-in is never automated.** A person signs in by hand, and the bot only reuses the profile that sign-in produced.
+
+**Where the bot runs (2026-11-14).** The company pods and the standby images are gone. The bot runs on the user's own runtime: their cloud computer or their Desktop (see the Meetings guide, "Where Gizzi runs"). cloud-api reaches that runtime through the signed relay. Only **Linux runtimes** (cloud computers) receive the signed-in profile. macOS and Windows runtimes join Meet signed out, as a guest, and Zoom and Teams do not use the profile at all.
 
 ## What a bot account is
 
 - A dedicated Google account that is used only for Meet. It holds no Drive data and has no other services turned on. It uses 2-step verification with a security key kept by ops, and its recovery address is the ops mailbox.
 - The account's profile name is **Gizzi (Allternit)** and its picture is the Gizzi mark. A signed-in Meet user has no name field: Meet shows the account name, so the account name is the display name. `PodConfig.displayName` is only used when the profile turns out to be signed out.
-- Accounts form a pool, `gizzi-meet-01`, `gizzi-meet-02`, and so on. Each one runs at most one session at a time, because two Chromes cannot share one profile.
+- Accounts form a pool, `gizzi-meet-01`, `gizzi-meet-02`, and so on. Each one runs at most one session at a time, because two Chromes cannot share one profile (the launcher claims an account per session; a runtime runs one bot at a time).
 - Accounts are listed in `MEETINGS_BOT_GOOGLE_ACCOUNTS` (comma list) in cloud-api's env. No account is hardcoded anywhere.
-- In the pod config it appears as `identity = { kind: "google_account", accountEmail, profileDir: "/var/lib/allternit/bot-profile" }`. That path is the directory the image creates (`cmd/allternit-computer-cloud/guest/build-meeting-bot-image.sh`).
-- The launcher hands out an account only when its `state.json` says `active`, a sealed generation is on disk, and `MEETINGS_BOT_PROFILE_KEY` is set. Accounts that are `needs_reauth`, `suspended` or never signed in are skipped. When no account qualifies or every qualifying account is busy, the pod joins signed out, as it did before.
+- In the pod config it appears as `identity = { kind: "google_account", accountEmail, profileDir }`. `profileDir` is a path the runtime host chooses: `<data_dir>/meeting-bot/profiles/<hash>` (mode 0700), created when the session starts and deleted when the bot exits.
+- The launcher hands out an account only when its `state.json` says `active`, a sealed generation is on disk, and `MEETINGS_BOT_PROFILE_KEY` is set. Accounts that are `needs_reauth`, `suspended` or never signed in are skipped. When no account qualifies or every qualifying account is busy, the bot joins signed out.
 
 ## Storage: one encrypted golden profile per account
 
@@ -27,44 +29,30 @@ cloud-api host: $MEETINGS_BOT_PROFILE_DIR (default /var/lib/allternit/bot-profil
 
 - **Encrypted at rest.** The archive is sealed with ChaCha20-Poly1305 (`ring`) under `MEETINGS_BOT_PROFILE_KEY`. The key is base64 of 32 random bytes (`openssl rand -base64 32`). It is a separate key from `ALLTERNIT_CREDENTIALS_KEY`. Every seal uses a fresh random 96-bit nonce, and the account email is the associated data, so a file moved into another account's directory does not open. The plan named XChaCha20-Poly1305, but no XChaCha crate is in the workspace, and `ring` is. Seals are rare (one at sign-in, then at most one per account per day), so random 96-bit nonces are safe. File layout: `ALTBPv1\n` + nonce + ciphertext + tag. Directories are 0700 and files are 0600. Every write goes to a temp file, is fsynced, then renamed.
 - **Account names** must look like an email (`[A-Za-z0-9._+-]`, exactly one `@`, no leading dot, no `..`). Any other name is refused, so no name can step outside the store.
-- **Copy per session.** For each session, the launcher decrypts the current generation in cloud-api and pushes the plain `tar.zst` into the stopped container as a root-only file (`/var/lib/allternit-profile-seed/profile.tar.zst`, 0600) through the Incus file API (`first_boot`). The image's `allternit-meeting-profile.service` is a oneshot unit with `Before=` the runner and `ConditionPathExists=` the archive. It unpacks the archive into `/var/lib/allternit/bot-profile` (owner `meetbot`, mode 0700), deletes the archive, and leaves the marker `/var/lib/allternit/bot-profile.delivered`. When the session ends, the copy is destroyed together with the container. Pods never see the key. If decryption fails (wrong key or a corrupt file), the account is dropped from that session's claim and the pod joins signed out.
-- **Portable cookies.** On Linux, Chrome encrypts cookies with a key from the OS keyring. The pod has no keyring, so the sign-in Chrome and the pod Chrome both run with `--password-store=basic`. That keeps the profile readable on any pod host. Pod Chrome must be the same major version as the sign-in Chrome, or newer.
+- **Delivery per session.** The profile is not in the start request (the relay caps request bodies at 1 MB). The start request carries only `bot_profile: { account }` or `null`. The runtime then pulls the profile with its pod token from `GET /meeting-sessions/:sid/bot-profile`. cloud-api decrypts the current generation and answers with the plain `tar.zst`, or `204` when the session has no profile. Only Linux runtimes call it. The runtime unpacks the archive into its per-session profile directory and deletes the directory when the bot exits. Runtimes never see the key. If decryption fails (wrong key or a corrupt file), the account is dropped from that session's claim and the bot joins signed out.
+- **Portable cookies.** On Linux, Chrome encrypts cookies with a key from the OS keyring. A cloud computer has no keyring, so the sign-in Chrome and the bot Chrome both run with `--password-store=basic`. That keeps the profile readable on any Linux runtime. The bot Chrome must be the same major version as the sign-in Chrome, or newer.
 
 ## Keeping the session fresh, without a schedule
 
-Google rotates session cookies as the account is used. If pods never write back, the golden copy goes stale.
-
-- **Write-back after a good session.** The runner unit has `ExecStopPost=-+/usr/local/sbin/allternit-meeting-profile-save`, which runs as root after the runner and Chrome have exited. If the profile was delivered (the marker exists) and the runner's journal has no `bot_profile_signed_out`, it tars the profile to `/var/lib/allternit-profile-out/profile.tar.zst` (0600). It leaves out `Cache`, `Code Cache`, `GPUCache`, `Service Worker/CacheStorage`, `Crashpad`, the shader caches and the `Singleton*` locks. The reaper decides whether to keep it. The session must have reached `live` and ended `left_by_user`, `empty_room` or `max_duration`, the account must still be `active`, and the current generation must be at least 24 hours old. When all of that holds, the reaper pulls the file (`ProvisionBackend::pull_file`, Incus `GET /1.0/instances/<name>/files?path=`, 256 MiB cap) before it deletes the container. It then seals the file as generation n+1 under the account lock, re-checking the once-a-day rule there. Every clean live session updates `last_ok_at`. Failures are logged and never fail the reap.
-- No cron or launchd job refreshes profiles (Eoj, no scheduled jobs). Accounts that sit unused simply age, and the next sign-in check catches them.
+**There is no write-back.** A runtime never sends its profile copy back, so cloud-api keeps the golden copy exactly as a person sealed it. Google rotates session cookies as an account is used, so a golden copy can age out. When that happens, the bot sees the signed-out page (see below) and the account is re-signed in by hand. No cron or launchd job refreshes profiles (Eoj, no scheduled jobs).
 
 ## Expiry and re-sign-in (a human step)
 
 1. **Detection.** If the Meet adapter sees the guest name field on a `google_account` profile, the profile is signed out. The adapter logs `bot_profile_signed_out`. It still tries to join as a guest, because Workspace calls that allow guests still work. The join failure detail carries `bot_profile_signed_out`.
-2. **Pool update.** When the pod's ingest batch carries an end detail containing `bot_profile_signed_out` (`routes/meeting_pod.rs`), cloud-api sets that session's account to `needs_reauth`, takes it out of the pool, logs an `OPS` warning and sends an ops alert email (`ops_alert`, deduplicated per account). Other accounts keep serving. If no account is active, Meet sessions still launch signed out and usually end `guest_blocked`. That is the honest outcome the UI shows as "Not let in".
-3. **Re-sign-in.** An operator runs `scripts/meetings/bot-profile-signin.sh` as root on a pod host. The script starts a throwaway container from the bot image and, with `--profile`, unpacks the account's current profile into it. It starts x11vnc on the container's Xvfb :0, reachable only on the host's 127.0.0.1 through an Incus proxy device, and prints the ssh tunnel command and a one-time VNC password. It then opens Chrome as `meetbot` with `--password-store=basic --user-data-dir=/var/lib/allternit/bot-profile --disable-features=MacAppCodeSignClone`. The operator signs in by hand with the security key, checks meet.google.com, and closes Chrome. The script tars the profile with the same excludes, deletes the container, and prints the seal commands. On the cloud-api host, `meetings-bot-profile seal <account> <archive>` seals the archive as a new generation and marks the account `active`.
+2. **Pool update.** When the runtime's ingest batch carries an end detail containing `bot_profile_signed_out` (`routes/meeting_pod.rs`), cloud-api sets that session's account to `needs_reauth`, takes it out of the pool, logs an `OPS` warning and sends an ops alert email (`ops_alert`, deduplicated per account). Other accounts keep serving. If no account is active, Meet sessions still launch signed out and usually end `guest_blocked`. That is the honest outcome the UI shows as "Not let in".
+3. **Re-sign-in.** An operator signs in by hand, in a Chrome started with `--password-store=basic --user-data-dir=<new dir>`, with the security key, checks meet.google.com, and closes Chrome. The `bot-profile-signin.sh` script ran inside the pod image and was removed with it. Tar the profile directory (leave out `Cache`, `Code Cache`, `GPUCache`, `Service Worker/CacheStorage`, `Crashpad`, the shader caches and the `Singleton*` locks) and, on the cloud-api host, run `meetings-bot-profile seal <account> <archive>`. That seals the archive as a new generation and marks the account `active`.
    - It is never done in Eoj's Safari, never on a personal machine, and never by a script that types credentials.
 
 ### First sign-in, step by step
 
-On the pod host (for example `host_standby`), as root:
-
-```
-scripts/meetings/bot-profile-signin.sh <account-email> --out /root/<account>.tar.zst
-# workstation: ssh -N -L 5911:127.0.0.1:5911 root@<pod host>; VNC to 127.0.0.1:5911
-# sign in by hand, open meet.google.com, close Chrome
-scp -p /root/<account>.tar.zst root@<cloud-api host>:/root/ && shred -u /root/<account>.tar.zst
-```
-
-On the cloud-api host, with cloud-api's env loaded (`systemctl show -p EnvironmentFiles allternit-cloud-api` shows where it is):
+Sign in by hand as described in step 3 above, on a Linux machine with the same Chrome major version the cloud computers use. Copy the archive to the cloud-api host, then run, with cloud-api's env loaded (`systemctl show -p EnvironmentFiles allternit-cloud-api` shows where it is):
 
 ```
 meetings-bot-profile seal <account-email> /root/<account>.tar.zst && shred -u /root/<account>.tar.zst
 meetings-bot-profile status
 ```
 
-Then add the account to `MEETINGS_BOT_GOOGLE_ACCOUNTS` and restart cloud-api.
-
-For a re-sign-in, run `meetings-bot-profile open <account> /root/<account>-current.tar.zst` on the cloud-api host first. Copy the file to the pod host and pass it with `--profile`.
+Then add the account to `MEETINGS_BOT_GOOGLE_ACCOUNTS` and restart cloud-api. For a re-sign-in, run `meetings-bot-profile open <account> /root/<account>-current.tar.zst` on the cloud-api host first.
 
 ### Ops binary
 
@@ -84,13 +72,12 @@ For a re-sign-in, run `meetings-bot-profile open <account> /root/<account>-curre
 | `MEETINGS_BOT_GOOGLE_ACCOUNTS` | empty | Pool of bot accounts (comma list) |
 | `MEETINGS_BOT_PROFILE_KEY` | unset (profiles are not delivered; Meet joins signed out) | base64 of 32 random bytes |
 | `MEETINGS_BOT_PROFILE_DIR` | `/var/lib/allternit/bot-profiles` | Profile store |
-| `MEETINGS_POD_HOSTS` | empty = every enabled Incus host | Host ids that take meeting pods, e.g. `host_standby`. Set it in production: `host_mail` runs cloud-api and Postgres and has no bot image |
 
 ## Risks
 
 - Google may suspend a bot account for automated use. The bot joins openly, under its own name and tile, posts the consent notice, and makes no attempt to look human, but suspension is still possible. A suspended account becomes `suspended` in `state.json` and leaves the pool. The pool size gives headroom.
-- Device Bound Session Credentials (DBSC): newer Chrome builds can tie Google cookies to a hardware key. If Google enforces this on Linux, profile copies across hosts stop working. Each account would then be pinned to one host, and the host's pods would share that host's key. Watch for `bot_profile_signed_out` happening right after a fresh sign-in.
-- The profile copy lives in the pod only while the session runs. A compromised pod exposes only that one account's session. Re-sign-in plus Google's "sign out of all sessions" revokes it.
+- Device Bound Session Credentials (DBSC): newer Chrome builds can tie Google cookies to a hardware key. If Google enforces this on Linux, profile copies across hosts stop working. Each account would then be pinned to one host, and each runtime would need its own sign-in. Watch for `bot_profile_signed_out` happening right after a fresh sign-in.
+- The profile copy lives on the runtime only while the session runs. A compromised runtime exposes only that one account's session, and only a Linux runtime ever receives it. Re-sign-in plus Google's "sign out of all sessions" revokes it.
 
 ## Decided
 

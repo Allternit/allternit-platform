@@ -50,3 +50,11 @@ node scripts/runtime-package.cjs publish   # dry run; add --confirm to upload
 ```
 
 The packed binaries must be the target platform's. A Linux package is packed on any machine with `ALLTERNIT_RUNTIME_PLATFORM=linux-x64` and `ALLTERNIT_RUNTIME_RESOURCES=<dir>`, where `<dir>/bin` holds `allternit-api`, `gizzi-code` and `allternit-factory` built on Linux x64 (the build host is the `alt-linux-build` container on `allternit-standby`, sources in `/srv/alt-build/src`, script `/srv/alt-build/rt.sh`; `allternit-factory` needs Zig 0.15.2) and `<dir>/platform` holds the screens from `npm run prepare:platform-static`. The signing key stays on the publishing Mac (`~/.config/allternit/runtime-signing-ed25519.pem`).
+
+Before you publish a `linux-x64` runtime, stage the meeting bot (the Gizzi Meetings bot that runs on cloud computers). Run this from `surfaces/allternit-desktop`, with the same `<dir>` you pack from:
+
+```bash
+ALLTERNIT_RUNTIME_PLATFORM=linux-x64 ALLTERNIT_RUNTIME_RESOURCES=<dir> node scripts/prepare-meeting-bot.cjs
+```
+
+It writes `meeting-bot/` (the bot's `dist/runner.js` and its production dependencies) and `meeting-bot-native/linux-x64/` (the LiveKit native binding) under `<dir>`. `runtime-package.cjs stamp` and `pack` include both. A runtime package without it cannot run Meetings on that computer: the status check reports `bot_missing`, and Gizzi falls back to another computer or ends the call as `no_runtime`.
