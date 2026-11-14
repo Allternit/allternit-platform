@@ -9,7 +9,7 @@ import UIKit
 
 enum ComputeGateCopy {
     static let title = "Agents need a computer"
-    static let body = "Pick where your agents run. Chat with Allternit Cloud models stays open."
+    static let body = "Pick where your agents run. Allternit Cloud models and your own API keys work without one."
     static let cardATitle = "Use your own computer"
     static let cardACost = "Free. Link the Allternit Desktop app."
     static let cardAButton = "Link my computer"
@@ -17,10 +17,28 @@ enum ComputeGateCopy {
     static let cardBButton = "See plans"
     static let cardCTitle = "Buy credits"
     static let cardCButton = "Buy credits"
-    static let chatOnlyLink = "Just chat for now"
-    static let chatOnlyConfirm = "Chat works without a computer. Agents will not run until you add one."
-    static let chatOnlyContinue = "Continue with chat"
-    static let chatOnlyBack = "Pick a computer"
+    static let laterLink = "Set up a computer later"
+    static let explainerLink = "What works without a computer"
+    static let laterContinue = "Set up a computer later"
+    static let laterBack = "Pick a computer"
+    static let explainerTitle = "What works without a computer"
+    static let explainerAnyTitle = "Works on any device"
+    static let explainerAny = [
+        "Allternit Cloud models. Included with Free, about $2 a month of usage.",
+        "Any API key you add.",
+        "Plans you already pay for, where the vendor allows it. GitHub Copilot works now. Claude and others are coming.",
+    ]
+    static let explainerNeedTitle = "Needs a computer"
+    static let explainerNeed = [
+        "Clicking apps.",
+        "Driving a browser.",
+        "Running coding tools such as Codex CLI and Claude Code.",
+        "Keeping agents running while your own machine sleeps.",
+    ]
+    static let explainerWaysTitle = "Three ways to get a computer"
+    static let explainerOwn = "Link your own computer. Free."
+    static let explainerHostedNote = "Hosted computers run on Allternit servers."
+    static let explainerWhenNeeded = "When a task needs a computer, you will see these options then."
     static let waiting = "Waiting for the Desktop app. Open it to finish linking."
     static let provisioning = "Starting your computer. This takes about a minute."
     static let ready = "Your computer is ready."
@@ -45,11 +63,32 @@ enum ComputeGateCopy {
         case 1: list = parts[0]
         default: list = parts.dropLast().joined(separator: ", ") + " or " + parts[parts.count - 1]
         }
-        return "\(list) a month. Includes one hosted computer."
+        return "\(list) a month. Includes one hosted computer. " + planExplainer(plans)
     }
 
     static func cardCCost(_ price: Double) -> String {
         "A hosted computer billed per minute while it runs. From \(money(price)) an hour."
+    }
+
+    /// "Credits: $0.10 an hour running, $0.005 an hour stopped. $5 to start." (all from the server)
+    static func cardCExplainer(_ c: ComputeStatus.Credits) -> String {
+        var t = "Credits: \(money(c.pricePerHourUsd)) an hour running"
+        if let stopped = c.stoppedPricePerHourUsd { t += ", \(stopped < 0.01 ? String(format: "$%.3f", stopped) : money(stopped)) an hour stopped" }
+        return t + ". \(whole(c.minStartUsd)) to start."
+    }
+
+    /// "From $20 a month (Plus): 200 hours, then $0.10/hour." Hours part omitted when the plan has none.
+    static func planExplainer(_ plans: [ComputeStatus.PlanOption]) -> String {
+        let withHours = plans.first { $0.includedHours != nil } ?? plans.first
+        guard let p = withHours else { return "A plan includes one hosted computer." }
+        var t = "From \(whole(p.priceUsdMonth)) a month (\(p.name))"
+        if let h = p.includedHours {
+            t += ": \(h) hours"
+            if let o = p.overagePricePerHourUsd { t += ", then \(money(o))/hour" }
+        } else {
+            t += ": one hosted computer"
+        }
+        return t + "."
     }
 
     static func insufficient(_ min: Double) -> String { "Starting needs at least \(whole(min)) in credits." }
@@ -109,7 +148,7 @@ struct ComputeGateView: View {
     @ObservedObject private var store = ComputeStatusStore.shared
     @ObservedObject private var storefront = StorefrontGate.shared
 
-    @State private var confirmingChatOnly = false
+    @State private var showExplainer = false
     @State private var working = false
     @State private var linking = false
     @State private var copied = false
@@ -129,6 +168,14 @@ struct ComputeGateView: View {
             }
         }
         .task { await store.refreshIfNeeded() }
+        .sheet(isPresented: $showExplainer) {
+            ComputeExplainerSheet(status: store.status, confirmTitle: ComputeGateCopy.laterContinue) {
+                working = true
+                defer { working = false }
+                try? await store.acknowledgeChatOnly()
+                onDone?()
+            }
+        }
         .onDisappear { stopWaiting() }
         .onChange(of: store.status) { _, s in
             if let s, !s.gate, s.computer != nil, s.state == "paired" || s.state == "hosted" { stopWaiting() }
@@ -178,8 +225,6 @@ struct ComputeGateView: View {
                     Button("Done", action: onDone).buttonStyle(SetupPrimaryButtonStyle())
                 }
             }
-        } else if confirmingChatOnly {
-            chatOnlyConfirm
         } else {
             if let notice = ComputeGateNotice.text(s) {
                 Text(notice).font(.subheadline.weight(.semibold)).foregroundStyle(SetupPalette.ink)
@@ -194,10 +239,11 @@ struct ComputeGateView: View {
                     .font(.footnote)
                     .foregroundStyle(SetupPalette.sub)
             }
-            Button(ComputeGateCopy.chatOnlyLink) { confirmingChatOnly = true }
+            Button(ComputeGateCopy.laterLink) { showExplainer = true }
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(SetupPalette.ink)
                 .frame(minHeight: 44)
+                .accessibilityHint("Shows what works without a computer first")
             Text(ComputeGateCopy.honesty)
                 .font(.footnote)
                 .foregroundStyle(SetupPalette.mut)
@@ -293,27 +339,6 @@ struct ComputeGateView: View {
         }
     }
 
-    private var chatOnlyConfirm: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(ComputeGateCopy.chatOnlyConfirm)
-                .font(.subheadline)
-                .foregroundStyle(SetupPalette.ink)
-                .fixedSize(horizontal: false, vertical: true)
-            Button(ComputeGateCopy.chatOnlyContinue) {
-                Task {
-                    working = true
-                    defer { working = false }
-                    try? await store.acknowledgeChatOnly()
-                    onDone?()
-                }
-            }
-            .buttonStyle(SetupPrimaryButtonStyle())
-            .disabled(working)
-            Button(ComputeGateCopy.chatOnlyBack) { confirmingChatOnly = false }
-                .buttonStyle(SetupGhostButtonStyle())
-        }
-    }
-
     // MARK: - Actions
 
     private func start(size: String) async {
@@ -373,8 +398,24 @@ struct ComputeGateSheet: View {
 struct ComputeGateStrip: View {
     @ObservedObject private var store = ComputeStatusStore.shared
     @State private var showSheet = false
+    @State private var showExplainer = false
 
     var body: some View {
+        VStack(spacing: 0) {
+            stripBody
+            if store.status != nil {
+                Button(ComputeGateCopy.explainerLink) { showExplainer = true }
+                    .font(.footnote.weight(.semibold))
+                    .foregroundColor(Color("TextPrimary"))
+                    .frame(minHeight: 44)
+                    .padding(.horizontal, 16)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .sheet(isPresented: $showExplainer) { ComputeExplainerSheet(status: store.status, confirmTitle: nil, onConfirm: nil) }
+    }
+
+    private var stripBody: some View {
         Group {
             if store.loadFailed && store.status == nil {
                 row(text: ComputeGateCopy.checkFailed, action: "Retry") { Task { await store.refresh() } }
@@ -429,5 +470,78 @@ struct SetupComputeGatePanel: View {
             }
         }
         .task { await store.refreshIfNeeded() }
+    }
+}
+
+/// "What works without a computer": two lists, then the three ways to get one.
+/// `onConfirm` non-nil = shown before "Set up a computer later" is recorded.
+struct ComputeExplainerSheet: View {
+    let status: ComputeStatus?
+    let confirmTitle: String?
+    let onConfirm: (() async -> Void)?
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var working = false
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    section(ComputeGateCopy.explainerAnyTitle, ComputeGateCopy.explainerAny)
+                    section(ComputeGateCopy.explainerNeedTitle, ComputeGateCopy.explainerNeed)
+                    ways
+                    Text(ComputeGateCopy.explainerWhenNeeded)
+                        .font(.footnote).foregroundStyle(SetupPalette.mut)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let onConfirm, let confirmTitle {
+                        Button(confirmTitle) {
+                            Task {
+                                working = true
+                                await onConfirm()
+                                working = false
+                                dismiss()
+                            }
+                        }
+                        .buttonStyle(SetupPrimaryButtonStyle())
+                        .disabled(working)
+                        Button(ComputeGateCopy.laterBack) { dismiss() }
+                            .buttonStyle(SetupGhostButtonStyle())
+                    }
+                }
+                .padding(16)
+            }
+            .background(SetupPalette.bg.ignoresSafeArea())
+            .navigationTitle(ComputeGateCopy.explainerTitle)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) { Button("Close") { dismiss() } }
+            }
+        }
+    }
+
+    private func section(_ title: String, _ lines: [String]) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title).font(.headline).foregroundStyle(SetupPalette.ink)
+                .accessibilityAddTraits(.isHeader)
+            ForEach(lines, id: \.self) { line in
+                Text(line).font(.subheadline).foregroundStyle(SetupPalette.sub)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(SetupPalette.card, in: RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(SetupPalette.line))
+        .accessibilityElement(children: .contain)
+    }
+
+    private var ways: some View {
+        var lines = [ComputeGateCopy.explainerOwn]
+        if let plans = status?.paths?.plan?.plans, !plans.isEmpty {
+            lines.append(ComputeGateCopy.planExplainer(plans))
+        }
+        if let credits = status?.paths?.credits { lines.append(ComputeGateCopy.cardCExplainer(credits)) }
+        lines.append(ComputeGateCopy.explainerHostedNote)
+        return section(ComputeGateCopy.explainerWaysTitle, lines)
     }
 }

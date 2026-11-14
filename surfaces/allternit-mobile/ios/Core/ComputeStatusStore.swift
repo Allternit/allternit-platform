@@ -90,10 +90,14 @@ struct ComputeStatus: Decodable, Equatable, Sendable {
         let id: String
         let name: String
         let priceUsdMonth: Double
+        let includedHours: Int?
+        let overagePricePerHourUsd: Double?
 
         enum CodingKeys: String, CodingKey {
             case id, name
             case priceUsdMonth = "price_usd_month"
+            case includedHours = "included_hours"
+            case overagePricePerHourUsd = "overage_price_per_hour_usd"
         }
     }
 
