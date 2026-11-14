@@ -11,6 +11,7 @@
 //! - `GET  /api/v1/plan-threads`               → `{threads:[summary]}`, newest first
 //! - `GET  /api/v1/plan-threads/:id`           → thread with `messages`
 //! - `POST /api/v1/plan-threads/:id/messages`  `{messages:[{role, content, model?}]}` → thread summary
+//! - `DELETE /api/v1/plan-threads/:id`         → 204 (someone else's or a missing thread is 404)
 //!
 //! Signed-in Clerk session only (API tokens 403), scoped to that person (a
 //! thread of someone else is 404), never `require_compute`. Erased with the
@@ -43,7 +44,7 @@ const LIST_LIMIT: i64 = 200;
 pub fn routes() -> Router<Arc<ApiState>> {
     Router::new()
         .route("/api/v1/plan-threads", get(list).post(create))
-        .route("/api/v1/plan-threads/:id", get(fetch))
+        .route("/api/v1/plan-threads/:id", get(fetch).delete(remove))
         .route("/api/v1/plan-threads/:id/messages", post(append))
 }
 
@@ -184,6 +185,22 @@ async fn fetch(State(state): State<Arc<ApiState>>, headers: HeaderMap, Path(id):
     .await)
 }
 
+async fn remove(State(state): State<Arc<ApiState>>, headers: HeaderMap, Path(id): Path<String>) -> Response {
+    reply(async {
+        let user = session_user(&state, &headers).await?;
+        let done = sqlx::query("DELETE FROM plan_threads WHERE id = $1 AND user_id = $2")
+            .bind(&id)
+            .bind(&user)
+            .execute(&state.db)
+            .await?;
+        if done.rows_affected() == 0 {
+            return Err(ApiError::NotFound("No such thread.".to_string()));
+        }
+        Ok(StatusCode::NO_CONTENT.into_response())
+    }
+    .await)
+}
+
 async fn append(State(state): State<Arc<ApiState>>, headers: HeaderMap, Path(id): Path<String>, body: Bytes) -> Response {
     reply(async {
         let user = session_user(&state, &headers).await?;
@@ -287,5 +304,19 @@ mod tests {
         let (status, _) = send(&router, "POST", &format!("/api/v1/plan-threads/{id}/messages"), "user_a",
             Some(json!({ "messages": [{ "role": "tool", "content": "x" }] }))).await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
+
+        // Delete: someone else's thread is 404 and survives; the owner's is 204 and gone.
+        let (status, _) = send(&router, "DELETE", &format!("/api/v1/plan-threads/{id}"), "user_b", None).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        let (status, _) = send(&router, "GET", &format!("/api/v1/plan-threads/{id}"), "user_a", None).await;
+        assert_eq!(status, StatusCode::OK);
+        let (status, _) = send(&router, "DELETE", &format!("/api/v1/plan-threads/{id}"), "user_a", None).await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        let (_, listed) = send(&router, "GET", "/api/v1/plan-threads", "user_a", None).await;
+        assert_eq!(listed["threads"], json!([]));
+        let (status, _) = send(&router, "GET", &format!("/api/v1/plan-threads/{id}"), "user_a", None).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        let (status, _) = send(&router, "DELETE", &format!("/api/v1/plan-threads/{id}"), "user_a", None).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
     }
 }
