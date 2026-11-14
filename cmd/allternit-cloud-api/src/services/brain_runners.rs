@@ -998,13 +998,9 @@ impl BrainRunnerService {
             }
         };
         if reply.get("type").and_then(Value::as_str) == Some("error") {
-            tracing::warn!(
-                runner = %handle.runner_id,
-                vendor = vendor.row_id(),
-                code = reply.get("code").and_then(Value::as_str).unwrap_or(""),
-                message = reply.get("message").and_then(Value::as_str).unwrap_or(""),
-                "brain runner answered with an error"
-            );
+            let code = reply.get("code").and_then(|v| v.as_str()).unwrap_or("");
+            let message = reply.get("message").and_then(|v| v.as_str()).unwrap_or("");
+            tracing::warn!(runner = %handle.runner_id, vendor = vendor.row_id(), code, message, "brain runner answered with an error");
             match reply.get("code").and_then(Value::as_str) {
                 Some("login_expired") => self.set_vendor(&handle.runner_id, vendor, "expired").await?,
                 Some("vendor_limited") => self.set_vendor(&handle.runner_id, vendor, "limited").await?,
