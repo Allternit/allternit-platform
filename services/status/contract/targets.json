@@ -63,6 +63,12 @@
       "critical": false
     },
     {
+      "id": "freeweights",
+      "name": "Freeweights",
+      "group": "freeweights",
+      "critical": false
+    },
+    {
       "id": "services",
       "name": "Services and booking",
       "group": "services",
@@ -524,6 +530,74 @@
       "body_marker": "\"status\":\"ok\"",
       "critical": false,
       "role": "ready"
+    },
+    {
+      "id": "freeweights",
+      "component_id": "freeweights",
+      "name": "freeweights.allternit.com",
+      "url": "https://freeweights.allternit.com/",
+      "method": "GET",
+      "expect_status": 200,
+      "follow_redirects": false,
+      "body_marker": "<title>Allternit Freeweights",
+      "critical": false,
+      "role": "page",
+      "vantages": [
+        "cloudflare",
+        "allternit-standby"
+      ],
+      "timeout_ms": 8000
+    },
+    {
+      "id": "freeweights-catalog",
+      "component_id": "freeweights",
+      "name": "Freeweights catalog",
+      "url": "https://freeweights.allternit.com/api/catalog",
+      "method": "GET",
+      "expect_status": 200,
+      "follow_redirects": false,
+      "body_marker": "\"models\":[",
+      "critical": false,
+      "role": "live",
+      "vantages": [
+        "cloudflare",
+        "allternit-standby"
+      ],
+      "timeout_ms": 8000
+    },
+    {
+      "id": "freeweights-resolve",
+      "component_id": "freeweights",
+      "name": "Freeweights pinned resolve (HEAD)",
+      "url": "https://freeweights.allternit.com/alesha-pro/GLM-5.3-Flash-abliterated-Maya-M-GGUF/resolve/3518a2d20e5a2ea8d9468718745dca5f72aed5f1/LICENSE",
+      "method": "HEAD",
+      "expect_status": 200,
+      "follow_redirects": false,
+      "body_marker": null,
+      "critical": false,
+      "role": "live",
+      "vantages": [
+        "cloudflare",
+        "allternit-standby"
+      ],
+      "timeout_ms": 8000
+    },
+    {
+      "id": "freeweights-minisig",
+      "component_id": "freeweights",
+      "name": "Freeweights manifest signature",
+      "url": "https://freeweights.allternit.com/manifests/alesha-pro/GLM-5.3-Flash-abliterated-Maya-M-GGUF.json.minisig",
+      "method": "GET",
+      "expect_status": 200,
+      "follow_redirects": false,
+      "body_marker": null,
+      "critical": false,
+      "role": "live",
+      "vantages": [
+        "cloudflare",
+        "allternit-standby"
+      ],
+      "timeout_ms": 8000
     }
   ]
 }
