@@ -13,23 +13,36 @@ import {
   assessRepo,
   recommendRepos,
   downloadRepo,
+  verifyRepo,
   type RecommendationIntent,
 } from "@/runtime/services/localEngine"
-
-const SOURCE_BADGE: Record<string, string> = {
-  subprocess: UI.Style.TEXT_INFO_BOLD + "[cli]" + UI.Style.TEXT_NORMAL,
-  local:      UI.Style.TEXT_WARNING_BOLD + "[local]" + UI.Style.TEXT_NORMAL,
-  platform:   UI.Style.TEXT_SUCCESS_BOLD + "[platform]" + UI.Style.TEXT_NORMAL,
-  plugin:     UI.Style.TEXT_SUCCESS_BOLD + "[plugin]" + UI.Style.TEXT_NORMAL,
-}
+import { describeVerification } from "@/runtime/services/modelVerification"
+import { pullModel, printVerification } from "@/cli/commands/models-pull"
+import { fetchFreeweightsCatalog } from "@/runtime/services/freeweightsCatalog"
+import { Sidecar } from "@/runtime/sidecar"
 
 export const ModelsCommand = cmd({
-  command: "models [provider]",
+  command: "models [provider] [repo]",
   describe: "list, assess, and manage local models",
   builder: (yargs: Argv) => {
     return yargs
+      .positional("repo", {
+        describe: "Hugging Face repo id (org/repo) for `models pull` / `models verify`, or the query for `models search`",
+        type: "string",
+      })
+      .option("allow-unverified", {
+        describe: "pull: accept a model with no hash to check against (otherwise exits non-zero)",
+        type: "boolean",
+        default: false,
+      })
+      .option("catalog-source", {
+        describe: "search: where to search",
+        type: "string",
+        choices: ["all", "freeweights"],
+        default: "all",
+      })
       .positional("provider", {
-        describe: "provider ID to filter models by",
+        describe: "provider ID to filter models by, or: pull | verify | search",
         type: "string",
         array: false,
       })
@@ -94,6 +107,54 @@ export const ModelsCommand = cmd({
       })
   },
   handler: async (args) => {
+    if (args.provider === "pull" || args.provider === "verify") {
+      const repo = args.repo
+      if (!repo || !repo.includes("/")) {
+        UI.error(`Usage: gizzi models ${args.provider} <org/repo>${args.provider === "pull" ? " [--quant Q4_K_M] [--allow-unverified]" : ""}`)
+        process.exit(1)
+      }
+      try {
+        if (args.provider === "verify") {
+          const r = await verifyRepo(repo, args.quant)
+          printVerification(r.verification)
+          process.exit(describeVerification(r.verification).unverified ? 2 : 0)
+        }
+        process.exit(await pullModel(repo, args.quant, Boolean(args["allow-unverified"])))
+      } catch (err) {
+        const status = (err as { status?: number })?.status
+        if (args.provider === "verify" && status === 404) {
+          printVerification(undefined)
+          process.exit(2)
+        }
+        UI.error(err instanceof Error ? err.message : `Failed to ${args.provider}`)
+        process.exit(1)
+      }
+      return
+    }
+
+    if (args.provider === "search") {
+      const q = (args.repo ?? "").trim().toLowerCase()
+      try {
+        const fw = await fetchFreeweightsCatalog()
+        const fwHits = fw.filter((e) => !q || e.id.toLowerCase().includes(q))
+        const badge = UI.Style.TEXT_SUCCESS_BOLD + "[freeweights]" + UI.Style.TEXT_NORMAL
+        for (const e of fwHits.slice(0, args.limit)) UI.println(`  ${e.id}  ${badge}${e.section ? " " + e.section : ""}`)
+        if (args["catalog-source"] !== "freeweights") {
+          const seen = new Set(fwHits.map((e) => e.id.toLowerCase()))
+          const hf = await Sidecar.searchHuggingFace(q, args.limit)
+          for (const m of hf) {
+            if (seen.has(m.repoId.toLowerCase())) continue
+            UI.println(`  ${m.repoId}  ${m.downloads.toLocaleString()} downloads${m.freeweights ? " " + badge : ""}`)
+          }
+        }
+        process.exit(0)
+      } catch (err) {
+        UI.error(err instanceof Error ? err.message : "Search failed")
+        process.exit(1)
+      }
+      return
+    }
+
     // Local-engine actions take precedence over the provider listing.
     if (args.catalog) {
       try {

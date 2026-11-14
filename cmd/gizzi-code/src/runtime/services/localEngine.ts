@@ -83,6 +83,8 @@ export interface Recommendation {
 
 export type RecommendationIntent = 'balanced' | 'smartest' | 'fastest' | 'lightweight'
 
+import type { ModelVerification } from './modelVerification'
+
 class LocalEngineError extends Error {
   constructor(message: string, public status?: number) {
     super(message)
@@ -142,9 +144,48 @@ export async function recommendRepos(
   })
 }
 
-export async function downloadRepo(repoId: string, quantization?: string): Promise<unknown> {
+export async function downloadRepo(
+  repoId: string,
+  quantization?: string,
+  opts?: { allowUnverified?: boolean },
+): Promise<DownloadResult> {
   return request('/models/download', {
+    method: 'POST',
+    body: JSON.stringify({
+      repo_id: repoId,
+      quantization,
+      ...(opts?.allowUnverified ? { allow_unverified: true } : {}),
+    }),
+  })
+}
+
+export interface DownloadResult {
+  id: string
+  repo_id?: string
+  status?: string
+  message?: string
+  verification?: ModelVerification
+}
+
+export interface CachedModel {
+  id: string
+  name: string
+  status: string
+  downloaded_bytes: number
+  total_bytes: number
+  verification?: ModelVerification
+}
+
+export async function listModels(): Promise<{ models: CachedModel[] }> {
+  return request('/models')
+}
+
+/** POST /models/verify. Older engines answer 404; callers treat that as "not checked". */
+export async function verifyRepo(repoId: string, quantization?: string): Promise<{ verification?: ModelVerification }> {
+  return request('/models/verify', {
     method: 'POST',
     body: JSON.stringify({ repo_id: repoId, quantization }),
   })
 }
+
+export { LocalEngineError }
