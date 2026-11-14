@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 2.11.1 (2026-11-14)
+
+- **Smaller model requests when a session has tool rules.** Tools that a session's permission rules deny (for example a hosted agent's "deny everything, then its own tools") are no longer sent to the model at all. Before, their schemas went out on every request and a short hosted-agent turn cost about 134k input tokens.
+
 ## 2.11.0 (2026-11-13)
 
 - **`gizzi connect`:** list every connection with the same four status words and connect from the terminal — keys, device codes, paste-back.
