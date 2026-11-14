@@ -4483,7 +4483,7 @@
       "label": "Allternit Meetings (Gizzi joins Meet, Zoom and Teams calls)",
       "product": "product:cloud-api",
       "status": "building",
-      "description": "Gizzi joins a Google Meet, Zoom or Teams call as a visible participant named \"Gizzi (Allternit)\", posts a consent notice, transcribes the call as text (no audio kept), answers \"Gizzi, ...\" in chat (voice is opt-in per meeting), and writes a recap with decisions and action items. One Incus pod per session (services/meeting-bot: Chrome on Xvfb for Meet/Teams, the Zoom Meeting SDK sidecar with an on-behalf-of token for Zoom) reports to cloud-api with a pod token; call audio goes over LiveKit to the voice meeting_worker for STT; the in-pod allternit-api answers turns. Calendars: Google OAuth and ICS links (no Microsoft sign-in). Surfaces: Home > Meetings on Desktop, web, phone layout and PWA, the Desktop tray and macOS menu bar, iOS (Settings > Meetings, Live Activity), gizzi `meetings`, and the meetings MCP tools. Behind the `meetings` flag (ALLTERNIT_MEETINGS_ENABLED / ALLTERNIT_MEETINGS_USER_IDS).",
+      "description": "Gizzi joins a Google Meet, Zoom or Teams call as a visible participant named \"Gizzi (Allternit)\", posts a consent notice, transcribes the call as text (no audio kept), answers \"Gizzi, ...\" in chat (voice is opt-in per meeting), and writes a recap with decisions and action items. The bot (services/meeting-bot: an Allternit Live voice session in the user's own Chrome; Zoom through the Meeting SDK for Web with an on-behalf-of token) runs on the user's own runtime, their cloud computer or Desktop, started by cloud-api over the signed runtime relay, and reports to cloud-api with a pod token; call audio goes over LiveKit to the voice meeting_worker for STT; the in-pod allternit-api answers turns. Calendars: Google OAuth and ICS links (no Microsoft sign-in). Surfaces: Home > Meetings on Desktop, web, phone layout and PWA, the Desktop tray and macOS menu bar, iOS (Settings > Meetings, Live Activity), gizzi `meetings`, and the meetings MCP tools. Behind the `meetings` flag (ALLTERNIT_MEETINGS_ENABLED / ALLTERNIT_MEETINGS_USER_IDS).",
       "touches": [
         "allternit/cmd/allternit-cloud-api/src/routes/meetings.rs",
         "allternit/cmd/allternit-cloud-api/src/routes/meeting_pod.rs",
@@ -4503,7 +4503,6 @@
         "allternit/services/meeting-bot/src/adapters/zoom/index.ts",
         "allternit/services/meeting-bot/src/adapters/zoom/sidecar/src/bot.cpp",
         "allternit/services/voice/src/meeting_worker/config.rs",
-        "allternit/cmd/allternit-computer-cloud/guest/build-meeting-bot-image.sh",
         "allternit/cmd/gizzi-code/src/cli/commands/meetings.ts",
         "allternit/surfaces/allternit-desktop/src/main/unified-main.ts",
         "allternit/surfaces/allternit-mobile/ios/Core/Calls/MeetingsStore.swift",
@@ -4531,6 +4530,10 @@
         {
           "on": "2026-11-13",
           "note": "Meet bot Google profiles are sealed with a separate MEETINGS_BOT_PROFILE_KEY in cloud-api, not the credentials key. gizziioetrid@gmail.com is a test account only; the production bot pool is not decided."
+        },
+        {
+          "on": "2026-11-14",
+          "note": "Allternit does not host user compute: the meeting bot runs on the user's cloud computer or Desktop (RuntimePodProvider over the signed relay); company pods and the standby bot image were removed. The bot is an Allternit Live voice session (real video over a local WebRTC loopback); Zoom joins via the Meeting SDK for Web so it works on macOS, Windows and Linux."
         }
       ],
       "evidence": [
@@ -5026,7 +5029,7 @@
         },
         {
           "at": "allternit/cmd/allternit-cloud-api/src/services/meeting_launcher.rs",
-          "says": "The launcher checks the caps, takes a bot account (Meet) or mints an OBF token (Zoom), creates the LiveKit room and starts one pod on a fleet host."
+          "says": "The launcher checks the caps, takes a bot account (Meet), and asks the user's own runtime (cloud computer, else an open Desktop, else wakes the cloud computer) to start the bot; none online ends no_runtime."
         },
         {
           "at": "allternit/services/meeting-bot/src/runner.ts",

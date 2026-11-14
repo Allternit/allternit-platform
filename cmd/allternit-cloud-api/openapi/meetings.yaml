@@ -15,9 +15,12 @@ info:
     `GET /api/v1/me/meeting-settings` answers
     `402 {"error":"meetings_requires_paid_plan"}` on the free plan.
 
-    **Pod routes** (`/ingest`, `/tool-calls`, `/control-stream`) take only the
-    pod token (`Bearer mpt_…`) the launcher issues for one session. It is
-    valid while the session is open and for 5 minutes after it ends.
+    **Pod routes** (`/ingest`, `/tool-calls`, `/control-stream`,
+    `/bot-profile`) take only the pod token (`Bearer mpt_…`) the launcher
+    issues for one session. It is valid while the session is open and for 5
+    minutes after it ends. The bot runs on the user's own runtime (their
+    cloud computer or Allternit Desktop), never on Allternit's servers;
+    a session ends `no_runtime` when none of them is online or wakeable.
 
     Errors are `{ "error": "<code>", "message": "<text>" }`. Codes:
     `invalid_request`, `unsupported_link` (400); `unauthorized` (401);
@@ -102,6 +105,37 @@ paths:
         "400": { $ref: "#/components/responses/Error" }
         "402": { $ref: "#/components/responses/Error" }
         "403": { $ref: "#/components/responses/Error" }
+  /api/v1/meetings/runner:
+    get:
+      operationId: getMeetingRunner
+      summary: Where Gizzi would join from
+      description: |
+        The runtime the bot would run on if sent now, from presence only (no
+        runtime is contacted or woken): an online cloud computer, then an
+        online Desktop, then an asleep cloud computer (it starts when Gizzi
+        joins). `none` when no runtime can run the bot.
+      tags: [Meetings]
+      responses:
+        "200":
+          description: Runner.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [state, runtime]
+                properties:
+                  state: { type: string, enum: [ready, asleep, none] }
+                  runtime:
+                    oneOf:
+                      - type: "null"
+                      - type: object
+                        required: [id, name, kind]
+                        properties:
+                          id: { type: string }
+                          name: { type: string }
+                          kind: { type: string, enum: [cloud_computer, desktop] }
+        "401": { $ref: "#/components/responses/Error" }
+        "402": { $ref: "#/components/responses/Error" }
   /api/v1/meetings/{id}:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
@@ -496,6 +530,29 @@ paths:
       responses:
         "200": { description: Control stream., content: { text/event-stream: { schema: { type: string } } } }
         "401": { $ref: "#/components/responses/Error" }
+  /api/v1/meeting-sessions/{sid}/bot-profile:
+    parameters:
+      - $ref: "#/components/parameters/SessionId"
+    get:
+      operationId: meetingBotProfile
+      summary: The claimed bot account's Chrome profile
+      description: |
+        The decrypted Chrome profile (`tar.zst`) of the bot Google account
+        the session claimed, for the runtime to unpack before the runner
+        starts. Only Linux runtimes get an account. `204` when the session
+        holds no account, has ended, or the profile does not open (the bot
+        then joins signed out).
+      tags: [Pod]
+      security:
+        - podToken: []
+      responses:
+        "200":
+          description: Profile archive.
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+          content: { application/zstd: { schema: { type: string, format: binary } } }
+        "204": { description: No profile for this session. }
+        "401": { $ref: "#/components/responses/Error" }
 components:
   securitySchemes:
     bearerAuth:
@@ -576,7 +633,7 @@ components:
         gizzi: { $ref: "#/components/schemas/GizziState" }
         end_reason:
           type: [string, "null"]
-          enum: [left_by_user, removed, not_admitted, empty_room, max_duration, other_notetaker, join_failed, guest_blocked, no_capacity, error, null]
+          enum: [left_by_user, removed, not_admitted, empty_room, max_duration, other_notetaker, join_failed, guest_blocked, no_capacity, no_runtime, error, null]
         platform: { type: string }
         speak_replies: { type: boolean }
         listening: { type: boolean }

@@ -1,53 +1,63 @@
-//! Meeting pod launcher (Allternit Meetings plan step 2.1, cloud side;
-//! docs/meetings/CONTRACT.md section 6 and the "pod env names" change).
+//! Meeting bot launcher (Allternit Meetings plan step 2.1, cloud side;
+//! docs/meetings/CONTRACT.md section 6 and "Change 2026-11-14: runtime
+//! launcher").
 //!
-//! One pod (an Incus container from the `allternit-meeting-bot` image) per
-//! meeting session. [`launch`] takes a session in `launching`:
+//! The bot runs on the user's own runtime: their cloud computer or their
+//! Allternit Desktop, never on Allternit's servers. [`launch`] takes a
+//! session in `launching`:
 //!
 //! 1. Under a Postgres advisory lock it checks the global cap
 //!    (`MEETINGS_GLOBAL_CONCURRENT_CAP`, default 20) and the owner's plan cap
 //!    (`plan_limits(plan).concurrent_cap`), counting sessions that already
-//!    hold a pod, and claims the session by writing `pod_ref`. Over a cap,
-//!    the session ends `no_capacity` and no pod is started. A Meet session
+//!    hold a bot, and claims the session by writing `pod_ref`. Over a cap,
+//!    the session ends `no_capacity` and no bot is started. A Meet session
 //!    also takes a free bot Google account here (docs/meetings/BOT-ACCOUNTS.md;
 //!    one session per account).
 //!    Only accounts that are `active` with a sealed profile (and
 //!    `MEETINGS_BOT_PROFILE_KEY` set) are handed out
 //!    ([`crate::services::bot_profiles`]).
-//! 2. Builds the bot identity: Meet = that account's profile, decrypted and
-//!    pushed into the stopped container as a root-only archive that the
-//!    image's `allternit-meeting-profile.service` unpacks before the runner
-//!    starts (signed out when no account is free or deliverable), Zoom =
-//!    an OBF token plus an SDK JWT signed here (`sdkSecretRef: "jwt:…"`;
-//!    the client secret never leaves cloud-api), Teams = anonymous as "Gizzi - Allternit".
-//! 3. Issues the pod token, creates LiveKit room `meeting-<sid>` with agent
-//!    dispatch `allternit-meeting` and mints the pod's participant token.
-//! 4. Reserves room on a fleet host (the same `provisioned_hosts` ledger and
-//!    Incus backends the cloud computers use) and starts the container with
-//!    the session env (see [`session_files`]).
+//! 2. Picks the runtime ([`RuntimePodProvider::reserve`]): an online cloud
+//!    computer, then an online Desktop, then an asleep cloud computer (the
+//!    relay wakes it). Each is asked `POST /webhooks/meeting-bot/status`
+//!    over the signed relay; the first that answers `ready` runs the bot.
+//!    None reachable ends the session `no_runtime`; only busy ones,
+//!    `no_capacity`.
+//! 3. Builds the bot identity: Meet = the claimed account (Linux runtimes
+//!    only; the runtime pulls the decrypted profile itself with the pod token
+//!    from `GET /api/v1/meeting-sessions/:sid/bot-profile`; macOS and
+//!    Windows runtimes join signed out and the account is released), Zoom =
+//!    an OBF token plus an SDK JWT signed here (`sdkSecretRef: "jwt:…"`; the
+//!    client secret never leaves cloud-api), Teams = anonymous as
+//!    "Gizzi - Allternit".
+//! 4. Issues the pod token, creates LiveKit room `meeting-<sid>` with agent
+//!    dispatch `allternit-meeting` (25-min empty timeout) and mints the bot's
+//!    participant token. The LiveKit URL in the pod config is the public one
+//!    (`ALLTERNIT_LIVEKIT_PUBLIC_URL`), since the runtime is outside the
+//!    fleet's network.
+//! 5. Relays `POST /webhooks/meeting-bot/start` with the pod config and the
+//!    two tokens.
 //!
-//! Failures end the session: `no_capacity` (cap or no host fits),
-//! `join_failed` (Zoom not connected / needs reconnect) or `error`.
+//! Failures end the session: `no_capacity` (cap, or every runtime busy),
+//! `no_runtime` (no runtime online or wakeable), `join_failed` (Zoom not
+//! connected / needs reconnect) or `error`.
 //!
-//! [`reap`] tears pods down: sessions that ended (after a grace so the pod
-//! can post its final batch and summary), and live sessions whose pod
-//! vanished or stopped reporting (see [`reap`] for the heartbeat rules).
-//! Before deleting a pod whose Meet session ended cleanly, it pulls the
-//! profile the pod saved on exit and seals it as the account's next
-//! generation, at most once a day per account ([`Launcher::write_back`]).
-//! A session that reports `bot_profile_signed_out` marks its account
-//! `needs_reauth` ([`note_bot_profile_signed_out`]).
+//! [`reap`] stops bots: sessions that ended (after a grace so the bot can
+//! post its final batch and summary), and live sessions whose bot stopped
+//! or stopped reporting (see [`reap`] for the heartbeat rules). A session
+//! that reports `bot_profile_signed_out` marks its account `needs_reauth`
+//! ([`note_bot_profile_signed_out`]). Profiles are not written back from
+//! runtimes.
 //!
-//! The provider sits behind [`PodProvider`]; tests use a fake and never
-//! touch a real host.
+//! The runtime sits behind [`PodProvider`] and the relay behind
+//! [`MeetingRelay`]; tests use a fake relay and never touch a real runtime.
 
-use std::sync::{Arc, OnceLock};
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use chrono::{DateTime, Utc};
-use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sqlx::PgPool;
@@ -60,10 +70,6 @@ use crate::routes::meetings::{fetch_meeting, fetch_session, set_state, MeetingEr
 use crate::routes::org_meeting_settings::{load_org_settings, plan_limits};
 use crate::routes::zoom::{zoom_identity, TokenError, ZoomApi, ZoomConfig, ZoomHttp};
 use crate::services::bot_profiles::{ProfileStatus, ProfileStore};
-use crate::services::provisioning::{
-    host_in_pool, release_host_allocation, select_host, BackendRegistry, BackendStatus, ComputeClass, ComputerSize,
-    HostCapacity, IncusBackendRegistry, InstanceFile, ProvisionDefaults, ProvisionError, ProvisionSpec,
-};
 use crate::ApiState;
 
 /// LiveKit agent the voice worker registers as (services/voice meeting_worker).
@@ -71,21 +77,20 @@ pub const MEETING_AGENT_NAME: &str = "allternit-meeting";
 pub const ROOM_PREFIX: &str = "meeting-";
 /// Teams guest names allow only letters, digits, spaces and `- ' . _ @`.
 pub const TEAMS_DISPLAY_NAME: &str = "Gizzi - Allternit";
-/// Mount point for the bot Google account's Chrome profile in the image.
+/// `profileDir` in a Meet `google_account` identity. The runtime replaces it
+/// with its own per-account profile directory before the runner starts.
 pub const BOT_PROFILE_DIR: &str = "/var/lib/allternit/bot-profile";
-/// Where the launcher pushes the decrypted profile archive (root-only, in a
-/// directory the image does not create, since Incus resets a pushed file's
-/// parent to 0700). `allternit-meeting-profile.service` unpacks and deletes it.
-pub const PROFILE_SEED_PATH: &str = "/var/lib/allternit-profile-seed/profile.tar.zst";
-/// Where the runner unit's `ExecStopPost` leaves the profile for write-back.
-pub const PROFILE_OUT_PATH: &str = "/var/lib/allternit-profile-out/profile.tar.zst";
-/// Largest profile archive the reaper pulls back.
-const MAX_PROFILE_BYTES: usize = 256 * 1024 * 1024;
 /// The pod's end detail when the Meet profile turned out signed out.
 pub const SIGNED_OUT_DETAIL: &str = "bot_profile_signed_out";
+/// `pod_ref.handle.provider` of a bot on a user runtime. Any other provider
+/// (the removed Incus pods: `incus`) is cleared by the reaper without a call.
+pub const RUNTIME_PROVIDER: &str = "runtime";
+/// Relayed meeting-bot host routes on the runtime's allternit-api.
+pub const BOT_STATUS_PATH: &str = "/webhooks/meeting-bot/status";
+pub const BOT_START_PATH: &str = "/webhooks/meeting-bot/start";
+pub const BOT_STOP_PATH: &str = "/webhooks/meeting-bot/stop";
 
 const DEFAULT_GLOBAL_CAP: i64 = 20;
-const DEFAULT_IMAGE: &str = "allternit-meeting-bot";
 const DEFAULT_CLOUD_API_URL: &str = "https://api.allternit.com";
 const DEFAULT_TILE_URL: &str = "https://ai.allternit.com/meeting-tile";
 /// Advisory lock key for the capacity check + claim ("meetlnch").
@@ -95,7 +100,8 @@ const LIVEKIT_TOKEN_TTL_SECS: i64 = 9 * 3600;
 /// A pod token is good for 5 minutes after the end; keep the pod that long
 /// when it went live, so it can post its last batch and the summary.
 const ENDED_GRACE: chrono::Duration = chrono::Duration::minutes(5);
-/// A claim never turned into a pod (process died mid-launch).
+/// A claim never turned into a pod (process died mid-launch). Longer than
+/// the wake of an asleep cloud computer ([`WAKE_ATTEMPTS`] relay waits).
 const STALE_CLAIM: chrono::Duration = chrono::Duration::minutes(5);
 /// A pod that never moved its session past `launching`.
 const LAUNCH_TIMEOUT: chrono::Duration = chrono::Duration::minutes(10);
@@ -110,6 +116,13 @@ const DEFAULT_SILENT_MINUTES: i64 = 20;
 /// voice worker (dispatched once, at room creation) left for good, so the call
 /// got no transcript (first real Meet call, 2026-11-14).
 pub const MEETING_ROOM_EMPTY_TIMEOUT_SECS: u32 = 25 * 60;
+/// Each relay to a sleeping cloud computer waits up to 30 s for it to come
+/// back; a wake takes about a minute, so the status preflight asks again.
+const WAKE_ATTEMPTS: usize = 6;
+/// No new wake attempt after this long (well inside [`STALE_CLAIM`]).
+const WAKE_BUDGET: Duration = Duration::from_secs(4 * 60);
+/// Largest relayed reply the launcher reads.
+const MAX_REPLY_BYTES: usize = 256 * 1024;
 const PICKUP_EVERY: Duration = Duration::from_secs(3);
 const REAP_EVERY: Duration = Duration::from_secs(30);
 
@@ -120,7 +133,7 @@ const REAP_EVERY: Duration = Duration::from_secs(30);
 #[derive(Debug, Clone)]
 pub struct LauncherConfig {
     pub global_cap: i64,
-    /// cloud-api base URL as the pod reaches it.
+    /// cloud-api base URL as the runtime reaches it.
     pub cloud_api_url: String,
     pub tile_url: String,
     /// Bot Google accounts for Meet (`MEETINGS_BOT_GOOGLE_ACCOUNTS`, comma list).
@@ -156,243 +169,383 @@ impl LauncherConfig {
 }
 
 // ---------------------------------------------------------------------------
+// The user's runtimes
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeKind {
+    CloudComputer,
+    Desktop,
+}
+
+/// One runtime that can run the bot.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeChoice {
+    pub id: String,
+    pub name: String,
+    pub kind: RuntimeKind,
+    /// Holds a live relay connection right now.
+    pub online: bool,
+}
+
+/// The owner's runtimes in the order the launcher tries them: online cloud
+/// computers, then online Desktops, then asleep cloud computers (a relay
+/// wakes them). An offline Desktop, a BYO VPS and a revoked or expired
+/// pairing are never picked. Within a group, the most recently seen first.
+pub async fn runtime_candidates(db: &PgPool, user_id: &str, connected: &HashSet<String>) -> Result<Vec<RuntimeChoice>, sqlx::Error> {
+    let rows: Vec<(String, Option<String>, Option<String>, String, bool)> = sqlx::query_as(
+        "SELECT d.id, d.name, d.runtime_type, COALESCE(d.capabilities, '[]'), \
+                EXISTS (SELECT 1 FROM provisioned_instances p WHERE p.device_id = d.id \
+                        AND p.status NOT IN ('deleted', 'error')) AS cloud \
+         FROM runtime_devices d \
+         WHERE d.user_id = $1 AND d.revoked_at IS NULL AND d.credential_expires_at > CURRENT_TIMESTAMP \
+         ORDER BY d.last_seen_at DESC NULLS LAST, d.created_at DESC",
+    )
+    .bind(user_id)
+    .fetch_all(db)
+    .await?;
+    let mut groups: [Vec<RuntimeChoice>; 3] = Default::default();
+    for (id, name, runtime_type, capabilities, cloud) in rows {
+        // The relay needs both (`/webhooks/...` is a `runtime:execute` path).
+        let caps: Vec<String> = serde_json::from_str(&capabilities).unwrap_or_default();
+        if !["runtime:connect", "runtime:execute"].iter().all(|c| caps.iter().any(|have| have == c)) {
+            continue;
+        }
+        let online = connected.contains(&id);
+        let kind = if cloud {
+            RuntimeKind::CloudComputer
+        } else if runtime_type.as_deref() == Some("desktop") {
+            RuntimeKind::Desktop
+        } else {
+            continue;
+        };
+        let group = match (kind, online) {
+            (RuntimeKind::CloudComputer, true) => 0,
+            (RuntimeKind::Desktop, true) => 1,
+            (RuntimeKind::CloudComputer, false) => 2,
+            (RuntimeKind::Desktop, false) => continue,
+        };
+        let name = name.filter(|n| !n.trim().is_empty()).unwrap_or_else(|| match kind {
+            RuntimeKind::CloudComputer => "Cloud computer".to_string(),
+            RuntimeKind::Desktop => "Computer".to_string(),
+        });
+        groups[group].push(RuntimeChoice { id, name, kind, online });
+    }
+    Ok(groups.into_iter().flatten().collect())
+}
+
+/// `GET /api/v1/meetings/runner` (presence only, no relay call): where the
+/// bot would run if sent now. `{state: ready|asleep|none, runtime: {id,
+/// name, kind}|null}`.
+pub async fn runner_status(db: &PgPool, user_id: &str, connected: &HashSet<String>) -> Result<Value, sqlx::Error> {
+    let first = runtime_candidates(db, user_id, connected).await?.into_iter().next();
+    Ok(match first {
+        None => json!({ "state": "none", "runtime": null }),
+        Some(choice) => json!({
+            "state": if choice.online { "ready" } else { "asleep" },
+            "runtime": { "id": choice.id, "name": choice.name, "kind": choice.kind },
+        }),
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Relay seam
+// ---------------------------------------------------------------------------
+
+/// What one relayed request got back.
+#[derive(Debug, Clone, PartialEq)]
+pub enum RelayReply {
+    /// The runtime answered (any status). `body` is its JSON (Null if none).
+    Answered { status: u16, body: Value },
+    /// A cloud computer is starting and did not reconnect yet; ask again.
+    Warming,
+    /// Not reachable: no live connection (and not woken), refused by the
+    /// relay, or no answer in time.
+    Offline,
+}
+
+/// The signed runtime relay, as the launcher uses it.
+#[async_trait]
+pub trait MeetingRelay: Send + Sync {
+    /// Runtime ids holding a live relay connection now.
+    async fn connected(&self) -> HashSet<String>;
+    /// `POST path` with a JSON body to `runtime_id` (owned by `user_id`).
+    /// `wake`: start an asleep cloud computer first. Without it a runtime
+    /// with no live connection is [`RelayReply::Offline`] and nothing wakes.
+    async fn post(&self, user_id: &str, runtime_id: &str, path: &str, body: &Value, wake: bool) -> RelayReply;
+}
+
+/// Production relay: `routes::runtime_relay`, signed for the runtime's
+/// `relay_auth` (the same path every cloud-to-runtime webhook uses).
+pub struct SignedRelay {
+    db: PgPool,
+    contabo: Arc<crate::services::ContaboRuntimeService>,
+    quota: crate::services::SharedQuotaService,
+    provisioning: Arc<crate::services::ProvisioningService>,
+}
+
+impl SignedRelay {
+    pub fn from_state(state: &ApiState) -> Self {
+        Self {
+            db: state.db.clone(),
+            contabo: state.contabo_runtime_service.clone(),
+            quota: state.quota_service.clone(),
+            provisioning: state.provisioning_service.clone(),
+        }
+    }
+}
+
+#[async_trait]
+impl MeetingRelay for SignedRelay {
+    async fn connected(&self) -> HashSet<String> {
+        crate::routes::runtime_relay::connected_runtime_ids().await
+    }
+
+    async fn post(&self, user_id: &str, runtime_id: &str, path: &str, body: &Value, wake: bool) -> RelayReply {
+        if !wake && !self.connected().await.contains(runtime_id) {
+            return RelayReply::Offline;
+        }
+        let response = crate::routes::runtime_relay::relay_signed_request_to_runtime_with(
+            &self.db,
+            &self.contabo,
+            &self.quota,
+            &self.provisioning,
+            user_id,
+            runtime_id,
+            crate::routes::runtime_relay::RelayRequest {
+                method: "POST".to_string(),
+                path: path.to_string(),
+                headers: HashMap::from([("content-type".to_string(), "application/json".to_string())]),
+                body: STANDARD.encode(body.to_string()),
+                body_encoding: "base64".to_string(),
+            },
+            &["content-type"],
+            HashMap::new(),
+        )
+        .await;
+        let response = match response {
+            Ok(response) => response,
+            Err(error) => {
+                // Not found / not allowed / compute gate / wake refused.
+                tracing::info!(%runtime_id, path, %error, "meetings: relay to the runtime refused");
+                return RelayReply::Offline;
+            }
+        };
+        let status = response.status().as_u16();
+        let Ok(bytes) = axum::body::to_bytes(response.into_body(), MAX_REPLY_BYTES).await else { return RelayReply::Offline };
+        let body: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+        match (status, body.get("error").and_then(Value::as_str)) {
+            (503, Some("runtime_warming")) => RelayReply::Warming,
+            (503, Some("runtime_offline")) | (504, Some("runtime_timeout")) => RelayReply::Offline,
+            _ => RelayReply::Answered { status, body },
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Pod provider seam
 // ---------------------------------------------------------------------------
 
-/// Where one pod runs. Serialized into `meeting_sessions.pod_ref` (inside
-/// [`PodRef`]) before the container exists, so a crash mid-launch can still
-/// be cleaned up.
+/// Where one bot runs. Serialized into `meeting_sessions.pod_ref` (inside
+/// [`PodRef`]) before the bot starts, so a crash mid-launch can still be
+/// cleaned up. `{provider: "runtime", host: <runtime id>, name}`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PodHandle {
     pub provider: String,
     pub host: String,
     pub name: String,
-    pub cpu_cores: i64,
-    pub memory_mb: i64,
-    pub disk_gb: i64,
 }
 
-/// One file written into the pod before it starts (root-owned).
+/// A runtime that said it can take the bot.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PodFile {
-    pub path: String,
-    pub content: Vec<u8>,
-    pub mode: &'static str,
+pub struct Reserved {
+    pub handle: PodHandle,
+    /// The runtime's OS (`linux`, `macos`, `windows`), from its status reply.
+    pub os: Option<String>,
+}
+
+/// What the bot gets at start: the pod config plus the two tokens (never
+/// in the config itself) and the claimed bot account, if any.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PodStart {
+    pub pod_config: Value,
+    pub pod_token: String,
+    pub livekit_token: String,
+    pub bot_account: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PodLiveness {
     Running,
-    /// Stopped or gone: the runner exited or the container vanished.
+    /// The runtime answered that the bot is not running.
     Gone,
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum PodError {
-    /// No host has room for another pod.
-    #[error("no host has room for a meeting pod")]
+    /// Every reachable runtime is busy with another bot.
+    #[error("every runtime is busy")]
     NoCapacity,
+    /// No runtime is online or wakeable (or none can run the bot).
+    #[error("no runtime can run the bot")]
+    NoRuntime,
+    /// The runtime is unreachable right now.
+    #[error("the runtime is offline")]
+    Offline,
     #[error("pod provider failed: {0}")]
     Failed(String),
 }
 
 #[async_trait]
 pub trait PodProvider: Send + Sync {
-    /// Pick a host and book the pod's size there. Nothing runs yet.
-    async fn reserve(&self, session_id: Uuid) -> Result<PodHandle, PodError>;
-    /// Create the container on the reserved host, write `files`, start it.
-    async fn start(&self, handle: &PodHandle, files: &[PodFile]) -> Result<(), PodError>;
+    /// Pick the owner's runtime that will run the bot. Nothing runs yet.
+    async fn reserve(&self, session_id: Uuid, user_id: &str) -> Result<Reserved, PodError>;
+    /// Start the bot on the reserved runtime.
+    async fn start(&self, handle: &PodHandle, start: &PodStart) -> Result<(), PodError>;
+    /// `Gone` only when the runtime answered that the bot is not running;
+    /// an unreachable runtime is `Err(Offline)`.
     async fn liveness(&self, handle: &PodHandle) -> Result<PodLiveness, PodError>;
-    /// Delete the container (a missing one is fine) and release the booking.
+    /// Stop the bot. An unreachable runtime is fine (`Ok`): nothing to stop
+    /// that cloud-api can reach.
     async fn stop(&self, handle: &PodHandle) -> Result<(), PodError>;
-    /// Read one file out of the pod (`Ok(None)` when it does not exist).
-    async fn pull_file(&self, _handle: &PodHandle, _path: &str) -> Result<Option<Vec<u8>>, PodError> {
-        Err(PodError::Failed("this pod provider cannot read files".to_string()))
-    }
-}
-
-/// `MEETINGS_POD_HOSTS` rule: empty = every Incus host; otherwise only the
-/// listed host ids take meeting pods (hosts like `host_mail` run cloud-api
-/// itself and have no bot image).
-pub fn pod_host_allowed(allow: &[String], host_id: &str) -> bool {
-    allow.is_empty() || allow.iter().any(|h| h == host_id)
-}
-
-/// Pods on the cloud-computer fleet: `provisioned_hosts` (Incus endpoints
-/// only; Orgo hosts and hosted-driver-only hosts are skipped) and the same
-/// Incus HTTP backend, booked in the same capacity ledger.
-pub struct IncusPodProvider {
-    db: PgPool,
-    registry: Arc<dyn BackendRegistry>,
-    image: String,
-    size: ComputerSize,
-    profiles: Vec<String>,
-    storage_pool: String,
-    /// `MEETINGS_POD_HOSTS` (comma list of host ids); empty = any host.
-    hosts: Vec<String>,
-}
-
-impl IncusPodProvider {
-    pub fn from_env(db: PgPool, registry: Arc<dyn BackendRegistry>) -> Self {
-        let get = |name: &str| std::env::var(name).ok().map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
-        let num = |name: &str, default: i64| get(name).and_then(|v| v.parse().ok()).filter(|n: &i64| *n > 0).unwrap_or(default);
-        let defaults = ProvisionDefaults::from_env();
-        Self {
-            db,
-            registry,
-            image: get("MEETINGS_POD_IMAGE").unwrap_or_else(|| DEFAULT_IMAGE.to_string()),
-            size: ComputerSize {
-                cpu_cores: num("MEETINGS_POD_CPU", 2),
-                memory_mb: num("MEETINGS_POD_MEMORY_MB", 3072),
-                disk_gb: num("MEETINGS_POD_DISK_GB", 12),
-            },
-            profiles: get("MEETINGS_POD_PROFILES")
-                .map(|p| p.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect())
-                .unwrap_or(defaults.profiles),
-            storage_pool: defaults.storage_pool,
-            hosts: get("MEETINGS_POD_HOSTS")
-                .map(|p| p.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect())
-                .unwrap_or_default(),
-        }
-    }
-
-    async fn backend(&self, host: &str) -> Result<Option<Arc<dyn crate::services::provisioning::ProvisionBackend>>, PodError> {
-        let endpoint: Option<String> = sqlx::query_scalar("SELECT incus_endpoint FROM provisioned_hosts WHERE id = $1")
-            .bind(host)
-            .fetch_optional(&self.db)
-            .await
-            .map_err(|e| PodError::Failed(e.to_string()))?;
-        let Some(endpoint) = endpoint else { return Ok(None) };
-        self.registry
-            .backend(host, &endpoint)
-            .await
-            .map(Some)
-            .map_err(|e| PodError::Failed(e.to_string()))
-    }
 }
 
 pub fn pod_name(session_id: Uuid) -> String {
     format!("allternit-meeting-{}", session_id.simple())
 }
 
-fn provision_failed(error: ProvisionError) -> PodError {
-    PodError::Failed(error.to_string())
+/// Bots on the user's own runtimes, over the signed relay (contract
+/// "Change 2026-11-14: runtime launcher"). One bot per runtime; the runtime
+/// says when it is busy.
+pub struct RuntimePodProvider {
+    db: PgPool,
+    relay: Arc<dyn MeetingRelay>,
+}
+
+impl RuntimePodProvider {
+    pub fn new(db: PgPool, relay: Arc<dyn MeetingRelay>) -> Self {
+        Self { db, relay }
+    }
+
+    async fn owner(&self, runtime_id: &str) -> Result<Option<String>, PodError> {
+        sqlx::query_scalar("SELECT user_id FROM runtime_devices WHERE id = $1 AND revoked_at IS NULL")
+            .bind(runtime_id)
+            .fetch_optional(&self.db)
+            .await
+            .map(Option::flatten)
+            .map_err(|e| PodError::Failed(e.to_string()))
+    }
+
+    /// The status preflight, waking an asleep cloud computer when `wake`.
+    async fn status(&self, user_id: &str, runtime_id: &str, session_id: Uuid, wake: bool) -> RelayReply {
+        let body = json!({ "session_id": session_id });
+        let attempts = if wake { WAKE_ATTEMPTS } else { 1 };
+        // Stay inside STALE_CLAIM, or the reaper retires the claim mid-wake.
+        let deadline = std::time::Instant::now() + WAKE_BUDGET;
+        let mut reply = RelayReply::Offline;
+        for _ in 0..attempts {
+            reply = self.relay.post(user_id, runtime_id, BOT_STATUS_PATH, &body, wake).await;
+            if reply != RelayReply::Warming || std::time::Instant::now() >= deadline {
+                break;
+            }
+        }
+        reply
+    }
 }
 
 #[async_trait]
-impl PodProvider for IncusPodProvider {
-    async fn reserve(&self, session_id: Uuid) -> Result<PodHandle, PodError> {
-        let fail = |e: sqlx::Error| PodError::Failed(e.to_string());
-        let mut tx = self.db.begin().await.map_err(fail)?;
-        let rows: Vec<(String, bool, i32, i64, i64, i32, i64, i64)> = sqlx::query_as(
-            "SELECT id, enabled, cpu_cores_total, memory_mb_total, disk_gb_total, \
-                    cpu_cores_allocated, memory_mb_allocated, disk_gb_allocated \
-             FROM provisioned_hosts WHERE enabled = TRUE AND incus_endpoint NOT LIKE 'orgo://%' \
-             ORDER BY id FOR UPDATE",
-        )
-        .fetch_all(&mut *tx)
-        .await
-        .map_err(fail)?;
-        let hosts: Vec<HostCapacity> = rows
-            .into_iter()
-            .filter(|row| host_in_pool(&row.0, false) && pod_host_allowed(&self.hosts, &row.0))
-            .map(|(id, enabled, cpu, mem, disk, cpu_used, mem_used, disk_used)| HostCapacity {
-                id,
-                enabled,
-                cpu_total: i64::from(cpu),
-                memory_total: mem,
-                disk_total: disk,
-                cpu_used: i64::from(cpu_used),
-                memory_used: mem_used,
-                disk_used,
-            })
-            .collect();
-        let host = select_host(&hosts, self.size.cpu_cores, self.size.memory_mb, self.size.disk_gb)
-            .ok_or(PodError::NoCapacity)?;
-        sqlx::query(
-            "UPDATE provisioned_hosts SET cpu_cores_allocated = cpu_cores_allocated + $2, \
-                 memory_mb_allocated = memory_mb_allocated + $3, disk_gb_allocated = disk_gb_allocated + $4, \
-                 updated_at = CURRENT_TIMESTAMP WHERE id = $1",
-        )
-        .bind(&host)
-        .bind(self.size.cpu_cores as i32)
-        .bind(self.size.memory_mb)
-        .bind(self.size.disk_gb)
-        .execute(&mut *tx)
-        .await
-        .map_err(fail)?;
-        tx.commit().await.map_err(fail)?;
-        Ok(PodHandle {
-            provider: "incus".to_string(),
-            host,
-            name: pod_name(session_id),
-            cpu_cores: self.size.cpu_cores,
-            memory_mb: self.size.memory_mb,
-            disk_gb: self.size.disk_gb,
-        })
+impl PodProvider for RuntimePodProvider {
+    async fn reserve(&self, session_id: Uuid, user_id: &str) -> Result<Reserved, PodError> {
+        let connected = self.relay.connected().await;
+        let candidates = runtime_candidates(&self.db, user_id, &connected).await.map_err(|e| PodError::Failed(e.to_string()))?;
+        let mut busy = false;
+        for choice in candidates {
+            match self.status(user_id, &choice.id, session_id, !choice.online).await {
+                RelayReply::Answered { status: 200, body } => {
+                    if body.get("ready").and_then(Value::as_bool) == Some(true) {
+                        tracing::info!(sid = %session_id, runtime = %choice.id, kind = ?choice.kind, "meetings: runtime picked");
+                        return Ok(Reserved {
+                            handle: PodHandle { provider: RUNTIME_PROVIDER.to_string(), host: choice.id, name: pod_name(session_id) },
+                            os: body.get("os").and_then(Value::as_str).map(str::to_string),
+                        });
+                    }
+                    let reason = body.get("reason").and_then(Value::as_str).unwrap_or("unknown");
+                    busy |= reason == "busy";
+                    tracing::info!(sid = %session_id, runtime = %choice.id, reason, "meetings: runtime cannot take the bot");
+                }
+                // 404: a runtime from before the meeting-bot host.
+                RelayReply::Answered { status, .. } => {
+                    tracing::info!(sid = %session_id, runtime = %choice.id, status, "meetings: runtime has no meeting-bot host")
+                }
+                RelayReply::Warming | RelayReply::Offline => {
+                    tracing::info!(sid = %session_id, runtime = %choice.id, "meetings: runtime unreachable")
+                }
+            }
+        }
+        Err(if busy { PodError::NoCapacity } else { PodError::NoRuntime })
     }
 
-    async fn start(&self, handle: &PodHandle, files: &[PodFile]) -> Result<(), PodError> {
-        let backend = self
-            .backend(&handle.host)
-            .await?
-            .ok_or_else(|| PodError::Failed(format!("host {} is gone", handle.host)))?;
-        let spec = ProvisionSpec {
-            name: handle.name.clone(),
-            image: format!("local:{}", self.image),
-            cpu_cores: handle.cpu_cores,
-            cpu_allowance: None,
-            cpu_priority: None,
-            memory_mb: handle.memory_mb,
-            disk_gb: handle.disk_gb,
-            profiles: self.profiles.clone(),
-            storage_pool: self.storage_pool.clone(),
-            user_data: "#cloud-config\n".to_string(),
-            instance_id: handle.name.clone(),
-            class: ComputeClass::Paid,
-        };
-        backend.create(&spec).await.map_err(provision_failed)?;
-        let files: Vec<InstanceFile> = files
-            .iter()
-            .map(|f| InstanceFile { path: f.path.clone(), content: f.content.clone(), uid: 0, gid: 0, mode: f.mode.to_string() })
-            .collect();
-        // Files go in while the container is stopped; systemd reads the
-        // drop-ins on its first boot.
-        backend.first_boot(&handle.name, &files).await.map_err(provision_failed)
+    async fn start(&self, handle: &PodHandle, start: &PodStart) -> Result<(), PodError> {
+        let user = self.owner(&handle.host).await?.ok_or(PodError::Offline)?;
+        let body = json!({
+            "session_id": session_id_of(handle),
+            "pod_config": start.pod_config,
+            "pod_token": start.pod_token,
+            "livekit_token": start.livekit_token,
+            "bot_profile": start.bot_account.as_ref().map(|account| json!({ "account": account })),
+        });
+        match self.relay.post(&user, &handle.host, BOT_START_PATH, &body, true).await {
+            RelayReply::Answered { status: 200..=299, .. } => Ok(()),
+            RelayReply::Answered { status: 409, body } => {
+                tracing::info!(runtime = %handle.host, error = %body["error"], "meetings: runtime refused the start");
+                Err(PodError::NoCapacity)
+            }
+            RelayReply::Answered { status, body } => Err(PodError::Failed(format!("start answered {status}: {body}"))),
+            RelayReply::Warming | RelayReply::Offline => Err(PodError::Offline),
+        }
     }
 
     async fn liveness(&self, handle: &PodHandle) -> Result<PodLiveness, PodError> {
-        let Some(backend) = self.backend(&handle.host).await? else { return Ok(PodLiveness::Gone) };
-        match backend.status(&handle.name).await.map_err(provision_failed)? {
-            BackendStatus::Running | BackendStatus::Busy => Ok(PodLiveness::Running),
-            BackendStatus::Stopped | BackendStatus::NotFound => Ok(PodLiveness::Gone),
+        let user = self.owner(&handle.host).await?.ok_or(PodError::Offline)?;
+        let sid = session_id_of(handle);
+        match self.relay.post(&user, &handle.host, BOT_STATUS_PATH, &json!({ "session_id": sid }), false).await {
+            RelayReply::Answered { status: 200, body } => {
+                let entry = body
+                    .get("sessions")
+                    .and_then(Value::as_array)
+                    .and_then(|sessions| sessions.iter().find(|s| s.get("session_id").and_then(Value::as_str) == Some(sid.as_str())));
+                // Not listed: the runtime does not have this bot (it restarted).
+                Ok(match entry.and_then(|s| s.get("running")).and_then(Value::as_bool) {
+                    Some(true) => PodLiveness::Running,
+                    _ => PodLiveness::Gone,
+                })
+            }
+            RelayReply::Answered { status, .. } => Err(PodError::Failed(format!("status answered {status}"))),
+            RelayReply::Warming | RelayReply::Offline => Err(PodError::Offline),
         }
     }
 
     async fn stop(&self, handle: &PodHandle) -> Result<(), PodError> {
-        if let Some(backend) = self.backend(&handle.host).await? {
-            match backend.delete(&handle.name).await {
-                Ok(()) | Err(ProvisionError::NotFound(_)) => {}
-                Err(error) => return Err(provision_failed(error)),
-            }
+        let Some(user) = self.owner(&handle.host).await? else { return Ok(()) };
+        let body = json!({ "session_id": session_id_of(handle) });
+        match self.relay.post(&user, &handle.host, BOT_STOP_PATH, &body, false).await {
+            RelayReply::Answered { status: 500.., body } => Err(PodError::Failed(format!("stop answered an error: {body}"))),
+            // 2xx, or a 4xx (an old runtime / an unknown session): nothing runs.
+            RelayReply::Answered { .. } | RelayReply::Warming | RelayReply::Offline => Ok(()),
         }
-        release_host_allocation(
-            &self.db,
-            &handle.host,
-            ComputerSize { cpu_cores: handle.cpu_cores, memory_mb: handle.memory_mb, disk_gb: handle.disk_gb },
-        )
-        .await;
-        Ok(())
     }
+}
 
-    async fn pull_file(&self, handle: &PodHandle, path: &str) -> Result<Option<Vec<u8>>, PodError> {
-        let Some(backend) = self.backend(&handle.host).await? else { return Ok(None) };
-        match backend.pull_file(&handle.name, path, MAX_PROFILE_BYTES).await {
-            Ok(file) => Ok(file),
-            Err(ProvisionError::NotFound(_)) => Ok(None),
-            Err(error) => Err(provision_failed(error)),
-        }
-    }
+/// The session id a handle's name carries (`allternit-meeting-<simple uuid>`),
+/// as the hyphenated form the runtime uses.
+fn session_id_of(handle: &PodHandle) -> String {
+    handle
+        .name
+        .strip_prefix("allternit-meeting-")
+        .and_then(|raw| Uuid::parse_str(raw).ok())
+        .map(|sid| sid.to_string())
+        .unwrap_or_else(|| handle.name.clone())
 }
 
 // ---------------------------------------------------------------------------
@@ -420,7 +573,7 @@ impl PodRef {
 }
 
 // ---------------------------------------------------------------------------
-// Pod config and session files
+// Pod config
 // ---------------------------------------------------------------------------
 
 /// Everything the pod config is built from.
@@ -460,7 +613,8 @@ pub fn notice_text(platform: &str) -> String {
 
 /// `PodConfig` (services/meeting-bot/src/adapter.ts) plus the optional
 /// `meetingTitle`. Tokens stay out: `podToken` and `livekit.token` are
-/// empty and come from `ALLTERNIT_POD_TOKEN` / `ALLTERNIT_LIVEKIT_TOKEN`.
+/// empty; the start body carries them and the runtime hands them to the
+/// runner as `ALLTERNIT_POD_TOKEN` / `ALLTERNIT_LIVEKIT_TOKEN`.
 pub(crate) fn pod_config(config: &LauncherConfig, inputs: &PodInputs<'_>) -> Value {
     let session = inputs.session;
     json!({
@@ -488,75 +642,6 @@ pub(crate) fn pod_config(config: &LauncherConfig, inputs: &PodInputs<'_>) -> Val
     })
 }
 
-/// Per-session secrets handed to the pod.
-pub struct PodSecrets {
-    pub pod_token: String,
-    pub livekit_token: String,
-    /// Random per pod: the runner -> in-pod allternit-api turn routes. Never
-    /// cloud-api's own internal service token.
-    pub internal_token: String,
-}
-
-/// One systemd `Environment=` line, quoted and escaped (`%` specifiers,
-/// backslashes, quotes).
-fn env_line(name: &str, value: &str) -> String {
-    let escaped = value.replace('\\', "\\\\").replace('"', "\\\"").replace('%', "%%");
-    format!("Environment=\"{name}={escaped}\"\n")
-}
-
-/// The session env as systemd drop-ins, in directories the image does not
-/// create (Incus resets an existing parent directory to 0700 on push, and
-/// `/etc/allternit` must stay readable for the `meetbot` user's PulseAudio
-/// config). Same env names as CONTRACT.md "pod env names":
-/// - `allternit-meeting-bot.service.d`: the runner gets `ALLTERNIT_POD_CONFIG`
-///   (base64 JSON, preferred over the file), `ALLTERNIT_POD_TOKEN`,
-///   `ALLTERNIT_LIVEKIT_TOKEN`, `ALLTERNIT_INTERNAL_SERVICE_TOKEN`, and the
-///   `meeting-pod.json` condition is cleared.
-/// - `allternit-headless.service.d` (vendor path): the in-pod allternit-api
-///   gets `ALLTERNIT_MEETING_CLOUD_API_URL`, `ALLTERNIT_MEETING_POD_TOKEN`,
-///   `ALLTERNIT_INTERNAL_SERVICE_TOKEN`.
-/// - `multi-user.target.d`: starts the (disabled) runner unit on boot.
-pub fn session_files(config: &LauncherConfig, pod_config: &Value, secrets: &PodSecrets) -> Vec<PodFile> {
-    let encoded = STANDARD.encode(pod_config.to_string());
-    let mut runner = String::from("[Unit]\nConditionPathExists=\n\n[Service]\n");
-    runner.push_str(&env_line("ALLTERNIT_POD_CONFIG", &encoded));
-    runner.push_str(&env_line("ALLTERNIT_POD_TOKEN", &secrets.pod_token));
-    runner.push_str(&env_line("ALLTERNIT_LIVEKIT_TOKEN", &secrets.livekit_token));
-    runner.push_str(&env_line("ALLTERNIT_INTERNAL_SERVICE_TOKEN", &secrets.internal_token));
-    runner.push_str(&env_line("ALLTERNIT_MEETING_CLOUD_API_URL", &config.cloud_api_url));
-    runner.push_str(&env_line("ALLTERNIT_MEETING_POD_TOKEN", &secrets.pod_token));
-
-    let mut app = String::from("[Service]\n");
-    app.push_str(&env_line("ALLTERNIT_API_PORT", "8013"));
-    app.push_str(&env_line("ALLTERNIT_MEETING_CLOUD_API_URL", &config.cloud_api_url));
-    app.push_str(&env_line("ALLTERNIT_MEETING_POD_TOKEN", &secrets.pod_token));
-    app.push_str(&env_line("ALLTERNIT_INTERNAL_SERVICE_TOKEN", &secrets.internal_token));
-
-    vec![
-        PodFile {
-            path: "/etc/systemd/system/allternit-meeting-bot.service.d/50-session.conf".to_string(),
-            content: runner.into_bytes(),
-            mode: "0600",
-        },
-        PodFile {
-            path: "/usr/lib/systemd/system/allternit-headless.service.d/50-meeting-session.conf".to_string(),
-            content: app.into_bytes(),
-            mode: "0600",
-        },
-        PodFile {
-            path: "/etc/systemd/system/multi-user.target.d/50-meeting-session.conf".to_string(),
-            content: b"[Unit]\nWants=allternit-meeting-bot.service\n".to_vec(),
-            mode: "0644",
-        },
-    ]
-}
-
-fn random_token(prefix: &str) -> String {
-    let mut bytes = [0u8; 32];
-    rand::thread_rng().fill_bytes(&mut bytes);
-    format!("{prefix}{}", hex::encode(bytes))
-}
-
 // ---------------------------------------------------------------------------
 // Launcher
 // ---------------------------------------------------------------------------
@@ -582,18 +667,14 @@ pub struct Launcher {
     pub profiles: ProfileStore,
 }
 
-fn incus_registry() -> Arc<dyn BackendRegistry> {
-    static REGISTRY: OnceLock<Arc<IncusBackendRegistry>> = OnceLock::new();
-    REGISTRY.get_or_init(|| Arc::new(IncusBackendRegistry::default())).clone()
-}
-
 impl Launcher {
-    /// Production wiring: Incus pods, LiveKit and Zoom from env.
+    /// Production wiring: the user's runtimes over the signed relay, LiveKit
+    /// and Zoom from env.
     pub fn from_state(state: &ApiState) -> Self {
         Self {
             db: state.db.clone(),
             cipher: state.credential_cipher.clone(),
-            provider: Arc::new(IncusPodProvider::from_env(state.db.clone(), incus_registry())),
+            provider: Arc::new(RuntimePodProvider::new(state.db.clone(), Arc::new(SignedRelay::from_state(state)))),
             livekit: LiveKitConfig::from_env().map(|c| Arc::new(LiveKitHttpAdmin::new(c)) as Arc<dyn LiveKitAdminClient>),
             zoom: ZoomConfig::from_env().map(|c| (Arc::new(ZoomHttp::new(c.clone())) as Arc<dyn ZoomApi>, c)),
             config: LauncherConfig::from_env(),
@@ -715,7 +796,35 @@ impl Launcher {
             Some(Err(reason)) => return self.end(sid, reason).await,
             Some(Ok(claim)) => claim,
         };
-        let Some((claim, profile_archive)) = self.open_profile(sid, claim).await? else { return Ok(LaunchOutcome::Skipped) };
+
+        // Pick the runtime first: whether the Meet account can be used
+        // depends on its OS. A runtime reservation books nothing, so an end
+        // below needs no undo.
+        let reserved = match self.provider.reserve(sid, &session.user_id).await {
+            Ok(reserved) => reserved,
+            Err(PodError::NoCapacity) => return self.end(sid, EndReason::NoCapacity).await,
+            Err(PodError::NoRuntime) | Err(PodError::Offline) => return self.end(sid, EndReason::NoRuntime).await,
+            Err(error) => {
+                tracing::error!(%sid, %error, "meetings: picking a runtime failed");
+                return self.end(sid, EndReason::Error).await;
+            }
+        };
+        let handle = reserved.handle.clone();
+        let with_handle = PodRef { handle: Some(handle.clone()), ..claim.clone() };
+        let recorded = sqlx::query("UPDATE meeting_sessions SET pod_ref = $3, updated_at = now() WHERE id = $1 AND pod_ref = $2")
+            .bind(sid)
+            .bind(claim.text())
+            .bind(with_handle.text())
+            .execute(&self.db)
+            .await?
+            .rows_affected();
+        if recorded == 0 {
+            // The reaper retired a stale claim meanwhile (a long wake).
+            return Ok(LaunchOutcome::Skipped);
+        }
+        let Some(claim) = self.check_profile(sid, with_handle, reserved.os.as_deref()).await? else {
+            return Ok(LaunchOutcome::Skipped);
+        };
         let identity = match self.identity(&session, &claim).await {
             Ok(identity) => identity,
             Err(reason) => return self.end(sid, reason).await,
@@ -728,6 +837,9 @@ impl Launcher {
 
         let pod_token = issue_pod_token(&self.db, sid).await?;
         let room = format!("{ROOM_PREFIX}{sid}");
+        // `participant_access_ttl` hands out the public LiveKit URL
+        // (ALLTERNIT_LIVEKIT_PUBLIC_URL): the runtime is outside the fleet,
+        // so the internal ALLTERNIT_LIVEKIT_URL would not reach it.
         let (livekit_url, livekit_token) = match &self.livekit {
             Some(livekit) => {
                 let metadata = json!({ "session_id": sid, "meeting_id": session.meeting_id, "platform": session.platform }).to_string();
@@ -744,7 +856,7 @@ impl Launcher {
                 }
             }
             None => {
-                tracing::warn!(%sid, "meetings: ALLTERNIT_LIVEKIT_* unset; the pod runs without the voice worker (no transcript)");
+                tracing::warn!(%sid, "meetings: ALLTERNIT_LIVEKIT_* unset; the bot runs without the voice worker (no transcript)");
                 (String::new(), String::new())
             }
         };
@@ -760,62 +872,46 @@ impl Launcher {
                 livekit_url: &livekit_url,
             },
         );
-        let secrets = PodSecrets { pod_token, livekit_token, internal_token: random_token("mit_") };
-        let mut files = session_files(&self.config, &config, &secrets);
-        if let Some(archive) = profile_archive {
-            files.push(PodFile { path: PROFILE_SEED_PATH.to_string(), content: archive, mode: "0600" });
-        }
-
-        let handle = match self.provider.reserve(sid).await {
-            Ok(handle) => handle,
-            Err(PodError::NoCapacity) => return self.end(sid, EndReason::NoCapacity).await,
-            Err(error) => {
-                tracing::error!(%sid, %error, "meetings: reserving a pod host failed");
-                return self.end(sid, EndReason::Error).await;
-            }
-        };
-        let with_handle = PodRef { handle: Some(handle.clone()), ..claim.clone() };
-        let recorded = sqlx::query("UPDATE meeting_sessions SET pod_ref = $3, updated_at = now() WHERE id = $1 AND pod_ref = $2")
-            .bind(sid)
-            .bind(claim.text())
-            .bind(with_handle.text())
-            .execute(&self.db)
-            .await?
-            .rows_affected();
-        if recorded == 0 {
-            // The reaper retired a stale claim meanwhile: give the booking back.
-            let _ = self.provider.stop(&handle).await;
-            return Ok(LaunchOutcome::Skipped);
-        }
-        if let Err(error) = self.provider.start(&handle, &files).await {
-            tracing::error!(%sid, %error, host = %handle.host, "meetings: starting the pod failed");
+        let start = PodStart { pod_config: config, pod_token, livekit_token, bot_account: claim.bot_account.clone() };
+        if let Err(error) = self.provider.start(&handle, &start).await {
+            let reason = match error {
+                // Taken by another call since the preflight.
+                PodError::NoCapacity => EndReason::NoCapacity,
+                PodError::Offline | PodError::NoRuntime => EndReason::NoRuntime,
+                PodError::Failed(_) => EndReason::Error,
+            };
+            tracing::error!(%sid, %error, runtime = %handle.host, "meetings: starting the bot failed");
             if let Err(error) = self.provider.stop(&handle).await {
-                tracing::warn!(%sid, %error, "meetings: cleaning up a failed pod failed; the reaper retries");
-                return self.end_keeping_pod(sid, EndReason::Error).await;
+                tracing::warn!(%sid, %error, "meetings: cleaning up a failed bot failed; the reaper retries");
+                return self.end_keeping_pod(sid, reason).await;
             }
-            return self.end(sid, EndReason::Error).await;
+            return self.end(sid, reason).await;
         }
-        tracing::info!(%sid, host = %handle.host, pod = %handle.name, platform = %session.platform, "meetings: pod started");
+        tracing::info!(%sid, runtime = %handle.host, pod = %handle.name, platform = %session.platform, "meetings: bot started");
         Ok(LaunchOutcome::Launched(handle))
     }
 
-    /// Decrypt the claimed bot account's current profile. When it does not
-    /// open (wrong key, corrupt file), the account is dropped from the claim
-    /// so the pod joins signed out and nothing is ever written back from it.
+    /// Decide whether the claimed bot account goes to this runtime. It is
+    /// dropped from the claim (the bot joins signed out, the account is free
+    /// for another call) when the runtime is not Linux (Chrome profiles do
+    /// not move between OSes) or the sealed profile does not open (wrong
+    /// key, corrupt file). The runtime fetches the profile itself
+    /// (`GET /meeting-sessions/:sid/bot-profile`).
     /// `None` = the claim changed meanwhile (the reaper retired it).
-    async fn open_profile(&self, sid: Uuid, claim: PodRef) -> Result<Option<(PodRef, Option<Vec<u8>>)>, MeetingError> {
-        let Some(account) = claim.bot_account.clone() else { return Ok(Some((claim, None))) };
-        let store = self.profiles.clone();
-        let opened = {
-            let account = account.clone();
-            tokio::task::spawn_blocking(move || store.open_current(&account)).await
+    async fn check_profile(&self, sid: Uuid, claim: PodRef, os: Option<&str>) -> Result<Option<PodRef>, MeetingError> {
+        let Some(account) = claim.bot_account.clone() else { return Ok(Some(claim)) };
+        let why = if os != Some("linux") {
+            format!("the runtime runs {}, and only Linux runtimes use a bot account", os.unwrap_or("an unknown OS"))
+        } else {
+            let store = self.profiles.clone();
+            let acct = account.clone();
+            match tokio::task::spawn_blocking(move || store.open_current(&acct).map(|_| ())).await {
+                Ok(Ok(())) => return Ok(Some(claim)),
+                Ok(Err(error)) => format!("the profile does not open: {error}"),
+                Err(join) => format!("the profile does not open: {join}"),
+            }
         };
-        let error = match opened {
-            Ok(Ok(archive)) => return Ok(Some((claim, Some(archive)))),
-            Ok(Err(error)) => error.to_string(),
-            Err(join) => join.to_string(),
-        };
-        tracing::error!(%sid, %account, %error, "meetings: bot account profile does not open; the pod joins signed out");
+        tracing::warn!(%sid, %account, why = %why, "meetings: the bot joins Meet signed out");
         let without = PodRef { bot_account: None, ..claim.clone() };
         let changed = sqlx::query("UPDATE meeting_sessions SET pod_ref = $3, updated_at = now() WHERE id = $1 AND pod_ref = $2")
             .bind(sid)
@@ -824,60 +920,31 @@ impl Launcher {
             .execute(&self.db)
             .await?
             .rows_affected();
-        Ok((changed == 1).then_some((without, None)))
+        Ok((changed == 1).then_some(without))
     }
 
-    /// After a clean Meet session on a bot account: note the account worked
-    /// and, at most once a day, seal the profile the pod saved on exit as
-    /// the next generation. Runs just before the pod is deleted. Never
-    /// fails the reap: every problem is logged and skipped.
-    pub(crate) async fn write_back(&self, sid: Uuid, pod: &PodRef, live: bool, end_reason: Option<&str>, now: DateTime<Utc>) {
-        let (Some(account), Some(handle)) = (&pod.bot_account, &pod.handle) else { return };
+    /// After a clean Meet session on a bot account, note that the account
+    /// worked. Profiles are not written back from runtimes. Never fails the
+    /// reap.
+    async fn note_account_ok(&self, sid: Uuid, pod: &PodRef, live: bool, end_reason: Option<&str>, now: DateTime<Utc>) {
+        let Some(account) = &pod.bot_account else { return };
         let clean = matches!(end_reason.and_then(EndReason::parse), Some(EndReason::LeftByUser | EndReason::EmptyRoom | EndReason::MaxDuration));
-        if !live || !clean || !self.profiles.has_key() {
+        if !live || !clean {
             return;
         }
         let store = self.profiles.clone();
         let acct = account.clone();
-        let due = tokio::task::spawn_blocking(move || -> Result<bool, crate::services::bot_profiles::ProfileError> {
-            let Some(state) = store.state(&acct)? else { return Ok(false) };
-            if state.status != ProfileStatus::Active {
-                return Ok(false);
+        let noted = tokio::task::spawn_blocking(move || -> Result<(), crate::services::bot_profiles::ProfileError> {
+            match store.state(&acct)? {
+                Some(state) if state.status == ProfileStatus::Active => store.record_ok(&acct, now),
+                _ => Ok(()),
             }
-            store.record_ok(&acct, now)?;
-            Ok(state.writeback_due(now))
         })
         .await;
-        match due {
-            Ok(Ok(true)) => {}
-            Ok(Ok(false)) => return,
-            Ok(Err(error)) => {
-                tracing::warn!(%sid, %account, %error, "meetings: bot profile state unreadable; no write-back");
-                return;
-            }
-            Err(error) => {
-                tracing::warn!(%sid, %account, %error, "meetings: bot profile write-back task failed");
-                return;
-            }
-        }
-        let archive = match self.provider.pull_file(handle, PROFILE_OUT_PATH).await {
-            Ok(Some(archive)) if !archive.is_empty() => archive,
-            Ok(_) => {
-                tracing::info!(%sid, %account, "meetings: pod left no profile to save back");
-                return;
-            }
-            Err(error) => {
-                tracing::warn!(%sid, %account, %error, "meetings: pulling the pod's profile failed; no write-back");
-                return;
-            }
-        };
-        let store = self.profiles.clone();
-        let acct = account.clone();
-        match tokio::task::spawn_blocking(move || store.seal_writeback(&acct, &archive, now)).await {
-            Ok(Ok(Some(gen))) => tracing::info!(%sid, %account, generation = gen, "meetings: bot profile saved back"),
-            Ok(Ok(None)) => {}
-            Ok(Err(error)) => tracing::warn!(%sid, %account, %error, "meetings: sealing the pod's profile failed"),
-            Err(error) => tracing::warn!(%sid, %account, %error, "meetings: bot profile write-back task failed"),
+        match noted {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => tracing::warn!(%sid, %account, %error, "meetings: noting a working bot account failed"),
+            Err(error) => tracing::warn!(%sid, %account, %error, "meetings: noting a working bot account failed"),
         }
     }
 
@@ -903,7 +970,11 @@ impl Launcher {
         if cleared == 0 {
             return Ok(false);
         }
-        if let Some(handle) = &pod.handle {
+        if let Some(handle) = pod.handle.as_ref().filter(|h| h.provider != RUNTIME_PROVIDER) {
+            // A removed provider (Incus pods): nothing to call; ops deletes
+            // any leftover container by hand.
+            tracing::info!(%sid, provider = %handle.provider, pod = %handle.name, "meetings: cleared a pod_ref of a removed provider");
+        } else if let Some(handle) = &pod.handle {
             if let Err(error) = self.provider.stop(handle).await {
                 tracing::warn!(%sid, %error, pod = %handle.name, "meetings: pod teardown failed; retrying next reap");
                 sqlx::query("UPDATE meeting_sessions SET pod_ref = $2 WHERE id = $1 AND pod_ref IS NULL")
@@ -913,7 +984,7 @@ impl Launcher {
                     .await?;
                 return Ok(false);
             }
-            tracing::info!(%sid, pod = %handle.name, "meetings: pod torn down");
+            tracing::info!(%sid, runtime = %handle.host, pod = %handle.name, "meetings: bot stopped");
         }
         Ok(true)
     }
@@ -961,20 +1032,24 @@ impl Launcher {
         if left.is_empty() { Ok(torn) } else { Err(left.join("; ")) }
     }
 
-    /// One reap pass. Returns how many pods were torn down.
+    /// One reap pass. Returns how many bots were stopped (or stale handles
+    /// cleared).
     ///
-    /// - Ended sessions: the pod goes once the end is older than 5 minutes
-    ///   (the pod token grace, for the final batch and summary), or at once
-    ///   when the bot never went live.
-    /// - Claims that never got a host (the launcher died) for 5 minutes:
+    /// - Ended sessions: the bot is stopped once the end is older than 5
+    ///   minutes (the pod token grace, for the final batch and summary), or
+    ///   at once when the bot never went live.
+    /// - Claims that never got a runtime (the launcher died) for 5 minutes:
     ///   the session ends `error`.
-    /// - Heartbeat, for sessions still active with a pod: the container is
-    ///   stopped or gone; `launching` for 10 minutes; `joining` /
-    ///   `waiting_admit` past the admit window; live past 8 h 15 min
-    ///   (`max_duration`); or live with no sign of life (state change,
-    ///   transcript, chat, participant change, screen note) for
-    ///   `MEETINGS_POD_SILENT_MINUTES` (default 20). These end `error`
-    ///   unless stated, and push `leave`.
+    /// - A handle from a removed provider (`incus`): cleared without a call;
+    ///   an active session ends `error`.
+    /// - Heartbeat, for sessions still active with a bot: the runtime
+    ///   answered that the bot is not running (`error`); `launching` for 10
+    ///   minutes; `joining` / `waiting_admit` past the admit window; live past
+    ///   8 h 15 min (`max_duration`); or live with no sign of life (state
+    ///   change, transcript, chat, participant change, screen note) for
+    ///   `MEETINGS_POD_SILENT_MINUTES` (default 20). An unreachable runtime
+    ///   is never "gone" by itself: it falls to these timeouts, which then
+    ///   end `no_runtime` instead of `error`. Each pushes `leave`.
     pub(crate) async fn reap(&self, now: DateTime<Utc>) -> Result<usize, MeetingError> {
         #[derive(sqlx::FromRow)]
         struct Row {
@@ -1012,7 +1087,7 @@ impl Launcher {
             if row.state == "ended" {
                 let grace = if row.live_at.is_some() { ENDED_GRACE } else { chrono::Duration::zero() };
                 if row.ended_at.unwrap_or(row.updated_at) + grace <= now {
-                    self.write_back(row.id, &pod, row.live_at.is_some(), row.end_reason.as_deref(), now).await;
+                    self.note_account_ok(row.id, &pod, row.live_at.is_some(), row.end_reason.as_deref(), now).await;
                     if self.teardown(row.id, &row.pod_ref, &pod).await? {
                         torn += 1;
                     }
@@ -1028,27 +1103,34 @@ impl Launcher {
                 }
                 continue;
             };
-            // A launching pod is created stopped and only starts after its
-            // files (a Meet bot profile is ~100 MB) are pushed: "stopped" is
-            // normal then. LAUNCH_TIMEOUT below covers a launch that hangs.
-            let gone = row.state != "launching" && matches!(self.provider.liveness(handle).await, Ok(PodLiveness::Gone));
+            if handle.provider != RUNTIME_PROVIDER {
+                self.end_active(row.id, &row.state, EndReason::Error).await?;
+                if self.teardown(row.id, &row.pod_ref, &pod).await? {
+                    torn += 1;
+                }
+                continue;
+            }
+            // A launching bot has not reported yet; LAUNCH_TIMEOUT covers a
+            // launch that hangs.
+            let liveness = if row.state == "launching" { None } else { Some(self.provider.liveness(handle).await) };
+            let gone = matches!(liveness, Some(Ok(PodLiveness::Gone)));
+            let unreachable = matches!(liveness, Some(Err(PodError::Offline)));
+            let timed_out = if unreachable { EndReason::NoRuntime } else { EndReason::Error };
             let reason = if gone {
                 Some(EndReason::Error)
             } else {
                 match row.state.as_str() {
                     "launching" if row.updated_at + LAUNCH_TIMEOUT <= now => Some(EndReason::Error),
-                    "joining" | "waiting_admit" if row.updated_at + ADMIT_TIMEOUT <= now => Some(EndReason::Error),
+                    "joining" | "waiting_admit" if row.updated_at + ADMIT_TIMEOUT <= now => Some(timed_out),
                     "live" | "paused" if row.live_at.is_some_and(|at| at + MAX_LIVE <= now) => Some(EndReason::MaxDuration),
-                    "live" if row.last_activity.unwrap_or(row.updated_at) + self.config.silent_after <= now => {
-                        Some(EndReason::Error)
-                    }
+                    "live" if row.last_activity.unwrap_or(row.updated_at) + self.config.silent_after <= now => Some(timed_out),
                     _ => None,
                 }
             };
             if let Some(reason) = reason {
                 self.end_active(row.id, &row.state, reason).await?;
-                // A vanished pod has nothing to wait for; otherwise the
-                // ended-session rule above deletes it after the grace.
+                // A stopped bot has nothing to wait for; otherwise the
+                // ended-session rule above stops it after the grace.
                 if gone && self.teardown(row.id, &row.pod_ref, &pod).await? {
                     torn += 1;
                 }
