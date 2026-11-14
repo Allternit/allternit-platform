@@ -282,13 +282,15 @@ export namespace SessionPrompt {
     input.sessionID = await beforeTurnHandoff(input)
     const session = await Session.get(input.sessionID)
     // Self-hosted: refuse the turn before anything is stored when the agent's
-    // custom tools are malformed or shadow a built-in (resolveTools registers them).
+    // custom tools are malformed or shadow a built-in or MCP tool of this
+    // session (resolveTools registers them again each step).
     const customTools = RemoteToolHost.customToolsFrom(input.metadata)
     if (customTools.length) {
-      RemoteToolHost.registerCustomTools(input.sessionID, customTools, [
-        ...(await ToolRegistry.ids({ computer: true })),
-        "StructuredOutput",
-      ])
+      RemoteToolHost.registerCustomTools(
+        input.sessionID,
+        customTools,
+        await reservedToolNames({ sessionID: input.sessionID, mcpProxy: input.mcpProxy }),
+      )
     }
     await SessionRevert.cleanup(session)
 
@@ -1780,12 +1782,7 @@ const message = await createUserMessage(input)
       })
     }
 
-    // The user's connectors, through allternit-api's per-user proxy (registered for this turn only).
-    const proxyClient = await McpUserProxy.client(input.session.id)
-    const proxyEntry = McpUserProxy.current(input.session.id)
-    const mcpCatalog = await MCP.toolCatalog(
-      proxyClient && proxyEntry ? { [proxyEntry.server]: proxyClient } : {},
-    )
+    const mcpCatalog = await mcpToolCatalog(input.session.id)
     const mcpTools = Object.entries(mcpCatalog.tools)
     const config = await Config.get()
     const dynamicSelection =
@@ -1985,7 +1982,7 @@ const message = await createUserMessage(input)
     }
 
     // Self-hosted Agents Server: the agent's custom tools (metadata.selfhost.custom_tools).
-    await addSelfhostCustomTools(tools, { ...input, context })
+    await addSelfhostCustomTools(tools, { ...input, context, mcpCatalog })
 
     // Per-message mobile composer gating (metadata.tools) — applied last so it
     // wins over agent/config tool assembly for this turn only.
@@ -2043,6 +2040,64 @@ const message = await createUserMessage(input)
     return tools
   }
 
+  type McpCatalog = Awaited<ReturnType<typeof MCP.toolCatalog>>
+
+  /**
+   * The session's MCP tools, named as the model gets them: the instance's
+   * connected servers plus the user's connectors through allternit-api's
+   * per-user proxy (registered for the current turn only). resolveTools offers
+   * these; reservedToolNames keeps custom tools off their names.
+   */
+  export async function mcpToolCatalog(sessionID: string): Promise<McpCatalog> {
+    const proxyClient = await McpUserProxy.client(sessionID)
+    const proxyEntry = McpUserProxy.current(sessionID)
+    return MCP.toolCatalog(proxyClient && proxyEntry ? { [proxyEntry.server]: proxyClient } : {})
+  }
+
+  /**
+   * Every name a self-hosted custom tool of the session may not take, with
+   * what holds it: the tools already offered this step (`tools`, resolveTools),
+   * every registered built-in, StructuredOutput, and every tool of the
+   * session's MCP catalog (all of it, not only the tools loaded this step, so
+   * dynamic tool selection cannot load a clash later in the turn).
+   *
+   * `mcpProxy`: the turn's per-user proxy entry when it is not registered yet
+   * (prompt() checks before it registers the proxy; the check route has no
+   * turn). It is held only while the catalog is read.
+   */
+  export async function reservedToolNames(input: {
+    sessionID: string
+    tools?: Record<string, AITool>
+    mcpCatalog?: McpCatalog
+    mcpProxy?: unknown
+  }): Promise<RemoteToolHost.ReservedTool[]> {
+    let catalog = input.mcpCatalog
+    if (!catalog) {
+      const release =
+        input.mcpProxy !== undefined && !McpUserProxy.current(input.sessionID)
+          ? McpUserProxy.register(input.sessionID, input.mcpProxy)
+          : () => {}
+      try {
+        catalog = await mcpToolCatalog(input.sessionID)
+      } finally {
+        release()
+      }
+    }
+    const descriptors = catalog.descriptors
+    const mcp: RemoteToolHost.ReservedTool[] = Object.values(descriptors).map((d) => ({
+      kind: "mcp",
+      name: d.qualifiedName,
+      server: d.serverName,
+      tool: d.originalName,
+    }))
+    const builtins = [
+      ...Object.keys(input.tools ?? {}).filter((name) => !(name in descriptors)),
+      ...(await ToolRegistry.ids({ computer: true })),
+      "StructuredOutput",
+    ]
+    return [...builtins, ...mcp]
+  }
+
   /**
    * Offer the agent's custom tools to the model (self-hosted Agents Server,
    * `GIZZI_TOOL_HOST=remote`). The server sends them in every turn's
@@ -2062,12 +2117,14 @@ const message = await createUserMessage(input)
       agent: Agent.Info
       metadata?: Record<string, unknown>
       context: (args: Record<string, unknown>, options: ToolCallOptions) => Tool.Context
+      /** The session's MCP catalog when the caller already read it (resolveTools). */
+      mcpCatalog?: McpCatalog
     },
   ) {
     if (!RemoteToolHost.enabled()) return
     const custom = RemoteToolHost.customToolsFrom(input.metadata)
     const reserved = custom.length
-      ? [...Object.keys(tools), ...(await ToolRegistry.ids({ computer: true })), "StructuredOutput"]
+      ? await reservedToolNames({ sessionID: input.session.id, tools, mcpCatalog: input.mcpCatalog })
       : []
     RemoteToolHost.registerCustomTools(input.session.id, custom, reserved)
     for (const def of custom) {

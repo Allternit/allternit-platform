@@ -9,6 +9,7 @@ import z from "zod/v4"
 import { Session } from "@/runtime/session"
 import { MessageV2 } from "@/runtime/session/message-v2"
 import { SessionPrompt } from "@/runtime/session/prompt"
+import { RemoteToolHost } from "@/runtime/tools/remote-host"
 import { ReviewLoop } from "@/runtime/review/loop"
 import { SessionCompaction } from "@/runtime/session/compaction"
 import { SessionRevert } from "@/runtime/session/revert"
@@ -604,6 +605,94 @@ export const SessionRoutes = lazy(() =>
         const input = c.req.valid("json") as any
         const result = await SessionPrompt.prompt({ ...input, sessionID })
         return c.json(result)
+      },
+    )
+    /**
+     * Self-hosted Agents Server preflight (plan decision 8): would a message
+     * with these custom tools be refused for a name clash? allternit-agents-
+     * server calls this before it stores a user message, because only this
+     * child knows the session's MCP tool names. Cheap: no message is stored,
+     * no model is called, the session's custom tool set is not changed.
+     *
+     *   POST /session/{gizzi session id}/custom-tools/check   (also under /v1)
+     *   ?directory=<the session's directory>  (the same instance the message
+     *   route is called with: MCP servers are per directory)
+     *
+     * Request body: the body the message route takes (loop.rs message_body)
+     * can be sent as is; only these fields are read, the rest is ignored:
+     *   { metadata?: { selfhost?: { custom_tools?: CustomTool[] } },
+     *     custom_tools?: CustomTool[],   // shortcut; wins over metadata
+     *     mcpProxy?: { server, url, sessionId, token } }  // per-user proxy, as on the message route
+     *   CustomTool = { type?: "custom", name, description?, input_schema }
+     * The session does not have to exist (a first message has no gizzi
+     * session yet); the id only selects the session's held per-user proxy.
+     *
+     * Responses:
+     *   200 { ok: true }  no clash (also when GIZZI_TOOL_HOST is not remote
+     *                      or there are no custom tools)
+     *   409 { error: { type: "conflict_error", code: "custom_tool_conflict",
+     *                  message, tool: "<custom tool name>",
+     *                  clashes_with: "builtin:<tool>" | "mcp:<server>:<tool>" } }
+     *        (the contract's Error schema, selfhost-v1.yaml; `<tool>` of an MCP
+     *        clash is the server's own tool name, not mcp__server__tool)
+     *   400 { error: { type: "invalid_request_error", code: "invalid_custom_tool",
+     *                  message } }  a custom tool the model could not be given
+     *        (bad name, schema, duplicate)
+     * MCP servers the server adds at turn time (/mcp/add) count only once
+     * they have been added to this instance.
+     */
+    .post(
+      "/:sessionID/custom-tools/check",
+      describeRoute({
+        summary: "Check self-hosted custom tools",
+        description:
+          "Self-hosted Agents Server preflight: answers 409 custom_tool_conflict when a custom tool has the name of a built-in or MCP tool of the session, without storing anything.",
+        operationId: "session.customTools.check",
+        responses: {
+          200: {
+            description: "No clash",
+            content: { "application/json": { schema: resolver(z.object({ ok: z.literal(true) })) } },
+          },
+          400: { description: "invalid_custom_tool", content: { "application/json": { schema: resolver(z.any()) } } },
+          409: { description: "custom_tool_conflict", content: { "application/json": { schema: resolver(z.any()) } } },
+        },
+      }),
+      validator("param", z.object({ sessionID: z.string().min(1) })),
+      validator("json", z.record(z.string(), z.unknown())),
+      async (c) => {
+        const { sessionID } = c.req.valid("param")
+        const body = c.req.valid("json")
+        const metadata =
+          body.custom_tools !== undefined
+            ? { selfhost: { custom_tools: body.custom_tools } }
+            : (body.metadata as Record<string, unknown> | undefined)
+        try {
+          const custom = RemoteToolHost.customToolsFrom(metadata)
+          if (custom.length) {
+            RemoteToolHost.checkCustomTools(
+              custom,
+              await SessionPrompt.reservedToolNames({ sessionID, mcpProxy: body.mcpProxy }),
+            )
+          }
+          return c.json({ ok: true as const })
+        } catch (error) {
+          if (!(error instanceof RemoteToolHost.RemoteToolError)) throw error
+          if (error.code === "custom_tool_conflict" && error.conflict) {
+            return c.json(
+              {
+                error: {
+                  type: "conflict_error",
+                  code: error.code,
+                  message: error.message,
+                  tool: error.conflict.tool,
+                  clashes_with: error.conflict.clashes_with,
+                },
+              },
+              409,
+            )
+          }
+          return c.json({ error: { type: "invalid_request_error", code: error.code, message: error.message } }, 400)
+        }
       },
     )
     .post(

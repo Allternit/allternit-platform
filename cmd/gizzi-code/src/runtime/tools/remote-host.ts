@@ -169,29 +169,65 @@ export namespace RemoteToolHost {
     })
   }
 
+  /** What holds a name a custom tool may not take. */
+  export type Clash =
+    | { kind: "builtin"; name: string }
+    /** `name` is the tool's name as the model gets it (`mcp__<server>__<tool>`). */
+    | { kind: "mcp"; name: string; server: string; tool: string }
+
+  /** A taken name: a plain string is a built-in tool of the agent loop. */
+  export type ReservedTool = string | Clash
+
+  /** The contract's `clashes_with` value: `builtin:<tool>` or `mcp:<server>:<tool>`. */
+  export function clashRef(clash: Clash): string {
+    return clash.kind === "mcp" ? `mcp:${clash.server}:${clash.tool}` : `builtin:${clash.name}`
+  }
+
+  function clashText(clash: Clash): string {
+    return clash.kind === "mcp"
+      ? `the tool "${clash.tool}" of the MCP server "${clash.server}"`
+      : `the built-in tool "${clash.name}"`
+  }
+
   /**
-   * Check a session's custom tools against the names already taken and make
-   * them the session's set (replacing the previous turn's; an empty list
-   * clears it). A custom tool may not shadow a built-in, MCP or sandbox tool:
-   * throws a RemoteToolError (`custom_tool_conflict`) and registers nothing.
-   * Names are compared without case so `Bash` cannot pass for `bash`.
+   * Refuse custom tools that take a name already held by a built-in, MCP or
+   * sandbox tool: throws a RemoteToolError (`custom_tool_conflict`, with
+   * `conflict` = { tool, clashes_with } naming the tool and what holds the name). Names are compared
+   * without case so `Bash` cannot pass for `bash`. Changes nothing.
    */
-  export function registerCustomTools(sessionID: string, tools: CustomTool[], reserved: Iterable<string>): void {
-    if (tools.length) {
-      const taken = new Set<string>()
-      for (const name of [...reserved, ...SANDBOX_TOOLS, ...SERVER_LOCAL_REFUSED, ...Object.keys(ALIASES)]) {
-        taken.add(name.toLowerCase())
-      }
-      for (const tool of tools) {
-        if (taken.has(tool.name.toLowerCase())) {
-          throw new RemoteToolError(
-            `The custom tool "${tool.name}" has the same name as a built-in tool of the agent loop. ` +
-              "Custom tools may not replace built-in tools: rename it on the agent and try again.",
-            "custom_tool_conflict",
-          )
-        }
-      }
+  export function checkCustomTools(tools: CustomTool[], reserved: Iterable<ReservedTool>): void {
+    if (!tools.length) return
+    const taken = new Map<string, Clash>()
+    const take = (clash: Clash) => {
+      const key = clash.name.toLowerCase()
+      if (!taken.has(key)) taken.set(key, clash)
     }
+    for (const entry of reserved) take(typeof entry === "string" ? { kind: "builtin", name: entry } : entry)
+    for (const name of [...SANDBOX_TOOLS, ...SERVER_LOCAL_REFUSED]) take({ kind: "builtin", name })
+    // An alias names the real tool it stands for.
+    for (const [alias, real] of Object.entries(ALIASES)) {
+      if (!taken.has(alias)) taken.set(alias, { kind: "builtin", name: real })
+    }
+    for (const tool of tools) {
+      const clash = taken.get(tool.name.toLowerCase())
+      if (!clash) continue
+      throw new RemoteToolError(
+        `The custom tool "${tool.name}" has the same name as ${clashText(clash)}. ` +
+          "Custom tools may not replace built-in or MCP tools: rename it on the agent and try again.",
+        "custom_tool_conflict",
+        { tool: tool.name, clashes_with: clashRef(clash) },
+      )
+    }
+  }
+
+  /**
+   * Check a session's custom tools against the names already taken
+   * (checkCustomTools) and make them the session's set (replacing the
+   * previous turn's; an empty list clears it). On a clash it throws and
+   * registers nothing.
+   */
+  export function registerCustomTools(sessionID: string, tools: CustomTool[], reserved: Iterable<ReservedTool>): void {
+    checkCustomTools(tools, reserved)
     customBySession.delete(sessionID)
     if (!tools.length) return
     customBySession.set(sessionID, new Map(tools.map((tool) => [tool.name, tool])))
@@ -211,6 +247,11 @@ export namespace RemoteToolHost {
     constructor(
       message: string,
       readonly code: string,
+      /**
+       * Set on `custom_tool_conflict`, in the contract's Error fields
+       * (selfhost-v1.yaml): the refused custom tool and what holds its name.
+       */
+      readonly conflict?: { tool: string; clashes_with: string },
     ) {
       super(message)
       this.name = "RemoteToolError"
