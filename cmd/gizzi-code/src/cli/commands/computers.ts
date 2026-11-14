@@ -55,9 +55,15 @@ export function formatComputePaths(paths: ComputePaths | undefined, docsUrl = DO
   const plans = paths?.plan?.plans ?? []
   const credits = paths?.credits
   const lines = [
-    "Agents need a computer. Pick where your agents run. Chat with Allternit Cloud models stays open.",
+    "What works without a computer",
+    "  Works on any device: Allternit Cloud models (included with Free, about $2 a month of usage), any API key you add,",
+    "  and plans you already pay for where the vendor allows it (GitHub Copilot now; Claude and others later).",
+    "  Needs a computer: clicking apps, driving a browser, running coding tools (Codex CLI, Claude Code), and keeping agents",
+    "  running while your own machine sleeps.",
     "",
-    "  1. Use your own computer. Free. Link the Allternit Desktop app.",
+    "Ways to get a computer",
+    "",
+    "  1. Link your own computer. Free. Link the Allternit Desktop app.",
     `     gizzi computers link   (download: ${download})`,
     "  2. Subscribe." +
       (plans.length
