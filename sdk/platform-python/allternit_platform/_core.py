@@ -6,7 +6,9 @@ from __future__ import annotations
 
 import json
 import os
+import http.client
 import socket
+import time
 import uuid
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Iterator, Optional
@@ -48,7 +50,12 @@ class Transport:
         base_url: Optional[str] = None,
         timeout: float = DEFAULT_TIMEOUT,
         default_headers: Optional[Dict[str, str]] = None,
+        max_retries: int = 2,
+        retry_backoff: float = 0.25,
     ) -> None:
+        """``max_retries``: retries for a POST (every POST carries an ``Idempotency-Key``) after a dropped
+        connection or a 502/503/504, reusing the same key; a 409 ``idempotency_in_progress`` is retried once.
+        0 turns it off. ``retry_backoff`` is the first wait in seconds; it doubles each time."""
         api_key = api_key or os.environ.get("ALLTERNIT_API_KEY")
         if not api_key:
             raise ValueError("No API key. Pass api_key=... or set ALLTERNIT_API_KEY (alt_test_... or alt_live_...).")
@@ -56,6 +63,8 @@ class Transport:
         self.base_url = (base_url or os.environ.get("ALLTERNIT_BASE_URL") or DEFAULT_BASE_URL).rstrip("/")
         self.timeout = timeout
         self.default_headers = dict(default_headers or {})
+        self.max_retries = max(0, max_retries)
+        self.retry_backoff = max(0.0, retry_backoff)
 
     # -- plumbing ---------------------------------------------------------
 
@@ -94,24 +103,43 @@ class Transport:
             data = json.dumps(body).encode()
         if method == "POST" and not any(h.lower() == "idempotency-key" for h in headers):
             headers["Idempotency-Key"] = idempotency_key or str(uuid.uuid4())
-        req = Request(url, data=data, headers=headers, method=method)
         wait = self.timeout if timeout is None else timeout
-        try:
-            return urlopen(req, timeout=wait)
-        except HTTPError as e:
-            raw = e.read().decode("utf-8", "replace")
+        retryable = method == "POST"
+        net_retries = 0
+        in_progress_retried = False
+        while True:
+            req = Request(url, data=data, headers=headers, method=method)
             try:
-                parsed = json.loads(raw) if raw else None
-            except ValueError:
-                parsed = None
-            err = parsed.get("error") if isinstance(parsed, dict) and isinstance(parsed.get("error"), dict) else None
-            raise error_for(e.code, err, dict(e.headers.items()), raw[:200] or None) from None
-        except (socket.timeout, TimeoutError) as e:
-            raise APITimeoutError(f"Request timed out after {wait} s.") from e
-        except URLError as e:
-            if isinstance(e.reason, (socket.timeout, TimeoutError)):
+                return urlopen(req, timeout=wait)
+            except HTTPError as e:
+                raw = e.read().decode("utf-8", "replace")
+                try:
+                    parsed = json.loads(raw) if raw else None
+                except ValueError:
+                    parsed = None
+                err = parsed.get("error") if isinstance(parsed, dict) and isinstance(parsed.get("error"), dict) else None
+                if retryable:
+                    if e.code in (502, 503, 504) and net_retries < self.max_retries:
+                        time.sleep(self.retry_backoff * 2 ** net_retries)
+                        net_retries += 1
+                        continue
+                    if (e.code == 409 and err and err.get("code") == "idempotency_in_progress"
+                            and not in_progress_retried and self.max_retries > 0):
+                        in_progress_retried = True
+                        time.sleep(max(self.retry_backoff, 1.0))
+                        continue
+                raise error_for(e.code, err, dict(e.headers.items()), raw[:200] or None) from None
+            except (socket.timeout, TimeoutError) as e:
                 raise APITimeoutError(f"Request timed out after {wait} s.") from e
-            raise APIConnectionError(f"Could not reach {self.base_url}: {e.reason}") from e
+            except (URLError, ConnectionError, http.client.HTTPException) as e:
+                reason = e.reason if isinstance(e, URLError) else e
+                if isinstance(reason, (socket.timeout, TimeoutError)):
+                    raise APITimeoutError(f"Request timed out after {wait} s.") from e
+                if retryable and net_retries < self.max_retries:
+                    time.sleep(self.retry_backoff * 2 ** net_retries)
+                    net_retries += 1
+                    continue
+                raise APIConnectionError(f"Could not reach {self.base_url}: {reason}") from e
 
     # -- what generated resources call ------------------------------------
 

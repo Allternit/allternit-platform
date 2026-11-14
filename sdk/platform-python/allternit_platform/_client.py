@@ -105,7 +105,10 @@ class AllternitPlatform(GeneratedResources):
         base_url: Optional[str] = None,
         timeout: float = DEFAULT_TIMEOUT,
         default_headers: Optional[Dict[str, str]] = None,
+        max_retries: int = 2,
+        retry_backoff: float = 0.25,
     ) -> None:
-        self.http = Transport(api_key, base_url=base_url, timeout=timeout, default_headers=default_headers)
+        self.http = Transport(api_key, base_url=base_url, timeout=timeout, default_headers=default_headers,
+                              max_retries=max_retries, retry_backoff=retry_backoff)
         super().__init__(self.http)
         self.conversations = Conversations(self.http)

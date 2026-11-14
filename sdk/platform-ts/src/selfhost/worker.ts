@@ -67,7 +67,10 @@ export interface CustomToolWorkerOptions {
   hostname?: string;
   /** Claim one item, run it, complete it and return. Return after one empty claim too. */
   drain?: boolean;
-  /** Also claim items whose lease ran out at least this long ago (work from a worker that died). */
+  /**
+   * Also take a live lease last renewed at least this many ms ago; expired leases are always claimable;
+   * values below 30000 are raised to 30000.
+   */
   reclaimOlderThanMs?: number;
   /** Abort to stop. A held item is handed back with `/release`. */
   signal?: AbortSignal;

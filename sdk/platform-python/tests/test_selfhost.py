@@ -258,5 +258,62 @@ class SelfHostTests(unittest.TestCase):
         self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
 
 
+
+class RetryTests(unittest.TestCase):
+    """A real HTTP server that drops the first connection, then answers (retry reuses the Idempotency-Key)."""
+
+    def _serve(self, first):
+        seen = []
+
+        class H(BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def do_POST(self):
+                self.rfile.read(int(self.headers.get("Content-Length") or 0))
+                seen.append(self.headers.get("Idempotency-Key"))
+                if len(seen) == 1 and first == "drop":
+                    self.request.shutdown(2)
+                    return
+                if len(seen) == 1 and first == "503":
+                    body = b'{"error":{"type":"api_error","code":"unavailable","message":"x"}}'
+                    self.send_response(503)
+                else:
+                    body = b'{"ok":true}'
+                    self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+        srv = ThreadingHTTPServer(("127.0.0.1", 0), H)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(srv.server_close)
+        self.addCleanup(srv.shutdown)
+        client = SelfHostClient("ask_test", base_url=f"http://127.0.0.1:{srv.server_address[1]}", retry_backoff=0.01)
+        return client, seen
+
+    def test_dropped_connection_is_retried_with_the_same_minted_key(self):
+        client, seen = self._serve("drop")
+        self.assertEqual(client.http.request("POST", "/v1/x", body={"a": 1}), {"ok": True})
+        self.assertEqual(len(seen), 2)
+        self.assertTrue(seen[0])
+        self.assertEqual(seen[0], seen[1])
+
+    def test_503_is_retried_and_caller_key_is_sent_as_is(self):
+        client, seen = self._serve("503")
+        out = client.http.request("POST", "/v1/x", body={}, idempotency_key="my-key-1")
+        self.assertEqual(out, {"ok": True})
+        self.assertEqual(seen, ["my-key-1", "my-key-1"])
+
+    def test_no_retries_when_turned_off(self):
+        client, seen = self._serve("503")
+        client.http.max_retries = 0
+        from allternit_platform import InternalServerError
+        with self.assertRaises(InternalServerError):
+            client.http.request("POST", "/v1/x", body={})
+        self.assertEqual(len(seen), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -13,6 +13,18 @@ export interface ErrorBody {
   url?: string;
 }
 
+/** Error `code` values the self-hosted Agents Server adds (compare with `APIError.code`). */
+export const ErrorCodes = {
+  /** 409: a custom tool name clashes with a built-in or MCP tool; nothing was stored. */
+  customToolConflict: "custom_tool_conflict",
+  /** 422: the Idempotency-Key was already used with a different request body. */
+  idempotencyKeyReuse: "idempotency_key_reuse",
+  /** 409: a request with this Idempotency-Key is still running. The SDK retries it once. */
+  idempotencyInProgress: "idempotency_in_progress",
+  /** Error event: the server replica running the turn went away; send the message again. */
+  serverRestarted: "server_restarted",
+} as const;
+
 export class AllternitError extends Error {
   constructor(message: string) {
     super(message);
@@ -86,6 +98,11 @@ export class APIConnectionError extends AllternitError {
 
 /** The request took longer than `timeout`. */
 export class APITimeoutError extends APIConnectionError {}
+
+/** True when `err` is an `APIError` with this `code`, e.g. `hasErrorCode(err, ErrorCodes.customToolConflict)`. */
+export function hasErrorCode(err: unknown, code: string): boolean {
+  return err instanceof APIError && err.code === code;
+}
 
 /** Build the right error class for a status and an error body. */
 export function errorFor(status: number, body: ErrorBody | undefined, headers?: Headers, fallback?: string): APIError {

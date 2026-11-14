@@ -224,3 +224,46 @@ test("the generated self-hosted code matches selfhost-v1.yaml", () => {
   ], { encoding: "utf8" });
   assert.match(out, /up to date/);
 });
+
+// ---- retries: real HTTP server that drops or 503s the first POST
+async function retryServer(first: "drop" | "503") {
+  const seen: Array<string | undefined> = [];
+  const srv = createServer((req, res) => {
+    req.resume();
+    req.on("end", () => {
+      seen.push(req.headers["idempotency-key"] as string | undefined);
+      if (seen.length === 1 && first === "drop") { req.socket.destroy(); return; }
+      if (seen.length === 1) {
+        res.writeHead(503, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: { type: "api_error", code: "unavailable", message: "x" } }));
+        return;
+      }
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end('{"ok":true}');
+    });
+  });
+  await new Promise<void>((r) => srv.listen(0, "127.0.0.1", () => r()));
+  const port = (srv.address() as { port: number }).port;
+  const client = new SelfHostClient({ apiKey: "ask_test", baseUrl: `http://127.0.0.1:${port}`, retryBackoffMs: 5 });
+  return { seen, client, close: () => new Promise<void>((r) => srv.close(() => r())) };
+}
+
+test("a POST that loses its connection is retried with the same minted Idempotency-Key", async () => {
+  const s = await retryServer("drop");
+  try {
+    const out = await s.client.http.request({ method: "POST", path: "/v1/x", body: { a: 1 } });
+    assert.deepEqual(out, { ok: true });
+    assert.equal(s.seen.length, 2);
+    assert.ok(s.seen[0]);
+    assert.equal(s.seen[0], s.seen[1]);
+  } finally { await s.close(); }
+});
+
+test("a 503 is retried and a caller-supplied key is sent as-is both times", async () => {
+  const s = await retryServer("503");
+  try {
+    const out = await s.client.http.request({ method: "POST", path: "/v1/x", body: {}, options: { idempotencyKey: "my-key-1" } });
+    assert.deepEqual(out, { ok: true });
+    assert.deepEqual(s.seen, ["my-key-1", "my-key-1"]);
+  } finally { await s.close(); }
+});
