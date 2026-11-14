@@ -725,6 +725,83 @@ impl IncusHttpBackend {
         Self { transport }
     }
 
+    /// Create a brain runner box (services::brain_runners), not started:
+    /// first its home volume (a custom volume, so the CLI homes have a real
+    /// quota that does not count the shared image blocks), then the
+    /// container with the runner program as its first process. Unlike a
+    /// computer: nesting off, hard memory limit, no swap, a process cap and
+    /// no cloud-init. An existing home volume is reused (a retry after a
+    /// failed instance create).
+    pub async fn create_runner(&self, spec: &RunnerSpec) -> Result<(), ProvisionError> {
+        let volumes = format!("/1.0/storage-pools/{}/volumes", spec.storage_pool);
+        let (status, json) = self
+            .transport
+            .request(
+                reqwest::Method::POST,
+                &volumes,
+                Some(serde_json::json!({
+                    "name": spec.home_volume,
+                    "type": "custom",
+                    "content_type": "filesystem",
+                    "config": { "size": format!("{}MiB", spec.home_size_mb) },
+                })),
+            )
+            .await?;
+        if status != 409 {
+            if !is_success(status) {
+                return Err(error_from_status(status, &json));
+            }
+            self.wait_operation(&json).await?;
+        }
+
+        let mut config = serde_json::Map::new();
+        for (key, value) in runner_instance_config(spec) {
+            config.insert(key, serde_json::Value::from(value));
+        }
+        let body = serde_json::json!({
+            "name": spec.name,
+            "source": { "type": "image", "alias": spec.image.strip_prefix("local:").unwrap_or(&spec.image) },
+            "type": "container",
+            "config": config,
+            "profiles": spec.profiles,
+            "devices": {
+                "root": { "type": "disk", "path": "/", "pool": spec.storage_pool },
+                "home": {
+                    "type": "disk",
+                    "path": RUNNER_HOME,
+                    "pool": spec.storage_pool,
+                    "source": spec.home_volume,
+                },
+            },
+        });
+        let (status, json) = self
+            .transport
+            .request(reqwest::Method::POST, "/1.0/instances", Some(body))
+            .await?;
+        if !is_success(status) {
+            return Err(error_from_status(status, &json));
+        }
+        self.wait_operation(&json).await
+    }
+
+    /// Delete a brain runner box and its home volume. Missing pieces are
+    /// success, so a half-made box can always be removed.
+    pub async fn delete_runner(&self, name: &str, storage_pool: &str, home_volume: &str) -> Result<(), ProvisionError> {
+        match ProvisionBackend::delete(self, name).await {
+            Ok(()) | Err(ProvisionError::NotFound(_)) => {}
+            Err(error) => return Err(error),
+        }
+        let path = format!("/1.0/storage-pools/{storage_pool}/volumes/custom/{home_volume}");
+        let (status, json) = self.transport.request(reqwest::Method::DELETE, &path, None).await?;
+        if status == 404 {
+            return Ok(());
+        }
+        if !is_success(status) {
+            return Err(error_from_status(status, &json));
+        }
+        self.wait_operation(&json).await
+    }
+
     async fn wait_operation(&self, response: &serde_json::Value) -> Result<(), ProvisionError> {
         let Some(operation) = response
             .get("operation")
@@ -838,6 +915,59 @@ fn incus_name_with_prefix(prefix: &str, user_id: &str, discriminator: &str) -> S
     } else {
         format!("{prefix}-{slug}-{}", &hash[..12])
     }
+}
+
+/// Deterministic name of an account's brain runner box:
+/// `allternit-runner-<user slug, ≤28>-<12 hex>` (≤ 58 chars, one per account).
+pub fn runner_incus_name_for(user_id: &str) -> String {
+    incus_name_with_prefix("allternit-runner", user_id, "runner")
+}
+
+/// Where a brain runner's home volume is mounted (the CLI homes).
+pub const RUNNER_HOME: &str = "/home/runner";
+
+/// A brain runner box (services::brain_runners). Never placed through
+/// `provisioned_hosts` bin-packing: the host is fixed by
+/// `ALLTERNIT_RUNNER_HOST` and the RAM budget is the runner ledger's own.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunnerSpec {
+    pub name: String,
+    /// Image alias (`ALLTERNIT_RUNNER_IMAGE`), `local:` prefix optional.
+    pub image: String,
+    pub storage_pool: String,
+    pub profiles: Vec<String>,
+    /// Custom volume mounted at [`RUNNER_HOME`].
+    pub home_volume: String,
+    pub home_size_mb: u32,
+    pub memory_mb: u32,
+    pub cpu_cores: u32,
+    pub max_processes: u32,
+    /// The runner program, run as the container's first process.
+    pub init_cmd: String,
+    /// `environment.*` keys (socket URL and token).
+    pub environment: Vec<(String, String)>,
+}
+
+/// The Incus config keys of a brain runner box, in a fixed order.
+/// Unprivileged, nesting off (nothing inside needs bwrap), hard memory limit
+/// with no swap (the host has none), one CPU, a process cap, and the runner
+/// as `lxc.init.cmd` so no systemd (and none of its inotify watches) runs.
+pub fn runner_instance_config(spec: &RunnerSpec) -> Vec<(String, String)> {
+    let mut config = vec![
+        ("security.privileged".to_string(), "false".to_string()),
+        ("security.nesting".to_string(), "false".to_string()),
+        ("limits.cpu".to_string(), spec.cpu_cores.to_string()),
+        ("limits.memory".to_string(), format!("{}MiB", spec.memory_mb)),
+        ("limits.memory.enforce".to_string(), "hard".to_string()),
+        ("limits.memory.swap".to_string(), "false".to_string()),
+        ("limits.processes".to_string(), spec.max_processes.to_string()),
+        ("raw.lxc".to_string(), format!("lxc.init.cmd = {}", spec.init_cmd)),
+        ("user.allternit.kind".to_string(), "brain-runner".to_string()),
+    ];
+    for (key, value) in &spec.environment {
+        config.push((format!("environment.{key}"), value.clone()));
+    }
+    config
 }
 
 /// Synthetic owners of hosted-driver computers (`/v1/computers`): computers
@@ -4018,6 +4148,12 @@ pub fn start_provisioning_lifecycle_task(state: Arc<crate::ApiState>) {
             if let Err(error) = state.provisioning_service.sweep_lifecycle(Utc::now()).await {
                 tracing::error!("Provisioned instance lifecycle sweep failed: {}", error);
             }
+            // Brain runner boxes unused for 90 days are destroyed (their
+            // own ledger, never provisioned_instances).
+            let runners = crate::services::brain_runners::shared(&state.db);
+            if let Err(error) = runners.sweep_unused(Utc::now()).await {
+                tracing::error!("Brain runner 90-day sweep failed: {}", error);
+            }
         }
     });
 }
@@ -4070,6 +4206,12 @@ pub fn start_provisioning_reconcile_task(state: Arc<crate::ApiState>) {
             interval.tick().await;
             if let Err(error) = state.provisioning_service.reconcile_all().await {
                 tracing::error!("Provisioned instance reconciliation failed: {}", error);
+            }
+            // Brain runner boxes idle for 5 minutes are stopped, freeing
+            // their share of ALLTERNIT_RUNNER_RAM_BUDGET_MB.
+            let runners = crate::services::brain_runners::shared(&state.db);
+            if let Err(error) = runners.sweep_idle(Utc::now()).await {
+                tracing::error!("Brain runner idle sweep failed: {}", error);
             }
         }
     });
@@ -4379,6 +4521,60 @@ mod tests {
             instance_id: "pi_test".to_string(),
             class: ComputeClass::Paid,
         }
+    }
+
+    /// The brain runner box must stay sealed: nesting off, a hard memory cap
+    /// with no swap (the runner host has none), a process cap, the runner as
+    /// the first process, and the CLI homes on their own quota'd volume.
+    #[tokio::test]
+    async fn brain_runners_incus_create_makes_a_sealed_box_with_its_home_volume() {
+        let mock = Arc::new(MockTransport::default());
+        mock.responses.lock().unwrap().extend([
+            (201, serde_json::json!({})), // volume create (sync)
+            create_operation_response("allternit-runner-u-abc"),
+        ]);
+        let backend = IncusHttpBackend::with_transport(Box::new(SharedTransport(mock.clone())));
+        let spec = RunnerSpec {
+            name: "allternit-runner-u-abc".to_string(),
+            image: "local:allternit-brain-runner".to_string(),
+            storage_pool: "runner".to_string(),
+            profiles: vec!["brain-runner".to_string()],
+            home_volume: "allternit-runner-u-abc-home".to_string(),
+            home_size_mb: 256,
+            memory_mb: 768,
+            cpu_cores: 1,
+            max_processes: 256,
+            init_cmd: "/usr/local/bin/allternit-brain-runner".to_string(),
+            environment: vec![("ALLTERNIT_RUNNER_TOKEN".to_string(), "tok".to_string())],
+        };
+
+        backend.create_runner(&spec).await.unwrap();
+
+        let requests = mock.requests.lock().unwrap();
+        let (method, path, volume) = &requests[0];
+        assert_eq!((method.as_str(), path.as_str()), ("POST", "/1.0/storage-pools/runner/volumes"));
+        let volume = volume.as_ref().unwrap();
+        assert_eq!(volume["type"], "custom");
+        assert_eq!(volume["config"]["size"], "256MiB");
+        let (method, path, body) = &requests[1];
+        assert_eq!((method.as_str(), path.as_str()), ("POST", "/1.0/instances"));
+        let body = body.as_ref().unwrap();
+        let config = &body["config"];
+        assert_eq!(config["security.nesting"], "false");
+        assert_eq!(config["security.privileged"], "false");
+        assert_eq!(config["limits.memory"], "768MiB");
+        assert_eq!(config["limits.memory.enforce"], "hard");
+        assert_eq!(config["limits.memory.swap"], "false");
+        assert_eq!(config["limits.cpu"], "1");
+        assert_eq!(config["limits.processes"], "256");
+        assert_eq!(config["raw.lxc"], "lxc.init.cmd = /usr/local/bin/allternit-brain-runner");
+        assert_eq!(config["environment.ALLTERNIT_RUNNER_TOKEN"], "tok");
+        assert!(config.get("cloud-init.user-data").is_none(), "runners never run cloud-init");
+        assert_eq!(body["source"]["alias"], "allternit-brain-runner");
+        assert_eq!(body["profiles"], serde_json::json!(["brain-runner"]));
+        assert_eq!(body["devices"]["home"]["source"], "allternit-runner-u-abc-home");
+        assert_eq!(body["devices"]["home"]["path"], "/home/runner");
+        assert_eq!(body["devices"]["root"]["pool"], "runner");
     }
 
     #[tokio::test]

@@ -62,6 +62,10 @@ pub const ERASE: &[(&str, &str)] = &[
     ("user_meeting_settings", USER),
     // The compute gate's "chat only" acknowledgement (migration 133).
     ("account_compute_acknowledgements", "user_id = $1"),
+    // Brain runner box and plan disclosure acceptances (migration 140). The
+    // box itself is destroyed in release_computers first.
+    ("brain_runners", USER),
+    ("plan_runner_consents", USER),
     // Platform API projects, children first.
     ("platform_webhook_deliveries", "webhook_id IN (SELECT id FROM platform_webhooks WHERE user_id = $1 OR project_id IN (SELECT id FROM platform_projects WHERE owner_user_id = $1)) OR event_id IN (SELECT id FROM platform_events WHERE user_id = $1 OR project_id IN (SELECT id FROM platform_projects WHERE owner_user_id = $1))"),
     ("platform_webhooks", "user_id = $1 OR project_id IN (SELECT id FROM platform_projects WHERE owner_user_id = $1)"),
@@ -388,6 +392,8 @@ fn is_missing(error: &ApiError) -> bool {
 
 async fn release_computers(state: &ApiState, user_id: &str) -> Result<(), ApiError> {
     state.provisioning_service.delete_all_for_user(user_id).await?;
+    // The plan box (CLI sign-ins on its home volume) goes with the computers.
+    crate::services::brain_runners::shared(&state.db).destroy(user_id).await?;
     crate::routes::hosted_runtimes::destroy_all_for_user(state, user_id).await?;
     let phones: Vec<String> =
         sqlx::query_scalar("SELECT id FROM cloud_phones WHERE user_id = $1 AND status <> 'deleted'")
@@ -839,6 +845,37 @@ mod tests {
 
         drop_db(db, &base, &name).await;
     }
+    /// Account erase destroys the plan box (box and home volume) and then
+    /// removes its row and the disclosure acceptances; someone else's stay.
+    #[tokio::test]
+    async fn erase_destroys_the_brain_runner_and_removes_its_rows() {
+        use crate::services::brain_runners::{test_runner_db, test_service_with_box, Vendor, DISCLOSURE_VERSION};
+        let db = test_runner_db().await;
+        let (service, backend) = test_service_with_box(db.clone(), "user_gone").await;
+        service.ensure("user_stays").await.unwrap();
+        for user in ["user_gone", "user_stays"] {
+            service.accept_disclosure(user, Vendor::Claude, DISCLOSURE_VERSION).await.unwrap();
+        }
+        assert_eq!(backend.boxes(), 2);
+
+        // release_computers' step, then the ERASE rows for both tables.
+        service.destroy("user_gone").await.unwrap();
+        assert_eq!(backend.boxes(), 1, "the erased account's box is gone");
+        for (table, condition) in ERASE.iter().filter(|(t, _)| matches!(*t, "brain_runners" | "plan_runner_consents")) {
+            sqlx::query(&format!("DELETE FROM {table} WHERE {condition}")).bind("user_gone").execute(&db).await.unwrap();
+        }
+        for (sql, want) in [
+            ("SELECT count(*) FROM brain_runners WHERE user_id = 'user_gone'", 0),
+            ("SELECT count(*) FROM plan_runner_consents WHERE user_id = 'user_gone'", 0),
+            ("SELECT count(*) FROM brain_runners WHERE user_id = 'user_stays'", 1),
+            ("SELECT count(*) FROM plan_runner_consents WHERE user_id = 'user_stays'", 1),
+        ] {
+            assert_eq!(count(&db, sql).await, want, "{sql}");
+        }
+        // Clerk retries: a second destroy with nothing left is fine.
+        service.destroy("user_gone").await.unwrap();
+    }
+
     /// Shared chat links die when the account is erased: the REVOKE step
     /// deletes them before any step that can fail, and ERASE covers a retry.
     /// Runs in CI (schema-per-test pool), unlike the full-schema test above.
