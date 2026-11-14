@@ -1,6 +1,6 @@
 ---
 title: Connections API
-description: "GET /api/v1/connections on cloud-api and on a computer's runtime, the connect, submit, login and remove actions, the login object, reason codes, and the older endpoints behind Settings → Connections."
+description: "GET /api/v1/connections on cloud-api and on a computer's runtime, the connect, submit, login and remove actions, the login object, the plan runner rows, the disclosure_required step, plan model chat and its refusals, reason codes, and the older endpoints behind Settings → Connections."
 ---
 
 Settings → Connections ([user guide](/guides/connections)) is built from one list of rows. Two servers answer it, and the app merges the answers. This page is the contract (version 1). To add a row, see [Add a connection](/build-on-allternit/add-a-connection). Older endpoints that still back parts of the page are in [Older endpoints and Desktop bridge](#older-endpoints-and-desktop-bridge).
@@ -68,9 +68,10 @@ Clients ignore ids they don't know. An id missing from the response falls back t
 | `phone` | Device pairing and app sign-in records. |
 | `gmail`, `drive`, `slack`, `github`, `notion` | Connector records. |
 | `telegram`, `whatsapp`, `discord` | Gateway channels. |
-| `claude`, `grok`, `kimi` | `available: false`, `terms: "pending"`, reason "Not available yet. Use a key for now.", fallback to the vendor's key row (Claude falls back to `anthropic-key`). |
-| `copilot` | `available: false`, reason "Coming soon.", fallback `github`. |
-| `chatgpt` | With no computer online: `available: false`, reason "Needs your own computer for now. Or use an OpenAI key.", fallbacks `this-mac` and `openai-key`. With an online computer it is `available: true` and the computer's row answers. |
+| `claude`, `chatgpt`, `grok`, `kimi` | Plan runner rows. See [Plan runner rows](#plan-runner-rows). |
+| `copilot` | `available: false`, reason "Coming soon.", fallback `github`, until the server has the GitHub App configured. |
+
+A client that does not send `caps=runner` gets `available: false` on the four plan rows, reason "Update the app to connect this plan.", `reason_code` `update_app`, and the vendor's key row as the fallback. Everyone gets `available: false` with "Not available yet. Use a key for now." (`not_available_yet`) when the server kill switch is off or the vendor is not on the server's vendor list.
 
 Coding tools and the local brain are `available: false` on cloud-api when no computer is online, with the reason "Runs on a computer." and the fallback `this-mac`. Their live state comes from the runtime.
 
@@ -114,6 +115,7 @@ Clients poll `/login` every 2 seconds and stop on `done`, `expired` or `failed`.
 | `device_code` | A code and a link. The code can already be in `url_with_code`. |
 | `link_paste` | A link, then a field for the code the vendor shows. The code goes to `submit`. |
 | `oauth` | A redirect to the vendor and back. |
+| `browser_redirect` | Desktop's ChatGPT device sign-in: open the authorize URL, then poll status. It finishes by itself. |
 | `paste` | A field for a key. The key goes to `submit`. |
 | `scan` | A QR code for the phone. |
 | `pair` | A one-time code. |
@@ -135,6 +137,114 @@ Clients poll `/login` every 2 seconds and stop on `done`, `expired` or `failed`.
 | Grok | `device_code`, with `url_with_code` |
 | Claude | `link_paste`. `submit` takes the pasted code. |
 
+## Plan runner rows
+
+`claude`, `chatgpt`, `grok` and `kimi` run on a private box per person on an Allternit server. The box runs the vendor's command-line program, the person signs in to the vendor themselves, and only messages the person sends go to it. Send `GET /api/v1/connections?caps=runner` to get these rows as available. Unknown `caps` values are ignored.
+
+On these rows:
+
+| Field | Value |
+| --- | --- |
+| `runs_on` | `"runner"` |
+| `terms` | `"pending"` |
+| `disclosure` | `{"version": "2026-11-14.1", "accepted_at": null}` before the person accepts, an ISO 8601 UTC string after. A new `version` makes `accepted_at` null again. |
+| `models` | `plan/<vendor>/<model>` ids, listed only while `state` is `on`. |
+| `person_only` | `true`. Keep any model with this flag out of bot, routine, schedule, mission and sub-agent pickers. |
+| `source` | `"cloud"` |
+
+States: `connecting` while the box wakes or a sign-in is pending; `on` with `found` set to the plan when known; `needs` with `login_expired` or `vendor_limited`; `could_not_start` when the box fails to create.
+
+The sign-in kind per vendor: Codex `device_code`; Grok `device_code` with `url_with_code`; Claude `link_paste`; Kimi `device_code` if its program offers one, otherwise `link_paste`.
+
+For `chatgpt`, the row from an online computer that reports `state: "on"` wins over the runner row. On Desktop, the iPhone app and Gizzi Code, a device sign-in (below) comes first.
+
+### Connect and the disclosure step
+
+`POST /api/v1/connections/{id}/connect` on a plan row takes an optional body:
+
+```json
+{ "accept_disclosure": "2026-11-14.1" }
+```
+
+| Case | Response |
+| --- | --- |
+| The version matches the current one, sent now or already stored for this account and vendor | `200` with `{ "login": … }` |
+| The version is missing or stale and none is stored | `409` `disclosure_required` |
+| The row is not offered to this client (no `caps=runner`, kill switch, vendor off the list) | `404` `not_found` |
+| No box is free within a 10 second wait | `503` `runner_busy`, message "Busy. Try again" |
+| The box could not be created | `502` `could_not_start`, message "Could not start. Try again" |
+
+```json
+{
+  "error": {
+    "code": "disclosure_required",
+    "disclosure": {
+      "version": "2026-11-14.1",
+      "title": "Before you connect your Claude plan",
+      "body": ["…", "…", "…", "…"],
+      "accept_label": "I understand, connect",
+      "decline_label": "Use a key instead"
+    }
+  }
+}
+```
+
+`title` and `body` carry the vendor's display name. Show the text as given and never a copy of your own. When the person declines, open the key sheet and send nothing. Accepting stores the account, vendor, version and time; the record is kept when the vendor is disconnected and erased with the account. `submit` and `login` for a vendor with no stored acceptance return the same `409`.
+
+`DELETE /api/v1/connections/{id}` on a plan row returns `204` after the sign-out on the box, the deletion of that vendor's sign-in files, and the removal of the row's state. When it was the person's last vendor, the box is destroyed. A failed sign-out still deletes the files and returns `204`.
+
+### Chat with a plan model
+
+A plan model id is `plan/<vendor>/<model>`, for example `plan/claude/sonnet`. These ids are not in the model catalog and `GET /v1/models` does not list them; take them from the `models` field of a row that is `on`. Send the turn to `POST /v1/chat/completions` as for any cloud model, with `stream: true` for OpenAI-compatible deltas. The server sends the `messages` you supply on every turn; there is no session to resume.
+
+Set the header `X-Allternit-Turn: person` only on a message the person sent from the composer. The server removes `tools` and `tool_choice` before the turn runs, and replies carry no tool calls.
+
+| Status | `error.code` | When |
+| --- | --- | --- |
+| `403` | `plan_person_only` | The token is a device token, a platform project key or a playground key; the header is missing or not `person`; or the request comes from a bot, routine, schedule, mission or sub-agent run. Other model routes (`open_lane`, platform responses, artifact runtime) return this for any `plan/…` or `copilot/…` id. |
+| `403` | `plan_not_connected` | There is no connected plan row for that vendor. |
+| `400` | `plan_no_tools` | A message has `role: "tool"`. |
+| `409` | `plan_turn_in_flight` | A second turn for the same account while one is running. |
+| `429` | `plan_rate` | More than 20 turns in 5 minutes for the account. |
+| `503` | `runner_busy` | The box budget is full after a 10 second wait. "Busy. Try again" |
+
+Plan turns are not metered against Allternit credits. A `developer` message is sent as `system`. After the turn, save the chat with the [plan chat store](#plan-chat-store) so it syncs to the person's other devices with no computer. Errors after a streamed turn starts arrive as one `data: {"error":{…}}` line, then `data: [DONE]`; without streaming they are `409 login_expired`, `409 vendor_limited` or `502 could_not_start`.
+
+### ChatGPT sign-in on the person's device
+
+On Desktop (through Gizzi Code, the engine under it), the iPhone app and Gizzi Code, ChatGPT uses OpenAI's open-source Sign in with ChatGPT on the device. Nothing is sent to cloud-api: the tokens stay in the device's keystore and chat goes from the device to OpenAI. The Desktop runtime's `chatgpt` row (`runs_on: "computer"`) starts the sign-in with `login.kind` `browser_redirect` and reports its status. The disclosure text shows before the first connect, and the acceptance is recorded on the device. Model ids are `chatgpt/<model>`, separate from `plan/chatgpt/<model>`. A usage limit from OpenAI shows as **Needs you · ChatGPT limit reached**. These models follow the same person-only, chat-only, no-tools rules.
+
+### Plan chat store
+
+Chats with plan (`plan/<vendor>/<model>`) and Copilot (`copilot/<model>`) models are saved on cloud-api so they sync across the person's devices with no computer. The turn itself goes to `POST /v1/chat/completions`; afterwards the client saves the person's message and the reply here. These routes need a signed-in session (an API token gets `403`, none gets `401`), are scoped to that person (another person's thread is `404`), never need a computer, and are erased with the account.
+
+| Call | Body | Returns |
+| --- | --- | --- |
+| `POST /api/v1/plan-threads` | `{ "model": "plan/claude/sonnet", "title"?: string, "messages"?: [msg] }` | `201` with a summary |
+| `GET /api/v1/plan-threads` | none | `{ "threads": [summary] }`, newest first, at most 200, no messages |
+| `GET /api/v1/plan-threads/{id}` | none | The summary plus `messages` |
+| `POST /api/v1/plan-threads/{id}/messages` | `{ "messages": [msg] }`, 1 to 50 | `200` with the summary |
+
+- `msg` is `{ "role": "user" | "assistant" | "system", "content": string, "model"?: string }`. Content is up to 200,000 characters. Any other role, such as `tool`, is `400`. A stored message also has `at`, an ISO 8601 UTC time set by the server.
+- A summary is `{ "id", "title", "model", "message_count", "created_at", "updated_at" }`. Ids start with `pth_`.
+- `model` on create must be a `plan/…`, `plan-…` or `copilot/…` id, otherwise `400`. A title is cut to 200 characters. A thread holds at most 5,000 messages.
+- Deleting a thread is not in this version.
+
+### GitHub Copilot
+
+`copilot` is a server row that signs in with a GitHub App (`allternit-copilot-connect`) user token. It is `available: true` only when the server has `ALLTERNIT_COPILOT_CLIENT_ID`, `ALLTERNIT_COPILOT_CLIENT_SECRET` and `ALLTERNIT_CREDENTIALS_KEY` set. Without them it stays "Coming soon." and `connect` returns `409 not_available`. It carries `person_only: true` and no `disclosure`; the GitHub consent screen is the consent.
+
+| Call | Notes |
+| --- | --- |
+| `POST /api/v1/connections/copilot/connect` | Body `{ "return_to"?: string }`. `return_to` must start with `https://ai.allternit.com/`, `https://m.allternit.com/`, `allternit://` or `gizzi://`, otherwise `400`. Returns an `oauth` login. |
+| `GET /api/v1/connections/copilot/callback?code&state` | GitHub's redirect. No session header; the signed `state` identifies the account. Always answers `302` to the return URL with `connected=copilot`, or with `error=` one of `bad_state`, `denied`, `exchange_failed`, `no_copilot`, `could_not_start`, `not_configured`. |
+| `GET /api/v1/connections/copilot/login` | `pending` while the sign-in is open, `done` once the row is `on`, `failed` when it needs you. |
+| `DELETE /api/v1/connections/copilot` | `204`. Revokes the grant at GitHub (best effort) and deletes the stored tokens. |
+
+`no_copilot` means the GitHub account has no Copilot; the grant is revoked and nothing is stored. While `on`, `found` is "GitHub · @login" and `models` are the account's Copilot chat models as `copilot/<id>`, read once at sign-in. The row is `needs` with `login_expired` when GitHub refuses the refresh token. The tokens are stored encrypted with `CredentialCipher` and erased with the account.
+
+Chat uses `POST /v1/chat/completions` with a `copilot/<model>` id and `X-Allternit-Turn: person`. The same refusals apply as for plan models (`plan_person_only`, `plan_no_tools`, `plan_rate` at 20 turns in 5 minutes, `plan_turn_in_flight`, `plan_not_connected`). Copilot adds `409 login_expired`, `409 vendor_limited`, `400 model_not_available` and `502 could_not_start`. Copilot turns are not metered, and tools are off.
+
 ## Reason codes
 
 | `reason_code` | Text |
@@ -146,6 +256,8 @@ Clients poll `/login` every 2 seconds and stop on `done`, `expired` or `failed`.
 | `not_available_yet` | Not available yet |
 | `computer_offline` | Your computer is offline |
 | `could_not_start` | Could not start. Try again |
+| `update_app` | Update the app to connect this plan. |
+| `runner_busy` | Busy. Try again |
 
 The kit's routes never call `require_compute`. On allternit-api, `design_connector_routes.rs` already matches a `/connections` path, so smoke-boot the server after a change to either route.
 

@@ -34,22 +34,27 @@ A row that your account cannot use right now shows why, in one line, and up to t
 
 Inside **Your AI**, rows are split three ways so you can see what works for you:
 
-- **Works on any device.** Allternit Cloud, API keys and Gemini. They work on your phone, the web and Desktop with no computer.
-- **Needs your computer.** Plans that sign in on a computer you own, such as ChatGPT through Codex, and the local brain.
-- **Coming soon.** GitHub Copilot, and your Claude, Grok and Kimi plans running on Allternit. They show as coming soon with a fallback until they are ready.
+- **Works on any device.** Allternit Cloud, API keys, Gemini, and your Claude, ChatGPT, Grok and Kimi plans. A plan runs in a private box on an Allternit server ("Runs on Allternit · no computer needed"), so it works on your phone, the web and Desktop with no computer.
+- **Needs your computer.** The coding tools and the local brain.
+- **Coming soon.** GitHub Copilot, until it is turned on for your account. Then you sign in with GitHub and it works with no computer.
 
 ## What works with no computer
 
 | Works on any device, no computer | Needs your computer |
 | --- | --- |
-| Allternit Cloud (included) | ChatGPT plan (signs in through Codex on your computer) |
-| API keys: OpenAI, Anthropic, Google, xAI, OpenRouter and more | Coding tools: Claude Code, Codex, Grok CLI, Kimi CLI, Gemini CLI, Cursor Agent |
-| Gemini through a free Google AI Studio key | Local brain (Ollama) |
-| Apps and channels (Gmail, Slack, Telegram and the rest) | Letting Allternit use the apps on your computer |
+| Allternit Cloud (included) | Coding tools: Claude Code, Codex, Grok CLI, Kimi CLI, Gemini CLI, Cursor Agent |
+| Your Claude, ChatGPT, Grok and Kimi plans (on an Allternit server, chat only) | Local brain (Ollama) |
+| API keys: OpenAI, Anthropic, Google, xAI, OpenRouter and more | Letting Allternit use the apps on your computer |
+| Gemini through a free Google AI Studio key | |
+| Apps and channels (Gmail, Slack, Telegram and the rest) | |
 | Voice keys saved to your account | |
 | Your phone | |
 
-Your Claude, Grok and Kimi plans do not run on Allternit yet. Their rows say "Not available yet. Use a key for now." and offer the key row. The GitHub Copilot row says "Coming soon." and offers GitHub. Nothing here is promised before it is ready.
+Each plan runs in a private box on an Allternit server. The box runs the vendor's own command-line program. You sign in to the vendor yourself and manage your own account with the vendor. Your plan answers only messages you send yourself, in chat, with tools off. Bots, routines, schedules and agents never use it; use an API key for those.
+
+Before the first connect, the sheet shows the risk and asks you to accept it: the vendor's terms may not allow using a plan this way, and the vendor could limit or close your account. Allternit cannot control or undo that. The full text is in [Use the AI plan you already pay for](/guides/use-your-plan#the-risk).
+
+A plan row is turned on one vendor at a time. A row that is not on yet says "Not available yet. Use a key for now." and offers the key row. An older app says "Update the app to connect this plan." The GitHub Copilot row says "Coming soon." and offers GitHub. Chats with a plan model are saved to your account in the cloud, so they show on your other devices.
 
 ## Connect something
 
@@ -58,6 +63,8 @@ Tap a row. The sheet shows the steps for that row. The steps are the fewest the 
 | What | Steps | How it finishes |
 | --- | --- | --- |
 | An app (Gmail, Slack, GitHub, Notion) | Continue to the app › Authorize › Done | You come back by yourself after the vendor's page |
+| A plan on an Allternit server (Claude, ChatGPT, Grok, Kimi) | Read the risk and tap **I understand, connect** › the sign-in step below › Done | The row checks and finishes. Claude: open the link, approve, paste the code the vendor shows. ChatGPT and Grok: open the link and confirm the code. Kimi: one of these two |
+| ChatGPT on Desktop, the iPhone app or Gizzi Code | Read the risk › sign in on OpenAI's page › Done | The page returns to the app and the row finishes. Your sign-in stays on the device |
 | Grok on a computer | Open Grok (the code is already in the link) › Confirm › Done | The row checks and finishes |
 | ChatGPT on a computer | Open ChatGPT (the code is copied when you tap) › Paste the code › Done | The row checks and finishes |
 | Claude Code on a computer | Open Claude › Approve › Copy the code › Done | Allternit Desktop reads the code from your clipboard when you come back. On the web you tap one **Paste** button |
@@ -66,7 +73,7 @@ Tap a row. The sheet shows the steps for that row. The steps are the fewest the 
 
 Allternit checks an API key with the vendor before it saves it, saves it encrypted, and never shows it again. You see only the last few characters. If the vendor rejects it, the row says **Needs you · The key was rejected**.
 
-Allternit never sees or stores your password for a plan or an app. Plan sign-ins happen on the vendor's own page, or on your computer through the vendor's own tool.
+Allternit never sees your password for a plan or an app. Plan sign-ins happen on the vendor's own page. For a plan on an Allternit server, the sign-in is kept in your private box and Allternit does not copy it anywhere else. For ChatGPT on your own device, it stays on the device. See [Use the AI plan you already pay for](/guides/use-your-plan).
 
 ### When a row needs you
 
@@ -74,9 +81,11 @@ Allternit never sees or stores your password for a plan or an app. Plan sign-ins
 | --- | --- |
 | Sign-in expired | Tap the row and sign in again. |
 | The key was rejected | Open the key page, copy a new key and paste it. |
-| `<vendor>` limited this plan | The vendor has limited your plan for now. Use a key, or try again later. |
+| The vendor limited this plan | The vendor has limited your plan for now. Use a key, or try again later. |
 | Needs your own computer for now | Connect a computer, or use the key shown as the fallback. |
 | Not available yet | Use the fallback button on the row. |
+| Update the app to connect this plan | Update the app, or use the key shown as the fallback. |
+| Busy. Try again | Allternit's plan boxes are all in use. Wait a moment and tap the row again. |
 | Your computer is offline | Turn the computer on and connect it to the internet. The row updates by itself. |
 | Could not start. Try again | Tap the row and try again. |
 
@@ -86,7 +95,7 @@ The first-run setup has four steps: your AI, your phone, your main bot, and conn
 
 ## Remove a connection
 
-Open a row and choose **Remove**. A row from your account is removed from your account. A row on a computer is removed from that computer only.
+Open a row and choose **Remove**. A row from your account is removed from your account. Removing a plan signs you out of the vendor and deletes your sign-in from your private box; removing your last plan deletes the box. A row on a computer is removed from that computer only.
 
 ## Ways a bot reaches an app
 
