@@ -1030,6 +1030,9 @@ struct HistorySidebarView: View {
             selectedSessionId = nil
             NotificationCenter.default.post(name: .shellNewChat, object: nil)
         }
+        // Plan chats (pth_…) have no delete route in the store (§9.10): the row
+        // leaves this list only.
+        if PlanThreadClient.isThreadId(session.id) { return }
         Task {
             do {
                 // DELETE /api/v1/agent-sessions/:id (same call as Settings'

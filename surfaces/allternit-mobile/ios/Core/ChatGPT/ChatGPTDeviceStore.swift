@@ -111,13 +111,14 @@ final class ChatGPTDeviceStore: ObservableObject {
 /// The note before the first ChatGPT sign-in on this iPhone. It follows the
 /// §9.8 disclosure (same version, same buttons) but says what is true here:
 /// the sign-in and the chat stay on the phone, nothing runs on an Allternit
-/// server. Wording pending Eoj's approval with the §9.8 text (plan Wave 4).
+/// server. Approved 2026-11-14.
 enum ChatGPTDeviceDisclosure {
     static let text = ConnDisclosure(
         version: "2026-11-14.1",
         title: "Before you connect your ChatGPT plan",
         body: [
             "You sign in to ChatGPT yourself, on this iPhone. Your sign-in is saved in this iPhone's Keychain. Allternit never receives it.",
+            "ChatGPT's terms may not allow using a plan this way. ChatGPT could limit or close your account. Allternit does not control that and cannot undo it.",
             "Messages you send with a ChatGPT model go from this iPhone straight to OpenAI and count toward your plan's limits.",
             "Your plan only answers messages you send yourself, in chat. Bots, routines, schedules and agents never use it.",
             "Disconnect signs you out at OpenAI and deletes the sign-in from this iPhone.",

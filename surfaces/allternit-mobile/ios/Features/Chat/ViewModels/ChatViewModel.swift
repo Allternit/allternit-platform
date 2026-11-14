@@ -237,6 +237,7 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
         editedVersions = [:]
         currentSessionId = nil
         hasLocalPersonTurns = false
+        resetPlanThread()
         isIncognito = ephemeral
         sessionContext.ephemeral = ephemeral
     }
@@ -255,6 +256,12 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
         branches = []
         editedVersions = [:]
         hasLocalPersonTurns = false
+        resetPlanThread()
+
+        if PlanThreadClient.isThreadId(sessionId) {
+            loadPlanThread(sessionId)
+            return
+        }
 
         Task { [weak self] in
             guard let self else { return }
@@ -763,6 +770,7 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
         streamingMessageId = assistantId
         hasLocalPersonTurns = true
         lastSent = (text, modelId, nil, [])
+        if PlanThreadClient.isStored(model: modelId), !hasAttachments { savePlanTurn(role: "user", content: text, model: modelId) }
 
         streamTask = Task { [weak self] in
             guard let self else { return }
@@ -777,6 +785,10 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
                     }
                 }
                 self.finishStreaming(messageId: assistantId)
+                if PlanThreadClient.isStored(model: modelId),
+                   let reply = self.messages.first(where: { $0.id == assistantId }), !reply.content.isEmpty {
+                    self.savePlanTurn(role: "assistant", content: reply.content, model: modelId)
+                }
                 UINotificationFeedbackGenerator().notificationOccurred(.success)
             } catch is CancellationError {
                 self.flushPendingDeltas()
@@ -790,6 +802,57 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
             } catch {
                 self.failStreaming(messageId: assistantId, error: error)
             }
+        }
+    }
+
+    // MARK: - Plan chat store (contract §9.10)
+
+    private var planThreadId: String?
+    /// Set by any store failure: the rest of this chat stays on the device.
+    private var planStoreOff = false
+    private var planSyncTail: Task<Void, Never>?
+
+    private func resetPlanThread() {
+        planThreadId = nil
+        planStoreOff = false
+        planSyncTail = nil
+    }
+
+    /// Saves one turn to the store in order: the first one creates the thread.
+    /// Any failure drops this chat to device-only, silently.
+    private func savePlanTurn(role: String, content: String, model: String) {
+        guard !planStoreOff else { return }
+        let previous = planSyncTail
+        planSyncTail = Task { [weak self] in
+            await previous?.value
+            guard let self, !self.planStoreOff else { return }
+            let message = PlanThreadMessage(role: role, content: content, model: model)
+            do {
+                if let id = self.planThreadId {
+                    try await PlanThreadClient.shared.append(id: id, messages: [message])
+                } else {
+                    let title = String(content.trimmingCharacters(in: .whitespacesAndNewlines).prefix(60))
+                    let thread = try await PlanThreadClient.shared.create(model: model, title: title, messages: [message])
+                    self.planThreadId = thread.id
+                    await ShellSessionsStore.shared.load()
+                }
+            } catch {
+                self.planStoreOff = true
+            }
+        }
+    }
+
+    /// Opens a stored plan chat; the thread keeps taking new turns.
+    private func loadPlanThread(_ id: String) {
+        Task { [weak self] in
+            guard let self else { return }
+            guard let detail = try? await PlanThreadClient.shared.get(id: id),
+                  self.currentSessionId == id else { return }
+            self.messages = detail.messages.enumerated().map { index, m in
+                MessageRecord(id: "\(id)-\(index)", role: m.role, content: m.content)
+            }
+            self.planThreadId = id
+            self.hasLocalPersonTurns = true
         }
     }
 
