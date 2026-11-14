@@ -39,6 +39,7 @@ pub mod hosted_runtimes;
 pub mod instances;
 pub mod inference_keys;
 pub mod voice_keys;
+pub mod brain_runners;
 pub mod connections;
 pub mod jobs;
 pub mod live_activity;
