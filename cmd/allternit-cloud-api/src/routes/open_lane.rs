@@ -134,6 +134,10 @@ pub async fn guard_open_request(
     has_credits: bool,
     request: &ChatCompletionRequest,
 ) -> Result<Option<Response>, ApiError> {
+    // Plan and Copilot models never run on the open lane (contract 9.3).
+    if crate::routes::model_router::is_person_only_model(&request.model) {
+        return Ok(Some(crate::routes::model_router::plan_person_only()));
+    }
     if !state.model_router.is_open_lane_alias(&request.model) {
         return Ok(None);
     }
@@ -165,6 +169,10 @@ pub async fn plan_handoff(
     has_credits: bool,
 ) -> Result<Option<HandoffPlan>, ApiError> {
     let requested_is_open = state.model_router.is_open_lane_alias(alias);
+    // A plan model's turn is never handed to the open lane (contract 9.3).
+    if crate::routes::model_router::is_person_only_model(alias) {
+        return Ok(None);
+    }
     if requested_is_open
         || options.handoff_disabled
         || !has_credits

@@ -66,6 +66,8 @@ pub const ERASE: &[(&str, &str)] = &[
     // box itself is destroyed in release_computers first.
     ("brain_runners", USER),
     ("plan_runner_consents", USER),
+    // Plan chat threads (migration 141).
+    ("plan_threads", USER),
     // Platform API projects, children first.
     ("platform_webhook_deliveries", "webhook_id IN (SELECT id FROM platform_webhooks WHERE user_id = $1 OR project_id IN (SELECT id FROM platform_projects WHERE owner_user_id = $1)) OR event_id IN (SELECT id FROM platform_events WHERE user_id = $1 OR project_id IN (SELECT id FROM platform_projects WHERE owner_user_id = $1))"),
     ("platform_webhooks", "user_id = $1 OR project_id IN (SELECT id FROM platform_projects WHERE owner_user_id = $1)"),
