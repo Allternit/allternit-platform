@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { describeApiError, gizziLabel, parseCallUrl, parseSse } from "./meetings-model"
+import { describeApiError, END_REASON_LABELS, gizziLabel, parseCallUrl, parseSse, runnerLine } from "./meetings-model"
 
 describe("gizziLabel", () => {
   test("uses the same words as the web", () => {
@@ -39,4 +39,14 @@ describe("parseSse", () => {
     expect(events).toEqual([{ id: "4", event: "meeting.ended", data: '{"a":1}' }])
     expect(rest).toContain("id: 5")
   })
+})
+
+describe("runnerLine and no_runtime", () => {
+  test("ready cloud computer, desktop, asleep, none", () => {
+    expect(runnerLine({ state: "ready", runtime: { id: "a", name: "Work", kind: "cloud_computer" } })).toBe("Gizzi joins from your cloud computer (Work). It can join while your own computer is off.")
+    expect(runnerLine({ state: "ready", runtime: { id: "a", name: "My Mac", kind: "desktop" } })).toContain("Keep Allternit open")
+    expect(runnerLine({ state: "asleep", runtime: null })).toContain("asleep")
+    expect(runnerLine({ state: "none", runtime: null })).toContain("No computer is online")
+  })
+  test("no_runtime label", () => expect(END_REASON_LABELS.no_runtime).toContain("None of your computers was online"))
 })

@@ -4,7 +4,7 @@ description: "Beta. The REST routes, live events and MCP connector tools behind 
 ---
 
 <Note>
-Meetings is in **beta**. The user guide is [Meetings](/guides/meetings). This page covers the routes your signed-in user can call. It does not cover the routes that the meeting pod uses.
+Meetings is in **beta**. The user guide is [Meetings](/guides/meetings). This page covers the routes your signed-in user can call. It does not cover the routes that the bot on your computer uses.
 </Note>
 
 All routes are under `/api/v1` and use the Clerk JWT of the signed-in user. Ids are UUIDs. Timestamps are ISO-8601 UTC. Offsets are whole milliseconds.
@@ -40,6 +40,9 @@ When you start a session, checks run in this order: plan, organization setting a
 | `POST /meetings` | `{ url, title?, starts_at?, reply_mode? }` | `201` with the meeting. If the same call and start time exist, `200` with that meeting. |
 | `PATCH /meetings/:id` | `{ title?, auto_join?, reply_mode? }` | `200` with the meeting. `auto_join` set to `null` follows your rule. |
 | `DELETE /meetings/:id` | | `204`. Returns `409` while a session is active. |
+| `GET /meetings/runner` | | `200 { state, runtime }`. Which of your computers Gizzi joins from now. Presence only: it wakes and contacts nothing. |
+
+`state` is `ready` (a computer is online now), `asleep` (your cloud computer is asleep and starts when Gizzi joins) or `none` (no computer is online). `runtime` is `{ id, name, kind }` with `kind` `cloud_computer` or `desktop`, and `null` when `state` is `none`. Gizzi picks your online cloud computer first, then your open Desktop, then wakes your sleeping cloud computer.
 
 `reply_mode` is `chat` or `voice`. `url` must be a Google Meet, Zoom or Teams link, otherwise `400 unsupported_link`.
 
@@ -61,7 +64,7 @@ A session is one visit of Gizzi to one call.
 
 Session `state` is one of `scheduled`, `launching`, `joining`, `waiting_admit`, `live`, `paused`, `ended`. A session moves forward through these states. `live` and `paused` switch back and forth. Open calls can go from `joining` straight to `live`, and any state can go to `ended`.
 
-When a session ends, `end_reason` is one of `left_by_user`, `removed`, `not_admitted`, `empty_room`, `max_duration`, `other_notetaker`, `join_failed`, `guest_blocked`, `no_capacity`, `error`.
+When a session ends, `end_reason` is one of `left_by_user`, `removed`, `not_admitted`, `empty_room`, `max_duration`, `other_notetaker`, `join_failed`, `guest_blocked`, `no_capacity`, `no_runtime`, `error`. `no_runtime` means none of your computers was online when Gizzi had to join (or the computer went offline and stayed silent for 20 minutes). Open Allternit on your computer or start your cloud computer, then send Gizzi again.
 
 ## Live events
 

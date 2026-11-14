@@ -43,6 +43,8 @@ final class MeetingsStore: ObservableObject {
     /// nil until read; Zoom calls need it (`409 zoom_not_connected`).
     @Published private(set) var zoomConnected: Bool?
     /// After the first calendar connects, the auto-join rule picker shows inline.
+    /// Which computer Gizzi joins from; nil when it can't be read (older server).
+    @Published private(set) var runner: MeetingRunner?
     @Published var pickRule = false
     @Published var actionError: String?
     @Published private(set) var pendingSwitches: Set<String> = []
@@ -123,6 +125,7 @@ final class MeetingsStore: ObservableObject {
 
         async let settingsLoad: Void = loadSettings()
         async let calendarsLoad: Void = loadConnections()
+        async let runnerLoad: Void = loadRunner()
         do {
             async let nowRows = client.list(range: "now")
             async let upcomingRows = client.list(range: "upcoming")
@@ -143,7 +146,7 @@ final class MeetingsStore: ObservableObject {
         } catch {
             if !(quiet && phase == .loaded) { phase = .failed(FriendlyErrorMessage.from(error.localizedDescription)) }
         }
-        _ = await (settingsLoad, calendarsLoad)
+        _ = await (settingsLoad, calendarsLoad, runnerLoad)
         syncSystemSurfaces()
         ensureWatching()
     }
@@ -208,6 +211,18 @@ final class MeetingsStore: ObservableObject {
         ensureWatching()
     }
 
+    func loadRunner() async {
+        runner = try? await client.runner()
+    }
+
+    /// Before sending Gizzi now: when the last answer said no computer is
+    /// online, ask again (one may have just opened). True = still none.
+    private func stillNoRunner() async -> Bool {
+        guard runner?.isNone == true else { return false }
+        await loadRunner()
+        return runner?.isNone == true
+    }
+
     // MARK: - Actions
 
     /// The per-meeting Gizzi switch (`PATCH auto_join`), optimistic.
@@ -233,6 +248,7 @@ final class MeetingsStore: ObservableObject {
     /// unless `joinNow` is false (the call is later).
     @discardableResult
     func addLink(_ link: String, joinNow: Bool) async throws -> (Meeting, MeetingSession?) {
+        if joinNow, await stillNoRunner() { throw MeetingsError.noRuntime }
         let meeting = try await client.create(url: link.trimmingCharacters(in: .whitespacesAndNewlines))
         var session: MeetingSession? = nil
         if joinNow {
@@ -247,6 +263,7 @@ final class MeetingsStore: ObservableObject {
 
     /// "Send Gizzi now" on an upcoming row.
     func sendNow(_ meeting: Meeting) async -> MeetingSession? {
+        if await stillNoRunner() { handle(MeetingsError.noRuntime); return nil }
         do {
             let session = try await client.startSession(meetingId: meeting.id, when: "now",
                                                         speakReplies: settings?.defaultReplyMode == "voice")

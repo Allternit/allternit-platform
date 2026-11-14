@@ -11,7 +11,7 @@ import { cmd } from "@/cli/commands/cmd"
 import { UI } from "@/cli/ui"
 import { cloudInferenceToken, cloudOrigin } from "@/runtime/providers/discovery/allternit-cloud"
 import { Installation } from "@/shared/installation"
-import { END_REASON_LABELS, describeApiError, gizziLabel, mmss, parseCallUrl, parseSse } from "@/cli/commands/meetings-model"
+import { END_REASON_LABELS, describeApiError, gizziLabel, mmss, parseCallUrl, parseSse, runnerLine, type Runner } from "@/cli/commands/meetings-model"
 
 type Meeting = {
   id: string
@@ -154,7 +154,10 @@ const ListCommand = cmd({
       .option("json", { type: "boolean", describe: "print JSON" }),
   handler: (args) => guard(async () => {
     const r = await api<{ meetings: Meeting[] }>("GET", `/meetings?range=${args.range}`)
-    if (args.json) return json(r)
+    // Older servers have no runner route: skip the line rather than fail.
+    const runner = await api<Runner>("GET", "/meetings/runner").catch(() => undefined)
+    if (args.json) return json(runner ? { ...r, runner } : r)
+    if (runner) process.stdout.write(runnerLine(runner) + "\n\n")
     process.stdout.write(formatMeetings(r.meetings ?? []) + "\n")
   }),
 })
@@ -188,6 +191,10 @@ const JoinCommand = cmd({
   builder: (y: Argv) => y.positional("id", { type: "string", demandOption: true }).option("now", { type: "boolean" }),
   handler: (args) => guard(async () => {
     const m = await findMeeting(String(args.id))
+    if (args.now) {
+      const runner = await api<Runner>("GET", "/meetings/runner").catch(() => undefined)
+      if (runner?.state === "none") throw new Failure(runnerLine(runner))
+    }
     const s = await api<Session>("POST", `/meetings/${m.id}/sessions`, { when: args.now ? "now" : "start" })
     process.stdout.write(`${m.title || m.id}: ${gizziLabel(s.gizzi)}\n`)
   }),

@@ -15,7 +15,7 @@ struct MeetingsSettingsView: View {
             }
 
             SettingsSectionHeading(text: "Which calls Gizzi joins")
-            SettingsDescription(text: "From your connected calendars. You can still switch Gizzi on or off for any one call.")
+            SettingsDescription(text: "From your connected calendars. You can still switch Gizzi on or off for any one call. Auto-join needs one of your computers online at the start time.")
             VStack(spacing: 8) {
                 ForEach(AutoJoinRule.allCases) { rule in
                     SettingsRadioCard(title: rule.title, detail: rule.detail,

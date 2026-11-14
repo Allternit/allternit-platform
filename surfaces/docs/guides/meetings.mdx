@@ -41,9 +41,20 @@ Gizzi answers a spoken question out loud, with the same voice as [Voice](/guides
 
 ### Where Gizzi runs
 
-Gizzi joins the call from your own computer, not from an Allternit server. Keep Allternit open on your computer during the call, or let the cloud computer in your plan run it. Gizzi uses your voice settings from **Settings > Voice**.
+Gizzi joins the call from your own computer, not from an Allternit server. It picks the first of these that is available:
 
-Google Meet, Zoom and Microsoft Teams all work on Mac, Windows and Linux. Gizzi joins Zoom in a browser window, like Meet and Teams, so no Zoom app is needed.
+1. **Your cloud computer**, when it is online. It can join while your own computer is off.
+2. **Your open Desktop**, when your cloud computer is asleep or you have none. Keep Allternit open and the computer awake during the call. The computer needs Google Chrome (or Edge).
+3. **Your sleeping cloud computer.** Gizzi wakes it. That takes about a minute.
+
+Meetings shows one line above your list that says which one Gizzi will use. If no computer is online, it says so and offers **Get a cloud computer**. **Send Gizzi now** then shows that note instead of sending. A call that Gizzi missed for this reason ends as "Gizzi could not join. None of your computers was online. Open Allternit on your computer or start your cloud computer, then send Gizzi again." Auto-join needs one of your computers online at the start time.
+
+| Computer | Google Meet | Zoom | Microsoft Teams |
+| --- | --- | --- | --- |
+| Cloud computer (Linux) | Signed in as Gizzi (Allternit) | Works | Works |
+| Desktop on Mac or Windows | Joins as a guest, signed out | Works | Works |
+
+Meet signs in on Linux computers only. From a Mac or Windows Desktop, Gizzi joins Meet as a guest, so calls that refuse guests show as "Not let in". Zoom works on every system, in a browser window, so no Zoom app is needed. Gizzi uses your voice settings from **Settings > Voice**.
 
 ## Connect your calendar
 
@@ -130,7 +141,7 @@ An approval covers that tool for the rest of that meeting. A request you do not 
 | Not let in | The host did not let Gizzi in, or the call refused it. | Ask the host to admit Gizzi, then send Gizzi again. Some calls block outside participants. See [Limits](#limits). |
 | Recap ready | The call ended and the recap is done. | Open the recap. |
 
-If a call ends for another reason, for example Gizzi could not join or there was no free capacity, the meeting shows that it ended, with the reason. Send Gizzi again if the call is still going.
+If a call ends for another reason, for example Gizzi could not join, none of your computers was online, or there was no free capacity, the meeting shows that it ended, with the reason. Send Gizzi again if the call is still going.
 
 Gizzi also leaves a call by itself when:
 
@@ -185,7 +196,7 @@ On iPhone, open the side drawer and tap **Meetings**. It has the list, the live 
 
 ## In Gizzi Code
 
-Use `gizzi meetings` in the terminal. The commands are `list`, `add`, `status`, `transcript` and `leave`. They show the same states as the app.
+Use `gizzi meetings` in the terminal. The commands are `list`, `add`, `status`, `transcript` and `leave`. They show the same states as the app. `gizzi meetings list` starts with the line that says which computer Gizzi joins from.
 
 ```bash
 gizzi meetings list
