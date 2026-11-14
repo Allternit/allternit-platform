@@ -224,7 +224,7 @@ pub struct RunnerConfig {
     pub storage_pool: String,
     /// `ALLTERNIT_RUNNER_PROFILES`, default `brain-runner`.
     pub profiles: Vec<String>,
-    /// `ALLTERNIT_RUNNER_INIT`, default `/usr/local/bin/allternit-brain-runner`.
+    /// `ALLTERNIT_RUNNER_INIT`, default `/usr/local/bin/allternit-runner-init` (the image wrapper: fixes the home owner, drops root, runs the runner under tini).
     pub init_cmd: String,
     /// `ALLTERNIT_RUNNER_SOCKET_URL`, what the box dials.
     pub socket_url: String,
@@ -259,7 +259,7 @@ impl Default for RunnerConfig {
             image: "allternit-brain-runner".to_string(),
             storage_pool: "runner".to_string(),
             profiles: vec!["brain-runner".to_string()],
-            init_cmd: "/usr/local/bin/allternit-brain-runner".to_string(),
+            init_cmd: "/usr/local/bin/allternit-runner-init".to_string(),
             socket_url: "wss://api.allternit.com/api/v1/brain-runner/socket".to_string(),
             ram_budget_mb: 4096,
             memory_mb: 768,
@@ -683,6 +683,11 @@ impl BrainRunnerService {
                 ("ALLTERNIT_RUNNER_URL".to_string(), self.cfg.socket_url.clone()),
                 ("ALLTERNIT_RUNNER_TOKEN".to_string(), token.to_string()),
                 ("HOME".to_string(), crate::services::provisioning::RUNNER_HOME.to_string()),
+                // The box enables only these; without it the runner defaults to claude alone.
+                (
+                    "ALLTERNIT_RUNNER_VENDORS".to_string(),
+                    self.cfg.vendors.iter().map(|v| v.row_id()).collect::<Vec<_>>().join(","),
+                ),
             ],
         }
     }
@@ -1292,6 +1297,8 @@ mod tests {
             }
             self.creates.fetch_add(1, Ordering::SeqCst);
             let token = spec.environment.iter().find(|(k, _)| k == "ALLTERNIT_RUNNER_TOKEN").unwrap().1.clone();
+            let vendors = spec.environment.iter().find(|(k, _)| k == "ALLTERNIT_RUNNER_VENDORS").map(|(_, v)| v.clone());
+            assert!(vendors.is_some_and(|v| !v.is_empty()), "the box must be told which vendors to enable");
             self.volumes.lock().unwrap().insert(spec.home_volume.clone());
             self.boxes.lock().unwrap().insert(spec.name.clone(), (false, token));
             Ok(())

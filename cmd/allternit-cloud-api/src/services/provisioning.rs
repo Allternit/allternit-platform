@@ -4544,7 +4544,7 @@ mod tests {
             memory_mb: 768,
             cpu_cores: 1,
             max_processes: 256,
-            init_cmd: "/usr/local/bin/allternit-brain-runner".to_string(),
+            init_cmd: "/usr/local/bin/allternit-runner-init".to_string(),
             environment: vec![("ALLTERNIT_RUNNER_TOKEN".to_string(), "tok".to_string())],
         };
 
@@ -4567,7 +4567,7 @@ mod tests {
         assert_eq!(config["limits.memory.swap"], "false");
         assert_eq!(config["limits.cpu"], "1");
         assert_eq!(config["limits.processes"], "256");
-        assert_eq!(config["raw.lxc"], "lxc.init.cmd = /usr/local/bin/allternit-brain-runner");
+        assert_eq!(config["raw.lxc"], "lxc.init.cmd = /usr/local/bin/allternit-runner-init");
         assert_eq!(config["environment.ALLTERNIT_RUNNER_TOKEN"], "tok");
         assert!(config.get("cloud-init.user-data").is_none(), "runners never run cloud-init");
         assert_eq!(body["source"]["alias"], "allternit-brain-runner");

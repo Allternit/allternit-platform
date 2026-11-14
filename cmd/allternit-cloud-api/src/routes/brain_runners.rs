@@ -82,6 +82,8 @@ async fn pump(socket: WebSocket, service: Arc<BrainRunnerService>, runner_id: St
     ping.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     ping.tick().await;
     let mut pings: u64 = 0;
+    // Any frame from the box counts as alive; two missed pings in a row drop it.
+    let mut last_heard = tokio::time::Instant::now();
     loop {
         tokio::select! {
             outgoing = conn.outgoing.recv() => match outgoing {
@@ -94,6 +96,7 @@ async fn pump(socket: WebSocket, service: Arc<BrainRunnerService>, runner_id: St
             },
             incoming = stream.next() => match incoming {
                 Some(Ok(Message::Text(text))) => {
+                    last_heard = tokio::time::Instant::now();
                     if text.len() <= MAX_FRAME_BYTES {
                         service.runner_frame(&runner_id, conn.conn_id, &text).await;
                     }
@@ -102,6 +105,10 @@ async fn pump(socket: WebSocket, service: Arc<BrainRunnerService>, runner_id: St
                 Some(Ok(_)) => {}
             },
             _ = ping.tick() => {
+                if last_heard.elapsed() > PING_EVERY * 2 {
+                    tracing::warn!(runner = %runner_id, "brain runner missed two pings; dropping its socket");
+                    break;
+                }
                 pings += 1;
                 let frame = json!({ "type": "ping", "id": format!("ping-{pings}") }).to_string();
                 if sink.send(Message::Text(frame)).await.is_err() {
