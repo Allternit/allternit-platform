@@ -250,3 +250,121 @@ async fn plan_rows_disclosure_login_and_logout_without_a_computer() {
     let admin = PgPool::connect(&base).await.unwrap();
     admin.execute(format!("DROP DATABASE {name} WITH (FORCE)").as_str()).await.unwrap();
 }
+
+/// Copilot (contract 9.5, 9.11) against a fake GitHub: with no App configured
+/// the row is the section 3 "Coming soon." row; with it, connect hands out a
+/// GitHub authorize URL, the callback stores a sealed grant once (the state is
+/// single use), the row turns on with its chat models, and DELETE revokes the
+/// grant at GitHub and removes it.
+#[tokio::test]
+async fn copilot_connect_callback_and_revoke() {
+    use crate::services::copilot::{fake, TEST_CONFIG};
+    let Some((db, base, name)) = migrated_db().await else {
+        eprintln!("skipped: TEST_DATABASE_URL is not set or cannot create a database");
+        return;
+    };
+    let user = "user_copilot";
+    db.execute(format!("INSERT INTO users (id, email) VALUES ('{user}', 'copilot@example.com');").as_str()).await.unwrap();
+    let base_state = test_state(Arc::new(MockGateway::new(None, vec![]))).await;
+    let mut state = Arc::try_unwrap(base_state).ok().expect("one owner");
+    let cipher = Arc::new(allternit_cloud_core::CredentialCipher::new("test cipher key material"));
+    state.db = db.clone();
+    state.credential_cipher = Some(cipher.clone());
+    let router = routes().with_state(Arc::new(state));
+    let session = Some(("x-test-session-user", user));
+    let copilot_row = |body: &Value| body["connections"].as_array().unwrap().iter().find(|r| r["id"] == "copilot").cloned().unwrap();
+
+    // No App env vars: unchanged.
+    TEST_CONFIG
+        .scope(None, async {
+            let (_, body) = send(&router, "GET", "/api/v1/connections?caps=runner", session, None).await;
+            let row = copilot_row(&body);
+            assert_eq!((row["available"].as_bool(), row["unavailable_reason"].as_str()), (Some(false), Some("Coming soon.")), "{row}");
+            assert_eq!(row["fallbacks"], serde_json::json!(["github"]));
+            assert!(row.get("person_only").is_none(), "{row}");
+            let (status, body) = send(&router, "POST", "/api/v1/connections/copilot/connect", session, None).await;
+            assert_eq!((status, body["error"]["code"].as_str()), (StatusCode::CONFLICT, Some("not_available")), "{body}");
+        })
+        .await;
+
+    let github = fake::start().await;
+    TEST_CONFIG
+        .scope(Some(github.config()), async {
+            let (_, body) = send(&router, "GET", "/api/v1/connections", session, None).await;
+            let row = copilot_row(&body);
+            assert_eq!((row["available"].as_bool(), row["state"].as_str(), row["person_only"].as_bool()), (Some(true), Some("off"), Some(true)), "{row}");
+
+            // A return URL outside Allternit is refused.
+            let (status, _) =
+                send(&router, "POST", "/api/v1/connections/copilot/connect", session, Some(r#"{"return_to":"https://evil.example/"}"#)).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST);
+            let (status, body) = send(
+                &router,
+                "POST",
+                "/api/v1/connections/copilot/connect",
+                session,
+                Some(r#"{"return_to":"allternit://connections"}"#),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            assert_eq!((body["login"]["kind"].as_str(), body["login"]["poll"].as_bool()), (Some("oauth"), Some(true)));
+            let url = reqwest::Url::parse(body["login"]["url"].as_str().unwrap()).unwrap();
+            assert_eq!(url.path(), "/login/oauth/authorize");
+            let param = |k: &str| url.query_pairs().find(|(key, _)| key == k).map(|(_, v)| v.to_string()).unwrap();
+            assert_eq!(param("client_id"), "Iv_test");
+            assert_eq!(param("redirect_uri"), "https://api.allternit.com/api/v1/connections/copilot/callback");
+            let signed = param("state");
+            let (_, body) = send(&router, "GET", "/api/v1/connections/copilot/login", session, None).await;
+            assert_eq!((body["status"].as_str(), body["row"]["state"].as_str()), (Some("pending"), Some("connecting")), "{body}");
+
+            // The callback carries no session; the signed state names the account.
+            let callback = |code: &str| format!("/api/v1/connections/copilot/callback?code={code}&state={}", urlencoding(&signed));
+            let response = router.clone().oneshot(Request::get(callback("good")).body(Body::empty()).unwrap()).await.unwrap();
+            assert_eq!(response.status(), StatusCode::FOUND);
+            assert_eq!(response.headers()["location"], "allternit://connections?connected=copilot");
+            let sealed: String = sqlx::query_scalar("SELECT sealed_access FROM copilot_grants WHERE user_id = $1")
+                .bind(user)
+                .fetch_one(&db)
+                .await
+                .unwrap();
+            assert!(!sealed.contains("ghu_"), "stored sealed");
+            assert_eq!(cipher.decrypt(&sealed).unwrap(), "ghu_fake_user_token");
+            // Single use: the same state again is refused.
+            let again = router.clone().oneshot(Request::get(callback("good")).body(Body::empty()).unwrap()).await.unwrap();
+            assert_eq!(again.headers()["location"], "https://ai.allternit.com/connections?connected=copilot&error=bad_state");
+            // A forged state never reaches GitHub.
+            let forged = router
+                .clone()
+                .oneshot(Request::get("/api/v1/connections/copilot/callback?code=good&state=abc.def").body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert!(forged.headers()["location"].to_str().unwrap().ends_with("error=bad_state"));
+            assert_eq!(github.calls.lock().unwrap().token_bodies.len(), 1, "one code exchange");
+
+            let (_, body) = send(&router, "GET", "/api/v1/connections", session, None).await;
+            let row = copilot_row(&body);
+            assert_eq!((row["state"].as_str(), row["found"].as_str()), (Some("on"), Some("GitHub · @octo")), "{row}");
+            assert_eq!(row["models"], serde_json::json!(["copilot/gpt-5", "copilot/claude-sonnet-4.5"]), "chat models only");
+            assert!(!body.to_string().contains("ghu_"), "the token never comes back");
+            let (_, body) = send(&router, "GET", "/api/v1/connections/copilot/login", session, None).await;
+            assert_eq!(body["status"], "done");
+
+            // Disconnect: revoked at GitHub, gone here.
+            let (status, _) = send(&router, "DELETE", "/api/v1/connections/copilot", session, None).await;
+            assert_eq!(status, StatusCode::NO_CONTENT);
+            assert_eq!(github.calls.lock().unwrap().revoked, vec!["ghu_fake_user_token".to_string()]);
+            let left: i64 = sqlx::query_scalar("SELECT count(*) FROM copilot_grants").fetch_one(&db).await.unwrap();
+            assert_eq!(left, 0);
+            let (_, body) = send(&router, "GET", "/api/v1/connections", session, None).await;
+            assert_eq!(copilot_row(&body)["state"], "off");
+        })
+        .await;
+
+    db.close().await;
+    let admin = PgPool::connect(&base).await.unwrap();
+    admin.execute(format!("DROP DATABASE {name} WITH (FORCE)").as_str()).await.unwrap();
+}
+
+fn urlencoding(value: &str) -> String {
+    reqwest::Url::parse_with_params("http://x/", &[("v", value)]).unwrap().query().unwrap()[2..].to_string()
+}

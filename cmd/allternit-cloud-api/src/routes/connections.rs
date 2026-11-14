@@ -25,6 +25,12 @@
 //! None of them call `require_compute`: an account with no computer gets a
 //! login, never `compute_required`.
 //!
+//! `copilot` (contract 9.5, 9.11) is a server flow: with the GitHub App
+//! configured, `connect` answers an `oauth` login and
+//! `GET /api/v1/connections/copilot/callback` (no session; the signed state
+//! names the account) stores the sealed user token. Without the App env vars
+//! the row stays "Coming soon.".
+//!
 //! Rows whose sign-in runs on the person's computer (coding tools, ChatGPT,
 //! the local brain, Gmail/Drive/GitHub/Notion) are started on the runtime's
 //! own `/api/v1/connections`; here `connect` answers 409.
@@ -64,6 +70,19 @@ struct ConnectBody {
     way: Option<String>,
     #[serde(default)]
     accept_disclosure: Option<String>,
+    /// `copilot` only: where the callback sends the browser afterwards.
+    #[serde(default)]
+    return_to: Option<String>,
+}
+
+#[derive(Deserialize, Default)]
+struct CallbackQuery {
+    #[serde(default)]
+    code: Option<String>,
+    #[serde(default)]
+    state: Option<String>,
+    #[serde(default)]
+    error: Option<String>,
 }
 
 #[derive(Deserialize, Default)]
@@ -95,6 +114,7 @@ const LOGIN_MINUTES: i64 = 15;
 pub fn routes() -> Router<Arc<ApiState>> {
     Router::new()
         .route("/api/v1/connections", get(list))
+        .route("/api/v1/connections/copilot/callback", get(copilot_callback))
         .route("/api/v1/connections/:id", axum::routing::delete(remove))
         .route("/api/v1/connections/:id/connect", post(connect))
         .route("/api/v1/connections/:id/submit", post(submit))
@@ -135,7 +155,60 @@ async fn rows_for(state: &ApiState, user_id: &str, runner_caps: bool) -> Result<
     });
     facts.runner_caps = runner_caps;
     let router = &state.model_router;
-    Ok(conn::build_rows(&facts, &|provider| router.listed_aliases_for_provider(provider)))
+    let mut rows = conn::build_rows(&facts, &|provider| router.listed_aliases_for_provider(provider));
+    if let Some(service) = crate::services::copilot::service(state) {
+        if let Some(row) = rows.iter_mut().find(|row| row.id == "copilot") {
+            copilot_row(&service, user_id, row).await;
+        }
+    }
+    Ok(rows)
+}
+
+/// The `copilot` row with the GitHub App configured (contract 9.5): connectable,
+/// person-only, its chat models listed while `on`.
+async fn copilot_row(service: &crate::services::copilot::CopilotService, user_id: &str, row: &mut Row) {
+    use crate::services::copilot::GrantState;
+    row.available = true;
+    row.unavailable_reason = None;
+    row.reason_code = None;
+    row.fallbacks = vec!["github"];
+    row.person_only = true;
+    // A failed read (e.g. migration 142 not applied yet) shows the row off.
+    let grant = service.grant_state(user_id).await.unwrap_or_else(|error| {
+        tracing::warn!(%error, "copilot grant unavailable; showing the row off");
+        GrantState::Off
+    });
+    match grant {
+        GrantState::Off => row.state = ConnState::Off,
+        GrantState::Connecting => row.state = ConnState::Connecting,
+        GrantState::On { login, models } => {
+            row.state = ConnState::On;
+            row.found = Some(login.map_or_else(|| "GitHub".to_string(), |login| format!("GitHub · @{login}")));
+            row.models = models.into_iter().map(|model| format!("copilot/{model}")).collect();
+        }
+        GrantState::Expired => {
+            row.state = ConnState::Needs;
+            row.reason = Some(conn::reason_text("login_expired").to_string());
+            row.reason_code = Some("login_expired");
+        }
+    }
+}
+
+/// The GitHub App's redirect URL. No session: the signed, single-use `state`
+/// names the account. Always a 302 to the client's return URL.
+async fn copilot_callback(
+    State(state): State<Arc<ApiState>>,
+    axum::extract::Query(query): axum::extract::Query<CallbackQuery>,
+) -> Response {
+    let target = match crate::services::copilot::service(&state) {
+        Some(service) => service.callback(query.code.as_deref(), query.state.as_deref(), query.error.as_deref()).await,
+        None => format!("{}&error=not_configured", crate::services::copilot::DEFAULT_RETURN),
+    };
+    let mut response = StatusCode::FOUND.into_response();
+    if let Ok(location) = HeaderValue::from_str(&target) {
+        response.headers_mut().insert(header::LOCATION, location);
+    }
+    reply(Ok(response))
 }
 
 /// The row as a client that knows plan rows sees it: `connect`, `submit`,
@@ -328,6 +401,20 @@ async fn connect(
         }
         if id == "allternit" {
             return Ok(Json(json!({ "state": "on" })).into_response());
+        }
+        if id == "copilot" {
+            if let Some(service) = crate::services::copilot::service(&state) {
+                let (url, expires) = service.authorize_url(&user, body.return_to.as_deref()).await?;
+                return Ok(Json(json!({ "login": {
+                    "kind": "oauth",
+                    "code": Value::Null,
+                    "url": url,
+                    "url_with_code": Value::Null,
+                    "expires_at": expires.to_rfc3339_opts(SecondsFormat::Secs, true),
+                    "poll": true,
+                }}))
+                .into_response());
+            }
         }
         if conn::key_provider_for(&id).is_some() || conn::voice_provider_for(&id).is_some() || id == "api-key" {
             return Ok(login_reply("paste", Some(conn::key_page(&id)), false, None));
@@ -531,6 +618,13 @@ async fn remove(
             }
             Some(Err(not_offered)) => return Ok(not_offered),
             None => {}
+        }
+        // Copilot: revoke at GitHub, then delete the sealed grant.
+        if id == "copilot" {
+            if let Some(service) = crate::services::copilot::service(&state) {
+                service.disconnect(&user).await?;
+                return Ok(StatusCode::NO_CONTENT.into_response());
+            }
         }
         if let Some(provider) = conn::key_provider_for(&id) {
             if let Some(service) = &state.inference_key_service {
