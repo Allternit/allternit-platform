@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 2.12.0 (2026-11-14)
+
+- **Plans with no computer.** `gizzi connect` shows plan rows that run on Allternit ("no computer needed"), shows the risk notice in the terminal and asks `[y/N]` before connecting. Connected plans appear as `plan/<vendor>/<model>` and `copilot-plan/<model>`.
+- **ChatGPT direct sign-in.** `gizzi connect chatgpt` signs in to your ChatGPT plan on this machine (OpenAI's open sign-in, PKCE, loopback); models appear as `chatgpt/<model>`. `gizzi connect status|disconnect <id>`, `--json` for Desktop.
+- **Plans answer only you.** Plan models chat only, with tools off, and only for messages you type in the TUI. `gizzi run`/`-p`, bots, missions, cron jobs and side calls refuse them.
+- Fix: macOS Keychain reads returned empty for printable secrets.
+
 ## 2.11.1 (2026-11-14)
 
 - **Smaller model requests when a session has tool rules.** Tools that a session's permission rules deny (for example a hosted agent's "deny everything, then its own tools") are no longer sent to the model at all. Before, their schemas went out on every request and a short hosted-agent turn cost about 134k input tokens.
