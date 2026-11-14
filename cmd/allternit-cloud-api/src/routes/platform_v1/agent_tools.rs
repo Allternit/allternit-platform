@@ -193,7 +193,7 @@ struct UsedApproval {
 /// must be this project's, raised by this agent for this recipient (its action is
 /// `text <to>` / `call <to>`), and `approved`; pending, denied, expired and
 /// already-consumed approvals are refused.
-async fn check_approval(db: &PgPool, agent: &AgentRef, input: &Value, to: &str) -> Result<Option<UsedApproval>, Response> {
+async fn check_approval(db: &PgPool, agent: &AgentRef, input: &Value, verb: &str, to: &str) -> Result<Option<UsedApproval>, Response> {
     let Some(approval_id) = input["approval_id"].as_str().map(str::trim).filter(|a| !a.is_empty()) else { return Ok(None) };
     #[derive(sqlx::FromRow)]
     struct Row {
@@ -216,7 +216,8 @@ async fn check_approval(db: &PgPool, agent: &AgentRef, input: &Value, to: &str) 
     let Some(Row { id, source_ref, status, kind, agent_id: approval_agent, expires_at }) = row else {
         return Err(refuse(StatusCode::NOT_FOUND, "approval_not_found", "No such approval."));
     };
-    if approval_agent.as_deref() != Some(agent.id.as_str()) || !kind.contains(to) {
+    // Exact action: an approval for `text +1…0123` never covers `call +1…0123` or `text +1…012`.
+    if approval_agent.as_deref() != Some(agent.id.as_str()) || kind != format!("{verb} {to}") {
         return Err(refuse(StatusCode::FORBIDDEN, "approval_mismatch", "That approval was for a different action."));
     }
     let status = super::approvals::effective_status(&status, expires_at, chrono::Utc::now());
@@ -254,7 +255,7 @@ async fn send_text(state: &ApiState, agent: &AgentRef, input: &Value) -> Respons
         Ok(n) => n,
         Err(r) => return r,
     };
-    let approval = match check_approval(db, agent, input, to).await {
+    let approval = match check_approval(db, agent, input, "text", to).await {
         Ok(a) => a,
         Err(r) => return r,
     };
@@ -292,7 +293,7 @@ async fn place_agent_call(state: &ApiState, agent: &AgentRef, input: &Value, dep
         Ok(n) => n,
         Err(r) => return r,
     };
-    let approval = match check_approval(db, agent, input, to).await {
+    let approval = match check_approval(db, agent, input, "call", to).await {
         Ok(a) => a,
         Err(r) => return r,
     };
