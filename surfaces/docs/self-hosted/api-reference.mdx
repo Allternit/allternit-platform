@@ -21,6 +21,7 @@ Default base URL: `http://127.0.0.1:8400`. Agent shapes follow the [Platform API
   - The same key with a different body gives `422 idempotency_key_reuse`.
   - The same key while the first request still runs gives `409 idempotency_in_progress`. Retry shortly. A request in progress for more than 60 seconds is taken over.
   - Only `2xx` responses are stored, for 24 hours. A failed request can be sent again with the same key.
+  - A key over 255 characters or with characters other than printable ASCII gives `400 invalid_idempotency_key`.
   - The official SDKs retry a failed request with the same key. To retry safely from your own code, send your own key and reuse it. See [SDKs](/self-hosted/sdks).
 - Every error is `{"error": {"type", "message", "code"}}`. The HTTP status says the kind of error; `code` says what went wrong.
 
@@ -96,6 +97,7 @@ Session statuses: `idle`, `running`, `waiting_for_worker`, `interrupted`, `error
 | `custom_tool_conflict` | 409 | A custom tool name clashes with a built-in or MCP tool name. Nothing is stored. |
 | `idempotency_key_reuse` | 422 | The `Idempotency-Key` was used with a different body. |
 | `idempotency_in_progress` | 409 | The first request with this key is still running. Retry shortly. |
+| `invalid_idempotency_key` | 400 | The `Idempotency-Key` is over 255 characters or not printable ASCII. |
 | `server_restarted` | (error event) | The replica running the turn stopped. The session status is `error`. Send the message again. See [Known limits](/self-hosted/overview#known-limits). |
 | `agent_in_use` | 409 | The agent has a non-archived session. |
 | `environment_in_use` | 409 | The environment has a non-archived session. |

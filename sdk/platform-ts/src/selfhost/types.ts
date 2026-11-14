@@ -22,6 +22,7 @@ export type Error = {
      * `custom_tool_conflict` (409, a custom tool name clashes with a built-in or MCP tool name),
      * `idempotency_key_reuse` (422, the Idempotency-Key was used with a different body),
      * `idempotency_in_progress` (409, the first request with this key is still running),
+     * `invalid_idempotency_key` (400, the Idempotency-Key is over 255 characters or not printable ASCII),
      * `server_restarted` (session error event: the replica running the turn stopped; resend the message).
      */
     code: string;
