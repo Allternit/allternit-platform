@@ -11,7 +11,7 @@ bash cmd/allternit-computer-cloud/guest/build-brain-runner-image.sh \
 
 `--runner-bin` is the linux-x64 `allternit-brain-runner` from step 1.2. The script launches an Ubuntu 24.04 container (same glibc as the runner binary built in alt-linux-build), installs Node 22.23.5 and the pinned CLIs (claude 2.1.325, codex 0.169.0, grok 1.0.77, kimi 2.5.2), bakes the self-update-off env into `/etc/environment`, runs `--version` for each CLI, then publishes and exports `out/allternit-brain-runner-<date>.tar.gz` (+ `.sha256`) and prints the size (target 1.5 GB or less) and the `incus image import` line. Change a pin with `CLAUDE_VERSION=... bash build-brain-runner-image.sh ...`.
 
-The image has no SSH, no desktop and does not use systemd. Entry point is `/usr/local/bin/allternit-runner-init`: cloud-api sets `raw.lxc: lxc.init.cmd = /usr/local/bin/allternit-runner-init` and the `ALLTERNIT_RUNNER_*` env (URL, TOKEN, HOME, VENDORS; names as cloud-api `brain_runners.rs` sets them) when it creates the instance.
+The image has no SSH, no desktop and does not use systemd. Entry point is `/usr/local/bin/allternit-runner-init`: cloud-api sets `raw.lxc: lxc.init.cmd = /usr/local/bin/allternit-runner-init` and the `ALLTERNIT_RUNNER_*` env (URL, TOKEN, HOME, VENDORS; names as cloud-api `brain_runners.rs` sets them) when it creates the instance. With no systemd in the box, the wrapper itself leases an address on eth0 (dhcpcd, kept running to renew) and writes `/etc/resolv.conf` pointing at the bridge gateway, the only resolver the host guard allows.
 
 ## 2. Set up the host
 

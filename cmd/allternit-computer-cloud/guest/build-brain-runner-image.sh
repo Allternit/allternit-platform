@@ -102,7 +102,7 @@ x() { incus exec "$BUILDER" -- "$@"; }
 log "base packages"
 x sh -c 'export DEBIAN_FRONTEND=noninteractive
   apt-get update -qq
-  apt-get install -y -qq --no-install-recommends ca-certificates curl xz-utils git util-linux procps tini >/dev/null'
+  apt-get install -y -qq --no-install-recommends ca-certificates curl xz-utils git util-linux procps tini dhcpcd-base iproute2 >/dev/null'
 
 log "Node ${NODE_VERSION}"
 x sh -c "set -e
@@ -166,6 +166,20 @@ if [ -r /etc/environment ]; then
     case "$k" in ''|'#'*) continue ;; esac
     eval "[ -n \"\${$k:-}\" ]" || export "$k=$v"
   done < /etc/environment
+fi
+# No systemd in a runner, so nothing brings eth0 up: lease an address (dhcpcd
+# stays running to renew it) and point DNS at the bridge gateway's dnsmasq,
+# the only resolver the host guard allows.
+if [ -e /sys/class/net/eth0 ]; then
+  ip link set lo up 2>/dev/null || true
+  if ! ip -4 addr show eth0 | grep -q "inet "; then
+    dhcpcd -4 -q -w -t 30 eth0 >/dev/null 2>&1 || echo "allternit-runner-init: no DHCP lease on eth0" >&2
+  fi
+  gw=$(ip -4 route show default | awk '{print $3; exit}')
+  if [ -n "$gw" ]; then
+    rm -f /etc/resolv.conf
+    printf 'nameserver %s\n' "$gw" > /etc/resolv.conf
+  fi
 fi
 : "${ALLTERNIT_RUNNER_HOME:=/home/runner}"
 export ALLTERNIT_RUNNER_HOME HOME=/home/runner
