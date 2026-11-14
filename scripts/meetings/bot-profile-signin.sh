@@ -138,12 +138,13 @@ EOF
 
 log "starting Chrome as meetbot; waiting for you to close it"
 incus exec "$NAME" -- su -s /bin/sh meetbot -c "DISPLAY=:0 /usr/local/bin/allternit-meeting-chrome \
-    --password-store=basic \
+    --no-sandbox --password-store=basic \
     --user-data-dir=$PROFILE_DIR \
     --disable-features=MacAppCodeSignClone \
     --no-first-run --no-default-browser-check --lang=en-US \
     --window-position=0,0 --window-size=1280,800 \
-    https://accounts.google.com/ >/dev/null 2>&1" || true
+    https://accounts.google.com/ >/tmp/signin-chrome.log 2>&1" || true
+incus exec "$NAME" -- sh -c "grep -m3 FATAL /tmp/signin-chrome.log" >&2 || true
 log "Chrome closed"
 
 # Same excludes as the image's allternit-meeting-profile-save hook.
