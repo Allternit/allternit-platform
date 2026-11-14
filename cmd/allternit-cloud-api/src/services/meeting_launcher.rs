@@ -1015,7 +1015,10 @@ impl Launcher {
                 }
                 continue;
             };
-            let gone = matches!(self.provider.liveness(handle).await, Ok(PodLiveness::Gone));
+            // A launching pod is created stopped and only starts after its
+            // files (a Meet bot profile is ~100 MB) are pushed: "stopped" is
+            // normal then. LAUNCH_TIMEOUT below covers a launch that hangs.
+            let gone = row.state != "launching" && matches!(self.provider.liveness(handle).await, Ok(PodLiveness::Gone));
             let reason = if gone {
                 Some(EndReason::Error)
             } else {
