@@ -555,7 +555,7 @@ private struct VoiceOwnProviderSection: View {
                     Label("Scan from my computer", systemImage: "qrcode.viewfinder")
                 }
                 .buttonStyle(SettingsQuietButtonStyle())
-                Text("Already set up on ai.allternit.com or Allternit Desktop? Show the QR code there and scan it. The key goes from screen to camera, not through Allternit.")
+                Text("Already set up on ai.allternit.com or Allternit Desktop? Show the QR code there and scan it. The key is sent end-to-end encrypted. Allternit can't read it.")
                     .font(.system(size: 13))
                     .foregroundColor(Color("TextSecondary"))
                     .fixedSize(horizontal: false, vertical: true)
