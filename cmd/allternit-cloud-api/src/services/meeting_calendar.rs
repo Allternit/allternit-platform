@@ -471,7 +471,7 @@ pub(crate) async fn sync_connection_by_id(state: &Arc<ApiState>, id: Uuid) {
 pub(crate) async fn sync_connection(state: &Arc<ApiState>, conn: &ConnectionRow, prefetched: Option<FetchedFeed>) {
     // Free plans can connect (contract) but Gizzi can't join for them:
     // don't spend provider calls until they upgrade.
-    match crate::services::voice_usage::plan_for_user(&state.db, &conn.user_id).await {
+    match crate::routes::meetings::meetings_plan(&state.db, &conn.user_id).await {
         Ok(plan) if plan == "free" => return,
         Ok(_) => {}
         Err(error) => {

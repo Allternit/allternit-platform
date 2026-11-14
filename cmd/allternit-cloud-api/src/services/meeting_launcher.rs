@@ -606,7 +606,7 @@ impl Launcher {
     /// Step 1: capacity check and claim, under one advisory lock so two
     /// launchers (or replicas) can't both take the last slot or account.
     async fn claim(&self, session: &SessionRow) -> Result<Option<Result<PodRef, EndReason>>, MeetingError> {
-        let plan = crate::services::voice_usage::plan_for_user(&self.db, &session.user_id).await?;
+        let plan = crate::routes::meetings::meetings_plan(&self.db, &session.user_id).await?;
         // Accounts a pod can actually use: active, sealed, key set. Read
         // before the lock (file IO); `needs_reauth`, `suspended` and
         // never-signed-in accounts stay out of the pool.

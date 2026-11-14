@@ -232,10 +232,25 @@ pub(crate) async fn caller(state: &ApiState, headers: &HeaderMap) -> Result<Call
     }
 }
 
+/// The plan Meetings bills and caps against. Users named in
+/// `ALLTERNIT_MEETINGS_USER_IDS` (the internal test allow-list that turns the
+/// flag on for them) get Ultra's meeting limits, so the team can run real
+/// calls before the flag is on for anyone else. Everyone else: their plan.
+pub(crate) async fn meetings_plan(db: &PgPool, user_id: &str) -> std::result::Result<String, crate::error::ApiError> {
+    if is_meetings_test_user(std::env::var("ALLTERNIT_MEETINGS_USER_IDS").ok().as_deref(), user_id) {
+        return Ok("ultra".to_string());
+    }
+    crate::services::voice_usage::plan_for_user(db, user_id).await
+}
+
+pub(crate) fn is_meetings_test_user(allowlist: Option<&str>, user_id: &str) -> bool {
+    !user_id.is_empty() && allowlist.is_some_and(|list| list.split(',').any(|id| id.trim() == user_id))
+}
+
 /// `402 meetings_requires_paid_plan` unless the caller is on Plus, Super or
-/// Ultra. Returns the plan id.
+/// Ultra (or a Meetings test user). Returns the plan id.
 pub(crate) async fn require_paid(db: &PgPool, caller: &Caller) -> Result<String> {
-    let plan = crate::services::voice_usage::plan_for_user(db, &caller.id).await?;
+    let plan = meetings_plan(db, &caller.id).await?;
     if plan == "free" {
         return Err(MeetingError::paid_plan());
     }
@@ -1636,3 +1651,17 @@ async fn decide_approval(
 #[cfg(test)]
 #[path = "meetings_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod meetings_plan_tests {
+    use super::is_meetings_test_user;
+
+    #[test]
+    fn only_listed_ids_are_test_users() {
+        assert!(is_meetings_test_user(Some("user_a, user_b"), "user_b"));
+        assert!(!is_meetings_test_user(Some("user_a,user_b"), "user_c"));
+        assert!(!is_meetings_test_user(Some("user_a"), ""));
+        assert!(!is_meetings_test_user(None, "user_a"));
+        assert!(!is_meetings_test_user(Some("user_ab"), "user_a"));
+    }
+}
