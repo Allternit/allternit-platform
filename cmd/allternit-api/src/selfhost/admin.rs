@@ -47,6 +47,7 @@ COMMANDS:
     rotate-key
         Re-seal every stored credential with secrets.encryption_key_ref.
         Keep the old key in secrets.previous_key_refs until this finishes.
+        Safe while the server is running.
     doctor [--offline]
         Check settings, database, gizzi, inference, egress and OpenTelemetry.
 ";
@@ -479,9 +480,11 @@ async fn rotate_key(args: &Args) -> Result<(), Fail> {
     );
     let report = rotate_credentials(&opened.store, &ring).await?;
     println!(
-        "re-sealed {}, already current {}, failed {}",
+        "re-sealed {}, already current {}, deleted meanwhile {}, retried {}, failed {}",
         report.rotated.len(),
         report.unchanged,
+        report.skipped,
+        report.retried,
         report.failed.len()
     );
     for name in &report.rotated {
@@ -492,7 +495,7 @@ async fn rotate_key(args: &Args) -> Result<(), Fail> {
             eprintln!("  FAILED {name}: {why}");
         }
         return Err(Fail::Run(
-            "some credentials did not open with any key; add the key that sealed them to secrets.previous_key_refs and run again".into(),
+            "some credentials were not re-sealed (could not be opened with any key, or kept changing); add the key that sealed them to secrets.previous_key_refs if needed and run again".into(),
         ));
     }
     Ok(())
