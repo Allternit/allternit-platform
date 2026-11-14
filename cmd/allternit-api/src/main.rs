@@ -1477,6 +1477,9 @@ async fn main() {
         // Allternit Meetings in-call turns (/api/v1/meeting-turns/*): the pod's runner
         // has no Clerk session; each handler checks the internal service token.
         .merge(allternit_api::meeting_turn_stream::meeting_turns_router())
+        // Allternit Meetings bot on this runtime: cloud-api relays status/start/stop
+        // (/webhooks/meeting-bot/*) signed with the device token (RelayedAuth verifies).
+        .merge(allternit_api::meeting_bot_host::meeting_bot_host_router(data_dir.clone(), app_config.api_port()))
         // Desktop Cloud host self-registration from bootstrap cloud-init.
         .merge(allternit_api::desktop_host_admin::public_router())
         // Private Fabric node daemon enrollment and heartbeat.
@@ -1794,6 +1797,9 @@ async fn main() {
 
         // Stop the background loops first, then let in-flight requests finish.
         let _ = shutdown_tx.send(());
+        // Meetings bot runners live in their own process groups; stop them
+        // (and the PulseAudio the host started) before the process exits.
+        allternit_api::meeting_bot_host::shutdown().await;
         tokio::time::sleep(DRAIN_TIMEOUT).await;
         let _ = server_shutdown_tx.send(());
         // Graceful shutdown waits for every open connection, and the UI's

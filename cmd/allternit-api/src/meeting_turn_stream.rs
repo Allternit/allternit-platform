@@ -45,8 +45,12 @@
 //!
 //! Both routes are on the public router and gate themselves with the internal
 //! service token (`x-allternit-internal-token`): the runner is a peer process
-//! in the pod with no Clerk session. The `/api/v1/meeting-turns` prefix is
-//! served by no other module.
+//! in the pod with no Clerk session. A bot started by this runtime's
+//! meeting-bot host sends its own per-session token in that header instead;
+//! it resolves to that session's cloud URL and pod token
+//! ([`crate::meeting_tools::session_cloud`]) and acts only for that session
+//! (another `session_id` is `403 wrong_session`). The `/api/v1/meeting-turns`
+//! prefix is served by no other module.
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -452,11 +456,17 @@ pub fn model_pair(model: Option<&str>) -> Result<(String, String), String> {
 }
 
 impl TurnEngine {
+    /// The old pod path: cloud settings from the process environment.
     pub fn production() -> Self {
+        Self::production_with(MeetingCloud::from_env())
+    }
+
+    /// Production gizzi with this session's cloud settings.
+    pub fn production_with(cloud: Option<MeetingCloud>) -> Self {
         Self {
             gizzi_base: crate::agent_session_routes::gizzi_base(),
             gizzi: crate::agent_session_routes::gizzi_client(&HeaderMap::new()),
-            cloud: MeetingCloud::from_env(),
+            cloud,
             approval_wait: APPROVAL_WAIT,
             poll_every: APPROVAL_POLL,
         }
@@ -658,10 +668,46 @@ fn refuse(status: StatusCode, code: &str, message: &str) -> Response {
     (status, Json(json!({ "error": code, "message": message }))).into_response()
 }
 
-async fn turn_route(State(state): State<Arc<AppState>>, headers: HeaderMap, peer: Option<ConnectInfo<SocketAddr>>, body: axum::body::Bytes) -> Response {
-    if let Err(status) = crate::internal_auth::require_internal_token(&headers, peer, &state) {
-        return refuse(status, "unauthorized", "internal token required");
+/// Who a turn request acts as.
+pub enum TurnAuth {
+    /// A bot the meeting-bot host started: its own session and cloud settings.
+    Session { session_id: String, cloud: MeetingCloud },
+    /// The process-wide internal token (the old pod path): env cloud settings.
+    Process,
+}
+
+impl TurnAuth {
+    /// The engine for this caller, or 403 when a session token is used for
+    /// another session.
+    fn engine_for(self, session_id: &str) -> Result<TurnEngine, Response> {
+        match self {
+            TurnAuth::Session { session_id: own, cloud } if own == session_id => Ok(TurnEngine::production_with(Some(cloud))),
+            TurnAuth::Session { .. } => Err(refuse(StatusCode::FORBIDDEN, "wrong_session", "this bot's token is for another meeting session")),
+            TurnAuth::Process => Ok(TurnEngine::production()),
+        }
     }
+}
+
+/// A registered per-session turn token ([`meeting_tools::register_session_cloud`]).
+pub fn session_turn_auth(headers: &HeaderMap) -> Option<TurnAuth> {
+    let token = headers.get(meeting_tools::TURN_TOKEN_HEADER).and_then(|v| v.to_str().ok())?;
+    meeting_tools::session_cloud(token).map(|(session_id, cloud)| TurnAuth::Session { session_id, cloud })
+}
+
+fn turn_auth(headers: &HeaderMap, peer: Option<ConnectInfo<SocketAddr>>, state: &AppState) -> Result<TurnAuth, Response> {
+    if let Some(auth) = session_turn_auth(headers) {
+        return Ok(auth);
+    }
+    crate::internal_auth::require_internal_token(headers, peer, state)
+        .map(|()| TurnAuth::Process)
+        .map_err(|status| refuse(status, "unauthorized", "internal token required"))
+}
+
+async fn turn_route(State(state): State<Arc<AppState>>, headers: HeaderMap, peer: Option<ConnectInfo<SocketAddr>>, body: axum::body::Bytes) -> Response {
+    let auth = match turn_auth(&headers, peer, &state) {
+        Ok(auth) => auth,
+        Err(response) => return response,
+    };
     let req: MeetingTurnRequest = match serde_json::from_slice(&body) {
         Ok(r) => r,
         Err(e) => return refuse(StatusCode::BAD_REQUEST, "invalid_request", &e.to_string()),
@@ -669,9 +715,12 @@ async fn turn_route(State(state): State<Arc<AppState>>, headers: HeaderMap, peer
     if let Err(e) = req.validate() {
         return refuse(StatusCode::BAD_REQUEST, "invalid_request", &e);
     }
+    let engine = match auth.engine_for(&req.session_id) {
+        Ok(engine) => engine,
+        Err(response) => return response,
+    };
     let (tx, mut rx) = unbounded_channel::<Value>();
     tokio::spawn(async move {
-        let engine = TurnEngine::production();
         if let Err(message) = engine.run(&req, &tx).await {
             warn!(session_id = %req.session_id, "meeting turn failed: {message}");
             let _ = tx.send(json!({ "type": "turn.error", "turn_id": req.turn_id, "message": message }));
@@ -697,15 +746,19 @@ struct SummaryRequest {
 }
 
 async fn summary_route(State(state): State<Arc<AppState>>, headers: HeaderMap, peer: Option<ConnectInfo<SocketAddr>>, body: axum::body::Bytes) -> Response {
-    if let Err(status) = crate::internal_auth::require_internal_token(&headers, peer, &state) {
-        return refuse(status, "unauthorized", "internal token required");
-    }
+    let auth = match turn_auth(&headers, peer, &state) {
+        Ok(auth) => auth,
+        Err(response) => return response,
+    };
     let req: SummaryRequest = match serde_json::from_slice(&body) {
         Ok(r) => r,
         Err(e) => return refuse(StatusCode::BAD_REQUEST, "invalid_request", &e.to_string()),
     };
     if req.session_id.trim().is_empty() || req.transcript.len() > MAX_SEGMENTS {
         return refuse(StatusCode::BAD_REQUEST, "invalid_request", "session_id is required and the transcript is bounded");
+    }
+    if let Err(response) = auth.engine_for(&req.session_id) {
+        return response;
     }
     let summary = if req.transcript.iter().all(|s| s.text.trim().is_empty()) {
         Ok(meeting_tools::MeetingSummary::default())

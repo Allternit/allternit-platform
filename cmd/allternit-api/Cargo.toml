@@ -63,6 +63,9 @@ allternitos-cloud-contracts = { workspace = true }
 # WebSocket
 tokio-tungstenite = { workspace = true, features = ["rustls-tls-webpki-roots"] }
 futures = "0.3"
+# Meetings bot host: unpacks the bot account's Chrome profile (tar.zst).
+tar = { workspace = true }
+zstd = { workspace = true }
 
 # SQLite
 rusqlite = { version = "0.31", features = ["bundled", "chrono"] }
