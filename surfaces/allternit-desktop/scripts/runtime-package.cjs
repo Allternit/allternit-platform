@@ -4,7 +4,7 @@
  * without a new Desktop app build (see src/main/runtime-package.ts).
  *
  *   node scripts/runtime-package.cjs stamp     write resources/runtime.json (build number + bundled file list)
- *   node scripts/runtime-package.cjs pack      write the feed for resources/{bin,platform} → release/runtime/feed/
+ *   node scripts/runtime-package.cjs pack      write the feed for resources/{bin,platform,meeting-bot} → release/runtime/feed/
  *   node scripts/runtime-package.cjs publish   show what would upload; add --confirm to upload to R2
  *
  * Feed layout (bucket allternit-runtime, served at runtime.allternit.com):
@@ -17,7 +17,7 @@
  *
  * Build the parts first without packaging the app:
  *   scripts/build-desktop.sh --skip-electron && (cd surfaces/allternit-desktop &&
- *     npm run prepare:platform-static && npm run prepare:api-binary)
+ *     npm run prepare:platform-static && npm run prepare:api-binary && npm run prepare:meeting-bot)
  *
  * Signing key: ALLTERNIT_RUNTIME_SIGNING_KEY or ~/.config/allternit/runtime-signing-ed25519.pem
  * (Ed25519, PKCS#8 PEM). Its public half is RUNTIME_PUBLIC_KEY in runtime-package.ts.
@@ -77,14 +77,43 @@ function walk(dir, base = dir, out = []) {
   return out;
 }
 
+// The Meetings bot (scripts/prepare-meeting-bot.cjs): resources/meeting-bot plus this
+// platform's rtc-node binding from resources/meeting-bot-native/<platform>/, listed where
+// the app has it after electron-builder's overlay (meeting-bot/node_modules/@livekit/…).
+const BOT_DIR = path.join(RESOURCES, 'meeting-bot');
+const BOT_NATIVE_DIR = path.join(RESOURCES, 'meeting-bot-native', PLATFORM);
+const BOT_RUNNER = 'meeting-bot/dist/runner.js';
+
+/** Manifest path -> source file for the Meetings bot; null when it is not staged for PLATFORM. */
+let botSources;
+function meetingBotSources() {
+  if (botSources !== undefined) return botSources;
+  botSources = null;
+  if (!fs.existsSync(path.join(BOT_DIR, 'dist', 'runner.js')) || !fs.existsSync(BOT_NATIVE_DIR)) return null;
+  const out = new Map();
+  for (const rel of walk(BOT_DIR)) out.set(`meeting-bot/${rel}`, path.join(BOT_DIR, rel));
+  for (const rel of walk(BOT_NATIVE_DIR)) out.set(`meeting-bot/node_modules/${rel}`, path.join(BOT_NATIVE_DIR, rel));
+  botSources = out;
+  return out;
+}
+
+/** Where a manifest path's bytes come from. */
+function sourceOf(rel) {
+  return rel.startsWith('meeting-bot/') ? meetingBotSources()?.get(rel) ?? path.join(RESOURCES, rel) : path.join(RESOURCES, rel);
+}
+
 /** The runtime's files under resources/, as manifest entries. Null when not built yet. */
 function runtimeFiles() {
   if (!BINARIES.every((b) => fs.existsSync(path.join(RESOURCES, 'bin', b)))) return null;
   if (!fs.existsSync(path.join(RESOURCES, 'platform', 'index.html'))) return null;
-  const rels = [...BINARIES.map((b) => `bin/${b}`), ...walk(path.join(RESOURCES, 'platform')).map((r) => `platform/${r}`)];
+  const sources = new Map([
+    ...BINARIES.map((b) => [`bin/${b}`, path.join(RESOURCES, 'bin', b)]),
+    ...walk(path.join(RESOURCES, 'platform')).map((r) => [`platform/${r}`, path.join(RESOURCES, 'platform', r)]),
+    ...(meetingBotSources() ?? []),
+  ]);
   const files = {};
-  for (const rel of rels.sort()) {
-    const buf = fs.readFileSync(path.join(RESOURCES, rel));
+  for (const rel of [...sources.keys()].sort()) {
+    const buf = fs.readFileSync(sources.get(rel));
     files[rel] = { sha256: sha256(buf), size: buf.length };
   }
   return files;
@@ -132,6 +161,15 @@ function signMacBinaries() {
     ], { stdio: 'inherit' });
     console.log(`✓ signed ${binary}`);
   }
+  // The Meetings bot's native modules (the rtc-node binding): Developer ID like the app signs
+  // its own native code, so a runtime update does not ship an unsigned dylib into a hardened app.
+  for (const [rel, file] of meetingBotSources() ?? []) {
+    if (!rel.endsWith('.node')) continue;
+    const details = spawnSync('codesign', ['-dvv', file], { encoding: 'utf8' }).stderr || '';
+    if (details.includes(`Authority=${developerId[1]}`)) continue;
+    execFileSync('codesign', ['--force', '--options', 'runtime', '--timestamp', '--sign', developerId[1], file], { stdio: 'inherit' });
+    console.log(`✓ signed ${rel}`);
+  }
 }
 
 function stamp() {
@@ -149,6 +187,7 @@ function stamp() {
   // The bundled file list lets a runtime update copy unchanged files from the app instead of downloading them.
   const files = runtimeFiles();
   if (!files) console.warn('⚠ runtime parts not staged yet — runtime.json has no file list (updates download every file)');
+  else if (!files[BOT_RUNNER]) console.warn(`⚠ meeting-bot not staged for ${PLATFORM} — run node scripts/prepare-meeting-bot.cjs (the bundled list has no Meetings bot)`);
   const info = {
     version, build, shellApi: shellApi(),
     platformSha: git(REPO_ROOT, 'rev-parse', 'HEAD') || null,
@@ -174,6 +213,8 @@ function pack() {
   const info = fs.existsSync(STAMP) ? JSON.parse(fs.readFileSync(STAMP, 'utf8')) : stamp();
   const files = runtimeFiles();
   if (!files) die(`resources/bin/{${BINARIES.join(',')}} or resources/platform missing — build them first`);
+  // Cloud computers and Desktop run the Meetings bot from the runtime package; never publish one without it.
+  if (!files[BOT_RUNNER]) die(`${BOT_RUNNER} or meeting-bot-native/${PLATFORM} missing — run node scripts/prepare-meeting-bot.cjs (ALLTERNIT_RUNTIME_PLATFORM / ALLTERNIT_RUNTIME_RESOURCES pick the target)`);
   const key = signingKey();
   const objectsDir = path.join(FEED, 'objects');
   const platformDir = path.join(FEED, 'stable', PLATFORM);
@@ -184,7 +225,7 @@ function pack() {
   for (const [rel, f] of Object.entries(files)) {
     const obj = path.join(objectsDir, `${f.sha256}.gz`);
     if (fs.existsSync(obj)) continue;
-    fs.writeFileSync(obj, zlib.gzipSync(fs.readFileSync(path.join(RESOURCES, rel)), { level: 9 }));
+    fs.writeFileSync(obj, zlib.gzipSync(fs.readFileSync(sourceOf(rel)), { level: 9 }));
     written += 1;
   }
   const manifest = Buffer.from(JSON.stringify({

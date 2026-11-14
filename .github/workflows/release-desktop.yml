@@ -423,6 +423,27 @@ jobs:
         run: npm run build:electron -- --publish never
         working-directory: surfaces/allternit-desktop
 
+      - name: Check meeting bot in the package
+        # Each artifact must carry its own OS/arch rtc-node binding
+        # (prepare-meeting-bot.cjs + the per-OS extraResources overlay).
+        shell: bash
+        working-directory: surfaces/allternit-desktop
+        run: |
+          set -euo pipefail
+          for pair in \
+            "release/mac-arm64/Allternit Desktop.app/Contents/Resources|darwin-arm64" \
+            "release/mac/Allternit Desktop.app/Contents/Resources|darwin-x64" \
+            ; do
+            res="${pair%%|*}"; triple="${pair##*|}"
+            for f in "$res/meeting-bot/dist/runner.js" "$res/meeting-bot/node_modules/@livekit/rtc-node/package.json" \
+                     "$res/meeting-bot/node_modules/@livekit/rtc-ffi-bindings-$triple/rtc-node.$triple.node"; do
+              [ -f "$f" ] || { echo "::error::missing $f"; exit 1; }
+            done
+            others=$(ls "$res/meeting-bot/node_modules/@livekit" | grep '^rtc-ffi-bindings-' | grep -v "^rtc-ffi-bindings-$triple$" || true)
+            [ -z "$others" ] || { echo "::error::$res carries other bindings: $others"; exit 1; }
+            echo "ok: $res has rtc-ffi-bindings-$triple"
+          done
+
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
         with:
@@ -687,6 +708,26 @@ jobs:
         run: npm run dist -- --publish never
         working-directory: surfaces/allternit-desktop
 
+      - name: Check meeting bot in the package
+        # Each artifact must carry its own OS/arch rtc-node binding
+        # (prepare-meeting-bot.cjs + the per-OS extraResources overlay).
+        shell: bash
+        working-directory: surfaces/allternit-desktop
+        run: |
+          set -euo pipefail
+          for pair in \
+            "release/win-unpacked/resources|win32-x64-msvc" \
+            ; do
+            res="${pair%%|*}"; triple="${pair##*|}"
+            for f in "$res/meeting-bot/dist/runner.js" "$res/meeting-bot/node_modules/@livekit/rtc-node/package.json" \
+                     "$res/meeting-bot/node_modules/@livekit/rtc-ffi-bindings-$triple/rtc-node.$triple.node"; do
+              [ -f "$f" ] || { echo "::error::missing $f"; exit 1; }
+            done
+            others=$(ls "$res/meeting-bot/node_modules/@livekit" | grep '^rtc-ffi-bindings-' | grep -v "^rtc-ffi-bindings-$triple$" || true)
+            [ -z "$others" ] || { echo "::error::$res carries other bindings: $others"; exit 1; }
+            echo "ok: $res has rtc-ffi-bindings-$triple"
+          done
+
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
         with:
@@ -877,6 +918,13 @@ jobs:
         run: pnpm install --frozen-lockfile --ignore-scripts
         working-directory: surfaces/allternit-desktop
 
+      - name: Stage meeting bot
+        # services/meeting-bot (pnpm deploy --prod, flattened) + the linux-x64
+        # rtc-node binding. This job calls electron-builder directly, so no
+        # prepare chain stages it (macOS/Windows get it from build:electron / dist).
+        run: npm run prepare:meeting-bot
+        working-directory: surfaces/allternit-desktop
+
       - name: Stage Cua Driver
         run: npm run prepare:cua-driver
         working-directory: surfaces/allternit-desktop
@@ -902,6 +950,26 @@ jobs:
         working-directory: surfaces/allternit-desktop
         env:
           ALLTERNIT_BUILD_SUFFIX: ""
+
+      - name: Check meeting bot in the package
+        # Each artifact must carry its own OS/arch rtc-node binding
+        # (prepare-meeting-bot.cjs + the per-OS extraResources overlay).
+        shell: bash
+        working-directory: surfaces/allternit-desktop
+        run: |
+          set -euo pipefail
+          for pair in \
+            "release/linux-unpacked/resources|linux-x64-gnu" \
+            ; do
+            res="${pair%%|*}"; triple="${pair##*|}"
+            for f in "$res/meeting-bot/dist/runner.js" "$res/meeting-bot/node_modules/@livekit/rtc-node/package.json" \
+                     "$res/meeting-bot/node_modules/@livekit/rtc-ffi-bindings-$triple/rtc-node.$triple.node"; do
+              [ -f "$f" ] || { echo "::error::missing $f"; exit 1; }
+            done
+            others=$(ls "$res/meeting-bot/node_modules/@livekit" | grep '^rtc-ffi-bindings-' | grep -v "^rtc-ffi-bindings-$triple$" || true)
+            [ -z "$others" ] || { echo "::error::$res carries other bindings: $others"; exit 1; }
+            echo "ok: $res has rtc-ffi-bindings-$triple"
+          done
 
       - name: Upload Linux artifacts
         uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0

@@ -108,6 +108,109 @@ export function loadIncusHostEnv(env: Record<string, string>, file = path.join(o
   }
 }
 
+/**
+ * The Node allternit-api runs the Meetings bot with (ALLTERNIT_MEETING_NODE).
+ * A real Node >= 20 on PATH or in a common install dir wins: on macOS,
+ * @livekit/rtc-node under Electron logs duplicate ObjC WebRTC classes (Electron
+ * links its own WebRTC), which can crash. Otherwise Electron's own Node, run
+ * with ELECTRON_RUN_AS_NODE=1 (`electron: true`; allternit-api sets that on the
+ * child only, never on itself). An exported ALLTERNIT_MEETING_NODE wins.
+ */
+export interface MeetingNode {
+  node: string;
+  electron: boolean;
+}
+
+export function nodeCandidates(
+  platform: NodeJS.Platform = process.platform,
+  env: NodeJS.ProcessEnv = process.env,
+  home: string = os.homedir(),
+  readdir: (dir: string) => string[] = (dir) => fs.readdirSync(dir),
+): string[] {
+  const exe = platform === 'win32' ? 'node.exe' : 'node';
+  const dirs = (env.PATH ?? env.Path ?? '').split(platform === 'win32' ? ';' : ':').filter(Boolean);
+  if (platform === 'win32') {
+    for (const base of [env.ProgramFiles, env['ProgramFiles(x86)'], env.LOCALAPPDATA && path.join(env.LOCALAPPDATA, 'Programs')]) {
+      if (base) dirs.push(path.join(base, 'nodejs'));
+    }
+    if (env.NVM_SYMLINK) dirs.push(env.NVM_SYMLINK);
+  } else {
+    dirs.push('/opt/homebrew/bin', '/usr/local/bin', '/usr/bin', path.join(home, '.volta', 'bin'));
+    // nvm installs, newest first.
+    try {
+      const nvm = path.join(home, '.nvm', 'versions', 'node');
+      const versions = readdir(nvm).filter((v) => /^v\d+/.test(v));
+      versions.sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
+      for (const v of versions) dirs.push(path.join(nvm, v, 'bin'));
+    } catch {
+      // no nvm
+    }
+  }
+  const join = platform === 'win32' ? path.win32.join : path.posix.join;
+  return [...new Set(dirs.map((d) => join(d, exe)))];
+}
+
+let meetingNodeCache: MeetingNode | null = null;
+
+export function resolveMeetingNode(
+  deps: {
+    env?: NodeJS.ProcessEnv;
+    candidates?: string[];
+    exists?: (file: string) => boolean;
+    version?: (node: string) => string;
+    execPath?: string;
+  } = {},
+): MeetingNode {
+  const env = deps.env ?? process.env;
+  if (env.ALLTERNIT_MEETING_NODE) {
+    return { node: env.ALLTERNIT_MEETING_NODE, electron: env.ALLTERNIT_MEETING_NODE_ELECTRON === '1' };
+  }
+  const exists = deps.exists ?? ((f: string) => fs.existsSync(f));
+  const version =
+    deps.version ??
+    ((node: string) => execFileSync(node, ['--version'], { encoding: 'utf8', timeout: 3000, windowsHide: true }).trim());
+  let tried = 0;
+  for (const node of deps.candidates ?? nodeCandidates(process.platform, env)) {
+    if (!exists(node)) continue;
+    // Each probe blocks the main process briefly; stop after a few.
+    if (++tried > 6) break;
+    try {
+      const m = /^v(\d+)\./.exec(version(node));
+      if (m && Number(m[1]) >= 20) return { node, electron: false };
+    } catch {
+      // not runnable (a broken shim, a timeout)
+    }
+  }
+  return { node: deps.execPath ?? process.execPath, electron: true };
+}
+
+function meetingNodeEnv(): Record<string, string> {
+  meetingNodeCache ??= resolveMeetingNode();
+  return {
+    ALLTERNIT_MEETING_NODE: meetingNodeCache.node,
+    ALLTERNIT_MEETING_NODE_ELECTRON: meetingNodeCache.electron ? '1' : '0',
+  };
+}
+
+/**
+ * The staged Meetings bot (scripts/prepare-meeting-bot.cjs): the active runtime
+ * package's meeting-bot/ when it has one, else the app's bundled copy. Dev runs
+ * fall back to resources/meeting-bot, then services/meeting-bot once built.
+ * Empty when none has dist/runner.js; allternit-api then reports bot_missing.
+ */
+function resolveMeetingBotDir(): string {
+  if (process.env.ALLTERNIT_MEETING_BOT_DIR) return process.env.ALLTERNIT_MEETING_BOT_DIR;
+  const repoRoot = path.resolve(__dirname, '..', '..', '..', '..');
+  const candidates = app.isPackaged
+    ? [runtimeResource('meeting-bot')]
+    : [
+        runtimeResource('meeting-bot'),
+        path.join(__dirname, '..', '..', 'resources', 'meeting-bot'),
+        path.join(repoRoot, 'services', 'meeting-bot'),
+      ];
+  return candidates.find((dir) => fs.existsSync(path.join(dir, 'dist', 'runner.js'))) ?? '';
+}
+
 // Port ownership: the packaged app owns the production gateway port (8013)
 // and reclaims it on launch. A dev desktop (worktree Electron, npm run dev)
 // binds the dev port instead, so a dev build can run side by side with the
@@ -309,6 +412,10 @@ export class BackendManager {
       // Desktop's own subscription gateway, the fallback when no Sessions
       // computer answers (empty on a cloud computer, whose image sets its own).
       ...subsGatewayManager.getApiEnvironment(),
+      // Meetings: the bot runs on this computer (the runtime's
+      // /webhooks/meeting-bot/* routes spawn `<node> <dir>/dist/runner.js`).
+      ALLTERNIT_MEETING_BOT_DIR: resolveMeetingBotDir(),
+      ...meetingNodeEnv(),
       ...(config.extraEnv ?? {}),
     };
     loadTartHostEnv(env);
