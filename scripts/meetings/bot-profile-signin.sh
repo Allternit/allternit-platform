@@ -154,6 +154,7 @@ incus exec "$NAME" -- bash -c "
     tar -C $PROFILE_DIR \
         --exclude=Cache --exclude='Code Cache' --exclude=GPUCache --exclude='Service Worker/CacheStorage' \
         --exclude=Crashpad --exclude=GrShaderCache --exclude=ShaderCache --exclude=DawnCache \
+        --exclude=component_crx_cache --exclude=optimization_guide_model_store --exclude=WasmTtsEngine --exclude="Safe Browsing" --exclude=CertificateRevocation --exclude=OnDeviceHeadSuggestModel --exclude="BrowserMetrics*" --exclude=ActorSafetyLists --exclude=extensions_crx_cache \
         --exclude='Singleton*' \
         -cf - . | zstd -q -3 -c > /root/profile-out.tar.zst
     chmod 0600 /root/profile-out.tar.zst

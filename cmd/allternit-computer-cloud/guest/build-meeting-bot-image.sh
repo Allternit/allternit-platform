@@ -155,6 +155,7 @@ tmp="$out/profile.tar.zst.tmp"
 tar -C "$src" \
     --exclude=Cache --exclude='Code Cache' --exclude=GPUCache --exclude='Service Worker/CacheStorage' \
     --exclude=Crashpad --exclude=GrShaderCache --exclude=ShaderCache --exclude=DawnCache \
+    --exclude=component_crx_cache --exclude=optimization_guide_model_store --exclude=WasmTtsEngine --exclude="Safe Browsing" --exclude=CertificateRevocation --exclude=OnDeviceHeadSuggestModel --exclude="BrowserMetrics*" --exclude=ActorSafetyLists --exclude=extensions_crx_cache \
     --exclude='Singleton*' \
     -cf - . 2>/dev/null | zstd -q -3 -c > "$tmp"
 status=("${PIPESTATUS[@]}")
