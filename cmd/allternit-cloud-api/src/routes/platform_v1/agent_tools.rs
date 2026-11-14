@@ -17,7 +17,20 @@
 //! The runtime names the agent from the gizzi session the tool call came from,
 //! never from model input (`cmd/allternit-api/src/platform_tools.rs`).
 //!
-//! Tools: `knowledge_search {query, limit?}`, `channel_post {text, channel?, target?}`.
+//! Tools: `knowledge_search {query, limit?}`, `channel_post {text, channel?, target?}`,
+//! `send_text {to, text, number_id?, approval_id?}`, `call {to, purpose, number_id?, approval_id?}`.
+//!
+//! **send_text and call** go out from a number bound to the agent
+//! (`phone_numbers.agent_id`); with several bound numbers the runtime says which
+//! with `number_id`. The cloud keeps the rules every send keeps: consent and STOP,
+//! the card on file, the spend cap and metering (a sandbox number is simulated and
+//! not metered). The runtime keeps autonomy: when its rules held the action for the
+//! developer, it passes the approval as `approval_id`, which must be an `approved`
+//! twin row of `platform_approvals` for this agent and recipient; it is the text's
+//! idempotency key and becomes `consumed` once the action ran. A runtime that passes
+//! no `approval_id` has evaluated autonomy itself (the trust boundary of a project's
+//! own runtime). Answers: `{"ok":true,"message_id","status","segments"}` and
+//! `{"ok":true,"call_id","status"}`; refusals are `{"ok":false,"error","message"}`.
 //!
 //! **channel_post and Phase 4.** End customers connect channels with
 //! `/v1/channels/{kind}/connect` (Phase 4). Their connections are rows of
@@ -40,6 +53,10 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use sqlx::PgPool;
 
+use super::calls::{self, CreateCall, VoiceDeps};
+use super::numbers::{api_number, phone_error, ApiNumber};
+use super::{PlatformCaller, PlatformError};
+use crate::routes::phone;
 use crate::routes::runtime_pairing::{device_token_from_headers, runtime_device_for_token};
 use crate::ApiState;
 
@@ -48,13 +65,20 @@ pub fn runtime_routes() -> Router<Arc<ApiState>> {
 }
 
 /// Tools served here.
-pub const CLOUD_TOOLS: [&str; 2] = ["knowledge_search", "channel_post"];
+pub const CLOUD_TOOLS: [&str; 4] = ["knowledge_search", "channel_post", "send_text", "call"];
 
 pub const MAX_POST_CHARS: usize = 4000;
 const MAX_QUERY_CHARS: usize = 500;
+/// The longest text an agent sends: ten concatenated SMS segments.
+pub const MAX_TEXT_CHARS: usize = 1600;
 
 fn refuse(status: StatusCode, code: &str, message: &str) -> Response {
     (status, Json(json!({ "ok": false, "error": code, "message": message }))).into_response()
+}
+
+/// A Platform API error as a tool refusal (same status, `ok:false`).
+fn refusal(e: PlatformError) -> Response {
+    refuse(e.status, &e.code, &e.message)
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -64,6 +88,7 @@ struct ToolBody {
 }
 
 struct AgentRef {
+    id: String,
     project_id: String,
     account_id: String,
     name: String,
@@ -95,12 +120,13 @@ async fn agent_for_runtime(db: &PgPool, headers: &HeaderMap, agent_id: &str) -> 
     let Some((account_id, name, tools)) = row else {
         return Err(refuse(StatusCode::NOT_FOUND, "agent_not_found", "No such agent."));
     };
-    Ok(AgentRef { project_id: project_id.to_string(), account_id, name, tools })
+    Ok(AgentRef { id: agent_id.to_string(), project_id: project_id.to_string(), account_id, name, tools })
 }
 
 async fn tool_h(
     State(state): State<Arc<ApiState>>,
     headers: HeaderMap,
+    voice: Option<axum::Extension<Arc<VoiceDeps>>>,
     Path((agent_id, tool)): Path<(String, String)>,
     body: Option<Json<ToolBody>>,
 ) -> Response {
@@ -117,8 +143,181 @@ async fn tool_h(
     let input = body.map(|Json(b)| b.input).unwrap_or(Value::Null);
     match tool.as_str() {
         "knowledge_search" => knowledge_search(&state.db, &agent_id, &input).await,
+        "send_text" => send_text(&state, &agent, &input).await,
+        "call" => place_agent_call(&state, &agent, &input, voice.map(|axum::Extension(d)| d)).await,
         _ => channel_post(&state, &agent, &input, &ProdChannels).await,
     }
+}
+
+// ---------------------------------------------------------------- send_text and call
+
+/// The caller of record for an agent's phone tool: the project, bound to the
+/// agent's account, acting as `agent_tool`.
+async fn tool_caller(db: &PgPool, agent: &AgentRef) -> Result<PlatformCaller, Response> {
+    calls::internal_caller(db, &agent.project_id, &agent.account_id, "agent_tool", &["messaging", "voice"]).await.map_err(refusal)
+}
+
+/// The number a phone tool uses: `number_id` when given, which must be a live
+/// number of this project bound to this agent; otherwise the agent's only number.
+async fn from_number(db: &PgPool, caller: &PlatformCaller, agent: &AgentRef, input: &Value) -> Result<ApiNumber, Response> {
+    let bound: Vec<String> = sqlx::query_scalar(
+        "SELECT id FROM phone_numbers WHERE project_id = $1 AND agent_id = $2 AND released_at IS NULL ORDER BY created_at, id",
+    )
+    .bind(&agent.project_id)
+    .bind(&agent.id)
+    .fetch_all(db)
+    .await
+    .map_err(|e| refusal(e.into()))?;
+    let id = match input["number_id"].as_str().map(str::trim).filter(|n| !n.is_empty()) {
+        Some(n) if bound.iter().any(|b| b == n) => n.to_string(),
+        Some(_) => return Err(refuse(StatusCode::FORBIDDEN, "number_not_bound", "That number isn't bound to this agent.")),
+        None => match bound.as_slice() {
+            [] => return Err(refuse(StatusCode::CONFLICT, "no_number", "No number is bound to this agent, so it can't text or call. Tell the person.")),
+            [only] => only.clone(),
+            _ => return Err(refuse(StatusCode::BAD_REQUEST, "number_required", "This agent has several numbers; say which with `number_id`.")),
+        },
+    };
+    api_number(db, caller, &id).await.map_err(refusal)
+}
+
+/// An approval the runtime passed as `approval_id`.
+struct UsedApproval {
+    source_ref: String,
+    id: String,
+}
+
+/// Check the developer's approval for this action (`approval_id` absent: none
+/// needed, see the module docs). The runtime sends its own approval id (the
+/// `gap_…` id of its `gateway_approvals` row), which is the twin row's
+/// `source_ref`; the public `apr_…` id of the same row is accepted too. The row
+/// must be this project's, raised by this agent for this recipient (its action is
+/// `text <to>` / `call <to>`), and `approved`; pending, denied, expired and
+/// already-consumed approvals are refused.
+async fn check_approval(db: &PgPool, agent: &AgentRef, input: &Value, to: &str) -> Result<Option<UsedApproval>, Response> {
+    let Some(approval_id) = input["approval_id"].as_str().map(str::trim).filter(|a| !a.is_empty()) else { return Ok(None) };
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        id: String,
+        source_ref: String,
+        status: String,
+        kind: String,
+        agent_id: Option<String>,
+        expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    }
+    let row: Option<Row> = sqlx::query_as(
+        "SELECT id, source_ref, status, kind, proposed_action->>'agent_id' AS agent_id, expires_at FROM platform_approvals \
+         WHERE project_id = $1 AND source = 'twin' AND (id = $2 OR source_ref = $2) ORDER BY (id = $2) DESC LIMIT 1",
+    )
+    .bind(&agent.project_id)
+    .bind(approval_id)
+    .fetch_optional(db)
+    .await
+    .map_err(|e| refusal(e.into()))?;
+    let Some(Row { id, source_ref, status, kind, agent_id: approval_agent, expires_at }) = row else {
+        return Err(refuse(StatusCode::NOT_FOUND, "approval_not_found", "No such approval."));
+    };
+    if approval_agent.as_deref() != Some(agent.id.as_str()) || !kind.contains(to) {
+        return Err(refuse(StatusCode::FORBIDDEN, "approval_mismatch", "That approval was for a different action."));
+    }
+    let status = super::approvals::effective_status(&status, expires_at, chrono::Utc::now());
+    if status != "approved" {
+        return Err(refuse(StatusCode::CONFLICT, "approval_not_approved", &format!("That approval is {status}, not approved, so nothing was sent.")));
+    }
+    Ok(Some(UsedApproval { source_ref, id }))
+}
+
+/// `approved → consumed` once the approved action ran (best effort: it already ran).
+async fn consume(db: &PgPool, agent: &AgentRef, approval: Option<UsedApproval>) {
+    if let Some(a) = approval {
+        if let Err(e) = super::approvals::mark_consumed(db, &agent.project_id, "twin", &a.source_ref).await {
+            tracing::warn!(approval = %a.id, "platform agent tool: approval not marked consumed: {e}");
+        }
+    }
+}
+
+async fn send_text(state: &ApiState, agent: &AgentRef, input: &Value) -> Response {
+    let db = &state.db;
+    let to = input["to"].as_str().unwrap_or("").trim();
+    // The text is sent as given (an approved text is the approved wording).
+    let text = input["text"].as_str().unwrap_or("");
+    if to.is_empty() {
+        return refuse(StatusCode::BAD_REQUEST, "invalid_to", "to must be an E.164 number like +14155550101.");
+    }
+    if text.trim().is_empty() || text.chars().count() > MAX_TEXT_CHARS {
+        return refuse(StatusCode::BAD_REQUEST, "invalid_text", &format!("text must be 1 to {MAX_TEXT_CHARS} characters."));
+    }
+    let caller = match tool_caller(db, agent).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
+    let number = match from_number(db, &caller, agent, input).await {
+        Ok(n) => n,
+        Err(r) => return r,
+    };
+    let approval = match check_approval(db, agent, input, to).await {
+        Ok(a) => a,
+        Err(r) => return r,
+    };
+    let carrier = if number.simulated {
+        None
+    } else {
+        match phone::carrier() {
+            Ok(c) => Some(c),
+            Err(e) => return refusal(phone_error(e)),
+        }
+    };
+    // One approval sends one text: the carrier dedupes a retry on this key.
+    let idem = approval.as_ref().map(|a| format!("approval:{}", a.id));
+    match super::texts::send_inner(db, &caller, &number, to, text, carrier.as_deref(), idem.as_deref()).await {
+        Ok(m) => {
+            consume(db, agent, approval).await;
+            Json(json!({ "ok": true, "message_id": m.id, "status": m.status, "segments": m.segments })).into_response()
+        }
+        Err(e) => refusal(e),
+    }
+}
+
+async fn place_agent_call(state: &ApiState, agent: &AgentRef, input: &Value, deps: Option<Arc<VoiceDeps>>) -> Response {
+    let db = &state.db;
+    let to = input["to"].as_str().unwrap_or("").trim();
+    let purpose = input["purpose"].as_str().unwrap_or("");
+    if to.is_empty() {
+        return refuse(StatusCode::BAD_REQUEST, "invalid_to", "to must be an E.164 number like +14155550101.");
+    }
+    let caller = match tool_caller(db, agent).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
+    let number = match from_number(db, &caller, agent, input).await {
+        Ok(n) => n,
+        Err(r) => return r,
+    };
+    let approval = match check_approval(db, agent, input, to).await {
+        Ok(a) => a,
+        Err(r) => return r,
+    };
+    let body = CreateCall { agent_id: agent.id.clone(), from_number_id: number.id, to: to.to_string(), purpose: purpose.to_string(), record: false };
+    let call = match calls::place_call(state, &caller, deps, body).await {
+        Ok(c) => c,
+        Err(e) => return refusal(e),
+    };
+    consume(db, agent, approval).await;
+    // A sandbox call is `in_progress` at once and holds the project's call slot
+    // until someone ends it; nobody plays the turns of a call an agent placed,
+    // so it ends here (`completed`, reason `simulated`) and gives the slot back.
+    let status = if call.simulated {
+        match calls::finish(db, &call.id, "completed", "simulated", None, None).await {
+            Ok(Some(row)) => row.status,
+            Ok(None) => call.status,
+            Err(e) => {
+                tracing::warn!(call = %call.id, code = %e.code, "platform agent call: simulated call not ended");
+                call.status
+            }
+        }
+    } else {
+        call.status
+    };
+    Json(json!({ "ok": true, "call_id": call.id, "status": status })).into_response()
 }
 
 async fn knowledge_search(db: &PgPool, agent_id: &str, input: &Value) -> Response {
@@ -388,7 +587,7 @@ mod tests {
         .execute(db)
         .await
         .unwrap();
-        let agent = |acct: &str| AgentRef { project_id: "proj_c".into(), account_id: format!("proj_c_{acct}"), name: "Ada".into(), tools: vec!["channel_post".into()] };
+        let agent = |acct: &str| AgentRef { id: "proj_c_agent".into(), project_id: "proj_c".into(), account_id: format!("proj_c_{acct}"), name: "Ada".into(), tools: vec!["channel_post".into()] };
         let sender = FakeSender::default();
         let body = |r: Response| async move { serde_json::from_slice::<Value>(&axum::body::to_bytes(r.into_body(), 1 << 20).await.unwrap()).unwrap() };
 
@@ -415,5 +614,358 @@ mod tests {
         assert_eq!(sender.0.lock().unwrap().last().unwrap().0, "cc_b2");
         let r = channel_post(&state, &agent("acct_b"), &json!({ "text": "" }), &sender).await;
         assert_eq!(body(r).await["error"], "invalid_text");
+    }
+}
+
+/// `send_text` / `call` and the agent's numbers reaching its runtime. Real
+/// Postgres, the real routes; only the hosted runtime is fake.
+#[cfg(test)]
+mod phone_tests {
+    use super::*;
+    use crate::routes::platform_v1::{
+        conversations,
+        hosting::{self, AgentHost, HostRuntime},
+        projects::{self, Principal},
+        router_gated, Gate, ProjectEnv,
+    };
+    use crate::routes::test_support::{test_state, MockGateway};
+    use crate::routes::voice_calls_cloud::RelayStream;
+    use crate::services::api_keys::{self, CreateProjectKeyInput};
+    use axum::body::Body;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Mutex;
+    use tower::ServiceExt;
+
+    /// Records the agent definitions it is sent. With `ack` it answers like a
+    /// current runtime (`phoneNumbers: <count>`); without, like one from before the field.
+    #[derive(Default)]
+    struct SpecHost {
+        ack: AtomicBool,
+        specs: Mutex<Vec<Value>>,
+    }
+
+    #[async_trait::async_trait]
+    impl AgentHost for SpecHost {
+        async fn runtime(&self, project_id: &str) -> Result<HostRuntime, PlatformError> {
+            Ok(HostRuntime { owner: hosting::runtime_owner(project_id), runtime_id: "rt_1".into() })
+        }
+        async fn call(&self, _rt: &HostRuntime, method: &str, path: &str, body: &Value) -> Result<(u16, Value), PlatformError> {
+            if method == "PUT" && path.starts_with("/api/v1/platform/agents/") {
+                self.specs.lock().unwrap().push(body.clone());
+                let mut answer = json!({ "ok": true });
+                if self.ack.load(Ordering::SeqCst) {
+                    if let Some(n) = body.get("phoneNumbers").and_then(Value::as_array) {
+                        answer["phoneNumbers"] = json!(n.len());
+                    }
+                }
+                return Ok((200, answer));
+            }
+            Ok((200, json!({ "sessionId": "ses_1" })))
+        }
+        async fn stream(&self, _rt: &HostRuntime, _path: &str, _body: &Value) -> Result<RelayStream, PlatformError> {
+            Err(hosting::starting())
+        }
+    }
+
+    struct Ctx {
+        state: Arc<ApiState>,
+        app: Router,
+        host: Arc<SpecHost>,
+    }
+
+    async fn ctx() -> Ctx {
+        let state = test_state(Arc::new(MockGateway::new(None, vec![]))).await;
+        crate::routes::test_support::platform_schema(&state.db).await;
+        let host = Arc::new(SpecHost::default());
+        let dyn_host: Arc<dyn AgentHost> = host.clone();
+        let app = router_gated(&state, Gate::Forced(true)).merge(runtime_routes()).layer(axum::Extension(dyn_host)).with_state(state.clone());
+        Ctx { state, app, host }
+    }
+
+    async fn req(app: &Router, method: &str, path: &str, token: &str, body: Option<Value>) -> (StatusCode, Value) {
+        let b = axum::http::Request::builder().method(method).uri(path).header("authorization", format!("Bearer {token}"));
+        let r = match body {
+            Some(v) => b.header("content-type", "application/json").body(Body::from(v.to_string())).unwrap(),
+            None => b.body(Body::empty()).unwrap(),
+        };
+        let resp = app.clone().oneshot(r).await.unwrap();
+        let status = resp.status();
+        let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20).await.unwrap();
+        (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
+    }
+
+    /// A sandbox project (card on file), its key, one account and its runtime's device token.
+    struct Proj {
+        id: String,
+        key: String,
+        acct: String,
+        runtime: String,
+    }
+
+    async fn sandbox(c: &Ctx, owner: &str) -> Proj {
+        let p = projects::create_project(&c.state.db, &Principal { user_id: owner.into(), org_id: None, org_admin: false }, "phone tools", ProjectEnv::Sandbox).await.unwrap();
+        crate::routes::platform_v1::project_billing::put_test_card(&c.state.db, &p.id).await;
+        let key = api_keys::create_project_key(
+            &c.state.db,
+            CreateProjectKeyInput {
+                user_id: p.owner_user_id.clone(),
+                organization_id: None,
+                project_id: p.id.clone(),
+                account_id: None,
+                env: ProjectEnv::Sandbox,
+                name: "k".into(),
+                scopes: ["agents", "numbers", "messaging", "voice"].iter().map(|s| s.to_string()).collect(),
+            },
+        )
+        .await
+        .unwrap()
+        .token;
+        let (_, a) = req(&c.app, "POST", "/v1/accounts", &key, Some(json!({ "name": "Lakeside Dental" }))).await;
+        let token = format!("allternit_runtime_{}_secret", p.id);
+        sqlx::query("INSERT INTO runtime_devices (id, user_id, name, status, credential_expires_at, credential_hash) VALUES ($1, $2, 'rt', 'online', '2999-01-01', $3)")
+            .bind(format!("rt_{}", p.id))
+            .bind(format!("platform:{}", p.id))
+            .bind(crate::routes::runtime_pairing::sha256_hex(token.as_bytes()))
+            .execute(&c.state.db)
+            .await
+            .unwrap();
+        Proj { id: p.id, key, acct: a["id"].as_str().unwrap().to_string(), runtime: token }
+    }
+
+    async fn agent(c: &Ctx, p: &Proj) -> String {
+        let (s, ag) = req(&c.app, "POST", "/v1/agents", &p.key, Some(json!({ "account_id": p.acct, "name": "Front desk", "tools": ["send_text", "call"] }))).await;
+        assert_eq!(s, StatusCode::CREATED, "{ag}");
+        ag["id"].as_str().unwrap().to_string()
+    }
+
+    /// A simulated number, bound to `agent` when given. Returns (id, e164).
+    async fn number(c: &Ctx, p: &Proj, agent: Option<&str>) -> (String, String) {
+        let (s, n) = req(&c.app, "POST", "/v1/numbers", &p.key, Some(json!({ "account_id": p.acct, "agent_id": agent }))).await;
+        assert_eq!(s, StatusCode::CREATED, "{n}");
+        (n["id"].as_str().unwrap().to_string(), n["e164"].as_str().unwrap().to_string())
+    }
+
+    async fn consent(c: &Ctx, p: &Proj, number: &str, to: &str) {
+        let (s, b) = req(&c.app, "POST", &format!("/v1/numbers/{number}/consent"), &p.key, Some(json!({ "e164": to, "source": "web form" }))).await;
+        assert_eq!(s, StatusCode::CREATED, "{b}");
+    }
+
+    async fn tool(c: &Ctx, p: &Proj, agent: &str, name: &str, input: Value) -> (StatusCode, Value) {
+        req(&c.app, "POST", &format!("/api/v1/runtime-devices/me/platform-agents/{agent}/tools/{name}"), &p.runtime, Some(json!({ "input": input }))).await
+    }
+
+    async fn synced(db: &PgPool, agent: &str) -> bool {
+        sqlx::query_scalar::<_, Option<chrono::DateTime<chrono::Utc>>>("SELECT synced_at FROM platform_agents WHERE id = $1").bind(agent).fetch_one(db).await.unwrap().is_some()
+    }
+
+    async fn mark_synced(db: &PgPool, agents: &[&str]) {
+        sqlx::query("UPDATE platform_agents SET synced_at = NOW() + INTERVAL '1 hour', runtime_id = 'rt_1' WHERE id = ANY($1)").bind(agents).execute(db).await.unwrap();
+    }
+
+    async fn ensure(c: &Ctx, p: &Proj, agent: &str) {
+        let caller = calls::internal_caller(&c.state.db, &p.id, &p.acct, "test", &["agents"]).await.unwrap();
+        conversations::ensure_agent(&c.state, c.host.as_ref(), &caller, agent).await.unwrap();
+    }
+
+    fn last_spec_for(c: &Ctx, numbers: usize) -> Value {
+        let specs = c.host.specs.lock().unwrap();
+        let last = specs.last().cloned().expect("a definition was sent");
+        assert_eq!(last["phoneNumbers"].as_array().map(Vec::len), Some(numbers), "{last}");
+        last
+    }
+
+    #[tokio::test]
+    async fn the_runtime_gets_only_the_agents_live_numbers_and_must_acknowledge_them() {
+        let c = ctx().await;
+        let p = sandbox(&c, "dev_spec").await;
+        let (a, b, plain) = (agent(&c, &p).await, agent(&c, &p).await, agent(&c, &p).await);
+        let (n_a, e_a) = number(&c, &p, Some(&a)).await;
+        number(&c, &p, Some(&b)).await;
+        let (released, _) = number(&c, &p, Some(&a)).await;
+        let (s, _) = req(&c.app, "DELETE", &format!("/v1/numbers/{released}"), &p.key, None).await;
+        assert_eq!(s, StatusCode::OK);
+
+        // A runtime from before `phoneNumbers` takes the definition but doesn't
+        // acknowledge the numbers: the agent stays unsynced and is sent again.
+        ensure(&c, &p, &a).await;
+        let spec = last_spec_for(&c, 1);
+        assert_eq!(spec["phoneNumbers"], json!([{ "id": n_a, "e164": e_a }]), "only A's live number");
+        assert!(!synced(&c.state.db, &a).await, "no stamp without the ack");
+        let sent = c.host.specs.lock().unwrap().len();
+        ensure(&c, &p, &a).await;
+        assert_eq!(c.host.specs.lock().unwrap().len(), sent + 1, "re-sent while unacknowledged");
+
+        // An agent without numbers needs no ack.
+        ensure(&c, &p, &plain).await;
+        assert_eq!(last_spec_for(&c, 0)["phoneNumbers"], json!([]));
+        assert!(synced(&c.state.db, &plain).await);
+
+        // A current runtime acknowledges: synced, and not sent again.
+        c.host.ack.store(true, Ordering::SeqCst);
+        ensure(&c, &p, &a).await;
+        assert!(synced(&c.state.db, &a).await);
+        let sent = c.host.specs.lock().unwrap().len();
+        ensure(&c, &p, &a).await;
+        assert_eq!(c.host.specs.lock().unwrap().len(), sent, "fresh agent is not re-sent");
+    }
+
+    #[tokio::test]
+    async fn binding_rebinding_unbinding_and_releasing_resync_both_agents() {
+        let c = ctx().await;
+        let db = &c.state.db;
+        let p = sandbox(&c, "dev_bind").await;
+        let (a, b) = (agent(&c, &p).await, agent(&c, &p).await);
+        let (n, _) = number(&c, &p, None).await;
+        let patch = |agent_id: Value| {
+            let (app, key, n) = (c.app.clone(), p.key.clone(), n.clone());
+            async move {
+                let (s, body) = req(&app, "PATCH", &format!("/v1/numbers/{n}"), &key, Some(json!({ "agent_id": agent_id }))).await;
+                assert_eq!(s, StatusCode::OK, "{body}");
+            }
+        };
+
+        mark_synced(db, &[&a, &b]).await;
+        patch(json!(a)).await;
+        assert_eq!((synced(db, &a).await, synced(db, &b).await), (false, true), "bind: the new agent resyncs");
+
+        mark_synced(db, &[&a, &b]).await;
+        patch(json!(b)).await;
+        assert_eq!((synced(db, &a).await, synced(db, &b).await), (false, false), "rebind: both resync");
+
+        mark_synced(db, &[&a, &b]).await;
+        patch(Value::Null).await;
+        assert_eq!((synced(db, &a).await, synced(db, &b).await), (true, false), "unbind: the old agent resyncs");
+
+        patch(json!(a)).await;
+        mark_synced(db, &[&a, &b]).await;
+        let (s, _) = req(&c.app, "DELETE", &format!("/v1/numbers/{n}"), &p.key, None).await;
+        assert_eq!(s, StatusCode::OK);
+        assert_eq!((synced(db, &a).await, synced(db, &b).await), (false, true), "release: the bound agent resyncs");
+    }
+
+    #[tokio::test]
+    async fn an_agent_sends_only_from_its_own_numbers() {
+        let c = ctx().await;
+        let p = sandbox(&c, "dev_own").await;
+        let other = sandbox(&c, "dev_other").await;
+        let (a, b) = (agent(&c, &p).await, agent(&c, &p).await);
+        let (n_a, _) = number(&c, &p, Some(&a)).await;
+        let (n_b, _) = number(&c, &p, Some(&b)).await;
+        let other_agent = agent(&c, &other).await;
+        let (n_other, _) = number(&c, &other, Some(&other_agent)).await;
+        let to = "+14155550123";
+        consent(&c, &p, &n_a, to).await;
+        consent(&c, &p, &n_b, to).await;
+
+        for foreign in [&n_b, &n_other] {
+            let (s, r) = tool(&c, &p, &a, "send_text", json!({ "to": to, "text": "Hi", "number_id": foreign })).await;
+            assert_eq!((s, r["ok"].as_bool(), r["error"].as_str()), (StatusCode::FORBIDDEN, Some(false), Some("number_not_bound")), "{r}");
+            let (s, r) = tool(&c, &p, &a, "call", json!({ "to": to, "purpose": "Confirm", "number_id": foreign })).await;
+            assert_eq!((s, r["error"].as_str()), (StatusCode::FORBIDDEN, Some("number_not_bound")), "{r}");
+        }
+        let sent: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM platform_messages").fetch_one(&c.state.db).await.unwrap();
+        assert_eq!(sent, 0);
+
+        // A second number on A: it has to say which.
+        number(&c, &p, Some(&a)).await;
+        let (s, r) = tool(&c, &p, &a, "send_text", json!({ "to": to, "text": "Hi" })).await;
+        assert_eq!((s, r["error"].as_str()), (StatusCode::BAD_REQUEST, Some("number_required")), "{r}");
+    }
+
+    #[tokio::test]
+    async fn a_simulated_text_is_recorded_and_not_metered() {
+        let c = ctx().await;
+        let db = &c.state.db;
+        let p = sandbox(&c, "dev_sim").await;
+        let a = agent(&c, &p).await;
+        let (n, e164) = number(&c, &p, Some(&a)).await;
+        let to = "+14155550123";
+        consent(&c, &p, &n, to).await;
+
+        let (s, r) = tool(&c, &p, &a, "send_text", json!({ "to": to, "text": "Your cleaning is tomorrow at 10." })).await;
+        assert_eq!(s, StatusCode::OK, "{r}");
+        assert_eq!((r["ok"].as_bool(), r["status"].as_str(), r["segments"].as_i64()), (Some(true), Some("simulated"), Some(1)), "{r}");
+        let row: (String, String, String, String, String) =
+            sqlx::query_as("SELECT number_id, from_e164, to_e164, body, status FROM platform_messages WHERE id = $1 AND project_id = $2")
+                .bind(r["message_id"].as_str().unwrap())
+                .bind(&p.id)
+                .fetch_one(db)
+                .await
+                .unwrap();
+        assert_eq!(row, (n, e164, to.to_string(), "Your cleaning is tomorrow at 10.".to_string(), "simulated".to_string()));
+        let metered: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM platform_usage_events WHERE project_id = $1").bind(&p.id).fetch_one(db).await.unwrap();
+        assert_eq!(metered, 0, "a simulated text costs nothing");
+    }
+
+    async fn approval(db: &PgPool, p: &Proj, id: &str, source_ref: &str, action: &str, agent: &str, status: &str) {
+        sqlx::query(
+            "INSERT INTO platform_approvals (id, project_id, source, source_ref, account_id, kind, proposed_action, status) VALUES ($1, $2, 'twin', $3, $4, $5, $6, $7)",
+        )
+        .bind(id)
+        .bind(&p.id)
+        .bind(source_ref)
+        .bind(&p.acct)
+        .bind(action)
+        .bind(json!({ "action": action, "agent_id": agent }))
+        .bind(status)
+        .execute(db)
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn an_approved_text_sends_once_and_the_approval_is_consumed() {
+        let c = ctx().await;
+        let db = &c.state.db;
+        let p = sandbox(&c, "dev_appr").await;
+        let a = agent(&c, &p).await;
+        let (n, _) = number(&c, &p, Some(&a)).await;
+        let to = "+14155550123";
+        consent(&c, &p, &n, to).await;
+        approval(db, &p, "apr_1", "gap_1", &format!("text {to}"), &a, "pending").await;
+        let messages = || async { sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM platform_messages WHERE project_id = $1").bind(&p.id).fetch_one(db).await.unwrap() };
+        let status = || async { sqlx::query_scalar::<_, String>("SELECT status FROM platform_approvals WHERE id = 'apr_1'").fetch_one(db).await.unwrap() };
+        let input = json!({ "to": to, "text": "See you at 10.", "approval_id": "gap_1" });
+
+        let (s, r) = tool(&c, &p, &a, "send_text", input.clone()).await;
+        assert_eq!((s, r["error"].as_str()), (StatusCode::CONFLICT, Some("approval_not_approved")), "{r}");
+        assert_eq!(messages().await, 0, "nothing sent while pending");
+
+        sqlx::query("UPDATE platform_approvals SET status = 'approved' WHERE id = 'apr_1'").execute(db).await.unwrap();
+        let (s, r) = tool(&c, &p, &a, "send_text", input.clone()).await;
+        assert_eq!((s, r["ok"].as_bool()), (StatusCode::OK, Some(true)), "{r}");
+        assert_eq!(status().await, "consumed");
+        let (s, r) = tool(&c, &p, &a, "send_text", input).await;
+        assert_eq!((s, r["error"].as_str()), (StatusCode::CONFLICT, Some("approval_not_approved")), "{r}");
+        assert_eq!(messages().await, 1, "one approval, one text");
+
+        // An approval for someone else can't be spent on this recipient (public id works too).
+        approval(db, &p, "apr_2", "gap_2", "text +14155550999", &a, "approved").await;
+        let (s, r) = tool(&c, &p, &a, "send_text", json!({ "to": to, "text": "Hi", "approval_id": "apr_2" })).await;
+        assert_eq!((s, r["error"].as_str()), (StatusCode::FORBIDDEN, Some("approval_mismatch")), "{r}");
+        assert_eq!(messages().await, 1);
+    }
+
+    #[tokio::test]
+    async fn an_agent_call_needs_consent_and_a_sandbox_call_gives_its_slot_back() {
+        let c = ctx().await;
+        let p = sandbox(&c, "dev_call").await;
+        let a = agent(&c, &p).await;
+        let (n, _) = number(&c, &p, Some(&a)).await;
+        let to = "+14155550123";
+        let input = json!({ "to": to, "purpose": "Confirm tomorrow's cleaning" });
+
+        let (s, r) = tool(&c, &p, &a, "call", input.clone()).await;
+        assert_eq!((s, r["ok"].as_bool(), r["error"].as_str()), (StatusCode::FORBIDDEN, Some(false), Some("no_consent")), "{r}");
+
+        consent(&c, &p, &n, to).await;
+        // Sandbox projects have one call slot: the second call only goes through
+        // because the first (simulated, nobody plays it) ended and freed it.
+        for _ in 0..2 {
+            let (s, r) = tool(&c, &p, &a, "call", input.clone()).await;
+            assert_eq!((s, r["ok"].as_bool(), r["status"].as_str()), (StatusCode::OK, Some(true), Some("completed")), "{r}");
+            let (s, got) = req(&c.app, "GET", &format!("/v1/calls/{}", r["call_id"].as_str().unwrap()), &p.key, None).await;
+            assert_eq!((s, got["status"].as_str(), got["end_reason"].as_str()), (StatusCode::OK, Some("completed"), Some("simulated")), "{got}");
+        }
     }
 }
