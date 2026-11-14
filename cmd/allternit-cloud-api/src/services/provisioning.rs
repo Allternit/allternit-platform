@@ -74,6 +74,12 @@ mod free;
 mod orgo;
 #[path = "provisioning_credit.rs"]
 mod credit;
+#[path = "provisioning_plan_hours.rs"]
+mod plan_hours;
+pub use plan_hours::{
+    month_start, next_month_start, plan_hours_usage, PlanHoursDefaults, PlanHoursTick, PlanHoursUsage,
+    PLAN_HOURS_STOP_REASON, PLAN_OVERAGE_LEDGER_SOURCE, PLUS_PLAN_ID,
+};
 pub use credit::{
     credit_computers_enabled, start_credit_computer_task, CreditDefaults, CreditStart, CreditTick,
     CREDIT_LEDGER_SOURCE, CREDIT_SIZE_ID,
@@ -2105,6 +2111,8 @@ pub struct ProvisioningService {
     routing: ComputeRouting,
     /// Credit computer size, prices and retention (`ALLTERNIT_CREDIT_COMPUTER_*`).
     credit: CreditDefaults,
+    /// Plan computer included hours and the overage flag (`ALLTERNIT_PLAN_OVERAGE`).
+    plan_hours: PlanHoursDefaults,
     registry: Arc<dyn BackendRegistry>,
     /// Downloadable copies being prepared or ready, by export id. In memory:
     /// Incus deletes the file itself after a day, and a restart only means
@@ -2188,6 +2196,7 @@ impl ProvisioningService {
             hosted: HostedDriverDefaults::from_env(),
             routing: ComputeRouting::from_env(),
             credit: CreditDefaults::from_env(),
+            plan_hours: PlanHoursDefaults::from_env(),
             registry,
             exports: Mutex::new(HashMap::new()),
         }
@@ -2214,6 +2223,12 @@ impl ProvisioningService {
     #[cfg(test)]
     pub(crate) fn with_credit_defaults(mut self, credit: CreditDefaults) -> Self {
         self.credit = credit;
+        self
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_plan_hours_defaults(mut self, plan_hours: PlanHoursDefaults) -> Self {
+        self.plan_hours = plan_hours;
         self
     }
 
@@ -4685,6 +4700,7 @@ pub(crate) mod pg_tests {
     const MIGRATION_066: &str = include_str!("../../migrations_pg/066_paired_computer_orgs.sql");
     const MIGRATION_081: &str = include_str!("../../migrations_pg/081_paired_cloud_computers.sql");
     const MIGRATION_CREDIT: &str = include_str!("../../migrations_pg/132_credit_computers.sql");
+    const MIGRATION_PLAN_HOURS: &str = include_str!("../../migrations_pg/134_plan_computer_hours.sql");
 
     async fn test_pool() -> PgPool {
         let url = "postgres://allternit:allternit_pg_2026@localhost:5432/allternit_test";
@@ -6567,6 +6583,250 @@ pub(crate) mod pg_tests {
         let error = service.create("user_1", Some("sub_1")).await.unwrap_err();
         assert!(error.to_string().contains("setup failed"), "{error}");
         assert_eq!(backend.created.lock().unwrap().len(), 1);
+    }
+
+    // ---- plan computer hours (provisioning_plan_hours.rs) -------------------
+
+    fn at(text: &str) -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339(text).unwrap().with_timezone(&Utc)
+    }
+
+    /// A pool with the wallet, ledger, email record and migration 134
+    /// (applied twice: idempotent).
+    async fn plan_hours_pool() -> PgPool {
+        let pool = migrated_pool().await;
+        credit_tables(&pool).await;
+        let schema: String = sqlx::query_scalar("SELECT current_schema()").fetch_one(&pool).await.unwrap();
+        apply_migration_sql(&pool, &schema, MIGRATION_PLAN_HOURS).await;
+        apply_migration_sql(&pool, &schema, MIGRATION_PLAN_HOURS).await;
+        insert_host(&pool, "host_a", 16, 32768, 200).await;
+        pool
+    }
+
+    fn plan_hours_service(pool: &PgPool, backend: &Arc<MockBackend>, included: i64, charging: bool) -> ProvisioningService {
+        service(pool.clone(), backend.clone())
+            .with_credit_defaults(CreditDefaults::default())
+            .with_plan_hours_defaults(PlanHoursDefaults { plus_included_hours: included, charging })
+    }
+
+    /// user_1's Plus computer (subscription sub_1), `running`, no sessions.
+    async fn plus_computer(pool: &PgPool, service: &ProvisioningService) -> String {
+        let view = service.create("user_1", Some("sub_1")).await.unwrap();
+        sqlx::query("DELETE FROM provisioned_instance_usage_sessions WHERE instance_id = $1")
+            .bind(&view.id)
+            .execute(pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE provisioned_instances SET status = 'running', plan_id = 'plus' WHERE id = $1")
+            .bind(&view.id)
+            .execute(pool)
+            .await
+            .unwrap();
+        view.id
+    }
+
+    async fn overage_ledger(pool: &PgPool) -> Vec<(f64, String)> {
+        sqlx::query_as(
+            "SELECT amount_usd, transaction_id FROM credit_transactions WHERE source = 'plan_computer_overage' ORDER BY created_at, transaction_id",
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn plan_hours_past_200_bill_each_minute_once_across_repeats_and_restarts() {
+        let pool = plan_hours_pool().await;
+        let backend = Arc::new(MockBackend::default());
+        let service = plan_hours_service(&pool, &backend, 200, true);
+        let id = plus_computer(&pool, &service).await;
+        set_balance(&pool, "user_1", 10.0).await;
+        let start = at("2026-11-01T00:00:00Z");
+        add_session(&pool, &id, start, None).await;
+
+        // Under 200 h: metered, nothing charged.
+        let under = service.meter_plan_hours(&id, start + Duration::hours(150)).await.unwrap().unwrap();
+        assert_eq!((under.running_seconds, under.overage_seconds(), under.charged_minutes), (150 * 3600, 0, 0));
+        assert!(overage_ledger(&pool).await.is_empty());
+
+        // Crossing 200 h mid-month: 30 minutes past at $0.10/h.
+        let now = start + Duration::hours(200) + Duration::minutes(30) + Duration::seconds(20);
+        let ticks = service.bill_plan_computer_hours(now).await.unwrap();
+        assert_eq!(ticks.len(), 1);
+        assert_eq!(ticks[0].charged_minutes, 30);
+        assert!((ticks[0].charged_usd - 0.05).abs() < 1e-9, "{}", ticks[0].charged_usd);
+        assert!((balance_of(&pool, "user_1").await - 9.95).abs() < 1e-9);
+
+        // Repeated ticks and a restarted service (new instance, same rows): no second charge.
+        let restarted = plan_hours_service(&pool, &backend, 200, true);
+        for (svc, when) in [(&service, now), (&restarted, now + Duration::seconds(30)), (&restarted, now)] {
+            let repeat = svc.meter_plan_hours(&id, when).await.unwrap().unwrap();
+            assert_eq!((repeat.charged_minutes, repeat.charged_usd), (0, 0.0));
+        }
+        assert!((balance_of(&pool, "user_1").await - 9.95).abs() < 1e-9);
+        let ledger = overage_ledger(&pool).await;
+        assert_eq!(ledger.len(), 1);
+        assert!((ledger[0].0 + 0.05).abs() < 1e-9);
+        assert_eq!(ledger[0].1, format!("plan_computer_overage:{id}:2026-11:30"));
+
+        // The next minute bills one more minute.
+        let next = restarted.meter_plan_hours(&id, now + Duration::minutes(1)).await.unwrap().unwrap();
+        assert_eq!(next.charged_minutes, 1);
+        assert!((next.charged_usd - 0.10 / 60.0).abs() < 1e-12);
+        let meter: (i64, i64, f64) = sqlx::query_as(
+            "SELECT charged_minutes, waived_minutes, charged_usd FROM plan_computer_hours WHERE instance_id = $1",
+        )
+        .bind(&id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!((meter.0, meter.1), (31, 0));
+        assert!((meter.2 - 31.0 * 0.10 / 60.0).abs() < 1e-9);
+
+        // Low balance past the hours: the 2 h warning once (also covers 24 h),
+        // armed again after a top-up.
+        let low_kinds = |pool: PgPool| async move {
+            sqlx::query_scalar::<_, String>("SELECT kind FROM customer_emails WHERE user_id = 'user_1' ORDER BY id")
+                .fetch_all(&pool)
+                .await
+                .unwrap()
+        };
+        assert!(low_kinds(pool.clone()).await.is_empty(), "$9.95 is ~99 h of runway");
+        set_balance(&pool, "user_1", 0.15).await;
+        restarted.bill_plan_computer_hours(now + Duration::minutes(2)).await.unwrap();
+        restarted.bill_plan_computer_hours(now + Duration::minutes(3)).await.unwrap();
+        assert_eq!(low_kinds(pool.clone()).await, vec!["credit_low_2h".to_string()]);
+        set_balance(&pool, "user_1", 10.0).await;
+        restarted.bill_plan_computer_hours(now + Duration::minutes(4)).await.unwrap();
+        let warned: (Option<DateTime<Utc>>, Option<DateTime<Utc>>) =
+            sqlx::query_as("SELECT warned_24h_at, warned_2h_at FROM plan_computer_hours WHERE instance_id = $1")
+                .bind(&id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(warned, (None, None));
+        assert_eq!(status_of(&pool, &id).await, "running");
+    }
+
+    #[tokio::test]
+    async fn plan_hours_with_the_flag_off_meter_and_waive_so_turning_it_on_never_back_charges() {
+        let pool = plan_hours_pool().await;
+        let backend = Arc::new(MockBackend::default());
+        let off = plan_hours_service(&pool, &backend, 200, false);
+        let id = plus_computer(&pool, &off).await;
+        set_balance(&pool, "user_1", 0.0).await;
+        let start = at("2026-11-01T00:00:00Z");
+        add_session(&pool, &id, start, None).await;
+        let now = start + Duration::hours(210);
+        let tick = off.bill_plan_computer_hours(now).await.unwrap().remove(0);
+        assert_eq!((tick.overage_seconds(), tick.charged_minutes), (10 * 3600, 0));
+        // Past the hours at $0, but charging is off: still running, no ledger.
+        assert_eq!(status_of(&pool, &id).await, "running");
+        assert!(overage_ledger(&pool).await.is_empty());
+
+        // Flag on: only minutes after this point are charged.
+        let on = plan_hours_service(&pool, &backend, 200, true);
+        set_balance(&pool, "user_1", 10.0).await;
+        let later = on.meter_plan_hours(&id, now + Duration::minutes(2)).await.unwrap().unwrap();
+        assert_eq!(later.charged_minutes, 2);
+        assert_eq!(overage_ledger(&pool).await.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn plan_hours_close_the_old_month_then_start_the_new_one_at_zero() {
+        let pool = plan_hours_pool().await;
+        let backend = Arc::new(MockBackend::default());
+        // 1 included hour keeps the numbers small; the rule is the same at 200.
+        let service = plan_hours_service(&pool, &backend, 1, true);
+        let id = plus_computer(&pool, &service).await;
+        set_balance(&pool, "user_1", 10.0).await;
+        add_session(&pool, &id, at("2026-11-30T22:00:00Z"), None).await;
+
+        // 23:59:10 → metered to 23:59: 1 h 59 min run, 59 min over.
+        let late = service.meter_plan_hours(&id, at("2026-11-30T23:59:10Z")).await.unwrap().unwrap();
+        assert_eq!(late.charged_minutes, 59);
+
+        // The first tick in December settles November's last minute, and
+        // December starts with its own included hour.
+        let december = service.meter_plan_hours(&id, at("2026-12-01T00:30:05Z")).await.unwrap().unwrap();
+        assert_eq!(december.period_start, at("2026-12-01T00:00:00Z"));
+        assert_eq!(december.running_seconds, 30 * 60);
+        assert_eq!(december.overage_seconds(), 0);
+        assert_eq!(december.charged_minutes, 1, "November's last minute");
+        let months: Vec<(DateTime<Utc>, i64, i64, DateTime<Utc>)> = sqlx::query_as(
+            "SELECT period_start, running_seconds, charged_minutes, metered_through FROM plan_computer_hours WHERE instance_id = $1 ORDER BY period_start",
+        )
+        .bind(&id)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(months.len(), 2);
+        assert_eq!((months[0].1, months[0].2, months[0].3), (2 * 3600, 60, at("2026-12-01T00:00:00Z")));
+        assert_eq!((months[1].1, months[1].2), (30 * 60, 0));
+        let keys: Vec<String> = overage_ledger(&pool).await.into_iter().map(|(_, key)| key).collect();
+        assert_eq!(keys, vec![format!("plan_computer_overage:{id}:2026-11:59"), format!("plan_computer_overage:{id}:2026-11:60")]);
+        assert!((balance_of(&pool, "user_1").await - (10.0 - 60.0 * 0.10 / 60.0)).abs() < 1e-9);
+    }
+
+    #[tokio::test]
+    async fn plan_computer_past_its_hours_stops_at_zero_is_kept_and_runs_again_with_credits_or_next_month() {
+        let pool = plan_hours_pool().await;
+        let backend = Arc::new(MockBackend::default());
+        let service = plan_hours_service(&pool, &backend, 200, true);
+        let id = plus_computer(&pool, &service).await;
+        let start = at("2026-11-01T00:00:00Z");
+        add_session(&pool, &id, start, None).await;
+        // 10 overage minutes cost ~$0.0167; the wallet holds $0.01.
+        set_balance(&pool, "user_1", 0.01).await;
+
+        let stop_at = start + Duration::hours(200) + Duration::minutes(10);
+        service.bill_plan_computer_hours(stop_at).await.unwrap();
+        assert_eq!(balance_of(&pool, "user_1").await, 0.0, "clamped at zero");
+        let row = service.fetch_row(&id, None).await.unwrap();
+        assert_eq!(row.status, "suspended");
+        assert!(row.cancelled_at.is_none() && row.delete_after.is_none(), "kept: no deletion scheduled");
+        assert!(backend.calls.lock().unwrap().contains(&format!("stop:{}", row.incus_name)));
+        let stopped: (Option<DateTime<Utc>>, i64) = sqlx::query_as(
+            "SELECT plan_overage_stopped_at, (SELECT COUNT(*) FROM provisioned_instance_usage_sessions WHERE instance_id = $1 AND ended_at IS NULL) FROM provisioned_instances WHERE id = $1",
+        )
+        .bind(&id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(stopped, (Some(stop_at), 0), "marked, metering closed");
+        let queued: Vec<(String, String)> =
+            sqlx::query_as("SELECT kind, status FROM customer_emails WHERE user_id = 'user_1'").fetch_all(&pool).await.unwrap();
+        assert_eq!(queued, vec![("plan_hours_stopped".to_string(), "queued".to_string())]);
+
+        // Not metered while stopped; not released the same month at $0.
+        assert!(service.bill_plan_computer_hours(stop_at + Duration::minutes(5)).await.unwrap().is_empty());
+        assert!(service.release_plan_hours_stops(stop_at + Duration::hours(1)).await.unwrap().is_empty());
+
+        // Credits added: released (incus computers come back stopped, for /start).
+        set_balance(&pool, "user_1", 5.0).await;
+        assert_eq!(service.release_plan_hours_stops(stop_at + Duration::hours(2)).await.unwrap(), vec![id.clone()]);
+        assert_eq!(status_of(&pool, &id).await, "stopped");
+
+        // Stopped again at $0; the next month releases it without credits.
+        set_balance(&pool, "user_1", 0.0).await;
+        let row = service.fetch_row(&id, None).await.unwrap();
+        service.stop_plan_for_hours(&row, stop_at + Duration::hours(3)).await.unwrap();
+        assert_eq!(status_of(&pool, &id).await, "suspended");
+        assert!(service.release_plan_hours_stops(at("2026-11-30T23:59:00Z")).await.unwrap().is_empty());
+        assert_eq!(service.release_plan_hours_stops(at("2026-12-01T00:00:30Z")).await.unwrap(), vec![id.clone()]);
+        assert_eq!(status_of(&pool, &id).await, "stopped");
+
+        // A plan that lapsed while stopped for hours is not released here:
+        // resuming a lapsed plan is the billing webhook's job.
+        let row = service.fetch_row(&id, None).await.unwrap();
+        service.stop_plan_for_hours(&row, at("2026-12-20T00:00:00Z")).await.unwrap();
+        sqlx::query("UPDATE billing_subscriptions SET status = 'past_due' WHERE stripe_subscription_id = 'sub_1'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        set_balance(&pool, "user_1", 5.0).await;
+        assert!(service.release_plan_hours_stops(at("2027-01-01T00:01:00Z")).await.unwrap().is_empty());
+        assert_eq!(status_of(&pool, &id).await, "suspended");
     }
 
     // ---- credit computers (provisioning_credit.rs) -------------------------

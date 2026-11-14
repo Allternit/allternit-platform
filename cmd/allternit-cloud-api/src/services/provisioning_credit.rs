@@ -537,8 +537,9 @@ impl ProvisioningService {
     }
 }
 
-/// Per-minute billing and the retention sweep. Always on: computers made
-/// while `ALLTERNIT_CREDIT_COMPUTERS` was on keep being billed after it is off.
+/// Per-minute billing and the retention sweep, plus plan computer hours
+/// metering and overage. Always on: computers made while
+/// `ALLTERNIT_CREDIT_COMPUTERS` was on keep being billed after it is off.
 pub fn start_credit_computer_task(state: Arc<crate::ApiState>) {
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(TICK_SECONDS));
@@ -552,6 +553,14 @@ pub fn start_credit_computer_task(state: Arc<crate::ApiState>) {
             }
             if let Err(error) = state.provisioning_service.sweep_credit_retention(now).await {
                 tracing::error!("Credit computer retention sweep failed: {}", error);
+            }
+            // Plan computer hours (provisioning_plan_hours.rs): metering always,
+            // charging and the $0 stop only with ALLTERNIT_PLAN_OVERAGE=1.
+            if let Err(error) = state.provisioning_service.bill_plan_computer_hours(now).await {
+                tracing::error!("Plan computer hours metering failed: {}", error);
+            }
+            if let Err(error) = state.provisioning_service.release_plan_hours_stops(now).await {
+                tracing::error!("Plan computer hours release failed: {}", error);
             }
         }
     });

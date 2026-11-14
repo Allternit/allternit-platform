@@ -22,9 +22,11 @@ A signed-in account with no computer does not reach agent work until it links it
     "own": { "download_url": "https://www.allternit.com/download", "pairing_supported": true },
     "plan": { "plans": [
       { "id": "plus", "billing_plan_id": "plus", "name": "Plus", "price_usd_month": 20,
-        "computer": { "cpu": 2, "memory_gb": 8, "disk_gb": 50 }, "included_hours": 200 },
+        "computer": { "cpu": 2, "memory_gb": 8, "disk_gb": 50 }, "included_hours": 200,
+        "overage_price_per_hour_usd": 0.10 },
       { "id": "max", "billing_plan_id": "super", "name": "Max", "price_usd_month": 100,
-        "computer": { "cpu": 4, "memory_gb": 16, "disk_gb": 100 }, "included_hours": null }
+        "computer": { "cpu": 4, "memory_gb": 16, "disk_gb": 100 }, "included_hours": null,
+        "overage_price_per_hour_usd": null }
     ] },
     "credits": {
       "price_per_hour_usd": 0.10, "stopped_price_per_hour_usd": 0.005,
@@ -45,11 +47,15 @@ Prices, sizes and included hours shown here are not final. Read them from `paths
 | `online` | The computer is reachable now. |
 | `gate` | True when `state` is `none` or `suspended`. Agent entry is refused while true. |
 | `acknowledged_at` | When the user confirmed chat-only. Does not lift the gate. |
-| `computer` | `{id, kind, provider, status, sleeps_when_idle, runway_hours, retention_until}` or null. `kind` is `own`, `plan` or `credits`. `provider` is `incus`, `orgo` or null (your own machine). `status` is `running`, `sleeping`, `starting`, `stopped` or `error`. |
+| `computer` | `{id, kind, provider, status, sleeps_when_idle, runway_hours, retention_until, hours}` or null. `kind` is `own`, `plan` or `credits`. `provider` is `incus`, `orgo` or null (your own machine). `status` is `running`, `sleeping`, `starting`, `stopped` or `error`. |
 | `computer.runway_hours` | Credit computers: hours of running time the balance buys. Show the low-runway notice at 24 and 2. Null otherwise. |
 | `computer.retention_until` | Suspended computers: when the stopped computer is deleted (RFC 3339). Null otherwise. |
+| `computer.hours` | Plan computers with included hours (Plus): this UTC month's `period_start`, `period_end`, `included_hours`, `used_hours`, `overage_hours`, `overage_price_per_hour_usd`, `overage_charged_usd`, `overage_billing` (true when extra hours are charged from credits), `stopped_for_hours` and `resumes_at`. Null otherwise. See [Computer pricing](/guides/computer-pricing). |
+| `paths.plan.plans[].overage_price_per_hour_usd` | Price of each running hour past `included_hours`, paid from credits. Null when the plan has no included hours set. |
 | `paths.plan.plans[].billing_plan_id` | The id to pass to `POST /api/v1/billing/subscribe` (Max is `super`). |
 | `paths.credits` | Null when credit computers are not enabled. |
+
+A plan computer that stopped at $0 credits past its included hours reports `suspended` (with `computer.hours.stopped_for_hours` true and no `retention_until`, because it is kept) even though the plan is active. It can run again at `computer.hours.resumes_at` or when credits are added.
 
 When both your own Desktop and a hosted computer exist, `state` reports your default computer. A failed hosted create shows as `none` with `computer.status` of `error` for a day, so clients can offer a retry. Free hosted computers do not count.
 

@@ -119,6 +119,9 @@ pub const ERASE: &[(&str, &str)] = &[
     ("tasks", OWNER),
     // Computers and runtimes.
     ("provisioned_instance_wakes", USER),
+    // Plan computer hours meter (migration 134); the overage debits it
+    // charged stay in credit_transactions (RETAIN, finance).
+    ("plan_computer_hours", USER),
     ("provisioned_instance_usage_sessions", USER),
     ("provisioned_instances", USER),
     ("hosted_runtime_usage_sessions", USER),
