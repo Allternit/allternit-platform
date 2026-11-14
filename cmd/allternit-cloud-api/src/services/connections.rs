@@ -356,7 +356,7 @@ pub async fn load_runner_facts(
         .into_iter()
         .map(|(vendor, state)| RunnerVendor {
             vendor,
-            offered: service.offers(vendor),
+            offered: service.offers(vendor) && service.allows(user_id),
             state,
             accepted_at: accepted.iter().find(|(v, _)| v == vendor.row_id()).map(|(_, at)| *at),
         })
