@@ -16,6 +16,22 @@
 //! session secret, so an old worker's secret and generation both stop
 //! working at once.
 //!
+//! Several replicas (Postgres only) share one database. The store is the
+//! truth for everything that crosses replicas:
+//!
+//! - One open work item per session: a partial unique index
+//!   (`work_items_one_open`) plus [`SelfHostStore::ensure_open_work`].
+//! - Soft worker affinity on claims (see [`SelfHostStore::claim_work`]).
+//! - Turn ownership: `sessions.turn_replica` / `gizzi_replica`, replica
+//!   liveness in `server_replicas`, and [`SelfHostStore::fail_orphaned_turns`].
+//! - Idempotency-Key records in `idempotency_keys`.
+//! - [`SelfHostStore::sweep_lock`]: one replica runs a sweep tick at a time.
+//! - Wake hints: the Postgres store calls
+//!   `pg_notify('allternit_selfhost', '<kind>:<id>[:<seq>]')` inside its own
+//!   transactions ([`Wake`]); [`SelfHostStore::subscribe_wakes`] returns them
+//!   as a stream. They only make waits faster: a waiter must still re-read
+//!   the store, and must re-read everything on [`Wake::Resync`].
+//!
 //! Both implementations share one test suite: `tests/selfhost_store.rs`.
 
 pub mod pg;
@@ -25,6 +41,8 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};
+use futures::future::BoxFuture;
+use futures::stream::BoxStream;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -34,6 +52,39 @@ pub const MAX_TOOL_RESULT_BYTES: usize = 102_400;
 
 /// Lease length handed out by a claim and a renew.
 pub const LEASE_TTL_SECS: i64 = 60;
+
+/// Work item statuses that count as "open". A session has at most one open
+/// item; the database enforces it (`work_items_one_open`).
+pub const OPEN_WORK_STATUSES: &[&str] = &["ready", "leased"];
+
+/// Soft affinity window: after a worker completes or releases a session's
+/// item, that worker is preferred for the session's next claim for this long.
+pub const AFFINITY_SECS: i64 = 10;
+
+/// The preference only holds while the preferred worker was seen (any claim,
+/// heartbeat, renew, complete or release) within this many seconds.
+pub const AFFINITY_SEEN_SECS: i64 = 60;
+
+/// A finished Idempotency-Key record is replayed for this long.
+pub const IDEMPOTENCY_TTL_HOURS: i64 = 24;
+
+/// An Idempotency-Key record still `in_progress` after this long is taken
+/// over by the next request with the same key (the first one died).
+pub const IDEMPOTENCY_TAKEOVER_SECS: i64 = 60;
+
+/// The Postgres NOTIFY channel for [`Wake`] hints.
+pub const WAKE_CHANNEL: &str = "allternit_selfhost";
+
+/// Error event code (and status reason) of a turn lost with its replica.
+pub const SERVER_RESTARTED: &str = "server_restarted";
+
+/// Message of the [`SERVER_RESTARTED`] error event.
+pub const SERVER_RESTARTED_MESSAGE: &str =
+    "The server replica running this turn stopped. Send the message again.";
+
+/// Output given to tool calls left open by a lost turn.
+pub const SERVER_RESTARTED_TOOL_OUTPUT: &str =
+    "The turn that made this call was lost because the server replica running it stopped.";
 
 pub type DynStore = Arc<dyn SelfHostStore>;
 
@@ -315,6 +366,12 @@ pub struct SessionRecord {
     pub agent_snapshot: Value,
     /// The gizzi child's own session id, set by the agent loop.
     pub gizzi_session_id: Option<String>,
+    /// The replica running the session's current turn
+    /// ([`SelfHostStore::claim_turn`]). None between turns.
+    pub turn_replica: Option<String>,
+    /// The replica whose gizzi child holds `gizzi_session_id`. Another
+    /// replica rebuilds the gizzi session from the events instead.
+    pub gizzi_replica: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub archived_at: Option<DateTime<Utc>>,
@@ -357,6 +414,10 @@ pub struct WorkItem {
     pub lease_expires_at: Option<DateTime<Utc>>,
     pub worker_id: Option<String>,
     pub error_message: Option<String>,
+    /// Soft affinity: until `prefer_until`, a claim from this worker is
+    /// preferred (see [`SelfHostStore::claim_work`]).
+    pub preferred_worker_id: Option<String>,
+    pub prefer_until: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub completed_at: Option<DateTime<Utc>>,
@@ -374,11 +435,19 @@ pub struct WorkClaim {
 pub struct ClaimRequest {
     pub environment_id: String,
     pub worker_id: String,
-    /// Also take leased items with `lease_expires_at <= now - ms`. `Some(0)`
-    /// takes every expired lease. A negative value also takes live leases
-    /// that end within `-ms` (the work routes use this for the public
-    /// `reclaim_older_than_ms`, see `routes_work::reclaim_cutoff_ms`).
-    pub reclaim_older_than_ms: Option<i64>,
+    /// Internal cutoff offset. This is NOT the public `reclaim_older_than_ms`.
+    ///
+    /// Leased items with `lease_expires_at <= now - lease_cutoff_offset_ms`
+    /// are also claimable. `None`: ready items only. `Some(0)`: also every
+    /// expired lease. A negative value also takes LIVE leases that end within
+    /// `-offset` ms, i.e. whose last renew was at least
+    /// `LEASE_TTL_SECS * 1000 + offset` ms ago.
+    ///
+    /// The public `reclaim_older_than_ms` R means "also take a live lease
+    /// last renewed at least R ms ago" (floor 30000, 60000 or more adds
+    /// nothing). The work routes turn it into this offset as `R - 60000`
+    /// (`routes_work::reclaim_cutoff_ms`).
+    pub lease_cutoff_offset_ms: Option<i64>,
     pub hostname: Option<String>,
     pub version: Option<String>,
     pub now: DateTime<Utc>,
@@ -492,7 +561,157 @@ pub struct CredentialRecord {
     /// Which encryption key sealed it (for rotation).
     pub key_id: String,
     pub created_at: DateTime<Utc>,
+    /// Strictly increases on every write, so it works as the version for
+    /// [`SelfHostStore::put_credential_if_unchanged`].
     pub updated_at: DateTime<Utc>,
+}
+
+/// Who and what an Idempotency-Key record is for. The key is unique per
+/// (principal, method, path, key).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IdempotencyScope {
+    /// The authenticated caller, e.g. the API key id.
+    pub principal: String,
+    pub method: String,
+    pub path: String,
+    /// The `Idempotency-Key` header value.
+    pub key: String,
+}
+
+/// A stored 2xx response, replayed for a repeat of the same request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StoredResponse {
+    pub status: u16,
+    /// Header (name, value) pairs to replay.
+    pub headers: Vec<(String, String)>,
+    pub body: Vec<u8>,
+}
+
+/// Result of [`SelfHostStore::idempotency_begin`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IdempotencyBegin {
+    /// This request owns the key now (new, expired, or taken over from a
+    /// request in progress for more than [`IDEMPOTENCY_TAKEOVER_SECS`]). Run
+    /// it, then call `idempotency_finish` (2xx) or `idempotency_abandon`.
+    New,
+    /// Same key, same body, finished: send this response again.
+    Replay(StoredResponse),
+    /// Same key, same body, still running (409 `idempotency_in_progress`).
+    InProgress,
+    /// Same key, different body (422 `idempotency_key_reuse`).
+    Mismatch,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ReplicaRecord {
+    pub replica_id: String,
+    pub started_at: DateTime<Utc>,
+    pub heartbeat_at: DateTime<Utc>,
+    pub version: Option<String>,
+}
+
+/// A wake hint. The Postgres store sends one as a NOTIFY on
+/// [`WAKE_CHANNEL`] inside the transaction that made the change, so it is
+/// delivered on commit. Payload: `<kind>:<id>[:<seq>]`.
+///
+/// Hints only make waits faster. Notifications can be lost (a dropped
+/// listener connection, a full queue), so a waiter must re-read the store
+/// on a hint and on a timer, and re-read everything on [`Wake::Resync`].
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum Wake {
+    /// `work:<environment_id>`: claimable work appeared in the environment
+    /// (an item queued, released, or put back after its lease ran out).
+    Work { environment_id: String },
+    /// `session:<session_id>`: the session's work item or pending tool
+    /// calls changed (item claimed, completed or cancelled; call queued).
+    Session { session_id: String },
+    /// `call:<tool_call_id>`: the tool call got its result or was closed.
+    Call { tool_call_id: String },
+    /// `event:<session_id>:<seq>`: an event was appended.
+    Event { session_id: String, seq: i64 },
+    /// `status:<session_id>`: the session's status changed.
+    Status { session_id: String },
+    /// Not sent by the store: the listener lost its connection (and
+    /// reconnects by itself). Hints may have been missed; re-read the store.
+    Resync,
+}
+
+impl Wake {
+    /// The NOTIFY payload. Empty for [`Wake::Resync`].
+    pub fn payload(&self) -> String {
+        match self {
+            Wake::Work { environment_id } => format!("work:{environment_id}"),
+            Wake::Session { session_id } => format!("session:{session_id}"),
+            Wake::Call { tool_call_id } => format!("call:{tool_call_id}"),
+            Wake::Event { session_id, seq } => format!("event:{session_id}:{seq}"),
+            Wake::Status { session_id } => format!("status:{session_id}"),
+            Wake::Resync => String::new(),
+        }
+    }
+
+    /// Parse a payload. None for anything unknown.
+    pub fn parse(payload: &str) -> Option<Wake> {
+        let (kind, rest) = payload.split_once(':')?;
+        if rest.is_empty() {
+            return None;
+        }
+        let id = rest.to_string();
+        Some(match kind {
+            "work" => Wake::Work { environment_id: id },
+            "session" => Wake::Session { session_id: id },
+            "call" => Wake::Call { tool_call_id: id },
+            "status" => Wake::Status { session_id: id },
+            "event" => {
+                let (sid, seq) = rest.rsplit_once(':')?;
+                if sid.is_empty() {
+                    return None;
+                }
+                Wake::Event {
+                    session_id: sid.to_string(),
+                    seq: seq.parse().ok()?,
+                }
+            }
+            _ => return None,
+        })
+    }
+}
+
+/// Endless stream of wake hints from [`SelfHostStore::subscribe_wakes`].
+pub type WakeStream = BoxStream<'static, Wake>;
+
+/// Held while this replica runs a sweep tick ([`SelfHostStore::sweep_lock`]).
+/// Call [`SweepGuard::release`] when the tick is done; dropping it also
+/// releases the lock, a little later.
+pub struct SweepGuard {
+    release: Option<Box<dyn FnOnce() -> BoxFuture<'static, ()> + Send>>,
+}
+
+impl SweepGuard {
+    /// A guard that holds nothing (single-node stores).
+    pub fn local() -> Self {
+        Self { release: None }
+    }
+
+    /// A guard that runs `release` when released.
+    pub fn new(release: impl FnOnce() -> BoxFuture<'static, ()> + Send + 'static) -> Self {
+        Self {
+            release: Some(Box::new(release)),
+        }
+    }
+
+    pub async fn release(mut self) {
+        if let Some(f) = self.release.take() {
+            f().await;
+        }
+    }
+}
+
+impl std::fmt::Debug for SweepGuard {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SweepGuard")
+            .field("held", &self.release.is_some())
+            .finish()
+    }
 }
 
 // ─── Trait ──────────────────────────────────────────────────────────────────
@@ -585,15 +804,35 @@ pub trait SelfHostStore: Send + Sync {
     ) -> StoreResult<Vec<EventRecord>>;
 
     // Work queue.
+    /// Insert a ready item. `Conflict("work_already_open")` when the session
+    /// already has an open item; use [`SelfHostStore::ensure_open_work`] to
+    /// find-or-insert.
     async fn enqueue_work(&self, environment_id: &str, session_id: &str) -> StoreResult<WorkItem>;
+    /// The session's open item, inserted now (ready) if it has none. Returns
+    /// the item and whether this call inserted it. Safe under any number of
+    /// concurrent callers on any number of replicas: the unique index makes
+    /// the insert a no-op for all but one. A new item inherits a live
+    /// affinity preference from the session's previous item.
+    async fn ensure_open_work(
+        &self,
+        environment_id: &str,
+        session_id: &str,
+    ) -> StoreResult<(WorkItem, bool)>;
     async fn get_work(&self, id: &str) -> StoreResult<WorkItem>;
-    /// The newest ready or leased item for the session, if any.
+    /// The session's ready or leased item, if any (at most one exists).
     async fn find_open_work_for_session(&self, session_id: &str) -> StoreResult<Option<WorkItem>>;
-    /// Oldest claimable item: ready, or (with `reclaim_older_than_ms`) leased
-    /// with `lease_expires_at <= now - reclaim_older_than_ms`. Raises the
-    /// generation, starts a [`LEASE_TTL_SECS`] lease, issues a new session
-    /// secret, hands the session's claimed-but-unfinished tool calls out
-    /// again, and records the worker. None when there is nothing.
+    /// Oldest claimable item: ready, or (with `lease_cutoff_offset_ms`)
+    /// leased with `lease_expires_at <= now - lease_cutoff_offset_ms`. Raises
+    /// the generation, starts a [`LEASE_TTL_SECS`] lease, issues a new
+    /// session secret, hands the session's claimed-but-unfinished tool calls
+    /// out again, clears the affinity preference, and records the worker.
+    /// None when there is nothing.
+    ///
+    /// Soft affinity, the whole rule: an item with `prefer_until > now` and a
+    /// `preferred_worker_id` other than the claimer is skipped, unless the
+    /// preferred worker was last seen more than [`AFFINITY_SEEN_SECS`] ago
+    /// (or never). Among claimable items, the claimer's own preferred items
+    /// come first, then oldest first. Nothing else: no waiting, no scoring.
     async fn claim_work(&self, req: ClaimRequest) -> StoreResult<Option<WorkClaim>>;
     /// Records the worker as alive. Does not move the lease.
     async fn heartbeat_work(
@@ -606,7 +845,8 @@ pub trait SelfHostStore: Send + Sync {
     async fn renew_work(&self, id: &str, generation: i64, now: DateTime<Utc>)
         -> StoreResult<WorkItem>;
     /// Ends the lease. Repeating it with the same generation is a no-op that
-    /// returns the item.
+    /// returns the item. The worker becomes the session's preferred worker
+    /// for [`AFFINITY_SECS`] (inherited by the next item).
     async fn complete_work(
         &self,
         id: &str,
@@ -615,7 +855,8 @@ pub trait SelfHostStore: Send + Sync {
         error_message: Option<&str>,
         now: DateTime<Utc>,
     ) -> StoreResult<WorkItem>;
-    /// Back to ready at once. Claimed tool calls go back to pending.
+    /// Back to ready at once. Claimed tool calls go back to pending. The
+    /// releasing worker is preferred for the item for [`AFFINITY_SECS`].
     async fn release_work(
         &self,
         id: &str,
@@ -660,6 +901,9 @@ pub trait SelfHostStore: Send + Sync {
     /// Unfinished calls of the session are finished as errors with this
     /// output. Returns how many.
     async fn cancel_open_tool_calls(&self, session_id: &str, output: &str) -> StoreResult<u64>;
+    /// Does the session have a tool call without a result (pending or
+    /// claimed)? Read from the store, so it sees calls made on any replica.
+    async fn has_open_tool_calls(&self, session_id: &str) -> StoreResult<bool>;
 
     // Workers.
     async fn touch_worker(
@@ -727,6 +971,95 @@ pub trait SelfHostStore: Send + Sync {
     async fn get_credential(&self, name: &str) -> StoreResult<CredentialRecord>;
     async fn list_credentials(&self) -> StoreResult<Vec<CredentialRecord>>;
     async fn delete_credential(&self, name: &str) -> StoreResult<()>;
+    /// Compare-and-set: replace the sealed value only if the row's
+    /// `updated_at` is still `expected_updated_at` (as read). False when
+    /// another write came first (re-read and retry). NotFound when no
+    /// credential has the name (it was deleted).
+    async fn put_credential_if_unchanged(
+        &self,
+        name: &str,
+        expected_updated_at: DateTime<Utc>,
+        sealed: &[u8],
+        key_id: &str,
+    ) -> StoreResult<bool>;
+
+    // Idempotency-Key records (2xx responses only).
+    /// Claim the key for this request, or say what to do instead. A record
+    /// older than [`IDEMPOTENCY_TTL_HOURS`] counts as absent. A record still
+    /// in progress after [`IDEMPOTENCY_TAKEOVER_SECS`] is taken over (`New`).
+    /// A different `request_hash` is `Mismatch`, whatever the state.
+    async fn idempotency_begin(
+        &self,
+        scope: &IdempotencyScope,
+        request_hash: &str,
+        now: DateTime<Utc>,
+    ) -> StoreResult<IdempotencyBegin>;
+    /// Store the (2xx) response of the request that got `New`.
+    async fn idempotency_finish(
+        &self,
+        scope: &IdempotencyScope,
+        request_hash: &str,
+        response: &StoredResponse,
+        now: DateTime<Utc>,
+    ) -> StoreResult<()>;
+    /// Drop the in-progress record (the request ended without a 2xx), so a
+    /// retry runs again.
+    async fn idempotency_abandon(&self, scope: &IdempotencyScope, request_hash: &str)
+        -> StoreResult<()>;
+    /// Delete records created before `older_than`. Returns how many.
+    async fn idempotency_purge(&self, older_than: DateTime<Utc>) -> StoreResult<u64>;
+
+    // Server replicas and turn ownership.
+    /// Insert or refresh this replica's row. `started_at` is the process
+    /// start (a restarted replica with the same id resets it).
+    async fn replica_heartbeat(
+        &self,
+        replica_id: &str,
+        started_at: DateTime<Utc>,
+        version: Option<&str>,
+        now: DateTime<Utc>,
+    ) -> StoreResult<()>;
+    /// Replicas with a heartbeat at or after `since`, oldest start first.
+    async fn list_live_replicas(&self, since: DateTime<Utc>) -> StoreResult<Vec<ReplicaRecord>>;
+    /// Every replica row, live or not, oldest start first.
+    async fn list_replicas(&self) -> StoreResult<Vec<ReplicaRecord>>;
+    /// Delete the replica's row (clean shutdown, or after its turns were
+    /// failed). Missing is fine.
+    async fn remove_replica(&self, replica_id: &str) -> StoreResult<()>;
+    /// Compare-and-set `turn_replica` to `replica_id` when it is unset or
+    /// already this replica. False when another replica owns the turn.
+    /// NotFound for a missing session.
+    async fn claim_turn(&self, session_id: &str, replica_id: &str) -> StoreResult<bool>;
+    /// Clear `turn_replica` if it is `replica_id`. False when it was not.
+    async fn release_turn(&self, session_id: &str, replica_id: &str) -> StoreResult<bool>;
+    /// Record whose gizzi child holds the session's `gizzi_session_id`.
+    async fn set_gizzi_replica(&self, session_id: &str, replica_id: Option<&str>) -> StoreResult<()>;
+    /// End turns nobody runs any more. A session in `running` or
+    /// `waiting_for_worker` is failed when its `turn_replica` is one of
+    /// `dead_replicas`, or (with `ownerless_before`) when it has no
+    /// `turn_replica` and was last updated before that time (rows left by a
+    /// 1.0 server). Each failed session gets, once: an `error` event
+    /// `{code: "server_restarted", message}`, status `error` with reason
+    /// `server_restarted` plus a `status` event, `turn_replica` cleared, and
+    /// its open tool calls closed as errors. The check and the change are
+    /// one atomic step, so concurrent callers fail a session exactly once.
+    /// Returns the failed sessions.
+    async fn fail_orphaned_turns(
+        &self,
+        dead_replicas: &[String],
+        ownerless_before: Option<DateTime<Utc>>,
+    ) -> StoreResult<Vec<SessionRecord>>;
+
+    // Coordination between replicas.
+    /// Take the sweep lock for one tick. None when another replica holds it
+    /// (skip this tick). Postgres: `pg_try_advisory_xact_lock` in a
+    /// transaction the guard keeps open, keyed by the schema name.
+    /// SQLite: always granted.
+    async fn sweep_lock(&self) -> StoreResult<Option<SweepGuard>>;
+    /// Wake hints from every replica's writes (Postgres LISTEN on
+    /// [`WAKE_CHANNEL`]). None when the store has no cross-process
+    /// notifications (SQLite: one process, wake locally).
+    async fn subscribe_wakes(&self) -> StoreResult<Option<WakeStream>>;
 
     // Observability (step 13). Defaults keep other implementations building;
     // both real stores override them.
@@ -802,6 +1135,21 @@ pub(crate) fn check_traceparent(tp: &str) -> StoreResult<()> {
 /// Lease end for a claim or renew at `now`.
 pub fn lease_end(now: DateTime<Utc>) -> DateTime<Utc> {
     now + Duration::seconds(LEASE_TTL_SECS)
+}
+
+/// End of the affinity window started at `now`.
+pub fn affinity_end(now: DateTime<Utc>) -> DateTime<Utc> {
+    now + Duration::seconds(AFFINITY_SECS)
+}
+
+/// Data of the error event a lost turn gets.
+pub(crate) fn server_restarted_event() -> Value {
+    serde_json::json!({ "code": SERVER_RESTARTED, "message": SERVER_RESTARTED_MESSAGE })
+}
+
+/// Data of the status event a lost turn gets.
+pub(crate) fn server_restarted_status_event() -> Value {
+    serde_json::json!({ "status": "error", "reason": SERVER_RESTARTED })
 }
 
 /// Reject event types and statuses outside the public enums before they

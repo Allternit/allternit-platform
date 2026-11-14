@@ -355,7 +355,7 @@ async fn expired_lease_is_reclaimed_and_its_calls_come_back() {
         .claim_work(ClaimRequest {
             environment_id: fx.env_id.clone(),
             worker_id: "dead".into(),
-            reclaim_older_than_ms: None,
+            lease_cutoff_offset_ms: None,
             hostname: None,
             version: None,
             now: Utc::now() - chrono::Duration::seconds(120),

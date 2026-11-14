@@ -200,7 +200,7 @@ async fn session_secret_only_works_for_its_own_session() {
     let claim = |w: &str| ClaimRequest {
         environment_id: e.id.clone(),
         worker_id: w.into(),
-        reclaim_older_than_ms: None,
+        lease_cutoff_offset_ms: None,
         hostname: None,
         version: None,
         now: Utc::now(),

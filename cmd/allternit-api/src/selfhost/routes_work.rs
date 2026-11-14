@@ -377,7 +377,7 @@ async fn claim(
             .claim_work(ClaimRequest {
                 environment_id: env_id.clone(),
                 worker_id: body.worker_id.clone(),
-                reclaim_older_than_ms: Some(cutoff),
+                lease_cutoff_offset_ms: Some(cutoff),
                 hostname: hostname.clone(),
                 version: version.clone(),
                 now: Utc::now(),

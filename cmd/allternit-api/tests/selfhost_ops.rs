@@ -153,7 +153,7 @@ async fn one_trace_runs_session_turn_tool_call_and_worker_result() {
         .claim_work(ClaimRequest {
             environment_id: env.id.clone(),
             worker_id: "w1".into(),
-            reclaim_older_than_ms: None,
+            lease_cutoff_offset_ms: None,
             hostname: None,
             version: None,
             now: Utc::now(),

@@ -67,6 +67,12 @@ store_suite!(
     workers_and_queue_depth,
     credentials_roundtrip,
     concurrent_claims_never_double_claim,
+    ensure_open_work_makes_one_row_under_concurrency,
+    affinity_prefers_the_last_worker_then_expires,
+    credential_cas_loses_to_a_concurrent_write,
+    idempotency_begin_race_has_one_winner_and_replays,
+    orphaned_turns_fail_exactly_once,
+    replicas_sweep_lock_and_wakes,
 );
 
 async fn agent(store: &DynStore, name: &str) -> AgentRecord {
@@ -105,11 +111,34 @@ async fn session(store: &DynStore) -> (AgentRecord, EnvironmentRecord, SessionRe
     (a, e, s)
 }
 
+/// `n` more sessions on the same agent and environment.
+async fn more_sessions(
+    store: &DynStore,
+    a: &AgentRecord,
+    e: &EnvironmentRecord,
+    n: usize,
+) -> Vec<SessionRecord> {
+    let mut out = Vec::with_capacity(n);
+    for _ in 0..n {
+        out.push(
+            store
+                .create_session(NewSession {
+                    agent_id: a.id.clone(),
+                    environment_id: e.id.clone(),
+                    ..Default::default()
+                })
+                .await
+                .unwrap(),
+        );
+    }
+    out
+}
+
 fn claim_req(env_id: &str, worker: &str, now: chrono::DateTime<Utc>) -> ClaimRequest {
     ClaimRequest {
         environment_id: env_id.into(),
         worker_id: worker.into(),
-        reclaim_older_than_ms: None,
+        lease_cutoff_offset_ms: None,
         hostname: None,
         version: None,
         now,
@@ -363,38 +392,44 @@ async fn claim_fencing_and_secrets(store: DynStore) {
         .is_none());
     assert!(matches!(store.renew_work(&item.id, 1, later).await, Err(StoreError::LeaseStale)));
 
-    let c2 = store.claim_work(claim_req(&e.id, "w2", later)).await.unwrap().unwrap();
+    // w1 just released it: for the affinity window another worker skips it.
+    assert!(store.claim_work(claim_req(&e.id, "w2", later)).await.unwrap().is_none());
+    let later2 = later + Duration::seconds(AFFINITY_SECS + 1);
+    let c2 = store.claim_work(claim_req(&e.id, "w2", later2)).await.unwrap().unwrap();
     assert_eq!(c2.item.lease_generation, 2);
     assert_ne!(c2.session_secret, c1.session_secret);
     assert!(matches!(
-        store.complete_work(&item.id, 1, WorkOutcome::Success, None, later).await,
+        store.complete_work(&item.id, 1, WorkOutcome::Success, None, later2).await,
         Err(StoreError::LeaseStale)
     ));
     let done = store
-        .complete_work(&item.id, 2, WorkOutcome::Success, None, later)
+        .complete_work(&item.id, 2, WorkOutcome::Success, None, later2)
         .await
         .unwrap();
     assert_eq!(done.status, WorkStatus::Done);
     assert_eq!(done.lease_expires_at, None);
     // Completing twice with the current generation is fine.
     let twice = store
-        .complete_work(&item.id, 2, WorkOutcome::Success, None, later)
+        .complete_work(&item.id, 2, WorkOutcome::Success, None, later2)
         .await
         .unwrap();
     assert_eq!(twice.status, WorkStatus::Done);
     assert!(store
-        .find_work_by_secret_hash(&hash_secret(&c2.session_secret), later)
+        .find_work_by_secret_hash(&hash_secret(&c2.session_secret), later2)
         .await
         .unwrap()
         .is_none());
-    assert!(matches!(store.renew_work(&item.id, 2, later).await, Err(StoreError::LeaseStale)));
+    assert!(matches!(store.renew_work(&item.id, 2, later2).await, Err(StoreError::LeaseStale)));
 
-    // Failed outcome keeps the message.
+    // Failed outcome keeps the message. The session's next item inherits
+    // w2's affinity (it just completed the session's item), so w2 claims it.
     let item2 = store.enqueue_work(&e.id, &s.id).await.unwrap();
-    let c3 = store.claim_work(claim_req(&e.id, "w1", later)).await.unwrap().unwrap();
+    assert_eq!(item2.preferred_worker_id.as_deref(), Some("w2"));
+    let c3 = store.claim_work(claim_req(&e.id, "w2", later2)).await.unwrap().unwrap();
     assert_eq!(c3.item.id, item2.id);
+    assert_eq!(c3.item.preferred_worker_id, None, "a claim clears the preference");
     let failed = store
-        .complete_work(&item2.id, 1, WorkOutcome::Failed, Some("sandbox died"), later)
+        .complete_work(&item2.id, 1, WorkOutcome::Failed, Some("sandbox died"), later2)
         .await
         .unwrap();
     assert_eq!(failed.status, WorkStatus::Failed);
@@ -418,11 +453,11 @@ async fn expired_leases_are_reclaimed(store: DynStore) {
         .is_none());
     // Expired less than 5s ago: a 5s reclaim threshold still waits.
     let mut r = claim_req(&e.id, "w2", t1);
-    r.reclaim_older_than_ms = Some(5_000);
+    r.lease_cutoff_offset_ms = Some(5_000);
     assert!(store.claim_work(r).await.unwrap().is_none());
     // 0ms threshold takes it.
     let mut r = claim_req(&e.id, "w2", t1);
-    r.reclaim_older_than_ms = Some(0);
+    r.lease_cutoff_offset_ms = Some(0);
     let c2 = store.claim_work(r).await.unwrap().unwrap();
     assert_eq!(c2.item.id, item.id);
     assert_eq!(c2.item.lease_generation, 2);
@@ -467,9 +502,11 @@ async fn tool_calls_are_at_least_once_and_idempotent(store: DynStore) {
     assert_eq!(got.claimed_generation, Some(1));
     assert!(store.next_tool_call(&item.id, 1).await.unwrap().is_none());
 
-    // The worker dies; the next owner gets the same call again.
+    // The worker dies; the next owner (after the affinity window) gets the
+    // same call again.
     store.release_work(&item.id, c1.item.lease_generation, now).await.unwrap();
-    let c2 = store.claim_work(claim_req(&e.id, "w2", now)).await.unwrap().unwrap();
+    let after_affinity = now + Duration::seconds(AFFINITY_SECS + 1);
+    let c2 = store.claim_work(claim_req(&e.id, "w2", after_affinity)).await.unwrap().unwrap();
     let again = store.next_tool_call(&item.id, c2.item.lease_generation).await.unwrap().unwrap();
     assert_eq!(again.id, "toolu_1");
     assert_eq!(again.claimed_generation, Some(2));
@@ -572,8 +609,9 @@ async fn api_keys_first_key_and_last_admin(store: DynStore) {
 }
 
 async fn workers_and_queue_depth(store: DynStore) {
-    let (_, e, s) = session(&store).await;
-    for _ in 0..3 {
+    let (a, e, s) = session(&store).await;
+    store.enqueue_work(&e.id, &s.id).await.unwrap();
+    for s in more_sessions(&store, &a, &e, 2).await {
         store.enqueue_work(&e.id, &s.id).await.unwrap();
     }
     assert_eq!(store.queue_depth(&e.id).await.unwrap(), 3);
@@ -623,10 +661,12 @@ async fn credentials_roundtrip(store: DynStore) {
     assert!(matches!(store.delete_credential("aws").await, Err(StoreError::NotFound)));
 }
 
-/// 50 claimers race for 200 items: every item is claimed exactly once.
+/// 50 claimers race for 200 items (one per session): every item is
+/// claimed exactly once.
 async fn concurrent_claims_never_double_claim(store: DynStore) {
-    let (_, e, s) = session(&store).await;
-    for _ in 0..200 {
+    let (a, e, s) = session(&store).await;
+    store.enqueue_work(&e.id, &s.id).await.unwrap();
+    for s in more_sessions(&store, &a, &e, 199).await {
         store.enqueue_work(&e.id, &s.id).await.unwrap();
     }
     let now = Utc::now();
@@ -667,4 +707,507 @@ async fn concurrent_claims_never_double_claim(store: DynStore) {
     assert_eq!(unique.len(), 200, "every item was claimed");
     assert!(all.iter().all(|(_, g)| *g == 1));
     assert_eq!(store.queue_depth(&e.id).await.unwrap(), 0);
+}
+
+// ─── Selfhost 1.1: several replicas on one database ────────────────────────
+
+/// 20 racing callers (20 replicas queueing the same session's work) leave
+/// exactly one open item, and exactly one of them inserted it.
+async fn ensure_open_work_makes_one_row_under_concurrency(store: DynStore) {
+    let (_, e, s) = session(&store).await;
+    let mut tasks = Vec::new();
+    for _ in 0..20 {
+        let store = store.clone();
+        let (env, sid) = (e.id.clone(), s.id.clone());
+        tasks.push(tokio::spawn(async move { store.ensure_open_work(&env, &sid).await.unwrap() }));
+    }
+    let mut results = Vec::new();
+    for t in tasks {
+        results.push(t.await.unwrap());
+    }
+    let ids: HashSet<_> = results.iter().map(|(w, _)| w.id.clone()).collect();
+    assert_eq!(ids.len(), 1, "every caller got the same item");
+    assert_eq!(results.iter().filter(|(_, created)| *created).count(), 1, "one insert");
+    assert_eq!(store.queue_depth(&e.id).await.unwrap(), 1, "one open row");
+    let open = store.find_open_work_for_session(&s.id).await.unwrap().unwrap();
+    assert!(ids.contains(&open.id));
+
+    // A plain insert is refused while the item is open.
+    assert!(matches!(
+        store.enqueue_work(&e.id, &s.id).await,
+        Err(StoreError::Conflict("work_already_open"))
+    ));
+
+    // Once it ends, the next call queues a new one.
+    let now = Utc::now();
+    let c = store.claim_work(claim_req(&e.id, "w1", now)).await.unwrap().unwrap();
+    store
+        .complete_work(&c.item.id, c.item.lease_generation, WorkOutcome::Success, None, now)
+        .await
+        .unwrap();
+    let (next, created) = store.ensure_open_work(&e.id, &s.id).await.unwrap();
+    assert!(created);
+    assert_ne!(next.id, open.id);
+    assert_eq!(next.preferred_worker_id.as_deref(), Some("w1"), "inherits the live preference");
+}
+
+/// The soft affinity rule: the claimer's preferred item first; another
+/// worker skips it while the preferred worker is alive and the window is
+/// open; the preference ends after the window or when the preferred worker
+/// has been silent for more than AFFINITY_SEEN_SECS.
+async fn affinity_prefers_the_last_worker_then_expires(store: DynStore) {
+    let (a, e, s1) = session(&store).await;
+    let s2 = more_sessions(&store, &a, &e, 1).await.remove(0);
+    let t0 = Utc::now();
+    let t1 = t0 + Duration::seconds(1);
+
+    // w1 serves s1's item and completes it (idle release).
+    store.enqueue_work(&e.id, &s1.id).await.unwrap();
+    let c = store.claim_work(claim_req(&e.id, "w1", t0)).await.unwrap().unwrap();
+    // Another session's item queues meanwhile: it is older than s1's next.
+    let other = store.enqueue_work(&e.id, &s2.id).await.unwrap();
+    store
+        .complete_work(&c.item.id, c.item.lease_generation, WorkOutcome::Success, None, t1)
+        .await
+        .unwrap();
+    store.touch_worker(&e.id, "w1", None, None, None, t1).await.unwrap();
+    let (next, _) = store.ensure_open_work(&e.id, &s1.id).await.unwrap();
+    assert_eq!(next.preferred_worker_id.as_deref(), Some("w1"));
+
+    // Order: w1 gets its preferred item before the older one.
+    let c = store.claim_work(claim_req(&e.id, "w1", t1)).await.unwrap().unwrap();
+    assert_eq!(c.item.id, next.id);
+    store.release_work(&next.id, c.item.lease_generation, t1).await.unwrap();
+    let released = store.get_work(&next.id).await.unwrap();
+    assert_eq!(released.preferred_worker_id.as_deref(), Some("w1"));
+    assert_eq!(released.worker_id, None);
+
+    // w2 skips w1's item and takes the other one; then there is nothing.
+    let c2 = store.claim_work(claim_req(&e.id, "w2", t1)).await.unwrap().unwrap();
+    assert_eq!(c2.item.id, other.id);
+    assert!(store.claim_work(claim_req(&e.id, "w2", t1)).await.unwrap().is_none());
+
+    // After the window, w2 may take it.
+    let t2 = t1 + Duration::seconds(AFFINITY_SECS + 1);
+    let c3 = store.claim_work(claim_req(&e.id, "w2", t2)).await.unwrap().unwrap();
+    assert_eq!(c3.item.id, next.id);
+
+    // A preferred worker silent for over 60 s does not hold the item. w2
+    // was last seen at its claim (t2); it releases 70 s later.
+    let t3 = t2 + Duration::seconds(70);
+    store.release_work(&next.id, c3.item.lease_generation, t3).await.unwrap();
+    let held = store.get_work(&next.id).await.unwrap();
+    assert_eq!(held.preferred_worker_id.as_deref(), Some("w2"));
+    assert!(held.prefer_until.unwrap() > t3);
+    let c4 = store.claim_work(claim_req(&e.id, "w3", t3)).await.unwrap().unwrap();
+    assert_eq!(c4.item.id, next.id, "a silent preferred worker is ignored");
+
+    // A lease that ran out (dead worker) carries no preference.
+    let t4 = t3 + Duration::seconds(LEASE_TTL_SECS + 1);
+    assert_eq!(store.requeue_expired_work(t4, Duration::zero()).await.unwrap(), 2);
+    let requeued = store.get_work(&next.id).await.unwrap();
+    assert_eq!(requeued.preferred_worker_id, None);
+    assert_eq!(requeued.prefer_until, None);
+}
+
+async fn credential_cas_loses_to_a_concurrent_write(store: DynStore) {
+    let v1 = store.put_credential("gh", b"v1", "k1").await.unwrap();
+    // Two quick writes still move updated_at (it is the version).
+    let v1b = store.put_credential("gh", b"v1", "k1").await.unwrap();
+    assert!(v1b.updated_at > v1.updated_at);
+    let read = store.get_credential("gh").await.unwrap();
+
+    // A writer slips in between the read and the rotation's write.
+    store.put_credential("gh", b"concurrent", "k2").await.unwrap();
+    let won = store
+        .put_credential_if_unchanged("gh", read.updated_at, b"rotated", "k3")
+        .await
+        .unwrap();
+    assert!(!won, "the stale write loses");
+    assert_eq!(store.get_credential("gh").await.unwrap().sealed, b"concurrent".to_vec());
+
+    // Re-read and retry wins.
+    let fresh = store.get_credential("gh").await.unwrap();
+    assert!(store
+        .put_credential_if_unchanged("gh", fresh.updated_at, b"rotated", "k3")
+        .await
+        .unwrap());
+    let now = store.get_credential("gh").await.unwrap();
+    assert_eq!(now.sealed, b"rotated".to_vec());
+    assert_eq!(now.key_id, "k3");
+    assert!(now.updated_at > fresh.updated_at);
+
+    // Ten racing CAS writes from the same read: one wins.
+    let mut tasks = Vec::new();
+    for i in 0..10 {
+        let store = store.clone();
+        let expected = now.updated_at;
+        tasks.push(tokio::spawn(async move {
+            store
+                .put_credential_if_unchanged("gh", expected, format!("racer-{i}").as_bytes(), "k4")
+                .await
+                .unwrap()
+        }));
+    }
+    let mut wins = 0;
+    for t in tasks {
+        wins += t.await.unwrap() as usize;
+    }
+    assert_eq!(wins, 1);
+
+    store.delete_credential("gh").await.unwrap();
+    assert!(matches!(
+        store.put_credential_if_unchanged("gh", now.updated_at, b"x", "k").await,
+        Err(StoreError::NotFound)
+    ));
+}
+
+async fn idempotency_begin_race_has_one_winner_and_replays(store: DynStore) {
+    let scope = IdempotencyScope {
+        principal: "key_abc".into(),
+        method: "POST".into(),
+        path: "/v1/sessions/sess_1/messages".into(),
+        key: "idem-1".into(),
+    };
+    let t0 = Utc::now();
+    let mut tasks = Vec::new();
+    for _ in 0..20 {
+        let (store, scope) = (store.clone(), scope.clone());
+        tasks.push(tokio::spawn(async move { store.idempotency_begin(&scope, "h1", t0).await.unwrap() }));
+    }
+    let mut outcomes = Vec::new();
+    for t in tasks {
+        outcomes.push(t.await.unwrap());
+    }
+    assert_eq!(outcomes.iter().filter(|o| **o == IdempotencyBegin::New).count(), 1, "{outcomes:?}");
+    assert!(outcomes
+        .iter()
+        .all(|o| matches!(o, IdempotencyBegin::New | IdempotencyBegin::InProgress)));
+
+    let resp = StoredResponse {
+        status: 201,
+        headers: vec![("content-type".into(), "application/json".into())],
+        body: br#"{"id":"evt_1"}"#.to_vec(),
+    };
+    store.idempotency_finish(&scope, "h1", &resp, t0).await.unwrap();
+    assert_eq!(
+        store.idempotency_begin(&scope, "h1", t0 + Duration::seconds(5)).await.unwrap(),
+        IdempotencyBegin::Replay(resp.clone())
+    );
+    // Same key, other body.
+    assert_eq!(
+        store.idempotency_begin(&scope, "h2", t0 + Duration::seconds(5)).await.unwrap(),
+        IdempotencyBegin::Mismatch
+    );
+    // The key is per principal.
+    let other = IdempotencyScope { principal: "key_other".into(), ..scope.clone() };
+    assert_eq!(store.idempotency_begin(&other, "h1", t0).await.unwrap(), IdempotencyBegin::New);
+    // After 24 h the record counts as gone.
+    assert_eq!(
+        store
+            .idempotency_begin(&scope, "h2", t0 + Duration::hours(IDEMPOTENCY_TTL_HOURS) + Duration::seconds(1))
+            .await
+            .unwrap(),
+        IdempotencyBegin::New
+    );
+
+    // Abandon (non-2xx): the retry runs again.
+    let s3 = IdempotencyScope { key: "idem-3".into(), ..scope.clone() };
+    assert_eq!(store.idempotency_begin(&s3, "h", t0).await.unwrap(), IdempotencyBegin::New);
+    store.idempotency_abandon(&s3, "h").await.unwrap();
+    assert_eq!(store.idempotency_begin(&s3, "h", t0).await.unwrap(), IdempotencyBegin::New);
+
+    // An in-progress record is taken over after 60 s, by one request.
+    let t_mid = t0 + Duration::seconds(30);
+    assert_eq!(store.idempotency_begin(&s3, "h", t_mid).await.unwrap(), IdempotencyBegin::InProgress);
+    let t_late = t0 + Duration::seconds(IDEMPOTENCY_TAKEOVER_SECS + 1);
+    assert_eq!(store.idempotency_begin(&s3, "h", t_late).await.unwrap(), IdempotencyBegin::New);
+    assert_eq!(store.idempotency_begin(&s3, "h", t_late).await.unwrap(), IdempotencyBegin::InProgress);
+
+    // Purge by creation time.
+    let purged = store.idempotency_purge(t0 + Duration::seconds(1)).await.unwrap();
+    assert!(purged >= 2, "purged {purged}");
+    assert_eq!(store.idempotency_begin(&other, "h1", t0).await.unwrap(), IdempotencyBegin::New);
+}
+
+async fn event_codes(store: &DynStore, sid: &str) -> Vec<(String, serde_json::Value)> {
+    store
+        .list_events(sid, 0, 1000, None)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|e| (e.event_type, e.data))
+        .collect()
+}
+
+/// A turn whose replica died is failed once, even with several replicas'
+/// keepers racing; live owners and idle sessions are left alone.
+async fn orphaned_turns_fail_exactly_once(store: DynStore) {
+    let (a, e, dead) = session(&store).await;
+    let mut more = more_sessions(&store, &a, &e, 3).await;
+    let (live, ownerless, idle) = (more.remove(0), more.remove(0), more.remove(0));
+    for s in [&dead, &live, &ownerless] {
+        store.transition_session_status(&s.id, &["idle"], "running", None).await.unwrap().unwrap();
+    }
+    assert!(store.claim_turn(&dead.id, "r-dead").await.unwrap());
+    assert!(store.claim_turn(&dead.id, "r-dead").await.unwrap(), "re-claim by the owner");
+    assert!(!store.claim_turn(&dead.id, "r-live").await.unwrap(), "another replica owns it");
+    assert!(store.claim_turn(&live.id, "r-live").await.unwrap());
+    assert!(store.claim_turn(&idle.id, "r-dead").await.unwrap());
+    assert!(matches!(store.claim_turn("sess_missing", "r").await, Err(StoreError::NotFound)));
+    store.set_gizzi_replica(&dead.id, Some("r-dead")).await.unwrap();
+    assert_eq!(store.get_session(&dead.id).await.unwrap().gizzi_replica.as_deref(), Some("r-dead"));
+    store
+        .insert_tool_call(NewToolCall {
+            id: "toolu_orphan".into(),
+            session_id: dead.id.clone(),
+            name: "bash".into(),
+            input: json!({}),
+        })
+        .await
+        .unwrap();
+
+    let mut tasks = Vec::new();
+    for _ in 0..5 {
+        let store = store.clone();
+        tasks.push(tokio::spawn(async move {
+            store.fail_orphaned_turns(&["r-dead".to_string()], None).await.unwrap()
+        }));
+    }
+    let mut failed = Vec::new();
+    for t in tasks {
+        failed.extend(t.await.unwrap().into_iter().map(|s| s.id));
+    }
+    assert_eq!(failed, vec![dead.id.clone()], "failed once, only the dead replica's running turn");
+
+    let d = store.get_session(&dead.id).await.unwrap();
+    assert_eq!(d.status, "error");
+    assert_eq!(d.status_reason.as_deref(), Some(SERVER_RESTARTED));
+    assert_eq!(d.turn_replica, None);
+    let events = event_codes(&store, &dead.id).await;
+    let errors: Vec<_> = events.iter().filter(|(t, _)| t == "error").collect();
+    assert_eq!(errors.len(), 1, "{events:?}");
+    assert_eq!(errors[0].1["code"], json!("server_restarted"));
+    assert_eq!(events.iter().filter(|(t, _)| t == "status").count(), 1);
+    let call = store.get_tool_call("toolu_orphan").await.unwrap();
+    assert_eq!(call.status, ToolCallStatus::Done);
+    assert!(call.is_error);
+    assert!(!store.has_open_tool_calls(&dead.id).await.unwrap());
+
+    assert_eq!(store.get_session(&live.id).await.unwrap().status, "running");
+    assert_eq!(store.get_session(&idle.id).await.unwrap().status, "idle");
+    assert_eq!(store.get_session(&ownerless.id).await.unwrap().status, "running");
+
+    // Ownerless running rows (a 1.0 server's) older than the cutoff.
+    let cutoff = Utc::now() + Duration::seconds(1);
+    let swept = store.fail_orphaned_turns(&[], Some(cutoff)).await.unwrap();
+    assert_eq!(swept.iter().map(|s| s.id.clone()).collect::<Vec<_>>(), vec![ownerless.id.clone()]);
+    assert!(store.fail_orphaned_turns(&["r-dead".to_string()], Some(cutoff)).await.unwrap().is_empty());
+    assert_eq!(store.get_session(&live.id).await.unwrap().status, "running");
+
+    // Turn release is owner-only.
+    assert!(!store.release_turn(&live.id, "r-dead").await.unwrap());
+    assert!(store.release_turn(&live.id, "r-live").await.unwrap());
+    assert!(store.claim_turn(&live.id, "r-other").await.unwrap());
+}
+
+async fn replicas_sweep_lock_and_wakes(store: DynStore) {
+    let now = Utc::now();
+    store.replica_heartbeat("r1", now - Duration::minutes(5), Some("1.1.0"), now).await.unwrap();
+    store
+        .replica_heartbeat("r2", now - Duration::minutes(9), None, now - Duration::minutes(2))
+        .await
+        .unwrap();
+    let live = store.list_live_replicas(now - Duration::seconds(45)).await.unwrap();
+    assert_eq!(live.iter().map(|r| r.replica_id.as_str()).collect::<Vec<_>>(), vec!["r1"]);
+    assert_eq!(live[0].version.as_deref(), Some("1.1.0"));
+    assert_eq!(store.list_replicas().await.unwrap().len(), 2);
+    // A restart with the same id resets started_at.
+    store.replica_heartbeat("r1", now, Some("1.1.1"), now).await.unwrap();
+    let r1 = store.list_live_replicas(now - Duration::seconds(45)).await.unwrap().remove(0);
+    assert!((r1.started_at - now).num_milliseconds().abs() <= 1);
+    store.remove_replica("r2").await.unwrap();
+    store.remove_replica("r2").await.unwrap();
+    assert_eq!(store.list_replicas().await.unwrap().len(), 1);
+
+    // Sweep lock: one holder at a time on Postgres; always granted on SQLite.
+    let g1 = store.sweep_lock().await.unwrap().expect("first lock");
+    let second = store.sweep_lock().await.unwrap();
+    if store.backend() == "postgres" {
+        assert!(second.is_none(), "another replica holds the sweep lock");
+    } else {
+        assert!(second.is_some());
+    }
+    g1.release().await;
+    if let Some(g) = second {
+        g.release().await;
+    }
+    store.sweep_lock().await.unwrap().expect("free again").release().await;
+
+    // Wakes: Postgres sends hints from inside the store's transactions.
+    let Some(mut wakes) = store.subscribe_wakes().await.unwrap() else {
+        assert_ne!(store.backend(), "postgres");
+        return;
+    };
+    use futures::StreamExt;
+    let (_, e, s) = session(&store).await;
+    let item = store.enqueue_work(&e.id, &s.id).await.unwrap();
+    let ev = store.append_event(&s.id, "message", json!({"text": "hi"})).await.unwrap();
+    store.set_session_status(&s.id, "running", None).await.unwrap();
+    let c = store.claim_work(claim_req(&e.id, "w1", Utc::now())).await.unwrap().unwrap();
+    assert_eq!(c.item.id, item.id);
+    store
+        .insert_tool_call(NewToolCall {
+            id: format!("toolu_wake_{}", s.id),
+            session_id: s.id.clone(),
+            name: "bash".into(),
+            input: json!({}),
+        })
+        .await
+        .unwrap();
+    store.submit_tool_result(&format!("toolu_wake_{}", s.id), "ok", false).await.unwrap();
+
+    let mut want: HashSet<Wake> = HashSet::from([
+        Wake::Work { environment_id: e.id.clone() },
+        Wake::Event { session_id: s.id.clone(), seq: ev.seq },
+        Wake::Status { session_id: s.id.clone() },
+        Wake::Session { session_id: s.id.clone() },
+        Wake::Call { tool_call_id: format!("toolu_wake_{}", s.id) },
+    ]);
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !want.is_empty() {
+        let next = tokio::time::timeout_at(deadline, wakes.next())
+            .await
+            .unwrap_or_else(|_| panic!("wake hints missing: {want:?}"))
+            .expect("the wake stream never ends");
+        // Other tests share the database; ignore their hints.
+        want.remove(&next);
+    }
+}
+
+// ─── SQLite only ────────────────────────────────────────────────────────────
+
+/// The 1.0 shape of the tables 1.1 changes.
+const SQLITE_V10_SCHEMA: &str = r#"
+CREATE TABLE agents (
+    id TEXT PRIMARY KEY, name TEXT NOT NULL, instructions TEXT NOT NULL DEFAULT '',
+    model TEXT NOT NULL, tools TEXT NOT NULL DEFAULT '[]', mcp_servers TEXT NOT NULL DEFAULT '[]',
+    skills TEXT NOT NULL DEFAULT '[]', metadata TEXT NOT NULL DEFAULT '{}',
+    version INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, deleted_at TEXT
+);
+CREATE TABLE environments (
+    id TEXT PRIMARY KEY, name TEXT NOT NULL,
+    network TEXT NOT NULL DEFAULT 'none' CHECK (network IN ('none','limited','full')),
+    allowed_hosts TEXT NOT NULL DEFAULT '[]', git TEXT NOT NULL DEFAULT '{}', mcp TEXT NOT NULL DEFAULT '{}',
+    image TEXT, packages TEXT NOT NULL DEFAULT '{}', metadata TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL, deleted_at TEXT
+);
+CREATE TABLE sessions (
+    id TEXT PRIMARY KEY, agent_id TEXT NOT NULL REFERENCES agents(id),
+    environment_id TEXT NOT NULL REFERENCES environments(id), title TEXT,
+    status TEXT NOT NULL DEFAULT 'idle'
+        CHECK (status IN ('idle','running','waiting_for_worker','interrupted','error','archived')),
+    status_reason TEXT, last_seq INTEGER NOT NULL DEFAULT 0, metadata TEXT NOT NULL DEFAULT '{}',
+    agent_snapshot TEXT NOT NULL DEFAULT '{}', gizzi_session_id TEXT,
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL, archived_at TEXT, traceparent TEXT
+);
+CREATE TABLE work_items (
+    id TEXT PRIMARY KEY, environment_id TEXT NOT NULL REFERENCES environments(id),
+    session_id TEXT NOT NULL REFERENCES sessions(id),
+    status TEXT NOT NULL DEFAULT 'ready' CHECK (status IN ('ready','leased','done','failed','cancelled')),
+    lease_generation INTEGER NOT NULL DEFAULT 0, lease_expires_at TEXT, worker_id TEXT,
+    session_secret_hash TEXT, error_message TEXT,
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL, completed_at TEXT, traceparent TEXT
+);
+CREATE INDEX work_items_session ON work_items (session_id, status);
+CREATE TABLE tool_calls (
+    id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES sessions(id), work_id TEXT,
+    claimed_generation INTEGER, name TEXT NOT NULL, input TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','claimed','done')),
+    output TEXT, is_error INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL, completed_at TEXT, traceparent TEXT
+);
+INSERT INTO agents (id, name, model, created_at, updated_at)
+    VALUES ('agent_1', 'a', 'm', '2026-11-01T00:00:00.000000Z', '2026-11-01T00:00:00.000000Z');
+INSERT INTO environments (id, name, created_at, updated_at)
+    VALUES ('env_1', 'e', '2026-11-01T00:00:00.000000Z', '2026-11-01T00:00:00.000000Z');
+INSERT INTO sessions (id, agent_id, environment_id, status, created_at, updated_at)
+    VALUES ('sess_1', 'agent_1', 'env_1', 'running', '2026-11-01T00:00:00.000000Z', '2026-11-01T00:00:00.000000Z');
+-- Two open items for one session (two 1.0 processes on one file): an older
+-- leased one, and a newer ready one with a call claimed under it.
+INSERT INTO work_items (id, environment_id, session_id, status, lease_generation, lease_expires_at, worker_id, session_secret_hash, created_at, updated_at)
+    VALUES ('work_leased', 'env_1', 'sess_1', 'leased', 1, '2099-01-01T00:00:00.000000Z', 'w1', 'hash1', '2026-11-01T00:00:01.000000Z', '2026-11-01T00:00:01.000000Z');
+INSERT INTO work_items (id, environment_id, session_id, status, lease_generation, created_at, updated_at)
+    VALUES ('work_ready', 'env_1', 'sess_1', 'ready', 0, '2026-11-01T00:00:02.000000Z', '2026-11-01T00:00:02.000000Z');
+INSERT INTO tool_calls (id, session_id, work_id, claimed_generation, name, input, status, created_at, updated_at)
+    VALUES ('toolu_dup', 'sess_1', 'work_ready', 1, 'bash', '{}', 'claimed', '2026-11-01T00:00:03.000000Z', '2026-11-01T00:00:03.000000Z');
+"#;
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn old_sqlite_file_upgrades_to_one_open_item() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("selfhost.db");
+    {
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        conn.execute_batch(SQLITE_V10_SCHEMA).unwrap();
+    }
+    let store: DynStore = Arc::new(SqliteStore::open(&path).expect("a 1.0 file opens"));
+
+    let open = store.find_open_work_for_session("sess_1").await.unwrap().unwrap();
+    assert_eq!(open.id, "work_leased", "the leased item is kept");
+    let dup = store.get_work("work_ready").await.unwrap();
+    assert_eq!(dup.status, WorkStatus::Cancelled);
+    let call = store.get_tool_call("toolu_dup").await.unwrap();
+    assert_eq!(call.status, ToolCallStatus::Pending, "a call claimed under the dropped item is handed out again");
+    assert!(matches!(
+        store.enqueue_work("env_1", "sess_1").await,
+        Err(StoreError::Conflict("work_already_open"))
+    ));
+    let s = store.get_session("sess_1").await.unwrap();
+    assert_eq!(s.turn_replica, None);
+    assert!(store.claim_turn("sess_1", "r1").await.unwrap());
+    drop(store);
+
+    // The index exists, and opening again changes nothing.
+    {
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        let n: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'work_items_one_open'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(n, 1);
+        let open: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM work_items WHERE session_id = 'sess_1' AND status IN ('ready','leased')",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(open, 1);
+    }
+    let again = SqliteStore::open(&path).expect("reopen");
+    assert_eq!(again.get_session("sess_1").await.unwrap().turn_replica.as_deref(), Some("r1"));
+    assert_eq!(again.get_work("work_leased").await.unwrap().status, WorkStatus::Leased);
+}
+
+#[test]
+fn wake_payloads_round_trip() {
+    let all = [
+        Wake::Work { environment_id: "env_1".into() },
+        Wake::Session { session_id: "sess_1".into() },
+        Wake::Call { tool_call_id: "call:with:colons".into() },
+        Wake::Event { session_id: "sess_1".into(), seq: 42 },
+        Wake::Status { session_id: "sess_1".into() },
+    ];
+    for w in all {
+        assert_eq!(Wake::parse(&w.payload()), Some(w.clone()), "{}", w.payload());
+    }
+    assert_eq!(Wake::parse("event:sess_1:x"), None);
+    assert_eq!(Wake::parse("event::3"), None);
+    assert_eq!(Wake::parse("nope:1"), None);
+    assert_eq!(Wake::parse("work:"), None);
+    assert_eq!(Wake::parse(""), None);
 }
