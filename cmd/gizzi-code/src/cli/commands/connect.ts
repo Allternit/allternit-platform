@@ -240,11 +240,26 @@ export function resolvePluginProviders(input: {
   return result
 }
 
+/**
+ * `gizzi connect` lists every connection with the four status words;
+ * `gizzi connect <id>` runs that row's way to connect; `--disconnect` removes it.
+ * The old provider-credential subcommands (list, login, logout) stay.
+ */
 export const ConnectCommand = cmd({
-  command: "connect",
-  describe: "connect to a model provider",
-  builder: (yargs) => yargs.command(AuthListCommand).command(AuthLoginCommand).command(AuthLogoutCommand).demandCommand(),
-  async handler() {},
+  command: "connect [id]",
+  describe: "connect brains, computers, phones, tools and apps",
+  builder: (yargs) =>
+    yargs
+      .command(AuthListCommand)
+      .command(AuthLoginCommand)
+      .command(AuthLogoutCommand)
+      .positional("id", { describe: "what to connect, e.g. anthropic-key, codex, slack", type: "string" })
+      .option("disconnect", { type: "boolean", describe: "remove this connection" })
+      .option("json", { type: "boolean", describe: "print the rows as JSON" }),
+  async handler(args) {
+    const { runConnect } = await import("@/cli/commands/connect-flow")
+    await runConnect({ id: args.id as string | undefined, disconnect: !!args.disconnect, json: !!args.json })
+  },
 })
 
 export const AuthListCommand = cmd({
