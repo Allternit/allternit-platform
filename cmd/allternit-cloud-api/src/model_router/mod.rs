@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 
+pub mod anthropic;
 pub mod catalog;
 pub mod items_bridge;
 pub mod generic_openai;
@@ -436,6 +437,17 @@ impl ModelRouter {
     /// The provider id a model alias routes to, without dispatching.
     pub fn provider_for_alias(&self, alias: &str) -> Option<&str> {
         self.alias_map.resolve(alias).map(|entry| entry.provider.as_str())
+    }
+
+    /// Listed catalog aliases a provider serves, in `GET /v1/models` order
+    /// (the models a saved key for that provider unlocks).
+    pub fn listed_aliases_for_provider(&self, provider_id: &str) -> Vec<String> {
+        self.alias_map
+            .ordered_entries()
+            .into_iter()
+            .filter(|entry| entry.listed && entry.provider == provider_id)
+            .map(|entry| entry.alias.clone())
+            .collect()
     }
 
     /// Whether a model alias is an open-lane model (`lane: "open"`).

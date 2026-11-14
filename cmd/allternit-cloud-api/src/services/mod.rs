@@ -14,6 +14,7 @@ pub mod fabric_ledger;
 pub mod executor_service;
 pub mod hosted_runtime_lifecycle;
 pub mod inference_keys;
+pub mod connections;
 pub mod voice_keys;
 pub mod inference_pool;
 pub mod inference_settlement;
@@ -68,7 +69,7 @@ pub use inference_pool::{
     check_free_tier_pool, free_tier_pool_policy, FreeTierPoolPolicy, InferencePoolService, PoolRow,
 };
 pub use inference_keys::{
-    byok_base_url, byok_enabled, mask_key, should_route_byok, InferenceKeyInfo,
+    byok_base_url, byok_enabled, is_key_provider, mask_key, should_route_byok, InferenceKeyInfo,
     InferenceKeyService, KeyValidator,
 };
 pub use node_resolution::{
