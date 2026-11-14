@@ -506,7 +506,7 @@ struct FirstRunSetupView: View {
                     Text("Set up in Settings › Connections")
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundStyle(SetupPalette.ink)
-                    SetupNote(text: "Your bots use the apps on your phone through Allternit on your Mac or PC. Open Settings › Connections › Your phone › Let your bots use this iPhone there. An Android phone pairs over the same Wi-Fi, with no cable. Once it’s linked, your bots use the phone from any device, including this one.")
+                    SetupNote(text: "Your bots use the apps on your phone through Allternit on your Mac or PC. Open Settings › Connections › Phones › Let Allternit use your phone there. An Android phone pairs over the same Wi-Fi, with no cable. Once it’s linked, your bots use the phone from any device, including this one.")
                     Link(destination: URL(string: "https://allternit.com/download")!) {
                         HStack(spacing: 6) {
                             Text("Get Allternit Desktop")

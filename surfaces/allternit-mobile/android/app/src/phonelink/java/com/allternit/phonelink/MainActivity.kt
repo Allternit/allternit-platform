@@ -120,7 +120,7 @@ class MainActivity : Activity() {
         }
         root.addView(text(a11y, 14f))
         root.addView(text("This phone: ${s.deviceName}  ·  id ${s.deviceId.take(8)}", 13f, color = muted))
-        if (!s.provisioned) root.addView(text("Not set up yet. On your Mac or PC, open Allternit › Settings › Connections › Your phone › Let your bots use this iPhone, with this phone on the same Wi-Fi. It walks you through Wireless debugging, so no cable is needed.", 14f))
+        if (!s.provisioned) root.addView(text("Not set up yet. On your Mac or PC, open Allternit › Settings › Connections › Phones › Let Allternit use your phone, with this phone on the same Wi-Fi. It walks you through Wireless debugging, so no cable is needed.", 14f))
 
         val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         if (ServerController.isRunning) row.addView(button("Stop") { ServerController.stopByUser(this) })
