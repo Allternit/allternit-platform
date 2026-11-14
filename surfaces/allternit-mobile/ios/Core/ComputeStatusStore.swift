@@ -223,9 +223,18 @@ final class ComputeStatusStore: ObservableObject {
     }
 
     /// An agent route answered 409 compute_required: refresh and open the gate.
-    func noteComputeRequired() {
+    /// After chat-only is confirmed, background reads (model list, inbox,
+    /// routines…) answer 409 on every load; a GET then leaves only the banner.
+    /// Actions (and callers that don't say) still open the sheet.
+    func noteComputeRequired(method: String? = nil) {
+        if Self.ignores409(method: method, acknowledged: status?.isAcknowledged == true) { return }
         showGateSheet = true
         Task { await refresh() }
+    }
+
+    nonisolated static func ignores409(method: String?, acknowledged: Bool) -> Bool {
+        guard acknowledged, let m = method?.uppercased() else { return false }
+        return m == "GET" || m == "HEAD"
     }
 
     // MARK: - Waiting (5 s poll, only while a view waits)
