@@ -347,8 +347,15 @@ async fn launcher_reaper_tears_down_ended_and_vanished_pods() {
     assert_eq!(r.launcher.reap(Utc::now()).await.unwrap(), 0);
     assert_eq!(r.launcher.reap(Utc::now() + chrono::Duration::minutes(6)).await.unwrap(), 1);
 
-    // The vanished pod's container is gone: session ends `error`, pod freed.
+    // Regression (first real Meet call, 2026-11-14): a launching pod is
+    // created stopped while its ~100 MB bot profile uploads. "Stopped" then is
+    // not "vanished": the reaper must leave it alone.
     *r.host.gone.lock().unwrap() = true;
+    assert_eq!(r.launcher.reap(Utc::now()).await.unwrap(), 0);
+    assert_eq!(state_of(&r.db, vanished).await.0, "launching");
+
+    // Once the pod has started (joining), a gone container ends `error`, pod freed.
+    sqlx::query("UPDATE meeting_sessions SET state = 'joining' WHERE id = $1").bind(vanished).execute(&r.db).await.unwrap();
     assert_eq!(r.launcher.reap(Utc::now()).await.unwrap(), 1);
     let (state, reason, pod_ref) = state_of(&r.db, vanished).await;
     assert_eq!((state.as_str(), reason.as_deref(), pod_ref), ("ended", Some("error"), None));
