@@ -116,11 +116,11 @@ class MainActivity : Activity() {
         val a11y = when {
             ServerController.ops != null -> "Accessibility: connected"
             accessibilityOn() -> "Accessibility: enabled, waiting for Android to connect it"
-            else -> "Accessibility: off — run setup from Allternit Desktop (USB cable, once)"
+            else -> "Accessibility: off — finish setup from Allternit on your Mac or PC (Settings › Connections › Your phone)"
         }
         root.addView(text(a11y, 14f))
         root.addView(text("This phone: ${s.deviceName}  ·  id ${s.deviceId.take(8)}", 13f, color = muted))
-        if (!s.provisioned) root.addView(text("Not set up yet. Open Allternit Desktop › Phone Link and plug this phone in once.", 14f))
+        if (!s.provisioned) root.addView(text("Not set up yet. On your Mac or PC, open Allternit › Settings › Connections › Phones › Let Allternit use your phone, with this phone on the same Wi-Fi. It walks you through Wireless debugging, so no cable is needed.", 14f))
 
         val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         if (ServerController.isRunning) row.addView(button("Stop") { ServerController.stopByUser(this) })

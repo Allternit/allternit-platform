@@ -13,45 +13,52 @@ import Foundation
 // MARK: - Steps
 
 enum SetupStep: String, CaseIterable, Sendable {
-    case `where`, style, ai, mainbot, connected
+    case `where`, style, ai, phone, mainbot, connected
 
     var label: String {
         switch self {
         case .where: return "Where it runs"
         case .style: return "Style"
         case .ai: return "Your AI"
+        case .phone: return "Your phone"
         case .mainbot: return "Main bot"
         case .connected: return "Connected"
         }
     }
 
-    /// The choice field a step asks for (connected and the main-bot slot ask nothing).
+    /// The choice field a step asks for (connected, the phone and the main-bot slot ask nothing).
     var field: SetupField? {
         switch self {
         case .where: return .where
         case .style: return .style
         case .ai: return .ai
-        case .mainbot, .connected: return nil
+        case .phone, .mainbot, .connected: return nil
         }
     }
 }
 
-/// The main-bot step ("Meet your bots") runs between Your AI and Connected,
-/// like the web (MAIN_BOT_STEP_ENABLED, Eoj 2026-10-16).
+/// The main-bot step ("Meet your bots") runs between Your phone and
+/// Connected, like the web (MAIN_BOT_STEP_ENABLED, Eoj 2026-10-16).
 let setupMainBotStepEnabled = true
 
+/// Day-one setup, connect kit option A (Eoj 2026-11-13): Your AI → Your
+/// phone → Main bot → Connected. No computer step and no Style step (the
+/// theme stays as it is); a computer is offered on the phone step as
+/// "Later, if you need it". `where` and `style` stay in the model for the
+/// connected view's facts but are no longer asked.
 func setupStepOrder(mainBot: Bool = setupMainBotStepEnabled) -> [SetupStep] {
-    mainBot ? [.where, .style, .ai, .mainbot, .connected] : [.where, .style, .ai, .connected]
+    mainBot ? [.ai, .phone, .mainbot, .connected] : [.ai, .phone, .connected]
 }
 
 enum SetupField: String, CaseIterable, Sendable {
-    case `where`, style, ai
+    case `where`, style, ai, phone
 
     var title: String {
         switch self {
         case .where: return "Where it runs"
         case .style: return "Style"
         case .ai: return "Your AI"
+        case .phone: return "Your phone"
         }
     }
 }
@@ -151,6 +158,7 @@ struct SetupChoices: Equatable, Sendable {
         case .where: return `where` != nil
         case .style: return style != nil
         case .ai: return ai != nil
+        case .phone: return false
         }
     }
 
@@ -159,6 +167,7 @@ struct SetupChoices: Equatable, Sendable {
         case .where: return `where`?.rawValue
         case .style: return style?.rawValue
         case .ai: return ai?.rawValue
+        case .phone: return nil
         }
     }
 }
@@ -189,7 +198,7 @@ struct StepOutcome: Equatable, Sendable {
 
 struct SetupState: Equatable, Sendable {
     var order: [SetupStep] = setupStepOrder()
-    var step: SetupStep = .where
+    var step: SetupStep = setupStepOrder().first ?? .ai
     var choices = SetupChoices()
     var outcomes: [SetupField: StepOutcome] = [:]
     var skipped: [SetupField: Bool] = [:]
@@ -204,7 +213,7 @@ struct SetupState: Equatable, Sendable {
 
     /// Whether Next is allowed from the current step.
     var canAdvance: Bool {
-        if step == .mainbot { return true }
+        if step == .mainbot || step == .phone { return true }
         guard let field = step.field else { return false }
         return choices.isSet(field)
     }
@@ -269,8 +278,7 @@ enum SetupReducer {
             s.step = s.order[min(s.index(of: s.step) + 1, s.order.count - 1)]
         case .skip:
             let i = s.index(of: s.step)
-            if s.step != .mainbot {
-                guard let field = s.step.field else { return state }
+            if let field = s.step.field {
                 // Skipping keeps any real outcome that already happened (a
                 // brain that did connect) but marks the step answered.
                 s.skipped[field] = !s.choices.isSet(field)
@@ -326,6 +334,8 @@ func orbState(for step: SetupStep, busy: Bool) -> AllternitOrbState {
     case .where: return .searching
     case .style: return .writing
     case .ai: return .thinking
+    // The app is signed in on this iPhone, so the phone step is already done.
+    case .phone: return .idle
     case .mainbot: return .working
     case .connected: return .idle
     }
@@ -338,7 +348,8 @@ enum SetupCopy {
         switch field {
         case .where: return "Hi, I'm Gizzi. First: where should I run your agents?"
         case .style: return "Got it. Light, dark, or match your device?"
-        case .ai: return "Last one. Which brain should I use by default?"
+        case .ai: return "Hi, I'm Gizzi. Which AI should I think with? If you already pay for one, use it here."
+        case .phone: return "Now put me on your phone, so you can talk to me from anywhere."
         }
     }
 }
@@ -383,6 +394,7 @@ func resultCard(_ state: SetupState, _ field: SetupField) -> ResultCard? {
         case .where: return "Computer"
         case .style: return "Theme"
         case .ai: return state.choices.ai == .phoneApps ? "Phone" : "Default brain"
+        case .phone: return "Phone"
         }
     }()
 
@@ -397,6 +409,7 @@ func resultCard(_ state: SetupState, _ field: SetupField) -> ResultCard? {
         case .where: return state.choices.where?.label ?? "—"
         case .style: return state.choices.style?.label ?? "—"
         case .ai: return state.choices.ai?.label ?? "—"
+        case .phone: return "Your phone"
         }
     }()
     let status = outcome?.status ?? .idle
@@ -424,8 +437,10 @@ private func defaultLines(_ field: SetupField, _ name: String, _ status: Outcome
         case .connected: return ["Default brain: \(name)", "Switch any time from the model picker"]
         case .working: return ["Connecting \(name) …"]
         case .error: return ["Could not connect \(name)"]
-        default: return ["Chose \(name)", "Connect it below, or later in Settings → Models"]
+        default: return ["Chose \(name)", "Connect it below, or later in Settings › Connections"]
         }
+    case .phone:
+        return status == .connected ? ["\(name) · signed in"] : ["Add your phone any time in Settings › Connections"]
     }
 }
 
@@ -433,7 +448,8 @@ private func defaultLines(_ field: SetupField, _ name: String, _ status: Outcome
 func completedCards(_ state: SetupState) -> [ResultCard] {
     let now = state.index(of: state.step)
     return SetupField.allCases.compactMap { f in
-        guard let step = SetupStep(rawValue: f.rawValue), state.index(of: step) < now else { return nil }
+        // Steps this run doesn't ask (index -1) are not "done".
+        guard let step = SetupStep(rawValue: f.rawValue), case let i = state.index(of: step), i >= 0, i < now else { return nil }
         return resultCard(state, f) ?? ResultCard(field: f, title: f.title, summary: "Skipped", chip: "Skipped",
                                                   tone: .soft, lines: [], done: false, kvKey: "", kvValue: "")
     }

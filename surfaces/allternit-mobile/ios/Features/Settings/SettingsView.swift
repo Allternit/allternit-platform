@@ -103,6 +103,7 @@ struct SettingsView: View {
                 .onAppear {
                     #if DEBUG
                     if launchArgumentEnabled("open-settings-memory") { path.append(SettingsPageID.memory) }
+                    if launchArgumentEnabled("open-settings-connections") { path.append(SettingsPageID.subscriptions) }
                     if launchArgumentEnabled("open-settings-platform") { isPlatformPresented = true }
                     if launchArgumentEnabled("open-settings-data") {
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
@@ -427,8 +428,7 @@ struct SettingsView: View {
         case .appearance: GeneralSettingsPage()
         case .openModels:
             SettingsWebPage(page: page, intro: "Open-weight models with far fewer refusals. They are marked Open in the model picker and use your credits or plan.")
-        case .subscriptions:
-            SettingsWebPage(page: page, intro: "How your bots reach the apps, bots and coding tools you already use. Your Allternit plan is under Billing.")
+        case .subscriptions: ConnectionsSettingsView()
         case .agentRules:
             SettingsWebPage(page: page, intro: "Configure · Observe · Extend. Set how agents work, see their contracts, and add your own rules and pieces.")
         case .skills: CapabilitiesSettingsView(kind: .skill)

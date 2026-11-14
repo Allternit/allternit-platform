@@ -195,6 +195,7 @@ struct AllternitApp: App {
         launchArgumentEnabled("autosend")
             || launchArgumentEnabled("open-settings")
             || launchArgumentEnabled("open-settings-memory")
+            || launchArgumentEnabled("open-settings-connections")
             || launchArgumentEnabled("open-settings-platform")
             || launchArgumentEnabled("open-settings-data")
             || launchArgumentEnabled("open-settings-brain-spike")
