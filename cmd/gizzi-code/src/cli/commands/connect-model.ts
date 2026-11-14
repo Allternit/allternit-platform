@@ -115,15 +115,24 @@ export function mergeRows(cloud: Row[], runtime: Row[]): Row[] {
   return [...out.values()]
 }
 
-/** Catalog order; rows with unknown ids are ignored, missing ids show as off. */
+/** Contract defaults for rows the server did not send: not yet usable, with a plain reason and fallback. */
+const NOT_YET = "Not available yet. Use a key for now."
+export const DEFAULT_ROWS: Record<string, Row> = {
+  claude: { id: "claude", state: "off", available: false, terms: "pending", reason_code: "not_available_yet", unavailable_reason: NOT_YET, fallbacks: ["anthropic-key"] },
+  grok: { id: "grok", state: "off", available: false, terms: "pending", reason_code: "not_available_yet", unavailable_reason: NOT_YET, fallbacks: ["xai-key"] },
+  kimi: { id: "kimi", state: "off", available: false, terms: "pending", reason_code: "not_available_yet", unavailable_reason: NOT_YET, fallbacks: ["kimi-key"] },
+  copilot: { id: "copilot", state: "off", available: false, reason_code: "not_available_yet", unavailable_reason: "Coming soon.", fallbacks: ["github"] },
+}
+
+/** Catalog order; rows with unknown ids are ignored, missing ids use the contract default (else off). */
 export function resolve(rows: Row[]): { entry: Entry; row: Row }[] {
   const byId = new Map(rows.map((r) => [r.id, r]))
-  return CATALOG.map((entry) => ({ entry, row: byId.get(entry.id) ?? { id: entry.id, state: "off" as State } }))
+  return CATALOG.map((entry) => ({ entry, row: byId.get(entry.id) ?? DEFAULT_ROWS[entry.id] ?? { id: entry.id, state: "off" as State } }))
 }
 
 export function brainSub(entry: Entry, row: Row): BrainSub {
   if (row.available === false && (row.reason_code === "not_available_yet" || row.terms === "pending")) return "Coming soon"
-  if (entry.id === "copilot" && row.available === false) return "Coming soon"
+  if (row.available === false && row.reason_code !== "no_computer" && row.reason_code !== "computer_offline" && row.runs_on !== "computer") return "Coming soon"
   const runsOn = row.runs_on ?? entry.runsOn
   if (runsOn === "computer" || runsOn === "device") return "Needs your computer"
   return "Works on any device"

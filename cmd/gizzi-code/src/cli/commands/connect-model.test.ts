@@ -36,7 +36,18 @@ describe("hub", () => {
     expect(text).toContain(" Works on any device")
     expect(text).toContain("Connected · Key works")
     expect(text).toContain("Try: gizzi connect this-mac  or  gizzi connect openai-key")
-    expect(text).not.toContain("gizzi connect x")
+    expect(text).not.toMatch(/gizzi connect x(\s|$)/)
     expect(text.indexOf("Needs your computer")).toBeLessThan(text.indexOf("Coming soon"))
+  })
+})
+
+describe("rows the server did not send", () => {
+  test("claude, grok, kimi and copilot use the contract defaults and group as Coming soon", () => {
+    const text = renderHub([]).join("\n")
+    const soon = text.slice(text.indexOf(" Coming soon"), text.indexOf("Computers"))
+    for (const n of ["Claude", "Grok", "Kimi", "GitHub Copilot"]) expect(soon).toContain(n)
+    expect(soon).toContain("Not available yet. Use a key for now.  Try: gizzi connect xai-key")
+    expect(soon).toContain("Coming soon.  Try: gizzi connect github")
+    expect(text.slice(text.indexOf(" Works on any device"), text.indexOf(" Coming soon"))).not.toContain("Grok")
   })
 })
