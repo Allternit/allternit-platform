@@ -793,12 +793,12 @@ DISC='{"version":"2026-11-14.1","title":"Before you connect your ChatGPT plan","
 if [ "$2" = "status" ]; then
   if [ -f "$D/accepted" ]; then AT='"2026-11-14T17:00:00Z"'; else AT=null; fi
   if [ -f "$D/running" ]; then ST=connecting; else ST=off; fi
-  echo "{"id":"chatgpt","state":"$ST","models":[],"disclosure":{"version":"2026-11-14.1","accepted_at":$AT}}"
+  printf '{"id":"chatgpt","state":"%s","models":[],"disclosure":{"version":"2026-11-14.1","accepted_at":%s}}\n' "$ST" "$AT"
   exit 0
 fi
 for a in "$@"; do [ "$prev" = "--accept-disclosure" ] && [ "$a" = "2026-11-14.1" ] && touch "$D/accepted"; prev="$a"; done
 if [ ! -f "$D/accepted" ]; then
-  echo "{"state":"needs","reason_code":"disclosure_required","disclosure":$DISC}"
+  printf '{"state":"needs","reason_code":"disclosure_required","disclosure":%s}\n' "$DISC"
   exit 2
 fi
 touch "$D/running"
