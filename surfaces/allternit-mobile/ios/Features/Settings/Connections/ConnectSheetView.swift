@@ -419,7 +419,7 @@ private struct ConnLoginStep: View {
             VStack(alignment: .leading, spacing: 10) {
                 ConnStepStrip(steps: steps, at: opened ? 2 : 0)
                 if !opened {
-                    Text("\(vendor) opens in Safari. Approve, then tap Copy on the code \(vendor) shows. Come back here and press Paste.")
+                    Text("\(vendor) opens in Safari. Approve, then tap Copy on the code \(vendor) shows. Come back here: the code is picked up from the clipboard, or press Paste.")
                         .font(.system(size: 13.5)).foregroundColor(Color("TextSecondary")).fixedSize(horizontal: false, vertical: true)
                     openButton(login)
                 } else if submitting {

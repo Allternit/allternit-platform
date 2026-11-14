@@ -15,6 +15,8 @@ struct ChatGPTSignInStep: View {
 
     @State private var phase: Phase = .starting
     @State private var checking = false
+    @State private var pageLoading = true
+    @State private var pageError: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -41,10 +43,26 @@ struct ChatGPTSignInStep: View {
                             .font(.system(size: 13.5))
                             .foregroundColor(Color("TextSecondary"))
                             .fixedSize(horizontal: false, vertical: true)
-                        ChatGPTAuthWebView(url: pending.url) { callback in
+                        ChatGPTAuthWebView(url: pending.url, loading: $pageLoading, loadError: $pageError) { callback in
                             Task { await finish(callback, pending: pending) }
                         }
+                        // A new attempt gets a new page, not the old web view.
+                        .id(pending.state)
                         .frame(minHeight: 520)
+                        .overlay {
+                            if let pageError {
+                                VStack(spacing: 10) {
+                                    Text(pageError).font(.system(size: 13.5)).foregroundColor(Color("TextPrimary")).multilineTextAlignment(.center)
+                                    Button("Try again") { Task { await start() } }.buttonStyle(ConnPrimaryButtonStyle())
+                                }
+                                .padding(24)
+                            } else if pageLoading {
+                                VStack(spacing: 8) {
+                                    ProgressView()
+                                    Text("Loading ChatGPT's sign-in page…").font(.system(size: 13)).foregroundColor(Color("TextSecondary"))
+                                }
+                            }
+                        }
                         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                         .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Color("BorderSubtle"), lineWidth: 1))
                         .accessibilityIdentifier("chatgpt-signin-web")
@@ -117,6 +135,8 @@ struct ChatGPTSignInStep: View {
 
     private func start() async {
         store.setConnecting("chatgpt", true)
+        pageLoading = true
+        pageError = nil
         phase = .starting
         let pending = await ChatGPTAuthService.shared.beginSignIn()
         phase = .web(pending)
@@ -144,6 +164,8 @@ struct ChatGPTSignInStep: View {
 /// No cookies are kept between sign-ins (non-persistent data store).
 struct ChatGPTAuthWebView: UIViewRepresentable {
     let url: URL
+    @Binding var loading: Bool
+    @Binding var loadError: String?
     let onCallback: (URL) -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator(onCallback: onCallback) }
@@ -160,12 +182,31 @@ struct ChatGPTAuthWebView: UIViewRepresentable {
 
     func updateUIView(_ view: WKWebView, context: Context) {
         context.coordinator.onCallback = onCallback
+        context.coordinator.setLoading = { loading = $0 }
+        context.coordinator.setError = { loadError = $0 }
     }
 
     @MainActor
     final class Coordinator: NSObject, WKNavigationDelegate {
         var onCallback: (URL) -> Void
+        var setLoading: (Bool) -> Void = { _ in }
+        var setError: (String?) -> Void = { _ in }
         private var handled = false
+
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { setLoading(false) }
+
+        func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+            fail(error)
+        }
+
+        func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { fail(error) }
+
+        private func fail(_ error: Error) {
+            setLoading(false)
+            // A cancelled load is ours (the callback, or a newer page).
+            if handled || (error as NSError).code == NSURLErrorCancelled || (error as NSError).code == 102 { return }
+            setError("ChatGPT's page didn't load. Check the connection and try again.")
+        }
 
         init(onCallback: @escaping (URL) -> Void) { self.onCallback = onCallback }
 
