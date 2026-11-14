@@ -14,10 +14,16 @@ Every app connects to your server the same way: a server URL plus a server API k
 | State | Meaning |
 |---|---|
 | Connecting | The app is calling `/v1/server/info`. |
-| Connected | The server answered and the key or sign-in works. The app shows the server version, provider, agents and environments with their online workers. |
+| Connected | The server answered and the key or sign-in works. The app shows the server version, provider, **Replicas** (the number of live server replicas), agents and environments with their online workers. |
 | Key refused (401) | The key is wrong, expired or revoked. Mint a new one with `POST /v1/api_keys` or `admin keys`. |
 | Unreachable | No answer from the URL. Check DNS, the reverse proxy and the firewall. |
 | `http://` blocked | The web app and PWA only accept `https://` URLs. Put TLS in front of the server. |
+
+## Sending messages
+
+A message keeps one `Idempotency-Key` from the moment you compose it. If the network fails and you send it again, the app reuses the key, so the server stores the message once. If the first try already went through, you get the stored answer.
+
+Two messages can be refused. `custom_tool_conflict` means a custom tool on the agent has the same name as a built-in or MCP tool. The app shows a message that names the clash, and nothing is stored. Rename the tool on the agent. `idempotency_in_progress` means the first try is still running. Wait a moment and send again. A turn that ends with `server_restarted` needs the message sent again. See [Known limits](/self-hosted/overview#known-limits).
 
 ## Desktop
 

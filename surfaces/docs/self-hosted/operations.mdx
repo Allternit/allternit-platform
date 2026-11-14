@@ -64,10 +64,10 @@ Test a restore before you need one.
 
 1. Add the new key in your secret store.
 2. In the settings file, point `secrets.encryption_key_ref` at the new key and move the old key's reference into `secrets.previous_key_refs`.
-3. Stop the server.
-4. Run `admin rotate-key --config <path>`. It re-seals every stored credential with the new key. Values sealed with the old key stay readable because it is in `previous_key_refs`.
-5. Start the server again.
-6. Remove the old key from your secret store and from `previous_key_refs`.
+3. Run `admin rotate-key --config <path>`. It re-seals every stored credential with the new key. Values sealed with the old key stay readable because it is in `previous_key_refs`.
+4. Remove the old key from your secret store and from `previous_key_refs`.
+
+The server can keep running. `admin rotate-key` writes each credential only if nobody changed it since it was read. When a credential changed in between, the command reads it again and retries, up to 3 times, and reports how many it retried.
 
 If the command reports credentials that did not open with any key, add the key that sealed them to `previous_key_refs` and run it again.
 
@@ -77,14 +77,36 @@ If the command reports credentials that did not open with any key, add the key t
 
 ## Upgrades
 
-v1 runs one server replica.
-
 1. Back up the database.
 2. Pull the new images.
 3. Run `migrate`.
-4. Restart the server, then the workers.
+4. Restart the server, then the workers. With several replicas, roll them one at a time (see below).
 
 On a graceful shutdown the server ends open long-polls at once, so workers and clients reconnect without waiting for their poll to time out. Sessions continue after a restart: the server rebuilds each session from its event log in PostgreSQL, and the next turn sees the earlier messages. Leases are stored in the database, so workers keep renewing once the server is back. An item whose lease ran out during the restart is claimed again.
+
+A turn that is running when a replica stops is the exception. The server waits `server.shutdown_grace` (default `45s`) for it to finish. If it does not, the session ends with status `error` and the error code `server_restarted`. Resend the message. See [Known limits](/self-hosted/overview#known-limits).
+
+## Run several replicas
+
+Several server replicas share one PostgreSQL database. They need PostgreSQL. SQLite is single node.
+
+- **Helm.** Set `replicaCount` in the `agents-server` chart values, for example `3`. The chart refuses to render more than one replica with a SQLite database URL. With more than one replica it also adds a PodDisruptionBudget.
+- **Rolling updates.** The chart uses a rolling update with `maxUnavailable: 0`, so a new pod is ready before an old one stops. Each stopping replica waits up to `server.shutdown_grace` for its turns.
+- **Live events.** Replicas tell each other about new events with PostgreSQL `LISTEN`. Give the server a direct PostgreSQL connection for this. Behind PgBouncer, use session mode, or point the server at the database directly. Without `LISTEN`, events arrive by polling, within 1 to 5 seconds.
+- **Check it.** `GET /v1/server/info` shows `replicas`, the number of live replicas.
+
+Docker Compose stays at one replica. One host gives no availability gain. Use Helm for several replicas.
+
+A replica that dies without a clean stop is noticed after 45 seconds. Its running turns then end with `server_restarted`.
+
+## Upgrade from 1.0
+
+Migration 003 runs when the server starts, or with `admin migrate`. It does these things:
+
+- It adds a rule that a session has at most one open work item. Before it adds the rule, it cancels older duplicate open items, so each session keeps one.
+- It adds the tables and columns that replicas, idempotency keys and worker affinity use.
+
+Back up the database first. After migration 003, a 1.0 server refuses to start on that database. There is no rollback without a restore: restore the backup, then start the old version. See [Known limits](/self-hosted/overview#known-limits).
 
 ## Doctor
 

@@ -17,7 +17,31 @@ Workers only make outbound HTTPS calls to the server. The server never connects 
 
 `bash`, `read`, `write`, `edit`, `multiedit`, `apply_patch`, `notebook`, `grep`, `glob`, `ls`, `symbol-edit`, `background-task`, `scratchpad`.
 
-For tools your own code runs (`custom` tools on an agent), use the worker helper in the SDKs. See [SDKs](/self-hosted/sdks#custom-tool-worker). The `gizzi worker` CLI does not know custom tools and answers them with an error result, so SDK workers run them.
+For tools your own code runs (`custom` tools on an agent), use the worker helper in the SDKs. See [SDKs](/self-hosted/sdks#custom-tool-worker). For tools that are a command, use a tools file with `gizzi worker`. See [Custom tools with a tools file](#custom-tools-with-a-tools-file). A custom tool with no handler and no entry in the file gets an error result.
+
+## Custom tools with a tools file
+
+`gizzi worker --tools-file <path>` (or the environment variable `ALLTERNIT_WORKER_TOOLS`) loads command tools. The file is JSON:
+
+```json
+{
+  "tools": {
+    "lookup_order": {
+      "command": ["/opt/tools/lookup-order", "--json"],
+      "timeout_ms": 120000
+    }
+  }
+}
+```
+
+- The tool's input JSON goes to the command on stdin.
+- The command's stdout is the result. The 100 KiB cap applies.
+- A non-zero exit code gives an error result (`is_error: true`).
+- The command runs under the same sandbox policy as `bash`, with the environment's network rules.
+- `command` is an argument list, not a shell string. `timeout_ms` is optional and defaults to 120000.
+- A tool name must match the custom tool's name on the agent. A name that is a worker built-in tool, such as `bash`, is refused: the worker exits with an error at start, and so does a bad file.
+
+Custom tools reach subagents and `batch` too. A call from a subagent goes to the root session's queue. A worker serves them the same way. Tools that need your own code, not a command, still use an SDK worker. See [Known limits](/self-hosted/overview#known-limits).
 
 ## One worker, one session
 
@@ -31,7 +55,9 @@ On Ubuntu 23.10 and later, the kernel setting `kernel.apparmor_restrict_unprivil
 
 ## How a work item ends
 
-A session has at most one open work item. A work item ends only when `POST /v1/work/{work_id}/tool_calls/next` answers **204 with the header `X-Session-Closed: true`**. That happens when the session is archived or has been idle for `sessions.idle_timeout` (default `1h`). Then the worker calls `/complete`.
+A session has at most one open work item. A work item ends only when `POST /v1/work/{work_id}/tool_calls/next` answers **204 with the header `X-Session-Closed: true`**. That happens when the session is archived or has been idle for `sessions.idle_timeout` (default `30s`). Then the worker calls `/complete` and is free for another session.
+
+When a worker releases an idle session, its background tasks and scratch files for that session end. The next turn that needs a tool queues a new item. The server prefers the same worker for **10 seconds**. If that worker is free, the follow-up turn goes back to it. If it is busy, another worker takes the item, and `/workspace` there is different. Set `sessions.idle_timeout` to `1h` to hold a worker longer. See [Known limits](/self-hosted/overview#known-limits).
 
 A plain 204 (no header) is an empty wait, not the end. Poll again. Never complete after an empty wait: the session may send a tool call later.
 
@@ -56,7 +82,8 @@ On a graceful server shutdown, open long-polls end at once.
 | `--block-ms N` | How long one claim waits for work before the server answers "nothing" (0 to 30000). |
 | `--drain` | Drain mode (above). |
 | `--on-work SCRIPT` | On-work mode (above). |
-| `--reclaim-older-than-ms N` | Also claim items whose lease ran out at least this long ago. This is how work from a dead worker comes back. |
+| `--reclaim-older-than-ms N` | Also take an item whose lease is still live but was last renewed at least this long ago (a stuck worker that still holds a lease). Expired leases are always claimable without it. Values below 30000, including 0, are raised to 30000, because a healthy worker renews every 20 seconds. The `gizzi` CLI warns when you pass less. 60000 or more adds nothing. |
+| `--tools-file PATH` | Command tools for custom tools (above). Also `ALLTERNIT_WORKER_TOOLS`. |
 | `--auto-stop` | Listed in the protocol. Its exact stop rule is still being defined. |
 
 The repo also ships a systemd unit, `gizzi-worker.service`, for always-on workers.
@@ -66,7 +93,7 @@ The repo also ships a systemd unit, `gizzi-worker.service`, for always-on worker
 - A claim gives a **60 second lease**. Renew it every **20 seconds** (`POST /v1/work/{work_id}/renew`). A heartbeat (`/heartbeat`) between renewals is optional.
 - Every claim raises the item's **`lease_generation`**. Every call about the item (`heartbeat`, `renew`, `complete`, `release`) carries the generation from the claim.
 - An old generation gets **409 `lease_stale`**. Another worker owns the item now. The worker stops at once, discards its results and posts nothing.
-- If a lease runs out, the item becomes ready again, and another worker can take it with `reclaim_older_than_ms`.
+- If a lease runs out, the item becomes ready again within 5 seconds, and any worker can claim it. `reclaim_older_than_ms` (minimum 30000) also lets a claim take a live lease that was last renewed that long ago.
 - On shutdown, a worker calls `/release`. The item goes back to ready at once.
 - A worker finishes with `/complete`, after the session-closed signal above. Completing twice with the current generation is safe.
 - Send `X-Worker-Hostname` and `X-Worker-Version` on claim, heartbeat, renew, complete and release. They show in the worker list below.

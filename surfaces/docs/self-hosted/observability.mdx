@@ -61,6 +61,8 @@ observability:
 | `egress_refusals_total` | counter | `host` | Outbound requests the egress guard refused. |
 | `store_up` | gauge | none | 1 when the scrape-time store reads worked. |
 
+The gauges `sessions`, `queue_depth`, `workers_online` and `store_up` are read from the database, so with several replicas every replica reports the same value. Use one replica's value, not the sum (for example `max by (status)`). Counters and histograms count what each replica did itself, so sum those. See [Known limits](/self-hosted/overview#known-limits).
+
 The listener has no TLS or login. To scrape from another machine, run a Prometheus agent on the same host or put a proxy in front, and limit who can reach it.
 
 ## Logs

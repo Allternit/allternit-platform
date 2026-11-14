@@ -13,7 +13,7 @@ Allternit Self-Hosted Agents is an agent server you run on your own infrastructu
 
 | Part | What it does | Where it runs |
 |---|---|---|
-| **Agents Server** (`allternit-agents-server`) | The HTTP API, keys and roles, and the agent loop. Model calls and MCP calls happen here. | Your host or cluster, one replica in v1. Listens on `127.0.0.1:8400` by default. |
+| **Agents Server** (`allternit-agents-server`) | The HTTP API, keys and roles, and the agent loop. Model calls and MCP calls happen here. | Your host or cluster. One replica by default. Run several replicas on PostgreSQL (see [Operations](/self-hosted/operations#run-several-replicas)). Listens on `127.0.0.1:8400` by default. |
 | **PostgreSQL** | Agents, environments, sessions, the event log, the work queue, tool calls, keys and stored credentials. SQLite is available for development. | Next to the server, or your managed PostgreSQL 16. |
 | **Workers** (`gizzi worker`) | Run sandboxed tools (bash, file reads and edits, search) in `/workspace`. They poll the server for work over outbound HTTPS. | Any host that can reach the server. The server never connects to a worker. |
 | **Model provider** | Answers model calls. Anthropic, Amazon Bedrock, Google Vertex AI, Microsoft Foundry, or your own gateway. | Wherever your provider runs. |
@@ -69,9 +69,22 @@ Web tools (web search and fetch) are off in v1.
 ## What v1 does not do
 
 - One deployment serves one tenant. Run a separate deployment per tenant.
-- One server replica. After a restart, sessions continue from the event log in PostgreSQL.
 - No credential-injecting egress gateway. Workers enforce the environment's network rules.
 - No web tools.
+
+## Known limits
+
+This is the full list of what still does not work the way you might expect. Other pages link here.
+
+- **SQLite is single node.** Run several replicas only with PostgreSQL.
+- **A turn on a replica that stops ends with an error.** The session gets the error code `server_restarted`. Resend the message. Earlier messages are kept.
+- **Files live on the worker pod.** A file a session wrote in `/workspace` stays on that worker, not in the database.
+- **A worker releases a session after it is idle.** A worker's background tasks and scratch files for the session end then. The wait is `sessions.idle_timeout`, 30 seconds by default. Set it to `1h` for the old behaviour. See [Configuration](/self-hosted/configuration#sessions).
+- **Live events across replicas need a direct PostgreSQL connection.** The server uses `LISTEN` for this. Without a direct connection, events arrive by polling, within 1 to 5 seconds.
+- **A session that moves to another replica rebuilds its context from the stored events.** The next turn sees the earlier messages, but not state held only in memory.
+- **Worker custom tools are commands only.** The `gizzi worker` tools file runs a command for each call. Use an SDK worker for tools that need your own code.
+- **Metrics gauges that come from the database repeat on every replica.** Take one replica's value, not the sum. See [Observability](/self-hosted/observability#metrics-prometheus).
+- **Going back to 1.0 after migration 003 is not supported.** Restore the database backup instead. See [Operations](/self-hosted/operations#upgrade-from-10).
 
 ## Next
 

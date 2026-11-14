@@ -16,8 +16,25 @@ The server makes no calls to `*.allternit.com`. It has no license check and
 no Allternit account. Model calls go only to the provider in your settings
 file. You can test this with the air-gap check (`compose/verify-airgap.sh`).
 
-Version 1 runs one server replica. Sessions are rebuilt from the events in
-PostgreSQL after a restart.
+Run one server replica, or several on PostgreSQL (section 4). Sessions are
+rebuilt from the events in PostgreSQL after a restart.
+
+### Known limits
+
+- SQLite is single node. Several replicas need PostgreSQL.
+- A turn running on a replica that stops ends with the error code
+  `server_restarted`. Resend the message.
+- Files live on the worker pod.
+- A worker's background tasks and scratch files for a session end when it
+  releases the session, after `sessions.idle_timeout` (default 30s; set `1h`
+  for the old behaviour).
+- Live events across replicas need a direct PostgreSQL connection for `LISTEN`.
+  Without it, events arrive within 1 to 5 seconds by polling.
+- A session that moves to another replica rebuilds its context from the stored
+  events.
+- Worker custom tools are commands only.
+- Metrics gauges that come from the database repeat on every replica.
+- Going back to 1.0 after migration 003 is not supported. Restore the database.
 
 ## Files in this package
 
@@ -98,8 +115,10 @@ The settings file is YAML. Secrets never go in it. Use a reference instead:
   With Vault, `vault:path#key` reads `{mount}/data/{vault.path}/{path}`, and
   `vault:#key` reads `vault.path` itself. Vault auth is `token`, `approle` or
   `kubernetes`.
-- `sessions`: `idle_timeout` (default 1h; after it the worker's item closes)
-  and `no_worker_timeout` (default 10m; then a tool call fails with
+- `server.shutdown_grace` (default 45s): how long a stopping replica waits for
+  its running turns before it fails them with `server_restarted`.
+- `sessions`: `idle_timeout` (default 30s; after it the worker's item closes
+  and the worker is free for another session) and `no_worker_timeout` (default 10m; then a tool call fails with
   `no_worker`). A session shows `waiting_for_worker` while a tool call has no
   worker.
 - `observability`: log format and the Prometheus listener (off by default;
@@ -276,7 +295,31 @@ docker run -d --restart unless-stopped \
 
 Worker flags (add them after the image name): `--drain` (run one item, then
 exit), `--block-ms`, `--reclaim-older-than-ms`, `--auto-stop SECS`,
-`--on-work SCRIPT`. See `docs/SELFHOST_WORKER_PROTOCOL.md` in the server source.
+`--on-work SCRIPT`, `--tools-file PATH`. See `docs/SELFHOST_WORKER_PROTOCOL.md`
+in the server source.
+
+`--reclaim-older-than-ms N` takes an item whose lease is still live but was last
+renewed at least N ms ago (a stuck worker). Expired leases are always claimable
+without it. Values below 30000, including 0, are raised to 30000.
+
+After `sessions.idle_timeout` with no turn, the server closes the session's
+item and the worker is free. The server prefers the same worker for 10 seconds
+for the next turn. A worker's background tasks and scratch files for that
+session end when it releases the item.
+
+### Tools file
+
+To give a `gizzi worker` your own command tools, set `--tools-file <path>` or
+`ALLTERNIT_WORKER_TOOLS`:
+
+```json
+{"tools": {"lookup_order": {"command": ["/opt/tools/lookup-order"], "timeout_ms": 120000}}}
+```
+
+The tool input JSON goes to the command on stdin. Stdout is the result (100 KiB
+cap). A non-zero exit gives an error result. The command runs in the same
+sandbox as `bash`. A name that is a worker built-in tool, or a bad file, stops
+the worker at start. Custom tools also reach subagents and `batch`.
 
 On SIGTERM, a worker hands its item back and exits, and another worker takes it.
 On a graceful server shutdown, open long-polls end at once.
@@ -296,6 +339,22 @@ helm install sandboxes charts/sandboxes -n allternit -f worker-values.yaml
 
 The chart runs the migration as a Job before each install and upgrade. You run
 PostgreSQL yourself.
+
+### Several replicas
+
+Set `replicaCount` in the `agents-server` values, for example `3`. This needs
+PostgreSQL: the chart refuses to render several replicas with a SQLite URL.
+
+- The chart adds a PodDisruptionBudget and updates with `maxUnavailable: 0`.
+- Each stopping replica waits `server.shutdown_grace` (default 45s) for its
+  turns, then fails the rest with `server_restarted`. Keep
+  `terminationGracePeriodSeconds` above it.
+- Replicas pass events to each other with PostgreSQL `LISTEN`. Give the server a
+  direct database connection, or PgBouncer in session mode. Otherwise events
+  arrive by polling within 1 to 5 seconds.
+- `GET /v1/server/info` shows `replicas`.
+
+Docker Compose stays at one replica.
 
 ## 5. Upgrades
 
@@ -320,6 +379,16 @@ sessions continue from their stored events.
 To go back to the previous version, restore the backup you took in step 2,
 then start the previous image. A migration may change the schema in a way the
 older server cannot read.
+
+### Upgrading from 1.0
+
+Migration 003 runs when the new server starts (or with `admin migrate`). It
+cancels duplicate open work items (each session keeps one), adds a rule that a
+session has at most one open item, and adds the tables replicas and
+idempotency keys use. After it, a 1.0 server refuses to start on that
+database. There is no rollback without restoring the backup from step 2. For
+a rolling upgrade on Helm, new pods run the migration, and old pods that
+restart afterwards stop at start.
 
 ## 6. Backups
 
@@ -357,7 +426,7 @@ Test a restore on a separate host from time to time.
 |---|---|
 | Server API keys (`ask_...`) | Create a new key (`POST /v1/api_keys`, admin role), switch your clients to it, then revoke the old one (`DELETE /v1/api_keys/{id}`). `admin keys` lists and revokes keys from the server container. |
 | Environment keys (`aek_...`) | Create a new key for the environment, update the workers' `ALLTERNIT_ENVIRONMENT_KEY` (`.env` or the Kubernetes Secret), restart the workers, then revoke the old key (`DELETE /v1/environments/{id}/keys/{key_id}`). |
-| Encryption key | Back up the database first. Add the new key, point `secrets.encryption_key_ref` at it and move the old key's reference into `secrets.previous_key_refs`. Stop the server, run `allternit-agents-server admin rotate-key --config <path>`, start the server, then remove the old key from `previous_key_refs` and your secret store. Keep the old key with the backups taken before the rotation. |
+| Encryption key | Back up the database first. Add the new key, point `secrets.encryption_key_ref` at it and move the old key's reference into `secrets.previous_key_refs`. Run `allternit-agents-server admin rotate-key --config <path>` while the server runs, then remove the old key from `previous_key_refs` and your secret store. The command writes each credential only if it did not change meanwhile, and retries up to 3 times when it did. Keep the old key with the backups taken before the rotation. |
 | Provider credentials | Change the value behind the reference (the env var, file or Vault secret) and restart the server. |
 | Session secrets | Nothing to do. Each work claim gets a new one, and it ends with the lease. |
 
