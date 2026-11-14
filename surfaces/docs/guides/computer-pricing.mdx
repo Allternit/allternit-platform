@@ -1,6 +1,6 @@
 ---
 title: "Computer pricing"
-description: "Plans with an included hosted computer, the credits computer's hourly price, sleep, and what happens at zero credits."
+description: "Plans with an included hosted computer, hours past the included hours, the credits computer's hourly price, sleep, and what happens at zero credits."
 ---
 
 Current prices are shown in the app and returned by `GET /api/v1/account/compute-status`. The tables below are the current prices and can change.
@@ -16,6 +16,16 @@ Each plan includes one hosted computer.
 | Ultra | $200 | 8 cores, 32 GB, 200 GB disk | not decided yet |
 
 Sizes and hours for Max and Ultra are not final.
+
+### Hours past the included hours
+
+Running hours count per calendar month in UTC. Only running time counts: a sleeping or stopped computer uses no hours. The count starts at zero on the first day of each month.
+
+After the included hours, each extra hour is paid from your credit balance at the computer-on-credits running price, $0.10 an hour, charged per minute (rate divided by 60 each minute). Plus includes 200 hours, so the 201st hour is the first one paid from credits.
+
+When your credits reach $0 while you are past the included hours, the plan's computer stops and the account shows as suspended. Nothing is deleted, because the plan still pays for the computer. It can run again when you add credits, or when the next month starts and the included hours begin again. We email you when it stops, and when about 24 hours and about 2 hours of extra running time are left on your credits.
+
+Used, included and extra hours for the month are returned in `computer.hours` by [`GET /api/v1/account/compute-status`](/api/account-compute-status).
 
 ## Computer on credits
 
@@ -33,7 +43,7 @@ Hosted computers sleep after 30 idle minutes and wake when an agent needs them. 
 
 ## When credits reach $0
 
-The computer stops and the account shows as suspended. The disk is kept for 14 days, then the computer is deleted. We email you when it stops, after 7 days and the day before it is deleted. Add credits and start the computer again to keep it.
+For a computer on credits: the computer stops and the account shows as suspended. The disk is kept for 14 days, then the computer is deleted. We email you when it stops, after 7 days and the day before it is deleted. Add credits and start the computer again to keep it.
 
 ## Free accounts
 

@@ -380,6 +380,9 @@ pub enum CreditNotice {
     Stopped { delete_after: chrono::DateTime<chrono::Utc> },
     /// Reminder that the stopped computer is deleted at `delete_after`.
     DeleteWarning { delete_after: chrono::DateTime<chrono::Utc> },
+    /// A plan computer past its included hours stopped at $0. Nothing is
+    /// deleted; it can run again at `resumes_at` (next month) or with credits.
+    PlanHoursStopped { resumes_at: chrono::DateTime<chrono::Utc> },
 }
 
 impl CreditNotice {
@@ -390,6 +393,7 @@ impl CreditNotice {
             CreditNotice::Low2h => "credit_low_2h",
             CreditNotice::Stopped { .. } => "credit_stopped",
             CreditNotice::DeleteWarning { .. } => "credit_delete_warning",
+            CreditNotice::PlanHoursStopped { .. } => "plan_hours_stopped",
         }
     }
 }
@@ -418,6 +422,11 @@ pub fn credit_notice_email(recipient: &Recipient, notice: CreditNotice) -> Email
             "Your stopped computer will be deleted soon".to_string(),
             format!("Your stopped hosted computer will be deleted on {}.", date(delete_after)),
             "Add credits and start it before then to keep it.".to_string(),
+        ),
+        CreditNotice::PlanHoursStopped { resumes_at } => (
+            "Your hosted computer stopped".to_string(),
+            "Your plan's computer hours for this month are used and your credits ran out, so the computer stopped. Add credits to start it again.".to_string(),
+            format!("Nothing is deleted. It can run again on {} when the new month starts.", date(resumes_at)),
         ),
     };
     let body = format!("{}\n\n{lead}\n\n{follow}\n\n— Allternit\n", greeting(recipient));
@@ -963,6 +972,11 @@ mod tests {
         let low = credit_notice_email(&eoj(), CreditNotice::Low2h);
         assert!(low.body.contains("About 2 hours of computer time left on your credits."));
         assert_eq!(CreditNotice::DeleteWarning { delete_after }.kind(), "credit_delete_warning");
+        let resumes_at = chrono::Utc.with_ymd_and_hms(2026, 12, 1, 0, 0, 0).unwrap();
+        let plan = credit_notice_email(&eoj(), CreditNotice::PlanHoursStopped { resumes_at });
+        assert!(plan.body.contains("Nothing is deleted. It can run again on December 1, 2026"));
+        assert!(!plan.body.contains("deleted on"), "a plan computer is never scheduled for deletion");
+        assert_eq!(CreditNotice::PlanHoursStopped { resumes_at }.kind(), "plan_hours_stopped");
     }
 
     #[test]

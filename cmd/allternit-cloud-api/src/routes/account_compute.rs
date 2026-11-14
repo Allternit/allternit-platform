@@ -26,7 +26,14 @@
 //! usable; otherwise a live hosted computer, then an own computer, then one
 //! being created (or a paid subscription whose computer is not made yet),
 //! then a suspended one, then a recent failed create (`none` with
-//! `computer.status: "error"`).
+//! `computer.status: "error"`). A plan computer stopped at $0 past its
+//! included hours (provisioning_plan_hours.rs) reports `suspended` even while
+//! its plan is active, and does not count as compute for the gate.
+//!
+//! `computer.hours` (plan computers with included hours, Plus today): this
+//! UTC month's `used_hours`, `included_hours`, `overage_hours`,
+//! `overage_price_per_hour_usd`, `overage_charged_usd`, `overage_billing`
+//! (`ALLTERNIT_PLAN_OVERAGE`), `stopped_for_hours` and `resumes_at`.
 //!
 //! Auth: Clerk session or `allternit_*` token with the `account` scope, like
 //! `me_flags`.
@@ -45,7 +52,9 @@ use chrono::{DateTime, Duration, SecondsFormat, Utc};
 use serde::Serialize;
 use serde_json::{json, Value};
 
-use crate::services::provisioning::{provider_for_endpoint, CreditDefaults, CREDIT_SIZE_ID};
+use crate::services::provisioning::{
+    plan_hours_usage, provider_for_endpoint, CreditDefaults, PlanHoursDefaults, PlanHoursUsage, CREDIT_SIZE_ID,
+};
 use crate::{auth, ApiError, ApiState};
 
 pub const DOCS_URL: &str = "https://docs.allternit.com/api/account-compute-status";
@@ -53,7 +62,6 @@ pub const COMPUTE_REQUIRED_MESSAGE: &str = "Agents need a computer. Link your ow
 const DEFAULT_DOWNLOAD_URL: &str = "https://www.allternit.com/download";
 const ENV_GATE: &str = "ALLTERNIT_COMPUTE_GATE";
 const ENV_DOWNLOAD_URL: &str = "ALLTERNIT_DOWNLOAD_URL";
-const ENV_PLUS_INCLUDED_HOURS: &str = "ALLTERNIT_PLUS_INCLUDED_HOURS";
 /// Same heartbeat grace as node resolution (`ALLTERNIT_NODE_STALE_AFTER_SECS`).
 const ENV_STALE_AFTER_SECS: &str = "ALLTERNIT_NODE_STALE_AFTER_SECS";
 /// A failed create is reported (as `none` + `status: "error"`) this long.
@@ -74,8 +82,9 @@ pub struct GateConfig {
     pub gate: bool,
     pub credits: bool,
     pub credit: CreditDefaults,
-    /// Running hours a month included with Plus (`ALLTERNIT_PLUS_INCLUDED_HOURS`, default 200: Eoj, 2026-11-13).
-    pub plus_included_hours: i64,
+    /// Running hours a month included with Plus (`ALLTERNIT_PLUS_INCLUDED_HOURS`,
+    /// default 200: Eoj, 2026-11-13) and whether overage bills (`ALLTERNIT_PLAN_OVERAGE`).
+    pub plan_hours: PlanHoursDefaults,
     pub download_url: String,
 }
 
@@ -85,11 +94,7 @@ impl GateConfig {
             gate: gate_enabled(),
             credits: crate::services::credit_computers_enabled(),
             credit: CreditDefaults::from_env(),
-            plus_included_hours: std::env::var(ENV_PLUS_INCLUDED_HOURS)
-                .ok()
-                .and_then(|v| v.trim().parse::<i64>().ok())
-                .filter(|v| *v >= 0)
-                .unwrap_or(200),
+            plan_hours: PlanHoursDefaults::from_env(),
             download_url: std::env::var(ENV_DOWNLOAD_URL)
                 .ok()
                 .map(|v| v.trim().to_string())
@@ -131,6 +136,9 @@ pub struct ComputerView {
     pub runway_hours: Option<f64>,
     /// Suspended computers: when the stopped computer is deleted (RFC 3339).
     pub retention_until: Option<String>,
+    /// Plan computers with included hours: this month's used, included and
+    /// overage hours (filled by [`status_body`]; null otherwise).
+    pub hours: Option<PlanHoursUsage>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -176,6 +184,16 @@ struct InstanceRow {
     delete_after: Option<DateTime<Utc>>,
     updated_at: DateTime<Utc>,
     incus_endpoint: Option<String>,
+    cancelled_at: Option<DateTime<Utc>>,
+    plan_overage_stopped_at: Option<DateTime<Utc>>,
+}
+
+impl InstanceRow {
+    /// A plan computer stopped at $0 past its included hours (the plan is
+    /// still active; provisioning_plan_hours.rs).
+    fn stopped_for_hours(&self) -> bool {
+        self.tier == "paid" && self.status == "suspended" && self.cancelled_at.is_none() && self.plan_overage_stopped_at.is_some()
+    }
 }
 
 /// Relay-capable devices of the account that no provisioned computer owns.
@@ -200,7 +218,8 @@ pub async fn compute_snapshot(
     let own: Vec<OwnDeviceRow> = sqlx::query_as(OWN_DEVICES_SQL).bind(user_id).fetch_all(db).await?;
     let instances: Vec<InstanceRow> = sqlx::query_as(
         r#"
-        SELECT i.id, i.tier, i.status, i.device_id, i.delete_after, i.updated_at, h.incus_endpoint
+        SELECT i.id, i.tier, i.status, i.device_id, i.delete_after, i.updated_at, h.incus_endpoint,
+               i.cancelled_at, i.plan_overage_stopped_at
         FROM provisioned_instances i
         LEFT JOIN provisioned_hosts h ON h.id = i.host_id
         WHERE i.user_id = $1 AND i.tier IN ('paid', 'credit') AND i.status <> 'deleted'
@@ -252,6 +271,7 @@ pub async fn compute_snapshot(
                 sleeps_when_idle: false,
                 runway_hours: None,
                 retention_until: None,
+                hours: None,
             },
             online,
         )
@@ -274,6 +294,7 @@ pub async fn compute_snapshot(
                     None
                 },
                 retention_until: (row.status == "suspended").then_some(row.delete_after).flatten().map(rfc3339),
+                hours: None,
             },
             online,
         )
@@ -304,6 +325,11 @@ pub async fn compute_snapshot(
     // 4. One being created, or a paid plan whose computer is not made yet.
     if let Some(row) = instances.iter().find(|row| row.status == "provisioning") {
         return Ok(snapshot(ComputeState::Provisioning, instance_view(row)));
+    }
+    // A plan computer stopped at $0 past its hours: suspended, although the
+    // plan is active (it is kept, not being made).
+    if let Some(row) = instances.iter().find(|row| row.stopped_for_hours()) {
+        return Ok(snapshot(ComputeState::Suspended, instance_view(row)));
     }
     if subscribed {
         return Ok(ComputeSnapshot { state: ComputeState::Provisioning, online: false, computer: None });
@@ -338,9 +364,13 @@ pub async fn has_compute(db: &sqlx::PgPool, user_id: &str) -> Result<bool, ApiEr
             SELECT 1 FROM provisioned_instances
             WHERE user_id = $1 AND tier IN ('paid', 'credit') AND replaced_by IS NULL
               AND status IN ('provisioning', 'running', 'stopped', 'sleeping', 'waking')
-        ) OR EXISTS (
+        ) OR (EXISTS (
             SELECT 1 FROM billing_subscriptions WHERE user_id = $1 AND status IN ('active', 'trialing')
-        )
+        ) AND NOT EXISTS (
+            SELECT 1 FROM provisioned_instances
+            WHERE user_id = $1 AND tier = 'paid' AND replaced_by IS NULL AND status = 'suspended'
+              AND cancelled_at IS NULL AND plan_overage_stopped_at IS NOT NULL
+        ))
         "#,
     )
     .bind(user_id)
@@ -377,7 +407,9 @@ pub async fn paths_for(db: &sqlx::PgPool, user_id: &str, config: &GateConfig) ->
                 "name": plan.label,
                 "price_usd_month": plan.price_usd,
                 "computer": { "cpu": cpu, "memory_gb": memory_gb, "disk_gb": disk_gb },
-                "included_hours": (id == "plus").then_some(config.plus_included_hours),
+                "included_hours": (id == "plus").then_some(config.plan_hours.plus_included_hours),
+                // Hours past the included ones bill from credits at the credit computer rate.
+                "overage_price_per_hour_usd": (id == "plus").then_some(config.credit.price_per_hour_usd),
             }))
         })
         .collect();
@@ -449,7 +481,11 @@ pub async fn status_body(
     connected: &HashSet<String>,
     now: DateTime<Utc>,
 ) -> Result<Value, ApiError> {
-    let snapshot = compute_snapshot(db, user_id, connected, &config.credit, now).await?;
+    let mut snapshot = compute_snapshot(db, user_id, connected, &config.credit, now).await?;
+    if let Some(computer) = snapshot.computer.as_mut().filter(|computer| computer.kind == "plan") {
+        computer.hours =
+            plan_hours_usage(db, &computer.id, &config.plan_hours, config.credit.price_per_hour_usd, now).await?;
+    }
     let acknowledged_at: Option<DateTime<Utc>> =
         sqlx::query_scalar("SELECT acknowledged_at FROM account_compute_acknowledgements WHERE user_id = $1")
             .bind(user_id)
@@ -547,6 +583,7 @@ pub(crate) mod tests {
             include_str!("../../migrations_pg/019_free_sleeping_computer.sql"),
             include_str!("../../migrations_pg/132_credit_computers.sql"),
             include_str!("../../migrations_pg/133_compute_gate.sql"),
+            include_str!("../../migrations_pg/134_plan_computer_hours.sql"),
         ] {
             sqlx::raw_sql(&sql.replace("public.", "")).execute(db).await.expect("migration applies");
         }
@@ -587,7 +624,7 @@ pub(crate) mod tests {
             gate,
             credits,
             credit: CreditDefaults::default(),
-            plus_included_hours: 200,
+            plan_hours: PlanHoursDefaults::default(),
             download_url: DEFAULT_DOWNLOAD_URL.to_string(),
         }
     }
@@ -700,6 +737,57 @@ pub(crate) mod tests {
         assert_eq!(pending["state"], "provisioning");
         assert!(pending["computer"].is_null());
         assert_eq!(pending["gate"], false);
+    }
+
+    #[tokio::test]
+    async fn a_plus_computer_reports_its_hours_and_is_suspended_when_stopped_for_hours() {
+        let db = gate_db().await;
+        sqlx::query("INSERT INTO billing_subscriptions (stripe_subscription_id, user_id, plan_id, plan_tier, status) VALUES ('sub_1', 'user_2', 'plus', 'pro', 'active')")
+            .execute(&db)
+            .await
+            .unwrap();
+        insert_instance(&db, "pi_plus", "user_2", "paid", "running", None).await;
+        sqlx::query("UPDATE provisioned_instances SET plan_id = 'plus', subscription_id = 'sub_1' WHERE id = 'pi_plus'")
+            .execute(&db)
+            .await
+            .unwrap();
+        // 201.5 hours run this month (an open session from the month start).
+        let now = Utc::now();
+        let started = crate::services::provisioning::month_start(now);
+        let ran = (now - started).num_seconds() as f64 / 3600.0;
+        sqlx::query("INSERT INTO provisioned_instance_usage_sessions (id, instance_id, user_id, started_at) VALUES ('pus_1', 'pi_plus', 'user_2', $1)")
+            .bind(started)
+            .execute(&db)
+            .await
+            .unwrap();
+        let running = status(&db, "user_2", true).await;
+        assert_eq!(running["state"], "hosted");
+        let hours = &running["computer"]["hours"];
+        assert_eq!(hours["included_hours"], 200);
+        assert!((hours["used_hours"].as_f64().unwrap() - ran).abs() < 0.01);
+        assert!((hours["overage_hours"].as_f64().unwrap() - (ran - 200.0).max(0.0)).abs() < 0.01);
+        assert_eq!(hours["overage_price_per_hour_usd"], 0.10);
+        assert_eq!(hours["overage_billing"], false);
+        assert_eq!(hours["stopped_for_hours"], false);
+        assert_eq!(running["paths"]["plan"]["plans"][0]["overage_price_per_hour_usd"], 0.10);
+
+        // Stopped at $0 past its hours: suspended and gated although the plan
+        // is active (before this, an active plan read as "provisioning").
+        sqlx::query("UPDATE provisioned_instances SET status = 'suspended', plan_overage_stopped_at = $1 WHERE id = 'pi_plus'")
+            .bind(now)
+            .execute(&db)
+            .await
+            .unwrap();
+        let stopped = status(&db, "user_2", true).await;
+        assert_eq!(stopped["state"], "suspended");
+        assert_eq!(stopped["gate"], true);
+        assert_eq!(stopped["computer"]["hours"]["stopped_for_hours"], true);
+        assert_eq!(
+            stopped["computer"]["hours"]["resumes_at"],
+            json!(crate::services::provisioning::next_month_start(now))
+        );
+        assert!(stopped["computer"]["retention_until"].is_null(), "kept, never deleted");
+        assert!(!has_compute(&db, "user_2").await.unwrap());
     }
 
     #[tokio::test]
