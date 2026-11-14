@@ -3,6 +3,7 @@ import QRCode from "qrcode"
 import { UI } from "@/cli/ui"
 import {
   ConnectFailure,
+  DisclosureRequired,
   copyToClipboard,
   disconnect,
   listRows,
@@ -11,14 +12,15 @@ import {
   submit,
   type Login,
 } from "@/cli/commands/connect-run"
-import { findEntry, nameOf, renderHub, resolve, statusText, unavailableText, type Row } from "@/cli/commands/connect-model"
+import { DEFAULT_ROWS, findEntry, nameOf, renderHub, resolve, statusText, unavailableText, type Row } from "@/cli/commands/connect-model"
 
 const say = (s = "") => process.stdout.write(s + "\n")
 
 async function readSecret(message: string, hidden: boolean): Promise<string> {
   if (!process.stdin.isTTY) {
-    const text = await new Response(Bun.stdin.stream()).text()
-    return text.split("\n")[0].trim()
+    // Piped input: one line, sharing the reader the disclosure prompt uses.
+    const { readLine } = await import("@/cli/commands/connect-chatgpt")
+    return (await readLine()).trim()
   }
   const v = hidden ? await prompts.password({ message }) : await prompts.text({ message })
   if (prompts.isCancel(v)) throw new UI.CancelledError()
@@ -49,7 +51,8 @@ async function connectOne(id: string, rows: Row[]) {
     process.exitCode = 1
     return
   }
-  const res = await startConnect(entry.id, row.source)
+  const res = await startWithDisclosure(entry.id, row)
+  if (!res) return
   const login = res.login
   if (!login) {
     say(`${entry.name}: ${res.state === "on" ? "Connected" : "Connecting…"}`)
@@ -91,14 +94,65 @@ async function connectOne(id: string, rows: Row[]) {
       if (login.url) say(`Open: ${login.url}`)
       return waitForDone(entry.id, row, login)
     }
-    case "oauth": {
-      if (login.url) say(`Open: ${login.url}`)
+    case "oauth":
+    case "browser_redirect": {
+      if (login.url) {
+        say(`Open: ${login.url}`)
+        const { default: open } = await import("open")
+        await open(login.url).catch(() => undefined)
+      }
       return waitForDone(entry.id, row, login)
     }
   }
 }
 
-export async function runConnect(opts: { id?: string; disconnect: boolean; json: boolean }) {
+/**
+ * POST connect; a runner row answers 409 `disclosure_required` until this
+ * account accepts the current version (§9.2). The text is the server's, shown
+ * as given; only "y" accepts, and the connect is sent again with
+ * `accept_disclosure`. Declining sends nothing and points at the key row.
+ */
+async function startWithDisclosure(id: string, row: Row) {
+  try {
+    return await startConnect(id, row.source)
+  } catch (e) {
+    if (!(e instanceof DisclosureRequired)) throw e
+    const { askAccept } = await import("@/cli/commands/connect-chatgpt")
+    if (!(await askAccept(e.disclosure))) {
+      const fallback = row.fallbacks?.[0] ?? DEFAULT_ROWS[id]?.fallbacks?.[0]
+      say(fallback ? `Not connected. ${e.disclosure.decline_label}: gizzi connect ${fallback}` : "Not connected.")
+      process.exitCode = 1
+      return undefined
+    }
+    return startConnect(id, row.source, { acceptDisclosure: e.disclosure.version })
+  }
+}
+
+export async function runConnect(opts: {
+  id?: string
+  target?: string
+  disconnect: boolean
+  json: boolean
+  acceptDisclosure?: string
+  open?: boolean
+}) {
+  // ChatGPT signs in on this computer (§9.9): `gizzi connect chatgpt`,
+  // `gizzi connect status chatgpt`, `gizzi connect disconnect chatgpt` (all take --json).
+  const verb = opts.id === "status" || opts.id === "disconnect" ? opts.id : undefined
+  const subject = (verb ? opts.target : opts.id)?.toLowerCase()
+  if (subject === "chatgpt") {
+    const chatgpt = await import("@/cli/commands/connect-chatgpt")
+    if (verb === "status") process.exitCode = await chatgpt.runChatgptStatus({ json: opts.json })
+    else if (verb === "disconnect" || opts.disconnect) process.exitCode = await chatgpt.runChatgptDisconnect({ json: opts.json })
+    else process.exitCode = await chatgpt.runChatgptConnect({ json: opts.json, acceptDisclosure: opts.acceptDisclosure, open: opts.open })
+    return
+  }
+  if (verb && !subject) {
+    UI.error(`Name the connection: gizzi connect ${verb} <name>`)
+    process.exitCode = 1
+    return
+  }
+  if (verb === "disconnect") opts = { ...opts, id: subject, disconnect: true }
   try {
     const rows = await listRows()
     if (!opts.id) {
@@ -114,6 +168,13 @@ export async function runConnect(opts: { id?: string; disconnect: boolean; json:
       await disconnect(entry.id, row.source)
       say(`${nameOf(entry.id)}: Not connected`)
       return
+    }
+    if (verb === "status") {
+      const entry = findEntry(subject!)
+      if (!entry) throw new ConnectFailure(`No connection called "${subject}". Run \`gizzi connect\` to see the list.`)
+      const row = resolve(rows).find((x) => x.entry.id === entry.id)!.row
+      if (opts.json) return say(JSON.stringify(row))
+      return say(`${entry.name}: ${row.available === false ? unavailableText(entry, row) : statusText(entry, row)}`)
     }
     await connectOne(opts.id, rows)
   } catch (e) {

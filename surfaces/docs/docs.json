@@ -433,6 +433,7 @@
               "cli/configuration",
               "cli/models",
               "cli/authentication",
+              "cli/connect",
               "cli/headless-execution",
               "cli/output",
               "cli/permission-profiles",

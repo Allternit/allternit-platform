@@ -34,6 +34,9 @@ import { resolveDefaultBrain, type DefaultBrain } from "@/runtime/providers/defa
 import { SubprocessLanguageModel } from "@/runtime/providers/adapters/loaders/subprocess"
 import { SubscriptionFabricLanguageModel } from "@/runtime/providers/fabric/language-model"
 import { fabricConfigured, isFabricProviderID } from "@/runtime/providers/fabric/client"
+import { PersonPlanLanguageModel } from "@/runtime/providers/person-plan/language-model"
+import { PERSON_PLAN_RUNTIME } from "@/runtime/providers/person-plan/discovery"
+import { isPersonOnlyProvider } from "@/runtime/providers/person-plan/rules"
 import { discoverSubscriptionFabric } from "@/runtime/providers/fabric/discovery"
 import { cliModel, stripProviderPrefix } from "@/runtime/providers/cli-model"
 import { tapRetryHint } from "@/runtime/providers/retry-hint"
@@ -688,6 +691,11 @@ export namespace Provider {
     return runtime === "fabric"
   }
 
+  /** Lanes that run no gizzi tools: Subscription Fabric and the person's own plans (chat only). */
+  function isToollessRuntime(runtime: unknown): boolean {
+    return runtime === "fabric" || runtime === PERSON_PLAN_RUNTIME
+  }
+
   function discoveredModels(dp: DiscoveredProvider): Record<string, Model> {
     const dpModels: Record<string, Model> = {}
     for (const m of dp.models) {
@@ -706,12 +714,12 @@ export namespace Provider {
         options: {},
         release_date: "",
         capabilities: {
-          temperature: !isSubscriptionRuntime(dp.options?.["runtime"]),
+          temperature: !isToollessRuntime(dp.options?.["runtime"]),
           reasoning: false,
           attachment: false,
           // Fabric chat runs in the provider's web UI: gizzi's tools cannot be
           // called there. Also keeps these models out of auto-tier picks.
-          toolcall: !isSubscriptionRuntime(dp.options?.["runtime"]),
+          toolcall: !isToollessRuntime(dp.options?.["runtime"]),
           input:  { text: true, audio: false, image: false, video: false, pdf: false },
           // Fabric replies can carry files the provider made (images,
           // decks, documents); they arrive as file parts on the message.
@@ -960,6 +968,14 @@ export namespace Provider {
         fabricProvider,
         model.api.id,
       ) as unknown as LanguageModelV2
+      s.models.set(key, language)
+      return language
+    }
+
+    // The person's own plans (chatgpt/…, plan/…, copilot-plan/…): chat only,
+    // and only on a turn the person sent (person-plan/language-model.ts).
+    if (provider?.options?.["runtime"] === PERSON_PLAN_RUNTIME || isPersonOnlyProvider(model.providerID)) {
+      const language = new PersonPlanLanguageModel(model.providerID, model.api.id) as unknown as LanguageModelV2
       s.models.set(key, language)
       return language
     }
@@ -1233,6 +1249,15 @@ export namespace Provider {
   /** Subscription Fabric models run only on a human send (D16): never pick one automatically. */
   export function isFabricModel(model: { providerID: string }): boolean {
     return isFabricProviderID(model.providerID)
+  }
+
+  /**
+   * Models that run only on the person's own send: Subscription Fabric (D16)
+   * and the person's plans (chatgpt/…, plan/…, copilot-plan/…). Never picked
+   * for a title, a summary, a small model or any other helper call.
+   */
+  export function isHumanSendOnly(model: { providerID: string }): boolean {
+    return isFabricProviderID(model.providerID) || isPersonOnlyProvider(model.providerID)
   }
 
   export async function getSmallModel(providerID: string) {

@@ -242,23 +242,41 @@ export function resolvePluginProviders(input: {
 
 /**
  * `gizzi connect` lists every connection with the four status words;
- * `gizzi connect <id>` runs that row's way to connect; `--disconnect` removes it.
+ * `gizzi connect <id>` runs that row's way to connect; `--disconnect` (or
+ * `gizzi connect disconnect <id>`) removes it; `gizzi connect status <id>`
+ * prints one row. `chatgpt` signs in on this computer (Sign in with ChatGPT);
+ * with `--json` it prints JSON lines for Desktop's runtime to drive.
  * The old provider-credential subcommands (list, login, logout) stay.
  */
 export const ConnectCommand = cmd({
-  command: "connect [id]",
+  command: "connect [id] [target]",
   describe: "connect brains, computers, phones, tools and apps",
   builder: (yargs) =>
     yargs
       .command(AuthListCommand)
       .command(AuthLoginCommand)
       .command(AuthLogoutCommand)
-      .positional("id", { describe: "what to connect, e.g. anthropic-key, codex, slack", type: "string" })
+      .positional("id", { describe: "what to connect, e.g. claude, chatgpt, anthropic-key, slack; or status / disconnect", type: "string" })
+      .positional("target", { describe: "with status or disconnect: the connection, e.g. chatgpt", type: "string" })
       .option("disconnect", { type: "boolean", describe: "remove this connection" })
-      .option("json", { type: "boolean", describe: "print the rows as JSON" }),
+      .option("json", { type: "boolean", describe: "print JSON (rows, or JSON lines for chatgpt sign-in)" })
+      .option("accept-disclosure", { type: "string", describe: "chatgpt --json: the disclosure version the person accepted in the app" })
+      .option("open", { type: "boolean", describe: "chatgpt: open the sign-in page in the browser (default: on, off with --json)" })
+      .example("gizzi connect", "list every connection")
+      .example("gizzi connect claude", "connect your Claude plan (shows the disclosure first)")
+      .example("gizzi connect chatgpt", "sign in with ChatGPT on this computer")
+      .example("gizzi connect status chatgpt --json", "the ChatGPT sign-in state as JSON")
+      .example("gizzi connect disconnect chatgpt", "sign out of ChatGPT and delete the sign-in"),
   async handler(args) {
     const { runConnect } = await import("@/cli/commands/connect-flow")
-    await runConnect({ id: args.id as string | undefined, disconnect: !!args.disconnect, json: !!args.json })
+    await runConnect({
+      id: args.id as string | undefined,
+      target: args.target as string | undefined,
+      disconnect: !!args.disconnect,
+      json: !!args.json,
+      acceptDisclosure: args.acceptDisclosure as string | undefined,
+      open: args.open as boolean | undefined,
+    })
   },
 })
 

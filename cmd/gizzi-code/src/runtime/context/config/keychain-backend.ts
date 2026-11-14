@@ -14,6 +14,24 @@ const SECURITY_TIMEOUT_MS = 10_000
 type ExecFileImpl = typeof execFile
 
 /**
+ * The blob as `security find-generic-password -w` prints it. The entry is
+ * written with `-X <hex>`, but `-w` prints a password whose bytes are
+ * printable as plain text (JSON is), and only non-printable data as hex.
+ * Reading only hex made every read empty, so each write replaced the whole
+ * blob and every stored credential read back as missing.
+ */
+export function decodeBlob(out: string): Record<string, string> {
+  for (const text of [out, /^[0-9a-f]+$/i.test(out) ? Buffer.from(out, "hex").toString("utf-8") : undefined]) {
+    if (text === undefined) continue
+    try {
+      const parsed = JSON.parse(text)
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed as Record<string, string>
+    } catch {}
+  }
+  return {}
+}
+
+/**
  * Keyring backend backed by the macOS Keychain (`security` CLI).
  *
  * Each credential `service` maps to one generic-password entry whose payload
@@ -67,12 +85,7 @@ export function createMacOSKeychainBackend(
       serviceName(service),
     ])
     if (!out) return {}
-    try {
-      const parsed = JSON.parse(Buffer.from(out, "hex").toString("utf-8"))
-      return parsed && typeof parsed === "object" ? (parsed as Record<string, string>) : {}
-    } catch {
-      return {}
-    }
+    return decodeBlob(out)
   }
 
   async function writeBlob(service: string, blob: Record<string, string>): Promise<void> {

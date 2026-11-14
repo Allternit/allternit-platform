@@ -11,6 +11,7 @@
  * driven directly from bun tests. Phase B2 builds canonical-session chat on
  * top of `canonicalSession`; phase B3 adds routines.
  */
+import { refuseIfPersonOnly } from "@/runtime/providers/person-plan/rules"
 import { existsSync } from "node:fs"
 import { cp, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises"
 import { homedir } from "node:os"
@@ -231,6 +232,12 @@ export interface BotStoreOptions {
   now?: Date
 }
 
+/** A bot never runs on the person's own plan (chatgpt/…, plan/…, copilot-plan/…): those answer only the person's sends. */
+function validateBotModel(model: string | null | undefined): void {
+  const refused = refuseIfPersonOnly(model, "bot")
+  if (refused) throw new BotStoreError(refused)
+}
+
 /**
  * Create a bot at `<config home>/bots/<name>/` with `bot.json`, `SOUL.md`,
  * and an empty `memory/` directory. Refuses invalid, reserved, or
@@ -241,6 +248,7 @@ export async function createBot(
   opts: BotStoreOptions = {},
 ): Promise<Bot> {
   validateBotName(input.name)
+  validateBotModel(input.model)
   const dir = botDir(input.name)
   if (existsSync(dir)) {
     throw new BotStoreError(`bot '${input.name}' already exists at ${dir}`)
@@ -315,7 +323,10 @@ export async function updateBot(
   const bot = await readBot(dir)
   if (patch.title !== undefined) bot.title = patch.title
   if (patch.description !== undefined) bot.description = patch.description
-  if (patch.model !== undefined) bot.model = patch.model
+  if (patch.model !== undefined) {
+    validateBotModel(patch.model)
+    bot.model = patch.model
+  }
   bot.updatedAt = (opts.now ?? new Date()).toISOString()
   await writeJsonAtomic(await botJsonPath(dir), bot)
   return bot
