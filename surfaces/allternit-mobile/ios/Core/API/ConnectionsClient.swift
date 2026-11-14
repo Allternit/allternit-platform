@@ -38,10 +38,16 @@ struct ConnectionWire: Decodable, Equatable, Sendable {
     var saved: String?
     var models: [String] = []
     var source: String?
+    /// Runner rows (contract §9.1): the disclosure version and when this
+    /// account accepted it (nil = not yet, or a newer version).
+    var disclosure: ConnDisclosureState?
+    /// Contract §9.1/§9.5: the row's models answer only messages the person
+    /// sends in chat. They never go in bot, routine or schedule pickers.
+    var personOnly: Bool = false
 
     private enum CodingKeys: String, CodingKey {
-        case id, group, state, found, reason, terms, saved, models, source, fallbacks, available
-        case reasonCode = "reason_code", runsOn = "runs_on", unavailableReason = "unavailable_reason"
+        case id, group, state, found, reason, terms, saved, models, source, fallbacks, available, disclosure
+        case reasonCode = "reason_code", runsOn = "runs_on", unavailableReason = "unavailable_reason", personOnly = "person_only"
     }
 
     private struct TermsObject: Decodable { let status: String? }
@@ -80,12 +86,82 @@ struct ConnectionWire: Decodable, Equatable, Sendable {
         saved = try? c.decodeIfPresent(String.self, forKey: .saved)
         models = ((try? c.decodeIfPresent([String].self, forKey: .models)) ?? nil) ?? []
         source = try? c.decodeIfPresent(String.self, forKey: .source)
+        disclosure = try? c.decodeIfPresent(ConnDisclosureState.self, forKey: .disclosure)
+        personOnly = (try? c.decodeIfPresent(Bool.self, forKey: .personOnly)) ?? false
     }
 
     /// `runtime:<id>` rows live on a computer.
     var runtimeId: String? {
         guard let source, source.hasPrefix("runtime:") else { return nil }
         return String(source.dropFirst("runtime:".count))
+    }
+}
+
+/// `disclosure` on a runner row (contract §9.1).
+struct ConnDisclosureState: Decodable, Equatable, Sendable {
+    var version: String?
+    var acceptedAt: String?
+
+    private enum CodingKeys: String, CodingKey { case version, acceptedAt = "accepted_at" }
+}
+
+/// The disclosure text the server sends with `409 disclosure_required`
+/// (contract §9.2). Shown exactly as given, never a copy of our own.
+struct ConnDisclosure: Decodable, Equatable, Sendable {
+    var version: String
+    var title: String
+    var body: [String]
+    var acceptLabel: String
+    var declineLabel: String
+
+    private enum CodingKeys: String, CodingKey {
+        case version, title, body, acceptLabel = "accept_label", declineLabel = "decline_label"
+    }
+
+    init(version: String, title: String, body: [String], acceptLabel: String, declineLabel: String) {
+        self.version = version
+        self.title = title
+        self.body = body
+        self.acceptLabel = acceptLabel
+        self.declineLabel = declineLabel
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        version = try c.decode(String.self, forKey: .version)
+        title = (try? c.decodeIfPresent(String.self, forKey: .title)) ?? ""
+        body = ((try? c.decodeIfPresent([String].self, forKey: .body)) ?? nil) ?? []
+        acceptLabel = ((try? c.decodeIfPresent(String.self, forKey: .acceptLabel)) ?? nil) ?? "I understand, connect"
+        declineLabel = ((try? c.decodeIfPresent(String.self, forKey: .declineLabel)) ?? nil) ?? "Use a key instead"
+    }
+}
+
+/// A connections call the server refused with a code (contract §9.2, §9.4).
+enum ConnectionsError: Error, Equatable, Sendable {
+    /// `409 disclosure_required`: show the text, then connect again with
+    /// `accept_disclosure` set to its version.
+    case disclosureRequired(ConnDisclosure)
+    /// Any other `{error:{code, message}}` body.
+    case refused(status: Int, code: String, message: String?)
+
+    private struct Body: Decodable {
+        struct Inner: Decodable {
+            let code: String?
+            let message: String?
+            let disclosure: ConnDisclosure?
+        }
+        let error: Inner?
+    }
+
+    /// Reads a failed response body. nil when it carries no error code (the
+    /// caller then falls back to the plain HTTP status).
+    static func parse(status: Int, data: Data) -> ConnectionsError? {
+        guard let body = try? JSONDecoder().decode(Body.self, from: data), let inner = body.error,
+              let code = inner.code, !code.isEmpty else { return nil }
+        if code == "disclosure_required", let disclosure = inner.disclosure {
+            return .disclosureRequired(disclosure)
+        }
+        return .refused(status: status, code: code, message: inner.message)
     }
 }
 
@@ -198,9 +274,19 @@ enum ConnectionsClient {
         }
     }
 
+    /// Every cloud call says `caps=runner`: this app knows the disclosure
+    /// step, so plan rows are offered to it (contract §9.1, D10). Servers
+    /// ignore caps they don't know.
+    static let cloudQuery = [URLQueryItem(name: "caps", value: "runner")]
+
     private static func send(_ target: ConnTarget, _ rest: String = "", method: String = "GET", body: [String: Any]? = nil) async throws -> Data {
         let client = APIClient.shared
-        var request = try await client.authorizedRequest(url: url(target, rest), method: method)
+        var full = url(target, rest)
+        if target == .cloud, var components = URLComponents(url: full, resolvingAgainstBaseURL: false) {
+            components.queryItems = cloudQuery
+            full = components.url ?? full
+        }
+        var request = try await client.authorizedRequest(url: full, method: method)
         request.cachePolicy = .reloadIgnoringLocalCacheData
         if let body { request.httpBody = try JSONSerialization.data(withJSONObject: body) }
         let (data, response): (Data, URLResponse)
@@ -215,6 +301,11 @@ enum ConnectionsClient {
         case .runtime:
             (data, response) = try await client.send(request)
         }
+        // Coded refusals (disclosure_required, runner_busy, …) keep their code.
+        if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode),
+           let coded = ConnectionsError.parse(status: http.statusCode, data: data) {
+            throw coded
+        }
         try client.validate(response, data: data)
         return data
     }
@@ -227,8 +318,12 @@ enum ConnectionsClient {
         try decode(ConnectionsEnvelope.self, try await send(target)).connections
     }
 
-    static func connect(_ id: String, target: ConnTarget, way: String? = nil) async throws -> ConnConnectResult {
-        let data = try await send(target, "\(id)/connect", method: "POST", body: way.map { ["way": $0] } ?? [:])
+    /// `acceptDisclosure` is the version the person just accepted (runner rows).
+    static func connect(_ id: String, target: ConnTarget, way: String? = nil, acceptDisclosure: String? = nil) async throws -> ConnConnectResult {
+        var body: [String: Any] = [:]
+        if let way { body["way"] = way }
+        if let acceptDisclosure { body["accept_disclosure"] = acceptDisclosure }
+        let data = try await send(target, "\(id)/connect", method: "POST", body: body)
         return try decode(ConnConnectResult.self, data)
     }
 
@@ -246,6 +341,23 @@ enum ConnectionsClient {
 
     /// A short plain sentence for a failed call.
     static func describe(_ error: Error) -> String {
+        if let coded = error as? ConnectionsError {
+            switch coded {
+            case .disclosureRequired: return "Read and accept the note first."
+            case .refused(let status, let code, let message):
+                switch code {
+                case "runner_busy": return "Busy. Try again"
+                case "could_not_start": return "Could not start. Try again"
+                case "update_app": return "Update the app to connect this plan."
+                case "not_found": return "This isn't offered on your account right now. Use a key for now."
+                case "login_expired": return "Sign-in expired. Sign in again."
+                case "vendor_limited": return message ?? "The vendor limited this plan."
+                default:
+                    if let message, !message.isEmpty { return message }
+                    return describe(APIError.httpError(statusCode: status, message: nil))
+                }
+            }
+        }
         if case APIError.httpError(let status, let message) = error {
             switch status {
             case 401: return "Sign in to Allternit on this phone, then try again."

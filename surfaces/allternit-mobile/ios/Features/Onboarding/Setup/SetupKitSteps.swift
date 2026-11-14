@@ -112,9 +112,14 @@ struct SetupKitAIStep: View {
     private func row(_ e: ConnEntry) -> some View {
         let r = store.row(e.id)
         let isBrain = brain.map { $0.id == e.id || (e.id == "api-key" && $0.id.hasSuffix("-key")) || (e.id == "gemini" && $0.id == "google-key") } ?? false
+        // A person-only plan (runner plans, Copilot, ChatGPT on this phone)
+        // answers only messages the person sends, so it can't be the main
+        // bot's brain (contract §9.1): it shows as connected, with no "Use this".
+        let personOnly = r.personOnly || ConnectionsCatalog.runnerIds.contains(e.id) || (e.id == "chatgpt" && r.runtimeId == nil)
         let custom: AnyView? = isBrain
             ? AnyView(Image(systemName: "checkmark.circle.fill").foregroundStyle(SetupPalette.ok).font(.system(size: 18)).accessibilityLabel("Your brain"))
-            : r.state == .on ? AnyView(Button("Use this") { use(e.id) }.buttonStyle(ConnQuietButtonStyle())) : nil
+            : r.state == .on && !personOnly ? AnyView(Button("Use this") { use(e.id) }.buttonStyle(ConnQuietButtonStyle()))
+            : r.state == .on ? AnyView(Text("Chat only").font(.system(size: 13)).foregroundStyle(SetupPalette.sub)) : nil
         return ConnectionRowView(entry: e.id == "allternit" ? ConnEntry(id: e.id, group: e.group, name: "Allternit", logo: e.logo, ways: e.ways) : e,
                                  store: store, tag: isBrain ? "Your brain" : nil, customAction: custom, compact: true) { action in
             switch action {
@@ -151,7 +156,9 @@ struct SetupKitAIStep: View {
         switch id {
         case "allternit":
             onPick(SetupKitBrain(id: id, provider: "allternit", modelId: allternitModel, label: "Allternit Cloud"))
-        case "chatgpt":
+        case "chatgpt" where store.row(id).runtimeId != nil:
+            // The computer's Codex sign-in. ChatGPT signed in on this phone
+            // is chat-only and never becomes the bot's brain.
             onPick(SetupKitBrain(id: id, provider: "codex-cli", modelId: nil, label: found ?? "ChatGPT"))
         default:
             if id.hasSuffix("-key") {

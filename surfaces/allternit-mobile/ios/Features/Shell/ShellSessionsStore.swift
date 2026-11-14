@@ -41,7 +41,10 @@ final class ShellSessionsStore: ObservableObject {
         do {
             // GET /api/v1/agent-sessions → { sessions: [...], count }
             let envelope: AgentSessionListResponse = try await APIClient.shared.get(path: "agent-sessions")
-            sessions = envelope.sessions.sorted { Self.timestamp(of: $0) > Self.timestamp(of: $1) }
+            // Plan chats saved in the cloud store join the same list; a store
+            // failure just leaves them out (device-only).
+            let planThreads = ((try? await PlanThreadClient.shared.list()) ?? []).compactMap(\.asSession)
+            sessions = (envelope.sessions + planThreads).sorted { Self.timestamp(of: $0) > Self.timestamp(of: $1) }
             // First sighting is the baseline: only activity after it counts
             // as unread. The chat on screen is always read.
             for session in sessions where seen[session.id] == nil || session.id == activeId {

@@ -83,7 +83,9 @@ enum ConnectionsCatalog {
     static let entries: [ConnEntry] = [
         // Brains
         ConnEntry(id: "allternit", group: .brains, name: "Allternit Cloud", logo: .asset("AProtocol"), ways: [.included]),
-        ConnEntry(id: "chatgpt", group: .brains, name: "ChatGPT", logo: .asset("SetupLogoChatGPT"), blurb: "Plus or Pro plan", ways: [.code], runsOn: .computer),
+        // iOS signs in to ChatGPT on the phone itself (contract §9.9): the
+        // sign-in and the chat stay on this iPhone.
+        ConnEntry(id: "chatgpt", group: .brains, name: "ChatGPT", logo: .asset("SetupLogoChatGPT"), blurb: "Plus or Pro plan", ways: [.oauth], runsOn: .device),
         ConnEntry(id: "claude", group: .brains, name: "Claude", logo: .asset("SetupLogoClaude"), blurb: "Pro or Max plan", ways: [.code], runsOn: .runner),
         ConnEntry(id: "gemini", group: .brains, name: "Gemini", logo: .asset("applogo-googlegemini"), blurb: "Free Google AI Studio key", ways: [.paste], isNew: true,
                   keyPage: "https://aistudio.google.com/apikey"),
@@ -149,6 +151,21 @@ enum ConnectionsCatalog {
     /// Every id the app knows (rows plus key providers); the server's other ids are ignored.
     static let knownIds: Set<String> = Set(entries.map(\.id)).union(keyProviders.map(\.id))
 
+    /// Plan rows that sign in on an Allternit runner box (contract §9.1). On
+    /// iOS `chatgpt` signs in on the phone instead (§9.9).
+    static let runnerIds: Set<String> = ["claude", "grok", "kimi"]
+
+    /// The key sheet "Use a key instead" opens for a plan row.
+    static func keyFallback(_ id: String) -> String {
+        switch id {
+        case "claude": return "anthropic-key"
+        case "chatgpt": return "openai-key"
+        case "grok": return "xai-key"
+        case "kimi": return "kimi-key"
+        default: return "api-key"
+        }
+    }
+
     /// The coding tools whose sign-in runs on a computer (contract §4, runtime CLI logins).
     static let cliLoginIds: Set<String> = ["claude-code", "codex", "gemini-cli", "cursor", "grok-cli", "kimi-cli"]
 
@@ -169,9 +186,9 @@ enum ConnectionsCatalog {
                                   unavailableReason: "Not available yet. Use a key for now.", fallbacks: ["kimi-key"])
         case "copilot":
             return ConnectionWire(id: id, available: false, unavailableReason: "Coming soon.", fallbacks: ["github"])
-        case "chatgpt" where !computerOnline:
-            return ConnectionWire(id: id, reasonCode: "no_computer", available: false,
-                                  unavailableReason: "Needs your own computer for now. Or use an OpenAI key.", fallbacks: ["this-mac", "openai-key"])
+        case "chatgpt":
+            // Signs in on this iPhone, so it never waits for a computer or the server.
+            return ConnectionWire(id: id)
         case "local", "gizzi", "claude-code", "codex", "gemini-cli", "cursor", "grok-cli", "kimi-cli":
             return computerOnline
                 ? ConnectionWire(id: id)
@@ -191,6 +208,9 @@ enum ConnectionsCatalog {
         case "not_available_yet": return "Not available yet"
         case "computer_offline": return "Your computer is offline"
         case "could_not_start": return "Could not start. Try again"
+        case "update_app": return "Update the app to connect this plan."
+        case "runner_busy": return "Busy. Try again"
+        case "usage_limit": return "\(name) limit reached"
         default: return nil
         }
     }

@@ -571,7 +571,9 @@ private struct BotFormSheet: View {
                 } else if let loadError = models.loadError, models.models.isEmpty {
                     Text(loadError).font(.caption).foregroundColor(Theme.statusWarning)
                 } else {
-                    ForEach(models.providers, id: \.provider) { group in
+                    // Never a person-only model (plan/…, copilot/…, chatgpt/…): a
+                    // bot runs without the person sending each message.
+                    ForEach(models.automationProviders, id: \.provider) { group in
                         Section(group.provider) {
                             ForEach(group.models) { option in
                                 Button {

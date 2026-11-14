@@ -35,6 +35,8 @@ enum ConnRoute {
         case "cloud-computer": return .page(store.state(id) == .on ? .cloudComputer : .billing)
         case "gizzi": return .page(.gizzi)
         case "local": return .sheet(.onComputer(id))
+        // Signs in on this iPhone (contract §9.9), with or without a computer.
+        case "chatgpt": return .sheet(.chatgptDevice)
         case "phone", "allternit": return .none
         default: break
         }
@@ -249,7 +251,13 @@ struct ConnectionsSettingsView: View {
             handleFallback(f)
         case .disconnect:
             Task {
-                do { try await store.disconnect(entry.id) } catch { actionError = "Couldn't disconnect \(entry.name). \(ConnectionsClient.describe(error))" }
+                do {
+                    try await store.disconnect(entry.id)
+                } catch let unconfirmed as ChatGPTSignOutUnconfirmed {
+                    actionError = unconfirmed.errorDescription
+                } catch {
+                    actionError = "Couldn't disconnect \(entry.name). \(ConnectionsClient.describe(error))"
+                }
             }
         case .connect, .fix, .open:
             route(ConnRoute.forConnect(entry.id, store: store))

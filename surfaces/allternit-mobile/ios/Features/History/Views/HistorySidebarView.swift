@@ -1030,6 +1030,19 @@ struct HistorySidebarView: View {
             selectedSessionId = nil
             NotificationCenter.default.post(name: .shellNewChat, object: nil)
         }
+        // Plan chats (pth_…) live in the cloud plan chat store (§9.10): delete
+        // the stored thread, or it returns on the next list refresh.
+        if PlanThreadClient.isThreadId(session.id) {
+            Task {
+                do {
+                    try await PlanThreadClient.shared.delete(id: session.id)
+                } catch {
+                    store.restore(removed)
+                    actionError = "Couldn't delete “\(session.name ?? "Untitled")”: \(FriendlyErrorMessage.from(error.localizedDescription))"
+                }
+            }
+            return
+        }
         Task {
             do {
                 // DELETE /api/v1/agent-sessions/:id (same call as Settings'
