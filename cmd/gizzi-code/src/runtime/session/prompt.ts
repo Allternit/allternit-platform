@@ -2040,6 +2040,22 @@ const message = await createUserMessage(input)
       if (!allowed) for (const id of PROJECT_SEND_TOOL_IDS) delete tools[id]
     }
 
+    // Session rules (deny `*`, then allow a few) only gate execution elsewhere; drop the
+    // denied tools here so their schemas are not sent on every model call.
+    if (input.session.permission?.length) {
+      const ruleset = PermissionNext.merge(input.agent.permission, input.session.permission)
+      const keys = Object.keys(tools).filter((k) => k !== "invalid")
+      for (const key of PermissionNext.hidden(keys, ruleset)) delete tools[key]
+    }
+    const schemaBytes = Object.values(tools).reduce((n, t) => {
+      try {
+        return n + JSON.stringify((t as any).inputSchema?.jsonSchema ?? (t as any).parameters ?? {}).length
+      } catch {
+        return n
+      }
+    }, 0)
+    log.info("resolved tools", { count: Object.keys(tools).length, schemaBytes, sessionRules: input.session.permission?.length ?? 0 })
+
     return tools
   }
 
