@@ -68,6 +68,8 @@ pub const ERASE: &[(&str, &str)] = &[
     ("plan_runner_consents", USER),
     // Plan chat threads (migration 141).
     ("plan_threads", USER),
+    // Copilot grants (migration 142). Revoked at GitHub in release_computers first.
+    ("copilot_grants", USER),
     // Platform API projects, children first.
     ("platform_webhook_deliveries", "webhook_id IN (SELECT id FROM platform_webhooks WHERE user_id = $1 OR project_id IN (SELECT id FROM platform_projects WHERE owner_user_id = $1)) OR event_id IN (SELECT id FROM platform_events WHERE user_id = $1 OR project_id IN (SELECT id FROM platform_projects WHERE owner_user_id = $1))"),
     ("platform_webhooks", "user_id = $1 OR project_id IN (SELECT id FROM platform_projects WHERE owner_user_id = $1)"),
@@ -396,6 +398,8 @@ async fn release_computers(state: &ApiState, user_id: &str) -> Result<(), ApiErr
     state.provisioning_service.delete_all_for_user(user_id).await?;
     // The plan box (CLI sign-ins on its home volume) goes with the computers.
     crate::services::brain_runners::shared(&state.db).destroy(user_id).await?;
+    // The Copilot grant is given back to GitHub (best effort; ERASE deletes the row).
+    crate::services::copilot::revoke_for_erase(state, user_id).await;
     crate::routes::hosted_runtimes::destroy_all_for_user(state, user_id).await?;
     let phones: Vec<String> =
         sqlx::query_scalar("SELECT id FROM cloud_phones WHERE user_id = $1 AND status <> 'deleted'")

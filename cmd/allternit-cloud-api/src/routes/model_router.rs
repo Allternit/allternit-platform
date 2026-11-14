@@ -648,7 +648,27 @@ async fn plan_turn(
         return Ok(crate::services::open_lane::hard_line_response(line.category()));
     }
     let not_connected = || plan_refusal(StatusCode::FORBIDDEN, "plan_not_connected", "Connect this plan in Connections first.");
-    // Copilot (`copilot/…`) is its own server flow (step 1.5); until then it is not connected.
+    // Only role and text go on: `tools`, `tool_choice` and every other field
+    // are dropped here. History is replayed each turn (D8).
+    let messages: Vec<ChatMessage> = request
+        .messages
+        .iter()
+        .map(|m| ChatMessage {
+            role: if m.role == "developer" { "system".to_string() } else { m.role.clone() },
+            content: message_text(&m.content),
+        })
+        .collect();
+    // Copilot (`copilot/<model>`, contract 9.5): the person's own GitHub
+    // Copilot through the Copilot API, not a runner box.
+    if let Some(model) = request.model.trim().strip_prefix("copilot/") {
+        let Some(copilot) = crate::services::copilot::service(state) else {
+            return Ok(not_connected());
+        };
+        return match copilot.turn(user_id, model.trim(), messages).await {
+            Ok(events) => turn_response(events, request.model.clone(), request.is_streaming()).await,
+            Err(refusal) => Ok(plan_refusal(refusal.status, refusal.code, &refusal.message)),
+        };
+    }
     let Some((vendor, model)) = plan_model(&request.model) else {
         return Ok(not_connected());
     };
@@ -662,25 +682,20 @@ async fn plan_turn(
     if !signed_in {
         return Ok(not_connected());
     }
-    // Only role and text reach the runner: `tools`, `tool_choice` and every
-    // other field are dropped here. History is replayed each turn (D8).
-    let messages = request
-        .messages
-        .iter()
-        .map(|m| ChatMessage {
-            role: if m.role == "developer" { "system".to_string() } else { m.role.clone() },
-            content: message_text(&m.content),
-        })
-        .collect();
-    let mut events = match service.turn(user_id, vendor, model, messages).await {
+    let events = match service.turn(user_id, vendor, model, messages).await {
         Ok(events) => events,
         Err(error) => return brain_runners::error_response(&error).map(Ok).unwrap_or(Err(error)),
     };
+    turn_response(events, request.model.clone(), request.is_streaming()).await
+}
+
+/// A plan or Copilot turn's events as an OpenAI-compatible reply: one JSON
+/// body, or SSE chunks ending in `data: [DONE]`.
+async fn turn_response(mut events: brain_runners::TurnStream, alias: String, streaming: bool) -> Result<Response, ApiError> {
     use futures::StreamExt;
     let id = format!("chatcmpl-{}", uuid::Uuid::new_v4().simple());
     let created = chrono::Utc::now().timestamp();
-    let alias = request.model.clone();
-    if !request.is_streaming() {
+    if !streaming {
         let mut text = String::new();
         let mut usage = serde_json::Value::Null;
         while let Some(event) = events.next().await {
