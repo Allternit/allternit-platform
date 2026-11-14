@@ -80,4 +80,90 @@ final class VoiceKeyHandoffTests: XCTestCase {
         XCTAssertNil(VoiceHandoffCrypto.QR("allternit-voice:3:sid:a:b"))
         XCTAssertNil(VoiceHandoffCrypto.QR("allternit-voice:2:sid:oaKjpKWmp6ipqqus"))
     }
+
+    // MARK: Relay polling (one scan)
+
+    private actor FakeRelay {
+        var pubB: Data?
+        var fetches = 0
+        var answers: [VoiceHandoffRelay.Sealed]
+        init(_ answers: [VoiceHandoffRelay.Sealed]) { self.answers = answers }
+        func register(_ pub: Data) { pubB = pub }
+        func next() -> VoiceHandoffRelay.Sealed {
+            fetches += 1
+            return answers.count > 1 ? answers.removeFirst() : answers[0]
+        }
+        func setAnswers(_ a: [VoiceHandoffRelay.Sealed]) { answers = a }
+    }
+
+    private func relay(_ fake: FakeRelay) -> VoiceHandoffRelay {
+        VoiceHandoffRelay(register: { _, pub in await fake.register(pub) }, fetchSealed: { _ in await fake.next() })
+    }
+
+    private func vendorClient401() -> VoiceVendorClient {
+        VoiceVendorStub.routes = ["/v1/models": (401, "{}"), "/v1/user": (401, "{}"), "/v1/voices": (401, "{}")]
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [VoiceVendorStub.self]
+        let base = URL(string: "https://fake-vendor.test")!
+        return VoiceVendorClient(session: URLSession(configuration: config), openAIBase: base, elevenLabsBase: base)
+    }
+
+    @MainActor
+    private func waitFor(_ session: VoiceKeyHandoffSession, timeout: TimeInterval = 5, _ done: (VoiceKeyHandoffSession.Phase) -> Bool) async {
+        let end = Date().addingTimeInterval(timeout)
+        while Date() < end, !done(session.phase) { try? await Task.sleep(nanoseconds: 20_000_000) }
+    }
+
+    /// Seals the vector's payload for the phone's key, the way the computer does.
+    private func seal(_ v: Vector, receiverKey: Data) throws -> (Data, Data) {
+        let sender = try P256.KeyAgreement.PrivateKey(rawRepresentation: hex(v.sender.private_scalar_hex))
+        let key = try VoiceHandoffCrypto.sessionKey(privateKey: sender, senderKey: receiverKey, sid: v.sid)
+        let nonce = AES.GCM.Nonce()
+        let box = try AES.GCM.seal(Data(v.aes_gcm.plaintext_utf8.utf8), using: key, nonce: nonce)
+        return (Data(nonce), box.ciphertext + box.tag)
+    }
+
+    @MainActor
+    func testPolledSealedKeyIsOpenedAndChecked() async throws {
+        let v = try vector()
+        let fake = FakeRelay([.waiting])
+        let session = VoiceKeyHandoffSession(vendorClient: vendorClient401(), relay: relay(fake), pollInterval: 0.05)
+        session.scanned(v.qr1)
+        await waitFor(session) { if case .confirm = $0 { return true }; return false }
+        let capturedPub = await fake.pubB
+        let pubB = try XCTUnwrap(capturedPub)
+        let (nonce, ct) = try seal(v, receiverKey: pubB)
+        try? await Task.sleep(nanoseconds: 150_000_000)
+        let waited = await fake.fetches
+        XCTAssertGreaterThan(waited, 1)
+        await fake.setAnswers([.sealed(nonce: nonce, ciphertext: ct)])
+        await waitFor(session) { if case .failed = $0 { return true }; return false }
+        // The vendor stub answers 401: the vendor rejection proves the polled
+        // bytes were decrypted (and nothing was saved to the Keychain).
+        guard case .failed(let message) = session.phase else { return XCTFail("expected failed, got \(session.phase)") }
+        XCTAssertEqual(message, "ElevenLabs didn't accept this key. Copy it again from your ElevenLabs account.")
+        XCTAssertFalse(message.contains("couldn't open"))
+    }
+
+    @MainActor
+    func testRelayNotFoundShowsExpired() async throws {
+        let v = try vector()
+        let session = VoiceKeyHandoffSession(vendorClient: vendorClient401(), relay: relay(FakeRelay([.notFound])), pollInterval: 0.05)
+        session.scanned(v.qr1)
+        await waitFor(session) { if case .failed = $0 { return true }; return false }
+        XCTAssertEqual(session.phase, .failed(VoiceKeyHandoffSession.expiredMessage))
+    }
+
+    @MainActor
+    func testRelayDeliveredStopsPollingAndStaysInConfirm() async throws {
+        let v = try vector()
+        let fake = FakeRelay([.delivered])
+        let session = VoiceKeyHandoffSession(vendorClient: vendorClient401(), relay: relay(fake), pollInterval: 0.03)
+        session.scanned(v.qr1)
+        try? await Task.sleep(nanoseconds: 400_000_000)
+        let fetches = await fake.fetches
+        XCTAssertEqual(fetches, 1)
+        guard case .confirm = session.phase else { return XCTFail("expected confirm, got \(session.phase)") }
+        session.cancel()
+    }
 }

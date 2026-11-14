@@ -1,14 +1,17 @@
 import CryptoKit
 import Foundation
 
-// The iPhone side of the voice key QR handoff (plan snoopy-napping-rabbit,
-// decision 1). A computer that has the key (web, Desktop or PWA) shows QR 1;
-// this phone scans it, makes a one-time P-256 key, posts only its public key
-// to the cloud-api relay, and shows a 6-digit code. Once the user confirms
-// the codes match on the computer, it shows QR 2: the key sealed with
-// AES-256-GCM under HKDF of the ECDH shared secret. The scanner, still open,
-// reads it and opens it with the private key that never leaves this phone's
-// memory. The API key travels only from screen to camera.
+// The iPhone side of the voice key handoff (plan snoopy-napping-rabbit,
+// decision 1; one-scan update 2026-11-13). A computer that has the key (web,
+// Desktop or PWA) shows QR 1; this phone scans it, makes a one-time P-256 key,
+// posts only its public key to the cloud-api relay, and shows a 6-digit code.
+// Once the user confirms the codes match on the computer, the computer seals
+// the key with AES-256-GCM under HKDF of the ECDH shared secret and uploads
+// the sealed bytes; this phone polls the relay, takes them once, and opens
+// them with the private key that never leaves this phone's memory. One scan.
+// The relay holds only end-to-end-encrypted bytes it cannot open. Fallback:
+// the computer can also show QR 2 (the same sealed bytes) for the camera to
+// read, for older computer builds or when nothing arrives.
 //
 // Wire format: docs/voice-handoff-vectors.json (generator:
 // docs/voice-handoff-vectors.gen.mjs). Tests check this file against it.
@@ -117,6 +120,47 @@ enum VoiceHandoffCrypto {
     }
 }
 
+/// The relay calls the session makes (cloud-api). Injectable for tests.
+struct VoiceHandoffRelay: Sendable {
+    enum Sealed: Equatable, Sendable {
+        case sealed(nonce: Data, ciphertext: Data)
+        case waiting, delivered, notFound
+    }
+
+    /// PUT /api/v1/voice/handoff/:sid/receiver
+    var register: @Sendable (_ sid: String, _ pubB: Data) async throws -> Void
+    /// GET /api/v1/voice/handoff/:sid/sealed: 200 sealed, 204 waiting, 409 delivered, 404 not found.
+    var fetchSealed: @Sendable (_ sid: String) async throws -> Sealed
+
+    static let live = VoiceHandoffRelay(
+        register: { sid, pub in
+            let client = APIClient.shared
+            let url = AppConfig.cloudAPIBaseURL.appendingPathComponent("api/v1/voice/handoff/\(sid)/receiver")
+            var request = try await client.authorizedRequest(url: url, method: "PUT")
+            request.httpBody = try JSONSerialization.data(withJSONObject: ["pubkey": VoiceHandoffCrypto.base64URLEncode(pub)])
+            let (data, response) = try await client.session.data(for: request)
+            try client.validate(response, data: data)
+        },
+        fetchSealed: { sid in
+            let client = APIClient.shared
+            let url = AppConfig.cloudAPIBaseURL.appendingPathComponent("api/v1/voice/handoff/\(sid)/sealed")
+            let request = try await client.authorizedRequest(url: url, method: "GET")
+            let (data, response) = try await client.session.data(for: request)
+            switch (response as? HTTPURLResponse)?.statusCode {
+            case 200:
+                struct Body: Decodable { let nonce: String; let ciphertext: String }
+                guard let body = try? JSONDecoder().decode(Body.self, from: data),
+                      let nonce = VoiceHandoffCrypto.base64URLDecode(body.nonce),
+                      let ct = VoiceHandoffCrypto.base64URLDecode(body.ciphertext) else { throw URLError(.cannotParseResponse) }
+                return .sealed(nonce: nonce, ciphertext: ct)
+            case 204: return .waiting
+            case 409: return .delivered
+            case 404: return .notFound
+            default: throw URLError(.badServerResponse)
+            }
+        })
+}
+
 /// One handoff, from scanning QR 1 to a key saved on this phone.
 @MainActor
 final class VoiceKeyHandoffSession: ObservableObject {
@@ -137,21 +181,36 @@ final class VoiceKeyHandoffSession: ObservableObject {
     /// The relay's lifetime for one handoff.
     static let timeout: TimeInterval = 120
 
-    @Published private(set) var phase: Phase = .scanning
+    /// Seconds between relay polls while waiting for the sealed key.
+    static let defaultPollInterval: TimeInterval = 1.5
+
+    @Published private(set) var phase: Phase = .scanning {
+        didSet {
+            if case .confirm = phase {} else { pollTask?.cancel() }
+        }
+    }
 
     private var sid: String?
     private var senderKey: Data?
     private var privateKey: P256.KeyAgreement.PrivateKey?
     private var timeoutTask: Task<Void, Never>?
+    private var pollTask: Task<Void, Never>?
     private let vendorClient: VoiceVendorClient
+    private let relay: VoiceHandoffRelay
+    private let pollInterval: TimeInterval
 
-    init(vendorClient: VoiceVendorClient = VoiceVendorClient()) {
+    init(vendorClient: VoiceVendorClient = VoiceVendorClient(),
+         relay: VoiceHandoffRelay = .live,
+         pollInterval: TimeInterval = VoiceKeyHandoffSession.defaultPollInterval) {
         self.vendorClient = vendorClient
+        self.relay = relay
+        self.pollInterval = pollInterval
     }
 
     /// Start over (Try again).
     func restart() {
         timeoutTask?.cancel()
+        pollTask?.cancel()
         sid = nil
         senderKey = nil
         privateKey = nil
@@ -161,6 +220,7 @@ final class VoiceKeyHandoffSession: ObservableObject {
     /// Ends the handoff and forgets the one-time key.
     func cancel() {
         timeoutTask?.cancel()
+        pollTask?.cancel()
         privateKey = nil
     }
 
@@ -182,12 +242,7 @@ final class VoiceKeyHandoffSession: ObservableObject {
         let key = P256.KeyAgreement.PrivateKey()
         let pub = key.publicKey.x963Representation
         do {
-            let client = APIClient.shared
-            let url = AppConfig.cloudAPIBaseURL.appendingPathComponent("api/v1/voice/handoff/\(sid)/receiver")
-            var request = try await client.authorizedRequest(url: url, method: "PUT")
-            request.httpBody = try JSONSerialization.data(withJSONObject: ["pubkey": VoiceHandoffCrypto.base64URLEncode(pub)])
-            let (data, response) = try await client.session.data(for: request)
-            try client.validate(response, data: data)
+            try await relay.register(sid, pub)
         } catch {
             phase = .failed(Self.relayMessage(error))
             return
@@ -202,7 +257,40 @@ final class VoiceKeyHandoffSession: ObservableObject {
             guard !Task.isCancelled, let self else { return }
             if case .confirm = self.phase {
                 self.privateKey = nil
-                self.phase = .failed("The code expired. Start again on your computer.")
+                self.phase = .failed(Self.expiredMessage)
+            }
+        }
+        startPolling(sid: sid)
+    }
+
+    static let expiredMessage = "The code expired. Start again on your computer."
+
+    /// Asks the relay for the sealed key until it arrives, the code expires,
+    /// or the phase leaves .confirm. Network errors just keep polling; a 409
+    /// (already taken) stops polling and leaves the QR 2 scan working.
+    private func startPolling(sid: String) {
+        pollTask?.cancel()
+        pollTask = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self else { return }
+                let result = try? await self.relay.fetchSealed(sid)
+                guard !Task.isCancelled, case .confirm = self.phase else { return }
+                switch result {
+                case .sealed(let nonce, let ciphertext)?:
+                    await self.receive(nonce: nonce, ciphertext: ciphertext)
+                    return
+                case .notFound?:
+                    self.timeoutTask?.cancel()
+                    self.privateKey = nil
+                    self.phase = .failed(Self.expiredMessage)
+                    return
+                case .delivered?:
+                    return
+                case .waiting?, nil:
+                    break
+                }
+                let nanos = UInt64(self.pollInterval * 1_000_000_000)
+                try? await Task.sleep(nanoseconds: nanos)
             }
         }
     }

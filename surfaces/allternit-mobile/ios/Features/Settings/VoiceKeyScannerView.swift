@@ -40,6 +40,7 @@ struct VoiceKeyHandoffSheet: View {
                 }
             }
         }
+        .onDisappear { session.cancel() }
         .task {
             if camera == .notDetermined {
                 let granted = await AVCaptureDevice.requestAccess(for: .video)
@@ -56,7 +57,7 @@ struct VoiceKeyHandoffSheet: View {
     private var instructions: String {
         switch session.phase {
         case .confirm:
-            return "Keep the camera on your computer's screen. When you confirm the codes match there, it shows a second code and this phone reads it."
+            return "Check the code matches, then press Codes match on your computer. The key arrives here by itself."
         default:
             return "On your computer, open Settings › Voice in Allternit and click Send to my phone. Then point this camera at the QR code."
         }
