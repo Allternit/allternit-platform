@@ -29,7 +29,7 @@ enum ComputeGateCopy {
     static let lowRunway24 = "About a day of computer time left on your credits."
     static let lowRunway2 = "About 2 hours of computer time left on your credits."
     static let freeRetired = "Free hosted computers are no longer offered. Pick one of the options above."
-    static let honesty = "Hosted computers run on a third-party cloud provider, managed by Allternit. They sleep when idle."
+    static let honesty = "Hosted computers run on Allternit servers. They sleep when idle."
     static let manageOnWeb = "Manage your plan on the web."
     static let checkFailed = "Couldn't check your computer."
 
