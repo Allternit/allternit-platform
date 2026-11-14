@@ -34,7 +34,8 @@ Signed-in session only. Platform API keys are refused with `403`. Responses carr
 
 After the user confirms the 6-digit codes, the sender encrypts the key and `PUT`s it to `/sealed`. The receiver polls `GET /sealed` and takes it once.
 
-- `nonce` is exactly 16 base64url characters. `ciphertext` is 23 to 2048 base64url characters.
+- `nonce` is exactly 16 base64url characters. `ciphertext` is 23 to 2048 base64url characters. Both must be unpadded base64url that decodes; anything else is `400` with a fixed message that never repeats the body.
+- `GET /sealed` returns `204` with an empty body while the sender hasn't sealed yet.
 - The take is one-time. A single statement reads the row and marks it delivered, so a second `GET` returns `409` and never the key again.
 - A successful `PUT` extends `expires_at` to at least 30 seconds from now, so the receiver has time to fetch.
 - Responses carry `Cache-Control: no-store`.
