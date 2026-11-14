@@ -60,7 +60,7 @@ pub const ERASE: &[(&str, &str)] = &[
     ("calendar_connections", USER),
     ("zoom_connections", USER),
     ("user_meeting_settings", USER),
-    // The compute gate's "chat only" acknowledgement (migration compute_gate).
+    // The compute gate's "chat only" acknowledgement (migration 133).
     ("account_compute_acknowledgements", "user_id = $1"),
     // Platform API projects, children first.
     ("platform_webhook_deliveries", "webhook_id IN (SELECT id FROM platform_webhooks WHERE user_id = $1 OR project_id IN (SELECT id FROM platform_projects WHERE owner_user_id = $1)) OR event_id IN (SELECT id FROM platform_events WHERE user_id = $1 OR project_id IN (SELECT id FROM platform_projects WHERE owner_user_id = $1))"),

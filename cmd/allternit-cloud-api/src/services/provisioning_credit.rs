@@ -96,7 +96,8 @@ pub struct CreditDefaults {
 }
 
 impl Default for CreditDefaults {
-    /// The contract placeholders (PENDING Eoj).
+    /// Eoj's numbers (decided 2026-11-13): $0.10/h running, $0.005/h stopped,
+    /// $5 minimum to start, disk kept 14 days after $0.
     fn default() -> Self {
         Self {
             cpu_cores: 2,

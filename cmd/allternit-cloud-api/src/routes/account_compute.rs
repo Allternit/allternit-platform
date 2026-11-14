@@ -7,7 +7,7 @@
 //!   prices read from the server, never hard-coded in clients.
 //! - `POST /api/v1/account/compute-status/acknowledge` with
 //!   `{"choice":"chat_only"}`: the user confirmed chat-only. Stored in
-//!   `account_compute_acknowledgements` (migration 129); repeat calls keep the
+//!   `account_compute_acknowledgements` (migration 133); repeat calls keep the
 //!   first time. It never lifts the gate for agent entry.
 //! - [`require_compute`]: the server side of the gate. With
 //!   `ALLTERNIT_COMPUTE_GATE=on`, agent entry (the runtime relay and the
@@ -74,7 +74,7 @@ pub struct GateConfig {
     pub gate: bool,
     pub credits: bool,
     pub credit: CreditDefaults,
-    /// Running hours a month included with Plus (`ALLTERNIT_PLUS_INCLUDED_HOURS`, PENDING Eoj).
+    /// Running hours a month included with Plus (`ALLTERNIT_PLUS_INCLUDED_HOURS`, default 200: Eoj, 2026-11-13).
     pub plus_included_hours: i64,
     pub download_url: String,
 }
@@ -545,8 +545,8 @@ pub(crate) mod tests {
             include_str!("../../migrations_pg/014_provisioned_fleet.sql"),
             include_str!("../../migrations_pg/018_cloud_computer_provisioning.sql"),
             include_str!("../../migrations_pg/019_free_sleeping_computer.sql"),
-            include_str!("../../migrations_pg/130_credit_computers.sql"),
-            include_str!("../../migrations_pg/131_compute_gate.sql"),
+            include_str!("../../migrations_pg/132_credit_computers.sql"),
+            include_str!("../../migrations_pg/133_compute_gate.sql"),
         ] {
             sqlx::raw_sql(&sql.replace("public.", "")).execute(db).await.expect("migration applies");
         }

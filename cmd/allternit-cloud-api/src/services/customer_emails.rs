@@ -383,7 +383,7 @@ pub enum CreditNotice {
 }
 
 impl CreditNotice {
-    /// `customer_emails.kind` (migration 129).
+    /// `customer_emails.kind` (migration 133).
     pub fn kind(&self) -> &'static str {
         match self {
             CreditNotice::Low24h => "credit_low_24h",

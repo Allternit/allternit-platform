@@ -27,7 +27,8 @@
 //! Orgo computers reserve nothing in host memory admission. Instead:
 //! `ALLTERNIT_ORGO_MAX_RUNNING` (default 10) computers provisioning, running
 //! or waking at once, and `ALLTERNIT_ORGO_DAILY_BUDGET_USD` (default 5) of
-//! estimated spend per UTC day: running hours from the metering sessions (plus
+//! estimated unpaid spend per UTC day (never applied to, or counting, a paying
+//! computer: plan or credits): running hours from the metering sessions (plus
 //! time spent in first boot) times the hourly price of the Orgo size. Past
 //! either: the `computer_capacity` 503 (message starts [`CLOUD_POOL_FULL`]).
 //!
@@ -1258,7 +1259,8 @@ async fn orgo_running(conn: &mut sqlx::PgConnection) -> Result<i64, ApiError> {
     .await?)
 }
 
-/// Estimated Orgo spend for the UTC day of `now`: metered running time inside
+/// Estimated unpaid Orgo spend for the UTC day of `now` (paying computers,
+/// plan or credits, are left out): metered running time inside
 /// the day plus the time computers spent in first boot, each at the hourly
 /// price of its Orgo size, never below `min_hourly_usd` (what the account
 /// really bills per computer).
@@ -1306,6 +1308,9 @@ pub(crate) async fn orgo_spend_today_usd(
                     disk_gb: 0,
                 },
             );
+            if class.is_paying() {
+                return 0.0;
+            }
             orgo_hourly_usd(size).max(min_hourly_usd) * seconds as f64 / 3600.0
         })
         .sum())
@@ -1319,11 +1324,17 @@ pub(crate) fn cloud_capacity_error() -> ApiError {
     ))
 }
 
-/// Admit one more running Orgo computer, or the capacity 503. Call inside the
-/// transaction holding the host row lock to make it binding.
+/// Admit one more running Orgo computer of `class`, or the capacity 503. Call
+/// inside the transaction holding the host row lock to make it binding.
+///
+/// The daily budget guards unpaid usage only (Platform API test runtimes,
+/// free and hosted-driver computers): a paying computer (a plan or credits,
+/// [`ComputeClass::is_paying`]) is never refused by it, and its hours do not
+/// count toward it. The running cap applies to every class.
 pub(crate) async fn orgo_admits(
     conn: &mut sqlx::PgConnection,
     routing: &ComputeRouting,
+    class: ComputeClass,
 ) -> Result<(), ApiError> {
     let running = orgo_running(&mut *conn).await?;
     if running >= routing.orgo_max_running {
@@ -1333,6 +1344,9 @@ pub(crate) async fn orgo_admits(
             "orgo: running cap reached; refusing"
         );
         return Err(cloud_capacity_error());
+    }
+    if class.is_paying() {
+        return Ok(());
     }
     let spent = orgo_spend_today_usd(&mut *conn, Utc::now(), routing.orgo_min_hourly_usd).await?;
     if spent >= routing.orgo_daily_budget_usd {
@@ -1453,7 +1467,7 @@ impl ProvisioningService {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use axum::http::{HeaderMap as AxumHeaders, Method, StatusCode, Uri};
     use axum::response::IntoResponse;
@@ -2018,6 +2032,29 @@ mod tests {
             "ALLTERNIT_ORGO_DESKTOP_DEB_URL='https://downloads.example.com/allternit desktop.deb'"
         ));
         assert!(fake.bash[launch].contains("ALLTERNIT_ORGO_DESKTOP_DEB_SHA256='ab12'"));
+    }
+
+    /// A real [`OrgoBackend`] on a fake Orgo API whose `POST /computers`
+    /// answers Orgo's out-of-memory refusal (for the provisioning service's
+    /// capacity-fallback tests). The state counts the create attempts.
+    pub(crate) async fn capacity_refusing_orgo() -> (Arc<dyn ProvisionBackend>, impl Fn() -> usize) {
+        let (base, fake) = serve(Fake {
+            create_refusal: Some(serde_json::json!({
+                "code": "insufficient_memory",
+                "error": "Failed to create computer: VMM returned 503: insufficient memory"
+            })),
+            ..Fake::default()
+        })
+        .await;
+        let creates = move || {
+            fake.lock()
+                .unwrap()
+                .seen
+                .iter()
+                .filter(|seen| seen.method == "POST" && seen.path == "/computers")
+                .count()
+        };
+        (Arc::new(backend(&base)) as Arc<dyn ProvisionBackend>, creates)
     }
 
     #[tokio::test]

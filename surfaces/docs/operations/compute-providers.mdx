@@ -27,6 +27,10 @@ Four classes of computers can be routed separately. Each variable is `incus` or 
 
 A class routed to Orgo lands only on an enabled `orgo://` host; every other class never lands on one. If no `orgo://` host is enabled, the create fails with "No enabled orgo:// host is registered" and does not fall back to Incus.
 
+**Capacity fallback.** When a new computer is routed to Orgo and Orgo has no room, cloud-api places it on the standby (Incus) pool instead. "No room" means any capacity refusal: Orgo's own `insufficient_memory`, the running cap, the daily budget (unpaid classes only, see [Guards](#guards)), or a full `orgo://` host ledger. The standby pool applies its usual admission: the host ledger, plus memory admission and idle sleep for free computers. Only when standby has no room either does the create answer `503 computer_capacity`. This applies to creates only. A wake of an existing Orgo computer stays on Orgo, because its disk lives there, and answers `503 computer_capacity` when Orgo is full.
+
+**Reserved hosts.** `host_mail` (the production mail VPS) never receives a computer, even though it is a registered, enabled host. Add more host ids with `ALLTERNIT_RESERVED_HOSTS` (comma-separated). The rule is in `select_host`, so it covers every placement, Meetings pods included.
+
 Two exceptions:
 
 - Developer computers (`/v1/computers`, see [Hosted computer driver](/operations/hosted-driver)) always stay on Incus. They need the egress-filtered network profile, and Orgo has nothing like it.
@@ -57,10 +61,10 @@ Orgo computers reserve nothing in the host memory admission that Incus free comp
 | Variable | Default | What it does |
 |---|---|---|
 | `ALLTERNIT_ORGO_MAX_RUNNING` | `10` | Orgo computers provisioning, running or waking at once. |
-| `ALLTERNIT_ORGO_DAILY_BUDGET_USD` | `5` | Estimated Orgo spend per UTC day. `0` refuses every new start. |
+| `ALLTERNIT_ORGO_DAILY_BUDGET_USD` | `5` | Estimated unpaid Orgo spend per UTC day (Platform API test runtimes, free and developer computers). It never refuses a paying computer (a plan or credits), and paying computers' hours do not count toward it. `0` refuses every new unpaid start. |
 | `ALLTERNIT_ORGO_MIN_HOURLY_USD` | `0.055` | Lowest hourly price the estimate uses per computer. The pay-as-you-go account bills every computer as Medium, whatever size is asked for. |
 
-Past either limit the answer is `503 computer_capacity` with `Retry-After: 30`. The message starts "Cloud computers are at capacity" and does not show the spend; the reason is in the cloud-api log. A paid computer that can't be created for this reason sends the team an ops alert.
+Past either limit a new computer goes to the standby pool (see the capacity fallback above); a wake, or a create with standby full, answers `503 computer_capacity` with `Retry-After: 30`. The message starts "Cloud computers are at capacity" and does not show the spend; the reason is in the cloud-api log. A paid computer that can't be created for this reason sends the team an ops alert.
 
 Orgo's own refusal is the same answer. When Orgo returns HTTP 500 with code `insufficient_memory` (its host has no room for the size), a create or wake answers `503 computer_capacity` with `Retry-After: 30`, and the Platform API relay answers it right away instead of `runtime_starting` after a long wait. The raw Orgo text stays in the cloud-api log.
 
@@ -114,19 +118,19 @@ Sleeping is an Orgo stop: the disk is kept and memory is lost. The next relay re
 
 ## Compute gate and credit computers
 
-These flags turn on the compute gate described in [Account compute status API](/api/account-compute-status). Both are off by default. Prices and sizes marked pending are placeholders until Eoj sets them; clients read them from `GET /api/v1/account/compute-status`, so changing the env changes every surface.
+These flags turn on the compute gate described in [Account compute status API](/api/account-compute-status). All three are off by default, so a merge changes nothing until they are set. The prices, hours and retention below are the decided values (2026-11-13); clients read them from `GET /api/v1/account/compute-status`, so changing the env changes every surface.
 
 | Variable | Default | What it does |
 |---|---|---|
 | `ALLTERNIT_COMPUTE_GATE` | `off` | `on`: an account with no computer (or only a suspended one) gets `409 compute_required` from the relay and from data-plane routes. `off`: nothing is refused and `gate` is always false. |
 | `ALLTERNIT_CREDIT_COMPUTERS` | `0` | `1`: `POST /api/v1/provisioned-instances/credit` and `/credit/stop` work and `paths.credits` is filled. `0`: both answer `404`. Billing of credit computers that already exist runs either way. |
-| `ALLTERNIT_CREDIT_COMPUTER_PRICE_PER_HOUR_USD` | `0.10` | Running price, debited per minute (pending). |
-| `ALLTERNIT_CREDIT_COMPUTER_STOPPED_PRICE_PER_HOUR_USD` | `0.005` | Price while stopped or asleep (pending). |
-| `ALLTERNIT_CREDIT_COMPUTER_MIN_START_USD` | `5` | Balance needed to create or start one; below it the API answers `402 insufficient_credits` (pending). |
-| `ALLTERNIT_CREDIT_COMPUTER_RETENTION_DAYS` | `14` | Days a computer stopped at $0 is kept before it is deleted (pending). |
-| `ALLTERNIT_CREDIT_COMPUTER_CPU` / `_MEMORY_MB` / `_DISK_GB` | `2` / `8192` / `50` | The Medium credit size (pending). |
+| `ALLTERNIT_CREDIT_COMPUTER_PRICE_PER_HOUR_USD` | `0.10` | Running price, debited per minute. |
+| `ALLTERNIT_CREDIT_COMPUTER_STOPPED_PRICE_PER_HOUR_USD` | `0.005` | Price while stopped or asleep. |
+| `ALLTERNIT_CREDIT_COMPUTER_MIN_START_USD` | `5` | Balance needed to create or start one; below it the API answers `402 insufficient_credits`. |
+| `ALLTERNIT_CREDIT_COMPUTER_RETENTION_DAYS` | `14` | Days a computer stopped at $0 is kept before it is deleted. |
+| `ALLTERNIT_CREDIT_COMPUTER_CPU` / `_MEMORY_MB` / `_DISK_GB` | `2` / `8192` / `50` | The Medium credit size. |
 | `ALLTERNIT_CREDIT_COMPUTER_EMAILS` | `0` | `1` (with `ALLTERNIT_CUSTOMER_EMAILS=1`): send the low-runway, stopped and deletion emails. `0`: they are recorded in `customer_emails` as `queued` and not sent, because the copy waits for approval. |
-| `ALLTERNIT_PLUS_INCLUDED_HOURS` | `200` | Running hours a month shown for Plus in `paths.plan` (pending). |
+| `ALLTERNIT_PLUS_INCLUDED_HOURS` | `200` | Running hours a month included with Plus, shown in `paths.plan`. Billing of plan hours past this from credits is not built yet; today the number is shown only. |
 | `ALLTERNIT_DOWNLOAD_URL` | `https://www.allternit.com/download` | The Desktop download link in `paths.own`. |
 
 How credit billing works:
@@ -136,4 +140,4 @@ How credit billing works:
 - Starting it again with enough credits resumes the same computer, and billing starts from that moment.
 - `POST /api/v1/provisioned-instances/free` answers `410 free_computers_retired` for everyone except admins (`ALLTERNIT_ADMIN_USER_IDS`).
 
-Database: migrations `128_credit_computers.sql` and `129_compute_gate.sql`. Production skips sqlx migrations, so apply them by hand as described in [Database migrations](/operations/database-migrations).
+Database: migrations `132_credit_computers.sql` and `133_compute_gate.sql`. Production skips sqlx migrations, so apply them by hand as described in [Database migrations](/operations/database-migrations).

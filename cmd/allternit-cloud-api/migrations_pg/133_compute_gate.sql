@@ -1,4 +1,4 @@
--- 129: compute gate (CONTRACT-compute-gate-2026-11-13 sections 3 and 6).
+-- 133: compute gate (CONTRACT-compute-gate-2026-11-13 sections 3 and 6).
 --
 -- * account_compute_acknowledgements: one row per account that confirmed
 --   "Just chat for now" (POST /api/v1/account/compute-status/acknowledge).
@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS public.account_compute_acknowledgements (
 
 ALTER TABLE public.customer_emails DROP CONSTRAINT IF EXISTS customer_emails_kind_check;
 ALTER TABLE public.customer_emails ADD CONSTRAINT customer_emails_kind_check
-    CHECK (kind IN ('welcome', 'plan_started', 'computer_ready', 'auto_topup_failed',
+    CHECK (kind IN ('welcome', 'plan_started', 'computer_ready', 'auto_topup_failed', 'meeting_recap',
                     'credit_low_24h', 'credit_low_2h', 'credit_stopped', 'credit_delete_warning'));
 
 ALTER TABLE public.customer_emails DROP CONSTRAINT IF EXISTS customer_emails_status_check;

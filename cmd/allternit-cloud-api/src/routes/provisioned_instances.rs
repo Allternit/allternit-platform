@@ -1570,7 +1570,7 @@ mod tests {
         assert!(backend.calls.lock().unwrap().is_empty());
     }
 
-    /// The credit columns (migration 128) and the wallet tables on top of
+    /// The credit columns (migration 132) and the wallet tables on top of
     /// this module's hand-made schema, plus an Orgo host (credit computers
     /// route to Orgo by default).
     async fn add_credit_schema(pool: &sqlx::PgPool) {

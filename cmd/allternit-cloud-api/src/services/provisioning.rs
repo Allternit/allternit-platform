@@ -321,6 +321,12 @@ pub enum ComputeClass {
 }
 
 impl ComputeClass {
+    /// A plan or credits computer: someone pays for its hours, so the Orgo
+    /// daily budget (a guard on unpaid usage) never refuses it.
+    pub fn is_paying(self) -> bool {
+        matches!(self, ComputeClass::Paid | ComputeClass::Credit)
+    }
+
     pub fn for_owner(user_id: &str, tier: &str) -> Self {
         if tier == TIER_CREDIT {
             ComputeClass::Credit
@@ -1413,6 +1419,22 @@ impl HostCapacity {
     }
 }
 
+/// Hosts that serve something else and never take a computer, even when they
+/// are registered and enabled: always `host_mail` (the production mail VPS),
+/// plus any ids in `ALLTERNIT_RESERVED_HOSTS` (comma-separated).
+pub const ALWAYS_RESERVED_HOSTS: &[&str] = &["host_mail"];
+
+fn reserved_hosts() -> Vec<String> {
+    let mut hosts = env_list("ALLTERNIT_RESERVED_HOSTS");
+    hosts.extend(ALWAYS_RESERVED_HOSTS.iter().map(|h| h.to_string()));
+    hosts
+}
+
+/// True when `host_id` must never receive a computer (see [`ALWAYS_RESERVED_HOSTS`]).
+pub fn is_reserved_host_with(reserved: &[String], host_id: &str) -> bool {
+    reserved.iter().any(|h| h.eq_ignore_ascii_case(host_id.trim()))
+}
+
 /// Best-free bin-pack (see module header for the full algorithm
 /// description): most free memory wins, tie → most free cpu, tie → lowest
 /// host id for determinism. Returns `None` when no enabled host fits.
@@ -1422,9 +1444,11 @@ pub fn select_host(
     memory_mb: i64,
     disk_gb: i64,
 ) -> Option<String> {
+    let reserved = reserved_hosts();
     hosts
         .iter()
         .filter(|host| host.enabled && host.fits(cpu, memory_mb, disk_gb))
+        .filter(|host| !is_reserved_host_with(&reserved, &host.id))
         .max_by(|a, b| {
             a.free_memory()
                 .cmp(&b.free_memory())
@@ -2244,14 +2268,51 @@ impl ProvisioningService {
         Ok(view)
     }
 
-    /// Shared create for both tiers. `tier` is [`TIER_PAID`] (per
-    /// subscription, plan-sized, always on, cancel snapshot) or
-    /// [`TIER_FREE`] (one per account, same image, small, sleeps, no snapshots).
+    /// Shared create for every tier. `tier` is [`TIER_PAID`] (per
+    /// subscription, plan-sized, always on, cancel snapshot), [`TIER_CREDIT`]
+    /// or [`TIER_FREE`] (one per account, same image, small, sleeps, no snapshots).
+    ///
+    /// Capacity fallback: when the class is routed to Orgo and Orgo has no
+    /// room (Orgo's own `insufficient_memory`, the running cap, the daily
+    /// budget or the orgo:// host ledger: every [`orgo::CLOUD_POOL_FULL`]
+    /// refusal), the computer is placed on the standby (Incus) pool instead,
+    /// under that pool's usual admission (host ledger, memory admission and
+    /// idle sleep for free computers). Only when standby has no room either
+    /// does the caller get the `computer_capacity` 503. A wake never moves a
+    /// computer: its disk lives on the provider that made it.
     pub(crate) async fn create_tier(
         &self,
         user_id: &str,
         subscription_id: Option<&str>,
         tier: &str,
+    ) -> Result<InstanceView, ApiError> {
+        let class = ComputeClass::for_owner(user_id, tier);
+        let routed_to_orgo = self.routing.provider_for(class) == ComputeProvider::Orgo;
+        match self.create_tier_on(user_id, subscription_id, tier, false).await {
+            Err(ApiError::ServiceUnavailable(message))
+                if routed_to_orgo && message.starts_with(orgo::CLOUD_POOL_FULL) =>
+            {
+                tracing::warn!(%user_id, ?class, "orgo at capacity; placing the computer on the standby pool");
+                match self.create_tier_on(user_id, subscription_id, tier, true).await {
+                    Ok(view) => Ok(view),
+                    Err(fallback) => {
+                        tracing::warn!(%user_id, ?class, error = %fallback, "standby pool has no room either");
+                        Err(ApiError::ServiceUnavailable(message))
+                    }
+                }
+            }
+            other => other,
+        }
+    }
+
+    /// One placement attempt of [`Self::create_tier`]. `standby_only` skips
+    /// Orgo routing and places on the Incus (standby) hosts.
+    async fn create_tier_on(
+        &self,
+        user_id: &str,
+        subscription_id: Option<&str>,
+        tier: &str,
+        standby_only: bool,
     ) -> Result<InstanceView, ApiError> {
         let free = tier == TIER_FREE;
         // Developer computers (the hosted driver) ride the free lane with
@@ -2272,7 +2333,7 @@ impl ProvisioningService {
             }
         }
         let class = ComputeClass::for_owner(user_id, tier);
-        let want_orgo = self.routing.provider_for(class) == ComputeProvider::Orgo;
+        let want_orgo = !standby_only && self.routing.provider_for(class) == ComputeProvider::Orgo;
         // A first boot that failed on Orgo minutes ago: wait before buying
         // another computer (a bad .deb URL would otherwise buy one per call).
         if want_orgo && self.orgo_first_boot_backoff(user_id, tier).await? {
@@ -2441,7 +2502,7 @@ impl ProvisioningService {
             }));
         };
         if orgo_hosts.contains(&host_id) {
-            if let Err(error) = orgo::orgo_admits(&mut *transaction, &self.routing).await {
+            if let Err(error) = orgo::orgo_admits(&mut *transaction, &self.routing, class).await {
                 transaction.rollback().await?;
                 return Err(error);
             }
@@ -3214,7 +3275,8 @@ impl ProvisioningService {
                 .bind(row.host_id.as_deref())
                 .execute(&mut *transaction)
                 .await?;
-            if let Err(error) = orgo::orgo_admits(&mut *transaction, &self.routing).await {
+            let class = ComputeClass::for_owner(&row.user_id, &row.tier);
+            if let Err(error) = orgo::orgo_admits(&mut *transaction, &self.routing, class).await {
                 transaction.rollback().await?;
                 return Err(error);
             }
@@ -4590,7 +4652,7 @@ pub(crate) mod pg_tests {
     const MIGRATION_017: &str = include_str!("../../migrations_pg/017_paired_computers.sql");
     const MIGRATION_066: &str = include_str!("../../migrations_pg/066_paired_computer_orgs.sql");
     const MIGRATION_081: &str = include_str!("../../migrations_pg/081_paired_cloud_computers.sql");
-    const MIGRATION_128: &str = include_str!("../../migrations_pg/130_credit_computers.sql");
+    const MIGRATION_CREDIT: &str = include_str!("../../migrations_pg/132_credit_computers.sql");
 
     async fn test_pool() -> PgPool {
         let url = "postgres://allternit:allternit_pg_2026@localhost:5432/allternit_test";
@@ -4678,8 +4740,8 @@ pub(crate) mod pg_tests {
         apply_migration_sql(&pool, &schema, MIGRATION_018).await;
         apply_migration_sql(&pool, &schema, MIGRATION_019).await;
         apply_migration_sql(&pool, &schema, MIGRATION_019).await;
-        apply_migration_sql(&pool, &schema, MIGRATION_128).await;
-        apply_migration_sql(&pool, &schema, MIGRATION_128).await;
+        apply_migration_sql(&pool, &schema, MIGRATION_CREDIT).await;
+        apply_migration_sql(&pool, &schema, MIGRATION_CREDIT).await;
         for sql in [MIGRATION_017, MIGRATION_066, MIGRATION_081] {
             apply_migration_sql(&pool, &schema, sql).await;
         }
@@ -6230,10 +6292,176 @@ pub(crate) mod pg_tests {
         assert!((spent - 7.0 * 0.055).abs() < 1e-6, "{spent}");
         drop(conn);
 
-        // A used-up budget refuses with the capacity 503.
+        // A used-up budget refuses Orgo; with standby full too, the capacity 503.
+        sqlx::query("UPDATE provisioned_hosts SET enabled = FALSE WHERE id = 'host_a'")
+            .execute(&pool)
+            .await
+            .unwrap();
         let broke = orgo_service(&pool, &backend, ComputeRouting { orgo_daily_budget_usd: 0.0, ..orgo_routing(true, false) });
-        let error = broke.create_free("user_2").await.unwrap_err();
+        let error = broke.create_free("user_3").await.unwrap_err();
         assert!(matches!(&error, ApiError::ServiceUnavailable(m) if is_capacity_message(m)), "{error:?}");
+    }
+
+    #[test]
+    fn select_host_never_places_on_the_mail_host() {
+        // host_mail has far more room, so the bin-pack would pick it.
+        let host = |id: &str, cpu_total: i64, memory_total: i64, disk_total: i64| HostCapacity {
+            id: id.to_string(),
+            enabled: true,
+            cpu_total,
+            memory_total,
+            disk_total,
+            cpu_used: 0,
+            memory_used: 0,
+            disk_used: 0,
+        };
+        let hosts = vec![
+            host("host_mail", 64, 262_144, 4000),
+            host("host_a", 4, 8192, 100),
+        ];
+        assert_eq!(select_host(&hosts, 2, 2048, 20).as_deref(), Some("host_a"));
+        // Alone, it takes nothing.
+        assert_eq!(select_host(&hosts[..1], 1, 1024, 10), None);
+        // Extra reserved ids come from ALLTERNIT_RESERVED_HOSTS; host_mail is always in.
+        let reserved = vec!["host_b".to_string(), "host_mail".to_string()];
+        assert!(is_reserved_host_with(&reserved, "host_b"));
+        assert!(is_reserved_host_with(&reserved, "HOST_MAIL"));
+        assert!(!is_reserved_host_with(&reserved, "host_a"));
+        assert!(ALWAYS_RESERVED_HOSTS.contains(&"host_mail"));
+    }
+
+    #[tokio::test]
+    async fn orgo_daily_budget_never_refuses_a_paying_computer() {
+        let pool = migrated_pool().await;
+        insert_orgo_host(&pool, "host_o", 64, 262_144, 2000).await;
+        let backend = Arc::new(MockBackend::default());
+        // Budget used up from the start; no standby host to fall back to.
+        let routing = ComputeRouting { orgo_daily_budget_usd: 0.0, ..orgo_routing(true, true) };
+        let service = orgo_service(&pool, &backend, routing);
+
+        let plan = service.create("user_1", Some("sub_1")).await.unwrap();
+        assert_eq!(plan.host_id.as_deref(), Some("host_o"), "a plan computer is not refused by the budget");
+        let credit = service.create_tier("user_2", None, TIER_CREDIT).await.unwrap();
+        assert_eq!(credit.host_id.as_deref(), Some("host_o"), "a credits computer is not refused by the budget");
+
+        // Unpaid usage is still guarded.
+        let error = service.create_free("user_free").await.unwrap_err();
+        assert!(matches!(&error, ApiError::ServiceUnavailable(m) if is_capacity_message(m)), "{error:?}");
+
+        // A paying computer's hours never count toward the unpaid budget.
+        set_status(&pool, &plan.id, "running").await;
+        sqlx::query(
+            "INSERT INTO provisioned_instance_usage_sessions (id, instance_id, user_id, started_at) VALUES ('pus_p', $1, 'user_1', $2)",
+        )
+        .bind(&plan.id)
+        .bind(Utc::now() - Duration::hours(3))
+        .execute(&pool)
+        .await
+        .unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        let spent = orgo::orgo_spend_today_usd(&mut conn, Utc::now(), 0.055).await.unwrap();
+        assert_eq!(spent, 0.0);
+        drop(conn);
+        assert!(ComputeClass::Paid.is_paying() && ComputeClass::Credit.is_paying());
+        assert!(!ComputeClass::Free.is_paying() && !ComputeClass::Platform.is_paying());
+    }
+
+    /// orgo:// hosts get the real Orgo backend on a fake Orgo API; every
+    /// other host gets the mock (the standby Incus pool).
+    struct SplitRegistry {
+        orgo: Arc<dyn ProvisionBackend>,
+        standby: Arc<MockBackend>,
+    }
+
+    impl std::fmt::Debug for SplitRegistry {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("SplitRegistry")
+        }
+    }
+
+    #[async_trait]
+    impl BackendRegistry for SplitRegistry {
+        async fn backend(&self, _host_id: &str, endpoint: &str) -> Result<Arc<dyn ProvisionBackend>, ApiError> {
+            Ok(if is_orgo_endpoint(endpoint) { self.orgo.clone() } else { self.standby.clone() })
+        }
+    }
+
+    #[tokio::test]
+    async fn orgo_capacity_refusal_on_create_falls_back_to_standby() {
+        let pool = migrated_pool().await;
+        insert_host(&pool, "host_a", 16, 32768, 200).await;
+        insert_orgo_host(&pool, "host_o", 64, 262_144, 2000).await;
+        let (orgo, orgo_creates) = orgo::tests::capacity_refusing_orgo().await;
+        let standby = Arc::new(MockBackend::default());
+        let service = Arc::new(
+            ProvisioningService::with_registry(pool.clone(), Arc::new(SplitRegistry { orgo, standby: standby.clone() }))
+                .with_defaults(test_defaults())
+                .with_free_defaults(test_free_defaults())
+                .with_routing(orgo_routing(false, true)),
+        );
+
+        // Orgo answers insufficient_memory: the plan computer lands on standby.
+        let paid = service.create("user_1", Some("sub_1")).await.unwrap();
+        assert_eq!(orgo_creates(), 1, "Orgo was asked first");
+        assert_eq!(paid.host_id.as_deref(), Some("host_a"));
+        assert_eq!(paid.provider, "incus");
+        assert_eq!(standby.created.lock().unwrap().len(), 1);
+        let orgo_allocated: i32 = sqlx::query_scalar("SELECT cpu_cores_allocated FROM provisioned_hosts WHERE id = 'host_o'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(orgo_allocated, 0, "the refused Orgo slot is released");
+        let live: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM provisioned_instances WHERE user_id = 'user_1' AND status NOT IN ('error', 'deleted')",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(live, 1, "one live computer, on standby");
+
+        // Credits computers fall back the same way.
+        let credit = service.create_tier("user_2", None, TIER_CREDIT).await.unwrap();
+        assert_eq!(credit.host_id.as_deref(), Some("host_a"));
+
+        // Standby with no room either: computer_capacity.
+        sqlx::query("UPDATE provisioned_hosts SET enabled = FALSE WHERE id = 'host_a'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let error = service.create("user_2", Some("sub_9")).await.unwrap_err();
+        assert!(
+            matches!(&error, ApiError::ServiceUnavailable(m) if m.starts_with(orgo::CLOUD_POOL_FULL)),
+            "{error:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn waking_an_orgo_computer_at_capacity_stays_on_orgo() {
+        let pool = migrated_pool().await;
+        insert_host(&pool, "host_a", 16, 32768, 200).await;
+        insert_orgo_host(&pool, "host_o", 64, 262_144, 2000).await;
+        let backend = Arc::new(MockBackend { orgo: true, ..MockBackend::default() });
+        let routing = ComputeRouting { orgo_max_running: 1, ..orgo_routing(false, true) };
+        let service = orgo_service(&pool, &backend, routing);
+
+        let asleep = service.create("user_1", Some("sub_1")).await.unwrap();
+        assert_eq!(asleep.host_id.as_deref(), Some("host_o"));
+        set_status(&pool, &asleep.id, "sleeping").await;
+        let awake = service.create("user_2", Some("sub_2")).await.unwrap();
+        assert_eq!(awake.host_id.as_deref(), Some("host_o"));
+        set_status(&pool, &awake.id, "running").await;
+
+        // The running cap is full: the wake is refused and nothing moves.
+        let error = service.wake(&asleep.id, Some("user_1"), WakeReason::Relay).await.unwrap_err();
+        assert!(matches!(&error, ApiError::ServiceUnavailable(m) if is_capacity_message(m)), "{error:?}");
+        let (status, host): (String, Option<String>) =
+            sqlx::query_as("SELECT status, host_id FROM provisioned_instances WHERE id = $1")
+                .bind(&asleep.id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(status, "sleeping");
+        assert_eq!(host.as_deref(), Some("host_o"), "its disk is on Orgo: it stays there");
     }
 
     #[tokio::test]

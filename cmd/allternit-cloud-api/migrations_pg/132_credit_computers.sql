@@ -1,4 +1,4 @@
--- 128: credit computers (compute gate, CONTRACT-compute-gate-2026-11-13 section 6).
+-- 132: credit computers (compute gate, CONTRACT-compute-gate-2026-11-13 section 6).
 --
 -- * provisioned_instances.tier gains 'credit': a hosted computer bought with
 --   the USD credit wallet, billed per minute while it runs (stopped rate
