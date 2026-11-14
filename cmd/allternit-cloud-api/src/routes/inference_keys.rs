@@ -127,6 +127,7 @@ mod tests {
             masked: "gsk…9999".to_string(),
             status: "active".to_string(),
             last_validated_at: None,
+            models: vec!["grok-4".to_string()],
         };
         let value = serde_json::to_value(&info).unwrap();
         assert_eq!(value["provider_id"], serde_json::json!("groq"));

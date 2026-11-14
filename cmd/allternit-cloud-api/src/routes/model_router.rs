@@ -269,14 +269,6 @@ async fn chat_completions_attributed(
                 "{alias} runs on your own {provider_id} key. Add one in Connections."
             )));
         }
-        if inference_keys::byok_base_url(provider_id).is_none() {
-            // TODO(connect-kit): Anthropic keys need the native Messages API
-            // (request + SSE translation to chat.completion chunks). Until
-            // then a saved Anthropic key is checked and stored but not used.
-            return Err(ApiError::BadRequest(format!(
-                "Chat on your own {provider_id} key is not available yet. Use an OpenRouter key or an Allternit model."
-            )));
-        }
         let vendor_model = vendor_model.to_string();
         return byok_chat_completions(state, &user_id, provider_id, vendor_model, request, attribution).await;
     }
@@ -444,13 +436,19 @@ async fn byok_chat_completions(
     }
     request.model = upstream_id;
 
-    let provider = GenericOpenAiProvider::new(GenericOpenAiConfig {
-        provider_id: provider_id.to_string(),
-        base_url: base_url.to_string(),
-        api_key,
-        model_list_cache_ttl: std::time::Duration::from_secs(300),
-    });
-    let response = provider.chat_completions(request).await?;
+    // Anthropic speaks the Messages API (translated both ways); every other
+    // BYOK host is OpenAI-compatible.
+    let response = if provider_id == "anthropic" {
+        crate::model_router::anthropic::AnthropicProvider::new(api_key).chat_completions(request).await?
+    } else {
+        let provider = GenericOpenAiProvider::new(GenericOpenAiConfig {
+            provider_id: provider_id.to_string(),
+            base_url: base_url.to_string(),
+            api_key,
+            model_list_cache_ttl: std::time::Duration::from_secs(300),
+        });
+        provider.chat_completions(request).await?
+    };
 
     tracing::info!(
         user_id = %user_id,

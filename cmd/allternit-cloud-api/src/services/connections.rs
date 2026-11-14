@@ -145,6 +145,12 @@ pub const VOICE_ROWS: &[(&str, &str)] = &[("openai-voice", "openai"), ("elevenla
 /// Coding tools whose live state comes from the runtime.
 pub const TOOL_ROWS: &[&str] = &["claude-code", "codex", "gemini-cli", "cursor", "grok-cli", "kimi-cli"];
 
+/// Rows the person's computer owns; the cloud lists them only while no
+/// computer is online (as unavailable).
+pub fn runtime_owned(id: &str) -> bool {
+    id == "chatgpt" || id == "local" || TOOL_ROWS.contains(&id)
+}
+
 /// The inference provider a key row (or the `gemini` alias) stores into.
 pub fn key_provider_for(id: &str) -> Option<&'static str> {
     if id == "gemini" {
@@ -182,6 +188,8 @@ pub struct SavedKey {
     pub provider: String,
     pub masked: String,
     pub active: bool,
+    /// The vendor's own model ids from the last check (no prefix).
+    pub models: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -252,12 +260,17 @@ pub fn build_rows(facts: &Facts, aliases_for: &dyn Fn(&str) -> Vec<String>) -> V
     let found = if facts.plan == "Free" { "Free · $2 a month free".to_string() } else { facts.plan.to_string() };
     rows.push(Row::new("allternit", "brains", "server").on(found));
 
-    let chatgpt = Row::new("chatgpt", "brains", "computer");
-    rows.push(if online {
-        chatgpt
-    } else {
-        chatgpt.unavailable("Needs your own computer for now. Or use an OpenAI key.", "no_computer", &["this-mac", "openai-key"])
-    });
+    // Rows the computer owns (ChatGPT, the local brain, coding tools): with a
+    // computer online they are left out, so the runtime's row is the one the
+    // client shows (clients let a runtime row win over a cloud row only when
+    // it is `on`; a cloud row would hide a usable, not yet signed-in one).
+    if !online {
+        rows.push(Row::new("chatgpt", "brains", "computer").unavailable(
+            "Needs your own computer for now. Or use an OpenAI key.",
+            "no_computer",
+            &["this-mac", "openai-key"],
+        ));
+    }
     for (id, fallback) in [("claude", "anthropic-key"), ("grok", "xai-key"), ("kimi", "kimi-key")] {
         let mut row = Row::new(id, "brains", "runner").unavailable(NOT_YET, "not_available_yet", &[fallback]);
         row.terms = "pending";
@@ -267,15 +280,22 @@ pub fn build_rows(facts: &Facts, aliases_for: &dyn Fn(&str) -> Vec<String>) -> V
     let mut copilot = Row::new("copilot", "brains", "server").unavailable("Coming soon.", "not_available_yet", &["github"]);
     copilot.terms = "pending";
     rows.push(copilot);
-    let local = Row::new("local", "brains", "computer");
-    rows.push(if online { local } else { local.unavailable(RUNS_ON_COMPUTER, "no_computer", &["this-mac"]) });
+    if !online {
+        rows.push(Row::new("local", "brains", "computer").unavailable(RUNS_ON_COMPUTER, "no_computer", &["this-mac"]));
+    }
 
     let key_row = |id: &str, provider: &str| -> Row {
         let mut row = Row::new(id, "brains", "server");
         row.saved = Some("account");
         match facts.keys.iter().find(|key| key.provider == provider) {
             Some(key) if key.active => {
+                // Catalog aliases where the router has them (OpenRouter and the
+                // other hosts); otherwise the vendor's own list as
+                // `<provider>/<model>`, which routes on this key.
                 row.models = aliases_for(provider);
+                if row.models.is_empty() {
+                    row.models = key.models.iter().map(|model| format!("{provider}/{model}")).collect();
+                }
                 row.on(format!("Key works · {}", key.masked))
             }
             Some(_) => row.needs("key_rejected"),
@@ -332,10 +352,11 @@ pub fn build_rows(facts: &Facts, aliases_for: &dyn Fn(&str) -> Vec<String>) -> V
         many => control.on(format!("{} phones", many.len())),
     });
 
-    // Coding tools: live state comes from the runtime.
-    for id in TOOL_ROWS {
-        let row = Row::new(id, "tools", "computer");
-        rows.push(if online { row } else { row.unavailable(RUNS_ON_COMPUTER, "no_computer", &["this-mac"]) });
+    // Coding tools: live state comes from the runtime (left out when online).
+    if !online {
+        for id in TOOL_ROWS {
+            rows.push(Row::new(id, "tools", "computer").unavailable(RUNS_ON_COMPUTER, "no_computer", &["this-mac"]));
+        }
     }
 
     // Voice keys saved to the account.
@@ -544,7 +565,12 @@ pub async fn load_facts(
 /// Masked saved keys from the key service's list (never the plaintext).
 pub fn saved_keys(list: Vec<crate::services::InferenceKeyInfo>) -> Vec<SavedKey> {
     list.into_iter()
-        .map(|key| SavedKey { active: key.status == "active", provider: key.provider_id, masked: key.masked })
+        .map(|key| SavedKey {
+            active: key.status == "active",
+            provider: key.provider_id,
+            masked: key.masked,
+            models: key.models,
+        })
         .collect()
 }
 
@@ -600,12 +626,18 @@ mod tests {
     }
 
     #[test]
-    fn an_online_computer_makes_computer_rows_available() {
+    fn an_online_computer_leaves_computer_rows_to_the_runtime() {
         let mut facts = facts();
         facts.desktops = vec![("Joe's Mac".to_string(), true)];
         let rows = build_rows(&facts, &no_models);
-        assert!(row(&rows, "chatgpt").available);
-        assert!(row(&rows, "codex").available);
+        for id in TOOL_ROWS.iter().chain(["chatgpt", "local"].iter()) {
+            assert!(rows.iter().all(|row| row.id != *id), "{id} is the runtime's row while a computer is online");
+        }
+        // A running cloud computer counts the same.
+        let mut cloud = super::tests::facts();
+        cloud.cloud_computer = CloudComputer::Live("Running");
+        cloud.cloud_computer_online = true;
+        assert!(build_rows(&cloud, &no_models).iter().all(|row| row.id != "codex"));
         assert_eq!(row(&rows, "this-mac").state, State::On);
         assert_eq!(row(&rows, "this-mac").found.as_deref(), Some("Joe's Mac"));
         // The brain runner rows stay unavailable whatever computer is online.
@@ -615,23 +647,28 @@ mod tests {
         let rows = build_rows(&facts, &no_models);
         assert_eq!(row(&rows, "this-mac").reason_code, Some("computer_offline"));
         assert!(!row(&rows, "codex").available, "an offline computer does not count");
+        assert!(!row(&rows, "chatgpt").available);
     }
 
     #[test]
     fn keys_show_masked_and_gemini_follows_the_google_key() {
         let mut facts = facts();
         facts.keys = vec![
-            SavedKey { provider: "google".into(), masked: "AIz…9xQ1".into(), active: true },
-            SavedKey { provider: "groq".into(), masked: "gsk…0000".into(), active: false },
+            SavedKey { provider: "google".into(), masked: "AIz…9xQ1".into(), active: true, models: vec!["gemini-2.5-pro".into()] },
+            SavedKey { provider: "groq".into(), masked: "gsk…0000".into(), active: false, models: Vec::new() },
+            SavedKey { provider: "openrouter".into(), masked: "sk-…beef".into(), active: true, models: Vec::new() },
         ];
-        let rows = build_rows(&facts, &|provider| vec![format!("{provider}-model")]);
+        let rows = build_rows(&facts, &|provider| {
+            if provider == "openrouter" { vec!["claude-sonnet-5.5".to_string()] } else { Vec::new() }
+        });
         let google = row(&rows, "google-key");
         assert_eq!(google.found.as_deref(), Some("Key works · AIz…9xQ1"));
-        assert_eq!(google.models, vec!["google-model"]);
+        assert_eq!(google.models, vec!["google/gemini-2.5-pro"], "vendor models, as routable ids");
+        assert_eq!(row(&rows, "openrouter-key").models, vec!["claude-sonnet-5.5"], "catalog aliases win");
         assert_eq!(row(&rows, "gemini").state, State::On);
         let groq = row(&rows, "groq-key");
         assert_eq!((groq.state, groq.reason_code), (State::Needs, Some("key_rejected")));
         assert_eq!(groq.reason.as_deref(), Some("The key was rejected"));
-        assert_eq!(row(&rows, "api-key").found.as_deref(), Some("1 key works"));
+        assert_eq!(row(&rows, "api-key").found.as_deref(), Some("2 keys work"));
     }
 }

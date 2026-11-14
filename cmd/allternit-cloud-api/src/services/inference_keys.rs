@@ -26,11 +26,12 @@ use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 
 use crate::error::ApiError;
 
-/// BYOK providers that route chat: OpenAI-compatible chat/completions hosts,
-/// as (provider_id, base URL). Google is reached through Gemini's own
-/// OpenAI-compatible endpoint (`/v1beta/openai`, streaming supported).
-/// OpenRouter keys route the catalog's OpenRouter-served aliases through the
-/// person's own OpenRouter account.
+/// BYOK providers that route chat, as (provider_id, base URL). All but
+/// Anthropic are OpenAI-compatible chat/completions hosts; Google is reached
+/// through Gemini's own OpenAI-compatible endpoint (`/v1beta/openai`,
+/// streaming supported). Anthropic goes through the native Messages API
+/// (`model_router::anthropic`). OpenRouter keys route the catalog's
+/// OpenRouter-served aliases through the person's own OpenRouter account.
 pub const BYOK_PROVIDERS: &[(&str, &str)] = &[
     ("together", "https://api.together.xyz/v1"),
     ("fireworks", "https://api.fireworks.ai/inference/v1"),
@@ -42,14 +43,18 @@ pub const BYOK_PROVIDERS: &[(&str, &str)] = &[
     ("xai", "https://api.x.ai/v1"),
     ("openrouter", "https://openrouter.ai/api/v1"),
     ("google", "https://generativelanguage.googleapis.com/v1beta/openai"),
+    ("anthropic", "https://api.anthropic.com"),
 ];
 
-/// Providers whose keys can be saved and checked but do not route chat yet.
-/// Anthropic needs the native Messages API (request and stream translation),
-/// which the router does not have; see `routes::model_router`.
-pub const KEY_ONLY_PROVIDERS: &[&str] = &["anthropic"];
+/// Providers whose own model list is saved with the key, so a person can pick
+/// `<provider>/<model>` from it (they have no catalog aliases).
+pub const LISTS_VENDOR_MODELS: &[&str] = &["anthropic", "google", "xai"];
 
-/// Base URL for a BYOK provider that routes chat, if any.
+/// At most this many vendor models are saved per key.
+pub const MAX_SAVED_MODELS: usize = 50;
+
+/// Base URL for a BYOK provider that routes chat, if any. Every key provider
+/// routes chat.
 pub fn byok_base_url(provider_id: &str) -> Option<&'static str> {
     BYOK_PROVIDERS
         .iter()
@@ -59,16 +64,12 @@ pub fn byok_base_url(provider_id: &str) -> Option<&'static str> {
 
 /// Whether a key for this provider can be saved (routes chat or key-only).
 pub fn is_key_provider(provider_id: &str) -> bool {
-    byok_base_url(provider_id).is_some() || KEY_ONLY_PROVIDERS.contains(&provider_id)
+    byok_base_url(provider_id).is_some()
 }
 
 /// Every provider a key can be saved for, in a stable order.
 pub fn key_provider_ids() -> Vec<&'static str> {
-    BYOK_PROVIDERS
-        .iter()
-        .map(|(id, _)| *id)
-        .chain(KEY_ONLY_PROVIDERS.iter().copied())
-        .collect()
+    BYOK_PROVIDERS.iter().map(|(id, _)| *id).collect()
 }
 
 /// A person's own model on their own key: `<provider>/<vendor model id>`
@@ -102,17 +103,22 @@ pub enum KeyAuth {
     Anthropic,
     /// `?key=<key>` on the URL.
     QueryKey,
+    /// `xi-api-key: <key>` (ElevenLabs).
+    ElevenLabs,
 }
 
 /// The vendor check for a key provider (contract section 4): OpenAI-compatible
 /// hosts `GET {base}/models`, Anthropic `GET /v1/models`, Google
-/// `GET /v1beta/models?key=`, OpenRouter `GET /api/v1/key`.
+/// `GET /v1beta/models?key=`, OpenRouter `GET /api/v1/key`. Also the
+/// ElevenLabs voice key: `GET /v1/user` (`xi-api-key`), the same check the
+/// voice key screens use.
 pub fn key_check(provider_id: &str) -> Option<KeyCheck> {
     let check = |url: String, auth, rejects_with_400| KeyCheck { url, auth, rejects_with_400 };
     match provider_id {
-        "anthropic" => Some(check("https://api.anthropic.com/v1/models".into(), KeyAuth::Anthropic, false)),
+        "anthropic" => Some(check("https://api.anthropic.com/v1/models?limit=100".into(), KeyAuth::Anthropic, false)),
+        "elevenlabs" => Some(check("https://api.elevenlabs.io/v1/user".into(), KeyAuth::ElevenLabs, false)),
         "google" => Some(check(
-            "https://generativelanguage.googleapis.com/v1beta/models".into(),
+            "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000".into(),
             KeyAuth::QueryKey,
             true,
         )),
@@ -189,9 +195,42 @@ pub(crate) fn decrypt_parts(
 /// trait).
 #[async_trait::async_trait]
 pub trait KeyValidator: Send + Sync {
-    /// The provider's [`key_check`]. Ok = key accepted; `BadRequest` = the
-    /// vendor rejected the key; `ServiceUnavailable` = it could not tell.
-    async fn validate(&self, provider_id: &str, api_key: &str) -> Result<(), ApiError>;
+    /// The provider's [`key_check`]. Ok = key accepted, with the chat model
+    /// ids the vendor listed (empty when the check lists none); `BadRequest` =
+    /// the vendor rejected the key; `ServiceUnavailable` = it could not tell.
+    async fn validate(&self, provider_id: &str, api_key: &str) -> Result<Vec<String>, ApiError>;
+}
+
+/// Chat model ids from a key check's body, capped at [`MAX_SAVED_MODELS`].
+/// OpenAI-style and Anthropic lists carry `data[].id`; Google carries
+/// `models[].name` (`models/gemini-…`) with the methods each supports.
+pub fn models_from_check(provider_id: &str, body: &serde_json::Value) -> Vec<String> {
+    let mut models: Vec<String> = if provider_id == "google" {
+        body["models"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|model| {
+                model["supportedGenerationMethods"]
+                    .as_array()
+                    .is_some_and(|methods| methods.iter().any(|m| m == "generateContent"))
+            })
+            .filter_map(|model| model["name"].as_str())
+            .map(|name| name.strip_prefix("models/").unwrap_or(name).to_string())
+            .collect()
+    } else {
+        body["data"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|model| model["id"].as_str())
+            .map(str::to_string)
+            .collect()
+    };
+    let mut seen = std::collections::HashSet::new();
+    models.retain(|id| !id.trim().is_empty() && seen.insert(id.clone()));
+    models.truncate(MAX_SAVED_MODELS);
+    models
 }
 
 /// The message for a rejected key. Callers match on `BadRequest`.
@@ -235,7 +274,7 @@ impl Default for ReqwestKeyValidator {
 
 #[async_trait::async_trait]
 impl KeyValidator for ReqwestKeyValidator {
-    async fn validate(&self, provider_id: &str, api_key: &str) -> Result<(), ApiError> {
+    async fn validate(&self, provider_id: &str, api_key: &str) -> Result<Vec<String>, ApiError> {
         let check = key_check(provider_id)
             .ok_or_else(|| ApiError::BadRequest(format!("Unknown BYOK provider: {provider_id:?}.")))?;
         let client = crate::net_client::client();
@@ -247,6 +286,7 @@ impl KeyValidator for ReqwestKeyValidator {
                 .header("x-api-key", api_key)
                 .header("anthropic-version", "2023-06-01"),
             KeyAuth::QueryKey => client.get(url).query(&[("key", api_key)]),
+            KeyAuth::ElevenLabs => client.get(url).header("xi-api-key", api_key),
         };
         let response = request.timeout(Duration::from_secs(5)).send().await.map_err(|_| {
             ApiError::ServiceUnavailable(
@@ -255,7 +295,9 @@ impl KeyValidator for ReqwestKeyValidator {
         })?;
         let status = response.status();
         if status.is_success() {
-            return Ok(());
+            // A body we cannot read still means the key works; only the list is lost.
+            let body: serde_json::Value = response.json().await.unwrap_or(serde_json::Value::Null);
+            return Ok(models_from_check(provider_id, &body));
         }
         let rejected = status == reqwest::StatusCode::UNAUTHORIZED
             || status == reqwest::StatusCode::FORBIDDEN
@@ -277,6 +319,9 @@ pub struct InferenceKeyInfo {
     pub masked: String,
     pub status: String,
     pub last_validated_at: Option<DateTime<Utc>>,
+    /// The vendor's chat models seen at the last check (providers in
+    /// [`LISTS_VENDOR_MODELS`]; empty otherwise), ids without a prefix.
+    pub models: Vec<String>,
 }
 
 #[derive(Debug, FromRow)]
@@ -286,6 +331,7 @@ struct KeyRow {
     key_nonce: Vec<u8>,
     status: String,
     last_validated_at: Option<DateTime<Utc>>,
+    models: sqlx::types::Json<Vec<String>>,
 }
 
 pub struct InferenceKeyService {
@@ -328,26 +374,29 @@ impl InferenceKeyService {
             return Err(ApiError::BadRequest("The API key must not be empty.".to_string()));
         }
 
-        self.validator.validate(provider_id, plaintext_key).await?;
+        let listed = self.validator.validate(provider_id, plaintext_key).await?;
+        let models = if LISTS_VENDOR_MODELS.contains(&provider_id) { listed } else { Vec::new() };
 
         let (ciphertext, nonce) = encrypt_parts(&self.cipher, plaintext_key)?;
         sqlx::query(
             r#"
             INSERT INTO user_inference_keys (
-                user_id, provider_id, key_ciphertext, key_nonce, status, last_validated_at, updated_at
-            ) VALUES ($1, $2, $3, $4, 'active', NOW(), NOW())
+                user_id, provider_id, key_ciphertext, key_nonce, status, last_validated_at, updated_at, models
+            ) VALUES ($1, $2, $3, $4, 'active', NOW(), NOW(), $5)
             ON CONFLICT (user_id, provider_id) DO UPDATE SET
                 key_ciphertext = excluded.key_ciphertext,
                 key_nonce = excluded.key_nonce,
                 status = 'active',
                 last_validated_at = NOW(),
-                updated_at = NOW()
+                updated_at = NOW(),
+                models = excluded.models
             "#,
         )
         .bind(user_id)
         .bind(provider_id)
         .bind(ciphertext)
         .bind(nonce)
+        .bind(sqlx::types::Json(&models))
         .execute(&self.db)
         .await
         .map_err(ApiError::DatabaseError)?;
@@ -357,6 +406,7 @@ impl InferenceKeyService {
             masked: mask_key(plaintext_key),
             status: "active".to_string(),
             last_validated_at: Some(Utc::now()),
+            models,
         })
     }
 
@@ -400,7 +450,7 @@ impl InferenceKeyService {
                 self.get_decrypted(user_id, &provider_id).await,
             ) {
                 (true, Ok(Some(key))) => match self.validator.validate(&provider_id, &key).await {
-                    Ok(()) => Ok(true),
+                    Ok(_) => Ok(true),
                     Err(ApiError::BadRequest(_)) => Ok(false),
                     Err(_) => Err(()),
                 },
@@ -433,7 +483,7 @@ impl InferenceKeyService {
     pub async fn list_for_user(&self, user_id: &str) -> Result<Vec<InferenceKeyInfo>, ApiError> {
         let rows = sqlx::query_as::<_, KeyRow>(
             r#"
-            SELECT provider_id, key_ciphertext, key_nonce, status, last_validated_at
+            SELECT provider_id, key_ciphertext, key_nonce, status, last_validated_at, models
             FROM user_inference_keys
             WHERE user_id = $1
             ORDER BY provider_id
@@ -453,6 +503,7 @@ impl InferenceKeyService {
                     masked,
                     status: row.status,
                     last_validated_at: row.last_validated_at,
+                    models: row.models.0,
                 })
             })
             .collect()
@@ -461,7 +512,7 @@ impl InferenceKeyService {
     /// Check a key with the vendor without storing it (the voice OpenAI key
     /// reuses the OpenAI check).
     pub async fn check_only(&self, provider_id: &str, plaintext_key: &str) -> Result<(), ApiError> {
-        self.validator.validate(provider_id, plaintext_key.trim()).await
+        self.validator.validate(provider_id, plaintext_key.trim()).await.map(|_| ())
     }
 
     /// Delete a key. Returns false when nothing existed.
@@ -516,6 +567,7 @@ mod tests {
                 key_nonce BYTEA NOT NULL,
                 status TEXT NOT NULL DEFAULT 'active',
                 last_validated_at TIMESTAMPTZ,
+                models JSONB NOT NULL DEFAULT '[]'::jsonb,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                 PRIMARY KEY (user_id, provider_id)
@@ -532,9 +584,9 @@ mod tests {
 
     #[async_trait::async_trait]
     impl KeyValidator for StubValidator {
-        async fn validate(&self, _provider_id: &str, _api_key: &str) -> Result<(), ApiError> {
+        async fn validate(&self, provider_id: &str, _api_key: &str) -> Result<Vec<String>, ApiError> {
             match &self.0 {
-                Ok(()) => Ok(()),
+                Ok(()) => Ok(vec![format!("{provider_id}-model-1")]),
                 Err("reject") => Err(ApiError::BadRequest(
                     "Key rejected by provider — check the key and try again.".to_string(),
                 )),
@@ -677,9 +729,14 @@ mod tests {
             .await
             .unwrap_err();
         assert!(error.to_string().contains("Unknown BYOK provider"), "{error}");
-        // Anthropic keys are saved (checked, key-only) though they do not route chat yet.
-        service.upsert_and_validate("user_1", "anthropic", "sk-ant-xxxxxxxxxx").await.unwrap();
-        assert!(service.has_key("user_1", "anthropic").await.unwrap());
+        // A vendor's model list is saved for the providers that have no
+        // catalog aliases, and replaced on the next check.
+        let info = service.upsert_and_validate("user_1", "anthropic", "sk-ant-xxxxxxxxxx").await.unwrap();
+        assert_eq!(info.models, vec!["anthropic-model-1"]);
+        let listed = service.list_for_user("user_1").await.unwrap();
+        assert_eq!(listed[0].models, vec!["anthropic-model-1"]);
+        let groq = service.upsert_and_validate("user_1", "groq", "gsk_xxxxxxxxxxxxxx").await.unwrap();
+        assert!(groq.models.is_empty(), "OpenAI-compatible hosts keep catalog aliases instead");
     }
 
     #[test]
@@ -699,9 +756,9 @@ mod tests {
     }
 
     #[test]
-    fn anthropic_is_key_only_and_direct_models_need_a_known_prefix() {
-        assert!(byok_base_url("anthropic").is_none(), "no OpenAI-compatible route for Claude keys");
+    fn direct_models_need_a_known_prefix() {
         assert!(is_key_provider("anthropic"));
+        assert!(!is_key_provider("elevenlabs"), "the voice key is not an inference key");
         assert_eq!(direct_model("xai/grok-4"), Some(("xai", "grok-4")));
         assert_eq!(
             direct_model("openrouter/anthropic/claude-sonnet-5.5"),
@@ -713,10 +770,11 @@ mod tests {
     }
 
     /// The real validator against a local fake vendor: each provider's path,
-    /// auth placement and rejection status (contract section 4).
+    /// auth placement, rejection status and model list (contract section 4).
     #[tokio::test]
     async fn validator_sends_each_vendor_its_own_check() {
-        use axum::{extract::Query, http::HeaderMap, routing::get, Router};
+        use axum::{extract::Query, http::HeaderMap, http::StatusCode, routing::get, Json, Router};
+        use serde_json::json;
         use std::collections::HashMap;
         const GOOD: &str = "good-key-123456";
         fn bearer_ok(headers: &HeaderMap) -> bool {
@@ -726,16 +784,18 @@ mod tests {
             .route(
                 "/v1/models",
                 get(|headers: HeaderMap| async move {
-                    // Anthropic (x-api-key + version) and xAI/OpenAI (Bearer) share this path.
+                    // Anthropic (x-api-key + version) and xAI (Bearer) share this path.
                     let anthropic = headers.get("x-api-key").and_then(|v| v.to_str().ok()) == Some(GOOD)
                         && headers.get("anthropic-version").is_some();
-                    if anthropic || bearer_ok(&headers) {
-                        axum::http::StatusCode::OK
+                    if anthropic {
+                        (StatusCode::OK, Json(json!({ "data": [{ "id": "claude-opus-5-5" }, { "id": "claude-sonnet-5-5" }] })))
+                    } else if bearer_ok(&headers) {
+                        (StatusCode::OK, Json(json!({ "data": [{ "id": "grok-4" }, { "id": "grok-4" }] })))
                     } else if headers.get("x-api-key").is_some() {
-                        axum::http::StatusCode::UNAUTHORIZED
+                        (StatusCode::UNAUTHORIZED, Json(json!({})))
                     } else {
                         // xAI answers a bad key with 400.
-                        axum::http::StatusCode::BAD_REQUEST
+                        (StatusCode::BAD_REQUEST, Json(json!({})))
                     }
                 }),
             )
@@ -743,9 +803,12 @@ mod tests {
                 "/v1beta/models",
                 get(|Query(query): Query<HashMap<String, String>>| async move {
                     if query.get("key").map(String::as_str) == Some(GOOD) {
-                        axum::http::StatusCode::OK
+                        (StatusCode::OK, Json(json!({ "models": [
+                            { "name": "models/gemini-2.5-pro", "supportedGenerationMethods": ["generateContent", "countTokens"] },
+                            { "name": "models/text-embedding-004", "supportedGenerationMethods": ["embedContent"] },
+                        ]})))
                     } else {
-                        axum::http::StatusCode::BAD_REQUEST
+                        (StatusCode::BAD_REQUEST, Json(json!({})))
                     }
                 }),
             )
@@ -753,20 +816,38 @@ mod tests {
                 "/api/v1/key",
                 get(|headers: HeaderMap| async move {
                     if bearer_ok(&headers) {
-                        axum::http::StatusCode::OK
+                        (StatusCode::OK, Json(json!({ "data": { "label": "sk-or-…" } })))
                     } else {
-                        axum::http::StatusCode::UNAUTHORIZED
+                        (StatusCode::UNAUTHORIZED, Json(json!({})))
                     }
                 }),
             )
-            .route("/inference/v1/models", get(|| async { axum::http::StatusCode::INTERNAL_SERVER_ERROR }));
+            .route(
+                "/v1/user",
+                get(|headers: HeaderMap| async move {
+                    if headers.get("xi-api-key").and_then(|v| v.to_str().ok()) == Some(GOOD) {
+                        StatusCode::OK
+                    } else {
+                        StatusCode::UNAUTHORIZED
+                    }
+                }),
+            )
+            .route("/inference/v1/models", get(|| async { StatusCode::INTERNAL_SERVER_ERROR }));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let origin = format!("http://{}", listener.local_addr().unwrap());
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         let validator = ReqwestKeyValidator::with_origin(origin);
 
-        for provider in ["anthropic", "google", "xai", "openrouter"] {
-            validator.validate(provider, GOOD).await.unwrap_or_else(|e| panic!("{provider}: {e}"));
+        let expected: [(&str, &[&str]); 5] = [
+            ("anthropic", &["claude-opus-5-5", "claude-sonnet-5-5"]),
+            ("google", &["gemini-2.5-pro"]),
+            ("xai", &["grok-4"]),
+            ("openrouter", &[]),
+            ("elevenlabs", &[]),
+        ];
+        for (provider, models) in expected {
+            let listed = validator.validate(provider, GOOD).await.unwrap_or_else(|e| panic!("{provider}: {e}"));
+            assert_eq!(listed, models, "{provider} model list");
             let error = validator.validate(provider, "bad-key-000000").await.unwrap_err();
             assert!(matches!(error, ApiError::BadRequest(_)), "{provider} rejects a bad key: {error}");
         }

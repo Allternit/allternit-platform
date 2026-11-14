@@ -49,9 +49,9 @@ struct PrefixValidator;
 
 #[async_trait::async_trait]
 impl KeyValidator for PrefixValidator {
-    async fn validate(&self, _provider_id: &str, api_key: &str) -> Result<(), ApiError> {
+    async fn validate(&self, provider_id: &str, api_key: &str) -> Result<Vec<String>, ApiError> {
         if api_key.starts_with("good") {
-            Ok(())
+            Ok(if provider_id == "xai" { vec!["grok-4".to_string()] } else { Vec::new() })
         } else {
             Err(ApiError::BadRequest(KEY_REJECTED_MESSAGE.to_string()))
         }
@@ -118,11 +118,15 @@ async fn rows_keys_and_logins_on_the_real_schema() {
     assert_eq!(status, StatusCode::OK, "{row}");
     assert_eq!(row["state"], "on");
     assert_eq!(row["found"], "Key works · goo…1234");
+    assert_eq!(row["models"], serde_json::json!(["xai/grok-4"]), "the vendor's models, as routable ids");
     assert!(!row.to_string().contains("good-xai-key-1234"), "the key never comes back");
 
-    // The voice ElevenLabs key goes to the voice store.
+    // The voice ElevenLabs key is checked, then goes to the voice store.
     let (status, row) =
-        send(&router, "POST", "/api/v1/connections/elevenlabs/submit", session, Some(r#"{"value":"sk_eleven_123456"}"#)).await;
+        send(&router, "POST", "/api/v1/connections/elevenlabs/submit", session, Some(r#"{"value":"bad_eleven_1234"}"#)).await;
+    assert_eq!((status, row["reason_code"].as_str()), (StatusCode::UNPROCESSABLE_ENTITY, Some("key_rejected")), "{row}");
+    let (status, row) =
+        send(&router, "POST", "/api/v1/connections/elevenlabs/submit", session, Some(r#"{"value":"good_eleven_1234"}"#)).await;
     assert_eq!((status, row["state"].as_str()), (StatusCode::OK, Some("on")), "{row}");
 
     let (status, body) = send(&router, "GET", "/api/v1/connections", session, None).await;
@@ -134,7 +138,9 @@ async fn rows_keys_and_logins_on_the_real_schema() {
     assert_eq!(find("allternit")["found"], "Free · $2 a month free");
     assert_eq!(find("this-mac")["found"], "Studio Mac");
     assert_eq!(find("slack")["found"], "Acme");
-    assert_eq!(find("chatgpt")["available"], true, "an online Mac makes ChatGPT available");
+    for id in ["chatgpt", "local", "codex", "claude-code"] {
+        assert!(rows.iter().all(|row| row["id"] != id), "{id}: the online Mac's runtime row answers");
+    }
     assert_eq!(find("claude")["available"], false);
 
     // Connect: a key row hands back the key page; an unavailable row is a 409.

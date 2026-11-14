@@ -174,7 +174,21 @@ async fn connect(
         } else {
             serde_json::from_slice(&body).map_err(|_| ApiError::BadRequest("Expected a JSON body {way?}.".to_string()))?
         };
-        let row = row_for(&state, &user, &id).await?;
+        let row = match row_for(&state, &user, &id).await {
+            Ok(row) => row,
+            // With a computer online the computer's rows are not listed here.
+            Err(ApiError::NotFound(_)) if conn::runtime_owned(&id) => {
+                return Ok((
+                    StatusCode::CONFLICT,
+                    Json(json!({
+                        "error": { "code": "runtime_row", "message": "Connect this on your computer." },
+                        "reason_code": Value::Null,
+                    })),
+                )
+                    .into_response());
+            }
+            Err(error) => return Err(error),
+        };
         if !row.available {
             return Ok(cannot_start(
                 "not_available",
@@ -281,9 +295,9 @@ async fn submit(
         let checked = if let Some(provider) = conn::key_provider_for(&id) {
             keys?.upsert_and_validate(&user, provider, value).await.map(|_| ())
         } else if let Some(provider) = conn::voice_provider_for(&id) {
-            // The OpenAI voice key is an OpenAI key: same vendor check. ElevenLabs
-            // has no check in the contract; the voice store takes it as given.
-            let check = if provider == "openai" { keys?.check_only("openai", value).await } else { Ok(()) };
+            // The OpenAI voice key is an OpenAI key (same vendor check); the
+            // ElevenLabs key is checked with `GET /v1/user`.
+            let check = keys?.check_only(provider, value).await;
             match check {
                 Ok(()) => VoiceKeyService::new(state.db.clone(), state.credential_cipher.clone())
                     .upsert(&user, provider, value, None, None)

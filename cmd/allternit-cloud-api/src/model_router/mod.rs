@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 
+pub mod anthropic;
 pub mod catalog;
 pub mod items_bridge;
 pub mod generic_openai;
