@@ -1,9 +1,10 @@
 //! Model download and cache routes.
 
-use crate::cache::model::{CachedModel, ModelSource};
+use crate::cache::model::{CachedModel, FileVerification, ModelSource};
 use crate::cache::store::ModelStore;
 use crate::download::huggingface::validate_repo_id;
-use crate::download::task::{build_cached_model, spawn_download_task};
+use crate::download::task::{build_cached_model, spawn_download_task, verify_local, VerifyReport};
+use allternit_model_source::{SourceKind, Verification};
 use crate::AppState;
 use axum::{
     extract::State,
@@ -56,7 +57,16 @@ impl From<ImportSource> for ModelSource {
     }
 }
 
-/// Response returned after queueing a download.
+/// Request body for `POST /models/verify`.
+#[derive(Debug, Deserialize)]
+pub struct VerifyRequest {
+    pub repo: String,
+    /// Defaults to the tracked download's revision, else the catalog's pin / `main`.
+    pub revision: Option<String>,
+}
+
+/// Response returned after queueing a download (and for an already-tracked
+/// one, which then carries its progress and verification).
 #[derive(Debug, Serialize)]
 pub struct DownloadResponse {
     pub id: String,
@@ -64,6 +74,29 @@ pub struct DownloadResponse {
     pub revision: String,
     pub status: String,
     pub message: String,
+    pub downloaded_bytes: u64,
+    pub total_bytes: u64,
+    /// Contract `verification`; `null` until the download finishes.
+    pub verification: Option<Verification>,
+    pub source_used: Option<SourceKind>,
+    pub error: Option<String>,
+}
+
+impl DownloadResponse {
+    fn from_model(model: &CachedModel, message: &str) -> Self {
+        Self {
+            id: model.id.clone(),
+            repo_id: model.repo_id.clone(),
+            revision: model.revision.clone(),
+            status: model.status.to_string(),
+            message: message.into(),
+            downloaded_bytes: model.downloaded_bytes,
+            total_bytes: model.total_bytes,
+            verification: model.verification.clone(),
+            source_used: model.verification.as_ref().map(|v| v.source_used),
+            error: model.error_message.clone(),
+        }
+    }
 }
 
 /// API representation of a cached model (matches the frontend contract).
@@ -77,6 +110,12 @@ pub struct CachedModelResponse {
     pub downloaded_bytes: u64,
     pub total_bytes: u64,
     pub created_at: String,
+    /// Contract `verification`; `null` until a download or verify finishes.
+    pub verification: Option<Verification>,
+    pub source_used: Option<SourceKind>,
+    /// Per-file hashes and how each was checked.
+    pub files: Vec<FileVerification>,
+    pub error: Option<String>,
 }
 
 impl From<&CachedModel> for CachedModelResponse {
@@ -90,6 +129,10 @@ impl From<&CachedModel> for CachedModelResponse {
             downloaded_bytes: model.downloaded_bytes,
             total_bytes: model.total_bytes,
             created_at: model.created_at.to_rfc3339(),
+            verification: model.verification.clone(),
+            source_used: model.verification.as_ref().map(|v| v.source_used),
+            files: model.files.clone(),
+            error: model.error_message.clone(),
         }
     }
 }
@@ -112,7 +155,27 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/models", get(list_models))
         .route("/models/download", post(download_model))
         .route("/models/import", post(import_model))
+        .route("/models/verify", post(verify_model))
         .with_state(state)
+}
+
+/// Re-hash a downloaded repo's local files against the signed manifest (or
+/// the publisher's hashes) and return the contract `verification`.
+async fn verify_model(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<VerifyRequest>,
+) -> Result<Json<VerifyReport>, (StatusCode, Json<ErrorResponse>)> {
+    let repo = payload.repo.trim().to_string();
+    if let Err(err) = validate_repo_id(&repo) {
+        return Err((StatusCode::BAD_REQUEST, Json(ErrorResponse { error: err.to_string() })));
+    }
+    match verify_local(&state.store, &state.models_dir, &repo, payload.revision.as_deref()).await {
+        Ok(report) => Ok(Json(report)),
+        Err(error) if error.ends_with("is not downloaded") => {
+            Err((StatusCode::NOT_FOUND, Json(ErrorResponse { error })))
+        }
+        Err(error) => Err((StatusCode::BAD_GATEWAY, Json(ErrorResponse { error }))),
+    }
 }
 
 async fn list_models(State(state): State<Arc<AppState>>) -> Json<ListModelsResponse> {
@@ -209,14 +272,14 @@ async fn download_model(
 
     // If the model is already known, return its current state without re-spawning.
     if let Some(existing) = state.store.get(&model_id).await {
-        info!(%model_id, "download already exists");
-        return Ok(Json(DownloadResponse {
-            id: existing.id,
-            repo_id: existing.repo_id,
-            revision: existing.revision,
-            status: existing.status.to_string(),
-            message: "model download already tracked".into(),
-        }));
+        // A failed download is retried; anything else reports its state.
+        if existing.status != crate::cache::model::ModelStatus::Failed {
+            info!(%model_id, "download already exists");
+            return Ok(Json(DownloadResponse::from_model(
+                &existing,
+                "model download already tracked",
+            )));
+        }
     }
 
     let model = build_cached_model(
@@ -225,13 +288,8 @@ async fn download_model(
         payload.quantization,
         &state.models_dir,
     );
-    let response = DownloadResponse {
-        id: model.id.clone(),
-        repo_id: model.repo_id.clone(),
-        revision: model.revision.clone(),
-        status: model.status.to_string(),
-        message: "download queued".into(),
-    };
+    let quantization = model.quantization.clone();
+    let response = DownloadResponse::from_model(&model, "download queued");
 
     state.store.insert(model).await;
 
@@ -240,6 +298,7 @@ async fn download_model(
         model_id.clone(),
         repo_id,
         payload.revision,
+        quantization,
         state.models_dir.clone(),
     );
 

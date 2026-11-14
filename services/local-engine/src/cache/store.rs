@@ -1,6 +1,7 @@
 //! In-memory model cache store with persistence helpers.
 
-use crate::cache::model::{CachedModel, ModelStatus};
+use crate::cache::model::{CachedModel, FileVerification, ModelStatus};
+use allternit_model_source::Verification;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -88,6 +89,29 @@ impl ModelStore {
         if let Some(model) = models.get_mut(id) {
             model.set_ready();
         }
+    }
+
+    /// Record how a model's files were checked.
+    pub async fn set_verification(
+        &self,
+        id: &str,
+        verification: Verification,
+        files: Vec<FileVerification>,
+    ) {
+        let mut models = self.models.write().await;
+        if let Some(model) = models.get_mut(id) {
+            model.set_verification(verification, files);
+        }
+    }
+
+    /// Ids of records for `repo_id` (any revision / quantization).
+    pub async fn ids_for_repo(&self, repo_id: &str) -> Vec<String> {
+        let models = self.models.read().await;
+        models
+            .values()
+            .filter(|m| m.repo_id == repo_id)
+            .map(|m| m.id.clone())
+            .collect()
     }
 
     /// Mark a model as failed.

@@ -369,11 +369,8 @@ impl ProcessManager {
                 let mut runtimes = self.runtimes.write().await;
                 if let Some(handle) = runtimes.get_mut(id) {
                     if let Some(ref mut child) = handle.child {
-                        match child.try_wait()? {
-                            Some(status) => {
-                                return Err(RuntimeManagerError::EarlyExit(status.code()));
-                            }
-                            None => {}
+                        if let Some(status) = child.try_wait()? {
+                            return Err(RuntimeManagerError::EarlyExit(status.code()));
                         }
                     }
                 }

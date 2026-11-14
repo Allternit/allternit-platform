@@ -1,42 +1,20 @@
-//! Hugging Face Hub download utilities.
+//! Repo ids, on-disk layout and file selection for model downloads.
+//!
+//! Bytes never come from here: every download goes through
+//! `allternit-model-source` (`resolve` + `fetch_verified`), see `task.rs`.
 
-use reqwest;
-use serde::Deserialize;
+use allternit_model_source::ExpectedFile;
+use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
 use thiserror::Error;
-use tracing::{debug, error};
 
-const HUGGINGFACE_API: &str = "https://huggingface.co/api/models";
-
-/// Errors that can occur when interacting with Hugging Face.
+/// Errors from repo-id validation and file selection.
 #[derive(Debug, Error)]
 pub enum HuggingFaceError {
     #[error("invalid repo id: {0}")]
     InvalidRepoId(String),
-    #[error("repo not found: {0}")]
-    NotFound(String),
-    #[error("network error: {0}")]
-    Network(#[from] reqwest::Error),
-    #[error("api error: {0}")]
-    Api(String),
-}
-
-/// A file entry returned by the Hugging Face tree API.
-#[derive(Debug, Clone, Deserialize)]
-pub struct TreeEntry {
-    pub path: String,
-    #[serde(rename = "type")]
-    pub entry_type: String,
-    pub size: Option<u64>,
-    pub oid: Option<String>,
-    #[serde(default)]
-    pub lfs: Option<HfLfsInfo>,
-}
-
-/// LFS metadata for a file.
-#[derive(Debug, Clone, Deserialize)]
-pub struct HfLfsInfo {
-    pub size: Option<u64>,
+    #[error("{0}")]
+    NoMatchingFiles(String),
 }
 
 /// Validate that a repo id is safe to use.
@@ -164,76 +142,78 @@ pub fn should_download(path: &str) -> bool {
     true
 }
 
-/// Size to use for a tree entry.
-pub fn entry_size(entry: &TreeEntry) -> u64 {
-    entry
-        .lfs
-        .as_ref()
-        .and_then(|l| l.size)
-        .or(entry.size)
-        .unwrap_or(0)
+/// `true` for weight files (the files the quantization filter applies to).
+pub fn is_weight_file(path: &str) -> bool {
+    let lower = path.to_lowercase();
+    [".safetensors", ".bin", ".gguf", ".mlx", ".pt", ".pth"]
+        .iter()
+        .any(|ext| lower.ends_with(ext))
 }
 
-/// Verify that a repo exists on Hugging Face.
-pub async fn verify_repo(repo_id: &str) -> Result<(), HuggingFaceError> {
-    validate_repo_id(repo_id)?;
-
-    let url = format!("{}/{}", HUGGINGFACE_API, repo_id);
-    debug!(%url, "verifying Hugging Face repo");
-
-    let client = reqwest::Client::new();
-    let resp = client.get(&url).send().await?;
-
-    match resp.status() {
-        s if s.is_success() => Ok(()),
-        s if s.as_u16() == 404 => Err(HuggingFaceError::NotFound(repo_id.into())),
-        _ => {
-            let text = resp.text().await.unwrap_or_default();
-            error!(%text, "Hugging Face API returned error");
-            Err(HuggingFaceError::Api(text))
+/// Pick the files to download from a resolution's file list (the signed
+/// manifest's `files[]`, or the publisher tree when the catalog is not used).
+///
+/// `should_download` drops docs and images. With a `quantization`, weight
+/// files are kept only when their path contains it (case-insensitive), so a
+/// GGUF repo with ten quants downloads one; config/tokenizer files stay.
+pub fn select_files(
+    files: &BTreeMap<String, ExpectedFile>,
+    quantization: Option<&str>,
+) -> Result<Vec<(String, ExpectedFile)>, HuggingFaceError> {
+    let quant = quantization
+        .map(|q| q.trim().to_lowercase())
+        .filter(|q| !q.is_empty());
+    let picked: Vec<(String, ExpectedFile)> = files
+        .iter()
+        .filter(|(path, _)| should_download(path))
+        .filter(|(path, _)| match &quant {
+            Some(q) if is_weight_file(path) => path.to_lowercase().contains(q.as_str()),
+            _ => true,
+        })
+        .map(|(p, e)| (p.clone(), e.clone()))
+        .collect();
+    if let Some(q) = &quant {
+        if !picked.iter().any(|(p, _)| is_weight_file(p)) {
+            return Err(HuggingFaceError::NoMatchingFiles(format!(
+                "no weight file matches quantization {q:?}"
+            )));
         }
     }
+    if picked.is_empty() {
+        return Err(HuggingFaceError::NoMatchingFiles(
+            "the repo has no downloadable model files".into(),
+        ));
+    }
+    Ok(picked)
 }
 
-/// List files we want to download from a repo revision.
-pub async fn list_target_files(
-    repo_id: &str,
-    revision: &str,
-) -> Result<Vec<TreeEntry>, HuggingFaceError> {
-    validate_repo_id(repo_id)?;
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    let url = format!("{}/{}/tree/{}", HUGGINGFACE_API, repo_id, revision);
-    debug!(%url, "listing Hugging Face repo tree");
-
-    let client = reqwest::Client::new();
-    let resp = client.get(&url).send().await?;
-
-    if resp.status().as_u16() == 404 {
-        return Err(HuggingFaceError::NotFound(format!(
-            "{} revision {}",
-            repo_id, revision
-        )));
+    fn files(paths: &[&str]) -> BTreeMap<String, ExpectedFile> {
+        paths
+            .iter()
+            .map(|p| (p.to_string(), ExpectedFile::default()))
+            .collect()
     }
 
-    resp.error_for_status_ref().map_err(|e| {
-        let status = resp.status();
-        HuggingFaceError::Api(format!("{}: {}", status, e))
-    })?;
-
-    let entries: Vec<TreeEntry> = resp.json().await?;
-    let filtered: Vec<TreeEntry> = entries
-        .into_iter()
-        .filter(|e| e.entry_type == "file" && should_download(&e.path))
-        .collect();
-
-    debug!(count = filtered.len(), "filtered target files");
-    Ok(filtered)
-}
-
-/// Build the CDN URL for a single file.
-pub fn file_url(repo_id: &str, revision: &str, path: &str) -> String {
-    format!(
-        "https://huggingface.co/{}/resolve/{}/{}",
-        repo_id, revision, path
-    )
+    #[test]
+    fn quant_filter_keeps_one_quant_and_configs() {
+        let f = files(&[
+            "README.md",
+            "config.json",
+            "Q4_K_M/model-Q4_K_M.gguf",
+            "Q8_0/model-Q8_0.gguf",
+            "mmproj-BF16.gguf",
+        ]);
+        let picked: Vec<String> = select_files(&f, Some("q4_k_m"))
+            .unwrap()
+            .into_iter()
+            .map(|(p, _)| p)
+            .collect();
+        assert_eq!(picked, vec!["Q4_K_M/model-Q4_K_M.gguf", "config.json"]);
+        assert!(select_files(&f, Some("IQ1_S")).is_err());
+        assert_eq!(select_files(&f, None).unwrap().len(), 4);
+    }
 }

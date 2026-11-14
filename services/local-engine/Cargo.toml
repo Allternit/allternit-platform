@@ -50,6 +50,12 @@ blake3 = { workspace = true }
 regex = { workspace = true }
 urlencoding = { workspace = true }
 
+# Verified weight downloads (Freeweights manifest / publisher hash): contracts/model-source
+allternit-model-source = { path = "../model-source" }
+sha1 = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+
 [dev-dependencies]
 tokio-test = { workspace = true }
 tempfile = { workspace = true }
