@@ -212,7 +212,7 @@ Plan turns are not metered against Allternit credits. A `developer` message is s
 
 ### ChatGPT sign-in on the person's device
 
-On Desktop (through Gizzi Code, the engine under it), the iPhone app and Gizzi Code, ChatGPT uses OpenAI's open-source Sign in with ChatGPT on the device. Nothing is sent to cloud-api: the tokens stay in the device's keystore and chat goes from the device to OpenAI. The Desktop runtime's `chatgpt` row (`runs_on: "computer"`) starts the sign-in with `login.kind` `browser_redirect` and reports its status. The disclosure text shows before the first connect, and the acceptance is recorded on the device and, when the person is signed in, through the cloud consent route. Model ids are `chatgpt/<model>`, separate from `plan/chatgpt/<model>`. A usage limit from OpenAI shows as **Needs you · ChatGPT limit reached**. These models follow the same person-only, chat-only, no-tools rules.
+On Desktop (through Gizzi Code, the engine under it), the iPhone app and Gizzi Code, ChatGPT uses OpenAI's open-source Sign in with ChatGPT on the device. Nothing is sent to cloud-api: the tokens stay in the device's keystore and chat goes from the device to OpenAI. The Desktop runtime's `chatgpt` row (`runs_on: "computer"`) starts the sign-in with `login.kind` `browser_redirect` and reports its status. The disclosure text shows before the first connect, and the acceptance is recorded on the device. Model ids are `chatgpt/<model>`, separate from `plan/chatgpt/<model>`. A usage limit from OpenAI shows as **Needs you · ChatGPT limit reached**. These models follow the same person-only, chat-only, no-tools rules.
 
 ### Plan chat store
 

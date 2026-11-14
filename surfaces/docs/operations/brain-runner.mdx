@@ -70,7 +70,7 @@ sudo -u postgres psql allternit -c '\d copilot_grants'
 sudo -u postgres psql allternit -c "select name from ops_applied_migrations where name like '14%' order by name"
 ```
 
-141 creates `plan_threads` (the plan chat store) and 142 creates `copilot_grants`. 140 is expected to hold the `brain_runners` and consent tables; confirm that against the file in `migrations_pg` before relying on it. Never edit a migration that has shipped.
+141 creates `plan_threads` (the plan chat store) and 142 creates `copilot_grants`. 140 creates `brain_runners` and `plan_runner_consents`. Never edit a migration that has shipped.
 
 ### inotify
 
