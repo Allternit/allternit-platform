@@ -39,6 +39,12 @@ Each rule is `tool=mode`:
 | `code_execution` | Sandbox code execution |
 | `*` | Wildcard — matches all tools |
 
+## Denied tools are hidden from the model
+
+When a session has permission rules, the tools those rules deny are no longer sent to the model. The model never sees their names or schemas, so it can't call them and the prompt is smaller. This holds in every mode, including `dontAsk`, bypass and `GIZZI_SKIP_PERMISSIONS`. A tool is hidden only when the last rule that matches it is a deny. Deny `*`, then allow a few tools, and the model gets only those few. A session with no rules keeps every tool.
+
+Hosted Platform agents use this: each conversation denies everything except the agent's `tools` list.
+
 ## Listing profiles
 
 ```bash
