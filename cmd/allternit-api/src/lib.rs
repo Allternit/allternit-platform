@@ -388,6 +388,8 @@ pub mod provider_routes;
 pub mod cli_catalog;
 pub mod model_thinking;
 pub mod cli_tools;
+/// The `allternit-brain-runner` program (runs in a person's runner box).
+pub mod brain_runner;
 pub mod queue_routes;
 pub mod rails;
 pub mod remote_control_routes;
