@@ -123,7 +123,17 @@ pub trait AgentHost: Send + Sync {
     async fn call(&self, rt: &HostRuntime, method: &str, path: &str, body: &Value) -> Result<(u16, Value), PlatformError>;
     /// A streamed call (the SSE turn).
     async fn stream(&self, rt: &HostRuntime, path: &str, body: &Value) -> Result<RelayStream, PlatformError>;
+    /// The longest a streamed turn may run before the API gives up on it
+    /// (`turn_timeout`). Tests shorten it; production keeps the default.
+    fn turn_cap(&self) -> std::time::Duration {
+        AGENT_TURN_CAP
+    }
 }
+
+/// A hosted agent turn that hasn't finished in 10 minutes is failed
+/// (`turn_timeout`) and its conversation freed. A cold computer wakes in well
+/// under that.
+pub const AGENT_TURN_CAP: std::time::Duration = std::time::Duration::from_secs(10 * 60);
 
 pub struct ProdHost(pub Arc<ApiState>);
 
