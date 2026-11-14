@@ -30,11 +30,19 @@ type ComputePaths = {
   plan?: { plans?: { name: string; price_usd_month: number }[] }
   credits?: ComputeCredits
 }
+/** `computer.hours` for plan computers with included hours (Plus). */
+export type ComputeHours = {
+  included_hours: number
+  used_hours: number
+  overage_price_per_hour_usd?: number
+  stopped_for_hours?: boolean
+  resumes_at?: string | null
+}
 export type ComputeStatus = {
   state: "none" | "paired" | "provisioning" | "hosted" | "suspended"
   online?: boolean
   gate?: boolean
-  computer?: { id: string; kind: string; provider: string | null; status: string; sleeps_when_idle?: boolean } | null
+  computer?: { id: string; kind: string; provider: string | null; status: string; sleeps_when_idle?: boolean; hours?: ComputeHours | null } | null
   paths?: ComputePaths
   docs_url?: string
 }
@@ -67,12 +75,32 @@ export function formatComputePaths(paths: ComputePaths | undefined, docsUrl = DO
   return lines.join("\n")
 }
 
+/** One plain line about this month's plan hours, or undefined when the computer has none. */
+export function formatComputeHours(h: ComputeHours | null | undefined): string | undefined {
+  if (!h || !(h.included_hours > 0) || !Number.isFinite(h.used_hours)) return undefined
+  if (h.stopped_for_hours) {
+    const at = h.resumes_at ? new Date(h.resumes_at) : undefined
+    const when =
+      at && !Number.isNaN(at.getTime())
+        ? ` or it starts again on ${at.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" })}`
+        : " or wait for next month"
+    return `Stopped: no credits left. Add credits${when}.`
+  }
+  if (h.used_hours >= h.included_hours) {
+    const price = h.overage_price_per_hour_usd === undefined ? "" : ` at ${money(h.overage_price_per_hour_usd)}/hour`
+    return `${h.included_hours} hours used. Extra hours bill from credits${price}.`
+  }
+  return `${Math.floor(h.used_hours)} of ${h.included_hours} hours used this month`
+}
+
 export function formatComputeStatus(s: ComputeStatus): string {
   const c = s.computer
   const lines = [`State: ${s.state}${s.online ? " (online)" : ""}`]
   if (c) lines.push(`Computer: ${c.kind}${c.provider ? ` on ${c.provider}` : ""}, ${c.status} (${c.id})`)
   else lines.push("Computer: none")
-  if (s.state === "suspended") lines.push("Your credits ran out and the computer stopped. Add credits to start it again.")
+  const hoursLine = formatComputeHours(c?.hours)
+  if (hoursLine) lines.push(hoursLine)
+  if (s.state === "suspended" && !c?.hours?.stopped_for_hours) lines.push("Your credits ran out and the computer stopped. Add credits to start it again.")
   if (s.state === "provisioning") lines.push("Starting your computer. This takes about a minute.")
   if (c?.status === "sleeping") lines.push("Your computer is asleep. It wakes when an agent needs it.")
   if (s.state === "none" || s.state === "suspended" || s.gate) lines.push("", formatComputePaths(s.paths, s.docs_url))
