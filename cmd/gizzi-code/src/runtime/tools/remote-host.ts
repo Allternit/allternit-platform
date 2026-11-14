@@ -6,7 +6,7 @@
  * sandbox set, and every custom tool of the session's agent, is handed to the
  * server's loopback queue instead of running locally:
  *
- *   POST ${GIZZI_TOOL_HOST_URL}/internal/v1/sessions/{gizzi session id}/tool_calls
+ *   POST ${GIZZI_TOOL_HOST_URL}/internal/v1/sessions/{root gizzi session id}/tool_calls
  *   Authorization: Bearer ${GIZZI_TOOL_HOST_TOKEN}
  *   { tool_call_id, name, input, timeout_ms }
  *
@@ -16,6 +16,11 @@
  * unchanged. Remote mode never falls back to local execution: a missing URL
  * or token, no worker (504), a timeout (408) or any transport failure is a
  * tool error.
+ *
+ * Subagents (task, agent_swarm) run in child sessions with their own gizzi
+ * ids, but the server maps only the session it prompts (the root). A child's
+ * calls therefore go to the root's queue, and a child is offered the root's
+ * custom tools (rootSessionOf).
  *
  * Spec: cmd/allternit-api/openapi/selfhost-v1.yaml (Internal),
  * docs/SELFHOST_WORKER_PROTOCOL.md.
@@ -93,6 +98,71 @@ export namespace RemoteToolHost {
     if (!enabled()) return false
     if (SANDBOX_TOOLS.has(toolID) || SERVER_LOCAL_REFUSED.has(toolID)) return true
     return sessionID !== undefined && isCustomTool(sessionID, toolID)
+  }
+
+  // ─── Root session ─────────────────────────────────────────────────────────
+  //
+  // The server knows one gizzi session per self-hosted session: the one it
+  // prompts (loop.rs adopt -> map_gizzi_session). A subagent's child session
+  // (Session.parentID, any depth) is unknown to it, so its tool calls use the
+  // root's id in the queue URL and the root's custom tool set.
+
+  /** Each session's parent, or null for a root. A session's parent never changes. */
+  const parentBySession = new Map<string, string | null>()
+  const MAX_LINKED_SESSIONS = 5000
+  /** Longest parent chain followed; deeper is treated as a loop. */
+  const MAX_DEPTH = 32
+
+  function remember(sessionID: string, parentID: string | null) {
+    parentBySession.delete(sessionID)
+    parentBySession.set(sessionID, parentID)
+    while (parentBySession.size > MAX_LINKED_SESSIONS) {
+      const oldest = parentBySession.keys().next().value
+      if (oldest === undefined) break
+      parentBySession.delete(oldest)
+    }
+  }
+
+  /** Record a session's parent (undefined: it is a root). */
+  export function linkSession(sessionID: string, parentID: string | undefined): void {
+    remember(sessionID, parentID && parentID !== sessionID ? parentID : null)
+  }
+
+  /** The root of `sessionID` from what is already known, without reading the store. */
+  export function rootSession(sessionID: string): string {
+    let current = sessionID
+    const seen = new Set<string>()
+    for (let depth = 0; depth < MAX_DEPTH; depth++) {
+      seen.add(current)
+      const parent = parentBySession.get(current)
+      if (!parent || seen.has(parent)) return current
+      current = parent
+    }
+    return current
+  }
+
+  /**
+   * The root of `sessionID`, reading each unknown parent from the session
+   * store. A session the store does not have counts as a root.
+   */
+  export async function rootSessionOf(sessionID: string): Promise<string> {
+    let current = sessionID
+    const seen = new Set<string>()
+    for (let depth = 0; depth < MAX_DEPTH; depth++) {
+      seen.add(current)
+      let parent = parentBySession.get(current)
+      if (parent === undefined) {
+        // Imported here: the session module pulls in the whole loop.
+        const { Session } = await import("@/runtime/session")
+        const info = await Session.get(current).catch(() => undefined)
+        if (!info) return current
+        linkSession(current, info.parentID)
+        parent = parentBySession.get(current) ?? null
+      }
+      if (!parent || seen.has(parent)) return current
+      current = parent
+    }
+    return current
   }
 
   // ─── Custom tools ─────────────────────────────────────────────────────────
@@ -238,9 +308,23 @@ export namespace RemoteToolHost {
     }
   }
 
-  /** True when `name` is one of the session's registered custom tools. */
+  /**
+   * True when `name` is one of the session's custom tools: its own, or its
+   * root's for a subagent session already linked (linkSession/rootSessionOf).
+   */
   export function isCustomTool(sessionID: string, name: string): boolean {
-    return customBySession.get(sessionID)?.has(name) ?? false
+    return (customBySession.get(sessionID) ?? customBySession.get(rootSession(sessionID)))?.has(name) ?? false
+  }
+
+  /**
+   * The custom tools a session may call: its own registered set, else its
+   * root's (a subagent gets the tools of the agent that started it).
+   */
+  export async function customToolsFor(sessionID: string): Promise<CustomTool[]> {
+    const own = customBySession.get(sessionID)
+    if (own) return [...own.values()]
+    const root = await rootSessionOf(sessionID)
+    return [...(customBySession.get(root)?.values() ?? [])]
   }
 
   export class RemoteToolError extends Error {
@@ -375,6 +459,8 @@ export namespace RemoteToolHost {
       )
     }
     const { url, token } = config()
+    // A subagent's call goes to the root's queue: the server knows no other id.
+    const queueSession = await rootSessionOf(ctx.sessionID)
     const tool_call_id = toolCallId(toolID, args, ctx)
     const timeout_ms = timeoutFor(toolID, args)
     const title = titleFor(toolID, args)
@@ -387,7 +473,7 @@ export namespace RemoteToolHost {
 
     let response: Response
     try {
-      response = await fetchImpl(`${url}/internal/v1/sessions/${encodeURIComponent(ctx.sessionID)}/tool_calls`, {
+      response = await fetchImpl(`${url}/internal/v1/sessions/${encodeURIComponent(queueSession)}/tool_calls`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

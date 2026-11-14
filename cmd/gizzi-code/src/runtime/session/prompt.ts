@@ -2105,7 +2105,8 @@ const message = await createUserMessage(input)
    * (replacing the last turn's), and a call to one goes through the remote
    * tool host to the server's queue, where an SDK worker runs it. A custom
    * tool named like a built-in, MCP or sandbox tool is refused: the turn
-   * fails with a `custom_tool_conflict` error.
+   * fails with a `custom_tool_conflict` error. A subagent's child session gets
+   * its root session's custom tools, and its calls go to the root's queue.
    *
    * @internal Exported for testing
    */
@@ -2122,11 +2123,30 @@ const message = await createUserMessage(input)
     },
   ) {
     if (!RemoteToolHost.enabled()) return
-    const custom = RemoteToolHost.customToolsFrom(input.metadata)
-    const reserved = custom.length
-      ? await reservedToolNames({ sessionID: input.session.id, tools, mcpCatalog: input.mcpCatalog })
-      : []
-    RemoteToolHost.registerCustomTools(input.session.id, custom, reserved)
+    let custom: RemoteToolHost.CustomTool[]
+    RemoteToolHost.linkSession(input.session.id, input.session.parentID)
+    if (input.session.parentID) {
+      // A subagent (task, agent_swarm) runs in a child session the server does
+      // not know: its turns carry no metadata, and its calls go to the root's
+      // queue. It gets the root's custom tools; the root checked them against
+      // the same registry and MCP catalog, and a name the child already has
+      // stays the child's. The child's disable map and agent permissions drop
+      // them like any built-in (LLM.resolveTools).
+      custom = (await RemoteToolHost.customToolsFor(input.session.id)).filter((def) => {
+        if (!(def.name in tools)) return true
+        log.warn("custom tool not offered to the subagent: the name is taken", {
+          sessionID: input.session.id,
+          tool: def.name,
+        })
+        return false
+      })
+    } else {
+      custom = RemoteToolHost.customToolsFrom(input.metadata)
+      const reserved = custom.length
+        ? await reservedToolNames({ sessionID: input.session.id, tools, mcpCatalog: input.mcpCatalog })
+        : []
+      RemoteToolHost.registerCustomTools(input.session.id, custom, reserved)
+    }
     for (const def of custom) {
       tools[def.name] = tool({
         id: def.name as any,

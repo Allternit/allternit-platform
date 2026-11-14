@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import path from "path"
 import { Instance } from "../../src/runtime/context/project/instance"
+import { Session } from "../../src/runtime/session"
 import { SettingsHooksBridge } from "../../src/runtime/hooks/settings-bridge"
 import { ToolDispatcher } from "../../src/runtime/tools/dispatch"
 import { tmpdir } from "../fixture/fixture"
@@ -153,6 +154,47 @@ describe("remote tool host", () => {
       await expect(call).rejects.toThrow(/GIZZI_TOOL_HOST_URL/)
       expect(ranLocally).toBe(false)
     })
+  })
+
+  test("a subagent's sandbox call goes to the root session's queue, from a child and a grandchild", async () => {
+    // The server maps only the root's gizzi session id (the one it prompts);
+    // a task/agent_swarm child has its own id, which the queue does not know.
+    const s = server(() => Response.json({ output: "/workspace\n", is_error: false }))
+    try {
+      process.env.GIZZI_TOOL_HOST = "remote"
+      process.env.GIZZI_TOOL_HOST_URL = s.url
+      process.env.GIZZI_TOOL_HOST_TOKEN = "internal-token"
+      let rootID = ""
+      await inProject(async () => {
+        const root = await Session.create({ title: "Root" })
+        const child = await Session.create({ parentID: root.id, title: "Child (@builder subagent)" })
+        const grandchild = await Session.create({ parentID: child.id, title: "Grandchild (@explorer subagent)" })
+        rootID = root.id
+        for (const [index, sessionID] of [child.id, grandchild.id, root.id].entries()) {
+          let ranLocally = false
+          const result: any = await ToolDispatcher.executeInitialized(
+            "bash",
+            { command: "pwd", description: "Where am I" },
+            { ...fakeCtx(`toolu_sub_${index}`), sessionID },
+            async () => {
+              ranLocally = true
+              return { title: "local", output: "local", metadata: {} }
+            },
+          )
+          expect(ranLocally).toBe(false)
+          expect(result.output).toBe("/workspace\n")
+        }
+      })
+      expect(s.received.map((r) => r.path)).toEqual([
+        `/internal/v1/sessions/${rootID}/tool_calls`,
+        `/internal/v1/sessions/${rootID}/tool_calls`,
+        `/internal/v1/sessions/${rootID}/tool_calls`,
+      ])
+      expect(s.received.map((r) => r.body.tool_call_id)).toEqual(["toolu_sub_0", "toolu_sub_1", "toolu_sub_2"])
+      expect(s.received.every((r) => r.auth === "Bearer internal-token")).toBe(true)
+    } finally {
+      s.srv.stop(true)
+    }
   })
 
   test("tools outside the sandbox set still run in the agent loop", async () => {

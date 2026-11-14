@@ -31,11 +31,14 @@ afterAll(() => {
 
 /** The tool record the model got on each build-agent call. */
 const toolLists: Record<string, any>[] = []
+/** Every model call's tool record, by session (subagent turns included). */
+const callsBySession: Record<string, { agent?: string; tools: Record<string, any> }[]> = {}
 
 mock.module("../../src/runtime/session/llm", () => ({
   LLM: {
     stream: async (input: any) => {
       if (input.agent?.name === "build") toolLists.push(input.tools)
+      ;(callsBySession[input.sessionID] ??= []).push({ agent: input.agent?.name, tools: input.tools })
       return {
         fullStream: (async function* () {
           yield { type: "start" }
@@ -145,6 +148,7 @@ function restoreEnv(key: string, value: string | undefined) {
 
 beforeEach(() => {
   toolLists.length = 0
+  for (const key of Object.keys(callsBySession)) delete callsBySession[key]
   process.env.GIZZI_TOOL_HOST = "remote"
   process.env.GIZZI_TOOL_HOST_URL = "http://127.0.0.1:4999/"
   process.env.GIZZI_TOOL_HOST_TOKEN = "internal-token"
@@ -270,6 +274,143 @@ describe("self-hosted custom tools", () => {
       expect(Object.keys(toolLists[0])).not.toContain("lookup_order")
     })
   }, 30_000)
+})
+
+/**
+ * A real HTTP stand-in for the Agents Server's internal tool queue (the
+ * network edge): records each POST and answers like a worker would.
+ */
+function queueServer(answer: (body: any) => { output: string; is_error: boolean }) {
+  const received: { path: string; auth: string | null; body: any }[] = []
+  const srv = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    async fetch(req) {
+      const body = await req.json()
+      received.push({ path: new URL(req.url).pathname, auth: req.headers.get("authorization"), body })
+      return Response.json(answer(body))
+    },
+  })
+  process.env.GIZZI_TOOL_HOST_URL = `http://127.0.0.1:${srv.port}`
+  return { srv, received }
+}
+
+/** A subagent turn the way task.ts runTurn sends it: no metadata, its own disable map. */
+async function subagentTurn(sessionID: string, agent = "builder") {
+  return SessionPrompt.prompt({
+    messageID: Identifier.ascending("message"),
+    sessionID,
+    agent,
+    model: { providerID: "claude-cli", modelID: "claude-sonnet" },
+    tools: { todowrite: false, todoread: false, task: false },
+    parts: [{ id: Identifier.ascending("part"), type: "text", text: "Check order 42." }],
+  })
+}
+
+async function lastAssistant(sessionID: string) {
+  for await (const m of MessageV2.stream(sessionID)) if (m.info.role === "assistant") return m.info
+  throw new Error(`no assistant message in ${sessionID}`)
+}
+
+function toolCtx(sessionID: string, messageID: string) {
+  return {
+    sessionID,
+    messageID,
+    callID: "toolu_batch_1",
+    agent: "build",
+    abort: new AbortController().signal,
+    messages: [],
+    metadata: async () => {},
+    ask: async () => {},
+  } as any
+}
+
+describe("self-hosted custom tools in subagents and batch", () => {
+  test("a subagent is offered the root's custom tools, and its calls go to the root's queue", async () => {
+    const q = queueServer((body) => ({ output: `${body.name}: order ${body.input.order_id} shipped.`, is_error: false }))
+    try {
+      await withProject(async () => {
+        const root = await Session.create({ title: "Root" })
+        await send(root.id, [LOOKUP])
+        const child = await Session.create({ parentID: root.id, title: "Check (@builder subagent)" })
+        const grandchild = await Session.create({ parentID: child.id, title: "Deeper (@builder subagent)" })
+        await subagentTurn(child.id)
+        await subagentTurn(grandchild.id)
+
+        for (const [index, sessionID] of [child.id, grandchild.id].entries()) {
+          const call = callsBySession[sessionID]?.find((c) => c.agent === "builder")
+          expect(call).toBeDefined()
+          expect(Object.keys(call!.tools)).toContain("lookup_order")
+          expect(call!.tools.lookup_order.description).toBe(LOOKUP.description)
+          expect(RemoteToolHost.handles("lookup_order", sessionID)).toBe(true)
+          const result = await call!.tools.lookup_order.execute(
+            { order_id: "42" },
+            { toolCallId: `toolu_sub_lookup_${index}`, messages: [], abortSignal: new AbortController().signal },
+          )
+          expect(result.output).toBe("lookup_order: order 42 shipped.")
+          expect(result.metadata.custom).toBe(true)
+        }
+        expect(q.received.map((r) => r.path)).toEqual([
+          `/internal/v1/sessions/${root.id}/tool_calls`,
+          `/internal/v1/sessions/${root.id}/tool_calls`,
+        ])
+        expect(q.received.map((r) => r.body.name)).toEqual(["lookup_order", "lookup_order"])
+        expect(q.received.every((r) => r.auth === "Bearer internal-token")).toBe(true)
+        // A subagent turn leaves the root's set as it was.
+        expect(RemoteToolHost.isCustomTool(root.id, "lookup_order")).toBe(true)
+        // An unrelated session still has none.
+        const other = await Session.create({ title: "Other" })
+        expect(RemoteToolHost.handles("lookup_order", other.id)).toBe(false)
+      })
+    } finally {
+      q.srv.stop(true)
+    }
+  }, 60_000)
+
+  test("batch forwards a custom tool to the root's queue, from the root and from a subagent", async () => {
+    const q = queueServer((body) => ({ output: `order ${body.input.order_id} shipped.`, is_error: false }))
+    try {
+      await withProject(async () => {
+        const { BatchTool } = await import("../../src/runtime/tools/builtins/batch")
+        const batch = await BatchTool.init()
+        const root = await Session.create({ title: "Root" })
+        await send(root.id, [LOOKUP])
+        const child = await Session.create({ parentID: root.id, title: "Check (@builder subagent)" })
+        await subagentTurn(child.id)
+
+        for (const sessionID of [root.id, child.id]) {
+          const assistant = await lastAssistant(sessionID)
+          const out = await batch.execute(
+            { tool_calls: [{ tool: "lookup_order", parameters: { order_id: "42" } }] },
+            toolCtx(sessionID, assistant.id),
+          )
+          expect(out.metadata.successful).toBe(1)
+          expect(out.metadata.failed).toBe(0)
+          const parts = (await MessageV2.get({ sessionID, messageID: assistant.id })).parts
+          const part = parts.find((p: any) => p.type === "tool" && p.tool === "lookup_order")
+          expect(part.state.status).toBe("completed")
+          expect(part.state.output).toBe("order 42 shipped.")
+          expect(part.state.metadata.custom).toBe(true)
+        }
+        expect(q.received.map((r) => r.path)).toEqual([
+          `/internal/v1/sessions/${root.id}/tool_calls`,
+          `/internal/v1/sessions/${root.id}/tool_calls`,
+        ])
+        expect(q.received.map((r) => r.body.input)).toEqual([{ order_id: "42" }, { order_id: "42" }])
+
+        // A name that is neither a registered nor a custom tool is still refused.
+        const assistant = await lastAssistant(root.id)
+        const bad = await batch.execute(
+          { tool_calls: [{ tool: "lookup_invoice", parameters: {} }] },
+          toolCtx(root.id, assistant.id),
+        )
+        expect(bad.metadata.failed).toBe(1)
+        expect(q.received).toHaveLength(2)
+      })
+    } finally {
+      q.srv.stop(true)
+    }
+  }, 60_000)
 })
 
 describe("custom tool check route", () => {
