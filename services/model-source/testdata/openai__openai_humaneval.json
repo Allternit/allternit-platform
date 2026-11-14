@@ -1,0 +1,48 @@
+{
+  "created_at": "2026-11-14T06:37:41Z",
+  "files": [
+    {
+      "lfs": false,
+      "path": ".gitattributes",
+      "sha256": "40e650854e43f5d4a0efaa68f487161e1226e22bc5480bd0effa0a8dadb5b848",
+      "size": 1174
+    },
+    {
+      "lfs": false,
+      "path": "README.md",
+      "sha256": "f81cb59f7dae73d1ee1069d7de3ba1c0f9d2bd80f4df6d6990d12bf488e5b5ef",
+      "size": 6523
+    },
+    {
+      "lfs": true,
+      "path": "openai_humaneval/test-00000-of-00001.parquet",
+      "sha256": "2f2871a15fbc95b6c683043359f4ed8e144c5a1c4f24f25f66bc51f598dfcfb6",
+      "size": 83920
+    }
+  ],
+  "generator": "freeweights-manifest/0.1.0",
+  "id": "openai/openai_humaneval",
+  "license": {
+    "file_path": "README.md",
+    "file_sha256": "f81cb59f7dae73d1ee1069d7de3ba1c0f9d2bd80f4df6d6990d12bf488e5b5ef",
+    "id": "MIT",
+    "name": "MIT License",
+    "redistribution": "yes"
+  },
+  "schema_version": 0,
+  "section": "alt.freeweights.datasets",
+  "sources": [
+    {
+      "last_checked": "2026-11-14T06:37:41Z",
+      "priority": 100,
+      "type": "source",
+      "url": "https://huggingface.co/datasets/openai/openai_humaneval/resolve/7dce6050a7d6d172f3cc5c32aa97f52fa1a2e544/"
+    }
+  ],
+  "upstream": {
+    "commit": "7dce6050a7d6d172f3cc5c32aa97f52fa1a2e544",
+    "host": "huggingface.co",
+    "repo": "openai/openai_humaneval",
+    "url": "https://huggingface.co/datasets/openai/openai_humaneval/tree/7dce6050a7d6d172f3cc5c32aa97f52fa1a2e544"
+  }
+}

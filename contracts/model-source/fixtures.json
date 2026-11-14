@@ -1,0 +1,82 @@
+{
+  "valid": [
+    {
+      "name": "signed manifest, served by the Freeweights worker",
+      "verification": {
+        "state": "freeweights_signed",
+        "source_used": "freeweights_worker",
+        "source_url": "https://freeweights.allternit.com/Qwen/Qwen3-Embedding-0.6B/resolve/97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3/",
+        "manifest_commit": "97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3",
+        "checked_at": "2026-11-14T21:36:41Z"
+      }
+    },
+    {
+      "name": "signed manifest, worker failed, upstream at the pinned commit",
+      "verification": {
+        "state": "freeweights_signed",
+        "source_used": "manifest_source",
+        "source_url": "https://huggingface.co/Qwen/Qwen3-Embedding-0.6B/resolve/97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3/",
+        "manifest_commit": "97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3",
+        "checked_at": "2026-11-14T21:36:41Z"
+      }
+    },
+    {
+      "name": "catalog unreachable, publisher lfs.oid",
+      "verification": {
+        "state": "publisher_hash",
+        "source_used": "publisher",
+        "source_url": "https://huggingface.co/Qwen/Qwen3-Embedding-0.6B/resolve/main/",
+        "checked_at": "2026-11-14T21:36:49Z"
+      }
+    },
+    {
+      "name": "caller pin, publisher had no hash",
+      "verification": {
+        "state": "pinned",
+        "source_used": "publisher",
+        "source_url": "https://huggingface.co/Qwen/Qwen3-Embedding-0.6B/resolve/main/",
+        "checked_at": "2026-11-14T21:36:49Z"
+      }
+    },
+    {
+      "name": "no hash, caller allowed unverified",
+      "verification": {
+        "state": "unverified",
+        "source_used": "publisher",
+        "source_url": "https://huggingface.co/Qwen/Qwen3-Embedding-0.6B/resolve/main/",
+        "checked_at": "2026-11-14T21:36:49Z"
+      }
+    }
+  ],
+  "invalid": [
+    {
+      "name": "blank state",
+      "verification": { "state": "", "source_used": "publisher", "source_url": "https://huggingface.co/a/b/resolve/main/", "checked_at": "2026-11-14T21:36:49Z" }
+    },
+    {
+      "name": "state missing",
+      "verification": { "source_used": "publisher", "source_url": "https://huggingface.co/a/b/resolve/main/", "checked_at": "2026-11-14T21:36:49Z" }
+    },
+    {
+      "name": "unknown source kind",
+      "verification": { "state": "pinned", "source_used": "torrent", "source_url": "https://example.com/", "checked_at": "2026-11-14T21:36:49Z" }
+    }
+  ],
+  "source_order": [
+    {
+      "name": "catalog reachable, manifest verifies",
+      "order": ["freeweights_worker", "manifest_hosted (by priority)", "manifest_source (by priority)"],
+      "basis": "freeweights_signed"
+    },
+    {
+      "name": "catalog unreachable or repo not listed",
+      "order": ["publisher"],
+      "basis": "publisher_hash"
+    },
+    {
+      "name": "manifest reachable but signature or key id bad",
+      "order": [],
+      "basis": "error (never falls back)"
+    }
+  ]
+}
