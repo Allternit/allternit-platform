@@ -4548,7 +4548,7 @@
       "label": "Connect kit and day-one setup (one Connections page, four status words)",
       "product": "product:cloud-api",
       "status": "building",
-      "description": "One Connections page and one first-run setup on every surface, replacing the five duplicate connect screens. One registry of rows (ids, groups, ways, runs_on) in the client, one GET /api/v1/connections contract served by cloud-api (account rows) and allternit-api (rows on the active computer), merged by the app, with four status words only (Not connected, Connecting, Connected, Needs you), a plain reason and up to two fallbacks for a row the account cannot use, and the fewest-step sign-in each vendor allows (device code, link and paste-back, OAuth, key, QR). Works with no computer: Allternit Cloud, API keys (OpenAI, Anthropic, Google, xAI, OpenRouter and more), Gemini key, apps, channels, phone. Needs a computer: ChatGPT through Codex, Claude Code, Grok CLI, Kimi CLI, local brain. The brain runner (Claude, Grok and Kimi plans on Allternit) and the Copilot SDK ship as available:false rows until vendor answers and a GitHub App exist. Surfaces: Desktop, ai.allternit.com and its phone layout, the m.allternit.com PWA, iOS (Settings > Connections), Android through the PWA, gizzi connect, cloud-api, allternit-api, docs. New code lives in allternit-ai src/components/connect-kit (registry.ts, ConnectionsHub, ConnectSheet, KitSetup) and cloud-api routes/connections.rs; the touches below name the existing files the kit replaces or reuses.",
+      "description": "One Connections page and one first-run setup on every surface, replacing the five duplicate connect screens. One registry of rows (ids, groups, ways, runs_on) in the client, one GET /api/v1/connections contract served by cloud-api (account rows) and allternit-api (rows on the active computer), merged by the app, with four status words only (Not connected, Connecting, Connected, Needs you), a plain reason and up to two fallbacks for a row the account cannot use, and the fewest-step sign-in each vendor allows (device code, link and paste-back, OAuth, key, QR). Works with no computer: Allternit Cloud, API keys (OpenAI, Anthropic, Google, xAI, OpenRouter and more), Gemini key, apps, channels, phone. Needs a computer: ChatGPT through Codex, Claude Code, Grok CLI, Kimi CLI, local brain. The brain runner (a private box per person on the mail host runs the vendor's own CLI for Claude, ChatGPT, Grok and Kimi plans, person-sent chat only, tools off, with a disclosure step and a kill switch ALLTERNIT_BRAIN_RUNNERS) lets those plans work with no computer, and plan chats are held in a cloud plan chat store so they sync across devices. ChatGPT also signs in directly on the person's device (Desktop, iOS, Gizzi Code). Copilot signs in through the GitHub App allternit-copilot-connect and stays Coming soon until the server has the App configured. Surfaces: Desktop, ai.allternit.com and its phone layout, the m.allternit.com PWA, iOS (Settings > Connections), Android through the PWA, gizzi connect, cloud-api, allternit-api, docs. New code lives in allternit-ai src/components/connect-kit (registry.ts, ConnectionsHub, ConnectSheet, KitSetup) and cloud-api routes/connections.rs; the touches below name the existing files the kit replaces or reuses.",
       "touches": [
         "allternit/cmd/allternit-cloud-api/src/routes/inference_keys.rs",
         "allternit/cmd/allternit-api/src/cli_tools.rs",
@@ -4564,6 +4564,10 @@
         "allternit/surfaces/docs/api/connections.mdx",
         "allternit/surfaces/docs/guides/use-your-plan.mdx",
         "allternit/surfaces/docs/build-on-allternit/add-a-connection.mdx",
+        "allternit/surfaces/docs/operations/brain-runner.mdx",
+        "allternit/cmd/allternit-cloud-api/src/routes/model_router.rs",
+        "allternit/cmd/allternit-cloud-api/src/services/provisioning.rs",
+        "allternit/cmd/allternit-cloud-api/src/services/account_erase.rs",
         "allternit-ai/src/components/connect-kit/ConnParts.tsx",
         "allternit-ai/src/components/connect-kit/ConnectSheet.tsx",
         "allternit-ai/src/components/connect-kit/ConnectionRow.tsx",
@@ -4599,6 +4603,10 @@
         "allternit/cmd/gizzi-code/src/cli/commands/connect-run.ts"
       ],
       "decisions": [
+        {
+          "on": "2026-11-14",
+          "note": "brain runner: plans with no computer. Eoj decided: no vendor letters; a disclosure the person accepts (the vendor could limit or close the account), the person signs in and manages their own account, and only person-sent chat reaches the plan, tools off, never bots, routines or agents. One box per person on the mail host, 4 GB runner RAM budget, kill switch ALLTERNIT_BRAIN_RUNNERS. ChatGPT also signs in directly on the person's device (Desktop, iOS, Gizzi Code). Plan chats sync through a cloud plan chat store. Copilot via the GitHub App. Disclosure wording still waits for Eoj's approval. Contract section 9. Docs: operations/brain-runner.mdx."
+        },
         {
           "on": "2026-11-13",
           "note": "connect kit: hub A, setup A, fewest-step sign-ins; brain runner gated on vendors. Connections page = option A (Brains split into Works on any device, Needs your computer, Coming soon); day-one setup = Your AI, Your phone, Main bot, Connected, with no computer step; Add a computer is offered as Later, if you need it. Claude, Grok and Kimi plans on Allternit wait for vendor answers (plan Phase 0); Copilot waits for a GitHub App. Contract: CONTRACT-connections-2026-11.md. Kit routes never call require_compute."

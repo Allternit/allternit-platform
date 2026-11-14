@@ -248,6 +248,12 @@ for (const mdxPath of collectMdxFiles(DOCS_DIR)) {
       if (mdxPath.endsWith('api/platform/messages.mdx')) continue;
       // Managed connector auth: the connector gateway guide gives each AI app's setup steps, and the managed-auth pages name the outside issuers (Claude orgs) people trust.
       if (['guides/connectors-in-other-apps.mdx', 'guides/connectors.mdx', 'guides/managed-authorization.mdx', 'security/allternit-idjag-issuer.mdx', 'security/trusting-outside-issuers.mdx'].some((p) => mdxPath.endsWith(p))) continue;
+      // Brain runner ops: each box runs the named vendor programs unmodified, so the page lists their versions, sign-in commands and allowed domains.
+      if (mdxPath.endsWith('operations/brain-runner.mdx')) continue;
+      // Guard's model picker lists the detected CLI brains and their source ids by name.
+      if (mdxPath.endsWith('guides/guard.mdx')) continue;
+      // gizzi connect names the plans it signs in to (ChatGPT direct sign-in, plan rows).
+      if (mdxPath.endsWith('cli/connect.mdx')) continue;
       fail(
         `competitor mention in ${path.relative(ROOT, mdxPath)}:${i + 1}: ${line.trim()}`
       );
