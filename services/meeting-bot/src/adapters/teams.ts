@@ -10,9 +10,10 @@
 // `installMedia` (the spike's installGizziMedia wrapper) and `setTile`; without them
 // Chrome's fake devices are used so pre-join still works.
 
-import { chromium, type Browser, type BrowserContext, type Page } from "playwright-core";
-import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import type { Browser, BrowserContext, Page } from "playwright-core";
+import { launchChrome } from "../chrome.js";
+import type { ChildProcess } from "node:child_process";
+import { mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type {
@@ -59,11 +60,6 @@ const SPEAKING_CAPTION_WINDOW_MS = 1500;
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
-function defaultChrome(): string {
-  if (process.env.CHROME_PATH) return process.env.CHROME_PATH;
-  if (process.platform === "darwin") return "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
-  return "/usr/bin/google-chrome";
-}
 
 function hash(s: string): string {
   let h = 5381;
@@ -187,37 +183,25 @@ export function createTeamsAdapter(cfg: Pick<PodConfig, "displayName">, opts: Te
   // ---- launch -------------------------------------------------------------------
 
   async function launch(): Promise<void> {
-    profile = opts.profileDir ?? mkdtempSync(join(tmpdir(), "gizzi-teams-profile-"));
+    // The shared launcher (chrome.ts): window modes for a user's own computer
+    // (MEETING_BOT_WINDOW), Chrome/Edge/Chromium probe on macOS/Windows/Linux,
+    // the crash-bubble / unsupported-flag suppression and the sandbox rule.
+    const session = await launchChrome({
+      chromePath: opts.chromePath,
+      headless: opts.headless,
+      profileDir: opts.profileDir,
+      chromeArgs: [...(opts.installMedia ? [] : ["--use-fake-device-for-media-stream"]), ...(opts.chromeArgs ?? [])],
+      onEvent: opts.onEvent,
+    });
+    chrome = session.chrome;
+    profile = session.profileDir;
     ownProfile = !opts.profileDir;
-    const args = [
-      "--autoplay-policy=no-user-gesture-required",
-      "--use-fake-ui-for-media-stream",
-      "--disable-background-timer-throttling",
-      "--disable-renderer-backgrounding",
-      "--disable-backgrounding-occluded-windows",
-      "--force-color-profile=srgb",
-      "--window-size=1280,800",
-      `--user-data-dir=${profile}`,
-      "--remote-debugging-port=0",
-      "--no-first-run",
-      "--no-default-browser-check",
-      "--lang=en-US",
-    ];
-    if (!opts.installMedia) args.push("--use-fake-device-for-media-stream");
-    if (process.getuid?.() === 0) args.push("--no-sandbox");
-    if (opts.headless) args.push("--headless=new");
-    if (opts.chromeArgs) args.push(...opts.chromeArgs);
-    chrome = spawn(opts.chromePath ?? defaultChrome(), [...args, "about:blank"], { stdio: "ignore" });
-    const portFile = join(profile, "DevToolsActivePort");
-    for (let i = 0; i < 150 && !existsSync(portFile); i++) await sleep(100);
-    if (!existsSync(portFile)) throw new Error("chrome did not start (no DevToolsActivePort)");
-    const port = readFileSync(portFile, "utf8").split("\n")[0].trim();
-    browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`);
-    context = browser.contexts()[0];
+    browser = session.browser;
+    context = session.context;
     for (const origin of ["https://teams.microsoft.com", "https://teams.live.com", "https://teams.cloud.microsoft"]) {
       await context.grantPermissions(["camera", "microphone"], { origin }).catch(() => undefined);
     }
-    page = context.pages()[0] ?? (await context.newPage());
+    page = session.page;
     if (opts.installMedia) await opts.installMedia(context, browser, page);
   }
 
