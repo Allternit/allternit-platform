@@ -3299,7 +3299,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     })
     // A subscription (fabric) model runs only on a human send (D16), and the
     // send's human action belongs to the reply — keep the default title.
-    if (Provider.isFabricModel(model)) return
+    if (Provider.isHumanSendOnly(model)) return
     const modelMessages = MessageV2.toModelMessages(contextMessages, model)
     // Title gen calls LLM.stream directly instead of going through loop(), so it
     // doesn't get loop()'s folding of lastUser.system into the system array — fold

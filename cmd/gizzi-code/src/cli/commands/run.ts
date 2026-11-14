@@ -272,6 +272,16 @@ export const RunCommand = cmd({
     if (args.worktree) Flag.GIZZI_WORKTREE = path.resolve(args.worktree)
     if (args.fallbackModel) Flag.GIZZI_FALLBACK_MODEL = args.fallbackModel
 
+    // The person's own plans answer only messages sent from the chat, never a headless run.
+    const { refuseIfPersonOnly } = await import("@/runtime/providers/person-plan/rules")
+    const personOnly = refuseIfPersonOnly(args.model, "headless") ?? refuseIfPersonOnly(args.fallbackModel, "headless")
+    if (personOnly) {
+      UI.error(personOnly)
+      // Let stderr drain before exiting, or a pipe can lose the message.
+      await new Promise<void>((resolve) => process.stderr.write("", () => resolve()))
+      process.exit(1)
+    }
+
     // Effort is an alias for variant, checked against the picked model's levels.
     if (args.effort) {
       const problem = effortProblem(args.effort, args.model)
@@ -945,6 +955,14 @@ export const RunCommand = cmd({
           const { currentDefaultBrain } = await import("@/runtime/providers/default-brain")
           const brain = await currentDefaultBrain().catch(() => undefined)
           args.model = brain?.model ?? undefined
+        }
+        // A config pin on a plan model still cannot run headless.
+        const pinned = refuseIfPersonOnly(args.model, "headless")
+        if (pinned) {
+          UI.error(pinned)
+          // Let stderr drain before exiting, or a pipe can lose the message.
+          await new Promise<void>((resolve) => process.stderr.write("", () => resolve()))
+          process.exit(1)
         }
       }
       if (config.sandbox?.enabled !== undefined && process.env.GIZZI_SANDBOX === undefined && process.env.GIZZI_SANDBOX_DISABLE === undefined && !args.dangerouslySkipSandbox) {

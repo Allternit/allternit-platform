@@ -21,6 +21,7 @@ import { discoverSubprocessProviders } from "./subprocess"
 import { discoverLocalProviders } from "./local"
 import { discoverAllternitCloud } from "./allternit-cloud"
 import { discoverSubscriptionFabric } from "../fabric/discovery"
+import { discoverPersonPlans } from "../person-plan/discovery"
 
 export { getCachedAllternitPlan, refreshAllternitPlan } from "./allternit-cloud"
 
@@ -109,6 +110,8 @@ export const Discovery = {
         discoverSubprocessProviders(),
         discoverLocalProviders(),
         discoverSubscriptionFabric(),
+        // Plans the person connected (chatgpt/…, plan/…, copilot-plan/…): person-sent chat only.
+        discoverPersonPlans(),
         ..._hooks.map((h) => h()),
       ])
 

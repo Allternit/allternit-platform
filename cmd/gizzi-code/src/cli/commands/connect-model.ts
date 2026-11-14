@@ -25,6 +25,10 @@ export type Row = {
   saved?: string
   models?: string[]
   source?: string
+  /** Runner rows (§9.1): the disclosure version this account accepted, if any. */
+  disclosure?: { version: string; accepted_at: string | null }
+  /** §9.1/§9.5: keep these models out of bot, routine, mission and sub-agent pickers. */
+  person_only?: boolean
 }
 
 export type Entry = { id: string; group: Group; name: string; blurb?: string; runsOn?: RunsOn; hidden?: boolean }
@@ -104,11 +108,14 @@ export const GROUP_ORDER: Group[] = ["brains", "computers", "phones", "tools", "
 export const BRAIN_SUB = ["Works on any device", "Needs your computer", "Coming soon"] as const
 export type BrainSub = (typeof BRAIN_SUB)[number]
 
-/** A runtime row wins over a cloud row with the same id only when its state is `on`. */
-export function mergeRows(cloud: Row[], runtime: Row[]): Row[] {
+/**
+ * A runtime row wins over a cloud row with the same id only when its state is
+ * `on`. A sign-in on this device (ChatGPT direct, §9.9) wins over both when on.
+ */
+export function mergeRows(cloud: Row[], runtime: Row[], device: Row[] = []): Row[] {
   const out = new Map<string, Row>()
   for (const r of cloud) out.set(r.id, r)
-  for (const r of runtime) {
+  for (const r of [...runtime, ...device]) {
     const prev = out.get(r.id)
     if (!prev || r.state === "on") out.set(r.id, r)
   }
@@ -149,8 +156,12 @@ export function statusText(entry: Entry, row: Row): string {
       const why = row.reason || (row.reason_code ? REASON_TEXT[row.reason_code] : undefined)
       return why ? `Needs you · ${why}` : "Needs you"
     }
-    default:
-      return entry.blurb ? `Not connected · ${entry.blurb}` : "Not connected"
+    default: {
+      // Runner rows say where they run (§2 copy): no computer needed.
+      const where = row.runs_on === "runner" ? "Runs on Allternit · no computer needed" : row.runs_on === "device" ? "Signs in on this computer" : undefined
+      const blurb = where ? [entry.blurb, where].filter(Boolean).join(" · ") : entry.blurb
+      return blurb ? `Not connected · ${blurb}` : "Not connected"
+    }
   }
 }
 
