@@ -61,11 +61,14 @@ pub enum EndReason {
     JoinFailed,
     GuestBlocked,
     NoCapacity,
+    /// None of the owner's runtimes (cloud computer, Desktop) was online
+    /// or wakeable, or the one running the bot went offline.
+    NoRuntime,
     Error,
 }
 
 impl EndReason {
-    pub const ALL: [EndReason; 10] = [
+    pub const ALL: [EndReason; 11] = [
         EndReason::LeftByUser,
         EndReason::Removed,
         EndReason::NotAdmitted,
@@ -75,6 +78,7 @@ impl EndReason {
         EndReason::JoinFailed,
         EndReason::GuestBlocked,
         EndReason::NoCapacity,
+        EndReason::NoRuntime,
         EndReason::Error,
     ];
 
@@ -89,6 +93,7 @@ impl EndReason {
             EndReason::JoinFailed => "join_failed",
             EndReason::GuestBlocked => "guest_blocked",
             EndReason::NoCapacity => "no_capacity",
+            EndReason::NoRuntime => "no_runtime",
             EndReason::Error => "error",
         }
     }

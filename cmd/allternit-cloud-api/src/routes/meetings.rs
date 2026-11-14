@@ -60,6 +60,7 @@ const DEFAULT_GLOBAL_CAP: i64 = 20;
 pub fn routes() -> Router<Arc<ApiState>> {
     Router::new()
         .route("/api/v1/meetings", get(list_meetings).post(create_meeting))
+        .route("/api/v1/meetings/runner", get(get_runner))
         .route(
             "/api/v1/meetings/:id",
             get(get_meeting).patch(patch_meeting).delete(delete_meeting),
@@ -888,6 +889,16 @@ fn day_start(tz: Option<&str>, now: DateTime<Utc>) -> Result<DateTime<Utc>> {
         .earliest()
         .map(|t| t.with_timezone(&Utc))
         .unwrap_or(now))
+}
+
+/// `GET /api/v1/meetings/runner`: where Gizzi would join from if sent now
+/// (presence only; no runtime is contacted or woken).
+/// `{state: ready|asleep|none, runtime: {id, name, kind: cloud_computer|desktop}|null}`.
+async fn get_runner(State(state): State<Arc<ApiState>>, headers: HeaderMap) -> Result<Json<Value>> {
+    let caller = caller(&state, &headers).await?;
+    require_paid(&state.db, &caller).await?;
+    let connected = super::runtime_relay::connected_runtime_ids().await;
+    Ok(Json(crate::services::meeting_launcher::runner_status(&state.db, &caller.id, &connected).await?))
 }
 
 async fn list_meetings(

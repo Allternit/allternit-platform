@@ -27,6 +27,11 @@
 //!   (`chat|page_only`).
 //! - `GET /api/v1/meeting-sessions/:sid/control-stream`: SSE of control
 //!   messages for the pod.
+//! - `GET /api/v1/meeting-sessions/:sid/bot-profile`: the decrypted Chrome
+//!   profile (`tar.zst`) of the bot Google account the session claimed, for
+//!   the runtime to unpack before the runner starts. `204` when the session
+//!   holds no account or has ended. The launcher hands an account only to a
+//!   Linux runtime.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -80,6 +85,7 @@ pub fn routes() -> Router<Arc<ApiState>> {
         .route("/api/v1/meeting-sessions/:sid/ingest", post(ingest))
         .route("/api/v1/meeting-sessions/:sid/tool-calls", post(tool_call))
         .route("/api/v1/meeting-sessions/:sid/control-stream", get(control_stream))
+        .route("/api/v1/meeting-sessions/:sid/bot-profile", get(bot_profile))
 }
 
 // ---------------------------------------------------------------------------
@@ -1071,6 +1077,49 @@ async fn control_stream(
     Ok(Sse::new(stream)
         .keep_alive(KeepAlive::new().interval(Duration::from_secs(20)).text("ping"))
         .into_response())
+}
+
+// ---------------------------------------------------------------------------
+// Bot profile
+// ---------------------------------------------------------------------------
+
+/// The claimed bot account's current profile as `application/zstd`, or
+/// `204` (no account, session ended, or the profile does not open; the bot
+/// then joins signed out). The archive is decrypted per request and never
+/// stored in clear here.
+async fn bot_profile(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+    Path(sid): Path<String>,
+) -> Result<Response> {
+    use axum::http::StatusCode;
+
+    let session = pod_session(&state.db, &headers, &sid).await?;
+    let account = session
+        .pod_ref
+        .as_deref()
+        .and_then(|raw| serde_json::from_str::<Value>(raw).ok())
+        .and_then(|pod| pod.get("bot_account").and_then(Value::as_str).map(str::to_string));
+    let Some(account) = account.filter(|_| session.state() != SessionState::Ended) else {
+        return Ok(StatusCode::NO_CONTENT.into_response());
+    };
+    let store = crate::services::bot_profiles::ProfileStore::shared();
+    let acct = account.clone();
+    match tokio::task::spawn_blocking(move || store.open_current(&acct)).await {
+        Ok(Ok(archive)) => Ok((
+            [(header::CONTENT_TYPE, "application/zstd"), (header::CACHE_CONTROL, "no-store")],
+            archive,
+        )
+            .into_response()),
+        Ok(Err(error)) => {
+            tracing::error!(sid = %session.id, %account, %error, "meetings: bot profile does not open; the bot joins signed out");
+            Ok(StatusCode::NO_CONTENT.into_response())
+        }
+        Err(error) => {
+            tracing::error!(sid = %session.id, %account, %error, "meetings: bot profile task failed");
+            Ok(StatusCode::NO_CONTENT.into_response())
+        }
+    }
 }
 
 #[cfg(test)]
