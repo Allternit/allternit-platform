@@ -109,6 +109,16 @@ struct AgentSpec {
     /// The account's memory (`/v1/accounts/{id}/memory`), the same for every agent of it.
     #[serde(default)]
     account_memory: Vec<Value>,
+    /// The numbers bound to this agent (`/v1/numbers/{id}` with `agent_id`). Absent
+    /// (an older cloud) leaves this runtime's rows alone; a list replaces them.
+    #[serde(default)]
+    phone_numbers: Option<Vec<SpecNumber>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SpecNumber {
+    id: String,
+    e164: String,
 }
 
 /// The twin owner key of one account inside a project's runtime: account memory
@@ -140,7 +150,8 @@ fn bot_owner(db: &DbHandle, bot_id: &str) -> Result<Option<String>, String> {
 }
 
 /// Write the bot row (and its bot-wide autonomy level) from the agent spec.
-pub fn upsert_bot(db: &DbHandle, owner: &str, bot_id: &str, spec: &Value) -> Result<(), String> {
+/// `Some(n)` when the spec listed the agent's phone numbers: this runtime now holds `n` for it.
+pub fn upsert_bot(db: &DbHandle, owner: &str, bot_id: &str, spec: &Value) -> Result<Option<usize>, String> {
     let s: AgentSpec = serde_json::from_value(spec.clone()).map_err(|e| format!("invalid agent: {e}"))?;
     if s.name.trim().is_empty() {
         return Err("name is required".into());
@@ -214,7 +225,32 @@ pub fn upsert_bot(db: &DbHandle, owner: &str, bot_id: &str, spec: &Value) -> Res
             .map_err(|e| e.to_string())?;
         }
     }
-    Ok(())
+    let numbers = match (&s.phone_numbers, owner.starts_with("platform:")) {
+        (Some(list), true) => Some(sync_numbers(db, owner, bot_id, list)?),
+        _ => None,
+    };
+    Ok(numbers)
+}
+
+/// Make this bot's runtime numbers match the cloud's list: drop the ones no longer bound to
+/// it, then upsert each (no sealed `sms` account: the cloud sends for hosted agents).
+/// A number another owner holds here is never moved (`channel_phone::upsert_number` only
+/// updates rows of the same owner); a malformed one is skipped, not fatal.
+fn sync_numbers(db: &DbHandle, owner: &str, bot_id: &str, list: &[SpecNumber]) -> Result<usize, String> {
+    let keep: Vec<&str> = list.iter().map(|n| n.id.as_str()).collect();
+    let conn = db.connect().map_err(|e| e.to_string())?;
+    let mut q = conn.prepare("SELECT number_id FROM channel_phone_numbers WHERE owner = ?1 AND bot_id = ?2").map_err(|e| e.to_string())?;
+    let held: Vec<String> = q.query_map(params![owner, bot_id], |r| r.get(0)).map_err(|e| e.to_string())?.filter_map(Result::ok).collect();
+    for id in held.iter().filter(|id| !keep.contains(&id.as_str())) {
+        conn.execute("DELETE FROM channel_phone_numbers WHERE number_id = ?1 AND owner = ?2 AND bot_id = ?3", params![id, owner, bot_id]).map_err(|e| e.to_string())?;
+    }
+    for n in list {
+        if let Err(e) = crate::channel_phone::upsert_number(db, &n.id, owner, bot_id, &n.e164, None) {
+            tracing::warn!(bot = %bot_id, number = %n.id, "platform agent number not stored: {e}");
+        }
+    }
+    let stored: i64 = conn.query_row("SELECT COUNT(*) FROM channel_phone_numbers WHERE owner = ?1 AND bot_id = ?2", params![owner, bot_id], |r| r.get(0)).map_err(|e| e.to_string())?;
+    Ok(stored as usize)
 }
 
 async fn upsert_h(State(state): State<Arc<AppState>>, Path(agent_id): Path<String>, auth: RelayedAuth) -> Response {
@@ -232,7 +268,7 @@ async fn upsert_h(State(state): State<Arc<AppState>>, Path(agent_id): Path<Strin
     };
     let created = !matches!(bot_owner(&state.db, &agent_id), Ok(Some(_)));
     match upsert_bot(&state.db, &auth.owner, &agent_id, &spec) {
-        Ok(()) => {
+        Ok(numbers) => {
             // A new hosted bot gets its own inbox in the background, like
             // `POST /agents` bots (idempotent; a no-op where bot email is off).
             if created {
@@ -241,7 +277,12 @@ async fn upsert_h(State(state): State<Arc<AppState>>, Path(agent_id): Path<Strin
                     crate::agent_email_routes::ensure_bot_mailbox(&app, &owner, &bot).await;
                 });
             }
-            Json(json!({ "agentId": agent_id, "botId": agent_id })).into_response()
+            let mut out = json!({ "agentId": agent_id, "botId": agent_id });
+            // The cloud stamps the agent synced only when this runtime acknowledges its numbers.
+            if let Some(n) = numbers {
+                out["phoneNumbers"] = json!(n);
+            }
+            Json(out).into_response()
         }
         Err(e) => fail(StatusCode::BAD_REQUEST, &e),
     }
@@ -256,6 +297,7 @@ async fn delete_h(State(state): State<Arc<AppState>>, Path(agent_id): Path<Strin
     }
     let removed = state.db.connect().and_then(|c| {
         c.execute("DELETE FROM autonomy_policies WHERE owner = ?1 AND bot_id = ?2", params![auth.owner, agent_id])?;
+        c.execute("DELETE FROM channel_phone_numbers WHERE owner = ?1 AND bot_id = ?2", params![auth.owner, agent_id])?;
         c.execute("DELETE FROM agents WHERE id = ?1 AND user_id = ?2", params![agent_id, auth.owner])
     });
     match removed {
@@ -310,7 +352,7 @@ pub fn tool_rules(tools: &[String]) -> Value {
     Value::Array(rules)
 }
 
-fn agent_tools(db: &DbHandle, bot_id: &str) -> Vec<String> {
+pub(crate) fn agent_tools(db: &DbHandle, bot_id: &str) -> Vec<String> {
     db.connect()
         .ok()
         .and_then(|c| c.query_row("SELECT json_extract(config, '$.platformAgent.tools') FROM agents WHERE id = ?1", params![bot_id], |r| r.get::<_, Option<String>>(0)).ok().flatten())
@@ -651,6 +693,45 @@ mod tests {
         assert_eq!(r.status(), StatusCode::OK);
         let left: i64 = state.db.connect().unwrap().query_row("SELECT count(*) FROM agents WHERE id = 'agent_1'", [], |r| r.get(0)).unwrap();
         assert_eq!(left, 0);
+    }
+
+    #[tokio::test]
+    async fn bound_numbers_follow_the_cloud_list_and_never_take_another_owners_row() {
+        let (app, state) = app().await;
+        let numbers = |db: &DbHandle| -> Vec<(String, String, String)> {
+            let conn = db.connect().unwrap();
+            let mut q = conn.prepare("SELECT number_id, owner, bot_id FROM channel_phone_numbers ORDER BY number_id").unwrap();
+            q.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).unwrap().map(Result::unwrap).collect()
+        };
+        // Someone else's number with an id the cloud will (wrongly) send.
+        upsert_bot(&state.db, "platform:proj_2", "agent_x", &json!({ "name": "X" })).unwrap();
+        crate::channel_phone::upsert_number(&state.db, "pn_other", "platform:proj_2", "agent_x", "+14155550999", None).unwrap();
+
+        let put = |body: Value| signed("PUT", "/api/v1/platform/agents/agent_1", body, OWNER);
+        let spec = json!({ "name": "Desk", "tools": ["send_text"], "phoneNumbers": [{ "id": "pn_1", "e164": "+14155550100" }, { "id": "pn_2", "e164": "+14155550101" }, { "id": "pn_other", "e164": "+14155550102" }] });
+        let r = app.clone().oneshot(put(spec)).await.unwrap();
+        let body: Value = serde_json::from_slice(&axum::body::to_bytes(r.into_body(), 1 << 16).await.unwrap()).unwrap();
+        assert_eq!(body["phoneNumbers"], 2, "the runtime acknowledges the list, counting the numbers it holds for the agent");
+        assert_eq!(numbers(&state.db), vec![
+            ("pn_1".into(), OWNER.into(), "agent_1".into()),
+            ("pn_2".into(), OWNER.into(), "agent_1".into()),
+            ("pn_other".into(), "platform:proj_2".into(), "agent_x".into()),
+        ], "another owner's row is never moved");
+
+        // Unbound in the cloud: the stale number drops here.
+        let r = app.clone().oneshot(put(json!({ "name": "Desk", "phoneNumbers": [{ "id": "pn_2", "e164": "+14155550101" }] }))).await.unwrap();
+        assert_eq!(r.status(), StatusCode::OK);
+        assert_eq!(numbers(&state.db).iter().filter(|n| n.1 == OWNER).map(|n| n.0.as_str()).collect::<Vec<_>>(), vec!["pn_2"]);
+
+        // An older cloud sends no list: rows stay, and there is no acknowledgement.
+        let r = app.clone().oneshot(put(json!({ "name": "Desk" }))).await.unwrap();
+        let body: Value = serde_json::from_slice(&axum::body::to_bytes(r.into_body(), 1 << 16).await.unwrap()).unwrap();
+        assert!(body.get("phoneNumbers").is_none());
+        assert_eq!(numbers(&state.db).iter().filter(|n| n.1 == OWNER).count(), 1);
+
+        // Deleting the agent removes its numbers, and only its own.
+        app.clone().oneshot(signed("DELETE", "/api/v1/platform/agents/agent_1", json!({}), OWNER)).await.unwrap();
+        assert_eq!(numbers(&state.db), vec![("pn_other".into(), "platform:proj_2".into(), "agent_x".into())]);
     }
 
     #[tokio::test]

@@ -141,7 +141,6 @@ struct MeetingRunner: Codable, Hashable, Sendable {
 
     static let noneText = "No computer is online. Gizzi joins calls from your own computer, not from Allternit\u{2019}s servers. Open Allternit on a computer that has Google Chrome, or add a cloud computer."
     static let noneAction = "Get a cloud computer"
-    static let noneActionURL = URL(string: "https://ai.allternit.com/settings/billing")!
     static let autoJoinHint = "Auto-join needs one of your computers online at the start time."
 
     var isNone: Bool { state != "ready" && state != "asleep" }

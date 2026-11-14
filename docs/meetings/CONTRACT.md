@@ -133,7 +133,7 @@ Codes: `400 invalid_request`, `400 unsupported_link`, `401` no/invalid token, `4
 
 | Route | Auth | Request | Response |
 |---|---|---|---|
-| `GET /meetings?range=now\|today\|week\|upcoming\|past&cursor=&limit=` | User | | `200 { meetings: Meeting[], next_cursor }` (agenda order: live first, then by `starts_at`) |
+| `GET /meetings?range=now\|today\|week\|upcoming\|past&cursor=&limit=` | User | | `200 { meetings: Meeting[], next_cursor }` (agenda order: live first, then by `starts_at`); each row includes `latest_session: {id, state, end_reason, live_at, ended_at, summary} \| null`, the same object `GET /meetings/:id` returns |
 | `POST /meetings` | User | `{ url, title?, starts_at?, reply_mode? }` | `201 Meeting`; if the same `url_key` and start already exists for the user, `200` with that row |
 | `GET /meetings/:id` | User | | `200 Meeting` with `gizzi` and `latest_session: {id, state, end_reason, live_at, ended_at, summary} \| null` (404 when not the caller's) |
 | `PATCH /meetings/:id` | User | `{ title?, auto_join?, reply_mode? }` | `200 Meeting` |

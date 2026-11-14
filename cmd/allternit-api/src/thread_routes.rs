@@ -683,10 +683,29 @@ fn bot_name(db: &DbHandle, bot_id: &str) -> String {
 /// approval card. A `read_only` bot gets `deny`.
 const WRITE_SEND_TOOLS: [&str; 10] = ["bash", "write", "edit", "send_agent_email", "message_agent", "project_send", "channel_*", "phone_*", "send_text", "send_email"];
 
+/// The send tools a hosted agent can be allowed ([`crate::platform_agents::tool_rules`] patterns).
+const PLATFORM_SEND_TOOLS: [&str; 4] = ["*phone_text*", "*phone_call*", "*allternit_mail*", "*agent_channel_post*"];
+
 /// The gizzi permission ruleset for a thread session: the bot's channel rules, then the
 /// envelope and taint restrictions.
+///
+/// A Platform agent (owner `platform:…`) shares its project's runtime with every other
+/// account's agents, so its threads start from the same rules as its API sessions: deny
+/// everything, then its own tools. Envelope and taint then tighten only the send tools it
+/// was allowed: gizzi applies the last matching rule, so an `ask` on a tool the agent
+/// lacks would loosen that tool's deny. Channel tool rules are owner settings a synthetic
+/// project owner can't make, and are not read for it.
 pub fn session_rules(db: &DbHandle, bot_id: &str, channel: &str, tainted: bool) -> Option<Value> {
-    let mut rules: Vec<Value> = crate::channel_tools::channel_rules(db, bot_id, channel).and_then(|v| v.as_array().cloned()).unwrap_or_default();
+    let platform = db
+        .connect()
+        .ok()
+        .and_then(|c| c.query_row("SELECT user_id FROM agents WHERE id = ?1", params![bot_id], |r| r.get::<_, String>(0)).ok())
+        .is_some_and(|o| o.starts_with("platform:"));
+    let mut rules: Vec<Value> = if platform {
+        crate::platform_agents::tool_rules(&crate::platform_agents::agent_tools(db, bot_id)).as_array().cloned().unwrap_or_default()
+    } else {
+        crate::channel_tools::channel_rules(db, bot_id, channel).and_then(|v| v.as_array().cloned()).unwrap_or_default()
+    };
     let envelope = crate::autonomy::envelope_of(db, bot_id);
     let action = match envelope.as_str() {
         "read_only" => Some("deny"),
@@ -694,7 +713,12 @@ pub fn session_rules(db: &DbHandle, bot_id: &str, channel: &str, tainted: bool) 
         _ => tainted.then_some("ask"),
     };
     if let Some(action) = action {
-        for tool in WRITE_SEND_TOOLS {
+        let tighten: Vec<&str> = if platform {
+            PLATFORM_SEND_TOOLS.into_iter().filter(|p| rules.iter().any(|r| r["permission"] == *p && r["action"] == "allow")).collect()
+        } else {
+            WRITE_SEND_TOOLS.to_vec()
+        };
+        for tool in tighten {
             rules.push(json!({ "permission": tool, "action": action, "pattern": "*" }));
         }
     }
@@ -2315,6 +2339,31 @@ mod tests {
         let r = rt.restricted.lock().unwrap().clone();
         assert_eq!(r.len(), 1, "only the mention thread is restricted");
         assert_eq!(r[0].1, json!([{ "permission": "bash", "action": "deny", "pattern": "*" }]));
+    }
+
+    /// A Platform agent's phone thread got only channel/envelope rules (none by default), so on a
+    /// shared project runtime bash and write were reachable from a call and every schema was sent.
+    #[tokio::test]
+    async fn a_platform_agents_thread_starts_from_deny_all_plus_its_own_tools() {
+        let state = setup("platform-rules").await;
+        crate::platform_agents::upsert_bot(&state.db, "platform:proj_1", "agent_p", &json!({ "name": "Desk", "tools": ["send_text"] })).unwrap();
+        let rt = FakeRt::default();
+        let mut b = body("Call from +14155550123");
+        b.bot_id = "agent_p".into();
+        b.created_by = Some("phone".into());
+        create(&state.db, &rt, "platform:proj_1", b).await.unwrap();
+        let r = rt.restricted.lock().unwrap().clone();
+        assert_eq!(r.len(), 1, "the platform agent's thread is restricted");
+        let rules = r[0].1.as_array().unwrap().clone();
+        assert_eq!(rules[0], json!({ "permission": "*", "pattern": "*", "action": "deny" }));
+        assert!(rules.iter().any(|x| x["permission"] == "*phone_text*" && x["action"] == "allow"));
+        // gizzi applies the last matching rule: bash must end denied even in a tainted thread,
+        // where the send tools the agent has drop to ask.
+        let tainted = session_rules(&state.db, "agent_p", "phone", true).unwrap();
+        let last = |perm: &str| tainted.as_array().unwrap().iter().rev().find(|x| x["permission"] == perm).map(|x| x["action"].clone());
+        assert_eq!(last("bash"), None, "bash is never mentioned after deny-all");
+        assert_eq!(last("*phone_text*"), Some(json!("ask")));
+        assert!(!tainted.as_array().unwrap().iter().any(|x| x["action"] == "ask" && x["permission"] == "*phone_call*"), "a tool the agent lacks never loosens to ask");
     }
 
     #[tokio::test]

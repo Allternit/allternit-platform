@@ -1,56 +1,98 @@
 ---
 title: Use the AI plan you already pay for
-description: "Which AI plans work in Allternit today, which need your own computer, what an API key does instead, and why the answer differs by vendor."
+description: "How to use your ChatGPT, Claude, Grok or Kimi plan in Allternit with no computer, what runs where, the risk you accept, and what an API key does instead."
 ---
 
-You may already pay for ChatGPT, Claude, Grok, Kimi, Gemini or GitHub Copilot. This page says what each one does in Allternit today. Open **Settings → Connections** and look under **Your AI** to connect. See [Connections](/guides/connections) for how the page works.
+You may already pay for ChatGPT, Claude, Grok, Kimi, Gemini or GitHub Copilot. This page says what each one does in Allternit. Open **Settings → Connections** and look under **Your AI** to connect. See [Connections](/guides/connections) for how the page works.
 
-Vendors set their own rules for how a plan can be used outside their own apps. Allternit follows those rules, so some plans work in more places than others. When a plan can't be used somewhere yet, its row says so in one line and offers another way.
+## How a plan runs with no computer
 
-## What works where today
+You do not need a computer of your own to use your Claude, ChatGPT, Grok or Kimi plan.
 
-| Plan | On your phone, the web, or Desktop with no computer | With your own computer | Another way today |
+- Allternit gives your account one private box on its servers. Only your account uses it.
+- The box runs the vendor's own command-line program, unchanged.
+- You sign in to the vendor yourself, in the sheet the row shows. Allternit never sees your password.
+- You manage your own account with the vendor: your plan, your limits, your billing.
+- Your plan answers only the messages you send yourself, in chat, with tools turned off. Bots, routines, schedules and agents never use it.
+
+## The risk
+
+
+Each vendor sets its own terms for how a plan can be used outside its own apps. Before the first connect, the sheet shows this text and asks you to accept it. The words below are the ones the sheet shows, with `<Vendor>` replaced by the vendor's name:
+
+> Your plan runs on an Allternit server, in a private space only your account uses.
+>
+> `<Vendor>`'s terms may not allow using a plan this way. `<Vendor>` could limit or close your account. Allternit does not control that and cannot undo it.
+>
+> You sign in yourself. Your sign-in stays in that private space and Allternit does not copy it anywhere else. Disconnect signs you out and deletes it.
+>
+> Your plan only answers messages you send yourself, in chat. Bots, routines, schedules and agents never use it.
+
+The buttons are **I understand, connect** and **Use a key instead**. Allternit saves that you accepted, for your account, that vendor and that version of the text. If the text changes, you accept it again. If you would rather not take the risk, use an API key for the same vendor (below).
+
+## What works where
+
+| Plan | With no computer | With your own computer | Another way |
 | --- | --- | --- | --- |
 | Allternit Cloud | Yes, included | Yes | Free accounts include $2 a month of use |
-| ChatGPT (Plus or Pro) | Not yet | Yes. Codex signs in on your computer. | An OpenAI API key works with no computer |
-| Claude (Pro or Max) | Not yet. The row says "Not available yet. Use a key for now." | Yes, through Claude Code on your computer | An Anthropic API key works with no computer |
-| Grok (SuperGrok) | Not yet | Yes, through the Grok CLI on your computer | An xAI API key works with no computer |
-| Kimi | Not yet | Yes, through the Kimi CLI on your computer | A Kimi API key works with no computer |
+| Claude (Pro or Max) | Yes, on an Allternit server | Yes, through Claude Code on your computer | An Anthropic API key |
+| ChatGPT (Plus or Pro) | On the phone app, Desktop and Gizzi Code, sign in on the device. On the web with no computer, on an Allternit server when the row is on. | Yes. Codex signs in on your computer. | An OpenAI API key |
+| Grok (SuperGrok) | On an Allternit server, when the row is on | Yes, through the Grok CLI on your computer | An xAI API key |
+| Kimi | On an Allternit server, when the row is on | Yes, through the Kimi CLI on your computer | A Kimi API key |
 | Gemini | The Gemini plan can't be used here. A free Google AI Studio key works with no computer. | The Gemini CLI signs in on your computer | A Google AI Studio key |
-| GitHub Copilot | Coming soon | Coming soon | Connect GitHub as an app |
+| GitHub Copilot | Yes, once connected with your GitHub account, when the row is on | Yes | Connect GitHub as an app |
 
-A row marked "not yet" or "coming soon" is not a promise of a date. It turns on when the vendor's rules and our own tests allow it, and the row changes on its own without an app update.
+Each vendor's row is turned on separately. A row that is not on yet says **Not available yet. Use a key for now.** and offers the key row, and it changes by itself without an app update. Older app versions show **Update the app to connect this plan.** The GitHub Copilot row says **Coming soon.** until Allternit has turned it on. Once it is on, you sign in with GitHub and Copilot answers messages you send yourself in chat, with tools off, under the same rules as the other plans. Removing it revokes the sign-in at GitHub.
+
+## ChatGPT: sign in on your own device
+
+On Allternit Desktop, the iPhone app and Gizzi Code, ChatGPT uses OpenAI's own Sign in with ChatGPT. It is a different path from the server box above.
+
+1. Tap the ChatGPT row. The same text as above is shown first, then OpenAI's sign-in page opens.
+2. Sign in to ChatGPT there. The page returns to the app on your device and the row turns **Connected**.
+3. Your tokens stay on that device. Allternit's servers never receive them. Chat with these models goes from your device straight to OpenAI.
+
+Disconnect signs you out at OpenAI and deletes the tokens from the device. If your plan hits its usage limit, the row says **Needs you · ChatGPT limit reached**. Like the server box, this path is for messages you send yourself, in chat, with tools off.
+
+On the web or the phone layout with no computer, the ChatGPT row uses the server box when it is on. If a computer of yours is online and signed in, that computer's row is used instead.
+
+## Your chats sync across devices
+
+A chat with a plan model is saved to your account in Allternit's cloud, so you can open it on your phone, on the web and on Desktop. This works with no computer. It does not change who can use your plan: only you, from a message you send.
+
+## What a plan can't do
+
+A plan model answers in chat only. It does not run tools, so it will not open files, run commands or use apps for you. It does not appear in the bot, routine, schedule or agent model pickers. If you want a bot to run on a vendor's model, use that vendor's API key. Allternit may also limit how often you can send: about 20 messages in 5 minutes, and one message at a time.
 
 ## API keys
 
-An API key is billed by the vendor on its own account, not by your plan. It works on every device with no computer.
+An API key is billed by the vendor on its own account, not by your plan. It works on every device with no computer, and it works for bots.
 
 - Keys work for OpenAI, Anthropic, Google AI Studio, xAI, OpenRouter, Together, Fireworks, DeepInfra, Groq, DeepSeek and Kimi.
 - Allternit checks the key with the vendor first, then saves it encrypted on your account. It never shows the key again, only the last few characters.
 - If a vendor rejects a key later, the row says **Needs you · The key was rejected**. Paste a new one.
 
-## Why some plans need your computer
+## Connect a plan with no computer
 
-A plan is made to be used inside the vendor's own tool. For ChatGPT, Claude, Grok and Kimi, that tool is a command-line program that has to run on a computer, and it keeps your sign-in on that computer. Allternit starts the vendor's sign-in for you and shows the steps, then the program on your computer does the work.
+1. Open **Settings → Connections** and tap the plan's row.
+2. Read the text and tap **I understand, connect**.
+3. Follow the steps. Claude shows a link, then asks for the code the vendor gives you. ChatGPT and Grok show a code and a link. Kimi uses one of those two. The row turns **Connected** by itself.
 
-That means:
+The steps for each vendor are in [Connections](/guides/connections#connect-something).
 
-- Your sign-in stays on your computer. Allternit does not copy it to its servers.
-- The computer has to be on and online. If it isn't, the row says **Needs you · Your computer is offline**.
-- Your phone and the web can still use that plan through your computer while it is on.
+## Disconnect
 
-If you have no computer, use the key for that vendor from the table above, or Allternit Cloud.
+Open the row and choose **Remove**. Allternit signs you out of the vendor, deletes your sign-in from the box, and removes the row. When you remove your last plan, the box is deleted. If you delete your Allternit account, the box and everything in it are deleted too. Your accepted-text record is erased with the account.
 
-## Connect a plan on a computer
+An idle box stops after 5 minutes and wakes when you next send a message, so the first message after a pause can be slower. A box you have not used for 90 days is deleted, and you sign in again next time.
 
-1. Open **Settings → Connections** on the computer, or choose that computer first if you are on another device.
-2. Tap the plan's row.
-3. Follow the sheet. It shows the steps for that vendor, and the row turns **Connected** by itself when you finish.
+## If the vendor limits your plan
 
-The steps for each vendor are listed in [Connections](/guides/connections#connect-something).
+The vendor decides what your plan can do. If it limits or closes your account, the row says **Needs you · The vendor limited this plan**. Allternit has no way to undo that and does not work around it. Use a key, or take it up with the vendor.
 
 ## Related
 
 - [Connections](/guides/connections)
 - [Connected subscriptions](/guides/subscriptions)
 - [Coding tools on any computer](/guides/subscriptions#coding-tools-on-any-computer)
+- [Brain runner (operations)](/operations/brain-runner)

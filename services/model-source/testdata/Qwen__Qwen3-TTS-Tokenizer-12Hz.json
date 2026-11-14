@@ -1,0 +1,66 @@
+{
+  "created_at": "2026-11-14T06:36:43Z",
+  "files": [
+    {
+      "lfs": false,
+      "path": ".gitattributes",
+      "sha256": "11ad7efa24975ee4b0c3c3a38ed18737f0658a5f75a0a96787b576a78a023361",
+      "size": 1519
+    },
+    {
+      "lfs": false,
+      "path": "README.md",
+      "sha256": "1d9016fbb07873cd720d008423c3da275eac7a20c3997a525594025608d3e1cf",
+      "size": 3482
+    },
+    {
+      "lfs": false,
+      "path": "config.json",
+      "sha256": "ee65bb901c876664ab8707c487157aa1a6ee57c65969b28fb5ec9dc211e68167",
+      "size": 2336
+    },
+    {
+      "lfs": false,
+      "path": "configuration.json",
+      "sha256": "6bc26d64eb5024b4d1dab5a52371958b429256d6c9d59787f1f5294a54e0cebd",
+      "size": 76
+    },
+    {
+      "lfs": true,
+      "path": "model.safetensors",
+      "sha256": "836b7b357f5ea43e889936a3709af68dfe3751881acefe4ecf0dbd30ba571258",
+      "size": 682293092
+    },
+    {
+      "lfs": false,
+      "path": "preprocessor_config.json",
+      "sha256": "fcb3805e597e786d4067706e602f6688524640f8d3396790e2e09b5942fcbdfb",
+      "size": 234
+    }
+  ],
+  "generator": "freeweights-manifest/0.1.0",
+  "id": "Qwen/Qwen3-TTS-Tokenizer-12Hz",
+  "license": {
+    "file_path": "README.md",
+    "file_sha256": "1d9016fbb07873cd720d008423c3da275eac7a20c3997a525594025608d3e1cf",
+    "id": "Apache-2.0",
+    "name": "Apache License 2.0",
+    "redistribution": "yes"
+  },
+  "schema_version": 0,
+  "section": "alt.freeweights.qwen",
+  "sources": [
+    {
+      "last_checked": "2026-11-14T06:36:43Z",
+      "priority": 100,
+      "type": "source",
+      "url": "https://huggingface.co/Qwen/Qwen3-TTS-Tokenizer-12Hz/resolve/7dd38ad4e9bad454aae9cd937d0cd577604fe229/"
+    }
+  ],
+  "upstream": {
+    "commit": "7dd38ad4e9bad454aae9cd937d0cd577604fe229",
+    "host": "huggingface.co",
+    "repo": "Qwen/Qwen3-TTS-Tokenizer-12Hz",
+    "url": "https://huggingface.co/Qwen/Qwen3-TTS-Tokenizer-12Hz/tree/7dd38ad4e9bad454aae9cd937d0cd577604fe229"
+  }
+}

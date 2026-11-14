@@ -784,6 +784,22 @@ export namespace PermissionNext {
     return result
   }
 
+  /**
+   * Tools whose last matching rule is deny `*`. Unlike `disabled`, this has no
+   * mode logic (bypass, dontAsk, plan, GIZZI_SKIP_PERMISSIONS): `evaluate` never
+   * skips a configured deny, so a tool hidden here could never run anyway.
+   * Used to keep denied tool schemas out of the model request.
+   */
+  export function hidden(tools: string[], ruleset: Ruleset): Set<string> {
+    const result = new Set<string>()
+    for (const tool of tools) {
+      const permission = EDIT_TOOLS.includes(tool) ? "edit" : tool
+      const rule = ruleset.findLast((r) => Wildcard.match(permission, r.permission))
+      if (rule && rule.pattern === "*" && rule.action === "deny") result.add(tool)
+    }
+    return result
+  }
+
   /** User rejected without message - halts execution */
   export class RejectedError extends Error {
     constructor() {

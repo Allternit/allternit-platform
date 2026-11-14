@@ -929,11 +929,12 @@ mod tests {
         pool
     }
 
+    // 16 GB: room for two 4 GB free computers (MIN_COMPUTER_MEMORY_MB) after the 2 GB headroom.
     async fn insert_host(pool: &sqlx::PgPool, id: &str) {
         sqlx::query(
             r#"
             INSERT INTO provisioned_hosts (id, name, incus_endpoint, cpu_cores_total, memory_mb_total, disk_gb_total)
-            VALUES ($1, $1, 'https://incus.example.com:8443', 8, 8192, 100)
+            VALUES ($1, $1, 'https://incus.example.com:8443', 8, 16384, 100)
             "#,
         )
         .bind(id)

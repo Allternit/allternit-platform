@@ -62,16 +62,13 @@ fn who(id: &str, org: Option<&str>) -> Value {
 }
 
 async fn call(router: &Router, method: &str, path: &str, who: &Value, body: Option<Value>) -> (StatusCode, Value) {
-    let mut b = Request::builder().method(method).uri(path).header("x-test-caller", who.to_string());
+    let b = Request::builder().method(method).uri(path).header("x-test-caller", who.to_string());
     let req = match body {
         Some(body) => b
             .header("content-type", "application/json")
             .body(Body::from(body.to_string()))
             .unwrap(),
-        None => {
-            b = b;
-            b.body(Body::empty()).unwrap()
-        }
+        None => b.body(Body::empty()).unwrap(),
     };
     let response = router.clone().oneshot(req).await.unwrap();
     let status = response.status();

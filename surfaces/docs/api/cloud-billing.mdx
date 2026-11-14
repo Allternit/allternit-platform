@@ -3,7 +3,7 @@ title: "Cloud billing API"
 description: "Credit packs, plans, auto top-up, disputes and the Stripe webhook on api.allternit.com (allternit-cloud-api)."
 ---
 
-These routes live in `allternit-cloud-api` (`cmd/allternit-cloud-api`) and are served at `https://api.allternit.com`. The web app's client is `src/lib/billing.ts` in `allternit-ai`. Every authenticated route takes a Clerk session or an `allternit_*` API token with the `billing` scope.
+These routes live in `allternit-cloud-api` (`cmd/allternit-cloud-api`) and are served at `https://api.allternit.com`. The web app's client is `src/lib/billing.ts` in `allternit-ai`. Every authenticated route takes a Clerk session or an Allternit API key (`alt_…`, created under ACI › Operator keys; legacy `allternit_*` tokens still work) with the `billing` scope.
 
 Routes that call Stripe answer `503 {"error":"billing_not_configured"}` when `STRIPE_SECRET_KEY` is unset, and `502 {"error":"billing_upstream_error"}` when Stripe rejects the call.
 

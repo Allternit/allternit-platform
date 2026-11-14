@@ -33,6 +33,7 @@ Account rows come from cloud-api (`connections.rs`). Rows about a computer come 
 | A voice key | `user_voice_keys` |
 | A connector, channel or app | The connector or gateway record |
 | A command-line tool on a computer | `cli_provider_detector.rs` and `provider_routes.rs`, plus a login using `cli_tools.rs` |
+| A vendor plan with no computer (`runs_on: "runner"`) | The brain runner: a vendor command-line program in a private box per person. See [Brain runner](/operations/brain-runner) and [Plan runner rows](/api/connections#plan-runner-rows) |
 
 Rules for the row:
 
@@ -41,6 +42,10 @@ Rules for the row:
 - If the account can't use the row now, set `available: false`, a plain `unavailable_reason`, and up to two `fallbacks` that are other row ids.
 - Never return a key or token. Return only a masked tail.
 - Keep the kit's routes free of `require_compute`.
+- A `runner` row also needs: a `disclosure` object, `person_only: true`, and `plan/<vendor>/<model>` ids in `models`. `connect` without an accepted disclosure version returns `409 disclosure_required` with the text. Clients show that text as given.
+- Only clients that send `caps=runner` get the row as available. Others get `available: false` with `update_app`.
+- A plan model answers messages a person sends in chat. Keep any model with `person_only` out of bot, routine, schedule, mission and sub-agent pickers, and never send tools with it.
+- ChatGPT on the person's own device (Desktop, iOS, Gizzi Code) uses OpenAI's Sign in with ChatGPT and keeps its tokens on the device. It does not use a runner row.
 
 ## 3. Write the copy
 
@@ -51,4 +56,5 @@ Use plain words and the four status words only. Say what the row needs from a pe
 - Run the registry through the client with the server row off, on and needs, and read each state on the page.
 - Confirm a missing server row falls back to the catalog entry with `state: off`.
 - Smoke-boot allternit-api after a runtime route change. `design_connector_routes.rs` already matches a `/connections` path.
+- For a runner row, check `connect` with and without `accept_disclosure`, a device token and a missing `X-Allternit-Turn` header (both `plan_person_only`), and that disconnect deletes the sign-in.
 - Run `python3 surfaces/docs/scripts/check_links.py` and update the [Connections](/guides/connections) guide if the new row changes what a person sees.

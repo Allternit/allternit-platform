@@ -26,7 +26,7 @@ The Mail VPS also runs the prod Postgres, prod allternit-api, MinIO, the trading
 | Limit | Value | Where it's set |
 |---|---|---|
 | CPU | `limits.cpu=1`, `limits.cpu.priority=1` (Incus default is 10) | cloud-api `ALLTERNIT_HOSTED_DRIVER_CPU`, `_CPU_PRIORITY` |
-| Memory | `limits.memory=2048MiB`, no swap | `ALLTERNIT_HOSTED_DRIVER_MEMORY_MB`; profile `limits.memory.swap=false` |
+| Memory | `limits.memory=4096MiB` (the minimum), no swap | `ALLTERNIT_HOSTED_DRIVER_MEMORY_MB`; profile `limits.memory.swap=false` |
 | Disk | 10 GiB root quota on the btrfs pool `cow` (loop file `/var/lib/incus/disks/cow.img`); the `dir` pool can't enforce a quota | `ALLTERNIT_HOSTED_DRIVER_DISK_GB` |
 | Processes, disk I/O | `limits.processes=2000`, `limits.disk.priority=1` | profile `allternit-hosted-driver` |
 | Pool | at most 4 awake at once, across all projects; the 5th create or start answers `503 computer_capacity` and leaves no row behind | `ALLTERNIT_HOSTED_DRIVER_MAX_RUNNING` |
@@ -83,7 +83,7 @@ The public launch and the prices are Eoj's call.
 | `ALLTERNIT_HOSTED_DRIVER_HOSTS` | unset (shared pool) | Comma-separated fleet host ids. When set, only these hosts take hosted-driver computers, and they take nothing else. Prod: `host_mail`. |
 | `ALLTERNIT_HOSTED_DRIVER_IMAGE` | `allternit-computer-headless` | Image alias for developer computers. |
 | `ALLTERNIT_HOSTED_DRIVER_CPU` / `_CPU_PRIORITY` | `1` / `1` | `limits.cpu` and `limits.cpu.priority`. |
-| `ALLTERNIT_HOSTED_DRIVER_MEMORY_MB` / `_DISK_GB` | `2048` / `10` | `limits.memory` and the root disk quota. |
+| `ALLTERNIT_HOSTED_DRIVER_MEMORY_MB` / `_DISK_GB` | `4096` / `10` | `limits.memory` and the root disk quota. Memory below 4096 is raised to 4096. |
 | `ALLTERNIT_HOSTED_DRIVER_MAX_RUNNING` | `4` | Awake developer computers across the pool. Past it: `503 computer_capacity`. |
 | `ALLTERNIT_HOSTED_DRIVER_PER_KEY` | `2` | Default cap on live computers per API key. Projects can lower or raise it in settings, up to the max. |
 | `ALLTERNIT_HOSTED_DRIVER_MAX_PER_KEY` | `10` | Upper bound for that setting. |
@@ -92,13 +92,23 @@ The public launch and the prices are Eoj's call.
 
 Free computers, and the hosted runtime behind each Platform API project (owner `platform:<project_id>`), reserve only disk in the host ledger, so awake free computers are checked against host memory when they start. A create or wake is admitted only if the memory of paid computers on the host, plus the free computers that are running, waking or provisioning, plus this one, fits under the host total minus headroom. If it does not, the longest-idle running free computer on that host (idle at least 2 minutes, never the one being started) is put to sleep with reason `pool_full`, and the check runs once more. Still full: `503 computer_capacity` with `Retry-After: 30`. The Platform API sends the same code and header for `runtime_starting`.
 
+## 4 GB minimum
+
+No Allternit computer is created or woken with less than 4096 MB of memory. The floor is the constant `MIN_COMPUTER_MEMORY_MB`, and it applies to free computers, the hosted driver and project runtimes, and to paid and credits computers. An env value below 4096 is raised to 4096.
+
+A computer that already exists with less memory is raised to 4096 MB the next time it wakes, before the capacity check. If the resize fails, it wakes at its old size and the next wake tries again. The raise applies to free, project runtime and hosted driver computers on Incus. It does not apply to Orgo computers or to paid computers.
+
+The floor changes no price. A computer minute is a flat rate and does not depend on memory.
+
+Because each awake computer now reserves 4096 MB, a host fits fewer awake computers at once. Expect `computer_capacity` sooner when a host is full.
+
 A project runtime that never connected is replaced at most three times (after 5, 15 and 45 minutes), and not while a new one would be refused for capacity.
 
 | Env | Default | Meaning |
 |---|---|---|
 | `ALLTERNIT_HOST_MEMORY_HEADROOM_MB` | `2048` | Memory kept free on each host. |
 | `ALLTERNIT_PLATFORM_RUNTIME_IMAGE` | the free image | Image for project runtimes (for example `allternit-computer-headless`). |
-| `ALLTERNIT_PLATFORM_RUNTIME_CPU` / `_MEMORY_MB` / `_DISK_GB` | the free size (`2` / `2048` / `10`) | Size of project runtimes. |
+| `ALLTERNIT_PLATFORM_RUNTIME_CPU` / `_MEMORY_MB` / `_DISK_GB` | the free size (`2` / `4096` / `10`) | Size of project runtimes. Memory below 4096 is raised to 4096. |
 
 The provisioned-instance view also returns `provider` (`incus`, or the endpoint scheme), `sleeps_when_idle`, `state_detail` (`waking` or null) and `retry_after_seconds` (null).
 
