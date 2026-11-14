@@ -38,10 +38,14 @@ spec:
         {{- with $root.Values.podLabels }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
-      {{- if or $root.Values.podAnnotations (and (not $apparmorField) (not $root.Values.sandbox.privileged)) }}
+      {{- if or $root.Values.podAnnotations $e.customTools (and (not $apparmorField) (not $root.Values.sandbox.privileged)) }}
       annotations:
         {{- with $root.Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- if $e.customTools }}
+        # Restart the workers when the tools file changes (read once at start).
+        checksum/tools: {{ include "sandboxes.toolsFile" $e | sha256sum }}
         {{- end }}
         {{- if and (not $apparmorField) (not $root.Values.sandbox.privileged) }}
         # Kubernetes before 1.30 sets AppArmor through this annotation.
@@ -107,6 +111,11 @@ spec:
                   fieldPath: metadata.name
             - name: ALLTERNIT_SELF_HOSTED
               value: "1"
+            {{- if $e.customTools }}
+            # The tools file (customTools), same as --tools-file.
+            - name: ALLTERNIT_WORKER_TOOLS
+              value: /etc/allternit/worker-tools/tools.json
+            {{- end }}
             {{- with $root.Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -135,6 +144,11 @@ spec:
               mountPath: /var/lib/gizzi-worker
             - name: tmp
               mountPath: /tmp
+            {{- if $e.customTools }}
+            - name: tools
+              mountPath: /etc/allternit/worker-tools
+              readOnly: true
+            {{- end }}
           resources:
             {{- toYaml $e.resources | nindent 12 }}
       volumes:
@@ -148,6 +162,11 @@ spec:
           emptyDir: {}
         - name: tmp
           emptyDir: {}
+        {{- if $e.customTools }}
+        - name: tools
+          configMap:
+            name: {{ include "sandboxes.envFullname" $ctx }}-tools
+        {{- end }}
       {{- with $root.Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

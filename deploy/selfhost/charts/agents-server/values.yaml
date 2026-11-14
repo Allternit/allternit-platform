@@ -11,10 +11,20 @@ image:
 imagePullSecrets: []
 # - name: ghcr-allternit
 
-# Version 1 runs ONE replica. The agent loop for a session lives in one server
-# process; after a restart, sessions are rebuilt from the events in PostgreSQL.
-# Do not raise this.
+# Server replicas. More than one needs PostgreSQL (settings.database.url); the
+# render fails on SQLite. Replicas share all state through the database. A
+# turn runs on one replica; if that replica dies, the session ends with error
+# code server_restarted and the client sends the message again. With more than
+# one replica the chart adds a PodDisruptionBudget (minAvailable 1).
+# Live updates between replicas use PostgreSQL LISTEN/NOTIFY, which needs a
+# direct or session-mode connection (not a transaction-mode pooler such as
+# PgBouncer in transaction mode). Without it, replicas fall back to polling
+# and a turn on another replica shows up 1-5 s late.
 replicaCount: 1
+
+# Empty: settings.server.shutdown_grace + 15 s (60 with the default 45s).
+# A value here may raise it, not lower it.
+terminationGracePeriodSeconds: null
 
 # The settings file, rendered into a ConfigMap and mounted at
 # /etc/allternit/settings.yaml. Schema:
@@ -26,6 +36,10 @@ settings:
   server:
     # The URL clients use, e.g. https://agents.example.internal
     public_url: ""
+    # On SIGTERM, how long running turns get to finish before the replica
+    # fails them (session error code server_restarted). The pod's
+    # terminationGracePeriodSeconds follows it (+15 s).
+    shutdown_grace: 45s
     # Browser origins allowed to call the API. iOS and the gizzi CLI do not need CORS.
     cors_origins:
       - https://ai.allternit.com   # web app; also Desktop's hosted fallback
@@ -58,6 +72,11 @@ settings:
     log_format: json
   health:
     check_interval: 60s
+  sessions:
+    # A session with no turn running and no pending tool call releases its
+    # worker after this long. Set 1h to keep the worker (and its /workspace)
+    # between turns the way 1.0 did.
+    idle_timeout: 30s
 
 # Secret environment variables. Each name in `keys` is read from the Secret
 # key of the same name and set as an environment variable.
@@ -202,7 +221,10 @@ securityContext:
   capabilities:
     drop: [ALL]
 
-# Scratch space for the gizzi child (its own session cache). Durable state is in PostgreSQL.
+# Scratch space per pod (an emptyDir, never shared between replicas): the
+# replica id file and the gizzi child's session cache. Durable state is in
+# PostgreSQL. Do not swap it for a shared ReadWriteMany volume: replicas would
+# share one replica id.
 dataVolume:
   sizeLimit: 5Gi
 

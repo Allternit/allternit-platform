@@ -157,12 +157,43 @@ and list it under `autoscaling.metrics`.
 On scale-down, a worker gets SIGTERM, hands its item back (`/release`) and
 exits. Another worker takes the item at once.
 
+## Custom tools
+
+An agent's custom tools are answered by the worker. The gizzi worker runs
+command tools from a tools file. List them per environment (or in
+`defaults`, merged with each environment's):
+
+```yaml
+environments:
+  - name: default
+    id: env_...
+    keySecret: { name: allternit-env-default }
+    customTools:
+      lookup_ticket:
+        command: ["/usr/local/bin/lookup-ticket", "--json"]
+        timeoutMs: 120000
+```
+
+The chart renders them into a ConfigMap (`<release>-sandboxes-<env>-tools`),
+mounts it read-only at `/etc/allternit/worker-tools/tools.json` and sets
+`ALLTERNIT_WORKER_TOOLS` to that path. A change restarts the workers.
+
+- The tool input JSON goes to the command on stdin. Its stdout is the result
+  (100 KiB cap). A non-zero exit returns an error to the model.
+- The command runs in the same bubblewrap sandbox and network mode as `bash`,
+  so it must exist in the worker image (build your own image on top of it)
+  or in `/workspace`.
+- A name equal to a worker built-in tool makes the worker exit at start.
+- Only commands. A custom tool without an entry here gets an error result.
+
 ## Values that matter
 
 | Key | Default | What it does |
 |---|---|---|
 | `server.url` | required | The server URL as the workers reach it. |
-| `environments[]` | `[]` | One worker group per environment: `name`, `id`, `keySecret`, `network`, `allowedEgress`, `replicas`, `autoscaling`. |
-| `defaults.*` | see values.yaml | Defaults for every environment: `blockMs`, `reclaimOlderThanMs`, `autoStop`, `workspace`, `resources`. |
+| `environments[]` | `[]` | One worker group per environment: `name`, `id`, `keySecret`, `network`, `allowedEgress`, `replicas`, `autoscaling`, `customTools`. |
+| `defaults.*` | see values.yaml | Defaults for every environment: `blockMs`, `reclaimOlderThanMs`, `autoStop`, `customTools`, `workspace`, `resources`. |
+| `reclaimOlderThanMs` | `null` | `--reclaim-older-than-ms`. Also take a live lease last renewed at least this long ago (a stuck worker). Expired leases are always claimable without it. Below 30000 is raised to 30000. |
+| `customTools` | `{}` | Command tools for the agent's custom tools: `name: {command: [argv...], timeoutMs}`. See "Custom tools". |
 | `sandbox.*` | user namespace on | See "Sandbox". |
 | `fullEgressExcept` | private ranges | What a `full` environment still cannot reach. |

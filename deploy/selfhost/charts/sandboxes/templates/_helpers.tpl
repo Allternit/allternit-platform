@@ -48,3 +48,29 @@ allternit.com/environment: {{ .env.name | quote }}
 {{- default "default" .Values.serviceAccount.name -}}
 {{- end -}}
 {{- end -}}
+
+{{/*
+The worker tools file for one merged environment, as JSON. Checks each entry:
+a tool name the model accepts, and a non-empty command list.
+*/}}
+{{- define "sandboxes.toolsFile" -}}
+{{- $tools := dict -}}
+{{- range $name, $t := .customTools -}}
+{{- if not (regexMatch "^[a-zA-Z0-9_-]{1,64}$" $name) -}}
+{{- fail (printf "environments[%s].customTools: tool name %q must be 1-64 letters, digits, _ or -" $.name $name) -}}
+{{- end -}}
+{{- $cmd := dig "command" list (default (dict) $t) -}}
+{{- if or (not (kindIs "slice" $cmd)) (eq (len $cmd) 0) -}}
+{{- fail (printf "environments[%s].customTools.%s.command must be a non-empty list (argv)" $.name $name) -}}
+{{- end -}}
+{{- $entry := dict "command" (list) -}}
+{{- range $cmd -}}
+{{- $_ := set $entry "command" (append $entry.command (toString .)) -}}
+{{- end -}}
+{{- with $t.timeoutMs -}}
+{{- $_ := set $entry "timeout_ms" (int64 .) -}}
+{{- end -}}
+{{- $_ := set $tools $name $entry -}}
+{{- end -}}
+{{- toPrettyJson (dict "tools" $tools) -}}
+{{- end -}}

@@ -25,6 +25,15 @@ export type Error = {
      * `server_restarted` (session error event: the replica running the turn stopped; resend the message).
      */
     code: string;
+    /**
+     * With `custom_tool_conflict`, the custom tool name that clashes.
+     */
+    tool?: string;
+    /**
+     * With `custom_tool_conflict`, what the name clashes with, as `builtin:<tool>`
+     * or `mcp:<server>:<tool>`.
+     */
+    clashes_with?: string;
   };
 };
 

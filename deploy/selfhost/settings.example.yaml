@@ -28,6 +28,15 @@ server:
     # Packaged Allternit Desktop: the window is served by the local runtime
     # on this origin.
     - http://127.0.0.1:8013
+  # On stop, how long running turns get to finish before they fail with
+  # session error code server_restarted. Needs server 1.1 or later (1.0
+  # refuses unknown keys), so it stays commented here; the default is 45s.
+  # shutdown_grace: 45s
+
+sessions:
+  # An idle session (no turn, no pending tool call) releases its worker after
+  # this long. 1h keeps the worker and its /workspace between turns.
+  idle_timeout: 30s
 
 database:
   # postgres://user:password@host:5432/db, set in the environment so the

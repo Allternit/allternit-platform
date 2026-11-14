@@ -1187,6 +1187,14 @@ components:
                 `idempotency_in_progress` (409, the first request with this key is still running),
                 `server_restarted` (session error event: the replica running the turn stopped; resend the message).
               examples: [model_not_mapped]
+            tool:
+              type: string
+              description: With `custom_tool_conflict`, the custom tool name that clashes.
+            clashes_with:
+              type: string
+              description: |
+                With `custom_tool_conflict`, what the name clashes with, as `builtin:<tool>`
+                or `mcp:<server>:<tool>`.
     ListEnvelope:
       type: object
       required: [data, has_more, next_cursor]

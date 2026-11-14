@@ -9,6 +9,21 @@ First run (once):
 
 Then make an environment and its worker key, and install the sandboxes chart:
   see deploy/selfhost/charts/sandboxes/README.md
+{{- if gt (int .Values.replicaCount) 1 }}
+
+Replicas: {{ .Values.replicaCount }} on PostgreSQL, with a PodDisruptionBudget (minAvailable 1).
+  Live updates between replicas use LISTEN/NOTIFY, which needs a direct or
+  session-mode connection in ALLTERNIT_DATABASE_URL. Through a
+  transaction-mode pooler the replicas fall back to polling, and events of a
+  turn on another replica arrive 1-5 s late. GET /v1/server/info shows the
+  replica count. A turn lost with its replica ends the session with error
+  code server_restarted; the client sends the message again.
+{{- else }}
+
+Replicas: 1. To run more, set replicaCount (PostgreSQL only). They need a
+  direct or session-mode connection for LISTEN/NOTIFY; otherwise they poll
+  and events from another replica arrive 1-5 s late.
+{{- end }}
 
 Check it:
   kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "agents-server.fullname" . }} 8400:{{ .Values.service.port }}

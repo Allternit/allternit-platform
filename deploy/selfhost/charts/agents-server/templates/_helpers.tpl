@@ -105,3 +105,62 @@ through Helm's map merge.
 {{ toYaml . }}
 {{- end }}
 {{- end -}}
+
+{{/*
+A settings duration ("45s", "1500ms", "2m", "1h") as whole seconds, rounded up.
+Same pattern as the settings schema: a positive number and one unit.
+*/}}
+{{- define "agents-server.durationSeconds" -}}
+{{- $d := toString . -}}
+{{- if not (regexMatch "^[0-9]*[1-9][0-9]*(ms|s|m|h)$" $d) -}}
+{{- fail (printf "settings.server.shutdown_grace %q is not a duration like 45s, 1500ms, 2m or 1h" $d) -}}
+{{- end -}}
+{{- $n := regexFind "^[0-9]+" $d | int64 -}}
+{{- $unit := regexFind "(ms|s|m|h)$" $d -}}
+{{- if eq $unit "ms" -}}{{ div (add $n 999) 1000 }}
+{{- else if eq $unit "s" -}}{{ $n }}
+{{- else if eq $unit "m" -}}{{ mul $n 60 }}
+{{- else -}}{{ mul $n 3600 }}
+{{- end -}}
+{{- end -}}
+
+{{/*
+terminationGracePeriodSeconds for the server pod: server.shutdown_grace (how
+long a stopping replica waits for running turns, default 45s) plus 15 seconds
+to fail the turns that are left and close the database pool. An explicit
+.Values.terminationGracePeriodSeconds may raise it, never lower it.
+*/}}
+{{- define "agents-server.terminationGrace" -}}
+{{- $grace := include "agents-server.durationSeconds" (dig "server" "shutdown_grace" "45s" (default (dict) .Values.settings)) | int64 -}}
+{{- $min := add $grace 15 -}}
+{{- with .Values.terminationGracePeriodSeconds -}}
+{{- if lt (int64 .) $min -}}
+{{- fail (printf "terminationGracePeriodSeconds %d is below settings.server.shutdown_grace + 15s (%d). Raise it or leave it empty." (int64 .) $min) -}}
+{{- end -}}
+{{- int64 . -}}
+{{- else -}}
+{{- $min -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Fails the render when more than one replica would run on a single-node store.
+The server uses SQLite in data_dir (or memory with ephemeral: true) when
+settings.database.url is not set; both are per pod. A secret reference
+(env:NAME, file:, vault:) always resolves to a Postgres URL; when the chart
+creates the Secret itself (secret.create) the value behind env:NAME is checked too.
+*/}}
+{{- define "agents-server.checkReplicas" -}}
+{{- if gt (int .Values.replicaCount) 1 -}}
+{{- $url := toString (dig "database" "url" "" (default (dict) .Values.settings)) -}}
+{{- if or (eq $url "") (eq $url "<nil>") -}}
+{{- fail (printf "replicaCount is %d, but settings.database.url is not set, so each pod would use its own SQLite file (or memory). More than one replica needs PostgreSQL: set settings.database.url (default env:ALLTERNIT_DATABASE_URL, with a postgres:// URL in the Secret), or set replicaCount: 1." (int .Values.replicaCount)) -}}
+{{- end -}}
+{{- if and .Values.secret.create (hasPrefix "env:" $url) -}}
+{{- $v := toString (index (default (dict) .Values.secret.values) (trimPrefix "env:" $url) | default "") -}}
+{{- if and $v (not (or (hasPrefix "postgres://" $v) (hasPrefix "postgresql://" $v))) -}}
+{{- fail (printf "replicaCount is %d, but secret.values.%s is not a postgres:// URL. More than one replica needs PostgreSQL, or set replicaCount: 1." (int .Values.replicaCount) (trimPrefix "env:" $url)) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}

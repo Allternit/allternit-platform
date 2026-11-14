@@ -1,0 +1,24 @@
+{{- /*
+One ConfigMap per environment that has customTools: the gizzi worker's tools
+file, {"tools": {"<name>": {"command": [...], "timeout_ms": N}}}. The
+Deployment mounts it and points ALLTERNIT_WORKER_TOOLS at it.
+*/ -}}
+{{- $root := . }}
+{{- range $env := .Values.environments }}
+{{- $e := mergeOverwrite (deepCopy $root.Values.defaults) $env }}
+{{- if $e.customTools }}
+{{- $ctx := dict "root" $root "env" $e }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "sandboxes.envFullname" $ctx }}-tools
+  labels:
+    {{- include "sandboxes.labels" $root | nindent 4 }}
+    app.kubernetes.io/component: worker
+    allternit.com/environment: {{ $e.name | quote }}
+data:
+  tools.json: |
+    {{- include "sandboxes.toolsFile" $e | nindent 4 }}
+{{- end }}
+{{- end }}
