@@ -465,7 +465,11 @@ async fn cors_allows_listed_origins_only() {
             .unwrap(),
     )
     .await;
-    assert_eq!(r.headers["access-control-expose-headers"].to_str().unwrap().to_ascii_lowercase(), "last-event-id");
+    let exposed = r.headers["access-control-expose-headers"].to_str().unwrap().to_ascii_lowercase();
+    let mut exposed: Vec<&str> = exposed.split(',').map(str::trim).collect();
+    exposed.sort();
+    // Browser clients read Last-Event-ID (SSE resume) and Idempotency-Replayed.
+    assert_eq!(exposed, ["idempotency-replayed", "last-event-id"]);
 }
 
 // ─── OIDC against a local issuer ────────────────────────────────────────────

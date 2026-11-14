@@ -27,7 +27,7 @@ use chrono::Utc;
 use sha2::{Digest, Sha256};
 use tracing::Instrument;
 
-use super::auth::{authenticate_user, role_allows};
+use super::auth::{authenticate_user, role_allows, Authenticated};
 use super::store::{DynStore, IdempotencyBegin, IdempotencyScope, StoredResponse};
 use super::{ApiError, SelfHostState};
 
@@ -83,7 +83,7 @@ pub async fn middleware(State(st): State<SelfHostState>, req: Request, next: Nex
         }
     };
 
-    let (parts, body) = req.into_parts();
+    let (mut parts, body) = req.into_parts();
     let bytes = match to_bytes(body, MAX_BODY_BYTES).await {
         Ok(b) => b,
         // The same answer the route's JSON extractor gives.
@@ -96,7 +96,7 @@ pub async fn middleware(State(st): State<SelfHostState>, req: Request, next: Nex
         }
     };
     let scope = IdempotencyScope {
-        principal: caller.subject,
+        principal: caller.subject.clone(),
         method: parts.method.to_string(),
         path: parts.uri.path().to_string(),
         key,
@@ -123,6 +123,8 @@ pub async fn middleware(State(st): State<SelfHostState>, req: Request, next: Nex
         Err(e) => return ApiError::from(e).into_response(),
     }
 
+    // The route's extractor reuses this instead of a second key lookup.
+    parts.extensions.insert(Authenticated(caller));
     let req = Request::from_parts(parts, Body::from(bytes));
     let guard = Pending {
         store: st.store.clone(),

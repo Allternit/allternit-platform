@@ -451,7 +451,10 @@ pub fn cors_layer(origins: &[String]) -> Option<CorsLayer> {
                 HeaderName::from_static("last-event-id"),
                 HeaderName::from_static("x-session-secret"),
             ])
-            .expose_headers([HeaderName::from_static("last-event-id")])
+            .expose_headers([
+                HeaderName::from_static("last-event-id"),
+                HeaderName::from_static("idempotency-replayed"),
+            ])
             .max_age(Duration::from_secs(600)),
     )
 }

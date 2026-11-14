@@ -95,7 +95,7 @@ health:
 | `server.listen` | string | `127.0.0.1:8400` | `host:port` to bind. |
 | `server.shutdown_grace` | duration (`ms`, `s`, `m`, `h`) | `45s` | How long a stopping replica waits for its running turns to finish. After that it fails the remaining turns with the session error code `server_restarted`. Set your Kubernetes `terminationGracePeriodSeconds` higher than this. See [Operations](/self-hosted/operations#run-several-replicas). |
 | `server.public_url` | URI | none | The URL clients use. Shown in `/v1/server/info`. |
-| `server.cors_origins` | list of URIs | `[]` | Browser origins allowed to call the API. Empty means no CORS headers. List `https://ai.allternit.com` (web app), `https://m.allternit.com` (PWA) and `http://127.0.0.1:8013` (packaged Desktop). iOS and Gizzi Code need no entry. See [Client apps](/self-hosted/client-apps). |
+| `server.cors_origins` | list of URIs | `[]` | Browser origins allowed to call the API. Empty means no CORS headers. List `https://ai.allternit.com` (web app), `https://m.allternit.com` (PWA) and `http://127.0.0.1:8013` (packaged Desktop). iOS and Gizzi Code need no entry. Allowed origins can read the response headers `Last-Event-ID` and `Idempotency-Replayed`. See [Client apps](/self-hosted/client-apps). |
 
 ## Inference
 
