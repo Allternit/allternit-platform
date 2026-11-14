@@ -1,0 +1,416 @@
+---
+title: "Guard local security workbench"
+description: "Review scoped security observations, findings and tool readiness with a private local Guard connector."
+---
+
+Guard is an internal local workbench under development. This page covers the shell, terminal, report templates, sharing and environments first, then the workspace features. It is not a hosted
+scanning service. The current source adds operator sign-in, explicit assessment
+scope, saved evidence, findings, reports and a read-only MCP connector.
+
+## Shell, modes and menus
+
+Guard uses an Allternit-style window. The title bar has back, forward, a sidebar
+toggle and a round mode dial. Hover or click the dial to pick a mode:
+**Investigate**, **Tools**, **Terminal** or **ACI**. Each mode has its own
+left rail with its own lists. The account row at the bottom of the rail holds
+Connections, Runs and audit, Learn and Settings.
+
+The header has a `Cmd/Ctrl+K` search box and a run pill that shows how many
+runs are active.
+
+Each conversation, case and artifact row has a **⋯** menu:
+
+- **Rename** changes the title.
+- **Pin** keeps the item at the top of its list.
+- **Move to case** attaches a conversation or artifact to another case.
+- **Hold to delete** needs a press of about one second. The item is soft
+  deleted, so a toast offers **Undo**. Archived items are kept, not erased.
+
+## Tabs and split view
+
+One tab row holds the open views. Drag a tab to reorder it. Use the split
+control on a tab to show that view beside the conversation. The **+** button
+opens `Cmd/Ctrl+K`, where you pick a view, a tool or a mode. On a phone-width
+browser the split is not shown; one view fills the screen.
+
+## Terminal
+
+The **Terminal** mode has two tabs.
+
+- **Shell** runs commands on this Mac. Each command is a block with its exit
+  code and duration. A block has **Copy**, **Save to case** and **Ask**.
+  Save to case stores the command, output and exit code as a command receipt
+  in the case. It is a manual record: Guard does not check the command.
+- **Case Desk** runs `allternit-guard tui` in a full terminal.
+
+Press `Cmd/Ctrl+J` to make the terminal full screen. Press `Esc` to go back,
+except while a full-screen program in Case Desk is using the key.
+
+The terminal UI has four screens: 1 Conversation, 2 Artifacts, 3 Runs and
+4 Environments. `Ctrl+P` opens a command palette with every action. The default
+theme is graphite. Set `GUARD_TUI_THEME=paper` for the light theme.
+
+```sh
+GUARD_TUI_THEME=paper allternit-guard tui
+```
+
+## Report templates
+
+Every artifact renders through a template. The registry,
+`artifact-templates.json`, has 42 layouts in 13 families, built from 25 blocks.
+The families are Network and protocols, Recon and OSINT, Web and APIs,
+Authorized assessments, Code and supply chain, Reverse engineering and forensics,
+Cloud and infrastructure, AI security, Geospatial and cameras, Hardware and
+radio, Browser evidence, Utilities and Case reports.
+
+Guard picks a template from the artifact kind or the tool that made it. If
+none fits, it uses the command receipt. Each template lists the Office targets
+it can export to: Docs, Sheets, Slides and PDF. The target list is stored with
+the template; it does not mean every artifact has been exported.
+
+```sh
+allternit-guard artifacts templates
+allternit-guard artifacts templates --family network
+```
+
+The read-only MCP tool `guard_templates` returns the same registry.
+
+## Artifacts page
+
+The Artifacts page has a template row, kind chips and a grid or list toggle.
+Select an artifact to open a detail panel. The panel previews the report and
+has **Report**, **Docs**, **Sheets**, **Slides**, **PDF** and **Sign** actions,
+and **Share**. The Office actions open the editors for that artifact; Sign is
+for the PDF. Whether an editor can open depends on the template's Office
+targets.
+
+```sh
+allternit-guard artifacts show ARTIFACT_ID --text
+allternit-guard artifacts rename ARTIFACT_ID "New title"
+allternit-guard artifacts pin ARTIFACT_ID
+allternit-guard artifacts archive ARTIFACT_ID
+allternit-guard artifacts restore ARTIFACT_ID
+```
+
+`show --text` prints the report as plain text, sized to the terminal width.
+`sessions` and `case` accept the same `rename`, `pin`, `unpin`, `archive` and
+`restore` verbs. Add `--archived` to `list` to see archived items.
+
+## Share to Allternit
+
+Share sends one artifact to your Allternit account as a private report. Nothing
+is sent automatically.
+
+1. In Connections, paste an Allternit API token with the `compute` scope. Guard
+   stores it in the macOS Keychain. It is not written to a file, a log or an
+   artifact. A device token (`allternit_runtime_*`) is refused.
+2. Select **Share** on an artifact. Guard builds a preview. It shows the size,
+   what it found (private IP addresses, local paths, email addresses, sensitive
+   fields, secrets) and whether this is a new report or a new version.
+3. Choose what to redact. Secrets are always removed. Private IP addresses,
+   local paths, email addresses and sensitive fields are optional choices.
+4. Select **Send**. The confirm step expires after 10 minutes and is bound to
+   the exact content shown. A body over 16 MB is not sent.
+
+The result is a `guard-report` artifact in your account. Sending the same
+artifact again adds a new version. It is private until you share it from
+Allternit. See [`guard-report` in the Artifacts API](/api/artifacts-v2#guard-report-kind).
+
+```sh
+allternit-guard artifacts share ARTIFACT_ID
+allternit-guard artifacts share ARTIFACT_ID --yes
+```
+
+The CLI prints the preview first. Without `--yes` it asks you to confirm, and
+without a terminal it stops. Sharing needs the macOS Keychain, so it is
+available on macOS only. Redaction is pattern based; review the preview before
+you send.
+
+## Environments
+
+The Environments page detects what is installed when you open it (and on
+`GET /api/environments`, cached for 15 seconds). Detection is read-only.
+
+| Environment | What Guard shows |
+| --- | --- |
+| This Mac | Always ready. |
+| Apple container | Whether the `container` runtime and its service are present and running. |
+| Kali container | Not installed, ready to start, image needed, running or error. |
+| Kali virtual machine | Detects `tart` or `qemu-system-aarch64` and VMs with "kali" in the name. Detection only. |
+| Docker | Not installed, daemon not reachable, ready or error. Docker is not installed on every Mac, and Guard shows that. |
+| Tails | Unsupported on Apple silicon. Needs external x86-64 hardware. |
+
+Only the **Kali container** has provision, start and stop. Guard does not
+pull images. Provision needs a local Kali base image that matches a pinned
+digest; if it does not, Guard stops and builds nothing. When the base matches,
+Guard builds a `guard-kali-tools` image with the packaged tools and records its
+digest. Tools that Kali does not package are listed as not packaged.
+
+- **Start** opens one Guard-owned session. It has no network, no host mounts,
+  a read-only root, all capabilities dropped, and it expires after 1 hour.
+- **Stop** removes only Guard-owned sessions.
+- A tool run uses a fresh container with network off. Its only mount is one work
+  folder for that run, mounted at `/work`. Output files from that folder are
+  saved with their SHA-256 digests. Defaults are 2 CPUs, 4 GB memory and a
+  120 second limit.
+- Network access for a run is allowed only to one exact IP and port list, and only
+  with an unexpired saved scope attestation.
+
+```sh
+allternit-guard env status
+allternit-guard env provision kali-container
+allternit-guard env start kali-container
+allternit-guard env stop kali-container
+```
+
+The Kali virtual machine, Docker and Tails entries cannot be provisioned,
+started or stopped from Guard. Running tools in them is not available. The
+read-only MCP tool `guard_environments` returns the same detection.
+
+## Record evidence and remediation
+
+In Guard's **Evidence & findings** screen, save an observation with an asset,
+source and evidence text. Then attach a finding with severity and remediation.
+Record a newer observation for the same asset before marking it remediated.
+This saves the operator's assessment; it does not automatically prove a fix.
+
+Completed collector jobs can be attached as observations. Running jobs can be
+canceled. A report download includes saved observations, findings, record counts
+and a flag when the result is truncated. Recognized secret formats are redacted;
+review any export before sharing it.
+
+## Read the capability catalog
+
+The catalog accounts for the pinned T3MP3ST source inventory. A reference entry
+is distinct from an installed binary, callable adapter or verified assessment.
+Upstream execution is not connected in the current Guard implementation.
+
+An optional read adapter can import observations from a separately managed local
+T3MP3ST runtime. It does not install that runtime, start missions or invoke tools.
+Imported claims require review before becoming findings.
+
+## Connect a local agent
+
+The Guard source includes a stdio MCP entry point, `mcp_server.py`, with fifteen
+read-only tools: `guard_status`, `guard_catalog`, `guard_findings`, `guard_report`, `guard_workspace`, `guard_conversation`, `guard_integrations`, `guard_learning`, `guard_tools`, `guard_cameras`, `guard_hardware`, `guard_intelligence`, `guard_browser`, `guard_templates` and `guard_environments`. Run it with Python 3.11 or newer on the machine that holds Guard's
+evidence. A compatible host configuration is:
+
+```json
+{
+  "mcpServers": {
+    "allternit-guard": {
+      "command": "python3",
+      "args": ["/absolute/path/to/guard-dashboard/mcp_server.py"]
+    }
+  }
+}
+```
+
+For Gizzi, merge the entry under `mcp` with `type: "local"`, an argv-array
+`command`, and `enabled: true`. Keep paths with spaces as single array elements.
+Project-local configuration examples are included in the Guard source.
+
+The connector cannot launch scans, change scope, use the operator terminal,
+approve an action or send reports. No Guard web server is needed for catalog
+and saved-evidence reads.
+
+## Surface availability
+
+The standalone console is responsive for desktop and phone browsers. Local MCP
+compatibility has been tested using real client libraries. A successful stdio
+test does not establish deployment to Desktop, web, PWA, iOS or Android.
+
+Allternit clients require a host-side connector on the machine holding Guard's
+data. A phone or cloud client's `localhost` points to that device or runtime,
+not the operator's Mac. Native client integration and remote transport remain
+unverified. The installed Guard Mac app also needs separate packaging before
+it contains the latest source changes.
+
+## Investigation workspace
+
+The new source entry is `/workspace.html#/eye`. It keeps continuous tilted globe
+navigation and groups tools by family. Networking and Recon share native public
+research for domains, IPs, CVEs and hashes. Create a case, choose sources, run a
+search, inspect a source record and save an evidence note. Bookmarks and history
+persist by case. Private searches stay in server memory until restart, are not
+listed in durable history and cannot be bookmarked. Switching retention does not
+delete older saved records.
+
+The17-category menu includes disconnected provider categories. UserSearch,
+Fingerprint and Worldcam are not connected vendor integrations. The camera desk
+uses existing official publisher adapters for snapshots and supports saved case
+references and watchlists. Monitoring, recordings and live aircraft feeds are
+not implemented by that desk. Catalog coverage does not certify tool execution.
+
+The CLI shares the same local records:
+
+```sh
+allternit-guard tui
+allternit-guard providers
+allternit-guard case list
+allternit-guard recon search --query example.com --case CASE_ID
+allternit-guard recon history --case CASE_ID
+allternit-guard recon bookmarks --case CASE_ID
+allternit-guard check /path/to/project
+```
+
+`guard_workspace` reads provider readiness without arguments, or saved runs and
+bookmarks with `case_id`. It never runs a lookup. `guard_conversation` reads saved
+conversation sessions and artifacts. The installed `gizzi guard` bridge forwards
+to the same local CLI service; the project-local MCP connection remains read-only.
+
+## God’s Eye depth and navigation
+
+God’s Eye uses one Cesium camera across map layers. With the configured Cesium
+credential,3D city renders the Google Photorealistic city mesh; Aerial and Street
+map use World Terrain and OSM building geometry. Zoom and tilt retain the current
+map target. Google-mode place search uses the Google geocoder. A flat fallback
+is named explicitly if no geometry provider can load. Provider access, coverage
+and tile detail depend on the operator’s configured account. No new vendor
+account or subscription is created by the workspace update.
+
+
+## Conversation-led workspace
+
+Guard opens `/chat.html`. Cases and conversations lead the work; God’s Eye,
+Network, Recon, terminal and artifact profiles open in persistent panes with
+expand, restore and close controls. On phone-width browsers, Close returns from
+the focused pane to the conversation. Guard remains loopback-only; this does not
+make it reachable from another device.
+
+Ask uses the installed local model. Plan action creates a review card before a
+managed public-research, source-check, prompt-audit or static-file action runs.
+Stop discards late results; restart marks incomplete runs interrupted. The app,
+CLI and branded case TUI use the same service and saved state.
+
+```sh
+gizzi guard sessions list --json
+gizzi guard ask "Collect public DNS for example.com" --plan --agent recon
+gizzi guard runs execute ACTION_ID
+gizzi guard artifacts show ARTIFACT_ID
+gizzi guard audit
+```
+
+Agent profiles expose role, model, instructions and tool allowlists. T3MP3ST
+Admiral intake is connected through the bounded local model broker. It prepares
+briefs; upstream mission execution is not exposed by the conversation adapter.
+
+Template-v1 profiles cite sources for assertions, accounts, media and locations.
+A cited location can open God’s Eye, retaining precision and provenance. Reports
+support deterministic HTML, JSON and browser Print / Save PDF. Operator imports
+are unverified; public camera markers are independent of profile associations.
+
+Tools → Situational layers exposes the official USGS M2.5+ past-day feed with
+freshness and stale/error states. Other global feeds require individual adapters
+and provider configuration. Cameradar, REA, Craft Anything and BLA are visible
+with actual dependency status; they are not installed or execution-enabled by
+this workspace update. REA currently requires a newer Node revision than the
+Mac’s24.18.0 runtime. Native owned-file triage is available separately.
+
+The installed Gizzi bridge keeps its original entry at
+`~/.allternit-guard/integrations/gizzi-original` and forwards all other commands.
+A subsequent Gizzi installer may replace the bridge; the Guard packaging script
+can reinstall it. Source command registration is included for the next normal
+Gizzi build. The manual PTY is distinct from managed run authorization and
+receipts; it starts only on operator request.
+
+World zoom keeps the imagery globe visible; city zoom uses the configured Google mesh below120km. The camera stays continuous across the transition.
+
+
+## Tool categories, artifact library and integration map
+
+Tools & commands (`Cmd/Ctrl+K`) now supports ten tool categories and combined
+search. It distinguishes existing work views from the121 pinned upstream
+reference entries. A reference detail shows its adapter acceptance gate; it does
+not imply execution readiness. Saved artifacts → Browse supports title, type
+and case filters and opens actual saved results in their pane.
+
+Integration build map in the sidebar footer tracks48 integration work items,
+121 tools,2 supplemental drivers,8 upstream specialist metadata templates and62
+saved source posts. It includes current state, build requirements, acceptance
+checks and JSON export. CLI detection does not verify login or runtime. Read it
+with `allternit-guard integrations list --json` or the read-only
+`guard_integrations` MCP tool.
+
+Tools → Network & protocols → Protocol learning opens independent TCP, DNS,
+HTTP and RTSP lessons. Step/play/reset controls simulate illustrative exchanges
+without sending packets. Source RFC links and limits accompany each lesson.
+`allternit-guard learn list --json`, `learn show tcp --json` and the read-only
+`guard_learning` MCP tool read the same lesson data. The external Protocol
+Explorer project is linked separately; its code is not bundled.
+
+Guard now starts at Home with a persisted, skippable setup guide. Seven sections organize Home, Investigations, Tools, Artifacts, Connections, Environments and Learn. Home uses the same composer as Investigations; case data and God’s Eye stay intact. Connections separates intelligence, Browser / ACI, data providers and agent profiles. Environments now shows live detection (see [Environments](#environments)). Remote Allternit/CLI intelligence adapters and unconfigured data providers remain unfinished.
+
+## Research browser
+
+Home → Browse the web opens a real local Chrome/Playwright session beside the conversation. Each conversation gets an explicitly started fresh context. Tabs, navigation, page-text reading, viewport screenshots, manual pixel input, Take over/Hand back and Stop use the shared Guard run service. Save evidence stores URL, time, text and screenshot hashes in the case artifact library. The pane displays a screenshot of the real browser; remote HTML is not injected into Guard.
+
+In Plan action mode, Coordinator, Recon or Network can propose `Browse https://example.com and save evidence`. Review and run the action before browsing starts. Later Ask replies can use bounded saved source text from that conversation, labeled untrusted. Previously restricted agent profiles keep their restrictions; Browser can be selected in the profile’s available tools.
+
+```sh
+allternit-guard browser provider --json
+allternit-guard browser start --session CONVERSATION_ID --json
+allternit-guard browser navigate BROWSER_ID --url https://example.com --json
+allternit-guard browser capture BROWSER_ID --json
+allternit-guard browser stop BROWSER_ID --json
+```
+
+The TUI accepts `/browser` operations. MCP `guard_browser` reads readiness and session metadata only; the connector has fifteen read-only tools. Inside Guard’s managed terminal `gizzi guard` forwards to Guard directly. The global Homebrew Gizzi release remains separate; use `allternit-guard` outside Guard until native forwarding is verified.
+
+The local provider supports public HTTP(S) GET/HEAD pages on standard ports. Request checks block private/reserved addresses, service workers and WebSockets; they are not an OS firewall. Existing signed-in sessions, password entry, uploads/downloads, DOM-ref actions, remote Allternit pairing and autonomous browsing are unsupported in this provider. Hand back disables manual input and does not start an agent loop.
+
+## Model sources and polished controls
+
+The composer’s model button and Connections → Intelligence share a searchable source/model picker. It lists installed Ollama models, the live Allternit Cloud catalog and detected Claude Code, Codex and Gizzi CLIs. Agent roles remain separate. T3MP3ST intake keeps its bounded local runtime. Each run snapshots the chosen source/model; an in-flight request does not change when the picker changes. Guard does not silently fall back on provider errors.
+
+Allternit Cloud supports an inference-enabled API key or Guard’s own account pairing. Choose Connect in its connection row, then Sign in with Allternit or Use an API key instead. The operator signs in and approves Guard on Allternit. Requested capabilities are runtime connection and model-provider access; remote files, terminal and computer control are not requested. Credentials stay private in Guard’s own state and are never read from another app’s browser cache. Cloud calls use the selected account’s credits.
+
+Claude Code and Codex returned actual test responses through the adapter. The existing Cloud environment key was rejected for inference, and Gizzi reported an account usage limit. Those states require account reconnection or available quota; Guard does not bypass them. CLI responses are decoded into ordinary chat text, with host-tool restrictions and bounded runtime/output. HTTP sources stream real text deltas.
+
+```sh
+allternit-guard models list --json
+allternit-guard models selected --json
+allternit-guard models select --source claude --model sonnet --json
+allternit-guard models sign-in
+allternit-guard models sign-in-status
+```
+
+The TUI accepts `/models` with the same operations. MCP `guard_intelligence` reads source readiness and selection only.
+
+Tools uses category tiles and separate working/reference lists. Artifacts uses type/case filters and readable result fields. Source-backed profile creation uses a form; run receipts use an activity timeline. Scope & permissions and Findings & observations are current-workspace views, and Workspace settings manages the map credential and local sign-out. The Advanced utilities link back to the old console has been removed.
+
+Learn → Protocol Explorer opens the original interactive project inside Guard’s expanded research browser. Its page runs at its real address; no iframe policy is bypassed and no unlicensed source is copied. Manual takeover provides page input and passive viewport refresh. The four native lessons remain separate.
+
+## Run a catalog tool
+
+Open Tools → Complete tool catalog. Each entry shows its current Guard profile and dependency state. Ready entries offer a typed input, a conversation picker and a review step. Running the reviewed action saves a result and receipt to the conversation and Artifacts. Installed command detection alone never grants execution. Current per-operation readiness is computed by the service; bounded execution and import/inspection are reported separately. External account and hardware integrations remain separately tracked.
+
+Local file profiles inspect an owned snapshot without network access. DNS/WHOIS/KEV actions query named public-data sources. HTTP/TLS profiles require an exact unexpired scope attestation, send one credential-free request, pin the resolved address and do not follow redirects. Header and static-code indicators require review; they are not verified vulnerabilities. KEV lookup covers the CISA exploited-vulnerability catalog, not every CVE. The offline Semgrep profile has one explicit indicator rule.
+
+```sh
+allternit-guard tools list
+allternit-guard tools show base64_decode
+allternit-guard tools plan base64_decode --session SESSION_ID --input R3VhcmQ=
+allternit-guard runs execute ACTION_ID
+```
+
+Use `--json` for automation. Terminal conversations accept `/tools`; the managed Gizzi bridge accepts `gizzi guard tools …`. MCP `guard_tools` pages through readiness without executing tools.
+
+
+## Main workspaces and collection layouts
+
+Guard opens Recon, Network, Cameras, Hardware and analysis views on the main canvas; see [Tabs and split view](#tabs-and-split-view) for the current tab row. The phone header is compact and the shell rail uses neutral gray.
+
+List, Grid and Deck are shared across catalogs, artifact collections, device cards and source records. Long catalogs use 24-item pages; Deck focuses one item. Filters apply before pagination. Hardware now shows original rotatable GLB models with front/ports views and an interactive Guard software simulator. Its physical model controls and software display share state. No reference photographs appear in the interface. Geometry is representative; vendor firmware and physical device I/O are not running.
+
+Camera wall loads official publisher previews on demand. Case watchlists have durable membership. Source checks save availability receipts. Captures saves single images with source, timestamp, digest and operator rights acknowledgement. Aircraft requests bounded OpenSky observations and can display them as a God’s Eye overlay. Worldcam, continuous AI scene monitoring and video recording remain unsupported.
+
+```sh
+allternit-guard cameras status --case CASE_ID --json
+allternit-guard cameras watch --case CASE_ID --name 'Area review'
+allternit-guard cameras member --case CASE_ID --watchlist WATCHLIST_ID --camera CAMERA_ID
+allternit-guard cameras check --case CASE_ID --camera CAMERA_ID
+allternit-guard cameras capture --case CASE_ID --camera CAMERA_ID --rights-confirmed
+```
+
+The full-screen terminal includes saved camera records and accepts `/cameras` commands. Read-only MCP `guard_cameras` returns saved case watchlists, checks and snapshot metadata without contacting a publisher.

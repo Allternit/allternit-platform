@@ -45,10 +45,23 @@ See [Authentication](/api/authentication).
 | `code` | `text/plain` (`meta.language` names the language) | |
 | `pdf` | `application/pdf` | |
 | `video` | `application/vnd.allternit.video+json` | |
+| `guard-report` | `text/html` | |
 
 When a create leaves out `body_format`, the kind's default is used. The server also accepts well-formed kinds it doesn't know (lower-case, at most 32 characters) so newer clients keep working. Apps show an unknown kind as a page when the body is HTML and as code otherwise.
 
 `runtime_version` is `2` for current artifacts. `1` marks legacy artifacts imported from the old local stores. A create with `runtime_version: 1` must set `origin.legacy_source`.
+
+## guard-report kind
+
+Allternit Guard, the local security workbench, creates `guard-report` artifacts when an operator shares a report. See [Guard](/guides/guard#share-to-allternit). A `guard-report` is always private when created, and it needs an API token with the `compute` scope.
+
+- `body_format` is `text/html`. The HTML is a finished report with no script: Guard removes scripts, event handlers and active content before it sends the body.
+- `template_id` has the form `guard.<family>.<template>`, for example `guard.recon.domain-dossier`. It is at most 128 characters.
+- `meta.guard` holds `template_id`, `family`, `artifact_kind`, `guard_artifact_id`, a `header` (`case_title`, `scope_summary`, `run_id`, `sha256`, `template_version`), `counts`, the list of optional `redacted` classes (`private_ip`, `local_path`, `email`, `sensitive`) and `source: "Allternit Guard"`. `meta` is at most 16 KB.
+- Secrets are always removed before sending. The other redactions are the operator's choice.
+- A later share of the same Guard artifact adds a version to the same artifact.
+
+Allternit shows a `guard-report` in a viewer and offers **Open in Docs**, **Open in Sheets**, **Open in Slides**, **Open in PDF** and **Open in Sign**. Which of these work depends on the template. An older client that does not know the kind shows it as a page.
 
 ## Access
 

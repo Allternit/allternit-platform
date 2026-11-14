@@ -132,6 +132,7 @@
               "guides/always-on-bots",
               "plugins/guides/vendor-packs",
               "guides/artifacts",
+              "guides/guard",
               "guides/pinned-artifacts",
               "guides/artifact-apps",
               "guides/artifact-editors",
