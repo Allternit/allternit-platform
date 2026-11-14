@@ -67,7 +67,7 @@ Test a restore before you need one.
 3. Run `admin rotate-key --config <path>`. It re-seals every stored credential with the new key. Values sealed with the old key stay readable because it is in `previous_key_refs`.
 4. Remove the old key from your secret store and from `previous_key_refs`.
 
-The server can keep running. `admin rotate-key` writes each credential only if nobody changed it since it was read. When a credential changed in between, the command reads it again and retries, up to 3 times, and reports how many it retried.
+The server can keep running. `admin rotate-key` writes each credential only if nobody changed it since it was read. When a credential changed in between, the command reads it again and retries, up to 3 times, and reports how many it retried. A credential that kept changing on every try is listed as failed and the command exits non-zero; run it again. A credential deleted meanwhile is skipped.
 
 If the command reports credentials that did not open with any key, add the key that sealed them to `previous_key_refs` and run it again.
 
