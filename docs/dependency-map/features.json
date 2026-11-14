@@ -663,12 +663,17 @@
         {
           "on": "2026-11-13",
           "note": "Voice keys: Connect + one-tap Paste with a live vendor check and an ElevenLabs voice picker; Send to my phone QR handoff (P-256 ECDH, two QR codes, 6-digit match, key never through Allternit); opt-in Save to my Allternit account (encrypted, account-wide). Eoj picked the B+C hybrid from mockups."
+        },
+        {
+          "on": "2026-11-13",
+          "note": "Voice-key handoff is one scan: after Codes match the computer PUTs the end-to-end encrypted key to /api/v1/voice/handoff/:sid/sealed (migration 135) and the iPhone takes it once (one-statement take, then delivered); QR2 stays as the fallback. The relay never sees the sender's public key (QR1 only), so it can't read the key or forge the 6-digit code. Eoj picked One scan."
         }
       ],
       "evidence": [
         "allternit/cmd/allternit-cloud-api/src/routes/voice_keys.rs",
         "allternit/cmd/allternit-cloud-api/src/services/voice_keys.rs",
         "allternit/cmd/allternit-cloud-api/migrations_pg/128_voice_keys.sql",
+        "allternit/cmd/allternit-cloud-api/migrations_pg/135_voice_handoff_sealed.sql",
         "allternit/surfaces/allternit-mobile/ios/Core/Voice/VoiceVendorClient.swift",
         "allternit/surfaces/allternit-mobile/ios/Core/Voice/VoiceKeyHandoff.swift",
         "allternit/surfaces/allternit-mobile/ios/Core/Voice/VoiceKeySync.swift",

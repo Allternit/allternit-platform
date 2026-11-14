@@ -10,10 +10,19 @@
 //! tokens. Unlike inference keys these come back decrypted, to the owner's
 //! signed-in session only (the routes refuse API tokens).
 //!
-//! **Handoff** (`voice_key_handoffs`): the relay for the device-to-device QR
-//! handoff. The sender creates a session id, the receiver posts its one-time
-//! P-256 public key once, and the sender reads it back. A row lives 120 s; an
-//! expired row is not found. The API key itself never reaches the server.
+//! **Handoff** (`voice_key_handoffs`, migrations 128 + 135): the relay for the
+//! device-to-device QR handoff. The sender creates a session id, the receiver
+//! posts its one-time P-256 public key once, and the sender reads it back.
+//! After both screens show the same 6-digit code, the sender may put the
+//! sealed key (AES-256-GCM under the ECDH key the two devices share) on the
+//! row once, and the receiver takes it once: the take sets `delivered_at` and
+//! clears the sealed bytes in the same statement. A row lives 120 s (sealing
+//! extends it to at least 30 s ahead); an expired row is not found.
+//!
+//! The API key reaches the server only end-to-end encrypted. The server never
+//! has the shared key and never sees the sender's public key, which travels
+//! only in QR1, so it cannot read the payload or swap in its own public key
+//! without the 6-digit codes differing.
 //!
 //! Key material never appears in errors or logs: validation messages are
 //! static, and [`VoiceKey`]'s `Debug` redacts the key.
@@ -43,6 +52,16 @@ pub const MAX_PUBKEY_CHARS: usize = 200;
 pub const HANDOFF_TTL_SECS: i64 = 120;
 /// Live handoffs one user may hold at once (a stuck client can't fill the table).
 pub const MAX_LIVE_HANDOFFS: i64 = 20;
+/// Sealed key: the AES-GCM nonce is 12 bytes, i.e. exactly this many unpadded
+/// base64url characters.
+pub const SEALED_NONCE_CHARS: usize = 16;
+/// Sealed key: ciphertext plus the 16-byte tag, unpadded base64url. The
+/// shortest is one byte of plaintext (17 bytes, 23 characters).
+pub const MIN_SEALED_CIPHERTEXT_CHARS: usize = 23;
+pub const MAX_SEALED_CIPHERTEXT_CHARS: usize = 2048;
+/// Sealing extends the handoff to at least this many seconds ahead, so the
+/// receiver has time to take it.
+pub const SEALED_MIN_REMAINING_SECS: i64 = 30;
 
 /// One saved voice key, decrypted, for its owner.
 #[derive(Clone, Serialize)]
@@ -72,6 +91,34 @@ pub struct Handoff {
     pub sid: String,
     pub receiver_pubkey: Option<String>,
     pub expires_at: DateTime<Utc>,
+    /// The receiver has taken the sealed key.
+    pub delivered: bool,
+}
+
+/// Columns every `Handoff` query selects or returns.
+const HANDOFF_COLUMNS: &str = "sid, receiver_pubkey, expires_at, delivered_at IS NOT NULL AS delivered";
+
+/// The end-to-end encrypted key on the relay (unpadded base64url text). The
+/// server cannot open it; still no `Debug`, so it never lands in a log.
+#[derive(Clone, Serialize, FromRow)]
+pub struct SealedKey {
+    pub nonce: String,
+    pub ciphertext: String,
+}
+
+/// Result of the receiver's take.
+pub enum SealedTake {
+    /// Taken now; the relay no longer holds it.
+    Taken(SealedKey),
+    /// Not sealed yet; poll again.
+    NotYet,
+}
+
+/// Unpadded base64url text of `min..=max` characters that decodes cleanly.
+fn is_b64url(value: &str, min: usize, max: usize) -> bool {
+    (min..=max).contains(&value.len())
+        && value.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        && URL_SAFE_NO_PAD.decode(value).is_ok()
 }
 
 #[derive(FromRow)]
@@ -242,11 +289,11 @@ impl VoiceKeyService {
         let mut bytes = [0u8; 32];
         rand::thread_rng().fill_bytes(&mut bytes);
         let sid = URL_SAFE_NO_PAD.encode(bytes);
-        let handoff = sqlx::query_as::<_, Handoff>(
+        let handoff = sqlx::query_as::<_, Handoff>(&format!(
             "INSERT INTO voice_key_handoffs (sid, user_id, expires_at) \
              VALUES ($1, $2, NOW() + make_interval(secs => $3)) \
-             RETURNING sid, receiver_pubkey, expires_at",
-        )
+             RETURNING {HANDOFF_COLUMNS}"
+        ))
         .bind(&sid)
         .bind(user_id)
         .bind(HANDOFF_TTL_SECS as f64)
@@ -285,12 +332,82 @@ impl VoiceKeyService {
         }
     }
 
+    /// Put the sealed key on the handoff, once, after the 6-digit match. 404
+    /// when the handoff is missing, expired or someone else's; 409 when no
+    /// receiver has joined yet, or it is already sealed or delivered. Extends
+    /// the handoff to at least [`SEALED_MIN_REMAINING_SECS`] ahead.
+    pub async fn put_sealed(&self, user_id: &str, sid: &str, nonce: &str, ciphertext: &str) -> Result<(), ApiError> {
+        if !is_b64url(nonce, SEALED_NONCE_CHARS, SEALED_NONCE_CHARS)
+            || !is_b64url(ciphertext, MIN_SEALED_CIPHERTEXT_CHARS, MAX_SEALED_CIPHERTEXT_CHARS)
+        {
+            return Err(ApiError::BadRequest(format!(
+                "nonce must be {SEALED_NONCE_CHARS} and ciphertext {MIN_SEALED_CIPHERTEXT_CHARS} to \
+                 {MAX_SEALED_CIPHERTEXT_CHARS} unpadded base64url characters."
+            )));
+        }
+        let updated = sqlx::query(
+            "UPDATE voice_key_handoffs SET sealed_nonce = $3, sealed_ciphertext = $4, \
+                 expires_at = GREATEST(expires_at, NOW() + make_interval(secs => $5)) \
+             WHERE sid = $1 AND user_id = $2 AND expires_at > NOW() AND receiver_pubkey IS NOT NULL \
+                 AND sealed_ciphertext IS NULL AND delivered_at IS NULL",
+        )
+        .bind(sid)
+        .bind(user_id)
+        .bind(nonce)
+        .bind(ciphertext)
+        .bind(SEALED_MIN_REMAINING_SECS as f64)
+        .execute(&self.db)
+        .await?;
+        if updated.rows_affected() == 1 {
+            return Ok(());
+        }
+        match self.get_handoff(user_id, sid).await? {
+            None => Err(ApiError::NotFound("Handoff not found or expired.".to_string())),
+            Some(h) if h.receiver_pubkey.is_none() => {
+                Err(ApiError::Conflict("No receiver has joined this handoff yet.".to_string()))
+            }
+            Some(h) if h.delivered => Err(ApiError::Conflict("This handoff was already delivered.".to_string())),
+            Some(_) => Err(ApiError::Conflict("This handoff already holds a sealed key.".to_string())),
+        }
+    }
+
+    /// The receiver's one-time take of the sealed key. Locking, marking it
+    /// delivered and clearing the bytes happen in one statement, so two
+    /// concurrent takes can't both get it. `NotYet` when nothing is sealed;
+    /// 409 when it was already delivered; 404 when missing/expired/not theirs.
+    pub async fn take_sealed(&self, user_id: &str, sid: &str) -> Result<SealedTake, ApiError> {
+        let taken = sqlx::query_as::<_, SealedKey>(
+            "WITH old AS ( \
+                 SELECT sid, sealed_nonce, sealed_ciphertext FROM voice_key_handoffs \
+                 WHERE sid = $1 AND user_id = $2 AND expires_at > NOW() \
+                     AND sealed_ciphertext IS NOT NULL AND delivered_at IS NULL \
+                 FOR UPDATE \
+             ) \
+             UPDATE voice_key_handoffs h \
+             SET delivered_at = NOW(), sealed_nonce = NULL, sealed_ciphertext = NULL \
+             FROM old WHERE h.sid = old.sid \
+             RETURNING old.sealed_nonce AS nonce, old.sealed_ciphertext AS ciphertext",
+        )
+        .bind(sid)
+        .bind(user_id)
+        .fetch_optional(&self.db)
+        .await?;
+        if let Some(sealed) = taken {
+            return Ok(SealedTake::Taken(sealed));
+        }
+        match self.get_handoff(user_id, sid).await? {
+            None => Err(ApiError::NotFound("Handoff not found or expired.".to_string())),
+            Some(h) if h.delivered => Err(ApiError::Conflict("This handoff was already delivered.".to_string())),
+            Some(_) => Ok(SealedTake::NotYet),
+        }
+    }
+
     /// The owner's live handoff, or `None` when missing/expired/not theirs.
     pub async fn get_handoff(&self, user_id: &str, sid: &str) -> Result<Option<Handoff>, ApiError> {
-        Ok(sqlx::query_as::<_, Handoff>(
-            "SELECT sid, receiver_pubkey, expires_at FROM voice_key_handoffs \
-             WHERE sid = $1 AND user_id = $2 AND expires_at > NOW()",
-        )
+        Ok(sqlx::query_as::<_, Handoff>(&format!(
+            "SELECT {HANDOFF_COLUMNS} FROM voice_key_handoffs \
+             WHERE sid = $1 AND user_id = $2 AND expires_at > NOW()"
+        ))
         .bind(sid)
         .bind(user_id)
         .fetch_optional(&self.db)
@@ -304,10 +421,12 @@ mod tests {
 
     async fn pool() -> PgPool {
         let db = crate::routes::test_support::test_pool().await;
-        sqlx::raw_sql(&include_str!("../../migrations_pg/128_voice_keys.sql").replace("public.", ""))
-            .execute(&db)
-            .await
-            .expect("128 applies");
+        for (name, sql) in [
+            ("128", include_str!("../../migrations_pg/128_voice_keys.sql")),
+            ("135", include_str!("../../migrations_pg/135_voice_handoff_sealed.sql")),
+        ] {
+            sqlx::raw_sql(&sql.replace("public.", "")).execute(&db).await.unwrap_or_else(|e| panic!("{name} applies: {e}"));
+        }
         db
     }
 
