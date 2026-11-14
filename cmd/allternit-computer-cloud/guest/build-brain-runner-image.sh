@@ -129,6 +129,8 @@ x sh -c "set -e
 
 log "runner user, binary, env, init wrapper"
 x sh -c 'set -e
+  # Ubuntu images ship user "ubuntu" at UID 1000; the runner takes that UID.
+  if id ubuntu >/dev/null 2>&1; then userdel -r ubuntu 2>/dev/null || userdel ubuntu; fi
   useradd --create-home --home-dir /home/runner --shell /usr/sbin/nologin --uid 1000 runner
   mkdir -p /etc/allternit'
 incus file push --mode 0755 "$RUNNER_BIN" "$BUILDER/usr/local/bin/allternit-brain-runner"
