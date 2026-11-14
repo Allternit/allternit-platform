@@ -4558,8 +4558,6 @@
         "allternit-ai/src/components/subscriptions/SubscriptionConnect.tsx",
         "allternit-ai/src/components/gateway/ConnectionWizard.tsx",
         "allternit-ai/src/components/settings/BrainsPanel.tsx",
-        "allternit-ai/src/components/chat/ConnectAccountPane.tsx",
-        "allternit-ai/src/components/chat/ProviderGallery.tsx",
         "allternit-ai/src/fabric-session/phone/PhoneFirstRun.tsx",
         "allternit/surfaces/docs/guides/connections.mdx",
         "allternit/surfaces/docs/api/connections.mdx",

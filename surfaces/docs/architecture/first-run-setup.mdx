@@ -9,14 +9,15 @@ First-run setup lives in `allternit-ai/src/components/onboarding/`. One implemen
 
 | File | Role |
 | --- | --- |
-| `OnboardingFlow.tsx` | The real setup logic, reused as panels: `InfraStep` (variants `local`, `server`, `full`), `PurchaseVPSPanel`, `ModesStep` (prop `focus` per brain row, `phone`), and `completeFirstRun()` (workspace init, `setupApi.saveConfig({ onboardingComplete: true, wizard })`, onboarding store, Desktop bridge). Exports `OnboardingFlow` (desktop) and `PhoneOnboardingFlow`. |
-| `setup/FirstRunSetup.tsx` | The shell: graph field, Gizzi + A:// rail, tiles, result cards, ripple, connected view. Derives the cloud-computer, phone-computer and brain outcomes. |
-| `setup/setupModel.ts` | Pure step machine (`setupReducer`), step order (`setupStepOrder`, Main bot step), progress blocks, result cards (`mainBotCard`), haptic rule (`firesHaptic`), `brainForProvider`. |
-| `setup/MainBotStep.tsx` | Step 4: the bot setup picker (`components/bots/look`) inside the setup — stage in the studio, panel in the rail; phone uses `BotSetupPhone`. |
+| `OnboardingFlow.tsx` | Mounts the setup and owns `completeFirstRun()` (workspace init, `setupApi.saveConfig({ onboardingComplete: true, wizard })`, onboarding store, Desktop bridge). Exports `OnboardingFlow` (desktop) and `PhoneOnboardingFlow`. The old `InfraStep`, `PurchaseVPSPanel` and `ModesStep` panels were removed with the Where and Style steps. |
+| `setup/FirstRunSetup.tsx` | The shell: graph field, Gizzi + A:// rail, tiles, result cards, ripple, connected view. Runs the step machine over the connect kit and derives the brain outcome. |
+| `setup/setupModel.ts` | Pure step machine (`setupReducer`), step order (`setupStepOrder`: `ai`, `phone`, `mainbot`, `connected`; the `computer` step exists but is not in the shipped order), progress blocks, result cards (`mainBotCard`), haptic rule (`firesHaptic`), `brainForProvider`. |
+| `setup/KitSetup.tsx` | Steps 1 and 2: `KitAiStep` and `KitPhoneStep`, built on the connect kit registry (`connect-kit/registry.ts`), `ConnectionRow` and `ConnectSheet`, with the "Later, if you need it" **Add a computer** row. See [Add a connection](/build-on-allternit/add-a-connection). |
+| `setup/MainBotStep.tsx` | Step 3: the bot setup picker (`components/bots/look`) inside the setup — stage in the studio, panel in the rail; phone uses `BotSetupPhone`. |
 | `setup/setupSignals.ts` | Live signals behind tile tags: local backend probe, cloud computer + plan, provider auth + Allternit Cloud catalog, Subscription Fabric status, settled runtimes. |
 | `setup/connectedInventory.ts` | `loadInventory()` (each source independent) and the pure `buildConnectedGraph()`. |
 | `setup/inventorySources.ts` | The real sources for the connected view. |
-| `setup/ConnectedView.tsx`, `SetupGraph.tsx`, `SetupArt.tsx`, `setup.css` | Presentation, ported from the approved prototype. |
+| `setup/ConnectedView.tsx`, `SetupArt.tsx`, `setup.css` | Presentation, ported from the approved prototype. |
 | `fabric-session/phone/PhoneFirstRun.tsx` | Phone gate (`decidePhoneSetup`) and phone theme handling. |
 
 ## Gating
@@ -29,9 +30,9 @@ First-run setup lives in `allternit-ai/src/components/onboarding/`. One implemen
 
 Every result card and tile tag is computed from what happened:
 
-- **This computer**: tile says Detected only after `probeLocalBackend()` finds an Allternit `/health` JSON response. Pairing uses `runtimeBackendApi.registerManualBackend` only when `NEXT_PUBLIC_ALLTERNIT_RUNTIME_API` is on; otherwise it relies on the Desktop's account runtime id (`window.allternit.auth.getSession().runtimeId`). A browser tab that finds a local engine but cannot pair it says so.
-- **Cloud computer**: `listCloudComputers()` and `getHostedEntitlement()`; specs come from the instance. No plan read → error, not "needs a plan".
-- **Brains**: connected only when `data.defaultProvider` belongs to the chosen row. Allternit Cloud uses `fetchCloudModelCatalog()`.
+- **Brains**: connected only when the connect kit row for the chosen brain reports `on` (`useConnections()` merged with the server's availability); the result card is built from that state in `aiCard`. Allternit Cloud is the brain when nothing else is picked. A row the account cannot use shows the server's reason and up to two fallbacks.
+- **Phone**: connected only when the QR sign-in completes and the row reports `on` with the phone's name (`phoneCard`). Leaving the step with the QR still showing resets the row to Not connected.
+- **Computer**: there is no computer step. **Add a computer** ("Later, if you need it") opens the compute gate's own paths, and finishing with no computer records the same "Set up a computer later" choice as the gate.
 - **Subscription brains** (`subs-chatgpt`, `subs-claude`, `subs-kimi`): status from `getSubscriptionStatus()` and `listFabricAccounts()`; ready means enabled and `session_health` ready or degraded. The rail runs `SubscriptionConnect` inline; a ready login becomes the default only after `ensureSubscriptionDisclosure()` resolves true. States reported: checking, no Sessions computer, computer offline, sign-in pending, error, ready.
 
 ## Haptic ripple
@@ -44,7 +45,7 @@ Every result card and tile tag is computed from what happened:
 
 ## Main bot step (Meet your bots)
 
-`MAIN_BOT_STEP_ENABLED` is on: the order is where → style → ai → mainbot → connected (30 progress blocks: 6 · 12 · 18 · 24 · 30). The `mainbot` step renders `MeetYourBotsCard` with `entry="setup"` (see [Meet your bots](/architecture/meet-your-bots)), on desktop, the ai.allternit.com phone layout and `PhoneOnboardingFlow`. Its main-bot page drives the shared picker hook `useBotSetup({ context: 'onboarding' })` (see [Bot setup picker](/architecture/bot-setup-picker)). The card creates nothing until **Start the job**; the step stays optional (Skip and Next both move on). Its done button continues to the connected view.
+`MAIN_BOT_STEP_ENABLED` is on: the order is ai → phone → mainbot → connected (`setupStepOrder`; the old Where and Style steps and `SetupGraph.tsx` were removed with the old connect screens, and a new account's theme is System). The `mainbot` step renders `MeetYourBotsCard` with `entry="setup"` (see [Meet your bots](/architecture/meet-your-bots)), on desktop, the ai.allternit.com phone layout and `PhoneOnboardingFlow`. Its main-bot page drives the shared picker hook `useBotSetup({ context: 'onboarding' })` (see [Bot setup picker](/architecture/bot-setup-picker)). The card creates nothing until **Start the job**; the step stays optional (Skip and Next both move on). Its done button continues to the connected view.
 
 ## Hand-off (Open Allternit)
 
