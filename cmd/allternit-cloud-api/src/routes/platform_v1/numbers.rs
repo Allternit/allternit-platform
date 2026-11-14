@@ -345,7 +345,10 @@ pub(crate) async fn release_number(
     super::calls::unprovision(&state.db, &number.id, voice).await;
     let row = phone::number_for_user(&state.db, &caller.owner_user_id, &number.id).await.map_err(phone_error)?;
     let carrier = if number.simulated { None } else { Some(phone::carrier().map_err(phone_error)?) };
-    phone::release_platform_number(&state.db, carrier.as_deref(), &row).await.map_err(phone_error)
+    phone::release_platform_number(&state.db, carrier.as_deref(), &row).await.map_err(phone_error)?;
+    // The bound agent's runtime definition no longer lists this number.
+    super::calls::mark_agents_stale(&state.db, &caller.project_id, &[number.agent_id.as_deref()]).await?;
+    Ok(())
 }
 
 #[derive(Debug, Deserialize)]

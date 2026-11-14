@@ -676,16 +676,35 @@ pub(crate) fn runtime_model(router: &crate::model_router::ModelRouter, model: &s
 }
 
 /// The agent's definition as the runtime takes it (`PUT /api/v1/platform/agents/{id}`):
-/// its settings plus the twin settings kept here (autonomy rules, the account's memory).
+/// its settings plus the twin settings kept here (autonomy rules, the account's
+/// memory) and the live numbers bound to it (`phoneNumbers`, always present), which
+/// the runtime texts and calls from.
 async fn runtime_spec(state: &ApiState, a: &agents::Agent) -> Result<Value, PlatformError> {
     let db = &state.db;
     let (rules,): (Value,) = sqlx::query_as("SELECT autonomy_rules FROM platform_agents WHERE id = $1").bind(&a.id).fetch_one(db).await?;
     let memory = super::twin::account_memory_for_runtime(db, &a.account_id).await?;
+    let numbers: Vec<(String, String)> = sqlx::query_as(
+        "SELECT id, e164 FROM phone_numbers WHERE agent_id = $1 AND account_id = $2 AND released_at IS NULL ORDER BY created_at, id",
+    )
+    .bind(&a.id)
+    .bind(&a.account_id)
+    .fetch_all(db)
+    .await?;
+    let numbers: Vec<Value> = numbers.into_iter().map(|(id, e164)| json!({ "id": id, "e164": e164 })).collect();
     Ok(json!({
         "name": a.name, "instructions": a.instructions, "greeting": a.greeting, "model": runtime_model(&state.model_router, &a.model),
         "voice": a.voice, "tools": a.tools, "autonomy": a.autonomy, "transferTargets": a.transfer_targets,
-        "accountId": a.account_id, "autonomyRules": rules, "accountMemory": memory,
+        "accountId": a.account_id, "autonomyRules": rules, "accountMemory": memory, "phoneNumbers": numbers,
     }))
+}
+
+/// Did the runtime take the whole definition? A runtime from before `phoneNumbers`
+/// ignores the field (its spec type allows unknown fields) and answers without the
+/// count, so an agent with numbers isn't marked synced: every turn re-sends it until
+/// the runtime is updated, and deploy order doesn't matter.
+fn runtime_took_spec(spec: &Value, answer: &Value) -> bool {
+    let has_numbers = spec["phoneNumbers"].as_array().is_some_and(|n| !n.is_empty());
+    !has_numbers || answer.get("phoneNumbers").is_some()
 }
 
 /// Make sure the project's runtime holds the agent's current definition (and the
@@ -723,14 +742,20 @@ async fn ensure_agent_key(state: &ApiState, host: &dyn AgentHost, caller: &Platf
                 return Err(PlatformError::api_error("model_key_sync_failed", "The hosted runtime refused the project's model key."));
             }
         }
-        let (status, body) = host.call(&rt, "PUT", &format!("/api/v1/platform/agents/{}", agent.id), &runtime_spec(state, &agent).await?).await?;
+        let spec = runtime_spec(state, &agent).await?;
+        let (status, body) = host.call(&rt, "PUT", &format!("/api/v1/platform/agents/{}", agent.id), &spec).await?;
         if status >= 400 {
             tracing::warn!(agent = %agent.id, status, %body, "platform: runtime refused the agent");
             return Err(PlatformError::api_error("agent_sync_failed", "The hosted runtime refused this agent's definition."));
         }
-        sqlx::query("UPDATE platform_agents SET runtime_id = $2, runtime_bot_id = $1, synced_at = NOW() WHERE id = $1")
+        let took = runtime_took_spec(&spec, &body);
+        if !took {
+            tracing::info!(agent = %agent.id, runtime = %rt.runtime_id, "platform: runtime didn't acknowledge phoneNumbers; the agent stays unsynced");
+        }
+        sqlx::query("UPDATE platform_agents SET runtime_id = $2, runtime_bot_id = $1, synced_at = CASE WHEN $3 THEN NOW() END WHERE id = $1")
             .bind(&agent.id)
             .bind(&rt.runtime_id)
+            .bind(took)
             .execute(&state.db)
             .await?;
     }
