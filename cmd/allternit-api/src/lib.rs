@@ -124,6 +124,8 @@ pub mod voice_turn_stream;
 pub mod meeting_tools;
 pub mod meetings_mcp;
 pub mod meeting_turn_stream;
+// The Meetings bot on this runtime (relayed start/stop/status from cloud-api).
+pub mod meeting_bot_host;
 pub mod channel_relay;
 pub mod channel_discord_dm;
 pub mod channel_attachments;

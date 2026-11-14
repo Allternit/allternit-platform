@@ -23,9 +23,14 @@
 //!      denied or the turn's wait runs out; an approved row covers later
 //!      calls of that tool in the session.
 //!
-//! The pod's cloud settings come from the launcher's environment:
-//! `ALLTERNIT_MEETING_CLOUD_API_URL` (PodConfig `cloudApiUrl`) and
-//! `ALLTERNIT_MEETING_POD_TOKEN` (PodConfig `podToken`). Without them no
+//! The cloud settings (cloud-api URL + pod token) are per session. A bot the
+//! runtime's meeting-bot host started (`meeting_bot_host.rs`) gets its own
+//! turn token; the host registers `token -> {session, cloud URL, pod token}`
+//! here on start and removes it on stop or exit ([`register_session_cloud`]),
+//! so one runtime can serve several sessions. A turn that carries no
+//! registered token falls back to the process environment of the old pod
+//! path: `ALLTERNIT_MEETING_CLOUD_API_URL` (PodConfig `cloudApiUrl`) and
+//! `ALLTERNIT_MEETING_POD_TOKEN` (PodConfig `podToken`). Without either no
 //! cloud tool runs and the turn says so.
 
 use std::collections::HashMap;
@@ -48,6 +53,8 @@ pub const SUMMARIZE_TOOL: &str = "summarize_so_far";
 pub const CONNECTOR_TOOL: &str = "use_connector";
 pub const CLOUD_URL_ENV: &str = "ALLTERNIT_MEETING_CLOUD_API_URL";
 pub const POD_TOKEN_ENV: &str = "ALLTERNIT_MEETING_POD_TOKEN";
+/// The header the runner sends its turn token in (`ALLTERNIT_INTERNAL_SERVICE_TOKEN`).
+pub const TURN_TOKEN_HEADER: &str = "x-allternit-internal-token";
 /// The bot's name on its own chat rows.
 pub const BOT_SENDER: &str = "Gizzi (Allternit)";
 const CLOUD_TIMEOUT: Duration = Duration::from_secs(60);
@@ -182,6 +189,11 @@ impl MeetingCloud {
         Some(Self::new(&base, &token))
     }
 
+    #[cfg(test)]
+    pub(crate) fn parts(&self) -> (&str, &str) {
+        (&self.base, &self.token)
+    }
+
     async fn post(&self, path: &str, body: &Value) -> Result<Value, String> {
         let res = self.http.post(format!("{}{path}", self.base)).bearer_auth(&self.token).json(body).send().await.map_err(|e| format!("cloud-api is not reachable: {e}"))?;
         let status = res.status();
@@ -213,6 +225,47 @@ impl MeetingCloud {
         });
         self.post(&format!("/api/v1/meeting-sessions/{}/ingest", urlencoding::encode(session_id)), &body).await.map(|_| ())
     }
+}
+
+// ------------------------------------------------------------------ per-session registry
+
+/// One bot the meeting-bot host started: the session it may act for and its
+/// cloud settings.
+struct SessionCloud {
+    session_id: String,
+    cloud: MeetingCloud,
+}
+
+/// Keyed by `sha256(turn token)`, so the raw token is never a map key.
+fn session_clouds() -> &'static Mutex<HashMap<String, SessionCloud>> {
+    static S: OnceLock<Mutex<HashMap<String, SessionCloud>>> = OnceLock::new();
+    S.get_or_init(Default::default)
+}
+
+fn token_key(token: &str) -> String {
+    hex::encode(Sha256::digest(token.as_bytes()))
+}
+
+/// The host started a bot: its turns, sent with `turn_token`, act for
+/// `session_id` with this cloud URL and pod token.
+pub fn register_session_cloud(turn_token: &str, session_id: &str, cloud_url: &str, pod_token: &str) {
+    let entry = SessionCloud { session_id: session_id.to_string(), cloud: MeetingCloud::new(cloud_url, pod_token) };
+    session_clouds().lock().unwrap_or_else(|e| e.into_inner()).insert(token_key(turn_token), entry);
+}
+
+/// The bot stopped or exited; its token no longer authenticates turns.
+pub fn unregister_session_cloud(turn_token: &str) {
+    session_clouds().lock().unwrap_or_else(|e| e.into_inner()).remove(&token_key(turn_token));
+}
+
+/// `(session_id, cloud)` for a registered turn token, else `None` (the
+/// caller falls back to the process-wide internal token and env).
+pub fn session_cloud(turn_token: &str) -> Option<(String, MeetingCloud)> {
+    let token = turn_token.trim();
+    if token.is_empty() {
+        return None;
+    }
+    session_clouds().lock().unwrap_or_else(|e| e.into_inner()).get(&token_key(token)).map(|e| (e.session_id.clone(), e.cloud.clone()))
 }
 
 /// What a tool call came to, for the turn.

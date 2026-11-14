@@ -210,6 +210,16 @@ fn err(code: &str, message: &str) -> Value {
     json!({ "error": code, "message": message })
 }
 
+/// What chat says when a session ended `no_runtime` (contract "Change
+/// 2026-11-14: runtime launcher"): the bot runs on the user's own computer.
+pub const NO_RUNTIME_MESSAGE: &str = "Gizzi could not join. None of your computers was online. Open Allternit on your computer or start your cloud computer, then send Gizzi again.";
+
+/// An ended session's end reason as a tool error the model can relay, for
+/// the reasons that need the person to act (today: `no_runtime`).
+pub fn end_reason_error(session: &Value) -> Option<Value> {
+    (session["state"] == "ended" && session["end_reason"] == "no_runtime").then(|| err("no_runtime", NO_RUNTIME_MESSAGE))
+}
+
 /// Lowercase, no query, fragment or trailing slash (to compare two call links).
 fn normalise_link(url: &str) -> String {
     let u = url.trim().to_lowercase();
@@ -313,6 +323,9 @@ impl Cloud<'_> {
                 let id = id_arg()?;
                 let when = a.get("when").and_then(Value::as_str).filter(|w| ["now", "start"].contains(w)).ok_or_else(|| err("invalid_request", "when must be now or start."))?;
                 let session = self.call(reqwest::Method::POST, &format!("/meetings/{id}/sessions"), &[], Some(json!({ "when": when }))).await?;
+                if let Some(e) = end_reason_error(&session) {
+                    return Err(e);
+                }
                 Ok(json!({ "id": id, "gizzi": s(&session, "gizzi"), "session_id": s(&session, "id"), "page_url": page_url(&id) }))
             }
             "set_auto_join" => {
@@ -327,6 +340,9 @@ impl Cloud<'_> {
                 let sid = m["latest_session"]["id"].as_str().ok_or_else(|| err("recap_not_ready", "Gizzi hasn't been in this meeting yet."))?;
                 let detail = self.get(&format!("/meeting-sessions/{sid}"), &[]).await?;
                 let session = &detail["session"];
+                if let Some(e) = end_reason_error(session) {
+                    return Err(e);
+                }
                 if session["state"] != "ended" {
                     return Err(err("recap_not_ready", "The meeting is still going; the recap comes when it ends."));
                 }
@@ -436,6 +452,15 @@ mod tests {
         let t = transcript("m-1", &json!({ "segments": [{ "seq": 1, "speaker": "Ann", "start_ms": 5, "end_ms": 9, "text": "hi", "confidence": 0.9 }], "next_after_seq": 1 }));
         assert_eq!(keys(&t["segments"][0]), vec!["seq", "speaker", "start_ms", "text"]);
         assert_eq!(keys(&t), vec!["id", "next_after_seq", "segments"]);
+    }
+
+    #[test]
+    fn meetings_mcp_no_runtime_says_no_computer_was_online() {
+        let e = end_reason_error(&json!({ "state": "ended", "end_reason": "no_runtime" })).unwrap();
+        assert_eq!(e["error"], "no_runtime");
+        assert!(e["message"].as_str().unwrap().contains("None of your computers was online"));
+        assert!(end_reason_error(&json!({ "state": "ended", "end_reason": "left_by_user" })).is_none());
+        assert!(end_reason_error(&json!({ "state": "live", "end_reason": null })).is_none());
     }
 
     #[test]
