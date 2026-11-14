@@ -63,7 +63,7 @@ enum ComputeGateCopy {
         case 1: list = parts[0]
         default: list = parts.dropLast().joined(separator: ", ") + " or " + parts[parts.count - 1]
         }
-        return "\(list) a month. Includes one hosted computer."
+        return "\(list) a month. Includes one hosted computer. " + planExplainer(plans)
     }
 
     static func cardCCost(_ price: Double) -> String {
@@ -77,10 +77,17 @@ enum ComputeGateCopy {
         return t + ". \(whole(c.minStartUsd)) to start."
     }
 
-    static func planExplainer(_ plans: [ComputeStatus.PlanOption], hours: Int?) -> String {
-        guard let first = plans.first else { return "A plan includes one hosted computer." }
-        var t = "\(first.name) \(whole(first.priceUsdMonth)) a month includes one hosted computer"
-        if let hours { t += ": \(hours) hours a month" }
+    /// "From $20 a month (Plus): 200 hours, then $0.10/hour." Hours part omitted when the plan has none.
+    static func planExplainer(_ plans: [ComputeStatus.PlanOption]) -> String {
+        let withHours = plans.first { $0.includedHours != nil } ?? plans.first
+        guard let p = withHours else { return "A plan includes one hosted computer." }
+        var t = "From \(whole(p.priceUsdMonth)) a month (\(p.name))"
+        if let h = p.includedHours {
+            t += ": \(h) hours"
+            if let o = p.overagePricePerHourUsd { t += ", then \(money(o))/hour" }
+        } else {
+            t += ": one hosted computer"
+        }
         return t + "."
     }
 
@@ -531,7 +538,7 @@ struct ComputeExplainerSheet: View {
     private var ways: some View {
         var lines = [ComputeGateCopy.explainerOwn]
         if let plans = status?.paths?.plan?.plans, !plans.isEmpty {
-            lines.append(ComputeGateCopy.planExplainer(plans, hours: status?.computer?.hours?.includedHours))
+            lines.append(ComputeGateCopy.planExplainer(plans))
         }
         if let credits = status?.paths?.credits { lines.append(ComputeGateCopy.cardCExplainer(credits)) }
         lines.append(ComputeGateCopy.explainerHostedNote)
