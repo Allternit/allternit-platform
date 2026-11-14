@@ -55,10 +55,41 @@ enum ComputeGateCopy {
     static func insufficient(_ min: Double) -> String { "Starting needs at least \(whole(min)) in credits." }
 }
 
+/// One plain line about the plan computer's hours this month, or nil.
+enum ComputeHoursLine {
+    static func text(_ s: ComputeStatus) -> String? {
+        guard let h = s.computer?.hours, h.includedHours > 0 else { return nil }
+        if h.stoppedForHours == true {
+            var when = " or wait for next month"
+            if let raw = h.resumesAt, let date = parse(raw) {
+                let f = DateFormatter()
+                f.locale = Locale(identifier: "en_US_POSIX")
+                f.timeZone = TimeZone(identifier: "UTC")
+                f.dateFormat = "MMM d"
+                when = " or it starts again on \(f.string(from: date))"
+            }
+            return "Stopped: no credits left. Add credits\(when)."
+        }
+        if h.usedHours >= Double(h.includedHours) {
+            var price = ""
+            if let p = h.overagePricePerHourUsd { price = " at " + ComputeGateCopy.money(p) + "/hour" }
+            return "\(h.includedHours) hours used. Extra hours bill from credits\(price)."
+        }
+        return "\(Int(h.usedHours.rounded(.down))) of \(h.includedHours) hours used this month"
+    }
+
+    private static func parse(_ raw: String) -> Date? {
+        let a = ISO8601DateFormatter()
+        if let d = a.date(from: raw) { return d }
+        a.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return a.date(from: raw)
+    }
+}
+
 /// A one-line status for the account's computer, or nil when there is nothing to say.
 enum ComputeGateNotice {
     static func text(_ s: ComputeStatus) -> String? {
-        if s.isSuspended { return ComputeGateCopy.outOfCredits }
+        if s.isSuspended { return ComputeHoursLine.text(s) ?? ComputeGateCopy.outOfCredits }
         guard let c = s.computer else { return nil }
         if s.state == "provisioning" || c.status == "starting" { return ComputeGateCopy.provisioning }
         if c.status == "sleeping" { return ComputeGateCopy.sleeping }
@@ -137,6 +168,12 @@ struct ComputeGateView: View {
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(SetupPalette.ink)
                     .fixedSize(horizontal: false, vertical: true)
+                if !s.isSuspended, let hours = ComputeHoursLine.text(s) {
+                    Text(hours)
+                        .font(.subheadline)
+                        .foregroundStyle(SetupPalette.ink)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 if let onDone {
                     Button("Done", action: onDone).buttonStyle(SetupPrimaryButtonStyle())
                 }
@@ -342,9 +379,9 @@ struct ComputeGateStrip: View {
             if store.loadFailed && store.status == nil {
                 row(text: ComputeGateCopy.checkFailed, action: "Retry") { Task { await store.refresh() } }
             } else if let s = store.status, s.gate {
-                row(text: s.isSuspended ? ComputeGateCopy.outOfCredits : ComputeGateCopy.title,
+                row(text: s.isSuspended ? (ComputeHoursLine.text(s) ?? ComputeGateCopy.outOfCredits) : ComputeGateCopy.title,
                     action: "Pick a computer") { showSheet = true }
-            } else if let s = store.status, let notice = ComputeGateNotice.text(s) {
+            } else if let s = store.status, let notice = ComputeGateNotice.text(s) ?? ComputeHoursLine.text(s) {
                 row(text: notice, action: nil, perform: {})
             }
         }

@@ -15,10 +15,31 @@ struct ComputeStatus: Decodable, Equatable, Sendable {
         let provider: String?
         let status: String
         let sleepsWhenIdle: Bool?
+        /// Plan computers with included hours (Plus). Absent on older servers.
+        let hours: Hours?
 
         enum CodingKeys: String, CodingKey {
-            case id, kind, provider, status
+            case id, kind, provider, status, hours
             case sleepsWhenIdle = "sleeps_when_idle"
+        }
+    }
+
+    /// `computer.hours` (platform account_compute.rs): this UTC month.
+    struct Hours: Decodable, Equatable, Sendable {
+        let includedHours: Int
+        let usedHours: Double
+        let overageHours: Double?
+        let overagePricePerHourUsd: Double?
+        let stoppedForHours: Bool?
+        let resumesAt: String?
+
+        enum CodingKeys: String, CodingKey {
+            case includedHours = "included_hours"
+            case usedHours = "used_hours"
+            case overageHours = "overage_hours"
+            case overagePricePerHourUsd = "overage_price_per_hour_usd"
+            case stoppedForHours = "stopped_for_hours"
+            case resumesAt = "resumes_at"
         }
     }
 
