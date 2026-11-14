@@ -20,6 +20,7 @@ export type EndReason =
   | "join_failed"
   | "guest_blocked"
   | "no_capacity"
+  | "no_runtime"
   | "error";
 
 /** Pod-side states an adapter reports while joining (maps to session states in CONTRACT.md). */

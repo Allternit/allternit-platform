@@ -37,6 +37,7 @@
 // the same livekit-node.ts publisher takes the sidecar's mixed PCM and feeds
 // the worker's `tts` track into the sidecar's virtual mic.
 
+import { findChrome } from "./chrome.js";
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
@@ -831,9 +832,16 @@ export async function runPod(cfg: PodConfig, opts: RunOptions = {}): Promise<Run
 
 async function main(): Promise<void> {
   const cfg = podConfigFromEnv();
+  const chromePath = findChrome();
+  if (!chromePath) {
+    // No Chrome, Edge or Chromium on this computer: the host reports end reason "no_runtime".
+    process.stderr.write(`runner: no_runtime (no Chrome, Edge or Chromium found; set CHROME_PATH)\n`);
+    process.exit(1);
+  }
   const r = await runPod(cfg, {
+    // MEETING_BOT_WINDOW (headless|offscreen|normal) is resolved in chrome.ts; the legacy flag still forces headless.
     headless: process.env.MEETING_BOT_HEADLESS === "1",
-    chromePath: process.env.CHROME_PATH,
+    chromePath,
     recordFile: process.env.MEETING_BOT_RECORD_FILE,
     screenshotDir: process.env.MEETING_BOT_SCREENSHOT_DIR,
     live: process.env.MEETING_BOT_LIVE !== "0",

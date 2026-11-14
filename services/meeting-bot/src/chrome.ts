@@ -6,14 +6,17 @@
 // its own tile and posts the consent notice. No evasion beyond that.
 
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright-core";
-import { spawn, type ChildProcess } from "node:child_process";
+import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 export interface ChromeOptions {
   chromePath?: string;
+  /** Legacy switch: true = windowMode "headless". */
   headless?: boolean;
+  /** Overrides MEETING_BOT_WINDOW. Default: resolveWindowMode(). */
+  windowMode?: WindowMode;
   /** Persistent profile (the signed-in bot account). Absent = a temp profile deleted on close. */
   profileDir?: string;
   chromeArgs?: string[];
@@ -29,10 +32,92 @@ export interface ChromeSession {
   close(): Promise<void>;
 }
 
+export type WindowMode = "headless" | "offscreen" | "normal";
+
+export interface ProbeEnv {
+  platform: NodeJS.Platform;
+  env: Record<string, string | undefined>;
+  exists: (path: string) => boolean;
+}
+
+const realProbeEnv = (): ProbeEnv => ({ platform: process.platform, env: process.env, exists: existsSync });
+
+/** MEETING_BOT_WINDOW, else "normal" on a bootstrapped cloud computer with a display, else "headless". */
+export function resolveWindowMode(p: ProbeEnv = realProbeEnv()): WindowMode {
+  const v = p.env.MEETING_BOT_WINDOW;
+  if (v === "headless" || v === "offscreen" || v === "normal") return v;
+  return p.env.DISPLAY && p.exists("/etc/allternit/bootstrap.json") ? "normal" : "headless";
+}
+
+/** Candidate Chrome-family binaries in preference order: Chrome, Edge, Chromium. */
+export function chromeCandidates(p: ProbeEnv): string[] {
+  if (p.platform === "darwin") {
+    return [
+      "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+      "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+      "/Applications/Chromium.app/Contents/MacOS/Chromium",
+    ];
+  }
+  if (p.platform === "win32") {
+    const roots = [p.env.ProgramFiles, p.env["ProgramFiles(x86)"], p.env.LOCALAPPDATA].filter((r): r is string => Boolean(r));
+    const rel = (r: string, sub: string) => `${r}\\${sub}`;
+    return [
+      ...roots.map((r) => rel(r, "Google\\Chrome\\Application\\chrome.exe")),
+      ...roots.map((r) => rel(r, "Microsoft\\Edge\\Application\\msedge.exe")),
+      ...roots.map((r) => rel(r, "Chromium\\Application\\chrome.exe")),
+    ];
+  }
+  const dirs = (p.env.PATH ?? "/usr/local/bin:/usr/bin:/bin").split(":").filter(Boolean);
+  const onPath = (names: string[]) => names.flatMap((n) => dirs.map((d) => `${d}/${n}`));
+  return [
+    ...onPath(["google-chrome", "google-chrome-stable"]),
+    "/opt/google/chrome/chrome",
+    ...onPath(["microsoft-edge", "microsoft-edge-stable"]),
+    ...onPath(["chromium", "chromium-browser"]),
+  ];
+}
+
+/** CHROME_PATH, else the first installed Chrome, Edge, then Chromium; null when none is found. */
+export function findChrome(p: ProbeEnv = realProbeEnv()): string | null {
+  if (p.env.CHROME_PATH) return p.env.CHROME_PATH;
+  return chromeCandidates(p).find((c) => p.exists(c)) ?? null;
+}
+
 export function defaultChromePath(): string {
-  if (process.env.CHROME_PATH) return process.env.CHROME_PATH;
-  if (process.platform === "darwin") return "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
-  return "/usr/bin/google-chrome";
+  return findChrome() ?? (process.platform === "darwin" ? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" : "/usr/bin/google-chrome");
+}
+
+/** A normal desktop Chrome user agent (headless Chrome says "HeadlessChrome"). */
+export function desktopUserAgent(platform: NodeJS.Platform, version = "131.0.0.0"): string {
+  const os =
+    platform === "darwin" ? "Macintosh; Intel Mac OS X 10_15_7" : platform === "win32" ? "Windows NT 10.0; Win64; x64" : "X11; Linux x86_64";
+  return `Mozilla/5.0 (${os}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${version} Safari/537.36`.replace(/HeadlessChrome/g, "Chrome");
+}
+
+/** Window-mode flags. `ua` is the browser's own UA if known (HeadlessChrome is stripped). */
+export function windowModeArgs(mode: WindowMode, platform: NodeJS.Platform, ua?: string): string[] {
+  if (mode === "headless") {
+    const agent = ua ? ua.replace(/HeadlessChrome/g, "Chrome") : desktopUserAgent(platform);
+    return [
+      "--headless=new",
+      `--user-agent=${agent}`,
+      "--mute-audio",
+      ...(platform === "darwin" ? ["--use-mock-keychain"] : []),
+    ];
+  }
+  if (mode === "offscreen") return ["--window-position=-32000,-32000", "--start-minimized", "--mute-audio"];
+  return [];
+}
+
+function chromeMajorVersion(chromePath: string): string | undefined {
+  if (process.platform === "win32") return undefined;
+  try {
+    const out = execFileSync(chromePath, ["--version"], { timeout: 5000, encoding: "utf8" });
+    const m = /(\d+)\.\d+\.\d+\.\d+/.exec(out);
+    return m ? `${m[1]}.0.0.0` : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -101,11 +186,13 @@ export async function launchChrome(opts: ChromeOptions = {}): Promise<ChromeSess
     const touched = markProfileCleanExit(profileDir);
     if (touched.length) log("chrome_profile_clean_exit", { files: touched.length });
   }
+  const chromePath = opts.chromePath ?? defaultChromePath();
+  const mode: WindowMode = opts.headless ? "headless" : (opts.windowMode ?? resolveWindowMode());
   const args = [
     ...BASE_CHROME_ARGS,
     `--user-data-dir=${profileDir}`,
     "--remote-debugging-port=0",
-    ...(opts.headless ? ["--headless=new"] : []),
+    ...windowModeArgs(mode, process.platform, mode === "headless" ? desktopUserAgent(process.platform, chromeMajorVersion(chromePath)) : undefined),
     // Pods have no OS keyring: the bot profile's cookies must stay readable on
     // any pod host, as signed in (docs/meetings/BOT-ACCOUNTS.md).
     ...(process.platform === "linux" ? ["--password-store=basic"] : []),
@@ -118,7 +205,6 @@ export async function launchChrome(opts: ChromeOptions = {}): Promise<ChromeSess
     ...(opts.chromeArgs ?? []),
     "about:blank",
   ];
-  const chromePath = opts.chromePath ?? defaultChromePath();
   const chrome = spawn(chromePath, args, { stdio: "ignore" });
   let exited = false;
   chrome.once("exit", (code, signal) => {
@@ -135,7 +221,7 @@ export async function launchChrome(opts: ChromeOptions = {}): Promise<ChromeSess
   const browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`);
   const context = browser.contexts()[0];
   const page = context.pages()[0] ?? (await context.newPage());
-  log("chrome_ready", { port, headless: Boolean(opts.headless), profile: ownsProfile ? "temp" : "persistent" });
+  log("chrome_ready", { port, mode, profile: ownsProfile ? "temp" : "persistent" });
 
   let closed = false;
   return {

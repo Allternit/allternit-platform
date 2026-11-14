@@ -12,7 +12,7 @@
     "build": "tsc -p tsconfig.json",
     "check": "tsc -p tsconfig.json --noEmit",
     "start": "node dist/runner.js",
-    "test": "tsc -p test/zoom/tsconfig.json && tsc -p test/live/tsconfig.json && node --test dist/test/test/zoom/zoom.test.js dist/test/test/zoom/media.test.js dist/test/test/live/live-wake.test.js dist/test/test/live/zoom-web.test.js"
+    "test": "tsc -p test/zoom/tsconfig.json && tsc -p test/live/tsconfig.json && node --test dist/test/test/zoom/zoom.test.js dist/test/test/zoom/media.test.js dist/test/test/live/live-wake.test.js dist/test/test/live/zoom-web.test.js dist/test/test/live/chrome-probe.test.js"
   },
   "dependencies": {
     "@livekit/rtc-node": "1.2.1",
