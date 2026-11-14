@@ -4496,6 +4496,7 @@
         "allternit/cmd/allternit-cloud-api/openapi/meetings.yaml",
         "allternit/cmd/allternit-api/src/meeting_tools.rs",
         "allternit/cmd/allternit-api/src/meeting_turn_stream.rs",
+        "allternit/cmd/allternit-api/src/meeting_bot_host.rs",
         "allternit/cmd/allternit-api/src/meetings_mcp.rs",
         "allternit/services/meeting-bot/src/runner.ts",
         "allternit/services/meeting-bot/src/adapters/meet.ts",
