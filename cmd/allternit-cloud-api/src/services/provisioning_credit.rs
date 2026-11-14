@@ -116,7 +116,7 @@ impl CreditDefaults {
         let defaults = Self::default();
         Self {
             cpu_cores: env_i64(ENV_CPU, defaults.cpu_cores).max(1),
-            memory_mb: env_i64(ENV_MEMORY_MB, defaults.memory_mb).max(1024),
+            memory_mb: env_i64(ENV_MEMORY_MB, defaults.memory_mb).max(free::MIN_COMPUTER_MEMORY_MB),
             disk_gb: env_i64(ENV_DISK_GB, defaults.disk_gb).max(10),
             price_per_hour_usd: env_f64(ENV_PRICE, defaults.price_per_hour_usd),
             stopped_price_per_hour_usd: env_f64(ENV_STOPPED_PRICE, defaults.stopped_price_per_hour_usd),
