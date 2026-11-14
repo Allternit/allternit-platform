@@ -1,24 +1,94 @@
 ---
 title: Connections
-description: "Settings → Connections: the apps, bots, channels and coding tools your bots can use, how each one is reached, and how to connect a new one."
+description: "Settings → Connections: one page to connect your AI, your computers, your phone, your coding tools, your voice keys, your apps and your messaging channels, with four status words and a fallback for anything that is not available."
 ---
 
-**Settings → Connections** is where you see and connect everything your bots can work through: the apps you use, your bots and messaging channels, and the coding tools on your computers. It replaces **Settings → Subscriptions**. Anything you set up under Subscriptions is still there.
+**Settings → Connections** is one page for everything Allternit can work through. Each thing is one row. You tap a row, a sheet shows the few steps for that row, and the row comes back by itself when you are done. It replaces **Settings → Subscriptions**, **Settings → API Keys** and the separate connect screens. Anything you set up before is still there.
 
-Connections is the same on Allternit Desktop, ai.allternit.com, the phone layout and the m.allternit.com app. A few steps need Allternit Desktop, because they talk to a phone or a computer near you; those are marked below.
+Connections is the same on Allternit Desktop, ai.allternit.com, the phone layout, the m.allternit.com app and the iPhone app (Settings › Connections, no new tab). In the terminal, `gizzi connect` lists the same rows with the same words. A few steps need Allternit Desktop, because they talk to a phone or a computer near you; those are marked below.
 
-## The four tabs
+## The four status words
 
-| Tab | What it holds |
+Every row shows one of four states. There are no others.
+
+| State | The row says | What it means |
+| --- | --- | --- |
+| Off | **Not connected** · what it is for | Nothing is set up yet. Tap to connect. |
+| Connecting | **Connecting…** | A sign-in is waiting for you or for the vendor. The row finishes by itself. |
+| On | **Connected** · what was found | It works. The row says what it found, for example the plan name or "Key works". |
+| Needs you | **Needs you** · the reason | It worked before and needs one thing from you. The reason is in plain words, for example "Sign-in expired" or "The key was rejected". |
+
+A row that your account cannot use right now shows why, in one line, and up to two buttons for another way to get the same thing. It never shows a **Connect** button that would fail. There are no "I entered it" or "I'm signed in" buttons anywhere: the row checks for itself.
+
+## The groups
+
+| Group | What it holds |
 | --- | --- |
-| **Apps** | One row per app (ChatGPT, Claude, Gmail, Slack, Notion and others), with how bots reach it and whether that way is working. |
-| **Bots & channels** | Your bots and the messaging channels they answer on (Telegram, WhatsApp, Slack, email and others). |
-| **Coding tools** | CLI brains such as Claude Code, Codex and Grok, installed and signed in on a computer you name. |
-| **Setup** | Link a phone, your linked phones and their state, which computer runs your connections, and browser sign-ins on this computer. |
+| **Your AI** | Allternit Cloud, your AI plans (ChatGPT, Claude, Grok, Kimi, GitHub Copilot), Gemini, API keys, and a local brain. |
+| **Computers** | Your Allternit Cloud computer, your Mac or PC, and your own server. |
+| **Phones** | Your phone, and letting Allternit use your phone. |
+| **Coding tools** | Gizzi Code, Claude Code, Codex, Gemini CLI, Cursor Agent and the other command-line tools on a computer. |
+| **Voice** | Your own OpenAI and ElevenLabs keys for voice. |
+| **Apps** | Gmail, Google Drive, Slack, GitHub, Notion and other apps your bots use. |
+| **Channels** | Telegram, WhatsApp, Discord and the other places your bots answer. |
 
-Your Allternit plan is no longer on this page. It moved to **Settings → Billing**.
+Inside **Your AI**, rows are split three ways so you can see what works for you:
 
-## How bots reach an app
+- **Works on any device.** Allternit Cloud, API keys and Gemini. They work on your phone, the web and Desktop with no computer.
+- **Needs your computer.** Plans that sign in on a computer you own, such as ChatGPT through Codex, and the local brain.
+- **Coming soon.** GitHub Copilot, and your Claude, Grok and Kimi plans running on Allternit. They show as coming soon with a fallback until they are ready.
+
+## What works with no computer
+
+| Works on any device, no computer | Needs your computer |
+| --- | --- |
+| Allternit Cloud (included) | ChatGPT plan (signs in through Codex on your computer) |
+| API keys: OpenAI, Anthropic, Google, xAI, OpenRouter and more | Coding tools: Claude Code, Codex, Grok CLI, Kimi CLI, Gemini CLI, Cursor Agent |
+| Gemini through a free Google AI Studio key | Local brain (Ollama) |
+| Apps and channels (Gmail, Slack, Telegram and the rest) | Letting Allternit use the apps on your computer |
+| Voice keys saved to your account | |
+| Your phone | |
+
+Your Claude, Grok and Kimi plans do not run on Allternit yet. Their rows say "Not available yet. Use a key for now." and offer the key row. The GitHub Copilot row says "Coming soon." and offers GitHub. Nothing here is promised before it is ready.
+
+## Connect something
+
+Tap a row. The sheet shows the steps for that row. The steps are the fewest the vendor allows, and the row finishes by itself when you are done.
+
+| What | Steps | How it finishes |
+| --- | --- | --- |
+| An app (Gmail, Slack, GitHub, Notion) | Continue to the app › Authorize › Done | You come back by yourself after the vendor's page |
+| Grok on a computer | Open Grok (the code is already in the link) › Confirm › Done | The row checks and finishes |
+| ChatGPT on a computer | Open ChatGPT (the code is copied when you tap) › Paste the code › Done | The row checks and finishes |
+| Claude Code on a computer | Open Claude › Approve › Copy the code › Done | Allternit Desktop reads the code from your clipboard when you come back. On the web you tap one **Paste** button |
+| An API key | Open the key page › Paste › Done | The key is checked with the vendor before it is saved |
+| Your phone | Scan the QR code, or tap **Text me the link** | The row checks and finishes |
+
+Allternit checks an API key with the vendor before it saves it, saves it encrypted, and never shows it again. You see only the last few characters. If the vendor rejects it, the row says **Needs you · The key was rejected**.
+
+Allternit never sees or stores your password for a plan or an app. Plan sign-ins happen on the vendor's own page, or on your computer through the vendor's own tool.
+
+### When a row needs you
+
+| The reason says | What to do |
+| --- | --- |
+| Sign-in expired | Tap the row and sign in again. |
+| The key was rejected | Open the key page, copy a new key and paste it. |
+| `<vendor>` limited this plan | The vendor has limited your plan for now. Use a key, or try again later. |
+| Needs your own computer for now | Connect a computer, or use the key shown as the fallback. |
+| Not available yet | Use the fallback button on the row. |
+| Your computer is offline | Turn the computer on and connect it to the internet. The row updates by itself. |
+| Could not start. Try again | Tap the row and try again. |
+
+### Setting up on the first day
+
+The first-run setup has four steps: your AI, your phone, your main bot, and connected. There is no computer step. If you need a computer later, **Add a computer** is offered as "Later, if you need it". See [Use the AI plan you already pay for](/guides/use-your-plan) for which plans work where.
+
+## Remove a connection
+
+Open a row and choose **Remove**. A row from your account is removed from your account. A row on a computer is removed from that computer only.
+
+## Ways a bot reaches an app
 
 A bot can reach the same app in up to four ways. Each app row lists the ways that exist for it, most reliable first:
 
@@ -42,19 +112,6 @@ Click an app row to open its drawer. For each way it shows:
 - **Recent tasks:** the latest tasks that used it, with their result.
 
 A number that has no data behind it is shown as a dash, not as zero. A new connection shows dashes until it has been used.
-
-## Connect a new app
-
-Choose **Connect** on an app row. The wizard has four steps:
-
-1. **Choose a way.** Pick one of the ways the app offers. The most reliable one is selected for you.
-2. **Sign in on your phone.** For a phone app, Allternit opens the app on your linked phone (Allternit Desktop only). Sign in there yourself, the way you normally would. For a desktop app or a browser sign-in, the sign-in opens on that computer instead.
-3. **Check.** Allternit opens the app again and reads what is on its screen to see whether it is signed in. If it shows your email or handle, the wizard shows it so you can confirm it is the right account.
-4. **Done.** The way appears in the app row, and bots can use it.
-
-Allternit never sees or stores your password. It doesn't type into sign-in screens or tap sign-in buttons for you; it only reads what the app already shows. If the check can't tell, it says so and you can check again after the app finishes loading.
-
-If the check says the phone is locked or offline, unlock the phone or bring it back on the same Wi-Fi as your computer, then choose **Check again**.
 
 ## Checks for every app on a phone
 
@@ -110,7 +167,7 @@ An Allternit server older than this feature shows each connector's one account w
 
 ## Coding tools
 
-The Coding tools tab is only for CLI brains: Claude Code, Codex, Grok and the other command-line tools Allternit can install and sign in on a computer. See [Coding tools on any computer](/guides/subscriptions#coding-tools-on-any-computer) for the steps.
+The Coding tools group is only for CLI brains: Claude Code, Codex, Grok and the other command-line tools Allternit can install and sign in on a computer. See [Coding tools on any computer](/guides/subscriptions#coding-tools-on-any-computer) for the steps.
 
 - **On this computer** lists the tools that are installed, ready ones first, with **Sign in** or **Sign in again**.
 - **Add a coding tool** at the bottom shows every other tool Allternit supports: Gemini CLI, GitHub Copilot CLI, Aider, Amp, Goose, Crush, Cline, Kilo Code, Factory Droid, Augment Auggie, OpenHands, Continue and more. **Install** runs a pinned installer, then the same sign-in.
@@ -123,8 +180,10 @@ Two kinds of brains live elsewhere:
 
 ## Related
 
+- [Use the AI plan you already pay for](/guides/use-your-plan)
 - [Phone Link](/guides/phone-link)
 - [Connected subscriptions](/guides/subscriptions)
 - [Lane status](/guides/lane-status)
 - [Meetings](/guides/meetings) (connect a calendar so Gizzi can join your calls)
-- [Connections API and Desktop bridge](/api/connections) (for developers)
+- [Connections API](/api/connections) (for developers)
+- [Add a connection to the registry](/build-on-allternit/add-a-connection) (for developers)

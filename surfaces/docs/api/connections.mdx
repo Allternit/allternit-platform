@@ -1,16 +1,164 @@
 ---
-title: Connections API and Desktop bridge
-description: "The endpoints and Desktop IPC behind Settings → Connections: route telemetry, the gateway catalog, CLI auth status, and the phone-link open-app / check-app / read-account calls."
+title: Connections API
+description: "GET /api/v1/connections on cloud-api and on a computer's runtime, the connect, submit, login and remove actions, the login object, reason codes, and the older endpoints behind Settings → Connections."
 ---
 
-Settings → Connections ([user guide](/guides/connections)) is built from four sources. This page covers the fields each one returns and the Desktop IPC the connect wizard uses.
+Settings → Connections ([user guide](/guides/connections)) is built from one list of rows. Two servers answer it, and the app merges the answers. This page is the contract (version 1). To add a row, see [Add a connection](/build-on-allternit/add-a-connection). Older endpoints that still back parts of the page are in [Older endpoints and Desktop bridge](#older-endpoints-and-desktop-bridge).
+
+## GET /api/v1/connections
+
+Session auth only. A platform API key gets `403`.
+
+Two servers answer the same path:
+
+- **cloud-api** returns the account's rows.
+- **allternit-api** on the active computer returns the rows that live on that computer, with `source: "runtime:<runtime_id>"`.
+
+The client merges both lists. A runtime row replaces a cloud row with the same `id` only when its `state` is `on`.
+
+```json
+{
+  "version": 1,
+  "connections": [{
+    "id": "anthropic-key",
+    "group": "brains",
+    "state": "off",
+    "found": "Key works · Claude models",
+    "reason": null,
+    "reason_code": null,
+    "runs_on": "server",
+    "available": true,
+    "unavailable_reason": null,
+    "fallbacks": [],
+    "terms": "cleared",
+    "saved": "account",
+    "models": ["anthropic/claude-sonnet-…"],
+    "source": "cloud"
+  }]
+}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `id`, `group` | The row's id and group. Groups are `brains`, `computers`, `phones`, `tools`, `voice`, `apps`, `channels`. |
+| `state` | `off`, `connecting`, `on` or `needs`. The row text is "Not connected · blurb", "Connecting…", "Connected · found" and "Needs you · reason". |
+| `found` | What was found, for example a plan name or "Key works". Set when `state` is `on`. |
+| `reason`, `reason_code` | Why a row needs you. `reason_code` is one of the [reason codes](#reason-codes). |
+| `runs_on` | `server`, `runner`, `device` or `computer`. |
+| `available` | `false` when this account can't use the row now. |
+| `unavailable_reason` | The plain line shown when `available` is `false`. |
+| `fallbacks` | Up to two row ids to offer instead. |
+| `terms` | The vendor-terms status the server holds for the row: `cleared`, `pending` or `blocked`. |
+| `saved` | Where the sign-in lives: `account`, `device` or `runner`. |
+| `models` | Model ids the row adds, when it has any. |
+| `source` | `"cloud"` or `"runtime:<runtime_id>"`. |
+
+Clients ignore ids they don't know. An id missing from the response falls back to the client catalog with `state: "off"`.
+
+### Rows from cloud-api
+
+| Row ids | Source |
+| --- | --- |
+| `allternit` | Always `on`. `found` is the plan name, and for Free "· $2 a month free". |
+| `openai-key`, `anthropic-key`, `google-key`, `xai-key`, `together-key`, `fireworks-key`, `deepinfra-key`, `groq-key`, `deepseek-key`, `kimi-key`, `openrouter-key` | `user_inference_keys`. Providers `anthropic`, `google`, `xai` and `openrouter` are new. |
+| `gemini` | An alias of `google-key`, shown in Your AI as "Free Google AI Studio key". |
+| `openai-voice`, `elevenlabs` | `user_voice_keys`. |
+| `cloud-computer` | Compute status (`account_compute`) or `provisioned_instances`. |
+| `this-mac`, `server` | `paired_computers` and `runtime_devices`. |
+| `phone` | Device pairing and app sign-in records. |
+| `gmail`, `drive`, `slack`, `github`, `notion` | Connector records. |
+| `telegram`, `whatsapp`, `discord` | Gateway channels. |
+| `claude`, `grok`, `kimi` | `available: false`, `terms: "pending"`, reason "Not available yet. Use a key for now.", fallback to the vendor's key row (Claude falls back to `anthropic-key`). |
+| `copilot` | `available: false`, reason "Coming soon.", fallback `github`. |
+| `chatgpt` | With no computer online: `available: false`, reason "Needs your own computer for now. Or use an OpenAI key.", fallbacks `this-mac` and `openai-key`. With an online computer it is `available: true` and the computer's row answers. |
+
+Coding tools and the local brain are `available: false` on cloud-api when no computer is online, with the reason "Runs on a computer." and the fallback `this-mac`. Their live state comes from the runtime.
+
+### Rows from allternit-api (a computer's runtime)
+
+| Row ids | Source |
+| --- | --- |
+| `claude-code`, `codex`, `gemini-cli`, `cursor`, `grok-cli`, `kimi-cli` | `cli_provider_detector.rs` and the `subscription_auth_check` in `provider_routes.rs` |
+| `chatgpt` | Codex signed in on this computer. `found` is the plan when known. |
+| `local` | Ollama or the local brain |
+| Voice and inference keys saved on the computer | Keys stored on this computer |
+
+## Actions
+
+| Call | Body | Returns |
+| --- | --- | --- |
+| `POST /api/v1/connections/{id}/connect` | `{ "way"?: string }` | `{ "login": … }`, or `{ "state": "on" }` for ways that finish at once |
+| `POST /api/v1/connections/{id}/submit` | `{ "value": string }`, a pasted key or a paste-back code | The updated row |
+| `GET /api/v1/connections/{id}/login` | none | `{ "status": "pending" \| "done" \| "expired" \| "failed", "row"?: … }` |
+| `DELETE /api/v1/connections/{id}` | none | `204`. Removes the connection from the account (cloud) or from that computer only (runtime). |
+
+Clients poll `/login` every 2 seconds and stop on `done`, `expired` or `failed`.
+
+### The login object
+
+```json
+{
+  "login": {
+    "kind": "device_code",
+    "code": "KQ7M-24TX",
+    "url": "https://example.com/device",
+    "url_with_code": "https://example.com/device?user_code=KQ7M-24TX",
+    "expires_at": "2026-11-13T12:00:00Z",
+    "poll": true
+  }
+}
+```
+
+| `kind` | What the client shows |
+| --- | --- |
+| `device_code` | A code and a link. The code can already be in `url_with_code`. |
+| `link_paste` | A link, then a field for the code the vendor shows. The code goes to `submit`. |
+| `oauth` | A redirect to the vendor and back. |
+| `paste` | A field for a key. The key goes to `submit`. |
+| `scan` | A QR code for the phone. |
+| `pair` | A one-time code. |
+
+### Keys
+
+- A key is checked with the vendor before it is stored: OpenAI `GET /v1/models`; Anthropic `GET /v1/models` with `x-api-key` and `anthropic-version`; Google `GET /v1beta/models?key=`; xAI `GET /v1/models`; OpenRouter `GET /api/v1/key`.
+- A `401` from the vendor sets the row to `needs` with `key_rejected`.
+- Keys are stored with AES-GCM through `CredentialCipher`, the same pattern as `inference_keys.rs`.
+- The API never returns a key, only a masked tail.
+
+### Logins on a computer
+
+`connect` for `codex`, `grok-cli`, `kimi-cli` and `claude-code` reuses `start_login_with_env` in `cli_tools.rs` and the `login_remote` argv. The runtime polls the tool's own status and reports it from `/login`.
+
+| Tool | `login.kind` |
+| --- | --- |
+| Codex | `device_code` |
+| Grok | `device_code`, with `url_with_code` |
+| Claude | `link_paste`. `submit` takes the pasted code. |
+
+## Reason codes
+
+| `reason_code` | Text |
+| --- | --- |
+| `login_expired` | Sign-in expired |
+| `key_rejected` | The key was rejected |
+| `vendor_limited` | The vendor limited this plan |
+| `no_computer` | Needs your own computer for now |
+| `not_available_yet` | Not available yet |
+| `computer_offline` | Your computer is offline |
+| `could_not_start` | Could not start. Try again |
+
+The kit's routes never call `require_compute`. On allternit-api, `design_connector_routes.rs` already matches a `/connections` path, so smoke-boot the server after a change to either route.
+
+## Older endpoints and Desktop bridge
+
+The rest of this page covers endpoints that still back parts of Settings → Connections: route telemetry for an app's ways, the gateway catalog, CLI auth status, and the phone-link open-app, check-app and read-account calls. They were the sources of the earlier four-tab page.
 
 | Source | Used for |
 | --- | --- |
 | `GET /api/v1/subscriptions/gateway/v1/routes` | Each app's ways in, their order, the pinned way, and the drawer numbers. |
 | `GET /v1/gateway/catalog` | Which vendors and bot projects exist, their names, logos and connect profiles. |
-| `GET /api/v1/providers/auth/status?kind=cli` | The Coding tools tab. |
-| `window.allternit.phoneLink.openApp` / `checkApp` | The wizard's "Sign in on your phone" and "Check" steps (Allternit Desktop). |
+| `GET /api/v1/providers/auth/status?kind=cli` | CLI auth status for the Coding tools group. |
+| `window.allternit.phoneLink.openApp` / `checkApp` | Opening an app on a linked phone and checking its sign-in (Allternit Desktop). |
 | `window.allternit.phoneLink.readAccount` | A phone way's account, plan and usage windows (Allternit Desktop). |
 
 ## Route telemetry: GET /v1/routes
@@ -194,6 +342,7 @@ An `ok: true` result with `null` fields means the app opened, but the reader cou
 ## Related
 
 - [Connections](/guides/connections)
+- [Add a connection](/build-on-allternit/add-a-connection)
 - [Subscription gateway](/api/subscription-gateway)
 - [Providers](/api/providers)
 - [Phone Link](/guides/phone-link)

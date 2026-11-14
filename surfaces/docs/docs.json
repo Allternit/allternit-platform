@@ -123,6 +123,7 @@
               "guides/delete-account",
               "guides/whatsapp-business",
               "guides/connections",
+              "guides/use-your-plan",
               "guides/subscriptions",
               "guides/connect-vendor-from-chat",
               "guides/open-models",
@@ -357,6 +358,7 @@
               "build-on-allternit/verifier",
               "build-on-allternit/policy",
               "build-on-allternit/executor",
+              "build-on-allternit/add-a-connection",
               "build-on-allternit/conformance-checklist"
             ],
             "icon": "/icons/code.svg"
