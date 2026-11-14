@@ -244,6 +244,7 @@ pub mod fabric_model_routes;
 pub mod fabric_node_routes;
 pub mod fabric_resources_routes;
 pub mod fabric_usage_routes;
+pub mod connections_routes;
 pub mod design_connector_routes;
 pub mod env_allowlist;
 pub mod error;
