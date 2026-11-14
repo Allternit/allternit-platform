@@ -16,7 +16,7 @@
 # on the serving host. Target size <= 1.5 GB; the size is printed.
 set -euo pipefail
 
-BASE_IMAGE=${BASE_IMAGE:-images:debian/12}
+BASE_IMAGE=${BASE_IMAGE:-images:ubuntu/24.04}  # same glibc (2.39) as the runner binary built in alt-linux-build
 IMAGE_ALIAS=${IMAGE_ALIAS:-allternit-brain-runner}
 NODE_VERSION=${NODE_VERSION:-22.23.5}   # must be >= 22.19
 NODE_SHA256=${NODE_SHA256:-}            # optional; else read from nodejs.org SHASUMS256.txt
@@ -35,7 +35,7 @@ usage() {
   cat <<USAGE
 Usage: $0 --runner-bin <path> [--out-dir <dir>] [--alias <name>]
 
-Builds the Brain runner image (Debian 12 container) with Node ${NODE_VERSION} and the
+Builds the Brain runner image (Ubuntu 24.04 container) with Node ${NODE_VERSION} and the
 pinned CLIs: claude ${CLAUDE_VERSION}, codex ${CODEX_VERSION}, grok ${GROK_VERSION}, kimi ${KIMI_VERSION}.
 
   --runner-bin <path>  allternit-brain-runner built for linux-x64 (step 1.2). Required.
@@ -196,7 +196,7 @@ incus stop "$BUILDER"
 STAMP=$(date -u +%Y%m%d)
 FP_OUT=$(incus publish "$BUILDER" --alias "${IMAGE_ALIAS}-build-$$" \
   "description=Allternit Brain runner ${STAMP} (claude ${CLAUDE_VERSION}, codex ${CODEX_VERSION}, grok ${GROK_VERSION}, kimi ${KIMI_VERSION}, node ${NODE_VERSION})" \
-  "properties.os=Debian" "properties.release=bookworm" "properties.purpose=brain-runner" 2>&1)
+  "properties.os=Ubuntu" "properties.release=noble" "properties.purpose=brain-runner" 2>&1)
 echo "$FP_OUT"
 TARBALL_BASE="${OUT_DIR}/${IMAGE_ALIAS}-${STAMP}"
 incus image export "${IMAGE_ALIAS}-build-$$" "$TARBALL_BASE"
