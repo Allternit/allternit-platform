@@ -101,7 +101,9 @@ allternit-guard artifacts restore ARTIFACT_ID
 Share sends one artifact to your Allternit account as a private report. Nothing
 is sent automatically.
 
-1. In Connections, paste an Allternit API token with the `compute` scope. Guard
+1. In Connections, paste an Allternit API key (`alt_…`) with the `compute`
+   scope. Create one under ACI › Operator keys in Allternit, or in Artifacts
+   open the Security report notice and select **Create a key for Guard**. Legacy `allternit_*` tokens also work. Guard
    stores it in the macOS Keychain. It is not written to a file, a log or an
    artifact. A device token (`allternit_runtime_*`) is refused.
 2. Select **Share** on an artifact. Guard builds a preview. It shows the size,
