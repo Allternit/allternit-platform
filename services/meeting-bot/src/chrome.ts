@@ -7,7 +7,7 @@
 
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright-core";
 import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -50,7 +50,42 @@ export const BASE_CHROME_ARGS = [
   "--lang=en-US",
   // macOS dev runs: without it every launch leaves a code_sign_clone copy in $TMPDIR (workspace AGENTS.md).
   "--disable-features=MacAppCodeSignClone",
+  // A bot profile captured from a killed Chrome would show "Restore pages?" over
+  // Meet's side panel (first live Meet call 2026-11-14: chat_post_failed).
+  "--hide-crash-restore-bubble",
+  // Suppresses the "unsupported command-line flag: --no-sandbox" infobar, which
+  // pushes the meeting page down. Sets no automation signal (navigator.webdriver stays false).
+  "--test-type",
 ];
+
+/**
+ * Mark a persistent profile as cleanly shut down, so Chrome never offers to
+ * restore pages from a crash (the pod's bot profile is captured after the
+ * runner's Chrome was stopped, often by SIGKILL). Best effort: a missing or
+ * unreadable file is left alone.
+ */
+export function markProfileCleanExit(profileDir: string): string[] {
+  const touched: string[] = [];
+  const patch = (file: string, edit: (j: Record<string, any>) => void) => {
+    if (!existsSync(file)) return;
+    try {
+      const j = JSON.parse(readFileSync(file, "utf8")) as Record<string, any>;
+      edit(j);
+      writeFileSync(file, JSON.stringify(j));
+      touched.push(file);
+    } catch {
+      /* corrupt or locked: Chrome rewrites it */
+    }
+  };
+  patch(join(profileDir, "Default", "Preferences"), (j) => {
+    j.profile = { ...(j.profile ?? {}), exit_type: "Normal", exited_cleanly: true };
+  });
+  patch(join(profileDir, "Local State"), (j) => {
+    j.exited_cleanly = true;
+    if (j.profile && typeof j.profile === "object") j.profile.exit_type = "Normal";
+  });
+  return touched;
+}
 
 export async function launchChrome(opts: ChromeOptions = {}): Promise<ChromeSession> {
   const log = opts.onEvent ?? (() => undefined);
@@ -58,6 +93,10 @@ export async function launchChrome(opts: ChromeOptions = {}): Promise<ChromeSess
   const profileDir = opts.profileDir ?? mkdtempSync(join(tmpdir(), "gizzi-pod-profile-"));
   // A stale port file from a crashed run would point at a dead port.
   rmSync(join(profileDir, "DevToolsActivePort"), { force: true });
+  if (!ownsProfile) {
+    const touched = markProfileCleanExit(profileDir);
+    if (touched.length) log("chrome_profile_clean_exit", { files: touched.length });
+  }
   const args = [
     ...BASE_CHROME_ARGS,
     `--user-data-dir=${profileDir}`,

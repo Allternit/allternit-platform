@@ -1,3 +1,9 @@
+// FALLBACK ONLY (MEETING_BOT_INPAGE_LIVEKIT=1). The pod's publisher is
+// livekit-node.ts (@livekit/rtc-node in Node) on every platform since
+// 2026-11-14, when Meet's non-extensible RTCPeerConnection broke this client's
+// webrtc-adapter shims. This file also holds the shared names (tracks,
+// topics) and the RoomBridge interface the runner uses.
+//
 // LiveKit bridge: runs livekit-client inside the meeting page, next to the
 // media it moves.
 //
@@ -67,10 +73,25 @@ export interface LiveKitStatus {
   remoteParticipants: string[];
 }
 
-interface BridgeEvent {
+export interface BridgeEvent {
   t: number;
   event: string;
   detail?: Record<string, unknown>;
+}
+
+/**
+ * What the runner needs from a pod <-> worker room bridge. LiveKitBridge
+ * (in-page, Meet/Teams) and NodeLiveKitBridge (livekit-node.ts, Node
+ * rtc-node, every platform) both implement it.
+ */
+export interface RoomBridge {
+  /** Epoch ms when `call-audio` was published: the clock of the worker's start_ms. */
+  readonly publishedAt: number;
+  status(): Promise<LiveKitStatus | null>;
+  drain(): Promise<{ data: SttSegment[]; turns: WakeTurn[]; events: BridgeEvent[] }>;
+  speak(turnId: string, text: string): Promise<boolean>;
+  setMuted(on: boolean): Promise<void>;
+  disconnect(): Promise<void>;
 }
 
 declare global {
@@ -217,7 +238,7 @@ async function connectInPage(a: ConnectArgs): Promise<{ ok: boolean; error?: str
   return { ok: true, publishedAt };
 }
 
-export class LiveKitBridge {
+export class LiveKitBridge implements RoomBridge {
   private constructor(
     private readonly page: Page,
     readonly publishedAt: number,

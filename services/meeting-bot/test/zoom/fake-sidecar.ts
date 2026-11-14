@@ -47,6 +47,8 @@ function goLive(): void {
     later(80, () => send({ type: "status", status: "ended", code: 1, name: "EndMeetingReason_KickByHost" }));
     return;
   }
+  // TileCamera::onStartSend in the real sidecar.
+  later(20, () => send({ type: "log", level: "info", msg: "camera started: tile frames are sent" }));
   later(30, () => {
     void sendTrickled({ type: "chat", msgId: "m-1", senderId: JORDAN.id, sender: "Jordan", text: "Gizzi, what's the plan? ✓", ts: 1763020800, self: false }).then(() => {
       send({ type: "chat", msgId: "m-0", senderId: SELF.id, sender: SELF.name, text: "notice", ts: 1763020801, self: true });
@@ -132,6 +134,11 @@ sock.on("data", (chunk: Buffer) => {
       // Loop mic audio back as call audio so the test sees both directions decode.
       micBytes += f.audio.pcm.length;
       sock.write(encodeAudioOut(f.audio));
+    } else if (f.kind === "video_in") {
+      // Echo what arrived (size + first Y/U/V bytes) so the test sees the frame decode.
+      const v = f.video;
+      const ySize = v.width * v.height;
+      send({ type: "log", level: "info", msg: `video_in ${v.width}x${v.height} len=${v.i420.length} yuv=${v.i420[0]},${v.i420[ySize]},${v.i420[ySize + ySize / 4]}` });
     }
   }
 });

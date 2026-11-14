@@ -174,6 +174,15 @@ describe("ZoomAdapter with a fake sidecar", () => {
       assert.deepEqual(people.map((p) => p.name), ["Jordan", "Sam"]);
 
       assert.ok(logs.some((l) => l.includes("Qt: fake log line on stdout")), "stdout chatter is logged, not parsed");
+
+      // The camera: the sidecar's "camera started" line turns cameraOn on; a tile frame arrives whole.
+      await until(() => z.cameraOn);
+      const w = 64;
+      const h = 36;
+      const i420 = new Uint8Array(w * h * 1.5).fill(235, 0, w * h).fill(128, w * h);
+      assert.equal(z.sendVideoFrame({ width: w, height: h, i420 }), true);
+      await until(() => logs.some((l) => l.includes("video_in 64x36")));
+      assert.ok(logs.some((l) => l.includes(`video_in 64x36 len=${w * h * 1.5} yuv=235,128,128`)), logs.join("\n"));
     } finally {
       await z.leave();
       await z.close();

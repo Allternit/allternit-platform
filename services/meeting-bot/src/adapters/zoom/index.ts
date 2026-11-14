@@ -18,6 +18,8 @@
 //   sendAudio(pcm, hz) PCM into the bot's virtual mic (spoken replies)
 //   clearAudio()       drop queued mic audio (barge-in)
 //   sendVideoFrame(f)  I420 frames for the bot's camera (the Bot Mode tile)
+//   cameraOn/onCamera  whether Zoom has the camera started (sidecar onStartSend/onStopSend)
+// The runner wires these in zoom-media.ts (tile) and livekit-node.ts (audio).
 
 import { spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -165,6 +167,8 @@ export class ZoomAdapter implements PlatformAdapter {
   private speakerSubs = new Set<(e: ActiveSpeakerEvent) => void>();
   private endedSubs = new Set<(r: EndedReason) => void>();
   private audioSubs = new Set<(a: AudioFrame & { t: number }) => void>();
+  private cameraSubs = new Set<(on: boolean) => void>();
+  private camera = false;
   private recordingState: string | null = null;
 
   constructor(private readonly opts: ZoomAdapterOptions = {}) {}
@@ -255,6 +259,13 @@ export class ZoomAdapter implements PlatformAdapter {
     if (this.live) this.fireEnded(this.leaving ? "left_by_user" : "error");
     this.live = false;
     this.stopSpeakerTimer();
+    this.setCamera(false);
+  }
+
+  private setCamera(on: boolean): void {
+    if (on === this.camera) return;
+    this.camera = on;
+    for (const cb of this.cameraSubs) cb(on);
   }
 
   private write(bytes: Uint8Array): boolean {
@@ -354,6 +365,9 @@ export class ZoomAdapter implements PlatformAdapter {
         this.log("debug", `virtual mic ${ev.state}`);
         break;
       case "log":
+        // TileCamera::onStartSend / onStopSend (sidecar/src/bot.cpp) report as log lines.
+        if (/^camera started\b/.test(ev.msg)) this.setCamera(true);
+        else if (/^camera stopped\b/.test(ev.msg)) this.setCamera(false);
         this.log(ev.level, `sidecar: ${ev.msg}`);
         break;
     }
@@ -674,6 +688,17 @@ export class ZoomAdapter implements PlatformAdapter {
   /** One I420 frame for the bot's camera. Returns false when not live. */
   sendVideoFrame(f: VideoFrame): boolean {
     return this.live ? this.write(encodeVideoIn(f)) : false;
+  }
+
+  /** True while Zoom has the bot's camera started; frames sent otherwise are dropped by the sidecar. */
+  get cameraOn(): boolean {
+    return this.camera;
+  }
+
+  /** Camera started (true) / stopped (false), as the sidecar reports it. */
+  onCamera(cb: (on: boolean) => void): Unsubscribe {
+    this.cameraSubs.add(cb);
+    return () => this.cameraSubs.delete(cb);
   }
 
   /** Last raw-recording state the sidecar reported (granted / requested / denied / ...), or null. */

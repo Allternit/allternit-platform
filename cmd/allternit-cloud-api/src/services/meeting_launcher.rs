@@ -104,6 +104,12 @@ const ADMIT_TIMEOUT: chrono::Duration = chrono::Duration::minutes(17);
 /// The 8 h max duration plus slack.
 const MAX_LIVE: chrono::Duration = chrono::Duration::minutes(8 * 60 + 15);
 const DEFAULT_SILENT_MINUTES: i64 = 20;
+/// The meeting room must outlive the pod's launch + pre-join + admit wait
+/// (the pod connects to LiveKit only once the call admits the bot): with
+/// LiveKit's 120 s the room closed while a host took a while to admit, and the
+/// voice worker (dispatched once, at room creation) left for good, so the call
+/// got no transcript (first real Meet call, 2026-11-14).
+pub const MEETING_ROOM_EMPTY_TIMEOUT_SECS: u32 = 25 * 60;
 const PICKUP_EVERY: Duration = Duration::from_secs(3);
 const REAP_EVERY: Duration = Duration::from_secs(30);
 
@@ -437,11 +443,18 @@ pub fn display_name(platform: &str) -> &'static str {
 
 /// The notice the bot posts on join (meetings-gates/consent-copy.md, short
 /// form; the runner appends the meeting page link). Draft copy pending Eoj.
+/// The display name already says "Allternit", so the notice names the bot
+/// once: "Gizzi (Allternit notetaker)", or on Teams (whose name has no
+/// parentheses) "Gizzi - Allternit (notetaker)".
 pub fn notice_text(platform: &str) -> String {
+    let who = if platform == "teams" {
+        format!("{TEAMS_DISPLAY_NAME} (notetaker)")
+    } else {
+        "Gizzi (Allternit notetaker)".to_string()
+    };
     format!(
-        "{} (Allternit notetaker) is transcribing this meeting as text. No audio is kept. \
-         Say \"Gizzi, stop listening\" or remove Gizzi to stop.",
-        display_name(platform)
+        "{who} is transcribing this meeting as text. No audio is kept. \
+         Say \"Gizzi, stop listening\" or remove Gizzi to stop."
     )
 }
 
@@ -718,7 +731,7 @@ impl Launcher {
         let (livekit_url, livekit_token) = match &self.livekit {
             Some(livekit) => {
                 let metadata = json!({ "session_id": sid, "meeting_id": session.meeting_id, "platform": session.platform }).to_string();
-                let access = match livekit.create_room_with_agent(&room, MEETING_AGENT_NAME, &metadata).await {
+                let access = match livekit.create_room_with_agent_timeout(&room, MEETING_AGENT_NAME, &metadata, MEETING_ROOM_EMPTY_TIMEOUT_SECS).await {
                     Ok(()) => livekit.participant_access_ttl(&room, &format!("meeting-pod-{sid}"), true, LIVEKIT_TOKEN_TTL_SECS),
                     Err(error) => Err(error),
                 };

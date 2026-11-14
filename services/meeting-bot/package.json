@@ -12,14 +12,16 @@
     "build": "tsc -p tsconfig.json",
     "check": "tsc -p tsconfig.json --noEmit",
     "start": "node dist/runner.js",
-    "test": "tsc -p test/zoom/tsconfig.json && node --test dist/test/test/zoom/zoom.test.js"
+    "test": "tsc -p test/zoom/tsconfig.json && node --test dist/test/test/zoom/zoom.test.js dist/test/test/zoom/media.test.js"
   },
   "dependencies": {
+    "@livekit/rtc-node": "1.2.1",
     "livekit-client": "2.22.3",
     "playwright-core": "1.56.1"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
+    "linkedom": "0.18.12",
     "typescript": "^6.0.3"
   }
 }
