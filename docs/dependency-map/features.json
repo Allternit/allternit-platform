@@ -4569,6 +4569,7 @@
         "allternit-ai/src/components/connect-kit/ConnectionsHub.tsx",
         "allternit-ai/src/components/connect-kit/KitBrainBanner.tsx",
         "allternit-ai/src/components/connect-kit/PickerConnectPane.tsx",
+        "allternit-ai/src/components/connect-kit/open.ts",
         "allternit-ai/src/components/connect-kit/index.ts",
         "allternit-ai/src/components/connect-kit/registry.ts",
         "allternit-ai/src/components/connect-kit/store.ts",
