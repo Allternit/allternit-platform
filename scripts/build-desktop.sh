@@ -118,6 +118,23 @@ if [ "$SKIP_PLATFORM" = false ]; then
   fi
   # prepare-platform-static builds this same checkout.
   export ALLTERNIT_AI_PATH="$PLATFORM_DIR"
+  # Install the ai checkout's dependencies before it is built: a dependency
+  # change (e.g. @zoom/meetingsdk) otherwise fails the build on a missing
+  # package. Frozen lockfile; skipped when a stamp of pnpm-lock.yaml matches
+  # the one the current node_modules was installed from.
+  if [ -f "$PLATFORM_DIR/pnpm-lock.yaml" ]; then
+    AI_LOCK_HASH="$(shasum -a 256 "$PLATFORM_DIR/pnpm-lock.yaml" | cut -d' ' -f1)"
+    AI_STAMP="$PLATFORM_DIR/node_modules/.allternit-lock-stamp"
+    if [ -d "$PLATFORM_DIR/node_modules" ] && [ "$(cat "$AI_STAMP" 2>/dev/null)" = "$AI_LOCK_HASH" ]; then
+      ok "Workspace UI dependencies current (lockfile unchanged)"
+    else
+      step "Installing workspace UI dependencies…"
+      (cd "$PLATFORM_DIR" && pnpm install --frozen-lockfile --config.confirmModulesPurge=false) \
+        || die "pnpm install failed in $PLATFORM_DIR"
+      echo "$AI_LOCK_HASH" > "$AI_STAMP"
+      ok "Workspace UI dependencies installed"
+    fi
+  fi
   if [ "$SKIP_ELECTRON" = true ]; then
     # No packaging step will build it: build it here.
     (cd "$PLATFORM_DIR" && NEXT_PUBLIC_ALLTERNIT_DESKTOP_AUTH=1 pnpm run build)
