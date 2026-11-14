@@ -119,13 +119,25 @@ fn timed_out() -> ApiError {
     )
 }
 
-/// The session the path names: a gizzi session id first, else our own id.
+/// The session the path names: a gizzi session id first, else our own id,
+/// else a gizzi session the runner can trace back to one of ours (a lineage
+/// head gizzi made by a context handoff during the turn).
 async fn resolve_session(st: &SelfHostState, id: &str) -> Result<SessionRecord, ApiError> {
-    let ours = st.work.session_for_gizzi(id).unwrap_or_else(|| id.to_string());
-    st.store.get_session(&ours).await.map_err(|e| match e {
+    let not_found = |e| match e {
         StoreError::NotFound => ApiError::not_found("No session with that id."),
         other => other.into(),
-    })
+    };
+    if let Some(ours) = st.work.session_for_gizzi(id) {
+        return st.store.get_session(&ours).await.map_err(not_found);
+    }
+    match st.store.get_session(id).await {
+        Err(StoreError::NotFound) => {}
+        other => return other.map_err(not_found),
+    }
+    match st.turn_runner.resolve_gizzi_session(st, id).await {
+        Some(ours) => st.store.get_session(&ours).await.map_err(not_found),
+        None => Err(ApiError::not_found("No session with that id.")),
+    }
 }
 
 /// `running` → `waiting_for_worker` (reason `no_worker`), with its event.
@@ -228,6 +240,12 @@ async fn submit_tool_call(
         let now = tokio::time::Instant::now();
         match cur.status {
             ToolCallStatus::Done => {
+                // A worker took the call and answered between two reads
+                // (the claim's wake-up was missed or came late): the session
+                // still leaves `waiting_for_worker` before the turn goes on.
+                if waiting {
+                    leave_waiting(&st, &session.id).await;
+                }
                 in_flight.settled = true;
                 break Ok(Json(result_json(&cur)));
             }
