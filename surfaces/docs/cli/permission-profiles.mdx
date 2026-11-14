@@ -24,7 +24,7 @@ gizzi config profile add strict \
   --rule delete=deny
 ```
 
-Rules are matched in order. The first matching rule wins.
+Rules are matched in order, and the last matching rule wins. Put a broad rule such as `*=deny` first, then the exceptions after it.
 
 ## Rule syntax
 
