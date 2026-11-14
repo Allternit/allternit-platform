@@ -69,7 +69,12 @@ const DEFAULT_FREE_CPU_PRIORITY: u8 = 2;
 /// Optional Incus `limits.cpu.allowance` on top of `limits.cpu` (e.g.
 /// "50ms/100ms" = half a core, hard quota). Empty = the whole vCPU.
 const DEFAULT_FREE_CPU_ALLOWANCE: &str = "";
-const DEFAULT_FREE_MEMORY_MB: i64 = 2048;
+/// No Allternit computer runs below this much memory (Eoj 2026-11-14: a 2 GB
+/// computer is too small for real work; the Desktop image idles near 1.8 GB
+/// and thrashes at 2 GB). Applied wherever size env is read, and to existing
+/// free / Platform rows on wake.
+pub const MIN_COMPUTER_MEMORY_MB: i64 = 4096;
+const DEFAULT_FREE_MEMORY_MB: i64 = 4096;
 const DEFAULT_FREE_DISK_GB: i64 = 10;
 const DEFAULT_FREE_IDLE_MINUTES: i64 = 15;
 const DEFAULT_FREE_MAX_AWAKE_PER_HOST: i64 = 10;
@@ -121,7 +126,7 @@ impl FreeDefaults {
                         .unwrap_or(DEFAULT_FREE_CPU_PRIORITY),
                 ),
             },
-            memory_mb: env_i64(ENV_FREE_MEMORY_MB, DEFAULT_FREE_MEMORY_MB),
+            memory_mb: env_i64(ENV_FREE_MEMORY_MB, DEFAULT_FREE_MEMORY_MB).max(MIN_COMPUTER_MEMORY_MB),
             disk_gb: env_i64(ENV_FREE_DISK_GB, DEFAULT_FREE_DISK_GB),
             idle: Duration::minutes(env_i64(ENV_FREE_IDLE_MINUTES, DEFAULT_FREE_IDLE_MINUTES).max(1)),
             max_awake_per_host: env_i64(ENV_FREE_MAX_AWAKE_PER_HOST, DEFAULT_FREE_MAX_AWAKE_PER_HOST),
@@ -154,7 +159,7 @@ impl FreeDefaults {
 /// | `ALLTERNIT_HOSTED_DRIVER_IMAGE` | `allternit-computer-headless` |
 /// | `ALLTERNIT_HOSTED_DRIVER_CPU` | `1` (`limits.cpu`) |
 /// | `ALLTERNIT_HOSTED_DRIVER_CPU_PRIORITY` | `1` (`limits.cpu.priority`, 0–10) |
-/// | `ALLTERNIT_HOSTED_DRIVER_MEMORY_MB` | `2048` (`limits.memory`) |
+/// | `ALLTERNIT_HOSTED_DRIVER_MEMORY_MB` | `4096` (`limits.memory`, floor 4096) |
 /// | `ALLTERNIT_HOSTED_DRIVER_DISK_GB` | `10` (root disk quota) |
 /// | `ALLTERNIT_HOSTED_DRIVER_MAX_RUNNING` | `4` awake at once, across the pool |
 #[derive(Debug, Clone)]
@@ -272,7 +277,7 @@ impl HostedDriverDefaults {
             image: env_string("ALLTERNIT_HOSTED_DRIVER_IMAGE", "allternit-computer-headless"),
             cpu_cores: env_i64("ALLTERNIT_HOSTED_DRIVER_CPU", 1).max(1),
             cpu_priority: Some(env_i64("ALLTERNIT_HOSTED_DRIVER_CPU_PRIORITY", 1).clamp(0, 10) as u8),
-            memory_mb: env_i64("ALLTERNIT_HOSTED_DRIVER_MEMORY_MB", 2048).max(512),
+            memory_mb: env_i64("ALLTERNIT_HOSTED_DRIVER_MEMORY_MB", MIN_COMPUTER_MEMORY_MB).max(MIN_COMPUTER_MEMORY_MB),
             disk_gb: env_i64("ALLTERNIT_HOSTED_DRIVER_DISK_GB", 10).max(4),
             max_running: env_i64("ALLTERNIT_HOSTED_DRIVER_MAX_RUNNING", 4).max(0),
         }
@@ -308,7 +313,7 @@ pub(crate) fn platform_runtime_spec(free: &FreeDefaults) -> (String, ComputerSiz
         env_string("ALLTERNIT_PLATFORM_RUNTIME_IMAGE", &free.image),
         ComputerSize {
             cpu_cores: env_i64("ALLTERNIT_PLATFORM_RUNTIME_CPU", free.cpu_cores).max(1),
-            memory_mb: env_i64("ALLTERNIT_PLATFORM_RUNTIME_MEMORY_MB", free.memory_mb).max(512),
+            memory_mb: env_i64("ALLTERNIT_PLATFORM_RUNTIME_MEMORY_MB", free.memory_mb).max(MIN_COMPUTER_MEMORY_MB),
             disk_gb: env_i64("ALLTERNIT_PLATFORM_RUNTIME_DISK_GB", free.disk_gb).max(4),
         },
     )
@@ -535,6 +540,49 @@ impl ProvisioningService {
     /// hourly wake limit (429) and the per-host awake cap (503) — and its
     /// start runs in the background. The start task moves it to `running`;
     /// the runtime attaching to the relay is the ready signal.
+    /// Raise a sleeping free / Platform Incus computer below
+    /// `MIN_COMPUTER_MEMORY_MB` to the floor before it starts. On a resize
+    /// failure the old size is kept (logged); never called for Orgo or paid.
+    async fn raise_to_memory_floor(&self, row: &mut InstanceRow, host_id: &str) {
+        if row.memory_mb >= MIN_COMPUTER_MEMORY_MB || !row.is_free() {
+            return;
+        }
+        let target = ComputerSize {
+            memory_mb: MIN_COMPUTER_MEMORY_MB,
+            ..row.size()
+        };
+        let backend = match self.backend_for_row(row).await {
+            Ok(backend) => backend,
+            Err(error) => {
+                tracing::warn!(instance_id = %row.id, %host_id, ?error, "memory floor: no backend; keeping size");
+                return;
+            }
+        };
+        if let Err(error) = backend
+            .resize(&row.incus_name, target, &self.defaults.storage_pool)
+            .await
+        {
+            tracing::warn!(instance_id = %row.id, %host_id, ?error, "memory floor: resize failed; keeping size");
+            return;
+        }
+        match sqlx::query(
+            "UPDATE provisioned_instances SET memory_mb = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $1",
+        )
+        .bind(&row.id)
+        .bind(target.memory_mb)
+        .execute(&self.db)
+        .await
+        {
+            Ok(_) => {
+                tracing::info!(instance_id = %row.id, from = row.memory_mb, to = target.memory_mb, "memory floor: raised on wake");
+                row.memory_mb = target.memory_mb;
+            }
+            Err(error) => {
+                tracing::warn!(instance_id = %row.id, ?error, "memory floor: row update failed");
+            }
+        }
+    }
+
     pub async fn wake(
         self: &Arc<Self>,
         instance_id: &str,
@@ -582,7 +630,9 @@ impl ProvisioningService {
             ));
         };
 
+        let mut row = row;
         if !on_orgo {
+            self.raise_to_memory_floor(&mut row, &host_id).await;
             self.make_room_for_free(&host_id, row.memory_mb, Some(&row.id)).await?;
         }
         let now = Utc::now();
@@ -974,6 +1024,14 @@ pub fn start_free_computer_task(state: Arc<crate::ApiState>) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn platform_runtime_spec_floors_a_small_free_default() {
+        let mut free = FreeDefaults::from_env();
+        free.memory_mb = 2048;
+        assert_eq!(platform_runtime_spec(&free).1.memory_mb, MIN_COMPUTER_MEMORY_MB);
+        assert_eq!(MIN_COMPUTER_MEMORY_MB, 4096);
+    }
+
     use super::*;
 
     // A host with 5 GB usable after headroom (7168 total, 2048 headroom).

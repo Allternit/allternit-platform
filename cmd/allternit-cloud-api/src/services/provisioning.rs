@@ -267,7 +267,7 @@ impl ProvisionDefaults {
         Self {
             image: env_string(ENV_IMAGE, DEFAULT_IMAGE),
             cpu_cores: env_i64(ENV_CPU, DEFAULT_CPU),
-            memory_mb: env_i64(ENV_MEMORY_MB, DEFAULT_MEMORY_MB),
+            memory_mb: env_i64(ENV_MEMORY_MB, DEFAULT_MEMORY_MB).max(free::MIN_COMPUTER_MEMORY_MB),
             disk_gb: env_i64(ENV_DISK_GB, DEFAULT_DISK_GB),
             profiles: env_string(ENV_PROFILES, DEFAULT_PROFILES)
                 .split(',')
@@ -5997,6 +5997,53 @@ pub(crate) mod pg_tests {
         .unwrap();
         service.sweep_free(now).await.unwrap();
         assert_eq!(service.fetch_row(&active.id, None).await.unwrap().status, "running");
+    }
+
+    #[tokio::test]
+    async fn wake_raises_a_small_free_computer_to_the_memory_floor() {
+        let pool = migrated_pool().await;
+        insert_host(&pool, "host_a", 8, 8192, 100).await;
+        let backend = Arc::new(MockBackend::default());
+        let service = free_service(pool.clone(), backend.clone(), test_free_defaults());
+        let view = service.create_free("user_1").await.unwrap();
+        assert_eq!(view.memory_mb, 2048);
+        set_status(&pool, &view.id, "sleeping").await;
+
+        let result = service.wake(&view.id, Some("user_1"), WakeReason::Owner).await.unwrap();
+        result.task.expect("a start task").await.unwrap();
+        let resizes: Vec<String> = backend
+            .calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|call| call.starts_with("resize:"))
+            .cloned()
+            .collect();
+        assert_eq!(resizes, vec![format!("resize:{}:2c/4096m/10g", view.incus_name)]);
+        assert_eq!(service.fetch_row(&view.id, None).await.unwrap().memory_mb, 4096);
+
+        // Already at the floor: a second sleep and wake resizes nothing more.
+        set_status(&pool, &view.id, "sleeping").await;
+        let again = service.wake(&view.id, Some("user_1"), WakeReason::Owner).await.unwrap();
+        again.task.expect("a start task").await.unwrap();
+        let count = backend.calls.lock().unwrap().iter().filter(|c| c.starts_with("resize:")).count();
+        assert_eq!(count, 1);
+    }
+
+    #[tokio::test]
+    async fn wake_checks_admission_with_the_floored_size() {
+        let pool = migrated_pool().await;
+        // Fits at 2048 but not at 4096: the wake must be refused, not admitted.
+        insert_host(&pool, "host_a", 8, 8192, 100).await;
+        let backend = Arc::new(MockBackend::default());
+        let service = free_service(pool.clone(), backend.clone(), test_free_defaults());
+        let view = service.create_free("user_1").await.unwrap();
+        set_status(&pool, &view.id, "sleeping").await;
+        sqlx::query("UPDATE provisioned_hosts SET memory_mb_total = 3000 WHERE id = 'host_a'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(service.wake(&view.id, Some("user_1"), WakeReason::Owner).await.is_err());
     }
 
     #[tokio::test]
