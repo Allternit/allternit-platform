@@ -36,8 +36,19 @@
 //! `required_actions: [{type: approval, approval_id}]` ([`response_json_with`]).
 //! The client resolves it (`POST /v1/approvals/{id}`) and sends a new response
 //! with `previous_response_id`.
+//!
+//! **Every turn ends.** Once a response row exists, the turn runs in its own
+//! task that owns the runtime stream, the items and the final write; the
+//! request handler only awaits it. A client that hangs up (or Cloudflare's 524
+//! on a non-streaming request after 100 s) drops the handler, never the turn,
+//! so the response still ends `completed`, `failed` or `incomplete`. A hosted
+//! turn past [`AgentHost::turn_cap`] (10 minutes) ends `failed` with
+//! `turn_timeout` and a failed assistant item, and frees the conversation. Rows
+//! left `in_progress` anyway (a crash or deploy mid-turn) are failed with
+//! `turn_abandoned` by [`fail_abandoned`], which the platform worker runs at
+//! startup and every 5 minutes.
 
-use std::{collections::HashMap, convert::Infallible, sync::Arc};
+use std::{collections::HashMap, convert::Infallible, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use axum::{
@@ -55,7 +66,7 @@ use sqlx::{FromRow, PgPool};
 use super::{
     agents, build_page,
     conversations::{self, ConvRow, TurnLock, TurnMeter},
-    hosting::{host_for, AgentHost, SseLines},
+    hosting::{host_for, AgentHost, SseLines, AGENT_TURN_CAP},
     items::{self, Item, NewItem},
     new_id, ApiJson, ApiQuery, PageParams, PlatformCaller, PlatformError, RouteTable,
 };
@@ -673,6 +684,8 @@ struct Finish {
     db: PgPool,
     store: bool,
     row: RespRow,
+    /// `error.code` when the turn fails: `turn_failed`, or `turn_timeout`.
+    error_code: &'static str,
 }
 
 impl Finish {
@@ -688,7 +701,7 @@ impl Finish {
         self.row.output = fold.output_json();
         self.row.usage = usage;
         self.row.error = match end {
-            End::Failed(f) => Some(json!({ "code": "turn_failed", "message": f })),
+            End::Failed(f) => Some(json!({ "code": self.error_code, "message": f })),
             _ => None,
         };
         self.row.completed_at = Some(Utc::now());
@@ -721,19 +734,42 @@ impl Finish {
 
 // ---- agent turns --------------------------------------------------------------
 
-/// Read an agent turn to its end, building items and events as it goes.
+/// How long a turn may run, in words.
+fn cap_words(cap: Duration) -> String {
+    match cap.as_secs() {
+        s if s >= 60 && s % 60 == 0 => format!("{} minutes", s / 60),
+        s if s >= 1 => format!("{s} seconds"),
+        _ => format!("{} ms", cap.as_millis()),
+    }
+}
+
+/// Read an agent turn to its end, building items and events as it goes. Runs
+/// in its own task (see [`agent_turn`]); at most `cap` is spent waiting on the
+/// runtime, then the turn ends `failed` (`turn_timeout`).
 async fn drive_agent(
     mut upstream: crate::routes::voice_calls_cloud::RelayStream,
     mut sink: DbSink,
-    fin: Finish,
+    mut fin: Finish,
     meter: TurnMeter,
     lock: TurnLock,
     mut emit: Emitter,
+    cap: Duration,
 ) -> Value {
     emit.send(vec![ev("response.created", json!({ "response": response_json(&fin.row) }))]);
     let mut fold = OutputFold::default();
     let (mut lines, mut failure, mut done, mut usage) = (SseLines::default(), None::<String>, false, Value::Null);
-    'read: while let Some(chunk) = upstream.next().await {
+    let deadline = tokio::time::Instant::now() + cap;
+    let mut timed_out = false;
+    'read: loop {
+        let chunk = match tokio::time::timeout_at(deadline, upstream.next()).await {
+            Ok(Some(chunk)) => chunk,
+            Ok(None) => break 'read,
+            Err(_) => {
+                timed_out = true;
+                failure = Some(format!("the agent didn't finish within {}", cap_words(cap)));
+                break 'read;
+            }
+        };
         let bytes = match chunk {
             Ok(b) => b,
             Err(e) => {
@@ -772,8 +808,24 @@ async fn drive_agent(
             }
         }
     }
+    // Stop reading from the runtime now (a timed-out turn closes its relay).
+    drop(upstream);
     let failure = failure.or_else(|| (!done).then(|| "the agent's reply ended early".to_string()));
     let end = failure.clone().map(End::Failed).unwrap_or(End::Completed);
+    if timed_out {
+        fin.error_code = "turn_timeout";
+        // The conversation shows the failed reply even when the runtime never answered.
+        let answered = fold.text.is_some() || fold.output.iter().any(|it| it.kind == "message" && it.role.as_deref() == Some("assistant"));
+        if !answered {
+            match fold.open(&mut sink, NewItem::assistant_text("").with_status("in_progress")).await {
+                Ok((index, added)) => {
+                    fold.text = Some((index, String::new()));
+                    emit.send(added);
+                }
+                Err(err) => tracing::error!(response = %fin.row.id, "platform: failed reply not stored: {}", err.message),
+            }
+        }
+    }
     match fold.finish(&mut sink, &end).await {
         Ok(evs) => emit.send(evs),
         Err(err) => tracing::error!(response = %fin.row.id, "platform: output items not closed: {}", err.message),
@@ -850,17 +902,98 @@ async fn agent_turn(state: &Arc<ApiState>, caller: &PlatformCaller, host: Arc<dy
     // Stored once the runtime took the turn: a refused turn leaves no response behind.
     let row = RespRow::new(new_id("resp_"), conv.account_id.clone(), Some(agent.id.clone()), None, Some(conv.id.clone()), body.previous_response_id.clone(), metadata);
     let row = insert_row(db, &caller.project_id, &row).await?;
-    items::append(db, &caller.project_id, Some(&conv.id), Some(&row.id), input).await?;
+    if let Err(e) = items::append(db, &caller.project_id, Some(&conv.id), Some(&row.id), input).await {
+        fail_one(db, &row.id, "turn_failed", "The request couldn't be stored.").await;
+        return Err(e);
+    }
+    let resp_id = row.id.clone();
     let sink = DbSink { db: db.clone(), project_id: caller.project_id.clone(), conversation_id: Some(conv.id.clone()), response_id: row.id.clone() };
-    let fin = Finish { db: db.clone(), store: true, row };
+    let fin = Finish { db: db.clone(), store: true, row, error_code: "turn_failed" };
     let (emit, rx) = emitter(body.stream);
+    // The turn owns everything it needs: dropping this handler (the client hung
+    // up) leaves it running to its stored end.
+    let turn = tokio::spawn(drive_agent(upstream, sink, fin, meter, lock, emit, host.turn_cap()));
     match rx {
-        None => Ok(Created::Json(drive_agent(upstream, sink, fin, meter, lock, emit).await)),
-        Some(rx) => {
-            tokio::spawn(drive_agent(upstream, sink, fin, meter, lock, emit));
-            Ok(Created::Stream(rx))
+        None => Ok(Created::Json(joined(db, &resp_id, turn).await?)),
+        Some(rx) => Ok(Created::Stream(rx)),
+    }
+}
+
+/// The answer of a detached turn the handler waits on. A turn task that
+/// panicked leaves its response failed, not running.
+async fn joined(db: &PgPool, resp_id: &str, turn: tokio::task::JoinHandle<Value>) -> Result<Value, PlatformError> {
+    match turn.await {
+        Ok(body) => Ok(body),
+        Err(error) => {
+            tracing::error!(%error, response = resp_id, "platform: response turn task died");
+            fail_one(db, resp_id, "turn_failed", "The turn stopped unexpectedly.").await;
+            Err(PlatformError::api_error("internal_error", "An internal error occurred. Please retry."))
         }
     }
+}
+
+// ---- responses that can't finish ---------------------------------------------
+
+/// A row still `in_progress` this long after it was created has no live turn
+/// behind it (turns end by [`AGENT_TURN_CAP`]); the margin covers the last writes.
+pub const ABANDON_AFTER: Duration = Duration::from_secs(AGENT_TURN_CAP.as_secs() + 5 * 60);
+
+/// Fail `in_progress` responses: `id` alone, or every row older than
+/// `older_than`. Each gets `status: failed`, `error {code, message}` and
+/// `completed_at`; its open items fail with it, and a response with no assistant
+/// message gets a failed one so its conversation shows the failure. Rows that
+/// already ended are never touched. Returns how many responses it failed.
+async fn fail_in_progress(db: &PgPool, id: Option<&str>, older_than: Duration, code: &str, message: &str) -> Result<u64, sqlx::Error> {
+    // Uses idx_platform_responses_in_progress (migration 138): only running rows are indexed.
+    // Postgres runs every data-modifying CTE to completion whether or not the
+    // final SELECT reads it.
+    let n: i64 = sqlx::query_scalar(
+        "WITH stuck AS ( \
+           UPDATE platform_responses \
+              SET status = 'failed', error = jsonb_build_object('code', $3::text, 'message', $4::text), completed_at = NOW() \
+            WHERE status = 'in_progress' AND ($1::text IS NULL OR id = $1) \
+              AND created_at <= NOW() - make_interval(secs => $2::float8) \
+           RETURNING id, project_id, conversation_id \
+         ), closed AS ( \
+           UPDATE platform_items SET status = 'failed', error = COALESCE(error, $4) \
+            WHERE response_id IN (SELECT id FROM stuck) AND status = 'in_progress' \
+           RETURNING response_id \
+         ), replies AS ( \
+           INSERT INTO platform_items (id, project_id, conversation_id, response_id, type, role, status, content, error) \
+           SELECT 'item_' || substr(md5(random()::text || s.id), 1, 24), s.project_id, s.conversation_id, s.id, \
+                  'message', 'assistant', 'failed', '[{\"type\":\"output_text\",\"text\":\"\"}]'::jsonb, $4 \
+             FROM stuck s \
+            WHERE NOT EXISTS (SELECT 1 FROM platform_items i WHERE i.response_id = s.id AND i.type = 'message' AND i.role = 'assistant') \
+           RETURNING 1 \
+         ) \
+         SELECT COUNT(*) FROM stuck",
+    )
+    .bind(id)
+    .bind(older_than.as_secs_f64())
+    .bind(code)
+    .bind(message)
+    .fetch_one(db)
+    .await?;
+    Ok(n as u64)
+}
+
+/// Fail one response whose turn can't finish (best effort; logged).
+async fn fail_one(db: &PgPool, id: &str, code: &str, message: &str) {
+    if let Err(error) = fail_in_progress(db, Some(id), Duration::ZERO, code, message).await {
+        tracing::error!(%error, response = id, "platform: couldn't fail a response that can't finish");
+    }
+}
+
+/// The sweep: responses (and `/v1/messages` thread turns) still `in_progress`
+/// after [`ABANDON_AFTER`] → `failed` with `turn_abandoned`. Cheap when nothing
+/// is stuck (a partial index holds only running rows). Run by the platform
+/// worker at startup and every 5 minutes.
+pub async fn fail_abandoned(db: &PgPool) -> Result<u64, sqlx::Error> {
+    fail_abandoned_after(db, ABANDON_AFTER).await
+}
+
+async fn fail_abandoned_after(db: &PgPool, older_than: Duration) -> Result<u64, sqlx::Error> {
+    fail_in_progress(db, None, older_than, "turn_abandoned", "The turn stopped without an answer; send the request again.").await
 }
 
 // ---- model turns --------------------------------------------------------------
@@ -985,14 +1118,14 @@ async fn model_turn(state: &Arc<ApiState>, caller: &PlatformCaller, model: &str,
         let row = RespRow::new(resp_id.clone(), account_id, None, Some(model.to_string()), None, body.previous_response_id.clone(), metadata);
         (Box::new(MemSink { project_id: caller.project_id.clone(), response_id: resp_id, seq: 0 }) as Box<dyn ItemSink>, row)
     };
-    let fin = Finish { db: db.clone(), store, row };
+    let fin = Finish { db: db.clone(), store, row, error_code: "turn_failed" };
+    let resp_id = fin.row.id.clone();
     let (emit, rx) = emitter(body.stream);
+    // Detached like an agent turn: a client that hangs up can't leave the row running.
+    let turn = tokio::spawn(drive_model(run, sink, fin, lock, emit));
     match rx {
-        None => Ok(Created::Json(drive_model(run, sink, fin, lock, emit).await)),
-        Some(rx) => {
-            tokio::spawn(drive_model(run, sink, fin, lock, emit));
-            Ok(Created::Stream(rx))
-        }
+        None => Ok(Created::Json(joined(db, &resp_id, turn).await?)),
+        Some(rx) => Ok(Created::Stream(rx)),
     }
 }
 

@@ -956,18 +956,43 @@ async fn send_message(
     let db = state.db.clone();
     let project_id = caller.project_id.clone();
 
+    // A turn may wait on the runtime this long, then its reply is stored failed.
+    let cap = host.turn_cap();
+    let deadline = tokio::time::Instant::now() + cap;
+    let timed_out = move || format!("the agent didn't finish within {} seconds", cap.as_secs());
+
     if !body.stream {
-        let (mut lines, mut log) = (SseLines::default(), TurnLog::default());
-        while let Some(chunk) = upstream.next().await {
-            let chunk = chunk.map_err(|e| PlatformError::api_error("runtime_unavailable", format!("The agent's reply was cut off: {e}")))?;
-            for ev in lines.push(&chunk) {
-                log.feed(&ev);
+        let conv_id = conv.id.clone();
+        // Detached: a client that hangs up (or Cloudflare's 524 at 100 s) drops
+        // this handler, never the turn, so the reply is still stored.
+        let turn = tokio::spawn(async move {
+            let _lock = lock;
+            let (mut lines, mut log) = (SseLines::default(), TurnLog::default());
+            loop {
+                match tokio::time::timeout_at(deadline, upstream.next()).await {
+                    Ok(Some(chunk)) => {
+                        let chunk = chunk.map_err(|e| PlatformError::api_error("runtime_unavailable", format!("The agent's reply was cut off: {e}")))?;
+                        for ev in lines.push(&chunk) {
+                            log.feed(&ev);
+                        }
+                    }
+                    Ok(None) => break,
+                    Err(_) => {
+                        log.failure = Some(timed_out());
+                        break;
+                    }
+                }
             }
-        }
-        drop(lock);
-        let failure = log.failure();
-        let reply = store_turn(&db, &project_id, &conv.id, &log, failure.as_deref()).await?;
-        meter_turn(&db, &meter, &reply.id, &log.usage, failure.as_deref()).await;
+            drop(upstream);
+            let failure = log.failure();
+            let reply = store_turn(&db, &project_id, &conv_id, &log, failure.as_deref()).await?;
+            meter_turn(&db, &meter, &reply.id, &log.usage, failure.as_deref()).await;
+            Ok::<_, PlatformError>(reply)
+        });
+        let reply = turn.await.map_err(|e| {
+            tracing::error!(error = %e, conversation = %conv.id, "platform: conversation turn task died");
+            PlatformError::api_error("internal_error", "An internal error occurred. Please retry.")
+        })??;
         return Ok(Json(reply_message(&reply)?).into_response());
     }
 
@@ -976,7 +1001,15 @@ async fn send_message(
     tokio::spawn(async move {
         let _lock = lock;
         let (mut lines, mut log) = (SseLines::default(), TurnLog::default());
-        'read: while let Some(chunk) = upstream.next().await {
+        'read: loop {
+            let chunk = match tokio::time::timeout_at(deadline, upstream.next()).await {
+                Ok(Some(chunk)) => chunk,
+                Ok(None) => break 'read,
+                Err(_) => {
+                    log.failure = Some(timed_out());
+                    break 'read;
+                }
+            };
             let bytes = match chunk {
                 Ok(b) => b,
                 Err(e) => {

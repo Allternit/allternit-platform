@@ -37,6 +37,16 @@ To go on, resolve it with `POST /v1/approvals/{id}` (or watch the `approval.reso
 
 With `stream: true`: `response.created`, `response.output_item.added`, `response.output_text.delta`, `response.output_text.done`, `response.function_call_arguments.done`, `response.tool_call.started`, `response.tool_call.completed`, `response.tool_call.failed`, `response.output_item.done`, `response.completed`, `response.incomplete`, `response.failed`, `error`. Skip event names you do not know.
 
+## Long turns and how a response ends
+
+Send agent turns with `stream: true`. An agent turn can take minutes, for example when the project's hosted computer has to wake up first. A non-streaming request sends nothing until the turn ends, and Cloudflare closes an idle request after 100 seconds with a `524` error. The stream sends `response.created` at once and keeps sending events while the agent works.
+
+Every response ends `completed`, `failed` or `incomplete`. It never stays `in_progress`:
+
+- If your client disconnects or times out, the turn still runs to its end and is stored. Read the result with `GET /v1/responses/{id}`. If you never got the id, list the conversation's items.
+- If the agent's runtime does not finish within 10 minutes, the response ends `failed` with `error.code: "turn_timeout"`. The assistant reply is stored as a failed item, and the conversation takes new turns again.
+- If a turn is cut short on our side (for example by a restart during a deploy), the response is marked `failed` with `error.code: "turn_abandoned"` within about 20 minutes. Send the request again.
+
 ## Billing
 
 The project pays for every response, in both modes. The project needs a card on file first, sandbox included; without one the request answers `402 payment_method_required` (see [Billing](/api/platform/billing)). Model tokens are recorded as `tokens_in` and `tokens_out` usage rows and billed to the project at the model's list price plus 15%, as in [Pricing](/api/platform/pricing). They count toward the project's monthly spend cap: at the cap a new response answers `402 spend_cap_reached`. In `model` mode no member's personal credits are used, whichever key or console session made the call. A streamed response is billed once, when it ends. A response that fails at the model is not billed.

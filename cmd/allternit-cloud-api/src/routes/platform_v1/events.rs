@@ -513,7 +513,8 @@ pub async fn record_agent_months(db: &PgPool) -> Result<u64, sqlx::Error> {
 }
 
 /// Background worker: webhook deliveries every 5 s; the approvals expiry sweep
-/// every 60 s (`approvals::expire_due`); number, agent, mailbox and identity months
+/// every 60 s (`approvals::expire_due`); stuck responses every 5 minutes
+/// (`responses::fail_abandoned`); number, agent, mailbox and identity months
 /// every 6 h; usage to Stripe every 5 min, only when that is switched on
 /// (`stripe_plan::report_if_enabled`).
 /// Started when the Platform API is switched on.
@@ -548,6 +549,15 @@ fn spawn_worker_with(db: PgPool, number_months: bool) {
             }
             if number_months && ticks % (5 * 12) == 0 {
                 super::stripe_plan::report_if_enabled(&db).await;
+            }
+            // Responses no turn will finish (a crash or deploy mid-turn) → `failed`
+            // (`turn_abandoned`), at startup and every 5 minutes.
+            if number_months && ticks % (5 * 12) == 0 {
+                match super::responses::fail_abandoned(&db).await {
+                    Ok(0) => {}
+                    Ok(n) => tracing::warn!("platform responses: {n} abandoned turns failed"),
+                    Err(e) => tracing::warn!("platform responses sweep: {e}"),
+                }
             }
             // Approvals past their deadline → `expired` + `approval.expired`, every 60 s.
             if number_months && ticks % 12 == 0 {
