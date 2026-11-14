@@ -13,6 +13,12 @@ path = "src/main.rs"
 name = "allternit-agents-server"
 path = "src/bin/allternit-agents-server.rs"
 
+# Brain runner: first process in a person's sealed runner box. Dials out to
+# cloud-api and runs the vendor CLIs tools-off. See src/brain_runner/mod.rs.
+[[bin]]
+name = "allternit-brain-runner"
+path = "src/bin/allternit-brain-runner.rs"
+
 [dependencies]
 jsonschema = { version = "0.58.6", default-features = false }
 # Vendored OpenSSL: allternit-api links openssl transitively (webauthn-rs-core),
