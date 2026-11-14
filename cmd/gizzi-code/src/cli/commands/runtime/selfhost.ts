@@ -25,6 +25,8 @@ interface ServerInfo {
   auth_modes?: string[]
   public_url?: string | null
   max_tool_result_bytes?: number
+  /** Live server replicas (selfhost-v1.yaml ServerInfo.replicas; absent on servers before 1.1). */
+  replicas?: number
 }
 
 interface Environment {
@@ -245,6 +247,7 @@ export async function selfHostedStatus(input: { server?: string; json?: boolean 
   out(`Self-hosted server: ${status.profile.name} (${status.profile.url})`)
   out(`  Version:   ${server.version}`)
   out(`  Provider:  ${server.provider}`)
+  if (Number.isInteger(server.replicas)) out(`  Replicas:  ${server.replicas}`)
   if (server.auth_modes?.length) out(`  Sign-in:   ${server.auth_modes.join(", ")}`)
   if (server.features) {
     const on = Object.entries(server.features)

@@ -15,7 +15,7 @@
  * one empty claim too), `--on-work <script>` (run the script per item while
  * this process keeps the lease; the script typically starts a sandbox that
  * runs `gizzi worker attach`), `--auto-stop <secs>` (exit 0 after that long
- * with no work).
+ * with no work). `--tools-file` adds command tools (custom-tools.ts).
  *
  * The secret and the environment key are never logged.
  */
@@ -28,15 +28,22 @@ import type { ToolExecutor, ToolResult } from "./executor"
 
 export const MAX_RESULT_BYTES = 102_400
 export const RENEW_INTERVAL_MS = 20_000
+/** The server raises a public reclaim_older_than_ms below this to this (selfhost-v1.yaml). */
+export const RECLAIM_FLOOR_MS = 30_000
 const RETRY_RESULT_BYTES = 50 * 1024
 const RESULT_POST_ATTEMPTS = 5
 const DONE_CACHE_SIZE = 512
 
-/** Cut `output` to at most `max` UTF-8 bytes, with a note saying so. */
-export function truncateResult(output: string, max = MAX_RESULT_BYTES): string {
+/**
+ * Cut `output` to at most `max` UTF-8 bytes, with a note saying so.
+ * `totalBytes`: the size of the full output when the caller kept only its
+ * start (command tools stop buffering at the limit).
+ */
+export function truncateResult(output: string, max = MAX_RESULT_BYTES, totalBytes?: number): string {
   const bytes = Buffer.byteLength(output, "utf8")
-  if (bytes <= max) return output
-  const note = `\n\n[gizzi worker: output truncated from ${bytes} bytes to fit the ${Math.floor(max / 1024)} KiB result limit]`
+  const total = Math.max(bytes, totalBytes ?? 0)
+  if (total <= max) return output
+  const note = `\n\n[gizzi worker: output truncated from ${total} bytes to fit the ${Math.floor(max / 1024)} KiB result limit]`
   const budget = Math.max(0, max - Buffer.byteLength(note, "utf8"))
   let text = Buffer.from(output, "utf8").subarray(0, budget).toString("utf8")
   // A cut inside a multi-byte character decodes to U+FFFD; drop it.
@@ -173,6 +180,8 @@ export interface SelfHostWorkerOptions {
   /** Aborts on SIGTERM/SIGINT. */
   stop: AbortSignal
   executor: ToolExecutor
+  /** Names of the command tools from --tools-file (for the start log). */
+  customToolNames?: string[]
   fetchImpl?: typeof fetch
 }
 
@@ -338,12 +347,16 @@ async function serveItem(
     }
   }
 
+  // A released item may go to another worker, so this worker's state for the
+  // session (shadow session, background tasks, network proxy) ends here too.
   if (opts.stop.aborted || outcome === "stopped") {
     await settle("release", () => client.release(claim.work_id, claim.lease_generation))
+    if (!opts.onWork) await opts.executor.finish(claim.session_id)
     return "stopped"
   }
   if (outcome === "idle") {
     await settle("release", () => client.release(claim.work_id, claim.lease_generation))
+    if (!opts.onWork) await opts.executor.finish(claim.session_id)
     return "idle"
   }
   if (outcome === "failed") {
@@ -371,7 +384,16 @@ export async function runSelfHostWorker(opts: SelfHostWorkerOptions): Promise<nu
     workdir: opts.workdir,
     block_ms: opts.blockMs ?? 25_000,
     auto_stop_secs: opts.autoStopSecs ?? null,
+    reclaim_older_than_ms: opts.reclaimOlderThanMs ?? null,
+    custom_tools: opts.customToolNames ?? [],
   })
+  if (opts.reclaimOlderThanMs !== undefined && opts.reclaimOlderThanMs < RECLAIM_FLOOR_MS) {
+    opts.log("warn", "worker.reclaim_raised", {
+      requested_ms: opts.reclaimOlderThanMs,
+      effective_ms: RECLAIM_FLOOR_MS,
+      note: `--reclaim-older-than-ms below ${RECLAIM_FLOOR_MS} is raised to ${RECLAIM_FLOOR_MS} by the server (a healthy worker renews every 20 s)`,
+    })
+  }
 
   while (true) {
     if (opts.stop.aborted) {

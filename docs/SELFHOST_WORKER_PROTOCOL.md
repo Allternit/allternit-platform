@@ -39,7 +39,7 @@ and whose `input` follows its `input_schema`. A worker runs
 a custom tool when it has a handler for it. Without one it answers with
 `is_error: true`. A worker built on the SDK uses its own handlers. The gizzi
 CLI worker reads command tools from a tools file:
-`gizzi worker --tools-file <path>` (or env `ALLTERNIT_WORKER_TOOLS`):
+`gizzi worker --tools-file <path>` or `gizzi worker attach --tools-file <path>` (or env `ALLTERNIT_WORKER_TOOLS`, which also reaches `attach` through the `--on-work` script's environment):
 
 ```json
 {"tools": {"<name>": {"command": ["argv", "..."], "timeout_ms": 120000}}}

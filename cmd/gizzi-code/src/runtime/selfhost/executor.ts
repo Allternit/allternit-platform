@@ -9,6 +9,9 @@
  * workdir, so hard bans and hooks apply as they do locally, and `bash` runs
  * under `Sandbox.wrap` (bubblewrap on Linux, sandbox-exec on macOS) with that
  * policy. Linux without bubblewrap fails closed (bash.ts refuses).
+ *
+ * Command tools from `--tools-file` (custom-tools.ts) run under that same
+ * session sandbox policy and child env, with cwd = the workdir.
  */
 import os from "node:os"
 import path from "node:path"
@@ -26,6 +29,8 @@ import { ProcessRegistry } from "@/runtime/process-registry"
 import { Identifier } from "@/shared/id/id"
 import { Global } from "@/runtime/context/global"
 import { Session } from "@/runtime/session"
+import { ShellEnv } from "@/runtime/integrations/shell/env"
+import { Config } from "@/runtime/context/config/config"
 import { BashTool } from "@/runtime/tools/builtins/bash"
 import { ReadTool } from "@/runtime/tools/builtins/read"
 import { WriteTool } from "@/runtime/tools/builtins/write"
@@ -48,6 +53,7 @@ import {
   ScratchpadRemoveTool,
   ScratchpadWriteTool,
 } from "@/runtime/tools/builtins/scratchpad"
+import { runCustomTool, type CustomTools } from "./custom-tools"
 import { effectiveNetwork, installGitPolicy, sandboxPolicyFor, type EnvironmentPolicy } from "./egress"
 import type { ToolCall } from "./client"
 import type { DaemonLog } from "@/runtime/fabric-transport/daemon-util"
@@ -92,6 +98,12 @@ const TOOLS: Tool.Info[] = [
   ScratchpadRemoveTool,
 ]
 
+/**
+ * Every name the worker answers as a built-in tool (ids plus the protocol's
+ * short aliases). A --tools-file tool may not use one (compared without case).
+ */
+export const WORKER_TOOL_NAMES: readonly string[] = [...TOOLS.map((tool) => tool.id), ...Object.keys(RemoteToolHost.ALIASES)]
+
 /** Light instance init: what the sandbox tools need, none of the server-side startup (no LSP, sidecar, discovery). */
 async function workerInit() {
   ProcessRegistry.install()
@@ -112,7 +124,13 @@ function realGitPath(exclude: string): string | null {
   return null
 }
 
-export function createGizziToolExecutor(opts: { workdir: string; log: DaemonLog; stateDir?: string }): ToolExecutor {
+export function createGizziToolExecutor(opts: {
+  workdir: string
+  log: DaemonLog
+  stateDir?: string
+  /** Command tools from --tools-file, checked by loadToolsFile. */
+  customTools?: CustomTools
+}): ToolExecutor {
   // This process runs tools; it must never forward them again.
   delete process.env.GIZZI_TOOL_HOST
 
@@ -121,6 +139,7 @@ export function createGizziToolExecutor(opts: { workdir: string; log: DaemonLog;
   const shadows = new Map<string, string>()
   const byId = new Map(TOOLS.map((tool) => [tool.id, tool]))
   const initialized = new Map<string, ReturnType<Tool.Info["init"]>>()
+  const customTools: CustomTools = opts.customTools ?? new Map()
 
   const provide = <T>(fn: () => Promise<T>) => Instance.provide({ directory: workdir, init: workerInit, fn })
 
@@ -179,9 +198,31 @@ export function createGizziToolExecutor(opts: { workdir: string; log: DaemonLog;
       const local = shadows.get(sessionId)
       if (!local) return { output: "The worker has no prepared session for this call.", is_error: true }
       const name = RemoteToolHost.canonicalName(call.name)
+      const custom = byId.has(name) ? undefined : customTools.get(call.name)
+      if (custom) {
+        return provide(async () => {
+          // The bash tool's sandbox and env for this session (bash.ts): the
+          // policy prepare() set, the allowlisted child env plus the session's
+          // git shim PATH and network proxy.
+          const sandbox = SessionSandbox.ensureDefault(local, [workdir])
+          const passthrough = (await Config.get().catch(() => undefined))?.bash?.env_passthrough ?? []
+          const env = ShellEnv.child(process.env, EnvironmentRuntime.toolEnv(local), passthrough)
+          return runCustomTool({
+            name: call.name,
+            spec: custom,
+            input: call.input ?? {},
+            cwd: workdir,
+            sessionID: local,
+            policy: sandbox?.enabled ? sandbox.policy : undefined,
+            env,
+            signal,
+          })
+        })
+      }
       if (!byId.has(name)) {
+        const known = [...byId.keys(), ...customTools.keys()]
         return {
-          output: `The worker does not run the tool "${call.name}". Worker tools: ${[...byId.keys()].join(", ")}.`,
+          output: `The worker does not run the tool "${call.name}". Worker tools: ${known.join(", ")}.`,
           is_error: true,
         }
       }

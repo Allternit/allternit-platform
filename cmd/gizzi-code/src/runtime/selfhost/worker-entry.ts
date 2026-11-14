@@ -7,7 +7,8 @@ import fs from "node:fs/promises"
 import path from "node:path"
 import { makeJsonLogger } from "@/runtime/fabric-transport/daemon-util"
 import { installSelfHostedGuard } from "@/shared/selfhost/offline"
-import { createGizziToolExecutor, DEFAULT_WORKDIR } from "./executor"
+import { createGizziToolExecutor, DEFAULT_WORKDIR, WORKER_TOOL_NAMES } from "./executor"
+import { loadToolsFile, type CustomTools } from "./custom-tools"
 import { runAttach, runSelfHostWorker } from "./worker"
 import type { EnvironmentPolicy } from "./egress"
 
@@ -22,6 +23,7 @@ export interface WorkerArgs {
   autoStop?: number
   onWork?: string
   workdir?: string
+  toolsFile?: string
 }
 
 const env = (name: string) => process.env[name]?.trim() || undefined
@@ -61,6 +63,13 @@ function serverUrl(raw: string | undefined): string {
   return value.replace(/\/+$/, "")
 }
 
+/** --tools-file / ALLTERNIT_WORKER_TOOLS, checked before any claim. Throws ToolsFileError. */
+async function customTools(flag: string | undefined): Promise<CustomTools | undefined> {
+  const file = flag?.trim() || env("ALLTERNIT_WORKER_TOOLS")
+  if (!file) return undefined
+  return loadToolsFile(path.resolve(file), WORKER_TOOL_NAMES)
+}
+
 export async function runWorkerCommand(args: WorkerArgs): Promise<number> {
   const { log, stop } = setup()
   try {
@@ -70,6 +79,7 @@ export async function runWorkerCommand(args: WorkerArgs): Promise<number> {
     if (!environmentKey) throw new Error("--environment-key (or ALLTERNIT_ENVIRONMENT_KEY) is required")
     if (!environmentKey.startsWith("aek_")) throw new Error("--environment-key must be an environment key (aek_...)")
     if (!environmentId) throw new Error("--environment (or ALLTERNIT_ENVIRONMENT_ID) is required")
+    const tools = await customTools(args.toolsFile)
     const workdir = await ensureWorkdir(args.workdir ?? env("ALLTERNIT_WORKDIR") ?? DEFAULT_WORKDIR)
     return await runSelfHostWorker({
       server,
@@ -84,7 +94,8 @@ export async function runWorkerCommand(args: WorkerArgs): Promise<number> {
       workdir,
       log,
       stop: stop.signal,
-      executor: createGizziToolExecutor({ workdir, log }),
+      executor: createGizziToolExecutor({ workdir, log, customTools: tools }),
+      customToolNames: tools ? [...tools.keys()] : [],
     })
   } catch (error) {
     log("error", "worker.fatal", { error: (error as Error).message })
@@ -92,7 +103,7 @@ export async function runWorkerCommand(args: WorkerArgs): Promise<number> {
   }
 }
 
-export async function runAttachCommand(args: Pick<WorkerArgs, "server" | "workdir" | "blockMs">): Promise<number> {
+export async function runAttachCommand(args: Pick<WorkerArgs, "server" | "workdir" | "blockMs" | "toolsFile">): Promise<number> {
   const { log, stop } = setup()
   try {
     const server = serverUrl(args.server ?? env("ALLTERNIT_SERVER_URL"))
@@ -113,6 +124,7 @@ export async function runAttachCommand(args: Pick<WorkerArgs, "server" | "workdi
         log("warn", "worker.attach_policy_unreadable", { note: "using network: none" })
       }
     }
+    const tools = await customTools(args.toolsFile)
     const workdir = await ensureWorkdir(args.workdir ?? env("ALLTERNIT_WORKDIR") ?? DEFAULT_WORKDIR)
     return await runAttach({
       server,
@@ -124,7 +136,7 @@ export async function runAttachCommand(args: Pick<WorkerArgs, "server" | "workdi
       blockMs: args.blockMs,
       log,
       stop: stop.signal,
-      executor: createGizziToolExecutor({ workdir, log }),
+      executor: createGizziToolExecutor({ workdir, log, customTools: tools }),
     })
   } catch (error) {
     log("error", "worker.fatal", { error: (error as Error).message })

@@ -21,7 +21,7 @@ For tools your own code runs (`custom` tools on an agent), use the worker helper
 
 ## Custom tools with a tools file
 
-`gizzi worker --tools-file <path>` (or the environment variable `ALLTERNIT_WORKER_TOOLS`) loads command tools. The file is JSON:
+`gizzi worker --tools-file <path>` (or the environment variable `ALLTERNIT_WORKER_TOOLS`) loads command tools. `gizzi worker attach` takes the same flag and variable, so `--on-work` scripts get the tools too. The file is JSON:
 
 ```json
 {
