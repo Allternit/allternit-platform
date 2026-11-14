@@ -984,14 +984,27 @@ impl BrainRunnerService {
         let id = format!("r_{}", uuid::Uuid::new_v4().simple());
         frame["id"] = id.clone().into();
         frame["vendor"] = vendor.row_id().into();
-        let mut replies = self.sockets.request(&handle.runner_id, &id, &frame).ok_or_else(could_not_start)?;
+        let Some(mut replies) = self.sockets.request(&handle.runner_id, &id, &frame) else {
+            tracing::warn!(runner = %handle.runner_id, vendor = vendor.row_id(), "brain runner has no open socket");
+            return Err(could_not_start());
+        };
         let reply = tokio::time::timeout(self.cfg.request_timeout, replies.recv()).await;
         self.sockets.forget(&handle.runner_id, &id);
         let reply = match reply {
             Ok(Some(reply)) => reply,
-            Ok(None) | Err(_) => return Err(could_not_start()),
+            Ok(None) | Err(_) => {
+                tracing::warn!(runner = %handle.runner_id, vendor = vendor.row_id(), "brain runner request got no reply");
+                return Err(could_not_start());
+            }
         };
         if reply.get("type").and_then(Value::as_str) == Some("error") {
+            tracing::warn!(
+                runner = %handle.runner_id,
+                vendor = vendor.row_id(),
+                code = reply.get("code").and_then(Value::as_str).unwrap_or(""),
+                message = reply.get("message").and_then(Value::as_str).unwrap_or(""),
+                "brain runner answered with an error"
+            );
             match reply.get("code").and_then(Value::as_str) {
                 Some("login_expired") => self.set_vendor(&handle.runner_id, vendor, "expired").await?,
                 Some("vendor_limited") => self.set_vendor(&handle.runner_id, vendor, "limited").await?,
