@@ -41,6 +41,7 @@ pub mod inference_keys;
 pub mod voice_keys;
 pub mod brain_runners;
 pub mod connections;
+pub mod plan_threads;
 pub mod jobs;
 pub mod live_activity;
 pub mod livekit_admin;

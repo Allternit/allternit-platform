@@ -68,6 +68,22 @@ pub struct InferenceAttribution {
     /// page (Decision D6). Set only when `PLATFORM_LOG_BODIES=1` and the key's
     /// project has `log_bodies` on; see [`record_request_bodies`].
     pub capture_request: Option<Arc<Value>>,
+    /// The request carried `X-Allternit-Turn: person` (a composer send by
+    /// the person; contract 9.3). Plan models need it.
+    pub person_turn: bool,
+}
+
+/// Header a client sets only on a person's composer send (contract 9.3).
+pub const TURN_HEADER: &str = "x-allternit-turn";
+
+/// D7 (contract 9.3): a plan or Copilot turn runs only for a person's own
+/// send: the person header, not a paired computer's device token (bots,
+/// routines, schedules, missions and sub-agents run there), not a Platform
+/// project key and not a playground key.
+pub fn person_turn_allowed(attribution: &InferenceAttribution) -> bool {
+    attribution.person_turn
+        && attribution.project_id.is_none()
+        && !matches!(attribution.client.as_deref(), Some("runtime") | Some(crate::services::api_keys::KEY_KIND_PLAYGROUND))
 }
 
 /// Largest request + response pair kept for the Logs page, in JSON bytes.
@@ -1029,6 +1045,7 @@ mod tests {
                 request_id: Some("req_stream".to_string()),
                 started_at: Some(std::time::Instant::now()),
                 capture_request: None,
+                person_turn: false,
             },
         };
         let body = axum::body::Body::new(UsageMeteringBody::new(inner, settlement));
@@ -1081,6 +1098,7 @@ mod tests {
             request_id: Some("req_1".to_string()),
             started_at: Some(std::time::Instant::now()),
             capture_request: None,
+            person_turn: false,
         };
         settle_inference(&pool, "user_1", "gpt-4o", None, true, &test_prices(), 10, 5, false, &attribution).await;
         settle_inference(&pool, "user_2", "gpt-4o", None, true, &test_prices(), 10, 5, false, &InferenceAttribution::default()).await;

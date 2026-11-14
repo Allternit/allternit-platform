@@ -146,8 +146,8 @@ async fn rows_keys_and_logins_on_the_real_schema() {
     // Connect: a key row hands back the key page; an unavailable row is a 409.
     let (status, body) = send(&router, "POST", "/api/v1/connections/anthropic-key/connect", session, None).await;
     assert_eq!((status, body["login"]["kind"].as_str()), (StatusCode::OK, Some("paste")));
-    let (status, body) = send(&router, "POST", "/api/v1/connections/grok/connect", session, Some("{}")).await;
-    assert_eq!((status, body["reason_code"].as_str()), (StatusCode::CONFLICT, Some("not_available_yet")));
+    let (status, body) = send(&router, "POST", "/api/v1/connections/telegram/connect", session, Some("{}")).await;
+    assert_eq!((status, body["error"]["code"].as_str()), (StatusCode::CONFLICT, Some("start_from_bot")));
     let (_, body) = send(&router, "GET", "/api/v1/connections/xai-key/login", session, None).await;
     assert_eq!(body["status"], "done");
 
@@ -156,6 +156,95 @@ async fn rows_keys_and_logins_on_the_real_schema() {
     assert_eq!(status, StatusCode::NO_CONTENT);
     let (_, body) = send(&router, "GET", "/api/v1/connections/xai-key/login", session, None).await;
     assert_eq!((body["status"].as_str(), body["row"]["state"].as_str()), (Some("pending"), Some("off")));
+
+    db.close().await;
+    let admin = PgPool::connect(&base).await.unwrap();
+    admin.execute(format!("DROP DATABASE {name} WITH (FORCE)").as_str()).await.unwrap();
+}
+
+/// Contract 9.1/9.2 end to end on the real schema, with no computer and the
+/// compute gate refusing agent entry for this account: plan rows need
+/// `caps=runner`, connect answers the disclosure until it is accepted, then
+/// a login from the runner; submit/login go to the runner; DELETE signs out.
+/// The runner box never shows in compute-status.
+#[tokio::test]
+async fn plan_rows_disclosure_login_and_logout_without_a_computer() {
+    let Some((db, base, name)) = migrated_db().await else {
+        eprintln!("skipped: TEST_DATABASE_URL is not set or cannot create a database");
+        return;
+    };
+    let user = "user_plan";
+    db.execute(format!("INSERT INTO users (id, email) VALUES ('{user}', 'plan@example.com');").as_str()).await.unwrap();
+    let base_state = test_state(Arc::new(MockGateway::new(None, vec![]))).await;
+    let mut state = Arc::try_unwrap(base_state).ok().expect("one owner");
+    state.db = db.clone();
+    let router = routes().with_state(Arc::new(state));
+    let session = Some(("x-test-session-user", user));
+    // A box with the fake runner program (its hello says ChatGPT is signed in).
+    let (service, _box) = crate::services::brain_runners::test_service_with_box(db.clone(), user).await;
+
+    TEST_RUNNERS
+        .scope(service, async {
+            // The gate would refuse this account agent entry.
+            let gate = crate::routes::account_compute::GateConfig { gate: true, ..crate::routes::account_compute::GateConfig::from_env() };
+            assert!(matches!(
+                crate::routes::account_compute::require_compute_with(&db, user, &gate).await,
+                Err(ApiError::ComputeRequired(_))
+            ));
+
+            // An older client: plan rows say update the app.
+            let (_, body) = send(&router, "GET", "/api/v1/connections", session, None).await;
+            let rows = body["connections"].as_array().unwrap().clone();
+            let find = |rows: &[Value], id: &str| rows.iter().find(|r| r["id"] == id).cloned().unwrap_or_else(|| panic!("no {id}"));
+            assert_eq!(find(&rows, "claude")["reason_code"], "update_app");
+            assert_eq!(find(&rows, "chatgpt")["unavailable_reason"], "Update the app to connect this plan.");
+
+            let (_, body) = send(&router, "GET", "/api/v1/connections?caps=runner", session, None).await;
+            let rows = body["connections"].as_array().unwrap().clone();
+            let chatgpt = find(&rows, "chatgpt");
+            assert_eq!((chatgpt["available"].as_bool(), chatgpt["state"].as_str(), chatgpt["runs_on"].as_str()), (Some(true), Some("on"), Some("runner")));
+            assert_eq!(chatgpt["person_only"], true);
+            assert_eq!(chatgpt["models"][0], "plan/chatgpt/gpt-6.1-sol");
+            let claude = find(&rows, "claude");
+            assert_eq!(claude["disclosure"], serde_json::json!({ "version": "2026-11-14.1", "accepted_at": null }));
+
+            // Connect before accepting: the disclosure, with the vendor's name.
+            let (status, body) = send(&router, "POST", "/api/v1/connections/claude/connect", session, Some("{}")).await;
+            assert_eq!((status, body["error"]["code"].as_str()), (StatusCode::CONFLICT, Some("disclosure_required")), "{body}");
+            assert_eq!(body["error"]["disclosure"]["title"], "Before you connect your Claude plan");
+            assert_eq!(body["error"]["disclosure"]["body"].as_array().unwrap().len(), 4);
+            let (status, _) =
+                send(&router, "POST", "/api/v1/connections/claude/connect", session, Some(r#"{"accept_disclosure":"2020-01-01.1"}"#)).await;
+            assert_eq!(status, StatusCode::CONFLICT, "a stale version is not an acceptance");
+            // Submit and login poll need the acceptance too.
+            let (status, body) = send(&router, "POST", "/api/v1/connections/grok/submit", session, Some(r#"{"value":"abc"}"#)).await;
+            assert_eq!((status, body["error"]["code"].as_str()), (StatusCode::CONFLICT, Some("disclosure_required")));
+
+            // Accept: a login from the runner, not compute_required.
+            let (status, body) =
+                send(&router, "POST", "/api/v1/connections/claude/connect", session, Some(r#"{"accept_disclosure":"2026-11-14.1"}"#)).await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            assert_eq!((body["login"]["kind"].as_str(), body["login"]["code"].as_str()), (Some("device_code"), Some("KQ7M-24TX")));
+            let (status, body) = send(&router, "GET", "/api/v1/connections/claude/login", session, None).await;
+            assert_eq!((status, body["status"].as_str(), body["row"]["state"].as_str()), (StatusCode::OK, Some("done"), Some("on")), "{body}");
+            assert!(body["row"]["disclosure"]["accepted_at"].is_string());
+
+            // The runner box is not a computer.
+            let status = crate::routes::account_compute::status_body(&db, user, &gate, &std::collections::HashSet::new(), Utc::now())
+                .await
+                .unwrap();
+            assert_eq!((status["state"].as_str(), status["gate"].as_bool()), (Some("none"), Some(true)));
+            assert!(status["computer"].is_null(), "{status}");
+
+            // Disconnect signs out on the runner; the consent stays.
+            let (status, _) = send(&router, "DELETE", "/api/v1/connections/chatgpt", session, None).await;
+            assert_eq!(status, StatusCode::NO_CONTENT);
+            let (_, body) = send(&router, "GET", "/api/v1/connections?caps=runner", session, None).await;
+            let rows = body["connections"].as_array().unwrap().clone();
+            assert_eq!(find(&rows, "chatgpt")["state"], "off");
+            assert!(find(&rows, "claude")["disclosure"]["accepted_at"].is_string());
+        })
+        .await;
 
     db.close().await;
     let admin = PgPool::connect(&base).await.unwrap();

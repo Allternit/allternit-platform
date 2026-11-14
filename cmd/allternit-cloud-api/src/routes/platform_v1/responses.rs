@@ -1131,6 +1131,18 @@ async fn model_turn(state: &Arc<ApiState>, caller: &PlatformCaller, model: &str,
 
 // ---- handlers -----------------------------------------------------------------
 
+/// Plan and Copilot models are person-sent chat only (CONTRACT-connections
+/// section 9.3): a Platform response never runs one.
+pub(crate) fn refuse_person_only_model(model: Option<&str>) -> Result<(), PlatformError> {
+    match model {
+        Some(model) if crate::routes::model_router::is_person_only_model(model) => Err(PlatformError::permission(
+            "plan_person_only",
+            crate::routes::model_router::PLAN_PERSON_ONLY_MESSAGE,
+        )),
+        _ => Ok(()),
+    }
+}
+
 async fn create_inner(state: &Arc<ApiState>, caller: &PlatformCaller, host: Arc<dyn AgentHost>, body: CreateBody) -> Result<Created, PlatformError> {
     let model = nonempty(&body.model).map(str::to_string);
     let agent = nonempty(&body.agent).map(str::to_string);
@@ -1145,6 +1157,7 @@ async fn create_inner(state: &Arc<ApiState>, caller: &PlatformCaller, host: Arc<
         (None, Some(_)) => caller.require("agents")?,
         _ => return Err(invalid("model", "Give exactly one of model or agent.")),
     }
+    refuse_person_only_model(model.as_deref())?;
     let metadata = check_metadata(&body.metadata)?;
     let input = items::parse_input(&body.input)?;
     if input.len() > MAX_INPUT_ITEMS {
