@@ -431,7 +431,7 @@ static CODE_RE: Lazy<regex::Regex> =
 static ANSI_RE: Lazy<regex::Regex> =
     Lazy::new(|| regex::Regex::new(r"\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07]*\x07").unwrap());
 
-fn strip_ansi(text: &str) -> String {
+pub(crate) fn strip_ansi(text: &str) -> String {
     ANSI_RE.replace_all(text, "").into_owned()
 }
 
