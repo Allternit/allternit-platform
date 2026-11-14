@@ -494,7 +494,7 @@ impl ProvisioningService {
     pub async fn platform_runtime_admissible(&self, owner: &str) -> Result<bool, ApiError> {
         if self.routing.provider_for(ComputeClass::Platform) == ComputeProvider::Orgo {
             let mut conn = self.db.acquire().await?;
-            return Ok(orgo::orgo_admits(&mut *conn, &self.routing).await.is_ok());
+            return Ok(orgo::orgo_admits(&mut *conn, &self.routing, ComputeClass::Platform).await.is_ok());
         }
         self.free_memory_available(owner, platform_runtime_spec(&self.free).1.memory_mb).await
     }
@@ -611,7 +611,8 @@ impl ProvisioningService {
         }
         if on_orgo {
             // Orgo: the running cap and daily budget, not host memory.
-            if let Err(error) = orgo::orgo_admits(&mut *transaction, &self.routing).await {
+            let class = ComputeClass::for_owner(&row.user_id, &row.tier);
+            if let Err(error) = orgo::orgo_admits(&mut *transaction, &self.routing, class).await {
                 transaction.rollback().await?;
                 return Err(error);
             }

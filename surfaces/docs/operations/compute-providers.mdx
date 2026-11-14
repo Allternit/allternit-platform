@@ -16,15 +16,20 @@ What users are told about an Orgo computer: "Runs on a third-party cloud provide
 
 ## Route a class to a provider
 
-Three classes of computers can be routed separately. Each variable is `incus` (the default) or `orgo`:
+Four classes of computers can be routed separately. Each variable is `incus` or `orgo`:
 
-| Variable | Class |
-|---|---|
-| `ALLTERNIT_COMPUTE_PROVIDER_PLATFORM` | The hosted runtime behind each Platform API project (owner `platform:<project_id>`). |
-| `ALLTERNIT_COMPUTE_PROVIDER_PAID` | Paid subscription computers. |
-| `ALLTERNIT_COMPUTE_PROVIDER_FREE` | Free sleeping computers. |
+| Variable | Default | Class |
+|---|---|---|
+| `ALLTERNIT_COMPUTE_PROVIDER_PLATFORM` | `incus` | The hosted runtime behind each Platform API project (owner `platform:<project_id>`). |
+| `ALLTERNIT_COMPUTE_PROVIDER_PAID` | `incus` | Paid subscription computers. |
+| `ALLTERNIT_COMPUTE_PROVIDER_FREE` | `incus` | Free sleeping computers (retired for new accounts, see [Compute gate](#compute-gate-and-credit-computers)). |
+| `ALLTERNIT_COMPUTE_PROVIDER_CREDIT` | `orgo` | Credit computers, billed per minute from the credit wallet. |
 
 A class routed to Orgo lands only on an enabled `orgo://` host; every other class never lands on one. If no `orgo://` host is enabled, the create fails with "No enabled orgo:// host is registered" and does not fall back to Incus.
+
+**Capacity fallback.** When a new computer is routed to Orgo and Orgo has no room, cloud-api places it on the standby (Incus) pool instead. "No room" means any capacity refusal: Orgo's own `insufficient_memory`, the running cap, the daily budget (unpaid classes only, see [Guards](#guards)), or a full `orgo://` host ledger. The standby pool applies its usual admission: the host ledger, plus memory admission and idle sleep for free computers. Only when standby has no room either does the create answer `503 computer_capacity`. This applies to creates only. A wake of an existing Orgo computer stays on Orgo, because its disk lives there, and answers `503 computer_capacity` when Orgo is full.
+
+**Reserved hosts.** `host_mail` (the production mail VPS) never receives a computer, even though it is a registered, enabled host. Add more host ids with `ALLTERNIT_RESERVED_HOSTS` (comma-separated). The rule is in `select_host`, so it covers every placement, Meetings pods included.
 
 Two exceptions:
 
@@ -56,10 +61,10 @@ Orgo computers reserve nothing in the host memory admission that Incus free comp
 | Variable | Default | What it does |
 |---|---|---|
 | `ALLTERNIT_ORGO_MAX_RUNNING` | `10` | Orgo computers provisioning, running or waking at once. |
-| `ALLTERNIT_ORGO_DAILY_BUDGET_USD` | `5` | Estimated Orgo spend per UTC day. `0` refuses every new start. |
+| `ALLTERNIT_ORGO_DAILY_BUDGET_USD` | `5` | Estimated unpaid Orgo spend per UTC day (Platform API test runtimes, free and developer computers). It never refuses a paying computer (a plan or credits), and paying computers' hours do not count toward it. `0` refuses every new unpaid start. |
 | `ALLTERNIT_ORGO_MIN_HOURLY_USD` | `0.055` | Lowest hourly price the estimate uses per computer. The pay-as-you-go account bills every computer as Medium, whatever size is asked for. |
 
-Past either limit the answer is `503 computer_capacity` with `Retry-After: 30`. The message starts "Cloud computers are at capacity" and does not show the spend; the reason is in the cloud-api log. A paid computer that can't be created for this reason sends the team an ops alert.
+Past either limit a new computer goes to the standby pool (see the capacity fallback above); a wake, or a create with standby full, answers `503 computer_capacity` with `Retry-After: 30`. The message starts "Cloud computers are at capacity" and does not show the spend; the reason is in the cloud-api log. A paid computer that can't be created for this reason sends the team an ops alert.
 
 Orgo's own refusal is the same answer. When Orgo returns HTTP 500 with code `insufficient_memory` (its host has no room for the size), a create or wake answers `503 computer_capacity` with `Retry-After: 30`, and the Platform API relay answers it right away instead of `runtime_starting` after a long wait. The raw Orgo text stays in the cloud-api log.
 
@@ -100,8 +105,8 @@ If first boot fails, the computer is stopped, its row goes to `error` with the r
 Every computer on Orgo sleeps when idle, paid ones too:
 
 - Free computers and Platform API runtimes sleep after the free idle window (`ALLTERNIT_FREE_IDLE_MINUTES`, 15 by default), as on Incus.
-- Paid computers sleep after `ALLTERNIT_ORGO_PAID_IDLE_MINUTES` (30 by default) with no relay activity.
-- Orgo's own auto-stop is also set as a backstop: `ALLTERNIT_ORGO_AUTO_STOP_PAID` (`30m`), `_PLATFORM` (`15m`) and `_FREE` (`15m`). Set one to empty to leave Orgo's default.
+- Paid and credit computers sleep after `ALLTERNIT_ORGO_PAID_IDLE_MINUTES` (30 by default) with no relay activity.
+- Orgo's own auto-stop is also set as a backstop: `ALLTERNIT_ORGO_AUTO_STOP_PAID` (`30m`, also used for credit computers), `_PLATFORM` (`15m`) and `_FREE` (`15m`). Set one to empty to leave Orgo's default.
 
 Sleeping is an Orgo stop: the disk is kept and memory is lost. The next relay request (or `POST /api/v1/provisioned-instances/:id/wake`, or `/start` for a paid one) starts it again. The relay waits up to 90 seconds for an Orgo computer, because Orgo restores the disk from storage first. After the start, cloud-api runs `/usr/local/sbin/allternit-orgo-ensure` on the computer, which brings the app back under supervisord. A paid computer the owner stopped by hand stays stopped until they start it.
 
@@ -110,3 +115,29 @@ Sleeping is an Orgo stop: the disk is kept and memory is lost. The next relay re
 - **Cancel snapshots.** A cancelled paid computer on Orgo is stopped and kept, because it is the only copy of the disk. The 30-day sweep never deletes it. Delete it by hand (or through account erase) when it should go.
 - **Restore points and downloadable copies.** These answer `501`.
 - **Resize while stopped.** Orgo resizes only a running computer, and the disk only grows. A plan change on a stopped or sleeping computer applies at the next resize while it runs.
+
+## Compute gate and credit computers
+
+These flags turn on the compute gate described in [Account compute status API](/api/account-compute-status). All three are off by default, so a merge changes nothing until they are set. The prices, hours and retention below are the decided values (2026-11-13); clients read them from `GET /api/v1/account/compute-status`, so changing the env changes every surface.
+
+| Variable | Default | What it does |
+|---|---|---|
+| `ALLTERNIT_COMPUTE_GATE` | `off` | `on`: an account with no computer (or only a suspended one) gets `409 compute_required` from the relay and from data-plane routes. `off`: nothing is refused and `gate` is always false. |
+| `ALLTERNIT_CREDIT_COMPUTERS` | `0` | `1`: `POST /api/v1/provisioned-instances/credit` and `/credit/stop` work and `paths.credits` is filled. `0`: both answer `404`. Billing of credit computers that already exist runs either way. |
+| `ALLTERNIT_CREDIT_COMPUTER_PRICE_PER_HOUR_USD` | `0.10` | Running price, debited per minute. |
+| `ALLTERNIT_CREDIT_COMPUTER_STOPPED_PRICE_PER_HOUR_USD` | `0.005` | Price while stopped or asleep. |
+| `ALLTERNIT_CREDIT_COMPUTER_MIN_START_USD` | `5` | Balance needed to create or start one; below it the API answers `402 insufficient_credits`. |
+| `ALLTERNIT_CREDIT_COMPUTER_RETENTION_DAYS` | `14` | Days a computer stopped at $0 is kept before it is deleted. |
+| `ALLTERNIT_CREDIT_COMPUTER_CPU` / `_MEMORY_MB` / `_DISK_GB` | `2` / `8192` / `50` | The Medium credit size. |
+| `ALLTERNIT_CREDIT_COMPUTER_EMAILS` | `0` | `1` (with `ALLTERNIT_CUSTOMER_EMAILS=1`): send the low-runway, stopped and deletion emails. `0`: they are recorded in `customer_emails` as `queued` and not sent, because the copy waits for approval. |
+| `ALLTERNIT_PLUS_INCLUDED_HOURS` | `200` | Running hours a month included with Plus, shown in `paths.plan`. Billing of plan hours past this from credits is not built yet; today the number is shown only. |
+| `ALLTERNIT_DOWNLOAD_URL` | `https://www.allternit.com/download` | The Desktop download link in `paths.own`. |
+
+How credit billing works:
+
+- A task in cloud-api ticks every minute. For each credit computer it debits the whole minutes since its billing cursor (`provisioned_instances.credit_billed_through`): minutes the computer ran (from the metering sessions) at the running price, the rest at the stopped price. The debit, a `credit_transactions` row (`source = credit_computer`) and the cursor move happen in one transaction, so a repeated tick or a restart never charges a minute twice.
+- The wallet is clamped at $0. At $0 the computer stops, its status becomes `suspended` and `delete_after` is set to the end of the retention window. Suspended computers are not billed. Warnings are recorded at 24 hours and 2 hours of runway and on days 7 and 13 of retention; then the computer is deleted.
+- Starting it again with enough credits resumes the same computer, and billing starts from that moment.
+- `POST /api/v1/provisioned-instances/free` answers `410 free_computers_retired` for everyone except admins (`ALLTERNIT_ADMIN_USER_IDS`).
+
+Database: migrations `132_credit_computers.sql` and `133_compute_gate.sql`. Production skips sqlx migrations, so apply them by hand as described in [Database migrations](/operations/database-migrations).

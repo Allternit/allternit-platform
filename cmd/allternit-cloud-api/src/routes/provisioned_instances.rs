@@ -19,12 +19,24 @@
 //!   omits `subscriptionId`, which only admins may do.
 //! - Host routes are admin-only; fleet hosts are operator-managed.
 //!
-//! ## Free sleeping computer (plan decision 16)
+//! ## Credit computers (compute gate path C)
 //!
-//! - `POST /api/v1/provisioned-instances/free` (Clerk): ensure the account's
-//!   one free computer. Idempotent (201 on first create, 200 after). 409 when
-//!   the account has an active paid subscription, 403 until
-//!   `ALLTERNIT_FREE_COMPUTERS=1`.
+//! - `POST /api/v1/provisioned-instances/credit` `{"size":"medium"}`: create
+//!   or start the account's credit computer (billed per minute from the
+//!   credit wallet, `services/provisioning_credit.rs`). 202
+//!   `{"id","status":"starting","pollUrl","instance"}` (200 with
+//!   `"status":"running"` when it already runs). 402 `insufficient_credits`
+//!   (with `min_start_usd`, `balance_usd`) under the minimum balance.
+//! - `POST /api/v1/provisioned-instances/credit/stop`: stop it (stopped rate).
+//! - Both answer 404 unless `ALLTERNIT_CREDIT_COMPUTERS=1`.
+//!
+//! ## Free sleeping computer (plan decision 16) — retired
+//!
+//! - `POST /api/v1/provisioned-instances/free` answers 410
+//!   `free_computers_retired` (compute gate, 2026-11-13). Admins keep the old
+//!   behavior for operating existing free computers: ensure the account's
+//!   one free computer, idempotent (201 on first create, 200 after), 409 when
+//!   the account has an active paid subscription.
 //! - `POST /api/v1/provisioned-instances/:id/wake` (owner): 202
 //!   `{"status":"waking","instance":{…}}` while it starts, 200
 //!   `{"status":"running",…}` when already awake; 429 over the hourly wake
@@ -79,6 +91,8 @@ pub fn routes() -> Router<Arc<ApiState>> {
         .route("/api/v1/provisioned-instances", post(create_instance))
         .route("/api/v1/provisioned-instances", get(list_instances))
         .route("/api/v1/provisioned-instances/free", post(create_free_instance))
+        .route("/api/v1/provisioned-instances/credit", post(start_credit_instance))
+        .route("/api/v1/provisioned-instances/credit/stop", post(stop_credit_instance))
         .route("/api/v1/provisioned-instances/:id/wake", post(wake_instance))
         .route("/api/v1/runtime-devices/:id/activity", post(runtime_activity))
         .route(
@@ -268,12 +282,10 @@ async fn create_free_instance(
     headers: HeaderMap,
 ) -> Result<Response, ApiError> {
     let user = crate::auth::resolve_user_scoped(&state.db, &headers, "compute").await?;
-    let service = &state.provisioning_service;
-    if !service.free_defaults().enabled && !is_admin(&user.id) {
-        return Err(ApiError::Forbidden(
-            "Free cloud computers are not enabled yet".to_string(),
-        ));
+    if !is_admin(&user.id) {
+        return Ok(free_computers_retired());
     }
+    let service = &state.provisioning_service;
     if service.has_active_subscription(&user.id).await? {
         return Err(ApiError::Conflict(
             "This account has a paid plan; it uses its paid cloud computer".to_string(),
@@ -291,6 +303,123 @@ async fn create_free_instance(
     let view = with_presence(service.create_free(&user.id).await?).await;
     let status = if existed { StatusCode::OK } else { StatusCode::CREATED };
     Ok((status, Json(serde_json::json!({ "instance": view }))).into_response())
+}
+
+/// The 410 for `POST /provisioned-instances/free` (contract section 6).
+fn free_computers_retired() -> Response {
+    (
+        StatusCode::GONE,
+        Json(serde_json::json!({ "error": {
+            "code": "free_computers_retired",
+            "message": "Free hosted computers are no longer offered. Pick one of the options above.",
+        }})),
+    )
+        .into_response()
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreditStartRequest {
+    #[serde(default)]
+    size: Option<String>,
+}
+
+/// `POST /api/v1/provisioned-instances/credit` — see the module docs.
+async fn start_credit_instance(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+    body: Option<Json<CreditStartRequest>>,
+) -> Result<Response, ApiError> {
+    let user = crate::auth::resolve_user_scoped(&state.db, &headers, "compute").await?;
+    let size = body.and_then(|Json(request)| request.size);
+    start_credit_for(&state, &user.id, crate::services::credit_computers_enabled(), size.as_deref()).await
+}
+
+/// The credit start with the flag passed in (tests set it explicitly).
+pub(crate) async fn start_credit_for(
+    state: &ApiState,
+    user_id: &str,
+    enabled: bool,
+    size: Option<&str>,
+) -> Result<Response, ApiError> {
+    if !enabled {
+        return Err(ApiError::NotFound("Credit computers are not available".to_string()));
+    }
+    if size.is_some_and(|size| size != crate::services::CREDIT_SIZE_ID) {
+        return Ok((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": {
+                "code": "invalid_size",
+                "message": format!("size must be \"{}\"", crate::services::CREDIT_SIZE_ID),
+            }})),
+        )
+            .into_response());
+    }
+    let service = &state.provisioning_service;
+    match service.start_credit(user_id).await? {
+        crate::services::CreditStart::InsufficientCredits { balance_usd } => {
+            let min_start_usd = service.credit_defaults().min_start_usd;
+            Ok((
+                StatusCode::PAYMENT_REQUIRED,
+                Json(serde_json::json!({ "error": {
+                    "code": "insufficient_credits",
+                    "message": format!("Starting needs at least ${} in credits.", format_usd(min_start_usd)),
+                    "min_start_usd": min_start_usd,
+                    "balance_usd": balance_usd,
+                }})),
+            )
+                .into_response())
+        }
+        crate::services::CreditStart::Started(view) => {
+            let view = with_presence(view).await;
+            let (code, status) = match view.status.as_str() {
+                "running" => (StatusCode::OK, "running"),
+                _ => (StatusCode::ACCEPTED, "starting"),
+            };
+            Ok((
+                code,
+                Json(serde_json::json!({
+                    "id": view.id,
+                    "status": status,
+                    "pollUrl": format!("/api/v1/provisioned-instances/{}", view.id),
+                    "instance": view,
+                })),
+            )
+                .into_response())
+        }
+    }
+}
+
+fn format_usd(value: f64) -> String {
+    if (value - value.round()).abs() < 0.005 {
+        format!("{}", value.round() as i64)
+    } else {
+        format!("{value:.2}")
+    }
+}
+
+/// `POST /api/v1/provisioned-instances/credit/stop` — see the module docs.
+async fn stop_credit_instance(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let user = crate::auth::resolve_user_scoped(&state.db, &headers, "compute").await?;
+    stop_credit_for(&state, &user.id, crate::services::credit_computers_enabled()).await
+}
+
+pub(crate) async fn stop_credit_for(
+    state: &ApiState,
+    user_id: &str,
+    enabled: bool,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    if !enabled {
+        return Err(ApiError::NotFound("Credit computers are not available".to_string()));
+    }
+    let view = state
+        .provisioning_service
+        .stop_credit(user_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound("This account has no credit computer".to_string()))?;
+    Ok(Json(serde_json::json!({ "instance": view })))
 }
 
 /// `POST /api/v1/provisioned-instances/:id/wake` — see the module docs.
@@ -1407,5 +1536,121 @@ mod tests {
 
         std::env::remove_var(ADMIN_USER_IDS_ENV);
         std::env::remove_var(ALLOW_DEV_TOKEN_ENV);
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn free_computers_are_retired_for_everyone_but_admins() {
+        let _guard = DEV_TOKEN_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::set_var(ALLOW_DEV_TOKEN_ENV, "true");
+        std::env::remove_var(ADMIN_USER_IDS_ENV);
+        let pool = test_pool().await;
+        insert_host(&pool, "host_a").await;
+        let backend = Arc::new(MockBackend::default());
+        let router = routes().with_state(test_state(pool.clone(), backend.clone()).await);
+
+        let response = router
+            .clone()
+            .oneshot(authed_request("POST", "/api/v1/provisioned-instances/free", ""))
+            .await
+            .unwrap();
+        std::env::remove_var(ALLOW_DEV_TOKEN_ENV);
+        assert_eq!(response.status(), StatusCode::GONE);
+        let body = body_json(response).await;
+        assert_eq!(body["error"]["code"], "free_computers_retired");
+        assert_eq!(
+            body["error"]["message"],
+            "Free hosted computers are no longer offered. Pick one of the options above."
+        );
+        let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM provisioned_instances")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(rows, 0, "a retired free request creates nothing");
+        assert!(backend.calls.lock().unwrap().is_empty());
+    }
+
+    /// The credit columns (migration 132) and the wallet tables on top of
+    /// this module's hand-made schema, plus an Orgo host (credit computers
+    /// route to Orgo by default).
+    async fn add_credit_schema(pool: &sqlx::PgPool) {
+        for statement in [
+            "ALTER TABLE provisioned_instances ADD COLUMN credit_billed_through TIMESTAMPTZ",
+            "ALTER TABLE provisioned_instances ADD COLUMN credit_warned_24h_at TIMESTAMPTZ",
+            "ALTER TABLE provisioned_instances ADD COLUMN credit_warned_2h_at TIMESTAMPTZ",
+            "ALTER TABLE provisioned_instances ADD COLUMN credit_delete_warned INTEGER NOT NULL DEFAULT 0",
+            "CREATE TABLE user_credits (user_id TEXT PRIMARY KEY, balance_usd DOUBLE PRECISION NOT NULL DEFAULT 0 CHECK (balance_usd >= 0))",
+            "INSERT INTO provisioned_hosts (id, name, incus_endpoint, cpu_cores_total, memory_mb_total, disk_gb_total) VALUES ('host_o', 'orgo', 'orgo://ws_test', 64, 262144, 2000)",
+        ] {
+            sqlx::query(statement).execute(pool).await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn credit_start_needs_the_minimum_balance_then_creates_on_orgo_and_stops() {
+        let pool = test_pool().await;
+        add_credit_schema(&pool).await;
+        let backend = Arc::new(MockBackend::default());
+        let state = test_state(pool.clone(), backend.clone()).await;
+
+        // Flag off: the path does not exist.
+        let error = start_credit_for(&state, DEV_USER, false, None).await.unwrap_err();
+        assert!(matches!(error, ApiError::NotFound(_)), "{error:?}");
+        assert!(matches!(stop_credit_for(&state, DEV_USER, false).await.unwrap_err(), ApiError::NotFound(_)));
+
+        // $1.20 is under the $5 minimum: 402 with both numbers, nothing made.
+        sqlx::query("INSERT INTO user_credits (user_id, balance_usd) VALUES ('dev-user', 1.2)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let response = start_credit_for(&state, DEV_USER, true, Some("medium")).await.unwrap();
+        assert_eq!(response.status(), StatusCode::PAYMENT_REQUIRED);
+        let body = body_json(response).await;
+        assert_eq!(body["error"]["code"], "insufficient_credits");
+        assert_eq!(body["error"]["message"], "Starting needs at least $5 in credits.");
+        assert_eq!(body["error"]["min_start_usd"], 5.0);
+        assert!((body["error"]["balance_usd"].as_f64().unwrap() - 1.2).abs() < 1e-9);
+        assert!(backend.calls.lock().unwrap().is_empty());
+
+        // An unknown size is refused before anything is bought.
+        let response = start_credit_for(&state, DEV_USER, true, Some("large")).await.unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+        // $10: created on the Orgo host at the credit size, 202 starting.
+        sqlx::query("UPDATE user_credits SET balance_usd = 10 WHERE user_id = 'dev-user'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let response = start_credit_for(&state, DEV_USER, true, None).await.unwrap();
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+        let body = body_json(response).await;
+        assert_eq!(body["status"], "starting");
+        let id = body["id"].as_str().unwrap().to_string();
+        assert_eq!(body["pollUrl"], format!("/api/v1/provisioned-instances/{id}"));
+        assert_eq!(body["instance"]["hostId"], "host_o");
+        assert_eq!(body["instance"]["tier"], "credit");
+        assert_eq!(body["instance"]["provider"], "orgo");
+        assert_eq!(body["instance"]["memoryMb"], 8192);
+        let billed_from: Option<chrono::DateTime<Utc>> =
+            sqlx::query_scalar("SELECT credit_billed_through FROM provisioned_instances WHERE id = $1")
+                .bind(&id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(billed_from.is_some(), "billing starts at create");
+
+        // Running → stop: the stopped rate applies from here.
+        sqlx::query("UPDATE provisioned_instances SET status = 'running' WHERE id = $1")
+            .bind(&id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let Json(stopped) = stop_credit_for(&state, DEV_USER, true).await.unwrap();
+        assert_eq!(stopped["instance"]["status"], "stopped");
+        // Stopping again is a no-op, not an error.
+        let Json(again) = stop_credit_for(&state, DEV_USER, true).await.unwrap();
+        assert_eq!(again["instance"]["status"], "stopped");
+        // Another account has none.
+        assert!(matches!(stop_credit_for(&state, "other-user", true).await.unwrap_err(), ApiError::NotFound(_)));
     }
 }

@@ -230,6 +230,7 @@
 		52D2F4EE34EB386E78AE8546 /* AutomationTasksListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A88A96EE967DEFAB910C51A6 /* AutomationTasksListView.swift */; };
 		52F3CD56C8A3C1D254CE71B9 /* FocusFilterClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F77A924890E644DD3DA1E21 /* FocusFilterClient.swift */; };
 		52FD37453399E2E4EAB18151 /* AccountPlanStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 470CC175B241BBABE5192CEF /* AccountPlanStore.swift */; };
+		0E2D59213DBFA3575B37A83D /* ComputeStatusStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8250405B5F79A51DA0A97F14 /* ComputeStatusStore.swift */; };
 		533AFC6DD06BFF755FF26B0B /* StatusSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0CF9E241C88BE3895072E07B /* StatusSnapshot.swift */; };
 		53507A35FFCB366B0E017695 /* WebhookClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 46CCFABAA5DAC2922F88593D /* WebhookClient.swift */; };
 		53D54D8692CD424759F3672A /* IntentGate.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD27499F59E5CDE9AC9911A1 /* IntentGate.swift */; };
@@ -677,6 +678,7 @@
 		E6FFCF674BCC929F2C6AC832 /* AppPhonesSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 29A1419A6712D19C70C180C1 /* AppPhonesSettingsView.swift */; };
 		E71A3541278126F1EFCF8C45 /* PhoneTaskClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65DE584766D15F75782CB57E /* PhoneTaskClient.swift */; };
 		E739501E6E791B31021747A3 /* ConnectComputerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 324344A5DC94AD9D1F524C6F /* ConnectComputerView.swift */; };
+		846D8EAD6F0AAA3FADE14754 /* ComputeGateView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6420F287608C5760235E4ED2 /* ComputeGateView.swift */; };
 		E766B7CA156D9677CA25B849 /* StatusSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0CF9E241C88BE3895072E07B /* StatusSnapshot.swift */; };
 		E7BFF01538F2745D57A73B9E /* PDFSignView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8CE87062DF914F64F131FF85 /* PDFSignView.swift */; };
 		E8221F8322A1DBD1F52A0DEC /* Routine.swift in Sources */ = {isa = PBXBuildFile; fileRef = A44284F59DE892D108C72571 /* Routine.swift */; };
@@ -959,6 +961,7 @@
 		31F8509A5A698D3AE1311CAC /* CodeSessionParsing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodeSessionParsing.swift; sourceTree = "<group>"; };
 		3205192CB5B62ACC0909EEA5 /* ActivityTokenClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivityTokenClient.swift; sourceTree = "<group>"; };
 		324344A5DC94AD9D1F524C6F /* ConnectComputerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectComputerView.swift; sourceTree = "<group>"; };
+		6420F287608C5760235E4ED2 /* ComputeGateView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComputeGateView.swift; sourceTree = "<group>"; };
 		32DF0D2473DA44EC0CF41008 /* AppPhoneLink.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppPhoneLink.swift; sourceTree = "<group>"; };
 		33BE9B2F87B3C05A37CF52AF /* BrainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrainStore.swift; sourceTree = "<group>"; };
 		33E0C5EA6F4839A5B350ADFE /* CodeRuntimePairingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodeRuntimePairingView.swift; sourceTree = "<group>"; };
@@ -1008,6 +1011,7 @@
 		46B0738673B7B6922FEFC50A /* SSHConnectionsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHConnectionsStore.swift; sourceTree = "<group>"; };
 		46CCFABAA5DAC2922F88593D /* WebhookClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebhookClient.swift; sourceTree = "<group>"; };
 		470CC175B241BBABE5192CEF /* AccountPlanStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountPlanStore.swift; sourceTree = "<group>"; };
+		8250405B5F79A51DA0A97F14 /* ComputeStatusStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComputeStatusStore.swift; sourceTree = "<group>"; };
 		4745086BACD42F4CC66CEBDF /* VoiceTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceTransport.swift; sourceTree = "<group>"; };
 		478E03D6A6E59FBC0AF664FE /* ComputerDriveViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComputerDriveViews.swift; sourceTree = "<group>"; };
 		47F6DBB5344BA0A6F481AD88 /* IntentServices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IntentServices.swift; sourceTree = "<group>"; };
@@ -2253,6 +2257,7 @@
 			isa = PBXGroup;
 			children = (
 				470CC175B241BBABE5192CEF /* AccountPlanStore.swift */,
+				8250405B5F79A51DA0A97F14 /* ComputeStatusStore.swift */,
 				80BE6F99828A33512D8BBF70 /* AgentActivityStore.swift */,
 				54A65D23DCABF32B76CA2982 /* AgentHubStore.swift */,
 				C262FDAD23A0BA84CEA2CBD8 /* AgentModeStore.swift */,
@@ -2923,6 +2928,7 @@
 			isa = PBXGroup;
 			children = (
 				324344A5DC94AD9D1F524C6F /* ConnectComputerView.swift */,
+				6420F287608C5760235E4ED2 /* ComputeGateView.swift */,
 				49C7586613A1AF683C0AF1C1 /* DesktopArtwork.swift */,
 				A6354FE83459A7C8C1555749 /* ImpactMapView.swift */,
 			);
@@ -3418,6 +3424,7 @@
 				A13EBC26EEE05FA56A9BC433 /* ACIWebBrowserView.swift in Sources */,
 				33FD9E0103C6E6CB0B6BC080 /* APIClient.swift in Sources */,
 				52FD37453399E2E4EAB18151 /* AccountPlanStore.swift in Sources */,
+				0E2D59213DBFA3575B37A83D /* ComputeStatusStore.swift in Sources */,
 				9AB12B784214173B2E38DEBB /* AccountProfileView.swift in Sources */,
 				A25C7FB3F637644E533569D4 /* ActivityIntents.swift in Sources */,
 				080590C98C00C30ADC30375D /* ActivityTokenClient.swift in Sources */,
@@ -3600,6 +3607,7 @@
 				7A1FBF2AE79890A4770B8B66 /* ComputerDriveViews.swift in Sources */,
 				9B9B6B7FEB6A399693D7624F /* ConnectAPI.swift in Sources */,
 				E739501E6E791B31021747A3 /* ConnectComputerView.swift in Sources */,
+				846D8EAD6F0AAA3FADE14754 /* ComputeGateView.swift in Sources */,
 				C35491E826DB32840F1B5313 /* ConnectWizardView.swift in Sources */,
 				62E613F976EBF3A0E64F7CF5 /* ConnectedInventory.swift in Sources */,
 				D8D1C920A1F1D21C0D0AA0ED /* ConnectedView.swift in Sources */,

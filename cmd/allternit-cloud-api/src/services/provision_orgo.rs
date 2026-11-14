@@ -15,7 +15,8 @@
 //! ## Routing
 //!
 //! `ALLTERNIT_COMPUTE_PROVIDER_PLATFORM`, `_PAID` and `_FREE` are `incus`
-//! (default) or `orgo`. A class routed to Orgo lands only on `orgo://` hosts;
+//! (default) or `orgo`. `_CREDIT` (credit computers, billed per minute from
+//! the credit wallet, see `provisioning_credit.rs`) defaults to `orgo`. A class routed to Orgo lands only on `orgo://` hosts;
 //! every other class never lands on one. Hosted-driver computers
 //! (`/v1/computers`) always stay on Incus: they need the egress-filtered
 //! network profile, which Orgo has no equivalent of. A paid re-subscribe that
@@ -26,7 +27,8 @@
 //! Orgo computers reserve nothing in host memory admission. Instead:
 //! `ALLTERNIT_ORGO_MAX_RUNNING` (default 10) computers provisioning, running
 //! or waking at once, and `ALLTERNIT_ORGO_DAILY_BUDGET_USD` (default 5) of
-//! estimated spend per UTC day: running hours from the metering sessions (plus
+//! estimated unpaid spend per UTC day (never applied to, or counting, a paying
+//! computer: plan or credits): running hours from the metering sessions (plus
 //! time spent in first boot) times the hourly price of the Orgo size. Past
 //! either: the `computer_capacity` 503 (message starts [`CLOUD_POOL_FULL`]).
 //!
@@ -151,20 +153,27 @@ pub enum ComputeProvider {
 
 impl ComputeProvider {
     fn from_env(name: &str) -> Self {
+        Self::from_env_or(name, Self::Incus)
+    }
+
+    /// `name` read as a provider; unset or empty = `default`.
+    fn from_env_or(name: &str, default: Self) -> Self {
         match std::env::var(name)
             .ok()
             .map(|value| value.trim().to_ascii_lowercase())
             .as_deref()
         {
-            None | Some("") | Some("incus") => Self::Incus,
+            None | Some("") => default,
+            Some("incus") => Self::Incus,
             Some("orgo") => Self::Orgo,
             Some(other) => {
                 tracing::warn!(
                     variable = name,
                     value = other,
-                    "unknown compute provider; using incus"
+                    ?default,
+                    "unknown compute provider; using the default"
                 );
-                Self::Incus
+                default
             }
         }
     }
@@ -176,6 +185,8 @@ pub struct ComputeRouting {
     pub platform: ComputeProvider,
     pub paid: ComputeProvider,
     pub free: ComputeProvider,
+    /// `ALLTERNIT_COMPUTE_PROVIDER_CREDIT`: credit computers (default orgo).
+    pub credit: ComputeProvider,
     /// `ALLTERNIT_ORGO_MAX_RUNNING`: Orgo computers provisioning, running or
     /// waking at once.
     pub orgo_max_running: i64,
@@ -196,6 +207,7 @@ impl Default for ComputeRouting {
             platform: ComputeProvider::Incus,
             paid: ComputeProvider::Incus,
             free: ComputeProvider::Incus,
+            credit: ComputeProvider::Orgo,
             orgo_max_running: 10,
             orgo_daily_budget_usd: 5.0,
             orgo_paid_idle: Duration::minutes(30),
@@ -211,6 +223,7 @@ impl ComputeRouting {
             platform: ComputeProvider::from_env("ALLTERNIT_COMPUTE_PROVIDER_PLATFORM"),
             paid: ComputeProvider::from_env("ALLTERNIT_COMPUTE_PROVIDER_PAID"),
             free: ComputeProvider::from_env("ALLTERNIT_COMPUTE_PROVIDER_FREE"),
+            credit: ComputeProvider::from_env_or("ALLTERNIT_COMPUTE_PROVIDER_CREDIT", defaults.credit),
             orgo_max_running: env_i64("ALLTERNIT_ORGO_MAX_RUNNING", defaults.orgo_max_running)
                 .max(0),
             orgo_daily_budget_usd: std::env::var("ALLTERNIT_ORGO_DAILY_BUDGET_USD")
@@ -235,6 +248,7 @@ impl ComputeRouting {
             ComputeClass::Platform => self.platform,
             ComputeClass::Paid => self.paid,
             ComputeClass::Free => self.free,
+            ComputeClass::Credit => self.credit,
             ComputeClass::HostedDriver => ComputeProvider::Incus,
         }
     }
@@ -369,7 +383,8 @@ impl OrgoConfig {
 
     fn auto_stop_for(&self, class: ComputeClass) -> Option<&str> {
         match class {
-            ComputeClass::Paid => self.auto_stop_paid.as_deref(),
+            // Credit computers bill per minute: same 30-minute sleep as paid.
+            ComputeClass::Paid | ComputeClass::Credit => self.auto_stop_paid.as_deref(),
             ComputeClass::Platform => self.auto_stop_platform.as_deref(),
             ComputeClass::Free | ComputeClass::HostedDriver => self.auto_stop_free.as_deref(),
         }
@@ -1244,7 +1259,8 @@ async fn orgo_running(conn: &mut sqlx::PgConnection) -> Result<i64, ApiError> {
     .await?)
 }
 
-/// Estimated Orgo spend for the UTC day of `now`: metered running time inside
+/// Estimated unpaid Orgo spend for the UTC day of `now` (paying computers,
+/// plan or credits, are left out): metered running time inside
 /// the day plus the time computers spent in first boot, each at the hourly
 /// price of its Orgo size, never below `min_hourly_usd` (what the account
 /// really bills per computer).
@@ -1292,6 +1308,9 @@ pub(crate) async fn orgo_spend_today_usd(
                     disk_gb: 0,
                 },
             );
+            if class.is_paying() {
+                return 0.0;
+            }
             orgo_hourly_usd(size).max(min_hourly_usd) * seconds as f64 / 3600.0
         })
         .sum())
@@ -1305,11 +1324,17 @@ pub(crate) fn cloud_capacity_error() -> ApiError {
     ))
 }
 
-/// Admit one more running Orgo computer, or the capacity 503. Call inside the
-/// transaction holding the host row lock to make it binding.
+/// Admit one more running Orgo computer of `class`, or the capacity 503. Call
+/// inside the transaction holding the host row lock to make it binding.
+///
+/// The daily budget guards unpaid usage only (Platform API test runtimes,
+/// free and hosted-driver computers): a paying computer (a plan or credits,
+/// [`ComputeClass::is_paying`]) is never refused by it, and its hours do not
+/// count toward it. The running cap applies to every class.
 pub(crate) async fn orgo_admits(
     conn: &mut sqlx::PgConnection,
     routing: &ComputeRouting,
+    class: ComputeClass,
 ) -> Result<(), ApiError> {
     let running = orgo_running(&mut *conn).await?;
     if running >= routing.orgo_max_running {
@@ -1319,6 +1344,9 @@ pub(crate) async fn orgo_admits(
             "orgo: running cap reached; refusing"
         );
         return Err(cloud_capacity_error());
+    }
+    if class.is_paying() {
+        return Ok(());
     }
     let spent = orgo_spend_today_usd(&mut *conn, Utc::now(), routing.orgo_min_hourly_usd).await?;
     if spent >= routing.orgo_daily_budget_usd {
@@ -1415,12 +1443,12 @@ impl ProvisioningService {
             .then(|| StdDuration::from_secs(ORGO_WAKE_WAIT_SECONDS))
     }
 
-    /// Paid computers on Orgo sleep after `orgo_paid_idle` with no activity
-    /// (a scheduled job about to be due keeps them up, like free ones).
+    /// Paid and credit computers on Orgo sleep after `orgo_paid_idle` with no
+    /// activity (a scheduled job about to be due keeps them up, like free ones).
     pub(crate) async fn sleep_idle_orgo_paid(&self, now: DateTime<Utc>) -> Result<(), ApiError> {
         let idle = sqlx::query_as::<_, InstanceRow>(&format!(
             "SELECT {INSTANCE_COLUMNS} FROM provisioned_instances \
-             WHERE tier = 'paid' AND status = 'running' \
+             WHERE tier IN ('paid', 'credit') AND status = 'running' \
                AND COALESCE(last_activity_at, last_started_at, created_at) <= $1 \
                AND (next_wake_at IS NULL OR next_wake_at > $2) \
                AND host_id IN (SELECT id FROM provisioned_hosts WHERE LOWER(incus_endpoint) LIKE 'orgo://%')"
@@ -1439,7 +1467,7 @@ impl ProvisioningService {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use axum::http::{HeaderMap as AxumHeaders, Method, StatusCode, Uri};
     use axum::response::IntoResponse;
@@ -1566,6 +1594,13 @@ mod tests {
         assert_eq!(
             ComputeClass::for_owner("user_1", TIER_PAID),
             ComputeClass::Paid
+        );
+        // Credit computers are their own class and default to Orgo even when
+        // every other class stays on Incus.
+        assert_eq!(ComputeClass::for_owner("user_1", TIER_CREDIT), ComputeClass::Credit);
+        assert_eq!(
+            ComputeRouting::default().provider_for(ComputeClass::Credit),
+            ComputeProvider::Orgo
         );
     }
 
@@ -1997,6 +2032,29 @@ mod tests {
             "ALLTERNIT_ORGO_DESKTOP_DEB_URL='https://downloads.example.com/allternit desktop.deb'"
         ));
         assert!(fake.bash[launch].contains("ALLTERNIT_ORGO_DESKTOP_DEB_SHA256='ab12'"));
+    }
+
+    /// A real [`OrgoBackend`] on a fake Orgo API whose `POST /computers`
+    /// answers Orgo's out-of-memory refusal (for the provisioning service's
+    /// capacity-fallback tests). The state counts the create attempts.
+    pub(crate) async fn capacity_refusing_orgo() -> (Arc<dyn ProvisionBackend>, impl Fn() -> usize) {
+        let (base, fake) = serve(Fake {
+            create_refusal: Some(serde_json::json!({
+                "code": "insufficient_memory",
+                "error": "Failed to create computer: VMM returned 503: insufficient memory"
+            })),
+            ..Fake::default()
+        })
+        .await;
+        let creates = move || {
+            fake.lock()
+                .unwrap()
+                .seen
+                .iter()
+                .filter(|seen| seen.method == "POST" && seen.path == "/computers")
+                .count()
+        };
+        (Arc::new(backend(&base)) as Arc<dyn ProvisionBackend>, creates)
     }
 
     #[tokio::test]

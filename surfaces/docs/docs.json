@@ -73,6 +73,8 @@
             "group": "Workspace workflows",
             "pages": [
               "guides/first-run-setup",
+              "guides/choose-how-agents-run",
+              "guides/link-your-computer",
               "guides/setup-checklist",
               "guides/sidebar-navigation",
               "guides/session-overview",
@@ -637,6 +639,8 @@
               "guides/token-budgets",
               "guides/allternit-cloud-quickstart",
               "guides/credits-and-auto-top-up",
+              "guides/computer-pricing",
+              "guides/credits-computer",
               "guides/webhooks",
               "guides/webhook-triggers",
               "guides/channel-events-and-connect-api",

@@ -21,6 +21,12 @@
 //! only recorded (`platform_spend_alerts`, the `usage.threshold` webhook).
 //! They are not claimed in `customer_emails` (whose rows are per Clerk user):
 //! the `platform_spend_alerts` insert already makes each one fire once.
+//!
+//! Credit computer notices ([`notify_credit`]: about a day / 2 hours of
+//! runway left, stopped at $0, deletion coming) are recorded in
+//! `customer_emails` with status `queued` and not sent, unless
+//! `ALLTERNIT_CREDIT_COMPUTER_EMAILS=1` and [`enabled`]. Their copy is a
+//! draft in Register 1 that Eoj has not approved yet.
 
 use std::process::Stdio;
 
@@ -354,6 +360,124 @@ pub fn auto_topup_failed_email(recipient: &Recipient, amount_usd: f64, reason: &
         ],
     );
     Email { subject: "Auto top-up failed and is now off".to_string(), body, html }
+}
+
+const ENV_CREDIT_COMPUTER_EMAILS: &str = "ALLTERNIT_CREDIT_COMPUTER_EMAILS";
+
+/// Credit computer notices are sent only with this switch and [`enabled`].
+pub fn credit_computer_emails_enabled() -> bool {
+    enabled() && matches!(std::env::var(ENV_CREDIT_COMPUTER_EMAILS).as_deref(), Ok("1") | Ok("true"))
+}
+
+/// A credit computer event worth telling the owner about.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CreditNotice {
+    /// About 24 hours of running time left on the credits.
+    Low24h,
+    /// About 2 hours left.
+    Low2h,
+    /// The credits reached $0 and the computer stopped; deleted at `delete_after`.
+    Stopped { delete_after: chrono::DateTime<chrono::Utc> },
+    /// Reminder that the stopped computer is deleted at `delete_after`.
+    DeleteWarning { delete_after: chrono::DateTime<chrono::Utc> },
+}
+
+impl CreditNotice {
+    /// `customer_emails.kind` (migration 133).
+    pub fn kind(&self) -> &'static str {
+        match self {
+            CreditNotice::Low24h => "credit_low_24h",
+            CreditNotice::Low2h => "credit_low_2h",
+            CreditNotice::Stopped { .. } => "credit_stopped",
+            CreditNotice::DeleteWarning { .. } => "credit_delete_warning",
+        }
+    }
+}
+
+/// Credit computer notice email. DRAFT copy (Register 1), pending Eoj's
+/// approval; the first lines reuse the contract's in-app strings.
+pub fn credit_notice_email(recipient: &Recipient, notice: CreditNotice) -> Email {
+    let date = |at: chrono::DateTime<chrono::Utc>| at.format("%B %-d, %Y").to_string();
+    let (subject, lead, follow) = match notice {
+        CreditNotice::Low24h => (
+            "About a day of computer time left".to_string(),
+            "About a day of computer time left on your credits.".to_string(),
+            "Add credits to keep your hosted computer running. When the credits reach $0 the computer stops.".to_string(),
+        ),
+        CreditNotice::Low2h => (
+            "About 2 hours of computer time left".to_string(),
+            "About 2 hours of computer time left on your credits.".to_string(),
+            "Add credits to keep your hosted computer running. When the credits reach $0 the computer stops.".to_string(),
+        ),
+        CreditNotice::Stopped { delete_after } => (
+            "Your hosted computer stopped".to_string(),
+            "Your credits ran out and the computer stopped. Add credits to start it again.".to_string(),
+            format!("We keep its disk until {}. After that the computer is deleted.", date(delete_after)),
+        ),
+        CreditNotice::DeleteWarning { delete_after } => (
+            "Your stopped computer will be deleted soon".to_string(),
+            format!("Your stopped hosted computer will be deleted on {}.", date(delete_after)),
+            "Add credits and start it before then to keep it.".to_string(),
+        ),
+    };
+    let body = format!("{}\n\n{lead}\n\n{follow}\n\n— Allternit\n", greeting(recipient));
+    let html = html::layout(
+        &lead,
+        &[
+            html::heading(&subject),
+            html::paragraph(&greeting(recipient)),
+            html::paragraph(&lead),
+            html::paragraph(&follow),
+            html::button("Add credits", "https://ai.allternit.com/settings/billing"),
+        ],
+    );
+    Email { subject, body, html }
+}
+
+/// Record a credit computer notice for `user_id`, once per `reference`.
+/// Queued (not sent) unless [`credit_computer_emails_enabled`]; when it is
+/// on, the email is claimed and sent in the background.
+pub async fn notify_credit(db: &PgPool, user_id: &str, notice: CreditNotice, reference: &str) {
+    if credit_computer_emails_enabled() {
+        let db = db.clone();
+        let user_id = user_id.to_string();
+        let reference = reference.to_string();
+        tokio::spawn(async move {
+            let Some(recipient) = fetch_recipient(&user_id).await else {
+                tracing::warn!(%user_id, kind = notice.kind(), "credit notice: no email from Clerk; not sent");
+                return;
+            };
+            let email = credit_notice_email(&recipient, notice);
+            deliver(&db, &user_id, notice.kind(), &reference, &recipient, &email).await;
+        });
+        return;
+    }
+    if let Err(error) = queue_credit_notice(db, user_id, notice, reference).await {
+        tracing::warn!(%user_id, kind = notice.kind(), %error, "credit notice: could not record");
+    }
+}
+
+/// Insert the notice as `queued`. `false` = this (user, kind, ref) was
+/// already recorded.
+pub async fn queue_credit_notice(
+    db: &PgPool,
+    user_id: &str,
+    notice: CreditNotice,
+    reference: &str,
+) -> Result<bool, sqlx::Error> {
+    let inserted = sqlx::query(
+        r#"
+        INSERT INTO customer_emails (user_id, kind, ref, status)
+        VALUES ($1, $2, $3, 'queued')
+        ON CONFLICT (user_id, kind, ref) DO NOTHING
+        "#,
+    )
+    .bind(user_id)
+    .bind(notice.kind())
+    .bind(reference)
+    .execute(db)
+    .await?;
+    Ok(inserted.rows_affected() == 1)
 }
 
 /// A platform project crossed `percent` of its monthly spend cap.
@@ -827,6 +951,18 @@ mod tests {
         assert_eq!(feature_for(at(2027, 3)).id, "agency-kernel");
         assert_eq!(feature_for(at(2027, 4)).id, "montage");
         assert_eq!(feature_for(at(2026, 9)).id, "agency-kernel");
+    }
+
+    #[test]
+    fn credit_notices_use_the_contract_lines_and_the_retention_date() {
+        use chrono::TimeZone;
+        let delete_after = chrono::Utc.with_ymd_and_hms(2026, 11, 27, 9, 0, 0).unwrap();
+        let stopped = credit_notice_email(&eoj(), CreditNotice::Stopped { delete_after });
+        assert!(stopped.body.contains("Your credits ran out and the computer stopped. Add credits to start it again."));
+        assert!(stopped.body.contains("We keep its disk until November 27, 2026."));
+        let low = credit_notice_email(&eoj(), CreditNotice::Low2h);
+        assert!(low.body.contains("About 2 hours of computer time left on your credits."));
+        assert_eq!(CreditNotice::DeleteWarning { delete_after }.kind(), "credit_delete_warning");
     }
 
     #[test]

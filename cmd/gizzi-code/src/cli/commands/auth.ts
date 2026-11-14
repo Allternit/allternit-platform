@@ -3,6 +3,7 @@ import * as prompts from "@clack/prompts"
 import path from "path"
 import { cmd } from "@/cli/commands/cmd"
 import { UI } from "@/cli/ui"
+import { printComputeStatusAfterLogin } from "@/cli/commands/computers"
 import { Global } from "@/runtime/context/global"
 import {
   addAuthProfile,
@@ -41,6 +42,7 @@ const LoginCommand = cmd({
       profile: args.profile,
     })
     UI.println(`Signed in with API key (${result.method}): ${result.profile}`)
+    await printComputeStatusAfterLogin()
   },
 })
 

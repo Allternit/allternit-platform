@@ -8,6 +8,7 @@ import type { Argv } from "yargs"
 import { cmd } from "@/cli/commands/cmd"
 import { UI } from "@/cli/ui"
 import {
+  cloudBase,
   findRuntime,
   listComputers,
   listRuntimes,
@@ -20,15 +21,149 @@ import {
   type Runtime,
 } from "@/cli/work/api"
 
+const DOCS_URL = "https://docs.allternit.com/api/account-compute-status"
+const HONEST_LINE = "Hosted computers run on a third-party cloud provider, managed by Allternit. They sleep when idle."
+
+type ComputeCredits = { price_per_hour_usd?: number; stopped_price_per_hour_usd?: number; min_start_usd?: number } | null
+type ComputePaths = {
+  own?: { download_url?: string }
+  plan?: { plans?: { name: string; price_usd_month: number }[] }
+  credits?: ComputeCredits
+}
+export type ComputeStatus = {
+  state: "none" | "paired" | "provisioning" | "hosted" | "suspended"
+  online?: boolean
+  gate?: boolean
+  computer?: { id: string; kind: string; provider: string | null; status: string; sleeps_when_idle?: boolean } | null
+  paths?: ComputePaths
+  docs_url?: string
+}
+
+const money = (n: number | undefined) => (n === undefined ? "" : `$${Number(n.toFixed(3))}`)
+
+/** The three ways to get a computer, with costs read from the server's paths (nothing hard-coded). */
+export function formatComputePaths(paths: ComputePaths | undefined, docsUrl = DOCS_URL): string {
+  const download = paths?.own?.download_url ?? "https://www.allternit.com/download"
+  const plans = paths?.plan?.plans ?? []
+  const credits = paths?.credits
+  const lines = [
+    "Agents need a computer. Pick where your agents run. Chat with Allternit Cloud models stays open.",
+    "",
+    "  1. Use your own computer. Free. Link the Allternit Desktop app.",
+    `     gizzi computers link   (download: ${download})`,
+    "  2. Subscribe." +
+      (plans.length
+        ? ` ${plans.map((p) => `${p.name} ${money(p.price_usd_month)}`).join(", ")} a month. Includes one hosted computer.`
+        : " Includes one hosted computer."),
+    "     https://platform.allternit.com/billing",
+  ]
+  if (credits) {
+    lines.push(
+      `  3. Buy credits. A hosted computer billed per minute while it runs. From ${money(credits.price_per_hour_usd)} an hour.`,
+      "     https://platform.allternit.com/billing",
+    )
+  }
+  lines.push("", HONEST_LINE, `Docs: ${docsUrl}`)
+  return lines.join("\n")
+}
+
+export function formatComputeStatus(s: ComputeStatus): string {
+  const c = s.computer
+  const lines = [`State: ${s.state}${s.online ? " (online)" : ""}`]
+  if (c) lines.push(`Computer: ${c.kind}${c.provider ? ` on ${c.provider}` : ""}, ${c.status} (${c.id})`)
+  else lines.push("Computer: none")
+  if (s.state === "suspended") lines.push("Your credits ran out and the computer stopped. Add credits to start it again.")
+  if (s.state === "provisioning") lines.push("Starting your computer. This takes about a minute.")
+  if (c?.status === "sleeping") lines.push("Your computer is asleep. It wakes when an agent needs it.")
+  if (s.state === "none" || s.state === "suspended" || s.gate) lines.push("", formatComputePaths(s.paths, s.docs_url))
+  else lines.push("", `Docs: ${s.docs_url ?? DOCS_URL}`)
+  return lines.join("\n")
+}
+
+/** If an error carries a 409 compute_required body, the plain message for it; else undefined. */
+export function computeRequiredMessage(text: string): string | undefined {
+  if (!/compute_required/.test(text)) return undefined
+  const start = text.indexOf("{")
+  let paths: ComputePaths | undefined
+  let docs: string | undefined
+  if (start >= 0) {
+    try {
+      const body = JSON.parse(text.slice(start))
+      paths = body?.error?.paths
+      docs = body?.error?.docs_url
+    } catch {}
+  }
+  return formatComputePaths(paths && Object.keys(paths).length ? paths : undefined, docs ?? DOCS_URL)
+}
+
 /** Print a failed request as one plain line (exit 1), not a stack. */
 async function guard(fn: () => Promise<void>): Promise<void> {
   try {
     await fn()
   } catch (e) {
-    UI.error((e as Error).message)
+    UI.error(computeRequiredMessage((e as Error).message) ?? (e as Error).message)
     process.exitCode = 1
   }
 }
+
+async function authHeaders(): Promise<Record<string, string>> {
+  const env = process.env.ALLTERNIT_API_TOKEN?.trim()
+  if (env) return { Authorization: `Bearer ${env}` }
+  const { Pairing } = await import("@/runtime/services/pairing/pairing")
+  const device = await Pairing.load().catch(() => undefined)
+  return Pairing.tokenUsable(device) ? { Authorization: `Bearer ${device!.deviceToken!}` } : {}
+}
+
+/** GET /api/v1/account/compute-status. Throws a plain Error when it can't be read. */
+export async function fetchComputeStatus(): Promise<ComputeStatus> {
+  const res = await fetch(`${cloudBase()}/api/v1/account/compute-status`, {
+    headers: await authHeaders(),
+    signal: AbortSignal.timeout(10_000),
+  })
+  if (res.status === 401 || res.status === 403) throw new Error("Not signed in. Run `gizzi login`.")
+  if (!res.ok) throw new Error(`compute status: ${res.status}`)
+  return (await res.json()) as ComputeStatus
+}
+
+/** After login: print the status and, when there is no computer, the three paths. Never throws. */
+export async function printComputeStatusAfterLogin(): Promise<void> {
+  try {
+    const s = await fetchComputeStatus()
+    if (s.state === "none") UI.println("\n" + formatComputeStatus(s))
+    else UI.println(`\nComputer: ${s.computer?.kind ?? s.state}, ${s.computer?.status ?? s.state}`)
+  } catch {
+    // Older servers have no compute-status route; login still succeeded.
+  }
+}
+
+const ComputersStatusCommand = cmd({
+  command: "status",
+  describe: "show whether this account has a computer for agents, and the ways to get one",
+  builder: (y: Argv) => y.option("json", { type: "boolean", describe: "print JSON" }),
+  handler: (args) => guard(async () => {
+    const s = await fetchComputeStatus()
+    process.stdout.write((args.json ? JSON.stringify(s, null, 2) : formatComputeStatus(s)) + "\n")
+  }),
+})
+
+const ComputersLinkCommand = cmd({
+  command: "link",
+  describe: "steps to link the Allternit Desktop app on your own computer",
+  handler: () => guard(async () => {
+    process.stdout.write(
+      [
+        "Link your own computer (free):",
+        "  1. Download the Desktop app: https://www.allternit.com/download",
+        "  2. Open Allternit on that computer. It opens a page in your browser; sign in and approve the link.",
+        "     If the browser does not open, type the code shown in the app at https://platform.allternit.com/pair",
+        "  3. Run `gizzi computers status`. It shows paired when the link is done.",
+        "",
+        "Docs: https://docs.allternit.com/guides/link-your-computer",
+        "",
+      ].join("\n"),
+    )
+  }),
+})
 
 function pad(s: string, n: number): string {
   return s.length >= n ? s.slice(0, n - 1) + "…" : s.padEnd(n)
@@ -96,7 +231,9 @@ export const ComputersCommand = cmd({
       .command(ComputersLsCommand)
       .command(lifecycle("start"))
       .command(lifecycle("stop"))
-      .demandCommand(1, "Specify a computers command (ls, start, stop)"),
+      .command(ComputersStatusCommand)
+      .command(ComputersLinkCommand)
+      .demandCommand(1, "Specify a computers command (ls, start, stop, status, link)"),
   handler: () => {},
 })
 
@@ -127,7 +264,7 @@ export async function runOnComputer(key: string, message: string, model?: string
     process.stdout.write(`Running on ${target.name} · session ${run.sessionID}\n  web:   ${run.web}\n  phone: ${run.phone}\n`)
     return 0
   } catch (e) {
-    UI.error((e as Error).message)
+    UI.error(computeRequiredMessage((e as Error).message) ?? (e as Error).message)
     return 1
   }
 }

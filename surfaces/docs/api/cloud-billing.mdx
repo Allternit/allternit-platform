@@ -7,6 +7,10 @@ These routes live in `allternit-cloud-api` (`cmd/allternit-cloud-api`) and are s
 
 Routes that call Stripe answer `503 {"error":"billing_not_configured"}` when `STRIPE_SECRET_KEY` is unset, and `502 {"error":"billing_upstream_error"}` when Stripe rejects the call.
 
+## Computers
+
+Agents need a computer. Credit computers are started and stopped with `POST /api/v1/provisioned-instances/credit` and `/credit/stop`, billed per minute from the wallet. Free hosted computers are retired: `POST /api/v1/provisioned-instances/free` answers `410 free_computers_retired`. See [Computer pricing](/guides/computer-pricing) and [Account compute status](/api/account-compute-status).
+
 ## Credit packs
 
 | Method | Path | Auth | Notes |

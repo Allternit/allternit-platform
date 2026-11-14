@@ -98,6 +98,13 @@ pub enum ApiError {
 
     #[error("Not implemented: {0}")]
     NotImplemented(String),
+
+    /// Compute gate (CONTRACT-compute-gate-2026-11-13 section 4): agent
+    /// entry by an account with no computer. 409 with the contract body
+    /// (`{"error":{"code":"compute_required",...}}`) passed through verbatim,
+    /// built by `routes::account_compute::compute_required_body`.
+    #[error("Compute required")]
+    ComputeRequired(serde_json::Value),
 }
 
 impl From<sqlx::migrate::MigrateError> for ApiError {
@@ -117,6 +124,11 @@ impl IntoResponse for ApiError {
         // so server logs show the root cause instead of a generic message.
         // so fly.io logs show the root cause instead of a generic message.
         warn!(error = %self, "ApiError response");
+
+        // The compute gate's body is a contract shared by every client.
+        if let ApiError::ComputeRequired(body) = &self {
+            return (StatusCode::CONFLICT, Json(body.clone())).into_response();
+        }
 
         let (status, error_code, message) = match &self {
             ApiError::DeploymentNotFound(id) => {
@@ -206,6 +218,12 @@ impl IntoResponse for ApiError {
                 msg.clone(),
             ),
             ApiError::Conflict(msg) => (StatusCode::CONFLICT, "CONFLICT", msg.clone()),
+            // Answered above with its contract body; kept for exhaustiveness.
+            ApiError::ComputeRequired(_) => (
+                StatusCode::CONFLICT,
+                "compute_required",
+                "Agents need a computer. Link your own, subscribe, or buy credits.".to_string(),
+            ),
             ApiError::PreconditionRequired(msg) => (
                 StatusCode::PRECONDITION_REQUIRED,
                 "PRECONDITION_REQUIRED",

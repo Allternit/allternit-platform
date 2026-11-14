@@ -295,6 +295,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Allternit Meetings: start pods for `launching` sessions, tear down
     // ended or silent ones.
     services::meeting_launcher::start_meeting_launcher_task(state.clone());
+    // Credit computers (compute gate path C): per-minute wallet billing, stop
+    // at $0, 14-day retention sweep. Always on so existing ones stay billed.
+    services::start_credit_computer_task(state.clone());
 
     // Start scheduler service (background task)
     let scheduler_enabled = std::env::var("SCHEDULER_ENABLED")

@@ -72,6 +72,12 @@ use crate::ApiError;
 mod free;
 #[path = "provision_orgo.rs"]
 mod orgo;
+#[path = "provisioning_credit.rs"]
+mod credit;
+pub use credit::{
+    credit_computers_enabled, start_credit_computer_task, CreditDefaults, CreditStart, CreditTick,
+    CREDIT_LEDGER_SOURCE, CREDIT_SIZE_ID,
+};
 pub use free::{
     is_capacity_message, mentions_capacity, note_runtime_attached, start_free_computer_task, touch_provisioned_activity,
     FreeDefaults, HostedDriverDefaults, ProvisionedWakeOutcome, WakeReason, WakeResult,
@@ -188,9 +194,12 @@ pub const BOOTSTRAP_PATH: &str = "/etc/allternit/bootstrap.json";
 /// Cancel lifecycle (plan B2 + round-3 answer): delete the stopped instance
 /// 30 days after cancel; keep the disk snapshot image for 6 months.
 pub const CANCEL_DELETE_AFTER_DAYS: i64 = 30;
-/// `provisioned_instances.tier` values (migration 019).
+/// `provisioned_instances.tier` values (migrations 019, 128).
 pub const TIER_PAID: &str = "paid";
 pub const TIER_FREE: &str = "free";
+/// A credit computer: bought with the USD credit wallet, billed per minute
+/// (`provisioning_credit.rs`). One per account, never a cancel snapshot.
+pub const TIER_CREDIT: &str = "credit";
 /// A `waking` row older than this whose start task is gone is converged by
 /// reconcile from the backend status.
 const WAKE_STALE_SECONDS: i64 = 120;
@@ -307,11 +316,21 @@ pub enum ComputeClass {
     Platform,
     /// A `/v1/computers` developer computer (owner `platform-drv:`).
     HostedDriver,
+    /// A credit computer (tier `credit`, billed from the credit wallet).
+    Credit,
 }
 
 impl ComputeClass {
+    /// A plan or credits computer: someone pays for its hours, so the Orgo
+    /// daily budget (a guard on unpaid usage) never refuses it.
+    pub fn is_paying(self) -> bool {
+        matches!(self, ComputeClass::Paid | ComputeClass::Credit)
+    }
+
     pub fn for_owner(user_id: &str, tier: &str) -> Self {
-        if tier != TIER_FREE {
+        if tier == TIER_CREDIT {
+            ComputeClass::Credit
+        } else if tier != TIER_FREE {
             ComputeClass::Paid
         } else if is_hosted_driver_owner(user_id) {
             ComputeClass::HostedDriver
@@ -783,6 +802,12 @@ pub fn incus_name_for(user_id: &str, subscription_id: Option<&str>) -> String {
 /// chars). One free computer per account, so the user id alone fixes it.
 pub fn free_incus_name_for(user_id: &str) -> String {
     incus_name_with_prefix("allternit-free", user_id, "free")
+}
+
+/// Deterministic name of an account's credit computer:
+/// `allternit-credit-<user slug, ≤28>-<12 hex>` (≤ 58 chars, one per account).
+pub fn credit_incus_name_for(user_id: &str) -> String {
+    incus_name_with_prefix("allternit-credit", user_id, "credit")
 }
 
 fn incus_name_with_prefix(prefix: &str, user_id: &str, discriminator: &str) -> String {
@@ -1426,6 +1451,22 @@ impl HostCapacity {
     }
 }
 
+/// Hosts that serve something else and never take a computer, even when they
+/// are registered and enabled: always `host_mail` (the production mail VPS),
+/// plus any ids in `ALLTERNIT_RESERVED_HOSTS` (comma-separated).
+pub const ALWAYS_RESERVED_HOSTS: &[&str] = &["host_mail"];
+
+fn reserved_hosts() -> Vec<String> {
+    let mut hosts = env_list("ALLTERNIT_RESERVED_HOSTS");
+    hosts.extend(ALWAYS_RESERVED_HOSTS.iter().map(|h| h.to_string()));
+    hosts
+}
+
+/// True when `host_id` must never receive a computer (see [`ALWAYS_RESERVED_HOSTS`]).
+pub fn is_reserved_host_with(reserved: &[String], host_id: &str) -> bool {
+    reserved.iter().any(|h| h.eq_ignore_ascii_case(host_id.trim()))
+}
+
 /// Best-free bin-pack (see module header for the full algorithm
 /// description): most free memory wins, tie → most free cpu, tie → lowest
 /// host id for determinism. Returns `None` when no enabled host fits.
@@ -1435,9 +1476,11 @@ pub fn select_host(
     memory_mb: i64,
     disk_gb: i64,
 ) -> Option<String> {
+    let reserved = reserved_hosts();
     hosts
         .iter()
         .filter(|host| host.enabled && host.fits(cpu, memory_mb, disk_gb))
+        .filter(|host| !is_reserved_host_with(&reserved, &host.id))
         .max_by(|a, b| {
             a.free_memory()
                 .cmp(&b.free_memory())
@@ -2060,6 +2103,8 @@ pub struct ProvisioningService {
     hosted: HostedDriverDefaults,
     /// Provider per class and the Orgo guards (`ALLTERNIT_COMPUTE_PROVIDER_*`).
     routing: ComputeRouting,
+    /// Credit computer size, prices and retention (`ALLTERNIT_CREDIT_COMPUTER_*`).
+    credit: CreditDefaults,
     registry: Arc<dyn BackendRegistry>,
     /// Downloadable copies being prepared or ready, by export id. In memory:
     /// Incus deletes the file itself after a day, and a restart only means
@@ -2142,6 +2187,7 @@ impl ProvisioningService {
             free: FreeDefaults::from_env(),
             hosted: HostedDriverDefaults::from_env(),
             routing: ComputeRouting::from_env(),
+            credit: CreditDefaults::from_env(),
             registry,
             exports: Mutex::new(HashMap::new()),
         }
@@ -2163,6 +2209,17 @@ impl ProvisioningService {
     pub(crate) fn with_routing(mut self, routing: ComputeRouting) -> Self {
         self.routing = routing;
         self
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_credit_defaults(mut self, credit: CreditDefaults) -> Self {
+        self.credit = credit;
+        self
+    }
+
+    /// The credit computer settings (size, prices, minimum start, retention).
+    pub fn credit_defaults(&self) -> &CreditDefaults {
+        &self.credit
     }
 
     /// The free-computer settings (sizes, idle window, limits).
@@ -2243,14 +2300,51 @@ impl ProvisioningService {
         Ok(view)
     }
 
-    /// Shared create for both tiers. `tier` is [`TIER_PAID`] (per
-    /// subscription, plan-sized, always on, cancel snapshot) or
-    /// [`TIER_FREE`] (one per account, same image, small, sleeps, no snapshots).
+    /// Shared create for every tier. `tier` is [`TIER_PAID`] (per
+    /// subscription, plan-sized, always on, cancel snapshot), [`TIER_CREDIT`]
+    /// or [`TIER_FREE`] (one per account, same image, small, sleeps, no snapshots).
+    ///
+    /// Capacity fallback: when the class is routed to Orgo and Orgo has no
+    /// room (Orgo's own `insufficient_memory`, the running cap, the daily
+    /// budget or the orgo:// host ledger: every [`orgo::CLOUD_POOL_FULL`]
+    /// refusal), the computer is placed on the standby (Incus) pool instead,
+    /// under that pool's usual admission (host ledger, memory admission and
+    /// idle sleep for free computers). Only when standby has no room either
+    /// does the caller get the `computer_capacity` 503. A wake never moves a
+    /// computer: its disk lives on the provider that made it.
     pub(crate) async fn create_tier(
         &self,
         user_id: &str,
         subscription_id: Option<&str>,
         tier: &str,
+    ) -> Result<InstanceView, ApiError> {
+        let class = ComputeClass::for_owner(user_id, tier);
+        let routed_to_orgo = self.routing.provider_for(class) == ComputeProvider::Orgo;
+        match self.create_tier_on(user_id, subscription_id, tier, false).await {
+            Err(ApiError::ServiceUnavailable(message))
+                if routed_to_orgo && message.starts_with(orgo::CLOUD_POOL_FULL) =>
+            {
+                tracing::warn!(%user_id, ?class, "orgo at capacity; placing the computer on the standby pool");
+                match self.create_tier_on(user_id, subscription_id, tier, true).await {
+                    Ok(view) => Ok(view),
+                    Err(fallback) => {
+                        tracing::warn!(%user_id, ?class, error = %fallback, "standby pool has no room either");
+                        Err(ApiError::ServiceUnavailable(message))
+                    }
+                }
+            }
+            other => other,
+        }
+    }
+
+    /// One placement attempt of [`Self::create_tier`]. `standby_only` skips
+    /// Orgo routing and places on the Incus (standby) hosts.
+    async fn create_tier_on(
+        &self,
+        user_id: &str,
+        subscription_id: Option<&str>,
+        tier: &str,
+        standby_only: bool,
     ) -> Result<InstanceView, ApiError> {
         let free = tier == TIER_FREE;
         // Developer computers (the hosted driver) ride the free lane with
@@ -2271,7 +2365,7 @@ impl ProvisioningService {
             }
         }
         let class = ComputeClass::for_owner(user_id, tier);
-        let want_orgo = self.routing.provider_for(class) == ComputeProvider::Orgo;
+        let want_orgo = !standby_only && self.routing.provider_for(class) == ComputeProvider::Orgo;
         // A first boot that failed on Orgo minutes ago: wait before buying
         // another computer (a bad .deb URL would otherwise buy one per call).
         if want_orgo && self.orgo_first_boot_backoff(user_id, tier).await? {
@@ -2296,7 +2390,9 @@ impl ProvisioningService {
             }
         }
 
-        let (plan_id, size) = if free {
+        let (plan_id, size) = if tier == TIER_CREDIT {
+            (None, self.credit.size())
+        } else if free {
             let size = if hosted {
                 self.hosted.size()
             } else if platform {
@@ -2309,8 +2405,9 @@ impl ProvisioningService {
             self.plan_size(subscription_id).await
         };
         let allocation = allocation_for(tier, size);
-        // Free computers never restore from (or get) a cancel snapshot.
-        let restore: Option<(String, String, String)> = if free {
+        // Free and credit computers never restore from (or get) a cancel
+        // snapshot: only paid computers take one.
+        let restore: Option<(String, String, String)> = if tier != TIER_PAID {
             None
         } else {
             sqlx::query_as(
@@ -2332,6 +2429,8 @@ impl ProvisioningService {
         let instance_id = format!("pi_{}", Uuid::new_v4().simple());
         let incus_name = if free {
             free_incus_name_for(user_id)
+        } else if tier == TIER_CREDIT {
+            credit_incus_name_for(user_id)
         } else {
             incus_name_for(user_id, subscription_id)
         };
@@ -2435,7 +2534,7 @@ impl ProvisioningService {
             }));
         };
         if orgo_hosts.contains(&host_id) {
-            if let Err(error) = orgo::orgo_admits(&mut *transaction, &self.routing).await {
+            if let Err(error) = orgo::orgo_admits(&mut *transaction, &self.routing, class).await {
                 transaction.rollback().await?;
                 return Err(error);
             }
@@ -3208,7 +3307,8 @@ impl ProvisioningService {
                 .bind(row.host_id.as_deref())
                 .execute(&mut *transaction)
                 .await?;
-            if let Err(error) = orgo::orgo_admits(&mut *transaction, &self.routing).await {
+            let class = ComputeClass::for_owner(&row.user_id, &row.tier);
+            if let Err(error) = orgo::orgo_admits(&mut *transaction, &self.routing, class).await {
                 transaction.rollback().await?;
                 return Err(error);
             }
@@ -4584,6 +4684,7 @@ pub(crate) mod pg_tests {
     const MIGRATION_017: &str = include_str!("../../migrations_pg/017_paired_computers.sql");
     const MIGRATION_066: &str = include_str!("../../migrations_pg/066_paired_computer_orgs.sql");
     const MIGRATION_081: &str = include_str!("../../migrations_pg/081_paired_cloud_computers.sql");
+    const MIGRATION_CREDIT: &str = include_str!("../../migrations_pg/132_credit_computers.sql");
 
     async fn test_pool() -> PgPool {
         let url = "postgres://allternit:allternit_pg_2026@localhost:5432/allternit_test";
@@ -4671,6 +4772,8 @@ pub(crate) mod pg_tests {
         apply_migration_sql(&pool, &schema, MIGRATION_018).await;
         apply_migration_sql(&pool, &schema, MIGRATION_019).await;
         apply_migration_sql(&pool, &schema, MIGRATION_019).await;
+        apply_migration_sql(&pool, &schema, MIGRATION_CREDIT).await;
+        apply_migration_sql(&pool, &schema, MIGRATION_CREDIT).await;
         for sql in [MIGRATION_017, MIGRATION_066, MIGRATION_081] {
             apply_migration_sql(&pool, &schema, sql).await;
         }
@@ -6087,6 +6190,7 @@ pub(crate) mod pg_tests {
             platform: ComputeProvider::Incus,
             paid: pick(paid),
             free: pick(free),
+            credit: ComputeProvider::Orgo,
             orgo_max_running: 10,
             orgo_daily_budget_usd: 1000.0,
             orgo_paid_idle: Duration::minutes(30),
@@ -6220,10 +6324,176 @@ pub(crate) mod pg_tests {
         assert!((spent - 7.0 * 0.055).abs() < 1e-6, "{spent}");
         drop(conn);
 
-        // A used-up budget refuses with the capacity 503.
+        // A used-up budget refuses Orgo; with standby full too, the capacity 503.
+        sqlx::query("UPDATE provisioned_hosts SET enabled = FALSE WHERE id = 'host_a'")
+            .execute(&pool)
+            .await
+            .unwrap();
         let broke = orgo_service(&pool, &backend, ComputeRouting { orgo_daily_budget_usd: 0.0, ..orgo_routing(true, false) });
-        let error = broke.create_free("user_2").await.unwrap_err();
+        let error = broke.create_free("user_3").await.unwrap_err();
         assert!(matches!(&error, ApiError::ServiceUnavailable(m) if is_capacity_message(m)), "{error:?}");
+    }
+
+    #[test]
+    fn select_host_never_places_on_the_mail_host() {
+        // host_mail has far more room, so the bin-pack would pick it.
+        let host = |id: &str, cpu_total: i64, memory_total: i64, disk_total: i64| HostCapacity {
+            id: id.to_string(),
+            enabled: true,
+            cpu_total,
+            memory_total,
+            disk_total,
+            cpu_used: 0,
+            memory_used: 0,
+            disk_used: 0,
+        };
+        let hosts = vec![
+            host("host_mail", 64, 262_144, 4000),
+            host("host_a", 4, 8192, 100),
+        ];
+        assert_eq!(select_host(&hosts, 2, 2048, 20).as_deref(), Some("host_a"));
+        // Alone, it takes nothing.
+        assert_eq!(select_host(&hosts[..1], 1, 1024, 10), None);
+        // Extra reserved ids come from ALLTERNIT_RESERVED_HOSTS; host_mail is always in.
+        let reserved = vec!["host_b".to_string(), "host_mail".to_string()];
+        assert!(is_reserved_host_with(&reserved, "host_b"));
+        assert!(is_reserved_host_with(&reserved, "HOST_MAIL"));
+        assert!(!is_reserved_host_with(&reserved, "host_a"));
+        assert!(ALWAYS_RESERVED_HOSTS.contains(&"host_mail"));
+    }
+
+    #[tokio::test]
+    async fn orgo_daily_budget_never_refuses_a_paying_computer() {
+        let pool = migrated_pool().await;
+        insert_orgo_host(&pool, "host_o", 64, 262_144, 2000).await;
+        let backend = Arc::new(MockBackend::default());
+        // Budget used up from the start; no standby host to fall back to.
+        let routing = ComputeRouting { orgo_daily_budget_usd: 0.0, ..orgo_routing(true, true) };
+        let service = orgo_service(&pool, &backend, routing);
+
+        let plan = service.create("user_1", Some("sub_1")).await.unwrap();
+        assert_eq!(plan.host_id.as_deref(), Some("host_o"), "a plan computer is not refused by the budget");
+        let credit = service.create_tier("user_2", None, TIER_CREDIT).await.unwrap();
+        assert_eq!(credit.host_id.as_deref(), Some("host_o"), "a credits computer is not refused by the budget");
+
+        // Unpaid usage is still guarded.
+        let error = service.create_free("user_free").await.unwrap_err();
+        assert!(matches!(&error, ApiError::ServiceUnavailable(m) if is_capacity_message(m)), "{error:?}");
+
+        // A paying computer's hours never count toward the unpaid budget.
+        set_status(&pool, &plan.id, "running").await;
+        sqlx::query(
+            "INSERT INTO provisioned_instance_usage_sessions (id, instance_id, user_id, started_at) VALUES ('pus_p', $1, 'user_1', $2)",
+        )
+        .bind(&plan.id)
+        .bind(Utc::now() - Duration::hours(3))
+        .execute(&pool)
+        .await
+        .unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        let spent = orgo::orgo_spend_today_usd(&mut conn, Utc::now(), 0.055).await.unwrap();
+        assert_eq!(spent, 0.0);
+        drop(conn);
+        assert!(ComputeClass::Paid.is_paying() && ComputeClass::Credit.is_paying());
+        assert!(!ComputeClass::Free.is_paying() && !ComputeClass::Platform.is_paying());
+    }
+
+    /// orgo:// hosts get the real Orgo backend on a fake Orgo API; every
+    /// other host gets the mock (the standby Incus pool).
+    struct SplitRegistry {
+        orgo: Arc<dyn ProvisionBackend>,
+        standby: Arc<MockBackend>,
+    }
+
+    impl std::fmt::Debug for SplitRegistry {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("SplitRegistry")
+        }
+    }
+
+    #[async_trait]
+    impl BackendRegistry for SplitRegistry {
+        async fn backend(&self, _host_id: &str, endpoint: &str) -> Result<Arc<dyn ProvisionBackend>, ApiError> {
+            Ok(if is_orgo_endpoint(endpoint) { self.orgo.clone() } else { self.standby.clone() })
+        }
+    }
+
+    #[tokio::test]
+    async fn orgo_capacity_refusal_on_create_falls_back_to_standby() {
+        let pool = migrated_pool().await;
+        insert_host(&pool, "host_a", 16, 32768, 200).await;
+        insert_orgo_host(&pool, "host_o", 64, 262_144, 2000).await;
+        let (orgo, orgo_creates) = orgo::tests::capacity_refusing_orgo().await;
+        let standby = Arc::new(MockBackend::default());
+        let service = Arc::new(
+            ProvisioningService::with_registry(pool.clone(), Arc::new(SplitRegistry { orgo, standby: standby.clone() }))
+                .with_defaults(test_defaults())
+                .with_free_defaults(test_free_defaults())
+                .with_routing(orgo_routing(false, true)),
+        );
+
+        // Orgo answers insufficient_memory: the plan computer lands on standby.
+        let paid = service.create("user_1", Some("sub_1")).await.unwrap();
+        assert_eq!(orgo_creates(), 1, "Orgo was asked first");
+        assert_eq!(paid.host_id.as_deref(), Some("host_a"));
+        assert_eq!(paid.provider, "incus");
+        assert_eq!(standby.created.lock().unwrap().len(), 1);
+        let orgo_allocated: i32 = sqlx::query_scalar("SELECT cpu_cores_allocated FROM provisioned_hosts WHERE id = 'host_o'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(orgo_allocated, 0, "the refused Orgo slot is released");
+        let live: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM provisioned_instances WHERE user_id = 'user_1' AND status NOT IN ('error', 'deleted')",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(live, 1, "one live computer, on standby");
+
+        // Credits computers fall back the same way.
+        let credit = service.create_tier("user_2", None, TIER_CREDIT).await.unwrap();
+        assert_eq!(credit.host_id.as_deref(), Some("host_a"));
+
+        // Standby with no room either: computer_capacity.
+        sqlx::query("UPDATE provisioned_hosts SET enabled = FALSE WHERE id = 'host_a'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let error = service.create("user_2", Some("sub_9")).await.unwrap_err();
+        assert!(
+            matches!(&error, ApiError::ServiceUnavailable(m) if m.starts_with(orgo::CLOUD_POOL_FULL)),
+            "{error:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn waking_an_orgo_computer_at_capacity_stays_on_orgo() {
+        let pool = migrated_pool().await;
+        insert_host(&pool, "host_a", 16, 32768, 200).await;
+        insert_orgo_host(&pool, "host_o", 64, 262_144, 2000).await;
+        let backend = Arc::new(MockBackend { orgo: true, ..MockBackend::default() });
+        let routing = ComputeRouting { orgo_max_running: 1, ..orgo_routing(false, true) };
+        let service = orgo_service(&pool, &backend, routing);
+
+        let asleep = service.create("user_1", Some("sub_1")).await.unwrap();
+        assert_eq!(asleep.host_id.as_deref(), Some("host_o"));
+        set_status(&pool, &asleep.id, "sleeping").await;
+        let awake = service.create("user_2", Some("sub_2")).await.unwrap();
+        assert_eq!(awake.host_id.as_deref(), Some("host_o"));
+        set_status(&pool, &awake.id, "running").await;
+
+        // The running cap is full: the wake is refused and nothing moves.
+        let error = service.wake(&asleep.id, Some("user_1"), WakeReason::Relay).await.unwrap_err();
+        assert!(matches!(&error, ApiError::ServiceUnavailable(m) if is_capacity_message(m)), "{error:?}");
+        let (status, host): (String, Option<String>) =
+            sqlx::query_as("SELECT status, host_id FROM provisioned_instances WHERE id = $1")
+                .bind(&asleep.id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(status, "sleeping");
+        assert_eq!(host.as_deref(), Some("host_o"), "its disk is on Orgo: it stays there");
     }
 
     #[tokio::test]
@@ -6297,5 +6567,303 @@ pub(crate) mod pg_tests {
         let error = service.create("user_1", Some("sub_1")).await.unwrap_err();
         assert!(error.to_string().contains("setup failed"), "{error}");
         assert_eq!(backend.created.lock().unwrap().len(), 1);
+    }
+
+    // ---- credit computers (provisioning_credit.rs) -------------------------
+
+    /// The wallet, its ledger and the email record the credit lane writes.
+    async fn credit_tables(pool: &PgPool) {
+        for statement in [
+            "CREATE TABLE user_credits (user_id TEXT PRIMARY KEY, balance_usd DOUBLE PRECISION NOT NULL DEFAULT 0 CHECK (balance_usd >= 0))",
+            "CREATE TABLE credit_transactions (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, amount_usd DOUBLE PRECISION NOT NULL, transaction_id TEXT NOT NULL UNIQUE, source TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())",
+            "CREATE TABLE customer_emails (id BIGSERIAL PRIMARY KEY, user_id TEXT NOT NULL, kind TEXT NOT NULL, ref TEXT NOT NULL DEFAULT '', email TEXT, status TEXT NOT NULL CHECK (status IN ('sent', 'failed', 'skipped', 'queued')), error TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), UNIQUE (user_id, kind, ref))",
+        ] {
+            sqlx::query(statement).execute(pool).await.unwrap();
+        }
+    }
+
+    async fn set_balance(pool: &PgPool, user_id: &str, balance: f64) {
+        sqlx::query(
+            "INSERT INTO user_credits (user_id, balance_usd) VALUES ($1, $2) ON CONFLICT (user_id) DO UPDATE SET balance_usd = $2",
+        )
+        .bind(user_id)
+        .bind(balance)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    async fn balance_of(pool: &PgPool, user_id: &str) -> f64 {
+        sqlx::query_scalar("SELECT balance_usd FROM user_credits WHERE user_id = $1")
+            .bind(user_id)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    fn credit_service(pool: &PgPool, backend: &Arc<MockBackend>) -> Arc<ProvisioningService> {
+        Arc::new(
+            service(pool.clone(), backend.clone())
+                .with_routing(orgo_routing(false, false))
+                .with_credit_defaults(CreditDefaults::default()),
+        )
+    }
+
+    /// A credit computer for `user_id` (bought with a $10 wallet), with its
+    /// billing cursor at `billed_through`, no metering sessions, `status`.
+    async fn credit_computer(
+        pool: &PgPool,
+        service: &ProvisioningService,
+        user_id: &str,
+        status: &str,
+        billed_through: DateTime<Utc>,
+    ) -> InstanceView {
+        set_balance(pool, user_id, 10.0).await;
+        let CreditStart::Started(view) = service.start_credit(user_id).await.unwrap() else {
+            panic!("a $10 wallet starts a credit computer");
+        };
+        sqlx::query("DELETE FROM provisioned_instance_usage_sessions WHERE instance_id = $1")
+            .bind(&view.id)
+            .execute(pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE provisioned_instances SET status = $2, credit_billed_through = $3 WHERE id = $1")
+            .bind(&view.id)
+            .bind(status)
+            .bind(billed_through)
+            .execute(pool)
+            .await
+            .unwrap();
+        view
+    }
+
+    async fn add_session(pool: &PgPool, instance_id: &str, started: DateTime<Utc>, ended: Option<DateTime<Utc>>) {
+        sqlx::query(
+            "INSERT INTO provisioned_instance_usage_sessions (id, instance_id, user_id, started_at, ended_at) \
+             SELECT $1, id, user_id, $3, $4 FROM provisioned_instances WHERE id = $2",
+        )
+        .bind(format!("pus_{}", Uuid::new_v4().simple()))
+        .bind(instance_id)
+        .bind(started)
+        .bind(ended)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    fn t0() -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339("2026-11-01T10:00:00Z").unwrap().with_timezone(&Utc)
+    }
+
+    #[tokio::test]
+    async fn credit_computers_land_on_orgo_at_the_credit_size() {
+        let pool = migrated_pool().await;
+        credit_tables(&pool).await;
+        insert_host(&pool, "host_a", 16, 32768, 200).await;
+        insert_orgo_host(&pool, "host_o", 64, 262_144, 2000).await;
+        let backend = Arc::new(MockBackend::default());
+        let service = credit_service(&pool, &backend);
+        set_balance(&pool, "user_1", 10.0).await;
+        let CreditStart::Started(view) = service.start_credit("user_1").await.unwrap() else {
+            panic!("started");
+        };
+        assert_eq!(view.tier, TIER_CREDIT);
+        assert_eq!(view.host_id.as_deref(), Some("host_o"));
+        assert_eq!(view.provider, "orgo");
+        assert!(view.sleeps_when_idle);
+        assert_eq!((view.cpu_cores, view.memory_mb, view.disk_gb), (2, 8192, 50));
+        let spec = backend.created.lock().unwrap().last().cloned().unwrap();
+        assert_eq!(spec.class, ComputeClass::Credit);
+        assert_eq!(spec.name, credit_incus_name_for("user_1"));
+        // Asking again returns the same computer (one per account).
+        let CreditStart::Started(again) = service.start_credit("user_1").await.unwrap() else {
+            panic!("started");
+        };
+        assert_eq!(again.id, view.id);
+        assert_eq!(backend.created.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn credit_billing_debits_each_minute_once_at_the_running_and_stopped_rates() {
+        let pool = migrated_pool().await;
+        credit_tables(&pool).await;
+        insert_orgo_host(&pool, "host_o", 64, 262_144, 2000).await;
+        let backend = Arc::new(MockBackend::default());
+        let service = credit_service(&pool, &backend);
+        let view = credit_computer(&pool, &service, "user_1", "stopped", t0()).await;
+        // Ran 6 of the 10 minutes, stopped for the other 4.
+        add_session(&pool, &view.id, t0(), Some(t0() + Duration::minutes(6))).await;
+
+        let now = t0() + Duration::minutes(10) + Duration::seconds(30);
+        let tick = service.bill_credit_minutes(&view.id, now).await.unwrap().unwrap();
+        let expected = 6.0 * 0.10 / 60.0 + 4.0 * 0.005 / 60.0;
+        assert_eq!(tick.minutes, 10);
+        assert!((tick.charged_usd - expected).abs() < 1e-9, "{}", tick.charged_usd);
+        assert!((balance_of(&pool, "user_1").await - (10.0 - expected)).abs() < 1e-9);
+
+        // The same minute again (a repeated tick, a restart): no charge.
+        for again in [now, now + Duration::seconds(20)] {
+            let repeat = service.bill_credit_minutes(&view.id, again).await.unwrap().unwrap();
+            assert_eq!((repeat.minutes, repeat.charged_usd), (0, 0.0));
+        }
+        assert!((balance_of(&pool, "user_1").await - (10.0 - expected)).abs() < 1e-9);
+        let ledger: Vec<(f64, String)> = sqlx::query_as(
+            "SELECT amount_usd, transaction_id FROM credit_transactions WHERE source = 'credit_computer'",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(ledger.len(), 1);
+        assert!((ledger[0].0 + expected).abs() < 1e-9);
+        assert_eq!(ledger[0].1, format!("credit_computer:{}:{}", view.id, (t0() + Duration::minutes(10)).timestamp() / 60));
+
+        // The next minute: stopped the whole minute.
+        let next = service.bill_credit_minutes(&view.id, now + Duration::minutes(1)).await.unwrap().unwrap();
+        assert_eq!(next.minutes, 1);
+        assert!((next.charged_usd - 0.005 / 60.0).abs() < 1e-12);
+    }
+
+    #[tokio::test]
+    async fn credit_computer_stops_at_zero_keeps_its_disk_and_needs_the_minimum_to_restart() {
+        let pool = migrated_pool().await;
+        credit_tables(&pool).await;
+        insert_orgo_host(&pool, "host_o", 64, 262_144, 2000).await;
+        let backend = Arc::new(MockBackend::default());
+        let service = credit_service(&pool, &backend);
+        let view = credit_computer(&pool, &service, "user_1", "running", t0()).await;
+        add_session(&pool, &view.id, t0(), None).await;
+        // 10 running minutes cost ~$0.0167; the wallet holds $0.01.
+        set_balance(&pool, "user_1", 0.01).await;
+
+        let now = t0() + Duration::minutes(10);
+        let ticks = service.bill_credit_computers(now).await.unwrap();
+        assert_eq!(ticks.len(), 1);
+        assert_eq!(balance_of(&pool, "user_1").await, 0.0, "clamped at zero");
+        let row = service.fetch_row(&view.id, None).await.unwrap();
+        assert_eq!(row.status, "suspended");
+        assert_eq!(row.delete_after, Some(now + Duration::days(14)));
+        assert!(backend.calls.lock().unwrap().contains(&format!("stop:{}", row.incus_name)));
+        let open: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM provisioned_instance_usage_sessions WHERE instance_id = $1 AND ended_at IS NULL",
+        )
+        .bind(&view.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(open, 0, "metering closed");
+        let queued: Vec<(String, String)> =
+            sqlx::query_as("SELECT kind, status FROM customer_emails WHERE user_id = 'user_1'")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(queued, vec![("credit_stopped".to_string(), "queued".to_string())]);
+
+        // Suspended computers are not billed.
+        assert!(service.bill_credit_computers(now + Duration::minutes(5)).await.unwrap().is_empty());
+
+        // Restart needs the minimum, then resumes the same computer.
+        set_balance(&pool, "user_1", 4.99).await;
+        assert!(matches!(
+            service.start_credit("user_1").await.unwrap(),
+            CreditStart::InsufficientCredits { balance_usd } if (balance_usd - 4.99).abs() < 1e-9
+        ));
+        set_balance(&pool, "user_1", 5.0).await;
+        let CreditStart::Started(resumed) = service.start_credit("user_1").await.unwrap() else {
+            panic!("$5 restarts it");
+        };
+        assert_eq!(resumed.id, view.id);
+        assert_ne!(resumed.status, "suspended");
+        assert!(resumed.delete_after.is_none());
+        let cursor: Option<DateTime<Utc>> =
+            sqlx::query_scalar("SELECT credit_billed_through FROM provisioned_instances WHERE id = $1")
+                .bind(&view.id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(cursor.unwrap() > now, "the suspended days are not billed");
+    }
+
+    #[tokio::test]
+    async fn credit_runway_warnings_fire_once_and_rearm_after_a_top_up() {
+        let pool = migrated_pool().await;
+        credit_tables(&pool).await;
+        insert_orgo_host(&pool, "host_o", 64, 262_144, 2000).await;
+        let backend = Arc::new(MockBackend::default());
+        let service = credit_service(&pool, &backend);
+        let view = credit_computer(&pool, &service, "user_1", "sleeping", t0()).await;
+        let kinds = || async {
+            sqlx::query_scalar::<_, String>("SELECT kind FROM customer_emails WHERE user_id = 'user_1' ORDER BY id")
+                .fetch_all(&pool)
+                .await
+                .unwrap()
+        };
+
+        // $1 = 10 hours of running time: the 24 h warning, once.
+        set_balance(&pool, "user_1", 1.0).await;
+        service.bill_credit_computers(t0()).await.unwrap();
+        service.bill_credit_computers(t0() + Duration::seconds(5)).await.unwrap();
+        assert_eq!(kinds().await, vec!["credit_low_24h"]);
+
+        // $0.15 = 1.5 hours: the 2 h warning.
+        set_balance(&pool, "user_1", 0.15).await;
+        service.bill_credit_computers(t0() + Duration::seconds(10)).await.unwrap();
+        assert_eq!(kinds().await, vec!["credit_low_24h", "credit_low_2h"]);
+
+        // A top-up past 24 h clears both; dropping again warns again.
+        set_balance(&pool, "user_1", 5.0).await;
+        service.bill_credit_computers(t0() + Duration::seconds(20)).await.unwrap();
+        let warned: (Option<DateTime<Utc>>, Option<DateTime<Utc>>) = sqlx::query_as(
+            "SELECT credit_warned_24h_at, credit_warned_2h_at FROM provisioned_instances WHERE id = $1",
+        )
+        .bind(&view.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(warned, (None, None));
+        set_balance(&pool, "user_1", 1.0).await;
+        service.bill_credit_computers(t0() + Duration::seconds(30)).await.unwrap();
+        assert_eq!(kinds().await, vec!["credit_low_24h", "credit_low_2h", "credit_low_24h"]);
+    }
+
+    #[tokio::test]
+    async fn suspended_credit_computers_get_retention_warnings_then_are_deleted() {
+        let pool = migrated_pool().await;
+        credit_tables(&pool).await;
+        insert_orgo_host(&pool, "host_o", 64, 262_144, 2000).await;
+        let backend = Arc::new(MockBackend::default());
+        let service = credit_service(&pool, &backend);
+        let view = credit_computer(&pool, &service, "user_1", "suspended", t0()).await;
+        let stopped_at = t0();
+        sqlx::query("UPDATE provisioned_instances SET cancelled_at = $2, delete_after = $3 WHERE id = $1")
+            .bind(&view.id)
+            .bind(stopped_at)
+            .bind(stopped_at + Duration::days(14))
+            .execute(&pool)
+            .await
+            .unwrap();
+        let warnings = || async {
+            sqlx::query_scalar::<_, String>("SELECT ref FROM customer_emails WHERE kind = 'credit_delete_warning' ORDER BY id")
+                .fetch_all(&pool)
+                .await
+                .unwrap()
+        };
+
+        service.sweep_credit_retention(stopped_at + Duration::days(3)).await.unwrap();
+        assert!(warnings().await.is_empty(), "nothing before day 7");
+        service.sweep_credit_retention(stopped_at + Duration::days(8)).await.unwrap();
+        service.sweep_credit_retention(stopped_at + Duration::days(9)).await.unwrap();
+        assert_eq!(warnings().await.len(), 1, "day 7 warning once");
+        service.sweep_credit_retention(stopped_at + Duration::days(13) + Duration::hours(1)).await.unwrap();
+        assert_eq!(warnings().await.len(), 2, "day 13 warning");
+
+        service.sweep_credit_retention(stopped_at + Duration::days(14) + Duration::minutes(1)).await.unwrap();
+        let row = service.fetch_row(&view.id, None).await.unwrap();
+        assert_eq!(row.status, "deleted");
+        assert!(backend.calls.lock().unwrap().contains(&format!("delete:{}", row.incus_name)));
+        let allocated: i64 = sqlx::query_scalar("SELECT memory_mb_allocated FROM provisioned_hosts WHERE id = 'host_o'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(allocated, 0, "its host capacity is released");
     }
 }

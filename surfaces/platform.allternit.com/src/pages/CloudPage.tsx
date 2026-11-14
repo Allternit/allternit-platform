@@ -679,6 +679,9 @@ function Pricing({ signedIn }: { signedIn: boolean }) {
         <a href={`${DOCS}/api/cloud-billing`} target="_blank" rel="noopener noreferrer" className={SECONDARY_BTN}>
           Billing docs <ArrowSquareOut size={14} />
         </a>
+        <a href={`${DOCS}/guides/credits-computer`} target="_blank" rel="noopener noreferrer" className={SECONDARY_BTN}>
+          Computer on credits <ArrowSquareOut size={14} />
+        </a>
       </div>
     </div>
   );

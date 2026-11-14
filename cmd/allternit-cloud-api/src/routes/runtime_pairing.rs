@@ -861,7 +861,8 @@ async fn exchange_pairing(
 /// the relay can wake (same states `wake_for_device` wakes from). A sleeping
 /// one reads "offline", so clients need this to keep it as a runtime and let
 /// the first relayed request wake it. Only each device's newest instance
-/// counts; a free computer replaced by a paid one is left out.
+/// counts; a free computer replaced by a paid one is left out. Paid and
+/// credit computers on Orgo sleep too (30 idle minutes) and wake the same way.
 async fn wakeable_instances_by_device(
     db: &PgPool,
     user_id: &str,
@@ -869,7 +870,7 @@ async fn wakeable_instances_by_device(
     let rows = sqlx::query_as::<_, (String, String, bool)>(
         r#"
         SELECT DISTINCT ON (device_id) device_id, id,
-               (tier = 'free' AND replaced_by IS NULL
+               (((tier = 'free' AND replaced_by IS NULL) OR tier IN ('paid', 'credit'))
                 AND status IN ('sleeping', 'waking', 'provisioning'))
         FROM provisioned_instances
         WHERE user_id = $1 AND device_id IS NOT NULL AND status <> 'deleted'
@@ -1744,6 +1745,8 @@ mod tests {
             ("pi_waking", "user_1", Some("dev_waking"), "free", "waking", None, 0),
             ("pi_running", "user_1", Some("dev_running"), "free", "running", None, 0),
             ("pi_paid", "user_1", Some("dev_paid"), "paid", "stopped", None, 0),
+            // Orgo paid and credit computers sleep and wake like free ones.
+            ("pi_credit", "user_1", Some("dev_credit"), "credit", "sleeping", None, 0),
             ("pi_replaced", "user_1", Some("dev_replaced"), "free", "sleeping", Some("pi_paid"), 0),
             ("pi_nodev", "user_1", None, "free", "sleeping", None, 0),
             ("pi_other", "user_2", Some("dev_other"), "free", "sleeping", None, 0),
@@ -1772,7 +1775,10 @@ mod tests {
         let mut got: Vec<(&str, &str)> =
             wakeable.iter().map(|(d, i)| (d.as_str(), i.as_str())).collect();
         got.sort();
-        assert_eq!(got, vec![("dev_sleep", "pi_sleep"), ("dev_waking", "pi_waking")]);
+        assert_eq!(
+            got,
+            vec![("dev_credit", "pi_credit"), ("dev_sleep", "pi_sleep"), ("dev_waking", "pi_waking")]
+        );
     }
 
     #[tokio::test]

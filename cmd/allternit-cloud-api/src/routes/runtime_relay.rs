@@ -547,6 +547,8 @@ pub(crate) async fn issue_socket_ticket(
     runtime_id: &str,
     path: String,
 ) -> Result<serde_json::Value, ApiError> {
+    // Compute gate, as for relayed requests (no-op unless the flag is on).
+    crate::routes::account_compute::require_compute(&state.db, user_id).await?;
     let capabilities = runtime_capabilities(&state.db, runtime_id, user_id).await?;
     if !capabilities
         .iter()
@@ -1177,6 +1179,10 @@ pub(crate) async fn relay_request_to_runtime_with(
     extra_allowed: &[&str],
     trusted: HashMap<String, String>,
 ) -> Result<Response, ApiError> {
+    // Compute gate: every relayed request is agent entry. An account with no
+    // computer (or only a suspended one) gets the contract's 409 before any
+    // wake. A no-op unless ALLTERNIT_COMPUTE_GATE=on.
+    crate::routes::account_compute::require_compute(db, user_id).await?;
     let capabilities = runtime_capabilities(db, runtime_id, user_id).await?;
     if !capabilities
         .iter()
