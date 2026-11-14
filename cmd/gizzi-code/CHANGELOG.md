@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 2.11.0 (2026-11-13)
+
+- **`gizzi connect`:** list every connection with the same four status words and connect from the terminal — keys, device codes, paste-back.
+
 ## 2.10.0 (2026-11-13)
 
 - **Fixed: the bash tool works again in the installed binary.** Since the compiled builds embedded the shell parser, every bash call in gizzi 2.9.0 (including the copy inside Allternit Desktop) failed with "asset.startsWith is not a function". Running from source was not affected.
