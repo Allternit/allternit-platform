@@ -12,7 +12,7 @@ Sections appear in this order:
 | Section | What is in it | When it shows |
 |---|---|---|
 | Allternit Cloud | The Cloud catalog, grouped by vendor ("Kimi · via Allternit Cloud") | Always |
-| Your subscriptions | CLI sign-ins you have installed (`claude-cli`, `codex-cli`, `kimi-cli`, any CLI you added) and Subscription Fabric (`subs-*`) | Always |
+| Your subscriptions | CLI sign-ins you have installed (`claude-cli`, `codex-cli`, `kimi-cli`, any CLI you added), Subscription Fabric (`subs-*`), and the plans you connected: `chatgpt/…` (ChatGPT signed in on this computer), `plan/<vendor>/<model>` and `copilot-plan/<model>` | Always; plans once connected ([Connect](/cli/connect)) |
 | API keys | Providers in `gizzi.json` with an OpenAI-compatible `baseURL` | Only once a key is on file |
 | Local | Servers on this computer (MLX, llama.cpp, Ollama, LM Studio) | Always |
 
@@ -83,6 +83,8 @@ gizzi attach http://127.0.0.1:4096 --model claude-cli/claude-sonnet-5-5
 ```
 
 `--model` sets the model for the session, ahead of your settings and `gizzi.json`. `/model` changes it later.
+
+Plan models (`chatgpt/…`, `plan/…`, `copilot-plan/…`) answer only what you type and send in the TUI. They are chat only, never picked as a default or for titles and summaries, and refused in `gizzi run`, bots, missions, routines and sub-agents. See [Plans answer only you](/cli/connect#plans-answer-only-you).
 
 ## CLI brains in the TUI
 

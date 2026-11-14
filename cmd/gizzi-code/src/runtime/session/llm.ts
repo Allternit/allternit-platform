@@ -1,4 +1,5 @@
 import { Installation } from "@/shared/installation"
+import { isPersonOnlyProvider, isPersonTurn, PERSON_TURN_HEADER } from "@/runtime/providers/person-plan/rules"
 import * as TurnRouter from "@/runtime/routing/turn-router"
 import { Provider } from "@/runtime/providers/provider"
 import { Log } from "@/shared/util/log"
@@ -239,7 +240,9 @@ export namespace LLM {
       typeCap === undefined ? undefined : kernelCap !== undefined ? Math.min(kernelCap, typeCap) : typeCap
 
     // O8: deterministic tool order so the [tools] prefix segment is stable.
-    const tools = PromptSegments.orderTools(await resolveTools(input))
+    // The person's own plans are chat only: no tools reach them (contract §9.3).
+    const personOnly = isPersonOnlyProvider(input.model.providerID)
+    const tools = personOnly ? {} : PromptSegments.orderTools(await resolveTools(input))
 
     // LiteLLM and some Anthropic proxies require the tools parameter to be present
     // when message history contains tool calls, even if no tools are being used.
@@ -408,6 +411,11 @@ export namespace LLM {
                 ? { "x-allternit-human-action": (input.user.metadata?.subscription as any).action_id }
                 : {}),
             }
+          : {}),
+        // A plan answers only the person's own composer send: the chat bridge
+        // marks that user message `metadata.turn: "person"` (person-plan/rules.ts).
+        ...(personOnly && !input.small && (input.callType ?? "answer") === "answer" && isPersonTurn(input.user.metadata as Record<string, unknown> | undefined)
+          ? { [PERSON_TURN_HEADER]: "person" }
           : {}),
         ...(input.model.providerID.startsWith("gizzi")
           ? {

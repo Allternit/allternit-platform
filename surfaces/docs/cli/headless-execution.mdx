@@ -61,6 +61,10 @@ gizzi exec "Draft release notes from CHANGELOG.md" \
   | gizzi exec "Proofread and tighten the language"
 ```
 
+## Plan models are not for headless runs
+
+`gizzi run` (with or without `-p`) refuses a plan model (`chatgpt/…`, `plan/…`, `copilot-plan/…`) before it starts, with exit code 1. A plan answers only messages you type in the TUI. See [Connect](/cli/connect#plans-answer-only-you).
+
 ## Exit codes
 
 | Code | Meaning |

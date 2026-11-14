@@ -9,6 +9,17 @@
 //! `login_remote` argv, so they are the same sign-ins Settings runs, shaped as
 //! the contract's `login` object. Nothing here calls `require_compute`.
 //!
+//! `chatgpt` (contract §9.9): Sign in with ChatGPT on this computer is owned
+//! by Gizzi Code. This row drives it through the gizzi binary
+//! (`gizzi connect chatgpt --json`, `gizzi connect status chatgpt --json`,
+//! `gizzi connect disconnect chatgpt --json`) with login kind
+//! `browser_redirect`: the client opens the authorize URL, the sign-in
+//! completes on 127.0.0.1 by itself, and `/login` polls. The disclosure
+//! comes first: `connect` without the current `accept_disclosure` answers
+//! `409 disclosure_required` with gizzi's text, and gizzi records the
+//! acceptance on this computer. Codex signed in here still turns the row on
+//! when the device sign-in is off (or gizzi is missing).
+//!
 //! Path note: `/api/v1/connections` is new. `design_connector_routes.rs` only
 //! serves `/design/composio/connections`, and `ssh_routes.rs` serves
 //! `/ssh-connections`, so there is no overlap. The smoke-boot in the PR proves it.
@@ -156,6 +167,175 @@ pub(crate) fn logout_argv(tool: &str) -> Option<&'static [&'static str]> {
     }
 }
 
+// ─── ChatGPT direct sign-in (through gizzi, §9.9) ─────────────────────────────
+
+/// Disclosure version (§9.8); gizzi owns the text and the stored acceptance.
+pub(crate) const CHATGPT_DISCLOSURE_VERSION: &str = "2026-11-14.1";
+
+/// The last JSON object gizzi printed (it prints JSON lines).
+pub(crate) fn last_json_line(stdout: &str) -> Option<Value> {
+    stdout
+        .lines()
+        .rev()
+        .filter(|l| l.trim_start().starts_with('{'))
+        .find_map(|l| serde_json::from_str::<Value>(l).ok())
+}
+
+/// Run gizzi with these args and read its JSON answer.
+async fn gizzi_json(bin: &std::path::Path, args: &[&str], secs: u64) -> Option<Value> {
+    let run = tokio::process::Command::new(bin)
+        .args(args)
+        .env("NO_COLOR", "1")
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .kill_on_drop(true)
+        .output();
+    match tokio::time::timeout(std::time::Duration::from_secs(secs), run).await {
+        Ok(Ok(out)) => last_json_line(&String::from_utf8_lossy(&out.stdout)),
+        _ => None,
+    }
+}
+
+/// `gizzi connect status chatgpt --json` → the device sign-in state.
+async fn chatgpt_device_status(bin: &std::path::Path) -> Option<Value> {
+    gizzi_json(bin, &["connect", "status", "chatgpt", "--json"], 15).await
+}
+
+/// The `chatgpt` row from gizzi's status (`state`, `found`, `models`, `disclosure`).
+pub(crate) fn chatgpt_row_from_status(status: &Value, src: &str) -> Value {
+    let state = match status.get("state").and_then(Value::as_str) {
+        Some(s @ ("off" | "connecting" | "on" | "needs")) => s,
+        _ => "off",
+    };
+    let found = (state == "on").then(|| status.get("found").and_then(Value::as_str).unwrap_or("Signed in on this computer").to_string());
+    let reason = (state == "needs").then(|| {
+        let code = status.get("reason_code").and_then(Value::as_str).unwrap_or("could_not_start");
+        let text = if code == "login_expired" { "Sign-in expired" } else { "Could not start. Try again" };
+        (code.to_string(), text)
+    });
+    let models: Vec<Value> = status.get("models").and_then(Value::as_array).cloned().unwrap_or_default();
+    json!({
+        "id": "chatgpt",
+        "group": "brains",
+        "state": state,
+        "found": found,
+        "reason": reason.as_ref().map(|(_, t)| *t),
+        "reason_code": reason.as_ref().map(|(c, _)| c.clone()),
+        "runs_on": "computer",
+        "available": true,
+        "unavailable_reason": null,
+        "fallbacks": [],
+        "terms": "pending",
+        "saved": "device",
+        "models": models,
+        "person_only": true,
+        "disclosure": status.get("disclosure").cloned().unwrap_or_else(|| json!({ "version": CHATGPT_DISCLOSURE_VERSION, "accepted_at": null })),
+        "source": src,
+    })
+}
+
+/// `/login` status word from gizzi's state.
+pub(crate) fn chatgpt_login_word(status: &Value) -> &'static str {
+    match status.get("state").and_then(Value::as_str) {
+        Some("on") => "done",
+        Some("connecting") => "pending",
+        Some("needs") if status.get("reason_code").and_then(Value::as_str) == Some("login_expired") => "expired",
+        Some("needs") => "failed",
+        _ => "expired",
+    }
+}
+
+fn disclosure_required(disclosure: Value) -> Response {
+    (StatusCode::CONFLICT, Json(json!({ "error": { "code": "disclosure_required", "disclosure": disclosure } }))).into_response()
+}
+
+/// The running `gizzi connect chatgpt --json` (one at a time; a new start replaces it).
+static CHATGPT_SIGN_IN: once_cell::sync::Lazy<tokio::sync::Mutex<Option<tokio::process::Child>>> =
+    once_cell::sync::Lazy::new(|| tokio::sync::Mutex::new(None));
+
+/// `POST /connections/chatgpt/connect` through gizzi: the disclosure step,
+/// then the sign-in started and its authorize URL as a `browser_redirect` login.
+pub(crate) async fn connect_chatgpt_with(bin: &std::path::Path, accept: Option<&str>) -> Response {
+    if let Some(status) = chatgpt_device_status(bin).await {
+        if status.get("state").and_then(Value::as_str) == Some("on") {
+            return Json(json!({ "state": "on" })).into_response();
+        }
+    }
+    if accept != Some(CHATGPT_DISCLOSURE_VERSION) {
+        // gizzi answers `needs` + `disclosure_required` (and exits) until the version is accepted.
+        let already = chatgpt_device_status(bin)
+            .await
+            .and_then(|s| s.pointer("/disclosure/accepted_at").and_then(Value::as_str).map(str::to_string))
+            .is_some();
+        if !already {
+            let answer = gizzi_json(bin, &["connect", "chatgpt", "--json"], 20).await;
+            return match answer.and_then(|a| a.get("disclosure").cloned()) {
+                Some(d) => disclosure_required(d),
+                None => err(StatusCode::INTERNAL_SERVER_ERROR, "could_not_start", "Could not start. Try again"),
+            };
+        }
+    }
+    let mut args = vec!["connect", "chatgpt", "--json", "--no-open"];
+    if let Some(v) = accept {
+        args.push("--accept-disclosure");
+        args.push(v);
+    }
+    let mut guard = CHATGPT_SIGN_IN.lock().await;
+    if let Some(mut old) = guard.take() {
+        let _ = old.start_kill();
+    }
+    let spawned = tokio::process::Command::new(bin)
+        .args(&args)
+        .env("NO_COLOR", "1")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn();
+    let mut child = match spawned {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!("chatgpt sign-in did not start: {e}");
+            return err(StatusCode::INTERNAL_SERVER_ERROR, "could_not_start", "Could not start. Try again");
+        }
+    };
+    let Some(stdout) = child.stdout.take() else {
+        return err(StatusCode::INTERNAL_SERVER_ERROR, "could_not_start", "Could not start. Try again");
+    };
+    use tokio::io::AsyncBufReadExt;
+    let mut lines = tokio::io::BufReader::new(stdout).lines();
+    let first = tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        while let Ok(Some(line)) = lines.next_line().await {
+            if let Some(v) = last_json_line(&line) {
+                return Some(v);
+            }
+        }
+        None
+    })
+    .await
+    .ok()
+    .flatten();
+    // Keep draining gizzi's later lines so it never blocks on a full pipe; `/login` reads status instead.
+    tokio::spawn(async move { while let Ok(Some(_)) = lines.next_line().await {} });
+    let Some(first) = first else {
+        let _ = child.start_kill();
+        return err(StatusCode::INTERNAL_SERVER_ERROR, "could_not_start", "Could not start. Try again");
+    };
+    match first.get("state").and_then(Value::as_str) {
+        Some("connecting") => {
+            *guard = Some(child);
+            let url = first.get("authorize_url").cloned().unwrap_or(Value::Null);
+            let expires_at = first.get("expires_at").cloned().unwrap_or(Value::Null);
+            Json(json!({ "login": { "kind": "browser_redirect", "code": null, "url": url, "url_with_code": null, "expires_at": expires_at, "poll": true } }))
+                .into_response()
+        }
+        Some("needs") if first.get("reason_code").and_then(Value::as_str) == Some("disclosure_required") => {
+            disclosure_required(first.get("disclosure").cloned().unwrap_or(Value::Null))
+        }
+        Some("on") => Json(json!({ "state": "on" })).into_response(),
+        _ => err(StatusCode::INTERNAL_SERVER_ERROR, "could_not_start", "Could not start. Try again"),
+    }
+}
+
 fn find_row(id: &str) -> Option<&'static CliRow> {
     CLI_ROWS.iter().find(|r| r.id == id)
 }
@@ -191,6 +371,22 @@ fn row_json(
 // ─── Row building ─────────────────────────────────────────────────────────────
 
 async fn cli_row(r: &'static CliRow, src: String) -> Value {
+    // ChatGPT signed in on this computer (gizzi) wins; Codex answers otherwise.
+    if r.id == "chatgpt" {
+        if let Some(bin) = crate::cloud_worker::gizzi_bin() {
+            if let Some(status) = chatgpt_device_status(&bin).await {
+                let codex = codex_chatgpt_row(r, src.clone()).await;
+                if status.get("state").and_then(Value::as_str) != Some("off") || codex["state"] != "on" {
+                    return chatgpt_row_from_status(&status, &src);
+                }
+                return codex;
+            }
+        }
+    }
+    codex_chatgpt_row(r, src).await
+}
+
+async fn codex_chatgpt_row(r: &'static CliRow, src: String) -> Value {
     let Some(tool) = crate::cli_catalog::find(r.tool) else {
         return row_json(r, "off", None, None, false, Some("Not available on this computer."), vec![], &src);
     };
@@ -310,11 +506,18 @@ async fn list_connections(headers: HeaderMap) -> Response {
 struct ConnectBody {
     #[allow(dead_code)]
     way: Option<String>,
+    accept_disclosure: Option<String>,
 }
 
-async fn connect(Path(id): Path<String>, headers: HeaderMap, _body: Option<Json<ConnectBody>>) -> Response {
+async fn connect(Path(id): Path<String>, headers: HeaderMap, body: Option<Json<ConnectBody>>) -> Response {
     if get_user(&headers).is_none() {
         return err(StatusCode::UNAUTHORIZED, "unauthorized", "Sign in first.");
+    }
+    if id == "chatgpt" {
+        if let Some(bin) = crate::cloud_worker::gizzi_bin() {
+            let accept = body.as_ref().and_then(|b| b.accept_disclosure.as_deref());
+            return connect_chatgpt_with(&bin, accept).await;
+        }
     }
     let (Some(r), true) = (find_row(&id), true) else {
         return err(StatusCode::NOT_FOUND, "unknown_connection", "Nothing here to connect.");
@@ -387,6 +590,22 @@ async fn login_status(Path(id): Path<String>, headers: HeaderMap) -> Response {
     if get_user(&headers).is_none() {
         return err(StatusCode::UNAUTHORIZED, "unauthorized", "Sign in first.");
     }
+    if id == "chatgpt" {
+        if let Some(bin) = crate::cloud_worker::gizzi_bin() {
+            let running = CHATGPT_SIGN_IN.lock().await.is_some();
+            if let Some(status) = chatgpt_device_status(&bin).await {
+                let word = chatgpt_login_word(&status);
+                // A device sign-in this server started, or one already done: gizzi answers.
+                if running || word == "done" {
+                    if word != "pending" {
+                        CHATGPT_SIGN_IN.lock().await.take();
+                    }
+                    let row = (word == "done").then(|| chatgpt_row_from_status(&status, &source()));
+                    return Json(json!({ "status": word, "row": row })).into_response();
+                }
+            }
+        }
+    }
     let Some(r) = find_row(&id) else {
         return err(StatusCode::NOT_FOUND, "unknown_connection", "Nothing here to connect.");
     };
@@ -416,6 +635,18 @@ async fn login_status(Path(id): Path<String>, headers: HeaderMap) -> Response {
 async fn disconnect(Path(id): Path<String>, headers: HeaderMap) -> Response {
     if get_user(&headers).is_none() {
         return err(StatusCode::UNAUTHORIZED, "unauthorized", "Sign in first.");
+    }
+    if id == "chatgpt" {
+        if let Some(bin) = crate::cloud_worker::gizzi_bin() {
+            let on = chatgpt_device_status(&bin).await.and_then(|s| s.get("state").and_then(Value::as_str).map(|s| s == "on")).unwrap_or(false);
+            if on {
+                // Revokes at OpenAI, then deletes the tokens on this computer.
+                return match gizzi_json(&bin, &["connect", "disconnect", "chatgpt", "--json"], 45).await {
+                    Some(v) if v["state"] == "off" => StatusCode::NO_CONTENT.into_response(),
+                    _ => err(StatusCode::BAD_GATEWAY, "could_not_sign_out", "Could not sign out. Try again"),
+                };
+            }
+        }
     }
     let Some(r) = find_row(&id) else {
         return err(StatusCode::NOT_FOUND, "unknown_connection", "Nothing here to disconnect.");
@@ -528,6 +759,91 @@ mod tests {
             assert!(row["source"].as_str().unwrap().starts_with("runtime:"));
             assert!(["off", "connecting", "on", "needs"].contains(&row["state"].as_str().unwrap()));
         }
+    }
+
+    #[test]
+    fn chatgpt_row_follows_the_device_sign_in() {
+        let on = json!({"id":"chatgpt","state":"on","found":"ChatGPT Plus · a@b.c","models":["chatgpt/gpt-6.1-sol"],
+            "disclosure":{"version":"2026-11-14.1","accepted_at":"2026-11-14T17:00:00Z"}});
+        let row = chatgpt_row_from_status(&on, "runtime:r1");
+        assert_eq!(row["state"], "on");
+        assert_eq!(row["found"], "ChatGPT Plus · a@b.c");
+        assert_eq!(row["runs_on"], "computer");
+        assert_eq!(row["person_only"], true);
+        assert_eq!(row["models"][0], "chatgpt/gpt-6.1-sol");
+        assert_eq!(row["disclosure"]["accepted_at"], "2026-11-14T17:00:00Z");
+        let expired = chatgpt_row_from_status(&json!({"state":"needs","reason_code":"login_expired"}), "runtime:r1");
+        assert_eq!(expired["reason_code"], "login_expired");
+        assert_eq!(expired["reason"], "Sign-in expired");
+        assert_eq!(chatgpt_row_from_status(&json!({"state":"weird"}), "x")["state"], "off");
+        assert_eq!(chatgpt_login_word(&on), "done");
+        assert_eq!(chatgpt_login_word(&json!({"state":"connecting"})), "pending");
+        assert_eq!(chatgpt_login_word(&json!({"state":"needs","reason_code":"login_expired"})), "expired");
+        assert_eq!(chatgpt_login_word(&json!({"state":"needs","reason_code":"could_not_start"})), "failed");
+        assert_eq!(chatgpt_login_word(&json!({"state":"off"})), "expired");
+    }
+
+    /// A stand-in for `gizzi`: the same JSON lines `gizzi connect … chatgpt --json` prints.
+    #[cfg(unix)]
+    fn fake_gizzi(dir: &std::path::Path) -> std::path::PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let script = r#"#!/bin/sh
+D="$(dirname "$0")"
+DISC='{"version":"2026-11-14.1","title":"Before you connect your ChatGPT plan","body":["one","two","three","four"],"accept_label":"I understand, connect","decline_label":"Use a key instead"}'
+if [ "$2" = "status" ]; then
+  if [ -f "$D/accepted" ]; then AT='"2026-11-14T17:00:00Z"'; else AT=null; fi
+  if [ -f "$D/running" ]; then ST=connecting; else ST=off; fi
+  echo "{"id":"chatgpt","state":"$ST","models":[],"disclosure":{"version":"2026-11-14.1","accepted_at":$AT}}"
+  exit 0
+fi
+for a in "$@"; do [ "$prev" = "--accept-disclosure" ] && [ "$a" = "2026-11-14.1" ] && touch "$D/accepted"; prev="$a"; done
+if [ ! -f "$D/accepted" ]; then
+  echo "{"state":"needs","reason_code":"disclosure_required","disclosure":$DISC}"
+  exit 2
+fi
+touch "$D/running"
+echo '{"state":"connecting","authorize_url":"https://auth.openai.com/api/accounts/authorize?client_id=dynamic_agent_client","redirect_uri":"http://127.0.0.1:1455/auth/callback","expires_at":"2026-11-14T18:00:00Z"}'
+sleep 5
+"#;
+        let path = dir.join("gizzi");
+        std::fs::write(&path, script).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        path
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn chatgpt_connect_shows_the_disclosure_before_any_sign_in() {
+        let tmp = tempfile::tempdir().unwrap();
+        let gizzi = fake_gizzi(tmp.path());
+        let body = |r: Response| async move {
+            let status = r.status();
+            let bytes = axum::body::to_bytes(r.into_body(), 1 << 20).await.unwrap();
+            (status, serde_json::from_slice::<Value>(&bytes).unwrap())
+        };
+
+        // No acceptance: 409 with the disclosure, the same shape as cloud-api (§9.2), and nothing started.
+        let (status, v) = body(connect_chatgpt_with(&gizzi, None).await).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(v["error"]["code"], "disclosure_required");
+        assert_eq!(v["error"]["disclosure"]["version"], "2026-11-14.1");
+        assert_eq!(v["error"]["disclosure"]["title"], "Before you connect your ChatGPT plan");
+        assert_eq!(v["error"]["disclosure"]["body"].as_array().unwrap().len(), 4);
+        assert_eq!(v["error"]["disclosure"]["accept_label"], "I understand, connect");
+        assert!(!tmp.path().join("running").exists());
+
+        // A stale version is the same as none.
+        let (status, _) = body(connect_chatgpt_with(&gizzi, Some("2026-01-01.1")).await).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+
+        // The current version: gizzi records it and the sign-in starts as a browser redirect.
+        let (status, v) = body(connect_chatgpt_with(&gizzi, Some(CHATGPT_DISCLOSURE_VERSION)).await).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(v["login"]["kind"], "browser_redirect");
+        assert!(v["login"]["url"].as_str().unwrap().starts_with("https://auth.openai.com/api/accounts/authorize"));
+        assert_eq!(v["login"]["poll"], true);
+        assert!(tmp.path().join("accepted").exists());
+        CHATGPT_SIGN_IN.lock().await.take();
     }
 
     #[test]

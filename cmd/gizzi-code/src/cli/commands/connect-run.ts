@@ -10,11 +10,20 @@ import { cloudInferenceToken, cloudOrigin } from "@/runtime/providers/discovery/
 import { Installation } from "@/shared/installation"
 import { ALLTERNIT_GATEWAY_BASE } from "@/shared/constants/allternitGateway"
 import type { Row } from "@/cli/commands/connect-model"
+import { personToken } from "@/runtime/providers/person-plan/rules"
 
 export class ConnectFailure extends Error {}
 
+/** cloud-api's disclosure step (§9.2): shown as given, accepted with `accept_disclosure`. */
+export type Disclosure = { version: string; title: string; body: string[]; accept_label: string; decline_label: string }
+export class DisclosureRequired extends Error {
+  constructor(readonly disclosure: Disclosure) {
+    super(disclosure.title)
+  }
+}
+
 export type Login = {
-  kind: "device_code" | "link_paste" | "oauth" | "paste" | "scan" | "pair"
+  kind: "device_code" | "link_paste" | "oauth" | "paste" | "scan" | "pair" | "browser_redirect"
   code?: string
   url?: string
   url_with_code?: string
@@ -24,6 +33,9 @@ export type Login = {
 export type LoginStatus = { status: "pending" | "done" | "expired" | "failed"; row?: Row }
 
 async function token(): Promise<string> {
+  // The person's own session first: plan rows and their disclosure belong to the person.
+  const person = personToken()
+  if (person) return person
   const direct = await cloudInferenceToken()
   if (direct) return direct
   try {
@@ -63,28 +75,50 @@ async function call(origin: string, method: string, route: string, body?: unknow
   }
   if (!res.ok) {
     const b = (await res.json().catch(() => undefined)) as { error?: unknown; message?: string; reason_code?: string } | undefined
+    const e = b?.error && typeof b.error === "object" ? (b.error as { code?: string; message?: string; disclosure?: Disclosure }) : undefined
+    if (res.status === 409 && e?.code === "disclosure_required" && e.disclosure) throw new DisclosureRequired(e.disclosure)
     if (res.status === 401) throw new ConnectFailure("Allternit did not accept your sign-in. Run `gizzi login`.")
-    if (res.status === 403) throw new ConnectFailure("Connections needs your signed-in account, not an API key.")
-    throw new ConnectFailure(b?.message || (typeof b?.error === "string" ? b.error : `Request failed (HTTP ${res.status})`))
+    if (res.status === 403 && !e?.message && !b?.message) throw new ConnectFailure("Connections needs your signed-in account, not an API key.")
+    if (res.status === 404 && (e?.code === "not_found" || b?.error === "not_found"))
+      throw new ConnectFailure("That one is not offered to this version of Gizzi Code. Update it with `gizzi upgrade`.")
+    throw new ConnectFailure(e?.message || b?.message || (typeof b?.error === "string" ? b.error : `Request failed (HTTP ${res.status})`))
   }
   if (res.status === 204) return undefined
   return res.json()
 }
 
-/** Cloud rows, plus the local runtime's when it answers (a quiet miss when no computer runs). */
+/**
+ * Cloud rows (with `caps=runner`: this client knows the disclosure step, so
+ * runner rows come back connectable, D10), plus the local runtime's when it
+ * answers (a quiet miss when no computer runs).
+ */
 export async function listRows(): Promise<Row[]> {
-  const cloud: { connections: Row[] } = await call(cloudOrigin(), "GET", "")
+  const cloud: { connections: Row[] } = await call(cloudOrigin(), "GET", "?caps=runner")
   let runtime: Row[] = []
   try {
     const r = await call(runtimeOrigin(), "GET", "", undefined, 2_500)
     runtime = (r?.connections ?? []).map((x: Row) => ({ ...x, source: x.source ?? "runtime:local" }))
   } catch {}
   const { mergeRows } = await import("@/cli/commands/connect-model")
-  return mergeRows(cloud.connections ?? [], runtime)
+  const { localChatgptRow } = await import("@/cli/commands/connect-chatgpt")
+  const device = await localChatgptRow().catch(() => undefined)
+  const merged = mergeRows(cloud.connections ?? [], runtime, device ? [device] : [])
+  // In the terminal ChatGPT signs in here; the cloud runner row is for web with no computer.
+  const i = merged.findIndex((r) => r.id === "chatgpt")
+  if (device && i !== -1 && merged[i]!.source !== device.source && !merged[i]!.source?.startsWith("runtime:")) merged[i] = device
+  if (device && i === -1) merged.push(device)
+  return merged
 }
 
-export const startConnect = (id: string, source?: string, way?: string): Promise<{ login?: Login; state?: string }> =>
-  call(base(source), "POST", `/${encodeURIComponent(id)}/connect`, way ? { way } : {})
+export const startConnect = (
+  id: string,
+  source?: string,
+  opts: { way?: string; acceptDisclosure?: string } = {},
+): Promise<{ login?: Login; state?: string }> =>
+  call(base(source), "POST", `/${encodeURIComponent(id)}/connect`, {
+    ...(opts.way ? { way: opts.way } : {}),
+    ...(opts.acceptDisclosure ? { accept_disclosure: opts.acceptDisclosure } : {}),
+  })
 export const submit = (id: string, source: string | undefined, value: string): Promise<Row> =>
   call(base(source), "POST", `/${encodeURIComponent(id)}/submit`, { value })
 export const loginStatus = (id: string, source?: string): Promise<LoginStatus> =>

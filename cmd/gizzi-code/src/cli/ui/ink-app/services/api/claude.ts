@@ -1,5 +1,7 @@
 // @ts-nocheck
 import { isCliBrainModel, queryCliBrainWithStreaming } from './cliBrain.js'
+import { queryPersonPlanWithStreaming } from './personPlan.js'
+import { isPersonOnlyRef } from '@/runtime/providers/person-plan/rules'
 import {
   isLocalProviderModel,
   queryLocalModelWithStreaming,
@@ -787,6 +789,12 @@ async function* queryModelRouted(
   ...args: Parameters<typeof queryModel>
 ): ReturnType<typeof queryModel> {
   const [messages, systemPrompt, , tools, signal, options] = args
+  // The person's own plans (chatgpt/…, plan/…, copilot-plan/…): composer
+  // sends only, chat only (personPlan.ts). Side calls get the refusal.
+  if (isPersonOnlyRef(options.model)) {
+    yield* queryPersonPlanWithStreaming({ messages, signal, options })
+    return
+  }
   if (isCliBrainModel(options.model)) {
     yield* queryCliBrainWithStreaming({ messages, signal, options })
     return

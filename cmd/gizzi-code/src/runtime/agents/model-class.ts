@@ -53,7 +53,7 @@ export async function resolveModelClass(cls: ModelClass | undefined, parent: Mod
       const sameProvider = small.providerID === parent.providerID
       if (!sameProvider && !cfg?.small_model) return parent
       // Subscription Fabric models run only on a human send (D16).
-      if (!sameProvider && Provider.isFabricModel({ providerID: small.providerID })) return parent
+      if (!sameProvider && Provider.isHumanSendOnly({ providerID: small.providerID })) return parent
       return { providerID: small.providerID, modelID: small.id }
     }
 

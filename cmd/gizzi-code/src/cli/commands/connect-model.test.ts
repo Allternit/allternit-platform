@@ -51,3 +51,21 @@ describe("rows the server did not send", () => {
     expect(text.slice(text.indexOf(" Works on any device"), text.indexOf(" Coming soon"))).not.toContain("Grok")
   })
 })
+
+describe("runner rows (caps=runner, §9.1)", () => {
+  test("an offered runner row is connectable with terms still pending, and says it needs no computer", () => {
+    const rows = [{ id: "claude", state: "off" as const, runs_on: "runner" as const, available: true, terms: "pending" as const, person_only: true, disclosure: { version: "2026-11-14.1", accepted_at: null } }]
+    const x = resolve(rows).find((i) => i.entry.id === "claude")!
+    expect(brainSub(x.entry, x.row)).toBe("Works on any device")
+    const text = renderHub(rows).join("\n")
+    expect(text).toContain("Claude                        Not connected · Pro or Max plan · Runs on Allternit · no computer needed")
+  })
+
+  test("ChatGPT signed in on this device wins over the cloud runner row and the runtime row", () => {
+    const cloud = [{ id: "chatgpt", state: "off" as const, runs_on: "runner" as const, source: "cloud" }]
+    const runtime = [{ id: "chatgpt", state: "on" as const, source: "runtime:a" }]
+    const device = [{ id: "chatgpt", state: "on" as const, source: "device" }]
+    expect(mergeRows(cloud, runtime, device)[0].source).toBe("device")
+    expect(mergeRows(cloud, runtime, [{ id: "chatgpt", state: "off" as const, source: "device" }])[0].source).toBe("runtime:a")
+  })
+})
