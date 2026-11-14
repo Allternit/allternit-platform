@@ -1,0 +1,24 @@
+[package]
+name = "allternit-model-source"
+version = "0.1.0"
+edition = "2021"
+description = "Freeweights manifest verification, ordered model sources and verified downloads (the model-source contract)"
+license = "MIT"
+
+[dependencies]
+# minisign signature check (MIT, no dependencies; ED = prehashed BLAKE2b-512 + Ed25519)
+minisign-verify = "0.3"
+base64 = { workspace = true }
+chrono = { workspace = true }
+hex = { workspace = true }
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+urlencoding = { workspace = true }
+
+[dev-dependencies]
+axum = { workspace = true }
+tempfile = { workspace = true }

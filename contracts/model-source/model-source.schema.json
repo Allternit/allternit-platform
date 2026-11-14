@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://allternit.com/contracts/model-source/v1/verification.json",
+  "title": "Model source verification (v1)",
+  "description": "The `verification` object every local-engine / allternit-api response that hands out model bytes carries. Rust: services/model-source `Verification`. TS: contracts/model-source/types.ts.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["state", "source_used", "source_url", "checked_at"],
+  "properties": {
+    "state": { "$ref": "#/$defs/state" },
+    "source_used": { "$ref": "#/$defs/source_kind" },
+    "source_url": {
+      "type": "string",
+      "format": "uri",
+      "description": "Base URL of the source that served the bytes, before redirects. File URL = source_url + percent-encoded path. Never carries a signed query string."
+    },
+    "manifest_commit": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$",
+      "description": "Upstream commit of the signed Freeweights manifest. Present only when a manifest was used (state freeweights_signed)."
+    },
+    "checked_at": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$",
+      "description": "UTC time the hash was checked."
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "state": { "const": "freeweights_signed" } } },
+      "then": { "required": ["manifest_commit"] }
+    }
+  ],
+  "$defs": {
+    "state": {
+      "enum": ["freeweights_signed", "publisher_hash", "pinned", "unverified"],
+      "description": "freeweights_signed: sha256 from a minisign-verified Freeweights manifest. publisher_hash: sha256 from the publisher (Hugging Face lfs.oid), catalog not used. pinned: sha256 the caller supplied. unverified: no hash, caller explicitly allowed it."
+    },
+    "source_kind": {
+      "enum": ["freeweights_worker", "manifest_hosted", "manifest_source", "publisher"]
+    }
+  }
+}
