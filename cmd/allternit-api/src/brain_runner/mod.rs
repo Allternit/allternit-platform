@@ -4,9 +4,10 @@
 //! outbound socket (contract section 9.7): start a sign-in, take a pasted
 //! code, report sign-in status, sign out, and run one tools-off chat turn.
 //!
-//! - Dials `ALLTERNIT_RUNNER_SOCKET_URL` with `Authorization: Bearer
+//! - Dials `ALLTERNIT_RUNNER_URL` with `Authorization: Bearer
 //!   ALLTERNIT_RUNNER_TOKEN`; no inbound port, no file, terminal, tool or
-//!   HTTP routes. Sends `hello`, answers `ping`, reconnects with backoff.
+//!   HTTP routes. Sends `hello`, answers cloud-api's `ping` text frame
+//!   (every 30 s) with a `pong` carrying the same `id`, reconnects with backoff.
 //! - Each vendor has its own home under `ALLTERNIT_RUNNER_HOME`
 //!   (`/home/runner/<vendor>`), so a logout deletes exactly one sign-in.
 //! - History is replayed every turn (D8): claude reads stream-json turns on
@@ -15,8 +16,9 @@
 //!   `cancel`, on socket loss, or after `ALLTERNIT_RUNNER_TURN_TIMEOUT_SECS`.
 //!
 //! Environment:
-//! `ALLTERNIT_RUNNER_SOCKET_URL`, `ALLTERNIT_RUNNER_TOKEN` (required),
-//! `ALLTERNIT_RUNNER_HOME` (default `/home/runner`),
+//! `ALLTERNIT_RUNNER_URL`, `ALLTERNIT_RUNNER_TOKEN` (required; cloud-api
+//! sets both, plus `HOME=/home/runner`, when it makes the box),
+//! `ALLTERNIT_RUNNER_HOME` (default `/home/runner`, the box's `HOME` volume),
 //! `ALLTERNIT_RUNNER_VENDORS` (default `claude`: step 0.2 proved only claude
 //! live; add the others as each passes a live turn),
 //! `ALLTERNIT_RUNNER_TURN_TIMEOUT_SECS` (default 180),
@@ -75,9 +77,9 @@ impl Config {
     }
 
     pub fn from_lookup(get: impl Fn(&str) -> Option<String>) -> Result<Config, String> {
-        let socket_url = get("ALLTERNIT_RUNNER_SOCKET_URL").ok_or("ALLTERNIT_RUNNER_SOCKET_URL is not set")?;
+        let socket_url = get("ALLTERNIT_RUNNER_URL").ok_or("ALLTERNIT_RUNNER_URL is not set")?;
         if !(socket_url.starts_with("wss://") || socket_url.starts_with("ws://")) {
-            return Err("ALLTERNIT_RUNNER_SOCKET_URL must be a ws:// or wss:// URL".into());
+            return Err("ALLTERNIT_RUNNER_URL must be a ws:// or wss:// URL".into());
         }
         let token = get("ALLTERNIT_RUNNER_TOKEN").ok_or("ALLTERNIT_RUNNER_TOKEN is not set")?;
         let home = PathBuf::from(get("ALLTERNIT_RUNNER_HOME").unwrap_or_else(|| "/home/runner".into()));
@@ -133,7 +135,7 @@ pub async fn run(cfg: Config, shutdown: CancellationToken) {
             Err(error) => warn!(%error, "runner socket failed"),
         }
         if shutdown.is_cancelled() {
-            return;
+            break;
         }
         if started.elapsed() > Duration::from_secs(60) {
             backoff = Duration::from_secs(1);
@@ -141,10 +143,14 @@ pub async fn run(cfg: Config, shutdown: CancellationToken) {
         // Up to 25% jitter so a host restart does not bring every box back at once.
         let jitter = backoff.mul_f64(rand::random::<f64>() * 0.25);
         tokio::select! {
-            _ = shutdown.cancelled() => return,
+            _ = shutdown.cancelled() => break,
             _ = tokio::time::sleep(backoff + jitter) => {}
         }
         backoff = (backoff * 2).min(Duration::from_secs(30));
+    }
+    // No sign-in process outlives the runner.
+    for vendor in Vendor::ALL {
+        crate::cli_tools::stop_login(&login_key(vendor)).await;
     }
 }
 
@@ -454,10 +460,14 @@ async fn login_status(cfg: &Config, vendor: Vendor) -> &'static str {
 /// CLI logout (best effort), then delete that vendor's home. Kimi has no
 /// logout command, so its credentials and oauth are deleted directly.
 async fn logout(cfg: &Config, vendor: Vendor) -> bool {
+    // A sign-in still waiting would write its credentials back after the
+    // home is deleted, so stop it first.
+    crate::cli_tools::stop_login(&login_key(vendor)).await;
     let home = vendors::home(cfg, vendor);
     match vendor.logout_argv() {
         Some(args) => {
-            if let Err(error) = process::run_quick(cfg, vendor, args, Duration::from_secs(30)).await {
+            // 20 s: cloud-api waits 30 s for the logout_done reply.
+            if let Err(error) = process::run_quick(cfg, vendor, args, Duration::from_secs(20)).await {
                 warn!(vendor = vendor.id(), %error, "CLI logout failed; deleting the home anyway");
             }
         }

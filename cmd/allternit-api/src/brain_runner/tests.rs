@@ -342,20 +342,20 @@ fn brain_runner_turn_messages_are_chat_only() {
 #[test]
 fn brain_runner_config_reads_env_and_rejects_unknown_vendors() {
     let env = |pairs: &'static [(&'static str, &'static str)]| move |k: &str| pairs.iter().find(|(key, _)| *key == k).map(|(_, v)| v.to_string());
-    let c = Config::from_lookup(env(&[("ALLTERNIT_RUNNER_SOCKET_URL", "wss://api.allternit.com/api/v1/brain-runner/socket"), ("ALLTERNIT_RUNNER_TOKEN", "x")])).unwrap();
+    let c = Config::from_lookup(env(&[("ALLTERNIT_RUNNER_URL", "wss://api.allternit.com/api/v1/brain-runner/socket"), ("ALLTERNIT_RUNNER_TOKEN", "x")])).unwrap();
     assert_eq!(c.vendors, vec![Vendor::Claude]);
     assert_eq!(c.home, PathBuf::from("/home/runner"));
     assert_eq!(c.turn_timeout, Duration::from_secs(180));
     assert!(c.codex_catalog);
     let c = Config::from_lookup(env(&[
-        ("ALLTERNIT_RUNNER_SOCKET_URL", "wss://h/s"), ("ALLTERNIT_RUNNER_TOKEN", "x"),
+        ("ALLTERNIT_RUNNER_URL", "wss://h/s"), ("ALLTERNIT_RUNNER_TOKEN", "x"),
         ("ALLTERNIT_RUNNER_VENDORS", "claude, kimi,claude"), ("ALLTERNIT_RUNNER_CODEX_CATALOG", "0"),
     ]))
     .unwrap();
     assert_eq!(c.vendors, vec![Vendor::Claude, Vendor::Kimi]);
     assert!(!c.codex_catalog);
-    assert!(Config::from_lookup(env(&[("ALLTERNIT_RUNNER_SOCKET_URL", "wss://h/s"), ("ALLTERNIT_RUNNER_TOKEN", "x"), ("ALLTERNIT_RUNNER_VENDORS", "copilot")])).is_err());
-    assert!(Config::from_lookup(env(&[("ALLTERNIT_RUNNER_SOCKET_URL", "https://h/s"), ("ALLTERNIT_RUNNER_TOKEN", "x")])).is_err());
+    assert!(Config::from_lookup(env(&[("ALLTERNIT_RUNNER_URL", "wss://h/s"), ("ALLTERNIT_RUNNER_TOKEN", "x"), ("ALLTERNIT_RUNNER_VENDORS", "copilot")])).is_err());
+    assert!(Config::from_lookup(env(&[("ALLTERNIT_RUNNER_URL", "https://h/s"), ("ALLTERNIT_RUNNER_TOKEN", "x")])).is_err());
 }
 
 // ─── Fake socket + fake claude ───────────────────────────────────────────────
@@ -542,6 +542,16 @@ async fn brain_runner_fake_socket_drives_login_and_a_streamed_turn() {
     send(&mut ws, json!({"type": "turn", "id": "t7", "vendor": "claude", "messages": [{"role": "user", "content": "Hi"}, {"role": "tool", "content": "x"}]})).await;
     assert_eq!(next_frame(&mut ws).await["code"], "bad_request");
 
+    // Logout of a vendor with a sign-in still pending stops that sign-in.
+    send(&mut ws, json!({"type": "logout", "id": "o0", "vendor": "chatgpt"})).await;
+    assert_eq!(next_frame(&mut ws).await["type"], "logout_done");
+    assert_eq!(
+        crate::cli_tools::login_view("brain-runner:chatgpt").await.map(|(_, exited, _)| exited),
+        None,
+        "the pending codex sign-in was stopped and forgotten"
+    );
+    std::fs::create_dir_all(home.path().join("chatgpt")).unwrap();
+
     // Logout deletes only that vendor's home.
     let claude_home = home.path().join("claude");
     std::fs::write(claude_home.join(".credentials.json"), "{}").unwrap();
@@ -556,6 +566,124 @@ async fn brain_runner_fake_socket_drives_login_and_a_streamed_turn() {
     let mut ws = tokio_tungstenite::accept_async(stream).await.unwrap();
     assert_eq!(next_frame(&mut ws).await["type"], "hello");
 
+    shutdown.cancel();
+    tokio::time::timeout(Duration::from_secs(5), runner).await.unwrap().unwrap();
+}
+
+/// Live check on a dev Mac (not CI): the real runner against a fake cloud-api
+/// socket, with the real CLIs. Prints codex's device-code login object (a
+/// throwaway `CODEX_HOME`; the code just expires) and one streamed tools-off
+/// claude turn using the signed-in claude in `$HOME` (a home override, so the
+/// runner never deletes it). Run with
+/// `cargo test -p allternit-api --lib brain_runner_live -- --ignored --nocapture`.
+#[cfg(unix)]
+#[tokio::test]
+#[ignore = "uses the real claude and codex CLIs and the network"]
+async fn brain_runner_live_device_code_and_claude_turn() {
+    let codex_home = tempfile::tempdir().unwrap();
+    let runner_home = tempfile::tempdir().unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let mut config = cfg(runner_home.path());
+    config.socket_url = format!("ws://{addr}/api/v1/brain-runner/socket");
+    config.token = "live-token".into();
+    config.turn_timeout = Duration::from_secs(120);
+    config.vendors = vec![Vendor::Claude, Vendor::Chatgpt];
+    config.home_overrides.insert(Vendor::Claude, PathBuf::from(std::env::var("HOME").unwrap()));
+    config.home_overrides.insert(Vendor::Chatgpt, codex_home.path().to_path_buf());
+    let shutdown = CancellationToken::new();
+    let runner = tokio::spawn(super::run(config, shutdown.clone()));
+
+    let (stream, _) = tokio::time::timeout(Duration::from_secs(10), listener.accept()).await.unwrap().unwrap();
+    let mut ws = tokio_tungstenite::accept_async(stream).await.unwrap();
+    let hello = tokio::time::timeout(Duration::from_secs(30), next_frame(&mut ws)).await.unwrap();
+    println!("hello: {hello}");
+    assert_eq!(hello["vendors"]["claude"], "signed_in", "claude must be signed in on this Mac");
+
+    send(&mut ws, json!({"type": "ping", "id": "ping-1"})).await;
+    let pong = next_frame(&mut ws).await;
+    println!("pong: {pong}");
+    assert_eq!(pong, json!({"type": "pong", "id": "ping-1"}));
+
+    send(&mut ws, json!({"type": "login_start", "id": "r_login", "vendor": "chatgpt"})).await;
+    let view = tokio::time::timeout(Duration::from_secs(30), next_frame(&mut ws)).await.unwrap();
+    println!("login_view: {view}");
+    assert_eq!(view["kind"], "device_code", "{view}");
+    assert!(view["code"].as_str().is_some_and(|c| c.contains('-')), "{view}");
+
+    send(&mut ws, json!({"type": "turn", "id": "t_live", "vendor": "claude", "model": "haiku",
+        "messages": [{"role": "user", "content": "Reply with exactly: brain runner ok"}]})).await;
+    let mut text = String::new();
+    let end = loop {
+        let frame = tokio::time::timeout(Duration::from_secs(120), next_frame(&mut ws)).await.unwrap();
+        println!("frame: {frame}");
+        match frame["type"].as_str() {
+            Some("turn_delta") => text.push_str(frame["text"].as_str().unwrap()),
+            _ => break frame,
+        }
+    };
+    println!("turn text: {text:?}");
+    assert_eq!(end["type"], "turn_done", "{end}");
+    assert!(text.to_lowercase().contains("brain runner ok"), "{text}");
+
+    shutdown.cancel();
+    tokio::time::timeout(Duration::from_secs(5), runner).await.unwrap().unwrap();
+}
+
+/// Live check (dev Mac, not CI): kimi and grok sign-in starts through the
+/// fake socket (throwaway homes; the codes just expire, nothing is
+/// completed), then one tools-off grok turn when `grok` is signed in in
+/// `$HOME`. Run with
+/// `cargo test -p allternit-api --lib brain_runner_live_kimi_grok -- --ignored --nocapture`.
+#[cfg(unix)]
+#[tokio::test]
+#[ignore = "uses the real kimi and grok CLIs and the network"]
+async fn brain_runner_live_kimi_grok_login_start() {
+    async fn start(config: Config) -> (Ws, CancellationToken, tokio::task::JoinHandle<()>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mut config = config;
+        config.socket_url = format!("ws://{}/api/v1/brain-runner/socket", listener.local_addr().unwrap());
+        let shutdown = CancellationToken::new();
+        let runner = tokio::spawn(super::run(config, shutdown.clone()));
+        let (stream, _) = tokio::time::timeout(Duration::from_secs(10), listener.accept()).await.unwrap().unwrap();
+        let mut ws = tokio_tungstenite::accept_async(stream).await.unwrap();
+        let hello = tokio::time::timeout(Duration::from_secs(30), next_frame(&mut ws)).await.unwrap();
+        println!("hello: {hello}");
+        (ws, shutdown, runner)
+    }
+    let runner_home = tempfile::tempdir().unwrap();
+    let mut config = cfg(runner_home.path());
+    config.vendors = vec![Vendor::Kimi, Vendor::Grok];
+    config.turn_timeout = Duration::from_secs(120);
+    let (mut ws, shutdown, runner) = start(config).await;
+    for (id, vendor) in [("r_kimi", "kimi"), ("r_grok", "grok")] {
+        send(&mut ws, json!({"type": "login_start", "id": id, "vendor": vendor})).await;
+        let view = tokio::time::timeout(Duration::from_secs(30), next_frame(&mut ws)).await.unwrap();
+        println!("login_view {vendor}: {view}");
+        assert_eq!(view["type"], "login_view", "{view}");
+        assert!(view["url"].as_str().is_some_and(|u| u.starts_with("https://")), "{view}");
+    }
+    shutdown.cancel();
+    tokio::time::timeout(Duration::from_secs(5), runner).await.unwrap().unwrap();
+
+    // Grok turn against the signed-in grok in $HOME (an override: never deleted).
+    let mut config = cfg(runner_home.path());
+    config.vendors = vec![Vendor::Grok];
+    config.turn_timeout = Duration::from_secs(120);
+    config.home_overrides.insert(Vendor::Grok, PathBuf::from(std::env::var("HOME").unwrap()));
+    let (mut ws, shutdown, runner) = start(config).await;
+    send(&mut ws, json!({"type": "turn", "id": "t_grok", "vendor": "grok",
+        "messages": [{"role": "user", "content": "Reply with exactly: brain runner ok"}]})).await;
+    let mut text = String::new();
+    let end = loop {
+        let frame = tokio::time::timeout(Duration::from_secs(120), next_frame(&mut ws)).await.unwrap();
+        println!("grok frame: {frame}");
+        match frame["type"].as_str() {
+            Some("turn_delta") => text.push_str(frame["text"].as_str().unwrap()),
+            _ => break frame,
+        }
+    };
+    println!("grok turn text: {text:?} end: {end}");
     shutdown.cancel();
     tokio::time::timeout(Duration::from_secs(5), runner).await.unwrap().unwrap();
 }

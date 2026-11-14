@@ -487,6 +487,23 @@ fn session(key: &str) -> Option<Shared> {
 /// `env` goes on the CLI: an added account's config dir
 /// (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`), so its sign-in lands in that home, or
 /// the catalog's `loginRemoteEnv` (`NO_BROWSER=1`).
+/// Stops a pending login process for `key`, if one is running, and waits
+/// briefly for it to exit (brain runner logout and shutdown).
+pub(crate) async fn stop_login(key: &str) {
+    let Some(session) = LOGINS.lock().unwrap().remove(key) else {
+        return;
+    };
+    if let Some(kill) = session.lock().await.kill.take() {
+        let _ = kill.send(());
+    }
+    for _ in 0..20 {
+        if session.lock().await.exited {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
 pub(crate) async fn start_login_with_env(
     key: &str,
     binary: &std::path::Path,

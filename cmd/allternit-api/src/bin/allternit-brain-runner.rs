@@ -30,7 +30,8 @@ mod init {
 
     /// Returns in the runner process. The reaper parent never returns.
     pub fn split_if_pid1() {
-        let forced = std::env::var("ALLTERNIT_RUNNER_INIT").is_ok_and(|v| v == "1");
+        // Not ALLTERNIT_RUNNER_INIT: cloud-api uses that name for the init command path.
+        let forced = std::env::var("ALLTERNIT_RUNNER_REAPER").is_ok_and(|v| v == "1");
         if std::process::id() != 1 && !forced {
             return;
         }
