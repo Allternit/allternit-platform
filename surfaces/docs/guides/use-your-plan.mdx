@@ -1,0 +1,56 @@
+---
+title: Use the AI plan you already pay for
+description: "Which AI plans work in Allternit today, which need your own computer, what an API key does instead, and why the answer differs by vendor."
+---
+
+You may already pay for ChatGPT, Claude, Grok, Kimi, Gemini or GitHub Copilot. This page says what each one does in Allternit today. Open **Settings → Connections** and look under **Your AI** to connect. See [Connections](/guides/connections) for how the page works.
+
+Vendors set their own rules for how a plan can be used outside their own apps. Allternit follows those rules, so some plans work in more places than others. When a plan can't be used somewhere yet, its row says so in one line and offers another way.
+
+## What works where today
+
+| Plan | On your phone, the web, or Desktop with no computer | With your own computer | Another way today |
+| --- | --- | --- | --- |
+| Allternit Cloud | Yes, included | Yes | Free accounts include $2 a month of use |
+| ChatGPT (Plus or Pro) | Not yet | Yes. Codex signs in on your computer. | An OpenAI API key works with no computer |
+| Claude (Pro or Max) | Not yet. The row says "Not available yet. Use a key for now." | Yes, through Claude Code on your computer | An Anthropic API key works with no computer |
+| Grok (SuperGrok) | Not yet | Yes, through the Grok CLI on your computer | An xAI API key works with no computer |
+| Kimi | Not yet | Yes, through the Kimi CLI on your computer | A Kimi API key works with no computer |
+| Gemini | The Gemini plan can't be used here. A free Google AI Studio key works with no computer. | The Gemini CLI signs in on your computer | A Google AI Studio key |
+| GitHub Copilot | Coming soon | Coming soon | Connect GitHub as an app |
+
+A row marked "not yet" or "coming soon" is not a promise of a date. It turns on when the vendor's rules and our own tests allow it, and the row changes on its own without an app update.
+
+## API keys
+
+An API key is billed by the vendor on its own account, not by your plan. It works on every device with no computer.
+
+- Keys work for OpenAI, Anthropic, Google AI Studio, xAI, OpenRouter, Together, Fireworks, DeepInfra, Groq, DeepSeek and Kimi.
+- Allternit checks the key with the vendor first, then saves it encrypted on your account. It never shows the key again, only the last few characters.
+- If a vendor rejects a key later, the row says **Needs you · The key was rejected**. Paste a new one.
+
+## Why some plans need your computer
+
+A plan is made to be used inside the vendor's own tool. For ChatGPT, Claude, Grok and Kimi, that tool is a command-line program that has to run on a computer, and it keeps your sign-in on that computer. Allternit starts the vendor's sign-in for you and shows the steps, then the program on your computer does the work.
+
+That means:
+
+- Your sign-in stays on your computer. Allternit does not copy it to its servers.
+- The computer has to be on and online. If it isn't, the row says **Needs you · Your computer is offline**.
+- Your phone and the web can still use that plan through your computer while it is on.
+
+If you have no computer, use the key for that vendor from the table above, or Allternit Cloud.
+
+## Connect a plan on a computer
+
+1. Open **Settings → Connections** on the computer, or choose that computer first if you are on another device.
+2. Tap the plan's row.
+3. Follow the sheet. It shows the steps for that vendor, and the row turns **Connected** by itself when you finish.
+
+The steps for each vendor are listed in [Connections](/guides/connections#connect-something).
+
+## Related
+
+- [Connections](/guides/connections)
+- [Connected subscriptions](/guides/subscriptions)
+- [Coding tools on any computer](/guides/subscriptions#coding-tools-on-any-computer)

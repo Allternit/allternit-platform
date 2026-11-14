@@ -4538,6 +4538,41 @@
         "allternit/docs/meetings/BOT-ACCOUNTS.md",
         "allternit/docs/meetings/ZOOM.md"
       ]
+    },
+    {
+      "id": "feature:connect-kit",
+      "label": "Connect kit and day-one setup (one Connections page, four status words)",
+      "product": "product:cloud-api",
+      "status": "building",
+      "description": "One Connections page and one first-run setup on every surface, replacing the five duplicate connect screens. One registry of rows (ids, groups, ways, runs_on) in the client, one GET /api/v1/connections contract served by cloud-api (account rows) and allternit-api (rows on the active computer), merged by the app, with four status words only (Not connected, Connecting, Connected, Needs you), a plain reason and up to two fallbacks for a row the account cannot use, and the fewest-step sign-in each vendor allows (device code, link and paste-back, OAuth, key, QR). Works with no computer: Allternit Cloud, API keys (OpenAI, Anthropic, Google, xAI, OpenRouter and more), Gemini key, apps, channels, phone. Needs a computer: ChatGPT through Codex, Claude Code, Grok CLI, Kimi CLI, local brain. The brain runner (Claude, Grok and Kimi plans on Allternit) and the Copilot SDK ship as available:false rows until vendor answers and a GitHub App exist. Surfaces: Desktop, ai.allternit.com and its phone layout, the m.allternit.com PWA, iOS (Settings > Connections), Android through the PWA, gizzi connect, cloud-api, allternit-api, docs. New code lives in allternit-ai src/components/connect-kit (registry.ts, ConnectionsHub, ConnectSheet, KitSetup) and cloud-api routes/connections.rs; the touches below name the existing files the kit replaces or reuses.",
+      "touches": [
+        "allternit/cmd/allternit-cloud-api/src/routes/inference_keys.rs",
+        "allternit/cmd/allternit-api/src/cli_tools.rs",
+        "allternit/cmd/allternit-api/src/cli_provider_detector.rs",
+        "allternit/cmd/allternit-api/src/provider_routes.rs",
+        "allternit/cmd/allternit-api/src/design_connector_routes.rs",
+        "allternit/cmd/gizzi-code/src/cli/commands/connect.ts",
+        "allternit-ai/src/components/subscriptions/SubscriptionConnect.tsx",
+        "allternit-ai/src/components/gateway/ConnectionWizard.tsx",
+        "allternit-ai/src/components/settings/BrainsPanel.tsx",
+        "allternit-ai/src/components/chat/ConnectAccountPane.tsx",
+        "allternit-ai/src/components/chat/ProviderGallery.tsx",
+        "allternit-ai/src/fabric-session/phone/PhoneFirstRun.tsx",
+        "allternit/surfaces/docs/guides/connections.mdx",
+        "allternit/surfaces/docs/api/connections.mdx",
+        "allternit/surfaces/docs/guides/use-your-plan.mdx",
+        "allternit/surfaces/docs/build-on-allternit/add-a-connection.mdx"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-13",
+          "note": "connect kit: hub A, setup A, fewest-step sign-ins; brain runner gated on vendors. Connections page = option A (Brains split into Works on any device, Needs your computer, Coming soon); day-one setup = Your AI, Your phone, Main bot, Connected, with no computer step; Add a computer is offered as Later, if you need it. Claude, Grok and Kimi plans on Allternit wait for vendor answers (plan Phase 0); Copilot waits for a GitHub App. Contract: CONTRACT-connections-2026-11.md. Kit routes never call require_compute."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/connections.mdx",
+        "allternit/surfaces/docs/api/connections.mdx"
+      ]
     }
   ],
   "journeys": [
@@ -5016,6 +5051,37 @@
       ],
       "evidence": [
         "allternit/docs/meetings/CONTRACT.md"
+      ]
+    },
+    {
+      "id": "journey:connect-kit-day-one-setup",
+      "label": "Connect kit and day-one setup",
+      "description": "From a first sign-in to a connected AI, phone and main bot, with no computer step, then any later connection from Settings > Connections.",
+      "steps": [
+        {
+          "at": "allternit-ai/src/fabric-session/phone/PhoneFirstRun.tsx",
+          "says": "First run on the phone or PWA walks Your AI, Your phone, Main bot, Connected. A failed step shows an error and Try again instead of skipping."
+        },
+        {
+          "at": "allternit-ai/src/components/subscriptions/SubscriptionConnect.tsx",
+          "says": "A row opens the connect sheet with the few steps for that vendor (code, link and paste-back, OAuth, key or QR); the row finishes by itself when the login is done."
+        },
+        {
+          "at": "allternit/cmd/allternit-cloud-api/src/routes/inference_keys.rs",
+          "says": "A pasted API key is checked with the vendor, stored encrypted, and the account row turns Connected."
+        },
+        {
+          "at": "allternit/cmd/allternit-api/src/cli_tools.rs",
+          "says": "A plan on a computer (Codex, Grok, Claude Code, Kimi) starts the CLI login there; the runtime polls it and reports the login and the row."
+        },
+        {
+          "at": "allternit/cmd/gizzi-code/src/cli/commands/connect.ts",
+          "says": "gizzi connect lists the same rows with the same four words and runs the logins in the terminal."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/connections.mdx",
+        "allternit/surfaces/docs/api/connections.mdx"
       ]
     }
   ]
