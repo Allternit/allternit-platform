@@ -22,7 +22,7 @@ https://api.allternit.com/api/v2
 Every route except the public link route takes one of:
 
 - a Clerk session JWT (`Authorization: Bearer <jwt>`). This is the only caller that carries an organization, a role and an email;
-- an `allternit_*` API token with the `compute` scope (or `*`). A token without it gets `403`;
+- an Allternit API key (`alt_…`, created under ACI › Operator keys; legacy `allternit_*` tokens still work) with the `compute` scope (or `*`). A token without it gets `403`;
 - a paired device's token (`allternit_runtime_…`, what `gizzi login` stores). It acts as the device's owner, with no organization.
 
 See [Authentication](/api/authentication).
