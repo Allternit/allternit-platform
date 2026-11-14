@@ -156,9 +156,21 @@ paths:
       responses:
         "201":
           description: The new agent.
+          headers:
+            Idempotency-Replayed: { $ref: "#/components/headers/IdempotencyReplayed" }
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Agent" }
+        "409":
+          description: "`idempotency_in_progress`: the first request with this key is still running. Retry shortly. A record in progress for more than 60 seconds is taken over."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "422":
+          description: "`idempotency_key_reuse`: this key was used with a different request body."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         default: { $ref: "#/components/responses/Error" }
   /v1/agents/{id}:
     parameters:
@@ -244,9 +256,21 @@ paths:
       responses:
         "201":
           description: The new environment.
+          headers:
+            Idempotency-Replayed: { $ref: "#/components/headers/IdempotencyReplayed" }
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Environment" }
+        "409":
+          description: "`idempotency_in_progress`: the first request with this key is still running. Retry shortly. A record in progress for more than 60 seconds is taken over."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "422":
+          description: "`idempotency_key_reuse`: this key was used with a different request body."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         default: { $ref: "#/components/responses/Error" }
   /v1/environments/{id}:
     parameters:
@@ -448,9 +472,21 @@ paths:
       responses:
         "201":
           description: The new session.
+          headers:
+            Idempotency-Replayed: { $ref: "#/components/headers/IdempotencyReplayed" }
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Session" }
+        "409":
+          description: "`idempotency_in_progress`: the first request with this key is still running. Retry shortly. A record in progress for more than 60 seconds is taken over."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "422":
+          description: "`idempotency_key_reuse`: this key was used with a different request body."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         default: { $ref: "#/components/responses/Error" }
   /v1/sessions/{id}:
     parameters:
@@ -499,7 +535,10 @@ paths:
         outbound request. While the agent loop is starting or cannot run, the
         answer is 503 `agent_loop_unavailable`; a server built without an agent
         loop answers 501 `not_implemented`. In those cases nothing is stored.
-        A turn that fails later ends with an `error` event and status `error`.
+        If a custom tool of the agent has the same name as a built-in tool or an
+        MCP tool, the answer is 409 `custom_tool_conflict`: nothing is stored and
+        the session status is unchanged.
+        A turn that fails later ends with an `error` event and status `error`. If the replica running the turn stops, the event code is `server_restarted`: send the message again.
       tags: [Sessions]
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"
@@ -520,9 +559,21 @@ paths:
       responses:
         "202":
           description: Accepted. The stored user message event.
+          headers:
+            Idempotency-Replayed: { $ref: "#/components/headers/IdempotencyReplayed" }
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Event" }
+        "409":
+          description: "`session_busy`, `session_archived`; `custom_tool_conflict` (a custom tool name clashes with a built-in or MCP tool name; nothing is stored and the session status is unchanged); or `idempotency_in_progress` (the first request with this Idempotency-Key is still running; retry shortly. A record in progress for more than 60 seconds is taken over)."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "422":
+          description: "`model_not_mapped`, or `idempotency_key_reuse` (this key was used with a different request body)."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         default: { $ref: "#/components/responses/Error" }
   /v1/sessions/{id}/interrupt:
     parameters:
@@ -614,14 +665,17 @@ paths:
 
         Claimable: an item that is ready, or one whose lease ran out (a worker that
         died). With `reclaim_older_than_ms`, also an item whose lease is still live
-        but was last renewed at least that long ago; pick a value above the 20 s
-        renew interval. Each claim raises the item's `lease_generation`, so the old
+        but was last renewed at least that long ago. Values below 30000 are raised
+        to 30000, because a healthy worker renews every 20 s. Values of 60000 or
+        more add nothing. Each claim raises the item's `lease_generation`, so the old
         worker gets 409 `lease_stale` on its next call. Tool calls the old worker
         took but did not answer are handed out again.
 
         The server also returns expired leases to the queue every 5 seconds.
         Each session has at most one open work item, queued the first time a turn
-        needs a sandbox tool. Auth: environment key of this environment.
+        needs a sandbox tool; the database enforces this. Soft affinity: for up to
+        10 seconds after a worker releases a session's item, a claim from that same
+        worker is preferred over a claim from another worker. Auth: environment key of this environment.
       tags: [Work]
       security:
         - EnvironmentKey: []
@@ -650,7 +704,7 @@ paths:
                 reclaim_older_than_ms:
                   type: integer
                   minimum: 0
-                  description: Also claim items whose live lease was last renewed at least this long ago. Expired leases are claimable without it. Values of 60000 or more add nothing.
+                  description: Also take a LIVE lease whose last renew was at least this many ms ago. Expired leases are always claimable without it. Values below 30000 are raised to 30000 (a healthy worker renews every 20 s). Values of 60000 or more add nothing.
       responses:
         "200":
           description: A work item, with a 60 second lease.
@@ -770,7 +824,7 @@ paths:
         **Session finished.** When the session will send no more tool calls, the
         server answers 204 with the header `X-Session-Closed: true`. That happens
         when the session is archived, or when it has had no turn running and no
-        pending tool call for `sessions.idle_timeout` (default 1 hour). The worker
+        pending tool call for `sessions.idle_timeout` (default 30 seconds). The worker
         then calls `/complete` for the work item. The session's next turn that
         needs a tool queues a new item. A 204 without the header only means
         "nothing yet, poll again".
@@ -1027,7 +1081,14 @@ components:
     IdempotencyKey:
       name: Idempotency-Key
       in: header
-      description: Up to 255 characters. Repeating a request with the same key replays the stored response for 24 hours.
+      description: |
+        Up to 255 characters. The key is scoped to the calling principal, the HTTP
+        method, the path and the key. Only 2xx responses are stored, for 24 hours.
+        The same key with the same body replays the stored response, with the
+        response header `Idempotency-Replayed: true`. The same key with a different
+        body is 422 `idempotency_key_reuse`. If the first request is still running,
+        the answer is 409 `idempotency_in_progress`; a record in progress for more
+        than 60 seconds is taken over by the new request.
       schema: { type: string, maxLength: 255 }
     AgentId:
       name: id
@@ -1074,6 +1135,10 @@ components:
               lease_generation:
                 type: integer
                 description: The generation from the claim. A lower number than the server holds is stale.
+  headers:
+    IdempotencyReplayed:
+      description: "`true` when the response is a replay of the stored response for this Idempotency-Key. Absent otherwise."
+      schema: { type: string, enum: ["true"] }
   responses:
     Error:
       description: Error. The HTTP status says the kind. The body is the Error object.
@@ -1116,7 +1181,11 @@ components:
                 `first_key_must_be_admin` (400), `tool_call_conflict` (409, the tool_call_id belongs to another session),
                 `invalid_body`, `invalid_query`, `invalid_field`, `invalid_limit`, `invalid_cursor`, `invalid_host` (400),
                 `not_implemented` (501, the agent loop is not available), `store_unavailable` (503),
-                `oidc_unavailable` (503, the identity provider is not reachable), `internal_error` (500).
+                `oidc_unavailable` (503, the identity provider is not reachable), `internal_error` (500),
+                `custom_tool_conflict` (409, a custom tool name clashes with a built-in or MCP tool name),
+                `idempotency_key_reuse` (422, the Idempotency-Key was used with a different body),
+                `idempotency_in_progress` (409, the first request with this key is still running),
+                `server_restarted` (session error event: the replica running the turn stopped; resend the message).
               examples: [model_not_mapped]
     ListEnvelope:
       type: object
@@ -1155,6 +1224,10 @@ components:
           items: { type: string, enum: [api_key, oidc] }
         public_url: { type: [string, "null"] }
         max_tool_result_bytes: { type: integer, examples: [102400] }
+        replicas:
+          type: integer
+          minimum: 1
+          description: Number of live server replicas. Always 1 on SQLite.
     McpServer:
       type: object
       required: [name, url]
@@ -1419,7 +1492,12 @@ components:
       type: object
       required: [code, message]
       properties:
-        code: { type: string }
+        code:
+          type: string
+          description: |
+            Error event code. `server_restarted`: the turn was lost because the
+            replica running it stopped; send the message again. Other codes are
+            the codes listed on the Error object.
         message: { type: string }
     WorkClaim:
       type: object
