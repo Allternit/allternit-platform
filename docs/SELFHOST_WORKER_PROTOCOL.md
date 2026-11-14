@@ -78,8 +78,12 @@ nothing is queued. A name that clashes with an MCP tool name is refused the same
   that needs a tool queues a new item. An interrupt does not end the item.
 - The database enforces one open item per session. The server never queues a
   second one.
-- **Soft affinity.** For up to 10 seconds after a worker releases a session's
-  item, a claim from that same worker is preferred over other workers.
+- **Soft affinity.** For up to 10 seconds after a worker completes or releases a
+  session's item, a claim from that same worker is preferred over other workers,
+  as long as that worker was seen in the last 60 seconds.
+- A ready item whose session has ended (archived, deleted, or idle past
+  `sessions.idle_timeout`) is cancelled when a worker would claim it; the claim
+  moves on to the next item.
 - A worker serves one session at a time. Run one worker per concurrent session.
 - Only 204 with `X-Session-Closed: true` ends the item. A plain 204 is an
   empty wait: poll again, never complete.

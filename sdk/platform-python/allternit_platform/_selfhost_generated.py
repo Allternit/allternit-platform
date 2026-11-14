@@ -557,8 +557,11 @@ class WorkResource:
         The server also returns expired leases to the queue every 5 seconds.
         Each session has at most one open work item, queued the first time a turn
         needs a sandbox tool; the database enforces this. Soft affinity: for up to
-        10 seconds after a worker releases a session's item, a claim from that same
-        worker is preferred over a claim from another worker. Auth: environment key of this environment.
+        10 seconds after a worker completes or releases a session's item, a claim from
+        that same worker is preferred over a claim from another worker (only while that
+        worker was seen in the last 60 seconds). A ready item of a session that has
+        ended (archived, deleted or idle past `sessions.idle_timeout`) is cancelled when
+        a worker would claim it, and the claim looks for the next item. Auth: environment key of this environment.
 
         ``POST /v1/environments/{id}/work/claim``
         """
