@@ -276,6 +276,9 @@ incus exec "${BUILD_CONTAINER}" -- sh -c '
         apt-get install -y -qq nodejs
     fi
     node -v
+    # The unit runs /usr/bin/node; the headless base ships Node in /usr/local/bin.
+    [ -x /usr/bin/node ] || ln -sf "$(command -v node)" /usr/bin/node
+    /usr/bin/node -v
     for c in /usr/bin/google-chrome /usr/bin/google-chrome-stable /opt/google/chrome/chrome; do
         [ -x "$c" ] && { ln -sf "$c" /usr/local/bin/allternit-meeting-chrome; break; }
     done
@@ -435,7 +438,11 @@ fi
 #    without a pod config (no network, no Chrome launch).
 log "smoke check"
 incus exec "${BUILD_CONTAINER}" -- sh -c '
-    out=$(cd /opt/allternit/meeting-bot && su -s /bin/sh meetbot -c "node dist/runner.js" 2>&1; true)
+    # The exact interpreter the unit runs (a PATH-only node passed this check
+    # once while the unit could not start: status=203/EXEC).
+    exec_node=$(sed -n "s|^ExecStart=\([^ ]*\) .*|\1|p" /etc/systemd/system/allternit-meeting-bot.service)
+    [ -x "$exec_node" ] || { echo "unit ExecStart interpreter $exec_node is missing" >&2; exit 1; }
+    out=$(cd /opt/allternit/meeting-bot && su -s /bin/sh meetbot -c "$exec_node dist/runner.js" 2>&1; true)
     echo "$out" | grep -q "ALLTERNIT_POD_CONFIG" || { echo "runner smoke check failed: $out" >&2; exit 1; }
     echo "runner refuses to start without a pod config: ok"
     systemctl is-enabled allternit-meeting-profile.service >/dev/null || { echo "allternit-meeting-profile.service is not enabled" >&2; exit 1; }
