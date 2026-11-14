@@ -17,6 +17,7 @@ pub mod admin;
 pub mod agent_loop;
 pub mod auth;
 pub mod egress_guard;
+pub mod idempotency;
 pub mod metrics_listener;
 pub mod routes_agents;
 pub mod routes_environments;
@@ -405,6 +406,11 @@ pub fn router(state: SelfHostState) -> Router {
     let cors = cors_layer(&state.settings.server.cors_origins);
     let mut router = route_book()
         .router
+        // A route layer, so the middleware sees `MatchedPath`.
+        .route_layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            idempotency::middleware,
+        ))
         .layer(axum::middleware::from_fn(log_requests));
     if let Some(cors) = cors {
         // Outermost, so a preflight is answered before any auth runs.
