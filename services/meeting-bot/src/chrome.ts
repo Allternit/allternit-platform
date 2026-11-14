@@ -66,7 +66,12 @@ export async function launchChrome(opts: ChromeOptions = {}): Promise<ChromeSess
     // Pods have no OS keyring: the bot profile's cookies must stay readable on
     // any pod host, as signed in (docs/meetings/BOT-ACCOUNTS.md).
     ...(process.platform === "linux" ? ["--password-store=basic"] : []),
-    ...(process.getuid?.() === 0 ? ["--no-sandbox"] : []), // pods run as root, like allternit-headless.service
+    // Chrome's own sandbox needs an unprivileged user namespace, which an
+    // unprivileged Incus pod refuses ("credentials.cc ... Permission denied"),
+    // so Chrome dies at start. The single-use, unprivileged pod is the
+    // isolation boundary instead, as for the cloud computers' Chrome; the image
+    // sets ALLTERNIT_CHROME_NO_SANDBOX=1 on the bot unit.
+    ...(process.getuid?.() === 0 || process.env.ALLTERNIT_CHROME_NO_SANDBOX === "1" ? ["--no-sandbox"] : []),
     ...(opts.chromeArgs ?? []),
     "about:blank",
   ];

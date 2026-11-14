@@ -392,6 +392,7 @@ Environment=XDG_RUNTIME_DIR=/run/meetbot
 Environment=PULSE_SERVER=unix:/run/meetbot/pulse/native
 Environment=PULSE_SINK=meet_out
 Environment=CHROME_PATH=/usr/local/bin/allternit-meeting-chrome
+Environment=ALLTERNIT_CHROME_NO_SANDBOX=1
 Environment=ALLTERNIT_POD_CONFIG_FILE=/etc/allternit/meeting-pod.json
 Environment=MEETING_BOT_SCREENSHOT_DIR=/var/lib/meetbot/shots
 Environment=ALLTERNIT_MEETING_TURN_URL=http://127.0.0.1:8013
