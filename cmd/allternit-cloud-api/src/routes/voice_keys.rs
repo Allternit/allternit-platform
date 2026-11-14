@@ -1,5 +1,5 @@
 //! Voice keys saved to the account, and the QR handoff relay
-//! (services::voice_keys, migration 128).
+//! (services::voice_keys, migrations 128 + 135).
 //!
 //! These routes hand back decrypted API keys, so they take a signed-in Clerk
 //! session only: `auth::require_session_user` answers 403 for every API token
@@ -8,12 +8,19 @@
 //! parsed by hand so a malformed body gets a static 400 that never echoes what
 //! was sent, and nothing here logs a key.
 //!
+//! The handoff's sealed key is end-to-end encrypted between the two devices
+//! (AES-256-GCM under their P-256 ECDH key). The relay never sees the sender's
+//! public key, which is in QR1 only, so it can neither read the key nor forge
+//! a matching 6-digit code. The take is one-time.
+//!
 //! - `GET    /api/v1/voice/keys`                    → `{keys:[{provider, api_key, voice_id, label, updated_at}]}`
 //! - `PUT    /api/v1/voice/keys/:provider`          `{api_key, voice_id?, label?}` → the row
 //! - `DELETE /api/v1/voice/keys`                    → 204
 //! - `POST   /api/v1/voice/handoff`                 → `{sid, expires_at}`
 //! - `PUT    /api/v1/voice/handoff/:sid/receiver`   `{pubkey}` → 204 / 409 / 404
-//! - `GET    /api/v1/voice/handoff/:sid`            → `{sid, receiver_pubkey|null, expires_at}`
+//! - `GET    /api/v1/voice/handoff/:sid`            → `{sid, receiver_pubkey|null, expires_at, delivered}`
+//! - `PUT    /api/v1/voice/handoff/:sid/sealed`     `{nonce, ciphertext}` → 204 / 409 / 404 / 400
+//! - `GET    /api/v1/voice/handoff/:sid/sealed`     → 200 `{nonce, ciphertext}` once / 204 not yet / 409 delivered / 404
 
 use std::sync::Arc;
 
@@ -29,7 +36,7 @@ use serde::Deserialize;
 use serde_json::json;
 
 use crate::error::ApiError;
-use crate::services::voice_keys::VoiceKeyService;
+use crate::services::voice_keys::{SealedTake, VoiceKeyService};
 use crate::ApiState;
 
 /// No `Debug`: the body holds the API key.
@@ -47,6 +54,13 @@ struct ReceiverBody {
     pubkey: String,
 }
 
+/// No `Debug`: the body holds the sealed key.
+#[derive(Deserialize)]
+struct SealedBody {
+    nonce: String,
+    ciphertext: String,
+}
+
 pub fn routes() -> Router<Arc<ApiState>> {
     Router::new()
         .route("/api/v1/voice/keys", get(list_keys).delete(delete_keys))
@@ -54,6 +68,7 @@ pub fn routes() -> Router<Arc<ApiState>> {
         .route("/api/v1/voice/handoff", post(create_handoff))
         .route("/api/v1/voice/handoff/:sid", get(get_handoff))
         .route("/api/v1/voice/handoff/:sid/receiver", put(set_receiver))
+        .route("/api/v1/voice/handoff/:sid/sealed", put(put_sealed).get(take_sealed))
 }
 
 fn service(state: &ApiState) -> VoiceKeyService {
@@ -141,6 +156,36 @@ async fn set_receiver(
         let body: ReceiverBody = parse(&body, "{pubkey}")?;
         service(&state).set_receiver(&user, &sid, &body.pubkey).await?;
         Ok(StatusCode::NO_CONTENT.into_response())
+    }
+    .await)
+}
+
+async fn put_sealed(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+    Path(sid): Path<String>,
+    body: Bytes,
+) -> Response {
+    reply(async {
+        let user = session_user(&state, &headers).await?;
+        let body: SealedBody = parse(&body, "{nonce, ciphertext}")?;
+        service(&state).put_sealed(&user, &sid, &body.nonce, &body.ciphertext).await?;
+        Ok(StatusCode::NO_CONTENT.into_response())
+    }
+    .await)
+}
+
+async fn take_sealed(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+    Path(sid): Path<String>,
+) -> Response {
+    reply(async {
+        let user = session_user(&state, &headers).await?;
+        match service(&state).take_sealed(&user, &sid).await? {
+            SealedTake::Taken(sealed) => Ok(Json(sealed).into_response()),
+            SealedTake::NotYet => Ok(StatusCode::NO_CONTENT.into_response()),
+        }
     }
     .await)
 }

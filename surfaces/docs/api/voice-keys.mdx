@@ -5,7 +5,7 @@ description: 'Account-saved OpenAI and ElevenLabs voice keys and the QR handoff 
 
 ## Overview
 
-Optional "Save to my Allternit account" stores a user's own OpenAI or ElevenLabs key, encrypted, so their other signed-in devices can use it. The same routes relay the device-to-device QR handoff, which carries only a session id and a one-time public key; the key itself never reaches the server. For the user flow see [Talk to your bots](/guides/voice#your-own-provider). For storage and protocol details see [Voice in the app](/surfaces/voice#your-own-key-storage-sync-and-qr-handoff).
+Optional "Save to my Allternit account" stores a user's own OpenAI or ElevenLabs key, encrypted, so their other signed-in devices can use it. The same routes relay the device-to-device QR handoff. The key is end-to-end encrypted between the two devices. It reaches the server only in that sealed form, and the server cannot read it. For the user flow see [Talk to your bots](/guides/voice#your-own-provider). For storage and protocol details see [Voice in the app](/surfaces/voice#your-own-key-storage-sync-and-qr-handoff).
 
 ## Base URL
 
@@ -26,6 +26,19 @@ Signed-in session only. Platform API keys are refused with `403`. Responses carr
 | `DELETE /api/v1/voice/keys` | none | `204`. Deletes every saved key for the user. |
 | `POST /api/v1/voice/handoff` | none | `{"sid","expires_at"}`. Expires after 120 seconds. |
 | `PUT /api/v1/voice/handoff/:sid/receiver` | `{"pubkey"}` | `204`; `409` if a receiver is already set; `404` if unknown or expired. |
-| `GET /api/v1/voice/handoff/:sid` | none | `{"sid","receiver_pubkey":null,"expires_at"}`. `receiver_pubkey` is null until the receiver registers. |
+| `GET /api/v1/voice/handoff/:sid` | none | `{"sid","receiver_pubkey":null,"delivered":false,"expires_at"}`. `receiver_pubkey` is null until the receiver registers. `delivered` is true once the receiver has taken the sealed key. |
+| `PUT /api/v1/voice/handoff/:sid/sealed` | `{"nonce","ciphertext"}` | `204`; `409` if no receiver is registered, or the key is already sealed or delivered; `404` if unknown, expired or not yours; `400` if a field is over its cap. |
+| `GET /api/v1/voice/handoff/:sid/sealed` | none | `200 {"nonce","ciphertext"}` the first time; `204` if nothing is sealed yet; `409` if already delivered; `404` if unknown, expired or not yours. |
 
-Keys are sealed with AES-256-GCM using `ALLTERNIT_CREDENTIALS_KEY` (migration `128_voice_keys.sql`, table `user_voice_keys`). Handoff rows live in `voice_key_handoffs`.
+### Sealed relay
+
+After the user confirms the 6-digit codes, the sender encrypts the key and `PUT`s it to `/sealed`. The receiver polls `GET /sealed` and takes it once.
+
+- `nonce` is exactly 16 base64url characters. `ciphertext` is 23 to 2048 base64url characters. Both must be unpadded base64url that decodes; anything else is `400` with a fixed message that never repeats the body.
+- `GET /sealed` returns `204` with an empty body while the sender hasn't sealed yet.
+- The take is one-time. A single statement reads the row and marks it delivered, so a second `GET` returns `409` and never the key again.
+- A successful `PUT` extends `expires_at` to at least 30 seconds from now, so the receiver has time to fetch.
+- Responses carry `Cache-Control: no-store`.
+- The sender's public key is never sent to the server; it travels only in QR1. The server holds the ciphertext but cannot derive the shared key, and the 6-digit check is what stops a relay from substituting its own key.
+
+Keys are sealed with AES-256-GCM using `ALLTERNIT_CREDENTIALS_KEY` (migration `128_voice_keys.sql`, table `user_voice_keys`). Handoff rows live in `voice_key_handoffs`; migration `135_voice_handoff_sealed.sql` adds `sealed_nonce`, `sealed_ciphertext` and `delivered_at`.

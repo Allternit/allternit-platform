@@ -176,17 +176,20 @@ With "Save to my Allternit account" on, the app sends keys to cloud-api and othe
 Migration `128_voice_keys.sql` adds two tables:
 
 - `user_voice_keys`: one row per user and provider (`openai` or `elevenlabs`). The key is sealed with AES-256-GCM through `CredentialCipher`, using `ALLTERNIT_CREDENTIALS_KEY` (the same cipher as `user_inference_keys`). `key_nonce` is the 12-byte nonce.
-- `voice_key_handoffs`: the QR relay. It holds `sid`, the owner and the receiver's one-time public key, and lives 120 seconds. Expired rows read as not found and are pruned on insert.
+- `voice_key_handoffs`: the QR relay. It holds `sid`, the owner and the receiver's one-time public key, and lives 120 seconds. Migration `135_voice_handoff_sealed.sql` adds `sealed_nonce`, `sealed_ciphertext` and `delivered_at` for the sealed key. Expired rows read as not found and are pruned on insert.
 
-### QR handoff protocol (v1)
+### QR handoff protocol (v1, one scan)
 
-The key travels screen to camera; cloud-api only relays the session id and the receiver's public key, so it never sees the key.
+The user scans once. The key is end-to-end encrypted between the two devices and goes through cloud-api only in that sealed form, so cloud-api cannot read it. The sender's public key travels only in QR1, never to the server, and the 6-digit check is what keeps a relay from substituting its own key.
 
-1. The sender (computer) calls `POST /api/v1/voice/handoff` and gets `sid`.
-2. The receiver (iPhone) generates a P-256 key pair. The sender shows QR1; the receiver scans it and `PUT`s its public key to `/handoff/:sid/receiver`.
+1. The sender (computer) generates its P-256 key pair, calls `POST /api/v1/voice/handoff` and gets `sid`. It shows QR1.
+2. The receiver (iPhone) generates its own P-256 key pair, scans QR1 and `PUT`s its public key to `/handoff/:sid/receiver`.
 3. The sender polls `GET /handoff/:sid` until `receiver_pubkey` appears.
-4. Both sides show the confirm code. The user taps **Codes match** on the sender.
-5. The sender generates its own P-256 key pair, derives the shared key, encrypts and shows QR2. The receiver scans it and decrypts.
+4. Both sides show the 6-digit confirm code. The user taps **Codes match** on the sender.
+5. The sender derives the shared key, encrypts, and `PUT`s `{nonce,ciphertext}` to `/handoff/:sid/sealed`.
+6. The receiver polls `GET /handoff/:sid/sealed`, takes the sealed key once, decrypts it and shows Connected.
+
+QR2 is still shown on the sender as a fallback for iPhone builds that only read QR2. On those builds the receiver scans QR2 instead of polling. The crypto and `docs/voice-handoff-vectors.json` are unchanged by the relay.
 
 Wire details:
 
