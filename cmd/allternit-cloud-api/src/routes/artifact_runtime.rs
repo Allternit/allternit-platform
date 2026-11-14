@@ -567,6 +567,13 @@ pub(crate) async fn billed_completion(
 
     let viewer = payer.to_string();
     let alias = ai_model();
+    // A plan model is person-sent chat only (CONTRACT-connections 9.3).
+    if crate::routes::model_router::is_person_only_model(&alias) {
+        return Err(ArtifactError::Api(ApiError::Forbidden(format!(
+            "plan_person_only: {}",
+            crate::routes::model_router::PLAN_PERSON_ONLY_MESSAGE
+        ))));
+    }
     let balance = inference_settlement::credit_balance_row(&state.db, &viewer).await?;
     inference_settlement::check_inference_allowed(&state.db, &viewer, balance).await?;
     if balance.is_none() {

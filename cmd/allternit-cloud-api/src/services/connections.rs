@@ -29,6 +29,7 @@ use serde::Serialize;
 use sqlx::PgPool;
 
 use crate::error::ApiError;
+use crate::services::brain_runners::{Vendor, VendorState, DISCLOSURE_VERSION};
 
 pub const VERSION: u32 = 1;
 
@@ -61,6 +62,52 @@ pub struct Row {
     pub saved: Option<&'static str>,
     pub models: Vec<String>,
     pub source: &'static str,
+    /// Runner rows only (contract 9.1): `{version, accepted_at}`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub disclosure: Option<DisclosureState>,
+    /// Runner rows only (contract 9.1): keep these models out of bot,
+    /// routine, schedule, mission and sub-agent pickers.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub person_only: bool,
+}
+
+/// A runner row's `disclosure` field (contract 9.1).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct DisclosureState {
+    pub version: &'static str,
+    pub accepted_at: Option<String>,
+}
+
+/// What [`build_rows`] knows about one brain runner vendor (contract 9).
+#[derive(Debug, Clone, PartialEq)]
+pub struct RunnerVendor {
+    pub vendor: Vendor,
+    /// The server offers it (kill switch on, vendor in `ALLTERNIT_RUNNER_VENDORS`).
+    pub offered: bool,
+    pub state: VendorState,
+    /// When this account accepted the current disclosure version.
+    pub accepted_at: Option<DateTime<Utc>>,
+}
+
+/// The vendor ids each plan offers in chat, as `plan/<vendor>/<model>`
+/// (FINDINGS-brain-runner-0.2: the `--model` / `-m` values that worked).
+pub fn plan_models(vendor: Vendor) -> &'static [&'static str] {
+    match vendor {
+        Vendor::Claude => &["sonnet", "opus", "haiku"],
+        Vendor::Chatgpt => &["gpt-6.1-sol", "gpt-6-luna"],
+        Vendor::Grok => &["grok-4.6", "grok-4.5"],
+        Vendor::Kimi => &["kimi-code/kimi-for-coding", "kimi-code/k3"],
+    }
+}
+
+/// The key row a plan row falls back to (contract 9.1).
+pub fn plan_fallback(vendor: Vendor) -> &'static str {
+    match vendor {
+        Vendor::Claude => "anthropic-key",
+        Vendor::Chatgpt => "openai-key",
+        Vendor::Grok => "xai-key",
+        Vendor::Kimi => "kimi-key",
+    }
 }
 
 impl Row {
@@ -80,6 +127,8 @@ impl Row {
             saved: None,
             models: Vec::new(),
             source: "cloud",
+            disclosure: None,
+            person_only: false,
         }
     }
 
@@ -120,6 +169,8 @@ pub fn reason_text(code: &str) -> &'static str {
         "no_computer" => "Needs your own computer for now",
         "not_available_yet" => "Not available yet",
         "computer_offline" => "Your computer is offline",
+        "update_app" => "Update the app to connect this plan.",
+        "runner_busy" => "Busy. Try again",
         _ => "Could not start. Try again",
     }
 }
@@ -220,6 +271,10 @@ pub struct Facts {
     pub discord: Vec<String>,
     pub whatsapp: bool,
     pub telegram: Option<TelegramState>,
+    /// Brain runner vendors (contract 9). Empty = the section 3 rows.
+    pub runners: Vec<RunnerVendor>,
+    /// The client sent `caps=runner` (contract 9.1, D10).
+    pub runner_caps: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -250,6 +305,64 @@ fn plan_label(plan_id: &str) -> &'static str {
 const RUNS_ON_COMPUTER: &str = "Runs on a computer.";
 const NOT_YET: &str = "Not available yet. Use a key for now.";
 
+/// One plan row (contract 9.1). `runner` is `None` when the server does not
+/// offer the vendor (kill switch, vendor list): the section 3 row.
+fn runner_row(vendor: Vendor, runner: Option<&RunnerVendor>, caps: bool) -> Row {
+    let fallback = plan_fallback(vendor);
+    let mut row = Row::new(vendor.row_id(), "brains", "runner");
+    row.terms = "pending";
+    row.saved = Some("runner");
+    let Some(runner) = runner else {
+        return row.unavailable(NOT_YET, "not_available_yet", &[fallback]);
+    };
+    if !caps {
+        return row.unavailable("Update the app to connect this plan.", "update_app", &[fallback]);
+    }
+    row.person_only = true;
+    row.fallbacks = vec![fallback];
+    row.disclosure = Some(DisclosureState {
+        version: DISCLOSURE_VERSION,
+        accepted_at: runner.accepted_at.map(|at| at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)),
+    });
+    match &runner.state {
+        VendorState::Off => row,
+        VendorState::Connecting => row.connecting(),
+        VendorState::On { found } => {
+            row.models = plan_models(vendor).iter().map(|m| format!("plan/{}/{m}", vendor.row_id())).collect();
+            row.on(found.clone().unwrap_or_else(|| "Signed in".to_string()))
+        }
+        VendorState::Expired => row.needs("login_expired"),
+        VendorState::Limited => row.needs("vendor_limited"),
+    }
+}
+
+/// The plan rows' facts for an account: what the server offers, each
+/// vendor's sign-in state (without waking the box) and the acceptances of
+/// the current disclosure.
+pub async fn load_runner_facts(
+    db: &PgPool,
+    service: &crate::services::brain_runners::BrainRunnerService,
+    user_id: &str,
+) -> Result<Vec<RunnerVendor>, ApiError> {
+    let states = service.vendor_state(user_id).await?;
+    let accepted: Vec<(String, DateTime<Utc>)> = sqlx::query_as(
+        "SELECT vendor, accepted_at FROM plan_runner_consents WHERE user_id = $1 AND disclosure_version = $2",
+    )
+    .bind(user_id)
+    .bind(DISCLOSURE_VERSION)
+    .fetch_all(db)
+    .await?;
+    Ok(states
+        .into_iter()
+        .map(|(vendor, state)| RunnerVendor {
+            vendor,
+            offered: service.offers(vendor),
+            state,
+            accepted_at: accepted.iter().find(|(v, _)| v == vendor.row_id()).map(|(_, at)| *at),
+        })
+        .collect())
+}
+
 /// The rows for an account. `aliases_for` gives the catalog models a key for
 /// a provider unlocks.
 pub fn build_rows(facts: &Facts, aliases_for: &dyn Fn(&str) -> Vec<String>) -> Vec<Row> {
@@ -264,18 +377,22 @@ pub fn build_rows(facts: &Facts, aliases_for: &dyn Fn(&str) -> Vec<String>) -> V
     // computer online they are left out, so the runtime's row is the one the
     // client shows (clients let a runtime row win over a cloud row only when
     // it is `on`; a cloud row would hide a usable, not yet signed-in one).
-    if !online {
+    let chatgpt_runner = facts.runners.iter().any(|r| r.vendor == Vendor::Chatgpt && r.offered);
+    if !online && !chatgpt_runner {
         rows.push(Row::new("chatgpt", "brains", "computer").unavailable(
             "Needs your own computer for now. Or use an OpenAI key.",
             "no_computer",
             &["this-mac", "openai-key"],
         ));
     }
-    for (id, fallback) in [("claude", "anthropic-key"), ("grok", "xai-key"), ("kimi", "kimi-key")] {
-        let mut row = Row::new(id, "brains", "runner").unavailable(NOT_YET, "not_available_yet", &[fallback]);
-        row.terms = "pending";
-        row.saved = Some("runner");
-        rows.push(row);
+    for vendor in Vendor::ALL {
+        let runner = facts.runners.iter().find(|r| r.vendor == vendor).filter(|r| r.offered);
+        // ChatGPT with a computer online is the runtime's row (contract 9.9
+        // precedence); without the runner it is the section 3 row above.
+        if vendor == Vendor::Chatgpt && (runner.is_none() || online) {
+            continue;
+        }
+        rows.push(runner_row(vendor, runner, facts.runner_caps));
     }
     let mut copilot = Row::new("copilot", "brains", "server").unavailable("Coming soon.", "not_available_yet", &["github"]);
     copilot.terms = "pending";
@@ -559,6 +676,8 @@ pub async fn load_facts(
         discord,
         whatsapp,
         telegram,
+        runners: Vec::new(),
+        runner_caps: false,
     })
 }
 
@@ -593,6 +712,8 @@ mod tests {
             discord: Vec::new(),
             whatsapp: false,
             telegram: None,
+            runners: Vec::new(),
+            runner_caps: false,
         }
     }
 
@@ -670,5 +791,42 @@ mod tests {
         assert_eq!((groq.state, groq.reason_code), (State::Needs, Some("key_rejected")));
         assert_eq!(groq.reason.as_deref(), Some("The key was rejected"));
         assert_eq!(row(&rows, "api-key").found.as_deref(), Some("2 keys work"));
+    }
+
+    fn offered(vendor: Vendor, state: VendorState) -> RunnerVendor {
+        RunnerVendor { vendor, offered: true, state, accepted_at: None }
+    }
+
+    #[test]
+    fn runner_rows_need_caps_and_list_plan_models_only_when_on() {
+        let mut facts = facts();
+        facts.runners = vec![
+            offered(Vendor::Claude, VendorState::On { found: Some("Max".into()) }),
+            offered(Vendor::Chatgpt, VendorState::Off),
+            offered(Vendor::Grok, VendorState::Expired),
+            RunnerVendor { vendor: Vendor::Kimi, offered: false, state: VendorState::Off, accepted_at: None },
+        ];
+        // An older client (no caps=runner): every offered plan says update.
+        let rows = build_rows(&facts, &no_models);
+        let claude = row(&rows, "claude");
+        assert_eq!((claude.available, claude.reason_code, claude.unavailable_reason), (false, Some("update_app"), Some("Update the app to connect this plan.")));
+        assert!(claude.models.is_empty() && claude.disclosure.is_none() && !claude.person_only);
+        assert_eq!(row(&rows, "chatgpt").reason_code, Some("update_app"), "the runner row replaces the no-computer text");
+        assert_eq!(row(&rows, "kimi").reason_code, Some("not_available_yet"), "a vendor off the list keeps the section 3 row");
+
+        facts.runner_caps = true;
+        let rows = build_rows(&facts, &no_models);
+        let claude = row(&rows, "claude");
+        assert!(claude.available && claude.person_only);
+        assert_eq!((claude.state, claude.found.as_deref(), claude.runs_on, claude.terms), (State::On, Some("Max"), "runner", "pending"));
+        assert_eq!(claude.models, vec!["plan/claude/sonnet", "plan/claude/opus", "plan/claude/haiku"]);
+        assert_eq!(claude.disclosure, Some(DisclosureState { version: DISCLOSURE_VERSION, accepted_at: None }));
+        let chatgpt = row(&rows, "chatgpt");
+        assert!(chatgpt.available && chatgpt.models.is_empty(), "no models until signed in");
+        assert_eq!(chatgpt.fallbacks, vec!["openai-key"]);
+        assert_eq!((row(&rows, "grok").state, row(&rows, "grok").reason_code), (State::Needs, Some("login_expired")));
+        assert!(!row(&rows, "kimi").available);
+        let json = serde_json::to_value(row(&rows, "allternit")).unwrap();
+        assert!(json.get("disclosure").is_none() && json.get("person_only").is_none(), "other rows never carry them");
     }
 }
