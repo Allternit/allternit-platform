@@ -84,7 +84,7 @@ If the command reports credentials that did not open with any key, add the key t
 
 On a graceful shutdown the server ends open long-polls at once, so workers and clients reconnect without waiting for their poll to time out. Sessions continue after a restart: the server rebuilds each session from its event log in PostgreSQL, and the next turn sees the earlier messages. Leases are stored in the database, so workers keep renewing once the server is back. An item whose lease ran out during the restart is claimed again.
 
-A turn that is running when a replica stops is the exception. The server waits `server.shutdown_grace` (default `45s`) for it to finish. If it does not, the session ends with status `error` and the error code `server_restarted`. Resend the message. See [Known limits](/self-hosted/overview#known-limits).
+A turn that is running when a replica stops is the exception. On `SIGTERM` the replica stops taking new turns: `/health/ready` and new messages answer `503 agent_loop_unavailable`, so the load balancer and clients move to another replica, while workers are still served. The server waits `server.shutdown_grace` (default `45s`) for running turns to finish. If it does not, the session ends with status `error` and the error code `server_restarted`. Resend the message. See [Known limits](/self-hosted/overview#known-limits).
 
 ## Run several replicas
 
@@ -93,6 +93,7 @@ Several server replicas share one PostgreSQL database. They need PostgreSQL. SQL
 - **Helm.** Set `replicaCount` in the `agents-server` chart values, for example `3`. The chart refuses to render more than one replica with a SQLite database URL. With more than one replica it also adds a PodDisruptionBudget.
 - **Rolling updates.** The chart uses a rolling update with `maxUnavailable: 0`, so a new pod is ready before an old one stops. Each stopping replica waits up to `server.shutdown_grace` for its turns.
 - **Live events.** Replicas tell each other about new events with PostgreSQL `LISTEN`. Give the server a direct PostgreSQL connection for this. Behind PgBouncer, use session mode, or point the server at the database directly. Without `LISTEN`, events arrive by polling, within 1 to 5 seconds.
+- **Own data directory per replica.** Each replica keeps its id in `<data_dir>/replica-id`. Never share `data_dir` between replicas: a second replica with the same id would end the first one's turns when it starts. The Helm chart gives each pod its own `emptyDir`.
 - **Check it.** `GET /v1/server/info` shows `replicas`, the number of live replicas.
 
 Docker Compose stays at one replica. One host gives no availability gain. Use Helm for several replicas.

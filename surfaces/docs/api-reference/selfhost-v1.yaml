@@ -78,7 +78,8 @@ paths:
         200 when the database answers and the agent loop (the gizzi child) is
         ready. 503 `store_unavailable` when the database does not answer, 503
         `agent_loop_unavailable` while the agent loop is starting or restarting,
-        or when it cannot run (for example the gizzi-code binary is missing). No auth.
+        when it cannot run (for example the gizzi-code binary is missing), or while
+        this replica is stopping (draining after SIGTERM). No auth.
       tags: [Server]
       security: []
       responses:
@@ -532,8 +533,9 @@ paths:
         `session_archived` for an archived session. The agent's model is checked
         against the server's model map again here (it may have changed since the
         session was made): an unmapped model is 422 `model_not_mapped`, with no
-        outbound request. While the agent loop is starting or cannot run, the
-        answer is 503 `agent_loop_unavailable`; a server built without an agent
+        outbound request. While the agent loop is starting or cannot run, or while
+        this replica is stopping, the answer is 503 `agent_loop_unavailable` (send
+        the message again; another replica takes it); a server built without an agent
         loop answers 501 `not_implemented`. In those cases nothing is stored.
         If a custom tool of the agent has the same name as a built-in tool or an
         MCP tool, the answer is 409 `custom_tool_conflict`: nothing is stored and
