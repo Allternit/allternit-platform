@@ -4,23 +4,30 @@
 //!
 //! Protocol: `docs/SELFHOST_WORKER_PROTOCOL.md`.
 //!
-//! - One open work item per session. The agent loop queues it the first time
-//!   a turn needs a sandbox tool ([`ensure_work`]); model-only turns queue
-//!   nothing.
+//! - One open work item per session, enforced by the database
+//!   (`work_items_one_open`). The agent loop queues it the first time a turn
+//!   needs a sandbox tool ([`ensure_work`]); model-only turns queue nothing.
 //! - A claim long-polls up to `block_ms` (max 30 s) and wakes as soon as an
-//!   item is queued or handed back. An expired lease is claimable at once;
-//!   `reclaim_older_than_ms` also takes a live lease that has not been
-//!   renewed for that long.
+//!   item is queued or handed back. An expired lease is claimable at once.
+//!   `reclaim_older_than_ms` R also takes a LIVE lease last renewed at least
+//!   R ms ago ([`reclaim_cutoff_ms`]; floor [`MIN_RECLAIM_OLDER_THAN_MS`],
+//!   60000 or more adds nothing). A claimed item whose session is already
+//!   closed is cancelled and the claim looks again.
 //! - A background sweeper ([`spawn_lease_sweeper`]) puts expired leases back
-//!   to ready every 5 s. Tool calls a dead worker held go back to pending on
-//!   the next claim (at least once, idempotent on `tool_call_id`).
-//! - The item ends when the session is archived, or idle for
-//!   `sessions.idle_timeout`. From then on `tool_calls/next` answers 204
-//!   with `X-Session-Closed: true` and the worker completes the item.
+//!   to ready every 5 s and purges old Idempotency-Key records hourly. Each
+//!   tick runs under the store's sweep lock, so with several replicas only
+//!   one sweeps at a time. Tool calls a dead worker held go back to pending
+//!   on the next claim (at least once, idempotent on `tool_call_id`).
+//! - The item ends when the session is archived, or has had no turn running
+//!   and no open tool call for `sessions.idle_timeout` ([`session_closed`],
+//!   read from the store so it holds across replicas). From then on
+//!   `tool_calls/next` answers 204 with `X-Session-Closed: true` and the
+//!   worker completes the item (idle release).
 //!
-//! The wake-ups ([`WorkHub`]) live in memory: v1 runs one server replica
-//! (plan A9). Every wait also re-reads the store about once a second, so a
-//! missed wake-up only costs latency.
+//! The store is the truth. The wake-ups ([`WorkHub`]) live in this
+//! process's memory and only make waits faster: every wait also re-reads
+//! the store about once a second, so a missed wake-up (or one raised on
+//! another replica) only costs latency.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -39,7 +46,7 @@ use super::auth::{EnvKey, SessionSecret};
 use super::routes_environments::{not_found_env, policy_json};
 use super::store::{
     ClaimRequest, SessionRecord, StoreError, ToolCallRecord, WorkClaim, WorkItem, WorkOutcome,
-    WorkStatus, LEASE_TTL_SECS, MAX_TOOL_RESULT_BYTES,
+    WorkStatus, IDEMPOTENCY_TTL_HOURS, LEASE_TTL_SECS, MAX_TOOL_RESULT_BYTES,
 };
 use super::{check_len, on_post, rfc3339, rfc3339_opt, ApiError, ApiJson, RouteBook, SelfHostState};
 
@@ -49,6 +56,12 @@ pub const MAX_BLOCK_MS: u64 = 30_000;
 const POLL_EVERY: StdDuration = StdDuration::from_secs(1);
 /// How often the sweeper returns expired leases to the queue.
 pub const SWEEP_EVERY: StdDuration = StdDuration::from_secs(5);
+/// How often the sweeper purges expired Idempotency-Key records.
+pub const PURGE_EVERY: StdDuration = StdDuration::from_secs(3600);
+/// Smallest public `reclaim_older_than_ms`. A healthy worker renews every
+/// 20 s, so a smaller value would take leases from live workers. Smaller
+/// values (0 included) are raised to this, with a warning in the log.
+pub const MIN_RECLAIM_OLDER_THAN_MS: u64 = 30_000;
 
 pub const WORKER_HOSTNAME_HEADER: &str = "x-worker-hostname";
 pub const WORKER_VERSION_HEADER: &str = "x-worker-version";
@@ -78,12 +91,14 @@ pub struct WorkHub {
     sessions: Mutex<HashMap<String, Arc<Notify>>>,
     /// Per tool call: it was claimed or got its result.
     calls: Mutex<HashMap<String, Arc<Notify>>>,
-    /// Per session: tool calls the agent loop is waiting on.
+    /// Per session: tool calls this process's internal route is waiting
+    /// on. Local only: it decides when the session leaves
+    /// `waiting_for_worker`, and a session's turn (and so its internal
+    /// calls) runs on one replica. Whether the session is closed is read
+    /// from the store instead ([`session_closed`]).
     in_flight: Mutex<HashMap<String, usize>>,
     /// gizzi session id → our session id (set by the agent loop).
     gizzi_sessions: Mutex<HashMap<String, String>>,
-    /// Serializes [`ensure_work`] so a session never gets two open items.
-    ensure: tokio::sync::Mutex<()>,
 }
 
 fn entry(map: &Mutex<HashMap<String, Arc<Notify>>>, key: &str) -> Arc<Notify> {
@@ -215,65 +230,135 @@ async fn wait_on(notified: std::pin::Pin<&mut tokio::sync::futures::Notified<'_>
 // ─── Shared helpers (also used by the internal route) ───────────────────────
 
 /// The session's open work item, queued now if it has none. Never makes a
-/// second open item for a session.
+/// second open item for a session, on any number of replicas: the store
+/// enforces one open item per session ([`super::store::SelfHostStore::ensure_open_work`]).
 pub async fn ensure_work(st: &SelfHostState, session: &SessionRecord) -> Result<WorkItem, ApiError> {
-    let _guard = st.work.ensure.lock().await;
-    if let Some(w) = st.store.find_open_work_for_session(&session.id).await? {
-        return Ok(w);
-    }
-    let w = st
+    let (w, inserted) = st
         .store
-        .enqueue_work(&session.environment_id, &session.id)
+        .ensure_open_work(&session.environment_id, &session.id)
         .await?;
-    tracing::info!(session_id = %session.id, work_id = %w.id, "work item queued");
-    if let Some(parent) = super::agent_loop::current_turn_trace(&st.store, &session.id).await {
-        super::telemetry::record_work_enqueued(&st.store, &w.id, &parent).await;
+    if inserted {
+        tracing::info!(session_id = %session.id, work_id = %w.id, "work item queued");
+        if let Some(parent) = super::agent_loop::current_turn_trace(&st.store, &session.id).await {
+            super::telemetry::record_work_enqueued(&st.store, &w.id, &parent).await;
+        }
+        st.work.notify_work();
     }
-    st.work.notify_work();
     Ok(w)
 }
 
 /// Is the session finished, as far as its worker is concerned? Archived, or
-/// no turn running, no tool call pending and quiet for `idle_timeout`.
-pub fn session_closed(st: &SelfHostState, s: &SessionRecord) -> bool {
+/// no turn running, no open tool call (pending or claimed, on any replica)
+/// and no change for `sessions.idle_timeout`. Read from the store, so every
+/// replica gives the same answer.
+pub async fn session_closed(st: &SelfHostState, s: &SessionRecord) -> Result<bool, StoreError> {
     if s.archived_at.is_some() || s.status == "archived" {
-        return true;
+        return Ok(true);
     }
-    if ACTIVE.contains(&s.status.as_str()) || st.work.in_flight(&s.id) > 0 {
-        return false;
+    if ACTIVE.contains(&s.status.as_str()) {
+        return Ok(false);
     }
-    let idle = Duration::from_std(st.settings.idle_timeout()).unwrap_or(Duration::hours(1));
-    Utc::now() - s.updated_at >= idle
+    let idle = Duration::from_std(st.settings.idle_timeout()).unwrap_or(Duration::seconds(30));
+    if Utc::now() - s.updated_at < idle {
+        return Ok(false);
+    }
+    Ok(!st.store.has_open_tool_calls(&s.id).await?)
 }
 
-/// Public `reclaim_older_than_ms` (time since the last renew) to the store's
-/// cutoff offset. No value: every expired lease (`0`). A value below the
-/// lease length also takes live leases not renewed for that long (a
-/// negative offset). A value at or above it changes nothing, so the option
-/// can only make more items claimable, never fewer.
+/// Public `reclaim_older_than_ms` R to the store's cutoff offset
+/// ([`ClaimRequest::lease_cutoff_offset_ms`]).
+///
+/// No value: offset 0, every expired lease and no live one. With R the
+/// claim also takes a LIVE lease last renewed at least R ms ago: a lease
+/// lasts [`LEASE_TTL_SECS`] from its last renew, so that is a lease ending
+/// within `60000 - R` ms, offset `R - 60000`. R below
+/// [`MIN_RECLAIM_OLDER_THAN_MS`] (0 included) is raised to it, with a
+/// warning, so a claim never takes the lease of a worker that is still
+/// renewing. R of 60000 or more adds nothing (offset 0). The option only
+/// ever makes more items claimable, never fewer.
 pub fn reclaim_cutoff_ms(reclaim_older_than_ms: Option<u64>) -> i64 {
     let ttl_ms = LEASE_TTL_SECS * 1000;
     match reclaim_older_than_ms {
         None => 0,
-        Some(ms) => (ms.min(ttl_ms as u64) as i64) - ttl_ms,
+        Some(ms) => {
+            if ms < MIN_RECLAIM_OLDER_THAN_MS {
+                warn_reclaim_floor(ms);
+            }
+            let r = ms.clamp(MIN_RECLAIM_OLDER_THAN_MS, ttl_ms as u64) as i64;
+            r - ttl_ms
+        }
     }
 }
 
-/// Starts the 5 s lease sweeper. Dropping the handle does not stop it; abort
-/// it to stop.
+/// Logs the clamp, at most once a minute per process (an idle worker sends
+/// the same value with every long-poll).
+fn warn_reclaim_floor(asked_ms: u64) {
+    use std::sync::atomic::{AtomicI64, Ordering};
+    static LAST: AtomicI64 = AtomicI64::new(i64::MIN);
+    let now = Utc::now().timestamp();
+    let last = LAST.load(Ordering::Relaxed);
+    if last != i64::MIN && now - last < 60 {
+        return;
+    }
+    if LAST
+        .compare_exchange(last, now, Ordering::Relaxed, Ordering::Relaxed)
+        .is_ok()
+    {
+        tracing::warn!(
+            reclaim_older_than_ms = asked_ms,
+            raised_to = MIN_RECLAIM_OLDER_THAN_MS,
+            "reclaim_older_than_ms below the floor was raised: a healthy worker renews every 20 s"
+        );
+    }
+}
+
+/// One sweeper tick, under the store's sweep lock: expired leases back to
+/// ready, and (with `purge_idempotency`) Idempotency-Key records past their
+/// replay window deleted. `None` when another replica holds the lock and
+/// this tick was skipped; else how many leases were returned.
+pub async fn sweep_once(st: &SelfHostState, purge_idempotency: bool) -> Result<Option<u64>, StoreError> {
+    let Some(guard) = st.store.sweep_lock().await? else {
+        return Ok(None);
+    };
+    let now = Utc::now();
+    let requeued = st.store.requeue_expired_work(now, Duration::zero()).await;
+    if purge_idempotency {
+        match st
+            .store
+            .idempotency_purge(now - Duration::hours(IDEMPOTENCY_TTL_HOURS))
+            .await
+        {
+            Ok(0) => {}
+            Ok(n) => tracing::info!(count = n, "expired Idempotency-Key records purged"),
+            Err(e) => tracing::warn!(error = %e, "Idempotency-Key purge failed"),
+        }
+    }
+    guard.release().await;
+    let n = requeued? as u64;
+    if n > 0 {
+        super::telemetry::record_expired_leases(n);
+        tracing::info!(count = n, "expired leases returned to the queue");
+        st.work.notify_work();
+    }
+    Ok(Some(n))
+}
+
+/// Starts the sweeper: a [`sweep_once`] every 5 s, purging Idempotency-Key
+/// records about once an hour. Safe on every replica at once. Dropping the
+/// handle does not stop it; abort it to stop.
 pub fn spawn_lease_sweeper(st: SelfHostState) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(SWEEP_EVERY);
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        let mut last_purge: Option<tokio::time::Instant> = None;
         loop {
             tick.tick().await;
-            match st.store.requeue_expired_work(Utc::now(), Duration::zero()).await {
-                Ok(0) => {}
-                Ok(n) => {
-                    super::telemetry::record_expired_leases(n as u64);
-                    tracing::info!(count = n, "expired leases returned to the queue");
-                    st.work.notify_work();
-                }
+            let purge = last_purge.map_or(true, |t| t.elapsed() >= PURGE_EVERY);
+            match sweep_once(&st, purge).await {
+                // Purged on this replica: wait an hour. Skipped (another
+                // replica holds the lock): try again next tick.
+                Ok(Some(_)) if purge => last_purge = Some(tokio::time::Instant::now()),
+                Ok(_) => {}
                 Err(e) => tracing::warn!(error = %e, "lease sweep failed"),
             }
         }
@@ -384,25 +469,27 @@ async fn claim(
             })
             .await?;
         if let Some(c) = got {
-            // An item of a session that ended has nothing to serve: close it
-            // and look again.
-            let session = st.store.get_session(&c.item.session_id).await;
-            let finished = match &session {
-                Ok(s) => s.archived_at.is_some(),
-                Err(StoreError::NotFound) => true,
-                Err(_) => false,
+            // An item of a session that already ended (archived, gone, or
+            // idle past its timeout) has nothing to serve: cancel it and look
+            // again. A tool call queued later gets a new item.
+            let ended = match st.store.get_session(&c.item.session_id).await {
+                Ok(s) if s.archived_at.is_some() => Some("The session was archived."),
+                Ok(s) => match session_closed(&st, &s).await {
+                    Ok(true) => Some("The session was idle past sessions.idle_timeout."),
+                    _ => None,
+                },
+                Err(StoreError::NotFound) => Some("The session no longer exists."),
+                Err(_) => None,
             };
-            if finished {
-                let _ = st
+            if let Some(why) = ended {
+                tracing::info!(work_id = %c.item.id, session_id = %c.item.session_id, why, "claimed item of an ended session cancelled");
+                if let Err(e) = st
                     .store
-                    .complete_work(
-                        &c.item.id,
-                        c.item.lease_generation,
-                        WorkOutcome::Cancelled,
-                        Some("The session was archived."),
-                        Utc::now(),
-                    )
-                    .await;
+                    .complete_work(&c.item.id, c.item.lease_generation, WorkOutcome::Cancelled, Some(why), Utc::now())
+                    .await
+                {
+                    tracing::warn!(error = %e, work_id = %c.item.id, "could not cancel the item");
+                }
                 continue;
             }
             tracing::info!(
@@ -599,9 +686,12 @@ async fn next_tool_call(
             return Ok((StatusCode::OK, Json(tool_call_json(&call))).into_response());
         }
         match st.store.get_session(&grant.session_id).await {
-            Ok(s) if session_closed(&st, &s) => return Ok(closed_response()),
+            Ok(s) => {
+                if session_closed(&st, &s).await? {
+                    return Ok(closed_response());
+                }
+            }
             Err(StoreError::NotFound) => return Ok(closed_response()),
-            Ok(_) => {}
             Err(e) => return Err(e.into()),
         }
 

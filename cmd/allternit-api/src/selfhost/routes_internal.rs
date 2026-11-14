@@ -15,7 +15,10 @@
 //!   `sessions.no_worker_timeout` (or `timeout_ms`); 408 `timeout` when a
 //!   worker took it but sent no result within `timeout_ms`. Either way the
 //!   call is closed as an error, so a late worker does not run a command the
-//!   model already gave up on.
+//!   model already gave up on. The same happens when the caller goes away
+//!   before a result (gizzi stopped, the turn was interrupted): an open call
+//!   nobody waits on would keep the session from going idle (`session_closed`
+//!   reads open calls from the store) and hold its worker.
 
 use std::sync::Arc;
 use std::time::Duration as StdDuration;
@@ -53,25 +56,44 @@ pub struct SubmitToolCallBody {
     pub timeout_ms: Option<u64>,
 }
 
-/// Counts the call as in flight for the session while it lives.
+/// Counts the call as in flight for the session while it lives (this
+/// process only, for [`leave_waiting`]). Dropped before the call was
+/// settled (the caller disconnected, or a store error ended the route), it
+/// closes the call as an error in the store.
 struct InFlight {
-    hub: Arc<WorkHub>,
+    st: SelfHostState,
     session_id: String,
+    call_id: String,
+    settled: bool,
 }
 
 impl InFlight {
-    fn new(hub: Arc<WorkHub>, session_id: &str) -> Self {
-        hub.begin_call(session_id);
+    fn new(st: &SelfHostState, session_id: &str, call_id: &str) -> Self {
+        st.work.begin_call(session_id);
         Self {
-            hub,
+            st: st.clone(),
             session_id: session_id.to_string(),
+            call_id: call_id.to_string(),
+            settled: false,
         }
     }
 }
 
 impl Drop for InFlight {
     fn drop(&mut self) {
-        self.hub.end_call(&self.session_id);
+        let hub: &Arc<WorkHub> = &self.st.work;
+        hub.end_call(&self.session_id);
+        if self.settled {
+            return;
+        }
+        hub.forget_call(&self.call_id);
+        let st = self.st.clone();
+        let call_id = self.call_id.clone();
+        if let Ok(rt) = tokio::runtime::Handle::try_current() {
+            rt.spawn(async move {
+                give_up(&st, &call_id, "The agent loop stopped waiting for this tool call.").await;
+            });
+        }
     }
 }
 
@@ -185,7 +207,7 @@ async fn submit_tool_call(
         }
     }
 
-    let _in_flight = InFlight::new(st.work.clone(), &session.id);
+    let mut in_flight = InFlight::new(&st, &session.id, &call.id);
     let notify = st.work.call_notify(&call.id);
     st.work.notify_session(&session.id);
 
@@ -205,7 +227,10 @@ async fn submit_tool_call(
         let cur = st.store.get_tool_call(&call.id).await?;
         let now = tokio::time::Instant::now();
         match cur.status {
-            ToolCallStatus::Done => break Ok(Json(result_json(&cur))),
+            ToolCallStatus::Done => {
+                in_flight.settled = true;
+                break Ok(Json(result_json(&cur)));
+            }
             ToolCallStatus::Claimed => {
                 claimed = true;
                 if waiting {
@@ -224,11 +249,13 @@ async fn submit_tool_call(
                 }
                 if !claimed && now >= no_worker_deadline {
                     give_up(&st, &call.id, "No worker took this tool call, so it did not run.").await;
+                    in_flight.settled = true;
                     break Err(no_worker());
                 }
             }
         }
         if now >= deadline {
+            in_flight.settled = true;
             if claimed {
                 give_up(&st, &call.id, "The worker sent no result in time.").await;
                 break Err(timed_out());

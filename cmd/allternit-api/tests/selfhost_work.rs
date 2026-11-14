@@ -1,6 +1,10 @@
 //! The work queue (plan step 7), the agent loop (step 8) and rehydration
 //! (step 9), over real HTTP against the real router and SQLite store.
 //!
+//! The queue tests that matter across replicas (one open item, the reclaim
+//! floor, the locked sweeper) also run on PostgreSQL, in a fresh schema, when
+//! `SELFHOST_TEST_PG_URL` is set.
+//!
 //! The agent loop tests run the real `GizziTurnRunner` against a small axum
 //! stand-in for gizzi's session and event routes (gizzi is an edge here: the
 //! model provider behind it is what we cannot call in a test). The stand-in
@@ -15,7 +19,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use allternit_api::selfhost::agent_loop::GizziTurnRunner;
+use allternit_api::selfhost::routes_work::sweep_once;
 use allternit_api::selfhost::settings::Settings;
+use allternit_api::selfhost::store::pg::PgStore;
 use allternit_api::selfhost::store::sqlite::SqliteStore;
 use allternit_api::selfhost::store::*;
 use allternit_api::selfhost::{router, SelfHostState};
@@ -185,11 +191,33 @@ async fn new_session(st: &SelfHostState, model: &str) -> (String, String) {
     (e.id, s.id)
 }
 
+/// SQLite in memory, plus PostgreSQL (own schema) when
+/// `SELFHOST_TEST_PG_URL` is set. The bool says "several replicas possible".
+async fn stores() -> Vec<(DynStore, bool)> {
+    let mut out: Vec<(DynStore, bool)> = vec![(Arc::new(SqliteStore::open_memory().unwrap()), false)];
+    match std::env::var("SELFHOST_TEST_PG_URL").ok().filter(|u| !u.is_empty()) {
+        Some(url) => {
+            let schema = format!("selfhost_w_{}", uuid::Uuid::new_v4().simple());
+            let pg = PgStore::connect_in_schema(&url, 60, &schema)
+                .await
+                .expect("connect to SELFHOST_TEST_PG_URL");
+            pg.migrate().await.expect("migrate");
+            out.push((Arc::new(pg), true));
+        }
+        None => eprintln!("SELFHOST_TEST_PG_URL not set; Postgres run skipped"),
+    }
+    out
+}
+
 /// `gizzi`: the stand-in's URL; None keeps the 501 stub runner.
-async fn fixture(mut settings: Settings, gizzi: Option<&str>) -> Fx {
+async fn fixture(settings: Settings, gizzi: Option<&str>) -> Fx {
+    fixture_on(Arc::new(SqliteStore::open_memory().unwrap()), settings, gizzi).await
+}
+
+async fn fixture_on(store: DynStore, mut settings: Settings, gizzi: Option<&str>) -> Fx {
     let tmp = tempfile::tempdir().unwrap();
     settings.data_dir = tmp.path().to_path_buf();
-    let mut st = SelfHostState::new(Arc::new(SqliteStore::open_memory().unwrap()), settings)
+    let mut st = SelfHostState::new(store, settings)
         .unwrap()
         .with_setup_token(None);
     if let Some(url) = gizzi {
@@ -380,8 +408,9 @@ async fn expired_lease_is_reclaimed_and_its_calls_come_back() {
         .await;
     assert_eq!(late.status, 409);
 
-    // The item is now held by a live lease: a plain claim leaves it alone,
-    // reclaim_older_than_ms takes it when it was not renewed for that long.
+    // The item is now held by a live lease just renewed: a plain claim
+    // leaves it alone, and so does any reclaim_older_than_ms (the floor is
+    // 30 s; see reclaim_floor_protects_a_renewing_worker).
     assert_eq!(fx.claim(0).await.status, 204);
     let long = fx
         .post(
@@ -391,16 +420,6 @@ async fn expired_lease_is_reclaimed_and_its_calls_come_back() {
         )
         .await;
     assert_eq!(long.status, 204, "renewed less than 30 s ago");
-    let stolen = fx
-        .post(
-            &format!("/v1/environments/{}/work/claim", fx.env_id),
-            Auth::Bearer(&fx.aek),
-            json!({ "worker_id": "w2", "reclaim_older_than_ms": 0 }),
-        )
-        .await;
-    assert_eq!(stolen.status, 200, "{}", stolen.body);
-    assert_eq!(stolen.body["work_id"], json!(item.id));
-    assert_eq!(stolen.body["lease_generation"], json!(3));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -461,6 +480,174 @@ async fn idle_or_archived_session_closes_its_item() {
     let (status, closed) = tokio::time::timeout(Duration::from_secs(5), polling).await.unwrap().unwrap();
     assert_eq!(status, 204);
     assert_eq!(closed.unwrap().to_str().unwrap(), "true");
+}
+
+/// A worker claim with `reclaim_older_than_ms`.
+async fn claim_reclaiming(fx: &Fx, worker: &str, reclaim_ms: u64) -> Resp {
+    fx.post(
+        &format!("/v1/environments/{}/work/claim", fx.env_id),
+        Auth::Bearer(&fx.aek),
+        json!({ "worker_id": worker, "reclaim_older_than_ms": reclaim_ms }),
+    )
+    .await
+}
+
+/// Plan D-C: a public value below 30000 (0 included) is raised to 30000, so
+/// it never takes the lease of a worker that renews every 20 s; 30000 takes
+/// a lease whose last renew was 35 s ago.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn reclaim_floor_protects_a_renewing_worker() {
+    for (store, _) in stores().await {
+        let fx = fixture_on(store, Settings::default(), None).await;
+        let item = fx.st.store.enqueue_work(&fx.env_id, &fx.session_id).await.unwrap();
+        let held = fx
+            .st
+            .store
+            .claim_work(ClaimRequest {
+                environment_id: fx.env_id.clone(),
+                worker_id: "w1".into(),
+                lease_cutoff_offset_ms: None,
+                hostname: None,
+                version: None,
+                now: Utc::now(),
+            })
+            .await
+            .unwrap()
+            .unwrap();
+        let gen = held.item.lease_generation;
+        fx.st
+            .store
+            .renew_work(&item.id, gen, Utc::now() - chrono::Duration::seconds(5))
+            .await
+            .unwrap();
+
+        // Renewed 5 s ago: 0 means 30000, so nothing is taken.
+        let r = claim_reclaiming(&fx, "w2", 0).await;
+        assert_eq!(r.status, 204, "0 must not take a lease renewed 5 s ago: {}", r.body);
+        assert_eq!(claim_reclaiming(&fx, "w2", 29_999).await.status, 204);
+        assert_eq!(claim_reclaiming(&fx, "w2", 30_000).await.status, 204);
+        assert_eq!(fx.st.store.get_work(&item.id).await.unwrap().lease_generation, gen);
+
+        // Renewed 35 s ago (the worker stalled): 45000 still waits, 30000 takes it.
+        fx.st
+            .store
+            .renew_work(&item.id, gen, Utc::now() - chrono::Duration::seconds(35))
+            .await
+            .unwrap();
+        assert_eq!(claim_reclaiming(&fx, "w2", 45_000).await.status, 204);
+        let r = claim_reclaiming(&fx, "w2", 30_000).await;
+        assert_eq!(r.status, 200, "{}", r.body);
+        assert_eq!(r.body["work_id"], json!(item.id));
+        assert_eq!(r.body["lease_generation"], json!(gen + 1));
+        // The old worker is fenced off.
+        let late = fx
+            .post(&format!("/v1/work/{}/renew", item.id), Auth::Bearer(&fx.aek), json!({ "lease_generation": gen }))
+            .await;
+        assert_eq!(late.status, 409);
+    }
+}
+
+/// Two server processes ("replicas") on one store, 20 tool calls of one
+/// session at once: one open work item, because the store enforces it (no
+/// in-process lock spans both).
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+async fn concurrent_tool_calls_on_two_replicas_share_one_item() {
+    for (store, _) in stores().await {
+        let a = fixture_on(store.clone(), Settings::default(), None).await;
+        let mut b_settings = Settings::default();
+        b_settings.data_dir = a._tmp.path().to_path_buf();
+        let b_state = SelfHostState::new(store.clone(), b_settings).unwrap().with_setup_token(None);
+        let b_base = serve(router(b_state.clone())).await;
+
+        let mut tasks = Vec::new();
+        for i in 0..20 {
+            let (base, token) = if i % 2 == 0 {
+                (a.base.clone(), a.st.internal_token.to_string())
+            } else {
+                (b_base.clone(), b_state.internal_token.to_string())
+            };
+            let http = a.http.clone();
+            let sid = a.session_id.clone();
+            tasks.push(tokio::spawn(async move {
+                http.post(format!("{base}/internal/v1/sessions/{sid}/tool_calls"))
+                    .bearer_auth(token)
+                    .json(&json!({ "tool_call_id": format!("toolu_c{i}"), "name": "bash", "input": {}, "timeout_ms": 1500 }))
+                    .send()
+                    .await
+                    .unwrap()
+                    .status()
+                    .as_u16()
+            }));
+        }
+        for t in tasks {
+            assert_eq!(t.await.unwrap(), 504, "no worker, so every call gives up");
+        }
+        assert_eq!(a.st.store.queue_depth(&a.env_id).await.unwrap(), 1, "one open item for the session");
+        // Every abandoned call is closed, so none holds the session open.
+        assert!(!a.st.store.has_open_tool_calls(&a.session_id).await.unwrap());
+    }
+}
+
+/// Each sweeper tick runs under the store's sweep lock: while another
+/// replica holds it the tick is skipped. The purge drops Idempotency-Key
+/// records past their 24 h window.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn sweeper_tick_runs_under_the_sweep_lock() {
+    for (store, multi_replica) in stores().await {
+        let fx = fixture_on(store, Settings::default(), None).await;
+        let item = fx.st.store.enqueue_work(&fx.env_id, &fx.session_id).await.unwrap();
+        fx.st
+            .store
+            .claim_work(ClaimRequest {
+                environment_id: fx.env_id.clone(),
+                worker_id: "dead".into(),
+                lease_cutoff_offset_ms: None,
+                hostname: None,
+                version: None,
+                now: Utc::now() - chrono::Duration::seconds(120),
+            })
+            .await
+            .unwrap()
+            .unwrap();
+
+        if multi_replica {
+            let other = fx.st.store.sweep_lock().await.unwrap().expect("lock");
+            assert_eq!(sweep_once(&fx.st, false).await.unwrap(), None, "another replica is sweeping");
+            assert_eq!(fx.st.store.get_work(&item.id).await.unwrap().status, WorkStatus::Leased);
+            other.release().await;
+        }
+        let scope = IdempotencyScope {
+            principal: "key_1".into(),
+            method: "POST".into(),
+            path: "/v1/sessions".into(),
+            key: "idem-old".into(),
+        };
+        let made = Utc::now() - chrono::Duration::hours(IDEMPOTENCY_TTL_HOURS + 1);
+        assert_eq!(fx.st.store.idempotency_begin(&scope, "h1", made).await.unwrap(), IdempotencyBegin::New);
+
+        assert_eq!(sweep_once(&fx.st, true).await.unwrap(), Some(1));
+        assert_eq!(fx.st.store.get_work(&item.id).await.unwrap().status, WorkStatus::Ready);
+        // Purged: seen from its own creation time, the key is free again
+        // (a kept record would answer Mismatch for another body).
+        assert_eq!(
+            fx.st.store.idempotency_begin(&scope, "h2", made + chrono::Duration::seconds(1)).await.unwrap(),
+            IdempotencyBegin::New
+        );
+    }
+}
+
+/// A claimed item whose session went idle past its timeout (its tool call
+/// gave up long ago) is cancelled at claim time instead of holding a worker.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn claim_cancels_the_item_of_an_ended_session() {
+    let mut settings = Settings::default();
+    settings.sessions.idle_timeout = "300ms".into();
+    let fx = fixture(settings, None).await;
+    let item = fx.st.store.enqueue_work(&fx.env_id, &fx.session_id).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    assert_eq!(fx.claim(0).await.status, 204);
+    assert_eq!(fx.st.store.get_work(&item.id).await.unwrap().status, WorkStatus::Cancelled);
+    assert!(fx.st.store.find_open_work_for_session(&fx.session_id).await.unwrap().is_none());
 }
 
 // ─── Agent loop (steps 8, 9) with a stand-in gizzi ──────────────────────────
@@ -762,4 +949,113 @@ async fn unmapped_model_at_turn_start_makes_no_call() {
     assert_eq!(fake.0.prompts.load(Ordering::SeqCst), 0);
     assert!(fx.st.store.list_events(&sid, 0, 10, None).await.unwrap().is_empty());
     assert_eq!(fx.st.store.get_session(&sid).await.unwrap().status, "idle");
+}
+
+async fn send_message(fx: &Fx, content: &str) {
+    let r = fx
+        .post(&format!("/v1/sessions/{}/messages", fx.session_id), Auth::Bearer(&fx.dev), json!({ "content": content }))
+        .await;
+    assert_eq!(r.status, 202, "{}", r.body);
+}
+
+/// Serve the turn's one bash call with an already claimed item.
+async fn serve_one_call(fx: &Fx, work_id: &str, secret: &str) {
+    let call = fx.next(work_id, secret, 10_000).await;
+    assert_eq!(call.status, 200, "{}", call.body);
+    let id = call.body["tool_call_id"].as_str().unwrap().to_string();
+    assert_eq!(fx.result(&id, secret, "hi\n").await.status, 200);
+}
+
+/// Plan D-A: the worker is released `sessions.idle_timeout` after the turn
+/// ends (204 + X-Session-Closed), not before, and the next turn that needs a
+/// tool queues a new item.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn worker_is_released_idle_timeout_after_the_turn_ends() {
+    let idle = chrono::Duration::seconds(2);
+    let mut settings = Settings::default();
+    settings.sessions.idle_timeout = "2s".into();
+    let (fx, _fake) = loop_fixture(settings).await;
+
+    send_message(&fx, "run bash").await;
+    let c = fx.claim(10_000).await;
+    assert_eq!(c.status, 200, "{}", c.body);
+    let work_id = c.body["work_id"].as_str().unwrap().to_string();
+    let secret = c.body["session_secret"].as_str().unwrap().to_string();
+    serve_one_call(&fx, &work_id, &secret).await;
+    fx.wait_status("idle").await;
+    let ended = fx.st.store.get_session(&fx.session_id).await.unwrap().updated_at;
+
+    // The worker keeps polling, the way a real one does.
+    let closed_at = loop {
+        let r = fx.next(&work_id, &secret, 500).await;
+        assert_eq!(r.status, 204, "{}", r.body);
+        let now = Utc::now();
+        if r.closed {
+            break now;
+        }
+        assert!(now - ended < idle + chrono::Duration::seconds(3), "never released");
+    };
+    let after = closed_at - ended;
+    assert!(after >= idle, "released {after} after the turn ended, before idle_timeout");
+    assert!(after < idle + chrono::Duration::milliseconds(2500), "released late: {after}");
+
+    let done = fx
+        .post(&format!("/v1/work/{work_id}/complete"), Auth::Bearer(&fx.aek), json!({ "lease_generation": 1 }))
+        .await;
+    assert_eq!(done.body["status"], json!("completed"));
+
+    // The next turn queues a new item, and the same worker serves it.
+    send_message(&fx, "run bash again").await;
+    let c2 = fx.claim(10_000).await;
+    assert_eq!(c2.status, 200, "{}", c2.body);
+    let w2 = c2.body["work_id"].as_str().unwrap().to_string();
+    assert_ne!(w2, work_id);
+    serve_one_call(&fx, &w2, c2.body["session_secret"].as_str().unwrap()).await;
+    fx.wait_status("idle").await;
+}
+
+/// A turn that starts right after the worker was told the session closed,
+/// before the worker completed its item: the call is not lost. The internal
+/// route queues a new item once the old one is completed, and a worker
+/// serves the call.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn tool_call_right_after_close_is_still_served() {
+    let mut settings = Settings::default();
+    settings.sessions.idle_timeout = "500ms".into();
+    let (fx, _fake) = loop_fixture(settings).await;
+    fx.st.store.enqueue_work(&fx.env_id, &fx.session_id).await.unwrap();
+    let c = fx.claim(0).await;
+    let work_id = c.body["work_id"].as_str().unwrap().to_string();
+    let secret = c.body["session_secret"].as_str().unwrap().to_string();
+    tokio::time::sleep(Duration::from_millis(600)).await;
+    let r = fx.next(&work_id, &secret, 0).await;
+    assert!(r.closed, "idle past the timeout");
+
+    // The worker is about to complete; a new turn runs bash right now.
+    send_message(&fx, "run bash").await;
+    // The call is queued while the old item is still leased (so the session
+    // stays running, not waiting_for_worker).
+    for _ in 0..200 {
+        if fx.st.store.has_open_tool_calls(&fx.session_id).await.unwrap() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    assert!(fx.st.store.has_open_tool_calls(&fx.session_id).await.unwrap());
+    let done = fx
+        .post(&format!("/v1/work/{work_id}/complete"), Auth::Bearer(&fx.aek), json!({ "lease_generation": 1 }))
+        .await;
+    assert_eq!(done.body["status"], json!("completed"));
+
+    let c2 = fx.claim(10_000).await;
+    assert_eq!(c2.status, 200, "a new item for the pending call: {}", c2.body);
+    let w2 = c2.body["work_id"].as_str().unwrap().to_string();
+    assert_ne!(w2, work_id);
+    serve_one_call(&fx, &w2, c2.body["session_secret"].as_str().unwrap()).await;
+    fx.wait_status("idle").await;
+    let events = fx.events().await;
+    let results = of_type(&events, "tool_result");
+    assert_eq!(results.len(), 1, "{events:?}");
+    assert_eq!(results[0].data["output"], json!("hi\n"));
+    assert_eq!(of_type(&events, "message").last().unwrap().data["content"], json!("ran: hi\n"));
 }
