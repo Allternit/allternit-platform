@@ -23,6 +23,12 @@
 //! gizzi (>= 2.2.4) names the calling session in the call's `_meta["allternit/session"]`; then the
 //! session's bot acts and a disagreeing `agent_id` is ignored, and a held call's approval carries
 //! that session id (its thread stays the contact's thread). With no session the `agent_id` is used.
+//!
+//! On a Platform project runtime (owner `platform:…`) both tools are always listed (gizzi may
+//! cache the tool list before a number syncs; the session's rules hide them from agents without
+//! the tool), take an optional `from` (which of the agent's numbers), and run through
+//! [`crate::platform_tools::phone_tool`]: the cloud sends from the agent tool route, autonomy is
+//! evaluated here on the calling session.
 
 use std::sync::Arc;
 
@@ -394,18 +400,20 @@ pub fn phone_outbound_router() -> Router<Arc<AppState>> {
 
 // ---------------------------------------------------------------- bot tools
 
-/// `phone_text` / `phone_call` descriptors, only for an owner who has a number.
+/// `phone_text` / `phone_call` descriptors, for an owner who has a number and always on a
+/// Platform project runtime (with an optional `from`).
 pub fn mcp_tools(db: &DbHandle, owner: &str) -> Vec<Value> {
+    let platform = owner.starts_with("platform:");
     let has_number = db
         .connect()
         .ok()
         .and_then(|c| c.query_row("SELECT COUNT(*) FROM channel_phone_numbers WHERE owner = ?1", params![owner], |r| r.get::<_, i64>(0)).ok())
         .unwrap_or(0)
         > 0;
-    if !has_number {
+    if !has_number && !platform {
         return vec![];
     }
-    vec![
+    let mut tools = vec![
         json!({
             "name": "phone_text",
             "title": "Send a text message",
@@ -426,7 +434,13 @@ pub fn mcp_tools(db: &DbHandle, owner: &str) -> Vec<Value> {
                 "agent_id": { "type": "string" }
             }, "required": ["to", "purpose"], "additionalProperties": false }
         }),
-    ]
+    ];
+    if platform {
+        for t in &mut tools {
+            t["inputSchema"]["properties"]["from"] = json!({ "type": "string", "description": "Which of your numbers to use (E.164); only needed when you have several" });
+        }
+    }
+    tools
 }
 
 pub fn is_tool(name: &str) -> bool {
@@ -452,6 +466,11 @@ fn session_agent(db: &DbHandle, owner: &str, session_id: &str) -> Option<String>
 
 /// Run a tool. A refusal is an `ok:false` result with a plain sentence, not a tool error.
 pub async fn call_mcp_tool(state: &Arc<AppState>, owner: &str, name: &str, args: Value, meta: Option<&Value>) -> Result<Value, (StatusCode, Json<Value>)> {
+    // A project's hosted agents send from numbers the cloud bound to them (no sealed `sms`
+    // account, no contact thread): the cloud's agent tool route sends.
+    if owner.starts_with("platform:") {
+        return crate::platform_tools::phone_tool(&state.db, &crate::platform_tools::ProdCloud, owner, name, args, meta).await;
+    }
     call_mcp_tool_with(&state.db, &runtime(state), Arc::new(ReqwestSend), owner, name, args, meta).await
 }
 

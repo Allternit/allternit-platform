@@ -1097,6 +1097,11 @@ pub(crate) fn create_approval(db: &DbHandle, cx: &Cx, authority: &str, action: &
     if let Some(sid) = session {
         payload["session_id"] = json!(sid);
     }
+    // A plain line of what will happen ("Text +1…: …"): the cloud shows it as the
+    // approval's `proposed_action.summary`.
+    if let Some(summary) = detail.get("summary").and_then(Value::as_str).filter(|s| !s.trim().is_empty()) {
+        payload["summary"] = json!(summary);
+    }
     led(db, &cx.bot_id, &cx.thread_id, session, "approval.requested", ("system", "gateway"), payload, None);
     set_thread_status(db, &cx.bot_id, &cx.thread_id, "needs_you", &format!("Approval needed ({authority}): {action}"));
     Ok(aid)
