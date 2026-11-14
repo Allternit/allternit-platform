@@ -52,6 +52,9 @@ Set these in `/opt/allternit-cloud-api/.env` and restart cloud-api.
 | `ALLTERNIT_BRAIN_RUNNERS` | `0` is the kill switch. Plan rows return "Not available yet. Use a key for now." Set it to `1` to allow boxes. |
 | `ALLTERNIT_RUNNER_VENDORS` | Default `claude,chatgpt,grok,kimi`. A vendor missing from the list is off. Take a vendor off if its program fails the tools-off check or its sign-in. |
 | `ALLTERNIT_RUNNER_RAM_BUDGET_MB` | Default 4096. |
+| `ALLTERNIT_BRAIN_RUNNERS_USERS` | Optional staging list: comma-separated user ids. When set, only these accounts get a box and see plan rows as available. Empty or unset means every account. |
+| `ALLTERNIT_RUNNER_SOCKET_URL` | What a box dials back to, e.g. `wss://api.allternit.com/api/v1/brain-runner/socket`. |
+| `ALLTERNIT_RUNNER_INIT` | Default `/usr/local/bin/allternit-runner-init`, the image wrapper that fixes the home owner, drops root and starts the runner under tini. |
 
 To stop everything now: set `ALLTERNIT_BRAIN_RUNNERS=0` and restart cloud-api. Rows go off for everyone; running boxes can then be stopped with `incus stop`. Disconnect and account erase destroy a person's box and their sign-ins; the accepted-disclosure record is erased with the account.
 
