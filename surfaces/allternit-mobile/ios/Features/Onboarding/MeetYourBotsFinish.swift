@@ -316,6 +316,9 @@ enum MeetTemplateCreate {
         guard let id = ModelStore.shared.selectedModelId?.trimmingCharacters(in: .whitespaces), !id.isEmpty else {
             return nil
         }
+        // A person-only model (the person's own plan) never becomes a bot's
+        // brain: bots run without the person sending each message (§9.1).
+        guard !PersonModels.isPersonOnly(id) else { return nil }
         guard let slash = id.firstIndex(of: "/"), slash != id.startIndex else { return (id, "allternit") }
         return (String(id[id.index(after: slash)...]), String(id[..<slash]))
     }

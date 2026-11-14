@@ -236,6 +236,7 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
         branches = []
         editedVersions = [:]
         currentSessionId = nil
+        hasLocalPersonTurns = false
         isIncognito = ephemeral
         sessionContext.ephemeral = ephemeral
     }
@@ -253,6 +254,7 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
         messages = []
         branches = []
         editedVersions = [:]
+        hasLocalPersonTurns = false
 
         Task { [weak self] in
             guard let self else { return }
@@ -540,6 +542,13 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
     func resendEditedMessage(_ messageId: String, newText: String, attachments: [StagedAttachment] = [], runtimeModelId: String?, effort: String? = nil) {
         guard !isStreaming, !isCreatingSession,
               let index = messages.firstIndex(where: { $0.id == messageId }) else { return }
+        // A chat with the person's own plan lives on this phone only: cut the
+        // feed back to that message and send the new text.
+        if currentSessionId == nil, PersonModels.isPersonOnly(runtimeModelId) {
+            messages.removeSubrange(index...)
+            sendMessage(ToolOptionsStore.shared.enrichedText(newText), attachments: attachments, runtimeModelId: runtimeModelId, effort: effort, enrich: false)
+            return
+        }
         guard let sessionId = currentSessionId else {
             transientError = "Couldn't edit this message: the chat isn't saved yet."
             return
@@ -602,6 +611,11 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
     /// `stagedAttachments` are uploaded first; `preparedRefs` skips the
     /// upload step (retry of an already-uploaded send).
     private func startStream(text trimmed: String, runtimeModelId: String?, effort: String? = nil, stagedAttachments: [StagedAttachment] = [], preparedRefs: [AttachmentRef]? = nil, userMessageId: String? = nil) {
+        if let modelId = runtimeModelId, PersonModels.isPersonOnly(modelId) {
+            startPersonStream(text: trimmed, modelId: modelId,
+                              hasAttachments: !stagedAttachments.isEmpty || !(preparedRefs ?? []).isEmpty)
+            return
+        }
         transientError = nil
         draftToRestore = nil
 
@@ -708,6 +722,73 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
                 } else {
                     self.failStreaming(messageId: assistantId, error: error)
                 }
+            }
+        }
+    }
+
+    // MARK: - The person's own plan (contract §9.3, §9.9)
+
+    /// True once this chat has turns sent to a person model. They live only
+    /// in this feed (no computer session), so the foreground reload must not
+    /// replace them with the server transcript.
+    private var hasLocalPersonTurns = false
+
+    /// The history a person model gets each turn (D8: replayed, no resume):
+    /// every finished user and assistant message, with `text` as the last
+    /// user message (it carries the composer's prefixes).
+    nonisolated static func personHistory(_ messages: [MessageRecord], text: String) -> [PersonChatMessage] {
+        var out: [PersonChatMessage] = messages.compactMap { m in
+            guard ["user", "assistant", "system"].contains(m.role), !m.isStreaming, m.error == nil else { return nil }
+            let content = m.content.trimmingCharacters(in: .whitespacesAndNewlines)
+            return content.isEmpty ? nil : PersonChatMessage(role: m.role, content: m.content)
+        }
+        if let last = out.last, last.role == "user" { out.removeLast() }
+        out.append(PersonChatMessage(role: "user", content: text))
+        return out
+    }
+
+    /// A composer send to a person model: plan/… and copilot/… go to cloud-api
+    /// with `X-Allternit-Turn: person`; chatgpt/… go from the phone to OpenAI.
+    /// No session on a computer, no tools, no attachments. A refusal lands
+    /// inline under the reply in plain words.
+    private func startPersonStream(text: String, modelId: String, hasAttachments: Bool) {
+        transientError = nil
+        draftToRestore = nil
+        let history = Self.personHistory(messages, text: text)
+        let vendor = PersonModels.vendorName(for: modelId)
+
+        let assistantId = UUID().uuidString
+        messages.append(MessageRecord(id: assistantId, role: "assistant", content: "", isStreaming: true))
+        isStreaming = true
+        streamingMessageId = assistantId
+        hasLocalPersonTurns = true
+        lastSent = (text, modelId, nil, [])
+
+        streamTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                if hasAttachments { throw PersonChatRefusal(code: "text_only", message: nil, vendor: vendor) }
+                self.streamRequestStartedAt = Date()
+                self.streamFirstDeltaAt = nil
+                for try await event in PersonChatClient.stream(model: modelId, messages: history) {
+                    try Task.checkCancellation()
+                    if case .delta(let chunk) = event {
+                        _ = self.apply(.textDelta(.init(messageId: nil, partId: nil, text: chunk)), to: assistantId)
+                    }
+                }
+                self.finishStreaming(messageId: assistantId)
+                UINotificationFeedbackGenerator().notificationOccurred(.success)
+            } catch is CancellationError {
+                self.flushPendingDeltas()
+            } catch let error as URLError where error.code == .cancelled {
+                self.flushPendingDeltas()
+            } catch let refusal as PersonChatRefusal {
+                self.flushPendingDeltas()
+                self.updateMessage(assistantId) { $0.error = refusal.card }
+                self.finishStreaming(messageId: assistantId)
+                UINotificationFeedbackGenerator().notificationOccurred(.error)
+            } catch {
+                self.failStreaming(messageId: assistantId, error: error)
             }
         }
     }
@@ -881,6 +962,15 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
     /// connection).
     private func reconcileSession() async {
         guard streamTask == nil else { return }
+        // Plan turns aren't on the server; reloading would drop them.
+        if hasLocalPersonTurns {
+            if let messageId = streamingMessageId {
+                updateMessage(messageId) { $0.isStreaming = false }
+                streamingMessageId = nil
+                isStreaming = false
+            }
+            return
+        }
 
         // A stream cancelled by backgrounding is no longer streaming locally.
         if let messageId = streamingMessageId {

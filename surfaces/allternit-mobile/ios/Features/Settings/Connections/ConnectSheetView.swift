@@ -9,12 +9,15 @@ enum ConnSheet: Identifiable, Equatable {
     case login(String)
     /// Something that is set up on the computer itself (local brain).
     case onComputer(String)
+    /// Sign in with ChatGPT on this iPhone (contract §9.9).
+    case chatgptDevice
 
     var id: String {
         switch self {
         case .keys(let only): return "keys-\(only ?? "all")"
         case .login(let id): return "login-\(id)"
         case .onComputer(let id): return "computer-\(id)"
+        case .chatgptDevice: return "chatgpt-device"
         }
     }
 }
@@ -74,7 +77,8 @@ struct ConnectSheetView: View {
                 }
             }
         }
-        .presentationDetents([.medium, .large])
+        // The ChatGPT sign-in page needs the full height.
+        .presentationDetents(sheet == .chatgptDevice ? [.large] : [.medium, .large])
         .presentationDragIndicator(.visible)
     }
 
@@ -86,6 +90,8 @@ struct ConnectSheetView: View {
         case .login(let id), .onComputer(let id):
             let name = ConnectionsCatalog.entry(id)?.name ?? id
             return store.state(id) == .needs ? "Reconnect \(name)" : "Connect \(name)"
+        case .chatgptDevice:
+            return store.state("chatgpt") == .needs ? "Reconnect ChatGPT" : "Connect ChatGPT"
         }
     }
 
@@ -108,6 +114,11 @@ struct ConnectSheetView: View {
             }
         case .login(let id):
             ConnLoginStep(id: id, store: store, onConnected: { onConnected?(id) }, onFallback: { f in
+                dismiss()
+                onFallback?(f)
+            })
+        case .chatgptDevice:
+            ChatGPTSignInStep(store: store, onConnected: { onConnected?("chatgpt") }, onFallback: { f in
                 dismiss()
                 onFallback?(f)
             })
@@ -273,19 +284,27 @@ struct AnyButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View { make(configuration) }
 }
 
-/// A sign-in on the computer: a device code (Copy + Open) or a link and a
-/// paste-back code (Open + Paste). Polls `/login` every 2 s and stops on
-/// done, expired or failed. No "I entered it" button anywhere.
+/// A sign-in on the computer or on an Allternit runner (plan rows, contract
+/// §9): a device code (Copy + Open) or a link and a paste-back code (Open +
+/// Paste). A runner row first shows the server's disclosure. Polls `/login`
+/// every 2 s and stops on done, expired or failed. No "I entered it" button
+/// anywhere.
 private struct ConnLoginStep: View {
     let id: String
     @ObservedObject var store: ConnectionsStore
     let onConnected: () -> Void
     let onFallback: (String) -> Void
 
-    private enum Phase: Equatable { case starting, vendor, done, failed(String), expired }
+    private enum Phase: Equatable { case starting, disclosure(ConnDisclosure), vendor, done, failed(String), expired }
 
     @Environment(\.openURL) private var openURL
+    @Environment(\.scenePhase) private var scenePhase
     @State private var phase: Phase = .starting
+    /// The disclosure version the person accepted in this sheet.
+    @State private var accepted: String?
+    /// The clipboard's change count when the vendor page was opened: a
+    /// newer one on return means the person copied the code.
+    @State private var pasteboardAtOpen: Int?
     @State private var login: ConnLogin?
     @State private var opened = false
     @State private var copied = false
@@ -294,6 +313,8 @@ private struct ConnLoginStep: View {
     @State private var attempt = 0
 
     private var entry: ConnEntry? { ConnectionsCatalog.entry(id) }
+    /// Plan rows sign in on an Allternit runner, not on a computer.
+    private var onRunner: Bool { ConnectionsCatalog.runnerIds.contains(id) || store.row(id).runsOn == "runner" }
     private var vendor: String {
         switch id {
         case "chatgpt", "codex": return "ChatGPT"
@@ -316,11 +337,22 @@ private struct ConnLoginStep: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(RoundedRectangle(cornerRadius: 10).fill(Color(hex: "#E8A33A").opacity(0.12)))
             }
-            Text("\(entry?.name ?? vendor) on your computer signs in with a code from \(vendor)'s own page. Allternit never sees your password.")
-                .font(.system(size: 14))
-                .foregroundColor(Color("TextSecondary"))
-                .fixedSize(horizontal: false, vertical: true)
+            if case .disclosure = phase {} else {
+                Text(onRunner
+                     ? "Your \(vendor) plan signs in on Allternit, with a code from \(vendor)'s own page. No computer needed. Allternit never sees your password."
+                     : "\(entry?.name ?? vendor) on your computer signs in with a code from \(vendor)'s own page. Allternit never sees your password.")
+                    .font(.system(size: 14))
+                    .foregroundColor(Color("TextSecondary"))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             switch phase {
+            case .disclosure(let disclosure):
+                ConnDisclosureView(disclosure: disclosure, onAccept: {
+                    accepted = disclosure.version
+                    attempt += 1
+                }, onDecline: {
+                    onFallback(store.row(id).fallbacks.first { $0.hasSuffix("-key") } ?? ConnectionsCatalog.keyFallback(id))
+                })
             case .starting:
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)
@@ -343,6 +375,26 @@ private struct ConnLoginStep: View {
         }
         .task(id: attempt) { await run() }
         .onReceive(Timer.publish(every: 1, on: .main, in: .common).autoconnect()) { now = $0 }
+        .onChange(of: scenePhase) { _, next in
+            if next == .active { pickUpCopiedCode() }
+        }
+    }
+
+    /// Claude's paste-back code (contract §6): back from Safari with a new
+    /// clipboard, take the code from it without a Paste tap.
+    private func pickUpCopiedCode() {
+        guard phase == .vendor, opened, !submitting, login?.kind == .linkPaste,
+              let before = pasteboardAtOpen, UIPasteboard.general.changeCount != before,
+              UIPasteboard.general.hasStrings else { return }
+        pasteboardAtOpen = UIPasteboard.general.changeCount
+        let text = (UIPasteboard.general.string ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard Self.looksLikeCode(text) else { return }
+        Task { await submitCode(text) }
+    }
+
+    /// One token, no spaces, a sane length: a code, not a copied sentence.
+    static func looksLikeCode(_ text: String) -> Bool {
+        (8...512).contains(text.count) && !text.contains(where: \.isWhitespace)
     }
 
     private func retry(_ message: String) -> some View {
@@ -350,7 +402,9 @@ private struct ConnLoginStep: View {
             Text(message).font(.system(size: 13.5)).foregroundColor(Color("TextPrimary"))
             HStack(spacing: 8) {
                 Button("Try again") { attempt += 1 }.buttonStyle(ConnPrimaryButtonStyle())
-                if !store.computerOnline {
+                if onRunner {
+                    Button("Use a key instead") { onFallback(ConnectionsCatalog.keyFallback(id)) }.buttonStyle(ConnQuietButtonStyle())
+                } else if !store.computerOnline {
                     Button("Add a computer") { onFallback("this-mac") }.buttonStyle(ConnQuietButtonStyle())
                 }
             }
@@ -441,6 +495,7 @@ private struct ConnLoginStep: View {
                 UIPasteboard.general.string = code
                 copied = true
             }
+            pasteboardAtOpen = UIPasteboard.general.changeCount
             if let url = login.openURL { openURL(url) }
             opened = true
         } label: {
@@ -469,7 +524,7 @@ private struct ConnLoginStep: View {
         defer { if phase != .done { store.setConnecting(id, false) } }
         let target = store.target(for: id)
         do {
-            let result = try await ConnectionsClient.connect(id, target: target, way: "code")
+            let result = try await ConnectionsClient.connect(id, target: target, way: "code", acceptDisclosure: accepted)
             if result.state == .on, result.login == nil {
                 store.markOn(id)
                 phase = .done
@@ -504,6 +559,10 @@ private struct ConnLoginStep: View {
             }
         } catch is CancellationError {
             return
+        } catch ConnectionsError.disclosureRequired(let disclosure) {
+            // §9.2: read and accept first (also when the version changed).
+            store.setConnecting(id, false)
+            phase = .disclosure(disclosure)
         } catch {
             phase = .failed(ConnectionsClient.describe(error))
         }
@@ -522,8 +581,61 @@ private struct ConnLoginStep: View {
                 onConnected()
             }
             // Otherwise the /login poll reports the result.
+        } catch ConnectionsError.disclosureRequired(let disclosure) {
+            phase = .disclosure(disclosure)
         } catch {
             phase = .failed(ConnectionsClient.describe(error))
         }
+    }
+}
+
+/// The disclosure step (contract §9.2, §9.8): the server's title and
+/// sentences exactly as sent, then accept or use a key instead. Nothing is
+/// sent on decline.
+struct ConnDisclosureView: View {
+    let disclosure: ConnDisclosure
+    var busy = false
+    let onAccept: () -> Void
+    let onDecline: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(disclosure.title)
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundColor(Color("TextPrimary"))
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityAddTraits(.isHeader)
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach(Array(disclosure.body.enumerated()), id: \.offset) { _, line in
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Circle().fill(Color("TextTertiary")).frame(width: 4, height: 4).accessibilityHidden(true)
+                        Text(line)
+                            .font(.system(size: 14))
+                            .foregroundColor(Color("TextPrimary"))
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color("FillNeutral")))
+            HStack(spacing: 8) {
+                Button(action: onAccept) {
+                    HStack(spacing: 6) {
+                        if busy { ProgressView().controlSize(.small).tint(Color("BgPrimary")) }
+                        Text(disclosure.acceptLabel)
+                    }
+                }
+                .buttonStyle(ConnPrimaryButtonStyle())
+                .disabled(busy)
+                .accessibilityIdentifier("conn-disclosure-accept")
+                Button(disclosure.declineLabel, action: onDecline)
+                    .buttonStyle(ConnQuietButtonStyle())
+                    .disabled(busy)
+                    .accessibilityIdentifier("conn-disclosure-decline")
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("conn-disclosure")
     }
 }

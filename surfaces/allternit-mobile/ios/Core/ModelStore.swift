@@ -30,7 +30,14 @@ final class ModelStore: ObservableObject {
         didSet { defaults.set(fastMode, forKey: Keys.fastMode) }
     }
 
+    /// The computer's catalog. Bots and routines pick from
+    /// `automationModels`, never from the person models below.
     @Published private(set) var models: [RuntimeModel] = []
+    /// Models that answer only the person's own chat messages: plan and
+    /// Copilot rows that are connected, and ChatGPT signed in on this phone
+    /// (`PersonModels`). Kept apart from `models` so no bot or routine
+    /// picker can offer them.
+    @Published private(set) var personModels: [RuntimeModel] = []
     @Published private(set) var isLoading = false
     @Published private(set) var loadError: String? = nil
 
@@ -58,6 +65,7 @@ final class ModelStore: ObservableObject {
     /// or "Pick a brain" when none is chosen (there is no default model).
     var pillLabel: String {
         guard let selectedModelId, !selectedModelId.isEmpty else { return "Pick a brain" }
+        if let person = personModels.first(where: { $0.id == selectedModelId }) { return person.name }
         let short = selectedModelId.split(separator: "/", maxSplits: 1).last.map(String.init) ?? selectedModelId
         guard let thinking = models.first(where: { $0.id == selectedModelId })?.effectiveThinking else { return short }
         return "\(short) \(thinking.label(thinking.level(selectedEffort)))"
@@ -65,7 +73,25 @@ final class ModelStore: ObservableObject {
 
     /// The currently selected catalog entry, when the catalog is loaded.
     var selectedModel: RuntimeModel? {
-        models.first { $0.id == selectedModelId }
+        chatModels.first { $0.id == selectedModelId }
+    }
+
+    /// What the chat composer's picker offers: the person's own plans first,
+    /// then the catalog.
+    var chatModels: [RuntimeModel] { personModels + models }
+
+    /// What a bot, routine or schedule may use: the catalog without any
+    /// person-only model (contract §9.1 `person_only`).
+    var automationModels: [RuntimeModel] { PersonModels.forAutomation(models) }
+
+    /// `automationModels` grouped by provider, in catalog order.
+    var automationProviders: [(provider: String, models: [RuntimeModel])] {
+        Self.grouped(automationModels)
+    }
+
+    func setPersonModels(_ list: [RuntimeModel]) {
+        guard list != personModels else { return }
+        personModels = list
     }
 
     /// Effort to attach to the next send — nil unless the selected model
@@ -95,7 +121,9 @@ final class ModelStore: ObservableObject {
 
     /// Catalog rows grouped by provider, preserving catalog order — the
     /// selector menu renders one section per provider.
-    var providers: [(provider: String, models: [RuntimeModel])] {
+    var providers: [(provider: String, models: [RuntimeModel])] { Self.grouped(models) }
+
+    private static func grouped(_ models: [RuntimeModel]) -> [(provider: String, models: [RuntimeModel])] {
         var order: [String] = []
         var byProvider: [String: [RuntimeModel]] = [:]
         for model in models {
@@ -148,7 +176,10 @@ final class ModelStore: ObservableObject {
             // before the catalog carried provider-prefixed ids) is a dead end:
             // clear it so the composer shows "Pick a brain" and the next send
             // opens the picker.
+            // A person model (plan/…, copilot/…, chatgpt/…) isn't in the
+            // computer's catalog; its row in Connections decides if it works.
             let selectionIsStale = self.selectedModelId != nil
+                && !PersonModels.isPersonOnly(self.selectedModelId)
                 && !self.models.contains(where: { $0.id == self.selectedModelId })
             if selectionIsStale, !self.models.isEmpty {
                 // A CLI model the vendor retired: carry the user's choice to

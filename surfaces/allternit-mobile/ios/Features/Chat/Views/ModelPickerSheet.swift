@@ -9,6 +9,10 @@ struct ModelPickerSheet: View {
     @ObservedObject var modelStore: ModelStore
     @ObservedObject private var quotas = ProviderQuotaStore.shared
     @ObservedObject private var usage = UsageStore.shared
+    /// Connected plans (plan/…, copilot/…) and ChatGPT on this phone feed
+    /// `modelStore.personModels`; observed so new rows show at once.
+    @ObservedObject private var connections = ConnectionsStore.shared
+    @ObservedObject private var chatgpt = ChatGPTDeviceStore.shared
     @Environment(\.dismiss) private var dismiss
 
     private enum Scope: Hashable { case all, favorites, provider(String) }
@@ -46,6 +50,11 @@ struct ModelPickerSheet: View {
             modelStore.fetchModelsIfNeeded()
             usage.fetchUsageIfNeeded()
             quotas.load(providerIds)
+            // Plans connect on cloud-api, so they show with no computer at all.
+            Task {
+                if !connections.loaded { await connections.load() }
+                await chatgpt.loadModels()
+            }
         }
         .onChange(of: modelStore.models) { _, _ in quotas.load(providerIds) }
         .sheet(isPresented: $isConnectPresented) {
@@ -188,7 +197,7 @@ struct ModelPickerSheet: View {
 
     private var providerIds: [String] {
         var ids: [String] = []
-        for model in modelStore.models where !ids.contains(model.provider) { ids.append(model.provider) }
+        for model in modelStore.chatModels where !ids.contains(model.provider) { ids.append(model.provider) }
         return ids.sorted { a, b in
             let ra = ModelProviderNames.rank(a), rb = ModelProviderNames.rank(b)
             return ra != rb ? ra < rb : ModelProviderNames.name(a) < ModelProviderNames.name(b)
@@ -197,7 +206,7 @@ struct ModelPickerSheet: View {
 
     /// Catalog rows the picker offers: hidden (retired) ones only when current.
     private var offered: [RuntimeModel] {
-        modelStore.models.filter { !$0.isHidden || $0.id == modelStore.selectedModelId }
+        modelStore.chatModels.filter { !$0.isHidden || $0.id == modelStore.selectedModelId }
     }
 
     private var searching: Bool { !query.trimmingCharacters(in: .whitespaces).isEmpty }
@@ -237,9 +246,9 @@ struct ModelPickerSheet: View {
 
     @ViewBuilder
     private var modelList: some View {
-        if modelStore.isLoading && modelStore.models.isEmpty {
+        if modelStore.isLoading && modelStore.chatModels.isEmpty {
             ProgressView().frame(maxWidth: .infinity).padding(.top, 32)
-        } else if modelStore.models.isEmpty, let loadError = modelStore.loadError {
+        } else if modelStore.chatModels.isEmpty, let loadError = modelStore.loadError {
             FriendlyStateView(
                 style: .offline,
                 icon: "wifi.slash",
@@ -349,6 +358,11 @@ struct ModelPickerSheet: View {
     }
 
     private func accountSummary(_ pid: String) -> String {
+        if PersonModels.providerNames[pid] != nil {
+            return pid == "chatgpt-phone"
+                ? "Your ChatGPT plan, from this iPhone · only messages you send"
+                : "Your own plan · only messages you send in chat"
+        }
         if pid == "allternit" {
             let left = usage.percentUsed.map { "\(max(0, 100 - Int($0.rounded())))% of allowance left" }
             let parts = ["Allternit Cloud", usage.planLabel, left].compactMap { $0 }
@@ -388,11 +402,27 @@ enum ModelProviderNames {
         "omlx": "oMLX",
         "local-brain": "Local Brain",
         "allternit-sidecar": "Local Brain",
-    ]
+    ].merging(PersonModels.providerNames) { a, _ in a }
     private static let local: Set<String> = ["ollama", "omlx", "allternit-sidecar", "local-brain"]
 
     static func name(_ pid: String) -> String { names[pid] ?? pid.capitalized }
-    static func rank(_ pid: String) -> Int { pid == "allternit" ? 0 : local.contains(pid) ? 2 : 1 }
+    /// The person's own plans first, then Allternit Cloud, providers, local.
+    static func rank(_ pid: String) -> Int {
+        if PersonModels.providerNames[pid] != nil { return -1 }
+        return pid == "allternit" ? 0 : local.contains(pid) ? 2 : 1
+    }
+
+    /// The letter on a provider's tile: the vendor's, not "Your …".
+    static func mark(_ pid: String) -> String {
+        switch pid {
+        case "plan-claude": return "C"
+        case "plan-chatgpt", "chatgpt-phone": return "G"
+        case "plan-grok": return "X"
+        case "plan-kimi": return "K"
+        case "copilot": return "G"
+        default: return String(name(pid).prefix(1))
+        }
+    }
 }
 
 /// Provider mark: the A:// matrix for Allternit Cloud, else the provider's
@@ -409,7 +439,7 @@ struct ModelProviderMark: View {
                     .scaledToFit()
                     .padding(size * 0.08)
             } else {
-                Text(String(ModelProviderNames.name(providerId).prefix(1)))
+                Text(ModelProviderNames.mark(providerId))
                     .font(.system(size: size * 0.55, weight: .semibold))
                     .foregroundColor(Color("TextPrimary"))
             }
