@@ -37,7 +37,7 @@ The script is `cmd/allternit-cloud-api/deploy/incus/brain-runner-host.sh`. It pr
 - an Incus profile for each box: 768 MB of memory enforced hard, no swap, 1 CPU, a process cap, nesting off;
 - a 256 MiB volume per box, mounted at `/home/runner`, which holds the vendor sign-ins and counts against the person's quota.
 
-The image is built by `cmd/allternit-computer-cloud/guest/build-brain-runner-image.sh`: Debian slim, Node 22.19 or newer, the four vendor programs at pinned versions with self-update off, and the runner program. Boxes are btrfs copy-on-write clones of it.
+The image is built by `cmd/allternit-computer-cloud/guest/build-brain-runner-image.sh`: Ubuntu 24.04 (the same glibc as the runner program build), Node 22.19 or newer, the four vendor programs at pinned versions with self-update off, and the runner program. Boxes are btrfs copy-on-write clones of it.
 
 ## RAM budget
 
