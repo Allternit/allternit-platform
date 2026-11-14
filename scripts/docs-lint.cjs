@@ -224,7 +224,8 @@ for (const mdxPath of collectMdxFiles(DOCS_DIR)) {
       if (mdxPath.endsWith('tools/open-notebook.mdx')) continue;
       // Connections lists the AI apps it reads on a linked phone, and the context window
       // page explains how each brain's own /context or session record is read.
-      if (['guides/connections.mdx', 'api/connections.mdx', 'surfaces/context-window.mdx'].some((p) => mdxPath.endsWith(p))) continue;
+      // Use your plan names each AI plan and which work with no computer; add-a-connection names the key providers.
+      if (['guides/connections.mdx', 'api/connections.mdx', 'surfaces/context-window.mdx', 'guides/use-your-plan.mdx', 'build-on-allternit/add-a-connection.mdx'].some((p) => mdxPath.endsWith(p))) continue;
       // Agent steps reads each CLI brain's own task tools and web-search output, so it names them.
       if (mdxPath.endsWith('guides/agent-steps.mdx')) continue;
       // Progress and response parts map each brain's own plan, citation and search events, so they name them.
