@@ -300,6 +300,9 @@ incus exec "${BUILD_CONTAINER}" -- sh -c '
     test -f /opt/allternit/meeting-bot/dist/runner.js
     test -d /opt/allternit/meeting-bot/node_modules/playwright-core
     test -d /opt/allternit/meeting-bot/node_modules/livekit-client
+    # Zoom pods publish call audio from Node with @livekit/rtc-node (native, prebuilt per platform).
+    test -d /opt/allternit/meeting-bot/node_modules/@livekit/rtc-node
+    find /opt/allternit/meeting-bot/node_modules/.pnpm -name "rtc-node.linux-$(uname -m | sed s/x86_64/x64/ | sed s/aarch64/arm64/)-gnu.node" | grep -q . || { echo "rtc-node native binary for this arch missing" >&2; exit 1; }
     # The bot account profile volume (persisted, encrypted at rest on the host; BOT-ACCOUNTS.md).
     mkdir -p /var/lib/allternit/bot-profile && chown meetbot:meetbot /var/lib/allternit/bot-profile && chmod 0700 /var/lib/allternit/bot-profile
     mkdir -p /etc/allternit && chmod 0755 /etc/allternit
@@ -446,6 +449,9 @@ incus exec "${BUILD_CONTAINER}" -- sh -c '
     out=$(cd /opt/allternit/meeting-bot && su -s /bin/sh meetbot -c "$exec_node dist/runner.js" 2>&1; true)
     echo "$out" | grep -q "ALLTERNIT_POD_CONFIG" || { echo "runner smoke check failed: $out" >&2; exit 1; }
     echo "runner refuses to start without a pod config: ok"
+    out=$(cd /opt/allternit/meeting-bot && su -s /bin/sh meetbot -c "node -e \"import(\\\"@livekit/rtc-node\\\").then(m => { new m.AudioSource(48000, 1); console.log(\\\"rtc-node ok\\\"); m.dispose(); })\"" 2>&1; true)
+    echo "$out" | grep -q "rtc-node ok" || { echo "rtc-node smoke check failed: $out" >&2; exit 1; }
+    echo "rtc-node loads (Zoom audio bridge): ok"
     systemctl is-enabled allternit-meeting-profile.service >/dev/null || { echo "allternit-meeting-profile.service is not enabled" >&2; exit 1; }
     test -x /usr/local/sbin/allternit-meeting-profile-unpack && test -x /usr/local/sbin/allternit-meeting-profile-save
     systemctl show -p ExecStopPost allternit-meeting-bot.service | grep -q allternit-meeting-profile-save || { echo "runner unit has no profile save hook" >&2; exit 1; }

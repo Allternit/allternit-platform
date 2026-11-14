@@ -455,6 +455,17 @@ async fn launcher_writes_back_a_clean_meet_session_once_per_day() {
 }
 
 #[test]
+fn launcher_notice_names_the_bot_once() {
+    for platform in ["meet", "zoom"] {
+        let n = notice_text(platform);
+        assert!(n.starts_with("Gizzi (Allternit notetaker) is transcribing this meeting as text."), "{platform}: {n}");
+        assert!(!n.contains("(Allternit) ("), "{platform}: name doubled: {n}");
+    }
+    let n = notice_text("teams");
+    assert!(n.starts_with("Gizzi - Allternit (notetaker) is transcribing this meeting as text."), "{n}");
+}
+
+#[test]
 fn launcher_pod_hosts_allow_list() {
     let any: Vec<String> = vec![];
     assert!(pod_host_allowed(&any, "host_mail"));

@@ -10,11 +10,18 @@
 // chat, or a `leave` control.
 //
 // Media (browser platforms): media.ts installs the camera tile + mic override
-// and the call capture before the meeting page loads; once live, livekit.ts
-// publishes the call mix to room meeting-<sid> and plays the worker's `tts`
-// track into the mic. STT segments come back on the LiveKit data channel; the
+// and the call capture before the meeting page loads; once live,
+// livekit-node.ts publishes the page's call mix (PCM through a Playwright
+// binding) to room meeting-<sid> with @livekit/rtc-node and plays the worker's
+// `tts` track into the page's mic. (The in-page livekit-client publish in
+// livekit.ts is a fallback behind MEETING_BOT_INPAGE_LIVEKIT=1: Meet broke it.) STT segments come back on the LiveKit data channel; the
 // runner labels the speaker from the adapter's active-speaker timeline,
 // assigns seq and ingests them (cloud's ingest is pod-only).
+//
+// Media (Zoom): the SDK sidecar has no page, so zoom-media.ts renders the same
+// tile in the pod's Chrome and pumps I420 frames to the sidecar's camera, and
+// the same livekit-node.ts publisher takes the sidecar's mixed PCM and feeds
+// the worker's `tts` track into the sidecar's virtual mic.
 
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
@@ -30,7 +37,9 @@ import type {
 } from "./adapter.js";
 import { createMeetAdapter } from "./adapters/meet.js";
 import { CloudClient, ControlStream, Ingest, SpeakerTimeline, type ControlMessage, type SessionState } from "./ingest.js";
-import { LiveKitBridge, type SttSegment, type WakeTurn } from "./livekit.js";
+import { LiveKitBridge, type RoomBridge, type SttSegment, type WakeTurn } from "./livekit.js";
+import { ZoomTile, type ZoomVideoPort } from "./zoom-media.js";
+import { NodeLiveKitBridge, type CallAudioPort } from "./livekit-node.js";
 import { TurnClient, type TurnMeeting, type TurnSegment } from "./turns.js";
 import { PodMedia } from "./media.js";
 import type { Browser, BrowserContext, Page } from "playwright-core";
@@ -161,7 +170,9 @@ export const defaultAdapterFactory: RunnerAdapterFactory = async (cfg, hooks) =>
     case "zoom": {
       const mod = await importAdapter("./adapters/zoom/index.js");
       const create = (mod.createZoomAdapter ?? mod.zoomFactory) as (c: PodConfig, o?: unknown) => PlatformAdapter;
-      return create(cfg, { onEvent: hooks.onEvent });
+      // Sidecar notes into the pod log (debug = raw SDK/Qt stdout, left out).
+      const emit = hooks.onEvent;
+      return create(cfg, { log: emit ? (level: string, msg: string) => level !== "debug" && emit("zoom_log", { level, msg: msg.slice(0, 500) }) : undefined });
     }
   }
 };
@@ -198,6 +209,21 @@ const TILE_FOR: Partial<Record<SessionState, TileState>> = {
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
+/** The Zoom adapter's media surface (camera frames, call PCM, virtual mic). Duck-typed: the adapter is imported by a variable specifier. */
+export type ZoomMediaAdapter = PlatformAdapter & ZoomVideoPort & CallAudioPort;
+export function isZoomMediaAdapter(a: PlatformAdapter | null): a is ZoomMediaAdapter {
+  const z = a as Partial<ZoomMediaAdapter> | null;
+  return Boolean(z && typeof z.sendVideoFrame === "function" && typeof z.onCamera === "function" && typeof z.onAudio === "function" && typeof z.sendAudio === "function");
+}
+
+/** What drives the camera tile: PodMedia (browser platforms) or ZoomTile. */
+interface TileControl {
+  setTile(state: TileState): Promise<void>;
+  readonly currentTile: TileState;
+  setLevel(level: number): void;
+  outLevel(): Promise<number>;
+}
+
 export async function runPod(cfg: PodConfig, opts: RunOptions = {}): Promise<RunResult> {
   const write = opts.logLine ?? ((l: string) => process.stdout.write(l + "\n"));
   const log = (kind: string, detail?: unknown) =>
@@ -212,6 +238,12 @@ export async function runPod(cfg: PodConfig, opts: RunOptions = {}): Promise<Run
   const media = browser
     ? new PodMedia({ displayName: cfg.displayName, tileUrl: cfg.tileUrl, recordFile: opts.recordFile, onEvent: log })
     : null;
+  const zoomTile =
+    cfg.platform === "zoom" && cfg.tileUrl
+      ? new ZoomTile({ tileUrl: cfg.tileUrl, displayName: cfg.displayName, chromePath: opts.chromePath, headless: opts.headless, onEvent: log })
+      : null;
+  const tileCtl: TileControl | null = media ?? zoomTile;
+  let zoomPort = null as ZoomMediaAdapter | null;
   const pageUrl = meetingPageUrl(cfg);
   const extras = cfg as PodConfig & PodConfigExtras;
   const turnTarget = opts.turns === undefined ? turnTargetFromEnv() : opts.turns;
@@ -225,7 +257,7 @@ export async function runPod(cfg: PodConfig, opts: RunOptions = {}): Promise<Run
   let state = "" as SessionState | ""; // nothing reported yet, so "launching" goes out first
   let liveAt = 0;
   let adapter = null as PlatformAdapter | null;
-  let lk = null as LiveKitBridge | null;
+  let lk = null as RoomBridge | null;
   let ending = false;
   let wantPaused = false;
   let lastSttAt = 0;
@@ -246,7 +278,7 @@ export async function runPod(cfg: PodConfig, opts: RunOptions = {}): Promise<Run
     state = next;
     log("state", { state: next, end_reason: reason, detail });
     const tile = TILE_FOR[next];
-    if (tile) void media?.setTile(tile);
+    if (tile) void tileCtl?.setTile(tile);
     await ingest.setState(next, reason, detail);
   }
 
@@ -352,6 +384,10 @@ export async function runPod(cfg: PodConfig, opts: RunOptions = {}): Promise<Run
 
   // ---- join -------------------------------------------------------------------------------------
   void setState("launching");
+  // The Zoom tile loads while the sidecar joins, so the camera has a frame the moment Zoom starts it.
+  const zoomTileReady = zoomTile
+    ? zoomTile.start().catch((e: unknown) => log("tile_unavailable", { url: cfg.tileUrl, error: String(e).slice(0, 300) }))
+    : Promise.resolve();
   const run = (async () => {
     const hooks: BrowserAdapterHooks = {
       installMedia: media ? (c, b, p) => media.install(c, b, p) : undefined,
@@ -364,6 +400,13 @@ export async function runPod(cfg: PodConfig, opts: RunOptions = {}): Promise<Run
     adapter = await (opts.adapterFactory ?? defaultAdapterFactory)(cfg, hooks);
     if (ending) return;
     unsubs.push(adapter.onEnded((r) => end(r, "adapter")));
+    const a0 = adapter;
+    if (isZoomMediaAdapter(a0)) {
+      zoomPort = a0;
+      zoomTile?.attach(a0);
+    } else if (cfg.platform === "zoom") {
+      log("zoom_media_unavailable", { note: "adapter has no media surface" });
+    }
 
     // Guard on top of the adapter's own timeouts: never sit in the lobby forever.
     const joinDeadline = setTimeout(() => end("not_admitted", "join_guard"), cfg.limits.prejoinTimeoutMs + cfg.limits.admitTimeoutMs + 60_000);
@@ -437,10 +480,24 @@ export async function runPod(cfg: PodConfig, opts: RunOptions = {}): Promise<Run
     if (people.length === 0) emptySince = Date.now();
 
     if (wantPaused) await applyPause(true);
-    if (media?.page) {
+    // One publisher for every platform: rtc-node in Node, fed by the page's PCM
+    // tap (Meet/Teams) or the Zoom sidecar. The in-page client is a fallback flag only.
+    const port: CallAudioPort | null = media?.page ? media : zoomPort;
+    const source = media?.page ? `${cfg.platform}_page` : "zoom_sidecar";
+    const startBridge: (() => Promise<RoomBridge>) | null =
+      media?.page && process.env.MEETING_BOT_INPAGE_LIVEKIT === "1"
+        ? () => LiveKitBridge.start(media.page!, cfg.livekit, log)
+        : port
+          ? async () => {
+              const b = await NodeLiveKitBridge.start(port, cfg.livekit, { source, speakReplies: () => cfg.speakReplies, onEvent: log });
+              if (zoomTile) zoomTile.levelSource = () => b.outLevel();
+              return b;
+            }
+          : null;
+    if (startBridge) {
       const connect = async () => {
-        if (lk || ending || !media.page || !cfg.livekit.url || !cfg.livekit.token) return;
-        lk = await LiveKitBridge.start(media.page, cfg.livekit, log).catch((e: unknown) => {
+        if (lk || ending || !cfg.livekit.url || !cfg.livekit.token) return;
+        lk = await startBridge().catch((e: unknown) => {
           log("livekit_unavailable", String(e).slice(0, 300));
           return null;
         });
@@ -449,8 +506,8 @@ export async function runPod(cfg: PodConfig, opts: RunOptions = {}): Promise<Run
       if (!cfg.livekit.url || !cfg.livekit.token) log("livekit_not_configured");
       await connect();
       every(30_000, connect);
-    } else if (!browser) {
-      log("livekit_bridge_unsupported", { platform: cfg.platform, note: "zoom audio arrives as PCM from the SDK sidecar; not bridged to LiveKit by this runner" });
+    } else {
+      log("livekit_unavailable", { platform: cfg.platform, note: browser ? "no meeting page" : "no Zoom media surface" });
     }
 
     // Leave rules + drains, once a second.
@@ -470,25 +527,42 @@ export async function runPod(cfg: PodConfig, opts: RunOptions = {}): Promise<Run
         const lv = await media.takeLevels();
         const st = await media.captureStatus();
         const lks = await lk?.status();
-        log("capture_level", { peak: lv?.peak ?? 0, mean: lv?.mean ?? 0, tracks: st?.live ?? 0, paused: st?.paused ?? false, livekit: lks ? { state: lks.state, published: lks.published, remotes: lks.remoteParticipants.length, tts: lks.ttsAttached } : null });
+        log("capture_level", {
+          peak: lv?.peak ?? 0,
+          mean: lv?.mean ?? 0,
+          tracks: st?.live ?? 0,
+          paused: st?.paused ?? false,
+          pcm: media.pcmStats,
+          livekit: lks ? { state: lks.state, published: lks.published, remotes: lks.remoteParticipants.length, tts: lks.ttsAttached } : null,
+          publisher: lk instanceof NodeLiveKitBridge ? { subscribed: lk.subscribedAt !== null, ...lk.counters } : lk ? "in_page" : "not_connected",
+        });
+      } else if (tick % 30 === 0 && zoomPort) {
+        const lks = await lk?.status();
+        log("zoom_media_level", {
+          video: zoomTile?.stats() ?? null,
+          camera: zoomPort.cameraOn,
+          publisher: lk instanceof NodeLiveKitBridge ? { subscribed: lk.subscribedAt !== null, ...lk.counters } : "not_connected",
+          livekit: lks ? { state: lks.state, remotes: lks.remoteParticipants.length, tts: lks.ttsAttached } : null,
+        });
       }
     });
 
     // The bot's own voice drives the tile (speaking + level), then back to listening.
-    if (media) {
+    if (tileCtl) {
+      const t = tileCtl;
       let quietSince = 0;
       every(150, async () => {
         if (state !== "live") return;
-        const level = await media.outLevel();
+        const level = await t.outLevel();
         if (level > 0.02) {
           quietSince = 0;
-          if (media.currentTile !== "speaking") await media.setTile("speaking");
-          media.setLevel(level);
-        } else if (media.currentTile === "speaking") {
+          if (t.currentTile !== "speaking") await t.setTile("speaking");
+          t.setLevel(level);
+        } else if (t.currentTile === "speaking") {
           quietSince ||= Date.now();
           if (Date.now() - quietSince > 700) {
-            media.setLevel(0);
-            await media.setTile("listening");
+            t.setLevel(0);
+            await t.setTile("listening");
           }
         }
       });
@@ -572,7 +646,7 @@ export async function runPod(cfg: PodConfig, opts: RunOptions = {}): Promise<Run
     const turnId = t.turnId ?? `turn-${randomUUID()}`;
     const started = Date.now();
     log("turn_started", { turn_id: turnId, kind: t.kind, asker: t.asker || null });
-    if (media && state === "live") await media.setTile("thinking");
+    if (tileCtl && state === "live") await tileCtl.setTile("thinking");
     try {
       const reply = await turnClient.turn({
         turn_id: turnId,
@@ -599,7 +673,7 @@ export async function runPod(cfg: PodConfig, opts: RunOptions = {}): Promise<Run
     } catch (e) {
       log("turn_failed", { turn_id: turnId, error: String(e).slice(0, 200) });
     } finally {
-      if (media && state === "live" && media.currentTile === "thinking") await media.setTile("listening");
+      if (tileCtl && state === "live" && tileCtl.currentTile === "thinking") await tileCtl.setTile("listening");
     }
   }
 
@@ -646,6 +720,8 @@ export async function runPod(cfg: PodConfig, opts: RunOptions = {}): Promise<Run
   await ingest.stop();
   const tIngest = Date.now();
   await media?.stop().catch(() => undefined);
+  await zoomTileReady;
+  await zoomTile?.stop().catch(() => undefined);
   const tMedia = Date.now();
   await adapter?.close().catch(() => undefined);
   log("shutdown", { ingestMs: tIngest - t, mediaMs: tMedia - tIngest, adapterMs: Date.now() - tMedia });

@@ -83,6 +83,10 @@ declare global {
     __gizziOutLevel?: () => number;
     __gizziMedia?: { installed: boolean; framesDrawn: number; tileFrames: number; state: string };
     __gizziPeerCap?: PeerCaptureApi;
+    /** Node binding (Playwright exposeBinding): 20 ms of the call mix, 48 kHz mono s16le, base64. */
+    __gizziPcmOut?: (b64: string) => unknown;
+    /** Reply audio from Node (s16le mono, base64) into the voice bus, scheduled gap-free. */
+    __gizziMicPcm?: (b64: string, sampleRate: number) => boolean;
   }
 }
 
@@ -210,6 +214,33 @@ export function installGizziMedia(opts: GizziMediaOptions): void {
     attached.set(id, { el, src });
     return id;
   };
+  // Reply PCM from Node (livekit-node.ts subscribes to the worker's `tts`
+  // track): each chunk is scheduled right after the previous one, with 80 ms
+  // of lead after a gap so chunk jitter never clicks.
+  let micNext = 0;
+  window.__gizziMicPcm = (b64: string, sampleRate: number) => {
+    const a = ensureAudio();
+    if (a.ac.state !== "running") void a.ac.resume().catch(() => undefined);
+    const bin = atob(b64);
+    const n = bin.length >> 1;
+    if (!n) return false;
+    const f = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+      const v = (bin.charCodeAt(2 * i) | (bin.charCodeAt(2 * i + 1) << 8)) << 16 >> 16;
+      f[i] = v / 32768;
+    }
+    const buf = a.ac.createBuffer(1, n, sampleRate);
+    buf.copyToChannel(f, 0);
+    const src = a.ac.createBufferSource();
+    src.buffer = buf;
+    src.connect(a.bus);
+    const now = a.ac.currentTime;
+    if (micNext < now + 0.02) micNext = now + 0.08;
+    src.start(micNext);
+    micNext += buf.duration;
+    return true;
+  };
+
   window.__gizziMicDetach = (id: number) => {
     const t = attached.get(id);
     if (!t) return;
@@ -354,7 +385,63 @@ export function installPeerCapture(opts: PeerCaptureOptions): void {
       rec.start(opts.timesliceMs);
     }
     log("peer_mixer_started", { sampleRate: ctx.sampleRate, ctxState: ctx.state, recording: Boolean(rec) });
+    void startPcmTap(ctx, master);
     return master;
+  }
+
+  // The call mix to Node as 20 ms s16 chunks (livekit-node.ts publishes them
+  // as `call-audio`). An AudioWorklet does the float->s16 work off the main
+  // thread; ScriptProcessor is the fallback if the worklet cannot load.
+  async function startPcmTap(ac: AudioContext, from: AudioNode): Promise<void> {
+    const send = w.__gizziPcmOut;
+    if (typeof send !== "function") return log("pcm_tap_unavailable", { reason: "no binding" });
+    const CHUNK = Math.round(ac.sampleRate / 50);
+    const post = (buf: ArrayBuffer) => {
+      const u = new Uint8Array(buf);
+      let s = "";
+      for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000) as unknown as number[]);
+      void Promise.resolve(send(btoa(s))).catch(() => undefined);
+    };
+    const sink = dest as MediaStreamAudioDestinationNode;
+    try {
+      const code = `class GizziPcmTap extends AudioWorkletProcessor {
+  constructor() { super(); this.n = 0; this.b = new Int16Array(${CHUNK}); }
+  process(inputs) {
+    const ch = inputs[0] && inputs[0][0];
+    const len = ch ? ch.length : 128;
+    for (let k = 0; k < len; k++) {
+      let v = ch ? ch[k] : 0;
+      v = v < -1 ? -1 : v > 1 ? 1 : v;
+      this.b[this.n++] = v < 0 ? v * 32768 : v * 32767;
+      if (this.n === this.b.length) { this.port.postMessage(this.b.buffer, [this.b.buffer]); this.b = new Int16Array(${CHUNK}); this.n = 0; }
+    }
+    return true;
+  }
+}
+registerProcessor("gizzi-pcm-tap", GizziPcmTap);`;
+      const url = URL.createObjectURL(new Blob([code], { type: "application/javascript" }));
+      await ac.audioWorklet.addModule(url);
+      URL.revokeObjectURL(url);
+      const node = new AudioWorkletNode(ac, "gizzi-pcm-tap", { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1], channelCount: 1, channelCountMode: "explicit" });
+      node.port.onmessage = (e: MessageEvent) => post(e.data as ArrayBuffer);
+      from.connect(node);
+      node.connect(sink); // pulled by the graph; it outputs silence
+      log("pcm_tap_started", { kind: "worklet", sampleRate: ac.sampleRate, chunk: CHUNK });
+    } catch (e) {
+      const sp = ac.createScriptProcessor(1024, 1, 1);
+      sp.onaudioprocess = (ev: AudioProcessingEvent) => {
+        const ch = ev.inputBuffer.getChannelData(0);
+        const out = new Int16Array(ch.length);
+        for (let k = 0; k < ch.length; k++) {
+          const v = ch[k] < -1 ? -1 : ch[k] > 1 ? 1 : ch[k];
+          out[k] = v < 0 ? v * 32768 : v * 32767;
+        }
+        post(out.buffer);
+      };
+      from.connect(sp);
+      sp.connect(sink);
+      log("pcm_tap_started", { kind: "script_processor", sampleRate: ac.sampleRate, error: String(e).slice(0, 120) });
+    }
   }
 
   function localTrackIds(): Set<string> {
@@ -506,8 +593,12 @@ export interface TileFeedOptions {
   state?: TileState;
   /** base64 JSON of the user's own bot (an allternit-ai Agent); absent = Gizzi. */
   agent?: string;
+  /** Layout size of the tile page (CSS px). */
   width?: number;
   height?: number;
+  /** Size of the screencast frames (default the layout size); smaller frames are scaled down by Chrome. */
+  frameWidth?: number;
+  frameHeight?: number;
   fps?: number;
   loadTimeoutMs?: number;
   onEvent?: (kind: string, detail?: unknown) => void;
@@ -521,6 +612,23 @@ export interface TileFeed {
   stop(): Promise<void>;
 }
 
+/** Resolves with `fallback` after `ms` if `p` has not settled (never rejects). */
+export function within<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
+  return new Promise<T>((resolve) => {
+    const t = setTimeout(() => resolve(fallback), ms);
+    p.then(
+      (v) => {
+        clearTimeout(t);
+        resolve(v);
+      },
+      () => {
+        clearTimeout(t);
+        resolve(fallback);
+      },
+    );
+  });
+}
+
 export function tileUrl(base: string, opts: { name: string; state: TileState; agent?: string }): string {
   const u = new URL(base);
   u.searchParams.set("name", opts.name);
@@ -532,6 +640,8 @@ export function tileUrl(base: string, opts: { name: string; state: TileState; ag
 export async function startTileFeed(browser: Browser, meetPage: Page, opts: TileFeedOptions): Promise<TileFeed> {
   const width = opts.width ?? 1280;
   const height = opts.height ?? 720;
+  const frameWidth = opts.frameWidth ?? width;
+  const frameHeight = opts.frameHeight ?? height;
   const fps = opts.fps ?? 15;
   const frameMs = Math.round(1000 / fps);
   const log = opts.onEvent ?? (() => undefined);
@@ -594,15 +704,20 @@ export async function startTileFeed(browser: Browser, meetPage: Page, opts: Tile
         if (!stopped) void tile.send("Page.screencastFrameAck", { sessionId: f.sessionId }).catch(() => undefined);
       }, nextAckAt - now);
     });
-    await tile.send("Page.startScreencast", { format: "jpeg", quality: 80, maxWidth: width, maxHeight: height, everyNthFrame: 1 });
-    log("tile_screencast_started", { width, height, fps });
+    await tile.send("Page.startScreencast", { format: "jpeg", quality: 80, maxWidth: frameWidth, maxHeight: frameHeight, everyNthFrame: 1 });
+    log("tile_screencast_started", { width: frameWidth, height: frameHeight, fps });
 
     return {
       tilePage,
       async setState(state) {
-        const ok = await tilePage
-          .evaluate((s) => (window as unknown as { __setTileState?: (x: string) => boolean }).__setTileState?.(s) ?? false, state)
-          .catch(() => false);
+        // Bounded: the tile page's main thread has been seen blocked for minutes
+        // (live Meet pod 2026-11-14: tile_state ok:false 5 min late), and the
+        // runner awaits this before a turn.
+        const ok = await within(
+          tilePage.evaluate((s) => (window as unknown as { __setTileState?: (x: string) => boolean }).__setTileState?.(s) ?? false, state),
+          2000,
+          false,
+        );
         log("tile_state", { state, ok });
       },
       setLevel(level) {
@@ -613,10 +728,10 @@ export async function startTileFeed(browser: Browser, meetPage: Page, opts: Tile
       stats: () => ({ framesIn, framesSent, framesDropped }),
       async stop() {
         stopped = true;
-        await tile.send("Page.stopScreencast").catch(() => undefined);
-        await tile.detach().catch(() => undefined);
-        await meet.detach().catch(() => undefined);
-        await tilePage.close().catch(() => undefined);
+        await within(tile.send("Page.stopScreencast"), 2000, undefined);
+        await within(tile.detach(), 2000, undefined);
+        await within(meet.detach(), 2000, undefined);
+        await within(tilePage.close({ runBeforeUnload: false }), 3000, undefined);
       },
     };
   } catch (e) {
@@ -647,7 +762,56 @@ export class PodMedia {
   private tileState: TileState = "joining";
   private recordBytes = 0;
   private chain: Promise<unknown> = Promise.resolve();
+  private cdp: CDPSession | null = null;
+  private pcmSubs = new Set<(a: { sampleRate: number; channels: number; pcm: Uint8Array; t: number }) => void>();
+  private micQueue: Uint8Array[] = [];
+  private micBytes = 0;
+  private micRate = 48_000;
+  private micTimer: ReturnType<typeof setTimeout> | null = null;
+  private micInFlight = false;
+  readonly pcmStats = { chunksIn: 0, micChunksOut: 0 };
   constructor(readonly opts: PodMediaOptions) {}
+
+  // ---- CallAudioPort (livekit-node.ts) -----------------------------------------------
+
+  /** The call mix from the page's PCM tap: 20 ms chunks, 48 kHz mono s16le. */
+  onAudio(cb: (a: { sampleRate: number; channels: number; pcm: Uint8Array; t: number }) => void): () => void {
+    this.pcmSubs.add(cb);
+    return () => this.pcmSubs.delete(cb);
+  }
+
+  /** Reply PCM into the page's virtual mic, batched to ~100 ms per CDP call. */
+  sendAudio(pcm: Uint8Array, sampleRate: number, channels = 1): boolean {
+    if (!this.page || this.page.isClosed() || !this.cdp || channels !== 1) return false;
+    if (sampleRate !== this.micRate) {
+      this.micQueue = [];
+      this.micBytes = 0;
+      this.micRate = sampleRate;
+    }
+    this.micQueue.push(pcm.slice());
+    this.micBytes += pcm.length;
+    if (this.micBytes >= (sampleRate / 10) * 2) this.flushMic();
+    else this.micTimer ??= setTimeout(() => this.flushMic(), 100);
+    return true;
+  }
+
+  private flushMic(): void {
+    if (this.micTimer) clearTimeout(this.micTimer);
+    this.micTimer = null;
+    if (this.micInFlight || !this.micBytes || !this.cdp) return;
+    const all = Buffer.concat(this.micQueue);
+    this.micQueue = [];
+    this.micBytes = 0;
+    this.micInFlight = true;
+    this.pcmStats.micChunksOut++;
+    void this.cdp
+      .send("Runtime.evaluate", { expression: `window.__gizziMicPcm && window.__gizziMicPcm("${all.toString("base64")}", ${this.micRate})` })
+      .catch(() => undefined)
+      .finally(() => {
+        this.micInFlight = false;
+        if (this.micBytes) this.flushMic();
+      });
+  }
 
   private log(kind: string, detail?: unknown): void {
     this.opts.onEvent?.(kind, detail);
@@ -668,7 +832,18 @@ export class PodMedia {
     // so CSP is bypassed for the meeting page only. Init scripts are not
     // affected by CSP either way.
     const cdp = await ctx.newCDPSession(page);
+    this.cdp = cdp;
     await cdp.send("Page.setBypassCSP", { enabled: true }).catch((e: unknown) => this.log("csp_bypass_failed", String(e)));
+    // The page's PCM tap calls this with 20 ms of the call mix (48 kHz mono s16le, base64).
+    await ctx
+      .exposeBinding("__gizziPcmOut", (_src, b64: string) => {
+        if (typeof b64 !== "string" || !this.pcmSubs.size) return;
+        this.pcmStats.chunksIn++;
+        const pcm = Buffer.from(b64, "base64");
+        const t = Date.now();
+        for (const cb of this.pcmSubs) cb({ sampleRate: 48_000, channels: 1, pcm, t });
+      })
+      .catch((e: unknown) => this.log("pcm_binding_failed", String(e).slice(0, 200)));
     await ctx.addInitScript(installGizziMedia, { name: this.opts.displayName, state: "Joining", skipOrigins });
     await ctx.addInitScript(installPeerCapture, { timesliceMs: 1000, record: Boolean(this.opts.recordFile), skipOrigins });
     if (this.opts.tileUrl) {
