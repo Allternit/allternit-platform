@@ -16,6 +16,7 @@ pub mod executor_service;
 pub mod hosted_runtime_lifecycle;
 pub mod inference_keys;
 pub mod connections;
+pub mod copilot;
 pub mod voice_keys;
 pub mod inference_pool;
 pub mod inference_settlement;

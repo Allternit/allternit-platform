@@ -856,4 +856,69 @@ mod plan_turns {
         assert_eq!(platform.status, StatusCode::FORBIDDEN);
         assert!(crate::routes::platform_v1::responses::refuse_person_only_model(Some("kimi-k3")).is_ok());
     }
+
+    /// Copilot turns (contract 9.5): the same D7 rules, then one streamed
+    /// turn through the (fake) Copilot API with the person's sealed token;
+    /// only role and text reach Copilot.
+    #[tokio::test]
+    async fn copilot_turns_are_person_only_and_stream_from_copilot() {
+        use crate::services::copilot::{fake, TEST_CONFIG};
+        let mut state = test_state(Arc::new(MockGateway::new(None, vec![]))).await;
+        let cipher = Arc::new(allternit_cloud_core::CredentialCipher::new("test cipher key material"));
+        Arc::get_mut(&mut state).expect("fresh state").credential_cipher = Some(cipher.clone());
+        sqlx::raw_sql(include_str!("../../migrations_pg/142_copilot_grants.sql")).execute(&state.db).await.unwrap();
+        let person = ("x-allternit-turn", "person");
+        let session = app(&state, "sess_1");
+
+        // No App configured: not connected.
+        TEST_CONFIG
+            .scope(None, async {
+                let (status, body) = call(&session, &[person], turn("copilot/gpt-5", false)).await;
+                assert_eq!((status, code(&body).as_deref()), (StatusCode::FORBIDDEN, Some("plan_not_connected")), "{body}");
+            })
+            .await;
+
+        let github = fake::start().await;
+        TEST_CONFIG
+            .scope(Some(github.config()), async {
+                let (status, body) = call(&session, &[person], turn("copilot/gpt-5", true)).await;
+                assert_eq!((status, code(&body).as_deref()), (StatusCode::FORBIDDEN, Some("plan_not_connected")), "no grant yet: {body}");
+                sqlx::query("INSERT INTO copilot_grants (user_id, github_login, sealed_access, access_expires_at, models) VALUES ($1, 'octo', $2, now() + interval '8 hours', '[\"gpt-5\"]')")
+                    .bind(USER)
+                    .bind(cipher.encrypt("ghu_fake_user_token").unwrap())
+                    .execute(&state.db)
+                    .await
+                    .unwrap();
+
+                // D7 still holds: no person header, a device token, a tool message.
+                let (status, body) = call(&session, &[], turn("copilot/gpt-5", true)).await;
+                assert_eq!((status, code(&body).as_deref()), (StatusCode::FORBIDDEN, Some("plan_person_only")), "{body}");
+                let (status, body) =
+                    call(&session, &[person, ("authorization", "Bearer allternit_runtime_abc")], turn("copilot/gpt-5", true)).await;
+                assert_eq!((status, code(&body).as_deref()), (StatusCode::FORBIDDEN, Some("plan_person_only")), "{body}");
+                let mut with_tool = turn("copilot/gpt-5", true);
+                with_tool["messages"] = json!([{ "role": "user", "content": "x" }, { "role": "tool", "content": "y", "tool_call_id": "c1" }]);
+                let (status, body) = call(&session, &[person], with_tool).await;
+                assert_eq!((status, code(&body).as_deref()), (StatusCode::BAD_REQUEST, Some("plan_no_tools")));
+                assert!(github.calls.lock().unwrap().chat_bodies.is_empty(), "refused turns never reach Copilot");
+
+                // The person's own send streams Copilot's reply.
+                let (status, body) = call(&session, &[person], turn("copilot/gpt-5", true)).await;
+                assert_eq!(status, StatusCode::OK, "{body}");
+                assert!(body.contains(r#""content":"Hi""#) && body.contains(r#""content":" there""#), "{body}");
+                assert!(body.contains(r#""model":"copilot/gpt-5""#) && body.trim_end().ends_with("data: [DONE]"), "{body}");
+                let sent = github.calls.lock().unwrap().chat_bodies[0].clone();
+                assert_eq!(sent["model"], "gpt-5");
+                assert!(sent.get("tools").is_none() && sent.get("tool_choice").is_none(), "{sent}");
+                assert_eq!(sent["messages"], json!([{ "role": "user", "content": "Hello" }]));
+
+                // Not streamed: one JSON body with usage.
+                let (status, body) = call(&session, &[person], turn("copilot/gpt-5", false)).await;
+                assert_eq!(status, StatusCode::OK, "{body}");
+                let reply: Value = serde_json::from_str(&body).unwrap();
+                assert_eq!(reply["choices"][0]["message"]["content"], "Hi there");
+                assert_eq!(reply["usage"]["completion_tokens"], 2);
+            })
+            .await;
+    }
 }
