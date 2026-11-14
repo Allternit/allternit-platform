@@ -80,6 +80,8 @@ Relay and agent-entry routes answer `409 Conflict` when the account has no compu
 
 `paths` is the same object as in compute status. Switch on `error.code`, not on the status alone.
 
+Runtime-backed reads (the model list, inbox, agents, routines, connectors) also answer this error on every page load while the account has no computer. The web, Desktop and phone app show the full gate until the user confirms chat-only. After that, a `compute_required` answer to a `GET` leaves only the banner. An action (`POST`, `PUT`, `PATCH`, `DELETE`) opens the gate again, and the user can close it.
+
 ## Link your own computer
 
 Create a code with `POST /api/v1/runtime-pairings`, open the download page with `?pair=CODE`, and the Desktop app handles the existing link `allternit://pair?code=CODE`. Poll `GET /api/v1/runtime-pairings/code/{code}` until it is approved.

@@ -86,7 +86,7 @@ enum ConnectHTTP {
                 if case .object(let details)? = o["details"], let c = details["error"]?.jString { code = code ?? c }
             }
             if status == 409, code == "compute_required" {
-                Task { @MainActor in ComputeStatusStore.shared.noteComputeRequired() }
+                Task { @MainActor in ComputeStatusStore.shared.noteComputeRequired(method: method) }
             }
             let text = code.flatMap { phoneErrors[$0] } ?? message ?? code.map { "\($0.replacingOccurrences(of: "_", with: " ")) (\(status))" }
                 ?? (status == 401 || status == 403 ? "Sign in again, then try again." : "Something went wrong. Try again.")

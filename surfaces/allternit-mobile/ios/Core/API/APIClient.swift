@@ -137,7 +137,7 @@ final class APIClient: @unchecked Sendable {
 
     /// Throws a typed APIError for non-2xx responses, surfacing the gateway's
     /// `{ "message" | "error" }` body when present (same shape the web reads).
-    func validate(_ response: URLResponse, data: Data? = nil) throws {
+    func validate(_ response: URLResponse, data: Data? = nil, method: String? = nil) throws {
         guard let httpResponse = response as? HTTPURLResponse else {
             throw APIError.invalidResponse
         }
@@ -152,7 +152,7 @@ final class APIClient: @unchecked Sendable {
             #endif
             // 409 compute_required: the account has no computer; open the gate.
             if httpResponse.statusCode == 409, ComputeHTTP.errorCode(data) == "compute_required" {
-                Task { @MainActor in ComputeStatusStore.shared.noteComputeRequired() }
+                Task { @MainActor in ComputeStatusStore.shared.noteComputeRequired(method: method) }
             }
             throw APIError.httpError(
                 statusCode: httpResponse.statusCode,
@@ -225,7 +225,7 @@ final class APIClient: @unchecked Sendable {
     func get<T: Decodable>(path: String) async throws -> T {
         let request = try await authorizedRequest(path: path)
         let (data, response) = try await send(request)
-        try validate(response, data: data)
+        try validate(response, data: data, method: "GET")
         do {
             return try JSONDecoder().decode(T.self, from: data)
         } catch {
