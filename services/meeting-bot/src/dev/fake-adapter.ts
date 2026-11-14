@@ -65,7 +65,9 @@ type CallWin = Window & {
 };
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
-const LOCAL_ICE = "--disable-features=WebRtcHideLocalIpsWithMdns"; // plain 127.0.0.1 host candidates
+// Plain 127.0.0.1 host candidates come from BASE_CHROME_ARGS (a second
+// --disable-features here would replace its list). No real devices are opened.
+const LOCAL_ICE = "--use-fake-device-for-media-stream";
 
 /** One non-trickle offer/answer round (each side waits for ICE gathering), as in spike/local-test. */
 async function negotiate(offerer: Page, answerer: Page): Promise<void> {

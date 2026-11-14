@@ -18,7 +18,21 @@
 // runner labels the speaker from the adapter's active-speaker timeline,
 // assigns seq and ingests them (cloud's ingest is pod-only).
 //
-// Media (Zoom): the SDK sidecar has no page, so zoom-media.ts renders the same
+// Live mode (Meet/Teams, default; MEETING_BOT_LIVE=0 turns it off): the
+// camera tile is an Allternit Live voice session (live-tile.ts). It hears the
+// call, the runner answers "Gizzi, …" through the same turn route, and Live
+// speaks the reply into the call; its stage goes out as real video. While
+// Live is up, the worker's `tts` stays off the mic, its wake turns are
+// ignored (Live heard the same words) and replies are spoken, not posted in
+// chat (the consent notice still goes in chat). If Live can't start or drops,
+// everything falls back to chat replies and the worker's voice.
+//
+// Zoom (default): the Meeting SDK for Web on allternit-ai /meeting-zoom in the
+// same Chrome (adapters/zoom-web.ts), so Zoom is a browser platform like Meet
+// and Teams and works wherever the runtime runs; the OBF token and SDK JWT come
+// fresh from cloud-api's zoom-tokens route before each join attempt.
+//
+// Media (Zoom, MEETING_BOT_ZOOM_NATIVE=1 only): the native SDK sidecar has no page, so zoom-media.ts renders the same
 // tile in the pod's Chrome and pumps I420 frames to the sidecar's camera, and
 // the same livekit-node.ts publisher takes the sidecar's mixed PCM and feeds
 // the worker's `tts` track into the sidecar's virtual mic.
@@ -36,12 +50,14 @@ import type {
   TileState,
 } from "./adapter.js";
 import { createMeetAdapter } from "./adapters/meet.js";
+import { createZoomWebAdapter, type ZoomTokens } from "./adapters/zoom-web.js";
 import { CloudClient, ControlStream, Ingest, SpeakerTimeline, type ControlMessage, type SessionState } from "./ingest.js";
 import { LiveKitBridge, type RoomBridge, type SttSegment, type WakeTurn } from "./livekit.js";
 import { ZoomTile, type ZoomVideoPort } from "./zoom-media.js";
 import { NodeLiveKitBridge, type CallAudioPort } from "./livekit-node.js";
 import { TurnClient, type TurnMeeting, type TurnSegment } from "./turns.js";
 import { PodMedia } from "./media.js";
+import { liveWake } from "./live-tile.js";
 import type { Browser, BrowserContext, Page } from "playwright-core";
 
 // ---- config --------------------------------------------------------------------
@@ -108,6 +124,17 @@ export function mentionQuestion(text: string): string {
   return text.replace(/^\s*@?gizzi[\s,:!-]*/i, "").trim() || text.trim();
 }
 
+/** allternit-ai /meeting-zoom on the tile's origin (where the bot joins Zoom in the browser). */
+export function zoomPageUrl(cfg: Pick<PodConfig, "tileUrl">): string {
+  let origin = "https://ai.allternit.com";
+  try {
+    if (cfg.tileUrl) origin = new URL(cfg.tileUrl).origin;
+  } catch {
+    /* keep prod */
+  }
+  return `${origin}/meeting-zoom`;
+}
+
 export function meetingPageUrl(cfg: Pick<PodConfig, "tileUrl" | "meetingId">): string {
   let origin = "https://ai.allternit.com";
   try {
@@ -146,12 +173,22 @@ export interface BrowserAdapterHooks {
   chromePath?: string;
   screenshotDir?: string;
   onEvent?: (kind: string, detail?: unknown) => void;
+  /** Zoom (browser): fresh SDK JWT + OBF token from cloud-api before each join attempt. */
+  zoomTokens?: () => Promise<ZoomTokens>;
 }
 
 export type RunnerAdapterFactory = (cfg: PodConfig, hooks: BrowserAdapterHooks) => PlatformAdapter | Promise<PlatformAdapter>;
 
-/** Platforms whose adapter drives a Chrome page (media.ts applies). Zoom runs the SDK sidecar. */
+/** Platforms whose adapter always drives a Chrome page (media.ts applies). */
 export const BROWSER_PLATFORMS: readonly Platform[] = ["meet", "teams"];
+
+/** The native Zoom sidecar instead of the web SDK (Linux only; kept for comparison). */
+export const zoomNative = (env: NodeJS.ProcessEnv = process.env) => env.MEETING_BOT_ZOOM_NATIVE === "1";
+
+/** Zoom is a browser platform too unless the native sidecar is chosen. */
+export function isBrowserPlatform(p: Platform, env: NodeJS.ProcessEnv = process.env): boolean {
+  return BROWSER_PLATFORMS.includes(p) || (p === "zoom" && !zoomNative(env));
+}
 
 async function importAdapter(spec: string): Promise<Record<string, unknown>> {
   // A variable specifier: other lanes own these files and build them in parallel.
@@ -168,6 +205,17 @@ export const defaultAdapterFactory: RunnerAdapterFactory = async (cfg, hooks) =>
       return create(cfg, hooks);
     }
     case "zoom": {
+      if (!zoomNative()) {
+        return createZoomWebAdapter(cfg, {
+          pageUrl: zoomPageUrl(cfg),
+          chromePath: hooks.chromePath,
+          headless: hooks.headless,
+          installMedia: hooks.installMedia,
+          setTile: hooks.setTile,
+          onEvent: hooks.onEvent,
+          freshTokens: hooks.zoomTokens,
+        });
+      }
       const mod = await importAdapter("./adapters/zoom/index.js");
       const create = (mod.createZoomAdapter ?? mod.zoomFactory) as (c: PodConfig, o?: unknown) => PlatformAdapter;
       // Sidecar notes into the pod log (debug = raw SDK/Qt stdout, left out).
@@ -190,6 +238,8 @@ export interface RunOptions {
   logLine?: (line: string) => void;
   /** In-pod allternit-api turn routes; default from turnTargetFromEnv(). Null turns turns off. */
   turns?: { url: string; token?: string } | null;
+  /** Live mode for browser platforms (default on; MEETING_BOT_LIVE=0 in main()). */
+  live?: boolean;
 }
 
 export interface RunResult {
@@ -234,12 +284,14 @@ export async function runPod(cfg: PodConfig, opts: RunOptions = {}): Promise<Run
   const ingest = new Ingest(cloud, log);
   ingest.start();
   const timeline = new SpeakerTimeline();
-  const browser = BROWSER_PLATFORMS.includes(cfg.platform);
+  const browser = isBrowserPlatform(cfg.platform);
   const media = browser
-    ? new PodMedia({ displayName: cfg.displayName, tileUrl: cfg.tileUrl, recordFile: opts.recordFile, onEvent: log })
+    ? new PodMedia({ displayName: cfg.displayName, tileUrl: cfg.tileUrl, recordFile: opts.recordFile, live: opts.live ?? true, onEvent: log })
     : null;
+  /** Live's voice is up (replies spoken by it; worker tts and wake turns stand down). */
+  const liveActive = () => media?.liveReady === true;
   const zoomTile =
-    cfg.platform === "zoom" && cfg.tileUrl
+    cfg.platform === "zoom" && !browser && cfg.tileUrl
       ? new ZoomTile({ tileUrl: cfg.tileUrl, displayName: cfg.displayName, chromePath: opts.chromePath, headless: opts.headless, onEvent: log })
       : null;
   const tileCtl: TileControl | null = media ?? zoomTile;
@@ -359,7 +411,8 @@ export async function runPod(cfg: PodConfig, opts: RunOptions = {}): Promise<Run
         if (state !== "live") break;
         const id = `speak-${randomUUID()}`;
         if (!cfg.guestQuiet) void say(m.text, `speak:${id}`);
-        if (cfg.speakReplies) void lk?.speak(id, m.text).then((ok) => log(ok ? "speak_sent" : "speak_not_sent", { turn_id: id }));
+        if (liveActive()) void media!.liveSay(m.text).then((ok) => log(ok ? "live_spoke" : "live_say_failed", { turn_id: id }));
+        else if (cfg.speakReplies) void lk?.speak(id, m.text).then((ok) => log(ok ? "speak_sent" : "speak_not_sent", { turn_id: id }));
         break;
       }
       case "set_speak_replies":
@@ -396,6 +449,12 @@ export async function runPod(cfg: PodConfig, opts: RunOptions = {}): Promise<Run
       chromePath: opts.chromePath,
       screenshotDir: opts.screenshotDir,
       onEvent: log,
+      zoomTokens: async () => {
+        const r = await cloud.postJson("zoom-tokens", {});
+        const j = (r.json ?? {}) as { obf_token?: string; sdk_jwt?: string; app_privilege_token?: string | null };
+        if (r.status !== 200) throw new Error(`zoom-tokens ${r.status}`);
+        return { obfToken: j.obf_token || undefined, sdkJwt: j.sdk_jwt || undefined, appPrivilegeToken: j.app_privilege_token || undefined };
+      },
     };
     adapter = await (opts.adapterFactory ?? defaultAdapterFactory)(cfg, hooks);
     if (ending) return;
@@ -404,7 +463,7 @@ export async function runPod(cfg: PodConfig, opts: RunOptions = {}): Promise<Run
     if (isZoomMediaAdapter(a0)) {
       zoomPort = a0;
       zoomTile?.attach(a0);
-    } else if (cfg.platform === "zoom") {
+    } else if (cfg.platform === "zoom" && !browser) {
       log("zoom_media_unavailable", { note: "adapter has no media surface" });
     }
 
@@ -464,6 +523,33 @@ export async function runPod(cfg: PodConfig, opts: RunOptions = {}): Promise<Run
       }),
     );
     unsubs.push(a.onActiveSpeaker((e) => timeline.add(e)));
+    if (media?.live) {
+      // What Live heard: a turn when it is addressed ("Gizzi, …"); "Gizzi?" alone
+      // takes the next utterance (within 10 s) as the question.
+      let wokeAt = 0;
+      media.live.onHeard = (text) => {
+        if (state !== "live" || !liveActive()) return;
+        const now = Date.now();
+        const hit = liveWake(text);
+        let question = hit?.question ?? "";
+        if (!hit) {
+          if (!wokeAt || now - wokeAt > 10_000) return;
+          question = text.trim();
+        }
+        wokeAt = 0;
+        if (!question) {
+          wokeAt = now;
+          return;
+        }
+        if (STOP_COMMAND.test(text)) {
+          log("voice_stop");
+          end("left_by_user", "voice_stop");
+          return;
+        }
+        const label = timeline.label(now - 4000, now).speaker ?? "";
+        queueTurn({ kind: "wake_word", text: question, asker: label, confidence: hit ? 0.8 : 0.6 });
+      };
+    }
     void a
       .captions((c) => {
         if (!c.final) return;
@@ -489,7 +575,7 @@ export async function runPod(cfg: PodConfig, opts: RunOptions = {}): Promise<Run
         ? () => LiveKitBridge.start(media.page!, cfg.livekit, log)
         : port
           ? async () => {
-              const b = await NodeLiveKitBridge.start(port, cfg.livekit, { source, speakReplies: () => cfg.speakReplies, onEvent: log });
+              const b = await NodeLiveKitBridge.start(port, cfg.livekit, { source, speakReplies: () => cfg.speakReplies && !liveActive(), onEvent: log });
               if (zoomTile) zoomTile.levelSource = () => b.outLevel();
               return b;
             }
@@ -521,7 +607,8 @@ export async function runPod(cfg: PodConfig, opts: RunOptions = {}): Promise<Run
         const d = await lk.drain();
         for (const e of d.events) log(e.event, e.detail);
         for (const s of d.data) ingestStt(s, lk.publishedAt);
-        for (const w of d.turns) wakeTurn(w);
+        // Live heard the same words and runs the turn itself.
+        for (const w of d.turns) if (!liveActive()) wakeTurn(w);
       }
       if (++tick % 5 === 0 && media) {
         const lv = await media.takeLevels();
@@ -656,7 +743,8 @@ export async function runPod(cfg: PodConfig, opts: RunOptions = {}): Promise<Run
         meeting: turnMeeting(),
         transcript: recentWindow(),
         artifacts: [],
-        speak_replies: cfg.speakReplies,
+        // Live speaks every reply (guest-quiet still keeps a guest's reply on the page).
+        speak_replies: cfg.speakReplies || (t.kind === "wake_word" && liveActive()),
         guest_quiet: cfg.guestQuiet,
       });
       if (ending) return;
@@ -665,6 +753,12 @@ export async function runPod(cfg: PodConfig, opts: RunOptions = {}): Promise<Run
       if (reply.pageOnly) {
         ingest.addChat({ idempotency_key: key, direction: "out", sender: cfg.displayName, text: reply.text, at: Date.now(), visibility: "page_only" });
         if (reply.chat && reply.chat !== reply.text) await say(reply.chat, `${key}:notice`);
+      } else if (t.kind === "wake_word" && liveActive() && (await media!.liveSay(reply.speak ?? reply.text))) {
+        // Spoken by Live; the full reply (links, code) stays on the meeting page.
+        ingest.addChat({ idempotency_key: key, direction: "out", sender: cfg.displayName, text: reply.text, at: Date.now(), visibility: "page_only" });
+        log("live_spoke", { turn_id: turnId, chars: (reply.speak ?? reply.text).length });
+        log("turn_done", { turn_id: turnId, ms: Date.now() - started, page_only: false, spoke: true, via: "live" });
+        return;
       } else if (reply.chat) {
         await say(reply.chat, key);
       }
@@ -742,6 +836,7 @@ async function main(): Promise<void> {
     chromePath: process.env.CHROME_PATH,
     recordFile: process.env.MEETING_BOT_RECORD_FILE,
     screenshotDir: process.env.MEETING_BOT_SCREENSHOT_DIR,
+    live: process.env.MEETING_BOT_LIVE !== "0",
   });
   await sleep(100);
   process.exit(r.exitCode);

@@ -48,8 +48,12 @@ export const BASE_CHROME_ARGS = [
   "--no-first-run",
   "--no-default-browser-check",
   "--lang=en-US",
-  // macOS dev runs: without it every launch leaves a code_sign_clone copy in $TMPDIR (workspace AGENTS.md).
-  "--disable-features=MacAppCodeSignClone",
+  // One --disable-features flag only: Chrome keeps the last one it is given.
+  // MacAppCodeSignClone: macOS dev runs leave a code_sign_clone copy in $TMPDIR without it (workspace AGENTS.md).
+  // WebRtcHideLocalIpsWithMdns: plain host ICE candidates, so the live tile's
+  // WebRTC loopback to the meeting tab (live-tile.ts) connects without mDNS,
+  // which an unprivileged pod's network may not resolve.
+  "--disable-features=MacAppCodeSignClone,WebRtcHideLocalIpsWithMdns",
   // A bot profile captured from a killed Chrome would show "Restore pages?" over
   // Meet's side panel (first live Meet call 2026-11-14: chat_post_failed).
   "--hide-crash-restore-bubble",
