@@ -162,7 +162,8 @@ incus file push - "$BUILDER/usr/local/bin/allternit-runner-init" --mode 0755 <<'
 # to fix the volume owner, then runs the runner as user "runner".
 set -eu
 if [ -r /etc/environment ]; then
-  while IFS='=' read -r k v; do
+  # "|| [ -n "$k" ]" keeps the last line when the file has no trailing newline (PATH is last).
+  while IFS='=' read -r k v || [ -n "$k" ]; do
     case "$k" in ''|'#'*) continue ;; esac
     eval "[ -n \"\${$k:-}\" ]" || export "$k=$v"
   done < /etc/environment
@@ -181,6 +182,7 @@ if [ -e /sys/class/net/eth0 ]; then
     printf 'nameserver %s\n' "$gw" > /etc/resolv.conf
   fi
 fi
+export PATH="${PATH:-/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin}"
 : "${ALLTERNIT_RUNNER_HOME:=/home/runner}"
 export ALLTERNIT_RUNNER_HOME HOME=/home/runner
 mkdir -p "$ALLTERNIT_RUNNER_HOME"
