@@ -1,7 +1,7 @@
 import Foundation
 
 /// cloud-api's plan chat store (CONTRACT-connections-2026-11 §9.10):
-/// `POST/GET /api/v1/plan-threads`, `GET .../:id`, `POST .../:id/messages`.
+/// `POST/GET /api/v1/plan-threads`, `GET .../:id`, `POST .../:id/messages`, `DELETE .../:id`.
 /// Needs the person's signed-in session; every failure throws, and callers
 /// fall back to device-only without telling the person.
 struct PlanThreadSummary: Decodable, Equatable, Sendable {
@@ -78,6 +78,20 @@ struct PlanThreadClient: Sendable {
     func append(id: String, messages: [PlanThreadMessage]) async throws -> PlanThreadSummary {
         struct Body: Encodable { let messages: [PlanThreadMessage] }
         return try await send("POST", "api/v1/plan-threads/\(id)/messages", Body(messages: Array(messages.prefix(Self.maxPerAppend))))
+    }
+
+    /// DELETE /api/v1/plan-threads/:id (204). A 404 means it is already gone, which is the goal.
+    func delete(id: String) async throws {
+        guard let token = try await tokenProvider(), !token.isEmpty else { throw APIError.invalidResponse }
+        let escaped = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
+        var request = URLRequest(url: baseURL.appendingPathComponent("api/v1/plan-threads/\(escaped)"))
+        request.httpMethod = "DELETE"
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.timeoutInterval = 20
+        let (_, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) || http.statusCode == 404 else {
+            throw APIError.invalidResponse
+        }
     }
 
     private func send<T: Decodable, B: Encodable>(_ method: String, _ path: String, _ body: B?) async throws -> T {

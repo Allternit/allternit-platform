@@ -49,6 +49,20 @@ final class PlanThreadClientTests: XCTestCase {
         do { _ = try await client(token: nil).create(model: "plan/claude/sonnet"); XCTFail("expected throw") } catch {}
     }
 
+    func testDeleteSendsDeleteAndTreatsMissingAsGone() async throws {
+        var seen: [(String, String)] = []
+        PlanThreadStubProtocol.handler = { request in
+            seen.append((request.httpMethod ?? "", request.url!.path))
+            return request.url!.path.hasSuffix("pth_gone") ? (404, #"{"error":"nope"}"#) : (204, "")
+        }
+        try await client().delete(id: "pth_1")
+        try await client().delete(id: "pth_gone")
+        XCTAssertEqual(seen.first?.0, "DELETE")
+        XCTAssertEqual(seen.first?.1, "/api/v1/plan-threads/pth_1")
+        PlanThreadStubProtocol.handler = { _ in (500, "") }
+        do { try await client().delete(id: "pth_1"); XCTFail("expected throw") } catch {}
+    }
+
     func testChatGPTOnDeviceChatsAreNotStored() {
         XCTAssertTrue(PlanThreadClient.isStored(model: "plan/claude/sonnet"))
         XCTAssertTrue(PlanThreadClient.isStored(model: "copilot/gpt"))
