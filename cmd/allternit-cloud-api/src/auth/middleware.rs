@@ -118,25 +118,11 @@ impl<S> AuthMiddleware<S> {
             return Some(AuthenticatedUser::development_user());
         }
 
-        // Check if token starts with "allternit_" (our token format)
-        if token.starts_with("allternit_") && token.len() >= 32 {
-            // Placeholder: In production, hash the token and look it up in the database
-            // let token_hash = sha256::digest(token);
-            // let db_token = sqlx::query_as::<_, ApiToken>(...)
-
-            // For now, return a mock user with limited permissions
-            return Some(AuthenticatedUser {
-                user_id: format!("user_{}", &token[4..12]),
-                token_id: format!("token_{}", &token[4..12]),
-                permissions: vec![
-                    "runs:read".to_string(),
-                    "runs:write".to_string(),
-                    "jobs:read".to_string(),
-                    "jobs:write".to_string(),
-                ],
-            });
-        }
-
+        // Anything else is refused. This Tower layer has no database handle, so
+        // it cannot check real tokens; the router authenticates with
+        // `auth_middleware`, which looks up `allternit_*` tokens and `alt_…`
+        // keys in Postgres. An earlier placeholder here accepted any
+        // `allternit_` string of 32+ characters as a mock user — fail closed.
         None
     }
 }
@@ -639,6 +625,18 @@ mod tests {
         assert!(
             user.is_none(),
             "removing the gate env turns the backdoor back off"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn legacy_middleware_rejects_unverified_allternit_tokens() {
+        let _guard = DEV_TOKEN_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::remove_var(ALLOW_DEV_TOKEN_ENV);
+        let forged = "allternit_0000000000000000000000000000000000";
+        assert!(
+            legacy_validator().validate_token(forged).await.is_none(),
+            "a token the layer cannot look up must not authenticate"
         );
     }
 
