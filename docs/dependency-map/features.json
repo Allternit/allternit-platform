@@ -4425,7 +4425,7 @@
       "id": "feature:self-hosted-agents",
       "label": "Self-Hosted Agents server (customer-run, no calls to Allternit)",
       "product": "product:allternit-api",
-      "status": "building",
+      "status": "live",
       "description": "A customer runs the whole agent service in their own environment: allternit-agents-server (API, agent loop via a gizzi child, Postgres or SQLite state) plus gizzi workers that poll a fleet work queue over outbound HTTPS and run shell/file tools in a sandbox. Model calls go to the customer's provider (Anthropic, Bedrock, Vertex, Foundry or a gateway with a model_map). Desktop, web, phone layout, PWA, iOS and gizzi connect to the server URL with a server API key.",
       "touches": [
         "allternit/cmd/allternit-api/src/bin/allternit-agents-server.rs",
@@ -4447,12 +4447,37 @@
         "allternit/surfaces/allternit-mobile/ios/Features/Settings/SelfHosted/SelfHostedSettingsView.swift",
         "allternit/sdk/platform-ts/src/selfhost/client.ts",
         "allternit/deploy/selfhost/compose/docker-compose.yml",
-        "allternit/surfaces/docs/self-hosted/overview.mdx"
+        "allternit/surfaces/docs/self-hosted/overview.mdx",
+        "allternit/cmd/allternit-api/src/selfhost/replica.rs",
+        "allternit/cmd/allternit-api/src/selfhost/idempotency.rs",
+        "allternit/cmd/allternit-api/src/selfhost/routes_sessions.rs",
+        "allternit/cmd/allternit-api/migrations_selfhost_pg/003_limits.sql",
+        "allternit/cmd/gizzi-code/src/runtime/selfhost/custom-tools.ts",
+        "allternit/cmd/gizzi-code/src/cli/commands/runtime/selfhost.ts",
+        "allternit/deploy/selfhost/charts/agents-server/templates/pdb.yaml",
+        "allternit/deploy/selfhost/charts/sandboxes/templates/tools-configmap.yaml",
+        "allternit/cmd/allternit-api/tests/e2e/selfhost-replicas.sh"
       ],
       "decisions": [
         {
           "on": "2026-11-13",
           "note": "Built from Eoj's request to match Anthropic's self-hosted Managed Agents; plan ~/.claude/plans/declarative-sprouting-catmull.md, contract approved (G1)."
+        },
+        {
+          "on": "2026-11-14",
+          "note": "D-A: an idle session releases its worker after 30 s; the worker keeps a 10 s affinity so the next turn prefers it (approved by Eoj)."
+        },
+        {
+          "on": "2026-11-14",
+          "note": "D-B: worker custom tools come from a tools file and are commands only (gizzi worker --tools-file) (approved by Eoj)."
+        },
+        {
+          "on": "2026-11-14",
+          "note": "D-C: reclaim_older_than_ms means also take a live lease last renewed at least N ms ago, clamped to at least 30000 (approved by Eoj)."
+        },
+        {
+          "on": "2026-11-14",
+          "note": "Known limits lifted: several replicas on one Postgres, rotate-key while running, Idempotency-Key replay, custom-tool clash refused before store, custom tools in subagents and batch, CLI worker custom tools, idle worker release."
         }
       ],
       "evidence": [
@@ -4475,7 +4500,16 @@
         "allternit/surfaces/allternit-mobile/ios/Features/Settings/SelfHosted/SelfHostedSettingsView.swift",
         "allternit/sdk/platform-ts/src/selfhost/client.ts",
         "allternit/deploy/selfhost/compose/docker-compose.yml",
-        "allternit/surfaces/docs/self-hosted/overview.mdx"
+        "allternit/surfaces/docs/self-hosted/overview.mdx",
+        "allternit/cmd/allternit-api/src/selfhost/replica.rs",
+        "allternit/cmd/allternit-api/src/selfhost/idempotency.rs",
+        "allternit/cmd/allternit-api/src/selfhost/routes_sessions.rs",
+        "allternit/cmd/allternit-api/migrations_selfhost_pg/003_limits.sql",
+        "allternit/cmd/gizzi-code/src/runtime/selfhost/custom-tools.ts",
+        "allternit/cmd/gizzi-code/src/cli/commands/runtime/selfhost.ts",
+        "allternit/deploy/selfhost/charts/agents-server/templates/pdb.yaml",
+        "allternit/deploy/selfhost/charts/sandboxes/templates/tools-configmap.yaml",
+        "allternit/cmd/allternit-api/tests/e2e/selfhost-replicas.sh"
       ]
     },
     {
