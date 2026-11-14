@@ -95,12 +95,23 @@ fn page_url(id: &str) -> String {
     format!("{PAGE_BASE}/{id}")
 }
 
-/// `meetings[]` row: `{id,title,platform_label,people_label,gizzi,starts_at,page_url}`.
+/// Square brand mark per platform (the web app's icon files), an absolute URL so chat cards can draw it.
+pub fn platform_icon(platform: &str) -> &'static str {
+    match platform {
+        "zoom" => "https://ai.allternit.com/app-icons/zoom.svg",
+        "teams" => "https://ai.allternit.com/app-icons/microsoftteams.svg",
+        _ => "https://ai.allternit.com/app-icons/googlemeet.svg",
+    }
+}
+
+/// `meetings[]` row: `{id,title,platform,platform_icon,platform_label,people_label,gizzi,starts_at,page_url}`.
 pub fn list_row(m: &Value) -> Value {
     let id = m["id"].as_str().unwrap_or_default();
     json!({
         "id": s(m, "id"),
         "title": s(m, "title"),
+        "platform": m["platform"].as_str().unwrap_or("meet"),
+        "platform_icon": platform_icon(m["platform"].as_str().unwrap_or("meet")),
         "platform_label": s(m, "platform_label"),
         "people_label": s(m, "people_label"),
         "gizzi": s(m, "gizzi"),
@@ -111,8 +122,12 @@ pub fn list_row(m: &Value) -> Value {
 
 /// The consent text the bot posts in the call (CONTRACT section 1 and the Teams display-name change).
 pub fn notice(platform: &str) -> String {
-    let name = if platform == "teams" { "Gizzi - Allternit" } else { "Gizzi (Allternit)" };
-    format!("Gizzi joins as \"{name}\", tells everyone it is taking notes, and answers in the meeting chat. The recap comes back to this chat.")
+    let join = match platform {
+        "teams" => "Gizzi joins as \"Gizzi - Allternit\" from the lobby; someone in the call lets it in. It tells everyone it is taking notes and answers in the meeting chat.".to_string(),
+        "zoom" => "Gizzi joins as \"Gizzi (Allternit)\" while you are in the Zoom call (Zoom requires it). Connect Zoom once in Settings \u{203a} Meetings. It tells everyone it is taking notes and answers in the meeting chat.".to_string(),
+        _ => "Gizzi joins as \"Gizzi (Allternit)\", tells everyone it is taking notes, and answers in the meeting chat.".to_string(),
+    };
+    format!("{join} The recap comes back to this chat.")
 }
 
 /// `get_meeting` / `add_meeting`: `{id,title,platform_label,people_label,gizzi,starts_at,join_url,notice}`.
@@ -124,6 +139,8 @@ pub fn meeting_detail(m: &Value) -> Value {
     json!({
         "id": s(m, "id"),
         "title": s(m, "title"),
+        "platform": m["platform"].as_str().unwrap_or("meet"),
+        "platform_icon": platform_icon(m["platform"].as_str().unwrap_or("meet")),
         "platform_label": s(m, "platform_label"),
         "people_label": people,
         "gizzi": s(m, "gizzi"),
@@ -155,6 +172,8 @@ pub fn recap(meeting: &Value, session: &Value, artifacts: usize) -> Value {
     json!({
         "id": s(meeting, "id"),
         "title": s(meeting, "title"),
+        "platform": meeting["platform"].as_str().unwrap_or("meet"),
+        "platform_icon": platform_icon(meeting["platform"].as_str().unwrap_or("meet")),
         "platform_label": platform_label,
         "gizzi": s(session, "gizzi"),
         "starts_at": s(meeting, "starts_at"),
@@ -173,6 +192,18 @@ pub fn transcript(meeting_id: &str, page: &Value) -> Value {
         .map(|a| a.iter().map(|g| json!({ "seq": s(g, "seq"), "speaker": s(g, "speaker"), "start_ms": s(g, "start_ms"), "text": s(g, "text") })).collect())
         .unwrap_or_default();
     json!({ "id": meeting_id, "segments": segments, "next_after_seq": s(page, "next_after_seq") })
+}
+
+/// Where a person connects Zoom once; chat shows it as a link.
+pub const SETTINGS_URL: &str = "https://ai.allternit.com/settings/meetings";
+
+/// `409 zoom_not_connected`: tells the model what to say and where the link is.
+fn zoom_not_connected() -> Value {
+    json!({
+        "error": "zoom_not_connected",
+        "message": "Connect Zoom once in Settings \u{203a} Meetings, then ask again. Zoom only lets Gizzi in while you are in the call.",
+        "settings_url": SETTINGS_URL,
+    })
 }
 
 fn err(code: &str, message: &str) -> Value {
@@ -217,6 +248,9 @@ impl Cloud<'_> {
         }
         // Pass cloud-api's `{error, message}` through (`402 meetings_requires_paid_plan` included).
         let code = value["error"].as_str().map(str::to_string).unwrap_or_else(|| format!("cloud_{}", status.as_u16()));
+        if code == "zoom_not_connected" {
+            return Err(zoom_not_connected());
+        }
         let message = value["message"].as_str().unwrap_or("Allternit Cloud refused the request.");
         Err(err(&code, message))
     }
@@ -365,8 +399,11 @@ mod tests {
 
     /// The pack's `sample` blocks (when the web worktree is next to this one) fix the key sets.
     fn pack_keys(screen: &str) -> Option<Vec<String>> {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../allternit-ai-meetings/src/lib/app-screens/packs/meetings.json");
-        let pack: Value = serde_json::from_str(&std::fs::read_to_string(root).ok()?).ok()?;
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let text = ["allternit-ai-meetings-finish", "allternit-ai-meetings"]
+            .iter()
+            .find_map(|d| std::fs::read_to_string(dir.join(format!("../../../{d}/src/lib/app-screens/packs/meetings.json"))).ok())?;
+        let pack: Value = serde_json::from_str(&text).ok()?;
         let sample = pack["screens"].as_array()?.iter().find(|s| s["id"] == screen)?["sample"].clone();
         Some(keys(if screen == "upcoming" { &sample["meetings"][0] } else { &sample }))
     }
@@ -375,19 +412,21 @@ mod tests {
     fn meetings_mcp_output_shapes_match_the_pack() {
         let m = cloud_meeting();
         let list = list_row(&m);
-        let want_list = vec!["gizzi", "id", "page_url", "people_label", "platform_label", "starts_at", "title"];
+        let want_list = vec!["gizzi", "id", "page_url", "people_label", "platform", "platform_icon", "platform_label", "starts_at", "title"];
         assert_eq!(keys(&list), want_list);
         let detail = meeting_detail(&m);
-        let want_detail = vec!["gizzi", "id", "join_url", "notice", "people_label", "platform_label", "starts_at", "title"];
+        let want_detail = vec!["gizzi", "id", "join_url", "notice", "people_label", "platform", "platform_icon", "platform_label", "starts_at", "title"];
         assert_eq!(keys(&detail), want_detail);
         assert_eq!(detail["people_label"], "5 people, from your calendar");
         let session = json!({ "state": "ended", "gizzi": "ended", "live_at": "2026-11-12T17:00:00.000Z", "ended_at": "2026-11-12T17:42:00.000Z",
             "summary": "Keep the free tier.", "decisions": ["a", "b", "c", "d"], "action_items": [{"text": "x"}, {"text": "y"}, {"text": "z"}] });
         let r = recap(&m, &session, 1);
-        let want_recap = vec!["action_items", "artifacts", "decisions", "gizzi", "id", "page_url", "platform_label", "starts_at", "summary", "title"];
+        let want_recap = vec!["action_items", "artifacts", "decisions", "gizzi", "id", "page_url", "platform", "platform_icon", "platform_label", "starts_at", "summary", "title"];
         assert_eq!(keys(&r), want_recap);
         assert_eq!((r["decisions"].clone(), r["action_items"].clone(), r["artifacts"].clone()), (json!(4), json!(3), json!(1)), "counts, not lists");
         assert_eq!(r["platform_label"], "Zoom · 42 min");
+        assert_eq!(r["platform_icon"], "https://ai.allternit.com/app-icons/zoom.svg");
+        assert!(notice("zoom").contains("while you are in the Zoom call") && notice("teams").contains("\"Gizzi - Allternit\" from the lobby") && notice("meet").contains("\"Gizzi (Allternit)\""));
         for (screen, want) in [("upcoming", want_list), ("meeting", want_detail), ("recap", want_recap)] {
             if let Some(pack) = pack_keys(screen) {
                 // The pack's sample may omit a field the tool also returns; every pack field must be there.
@@ -397,6 +436,14 @@ mod tests {
         let t = transcript("m-1", &json!({ "segments": [{ "seq": 1, "speaker": "Ann", "start_ms": 5, "end_ms": 9, "text": "hi", "confidence": 0.9 }], "next_after_seq": 1 }));
         assert_eq!(keys(&t["segments"][0]), vec!["seq", "speaker", "start_ms", "text"]);
         assert_eq!(keys(&t), vec!["id", "next_after_seq", "segments"]);
+    }
+
+    #[test]
+    fn meetings_mcp_zoom_not_connected_points_to_settings() {
+        let e = zoom_not_connected();
+        assert_eq!(e["error"], "zoom_not_connected");
+        assert!(e["message"].as_str().unwrap().contains("Connect Zoom once in Settings"));
+        assert_eq!(e["settings_url"], "https://ai.allternit.com/settings/meetings");
     }
 
     #[test]
@@ -434,7 +481,7 @@ mod tests {
         let base = fake_cloud().await;
         let cloud = Cloud { base: &base, token: "allternit_runtime_test" };
         let out = cloud.run("meetings__list_meetings", &json!({})).await.unwrap();
-        assert_eq!(keys(&out["meetings"][0]), vec!["gizzi", "id", "page_url", "people_label", "platform_label", "starts_at", "title"]);
+        assert_eq!(keys(&out["meetings"][0]), vec!["gizzi", "id", "page_url", "people_label", "platform", "platform_icon", "platform_label", "starts_at", "title"]);
         assert_eq!(out["meetings"][0]["page_url"], "https://ai.allternit.com/meetings/m-1");
         // A link finds the meeting by its call URL, ignoring the query.
         let found = cloud.run("meetings__get_meeting", &json!({ "url": "https://meet.google.com/abc-defg-hij" })).await.unwrap();

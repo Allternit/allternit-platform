@@ -54,7 +54,7 @@ struct MeetingRecapView: View {
                 .font(.system(size: 22, weight: .semibold))
                 .foregroundColor(Color("TextPrimary"))
             HStack(spacing: 6) {
-                MeetingPlatformDot(platform: meeting.platform)
+                MeetingPlatformMark(platform: meeting.platform, size: 16)
                 Text(subtitle)
                     .font(.system(size: 14))
                     .foregroundColor(Color("TextSecondary"))

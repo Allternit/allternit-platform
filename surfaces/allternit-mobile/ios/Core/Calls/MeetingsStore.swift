@@ -464,13 +464,43 @@ enum MeetingNotifier {
 
 // MARK: - Live Activity
 
-/// One local Live Activity per meeting Gizzi is in (the widget extension's
-/// `MeetingLiveActivityWidget`). cloud-api sends no pushes for it yet, so it
-/// is requested without a push type and updated while the app runs.
+/// One Live Activity per meeting Gizzi is in (the widget extension's
+/// `MeetingLiveActivityWidget`). Two writers keep it current:
+/// - this process, from the agenda / SSE state (`sync(live:)`) while the app runs;
+/// - cloud-api (`routes/meeting_notify.rs`), by APNs Live Activity pushes while
+///   the app is suspended. Activities are requested with `pushType: .token`;
+///   each update token goes to the cloud with `activityKey = sessionId` (the
+///   server matches pushes on the session id), and on iOS 17.2+ the
+///   push-to-start token lets the server start one when Gizzi joins with the
+///   app closed. Tokens go through `ActivityTokenRegistry`, which honours the
+///   device-local Live Activities switch.
 @MainActor
 final class MeetingLiveActivityManager {
     static let shared = MeetingLiveActivityManager()
+
+    /// cloud-api `meeting_notify::ATTRIBUTES`.
+    nonisolated static let attributesType = "MeetingActivityAttributes"
+
+    private var observed: Set<String> = []
+    private var installed = false
+
     private init() {}
+
+    /// Launch (`BotLiveActivityManager.installAtLaunch()`): adopt activities
+    /// that outlived the last process or were started by push, and keep their
+    /// tokens current.
+    func startObserving() {
+        guard !installed else { return }
+        installed = true
+        for existing in Activity<MeetingActivityAttributes>.activities
+        where existing.activityState == .active || existing.activityState == .stale {
+            observe(existing)
+        }
+        Task { await Self.watchNewActivities() }
+        if #available(iOS 17.2, *) {
+            Task { await Self.watchPushToStartTokens() }
+        }
+    }
 
     func sync(live: [(Meeting, MeetingSession?)]) {
         guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
@@ -494,7 +524,7 @@ final class MeetingLiveActivityManager {
                 title: meeting.displayTitle,
                 platformLabel: meeting.platformName
             )
-            _ = try? Activity.request(attributes: attributes, content: ActivityContent(state: Self.state(meeting, session), staleDate: nil))
+            start(attributes: attributes, state: Self.state(meeting, session))
         }
     }
 
@@ -502,6 +532,68 @@ final class MeetingLiveActivityManager {
         let ids = Activity<MeetingActivityAttributes>.activities.map(\.id)
         Task {
             for id in ids { await Self.live(id)?.end(nil, dismissalPolicy: .immediate) }
+        }
+    }
+
+    private func start(attributes: MeetingActivityAttributes, state: MeetingActivityAttributes.ContentState) {
+        let content = ActivityContent(state: state, staleDate: nil)
+        let activity: Activity<MeetingActivityAttributes>
+        do {
+            activity = try Activity.request(attributes: attributes, content: content, pushType: .token)
+        } catch {
+            // No push entitlement (unsigned or simulator builds): a local
+            // activity still works, it just can't be updated by push.
+            guard let local = try? Activity.request(attributes: attributes, content: content) else { return }
+            activity = local
+        }
+        observe(activity)
+    }
+
+    private func observe(_ activity: Activity<MeetingActivityAttributes>) {
+        let id = activity.id
+        let sessionId = activity.attributes.sessionId
+        guard observed.insert(id).inserted else { return }
+        // Without a session id the server has nothing to match pushes on.
+        if !sessionId.isEmpty {
+            Task { await Self.watchTokens(activityId: id, sessionId: sessionId) }
+        }
+        Task { await Self.watchState(activityId: id, sessionId: sessionId) }
+    }
+
+    private func didEnd(activityId: String, sessionId: String) async {
+        observed.remove(activityId)
+        guard !sessionId.isEmpty else { return }
+        await ActivityTokenRegistry.shared.remove(kind: .laUpdate, attributesType: Self.attributesType, activityKey: sessionId)
+    }
+
+    private nonisolated static func watchNewActivities() async {
+        for await new in Activity<MeetingActivityAttributes>.activityUpdates {
+            let id = new.id
+            await MainActor.run {
+                if let found = live(id) { MeetingLiveActivityManager.shared.observe(found) }
+            }
+        }
+    }
+
+    @available(iOS 17.2, *)
+    private nonisolated static func watchPushToStartTokens() async {
+        for await token in Activity<MeetingActivityAttributes>.pushToStartTokenUpdates {
+            await ActivityTokenRegistry.shared.update(kind: .laStart, attributesType: attributesType, activityKey: nil, token: token)
+        }
+    }
+
+    private nonisolated static func watchTokens(activityId: String, sessionId: String) async {
+        guard let tracked = live(activityId) else { return }
+        for await token in tracked.pushTokenUpdates {
+            await ActivityTokenRegistry.shared.update(kind: .laUpdate, attributesType: attributesType, activityKey: sessionId, token: token)
+        }
+    }
+
+    private nonisolated static func watchState(activityId: String, sessionId: String) async {
+        guard let tracked = live(activityId) else { return }
+        for await state in tracked.activityStateUpdates where state == .ended || state == .dismissed {
+            await MeetingLiveActivityManager.shared.didEnd(activityId: activityId, sessionId: sessionId)
+            return
         }
     }
 

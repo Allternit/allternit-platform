@@ -19,6 +19,24 @@ Gizzi can join a video call for you. It listens, writes a transcript, answers wh
 - **Asks you before it uses a tool.** See [Approvals](#approvals).
 - **Writes a recap.** The recap has a summary, the decisions and the action items.
 
+### How Gizzi joins each platform
+
+| Platform | Name in the call | How it gets in | What you do |
+| --- | --- | --- | --- |
+| Google Meet | Gizzi (Allternit) | Joins as a guest and asks to join. | Let it in if the host asks. |
+| Zoom | Gizzi (Allternit) | Joins only while you are in the Zoom call. Zoom requires this. | Connect Zoom once in **Settings > Meetings**, then be in the call. |
+| Microsoft Teams | Gizzi - Allternit | Waits in the lobby. | Someone in the call lets it in. |
+
+To connect Zoom, once per account:
+
+1. Open **Settings > Meetings** on the web, the phone layout, the PWA or Desktop. On the iPhone app, open Meetings settings.
+2. In the Zoom row, choose **Connect Zoom**. Zoom opens in your browser. Allow access.
+3. You come back to Settings with a note that Zoom connected. The row now says **Connected**. Choose **Disconnect** to remove it.
+
+If Zoom asks you to sign in again later, the row shows **Reconnect Zoom**. If you send Gizzi to a Zoom call before you connect, Meetings shows **Connect Zoom to send Gizzi** next to the message. In chat and in the terminal, Gizzi tells you to connect Zoom and gives the Settings link. Meet and Teams need no setup.
+
+Each platform's logo shows next to its name in the meetings list, the live page, the recap and the Meetings chat card.
+
 By default Gizzi replies in the meeting chat only. It speaks aloud only if you turn on **Speak replies** for that meeting.
 
 ## Connect your calendar

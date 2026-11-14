@@ -1,13 +1,15 @@
 //! Launcher: capacity and `no_capacity`, pod config per platform (no
-//! secret in what the pod gets), and the reaper. The pod host, LiveKit and
-//! Zoom are faked (vendor/infra edges); the database and state machine are
-//! real.
+//! secret in what the pod gets), bot account profiles (delivery, pool
+//! rules, write-back), and the reaper. The pod host, LiveKit and Zoom are
+//! faked (vendor/infra edges); the database, state machine and profile
+//! store (a temp dir) are real.
 
 use super::*;
 use crate::routes::livekit_admin::{CreateSipParticipantRequest, LiveKitError, ParticipantAccess};
 use crate::routes::meeting_pod::hash_token;
 use crate::routes::test_support::{test_state, MockGateway};
 use crate::routes::zoom::{ZoomCallError, ZoomTokens, DEFAULT_REDIRECT_URI};
+use crate::services::bot_profiles::{ProfileKey, ProfileStatus, ProfileStore};
 use std::sync::Mutex;
 
 const CLIENT_SECRET: &str = "zoom-client-secret-never-in-a-pod";
@@ -18,6 +20,9 @@ struct FakeHost {
     started: Mutex<Vec<(PodHandle, Vec<PodFile>)>>,
     stopped: Mutex<Vec<String>>,
     gone: Mutex<bool>,
+    /// What the pod left at PROFILE_OUT_PATH; `pulled` counts reads.
+    saved_profile: Mutex<Option<Vec<u8>>>,
+    pulled: Mutex<usize>,
 }
 
 #[async_trait]
@@ -41,6 +46,12 @@ impl PodProvider for FakeHost {
         self.stopped.lock().unwrap().push(handle.name.clone());
         *self.slots.lock().unwrap() += 1;
         Ok(())
+    }
+    async fn pull_file(&self, handle: &PodHandle, path: &str) -> Result<Option<Vec<u8>>, PodError> {
+        assert_eq!(path, PROFILE_OUT_PATH);
+        assert!(!self.stopped.lock().unwrap().contains(&handle.name), "profile pulled after the pod was deleted");
+        *self.pulled.lock().unwrap() += 1;
+        Ok(self.saved_profile.lock().unwrap().clone())
     }
 }
 
@@ -104,8 +115,20 @@ struct Rig {
     host: Arc<FakeHost>,
     livekit: Arc<FakeLiveKit>,
     launcher: Launcher,
+    store: ProfileStore,
+    _profiles_dir: tempfile::TempDir,
 }
 
+fn profile_key() -> ProfileKey {
+    ProfileKey::from_base64(&STANDARD.encode([9u8; 32])).unwrap()
+}
+
+/// The sealed profile each account starts with in [`rig`].
+fn signed_in_archive(account: &str) -> Vec<u8> {
+    format!("tar.zst of {account}").into_bytes()
+}
+
+/// Every account in `accounts` starts signed in (active, generation 1).
 async fn rig(slots: usize, global_cap: i64, accounts: &[&str]) -> Rig {
     let state = test_state(Arc::new(MockGateway::new(None, vec![]))).await;
     for sql in [
@@ -116,6 +139,11 @@ async fn rig(slots: usize, global_cap: i64, accounts: &[&str]) -> Rig {
     }
     let host = Arc::new(FakeHost { slots: Mutex::new(slots), ..Default::default() });
     let livekit = Arc::new(FakeLiveKit::default());
+    let profiles_dir = tempfile::tempdir().unwrap();
+    let store = ProfileStore::new(profiles_dir.path(), Some(profile_key()));
+    for account in accounts {
+        store.seal(account, &signed_in_archive(account), Utc::now() - chrono::Duration::days(2), true).unwrap();
+    }
     let launcher = Launcher {
         db: state.db.clone(),
         cipher: None,
@@ -132,8 +160,9 @@ async fn rig(slots: usize, global_cap: i64, accounts: &[&str]) -> Rig {
             bot_accounts: accounts.iter().map(|a| a.to_string()).collect(),
             silent_after: chrono::Duration::minutes(20),
         },
+        profiles: store.clone(),
     };
-    Rig { db: state.db.clone(), host, livekit, launcher }
+    Rig { db: state.db.clone(), host, livekit, launcher, store, _profiles_dir: profiles_dir }
 }
 
 async fn subscribe(db: &PgPool, user: &str, plan: &str) {
@@ -179,13 +208,13 @@ async fn state_of(db: &PgPool, sid: Uuid) -> (String, Option<String>, Option<Str
 
 /// The pod config and env the pod would see, from the runner drop-in.
 fn pod_view(files: &[PodFile]) -> (Value, String) {
-    let runner = &files.iter().find(|f| f.path.contains("allternit-meeting-bot.service.d")).unwrap().content;
+    let runner = String::from_utf8(files.iter().find(|f| f.path.contains("allternit-meeting-bot.service.d")).unwrap().content.clone()).unwrap();
     let encoded = runner
         .lines()
         .find_map(|l| l.strip_prefix("Environment=\"ALLTERNIT_POD_CONFIG=")?.strip_suffix('"'))
         .unwrap();
     let config: Value = serde_json::from_slice(&STANDARD.decode(encoded).unwrap()).unwrap();
-    let all: String = files.iter().map(|f| f.content.clone()).collect();
+    let all: String = files.iter().map(|f| String::from_utf8_lossy(&f.content).into_owned()).collect();
     (config, all)
 }
 
@@ -329,4 +358,100 @@ async fn launcher_reaper_tears_down_ended_and_vanished_pods() {
 #[test]
 fn launcher_env_lines_escape_systemd_specifiers() {
     assert_eq!(env_line("A", "x%y\"z\\"), "Environment=\"A=x%%y\\\"z\\\\\"\n");
+}
+
+fn started_files(r: &Rig, sid: Uuid) -> Vec<PodFile> {
+    r.host.started.lock().unwrap().iter().find(|(h, _)| h.name == pod_name(sid)).unwrap().1.clone()
+}
+
+#[tokio::test]
+async fn launcher_meet_claim_skips_needs_reauth_and_unsealed_accounts() {
+    // a: needs a new sign-in; b: listed but never signed in; c: active.
+    let mut r = rig(10, 20, &["a@example.com", "c@example.com"]).await;
+    r.launcher.config.bot_accounts = vec!["a@example.com".into(), "b@example.com".into(), "c@example.com".into()];
+    r.store.set_status("a@example.com", ProfileStatus::NeedsReauth, Utc::now()).unwrap();
+    subscribe(&r.db, "u1", "ultra").await;
+
+    let first = session(&r.db, "u1", "meet", 1).await;
+    r.launcher.launch_session(first).await.unwrap();
+    let files = started_files(&r, first);
+    assert_eq!(pod_view(&files).0["identity"]["accountEmail"], "c@example.com");
+    // The decrypted profile goes in as a root-only file; the sealed copy never does.
+    let seed = files.iter().find(|f| f.path == PROFILE_SEED_PATH).expect("profile archive pushed");
+    assert_eq!((seed.content.clone(), seed.mode), (signed_in_archive("c@example.com"), "0600"));
+
+    // The only usable account is busy: the next Meet pod joins signed out, with no archive.
+    let second = session(&r.db, "u1", "meet", 2).await;
+    r.launcher.launch_session(second).await.unwrap();
+    let files = started_files(&r, second);
+    assert_eq!(pod_view(&files).0["identity"], json!({ "kind": "anonymous" }));
+    assert!(files.iter().all(|f| f.path != PROFILE_SEED_PATH));
+    assert_eq!(PodRef::parse(&state_of(&r.db, second).await.2.unwrap()).unwrap().bot_account, None);
+}
+
+#[tokio::test]
+async fn launcher_signed_out_report_takes_the_account_out_of_the_pool() {
+    let r = rig(10, 20, &["bot@example.com"]).await;
+    subscribe(&r.db, "u1", "ultra").await;
+    let first = session(&r.db, "u1", "meet", 1).await;
+    r.launcher.launch_session(first).await.unwrap();
+    note_bot_profile_signed_out(&r.db, &r.store, first).await;
+    let state = r.store.state("bot@example.com").unwrap().unwrap();
+    assert_eq!(state.status, ProfileStatus::NeedsReauth);
+    assert!(state.last_signed_out_at.is_some());
+
+    // Even once the first session is over, the account stays out until re-signed in.
+    set_state(&r.db, first, SessionState::Launching, SessionState::Ended, Some(EndReason::GuestBlocked)).await.unwrap();
+    r.launcher.reap(Utc::now()).await.unwrap();
+    let next = session(&r.db, "u1", "meet", 2).await;
+    r.launcher.launch_session(next).await.unwrap();
+    assert_eq!(pod_view(&started_files(&r, next)).0["identity"], json!({ "kind": "anonymous" }));
+}
+
+#[tokio::test]
+async fn launcher_writes_back_a_clean_meet_session_once_per_day() {
+    let r = rig(10, 20, &["bot@example.com"]).await;
+    subscribe(&r.db, "u1", "ultra").await;
+    *r.host.saved_profile.lock().unwrap() = Some(b"fresh cookies".to_vec());
+    let go_live_and_end = |sid: Uuid, reason: EndReason| {
+        let db = r.db.clone();
+        async move {
+            sqlx::query("UPDATE meeting_sessions SET state = 'live', live_at = now() WHERE id = $1").bind(sid).execute(&db).await.unwrap();
+            set_state(&db, sid, SessionState::Live, SessionState::Ended, Some(reason)).await.unwrap();
+        }
+    };
+    let later = Utc::now() + chrono::Duration::minutes(6);
+
+    // A session that ended in error is not saved back.
+    let failed = session(&r.db, "u1", "meet", 1).await;
+    r.launcher.launch_session(failed).await.unwrap();
+    go_live_and_end(failed, EndReason::Error).await;
+    assert_eq!(r.launcher.reap(later).await.unwrap(), 1);
+    assert_eq!((*r.host.pulled.lock().unwrap(), r.store.state("bot@example.com").unwrap().unwrap().gen), (0, 1));
+
+    // Clean end, profile sealed 2 days ago: saved as generation 2 before the pod is deleted.
+    let clean = session(&r.db, "u1", "meet", 2).await;
+    r.launcher.launch_session(clean).await.unwrap();
+    go_live_and_end(clean, EndReason::EmptyRoom).await;
+    assert_eq!(r.launcher.reap(later).await.unwrap(), 1);
+    assert_eq!(r.store.open_current("bot@example.com").unwrap(), b"fresh cookies");
+    assert_eq!(r.store.generations("bot@example.com").unwrap(), vec![1, 2]);
+
+    // Another clean session the same day: not pulled, not sealed.
+    let again = session(&r.db, "u1", "meet", 3).await;
+    r.launcher.launch_session(again).await.unwrap();
+    assert_eq!(started_files(&r, again).iter().find(|f| f.path == PROFILE_SEED_PATH).unwrap().content, b"fresh cookies");
+    go_live_and_end(again, EndReason::LeftByUser).await;
+    assert_eq!(r.launcher.reap(later).await.unwrap(), 1);
+    assert_eq!(*r.host.pulled.lock().unwrap(), 1);
+    assert_eq!(r.store.state("bot@example.com").unwrap().unwrap().gen, 2);
+}
+
+#[test]
+fn launcher_pod_hosts_allow_list() {
+    let any: Vec<String> = vec![];
+    assert!(pod_host_allowed(&any, "host_mail"));
+    let only = vec!["host_standby".to_string()];
+    assert!(pod_host_allowed(&only, "host_standby"));
+    assert!(!pod_host_allowed(&only, "host_mail"), "cloud-api's own host never takes a meeting pod when the list is set");
 }

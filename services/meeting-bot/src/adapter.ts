@@ -60,6 +60,12 @@ export interface JoinOk {
   ok: true;
   /** Epoch ms when the bot became live in the call. */
   liveAt: number;
+  /**
+   * Set when the call went live anyway but something needs ops, e.g. Meet let a
+   * signed-out bot profile in as a guest (`bot_profile_signed_out`). The runner
+   * sends it with the `live` state so cloud-api takes the account out of the pool.
+   */
+  detail?: string;
 }
 export interface JoinFailure {
   ok: false;

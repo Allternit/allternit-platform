@@ -75,6 +75,8 @@ async function raw(method: string, route: string, body?: unknown, signal?: Abort
   }
   if (!res.ok) {
     const b = (await res.json().catch(() => undefined)) as { error?: unknown; message?: string } | undefined
+    if (res.status === 409 && b?.error === "zoom_not_connected")
+      throw new Failure(`Connect Zoom once, then try again: ${ZOOM_SETTINGS_URL}\nZoom only lets Gizzi in while you are in the call.`)
     throw new Failure(describeApiError(res.status, b))
   }
   return res
@@ -129,11 +131,16 @@ function when(iso: string | null): string {
   return `${day} ${d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}`
 }
 
+const ZOOM_SETTINGS_URL = "https://ai.allternit.com/settings/meetings"
+const ZOOM_NOTE = "Zoom: Gizzi joins as \"Gizzi (Allternit)\" only while you are in the call, so you must be in it. Connect Zoom once in Settings > Meetings."
+const isZoom = (m: { platform_label: string }) => /zoom/i.test(m.platform_label)
+
 export function formatMeetings(list: Meeting[]): string {
   if (!list.length) return "No meetings."
   return [
     `${pad("WHEN", 20)} ${pad("TITLE", 34)} ${pad("PLATFORM", 16)} ${pad("GIZZI", 21)} ID`,
     ...list.map((m) => `${pad(when(m.starts_at), 20)} ${pad(m.title || "(untitled)", 34)} ${pad(m.platform_label, 16)} ${pad(gizziLabel(m.gizzi), 21)} ${m.id.slice(0, 8)}`),
+    ...(list.some(isZoom) ? ["", ZOOM_NOTE] : []),
   ].join("\n")
 }
 
@@ -171,6 +178,7 @@ const AddCommand = cmd({
     if (args.json) return json({ meeting, session })
     process.stdout.write(`Added: ${meeting.title || meeting.join_url} (${meeting.platform_label}) · ${meeting.id}\n`)
     if (session) process.stdout.write(`Gizzi: ${gizziLabel(session.gizzi)}\n`)
+    if (isZoom(meeting)) process.stdout.write(`${ZOOM_NOTE}\n`)
   }),
 })
 

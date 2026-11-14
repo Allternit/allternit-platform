@@ -11,10 +11,15 @@
 //!    the session ends `no_capacity` and no pod is started. A Meet session
 //!    also takes a free bot Google account here (docs/meetings/BOT-ACCOUNTS.md;
 //!    one session per account).
-//! 2. Builds the bot identity: Meet = that account's profile (signed out
-//!    when the pool is empty or busy), Zoom = an OBF token plus an SDK JWT
-//!    signed here (`sdkSecretRef: "jwt:…"`; the client secret never leaves
-//!    cloud-api), Teams = anonymous as "Gizzi - Allternit".
+//!    Only accounts that are `active` with a sealed profile (and
+//!    `MEETINGS_BOT_PROFILE_KEY` set) are handed out
+//!    ([`crate::services::bot_profiles`]).
+//! 2. Builds the bot identity: Meet = that account's profile, decrypted and
+//!    pushed into the stopped container as a root-only archive that the
+//!    image's `allternit-meeting-profile.service` unpacks before the runner
+//!    starts (signed out when no account is free or deliverable), Zoom =
+//!    an OBF token plus an SDK JWT signed here (`sdkSecretRef: "jwt:…"`;
+//!    the client secret never leaves cloud-api), Teams = anonymous as "Gizzi - Allternit".
 //! 3. Issues the pod token, creates LiveKit room `meeting-<sid>` with agent
 //!    dispatch `allternit-meeting` and mints the pod's participant token.
 //! 4. Reserves room on a fleet host (the same `provisioned_hosts` ledger and
@@ -27,6 +32,11 @@
 //! [`reap`] tears pods down: sessions that ended (after a grace so the pod
 //! can post its final batch and summary), and live sessions whose pod
 //! vanished or stopped reporting (see [`reap`] for the heartbeat rules).
+//! Before deleting a pod whose Meet session ended cleanly, it pulls the
+//! profile the pod saved on exit and seals it as the account's next
+//! generation, at most once a day per account ([`Launcher::write_back`]).
+//! A session that reports `bot_profile_signed_out` marks its account
+//! `needs_reauth` ([`note_bot_profile_signed_out`]).
 //!
 //! The provider sits behind [`PodProvider`]; tests use a fake and never
 //! touch a real host.
@@ -49,6 +59,7 @@ use crate::routes::meeting_state::{EndReason, State as SessionState};
 use crate::routes::meetings::{fetch_meeting, fetch_session, set_state, MeetingError, SessionRow, BOT_IDENTITY};
 use crate::routes::org_meeting_settings::{load_org_settings, plan_limits};
 use crate::routes::zoom::{zoom_identity, TokenError, ZoomApi, ZoomConfig, ZoomHttp};
+use crate::services::bot_profiles::{ProfileStatus, ProfileStore};
 use crate::services::provisioning::{
     host_in_pool, release_host_allocation, select_host, BackendRegistry, BackendStatus, ComputeClass, ComputerSize,
     HostCapacity, IncusBackendRegistry, InstanceFile, ProvisionDefaults, ProvisionError, ProvisionSpec,
@@ -62,6 +73,16 @@ pub const ROOM_PREFIX: &str = "meeting-";
 pub const TEAMS_DISPLAY_NAME: &str = "Gizzi - Allternit";
 /// Mount point for the bot Google account's Chrome profile in the image.
 pub const BOT_PROFILE_DIR: &str = "/var/lib/allternit/bot-profile";
+/// Where the launcher pushes the decrypted profile archive (root-only, in a
+/// directory the image does not create, since Incus resets a pushed file's
+/// parent to 0700). `allternit-meeting-profile.service` unpacks and deletes it.
+pub const PROFILE_SEED_PATH: &str = "/var/lib/allternit-profile-seed/profile.tar.zst";
+/// Where the runner unit's `ExecStopPost` leaves the profile for write-back.
+pub const PROFILE_OUT_PATH: &str = "/var/lib/allternit-profile-out/profile.tar.zst";
+/// Largest profile archive the reaper pulls back.
+const MAX_PROFILE_BYTES: usize = 256 * 1024 * 1024;
+/// The pod's end detail when the Meet profile turned out signed out.
+pub const SIGNED_OUT_DETAIL: &str = "bot_profile_signed_out";
 
 const DEFAULT_GLOBAL_CAP: i64 = 20;
 const DEFAULT_IMAGE: &str = "allternit-meeting-bot";
@@ -145,11 +166,11 @@ pub struct PodHandle {
     pub disk_gb: i64,
 }
 
-/// One file written into the pod before it starts.
+/// One file written into the pod before it starts (root-owned).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PodFile {
     pub path: String,
-    pub content: String,
+    pub content: Vec<u8>,
     pub mode: &'static str,
 }
 
@@ -178,6 +199,17 @@ pub trait PodProvider: Send + Sync {
     async fn liveness(&self, handle: &PodHandle) -> Result<PodLiveness, PodError>;
     /// Delete the container (a missing one is fine) and release the booking.
     async fn stop(&self, handle: &PodHandle) -> Result<(), PodError>;
+    /// Read one file out of the pod (`Ok(None)` when it does not exist).
+    async fn pull_file(&self, _handle: &PodHandle, _path: &str) -> Result<Option<Vec<u8>>, PodError> {
+        Err(PodError::Failed("this pod provider cannot read files".to_string()))
+    }
+}
+
+/// `MEETINGS_POD_HOSTS` rule: empty = every Incus host; otherwise only the
+/// listed host ids take meeting pods (hosts like `host_mail` run cloud-api
+/// itself and have no bot image).
+pub fn pod_host_allowed(allow: &[String], host_id: &str) -> bool {
+    allow.is_empty() || allow.iter().any(|h| h == host_id)
 }
 
 /// Pods on the cloud-computer fleet: `provisioned_hosts` (Incus endpoints
@@ -190,6 +222,8 @@ pub struct IncusPodProvider {
     size: ComputerSize,
     profiles: Vec<String>,
     storage_pool: String,
+    /// `MEETINGS_POD_HOSTS` (comma list of host ids); empty = any host.
+    hosts: Vec<String>,
 }
 
 impl IncusPodProvider {
@@ -210,6 +244,9 @@ impl IncusPodProvider {
                 .map(|p| p.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect())
                 .unwrap_or(defaults.profiles),
             storage_pool: defaults.storage_pool,
+            hosts: get("MEETINGS_POD_HOSTS")
+                .map(|p| p.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect())
+                .unwrap_or_default(),
         }
     }
 
@@ -252,7 +289,7 @@ impl PodProvider for IncusPodProvider {
         .map_err(fail)?;
         let hosts: Vec<HostCapacity> = rows
             .into_iter()
-            .filter(|row| host_in_pool(&row.0, false))
+            .filter(|row| host_in_pool(&row.0, false) && pod_host_allowed(&self.hosts, &row.0))
             .map(|(id, enabled, cpu, mem, disk, cpu_used, mem_used, disk_used)| HostCapacity {
                 id,
                 enabled,
@@ -311,7 +348,7 @@ impl PodProvider for IncusPodProvider {
         backend.create(&spec).await.map_err(provision_failed)?;
         let files: Vec<InstanceFile> = files
             .iter()
-            .map(|f| InstanceFile { path: f.path.clone(), content: f.content.clone().into_bytes(), uid: 0, gid: 0, mode: f.mode.to_string() })
+            .map(|f| InstanceFile { path: f.path.clone(), content: f.content.clone(), uid: 0, gid: 0, mode: f.mode.to_string() })
             .collect();
         // Files go in while the container is stopped; systemd reads the
         // drop-ins on its first boot.
@@ -340,6 +377,15 @@ impl PodProvider for IncusPodProvider {
         )
         .await;
         Ok(())
+    }
+
+    async fn pull_file(&self, handle: &PodHandle, path: &str) -> Result<Option<Vec<u8>>, PodError> {
+        let Some(backend) = self.backend(&handle.host).await? else { return Ok(None) };
+        match backend.pull_file(&handle.name, path, MAX_PROFILE_BYTES).await {
+            Ok(file) => Ok(file),
+            Err(ProvisionError::NotFound(_)) => Ok(None),
+            Err(error) => Err(provision_failed(error)),
+        }
     }
 }
 
@@ -476,17 +522,17 @@ pub fn session_files(config: &LauncherConfig, pod_config: &Value, secrets: &PodS
     vec![
         PodFile {
             path: "/etc/systemd/system/allternit-meeting-bot.service.d/50-session.conf".to_string(),
-            content: runner,
+            content: runner.into_bytes(),
             mode: "0600",
         },
         PodFile {
             path: "/usr/lib/systemd/system/allternit-headless.service.d/50-meeting-session.conf".to_string(),
-            content: app,
+            content: app.into_bytes(),
             mode: "0600",
         },
         PodFile {
             path: "/etc/systemd/system/multi-user.target.d/50-meeting-session.conf".to_string(),
-            content: "[Unit]\nWants=allternit-meeting-bot.service\n".to_string(),
+            content: b"[Unit]\nWants=allternit-meeting-bot.service\n".to_vec(),
             mode: "0644",
         },
     ]
@@ -519,6 +565,8 @@ pub struct Launcher {
     pub livekit: Option<Arc<dyn LiveKitAdminClient>>,
     pub zoom: Option<(Arc<dyn ZoomApi>, ZoomConfig)>,
     pub config: LauncherConfig,
+    /// Sealed bot account profiles (`MEETINGS_BOT_PROFILE_DIR` / `_KEY`).
+    pub profiles: ProfileStore,
 }
 
 fn incus_registry() -> Arc<dyn BackendRegistry> {
@@ -536,6 +584,7 @@ impl Launcher {
             livekit: LiveKitConfig::from_env().map(|c| Arc::new(LiveKitHttpAdmin::new(c)) as Arc<dyn LiveKitAdminClient>),
             zoom: ZoomConfig::from_env().map(|c| (Arc::new(ZoomHttp::new(c.clone())) as Arc<dyn ZoomApi>, c)),
             config: LauncherConfig::from_env(),
+            profiles: ProfileStore::shared(),
         }
     }
 
@@ -558,6 +607,18 @@ impl Launcher {
     /// launchers (or replicas) can't both take the last slot or account.
     async fn claim(&self, session: &SessionRow) -> Result<Option<Result<PodRef, EndReason>>, MeetingError> {
         let plan = crate::services::voice_usage::plan_for_user(&self.db, &session.user_id).await?;
+        // Accounts a pod can actually use: active, sealed, key set. Read
+        // before the lock (file IO); `needs_reauth`, `suspended` and
+        // never-signed-in accounts stay out of the pool.
+        let eligible: Vec<String> = if session.platform == "meet" && !self.config.bot_accounts.is_empty() {
+            let store = self.profiles.clone();
+            let accounts = self.config.bot_accounts.clone();
+            tokio::task::spawn_blocking(move || accounts.into_iter().filter(|a| store.deliverable(a)).collect())
+                .await
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
         let mut tx = self.db.begin().await?;
         sqlx::query("SELECT pg_advisory_xact_lock($1)").bind(LAUNCH_LOCK_KEY).execute(&mut *tx).await?;
         let still: Option<(String, Option<String>)> =
@@ -580,7 +641,7 @@ impl Launcher {
             tx.commit().await?;
             return Ok(Some(Err(EndReason::NoCapacity)));
         }
-        let bot_account = if session.platform == "meet" && !self.config.bot_accounts.is_empty() {
+        let bot_account = if !eligible.is_empty() {
             // An account is busy while any pod (live or in its end grace) holds it.
             let busy: Vec<String> = sqlx::query_scalar(
                 "SELECT pod_ref::jsonb ->> 'bot_account' FROM meeting_sessions \
@@ -588,7 +649,7 @@ impl Launcher {
             )
             .fetch_all(&mut *tx)
             .await?;
-            self.config.bot_accounts.iter().find(|a| !busy.contains(a)).cloned()
+            eligible.iter().find(|a| !busy.contains(a)).cloned()
         } else {
             None
         };
@@ -641,6 +702,7 @@ impl Launcher {
             Some(Err(reason)) => return self.end(sid, reason).await,
             Some(Ok(claim)) => claim,
         };
+        let Some((claim, profile_archive)) = self.open_profile(sid, claim).await? else { return Ok(LaunchOutcome::Skipped) };
         let identity = match self.identity(&session, &claim).await {
             Ok(identity) => identity,
             Err(reason) => return self.end(sid, reason).await,
@@ -686,7 +748,10 @@ impl Launcher {
             },
         );
         let secrets = PodSecrets { pod_token, livekit_token, internal_token: random_token("mit_") };
-        let files = session_files(&self.config, &config, &secrets);
+        let mut files = session_files(&self.config, &config, &secrets);
+        if let Some(archive) = profile_archive {
+            files.push(PodFile { path: PROFILE_SEED_PATH.to_string(), content: archive, mode: "0600" });
+        }
 
         let handle = match self.provider.reserve(sid).await {
             Ok(handle) => handle,
@@ -719,6 +784,88 @@ impl Launcher {
         }
         tracing::info!(%sid, host = %handle.host, pod = %handle.name, platform = %session.platform, "meetings: pod started");
         Ok(LaunchOutcome::Launched(handle))
+    }
+
+    /// Decrypt the claimed bot account's current profile. When it does not
+    /// open (wrong key, corrupt file), the account is dropped from the claim
+    /// so the pod joins signed out and nothing is ever written back from it.
+    /// `None` = the claim changed meanwhile (the reaper retired it).
+    async fn open_profile(&self, sid: Uuid, claim: PodRef) -> Result<Option<(PodRef, Option<Vec<u8>>)>, MeetingError> {
+        let Some(account) = claim.bot_account.clone() else { return Ok(Some((claim, None))) };
+        let store = self.profiles.clone();
+        let opened = {
+            let account = account.clone();
+            tokio::task::spawn_blocking(move || store.open_current(&account)).await
+        };
+        let error = match opened {
+            Ok(Ok(archive)) => return Ok(Some((claim, Some(archive)))),
+            Ok(Err(error)) => error.to_string(),
+            Err(join) => join.to_string(),
+        };
+        tracing::error!(%sid, %account, %error, "meetings: bot account profile does not open; the pod joins signed out");
+        let without = PodRef { bot_account: None, ..claim.clone() };
+        let changed = sqlx::query("UPDATE meeting_sessions SET pod_ref = $3, updated_at = now() WHERE id = $1 AND pod_ref = $2")
+            .bind(sid)
+            .bind(claim.text())
+            .bind(without.text())
+            .execute(&self.db)
+            .await?
+            .rows_affected();
+        Ok((changed == 1).then_some((without, None)))
+    }
+
+    /// After a clean Meet session on a bot account: note the account worked
+    /// and, at most once a day, seal the profile the pod saved on exit as
+    /// the next generation. Runs just before the pod is deleted. Never
+    /// fails the reap: every problem is logged and skipped.
+    pub(crate) async fn write_back(&self, sid: Uuid, pod: &PodRef, live: bool, end_reason: Option<&str>, now: DateTime<Utc>) {
+        let (Some(account), Some(handle)) = (&pod.bot_account, &pod.handle) else { return };
+        let clean = matches!(end_reason.and_then(EndReason::parse), Some(EndReason::LeftByUser | EndReason::EmptyRoom | EndReason::MaxDuration));
+        if !live || !clean || !self.profiles.has_key() {
+            return;
+        }
+        let store = self.profiles.clone();
+        let acct = account.clone();
+        let due = tokio::task::spawn_blocking(move || -> Result<bool, crate::services::bot_profiles::ProfileError> {
+            let Some(state) = store.state(&acct)? else { return Ok(false) };
+            if state.status != ProfileStatus::Active {
+                return Ok(false);
+            }
+            store.record_ok(&acct, now)?;
+            Ok(state.writeback_due(now))
+        })
+        .await;
+        match due {
+            Ok(Ok(true)) => {}
+            Ok(Ok(false)) => return,
+            Ok(Err(error)) => {
+                tracing::warn!(%sid, %account, %error, "meetings: bot profile state unreadable; no write-back");
+                return;
+            }
+            Err(error) => {
+                tracing::warn!(%sid, %account, %error, "meetings: bot profile write-back task failed");
+                return;
+            }
+        }
+        let archive = match self.provider.pull_file(handle, PROFILE_OUT_PATH).await {
+            Ok(Some(archive)) if !archive.is_empty() => archive,
+            Ok(_) => {
+                tracing::info!(%sid, %account, "meetings: pod left no profile to save back");
+                return;
+            }
+            Err(error) => {
+                tracing::warn!(%sid, %account, %error, "meetings: pulling the pod's profile failed; no write-back");
+                return;
+            }
+        };
+        let store = self.profiles.clone();
+        let acct = account.clone();
+        match tokio::task::spawn_blocking(move || store.seal_writeback(&acct, &archive, now)).await {
+            Ok(Ok(Some(gen))) => tracing::info!(%sid, %account, generation = gen, "meetings: bot profile saved back"),
+            Ok(Ok(None)) => {}
+            Ok(Err(error)) => tracing::warn!(%sid, %account, %error, "meetings: sealing the pod's profile failed"),
+            Err(error) => tracing::warn!(%sid, %account, %error, "meetings: bot profile write-back task failed"),
+        }
     }
 
     /// End without clearing `pod_ref`, so the reaper deletes the pod later.
@@ -824,10 +971,11 @@ impl Launcher {
             updated_at: DateTime<Utc>,
             live_at: Option<DateTime<Utc>>,
             ended_at: Option<DateTime<Utc>>,
+            end_reason: Option<String>,
             last_activity: Option<DateTime<Utc>>,
         }
         let rows = sqlx::query_as::<_, Row>(
-            "SELECT s.id, s.state, s.pod_ref, s.updated_at, s.live_at, s.ended_at, \
+            "SELECT s.id, s.state, s.pod_ref, s.updated_at, s.live_at, s.ended_at, s.end_reason, \
                     GREATEST(s.updated_at, \
                         (SELECT MAX(created_at) FROM meeting_transcript_segments WHERE session_id = s.id), \
                         (SELECT MAX(created_at) FROM meeting_chat_messages WHERE session_id = s.id), \
@@ -850,8 +998,11 @@ impl Launcher {
             };
             if row.state == "ended" {
                 let grace = if row.live_at.is_some() { ENDED_GRACE } else { chrono::Duration::zero() };
-                if row.ended_at.unwrap_or(row.updated_at) + grace <= now && self.teardown(row.id, &row.pod_ref, &pod).await? {
-                    torn += 1;
+                if row.ended_at.unwrap_or(row.updated_at) + grace <= now {
+                    self.write_back(row.id, &pod, row.live_at.is_some(), row.end_reason.as_deref(), now).await;
+                    if self.teardown(row.id, &row.pod_ref, &pod).await? {
+                        torn += 1;
+                    }
                 }
                 continue;
             }
@@ -898,6 +1049,44 @@ impl Launcher {
         .bind(limit)
         .fetch_all(&self.db)
         .await?)
+    }
+}
+
+/// The pod reported `bot_profile_signed_out`: mark the session's bot account
+/// `needs_reauth` (out of the pool until someone signs it in again) and
+/// alert ops. No-op when the session holds no account.
+pub(crate) async fn note_bot_profile_signed_out(db: &PgPool, store: &ProfileStore, sid: Uuid) {
+    let raw: Option<String> = match sqlx::query_scalar("SELECT pod_ref FROM meeting_sessions WHERE id = $1").bind(sid).fetch_optional(db).await {
+        Ok(raw) => raw.flatten(),
+        Err(error) => {
+            tracing::warn!(%sid, %error, "meetings: reading pod_ref for a signed-out report failed");
+            return;
+        }
+    };
+    let Some(account) = raw.as_deref().and_then(PodRef::parse).and_then(|p| p.bot_account) else { return };
+    let store = store.clone();
+    let acct = account.clone();
+    match tokio::task::spawn_blocking(move || store.set_status(&acct, ProfileStatus::NeedsReauth, Utc::now())).await {
+        Ok(Ok(_)) => {
+            tracing::warn!(
+                %sid,
+                %account,
+                "meetings: OPS bot Google account is signed out; marked needs_reauth and taken out of the pool. \
+                 Sign it in again with scripts/meetings/bot-profile-signin.sh (docs/meetings/BOT-ACCOUNTS.md)"
+            );
+            crate::services::ops_alert::send_once(
+                &format!("meetings-bot-signed-out:{account}"),
+                format!("Meet bot account {account} needs a new sign-in"),
+                format!(
+                    "Meeting session {sid} found the Chrome profile of {account} signed out. The account is now \
+                     needs_reauth and Meet pods no longer use it. Sign it in again by hand with \
+                     scripts/meetings/bot-profile-signin.sh on a pod host, then run meetings-bot-profile seal on \
+                     the cloud-api host (docs/meetings/BOT-ACCOUNTS.md)."
+                ),
+            );
+        }
+        Ok(Err(error)) => tracing::error!(%sid, %account, %error, "meetings: marking a signed-out bot account failed"),
+        Err(error) => tracing::error!(%sid, %account, %error, "meetings: marking a signed-out bot account failed"),
     }
 }
 

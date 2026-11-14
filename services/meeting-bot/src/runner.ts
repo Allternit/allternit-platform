@@ -388,13 +388,13 @@ export async function runPod(cfg: PodConfig, opts: RunOptions = {}): Promise<Run
       return;
     }
     liveAt = result.liveAt;
-    await goLive();
+    await goLive(result.detail);
   })().catch((e: unknown) => end("error", String(e).slice(0, 300)));
 
-  async function goLive(): Promise<void> {
+  async function goLive(detail?: string): Promise<void> {
     if (!adapter) return;
     const a = adapter;
-    await setState("live");
+    await setState("live", null, detail);
     await postNotice("admitted");
 
     unsubs.push(

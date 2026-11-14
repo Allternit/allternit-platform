@@ -41,6 +41,7 @@ set(ZOOM_ENUM_NAMES
   EndMeetingReason_NoAttendee EndMeetingReason_HostStartAnotherMeeting EndMeetingReason_FreeMeetingTimeOut
   EndMeetingReason_NetworkBroken
   RequestLocalRecording_Granted RequestLocalRecording_Denied RequestLocalRecording_Timeout
+  FrameDataFormat_I420_LIMITED
 )
 include(CheckCXXSourceCompiles)
 set(CMAKE_REQUIRED_INCLUDES "${ZOOM_SDK_DIR}/h")

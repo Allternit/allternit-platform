@@ -286,9 +286,9 @@ bool ZoomBot::init() {
   p.emLanguageID = LANGUAGE_English;
   p.enableLogByDefault = true;
   p.enableGenerateDump = false;
-  p.rawdataOpts.audioRawDataMemoryMode = ZoomSDKRawDataMemoryModeHeap;
+  p.rawdataOpts.audioRawdataMemoryMode = ZoomSDKRawDataMemoryModeHeap;
   p.rawdataOpts.videoRawdataMemoryMode = ZoomSDKRawDataMemoryModeHeap;
-  p.rawdataOpts.shareRawDataMemoryMode = ZoomSDKRawDataMemoryModeHeap;
+  p.rawdataOpts.shareRawdataMemoryMode = ZoomSDKRawDataMemoryModeHeap;
 
   SDKError e = InitSDK(p);
   if (e != SDKERR_SUCCESS) {
@@ -421,7 +421,14 @@ void ZoomBot::doJoin() {
 
   // The camera source must be set before Join (Zoom: external video source before joining).
   bool cameraSet = false;
-  if (IZoomSDKVideoSourceHelper* vs = GetRawdataVideoSourceHelper()) cameraSet = vs->setExternalVideoSource(&camera_) == SDKERR_SUCCESS;
+  if (IZoomSDKVideoSourceHelper* vs = GetRawdataVideoSourceHelper()) {
+#ifdef HAVE_FrameDataFormat_I420_LIMITED
+    // SDK 7.x takes the colour range; Node sends limited (TV) range I420.
+    cameraSet = vs->setExternalVideoSource(&camera_, FrameDataFormat_I420_LIMITED) == SDKERR_SUCCESS;
+#else
+    cameraSet = vs->setExternalVideoSource(&camera_) == SDKERR_SUCCESS;
+#endif
+  }
 
   JoinParam jp;
   jp.userType = SDK_UT_WITHOUT_LOGIN;
