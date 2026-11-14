@@ -575,10 +575,12 @@ struct AutomationWizardSheet: View {
         } else {
             Picker("Model", selection: $model) {
                 Text("Default model").tag(String?.none)
-                if let model, !modelStore.models.contains(where: { Self.modelRef($0) == model }) {
+                // A saved person-only model (plan/…, copilot/…, chatgpt/…) is
+                // not shown: routines run without the person sending.
+                if let model, !PersonModels.isPersonOnly(model), !modelStore.automationModels.contains(where: { Self.modelRef($0) == model }) {
                     Text(model).tag(String?.some(model))
                 }
-                ForEach(modelStore.models) { Text($0.name).tag(String?.some(Self.modelRef($0))) }
+                ForEach(modelStore.automationModels) { Text($0.name).tag(String?.some(Self.modelRef($0))) }
             }
         }
     }

@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 
 /// The live connect-kit list for Settings › Connections and first-run setup.
@@ -8,7 +9,9 @@ import Foundation
 final class ConnectionsStore: ObservableObject {
     static let shared = ConnectionsStore()
 
-    @Published private(set) var rows: [String: ConnectionWire] = [:]
+    @Published private(set) var rows: [String: ConnectionWire] = [:] {
+        didSet { publishPersonModels() }
+    }
     @Published private(set) var isLoading = false
     @Published private(set) var loaded = false
     /// Set when cloud-api could not answer; rows fall back to the catalog.
@@ -19,6 +22,24 @@ final class ConnectionsStore: ObservableObject {
     @Published private var connecting: Set<String> = []
 
     var computerOnline: Bool { runtimeId != nil }
+
+    private var deviceWatch: AnyCancellable?
+
+    init() {
+        // ChatGPT signs in on this iPhone (§9.9): its row and models follow
+        // the device store.
+        deviceWatch = ChatGPTDeviceStore.shared.objectWillChange.sink { [weak self] _ in
+            Task { @MainActor in
+                self?.objectWillChange.send()
+                self?.publishPersonModels()
+            }
+        }
+    }
+
+    /// The chat picker's plan models (`ModelStore.personModels`).
+    private func publishPersonModels() {
+        ModelStore.shared.setPersonModels(PersonModels.build(rows: Array(rows.values), chatgpt: ChatGPTDeviceStore.shared.models))
+    }
 
     func load() async {
         guard !isLoading else { return }
@@ -107,6 +128,26 @@ final class ConnectionsStore: ObservableObject {
                 row.state = .on
                 row.found = row.found ?? "This iPhone"
             }
+        case "chatgpt":
+            // On iOS ChatGPT signs in on the phone (contract §9.9). A
+            // computer's ChatGPT that is on still counts when the phone isn't
+            // signed in.
+            let device = ChatGPTDeviceStore.shared
+            if device.signedIn {
+                row = ConnectionWire(id: "chatgpt", state: device.needs == nil ? .on : .needs,
+                                     found: device.needs == nil ? (device.plan.map { "ChatGPT \($0.capitalized) · this iPhone" } ?? device.email.map { "\($0) · this iPhone" } ?? "This iPhone") : nil,
+                                     reason: device.needs?.reason, reasonCode: device.needs?.code, source: "device")
+                row.runsOn = "device"
+                row.personOnly = true
+                row.models = device.models.map(\.id)
+            } else if !(row.state == .on && row.runtimeId != nil) {
+                if device.needs == .loginExpired {
+                    row = ConnectionWire(id: "chatgpt", state: .needs, reason: device.needs?.reason, reasonCode: device.needs?.code, source: "device")
+                } else {
+                    row = ConnectionWire(id: "chatgpt", source: "device")
+                }
+                row.runsOn = "device"
+            }
         case "openai-voice", "elevenlabs":
             let vendor: VoiceVendor = row.id == "elevenlabs" ? .elevenlabs : .openai
             if VoiceProviderKeys.value(vendor.keyField) != nil {
@@ -169,8 +210,21 @@ final class ConnectionsStore: ObservableObject {
         rows[id] = r
     }
 
+    /// ChatGPT signed in on this phone (not a computer's ChatGPT).
+    var chatgptOnDevice: Bool { ChatGPTDeviceStore.shared.signedIn }
+
     func disconnect(_ id: String) async throws {
+        if id == "chatgpt", chatgptOnDevice {
+            let confirmed = await ChatGPTDeviceStore.shared.signOut()
+            if ModelStore.shared.selectedModelId.map({ $0.hasPrefix("chatgpt/") }) == true { ModelStore.shared.selectedModelId = nil }
+            if !confirmed { throw ChatGPTSignOutUnconfirmed() }
+            return
+        }
         try await ConnectionsClient.disconnect(id, target: target(for: id))
+        // That plan's models stop working: don't leave the composer on one.
+        if let selected = ModelStore.shared.selectedModelId, rows[id]?.models.contains(selected) == true {
+            ModelStore.shared.selectedModelId = nil
+        }
         var r = rows[id] ?? ConnectionWire(id: id)
         r.state = .off
         r.found = nil
@@ -185,4 +239,12 @@ final class ConnectionsStore: ObservableObject {
         loaded = true
     }
     #endif
+}
+
+/// Signed out on this iPhone, but OpenAI didn't confirm the revoke
+/// (Accounts and sessions, "Signing out").
+struct ChatGPTSignOutUnconfirmed: Error, LocalizedError {
+    var errorDescription: String? {
+        "Signed out on this iPhone. OpenAI didn't confirm it, so you can also remove Allternit in ChatGPT's settings."
+    }
 }

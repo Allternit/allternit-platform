@@ -51,7 +51,9 @@ final class ConnectionsMergeTests: XCTestCase {
             XCTAssertFalse(row.available, id)
             XCTAssertFalse(row.fallbacks.isEmpty, id)
         }
-        XCTAssertFalse(ConnectionsCatalog.fallbackRow("chatgpt", computerOnline: false).available)
+        // Contract §9.9: on iOS ChatGPT signs in on the phone, so it never
+        // waits for a computer or the server.
+        XCTAssertTrue(ConnectionsCatalog.fallbackRow("chatgpt", computerOnline: false).available)
         XCTAssertTrue(ConnectionsCatalog.fallbackRow("chatgpt", computerOnline: true).available)
         XCTAssertEqual(ConnectionsCatalog.fallbackRow("codex", computerOnline: false).fallbacks, ["this-mac"])
     }
