@@ -78,7 +78,9 @@ async function call(origin: string, method: string, route: string, body?: unknow
     const e = b?.error && typeof b.error === "object" ? (b.error as { code?: string; message?: string; disclosure?: Disclosure }) : undefined
     if (res.status === 409 && e?.code === "disclosure_required" && e.disclosure) throw new DisclosureRequired(e.disclosure)
     if (res.status === 401) throw new ConnectFailure("Allternit did not accept your sign-in. Run `gizzi login`.")
-    if (res.status === 403 && !e?.message && !b?.message) throw new ConnectFailure("Connections needs your signed-in account, not an API key.")
+    // 403 on a key (no person session): cloud-api refuses API keys here; say what to do, not the server text.
+    if (res.status === 403 && (!personToken() || (!e?.message && !b?.message)))
+      throw new ConnectFailure("Connections needs your signed-in Allternit account, not an API key. Run `gizzi login`.")
     if (res.status === 404 && (e?.code === "not_found" || b?.error === "not_found"))
       throw new ConnectFailure("That one is not offered to this version of Gizzi Code. Update it with `gizzi upgrade`.")
     throw new ConnectFailure(e?.message || b?.message || (typeof b?.error === "string" ? b.error : `Request failed (HTTP ${res.status})`))
