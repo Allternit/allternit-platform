@@ -22,7 +22,7 @@ import {
 } from "@/cli/work/api"
 
 const DOCS_URL = "https://docs.allternit.com/api/account-compute-status"
-const HONEST_LINE = "Hosted computers run on a third-party cloud provider, managed by Allternit. They sleep when idle."
+const HONEST_LINE = "Hosted computers run on Allternit servers. They sleep when idle."
 
 type ComputeCredits = { price_per_hour_usd?: number; stopped_price_per_hour_usd?: number; min_start_usd?: number } | null
 type ComputePaths = {

@@ -186,7 +186,7 @@ export function ComputerOnCreditsCard({ onChanged }: { onChanged?: () => void })
         </a>
       </div>
       <p className="mt-3 text-[12px] text-[var(--text-tertiary)]">
-        Hosted computers run on a third-party cloud provider, managed by Allternit. They sleep when idle.
+        Hosted computers run on Allternit servers. They sleep when idle.
       </p>
     </div>
   );

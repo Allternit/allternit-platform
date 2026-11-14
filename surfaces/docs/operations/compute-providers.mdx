@@ -12,7 +12,7 @@ Cloud computers run on one of two providers. Both are driven by cloud-api (`cmd/
 
 The `provider` field on every computer (`GET /api/v1/provisioned-instances`) reads `incus` or `orgo`.
 
-What users are told about an Orgo computer: "Runs on a third-party cloud provider, managed by Allternit. It sleeps when idle."
+Since 2026-11-14 Platform runtimes and credits computers run on the standby host (`ALLTERNIT_COMPUTE_PROVIDER_PLATFORM=incus`, `ALLTERNIT_COMPUTE_PROVIDER_CREDIT=incus`); Orgo stays configured but unused (its plans sell per-computer slots). What users are told: "Hosted computers run on Allternit servers. They sleep when idle." If a class is routed to Orgo again, change that line in the app, the console and these docs.
 
 ## Route a class to a provider
 
