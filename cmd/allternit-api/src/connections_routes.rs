@@ -249,6 +249,29 @@ fn disclosure_required(disclosure: Value) -> Response {
     (StatusCode::CONFLICT, Json(json!({ "error": { "code": "disclosure_required", "disclosure": disclosure } }))).into_response()
 }
 
+/// `Some(409 disclosure_required)` while this device has no acceptance of the
+/// current ChatGPT disclosure (§9.2: connect, submit and login poll all answer it).
+/// gizzi answers `needs` + `disclosure_required` (and exits) until the version is accepted.
+pub(crate) async fn chatgpt_disclosure_gate(bin: &std::path::Path) -> Option<Response> {
+    let status = chatgpt_device_status(bin).await;
+    if status.as_ref().and_then(|s| s.get("state")).and_then(Value::as_str) == Some("on") {
+        return None;
+    }
+    let accepted = status
+        .as_ref()
+        .and_then(|s| s.pointer("/disclosure/accepted_at"))
+        .and_then(Value::as_str)
+        .is_some();
+    if accepted {
+        return None;
+    }
+    let answer = gizzi_json(bin, &["connect", "chatgpt", "--json"], 20).await;
+    Some(match answer.and_then(|a| a.get("disclosure").cloned()) {
+        Some(d) => disclosure_required(d),
+        None => err(StatusCode::INTERNAL_SERVER_ERROR, "could_not_start", "Could not start. Try again"),
+    })
+}
+
 /// The running `gizzi connect chatgpt --json` (one at a time; a new start replaces it).
 static CHATGPT_SIGN_IN: once_cell::sync::Lazy<tokio::sync::Mutex<Option<tokio::process::Child>>> =
     once_cell::sync::Lazy::new(|| tokio::sync::Mutex::new(None));
@@ -262,17 +285,8 @@ pub(crate) async fn connect_chatgpt_with(bin: &std::path::Path, accept: Option<&
         }
     }
     if accept != Some(CHATGPT_DISCLOSURE_VERSION) {
-        // gizzi answers `needs` + `disclosure_required` (and exits) until the version is accepted.
-        let already = chatgpt_device_status(bin)
-            .await
-            .and_then(|s| s.pointer("/disclosure/accepted_at").and_then(Value::as_str).map(str::to_string))
-            .is_some();
-        if !already {
-            let answer = gizzi_json(bin, &["connect", "chatgpt", "--json"], 20).await;
-            return match answer.and_then(|a| a.get("disclosure").cloned()) {
-                Some(d) => disclosure_required(d),
-                None => err(StatusCode::INTERNAL_SERVER_ERROR, "could_not_start", "Could not start. Try again"),
-            };
+        if let Some(refused) = chatgpt_disclosure_gate(bin).await {
+            return refused;
         }
     }
     let mut args = vec!["connect", "chatgpt", "--json", "--no-open"];
@@ -567,6 +581,13 @@ async fn submit(Path(id): Path<String>, headers: HeaderMap, Json(body): Json<Sub
     if get_user(&headers).is_none() {
         return err(StatusCode::UNAUTHORIZED, "unauthorized", "Sign in first.");
     }
+    if id == "chatgpt" {
+        if let Some(bin) = crate::cloud_worker::gizzi_bin() {
+            if let Some(refused) = chatgpt_disclosure_gate(&bin).await {
+                return refused;
+            }
+        }
+    }
     let Some(r) = find_row(&id) else {
         return err(StatusCode::NOT_FOUND, "unknown_connection", "Nothing here to connect.");
     };
@@ -592,6 +613,9 @@ async fn login_status(Path(id): Path<String>, headers: HeaderMap) -> Response {
     }
     if id == "chatgpt" {
         if let Some(bin) = crate::cloud_worker::gizzi_bin() {
+            if let Some(refused) = chatgpt_disclosure_gate(&bin).await {
+                return refused;
+            }
             let running = CHATGPT_SIGN_IN.lock().await.is_some();
             if let Some(status) = chatgpt_device_status(&bin).await {
                 let word = chatgpt_login_word(&status);
@@ -832,6 +856,12 @@ sleep 5
         assert_eq!(v["error"]["disclosure"]["accept_label"], "I understand, connect");
         assert!(!tmp.path().join("running").exists());
 
+        // Submit and login poll answer the same 409 until it is accepted (§9.2).
+        let (status, v) = body(chatgpt_disclosure_gate(&gizzi).await.expect("gate refuses")).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(v["error"]["code"], "disclosure_required");
+        assert_eq!(v["error"]["disclosure"]["decline_label"], "Use a key instead");
+
         // A stale version is the same as none.
         let (status, _) = body(connect_chatgpt_with(&gizzi, Some("2026-01-01.1")).await).await;
         assert_eq!(status, StatusCode::CONFLICT);
@@ -843,6 +873,7 @@ sleep 5
         assert!(v["login"]["url"].as_str().unwrap().starts_with("https://auth.openai.com/api/accounts/authorize"));
         assert_eq!(v["login"]["poll"], true);
         assert!(tmp.path().join("accepted").exists());
+        assert!(chatgpt_disclosure_gate(&gizzi).await.is_none(), "accepted: the gate lets submit and login through");
         CHATGPT_SIGN_IN.lock().await.take();
     }
 
