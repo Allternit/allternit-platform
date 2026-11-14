@@ -211,6 +211,9 @@ pub fn error_response(error: &ApiError) -> Option<Response> {
 pub struct RunnerConfig {
     /// `ALLTERNIT_BRAIN_RUNNERS=1`. Off: `ensure` refuses; cleanup still runs.
     pub enabled: bool,
+    /// `ALLTERNIT_BRAIN_RUNNERS_USERS`: comma-separated user ids. Set, only
+    /// these accounts get a box (staging); unset or empty, every account.
+    pub only_users: Option<std::collections::HashSet<String>>,
     /// `ALLTERNIT_RUNNER_VENDORS`, default all four.
     pub vendors: Vec<Vendor>,
     /// `ALLTERNIT_RUNNER_HOST`, default `host_mail`.
@@ -253,6 +256,7 @@ impl Default for RunnerConfig {
     fn default() -> Self {
         Self {
             enabled: false,
+            only_users: None,
             vendors: Vendor::ALL.to_vec(),
             host_id: "host_mail".to_string(),
             incus_endpoint: None,
@@ -286,6 +290,11 @@ impl RunnerConfig {
     pub fn from_env() -> Self {
         let mut cfg = Self::default();
         cfg.enabled = env_text("ALLTERNIT_BRAIN_RUNNERS").as_deref() == Some("1");
+        cfg.only_users = env_text("ALLTERNIT_BRAIN_RUNNERS_USERS").and_then(|list| {
+            let ids: std::collections::HashSet<String> =
+                list.split(',').map(|id| id.trim().to_string()).filter(|id| !id.is_empty()).collect();
+            (!ids.is_empty()).then_some(ids)
+        });
         if let Some(list) = env_text("ALLTERNIT_RUNNER_VENDORS") {
             cfg.vendors = list.split(',').filter_map(|v| Vendor::parse(v.trim())).collect();
         }
@@ -621,6 +630,11 @@ impl BrainRunnerService {
         self.cfg.enabled && self.cfg.vendors.contains(&vendor)
     }
 
+    /// Whether this account may have a box (the staging list, when set).
+    pub fn allows(&self, user_id: &str) -> bool {
+        self.cfg.only_users.as_ref().map_or(true, |ids| ids.contains(user_id))
+    }
+
     fn check_offered(&self, vendor: Vendor) -> Result<(), ApiError> {
         if self.offers(vendor) {
             Ok(())
@@ -697,7 +711,7 @@ impl BrainRunnerService {
     /// Create or wake the person's box and wait until its socket is up.
     /// Err `runner_busy` after the 10 s budget queue; `could_not_start` on failure.
     pub async fn ensure(&self, user_id: &str) -> Result<RunnerHandle, ApiError> {
-        if !self.cfg.enabled {
+        if !self.cfg.enabled || !self.allows(user_id) {
             return Err(not_offered());
         }
         match self.wake(user_id, true).await? {
@@ -1347,6 +1361,7 @@ mod tests {
     fn test_config() -> RunnerConfig {
         RunnerConfig {
             enabled: true,
+            only_users: None,
             budget_wait: Duration::from_millis(300),
             socket_wait: Duration::from_secs(5),
             request_timeout: Duration::from_secs(5),
@@ -1488,6 +1503,22 @@ mod tests {
         service.sweep_idle(Utc::now() + chrono::Duration::minutes(6)).await.unwrap();
         service.ensure(&waiting).await.unwrap();
         assert_eq!(backend.running(), 1);
+    }
+
+    #[tokio::test]
+    async fn brain_runner_staging_list_limits_boxes_to_listed_accounts() {
+        let db = runner_db().await;
+        let cfg = RunnerConfig {
+            only_users: Some(["user_a".to_string()].into_iter().collect()),
+            ..test_config()
+        };
+        let (service, backend) = service_with(db.clone(), cfg);
+        assert!(service.allows("user_a"));
+        assert!(!service.allows("user_b"));
+        let refused = service.ensure("user_b").await.unwrap_err();
+        assert_eq!(error_code(&refused), Some(NOT_FOUND));
+        assert_eq!(backend.creates.load(Ordering::SeqCst), 0);
+        assert_eq!(state_of(&db, "user_b").await, None);
     }
 
     #[tokio::test]

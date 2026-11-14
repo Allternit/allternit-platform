@@ -718,3 +718,142 @@ async fn default_flag_moves_when_the_default_provider_is_out_of_credits() {
     assert_eq!(models[0].extra["default"], true);
     assert_eq!(router.default_alias(), Some("funded"));
 }
+
+/// Plan models through the real `/v1/chat/completions` handler (contract 9.3,
+/// D7): person-only, chat-only, streamed from the person's runner box (a
+/// fake runner program; the box backend is the edge).
+mod plan_turns {
+    use std::sync::Arc;
+
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use axum::{Extension, Router};
+    use http_body_util::BodyExt;
+    use serde_json::{json, Value};
+    use tower::ServiceExt;
+
+    use crate::auth::{AuthContext, AuthenticatedUser};
+    use crate::routes::connections::TEST_RUNNERS;
+    use crate::routes::model_router::{chat_completions, is_person_only_model, plan_model};
+    use crate::routes::test_support::{test_state, MockGateway};
+    use crate::services::brain_runners::{test_service_with_box, Vendor};
+    use crate::ApiState;
+
+    const USER: &str = "user_plan_turn";
+
+    fn app(state: &Arc<ApiState>, token_id: &str) -> Router {
+        let auth = AuthContext {
+            user: AuthenticatedUser { user_id: USER.into(), token_id: token_id.into(), permissions: vec!["inference".into()] },
+            is_development: false,
+        };
+        Router::new()
+            .route("/v1/chat/completions", axum::routing::post(chat_completions))
+            .layer(Extension(auth))
+            .with_state(state.clone())
+    }
+
+    async fn call(app: &Router, headers: &[(&str, &str)], body: Value) -> (StatusCode, String) {
+        let mut builder = Request::builder().method("POST").uri("/v1/chat/completions").header("content-type", "application/json");
+        for (name, value) in headers {
+            builder = builder.header(*name, *value);
+        }
+        let response = app.clone().oneshot(builder.body(Body::from(body.to_string())).unwrap()).await.unwrap();
+        let status = response.status();
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        (status, String::from_utf8_lossy(&bytes).to_string())
+    }
+
+    fn code(body: &str) -> Option<String> {
+        serde_json::from_str::<Value>(body).ok()?["error"]["code"].as_str().map(str::to_string)
+    }
+
+    fn turn(model: &str, stream: bool) -> Value {
+        json!({ "model": model, "stream": stream, "messages": [{ "role": "user", "content": "Hello" }],
+                "tools": [{ "type": "function", "function": { "name": "x" } }], "tool_choice": "auto" })
+    }
+
+    #[test]
+    fn plan_ids_parse_in_wire_and_in_app_forms() {
+        assert_eq!(plan_model("plan/claude/sonnet"), Some((Vendor::Claude, "sonnet")));
+        assert_eq!(plan_model("plan-kimi/kimi-code/k3"), Some((Vendor::Kimi, "kimi-code/k3")));
+        assert_eq!(plan_model("plan/nope/x"), None);
+        assert!(is_person_only_model("copilot/gpt-5") && is_person_only_model("plan-claude/opus"));
+        assert!(!is_person_only_model("kimi-k3") && !is_person_only_model("xai/grok-4"));
+    }
+
+    #[tokio::test]
+    async fn plan_turns_are_person_only_chat_only_and_stream_from_the_runner() {
+        let state = test_state(Arc::new(MockGateway::new(None, vec![]))).await;
+        sqlx::raw_sql(include_str!("../../migrations_pg/140_brain_runners.sql")).execute(&state.db).await.unwrap();
+        sqlx::raw_sql(
+            "CREATE TABLE IF NOT EXISTS api_keys (id TEXT PRIMARY KEY, project_id TEXT, kind TEXT NOT NULL DEFAULT 'standard');
+             INSERT INTO api_keys (id, project_id, kind) VALUES ('key_platform', 'proj_1', 'standard'), ('key_play', 'proj_1', 'playground');",
+        )
+        .execute(&state.db)
+        .await
+        .unwrap();
+        // The fake runner's hello: ChatGPT signed in, Claude signed out.
+        let (service, _box) = test_service_with_box(state.db.clone(), USER).await;
+        let person = ("x-allternit-turn", "person");
+
+        TEST_RUNNERS
+            .scope(service, async {
+                let session = app(&state, "sess_1");
+                // D7: no person header, a device token, a Platform key, a playground key.
+                let (status, body) = call(&session, &[], turn("plan/chatgpt/gpt-6-luna", false)).await;
+                assert_eq!((status, code(&body).as_deref()), (StatusCode::FORBIDDEN, Some("plan_person_only")), "{body}");
+                let (status, body) =
+                    call(&session, &[person, ("authorization", "Bearer allternit_runtime_abc")], turn("plan/chatgpt/gpt-6-luna", false)).await;
+                assert_eq!((status, code(&body).as_deref()), (StatusCode::FORBIDDEN, Some("plan_person_only")), "device token: {body}");
+                for key in ["key_platform", "key_play"] {
+                    let (status, body) = call(&app(&state, key), &[person], turn("plan/chatgpt/gpt-6-luna", false)).await;
+                    assert_eq!((status, code(&body).as_deref()), (StatusCode::FORBIDDEN, Some("plan_person_only")), "{key}: {body}");
+                }
+                // Copilot ids take the same rule.
+                let (status, body) = call(&session, &[], turn("copilot/gpt-5", false)).await;
+                assert_eq!(code(&body).as_deref(), Some("plan_person_only"), "{status} {body}");
+
+                // Chat only: a tool-role message is a 400.
+                let mut with_tool = turn("plan/chatgpt/gpt-6-luna", false);
+                with_tool["messages"] = json!([{ "role": "user", "content": "x" }, { "role": "tool", "content": "y", "tool_call_id": "c1" }]);
+                let (status, body) = call(&session, &[person], with_tool).await;
+                assert_eq!((status, code(&body).as_deref()), (StatusCode::BAD_REQUEST, Some("plan_no_tools")));
+
+                // A plan that is not signed in.
+                let (status, body) = call(&session, &[person], turn("plan/claude/sonnet", false)).await;
+                assert_eq!((status, code(&body).as_deref()), (StatusCode::FORBIDDEN, Some("plan_not_connected")), "{body}");
+
+                // The person's own send: the runner's reply, tools dropped.
+                let (status, body) = call(&session, &[person], turn("plan/chatgpt/gpt-6-luna", false)).await;
+                assert_eq!(status, StatusCode::OK, "{body}");
+                let reply: Value = serde_json::from_str(&body).unwrap();
+                assert_eq!(reply["choices"][0]["message"]["content"], "Hi there");
+                assert_eq!(reply["model"], "plan/chatgpt/gpt-6-luna");
+                assert_eq!(reply["usage"]["completion_tokens"], 3);
+
+                let (status, body) = call(&session, &[person], turn("plan-chatgpt/gpt-6-luna", true)).await;
+                assert_eq!(status, StatusCode::OK);
+                assert!(body.contains(r#""content":"Hi""#) && body.contains(r#""content":" there""#), "{body}");
+                assert!(body.trim_end().ends_with("data: [DONE]"), "{body}");
+            })
+            .await;
+
+        // Other routes that take a model refuse a plan id.
+        let mut open = super::ChatCompletionRequest {
+            model: "plan/claude/sonnet".into(),
+            messages: vec![super::Message::text("user", "hi")],
+            temperature: None,
+            max_tokens: None,
+            stream: None,
+            top_p: None,
+            extra: serde_json::Map::new(),
+        };
+        let refused = crate::routes::open_lane::guard_open_request(&state, USER, true, &open).await.unwrap().expect("refused");
+        assert_eq!(refused.status(), StatusCode::FORBIDDEN);
+        open.model = "copilot/gpt-5".into();
+        assert!(crate::routes::open_lane::guard_open_request(&state, USER, true, &open).await.unwrap().is_some());
+        let platform = crate::routes::platform_v1::responses::refuse_person_only_model(Some("plan/grok/grok-4.6")).unwrap_err();
+        assert_eq!(platform.status, StatusCode::FORBIDDEN);
+        assert!(crate::routes::platform_v1::responses::refuse_person_only_model(Some("kimi-k3")).is_ok());
+    }
+}

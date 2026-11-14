@@ -111,6 +111,10 @@ pub(crate) async fn inference_attribution(
         request_id: Some(request_id),
         started_at: Some(std::time::Instant::now()),
         capture_request: None,
+        person_turn: headers
+            .get(inference_settlement::TURN_HEADER)
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(|value| value.trim().eq_ignore_ascii_case("person")),
     }
 }
 
@@ -205,6 +209,13 @@ async fn chat_completions_attributed(
             "Missing required permission: {} (or 'inference')",
             REQUIRED_PERMISSION
         )));
+    }
+
+    // Plan and Copilot models (contract 9.3): the person's own plan on their
+    // brain runner, person-sent chat only (D7). They never reach the catalog,
+    // the credit checks or an upstream.
+    if is_person_only_model(&request.model) {
+        return plan_turn(state, &auth.user.user_id, request, &attribution).await;
     }
 
     if !state.model_router.is_enabled() {
@@ -562,4 +573,171 @@ mod tests {
         assert!(can_run_inference(&key_user(vec!["models:write".to_string()])));
         assert!(can_run_inference(&AuthenticatedUser::development_user()));
     }
+}
+
+// ---- plan models (CONTRACT-connections-2026-11 section 9.3) -----------------
+
+use crate::services::brain_runners::{self, ChatMessage, TurnEvent, Vendor, VendorState};
+
+/// Plan (`plan/…`, web's in-app `plan-…`) and Copilot (`copilot/…`) ids:
+/// person-sent chat only. Every other route that takes a model refuses them.
+pub fn is_person_only_model(model: &str) -> bool {
+    let model = model.trim();
+    model.starts_with("plan/") || model.starts_with("plan-") || model.starts_with("copilot/")
+}
+
+/// `plan/<vendor>/<model>` (wire) or `plan-<vendor>/<model>` (web in-app).
+/// The model may hold a slash (`plan/kimi/kimi-code/k3`).
+pub fn plan_model(model: &str) -> Option<(Vendor, &str)> {
+    let model = model.trim();
+    let rest = model.strip_prefix("plan/").or_else(|| model.strip_prefix("plan-"))?;
+    let (vendor, name) = rest.split_once('/')?;
+    let vendor = Vendor::parse(vendor)?;
+    (!name.trim().is_empty()).then_some((vendor, name))
+}
+
+/// `{"error":{"code","message"}}` with its status (contract 9.3).
+pub fn plan_refusal(status: StatusCode, code: &str, message: &str) -> Response {
+    (status, Json(serde_json::json!({ "error": { "code": code, "message": message } }))).into_response()
+}
+
+pub const PLAN_PERSON_ONLY_MESSAGE: &str = "Your plan only answers messages you send yourself, in chat.";
+
+pub fn plan_person_only() -> Response {
+    plan_refusal(StatusCode::FORBIDDEN, "plan_person_only", PLAN_PERSON_ONLY_MESSAGE)
+}
+
+/// The text of a message (a string, or the text parts of an array).
+fn message_text(content: &serde_json::Value) -> String {
+    match content {
+        serde_json::Value::String(text) => text.clone(),
+        serde_json::Value::Array(parts) => parts
+            .iter()
+            .filter_map(|part| part.get("text").and_then(|t| t.as_str()))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        _ => String::new(),
+    }
+}
+
+fn turn_error(code: &str, message: &str) -> Response {
+    match code {
+        "login_expired" => plan_refusal(StatusCode::CONFLICT, code, "Sign-in expired"),
+        "vendor_limited" => plan_refusal(StatusCode::CONFLICT, code, if message.is_empty() { "The vendor limited this plan" } else { message }),
+        brain_runners::RUNNER_BUSY => plan_refusal(StatusCode::SERVICE_UNAVAILABLE, code, "Busy. Try again"),
+        _ => plan_refusal(StatusCode::BAD_GATEWAY, brain_runners::COULD_NOT_START, "Could not start. Try again"),
+    }
+}
+
+/// One plan turn on the person's runner (D6, D7, D8). Not metered: the
+/// person's own plan pays, no Allternit credits or upstream are used.
+async fn plan_turn(
+    state: &Arc<ApiState>,
+    user_id: &str,
+    request: ChatCompletionRequest,
+    attribution: &inference_settlement::InferenceAttribution,
+) -> Result<Response, ApiError> {
+    if !inference_settlement::person_turn_allowed(attribution) {
+        return Ok(plan_person_only());
+    }
+    if request.messages.iter().any(|m| m.role == "tool") {
+        return Ok(plan_refusal(StatusCode::BAD_REQUEST, "plan_no_tools", "Plan chats can't use tools."));
+    }
+    if let Some(line) = crate::services::hard_line::standard_check(&request.messages) {
+        crate::services::open_lane::record_block(&state.db, user_id, line.category()).await;
+        return Ok(crate::services::open_lane::hard_line_response(line.category()));
+    }
+    let not_connected = || plan_refusal(StatusCode::FORBIDDEN, "plan_not_connected", "Connect this plan in Connections first.");
+    // Copilot (`copilot/…`) is its own server flow (step 1.5); until then it is not connected.
+    let Some((vendor, model)) = plan_model(&request.model) else {
+        return Ok(not_connected());
+    };
+    let service = crate::routes::connections::runners(state);
+    let signed_in = service.offers(vendor)
+        && service
+            .vendor_state(user_id)
+            .await?
+            .iter()
+            .any(|(v, s)| *v == vendor && matches!(s, VendorState::On { .. }));
+    if !signed_in {
+        return Ok(not_connected());
+    }
+    // Only role and text reach the runner: `tools`, `tool_choice` and every
+    // other field are dropped here. History is replayed each turn (D8).
+    let messages = request
+        .messages
+        .iter()
+        .map(|m| ChatMessage {
+            role: if m.role == "developer" { "system".to_string() } else { m.role.clone() },
+            content: message_text(&m.content),
+        })
+        .collect();
+    let mut events = match service.turn(user_id, vendor, model, messages).await {
+        Ok(events) => events,
+        Err(error) => return brain_runners::error_response(&error).map(Ok).unwrap_or(Err(error)),
+    };
+    use futures::StreamExt;
+    let id = format!("chatcmpl-{}", uuid::Uuid::new_v4().simple());
+    let created = chrono::Utc::now().timestamp();
+    let alias = request.model.clone();
+    if !request.is_streaming() {
+        let mut text = String::new();
+        let mut usage = serde_json::Value::Null;
+        while let Some(event) = events.next().await {
+            match event {
+                TurnEvent::Delta(delta) => text.push_str(&delta),
+                TurnEvent::Done { input_tokens, output_tokens } => {
+                    usage = serde_json::json!({
+                        "prompt_tokens": input_tokens,
+                        "completion_tokens": output_tokens,
+                        "total_tokens": input_tokens.zip(output_tokens).map(|(a, b)| a + b),
+                    });
+                    break;
+                }
+                TurnEvent::Error { code, message } => return Ok(turn_error(code, &message)),
+            }
+        }
+        return Ok(Json(serde_json::json!({
+            "id": id,
+            "object": "chat.completion",
+            "created": created,
+            "model": alias,
+            "choices": [{ "index": 0, "message": { "role": "assistant", "content": text }, "finish_reason": "stop" }],
+            "usage": usage,
+        }))
+        .into_response());
+    }
+    let chunk = move |delta: serde_json::Value, finish: Option<&str>, usage: Option<serde_json::Value>| {
+        let mut body = serde_json::json!({
+            "id": id,
+            "object": "chat.completion.chunk",
+            "created": created,
+            "model": alias,
+            "choices": [{ "index": 0, "delta": delta, "finish_reason": finish }],
+        });
+        if let Some(usage) = usage {
+            body["usage"] = usage;
+        }
+        format!("data: {body}\n\n")
+    };
+    let sse = events.map(move |event| {
+        let text = match event {
+            TurnEvent::Delta(delta) => chunk(serde_json::json!({ "role": "assistant", "content": delta }), None, None),
+            TurnEvent::Done { input_tokens, output_tokens } => {
+                let usage = serde_json::json!({ "prompt_tokens": input_tokens, "completion_tokens": output_tokens });
+                format!("{}data: [DONE]\n\n", chunk(serde_json::json!({}), Some("stop"), Some(usage)))
+            }
+            TurnEvent::Error { code, message } => {
+                let error = serde_json::json!({ "error": { "code": code, "message": message } });
+                format!("data: {error}\n\ndata: [DONE]\n\n")
+            }
+        };
+        Ok::<_, std::convert::Infallible>(axum::body::Bytes::from(text))
+    });
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(axum::http::header::CONTENT_TYPE, "text/event-stream")
+        .header(axum::http::header::CACHE_CONTROL, "no-cache")
+        .body(axum::body::Body::from_stream(sse))
+        .map_err(|e| ApiError::Internal(e.to_string()))
 }

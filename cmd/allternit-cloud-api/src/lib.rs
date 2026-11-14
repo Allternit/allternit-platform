@@ -517,6 +517,9 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         // Connect kit account rows (CONTRACT-connections-2026-11): signed-in
         // Clerk session only (API tokens 403); never gated on compute.
         .merge(routes::connections::routes())
+        // Plan chat store (CONTRACT-connections-2026-11 section 9.10): Clerk
+        // session only, never gated on compute.
+        .merge(routes::plan_threads::routes())
         // API keys verify the Clerk session per-request and store only hashes.
         .merge(routes::api_keys::routes())
         // Allternit Platform API (/v1/accounts, /v1/usage, … plus console
