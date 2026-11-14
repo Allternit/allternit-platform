@@ -348,6 +348,7 @@ const MEETING_SELECT: &str = "SELECT m.id, m.user_id, m.org_id, m.platform, m.ti
     m.attendee_count, m.external_attendee_count, m.is_one_on_one, m.auto_join, m.reply_mode, \
     m.latest_session_id, m.created_at, m.updated_at, s.state AS s_state, \
     s.end_reason AS s_end_reason, s.live_at AS s_live_at, \
+    s.ended_at AS s_ended_at, s.summary AS s_summary, \
     (s.summary IS NOT NULL) AS s_summary_ready, \
     (CASE WHEN jsonb_typeof(s.decisions) = 'array' THEN jsonb_array_length(s.decisions) ELSE 0 END) AS s_decisions, \
     (CASE WHEN jsonb_typeof(s.action_items) = 'array' THEN jsonb_array_length(s.action_items) ELSE 0 END) AS s_action_items \
@@ -378,6 +379,8 @@ pub(crate) struct MeetingRow {
     pub s_state: Option<String>,
     pub s_end_reason: Option<String>,
     pub s_live_at: Option<DateTime<Utc>>,
+    pub s_ended_at: Option<DateTime<Utc>>,
+    pub s_summary: Option<String>,
     pub s_summary_ready: Option<bool>,
     pub s_decisions: Option<i32>,
     pub s_action_items: Option<i32>,
@@ -423,6 +426,23 @@ impl MeetingRow {
         }
     }
 
+    /// `latest_session` for list rows, same shape as `GET /meetings/:id`,
+    /// built from the joined session columns (no extra query). Null when no
+    /// session exists.
+    pub fn latest_session(&self) -> Value {
+        match (self.latest_session_id, self.s_state.as_deref()) {
+            (Some(id), Some(state)) => latest_session_json(
+                id,
+                state,
+                self.s_end_reason.as_deref(),
+                self.s_live_at,
+                self.s_ended_at,
+                self.s_summary.as_deref(),
+            ),
+            _ => Value::Null,
+        }
+    }
+
     /// When Gizzi went live in the current call: the active (not ended)
     /// latest session's `live_at`, else null.
     pub fn live_at(&self) -> Option<DateTime<Utc>> {
@@ -442,6 +462,25 @@ pub(crate) fn people_label(attendees: Option<i32>, outside: Option<i32>) -> Stri
         Some(m) if m > 0 => format!("{people}, {m} outside"),
         _ => people,
     }
+}
+
+/// The `latest_session` object shared by the list and detail responses.
+fn latest_session_json(
+    id: Uuid,
+    state: &str,
+    end_reason: Option<&str>,
+    live_at: Option<DateTime<Utc>>,
+    ended_at: Option<DateTime<Utc>>,
+    summary: Option<&str>,
+) -> Value {
+    json!({
+        "id": id,
+        "state": state,
+        "end_reason": end_reason,
+        "live_at": ts_opt(live_at),
+        "ended_at": ts_opt(ended_at),
+        "summary": summary,
+    })
 }
 
 pub(crate) fn meeting_json(row: &MeetingRow, rule: AutoJoinRule, now: DateTime<Utc>) -> Value {
@@ -967,7 +1006,15 @@ async fn list_meetings(
         .await?;
     let rule = user_rule(&state.db, &caller.id).await?;
     let more = rows.len() as i64 > limit;
-    let meetings: Vec<Value> = rows.iter().take(limit as usize).map(|r| meeting_json(r, rule, now)).collect();
+    let meetings: Vec<Value> = rows
+        .iter()
+        .take(limit as usize)
+        .map(|r| {
+            let mut body = meeting_json(r, rule, now);
+            body["latest_session"] = r.latest_session();
+            body
+        })
+        .collect();
     Ok(Json(json!({
         "meetings": meetings,
         "next_cursor": if more { Value::String((offset + limit).to_string()) } else { Value::Null },
@@ -1108,14 +1155,7 @@ async fn get_meeting(
     body["latest_session"] = latest
         .as_ref()
         .map(|s| {
-            json!({
-                "id": s.id,
-                "state": s.state,
-                "end_reason": s.end_reason,
-                "live_at": ts_opt(s.live_at),
-                "ended_at": ts_opt(s.ended_at),
-                "summary": s.summary,
-            })
+            latest_session_json(s.id, &s.state, s.end_reason.as_deref(), s.live_at, s.ended_at, s.summary.as_deref())
         })
         .unwrap_or(Value::Null);
     Ok(Json(body))

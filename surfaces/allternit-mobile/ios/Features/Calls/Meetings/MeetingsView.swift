@@ -240,7 +240,10 @@ struct MeetingRunnerNote: View {
                 .foregroundColor(Color("TextSecondary"))
                 .fixedSize(horizontal: false, vertical: true)
             if runner.isNone {
-                Link(MeetingRunner.noneAction, destination: MeetingRunner.noneActionURL)
+                Button(MeetingRunner.noneAction) {
+                    DeepLinkRouter.shared.enqueue(.computers)
+                }
+                .buttonStyle(.plain)
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundColor(Color("TextPrimary"))
             }

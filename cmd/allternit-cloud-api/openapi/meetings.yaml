@@ -74,7 +74,15 @@ paths:
                 type: object
                 required: [meetings, next_cursor]
                 properties:
-                  meetings: { type: array, items: { $ref: "#/components/schemas/Meeting" } }
+                  meetings:
+                    type: array
+                    items:
+                      allOf:
+                        - $ref: "#/components/schemas/Meeting"
+                        - type: object
+                          required: [latest_session]
+                          properties:
+                            latest_session: { $ref: "#/components/schemas/LatestSession" }
                   next_cursor: { type: [string, "null"] }
         "401": { $ref: "#/components/responses/Error" }
         "402": { $ref: "#/components/responses/Error" }
@@ -155,18 +163,7 @@ paths:
                   - type: object
                     required: [latest_session]
                     properties:
-                      latest_session:
-                        oneOf:
-                          - type: object
-                            required: [id, state, end_reason, live_at, ended_at, summary]
-                            properties:
-                              id: { type: string, format: uuid }
-                              state: { type: string }
-                              end_reason: { type: [string, "null"] }
-                              live_at: { type: [string, "null"], format: date-time }
-                              ended_at: { type: [string, "null"], format: date-time }
-                              summary: { type: [string, "null"] }
-                          - type: "null"
+                      latest_session: { $ref: "#/components/schemas/LatestSession" }
         "404": { $ref: "#/components/responses/Error" }
     patch:
       operationId: updateMeeting
@@ -581,6 +578,19 @@ components:
               error: { type: string }
               message: { type: string }
   schemas:
+    LatestSession:
+      description: The meeting's latest Gizzi session, or null before Gizzi was sent. Same object in the list and the detail response.
+      oneOf:
+        - type: object
+          required: [id, state, end_reason, live_at, ended_at, summary]
+          properties:
+            id: { type: string, format: uuid }
+            state: { type: string }
+            end_reason: { type: [string, "null"] }
+            live_at: { type: [string, "null"], format: date-time }
+            ended_at: { type: [string, "null"], format: date-time }
+            summary: { type: [string, "null"] }
+        - type: "null"
     GizziState:
       type: string
       enum: [scheduled, "off", launching, joining, waiting_admit, live, paused, ended, not_admitted]

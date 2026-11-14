@@ -203,6 +203,32 @@ async fn get_meeting_shows_gizzi_and_the_latest_session_to_its_owner_only() {
 }
 
 #[tokio::test]
+async fn list_rows_carry_the_same_latest_session_as_get_meeting() {
+    let (router, db) = setup().await;
+    let me = who("user_a");
+    subscribe(&db, "user_a", "plus").await;
+    let id = add(&router, &me, MEET).await;
+    let row_for = |list: &Value| list["meetings"].as_array().unwrap().iter().find(|m| m["id"] == id.as_str()).cloned();
+
+    let (_, list) = call(&router, "GET", "/api/v1/meetings?range=upcoming", &me, None).await;
+    let row = row_for(&list).expect("meeting listed");
+    assert!(row["latest_session"].is_null(), "no session yet: {row}");
+
+    let (_, session) = send_now(&router, &me, &id).await;
+    sqlx::query("UPDATE meeting_sessions SET summary = 'Shipped it.' WHERE id = $1")
+        .bind(Uuid::parse_str(session["id"].as_str().unwrap()).unwrap())
+        .execute(&db)
+        .await
+        .unwrap();
+    let (_, list) = call(&router, "GET", "/api/v1/meetings?range=upcoming", &me, None).await;
+    let row = row_for(&list).expect("meeting listed");
+    let (_, detail) = call(&router, "GET", &format!("/api/v1/meetings/{id}"), &me, None).await;
+    assert_eq!(row["latest_session"], detail["latest_session"]);
+    assert_eq!(row["latest_session"]["summary"], "Shipped it.");
+    assert_eq!(row["latest_session"]["id"], session["id"]);
+}
+
+#[tokio::test]
 async fn one_bot_per_url_later_requesters_attach_but_cannot_control() {
     let (router, db) = setup().await;
     let (a, b) = (who("user_a"), who("user_b"));
