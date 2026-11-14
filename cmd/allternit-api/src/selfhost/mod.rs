@@ -21,6 +21,7 @@ pub mod idempotency;
 pub mod metrics_listener;
 pub mod routes_agents;
 pub mod routes_environments;
+pub mod replica;
 pub mod routes_info;
 pub mod routes_internal;
 pub mod routes_keys;
@@ -31,6 +32,7 @@ pub mod settings;
 pub mod state;
 pub mod store;
 pub mod telemetry;
+pub mod wake;
 
 use std::borrow::Cow;
 use std::time::Duration;
@@ -502,6 +504,12 @@ async fn health_live() -> Json<Value> {
 }
 
 async fn health_ready(State(st): State<SelfHostState>) -> Response {
+    if st.replica.draining() {
+        // Stopping: take this replica out of the load balancer first.
+        // The contract has no own code for this; the loop takes no turns.
+        return ApiError::unavailable("agent_loop_unavailable", "This server replica is stopping.")
+            .into_response();
+    }
     if let Err(e) = st.store.health().await {
         tracing::warn!(error = %e, "readiness check failed");
         return ApiError::unavailable("store_unavailable", "The database is not reachable.")
