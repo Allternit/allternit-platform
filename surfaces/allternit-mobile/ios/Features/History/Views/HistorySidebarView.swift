@@ -198,6 +198,7 @@ struct HistorySidebarView: View {
             // testing/screenshots — no tap injection in simctl.
             if launchArgumentEnabled("open-settings")
                 || launchArgumentEnabled("open-settings-memory")
+                || launchArgumentEnabled("open-settings-connections")
                 || launchArgumentEnabled("open-settings-brain-spike")
                 || launchArgumentEnabled("open-settings-meetings")
                 || launchArgumentEnabled("open-usage") {

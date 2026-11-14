@@ -42,6 +42,9 @@ struct FirstRunSetupView: View {
     @State private var opening = false
     /// The account's main bot when the Meet-your-bots step opened (to tell a new one apart).
     @State private var mainBotBefore: String??
+    /// Connect kit: the live connection rows and the brain picked from them.
+    @ObservedObject private var connections = ConnectionsStore.shared
+    @State private var kitBrain: SetupKitBrain?
 
     private static let cell: CGFloat = 41
 
@@ -79,6 +82,7 @@ struct FirstRunSetupView: View {
         .background(SetupPalette.bg.ignoresSafeArea())
         .animation(reduceMotion ? nil : .easeOut(duration: 0.3), value: state.step)
         .onAppear { signals.start() }
+        .task { await connections.load() }
         .sheet(item: $termsPrompt) { prompt in termsSheet(prompt) }
     }
 
@@ -92,11 +96,17 @@ struct FirstRunSetupView: View {
             s.outcomes[.where] = computerOutcome
         }
         if state.choices.ai == .phoneApps {
-            // Phone Link is set up from Allternit Desktop (a cable to the phone once).
+            // Phone Link is paired from Allternit on a Mac or PC (Settings › Connections there).
             s.outcomes[.ai] = StepOutcome(status: .waiting, label: BrainChoice.phoneApps.label,
-                                          detail: ["Set up from Allternit Desktop", "The first setup needs a cable to your phone"])
+                                          detail: ["Set up in Settings › Connections › Your phone on your Mac or PC",
+                                                   "An Android phone pairs over the same Wi-Fi, no cable"])
         } else {
-            s.outcomes[.ai] = brainOutcome
+            s.outcomes[.ai] = SetupKit.outcome(kitBrain) ?? brainOutcome
+        }
+        if state.order.contains(.phone) {
+            // This app is signed in on this iPhone, so the phone is already connected.
+            s.outcomes[.phone] = StepOutcome(status: .connected, label: "This iPhone",
+                                             detail: ["You're signed in on this iPhone", "Chats, bots and approvals work here"])
         }
         if let style = state.choices.style {
             s.outcomes[.style] = StepOutcome(status: .set, label: style.label,
@@ -352,13 +362,37 @@ struct FirstRunSetupView: View {
                     .id("q-\(field.rawValue)")
                     .setupRise()
                 if field == .where { SetupComputeGatePanel().padding(.bottom, 8) }
-                tileList(field)
-                if let card = resultCard(eff, field) {
-                    SetupResultCardView(card: card, working: busy)
-                        .id("card-\(field.rawValue)-\(state.choices.raw(field) ?? "")")
-                        .padding(.top, 4)
+                if field == .ai {
+                    // Connect kit option A: the brains as connect-kit rows.
+                    SetupKitAIStep(store: connections, brain: kitBrain, allternitModel: allternitModelId, onPick: pickKitBrain)
+                        .id("tiles-ai")
+                    if kitBrain != nil, let card = resultCard(eff, field) {
+                        SetupResultCardView(card: card, working: busy)
+                            .id("card-ai-\(kitBrain?.id ?? "")")
+                            .padding(.top, 4)
+                    }
+                } else {
+                    tileList(field)
+                    if let card = resultCard(eff, field) {
+                        SetupResultCardView(card: card, working: busy)
+                            .id("card-\(field.rawValue)-\(state.choices.raw(field) ?? "")")
+                            .padding(.top, 4)
+                    }
+                    panel(field).id("panel")
                 }
-                panel(field).id("panel")
+            } else if state.step == .phone {
+                Text(SetupCopy.question(.phone))
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(SetupPalette.ink)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 10)
+                    .padding(.bottom, 8)
+                    .id("q-phone")
+                    .setupRise()
+                if let card = resultCard(eff, .phone) {
+                    SetupResultCardView(card: card, working: false)
+                }
+                SetupKitPhoneStep(store: connections)
             }
         }
     }
@@ -469,10 +503,10 @@ struct FirstRunSetupView: View {
             // PhoneLinkPanel without the Desktop bridge (phone layout and PWA).
             SetupPanel(title: "Apps on your phone") {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Set up from Allternit Desktop")
+                    Text("Set up in Settings › Connections")
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundStyle(SetupPalette.ink)
-                    SetupNote(text: "The first setup needs a cable between your phone and your computer, so it runs in Allternit Desktop. Open Settings › Connections › Link a phone there. Once it’s linked, your bots use the phone from any device, including this one.")
+                    SetupNote(text: "Your bots use the apps on your phone through Allternit on your Mac or PC. Open Settings › Connections › Your phone › Let your bots use this iPhone there. An Android phone pairs over the same Wi-Fi, with no cable. Once it’s linked, your bots use the phone from any device, including this one.")
                     Link(destination: URL(string: "https://allternit.com/download")!) {
                         HStack(spacing: 6) {
                             Text("Get Allternit Desktop")
@@ -596,7 +630,7 @@ struct FirstRunSetupView: View {
         HStack(spacing: 8) {
             Button("Back") { dispatch(.back) }
                 .buttonStyle(SetupGhostButtonStyle())
-                .disabled(state.step == .where)
+                .disabled(state.step == state.order.first)
             Button("Skip") {
                 // Skipping Your AI saves no brain unless one really connected
                 // (its connect already saved it); the apps ask on first send.
@@ -654,7 +688,24 @@ struct FirstRunSetupView: View {
                 data.defaultModelId = first.id.replacingOccurrences(of: "allternit/", with: "")
             }
             dispatch(.chooseAI(v, origin))
+        case .phone:
+            // The phone step has no tiles to choose.
+            return
         }
+    }
+
+    /// The first Allternit Cloud model, saved when Allternit is picked.
+    private var allternitModelId: String? {
+        signals.catalog.first.map { $0.id.replacingOccurrences(of: "allternit/", with: "") }
+    }
+
+    /// A kit row turned on (or was already on and tapped "Use this"): it becomes the default brain.
+    private func pickKitBrain(_ brain: SetupKitBrain) {
+        kitBrain = brain
+        data.defaultProvider = brain.provider
+        data.defaultModelId = brain.modelId
+        let choice = BrainChoice.forProvider(brain.provider) ?? .other
+        dispatch(.chooseAI(choice, nil))
     }
 
     private func applyTheme(_ style: StyleChoice) {

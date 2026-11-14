@@ -43,6 +43,18 @@ struct SetupGraphView: View {
         BrainNode(id: .local, name: "Local model", mono: "L", at: CGPoint(x: 225, y: 276)),
     ]
     private static let otherNode = CGPoint(x: 520, y: 180)
+    /// Connect kit (option A): the picked brain above A://, the phone below right.
+    private static let kitBrainAt = CGPoint(x: 347, y: 150)
+    private static let phoneAt = CGPoint(x: 540, y: 500)
+
+    /// Day-one setup without a computer step (connect kit option A): no
+    /// Computers card; a computer appears only once one is added.
+    private var kit: Bool { !state.order.contains(.where) }
+    private var showPhone: Bool { kit && state.index(of: state.step) >= state.index(of: .phone) && state.order.contains(.phone) }
+    private var kitBrainLabel: String? {
+        guard kit, !showBrains, state.outcomes[.ai]?.status == .connected else { return nil }
+        return state.outcomes[.ai]?.label
+    }
 
     private static func tag(_ status: OutcomeStatus?) -> String {
         switch status ?? .idle {
@@ -61,8 +73,19 @@ struct SetupGraphView: View {
         SetupFitBox(width: Self.w, height: Self.h) {
             ZStack(alignment: .topLeading) {
                 edges
-                computers.position(x: 20 + 104, y: 20 + 62)
+                if !kit { computers.position(x: 20 + 104, y: 20 + 62) }
                 if showBrains { brains }
+                if let label = kitBrainLabel {
+                    brainChip(mono: String(label.prefix(1)), name: label, lit: true, tag: "Brain", fixedWidth: false)
+                        .position(Self.kitBrainAt)
+                        .modifier(SetupPopIn(delay: 0))
+                }
+                if showPhone {
+                    brainChip(mono: "P", name: state.outcomes[.phone]?.label ?? "Your phone", lit: state.outcomes[.phone]?.status == .connected,
+                              tag: state.outcomes[.phone]?.status == .connected ? "Connected" : nil, fixedWidth: false)
+                        .position(Self.phoneAt)
+                        .modifier(SetupPopIn(delay: 0.1))
+                }
                 core
             }
             .frame(width: Self.w, height: Self.h, alignment: .topLeading)
@@ -75,7 +98,15 @@ struct SetupGraphView: View {
 
     private var edges: some View {
         ZStack {
-            SetupEdge(from: Self.center, to: Self.computersAnchor, delay: 0)
+            if !kit { SetupEdge(from: Self.center, to: Self.computersAnchor, delay: 0) }
+            if kitBrainLabel != nil {
+                SetupEdge(from: Self.center, to: Self.kitBrainAt, delay: 0)
+                SetupPackets(from: Self.center, to: Self.kitBrainAt)
+            }
+            if showPhone {
+                SetupEdge(from: Self.center, to: Self.phoneAt, delay: 0.1)
+                if state.outcomes[.phone]?.status == .connected { SetupPackets(from: Self.center, to: Self.phoneAt) }
+            }
             if state.choices.where != nil && state.outcomes[.where]?.status == .paired {
                 SetupPackets(from: Self.center, to: Self.computersAnchor)
             }
@@ -165,6 +196,7 @@ struct SetupGraphView: View {
         .foregroundStyle(lit ? SetupPalette.ink : SetupPalette.sub)
         .padding(.horizontal, 9)
         .frame(width: fixedWidth ? 118 : nil, height: 32)
+        .fixedSize(horizontal: !fixedWidth, vertical: false)
         .frame(minWidth: 118)
         .background(SetupPalette.card, in: RoundedRectangle(cornerRadius: 9))
         .overlay(nodeBorder(on: lit, radius: 9))

@@ -52,6 +52,11 @@ enum SampleWorkspaceAPI {
             return meetings
         }
 
+        // Connect kit: account rows (cloud) and the computer's rows (relay).
+        if namespace == .v1, let connections = SampleConnections.shared.answer(method: method, url: url, parts: parts, body: body) {
+            return connections
+        }
+
         if method != "GET" {
             return write(method: method, namespace: namespace, parts: parts, body: body)
         }
