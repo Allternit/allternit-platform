@@ -1,0 +1,127 @@
+---
+title: "Brain runner (operations)"
+description: "What runs behind plan rows with no computer: the host, the RAM budget, the kill switch, the vendor CLI table, the egress list, and the checks to run by hand."
+---
+
+**Status: BUILDING (internal).** See [status labels](/architecture#status-labels). The user guide is [Use the AI plan you already pay for](/guides/use-your-plan). The API is in [Connections API](/api/connections#plan-runner-rows). This page covers what Allternit runs.
+
+## What it is
+
+One private box per person, on Allternit's own host, runs the vendor's command-line program unchanged. The person signs in to the vendor themselves and manages their own account. Only messages the person sends in chat reach the box, with tools off. Bots, routines, schedules, missions and sub-agents are refused before they get there.
+
+- cloud-api creates, wakes and destroys boxes (`services/brain_runners.rs`).
+- Each box runs one small program that dials out to `wss://api.allternit.com/api/v1/brain-runner/socket` with its own token. Nothing connects in. The program has no file, terminal or tool routes.
+- The plan model route (`plan/<vendor>/<model>`) is a branch in `routes/model_router.rs` that enforces the person-only rules: no device, platform or playground token, the `X-Allternit-Turn: person` header, tools removed, one turn in flight per account, 20 turns in 5 minutes.
+- Boxes never use the hosted-computer placement, so they do not appear in compute status.
+
+## Host
+
+Boxes run on the `mail` host in Incus containers (Incus 6.0.0, Ubuntu 24.04, no KVM, no swap). Measured 2026-11-14, read-only:
+
+| Item | mail |
+| --- | --- |
+| RAM | 24 GB total, about 7.5 GB used, about 16.5 GB available |
+| CPU | 8 |
+| inotify | 1024 instances, 524288 watches, 34 in use |
+| Instances at the time | 0 |
+| cloud-api | running, about 92 MB resident |
+
+`mail` also serves the production API and database, so a box fault must never reach them. The limits below are the protection.
+
+### Set up the host
+
+The script is `cmd/allternit-cloud-api/deploy/incus/brain-runner-host.sh`. It prints what it will do and changes nothing without `--confirm`. Take a backup first. It sets up:
+
+- a dedicated btrfs pool `runner`, and a bridge with an egress allow-list (below);
+- the inotify sysctl values;
+- an Incus profile for each box: 768 MB of memory enforced hard, no swap, 1 CPU, a process cap, nesting off;
+- a 256 MiB volume per box, mounted at `/home/runner`, which holds the vendor sign-ins and counts against the person's quota.
+
+The image is built by `cmd/allternit-computer-cloud/guest/build-brain-runner-image.sh`: Debian slim, Node 22.19 or newer, the four vendor programs at pinned versions with self-update off, and the runner program. Boxes are btrfs copy-on-write clones of it.
+
+## RAM budget
+
+`ALLTERNIT_RUNNER_RAM_BUDGET_MB` (default 4096) divided by 768 MB per box is 5 awake boxes at once. A sixth request waits up to 10 seconds, then gets `503 runner_busy` ("Busy. Try again"). That leaves about 12 GB of the available memory for cloud-api and Postgres. A box stops after 5 idle minutes and is deleted after 90 days idle.
+
+## Settings and kill switch
+
+Set these in `/opt/allternit-cloud-api/.env` and restart cloud-api.
+
+| Variable | Meaning |
+| --- | --- |
+| `ALLTERNIT_BRAIN_RUNNERS` | `0` is the kill switch. Plan rows return "Not available yet. Use a key for now." Set it to `1` to allow boxes. |
+| `ALLTERNIT_RUNNER_VENDORS` | Default `claude,chatgpt,grok,kimi`. A vendor missing from the list is off. Take a vendor off if its program fails the tools-off check or its sign-in. |
+| `ALLTERNIT_RUNNER_RAM_BUDGET_MB` | Default 4096. |
+
+To stop everything now: set `ALLTERNIT_BRAIN_RUNNERS=0` and restart cloud-api. Rows go off for everyone; running boxes can then be stopped with `incus stop`. Disconnect and account erase destroy a person's box and their sign-ins; the accepted-disclosure record is erased with the account.
+
+The Copilot row is separate. It needs `ALLTERNIT_COPILOT_CLIENT_ID`, `ALLTERNIT_COPILOT_CLIENT_SECRET` and `ALLTERNIT_CREDENTIALS_KEY`, and it uses no box. See [Connections API](/api/connections#github-copilot).
+
+## Checks to run by hand
+
+### Migrations
+
+Production runs with `ALLTERNIT_SKIP_MIGRATIONS=1`, so the server does not apply migrations when it starts. The deploy applies them (see [Cloud database migrations](/operations/database-migrations)). This feature adds migrations 140, 141 and 142. After the deploy, check by hand, and apply any that is missing as the `postgres` user:
+
+```bash
+sudo -u postgres psql allternit -c '\d brain_runners'
+sudo -u postgres psql allternit -c '\d plan_threads'
+sudo -u postgres psql allternit -c '\d copilot_grants'
+sudo -u postgres psql allternit -c "select name from ops_applied_migrations where name like '14%' order by name"
+```
+
+141 creates `plan_threads` (the plan chat store) and 142 creates `copilot_grants`. 140 is expected to hold the `brain_runners` and consent tables; confirm that against the file in `migrations_pg` before relying on it. Never edit a migration that has shipped.
+
+### inotify
+
+An inotify limit reset has taken cloud computers offline before (see [Cloud computer network](/operations/cloud-computer-network)). Before and after turning boxes on:
+
+```bash
+sysctl fs.inotify.max_user_instances fs.inotify.max_user_watches
+cat /proc/sys/fs/inotify/max_user_instances
+incus network list
+```
+
+Compare with the values in the host table. Boxes have no init system, which keeps their inotify use low. A failed box create raises an ops alert.
+
+### Health
+
+- `curl -s -o /dev/null -w '%{http_code}' https://api.allternit.com/health` returns 200 with boxes awake.
+- Host memory stays under the budget; a sixth concurrent turn gets `runner_busy`.
+- A request from a box to a host that is not on the list fails.
+
+## Vendor programs
+
+Measured 2026-11-14 on a Mac with the versions shown. These are the settings the runner uses, and they are rechecked before any image rebuild.
+
+| | Claude 2.1.325 | Codex 0.169.0 | Grok 1.0.77 | Kimi 2.5.2 |
+| --- | --- | --- | --- | --- |
+| Tools off | `--tools ""` plus strict flags | A model-catalog override and `--disable` flags (no single flag does it) | `--tools "" --no-subagents --disable-web-search --no-plan --permission-mode dontAsk` | An agent file with `tools: []` |
+| Proven | Live turn: no tools, a refused `ls` | Tool list only | Not proven | Docs only |
+| Stream | `stream-json` | `exec --json`, whole messages | `streaming-messages-json` | `stream-json` |
+| Sign-in | `claude auth login --claudeai`: link, then paste a code | `codex login --device-auth`: link and code | `grok login --device-auth`: link with code | `kimi login --region global`: link with code |
+| Sign-in check | `claude auth status` | `codex login status` | `grok models`, parse the text | `kimi provider list` |
+| Sign-out | `claude auth logout` | `codex logout` | `grok logout` | None: delete its `credentials` and `oauth` folders |
+| Peak memory | 227 MB | 121 MB (failed turn) | 73 MB (signed out) | 381 to 497 MB (failed turn) |
+| Self-update off | `DISABLE_AUTOUPDATER=1` | `-c check_for_update_on_startup=false` | Config `auto_update` (unexercised) | `KIMI_CODE_NO_AUTO_UPDATE=1` |
+| Home | `HOME` | `CODEX_HOME` | `HOME` | `KIMI_CODE_HOME` |
+
+Each turn uses a fresh home or config so a user's settings never leak in. History is replayed from the messages on every turn; no vendor session is resumed. Only Claude was proven end to end. Codex, Grok and Kimi must pass a live tools-off turn before their vendor stays on the list. The Kimi peak is the heaviest against the 768 MB cap.
+
+## Egress allow-list
+
+The box bridge allows only these domains, plus `api.allternit.com:443`. Codex and Grok ignore proxy settings, so this is a domain list on the network, not a proxy.
+
+| Vendor | Domains |
+| --- | --- |
+| Claude | `api.anthropic.com`, `claude.com`, `platform.claude.com` |
+| Codex | `chatgpt.com`, `auth.openai.com`, `api.openai.com` |
+| Grok | `cli-chat-proxy.grok.com`, `accounts.x.ai`, `auth.x.ai`, `api.x.ai` |
+| Kimi | `api.kimi.com`, `auth.kimi.ai`, `auth.kimi.com`, `telemetry-logs.kimi.com` |
+
+## Related
+
+- [Use the AI plan you already pay for](/guides/use-your-plan)
+- [Connections API](/api/connections)
+- [Hosted computer driver (operations)](/operations/hosted-driver)
+- [Cloud database migrations](/operations/database-migrations)

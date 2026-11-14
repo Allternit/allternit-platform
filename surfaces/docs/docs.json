@@ -373,6 +373,7 @@
               "operations/owned-downloads",
               "operations/screen-capture",
               "operations/hosted-driver",
+              "operations/brain-runner",
               "operations/compute-providers",
               "operations/cloud-computer-network",
               "operations/upstream-funding",
