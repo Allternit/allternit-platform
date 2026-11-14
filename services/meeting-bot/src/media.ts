@@ -1,9 +1,15 @@
 // Pod media, both directions, for browser platforms (Meet, Teams).
 //
 // Outbound (what the call sees and hears from the bot):
-//   - camera: a 1280x720 canvas streamed with captureStream(15). It shows our
-//     real bot, the allternit-ai /meeting-tile page (Bot Mode stage), opened in
-//     its own window and CDP-screencast into the canvas (startTileFeed).
+//   - camera, live mode (default, live-tile.ts): the /meeting-tile?live=1 page
+//     draws its stage into a 640x360 canvas (HTML-in-canvas) and sends it as
+//     real video over a WebRTC loopback between the tile tab and this page;
+//     getUserMedia hands Meet that received track. The same loopback carries
+//     Allternit Live's voice (onto the voice bus below) one way and the call
+//     mix (installPeerCapture) the other way, into the Live session's mic.
+//   - camera, fallback: a 1280x720 canvas streamed with captureStream(15). It
+//     shows the same tile page, opened in its own window and CDP-screencast
+//     into the canvas (startTileFeed), when the tile has no live mode.
 //   - mic: a WebAudio MediaStreamDestination behind a "voice bus". The TTS
 //     track from LiveKit (livekit.ts) is attached to the bus with
 //     __gizziMicAttach(); __gizziSpeak(url) plays a file into it. Silent
@@ -24,11 +30,12 @@
 // (all proven by spike/local-test). Changes: a voice bus with stream attach,
 // a capture gain for pause, a level meter on the mix, the MediaRecorder made
 // optional (debug only; production audio leaves through LiveKit), and both
-// scripts skip the tile page's own origin.
+// scripts skip the tile page itself (by URL prefix).
 
 import { appendFileSync } from "node:fs";
 import type { Browser, BrowserContext, CDPSession, Page } from "playwright-core";
 import type { TileState } from "./adapter.js";
+import { LiveHub } from "./live-tile.js";
 
 export type { TileState };
 export const TILE_STATES: readonly TileState[] = ["joining", "listening", "thinking", "speaking", "paused"];
@@ -38,8 +45,14 @@ export const TILE_STATES: readonly TileState[] = ["joining", "listening", "think
 export interface GizziMediaOptions {
   name: string;
   state: string;
-  /** Origins where the override must not run (the tile page itself). */
-  skipOrigins: string[];
+  /**
+   * URL prefixes (origin + path) where the override must not run: the tile
+   * page itself. A prefix, not an origin: /meeting-zoom shares the tile's
+   * origin and must get the override.
+   */
+  skipPrefixes: string[];
+  /** Live mode: answer the tile's loopback and use its video as the camera. */
+  live?: boolean;
 }
 
 export interface CaptureLevels {
@@ -87,13 +100,28 @@ declare global {
     __gizziPcmOut?: (b64: string) => unknown;
     /** Reply audio from Node (s16le mono, base64) into the voice bus, scheduled gap-free. */
     __gizziMicPcm?: (b64: string, sampleRate: number) => boolean;
+    /** Node binding (live-tile.ts): loopback signalling between the tile tab and this page. */
+    __gizziLoopSignal?: (msg: LoopMessage) => unknown;
+    /** Loopback messages from the tile tab, delivered by Node. */
+    __gizziLoopIn?: (msg: LoopMessage) => void;
+    __gizziLoop?: { state: () => string; video: () => boolean };
   }
 }
 
+/** Loopback signalling (same shapes as allternit-ai src/lib/voice/meeting-live.ts). */
+export type LoopMessage =
+  | { type: "hello"; side: "tile" | "meet" }
+  | { type: "restart" }
+  /** Node to the meeting page: no live tile this session, use the canvas camera. */
+  | { type: "off" }
+  | { type: "offer" | "answer"; sdp: string };
+
 export function installGizziMedia(opts: GizziMediaOptions): void {
-  if (opts.skipOrigins.includes(location.origin)) return;
+  if (opts.skipPrefixes.some((p) => (location.origin + location.pathname).startsWith(p))) return;
   const md = navigator.mediaDevices;
   if (!md || window.__gizziMedia) return;
+  // Before installPeerCapture wraps it: the loopback must never be captured as call audio.
+  const NativePC: typeof RTCPeerConnection | undefined = window.RTCPeerConnection;
 
   const W = 1280;
   const H = 720;
@@ -111,9 +139,39 @@ export function installGizziMedia(opts: GizziMediaOptions): void {
   let ctx2d: CanvasRenderingContext2D | null = null;
   let latest: ImageBitmap | null = null;
 
+  // Live video from the tile tab (loopback). The canvas fallback draws it too,
+  // for a camera Meet asked for before the loopback was up.
+  let loopVideo: MediaStreamTrack | null = null;
+  let loopEl: HTMLVideoElement | null = null;
+  let videoWaiters: Array<(t: MediaStreamTrack | null) => void> = [];
+  function setLoopVideo(t: MediaStreamTrack | null): void {
+    loopVideo = t;
+    if (t) {
+      loopEl ??= document.createElement("video");
+      loopEl.muted = true;
+      loopEl.srcObject = new MediaStream([t]);
+      void loopEl.play().catch(() => undefined);
+    }
+    const w = videoWaiters;
+    videoWaiters = [];
+    for (const f of w) f(t);
+  }
+  function liveVideo(ms: number): Promise<MediaStreamTrack | null> {
+    if (loopVideo && loopVideo.readyState === "live") return Promise.resolve(loopVideo);
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => resolve(null), ms);
+      videoWaiters.push((t) => {
+        clearTimeout(timer);
+        resolve(t);
+      });
+    });
+  }
+
   function draw(): void {
     if (!ctx2d) return;
-    if (latest) {
+    if (loopEl && loopVideo?.readyState === "live" && loopEl.readyState >= 2) {
+      ctx2d.drawImage(loopEl, 0, 0, W, H);
+    } else if (latest) {
       ctx2d.drawImage(latest, 0, 0, W, H);
     } else {
       ctx2d.fillStyle = EMPTY;
@@ -262,9 +320,75 @@ export function installGizziMedia(opts: GizziMediaOptions): void {
 
   const origEnumerate = md.enumerateDevices.bind(md);
 
+  // ---- live loopback (this page answers the tile tab's offer) -------------------------
+  let loopPc: RTCPeerConnection | null = null;
+  let voiceId = 0;
+  const loopSignal = (msg: LoopMessage) => {
+    try {
+      void Promise.resolve(window.__gizziLoopSignal?.(msg)).catch(() => undefined);
+    } catch {
+      /* binding gone */
+    }
+  };
+  async function answer(sdp: string): Promise<void> {
+    if (!NativePC) return;
+    loopPc?.close();
+    const pc = new NativePC({ iceServers: [] });
+    loopPc = pc;
+    let gotVideo = false;
+    pc.ontrack = (e: RTCTrackEvent) => {
+      if (e.track.kind === "video") {
+        gotVideo = true;
+        setLoopVideo(e.track);
+      } else if (e.track.kind === "audio" && window.__gizziMicAttach) {
+        // Allternit Live's voice onto the voice bus: the mic Meet already has.
+        if (voiceId) window.__gizziMicDetach?.(voiceId);
+        voiceId = window.__gizziMicAttach(new MediaStream([e.track]));
+      }
+    };
+    await pc.setRemoteDescription({ type: "offer", sdp });
+    // The tile has no video (no HTML-in-canvas): the canvas fallback, fed by Node's screencast.
+    if (!gotVideo) setLoopVideo(null);
+    const mix = window.__gizziPeerCap?.mixTrack();
+    for (const t of pc.getTransceivers()) {
+      if (t.receiver.track?.kind !== "audio") continue;
+      if (mix) await t.sender.replaceTrack(mix);
+      t.direction = "sendrecv";
+    }
+    await pc.setLocalDescription(await pc.createAnswer());
+    if (pc.iceGatheringState !== "complete") {
+      await new Promise<void>((resolve) => {
+        const done = () => pc.iceGatheringState === "complete" && resolve();
+        pc.addEventListener("icegatheringstatechange", done);
+        setTimeout(resolve, 3000);
+      });
+    }
+    if (loopPc === pc) loopSignal({ type: "answer", sdp: pc.localDescription?.sdp ?? "" });
+  }
+  if (opts.live && window.top === window && location.protocol.startsWith("http")) {
+    window.__gizziLoopIn = (msg: LoopMessage) => {
+      if (msg.type === "offer") void answer(msg.sdp).catch(() => setLoopVideo(null));
+      else if (msg.type === "off") {
+        delete window.__gizziLoopIn;
+        setLoopVideo(null);
+      }
+    };
+    window.__gizziLoop = { state: () => loopPc?.connectionState ?? "none", video: () => loopVideo?.readyState === "live" };
+    // The binding appears with the page; say hello once it is there.
+    const hello = (n: number) => {
+      if (typeof window.__gizziLoopSignal === "function") loopSignal({ type: "hello", side: "meet" });
+      else if (n < 50) setTimeout(() => hello(n + 1), 200);
+    };
+    hello(0);
+  }
+
   md.getUserMedia = async (constraints?: MediaStreamConstraints) => {
     const out = new MediaStream();
-    if (constraints?.video) out.addTrack(tagTrack(ensureCanvas().captureStream(FPS).getVideoTracks()[0], CAM_ID));
+    if (constraints?.video) {
+      // Live: the tile's own video track (waits for the loopback a little), else the canvas.
+      const lv = opts.live && window.__gizziLoopIn ? await liveVideo(15_000) : null;
+      out.addTrack(tagTrack(lv ? lv.clone() : ensureCanvas().captureStream(FPS).getVideoTracks()[0], CAM_ID));
+    }
     // A clone per call: the page can stop its copy without killing ours.
     if (constraints?.audio) out.addTrack(tagTrack(ensureAudio().dest.stream.getAudioTracks()[0].clone(), MIC_ID));
     if (out.getTracks().length === 0) throw new DOMException("No audio or video requested", "TypeError");
@@ -302,11 +426,11 @@ export interface PeerCaptureOptions {
   timesliceMs: number;
   /** Also record the mix with MediaRecorder (debug; drained to a .webm file by Node). */
   record: boolean;
-  skipOrigins: string[];
+  skipPrefixes: string[];
 }
 
 export function installPeerCapture(opts: PeerCaptureOptions): void {
-  if (opts.skipOrigins.includes(location.origin)) return;
+  if (opts.skipPrefixes.some((p) => (location.origin + location.pathname).startsWith(p))) return;
   const w = window as Window & { RTCPeerConnection?: typeof RTCPeerConnection; webkitRTCPeerConnection?: unknown };
   if (!w.RTCPeerConnection || w.__gizziPeerCap) return;
   const Orig: typeof RTCPeerConnection = w.RTCPeerConnection;
@@ -629,15 +753,59 @@ export function within<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
   });
 }
 
-export function tileUrl(base: string, opts: { name: string; state: TileState; agent?: string }): string {
+export function tileUrl(base: string, opts: { name: string; state: TileState; agent?: string; live?: boolean }): string {
   const u = new URL(base);
   u.searchParams.set("name", opts.name);
   u.searchParams.set("state", opts.state);
   if (opts.agent) u.searchParams.set("agent", opts.agent);
+  if (opts.live) u.searchParams.set("live", "1");
   return u.toString();
 }
 
+/**
+ * Open the tile page in a second window (not a tab: a background tab is
+ * "hidden" and the stage pauses) at the stage size, and wait until it drew.
+ */
+export async function openTileWindow(
+  browser: Browser,
+  context: BrowserContext,
+  url: string,
+  opts: { width?: number; height?: number; loadTimeoutMs?: number } = {},
+): Promise<{ tilePage: Page; tile: CDPSession }> {
+  const width = opts.width ?? 1280;
+  const height = opts.height ?? 720;
+  const browserSession = await browser.newBrowserCDPSession();
+  const pageEvent = context.waitForEvent("page", { timeout: 15_000 });
+  await browserSession.send("Target.createTarget", { url, newWindow: true, background: true, width, height });
+  const tilePage = await pageEvent;
+  await browserSession.detach().catch(() => undefined);
+  try {
+    const tile: CDPSession = await context.newCDPSession(tilePage);
+    await tile.send("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: false });
+    await tilePage.waitForFunction(() => (window as unknown as { __tileReady?: boolean }).__tileReady === true, null, {
+      timeout: opts.loadTimeoutMs ?? 45_000,
+    });
+    return { tilePage, tile };
+  } catch (e) {
+    await tilePage.close().catch(() => undefined);
+    throw e;
+  }
+}
+
 export async function startTileFeed(browser: Browser, meetPage: Page, opts: TileFeedOptions): Promise<TileFeed> {
+  const url = tileUrl(opts.url, { name: opts.name, state: opts.state ?? "joining", agent: opts.agent });
+  const { tilePage, tile } = await openTileWindow(browser, meetPage.context(), url, opts);
+  (opts.onEvent ?? (() => undefined))("tile_ready", { url: opts.url });
+  return screencastTile(tilePage, tile, meetPage, opts);
+}
+
+/** CDP-screencast an open tile page into the meeting page's canvas camera. */
+export async function screencastTile(
+  tilePage: Page,
+  tile: CDPSession,
+  meetPage: Page,
+  opts: Pick<TileFeedOptions, "width" | "height" | "frameWidth" | "frameHeight" | "fps" | "onEvent">,
+): Promise<TileFeed> {
   const width = opts.width ?? 1280;
   const height = opts.height ?? 720;
   const frameWidth = opts.frameWidth ?? width;
@@ -647,21 +815,7 @@ export async function startTileFeed(browser: Browser, meetPage: Page, opts: Tile
   const log = opts.onEvent ?? (() => undefined);
   const context = meetPage.context();
 
-  // A second window (not a tab): a background tab is "hidden" and the stage pauses.
-  const browserSession = await browser.newBrowserCDPSession();
-  const url = tileUrl(opts.url, { name: opts.name, state: opts.state ?? "joining", agent: opts.agent });
-  const pageEvent = context.waitForEvent("page", { timeout: 15_000 });
-  await browserSession.send("Target.createTarget", { url, newWindow: true, background: true, width, height });
-  const tilePage = await pageEvent;
-  await browserSession.detach().catch(() => undefined);
-
   try {
-    const tile: CDPSession = await context.newCDPSession(tilePage);
-    await tile.send("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: false });
-    await tilePage.waitForFunction(() => (window as unknown as { __tileReady?: boolean }).__tileReady === true, null, {
-      timeout: opts.loadTimeoutMs ?? 45_000,
-    });
-    log("tile_ready", { url: opts.url });
 
     // Frames go to the meeting page with a raw Runtime.evaluate; one in flight,
     // a newer frame replaces a waiting one.
@@ -748,6 +902,8 @@ export interface PodMediaOptions {
   agent?: string;
   /** Debug: also record the call mix to this .webm file. */
   recordFile?: string;
+  /** Live mode (live-tile.ts): the tile is an Allternit Live voice session with real video. */
+  live?: boolean;
   onEvent?: (kind: string, detail?: unknown) => void;
 }
 
@@ -759,6 +915,8 @@ export interface PodMediaOptions {
 export class PodMedia {
   page: Page | null = null;
   tile: TileFeed | null = null;
+  /** Live mode's hub; null when live mode is off or the tile has none. */
+  live: LiveHub | null = null;
   private tileState: TileState = "joining";
   private recordBytes = 0;
   private chain: Promise<unknown> = Promise.resolve();
@@ -820,13 +978,14 @@ export class PodMedia {
   /** The `installMedia` hook browser adapters call: init scripts, CSP bypass, tile window. */
   async install(ctx: BrowserContext, browser: Browser, page: Page): Promise<void> {
     this.page = page;
-    let tileOrigin = "";
+    let tilePrefix = "";
     try {
-      tileOrigin = new URL(this.opts.tileUrl).origin;
+      const u = new URL(this.opts.tileUrl);
+      tilePrefix = u.origin + u.pathname;
     } catch {
       /* no tile */
     }
-    const skipOrigins = tileOrigin ? [tileOrigin] : [];
+    const skipPrefixes = tilePrefix ? [tilePrefix] : [];
     // LiveKit runs inside the meeting page (livekit.ts). The meeting site's
     // CSP (connect-src, Trusted Types) would block its websocket and script,
     // so CSP is bypassed for the meeting page only. Init scripts are not
@@ -844,9 +1003,31 @@ export class PodMedia {
         for (const cb of this.pcmSubs) cb({ sampleRate: 48_000, channels: 1, pcm, t });
       })
       .catch((e: unknown) => this.log("pcm_binding_failed", String(e).slice(0, 200)));
-    await ctx.addInitScript(installGizziMedia, { name: this.opts.displayName, state: "Joining", skipOrigins });
-    await ctx.addInitScript(installPeerCapture, { timesliceMs: 1000, record: Boolean(this.opts.recordFile), skipOrigins });
-    if (this.opts.tileUrl) {
+    let live = Boolean(this.opts.live && this.opts.tileUrl);
+    if (live) {
+      const hub = new LiveHub(page, { onEvent: (k, d) => this.log(k, d) });
+      try {
+        await hub.bind(ctx);
+        this.live = hub;
+      } catch (e) {
+        live = false;
+        this.log("live_unavailable", { reason: "bindings", error: String(e).slice(0, 200) });
+      }
+    }
+    await ctx.addInitScript(installGizziMedia, { name: this.opts.displayName, state: "Joining", skipPrefixes, live });
+    await ctx.addInitScript(installPeerCapture, { timesliceMs: 1000, record: Boolean(this.opts.recordFile), skipPrefixes });
+    if (this.live && this.opts.tileUrl) {
+      // No screencast: the tile sends its stage as video and runs the voice session.
+      this.tile = await this.live
+        .open(browser, this.opts.tileUrl, { name: this.opts.displayName, agent: this.opts.agent })
+        .catch((e: unknown) => {
+          this.log("live_unavailable", { reason: "tile", error: String(e).slice(0, 300) });
+          this.live?.disable();
+          this.live = null;
+          return null;
+        });
+    }
+    if (this.opts.tileUrl && !this.tile) {
       this.tile = await startTileFeed(browser, page, {
         url: this.opts.tileUrl,
         name: this.opts.displayName,
@@ -873,6 +1054,16 @@ export class PodMedia {
 
   setLevel(level: number): void {
     this.tile?.setLevel(level);
+  }
+
+  /** Live's voice is up: replies are spoken by it, not by the worker or in chat. */
+  get liveReady(): boolean {
+    return this.live?.voiceReady ?? false;
+  }
+
+  /** Speak through Live; false = not delivered (the caller falls back to chat). */
+  liveSay(text: string): Promise<boolean> {
+    return this.live ? this.live.say(text) : Promise.resolve(false);
   }
 
   /** The bot's own voice level (TTS on the mic), 0..1. */
