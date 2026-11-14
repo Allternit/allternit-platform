@@ -250,8 +250,35 @@ async fn chat_completions_attributed(
                 None => false,
             },
         ) {
-            return byok_chat_completions(state, &user_id, provider_id, request, attribution).await;
+            let upstream_id = state
+                .model_router
+                .upstream_for_alias(&alias)
+                .ok_or_else(|| ApiError::BadRequest(format!("Unknown model alias: {alias}")))?
+                .to_string();
+            return byok_chat_completions(state, &user_id, provider_id, upstream_id, request, attribution).await;
         }
+    } else if let Some((provider_id, vendor_model)) = inference_keys::direct_model(&alias) {
+        // `<provider>/<vendor model>` (not a catalog alias): the person's own
+        // model on their own key, e.g. `xai/grok-4`, `google/gemini-2.5-pro`.
+        let has_key = match &state.inference_key_service {
+            Some(service) if inference_keys::byok_enabled() => service.has_key(&user_id, provider_id).await?,
+            _ => false,
+        };
+        if !has_key {
+            return Err(ApiError::BadRequest(format!(
+                "{alias} runs on your own {provider_id} key. Add one in Connections."
+            )));
+        }
+        if inference_keys::byok_base_url(provider_id).is_none() {
+            // TODO(connect-kit): Anthropic keys need the native Messages API
+            // (request + SSE translation to chat.completion chunks). Until
+            // then a saved Anthropic key is checked and stored but not used.
+            return Err(ApiError::BadRequest(format!(
+                "Chat on your own {provider_id} key is not available yet. Use an OpenRouter key or an Allternit model."
+            )));
+        }
+        let vendor_model = vendor_model.to_string();
+        return byok_chat_completions(state, &user_id, provider_id, vendor_model, request, attribution).await;
     }
 
     // Upstream funding: skip a provider under its funding floor when another
@@ -389,6 +416,7 @@ async fn byok_chat_completions(
     state: &Arc<ApiState>,
     user_id: &str,
     provider_id: &str,
+    upstream_id: String,
     mut request: ChatCompletionRequest,
     attribution: inference_settlement::InferenceAttribution,
 ) -> Result<Response, ApiError> {
@@ -404,11 +432,6 @@ async fn byok_chat_completions(
         .expect("BYOK branch only runs for registered providers");
 
     let alias = request.model.clone();
-    let upstream_id = state
-        .model_router
-        .upstream_for_alias(&alias)
-        .ok_or_else(|| ApiError::BadRequest(format!("Unknown model alias: {alias}")))?
-        .to_string();
 
     let streaming = request.is_streaming();
     let prompt_chars: usize = request.messages.iter().map(|m| m.content_chars()).sum();

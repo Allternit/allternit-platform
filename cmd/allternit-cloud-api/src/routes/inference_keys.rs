@@ -19,7 +19,7 @@ use axum::{
 use serde::Deserialize;
 use std::sync::Arc;
 
-use crate::{services::inference_keys::byok_base_url, ApiState};
+use crate::{services::inference_keys::is_key_provider, ApiState};
 
 #[derive(Debug, Deserialize)]
 pub struct PutKeyRequest {
@@ -71,7 +71,7 @@ async fn put_key(
         Ok(user) => user.id,
         Err(error) => return error.into_response(),
     };
-    if byok_base_url(&request.provider_id).is_none() {
+    if !is_key_provider(&request.provider_id) {
         return crate::error::ApiError::BadRequest(format!(
             "Unknown BYOK provider: {:?}.",
             request.provider_id

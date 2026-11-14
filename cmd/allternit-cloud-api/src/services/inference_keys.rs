@@ -26,10 +26,11 @@ use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 
 use crate::error::ApiError;
 
-/// BYOK-capable providers: OpenAI-compatible chat/completions hosts only, as
-/// (provider_id, base URL). Anthropic is excluded (messages API, different
-/// protocol); OpenRouter is excluded from BYOK v1 (its per-token pricing
-/// extras differ from the shared-router path).
+/// BYOK providers that route chat: OpenAI-compatible chat/completions hosts,
+/// as (provider_id, base URL). Google is reached through Gemini's own
+/// OpenAI-compatible endpoint (`/v1beta/openai`, streaming supported).
+/// OpenRouter keys route the catalog's OpenRouter-served aliases through the
+/// person's own OpenRouter account.
 pub const BYOK_PROVIDERS: &[(&str, &str)] = &[
     ("together", "https://api.together.xyz/v1"),
     ("fireworks", "https://api.fireworks.ai/inference/v1"),
@@ -38,14 +39,88 @@ pub const BYOK_PROVIDERS: &[(&str, &str)] = &[
     ("openai", "https://api.openai.com/v1"),
     ("deepseek", "https://api.deepseek.com"),
     ("kimi", "https://api.moonshot.ai/v1"),
+    ("xai", "https://api.x.ai/v1"),
+    ("openrouter", "https://openrouter.ai/api/v1"),
+    ("google", "https://generativelanguage.googleapis.com/v1beta/openai"),
 ];
 
-/// Base URL for a BYOK-registered provider, if any.
+/// Providers whose keys can be saved and checked but do not route chat yet.
+/// Anthropic needs the native Messages API (request and stream translation),
+/// which the router does not have; see `routes::model_router`.
+pub const KEY_ONLY_PROVIDERS: &[&str] = &["anthropic"];
+
+/// Base URL for a BYOK provider that routes chat, if any.
 pub fn byok_base_url(provider_id: &str) -> Option<&'static str> {
     BYOK_PROVIDERS
         .iter()
         .find(|(id, _)| *id == provider_id)
         .map(|(_, base_url)| *base_url)
+}
+
+/// Whether a key for this provider can be saved (routes chat or key-only).
+pub fn is_key_provider(provider_id: &str) -> bool {
+    byok_base_url(provider_id).is_some() || KEY_ONLY_PROVIDERS.contains(&provider_id)
+}
+
+/// Every provider a key can be saved for, in a stable order.
+pub fn key_provider_ids() -> Vec<&'static str> {
+    BYOK_PROVIDERS
+        .iter()
+        .map(|(id, _)| *id)
+        .chain(KEY_ONLY_PROVIDERS.iter().copied())
+        .collect()
+}
+
+/// A person's own model on their own key: `<provider>/<vendor model id>`
+/// (`xai/grok-4`, `google/gemini-2.5-pro`). Used only when the id is not a
+/// catalog alias. Returns (provider_id, vendor model id).
+pub fn direct_model(model: &str) -> Option<(&'static str, &str)> {
+    let (prefix, rest) = model.split_once('/')?;
+    if rest.trim().is_empty() {
+        return None;
+    }
+    key_provider_ids()
+        .into_iter()
+        .find(|id| *id == prefix)
+        .map(|id| (id, rest))
+}
+
+/// How a provider's key is checked: one cheap authenticated GET.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeyCheck {
+    pub url: String,
+    pub auth: KeyAuth,
+    /// The vendor answers a bad key with 400 (Google, xAI), not only 401/403.
+    pub rejects_with_400: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeyAuth {
+    /// `Authorization: Bearer <key>`.
+    Bearer,
+    /// `x-api-key: <key>` + `anthropic-version`.
+    Anthropic,
+    /// `?key=<key>` on the URL.
+    QueryKey,
+}
+
+/// The vendor check for a key provider (contract section 4): OpenAI-compatible
+/// hosts `GET {base}/models`, Anthropic `GET /v1/models`, Google
+/// `GET /v1beta/models?key=`, OpenRouter `GET /api/v1/key`.
+pub fn key_check(provider_id: &str) -> Option<KeyCheck> {
+    let check = |url: String, auth, rejects_with_400| KeyCheck { url, auth, rejects_with_400 };
+    match provider_id {
+        "anthropic" => Some(check("https://api.anthropic.com/v1/models".into(), KeyAuth::Anthropic, false)),
+        "google" => Some(check(
+            "https://generativelanguage.googleapis.com/v1beta/models".into(),
+            KeyAuth::QueryKey,
+            true,
+        )),
+        "openrouter" => Some(check("https://openrouter.ai/api/v1/key".into(), KeyAuth::Bearer, false)),
+        "xai" => Some(check("https://api.x.ai/v1/models".into(), KeyAuth::Bearer, true)),
+        other => byok_base_url(other)
+            .map(|base| check(format!("{}/models", base.trim_end_matches('/')), KeyAuth::Bearer, false)),
+    }
 }
 
 /// BYOK master switch (`BYOK_ENABLED`, default true).
@@ -114,38 +189,79 @@ pub(crate) fn decrypt_parts(
 /// trait).
 #[async_trait::async_trait]
 pub trait KeyValidator: Send + Sync {
-    /// Cheap authenticated GET to `{base_url}/models`. Ok = key accepted.
-    async fn validate(&self, base_url: &str, api_key: &str) -> Result<(), ApiError>;
+    /// The provider's [`key_check`]. Ok = key accepted; `BadRequest` = the
+    /// vendor rejected the key; `ServiceUnavailable` = it could not tell.
+    async fn validate(&self, provider_id: &str, api_key: &str) -> Result<(), ApiError>;
 }
 
-/// Production validator: 5s timeout, 401/403 → 400 "key rejected by provider",
-/// anything else unreachable/unexpected → 502-style "validation unavailable".
-/// The key is never included in any message.
-pub struct ReqwestKeyValidator;
+/// The message for a rejected key. Callers match on `BadRequest`.
+pub const KEY_REJECTED_MESSAGE: &str = "Key rejected by provider — check the key and try again.";
+
+/// Production validator: 5s timeout, a rejection status → 400 "key rejected
+/// by provider", anything else unreachable/unexpected → 503 "validation
+/// unavailable". The key is never included in any message.
+pub struct ReqwestKeyValidator {
+    /// Tests only: send every check to this origin (a local fake vendor)
+    /// instead of the vendor's host. Not settable outside tests.
+    origin: Option<String>,
+}
+
+impl ReqwestKeyValidator {
+    pub fn new() -> Self {
+        Self { origin: None }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_origin(origin: impl Into<String>) -> Self {
+        Self { origin: Some(origin.into()) }
+    }
+
+    fn target(&self, url: &str) -> String {
+        match &self.origin {
+            Some(origin) => {
+                let path_start = url.find("://").map(|i| i + 3).and_then(|i| url[i..].find('/').map(|j| i + j));
+                format!("{}{}", origin.trim_end_matches('/'), path_start.map(|i| &url[i..]).unwrap_or(""))
+            }
+            None => url.to_string(),
+        }
+    }
+}
+
+impl Default for ReqwestKeyValidator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 #[async_trait::async_trait]
 impl KeyValidator for ReqwestKeyValidator {
-    async fn validate(&self, base_url: &str, api_key: &str) -> Result<(), ApiError> {
-        let response = crate::net_client::client()
-            .get(format!("{}/models", base_url.trim_end_matches('/')))
-            .bearer_auth(api_key)
-            .timeout(Duration::from_secs(5))
-            .send()
-            .await
-            .map_err(|_| {
-                ApiError::ServiceUnavailable(
-                    "Key validation is required but the provider could not be reached — please retry."
-                        .to_string(),
-                )
-            })?;
+    async fn validate(&self, provider_id: &str, api_key: &str) -> Result<(), ApiError> {
+        let check = key_check(provider_id)
+            .ok_or_else(|| ApiError::BadRequest(format!("Unknown BYOK provider: {provider_id:?}.")))?;
+        let client = crate::net_client::client();
+        let url = self.target(&check.url);
+        let request = match check.auth {
+            KeyAuth::Bearer => client.get(url).bearer_auth(api_key),
+            KeyAuth::Anthropic => client
+                .get(url)
+                .header("x-api-key", api_key)
+                .header("anthropic-version", "2023-06-01"),
+            KeyAuth::QueryKey => client.get(url).query(&[("key", api_key)]),
+        };
+        let response = request.timeout(Duration::from_secs(5)).send().await.map_err(|_| {
+            ApiError::ServiceUnavailable(
+                "Key validation is required but the provider could not be reached — please retry.".to_string(),
+            )
+        })?;
         let status = response.status();
         if status.is_success() {
             return Ok(());
         }
-        if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
-            return Err(ApiError::BadRequest(
-                "Key rejected by provider — check the key and try again.".to_string(),
-            ));
+        let rejected = status == reqwest::StatusCode::UNAUTHORIZED
+            || status == reqwest::StatusCode::FORBIDDEN
+            || (check.rejects_with_400 && status == reqwest::StatusCode::BAD_REQUEST);
+        if rejected {
+            return Err(ApiError::BadRequest(KEY_REJECTED_MESSAGE.to_string()));
         }
         Err(ApiError::ServiceUnavailable(
             "Key validation is required but the provider returned an unexpected status — please retry."
@@ -183,12 +299,12 @@ impl InferenceKeyService {
         Self {
             db,
             cipher,
-            validator: Arc::new(ReqwestKeyValidator),
+            validator: Arc::new(ReqwestKeyValidator::new()),
         }
     }
 
     #[cfg(test)]
-    fn with_validator(db: PgPool, cipher: Arc<CredentialCipher>, validator: Arc<dyn KeyValidator>) -> Self {
+    pub(crate) fn with_validator(db: PgPool, cipher: Arc<CredentialCipher>, validator: Arc<dyn KeyValidator>) -> Self {
         Self { db, cipher, validator }
     }
 
@@ -200,22 +316,19 @@ impl InferenceKeyService {
         provider_id: &str,
         plaintext_key: &str,
     ) -> Result<InferenceKeyInfo, ApiError> {
-        let base_url = byok_base_url(provider_id).ok_or_else(|| {
-            ApiError::BadRequest(format!(
+        if !is_key_provider(provider_id) {
+            return Err(ApiError::BadRequest(format!(
                 "Unknown BYOK provider: {:?}. Supported: {}.",
                 provider_id,
-                BYOK_PROVIDERS
-                    .iter()
-                    .map(|(id, _)| *id)
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ))
-        })?;
-        if plaintext_key.trim().is_empty() {
+                key_provider_ids().join(", ")
+            )));
+        }
+        let plaintext_key = plaintext_key.trim();
+        if plaintext_key.is_empty() {
             return Err(ApiError::BadRequest("The API key must not be empty.".to_string()));
         }
 
-        self.validator.validate(base_url, plaintext_key).await?;
+        self.validator.validate(provider_id, plaintext_key).await?;
 
         let (ciphertext, nonce) = encrypt_parts(&self.cipher, plaintext_key)?;
         sqlx::query(
@@ -283,10 +396,10 @@ impl InferenceKeyService {
         .unwrap_or_default();
         let calls = rows.into_iter().map(|(provider_id,)| async move {
             let verdict = match (
-                byok_base_url(&provider_id),
+                is_key_provider(&provider_id),
                 self.get_decrypted(user_id, &provider_id).await,
             ) {
-                (Some(base), Ok(Some(key))) => match self.validator.validate(base, &key).await {
+                (true, Ok(Some(key))) => match self.validator.validate(&provider_id, &key).await {
                     Ok(()) => Ok(true),
                     Err(ApiError::BadRequest(_)) => Ok(false),
                     Err(_) => Err(()),
@@ -343,6 +456,12 @@ impl InferenceKeyService {
                 })
             })
             .collect()
+    }
+
+    /// Check a key with the vendor without storing it (the voice OpenAI key
+    /// reuses the OpenAI check).
+    pub async fn check_only(&self, provider_id: &str, plaintext_key: &str) -> Result<(), ApiError> {
+        self.validator.validate(provider_id, plaintext_key.trim()).await
     }
 
     /// Delete a key. Returns false when nothing existed.
@@ -413,7 +532,7 @@ mod tests {
 
     #[async_trait::async_trait]
     impl KeyValidator for StubValidator {
-        async fn validate(&self, _base_url: &str, _api_key: &str) -> Result<(), ApiError> {
+        async fn validate(&self, _provider_id: &str, _api_key: &str) -> Result<(), ApiError> {
             match &self.0 {
                 Ok(()) => Ok(()),
                 Err("reject") => Err(ApiError::BadRequest(
@@ -554,10 +673,13 @@ mod tests {
         let pool = test_pool().await;
         let service = test_service(pool, Ok(()));
         let error = service
-            .upsert_and_validate("user_1", "anthropic", "sk-ant-xxxxxxxxxx")
+            .upsert_and_validate("user_1", "mistral", "sk-mistral-xxxxxxxx")
             .await
             .unwrap_err();
         assert!(error.to_string().contains("Unknown BYOK provider"), "{error}");
+        // Anthropic keys are saved (checked, key-only) though they do not route chat yet.
+        service.upsert_and_validate("user_1", "anthropic", "sk-ant-xxxxxxxxxx").await.unwrap();
+        assert!(service.has_key("user_1", "anthropic").await.unwrap());
     }
 
     #[test]
@@ -577,11 +699,79 @@ mod tests {
     }
 
     #[test]
-    fn byok_registry_excludes_anthropic_and_openrouter() {
-        assert!(byok_base_url("anthropic").is_none());
-        assert!(byok_base_url("openrouter").is_none());
-        for (provider, _) in BYOK_PROVIDERS {
-            assert!(byok_base_url(provider).is_some());
+    fn anthropic_is_key_only_and_direct_models_need_a_known_prefix() {
+        assert!(byok_base_url("anthropic").is_none(), "no OpenAI-compatible route for Claude keys");
+        assert!(is_key_provider("anthropic"));
+        assert_eq!(direct_model("xai/grok-4"), Some(("xai", "grok-4")));
+        assert_eq!(
+            direct_model("openrouter/anthropic/claude-sonnet-5.5"),
+            Some(("openrouter", "anthropic/claude-sonnet-5.5"))
+        );
+        assert_eq!(direct_model("meta-llama/llama-3.1-8b-instruct"), None);
+        assert_eq!(direct_model("xai/"), None);
+        assert_eq!(direct_model("gpt-5"), None);
+    }
+
+    /// The real validator against a local fake vendor: each provider's path,
+    /// auth placement and rejection status (contract section 4).
+    #[tokio::test]
+    async fn validator_sends_each_vendor_its_own_check() {
+        use axum::{extract::Query, http::HeaderMap, routing::get, Router};
+        use std::collections::HashMap;
+        const GOOD: &str = "good-key-123456";
+        fn bearer_ok(headers: &HeaderMap) -> bool {
+            headers.get("authorization").and_then(|v| v.to_str().ok()) == Some("Bearer good-key-123456")
         }
+        let app = Router::new()
+            .route(
+                "/v1/models",
+                get(|headers: HeaderMap| async move {
+                    // Anthropic (x-api-key + version) and xAI/OpenAI (Bearer) share this path.
+                    let anthropic = headers.get("x-api-key").and_then(|v| v.to_str().ok()) == Some(GOOD)
+                        && headers.get("anthropic-version").is_some();
+                    if anthropic || bearer_ok(&headers) {
+                        axum::http::StatusCode::OK
+                    } else if headers.get("x-api-key").is_some() {
+                        axum::http::StatusCode::UNAUTHORIZED
+                    } else {
+                        // xAI answers a bad key with 400.
+                        axum::http::StatusCode::BAD_REQUEST
+                    }
+                }),
+            )
+            .route(
+                "/v1beta/models",
+                get(|Query(query): Query<HashMap<String, String>>| async move {
+                    if query.get("key").map(String::as_str) == Some(GOOD) {
+                        axum::http::StatusCode::OK
+                    } else {
+                        axum::http::StatusCode::BAD_REQUEST
+                    }
+                }),
+            )
+            .route(
+                "/api/v1/key",
+                get(|headers: HeaderMap| async move {
+                    if bearer_ok(&headers) {
+                        axum::http::StatusCode::OK
+                    } else {
+                        axum::http::StatusCode::UNAUTHORIZED
+                    }
+                }),
+            )
+            .route("/inference/v1/models", get(|| async { axum::http::StatusCode::INTERNAL_SERVER_ERROR }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let origin = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let validator = ReqwestKeyValidator::with_origin(origin);
+
+        for provider in ["anthropic", "google", "xai", "openrouter"] {
+            validator.validate(provider, GOOD).await.unwrap_or_else(|e| panic!("{provider}: {e}"));
+            let error = validator.validate(provider, "bad-key-000000").await.unwrap_err();
+            assert!(matches!(error, ApiError::BadRequest(_)), "{provider} rejects a bad key: {error}");
+        }
+        // A vendor error that is not about the key is "could not tell", not a rejection.
+        let error = validator.validate("fireworks", GOOD).await.unwrap_err();
+        assert!(matches!(error, ApiError::ServiceUnavailable(_)), "{error}");
     }
 }

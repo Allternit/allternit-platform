@@ -111,11 +111,13 @@ pub const ERASE: &[(&str, &str)] = &[
     // Runs, schedules, tasks.
     ("mirror_sessions", USER),
     ("attachments", USER),
+    ("approval_requests", "run_id IN (SELECT id FROM runs WHERE owner_id = $1)"),
     ("runs", OWNER),
     ("schedules", OWNER),
     ("task_comments", "task_id IN (SELECT id FROM tasks WHERE owner_id = $1)"),
     ("task_queue", "task_id IN (SELECT id FROM tasks WHERE owner_id = $1)"),
     ("task_events", "task_id IN (SELECT id FROM tasks WHERE owner_id = $1)"),
+    ("task_assignments", "task_id IN (SELECT id FROM tasks WHERE owner_id = $1)"),
     ("tasks", OWNER),
     // Computers and runtimes.
     ("provisioned_instance_wakes", USER),
@@ -226,6 +228,14 @@ const SCRUB: &[&str] = &[
     // Org-owned managed-auth settings stay with the org; only who made them goes.
     "UPDATE managed_auth_configs SET created_by = 'deleted' WHERE created_by = $1",
     "UPDATE mcp_trusted_issuers SET created_by = 'deleted' WHERE created_by = $1",
+    // Org-owned artifact and meeting settings stay with the org; who last
+    // changed them goes.
+    "UPDATE org_artifact_settings SET updated_by = NULL WHERE updated_by = $1",
+    "UPDATE org_meeting_settings SET updated_by = NULL WHERE updated_by = $1",
+    // The user acting on someone else's run or task.
+    "UPDATE approval_requests SET requested_by = NULL WHERE requested_by = $1",
+    "UPDATE approval_requests SET responded_by = NULL WHERE responded_by = $1",
+    "UPDATE task_assignments SET assigned_by = NULL WHERE assigned_by = $1",
     "UPDATE audit_log SET user_email = NULL, ip_address = NULL, user_agent = NULL WHERE user_id = $1",
     "UPDATE audit_logs SET ip_address = NULL WHERE user_id = $1",
     // The user as a participant in someone else's meeting: the owner keeps the
@@ -521,9 +531,20 @@ mod tests {
         word.trim_matches('"').rsplit('.').next().unwrap().trim_matches('"').to_ascii_lowercase()
     }
 
+    /// `created_by`, `updated_by` and the like: a person who acted on a row
+    /// that may belong to someone else (an org). Not part of
+    /// [`holds_a_person`]: such a row needs a [`SCRUB`] line, not ERASE.
+    fn names_an_actor(column: &str) -> bool {
+        column.to_ascii_lowercase().ends_with("_by")
+    }
+
     /// Table name → its columns that can hold a user, from `CREATE TABLE` and
     /// `ALTER TABLE … ADD COLUMN` across all the migrations.
     fn person_columns() -> BTreeMap<String, BTreeSet<String>> {
+        columns_matching(holds_a_person)
+    }
+
+    fn columns_matching(holds_a_person: fn(&str) -> bool) -> BTreeMap<String, BTreeSet<String>> {
         let mut found: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
         for file in migrations() {
             let sql = std::fs::read_to_string(file).unwrap();
@@ -578,6 +599,26 @@ mod tests {
             .map(|(table, columns)| format!("{table} {columns:?}"))
             .collect();
         assert!(missing.is_empty(), "add these to ERASE or RETAIN in account_erase.rs: {missing:#?}");
+    }
+
+    /// Regression: `org_artifact_settings.updated_by` and
+    /// `org_meeting_settings.updated_by` sat in no list (2026-11-13 inventory).
+    #[test]
+    fn every_actor_column_is_erased_retained_or_scrubbed() {
+        let classified: BTreeSet<&str> = ERASE.iter().map(|(t, _)| *t).chain(RETAIN.iter().map(|(t, _)| *t)).collect();
+        let found = columns_matching(names_an_actor);
+        assert!(found.contains_key("org_meeting_settings"), "the migration parser missed updated_by");
+        let missing: Vec<String> = found
+            .iter()
+            .filter(|(table, _)| !classified.contains(table.as_str()))
+            .flat_map(|(table, columns)| columns.iter().map(move |column| (table, column)))
+            .filter(|(table, column)| {
+                let set = format!("UPDATE {table} SET {column} ");
+                !SCRUB.iter().any(|statement| statement.starts_with(&set))
+            })
+            .map(|(table, column)| format!("{table}.{column}"))
+            .collect();
+        assert!(missing.is_empty(), "add a SCRUB line (or ERASE/RETAIN) in account_erase.rs for: {missing:#?}");
     }
 
     #[test]

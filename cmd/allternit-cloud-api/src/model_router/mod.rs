@@ -438,6 +438,17 @@ impl ModelRouter {
         self.alias_map.resolve(alias).map(|entry| entry.provider.as_str())
     }
 
+    /// Listed catalog aliases a provider serves, in `GET /v1/models` order
+    /// (the models a saved key for that provider unlocks).
+    pub fn listed_aliases_for_provider(&self, provider_id: &str) -> Vec<String> {
+        self.alias_map
+            .ordered_entries()
+            .into_iter()
+            .filter(|entry| entry.listed && entry.provider == provider_id)
+            .map(|entry| entry.alias.clone())
+            .collect()
+    }
+
     /// Whether a model alias is an open-lane model (`lane: "open"`).
     pub fn is_open_lane_alias(&self, alias: &str) -> bool {
         self.alias_map.resolve(alias).is_some_and(catalog::is_open_lane)
