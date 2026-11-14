@@ -31,7 +31,7 @@ When an agent's action needs the owner's [approval](/api/platform/approvals), th
   "required_actions": [{ "type": "approval", "approval_id": "apr_…" }], … }
 ```
 
-To go on, resolve it with `POST /v1/approvals/{id}` (or watch the `approval.resolved` webhook), then send a new response with `previous_response_id` set to this one. Once no approval is pending, `GET /v1/responses/{id}` returns the stored status again (`completed`, `failed` or `incomplete`) and `required_actions` is `[]`. The stream and the `POST /v1/responses` answer of the turn itself end `completed`: the approval is raised after the turn finishes, so read the response again (or follow `approval.requested`) to see it. Approvals raised by a developer's own `POST /v1/computers/{id}/toolset` call belong to no response and never show here.
+To go on, resolve it with `POST /v1/approvals/{id}` (or watch the `approval.resolved` webhook), then send a new response with `previous_response_id` set to this one. Once no approval is pending, `GET /v1/responses/{id}` returns the stored status again (`completed`, `failed` or `incomplete`) and `required_actions` is `[]`. The stream and the `POST /v1/responses` answer of the turn itself end `completed`: the approval is raised after the turn finishes, so read the response again (or follow `approval.requested`) to see it. A text or call from an agent with autonomy `ask` raises one of these approvals the first time it tries to send; see [Agents](/api/platform/agents#texting-and-calling). Approvals raised by a developer's own `POST /v1/computers/{id}/toolset` call belong to no response and never show here.
 
 ## Streaming
 

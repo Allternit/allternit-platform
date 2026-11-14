@@ -19,4 +19,8 @@ Whether a key may approve a computer action follows the project's `approval_mode
 
 When an agent's turn raises an approval, the agent's tool call fails with a "try again once they approve" result and the turn ends. The approval carries that turn's `response_id`, and while it is pending `GET /v1/responses/{id}` reads `status: "requires_action"` with `required_actions: [{ "type": "approval", "approval_id": "apr_…" }]` (see [Responses](/api/platform/responses)). Resolve it here, or follow the `approval.requested` / `approval.resolved` [webhooks](/api/platform/webhooks), then send a new response with `previous_response_id`. Nothing resumes on its own. Computer approvals come from your own `POST /v1/computers/{id}/toolset` calls, so their `response_id` and `conversation_id` are `null`.
 
+### Texts and calls
+
+When an agent with autonomy `ask` tries to text or call, the approval has `kind` for that action and `proposed_action.summary` carries what it wants to do, for example `text +15555550123`, with the text or call purpose in the proposed action. Approve it, then send a new response with `previous_response_id`. The agent's next attempt sends exactly the approved text. One approval allows one send: after the send the approval reads `consumed`, and the next text raises a new approval. If you deny it, nothing is sent, and the agent's next attempt raises a new approval.
+
 Webhooks: `approval.requested`, `approval.resolved`, `approval.expired`.

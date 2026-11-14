@@ -66,6 +66,21 @@ Each conversation runs with every tool denied except the ones in the agent's `to
 | `calendar` | Free/busy and new events on the end customer's Google or Microsoft calendar | Not available yet (`tool_not_available`): the end-customer calendar connection isn't open. |
 | `transfer` | Transfer a call to one of `transfer_targets` | Not available yet (`tool_not_available`): it arrives with voice calls for hosted agents. |
 
+### Texting and calling
+
+Bind a number to an agent and it can text and call from that number. Bind it with `agent_id` on `POST /v1/numbers`, or with `PATCH /v1/numbers/{id}` (see [Numbers](/api/platform/numbers)). The agent then gets the `send_text` and `call` tools, if they are in its `tools` list. An agent with no bound number has nothing to send from. With more than one bound number, the agent names the one to use, or the tool refuses with `number_required`.
+
+The tools follow the same rules as `POST /v1/texts` and `POST /v1/calls`: consent, STOP opt-outs, a card on file, the monthly spend cap and metering. A refusal comes back to the agent as a plain sentence, and the conversation keeps going.
+
+Autonomy decides what happens before the send:
+
+- `draft`: the agent writes the text but never sends it.
+- `ask`: the first attempt raises an [approval](/api/platform/approvals) and nothing is sent. The turn ends, and [`GET /v1/responses/{id}`](/api/platform/responses) reads `requires_action`. After you approve it, send a new response with `previous_response_id`. The agent's next attempt sends exactly the text you approved, even if the model words it differently. One approval allows one send; the next text raises a new approval.
+- `tell`: the agent sends, then reports.
+- `limits`: the agent sends within the daily limits, then asks.
+
+A denied approval is not reported to the agent. Its next attempt raises a new approval.
+
 When a tool refuses (no channel connected, a file type the agent can't read), the agent gets a plain sentence saying why and passes it on; the conversation keeps going.
 
 ## Model keys
