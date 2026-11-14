@@ -661,6 +661,10 @@ struct FakeInner {
     imports: Mutex<Vec<Value>>,
     prompts: AtomicU64,
     next: AtomicU64,
+    /// What `custom-tools/check` answers (status, body); None = 200 ok.
+    check: Mutex<Option<(u16, Value)>>,
+    /// Bodies of the session create calls.
+    creates: Mutex<Vec<Value>>,
     /// The server under test and its internal token, for tool calls.
     server: Mutex<Option<(String, String)>>,
 }
@@ -674,6 +678,8 @@ impl FakeGizzi {
             imports: Mutex::new(Vec::new()),
             prompts: AtomicU64::new(0),
             next: AtomicU64::new(1),
+            check: Mutex::new(None),
+            creates: Mutex::new(Vec::new()),
             server: Mutex::new(None),
         }))
     }
@@ -695,6 +701,7 @@ impl FakeGizzi {
         Router::new()
             .route("/health", get(|| async { Json(json!({ "status": "ok" })) }))
             .route("/v1/session", post(fake_create))
+            .route("/v1/session/:id/custom-tools/check", post(fake_check))
             .route("/v1/session/import", post(fake_import))
             .route("/v1/session/:id", get(fake_get).patch(|| async { Json(json!({})) }))
             .route("/v1/session/:id/message", post(fake_prompt))
@@ -706,7 +713,16 @@ impl FakeGizzi {
     }
 }
 
-async fn fake_create(State(f): State<FakeGizzi>) -> Json<Value> {
+async fn fake_check(State(f): State<FakeGizzi>) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let (code, body) = f.0.check.lock().unwrap().clone().unwrap_or((200, json!({ "ok": true })));
+    (axum::http::StatusCode::from_u16(code).unwrap(), Json(body)).into_response()
+}
+
+async fn fake_create(State(f): State<FakeGizzi>, body: Option<Json<Value>>) -> Json<Value> {
+    if let Some(Json(b)) = body {
+        f.0.creates.lock().unwrap().push(b);
+    }
     let id = f.id("ses");
     f.0.sessions.lock().unwrap().insert(id.clone(), Vec::new());
     Json(json!({ "id": id }))
@@ -1058,4 +1074,69 @@ async fn tool_call_right_after_close_is_still_served() {
     assert_eq!(results.len(), 1, "{events:?}");
     assert_eq!(results[0].data["output"], json!("hi\n"));
     assert_eq!(of_type(&events, "message").last().unwrap().data["content"], json!("ran: hi\n"));
+}
+
+async fn session_with_custom_tool(fx: &Fx) -> String {
+    let a = fx
+        .st
+        .store
+        .create_agent(NewAgent {
+            name: "c".into(),
+            model: "claude-sonnet".into(),
+            tools: json!([
+                { "type": "builtin", "name": "bash" },
+                { "type": "custom", "name": "lookup", "description": "d", "input_schema": { "type": "object" } }
+            ]),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    fx.st
+        .store
+        .create_session(NewSession { agent_id: a.id, environment_id: fx.env_id.clone(), ..Default::default() })
+        .await
+        .unwrap()
+        .id
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn clashing_custom_tool_is_refused_before_the_message_is_stored() {
+    let (fx, fake) = loop_fixture(Settings::default()).await;
+    let sid = session_with_custom_tool(&fx).await;
+    *fake.0.check.lock().unwrap() = Some((
+        409,
+        json!({ "error": { "type": "conflict_error", "code": "custom_tool_conflict",
+            "message": "custom tool lookup clashes with builtin:lookup", "tool": "lookup", "clashes_with": "builtin:lookup" } }),
+    ));
+    let r = fx
+        .post(&format!("/v1/sessions/{sid}/messages"), Auth::Bearer(&fx.dev), json!({ "content": "hi" }))
+        .await;
+    assert_eq!(r.status, 409, "{}", r.body);
+    assert_eq!(r.body["error"]["code"], json!("custom_tool_conflict"));
+    assert_eq!(r.body["error"]["tool"], json!("lookup"));
+    assert_eq!(r.body["error"]["clashes_with"], json!("builtin:lookup"));
+    assert!(fx.st.store.list_events(&sid, 0, 10, None).await.unwrap().is_empty());
+    assert_eq!(fx.st.store.get_session(&sid).await.unwrap().status, "idle");
+    assert_eq!(fake.0.prompts.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn custom_tool_passes_the_permission_rules() {
+    let (fx, fake) = loop_fixture(Settings::default()).await;
+    let sid = session_with_custom_tool(&fx).await;
+    let r = fx
+        .post(&format!("/v1/sessions/{sid}/messages"), Auth::Bearer(&fx.dev), json!({ "content": "hi" }))
+        .await;
+    assert_eq!(r.status, 202, "{}", r.body);
+    for _ in 0..200 {
+        if fx.st.store.get_session(&sid).await.unwrap().status == "idle" {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let creates = fake.0.creates.lock().unwrap().clone();
+    let rules = creates[0]["permission"].as_array().expect("permission rules").clone();
+    let allowed = |n: &str| rules.iter().any(|r| r["permission"] == json!(n) && r["action"] == json!("allow"));
+    assert!(allowed("bash"), "{rules:?}");
+    assert!(allowed("lookup"), "{rules:?}");
 }

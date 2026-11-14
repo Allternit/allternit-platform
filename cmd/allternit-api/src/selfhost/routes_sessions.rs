@@ -79,6 +79,17 @@ pub trait TurnRunner: Send + Sync + 'static {
         Ok(())
     }
 
+    /// Refuse a message that would clash with the agent's custom tools
+    /// BEFORE it is stored (409 `custom_tool_conflict`). The default accepts.
+    async fn preflight(
+        &self,
+        _state: &SelfHostState,
+        _session: &SessionRecord,
+        _content: &str,
+    ) -> Result<(), ApiError> {
+        Ok(())
+    }
+
     /// For `/health/ready`.
     fn loop_status(&self) -> LoopStatus {
         LoopStatus::Disabled
@@ -372,6 +383,7 @@ async fn send_message(
             "This server replica is stopping. Send the message again.",
         ));
     }
+    st.turn_runner.preflight(&st, &cur, &body.content).await?;
     let previous = cur.status.clone();
     let Some(session) = st
         .store

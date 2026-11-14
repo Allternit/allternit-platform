@@ -201,6 +201,9 @@ struct Inner {
     next_turn: AtomicU64,
     /// `(child generation, session id)` pairs whose MCP servers are set up.
     mcp_done: Mutex<HashSet<(u64, String)>>,
+    /// `(child generation, session id)` pairs whose custom tools passed the
+    /// clash check.
+    preflight_ok: Mutex<HashSet<(u64, String)>>,
     supervisor: Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
 
@@ -256,6 +259,7 @@ impl GizziTurnRunner {
                 turns: Mutex::new(HashMap::new()),
                 next_turn: AtomicU64::new(1),
                 mcp_done: Mutex::new(HashSet::new()),
+                preflight_ok: Mutex::new(HashSet::new()),
                 supervisor: Mutex::new(None),
             }),
         })
@@ -292,6 +296,7 @@ impl GizziTurnRunner {
             turns: Mutex::new(HashMap::new()),
             next_turn: AtomicU64::new(1),
             mcp_done: Mutex::new(HashSet::new()),
+            preflight_ok: Mutex::new(HashSet::new()),
             supervisor: Mutex::new(None),
         });
 
@@ -350,6 +355,87 @@ impl TurnRunner for GizziTurnRunner {
 
     fn loop_status(&self) -> LoopStatus {
         self.inner.endpoint.status()
+    }
+
+    async fn preflight(&self, st: &SelfHostState, session: &SessionRecord, content: &str) -> Result<(), ApiError> {
+        let snap = &session.agent_snapshot;
+        if snapshot_tools(snap, "custom").is_empty() || self.inner.endpoint.status() != LoopStatus::Ready {
+            return Ok(());
+        }
+        let key = (
+            self.inner.endpoint.generation.load(Ordering::SeqCst),
+            session.id.clone(),
+        );
+        if self.inner.preflight_ok.lock().unwrap_or_else(|e| e.into_inner()).contains(&key) {
+            return Ok(());
+        }
+        let dir = self.inner.session_dir(&session.id);
+        if std::fs::create_dir_all(&dir).is_err() {
+            return Ok(());
+        }
+        let Ok(env) = st.store.get_environment(&session.environment_id).await else {
+            return Ok(());
+        };
+        let ctx = TurnCtx {
+            st: st.clone(),
+            inner: self.inner.clone(),
+            session: session.clone(),
+            user_seq: 0,
+            text: content.to_string(),
+            interrupted: Arc::new(AtomicBool::new(false)),
+            slot: Arc::new(Mutex::new(None)),
+            turn_id: 0,
+            traceparent: String::new(),
+        };
+        // MCP servers first, so a clash with one of their tools is seen now.
+        let (mcp, _refused) = allowed_mcp_servers(&st.settings, &env.mcp, snap);
+        setup_mcp(&ctx, &dir, &mcp).await;
+        let body = message_body(&ctx, snap);
+        // The route does not need the session to exist.
+        let gsid = session.gizzi_session_id.clone().unwrap_or_else(|| "preflight".to_string());
+        let path = format!("/v1/session/{}/custom-tools/check", urlencoding::encode(&gsid));
+        match self
+            .inner
+            .call("POST", &path, Some(&dir), Some(&body), Some(Duration::from_secs(15)))
+            .await
+        {
+            Ok(_) => {
+                self.inner.preflight_ok.lock().unwrap_or_else(|e| e.into_inner()).insert(key);
+                Ok(())
+            }
+            Err(GizziError::Http(409, text)) => {
+                let v: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
+                let e = v.get("error").unwrap_or(&v);
+                let tool = e.get("tool").and_then(Value::as_str).unwrap_or_default();
+                let mut message = e
+                    .get("message")
+                    .and_then(Value::as_str)
+                    .unwrap_or("A custom tool clashes with another tool.")
+                    .to_string();
+                if !tool.is_empty() && !message.contains(tool) {
+                    message = format!("{message} (tool: {tool})");
+                }
+                let mut err = ApiError::conflict("custom_tool_conflict", message);
+                err.tool = Some(tool.to_string()).filter(|t| !t.is_empty());
+                err.clashes_with = e
+                    .get("clashes_with")
+                    .and_then(Value::as_str)
+                    .filter(|c| !c.is_empty())
+                    .map(str::to_string);
+                Err(err)
+            }
+            Err(GizziError::Http(400, text)) => {
+                let v: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
+                let message = v["error"]["message"]
+                    .as_str()
+                    .unwrap_or("A custom tool definition is not valid.")
+                    .to_string();
+                Err(ApiError::invalid("invalid_custom_tool", message))
+            }
+            // Old gizzi child (404), timeout, anything else: the turn-time
+            // check still runs.
+            Err(_) => Ok(()),
+        }
     }
 
     async fn start_turn(
@@ -889,6 +975,12 @@ fn permission_rules(snap: &Value, mcp: &[Value]) -> Option<Value> {
     }
     let mut rules = vec![json!({ "permission": "*", "pattern": "*", "action": "deny" })];
     for t in builtin {
+        if let Some(n) = t.get("name").and_then(Value::as_str) {
+            rules.push(json!({ "permission": n, "pattern": "*", "action": "allow" }));
+        }
+    }
+    // Custom tools reach gizzi as remote tools; the deny-all must not hide them.
+    for t in snapshot_tools(snap, "custom") {
         if let Some(n) = t.get("name").and_then(Value::as_str) {
             rules.push(json!({ "permission": n, "pattern": "*", "action": "allow" }));
         }

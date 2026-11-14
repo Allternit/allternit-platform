@@ -65,6 +65,10 @@ pub struct ApiError {
     pub kind: &'static str,
     pub code: Cow<'static, str>,
     pub message: String,
+    /// The clashing custom tool (409 `custom_tool_conflict`), echoed in the body.
+    pub tool: Option<String>,
+    /// What it clashes with: `builtin:<tool>` or `mcp:<server>:<tool>`.
+    pub clashes_with: Option<String>,
 }
 
 impl ApiError {
@@ -79,6 +83,8 @@ impl ApiError {
             kind,
             code: code.into(),
             message: message.into(),
+            tool: None,
+            clashes_with: None,
         }
     }
     pub fn invalid(code: impl Into<Cow<'static, str>>, message: impl Into<String>) -> Self {
@@ -112,7 +118,14 @@ impl ApiError {
         Self::new(StatusCode::SERVICE_UNAVAILABLE, "api_error", code, message)
     }
     pub fn body(&self) -> Value {
-        json!({ "error": { "type": self.kind, "message": self.message, "code": self.code } })
+        let mut b = json!({ "error": { "type": self.kind, "message": self.message, "code": self.code } });
+        if let Some(t) = &self.tool {
+            b["error"]["tool"] = json!(t);
+        }
+        if let Some(c) = &self.clashes_with {
+            b["error"]["clashes_with"] = json!(c);
+        }
+        b
     }
 }
 
