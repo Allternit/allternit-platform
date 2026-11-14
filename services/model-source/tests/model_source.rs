@@ -212,14 +212,25 @@ fn publisher_routes() -> HashMap<String, Vec<u8>> {
     let tree = serde_json::json!([
         {"type": "file", "path": "config.json", "size": 135, "oid": "x",
          "lfs": {"oid": sha, "size": config_bytes().len(), "pointerSize": 135}},
-        {"type": "file", "path": "tokenizer_config.json", "size": 727, "oid": "52373fe24473b1aa44333d318f578ae6bf04b49b"}
+        // Real HF tree entry for this non-LFS file at the pinned commit (git blob SHA-1).
+        {"type": "file", "path": "blob/config.json", "size": 727, "oid": "cef2749ee93607b8f9a58ec72f4f6bfaf874e71d"},
+        {"type": "file", "path": "flipped/config.json", "size": 727, "oid": "cef2749ee93607b8f9a58ec72f4f6bfaf874e71d"},
+        // No usable hash at all.
+        {"type": "file", "path": "tokenizer_config.json", "size": 727}
     ]);
+    let mut flipped = config_bytes();
+    flipped[10] ^= 0x01;
     HashMap::from([
         (
             format!("/api/models/{QWEN}/tree/main"),
             serde_json::to_vec(&tree).unwrap(),
         ),
         (format!("/{QWEN}/resolve/main/config.json"), config_bytes()),
+        (
+            format!("/{QWEN}/resolve/main/blob/config.json"),
+            config_bytes(),
+        ),
+        (format!("/{QWEN}/resolve/main/flipped/config.json"), flipped),
         (
             format!("/{QWEN}/resolve/main/tokenizer_config.json"),
             config_bytes(),
@@ -317,4 +328,38 @@ fn contract_fixtures_match_rust_types() {
         );
         assert!(r.is_err(), "{} should be rejected", case["name"]);
     }
+}
+
+#[tokio::test]
+async fn catalog_down_non_lfs_file_verifies_by_git_blob_id() {
+    let hf = serve(publisher_routes()).await;
+    let client = Client::with_urls("http://127.0.0.1:1", &hf).unwrap();
+    let res = client.resolve(QWEN, None).await.unwrap();
+    let dir = tempfile::tempdir().unwrap();
+
+    let dest = dir.path().join("config.json");
+    let out = client
+        .fetch_verified(&res, "blob/config.json", &dest, &FetchOptions::default())
+        .await
+        .unwrap();
+    assert_eq!(out.verification.state, VerificationState::PublisherHash);
+    assert_eq!(out.verification.source_used, SourceKind::Publisher);
+    assert_eq!(std::fs::read(&dest).unwrap(), config_bytes());
+
+    let bad = dir.path().join("flipped.json");
+    let err = client
+        .fetch_verified(&res, "flipped/config.json", &bad, &FetchOptions::default())
+        .await
+        .unwrap_err();
+    match err {
+        Error::AllSourcesFailed { attempts, .. } => {
+            assert!(
+                attempts[0].reason.contains("git blob"),
+                "{}",
+                attempts[0].reason
+            )
+        }
+        other => panic!("want AllSourcesFailed, got {other}"),
+    }
+    assert!(!bad.exists() && !dir.path().join("flipped.json.part").exists());
 }

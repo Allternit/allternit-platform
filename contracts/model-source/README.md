@@ -31,13 +31,17 @@ Desktop/web/PWA, Gizzi Code, iOS) builds against this folder.
 | State | Checked against | When |
 | --- | --- | --- |
 | `freeweights_signed` | sha256 + size in the Freeweights manifest, whose minisign signature verified under key `2DC28CC7B26A283B` | catalog reachable, repo listed |
-| `publisher_hash` | sha256 from the publisher: the Hugging Face tree API `lfs.oid` (`/api/models/{repo}/tree/{rev}?recursive=1`) | catalog unreachable, or repo not listed |
+| `publisher_hash` | the publisher's hash from the Hugging Face tree API (`/api/models/{repo}/tree/{rev}?recursive=1`, or `/api/datasets/…`): sha256 `lfs.oid` for LFS files, the git blob id `oid` for non-LFS files | catalog unreachable, or repo not listed |
 | `pinned` | sha256 the caller supplied | no catalog or publisher hash for the file, caller passed one |
 | `unverified` | nothing | no hash anywhere and the caller explicitly allowed it |
 
-Data with no hash is an **error** unless the caller sets `allow_unverified`. Non-LFS files at
-the publisher (small JSON/config files) have no sha256 in the tree API, so with the catalog down
-they need a pin or `allow_unverified`.
+Data with no hash is an **error** unless the caller sets `allow_unverified`.
+
+Non-LFS files at the publisher (small JSON/config/tokenizer files) have no sha256 in the tree API.
+They are checked against the tree entry's `oid`, the git blob SHA-1:
+`sha1("blob {size}\0" + content)`, computed while streaming over the downloaded bytes. A match is
+`publisher_hash`; a mismatch is handled exactly like a sha256 mismatch (delete, next source). So with
+the catalog down, every file the tree lists verifies without a pin.
 
 ## Source order
 
@@ -49,7 +53,9 @@ failure, size mismatch or hash mismatch moves to the next one, and a mismatch de
 2. **Manifest `sources[]`** — by `priority` (lower first): `hosted` entries, `source` entries
    (upstream at the pinned commit). `seeded` (magnet-only) entries are not HTTP sources and are skipped.
 3. **Publisher fallback, only when the catalog is unreachable** — `https://huggingface.co/{repo}/resolve/{rev}/{path}`
-   (`rev` defaults to `main`), checked against `lfs.oid`.
+   (`rev` defaults to `main`). If the models tree API does not know the repo, the datasets one is tried
+   and the URL becomes `https://huggingface.co/datasets/{repo}/resolve/{rev}/{path}`. Checked against
+   `lfs.oid` (LFS) or the git blob `oid` (non-LFS).
 
 `{base}` is `https://freeweights.allternit.com`, overridden by env `ALLTERNIT_FREEWEIGHTS_URL`.
 The manifest is `{base}/manifests/{org}/{repo}.json` plus `.json.minisig`; the catalog is

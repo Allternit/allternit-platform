@@ -7,8 +7,9 @@
 //!    Freeweights worker URL, then the manifest `sources[]` by priority, and
 //!    every file is checked against the signed sha256 (`freeweights_signed`).
 //!    When the catalog is unreachable (or does not list the repo), the list is
-//!    the publisher (Hugging Face) and files are checked against the HF tree
-//!    API `lfs.oid` sha256 (`publisher_hash`). A manifest that is reachable but
+//!    the publisher (Hugging Face; models, else datasets) and files are checked
+//!    against the HF tree API: `lfs.oid` sha256 for LFS files, the git blob id
+//!    (`oid`) for the rest (`publisher_hash`). A manifest that is reachable but
 //!    fails verification is an error, never a silent fallback.
 //! 2. [`Client::fetch_verified`] downloads one file, resumable, hashing as it
 //!    streams. A hash or size mismatch deletes the file and moves on to the
@@ -98,6 +99,10 @@ impl Source {
 pub struct ExpectedFile {
     pub sha256: Option<String>,
     pub size: Option<u64>,
+    /// Publisher git blob id (SHA-1 of `"blob {size}\0" + content`), for
+    /// non-LFS files at the publisher. Checked only when `sha256` is absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub git_blob_sha1: Option<String>,
 }
 
 /// Result of [`Client::resolve`]: ordered sources plus the hashes to check against.
@@ -318,7 +323,14 @@ impl Client {
             Err(reason) => reason,
         };
         let rev = rev.unwrap_or("main");
-        let files = self.publisher_hashes(repo, rev).await;
+        // Models first; a repo the models API does not know may be a dataset.
+        let (prefix, files) = match self.publisher_tree("models", repo, rev).await {
+            Some(files) => ("", files),
+            None => match self.publisher_tree("datasets", repo, rev).await {
+                Some(files) => ("datasets/", files),
+                None => ("", BTreeMap::new()),
+            },
+        };
         Ok(Resolution {
             repo: repo.into(),
             revision: rev.into(),
@@ -327,7 +339,7 @@ impl Client {
             sources: vec![Source {
                 kind: SourceKind::Publisher,
                 base_url: format!(
-                    "{}/{}/resolve/{}/",
+                    "{}/{prefix}{}/resolve/{}/",
                     self.publisher,
                     encode_path(repo),
                     urlencoding::encode(rev)
@@ -371,6 +383,7 @@ impl Client {
                     ExpectedFile {
                         sha256: Some(f.sha256.clone()),
                         size: Some(f.size),
+                        git_blob_sha1: None,
                     },
                 )
             })
@@ -386,9 +399,15 @@ impl Client {
         }
     }
 
-    /// Hugging Face tree API: sha256 for LFS files (`lfs.oid`), size for all.
-    /// Unreachable tree = no hashes (fetches then need a pin or allow_unverified).
-    async fn publisher_hashes(&self, repo: &str, rev: &str) -> BTreeMap<String, ExpectedFile> {
+    /// Hugging Face tree API (`kind` = `models` or `datasets`): sha256 for LFS
+    /// files (`lfs.oid`), git blob SHA-1 (`oid`) for the rest, size for all.
+    /// `None` = tree unavailable (fetches then need a pin or allow_unverified).
+    async fn publisher_tree(
+        &self,
+        kind: &str,
+        repo: &str,
+        rev: &str,
+    ) -> Option<BTreeMap<String, ExpectedFile>> {
         #[derive(Deserialize)]
         struct Lfs {
             oid: String,
@@ -402,21 +421,19 @@ impl Client {
             #[serde(default)]
             size: Option<u64>,
             #[serde(default)]
+            oid: Option<String>,
+            #[serde(default)]
             lfs: Option<Lfs>,
         }
         let url = format!(
-            "{}/api/models/{}/tree/{}?recursive=1",
+            "{}/api/{kind}/{}/tree/{}?recursive=1",
             self.publisher,
             encode_path(repo),
             urlencoding::encode(rev)
         );
-        let Ok(bytes) = self.get_small(&url).await else {
-            return BTreeMap::new();
-        };
-        let Ok(entries) = serde_json::from_slice::<Vec<Entry>>(&bytes) else {
-            return BTreeMap::new();
-        };
-        entries
+        let bytes = self.get_small(&url).await.ok()?;
+        let entries = serde_json::from_slice::<Vec<Entry>>(&bytes).ok()?;
+        let files = entries
             .into_iter()
             .filter(|e| e.kind == "file")
             .map(|e| {
@@ -424,15 +441,20 @@ impl Client {
                     Some(l) if manifest::is_hex(&l.oid, 64) => ExpectedFile {
                         sha256: Some(l.oid),
                         size: Some(l.size),
+                        git_blob_sha1: None,
                     },
-                    _ => ExpectedFile {
+                    // LFS entry with an unusable oid: the git oid is the pointer's, not the data's.
+                    Some(_) => ExpectedFile::default(),
+                    None => ExpectedFile {
                         sha256: None,
                         size: e.size,
+                        git_blob_sha1: e.oid.filter(|o| manifest::is_hex(o, 40)),
                     },
                 };
                 (e.path, exp)
             })
-            .collect()
+            .collect();
+        Some(files)
     }
 
     /// Download `path` to `dest`, trying `res.sources` in order. Resumes from
@@ -471,6 +493,10 @@ impl Client {
                     "expected_sha256 {p:?} is not 64 hex"
                 )))
             }
+            // Publisher git blob id: needs the size to build the `blob {size}\0` header.
+            (None, None) if known.git_blob_sha1.is_some() && known.size.is_some() => {
+                (None, res.basis)
+            }
             (None, None) if opts.allow_unverified => (None, VerificationState::Unverified),
             (None, None) => return Err(Error::NoHash(path.into())),
         };
@@ -480,6 +506,11 @@ impl Client {
         } else {
             known.size
         };
+        let check = Check {
+            sha256: sha,
+            size,
+            git_blob: known.git_blob_sha1.clone().zip(known.size),
+        };
 
         if let Some(dir) = dest.parent() {
             tokio::fs::create_dir_all(dir).await?;
@@ -488,11 +519,11 @@ impl Client {
         let mut failed = Vec::new();
         for source in &res.sources {
             let url = source.file_url(path);
-            let mut result = self.download(&url, &part, sha.as_deref(), size).await;
+            let mut result = self.download(&url, &part, &check).await;
             if let Err(Attempt::Mismatch { resumed: true, .. }) = &result {
                 // The partial bytes may have come from an earlier source: retry this one from 0.
                 let _ = tokio::fs::remove_file(&part).await;
-                result = self.download(&url, &part, sha.as_deref(), size).await;
+                result = self.download(&url, &part, &check).await;
             }
             match result {
                 Ok((n, digest)) => {
@@ -534,9 +565,9 @@ impl Client {
         &self,
         url: &str,
         part: &Path,
-        sha: Option<&str>,
-        size: Option<u64>,
+        check: &Check,
     ) -> std::result::Result<(u64, String), Attempt> {
+        let size = check.size;
         let mut have = tokio::fs::metadata(part)
             .await
             .map(|m| m.len())
@@ -554,7 +585,7 @@ impl Client {
             .await
             .map_err(|e| Attempt::Transport(e.to_string()))?;
         let status = resp.status();
-        let mut hasher = Sha256::new();
+        let mut hasher = Hashers::new(check);
         let mut written = 0u64;
         let resumed;
         let mut file = if status == reqwest::StatusCode::PARTIAL_CONTENT && have > 0 {
@@ -583,7 +614,7 @@ impl Client {
             written = hash_existing(part, &mut hasher)
                 .await
                 .map_err(Attempt::io)?;
-            return finish(hasher, written, sha, size, true);
+            return finish(hasher, written, check, true);
         } else if status.is_success() {
             resumed = false;
             tokio::fs::File::create(part).await.map_err(Attempt::io)?
@@ -611,7 +642,7 @@ impl Client {
         }
         file.flush().await.map_err(Attempt::io)?;
         drop(file);
-        finish(hasher, written, sha, size, resumed)
+        finish(hasher, written, check, resumed)
     }
 
     async fn get_small(&self, url: &str) -> Result<Vec<u8>> {
@@ -655,14 +686,49 @@ impl std::fmt::Display for Attempt {
     }
 }
 
-fn finish(
-    hasher: Sha256,
-    written: u64,
-    sha: Option<&str>,
+/// What one download must match.
+struct Check {
+    sha256: Option<String>,
     size: Option<u64>,
+    /// (git blob SHA-1 hex, size) from the publisher tree.
+    git_blob: Option<(String, u64)>,
+}
+
+/// sha256 always; git blob SHA-1 too when the publisher gave one.
+struct Hashers {
+    sha256: Sha256,
+    blob: Option<sha1::Sha1>,
+}
+
+impl Hashers {
+    fn new(check: &Check) -> Self {
+        let blob = check.git_blob.as_ref().map(|(_, size)| {
+            let mut h = sha1::Sha1::new();
+            h.update(format!("blob {size}\0").as_bytes());
+            h
+        });
+        Self {
+            sha256: Sha256::new(),
+            blob,
+        }
+    }
+
+    fn update(&mut self, bytes: &[u8]) {
+        self.sha256.update(bytes);
+        if let Some(b) = &mut self.blob {
+            b.update(bytes);
+        }
+    }
+}
+
+fn finish(
+    hasher: Hashers,
+    written: u64,
+    check: &Check,
     resumed: bool,
 ) -> std::result::Result<(u64, String), Attempt> {
-    let digest = hex::encode(hasher.finalize());
+    let digest = hex::encode(hasher.sha256.finalize());
+    let (sha, size) = (check.sha256.as_deref(), check.size);
     if let Some(s) = size {
         if written != s {
             return Err(Attempt::Mismatch {
@@ -679,10 +745,19 @@ fn finish(
             });
         }
     }
+    if let (Some((want, _)), Some(blob)) = (&check.git_blob, hasher.blob) {
+        let got = hex::encode(blob.finalize());
+        if &got != want {
+            return Err(Attempt::Mismatch {
+                resumed,
+                why: format!("git blob {got}, expected {want}"),
+            });
+        }
+    }
     Ok((written, digest))
 }
 
-async fn hash_existing(part: &Path, hasher: &mut Sha256) -> std::io::Result<u64> {
+async fn hash_existing(part: &Path, hasher: &mut Hashers) -> std::io::Result<u64> {
     let mut f = tokio::fs::File::open(part).await?;
     let mut buf = vec![0u8; 1 << 16];
     let mut n = 0u64;
