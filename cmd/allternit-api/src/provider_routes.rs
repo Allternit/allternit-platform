@@ -1752,7 +1752,7 @@ pub(crate) fn connect_card_meta(id: &str) -> Option<(String, String, String)> {
     })
 }
 
-fn home_file(parts: &[&str]) -> std::path::PathBuf {
+pub(crate) fn home_file(parts: &[&str]) -> std::path::PathBuf {
     let mut p = std::path::PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".to_string()));
     for part in parts {
         p.push(part);
@@ -1794,7 +1794,7 @@ fn claude_cli_logged_in(binary: &str) -> bool {
 
 /// `(logged in, email)` from `claude auth status`. `home` points the CLI at an
 /// added account's config dir (`CLAUDE_CONFIG_DIR`); `None` is the stock home.
-fn claude_cli_status(binary: &str, home: Option<&std::path::Path>) -> (bool, Option<String>) {
+pub(crate) fn claude_cli_status(binary: &str, home: Option<&std::path::Path>) -> (bool, Option<String>) {
     let mut cmd = std::process::Command::new(binary);
     cmd.args(["auth", "status"])
         .stdout(std::process::Stdio::piped())
@@ -1866,7 +1866,7 @@ fn antigravity_keychain_signed_in() -> bool {
         .unwrap_or(false)
 }
 
-fn subscription_auth_check(id: &str, binary: &str) -> bool {
+pub(crate) fn subscription_auth_check(id: &str, binary: &str) -> bool {
     match id {
         "claude" | "claude-cli" => claude_cli_logged_in(binary),
         "codex" | "codex-cli" => {
@@ -1936,16 +1936,16 @@ struct ConnectBody {
 }
 
 /// How to run a provider's sign-in: argv, a hint shown beside it, and env.
-struct LoginCmd {
-    argv: Vec<&'static str>,
-    hint: Option<String>,
-    env: Vec<(&'static str, &'static std::ffi::OsStr)>,
+pub(crate) struct LoginCmd {
+    pub(crate) argv: Vec<&'static str>,
+    pub(crate) hint: Option<String>,
+    pub(crate) env: Vec<(&'static str, &'static std::ffi::OsStr)>,
 }
 
 /// The sign-in for a provider: the catalog's headless variant when the user is
 /// remote and the CLI has one (`loginRemote` + `loginRemoteEnv`); Claude's own
 /// flow already works remotely (link, then paste the code the page shows).
-fn login_argv(provider: &str, default: &'static [String], remote: bool) -> LoginCmd {
+pub(crate) fn login_argv(provider: &str, default: &'static [String], remote: bool) -> LoginCmd {
     // A remote computer has no browser next to the CLI: use the catalog's
     // headless / device-code sign-in (`loginRemote`) when the tool has one.
     if remote {
