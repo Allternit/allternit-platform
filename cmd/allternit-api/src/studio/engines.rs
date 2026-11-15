@@ -7,9 +7,12 @@
 //! with a `requirements.txt`, not a pip package. The host finds the folder
 //! ([`tune_source`]), installs its requirements into
 //! `<data dir>/studio/engines/<engine id>/venv` and writes
-//! `.allternit-installed` holding the sha256 of the requirements it
-//! installed. The engine counts as installed while the venv python exists and
-//! that hash matches the current `requirements.txt`. The host then starts
+//! `.allternit-installed` holding the sha256 of the requirements file it
+//! installed: `requirements-<hardware id>.txt` when the folder has one for
+//! this computer's hardware, else `requirements.txt`. The venv is made with
+//! `ALLTERNIT_STUDIO_PYTHON` when set (Desktop's bundled CPython), else the
+//! first Python 3.10+ on `PATH`. The engine counts as installed while the
+//! venv python exists and that hash matches the current file. The host then starts
 //!
 //! ```text
 //! <venv>/bin/python -m allternit_tune.server --port <port> --data-dir <job dir>/engine
@@ -22,11 +25,15 @@
 //!   bearer token (env, not argv, so it never shows in `ps`)
 //! - `ALLTERNIT_ENGINE_PORT`: same as `--port`
 //! - `ALLTERNIT_STUDIO_JOB_DIR`, `ALLTERNIT_STUDIO_OUTPUT_DIR`: the job folder
-//!   and its outputs folder; relative output paths the engine reports are read
-//!   against the outputs folder
+//!   and its outputs folder, both absolute; the engine reports absolute output
+//!   paths inside the outputs folder (relative ones are still read against it)
+//! - `ALLTERNIT_STUDIO_HARDWARE`: the hardware id the host detected
+//!   ([`super::hardware`]); the engine does not probe
+//! - `ALLTERNIT_STUDIO_PYTHON`: passed through when the host has it set
 //!
 //! The job spec the host posts has `base.repo` replaced by the local folder the
-//! host fetched (Decision 5) and `dataset.path` set to an absolute local path.
+//! host fetched (Decision 5), or `base.path` expanded to an absolute folder for
+//! a local base, and `dataset.path` set to an absolute local path.
 //!
 //! Developer override (also used by the smoke test with the contract crate's
 //! fake engine): `ALLTERNIT_STUDIO_ENGINE_CMD_<ID>` (id upper-cased, `-` to
@@ -34,7 +41,7 @@
 //! separated command line in which `{port}` and `{token}` are replaced. When
 //! set, the engine counts as installed.
 
-use allternit_studio_spec::{EngineInfo, InstallState};
+use allternit_studio_spec::{EngineInfo, Fit, Hardware, InstallState};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -48,101 +55,12 @@ pub fn engine_module(engine_id: &str) -> Option<&'static str> {
         .map(|(_, m)| *m)
 }
 
-/// The training hardware this computer has.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum Hardware {
-    AppleSilicon,
-    CudaLinux,
-    /// Windows, AMD, Intel, CPU only, or a Linux box without an NVIDIA driver.
-    Unsupported,
-}
-
-impl Hardware {
-    pub fn detect() -> Hardware {
-        if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
-            return Hardware::AppleSilicon;
-        }
-        if cfg!(target_os = "linux")
-            && (Path::new("/proc/driver/nvidia/version").exists() || which("nvidia-smi").is_some())
-        {
-            return Hardware::CudaLinux;
-        }
-        Hardware::Unsupported
-    }
-
-    fn catalog_name(self) -> Option<&'static str> {
-        match self {
-            Hardware::AppleSilicon => Some("apple-silicon"),
-            Hardware::CudaLinux => Some("cuda-linux"),
-            Hardware::Unsupported => None,
-        }
-    }
-}
-
-/// Can this engine train on this computer, and with which backend.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct HardwareFit {
-    pub ok: bool,
-    pub hardware: Hardware,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub backend: Option<String>,
-    /// Plain words, shown to the person as is.
-    pub reason: String,
-}
-
-pub fn hardware_fit(engine: &EngineInfo, hw: Hardware) -> HardwareFit {
-    let Some(name) = hw.catalog_name() else {
-        return HardwareFit {
-            ok: false,
-            hardware: hw,
-            backend: None,
-            reason:
-                "Training needs a Mac with Apple Silicon or a Linux computer with an NVIDIA GPU. \
-                     This computer has neither."
-                    .into(),
-        };
-    };
-    if !engine.hardware.iter().any(|h| h == name) {
-        let reason = match hw {
-            Hardware::AppleSilicon => {
-                format!("{} runs only on Linux with an NVIDIA GPU.", engine.name)
-            }
-            _ => format!("{} does not run on this kind of computer.", engine.name),
-        };
-        return HardwareFit {
-            ok: false,
-            hardware: hw,
-            backend: None,
-            reason,
-        };
-    }
-    let (backend, reason) = match (engine.id.as_str(), hw) {
-        // MLX waits on the F14-prime decision; PyTorch with the MPS device is allowed now.
-        ("allternit-tune", Hardware::AppleSilicon) => (
-            "torch-mps",
-            "Runs on this Mac's GPU with PyTorch (MPS).".to_string(),
-        ),
-        (_, Hardware::CudaLinux) => (
-            "torch-cuda",
-            "Runs on this computer's NVIDIA GPU.".to_string(),
-        ),
-        _ => ("torch", "Runs on this computer.".to_string()),
-    };
-    HardwareFit {
-        ok: true,
-        hardware: hw,
-        backend: Some(backend.into()),
-        reason,
-    }
-}
-
 /// `GET /engines` row: the catalog entry plus what this computer says about it.
 #[derive(Debug, Clone, Serialize)]
 pub struct EngineView {
     #[serde(flatten)]
     pub info: EngineInfo,
-    pub fit: HardwareFit,
+    pub fit: Fit,
     /// false = this build cannot install the engine (POST install returns 501).
     pub available: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -171,12 +89,14 @@ pub fn override_command(engine_id: &str) -> Option<String> {
 
 pub struct EngineDirs {
     root: PathBuf,
+    hardware: Hardware,
 }
 
 impl EngineDirs {
-    pub fn new(studio_dir: &Path) -> Self {
+    pub fn new(studio_dir: &Path, hardware: Hardware) -> Self {
         Self {
             root: studio_dir.join("engines"),
+            hardware,
         }
     }
 
@@ -209,7 +129,7 @@ impl EngineDirs {
         let Ok(marker) = std::fs::read_to_string(self.marker(id)) else {
             return false;
         };
-        match tune_source().and_then(|src| requirements_hash(&src)) {
+        match tune_source().and_then(|src| requirements_hash(&requirements_file(&src, self.hardware))) {
             Some(current) => marker.trim() == current,
             // No source folder means the engine cannot start either.
             None => false,
@@ -242,9 +162,10 @@ impl EngineDirs {
              Set ALLTERNIT_TUNE_SOURCE to its folder and try again."
                 .to_string()
         })?;
-        let requirements = source.join("requirements.txt");
-        let hash =
-            requirements_hash(&source).ok_or("The engine's requirements.txt could not be read.")?;
+        let requirements = requirements_file(&source, self.hardware);
+        let hash = requirements_hash(&requirements).ok_or_else(|| {
+            format!("The engine's {} could not be read.", requirements.display())
+        })?;
         let python = find_python().await.ok_or_else(|| {
             "Python 3.10 or newer is needed to install a training engine, and none was found on this computer."
                 .to_string()
@@ -330,13 +251,35 @@ fn tune_source_from(env: Option<PathBuf>, exe_dir: Option<&Path>) -> Option<Path
         .find(|p| is_tune_source(p))
 }
 
-fn requirements_hash(source: &Path) -> Option<String> {
+/// `requirements-<hardware id>.txt` when the engine folder has one for this
+/// hardware (torch wheel index, mlx-lm on a Mac), else `requirements.txt`.
+pub fn requirements_file(source: &Path, hw: Hardware) -> PathBuf {
+    let specific = source.join(format!("requirements-{}.txt", hw.id()));
+    if specific.is_file() {
+        specific
+    } else {
+        source.join("requirements.txt")
+    }
+}
+
+fn requirements_hash(file: &Path) -> Option<String> {
     use sha2::{Digest, Sha256};
-    let bytes = std::fs::read(source.join("requirements.txt")).ok()?;
+    let bytes = std::fs::read(file).ok()?;
     Some(hex::encode(Sha256::digest(bytes)))
 }
 
+/// The host's `ALLTERNIT_STUDIO_PYTHON` (Desktop's bundled CPython), if set.
+pub fn studio_python() -> Option<String> {
+    std::env::var("ALLTERNIT_STUDIO_PYTHON")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+}
+
 async fn find_python() -> Option<String> {
+    if let Some(p) = studio_python() {
+        // An explicit Python is the answer, right or wrong: never swap in another.
+        return python_ok(&p).await.then_some(p);
+    }
     for cand in [
         "python3.12",
         "python3.11",
@@ -344,17 +287,19 @@ async fn find_python() -> Option<String> {
         "python3",
         "python",
     ] {
-        let out = tokio::process::Command::new(cand)
-            .args(["-c", "import sys; print(sys.version_info >= (3, 10))"])
-            .output()
-            .await;
-        if let Ok(out) = out {
-            if out.status.success() && String::from_utf8_lossy(&out.stdout).trim() == "True" {
-                return Some(cand.to_string());
-            }
+        if python_ok(cand).await {
+            return Some(cand.to_string());
         }
     }
     None
+}
+
+async fn python_ok(program: &str) -> bool {
+    let out = tokio::process::Command::new(program)
+        .args(["-c", "import sys; print(sys.version_info >= (3, 10))"])
+        .output()
+        .await;
+    matches!(out, Ok(out) if out.status.success() && String::from_utf8_lossy(&out.stdout).trim() == "True")
 }
 
 async fn run(
@@ -377,39 +322,40 @@ async fn run(
     Err(format!("Could not {what}. {tail}"))
 }
 
-fn which(bin: &str) -> Option<PathBuf> {
-    let path = std::env::var_os("PATH")?;
-    std::env::split_paths(&path)
-        .map(|d| d.join(bin))
-        .find(|p| p.is_file())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn fit_refuses_with_reason() {
+        use allternit_studio_spec::{fit, HostHardware};
         let tune = allternit_studio_spec::engines::find("allternit-tune").unwrap();
         let unsloth = allternit_studio_spec::engines::find("unsloth-upstream").unwrap();
 
-        let mac = hardware_fit(&tune, Hardware::AppleSilicon);
+        let mac = fit(&tune, &HostHardware::plain(Hardware::AppleSilicon));
         assert!(mac.ok);
-        assert_eq!(mac.backend.as_deref(), Some("torch-mps"));
+        assert!(mac.methods_unavailable.is_empty());
 
-        let mac_unsloth = hardware_fit(&unsloth, Hardware::AppleSilicon);
+        let mac_unsloth = fit(&unsloth, &HostHardware::plain(Hardware::AppleSilicon));
         assert!(!mac_unsloth.ok);
-        assert!(
-            mac_unsloth.reason.contains("NVIDIA"),
-            "{}",
-            mac_unsloth.reason
-        );
+        assert!(!mac_unsloth.reason.is_empty());
 
-        assert!(hardware_fit(&unsloth, Hardware::CudaLinux).ok);
+        // CPU is a real device: allternit-tune runs, LoRA only, with a warning.
+        let cpu = fit(&tune, &crate::studio::hardware::classify_probe("linux", "x86_64", &Default::default()));
+        assert!(cpu.ok, "{}", cpu.reason);
+        assert_eq!(cpu.hardware, Hardware::Cpu);
+        assert!(cpu.warning.is_some());
+        assert!(cpu.methods_unavailable.contains_key("qlora"));
+        assert!(!cpu.methods_unavailable.contains_key("lora"));
+    }
 
-        let none = hardware_fit(&tune, Hardware::Unsupported);
-        assert!(!none.ok);
-        assert!(none.reason.contains("Apple Silicon"));
+    #[test]
+    fn requirements_file_prefers_the_hardware_one() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("requirements.txt"), "torch\n").unwrap();
+        std::fs::write(tmp.path().join("requirements-apple-silicon.txt"), "mlx-lm\n").unwrap();
+        assert!(requirements_file(tmp.path(), Hardware::AppleSilicon).ends_with("requirements-apple-silicon.txt"));
+        assert!(requirements_file(tmp.path(), Hardware::CudaLinux).ends_with("requirements.txt"));
     }
 
     #[test]

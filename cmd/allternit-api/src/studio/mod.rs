@@ -3,7 +3,9 @@
 //!
 //! - [`routes`]: the host API in `services/studio-spec/openapi/studio-api.yaml`.
 //! - [`store`]: jobs as JSON files under `<data dir>/studio/jobs/`.
-//! - [`engines`]: install state, hardware fit, venv install, launch contract.
+//! - [`engines`]: install state, venv install, launch contract.
+//! - [`hardware`]: training-hardware detection for the seven hardware ids;
+//!   engine cards carry the spec's `fit` and job creation runs `check_job`.
 //! - [`runner`]: starts an engine process, speaks engine API v1 over loopback
 //!   with a per-launch token, copies its events, cancels, and reattaches after
 //!   an allternit-api restart.
@@ -11,6 +13,7 @@
 //! One job runs per computer at a time.
 
 pub mod engines;
+pub mod hardware;
 pub mod routes;
 pub mod runner;
 pub mod store;
@@ -19,11 +22,11 @@ pub mod store;
 mod tests;
 
 use allternit_studio_spec::{
-    engines as catalog, ApiError, Job, JobEvent, JobOutput, JobSpec, JobState,
+    engines as catalog, ApiError, HostHardware, Job, JobEvent, JobOutput, JobSpec, JobState,
 };
 use axum::http::StatusCode;
 use chrono::Utc;
-use engines::{EngineDirs, EngineView, Hardware, InstallRecord};
+use engines::{EngineDirs, EngineView, InstallRecord};
 use runner::{EngineLauncher, RunningEngine};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
@@ -36,7 +39,10 @@ pub use routes::router;
 pub struct StudioConfig {
     /// `<data dir>/studio`.
     pub dir: PathBuf,
-    pub hardware: Hardware,
+    /// This computer's training hardware (detected once, cached).
+    pub hardware: HostHardware,
+    /// Re-checks the device at job creation; `Err` gives 503 `hardware_unavailable`.
+    pub device_check: hardware::DeviceCheck,
     pub launcher: Arc<dyn EngineLauncher>,
     /// Base URL of the local-engine service (outputs/register).
     pub local_engine_url: String,
@@ -56,7 +62,8 @@ impl StudioConfig {
     pub fn from_data_dir(data_dir: &std::path::Path) -> Self {
         Self {
             dir: data_dir.join("studio"),
-            hardware: Hardware::detect(),
+            hardware: hardware::detect(),
+            device_check: hardware::real_device_check(),
             launcher: Arc::new(runner::ProcessLauncher),
             local_engine_url: std::env::var("LOCAL_ENGINE_URL")
                 .ok()
@@ -121,7 +128,7 @@ impl StudioHost {
         let _ = std::fs::create_dir_all(&cfg.dir);
         let store = Store::new(&cfg.dir);
         let jobs = store.load_all();
-        let engines = EngineDirs::new(&cfg.dir);
+        let engines = EngineDirs::new(&cfg.dir, cfg.hardware.hardware);
         let http = reqwest::Client::builder()
             .no_proxy()
             .timeout(Duration::from_secs(15))
@@ -155,7 +162,7 @@ impl StudioHost {
     }
 
     fn engine_view(&self, mut info: allternit_studio_spec::EngineInfo) -> EngineView {
-        let fit = engines::hardware_fit(&info, self.0.cfg.hardware);
+        let fit = allternit_studio_spec::fit(&info, &self.0.cfg.hardware);
         let rec = self.0.engines.read_install(&info.id);
         let installing = self.0.installing.lock().unwrap().contains(&info.id);
         let installed = self.0.cfg.launcher.installed(&info.id, &self.0.engines);
@@ -198,7 +205,7 @@ impl StudioHost {
                 format!("{} is not available in this build of Allternit.", info.name),
             ));
         }
-        let fit = engines::hardware_fit(&info, self.0.cfg.hardware);
+        let fit = allternit_studio_spec::fit(&info, &self.0.cfg.hardware);
         if !fit.ok {
             return Err(HostError::new(
                 StatusCode::UNPROCESSABLE_ENTITY,
@@ -264,6 +271,13 @@ impl StudioHost {
         let Some(pin) = spec.base.manifest_sha256.as_deref() else {
             return Ok(());
         };
+        if spec.base.path.is_some() {
+            return Err(HostError::new(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "invalid_base",
+                "base.manifest_sha256 pins a Freeweights repo; it cannot be used with base.path.",
+            ));
+        }
         let pin = pin.trim().to_ascii_lowercase();
         let repo = spec.base.repo.as_str();
         let mismatch = |message: String| {
@@ -325,13 +339,20 @@ impl StudioHost {
             HostError::new(StatusCode::UNPROCESSABLE_ENTITY, &errs[0].code, message)
         })?;
         let info = catalog::find(&spec.engine).expect("validated engine is in the catalog");
-        let fit = engines::hardware_fit(&info, self.0.cfg.hardware);
-        if !fit.ok {
-            return Err(HostError::new(
-                StatusCode::UNPROCESSABLE_ENTITY,
-                "hardware_not_supported",
-                fit.reason,
-            ));
+        // Engine, method, backend and outputs against this computer; the
+        // message is the host's reason, shown as is.
+        allternit_studio_spec::check_job(&spec, &self.0.cfg.hardware).map_err(|errs| {
+            let message = errs
+                .iter()
+                .map(|e| e.message.clone())
+                .collect::<Vec<_>>()
+                .join(" ");
+            HostError::new(StatusCode::UNPROCESSABLE_ENTITY, &errs[0].code, message)
+        })?;
+        if let Some(p) = spec.base.path.as_deref() {
+            runner::local_base(p).map_err(|m| {
+                HostError::new(StatusCode::UNPROCESSABLE_ENTITY, "invalid_base", m)
+            })?;
         }
         if !self.0.cfg.launcher.installed(&info.id, &self.0.engines) {
             return Err(HostError::new(
@@ -343,6 +364,9 @@ impl StudioHost {
                 ),
             ));
         }
+        (self.0.cfg.device_check)(self.0.cfg.hardware.hardware).map_err(|reason| {
+            HostError::new(StatusCode::SERVICE_UNAVAILABLE, "hardware_unavailable", reason)
+        })?;
         self.check_manifest_pin(&spec).await?;
         let job = {
             let mut jobs = self.0.jobs.lock().unwrap();
@@ -568,7 +592,7 @@ impl StudioHost {
         let name = name.filter(|n| !n.trim().is_empty()).unwrap_or_else(|| {
             format!(
                 "{}-{}-{}",
-                short_repo(&job.spec.base.repo),
+                short_repo(job.spec.base.path.as_deref().unwrap_or(&job.spec.base.repo)),
                 job.spec.method,
                 kind
             )
@@ -624,6 +648,8 @@ pub(crate) fn state_word(s: JobState) -> &'static str {
     }
 }
 
+/// Last part of a repo id or folder path (`a/b` → `b`).
 fn short_repo(repo: &str) -> String {
-    repo.rsplit('/').next().unwrap_or(repo).to_string()
+    let trimmed = repo.trim_end_matches(['/', '\\']);
+    trimmed.rsplit(['/', '\\']).next().unwrap_or(trimmed).to_string()
 }
