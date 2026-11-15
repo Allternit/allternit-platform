@@ -97,12 +97,12 @@ struct FreeweightsSection: View {
             if store.isLoading && store.results.isEmpty {
                 ProgressView()
                     .frame(maxWidth: .infinity, alignment: .center)
-            } else if let reason = store.downReason, store.results.isEmpty {
+            } else if store.downReason != nil, store.results.isEmpty {
                 FriendlyInlineStateView(
                     style: .offline,
                     icon: "wifi.slash",
                     title: "Freeweights is not answering",
-                    message: "The catalog couldn't be reached (\(reason)). Try again in a moment.",
+                    message: "The catalog couldn't be reached. Check your connection, then try again.",
                     actionTitle: "Retry",
                     action: { Task { await store.reload() } }
                 )
@@ -344,7 +344,7 @@ struct FreeweightsDetailSheet: View {
                             style: .offline,
                             icon: "wifi.slash",
                             title: "Freeweights is not answering",
-                            message: "Couldn't load this model (\(downReason)).",
+                            message: "Couldn't load this model. Check your connection, then try again.",
                             actionTitle: "Retry",
                             action: { Task { await load() } }
                         )

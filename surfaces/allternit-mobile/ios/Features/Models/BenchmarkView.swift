@@ -109,7 +109,7 @@ struct BenchmarkView: View {
                 let generator = UINotificationFeedbackGenerator()
                 generator.notificationOccurred(.success)
             } catch {
-                runError = error.localizedDescription
+                runError = FriendlyErrorMessage.from(error.localizedDescription, doing: "run the benchmark")
             }
             isRunning = false
         }
