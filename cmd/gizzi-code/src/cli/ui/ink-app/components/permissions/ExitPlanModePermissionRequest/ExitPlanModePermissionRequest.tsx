@@ -133,6 +133,8 @@ export function ExitPlanModePermissionRequest({
   // acceptFeedback when the user approves — lets users annotate the plan
   // ("also update the README") without a reject+re-plan round-trip.
   const [planFeedback, setPlanFeedback] = useState('');
+  // The focused option; `e` edits the plan unless the feedback input has focus.
+  const focusedOptionRef = useRef<string | undefined>(undefined);
   const [pastedContents, setPastedContents] = useState<Record<number, PastedContent>>({});
   const nextPasteIdRef = useRef(0);
   const showClearContext = useAppState(s => s.settings.showClearContextOnPlanAccept) ?? false;
@@ -225,9 +227,12 @@ export function ExitPlanModePermissionRequest({
     }
   }, [showSaveMessage]);
 
-  // Handle Ctrl+G to edit plan in $EDITOR, Shift+Tab for auto-accept edits
+  // Ctrl+G or `e` edits the plan in $EDITOR (the edited plan is what runs:
+  // currentPlan goes into the tool input and the implement prompt), Shift+Tab
+  // for auto-accept edits. `e` is ignored while the feedback input has focus.
   const handleKeyDown = (e: KeyboardEvent): void => {
-    if (e.ctrl && e.key === 'g') {
+    const plainE = e.key === 'e' && !e.ctrl && !e.meta && !e.shift && focusedOptionRef.current !== 'no';
+    if ((e.ctrl && e.key === 'g') || plainE) {
       e.preventDefault();
       logEvent('tengu_plan_external_editor_used', {});
       void (async () => {
@@ -536,10 +541,10 @@ export function ExitPlanModePermissionRequest({
     setStickyFooter(<Box flexDirection="column" borderStyle="round" borderColor="planMode" borderLeft={false} borderRight={false} borderBottom={false} paddingX={1}>
         <Text dimColor>Would you like to proceed?</Text>
         <Box marginTop={1}>
-          <Select options={options} onChange={v => void handleResponseRef.current(v)} onCancel={() => handleCancelRef.current?.()} onImagePaste={onImagePaste} pastedContents={pastedContents} onRemoveImage={onRemoveImage} />
+          <Select options={options} onFocus={v => { focusedOptionRef.current = v; }} onChange={v => void handleResponseRef.current(v)} onCancel={() => handleCancelRef.current?.()} onImagePaste={onImagePaste} pastedContents={pastedContents} onRemoveImage={onRemoveImage} />
         </Box>
         {editorName && <Box flexDirection="row" gap={1} marginTop={1}>
-            <Text dimColor>ctrl-g to edit in </Text>
+            <Text dimColor>e or ctrl-g to edit in </Text>
             <Text bold dimColor>
               {editorName}
             </Text>
@@ -649,7 +654,7 @@ export function ExitPlanModePermissionRequest({
                   you like to proceed?
                 </Text>
                 <Box marginTop={1}>
-                  <Select options={options} onChange={handleResponse} onCancel={() => handleCancelRef.current?.()} onImagePaste={onImagePaste} pastedContents={pastedContents} onRemoveImage={onRemoveImage} />
+                  <Select options={options} onFocus={v => { focusedOptionRef.current = v; }} onChange={handleResponse} onCancel={() => handleCancelRef.current?.()} onImagePaste={onImagePaste} pastedContents={pastedContents} onRemoveImage={onRemoveImage} />
                 </Box>
               </>}
           </Box>
@@ -657,7 +662,7 @@ export function ExitPlanModePermissionRequest({
       </PermissionDialog>
       {!useStickyFooter && editorName && <Box flexDirection="row" gap={1} paddingX={1} marginTop={1}>
           <Box>
-            <Text dimColor>ctrl-g to edit in </Text>
+            <Text dimColor>e or ctrl-g to edit in </Text>
             <Text bold dimColor>
               {editorName}
             </Text>

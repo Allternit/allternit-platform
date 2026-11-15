@@ -6,7 +6,7 @@
 //! it may go (12 hops per bot pair per 10 minutes, depth 8, no cycle back to an
 //! ancestor with the same text) and records it as `stored`, or as `held` with a
 //! `loop_guard` attention item. [`advance`] moves the receipt
-//! `stored → delivered → read → answered` (or `failed`). A replayed idempotency
+//! `stored → pushed → delivered → read → answered` (or `failed`). A replayed idempotency
 //! key returns the earlier hop. [`timeline`] folds `bot_events` and the hops of a
 //! thread's traces into a span tree; it works with OTel off.
 
@@ -91,6 +91,13 @@ pub fn derive_key(parts: &[&str]) -> String {
         h.update([0u8]);
     }
     hex::encode(h.finalize())
+}
+
+/// Key for a send that supplied none: from, to, thread, text and a 60 s bucket.
+fn auto_key(hop: &HopIn, now_secs: i64) -> String {
+    let bucket = (now_secs / 60).to_string();
+    let text = hop.text.split_whitespace().collect::<Vec<_>>().join(" ");
+    format!("auto:{}", derive_key(&[&hop.from_id, &hop.to_bot_id, hop.thread_id.as_deref().unwrap_or(""), &text, &bucket]))
 }
 
 fn text_hash(text: &str) -> String {
@@ -181,10 +188,11 @@ fn find_by_key(conn: &Connection, owner: &str, key: &str) -> Option<Admit> {
 /// The loop guard and the first receipt (`stored`). Never blocks on anything
 /// but the database.
 pub fn admit(conn: &Connection, hop: &HopIn) -> Admit {
-    if let Some(key) = hop.idempotency_key.as_deref() {
-        if let Some(prev) = find_by_key(conn, &hop.owner, key) {
-            return prev;
-        }
+    // A NULL key bypasses the UNIQUE(owner, idempotency_key) index, so a keyless
+    // send gets a derived one: an identical retry in the same minute replays.
+    let key = hop.idempotency_key.clone().unwrap_or_else(|| auto_key(hop, Utc::now().timestamp()));
+    if let Some(prev) = find_by_key(conn, &hop.owner, &key) {
+        return prev;
     }
     let parent = hop.traceparent.as_deref().and_then(parse);
     let hash = text_hash(&hop.text);
@@ -247,13 +255,13 @@ pub fn admit(conn: &Connection, hop: &HopIn) -> Admit {
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
             params![
                 hop_id, hop.owner, trace.trace_id, trace.span_id, parent.as_ref().map(|p| p.span_id.clone()), depth, hop.via, hop.from_kind,
-                hop.from_id, hop.to_bot_id, hop.thread_id, hop.idempotency_key, state, reason, hash, now_ts()
+                hop.from_id, hop.to_bot_id, hop.thread_id, key, state, reason, hash, now_ts()
             ],
         )
         .unwrap_or(0);
     if inserted == 0 {
         // Lost a race on the idempotency key: the other writer's hop is the answer.
-        if let Some(prev) = hop.idempotency_key.as_deref().and_then(|k| find_by_key(conn, &hop.owner, k)) {
+        if let Some(prev) = find_by_key(conn, &hop.owner, &key) {
             return prev;
         }
     }
@@ -283,9 +291,11 @@ pub fn admit(conn: &Connection, hop: &HopIn) -> Admit {
 fn rank(state: &str) -> i32 {
     match state {
         "stored" => 1,
-        "delivered" => 2,
-        "read" => 3,
-        "answered" => 4,
+        // Written to the session's socket or inbox, not yet confirmed by the receiver.
+        "pushed" => 2,
+        "delivered" => 3,
+        "read" => 4,
+        "answered" => 5,
         _ => 0,
     }
 }
@@ -303,7 +313,9 @@ pub fn advance(conn: &Connection, hop_id: &str, state: &str, reason: Option<&str
         s => !terminal && rank(s) > rank(&cur),
     };
     let ts = now_ts();
-    if ok {
+    if ok && state == "pushed" {
+        let _ = conn.execute("UPDATE agent_hops SET state = ?2, state_reason = ?3 WHERE id = ?1", params![hop_id, state, reason]);
+    } else if ok {
         let col = match state {
             "delivered" => "delivered_at",
             "read" => "read_at",
@@ -493,6 +505,14 @@ mod tests {
         .unwrap();
         c.execute_batch(include_str!("../../migrations/V260__agent_hops_trace.sql")).unwrap();
         c
+    }
+
+    #[test]
+    fn auto_key_dedupes_within_a_minute_only() {
+        let h = hop("a", "b", "do  it", None, None);
+        assert_eq!(auto_key(&h, 120), auto_key(&hop("a", "b", "do it", None, None), 179));
+        assert_ne!(auto_key(&h, 120), auto_key(&h, 180));
+        assert_ne!(auto_key(&h, 120), auto_key(&hop("a", "b", "other", None, None), 120));
     }
 
     fn hop(from: &str, to: &str, text: &str, key: Option<&str>, tp: Option<String>) -> HopIn {

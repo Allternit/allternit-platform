@@ -49,7 +49,8 @@ Each virtual key has a configurable requests-per-minute limit. The gateway also 
 Callers can inspect their current quota at any time:
 
 ```bash
-curl https://api.allternit.com/v1/rate-limits \
+# Runtime base URL: http://127.0.0.1:8013 on Desktop, or your paired or hosted computer
+curl http://127.0.0.1:8013/v1/rate-limits \
   -H "Authorization: Bearer $ALLTERNIT_API_KEY"
 ```
 

@@ -22,7 +22,8 @@ export namespace PaneRender {
   export const Request = z.object({
     id: Identifier.schema("question"),
     sessionID: Identifier.schema("session"),
-    kind: z.enum(["image", "video"]),
+    /** check: artifact_check — the app renders an artifact (code = its body) at each width and reports what it saw. */
+    kind: z.enum(["image", "video", "check"]),
     format: Format,
     code: z.string(),
     width: z.number().int(),
@@ -33,6 +34,11 @@ export namespace PaneRender {
     fps: z.number().int().optional(),
     motionBlur: z.number().int().optional(),
     audio: z.string().optional(),
+    /** Check: the artifact's kind and body format, the widths to render, and a reference picture (data URL). */
+    artifactKind: z.string().optional(),
+    bodyFormat: z.string().optional(),
+    widths: z.array(z.number().int()).optional(),
+    reference: z.string().optional(),
     /** When it was asked (ms). The app skips requests older than timeoutMs. */
     time: z.number(),
     /** How long gizzi waits for the reply (ms). */
@@ -53,11 +59,28 @@ export namespace PaneRender {
   })
   export type Video = z.infer<typeof Video>
 
+  /** What artifact_check saw at one width. */
+  export const CheckWidth = z.object({
+    width: z.number(),
+    height: z.number(),
+    /** JPEG data URL of the first screen. */
+    image: z.string().optional(),
+    blank: z.boolean(),
+    /** px wider than the window (sideways scroll). */
+    overflowX: z.number(),
+    errors: z.array(z.string()),
+    /** 0–1 likeness to the reference, on the width compared with it. */
+    similarity: z.number().optional(),
+    mismatch: z.array(z.string()).optional(),
+  })
+  export type CheckWidth = z.infer<typeof CheckWidth>
+
   export const Result = z.object({
     ok: z.boolean(),
     /** PNG data URL of the render (for a video: its contact sheet). */
     image: z.string().optional(),
     video: Video.optional(),
+    checks: z.array(CheckWidth).optional(),
     width: z.number().optional(),
     height: z.number().optional(),
     error: z.string().optional(),

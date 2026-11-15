@@ -85,7 +85,7 @@ async fn email_domain_call(method: reqwest::Method, domain: Option<&str>) -> Res
         Some(d) => format!("{}/api/v1/runtime-devices/me/bot-email/domains/{}", base.trim_end_matches('/'), urlencoding::encode(d)),
         None => format!("{}/api/v1/runtime-devices/me/bot-email/domains", base.trim_end_matches('/')),
     };
-    match reqwest::Client::new().request(method, url).bearer_auth(bearer).timeout(std::time::Duration::from_secs(45)).send().await {
+    match crate::net_client::client().request(method, url).bearer_auth(bearer).timeout(std::time::Duration::from_secs(45)).send().await {
         Ok(r) => {
             let status = StatusCode::from_u16(r.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
             let body: Value = r.json().await.unwrap_or(Value::Null);
@@ -272,9 +272,11 @@ pub(crate) struct SendAgentEmailRequest {
 async fn send_agent_email(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
+    headers: HeaderMap,
     Json(req): Json<SendAgentEmailRequest>,
 ) -> Result<Response, ApiError> {
-    Ok(Json(send_email_for_user(&state, &user.user_id, req).await?).into_response())
+    let idem = headers.get("idempotency-key").and_then(|v| v.to_str().ok()).map(str::trim).filter(|v| !v.is_empty() && v.len() <= 200);
+    Ok(Json(send_email_inner(&state, &user.user_id, req, SendEmailExtra { idempotency_key: idem, ..SendEmailExtra::default() }).await?).into_response())
 }
 
 /// Reply-path extras on top of a plain outbound send. `skip_approval` delivers
@@ -282,6 +284,8 @@ async fn send_agent_email(
 /// — only the bot-reply path may set it, and only when the reply plan says so.
 #[derive(Default)]
 struct SendEmailExtra<'a> {
+    /// Caller's `Idempotency-Key` for a fresh send (a retry must not mail twice).
+    idempotency_key: Option<&'a str>,
     /// Inbound row this send answers (marks the outbound row for the reply caps).
     reply_inbound_id: Option<&'a str>,
     /// Threading/auto-reply headers mailflare allow-lists.
@@ -423,7 +427,30 @@ async fn send_email_inner(
     let outbound_id = uuid::Uuid::new_v4().to_string();
     let idempotency_key = match extra.reply_inbound_id {
         Some(inbound_id) => format!("agent-email-reply:{inbound_id}"),
-        None => format!("agent-email:{outbound_id}"),
+        None => match extra.idempotency_key {
+            Some(k) => format!("agent-email:{k}"),
+            None => {
+                // No key from the caller: derive one from the content and a 10-minute
+                // bucket, so a blind retry collapses to one mailflare message but the
+                // same email sent on purpose later (a weekly report) still goes out.
+                use sha2::Digest;
+                let bucket = (chrono::Utc::now().timestamp() / 600).to_string();
+                let mut h = Sha256::new();
+                for part in [
+                    bucket.as_str(),
+                    req.agent_id.as_str(),
+                    req.to.as_str(),
+                    req.subject.as_str(),
+                    req.text.as_deref().unwrap_or(""),
+                    req.html.as_deref().unwrap_or(""),
+                    extra.headers.and_then(|m| m.iter().find(|(k, _)| k.eq_ignore_ascii_case("in-reply-to")).map(|(_, v)| v.as_str())).unwrap_or(""),
+                ] {
+                    h.update(part.as_bytes());
+                    h.update([0u8]);
+                }
+                format!("agent-email:h:{}", hex::encode(h.finalize()))
+            }
+        },
     };
     let thread_id = format!("mail:email-out-{outbound_id}");
     let snippet: String = req
@@ -530,6 +557,8 @@ async fn send_email_inner(
         }
 
         info!(agent_id = %req.agent_id, to = %req.to, "agent-email: outbound pending approval");
+        // One `approval.requested` for the cloud (push with the inbox id).
+        crate::inbox_needs::record_email_draft(&state.db, &req.agent_id, &outbound_id);
         if let Some(e) = autonomy.as_ref().filter(|e| e.held()) {
             let (outcome, reason) = match &e.verdict {
                 crate::autonomy::Verdict::Draft { reason } => ("drafted", reason.clone()),
@@ -652,6 +681,23 @@ fn sender_has_thread(conn: &rusqlite::Connection, agent_id: &str, from_lower: &s
 /// switch) is re-read here so a settings change mid-conversation applies to
 /// the next reply, not the next restart.
 /// The bot thread an inbound email conversation lives in (same key as the inbound handler).
+/// An email kept unanswered (bots paused): a `channel.message.received` event on
+/// the bot's thread, so Needs you lists it as `unanswered` like other channels.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn record_unanswered_email(db: &crate::db::DbHandle, agent_id: &str, thread_id: &str, session: &str, inbound_id: &str, from: &str, subject: &str, body: &str) {
+    let text: String = format!("{subject}: {body}").chars().take(500).collect();
+    crate::gateway_runner::led(
+        db,
+        agent_id,
+        thread_id,
+        Some(session),
+        "channel.message.received",
+        ("system", "email"),
+        serde_json::json!({ "provider": "email", "from": from, "text": text, "inboundId": inbound_id }),
+        Some(format!("email-in:{inbound_id}")),
+    );
+}
+
 fn email_bot_thread(db: &crate::db::DbHandle, agent_id: &str, from: &str, subject: &str) -> Option<String> {
     let key = format!("email:{}:{}", from.to_lowercase(), crate::thread_routes::conversation_subject(subject));
     db.connect()
@@ -1228,6 +1274,14 @@ async fn receive_inbound_email(
                         }
                         None => text,
                     };
+                    // Pause all bots: the email is kept in the bot's thread; only the owner's own mail runs.
+                    if !from_owner && crate::bots_pause::is_paused_db(&db, &owner_s) {
+                        if let Some(thread) = email_bot_thread(&db, &agent, &from_s, &subject_s) {
+                            record_unanswered_email(&db, &agent, &thread, &session, &inbound, &from_s, &subject_s, &turn_body);
+                        }
+                        tracing::info!(agent = %agent, "bots paused: email kept, no auto-reply");
+                        return;
+                    }
                     match crate::agent_session_routes::send_bot_turn(&db, &session, &agent, &text).await {
                         Ok(reply) => {
                             if let Err(e) = send_reply_for_turn(
@@ -1850,7 +1904,7 @@ pub async fn revoke_agent_mailbox(agent_id: &str, db: &crate::db::DbHandle) -> b
         // its webhook and the relay route.
         if let Some(bearer) = crate::phone_sync::runtime_bearer() {
             let url = format!("{}/api/v1/runtime-devices/me/bot-email/mailboxes/{}", crate::phone_sync::cloud_base().trim_end_matches('/'), mailbox_id);
-            match reqwest::Client::new().delete(url).bearer_auth(bearer).timeout(std::time::Duration::from_secs(20)).send().await {
+            match crate::net_client::client().delete(url).bearer_auth(bearer).timeout(std::time::Duration::from_secs(20)).send().await {
                 Ok(r) if r.status().is_success() || r.status() == StatusCode::NOT_FOUND => {
                     info!(agent_id = %agent_id, mailbox_id = %mailbox_id, "agent-email: mailbox removed through the cloud");
                     return true;
@@ -1897,5 +1951,27 @@ mod tests {
         let mut bad_headers = HeaderMap::new();
         bad_headers.insert("x-email-platform-signature", "zz".parse().unwrap());
         assert!(verify_mailflare_signature("test-webhook-secret", &bad_headers, body).is_err());
+    }
+}
+
+#[cfg(test)]
+mod paused_email_tests {
+    use rusqlite::params;
+
+    /// A bot email kept while bots are paused shows as `unanswered` in Needs you.
+    #[tokio::test]
+    async fn a_paused_email_shows_as_unanswered() {
+        let dir = std::env::temp_dir().join(format!("allternit-paused-email-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let st = crate::test_helpers::app_state(&dir).await;
+        let c = st.db.connect().unwrap();
+        c.execute("INSERT INTO agents (id, user_id, name, model, provider, is_bot, config) VALUES ('bot-e', 'user-a', 'Mailer', 'm', 'p', 1, '{}')", params![]).unwrap();
+        super::record_unanswered_email(&st.db, "bot-e", "th-email", "ses-e", "in-1", "ann@example.com", "Quote", "Can you send the quote?");
+        // A replayed delivery is recorded once.
+        super::record_unanswered_email(&st.db, "bot-e", "th-email", "ses-e", "in-1", "ann@example.com", "Quote", "Can you send the quote?");
+        let items = crate::inbox_needs::collect(&c, "user-a", 0).unwrap();
+        let un: Vec<_> = items.iter().filter(|i| i["kind"] == "unanswered").collect();
+        assert_eq!(un.len(), 1, "{items:?}");
+        assert_eq!((un[0]["id"].as_str(), un[0]["source"].as_str()), (Some("reply:th-email"), Some("email")));
     }
 }

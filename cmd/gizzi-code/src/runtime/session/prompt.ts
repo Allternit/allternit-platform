@@ -1,4 +1,6 @@
 import { runWithStreamContext } from "@/runtime/session/stream-context"
+import { isRelativeUrl, resolveUploadUrl } from "@/runtime/session/upload-part"
+import { matchReviewPreset, reviewPresetPrompt } from "@/shared/util/review-presets"
 import path from "path"
 import os from "os"
 import fs from "fs/promises"
@@ -16,6 +18,7 @@ import { Provider } from "@/runtime/providers/provider"
 import { CLOUD_PROVIDER_ID, consumeHandoff, handoffTarget, isRefusal } from "@/runtime/providers/handoff"
 import { type Tool as AITool, tool, jsonSchema, type ToolCallOptions, asSchema } from "ai"
 import { ToolDispatcher } from "@/runtime/tools/dispatch"
+import { RemoteToolHost } from "@/runtime/tools/remote-host"
 import { ToolDedupe } from "@/runtime/tools/dedupe"
 import { ToolSelection } from "@/runtime/tools/selection"
 import { SessionCompaction } from "@/runtime/session/compaction"
@@ -49,6 +52,7 @@ import { ConfigMarkdown } from "@/runtime/context/config/markdown"
 import { SessionSummary } from "@/runtime/session/summary"
 import { NamedError } from "@allternit/gizzi-util/error.js"
 import { fn } from "@/shared/util/fn"
+import { AnswerTurnGuard } from "@/runtime/session/answer-policy"
 import { SessionProcessor } from "@/runtime/session/processor"
 import { Guardrails } from "@/runtime/session/guardrails"
 import { TaskTool } from "@/runtime/tools/builtins/task"
@@ -79,7 +83,9 @@ import { isMessageAgentSession, MessageAgentTool } from "@/runtime/tools/builtin
 import { SuggestTaskTool } from "@/runtime/tools/builtins/suggest-task"
 import { GrantTaskPermissionTool } from "@/runtime/tools/builtins/grant-task-permission"
 import { THREAD_TOOL_IDS } from "@/runtime/tools/builtins/thread-tools"
-import { isAppBotSession } from "@/runtime/bots/app-bot-routing"
+import { WORKER_BOT_TOOL_IDS } from "@/runtime/tools/builtins/worker-bot-tools"
+import { isAppBotMainChat, isAppBotSession } from "@/runtime/bots/app-bot-routing"
+import { PROJECT_SEND_TOOL_IDS } from "@/runtime/tools/builtins/project-send"
 import { SessionHandoff } from "@/runtime/session/handoff"
 import { SessionPause } from "@/runtime/session/pause"
 import { SessionLimit } from "@/runtime/session/limit"
@@ -124,6 +130,9 @@ export namespace SessionPrompt {
       }
     },
   )
+
+  // A running turn keeps a settings reload from aborting it (Instance.disposeAll).
+  Instance.registerBusyCheck(() => Object.keys(state()).length > 0)
 
   export function assertNotBusy(sessionID: string) {
     const match = state()[sessionID]
@@ -241,12 +250,48 @@ export namespace SessionPrompt {
   export type PromptInput = z.infer<typeof PromptInput>
 
   export const prompt = fn(PromptInput, async (input) => {
+    // A live terminal session runs its turns in the terminal: hand the text over (TerminalLive).
+    const { TerminalLive } = await import("@/runtime/session/terminal-live")
+    if (TerminalLive.attached(input.sessionID)) {
+      const text = input.parts
+        .filter((part): part is MessageV2.TextPart => part.type === "text" && !(part as MessageV2.TextPart).synthetic)
+        .map((part) => part.text)
+        .join("\n")
+      // The terminal echoes the prompt into its transcript, which syncs back as the stored user message.
+      if (input.noReply !== true) TerminalLive.deliver(input.sessionID, text)
+      const info: MessageV2.User = {
+        id: input.messageID ?? Identifier.ascending("message"),
+        sessionID: input.sessionID,
+        role: "user",
+        time: { created: Date.now() },
+        agent: input.agent ?? "build",
+        model: input.model ?? { providerID: TerminalLive.HARNESS, modelID: "terminal" },
+        metadata: { terminal: "delivered" },
+      }
+      return { info, parts: [] } as unknown as MessageV2.WithParts
+    }
+    // No terminal holds it: the engine continues the session, its tools in the terminal's folder.
+    if (input.workdir === undefined && !workdirs.has(input.sessionID)) {
+      const owner = await Session.get(input.sessionID).catch(() => undefined)
+      if (owner?.sourceRef?.harness === TerminalLive.HARNESS) input.workdir = owner.directory
+    }
     // Context handoff: a prompt to a session that handed off lands on its
     // lineage head, and a switch to a model whose window can't hold this one
     // hands off first. Every entry point (HTTP, CLI, bots, routines) goes
     // through here, so no client can talk to a closed window.
     input.sessionID = await beforeTurnHandoff(input)
     const session = await Session.get(input.sessionID)
+    // Self-hosted: refuse the turn before anything is stored when the agent's
+    // custom tools are malformed or shadow a built-in or MCP tool of this
+    // session (resolveTools registers them again each step).
+    const customTools = RemoteToolHost.customToolsFrom(input.metadata)
+    if (customTools.length) {
+      RemoteToolHost.registerCustomTools(
+        input.sessionID,
+        customTools,
+        await reservedToolNames({ sessionID: input.sessionID, mcpProxy: input.mcpProxy }),
+      )
+    }
     await SessionRevert.cleanup(session)
 
     const submittedText = input.parts
@@ -287,12 +332,14 @@ export namespace SessionPrompt {
     // attributed messages. Runs before createUserMessage so both the TUI and
     // headless paths (and routine deliveries, which re-enter through prompt)
     // pick up pending mail exactly once per turn.
+    let confirmInbox: () => Promise<void> = async () => {}
     if (input.parts.length > 0) {
-      const inboxMessages = await BotInbox.collectBotInboxMessages(input.sessionID).catch((error) => {
+      const picked = await BotInbox.collectBotInbox(input.sessionID).catch((error) => {
         log.warn("bot inbox pickup failed; continuing without injected mail", { sessionID: input.sessionID, error })
-        return [] as string[]
+        return { texts: [] as string[], confirm: async () => {} }
       })
-      for (const text of inboxMessages) {
+      confirmInbox = picked.confirm
+      for (const text of picked.texts) {
         input.parts.push({ type: "text", text, synthetic: true })
       }
     }
@@ -303,6 +350,8 @@ export namespace SessionPrompt {
     if (input.workdir !== undefined) setWorkdir(input.sessionID, input.workdir)
 
 const message = await createUserMessage(input)
+    // The injected mail is saved with the turn's user message: drop its staged copy.
+    await confirmInbox()
     await Session.touch(input.sessionID)
 
     // this is backwards compatibility for allowing `tools` to be specified when
@@ -578,8 +627,15 @@ const message = await createUserMessage(input)
     return s[sessionID].abort.signal
   }
 
+  // Loaded once, off the import graph's critical path (it imports Session).
+  let terminalLive: typeof import("@/runtime/session/terminal-live").TerminalLive | undefined
+  void import("@/runtime/session/terminal-live").then((m) => (terminalLive = m.TerminalLive))
+
   export function cancel(sessionID: string) {
     log.info("cancel", { sessionID })
+    // A live terminal session's turn runs in the terminal: Stop goes there,
+    // and the terminal reports idle itself once its turn has really stopped.
+    if (terminalLive?.stop(sessionID)) return
     setupAborts.get(sessionID)?.abort()
     const s = state()
     const match = s[sessionID]
@@ -664,6 +720,7 @@ const message = await createUserMessage(input)
     // Note: On session resumption, state is reset but outputFormat is preserved
     // on the user message and will be retrieved from lastUser below
     let structuredOutput: unknown | undefined
+    let answerGuard: AnswerTurnGuard | undefined
 
     let step = 0
     // O12: one guard per turn. A durable-goal continuation is its own slice:
@@ -720,13 +777,22 @@ const message = await createUserMessage(input)
       }
 
       if (!lastUser) throw new Error("No user message found in stream. This should never happen.")
+      // A synthetic hook/goal continuation cannot replace the person's output contract.
+      const policySource = msgs.findLast(m => m.info.role === 'user' && m.parts.some(p => p.type === 'text' && !p.synthetic && !p.ignored))
+        ?? (!answerGuard ? msgs.findLast(m => m.info.role === 'user') : undefined);
+      if (policySource && answerGuard?.userID !== policySource.info.id) {
+        const text = policySource.parts.filter((p): p is MessageV2.TextPart => p.type === 'text' && !p.synthetic && !p.ignored).map(p => p.text).join('\n');
+        answerGuard = new AnswerTurnGuard(policySource.info.id, text, policySource.info as MessageV2.User);
+        answerGuard.recordSelection(sessionID);
+      }
+
       // A bot turn (allternit-api marked a user message with `bot`) runs as
       // the bot: persona first, no personal instruction files, skills or
       // workspace identity from ~/.gizzi (runtime/bots/bot-turn.ts). Resolved
       // before tools are built so the skill tool sees it too.
       const botTurn = BotTurn.resolve(sessionID, msgs)
 
-      if (step === 1 && session.sourceRef) {
+      if (step === 1 && session.sourceRef && session.sourceRef.harness !== "gizzi-tui") {
         try {
           const { NativeSource } = await import("@/runtime/session/native-source")
           const originText = await NativeSource.originPromptBlock(sessionID)
@@ -750,7 +816,8 @@ const message = await createUserMessage(input)
       if (
         lastAssistant?.finish &&
         !["tool-calls", "unknown"].includes(lastAssistant.finish) &&
-        lastUser.id < lastAssistant.id
+        lastUser.id < lastAssistant.id &&
+        !answerGuard.needsRepair
       ) {
         log.info("exiting loop", { sessionID })
         break
@@ -1108,6 +1175,10 @@ const message = await createUserMessage(input)
         abort,
         fallbackModels: input.fallbackModels,
         guard,
+        ...(answerGuard.required ? {
+          holdText: (part: MessageV2.TextPart) => answerGuard!.hold(part),
+          resetHeldText: (messageID: string) => answerGuard!.restart(messageID, sessionID),
+        } : {}),
       })
       using _ = defer(() => InstructionPrompt.clear(processor.message.id))
 
@@ -1136,7 +1207,7 @@ const message = await createUserMessage(input)
         // If user provided a full system prompt override, use only that; a "+"
         // prefix (or --append-system-prompt) appends — or, on a bot turn, leads.
         const system = await composeTurnSystem({
-          userSystem: lastUser.system,
+          userSystem: lastUser.system ?? (answerGuard.required ? answerGuard.system : undefined),
           bot: botTurn,
           environment: () => SystemPrompt.environment(model),
           instructions: () => InstructionPrompt.system(),
@@ -1180,7 +1251,7 @@ const message = await createUserMessage(input)
       })()
       turnSystemPromise.catch(() => {}) // awaited below; keeps an early failure from going unhandled
 
-      const tools = await resolveTools({
+      const tools = answerGuard.needsRepair ? {} : await resolveTools({
         agent,
         session,
         model,
@@ -1239,6 +1310,7 @@ const message = await createUserMessage(input)
       // The turn-only layer (answer template, card-repair note, opt-in location) goes last among the user layers.
       const turnLayer = turnSystemLayers.get(sessionID)
       if (turnLayer) system.push(turnLayer)
+      if (answerGuard.required) system.push(answerGuard.instruction())
       const format = lastUser.format ?? { type: "text" }
       if (format.type === "json_schema") {
         system.push(STRUCTURED_OUTPUT_SYSTEM_PROMPT)
@@ -1291,7 +1363,7 @@ const message = await createUserMessage(input)
         system,
         tail,
         messages: [
-          ...MessageV2.toModelMessages(msgs, model),
+          ...MessageV2.toModelMessages(answerGuard.required ? answerGuard.context(msgs) : msgs, model),
           ...(isLastStep
             ? [
                 {
@@ -1303,11 +1375,15 @@ const message = await createUserMessage(input)
         ],
         tools,
         model,
-        toolChoice: format.type === "json_schema" ? "required" : undefined,
+        toolChoice: answerGuard.needsRepair ? "none" : format.type === "json_schema" ? "required" : undefined,
         plan,
       }).finally(() => {
         if (deadlineTimer !== undefined) clearTimeout(deadlineTimer)
       })
+
+      if (answerGuard.required && (abort.aborted || processor.message.error || guard.trip)) {
+        await answerGuard.interrupted(processor.message, abort.aborted ? 'Turn cancelled before answer validation.' : guard.trip ? 'A runtime limit ended the turn before answer validation.' : 'The provider failed before answer validation.');
+      }
 
       // If structured output was captured, save it and exit immediately
       // This takes priority because the StructuredOutput tool was called successfully
@@ -1330,7 +1406,7 @@ const message = await createUserMessage(input)
       const cloudHandoff = consumeHandoff(sessionID)
       if (cloudHandoff && !processor.message.handoff) {
         processor.message.handoff = cloudHandoff
-        await Session.updateMessage(processor.message)
+        if (!answerGuard.required) await Session.updateMessage(processor.message)
       }
 
       // Check if model finished (finish reason is not "tool-calls" or "unknown")
@@ -1343,13 +1419,14 @@ const message = await createUserMessage(input)
       if (
         modelFinished &&
         !refusalHandoff &&
+        !answerGuard.needsRepair &&
         !processor.message.error &&
         !abort.aborted &&
         !session.parentID &&
         model.providerID !== CLOUD_PROVIDER_ID
       ) {
         const parts = await MessageV2.parts(processor.message.id)
-        const text = parts
+        const text = answerGuard.required ? answerGuard.text(processor.message.id) : parts
           .filter((p): p is MessageV2.TextPart => p.type === "text" && !p.synthetic)
           .map((p) => p.text)
           .join("\n")
@@ -1362,6 +1439,7 @@ const message = await createUserMessage(input)
               from: `${model.providerID}/${model.id}`,
               refusedID: processor.message.id,
             }
+            if (answerGuard.required) await answerGuard.interrupted({ ...processor.message, finish: 'unknown', time: { created: processor.message.time.created } }, 'Refused response handed off before answer validation.');
             log.info("refused turn: handing off to the open lane", {
               sessionID,
               from: refusalHandoff.from,
@@ -1388,9 +1466,19 @@ const message = await createUserMessage(input)
           }
         }
         if (wrapUp && (modelFinished || wrapUp.left <= 0)) {
-          wrapUp.done = true
+          if (answerGuard.required && !processor.message.error && !abort.aborted) {
+            if (modelFinished || answerGuard.needsRepair) await answerGuard.complete(processor.message, false);
+            else await answerGuard.interrupted(processor.message, 'Usage limit ended the turn before answer validation.');
+          }
+          wrapUp.done = !processor.message.error
           break
         }
+      }
+
+      if (answerGuard.required && (modelFinished || answerGuard.needsRepair) && !processor.message.error && !abort.aborted) {
+        const outcome = await answerGuard.complete(processor.message);
+        if (outcome === 'repairing') continue;
+        if (outcome === 'rejected') break;
       }
 
       if (processor.message.error) {
@@ -1628,6 +1716,7 @@ const message = await createUserMessage(input)
       { modelID: input.model.api.id, providerID: input.model.providerID, npm: input.model.api.npm },
       input.agent,
       input.session.id,
+      { computer: mobileOptions?.computer === true },
     )) {
       const schema = ProviderTransform.schema(input.model, z.toJSONSchema(item.parameters) as any)
       tools[item.id] = tool({
@@ -1693,12 +1782,7 @@ const message = await createUserMessage(input)
       })
     }
 
-    // The user's connectors, through allternit-api's per-user proxy (registered for this turn only).
-    const proxyClient = await McpUserProxy.client(input.session.id)
-    const proxyEntry = McpUserProxy.current(input.session.id)
-    const mcpCatalog = await MCP.toolCatalog(
-      proxyClient && proxyEntry ? { [proxyEntry.server]: proxyClient } : {},
-    )
+    const mcpCatalog = await mcpToolCatalog(input.session.id)
     const mcpTools = Object.entries(mcpCatalog.tools)
     const config = await Config.get()
     const dynamicSelection =
@@ -1739,8 +1823,11 @@ const message = await createUserMessage(input)
         },
       })
     }
+    // A bot's Capabilities page: MCP connectors it has off are not offered to it.
+    const turnBot = BotTurn.get(input.session.id)
     for (const [key, item] of mcpTools) {
       if (dynamicSelection && !loadedMcpTools.has(key)) continue
+      if (!BotTurn.mcpOnForBot(turnBot, mcpCatalog.descriptors[key]?.connectorId)) continue
       const execute = item.execute
       if (!execute) continue
 
@@ -1770,6 +1857,13 @@ const message = await createUserMessage(input)
         if (offConnector) {
           throw new Error(
             `The ${offConnector} connector is turned off for this session. Tell the user it's off; they can turn it on from the + menu → Connectors.`,
+          )
+        }
+        // A bot's Capabilities page: a catalog connector it has off can't be used by it.
+        const botApp = connectorAppOf(args)
+        if (botApp && !BotTurn.connectorOnForBot(turnBot, botApp)) {
+          throw new Error(
+            `The ${botApp} connector is off for this bot. Tell the user; they can turn it on from the bot's page → Capabilities.`,
           )
         }
 
@@ -1887,6 +1981,9 @@ const message = await createUserMessage(input)
       tools[key] = item
     }
 
+    // Self-hosted Agents Server: the agent's custom tools (metadata.selfhost.custom_tools).
+    await addSelfhostCustomTools(tools, { ...input, context, mcpCatalog })
+
     // Per-message mobile composer gating (metadata.tools) — applied last so it
     // wins over agent/config tool assembly for this turn only.
     if (mobileOptions) {
@@ -1928,7 +2025,187 @@ const message = await createUserMessage(input)
       if (!allowed) for (const id of THREAD_TOOL_IDS) delete tools[id]
     }
 
+    // bot_create / vendor_connect: only an app bot's chat has an owner to act for.
+    if (WORKER_BOT_TOOL_IDS.some((id) => id in tools)) {
+      const allowed = await isAppBotSession(input.session.id).catch(() => false)
+      if (!allowed) for (const id of WORKER_BOT_TOOL_IDS) delete tools[id]
+    }
+
+    // project_list / project_send: only a bot's main chat works across projects.
+    if (PROJECT_SEND_TOOL_IDS.some((id) => id in tools)) {
+      const allowed = await isAppBotMainChat(input.session.id).catch(() => false)
+      if (!allowed) for (const id of PROJECT_SEND_TOOL_IDS) delete tools[id]
+    }
+
+    // Session rules (deny `*`, then allow a few) only gate execution elsewhere; drop the
+    // denied tools here so their schemas are not sent on every model call.
+    if (input.session.permission?.length) {
+      const ruleset = PermissionNext.merge(input.agent.permission, input.session.permission)
+      const keys = Object.keys(tools).filter((k) => k !== "invalid")
+      for (const key of PermissionNext.hidden(keys, ruleset)) delete tools[key]
+    }
+    const schemaBytes = Object.values(tools).reduce((n, t) => {
+      try {
+        return n + JSON.stringify((t as any).inputSchema?.jsonSchema ?? (t as any).parameters ?? {}).length
+      } catch {
+        return n
+      }
+    }, 0)
+    log.info("resolved tools", { count: Object.keys(tools).length, schemaBytes, sessionRules: input.session.permission?.length ?? 0 })
+
     return tools
+  }
+
+  type McpCatalog = Awaited<ReturnType<typeof MCP.toolCatalog>>
+
+  /**
+   * The session's MCP tools, named as the model gets them: the instance's
+   * connected servers plus the user's connectors through allternit-api's
+   * per-user proxy (registered for the current turn only). resolveTools offers
+   * these; reservedToolNames keeps custom tools off their names.
+   */
+  export async function mcpToolCatalog(sessionID: string): Promise<McpCatalog> {
+    const proxyClient = await McpUserProxy.client(sessionID)
+    const proxyEntry = McpUserProxy.current(sessionID)
+    return MCP.toolCatalog(proxyClient && proxyEntry ? { [proxyEntry.server]: proxyClient } : {})
+  }
+
+  /**
+   * Every name a self-hosted custom tool of the session may not take, with
+   * what holds it: the tools already offered this step (`tools`, resolveTools),
+   * every registered built-in, StructuredOutput, and every tool of the
+   * session's MCP catalog (all of it, not only the tools loaded this step, so
+   * dynamic tool selection cannot load a clash later in the turn).
+   *
+   * `mcpProxy`: the turn's per-user proxy entry when it is not registered yet
+   * (prompt() checks before it registers the proxy; the check route has no
+   * turn). It is held only while the catalog is read.
+   */
+  export async function reservedToolNames(input: {
+    sessionID: string
+    tools?: Record<string, AITool>
+    mcpCatalog?: McpCatalog
+    mcpProxy?: unknown
+  }): Promise<RemoteToolHost.ReservedTool[]> {
+    let catalog = input.mcpCatalog
+    if (!catalog) {
+      const release =
+        input.mcpProxy !== undefined && !McpUserProxy.current(input.sessionID)
+          ? McpUserProxy.register(input.sessionID, input.mcpProxy)
+          : () => {}
+      try {
+        catalog = await mcpToolCatalog(input.sessionID)
+      } finally {
+        release()
+      }
+    }
+    const descriptors = catalog.descriptors
+    const mcp: RemoteToolHost.ReservedTool[] = Object.values(descriptors).map((d) => ({
+      kind: "mcp",
+      name: d.qualifiedName,
+      server: d.serverName,
+      tool: d.originalName,
+    }))
+    const builtins = [
+      ...Object.keys(input.tools ?? {}).filter((name) => !(name in descriptors)),
+      ...(await ToolRegistry.ids({ computer: true })),
+      "StructuredOutput",
+    ]
+    return [...builtins, ...mcp]
+  }
+
+  /**
+   * Offer the agent's custom tools to the model (self-hosted Agents Server,
+   * `GIZZI_TOOL_HOST=remote`). The server sends them in every turn's
+   * `metadata.selfhost.custom_tools`; they become this session's custom tools
+   * (replacing the last turn's), and a call to one goes through the remote
+   * tool host to the server's queue, where an SDK worker runs it. A custom
+   * tool named like a built-in, MCP or sandbox tool is refused: the turn
+   * fails with a `custom_tool_conflict` error. A subagent's child session gets
+   * its root session's custom tools, and its calls go to the root's queue.
+   *
+   * @internal Exported for testing
+   */
+  export async function addSelfhostCustomTools(
+    tools: Record<string, AITool>,
+    input: {
+      session: Session.Info
+      model: Provider.Model
+      agent: Agent.Info
+      metadata?: Record<string, unknown>
+      context: (args: Record<string, unknown>, options: ToolCallOptions) => Tool.Context
+      /** The session's MCP catalog when the caller already read it (resolveTools). */
+      mcpCatalog?: McpCatalog
+    },
+  ) {
+    if (!RemoteToolHost.enabled()) return
+    let custom: RemoteToolHost.CustomTool[]
+    RemoteToolHost.linkSession(input.session.id, input.session.parentID)
+    if (input.session.parentID) {
+      // A subagent (task, agent_swarm) runs in a child session the server does
+      // not know: its turns carry no metadata, and its calls go to the root's
+      // queue. It gets the root's custom tools; the root checked them against
+      // the same registry and MCP catalog, and a name the child already has
+      // stays the child's. The child's disable map and agent permissions drop
+      // them like any built-in (LLM.resolveTools).
+      custom = (await RemoteToolHost.customToolsFor(input.session.id)).filter((def) => {
+        if (!(def.name in tools)) return true
+        log.warn("custom tool not offered to the subagent: the name is taken", {
+          sessionID: input.session.id,
+          tool: def.name,
+        })
+        return false
+      })
+    } else {
+      custom = RemoteToolHost.customToolsFrom(input.metadata)
+      const reserved = custom.length
+        ? await reservedToolNames({ sessionID: input.session.id, tools, mcpCatalog: input.mcpCatalog })
+        : []
+      RemoteToolHost.registerCustomTools(input.session.id, custom, reserved)
+    }
+    for (const def of custom) {
+      tools[def.name] = tool({
+        id: def.name as any,
+        description: def.description,
+        inputSchema: jsonSchema(ProviderTransform.schema(input.model, def.inputSchema as any) as any),
+        async execute(args: Record<string, unknown>, options: ToolCallOptions) {
+          const ctx = input.context(args, options)
+          await Plugin.trigger(
+            "tool.execute.before",
+            { tool: def.name, sessionID: ctx.sessionID, callID: ctx.callID },
+            { args },
+          )
+          const result = await ToolDedupe.execute({
+            sessionID: ctx.sessionID,
+            messageID: ctx.messageID,
+            tool: def.name,
+            args,
+            // The dispatcher forwards it too (RemoteToolHost.handles); it never runs here.
+            run: () =>
+              ToolDispatcher.executeInitialized(def.name, args, ctx, (nextArgs, nextCtx) =>
+                RemoteToolHost.execute(def.name, nextArgs, nextCtx),
+              ),
+          })
+          const truncated = await Truncate.output(SecretRedactor.text(result.output), {}, input.agent)
+          const output = {
+            title: result.title,
+            metadata: {
+              ...SecretRedactor.deep(result.metadata),
+              custom: true,
+              truncated: truncated.truncated,
+              ...(truncated.truncated && { outputPath: truncated.outputPath }),
+            },
+            output: truncated.content,
+          }
+          await Plugin.trigger(
+            "tool.execute.after",
+            { tool: def.name, sessionID: ctx.sessionID, callID: ctx.callID, args },
+            output,
+          )
+          return output
+        },
+      })
+    }
   }
 
   const MobileTools = z.object({
@@ -1936,6 +2213,7 @@ const message = await createUserMessage(input)
     research: z.boolean().optional(),
     toolAccess: z.enum(["auto", "on_demand", "always"]).optional(),
     disabledConnectors: z.array(z.string()).optional(),
+    computer: z.boolean().optional(),
   })
 
   export interface MobileToolOptions {
@@ -1945,6 +2223,10 @@ const message = await createUserMessage(input)
     /** Connector ids (open-connector app ids, e.g. "github") the user turned
      * off for this session in the composer's + menu. */
     disabledConnectors?: string[]
+    /** Computer toolset on for this turn only (contracts/pet-offers
+     * `turnOptions.computer`), even when GIZZI_ENABLE_COMPUTER_TOOL is unset.
+     * Never persisted; the server's lease and confirm gates still apply. */
+    computer?: boolean
   }
 
   /**
@@ -1955,6 +2237,12 @@ const message = await createUserMessage(input)
    *
    * @internal Exported for testing
    */
+  export function connectorAppOf(args: unknown): string | undefined {
+    if (!args || typeof args !== "object") return undefined
+    const actionId = (args as { actionId?: unknown }).actionId
+    return typeof actionId === "string" ? actionId.split(".")[0]?.toLowerCase() || undefined : undefined
+  }
+
   export function disabledConnectorFor(options: MobileToolOptions | undefined, args: unknown): string | undefined {
     const disabled = options?.disabledConnectors
     if (!disabled?.length || !args || typeof args !== "object") return undefined
@@ -2094,9 +2382,14 @@ const message = await createUserMessage(input)
       id: part.id ?? Identifier.ascending("part"),
     })
 
+    // The person's own text, to tell which attachments the composer already inlined.
+    const userText = input.parts
+      .flatMap((p) => (p.type === "text" && !p.synthetic ? [p.text] : []))
+      .join("\n")
     const parts = await Promise.all(
       input.parts.map(async (part): Promise<Draft<MessageV2.Part>[]> => {
         if (part.type === "file") {
+          const partFilename = part.filename
           // before checking the protocol we check if this is an mcp resource because it needs special handling
           if (part.source?.type === "resource") {
             const { clientName, uri } = part.source
@@ -2164,7 +2457,38 @@ const message = await createUserMessage(input)
 
             return pieces
           }
-          const url = new URL(part.url)
+          if (isRelativeUrl(part.url)) {
+            // An upload path from allternit-api: fetch it now (see upload-part.ts).
+            const resolved = await resolveUploadUrl(part.url, part.mime)
+            if (!resolved.ok) {
+              log.warn("attachment could not be loaded", { filename: part.filename, reason: resolved.reason })
+              return [
+                {
+                  messageID: info.id,
+                  sessionID: input.sessionID,
+                  type: "text",
+                  synthetic: true,
+                  text: `The attachment ${part.filename ?? "file"} could not be loaded (${resolved.reason}).`,
+                },
+              ]
+            }
+            part = { ...part, url: resolved.url }
+          }
+          let url: URL
+          try {
+            url = new URL(part.url)
+          } catch {
+            log.warn("attachment url is not a valid URL", { filename: part.filename })
+            return [
+              {
+                messageID: info.id,
+                sessionID: input.sessionID,
+                type: "text",
+                synthetic: true,
+                text: `The attachment ${part.filename ?? "file"} has an invalid URL and was skipped.`,
+              },
+            ]
+          }
           switch (url.protocol) {
             case "data:":
               if (part.mime === "text/plain") {
@@ -2181,7 +2505,8 @@ const message = await createUserMessage(input)
                     sessionID: input.sessionID,
                     type: "text",
                     synthetic: true,
-                    text: Buffer.from(part.url, "base64url").toString(),
+                    // Capped like every data file (MessageV2.dataFileText): a big file is a note, not the whole text.
+                    text: MessageV2.dataFileText(part, userText, { bare: true }),
                   },
                   {
                     ...part,
@@ -2275,7 +2600,7 @@ const message = await createUserMessage(input)
                         ...result.attachments.map((attachment) => ({
                           ...attachment,
                           synthetic: true,
-                          filename: attachment.filename ?? part.filename,
+                          filename: attachment.filename ?? partFilename,
                           messageID: info.id,
                           sessionID: input.sessionID,
                         })),
@@ -2862,11 +3187,15 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     const session = await Session.get(input.sessionID)
     const command = await Command.get(input.command)
     const agentName = command.agent ?? input.agent ?? (await Agent.defaultAgent())
+    // `review security|perf|tests|diff [target]`: a focused preset prompt with
+    // the shared findings format; the rest of the arguments is the target.
+    const preset = input.command === Command.Default.REVIEW ? matchReviewPreset(input.arguments) : undefined
+    if (preset) input = { ...input, arguments: preset.target }
 
     const raw = input.arguments.match(argsRegex) ?? []
     const args = raw.map((arg) => arg.replace(quoteTrimRegex, ""))
 
-    const templateCommand = await command.template
+    const templateCommand = preset ? reviewPresetPrompt(preset.name) : await command.template
 
     const placeholders = templateCommand.match(placeholderRegex) ?? []
     let last = 0
@@ -3047,7 +3376,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     })
     // A subscription (fabric) model runs only on a human send (D16), and the
     // send's human action belongs to the reply — keep the default title.
-    if (Provider.isFabricModel(model)) return
+    if (Provider.isHumanSendOnly(model)) return
     const modelMessages = MessageV2.toModelMessages(contextMessages, model)
     // Title gen calls LLM.stream directly instead of going through loop(), so it
     // doesn't get loop()'s folding of lastUser.system into the system array — fold

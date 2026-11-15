@@ -50,6 +50,9 @@ final class AgentHubStore: ObservableObject {
             }
             do {
                 self.agents = try await self.agentClient.listAgents()
+                // The bot list changed: refresh Siri/Shortcuts phrases and Spotlight.
+                AllternitShortcuts.updateAppShortcutParameters()
+                await SpotlightIndexer.refresh()
             } catch is CancellationError {
                 // View went away mid-flight — keep current state.
             } catch {

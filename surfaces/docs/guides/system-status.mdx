@@ -1,0 +1,33 @@
+---
+title: System status
+description: "Where to see whether Allternit services are working, and what each state means"
+---
+
+The status page shows whether the parts of Allternit are working, as measured by our own checks over the last 90 days. It is not a promise of uptime.
+
+## Where to see it
+
+- **Status page:** [status.allternit.com](https://status.allternit.com). Each component shows its current state and a 90-day bar.
+- **In the app:** Desktop, the web app, the phone layout and the mobile web app have a System status item in Help. iOS has it in Settings. When an open incident touches something the app uses, a short notice appears. If the status feed cannot be reached, the app shows nothing.
+- **Terminal:** `gizzi status --services`. See [gizzi status](/cli/status).
+- **Feeds:** an Atom feed at `https://status.allternit.com/feed.xml` for incidents, and JSON at `https://status.allternit.com/api/v1/status.json`. History is at `/api/v1/history.json` and incidents at `/api/v1/incidents.json`.
+
+## What each state means
+
+| State | Meaning |
+|---|---|
+| Operational | Our checks pass |
+| Degraded | Something is failing or slow, but the service mostly works |
+| Down | A critical check is failing from more than one place |
+| Maintenance | Planned work, announced on the page |
+| Unknown | Not enough data yet |
+
+The Other sites component shows Degraded at most, because those sites are not critical.
+
+## Incidents
+
+An incident has a title, the components it affects, and dated updates. Some are opened automatically with fixed wording; we edit or add to them by hand when we know more. Resolved incidents stay listed.
+
+## If the page and your experience disagree
+
+Checks run every minute from two places. A short problem or one affecting only your account may not show. Contact support at support@allternit.com and include what you saw and when.

@@ -7,44 +7,218 @@ import Foundation
 /// instead of duplicating the mesh-proxy dance.
 @MainActor
 enum InstanceConnection {
-    /// A resolved connection target: the base URL to talk to (already
-    /// mesh-proxied if needed) plus the display name of the instance it
-    /// actually came from — which can differ from `store.preferredInstance`
-    /// when resolution fell back to a non-mesh instance or the static
-    /// default.
-    struct Resolved {
-        let baseURL: URL
-        let instanceName: String?
+    /// How a resolved target is reached.
+    enum Route: Sendable, Equatable {
+        /// An explicit gizzi URL (DEBUG `-gizzi-url`, a baked build setting)
+        /// or a registered instance's public tunnel URL.
+        case direct
+        /// A registered mesh instance through the embedded tailnet proxy.
+        case mesh
+        /// The user's computer through the cloud-api runtime relay.
+        case relay(runtimeId: String)
     }
 
-    /// Resolves where to talk to: the preferred registered instance, proxied
-    /// through `MeshClient` when it's a mesh address. In DEBUG builds with an
-    /// explicit `-gizzi-url` override or a baked `ALLTERNIT_GIZZI_CODE_URL`,
-    /// falls back to that static URL. In release builds there is no silent
-    /// static fallback — callers must have a registered instance or they get
-    /// `nil` and should show a "no harness" state.
+    /// A resolved connection target: the base URL to talk to (already
+    /// mesh-proxied if needed; an `allternit-relay://<runtimeId>`
+    /// placeholder for the relay, which `APIClient` and the helpers below
+    /// recognise) plus the display name of the instance or computer it
+    /// came from.
+    struct Resolved: Sendable {
+        let baseURL: URL
+        let instanceName: String?
+        let route: Route
+
+        init(baseURL: URL, instanceName: String?, route: Route = .direct) {
+            self.baseURL = baseURL
+            self.instanceName = instanceName
+            self.route = route
+        }
+
+        var isRelay: Bool {
+            if case .relay = route { return true }
+            return false
+        }
+    }
+
+    /// Resolves where gizzi-code calls go. Order:
+    ///
+    /// 1. DEBUG: an explicit `-gizzi-url` launch argument.
+    /// 2. The instance the user pinned in the code thread's instance menu
+    ///    (brought up over the mesh when it is a mesh address).
+    /// 3. A registered mesh instance while the mesh node is already up.
+    /// 4. An online registered instance with a public (non-mesh) URL.
+    /// 5. The relay to the user's active computer (`RuntimeRelayStore`) —
+    ///    the Release default, the way m.allternit.com reaches the runtime.
+    /// 6. A baked `ALLTERNIT_GIZZI_CODE_URL` (DEBUG builds fall back to the
+    ///    local dev server here).
+    /// 7. A registered mesh instance, starting the mesh for it (up to ~60 s).
+    ///
+    /// nil when nothing is reachable: callers show `ConnectComputerView`.
     static func resolve(from store: InstanceStore) async -> Resolved? {
-        if let instance = store.preferredInstance, let url = instance.instanceURL {
+        #if DEBUG
+        if let override = UserDefaults.standard.string(forKey: "gizzi-url"),
+           let url = URL(string: override) {
+            return Resolved(baseURL: url, instanceName: nil, route: .direct)
+        }
+        #endif
+
+        if let pinnedID = store.selectedInstanceID,
+           let pinned = store.instances.first(where: { $0.id == pinnedID }),
+           let url = pinned.instanceURL {
             if !url.isMeshAddress {
-                return Resolved(baseURL: url, instanceName: instance.name)
+                return Resolved(baseURL: url, instanceName: pinned.name, route: .direct)
             }
             if let proxyURL = await resolveMeshProxyBaseURL(for: url) {
-                return Resolved(baseURL: proxyURL, instanceName: instance.name)
+                return Resolved(baseURL: proxyURL, instanceName: pinned.name, route: .mesh)
             }
-            // Mesh instance preferred but unreachable. Do not silently fall back
-            // to a different instance; the user must pick another or fix mesh.
+            // A pinned mesh instance that can't come up: don't silently
+            // switch to another target the user didn't choose.
             return nil
         }
-        // Static gizzi URL is only usable when explicitly configured (DEBUG
-        // launch arg or baked Info.plist). Release builds without a registered
-        // instance resolve to nil.
-        guard AppConfig.hasUsableGizziCodeURL else { return nil }
-        return Resolved(baseURL: AppConfig.gizziCodeBaseURL, instanceName: nil)
+
+        if MeshClient.shared.state.isUp,
+           let mesh = store.instances.first(where: { $0.isOnline && $0.isMeshInstance }),
+           let url = mesh.instanceURL,
+           let proxyURL = try? await MeshClient.shared.localProxyBaseURL(forMeshURL: url) {
+            return Resolved(baseURL: proxyURL, instanceName: mesh.name, route: .mesh)
+        }
+
+        if let tunnel = store.instances.first(where: { $0.isOnline && !$0.isMeshInstance }),
+           let url = tunnel.instanceURL {
+            return Resolved(baseURL: url, instanceName: tunnel.name, route: .direct)
+        }
+
+        let relay = RuntimeRelayStore.shared
+        if let runtimeId = await relay.resolveActiveRuntimeId() {
+            return Resolved(
+                baseURL: RuntimeRelayClient.relayBaseURL(runtimeId: runtimeId),
+                instanceName: relay.devices.first(where: { $0.id == runtimeId })?.displayName,
+                route: .relay(runtimeId: runtimeId)
+            )
+        }
+
+        if AppConfig.hasUsableGizziCodeURL {
+            return Resolved(baseURL: AppConfig.gizziCodeBaseURL, instanceName: nil, route: .direct)
+        }
+
+        if let mesh = store.instances.first(where: { $0.isOnline && $0.isMeshInstance })
+            ?? store.instances.first(where: { $0.isMeshInstance }),
+           let url = mesh.instanceURL,
+           let proxyURL = await resolveMeshProxyBaseURL(for: url) {
+            return Resolved(baseURL: proxyURL, instanceName: mesh.name, route: .mesh)
+        }
+        return nil
     }
 
     /// Convenience resolver using the shared instance store.
     static func resolve() async -> Resolved? {
         await resolve(from: InstanceStore.shared)
+    }
+
+    /// The gizzi-code base URL a client built with `baseURL` should call
+    /// now. A client constructed with the static default
+    /// (`AppConfig.gizziCodeBaseURL`, i.e. every `.shared` client) resolves
+    /// per call through `resolve()`; an explicit base URL is used as given.
+    /// Throws `RuntimeRelayError.noComputer` when nothing is reachable.
+    nonisolated static func gizziBaseURL(for baseURL: URL) async throws -> URL {
+        guard baseURL == AppConfig.gizziCodeBaseURL else { return baseURL }
+        guard let resolved = await resolve() else { throw RuntimeRelayError.noComputer }
+        return resolved.baseURL
+    }
+
+    /// An `APIClient` for gizzi-code calls from a client built with
+    /// `baseURL` (see `gizziBaseURL(for:)`). Relay placeholders are sent
+    /// through `RuntimeRelayClient` by `APIClient.send` itself.
+    nonisolated static func gizziClient(for baseURL: URL) async throws -> APIClient {
+        APIClient(
+            baseURL: try await gizziBaseURL(for: baseURL),
+            tokenProvider: { try await AuthManager.shared.getToken() }
+        )
+    }
+
+    // MARK: - One transport for runtime calls
+
+    /// Sends `request`: through the relay when its URL is an
+    /// `allternit-relay://` placeholder, otherwise straight out.
+    nonisolated static func data(for request: URLRequest, session: URLSession = .shared) async throws -> (Data, URLResponse) {
+        if let runtimeId = RuntimeRelayClient.runtimeId(in: request.url) {
+            return try await RuntimeRelayClient.shared.send(request, runtimeId: runtimeId)
+        }
+        return try await session.data(for: request)
+    }
+
+    /// Streaming (SSE) variant of `data(for:)`.
+    nonisolated static func bytes(for request: URLRequest, session: URLSession = .shared) async throws -> (URLSession.AsyncBytes, URLResponse) {
+        if let runtimeId = RuntimeRelayClient.runtimeId(in: request.url) {
+            return try await RuntimeRelayClient.shared.stream(request, runtimeId: runtimeId)
+        }
+        return try await session.bytes(for: request)
+    }
+
+    /// A WebSocket for `request` (an `http(s)`/`ws(s)` URL, or a relay
+    /// placeholder). Relayed sockets come back resumed and past the tunnel
+    /// handshake; direct ones are returned unresumed. Either way the caller
+    /// calls `resume()` (a no-op on a running task).
+    nonisolated static func webSocketTask(for request: URLRequest, session: URLSession = .shared) async throws -> URLSessionWebSocketTask {
+        if let runtimeId = RuntimeRelayClient.runtimeId(in: request.url) {
+            var path = "/"
+            if let url = request.url, let components = URLComponents(url: url, resolvingAgainstBaseURL: false) {
+                path = components.percentEncodedPath.isEmpty ? "/" : components.percentEncodedPath
+                if let query = components.percentEncodedQuery, !query.isEmpty { path += "?\(query)" }
+            }
+            return try await RuntimeRelayClient.shared.webSocket(path: path, runtimeId: runtimeId)
+        }
+        var direct = request
+        if let url = request.url, var components = URLComponents(url: url, resolvingAgainstBaseURL: false) {
+            if components.scheme == "https" { components.scheme = "wss" }
+            if components.scheme == "http" { components.scheme = "ws" }
+            direct.url = components.url ?? url
+        }
+        return session.webSocketTask(with: direct)
+    }
+
+    // MARK: - Runtime API (allternit-api on the user's computer)
+
+    /// Sends a request for an allternit-api route that lives on the user's
+    /// computer, not on cloud-api — `/api/aci/*`, `/api/factory/*`,
+    /// `/api/v1/cowork/sessions` — the way the PWA's fetch interceptor
+    /// relays them (they are not cloud control-plane paths,
+    /// cloud-control-plane-paths.ts):
+    ///
+    /// - Environment paired to cloud → the paired runtime's relay.
+    /// - `apiBaseURL` is the cloud host (Release) → the active computer's
+    ///   relay (`RuntimeRelayStore`); `RuntimeRelayError.noComputer` when
+    ///   none.
+    /// - Otherwise (DEBUG against a local allternit-api) → direct.
+    nonisolated static func runtimeAPIData(for request: URLRequest, session: URLSession = .shared) async throws -> (Data, URLResponse) {
+        if let runtimeId = try await runtimeAPIRelayTarget() {
+            return try await RuntimeRelayClient.shared.send(request, runtimeId: runtimeId)
+        }
+        return try await session.data(for: request)
+    }
+
+    /// Streaming variant of `runtimeAPIData(for:)`.
+    nonisolated static func runtimeAPIBytes(for request: URLRequest, session: URLSession = .shared) async throws -> (URLSession.AsyncBytes, URLResponse) {
+        if let runtimeId = try await runtimeAPIRelayTarget() {
+            return try await RuntimeRelayClient.shared.stream(request, runtimeId: runtimeId)
+        }
+        return try await session.bytes(for: request)
+    }
+
+    /// The runtime id runtime-API calls relay through, nil for direct.
+    private nonisolated static func runtimeAPIRelayTarget() async throws -> String? {
+        let (environment, paired) = await MainActor.run {
+            (EnvironmentStore.shared.environment, EnvironmentStore.shared.pairedRuntimeId)
+        }
+        if environment == .cloud {
+            guard let paired, !paired.isEmpty else { throw RuntimeRelayError.noComputer }
+            return paired
+        }
+        guard AppConfig.apiBaseURL.host == AppConfig.cloudAPIBaseURL.host else { return nil }
+        guard let runtimeId = await RuntimeRelayStore.shared.resolveActiveRuntimeId() else {
+            throw RuntimeRelayError.noComputer
+        }
+        return runtimeId
     }
 
     /// Tunnels a localhost URL (e.g. `http://localhost:3000`) to the active

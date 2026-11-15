@@ -1,0 +1,74 @@
+---
+title: Allternit for Android
+description: "Install the Allternit app on an Android phone from Google Play, or the version with Phone Link from allternit.com/android so your bots can use the phone's apps."
+---
+
+Allternit for Android is the app version of [m.allternit.com](https://m.allternit.com). It uses the same account as ai.allternit.com, Allternit Desktop and the iPhone app, so your chats, bots, projects and settings are the same everywhere. It needs Android 8 or later and Chrome, or another browser that supports Trusted Web Activities.
+
+There are two versions with the same app ID. Pick one:
+
+- **Google Play** (most people): [Get Allternit on Google Play](https://play.google.com/store/apps/details?id=com.allternit.app). Updates come from Google Play.
+- **With Phone Link**: from allternit.com/android. Use this one if your bots should use the phone's other apps. Allternit Desktop installs it for you when you link the phone.
+
+## Install from Google Play
+
+1. On the phone, open [allternit.com/play](https://allternit.com/play), or search for **Allternit** in the Play Store.
+2. Tap **Install**.
+3. Open **Allternit** and sign in.
+
+## Install the version with Phone Link
+
+1. On the phone, open [allternit.com/android](https://allternit.com/android). The download starts.
+2. Open the downloaded file. If Android asks, allow your browser to **Install unknown apps**, then go back and tap **Install**.
+3. Open **Allternit** from your home screen and sign in.
+
+The app opens your workspace full-screen, with no address bar. Links to m.allternit.com open in the app too. Without a browser that supports Trusted Web Activities, it opens the same page with the address bar showing.
+
+## Phone Link
+
+The version from allternit.com/android is also the Phone Link helper. The Google Play version doesn't include Phone Link. Phone Link lets your bots use the apps that are signed in on this phone. To turn it on, connect the phone to your computer with a USB cable and follow **Link a phone** in Allternit Desktop. If the phone has the Google Play version, Desktop replaces it with the Phone Link version. You stay signed in. See [Phone Link](/guides/phone-link).
+
+To see Phone Link's status (paired computers, **Stop** and **Start**, **Revoke**), tap its notification. You can also long-press the Allternit icon and tap **Phone Link**.
+
+## Error offers
+
+With the Phone Link version, your bot can notice when another app on the phone shows an error or crash dialog (for example "keeps stopping") and offer to help. It is off until you turn it on.
+
+- **Turn it on:** open Phone Link's status screen (tap its notification) and turn on **Spot errors in other apps**. While it's on, the screen says it is watching for errors.
+- **What you see:** a notification that says "Your bot spotted an error. Fix it?" The notification never shows the error text or the app's name, so nothing private appears on the lock screen.
+- **Fix it:** opens m.allternit.com with the error text attached in your bot's quick chat. Nothing is sent until you send it. The text is passed in the part of the link that never reaches a server.
+- **Mute:** tap **Mute** on the notification to stop offers from that app. The status screen lists muted apps and your block list, where you can add or remove apps.
+- **Never read:** password managers, banking and payment apps, and messaging apps are skipped before anything is read. Password fields are never read.
+
+Phone Link reads only dialog windows for this, and only the text the phone's accessibility service already sees. The Google Play version doesn't read other apps; it shows offers inside Allternit when a bot's run fails, the same as [m.allternit.com](/guides/bot-avatars#on-the-web-the-phone-layout-and-the-pwa).
+
+## Shortcuts, sharing and notifications
+
+Long-press the Allternit icon for four shortcuts: **Ask a bot**, **Hand off a task**, **Needs you** and **Call main bot**. Each opens the app at that screen.
+
+To send a link or some text to a bot, tap **Share** in any app and choose **Allternit**. Text and links only; files and images are not shared.
+
+Notifications appear under **Allternit**, with their action buttons, not under Chrome. On Android 13 and later the app asks for notification permission the first time the site requests it. If you turn it off, use **Settings → Apps → Allternit → Notifications**.
+
+## Rating the app
+
+If you installed Allternit from Google Play, the app may show Google Play's in-app review card when you open it, after you have used it several times over a few days. The app opens right after, whether or not you rate. Google Play decides whether the card shows. The app installed from allternit.com/android has no rating prompt.
+
+The app keeps its counters on your phone only. Nothing about them is sent to Allternit.
+
+## Updates
+
+Allternit Desktop updates the app when it sets up or relinks the phone. To update it yourself, open [allternit.com/android](https://allternit.com/android) again and install over the old version. Your sign-in stays.
+
+## Moving from the old Phone Link app
+
+Phone Link before version 0.4.0 was a separate app called **Allternit Phone Link**. When Allternit Desktop next sets up the phone, it removes the old app, installs this one and links the phone again. If you installed this app yourself first, uninstall **Allternit Phone Link** in **Settings → Apps**.
+
+## For developers
+
+- App ID `com.allternit.app`. The Kotlin classes keep the `com.allternit.phonelink` package. Source: `surfaces/allternit-mobile/android`.
+- The launcher is `LauncherActivity` from `androidbrowserhelper` (a Trusted Web Activity around `https://m.allternit.com/`). Its asset links are served from allternit-ai `public/.well-known/assetlinks.json`, with the release cert `3F:8A:39:51:…:E0:67` (sideloaded builds) and the Google Play app-signing cert `8D:4C:4F:BE:…:F9:4B` (Play installs).
+- Each build is published under `runtime.allternit.com/phone-link/android/<version>/` and pinned in Desktop's `phone-android-helper.ts`. The `/android` redirect in the www site's `public/_redirects` points at the current build. Move it with every new pin.
+- Shortcuts are static (`res/xml/shortcuts.xml`, in `src/main`; the Phone Link build overrides the file with the same four plus **Phone Link**). They open `https://m.allternit.com/?allternit_open=ask|handoff|inbox|call` through `LauncherActivity`.
+- The share target is the `METADATA_SHARE_TARGET` meta-data on `LauncherActivity` (JSON in the `share_target` string, GET `/share-target` with `title` and `text`) plus an `ACTION_SEND` `text/plain` intent filter. androidbrowserhelper 2.5.0 has no `url` parameter, so a shared link arrives in `text`.
+- Notification delegation is `DelegationService` plus `NotificationPermissionRequestActivity` (both from `androidbrowserhelper`) and the `POST_NOTIFICATIONS` permission, declared in `src/main`.

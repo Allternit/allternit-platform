@@ -1,4 +1,5 @@
 import type { Provider } from "@/runtime/providers/provider"
+import { ModelThinking } from "@/runtime/providers/discovery/model-thinking"
 
 /**
  * An installed CLI (claude, codex, kimi…) picks and validates its own model,
@@ -16,7 +17,15 @@ export function cliModel(
   if (!modelID || modelID.includes("/")) return undefined
   const template = Object.values(provider.models)[0]
   if (!template) return undefined
-  const model: Provider.Model = { ...template, id: modelID, name: modelID, api: { ...template.api, id: modelID }, variants: {} }
+  // The CLI takes the level as its own flag (local-cli-driver), so a variant carries no SDK options.
+  const levels = ModelThinking.of(modelID)?.levels ?? []
+  const model: Provider.Model = {
+    ...template,
+    id: modelID,
+    name: modelID,
+    api: { ...template.api, id: modelID },
+    variants: Object.fromEntries(levels.map((level) => [level, {}])),
+  }
   provider.models[modelID] = model
   log?.info("cli model added", { providerID: provider.id, modelID })
   return model

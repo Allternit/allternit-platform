@@ -15,6 +15,12 @@ name = "platform-stripe-plan"
 path = "src/bin/platform_stripe_plan.rs"
 required-features = ["stripe-plan-cli"]
 
+# Operator tool for the Meet bot account profiles (docs/meetings/BOT-ACCOUNTS.md),
+# run on the cloud-api host with MEETINGS_BOT_PROFILE_KEY in env.
+[[bin]]
+name = "meetings-bot-profile"
+path = "src/bin/meetings_bot_profile.rs"
+
 [features]
 stripe-plan-cli = []
 triage-eval = []
@@ -34,6 +40,7 @@ tower-http = { workspace = true, features = ["cors", "trace"] }
 # Serialization
 serde = { workspace = true }
 serde_json = { workspace = true }
+jsonschema = { version = "0.58.6", default-features = false }
 
 # Async runtime
 tokio = { workspace = true, features = ["full"] }
@@ -72,12 +79,15 @@ bytes = { workspace = true }
 sha2 = { workspace = true }
 sha1 = { workspace = true }
 urlencoding = { workspace = true }
+url = "2"
 hmac = { workspace = true }
 hex = { workspace = true }
+# Meet bot profile sealing (services::bot_profiles; ChaCha20-Poly1305).
+ring = { workspace = true }
 ed25519-dalek = { workspace = true }
 jsonwebtoken = { version = "10", features = ["aws_lc_rs"] }
 aws-lc-rs = "1"
-reqwest = { workspace = true, default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { workspace = true, default-features = false, features = ["json", "rustls-tls", "http2"] }
 cron = "0.12"
 tempfile = { workspace = true }
 regex = { workspace = true }

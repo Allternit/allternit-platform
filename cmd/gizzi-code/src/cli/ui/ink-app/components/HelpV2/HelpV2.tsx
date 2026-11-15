@@ -64,7 +64,7 @@ export function HelpV2({
   const t5_2 = insideModal ? undefined : maxHeight;
   const t6_2 = <Tabs title={false ? "/help" : `Gizzi Code v${MACRO.VERSION}`} color="professionalBlue" defaultTab="general">{tabs}</Tabs>;
 
-  const t7 = <Box marginTop={1}><Text>For more help:{" "}<Link url="https://docs.gizziio.com/overview" /></Text></Box>;
+  const t7 = <Box marginTop={1}><Text>For more help:{" "}<Link url="https://docs.allternit.com/cli/overview" /></Text></Box>;
 
   const t8 = <Box marginTop={1}><Text dimColor={true}>{exitState.pending ? <>Press {exitState.keyName} again to exit</> : <Text italic={true}>{dismissShortcut} to cancel</Text>}</Text></Box>;
 

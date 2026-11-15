@@ -12,7 +12,7 @@ All fallback retry policy endpoints require the caller to be an organization own
 ## Base URL
 
 ```text
-https://api.allternit.com/api/v1/admin/fallback-retry-policy
+http://127.0.0.1:8013/api/v1/admin/fallback-retry-policy
 ```
 
 For local development:
@@ -45,7 +45,7 @@ Retryable statuses: `refusal`, `error`, `rate_limited`, `budget_exceeded`, `dlp_
 ## Get the policy
 
 ```bash
-curl https://api.allternit.com/api/v1/admin/fallback-retry-policy \
+curl http://127.0.0.1:8013/api/v1/admin/fallback-retry-policy \
   -H "Authorization: Bearer $ADMIN_TOKEN"
 ```
 
@@ -69,7 +69,7 @@ curl https://api.allternit.com/api/v1/admin/fallback-retry-policy \
 ## Update the policy
 
 ```bash
-curl -X PUT https://api.allternit.com/api/v1/admin/fallback-retry-policy \
+curl -X PUT http://127.0.0.1:8013/api/v1/admin/fallback-retry-policy \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -90,6 +90,12 @@ curl -X PUT https://api.allternit.com/api/v1/admin/fallback-retry-policy \
   "updated": true
 }
 ```
+
+## Alerts when a provider fails
+
+When a provider fails 4 or more times within 60 seconds, the gateway routes requests away from it for 30 seconds and opens an `llm_provider_cooldown` attention item. When every provider in the chain is cooling down, it opens an `llm_chain_exhausted` item and tries the provider whose cooldown ends first. There is one open item per provider.
+
+Provider health is operator data. The items go to the user set in `ALLTERNIT_OPS_ALERT_OWNER`. On a single-user runtime (Desktop, or a bot's computer) without that variable, they go to that user. On a shared runtime without it, the gateway only logs the event.
 
 ## Error codes
 

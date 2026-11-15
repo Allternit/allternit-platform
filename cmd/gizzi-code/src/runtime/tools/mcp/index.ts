@@ -44,6 +44,7 @@ import {
 import { McpUserProxy } from "@/runtime/tools/mcp/user-proxy"
 import { getStreamContext } from "@/runtime/session/stream-context"
 import { McpEra } from "@/runtime/tools/mcp/era"
+import { callToolAsTask, shouldCallAsTask } from "@/shared/util/mcp-tasks"
 
 export namespace MCP {
   const log = Log.create({ service: "mcp" })
@@ -178,7 +179,7 @@ export namespace MCP {
     return dynamicTool({
       description: mcpTool.description ?? "",
       inputSchema: jsonSchema(schema),
-      execute: async (args: unknown, options?: { toolCallId?: string }) => {
+      execute: async (args: unknown, options?: { toolCallId?: string; abortSignal?: AbortSignal }) => {
         // Proxy tools marked "requires confirmation" run only with the user's approval, recorded by
         // the permission ask that precedes this call; the proxy checks the flag.
         const approved = McpUserProxy.requiresConfirmation(mcpTool) && McpUserProxy.consumeApproval(options?.toolCallId)
@@ -186,6 +187,18 @@ export namespace MCP {
         const meta = {
           ...(approved ? { [MCP_APPROVED_META]: true } : {}),
           ...(sessionID ? { [SESSION_META]: sessionID } : {}),
+        }
+        // Long-running tools the server runs as MCP tasks (2025-11-25): poll
+        // until done; stopping the turn sends tasks/cancel.
+        if (shouldCallAsTask(client, mcpTool.execution?.taskSupport)) {
+          return callToolAsTask({
+            client,
+            name: mcpTool.name,
+            args: (args || {}) as Record<string, unknown>,
+            ...(Object.keys(meta).length ? { meta } : {}),
+            signal: options?.abortSignal,
+            requestTimeoutMs: timeout,
+          })
         }
         return client.callTool(
           {
@@ -718,6 +731,8 @@ export namespace MCP {
     requiresConfirmation?: boolean
     /** Display name of the connector/app the tool belongs to (proxy tools). */
     appName?: string
+    /** Id of the user's MCP connector the tool belongs to (proxy tools), for a bot's connector list. */
+    connectorId?: string
     title?: string
     /** The server marked the tool destructive (`annotations.destructiveHint: true`). */
     destructive?: boolean
@@ -795,6 +810,7 @@ export namespace MCP {
           uiResourceUri: mcpAppResourceUri(mcpTool),
           requiresConfirmation: McpUserProxy.requiresConfirmation(mcpTool),
           appName: ((mcpTool._meta as Record<string, any> | undefined)?.[MCP_CONNECTOR_META_KEY] as { name?: string } | undefined)?.name,
+          connectorId: ((mcpTool._meta as Record<string, any> | undefined)?.[MCP_CONNECTOR_META_KEY] as { id?: string } | undefined)?.id,
           title: mcpTool.title ?? (mcpTool.annotations as { title?: string } | undefined)?.title,
           destructive: (mcpTool.annotations as { destructiveHint?: boolean } | undefined)?.destructiveHint === true,
         }

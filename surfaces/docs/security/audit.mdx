@@ -21,7 +21,7 @@ Audit endpoints require a Clerk JWT and an active organization. Only organizatio
 Applications and integrations can emit custom audit events to the organization feed.
 
 ```bash
-curl -X POST https://api.allternit.com/api/v1/admin/audit \
+curl -X POST http://127.0.0.1:8013/api/v1/admin/audit \
   -H "Authorization: Bearer $ALLTERNIT_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -48,7 +48,7 @@ curl -X POST https://api.allternit.com/api/v1/admin/audit \
 Events are returned in ascending chronological order. Use `cursor` to page forward and `limit` to control page size.
 
 ```bash
-curl "https://api.allternit.com/api/v1/admin/audit?limit=50" \
+curl "http://127.0.0.1:8013/api/v1/admin/audit?limit=50" \
   -H "Authorization: Bearer $ALLTERNIT_TOKEN"
 ```
 
@@ -78,7 +78,7 @@ curl "https://api.allternit.com/api/v1/admin/audit?limit=50" \
 ### Pagination with cursor
 
 ```bash
-curl "https://api.allternit.com/api/v1/admin/audit?limit=50&cursor=2026-08-12T10:00:00Z|evt_01J4N" \
+curl "http://127.0.0.1:8013/api/v1/admin/audit?limit=50&cursor=2026-08-12T10:00:00Z|evt_01J4N" \
   -H "Authorization: Bearer $ALLTERNIT_TOKEN"
 ```
 

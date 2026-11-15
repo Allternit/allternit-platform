@@ -4,6 +4,7 @@
 
 pub mod aci_approvals;
 pub mod aci_batch;
+pub mod net_client;
 #[cfg(test)]
 mod aci_batch_adversarial;
 pub mod aci_code;
@@ -36,12 +37,16 @@ pub mod agent_runtime_routes;
 pub mod agent_session_routes;
 pub mod agent_workspace_paths;
 pub mod agent_workspace_routes;
+pub mod agent_package_routes;
+pub mod bot_hub_routes;
+pub mod memory_map_routes;
+pub mod skill_use;
 pub mod agents_v1_routes;
-pub mod alabs_routes;
 pub mod allternit_vault;
 pub mod analytics_routes;
 pub mod artifact_routes;
 pub mod audit_log_routes;
+pub mod byte_range;
 pub mod auth;
 pub mod auth_dp_jwt;
 pub mod benchmark_routes;
@@ -67,12 +72,15 @@ pub mod bot_desktop_admin;
 pub mod bot_desktop_stream;
 pub mod bot_event_routes;
 pub mod events_feed;
+pub mod floor_routes;
 pub mod netops;
 pub mod routine_local_scheduler;
 pub mod agent_gateway_routes;
 pub mod thread_routes;
 pub mod thread_closeout;
 pub mod thread_bot_tools;
+pub mod project_send_tools;
+pub mod worker_bot_tools;
 pub mod bot_routing;
 pub mod bot_suggestions;
 pub mod gateway_routing;
@@ -90,6 +98,8 @@ pub mod discord_gateway;
 pub mod channel_discord_app;
 pub mod channel_gateway;
 pub mod openui_text;
+pub mod answer_contract;
+pub mod answer_policy;
 pub mod card_meta;
 pub mod card_repair;
 pub mod client_location;
@@ -99,12 +109,22 @@ pub mod phone_sync;
 pub mod cloud_files;
 pub mod relay_auth;
 pub mod runtime_events;
+/// `status.snapshot` producer for the iPhone system surfaces.
+pub mod status_snapshot;
+pub mod bots_pause;
+pub mod messages_mac;
 pub mod runtime_viewer;
 pub mod voice_calls;
 pub mod platform_agents;
 pub mod platform_tools;
 pub mod platform_twin;
 pub mod voice_turn_stream;
+// Allternit Meetings: the in-call agent turn and its tools (plan step 2.6).
+pub mod meeting_tools;
+pub mod meetings_mcp;
+pub mod meeting_turn_stream;
+// The Meetings bot on this runtime (relayed start/stop/status from cloud-api).
+pub mod meeting_bot_host;
 pub mod channel_relay;
 pub mod channel_discord_dm;
 pub mod channel_attachments;
@@ -125,9 +145,11 @@ pub mod templates_routes;
 pub mod memory_curation;
 pub mod memory_consolidation;
 pub mod placement;
+pub mod teleport_routes;
 pub mod coordinator_routes;
 pub mod delegate_routes;
 pub mod morning_brief;
+pub mod main_bot_reach_out;
 // One source with cloud-api's eval (`evals/triage` measures this exact code).
 #[path = "../../allternit-cloud-api/src/routes/mail_triage.rs"]
 pub mod mail_triage;
@@ -170,6 +192,8 @@ pub mod computer_history;
 pub mod phone_runs;
 pub mod phone_replay;
 pub mod phone_task;
+pub mod phone_task_notify;
+pub mod phone_guard;
 pub mod computer_transfer;
 pub mod computer_parallel;
 pub mod computer_subtask;
@@ -188,6 +212,7 @@ pub mod data_residency_routes;
 pub mod device_attestation_routes;
 pub mod config;
 pub mod connector_routes;
+pub mod github_ci;
 pub mod control_plane;
 pub mod content_artifact_file_routes;
 pub mod content_artifact_publish;
@@ -220,6 +245,7 @@ pub mod fabric_model_routes;
 pub mod fabric_node_routes;
 pub mod fabric_resources_routes;
 pub mod fabric_usage_routes;
+pub mod connections_routes;
 pub mod design_connector_routes;
 pub mod env_allowlist;
 pub mod error;
@@ -261,6 +287,7 @@ pub mod factory_approvals_push;
 /// `/api/factory/*` → the Factory engine (everything except approvals).
 pub mod factory_proxy;
 pub mod inbox_needs;
+pub mod project_status;
 pub mod inbox_routes;
 pub mod internal_auth;
 pub mod internal_routes;
@@ -270,7 +297,9 @@ pub mod local_brain_routes;
 pub mod local_engine_routes;
 pub mod long_running_task_routes;
 pub mod local_studio_routes;
+pub mod managed_auth;
 pub mod mcp_apps;
+pub mod mcp_breaker;
 pub mod mcp_user_proxy;
 pub mod mcp_dispatcher;
 pub mod mcp_directory_guard;
@@ -279,6 +308,8 @@ pub mod mcp_directory_routes;
 pub mod studio_apps_routes;
 pub mod mcp_routes;
 pub mod oauth_result_page;
+pub mod oauth_return;
+pub mod official_mcp;
 pub mod mcp_agents;
 pub mod mcp_vendor_bots;
 pub mod mcp_vendor_cards;
@@ -293,10 +324,14 @@ pub mod commerce_routes;
 pub mod marketplace_routes;
 pub mod me_routes;
 pub mod setup_routes;
+/// Self-hosted Agents Server (the `allternit-agents-server` binary). Never
+/// mounted by the main `allternit-api` router.
+pub mod selfhost;
 pub mod mailflare_client;
 pub mod media;
-pub mod model_training_routes;
 pub mod photon_routes;
+/// Freeweights Studio host: `/api/v1/studio` (training jobs on this computer).
+pub mod studio;
 pub mod memory_notes_routes;
 pub mod memory_reconstruction_routes;
 pub mod memory_routes;
@@ -336,6 +371,7 @@ pub mod passkey_routes;
 pub mod office_cli_mcp;
 pub mod office_cli_routes;
 pub mod office_engine_routes;
+pub mod office_session_guard;
 pub mod office_routes;
 pub mod onboarding_routes;
 pub mod open_connector_proxy;
@@ -344,12 +380,16 @@ pub mod permission_policy;
 pub mod policy_audit;
 pub mod policy_config;
 pub mod allternit_bus_routes;
+pub mod photon_outbound;
 pub mod platform_static;
 pub mod playground_routes;
 pub mod pricing;
 pub mod provider_routes;
 pub mod cli_catalog;
+pub mod model_thinking;
 pub mod cli_tools;
+/// The `allternit-brain-runner` program (runs in a person's runner box).
+pub mod brain_runner;
 pub mod queue_routes;
 pub mod rails;
 pub mod remote_control_routes;
@@ -367,6 +407,7 @@ pub mod sandbox_template_routes;
 pub mod scim_routes;
 pub mod skills_routes;
 pub mod skill_catalog_install;
+pub mod agent_capability_import;
 pub mod server_tool_routes;
 pub mod session_memory_service;
 pub mod session_worker;
@@ -740,8 +781,8 @@ pub struct AppState {
 
 /// Return the default LLM provider/model pair used when a request does not
 /// specify one. Reads from the unified app config (file + env overrides).
-/// Returns empty strings when nothing is configured; callers fall back to the
-/// local Ollama brain rather than a hardcoded provider.
+/// Returns empty strings when no brain was chosen; callers then answer with
+/// `config::no_brain_error` (or skip background work) — never a fallback model.
 pub fn default_model() -> (String, String) {
     APP_CONFIG
         .get()

@@ -508,6 +508,8 @@ async fn send_h(State(state): S, headers: HeaderMap, body: Option<Json<SendReque
     if req.idempotency_key.is_none() {
         req.idempotency_key = header(&headers, "idempotency-key");
     }
+    // Anything sent to a busy pane waits in its mailbox; this empties it when the pane goes idle.
+    crate::agents::mailbox_drain::ensure(state.root_dir.clone());
     let ctx = SendCtx {
         root: state.root_dir.clone(),
         registry: Registry::open_default(),

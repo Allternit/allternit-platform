@@ -38,11 +38,11 @@ export function GizziMdExternalIncludesDialog(t0) {
   const handleEscape = t3;
   const t4 = !isStandaloneDialog;
   const t5 = !isStandaloneDialog;
-  const t6 = <Text>This project's CLAUDE.md imports files outside the current working directory. Never allow this for third-party repositories.</Text>;
+  const t6 = <Text>This project's GIZZI.md imports files outside the current working directory. Never allow this for third-party repositories.</Text>;
 
   const t7 = externalIncludes && externalIncludes.length > 0 && <Box flexDirection="column"><Text dimColor={true}>External imports:</Text>{externalIncludes.map(_temp4)}</Box>;
 
-  const t8 = <Text dimColor={true}>Important: Only use Gizzi Code with files you trust. Accessing untrusted files may pose security risks{" "}<Link url="https://docs.gizziio.com/security" />{" "}</Text>;
+  const t8 = <Text dimColor={true}>Important: Only use Gizzi Code with files you trust. Accessing untrusted files may pose security risks{" "}<Link url="https://docs.allternit.com/security/overview" />{" "}</Text>;
 
   const t9 = [{
       label: "Yes, allow external imports",
@@ -54,7 +54,7 @@ export function GizziMdExternalIncludesDialog(t0) {
 
   const t10 = <Select options={t9} onChange={value_0 => handleSelection(value_0 as 'yes' | 'no')} />;
 
-  const t11 = <Dialog title="Allow external CLAUDE.md file imports?" color="warning" onCancel={handleEscape} hideBorder={t4} hideInputGuide={t5}>{t6}{t7}{t8}{t10}</Dialog>;
+  const t11 = <Dialog title="Allow external GIZZI.md file imports?" color="warning" onCancel={handleEscape} hideBorder={t4} hideInputGuide={t5}>{t6}{t7}{t8}{t10}</Dialog>;
 
   return t11;
 }

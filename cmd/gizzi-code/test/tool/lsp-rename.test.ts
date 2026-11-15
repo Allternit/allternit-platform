@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { describe, test, expect, mock } from "bun:test"
+import { afterAll, describe, test, expect, mock } from "bun:test"
 import path from "path"
 import fs from "fs/promises"
 import { pathToFileURL } from "url"
@@ -10,6 +10,13 @@ import { tmpdir } from "../fixture/fixture"
 // language server should report.
 const real = await import("../../src/runtime/integrations/lsp")
 const lspState: { hasClients: boolean; rename: any[]; touched: string[] } = { hasClients: false, rename: [], touched: [] }
+// Bun keeps a mock.module override for the rest of the run, other test files
+// included, so the real module goes back once this file is done.
+const realLspModule = { ...real }
+afterAll(() => {
+  mock.module("../../src/runtime/integrations/lsp", () => realLspModule)
+})
+
 mock.module("../../src/runtime/integrations/lsp", () => ({
   LSP: {
     ...real.LSP,

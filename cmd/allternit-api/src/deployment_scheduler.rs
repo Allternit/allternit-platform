@@ -448,7 +448,9 @@ mod tests {
     #[test]
     fn overdue_catch_up_fires_once_not_a_burst() {
         let db = db();
-        let now = Utc::now();
+        // Mid-hour, so the +20 s follow-up tick never crosses the next hourly
+        // occurrence (at hh:59:50 it would, and correctly fire).
+        let now = Utc::now().date_naive().and_hms_opt(12, 30, 0).unwrap().and_utc();
         // Three missed hourly occurrences while the server was down.
         insert_deployment(&db, "d1", "0 * * * *", now - Duration::hours(3), "active");
 

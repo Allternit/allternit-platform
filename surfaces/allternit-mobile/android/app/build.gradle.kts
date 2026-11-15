@@ -4,15 +4,40 @@ plugins {
 }
 
 android {
-    namespace = "com.allternit.phonelink"
-    compileSdk = 35
+    namespace = "com.allternit.app"
+    compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.allternit.phonelink"
+        // Since 0.4.0. Phone Link Kotlin classes keep the com.allternit.phonelink package (src/phonelink).
+        applicationId = "com.allternit.app"
         minSdk = 26
-        targetSdk = 35
-        versionCode = 8
-        versionName = "0.3.4"
+        targetSdk = 36
+        versionCode = 14
+        versionName = "0.5.4"
+    }
+
+    // Two builds of the same app ID:
+    //  - phonelink: the sideloaded APK Allternit Desktop installs (allternit.com/android).
+    //    The Allternit app plus Phone Link (src/phonelink: code, mesh library,
+    //    accessibility service, services, receivers, permissions).
+    //  - play: the Google Play bundle. Only the Allternit app (src/main). No
+    //    Phone Link code, library or permission is packaged.
+    flavorDimensions += "dist"
+    productFlavors {
+        create("phonelink") {
+            dimension = "dist"
+            isDefault = true
+            // The stock androidbrowserhelper launcher (no in-app review here:
+            // this build is not installed from Google Play).
+            manifestPlaceholders["launcherActivity"] =
+                "com.google.androidbrowserhelper.trusted.LauncherActivity"
+        }
+        create("play") {
+            dimension = "dist"
+            // Subclass of LauncherActivity that may show the Play in-app review
+            // sheet before opening the TWA (src/play/java/.../ReviewLauncherActivity.kt).
+            manifestPlaceholders["launcherActivity"] = "com.allternit.app.ReviewLauncherActivity"
+        }
     }
 
     buildTypes {
@@ -55,7 +80,13 @@ dependencies {
     // infrastructure/mesh/tsnet-ios — build it first:
     //   infrastructure/mesh/tsnet-ios/build-android.sh   (output: Mesh.aar,
     //   copied to app/libs/, gitignored; ARM only (arm64-v8a, armeabi-v7a), stripped, ~15 MB)
-    implementation(files("libs/Mesh.aar"))
+    "phonelinkImplementation"(files("libs/Mesh.aar"))
+    // The Allternit app as a Trusted Web Activity around m.allternit.com
+    // (LauncherActivity, Custom Tab fallback). Apache-2.0, Google.
+    implementation("com.google.androidbrowserhelper:androidbrowserhelper:2.5.0")
+    // Play In-App Review (the "rate this app" sheet), Google Play build only.
+    // The web content cannot call it, so ReviewLauncherActivity asks natively.
+    "playImplementation"("com.google.android.play:review:2.0.2")
     testImplementation("junit:junit:4.13.2")
     // Real org.json for JVM tests (android.jar only ships stubs). Public domain
     // since 20231013.

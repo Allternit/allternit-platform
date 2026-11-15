@@ -459,6 +459,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial]
     async fn owner_gets_a_scoped_short_lived_token() {
         let _g = DEV_TOKEN_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let (router, db) = setup().await;
@@ -492,6 +493,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial]
     async fn other_users_and_unknown_ids_get_the_same_404() {
         let _g = DEV_TOKEN_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let (router, db) = setup().await;
@@ -508,6 +510,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial]
     async fn desktop_runtime_is_409_not_a_cloud_computer() {
         let _g = DEV_TOKEN_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let (router, db) = setup().await;
@@ -519,6 +522,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial]
     async fn needs_no_env_and_asks_for_a_host_when_there_is_none() {
         let _g = DEV_TOKEN_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let (router, db) = setup().await;
@@ -530,6 +534,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial]
     async fn unauthenticated_is_401() {
         let _g = DEV_TOKEN_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let (router, db) = setup().await;
@@ -558,6 +563,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial]
     async fn the_check_has_the_same_404_409_and_401_as_the_token() {
         let _g = DEV_TOKEN_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let (router, db) = setup().await;

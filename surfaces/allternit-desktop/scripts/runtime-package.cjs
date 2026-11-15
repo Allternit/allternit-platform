@@ -4,8 +4,9 @@
  * without a new Desktop app build (see src/main/runtime-package.ts).
  *
  *   node scripts/runtime-package.cjs stamp     write resources/runtime.json (build number + bundled file list)
- *   node scripts/runtime-package.cjs pack      write the feed for resources/{bin,platform} → release/runtime/feed/
+ *   node scripts/runtime-package.cjs pack      write the feed for resources/{bin,platform,meeting-bot} + model-training → release/runtime/feed/
  *   node scripts/runtime-package.cjs publish   show what would upload; add --confirm to upload to R2
+ *   node scripts/runtime-package.cjs prune     plan old-version cleanup (--keep N, default 3); --confirm deletes
  *
  * Feed layout (bucket allternit-runtime, served at runtime.allternit.com):
  *   objects/<sha256>.gz                          each file once, gzip, shared by every version and platform
@@ -17,7 +18,7 @@
  *
  * Build the parts first without packaging the app:
  *   scripts/build-desktop.sh --skip-electron && (cd surfaces/allternit-desktop &&
- *     npm run prepare:platform-static && npm run prepare:api-binary)
+ *     npm run prepare:platform-static && npm run prepare:api-binary && npm run prepare:meeting-bot)
  *
  * Signing key: ALLTERNIT_RUNTIME_SIGNING_KEY or ~/.config/allternit/runtime-signing-ed25519.pem
  * (Ed25519, PKCS#8 PEM). Its public half is RUNTIME_PUBLIC_KEY in runtime-package.ts.
@@ -28,7 +29,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const zlib = require('node:zlib');
-const { execFileSync } = require('node:child_process');
+const { execFileSync, spawnSync } = require('node:child_process');
 const https = require('node:https');
 
 const DESKTOP_DIR = path.resolve(__dirname, '..');
@@ -77,14 +78,63 @@ function walk(dir, base = dir, out = []) {
   return out;
 }
 
+// The Meetings bot (scripts/prepare-meeting-bot.cjs): resources/meeting-bot plus this
+// platform's rtc-node binding from resources/meeting-bot-native/<platform>/, listed where
+// the app has it after electron-builder's overlay (meeting-bot/node_modules/@livekit/…).
+const BOT_DIR = path.join(RESOURCES, 'meeting-bot');
+const BOT_NATIVE_DIR = path.join(RESOURCES, 'meeting-bot-native', PLATFORM);
+const BOT_RUNNER = 'meeting-bot/dist/runner.js';
+
+/** Manifest path -> source file for the Meetings bot; null when it is not staged for PLATFORM. */
+let botSources;
+function meetingBotSources() {
+  if (botSources !== undefined) return botSources;
+  botSources = null;
+  if (!fs.existsSync(path.join(BOT_DIR, 'dist', 'runner.js')) || !fs.existsSync(BOT_NATIVE_DIR)) return null;
+  const out = new Map();
+  for (const rel of walk(BOT_DIR)) out.set(`meeting-bot/${rel}`, path.join(BOT_DIR, rel));
+  for (const rel of walk(BOT_NATIVE_DIR)) out.set(`meeting-bot/node_modules/${rel}`, path.join(BOT_NATIVE_DIR, rel));
+  botSources = out;
+  return out;
+}
+
+// Allternit Tune (services/model-training), source only: the Studio host in
+// allternit-api installs the engine's venv from it. Same files as the
+// electron-builder extraResources `model-training` entry, so the bundled list
+// matches what the app carries. Read from the checkout the staged resources
+// belong to (ALLTERNIT_RUNTIME_RESOURCES = <worktree>/surfaces/allternit-desktop/resources).
+const TUNE_DIR = [
+  path.resolve(RESOURCES, '..', '..', '..', 'services', 'model-training'),
+  path.join(REPO_ROOT, 'services', 'model-training'),
+].find((dir) => fs.existsSync(path.join(dir, 'requirements.txt')));
+const TUNE_REQUIREMENTS = 'model-training/requirements.txt';
+const TUNE_SKIP = /^(tests|tools|\.venv|\.scratch|\.pytest_cache)\/|(^|\/)__pycache__\/|\.egg-info\/|^\.gitignore$|^requirements-dev\.txt$/;
+
+/** Manifest path -> source file for Allternit Tune; empty when the checkout has none. */
+function tuneSources() {
+  if (!TUNE_DIR) return new Map();
+  return new Map(walk(TUNE_DIR).filter((rel) => !TUNE_SKIP.test(rel)).map((rel) => [`model-training/${rel}`, path.join(TUNE_DIR, rel)]));
+}
+
+/** Where a manifest path's bytes come from. */
+function sourceOf(rel) {
+  if (rel.startsWith('model-training/')) return tuneSources().get(rel) ?? path.join(RESOURCES, rel);
+  return rel.startsWith('meeting-bot/') ? meetingBotSources()?.get(rel) ?? path.join(RESOURCES, rel) : path.join(RESOURCES, rel);
+}
+
 /** The runtime's files under resources/, as manifest entries. Null when not built yet. */
 function runtimeFiles() {
   if (!BINARIES.every((b) => fs.existsSync(path.join(RESOURCES, 'bin', b)))) return null;
   if (!fs.existsSync(path.join(RESOURCES, 'platform', 'index.html'))) return null;
-  const rels = [...BINARIES.map((b) => `bin/${b}`), ...walk(path.join(RESOURCES, 'platform')).map((r) => `platform/${r}`)];
+  const sources = new Map([
+    ...BINARIES.map((b) => [`bin/${b}`, path.join(RESOURCES, 'bin', b)]),
+    ...walk(path.join(RESOURCES, 'platform')).map((r) => [`platform/${r}`, path.join(RESOURCES, 'platform', r)]),
+    ...(meetingBotSources() ?? []),
+    ...tuneSources(),
+  ]);
   const files = {};
-  for (const rel of rels.sort()) {
-    const buf = fs.readFileSync(path.join(RESOURCES, rel));
+  for (const rel of [...sources.keys()].sort()) {
+    const buf = fs.readFileSync(sources.get(rel));
     files[rel] = { sha256: sha256(buf), size: buf.length };
   }
   return files;
@@ -105,7 +155,46 @@ function stagedUiSource() {
   }
 }
 
+/**
+ * Sign the Mac binaries with the Developer ID, under the same identifiers as the
+ * app bundle. A linker's ad-hoc signature is a new identity on every publish, so
+ * macOS asked again for Keychain access after each runtime update, once per
+ * binary. This has to run before stamp and pack hash the files.
+ */
+function signMacBinaries() {
+  if (!PLATFORM.startsWith('darwin') || process.platform !== 'darwin') return;
+  const identities = execFileSync('security', ['find-identity', '-v', '-p', 'codesigning'], { encoding: 'utf8' });
+  const developerId = identities.match(/"(Developer ID Application: [^"]+)"/);
+  if (!developerId) {
+    if (process.env.ALLTERNIT_RUNTIME_ALLOW_ADHOC === '1') return;
+    die('no Developer ID Application certificate: an ad-hoc runtime brings the Keychain prompts back (ALLTERNIT_RUNTIME_ALLOW_ADHOC=1 for a local test)');
+  }
+  const entitlements = path.join(DESKTOP_DIR, 'build', 'entitlements.mac.plist');
+  for (const binary of BINARIES) {
+    const file = path.join(RESOURCES, 'bin', binary);
+    if (!fs.existsSync(file)) continue;
+    // codesign reports on stderr.
+    const details = spawnSync('codesign', ['-dvv', file], { encoding: 'utf8' }).stderr || '';
+    if (details.includes(`Identifier=${binary}\n`) && details.includes(`Authority=${developerId[1]}`)) continue;
+    execFileSync('codesign', [
+      '--force', '--options', 'runtime', '--timestamp', '--identifier', binary,
+      '--entitlements', entitlements, '--sign', developerId[1], file,
+    ], { stdio: 'inherit' });
+    console.log(`✓ signed ${binary}`);
+  }
+  // The Meetings bot's native modules (the rtc-node binding): Developer ID like the app signs
+  // its own native code, so a runtime update does not ship an unsigned dylib into a hardened app.
+  for (const [rel, file] of meetingBotSources() ?? []) {
+    if (!rel.endsWith('.node')) continue;
+    const details = spawnSync('codesign', ['-dvv', file], { encoding: 'utf8' }).stderr || '';
+    if (details.includes(`Authority=${developerId[1]}`)) continue;
+    execFileSync('codesign', ['--force', '--options', 'runtime', '--timestamp', '--sign', developerId[1], file], { stdio: 'inherit' });
+    console.log(`✓ signed ${rel}`);
+  }
+}
+
 function stamp() {
+  signMacBinaries();
   const staged = stagedUiSource();
   const aiDir = process.env.ALLTERNIT_AI_PATH || staged?.path;
   const aiRef = process.env.ALLTERNIT_AI_PATH ? 'HEAD' : staged?.commit;
@@ -119,6 +208,7 @@ function stamp() {
   // The bundled file list lets a runtime update copy unchanged files from the app instead of downloading them.
   const files = runtimeFiles();
   if (!files) console.warn('⚠ runtime parts not staged yet — runtime.json has no file list (updates download every file)');
+  else if (!files[BOT_RUNNER]) console.warn(`⚠ meeting-bot not staged for ${PLATFORM} — run node scripts/prepare-meeting-bot.cjs (the bundled list has no Meetings bot)`);
   const info = {
     version, build, shellApi: shellApi(),
     platformSha: git(REPO_ROOT, 'rev-parse', 'HEAD') || null,
@@ -140,9 +230,14 @@ function signingKey() {
 }
 
 function pack() {
+  signMacBinaries();
   const info = fs.existsSync(STAMP) ? JSON.parse(fs.readFileSync(STAMP, 'utf8')) : stamp();
   const files = runtimeFiles();
   if (!files) die(`resources/bin/{${BINARIES.join(',')}} or resources/platform missing — build them first`);
+  // Cloud computers and Desktop run the Meetings bot from the runtime package; never publish one without it.
+  if (!files[BOT_RUNNER]) die(`${BOT_RUNNER} or meeting-bot-native/${PLATFORM} missing — run node scripts/prepare-meeting-bot.cjs (ALLTERNIT_RUNTIME_PLATFORM / ALLTERNIT_RUNTIME_RESOURCES pick the target)`);
+  // Studio installs Allternit Tune from the runtime's model-training/ (allternit-api engines.rs).
+  if (!files[TUNE_REQUIREMENTS]) die(`${TUNE_REQUIREMENTS} missing — services/model-training is not in this checkout`);
   const key = signingKey();
   const objectsDir = path.join(FEED, 'objects');
   const platformDir = path.join(FEED, 'stable', PLATFORM);
@@ -153,7 +248,7 @@ function pack() {
   for (const [rel, f] of Object.entries(files)) {
     const obj = path.join(objectsDir, `${f.sha256}.gz`);
     if (fs.existsSync(obj)) continue;
-    fs.writeFileSync(obj, zlib.gzipSync(fs.readFileSync(path.join(RESOURCES, rel)), { level: 9 }));
+    fs.writeFileSync(obj, zlib.gzipSync(fs.readFileSync(sourceOf(rel)), { level: 9 }));
     written += 1;
   }
   const manifest = Buffer.from(JSON.stringify({
@@ -207,11 +302,21 @@ function put(url, method, headers, body) {
   });
 }
 
+// Prune makes thousands of small requests; the account allows ~1200 / 5 min, so it paces itself.
+const pace = { on: false, next: 0, gapMs: 300 };
+async function gate() {
+  if (!pace.on) return;
+  const at = Math.max(Date.now(), pace.next);
+  pace.next = at + pace.gapMs;
+  if (at > Date.now()) await new Promise((r) => setTimeout(r, at - Date.now()));
+}
+
 async function r2(method, key, body, contentType, cacheControl) {
   const url = `https://api.cloudflare.com/client/v4/accounts/${ACCOUNT}/r2/buckets/${BUCKET}/objects/${key}`;
   for (let attempt = 1, refreshed = false; ; attempt++) {
     const token = auth.token;
     let res;
+    await gate();
     try {
       res = await put(url, method, { Authorization: `Bearer ${token}`, ...(contentType ? { 'Content-Type': contentType } : {}), ...(cacheControl ? { 'Cache-Control': cacheControl } : {}) }, body);
     } catch (e) {
@@ -334,10 +439,129 @@ async function publish(confirm) {
       rel.endsWith('.json') ? 'application/json' : 'text/plain', immutable ? 'public, max-age=31536000, immutable' : 'no-store');
   }
   console.log(`✓ published ${latest.version} → https://runtime.allternit.com/stable/${PLATFORM}/latest.json`);
+  console.log('Run `node surfaces/allternit-desktop/scripts/runtime-package.cjs prune --confirm` to delete old versions (keeps 3).');
 }
 
-const [cmd, ...rest] = process.argv.slice(2);
-if (cmd === 'stamp') stamp();
-else if (cmd === 'pack') pack();
-else if (cmd === 'publish') publish(rest.includes('--confirm')).catch((e) => die(e.message));
-else die('usage: runtime-package.cjs stamp | pack | publish [--confirm]');
+/** Order of a manifest for "newest": its build number, else the rNNNNNNNN.NNNN timestamp in its version. */
+function manifestOrder(m, key) {
+  if (Number.isFinite(Number(m?.build)) && m?.build !== undefined && m?.build !== null) return [1, Number(m.build), ''];
+  const v = String(m?.version ?? key.split('/').pop().replace(/\.json$/, ''));
+  const t = v.match(/r(\d{8})\.(\d+)/);
+  return t ? [0, Number(t[1]) * 1e6 + Number(t[2]), ''] : [0, 0, v];
+}
+const cmpOrder = (a, b) => a[0] - b[0] || a[1] - b[1] || a[2].localeCompare(b[2]);
+
+/**
+ * Pure keep/delete decision. Objects are content-addressed and shared by every version and platform,
+ * so an object goes only when NO kept manifest on ANY platform references it.
+ * @param {{platforms: Record<string, {latest: string, manifests: Record<string, object>}>, objects: Set<string>|string[], keep: number}} input
+ *   manifests keyed by manifest file name (e.g. "r2026.json"), latest = the name latest.json points at.
+ * @returns {{keepManifests: string[], dropManifests: string[], keepObjects: Set<string>, dropObjects: string[], missing: string[]}}
+ */
+function planPrune({ platforms, objects, keep }) {
+  const have = new Set(objects);
+  const keepManifests = new Set();
+  const dropManifests = [];
+  for (const [plat, { latest, manifests }] of Object.entries(platforms)) {
+    const names = Object.keys(manifests).sort((a, b) => cmpOrder(manifestOrder(manifests[a], a), manifestOrder(manifests[b], b)));
+    const kept = new Set(names.slice(-Math.max(1, keep)));
+    if (latest) kept.add(latest);
+    for (const n of names) {
+      const key = `stable/${plat}/manifests/${n}`;
+      if (kept.has(n)) keepManifests.add(key); else dropManifests.push(key);
+    }
+  }
+  const keepObjects = new Set();
+  for (const [plat, { manifests }] of Object.entries(platforms)) {
+    for (const [n, m] of Object.entries(manifests)) {
+      if (!keepManifests.has(`stable/${plat}/manifests/${n}`)) continue;
+      for (const f of Object.values(m.files ?? {})) keepObjects.add(`objects/${f.sha256}.gz`);
+    }
+  }
+  return {
+    keepManifests: [...keepManifests].sort(),
+    dropManifests,
+    keepObjects,
+    dropObjects: [...have].filter((k) => !keepObjects.has(k)),
+    missing: [...keepObjects].filter((k) => !have.has(k)),
+  };
+}
+
+async function listAll(prefix) {
+  const out = [];
+  let cursor = '';
+  for (;;) {
+    const url = `https://api.cloudflare.com/client/v4/accounts/${ACCOUNT}/r2/buckets/${BUCKET}/objects?prefix=${encodeURIComponent(prefix)}&per_page=1000${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`;
+    let body;
+    for (let attempt = 1; ; attempt++) {
+      await gate();
+      const res = await put(url, 'GET', { Authorization: `Bearer ${auth.token}` });
+      if (res.ok) { body = JSON.parse(await res.text()); break; }
+      if (res.status === 401 && attempt === 1 && !process.env.CLOUDFLARE_API_TOKEN) { refreshToken(auth.token); continue; }
+      if ((res.status === 429 || res.status >= 500) && attempt < 8) { await new Promise((r) => setTimeout(r, attempt * 10_000)); continue; }
+      throw new Error(`list ${prefix}: ${res.status} ${await res.text()}`);
+    }
+    for (const o of body.result ?? []) out.push({ key: o.key, size: Number(o.size ?? 0) });
+    cursor = body.result_info?.cursor ?? '';
+    if (!body.result_info?.is_truncated || !cursor) return out;
+  }
+}
+
+async function prune(confirm, keep) {
+  auth.token = cloudflareToken();
+  pace.on = true;
+  const stable = await listAll('stable/');
+  const objs = await listAll('objects/');
+  const sizes = new Map(objs.map((o) => [o.key, o.size]));
+  const stableKeys = new Set(stable.map((o) => o.key));
+  const plats = [...new Set(stable.map((o) => o.key.split('/')[1]))].sort();
+  const platforms = {};
+  for (const plat of plats) {
+    const latestKey = `stable/${plat}/latest.json`;
+    if (!stableKeys.has(latestKey)) { console.log(`skip ${plat}: no latest.json`); continue; }
+    const latest = JSON.parse(await (await r2('GET', latestKey)).text());
+    const manifests = {};
+    for (const o of stable) {
+      const m = o.key.match(new RegExp(`^stable/${plat}/manifests/([^/]+\\.json)$`));
+      if (m) manifests[m[1]] = JSON.parse(await (await r2('GET', o.key)).text());
+    }
+    platforms[plat] = { latest: String(latest.manifest).replace(/^manifests\//, ''), manifests };
+  }
+  const plan = planPrune({ platforms, objects: sizes.keys(), keep });
+  const dropManifestFiles = plan.dropManifests.flatMap((k) => [k, `${k}.sig`].filter((x) => stableKeys.has(x)));
+  const gb = (n) => `${(n / 1e9).toFixed(2)} GB`;
+  for (const [plat, { latest, manifests }] of Object.entries(platforms)) {
+    const kept = plan.keepManifests.filter((k) => k.startsWith(`stable/${plat}/`)).map((k) => k.split('/').pop());
+    console.log(`${plat}: ${Object.keys(manifests).length} manifests, latest -> ${latest}, keep ${kept.length}: ${kept.join(', ')}`);
+  }
+  const dropBytes = plan.dropObjects.reduce((n, k) => n + sizes.get(k), 0);
+  console.log(`objects: ${sizes.size} (${gb([...sizes.values()].reduce((a, b) => a + b, 0))}); referenced by kept manifests: ${plan.keepObjects.size}; missing: ${plan.missing.length}`);
+  console.log(`delete: ${plan.dropObjects.length} objects (${gb(dropBytes)}) + ${dropManifestFiles.length} old manifest files`);
+  if (plan.missing.length) die(`refusing: kept manifests reference ${plan.missing.length} missing object(s), e.g. ${plan.missing[0]}; nothing deleted`);
+  if (!confirm) { console.log('Dry run. Re-run with --confirm to delete.'); return; }
+  const queue = [...plan.dropObjects, ...dropManifestFiles];
+  let done = 0;
+  const worker = async () => {
+    for (let k = queue.shift(); k; k = queue.shift()) {
+      await r2('DELETE', k);
+      if (++done % 1000 === 0) console.log(`  deleted ${done}`);
+    }
+  };
+  await Promise.all(Array.from({ length: 6 }, worker));
+  console.log(`✓ deleted ${done} files`);
+}
+
+module.exports = { planPrune, manifestOrder };
+
+if (require.main === module) {
+  const [cmd, ...rest] = process.argv.slice(2);
+  if (cmd === 'stamp') stamp();
+  else if (cmd === 'pack') pack();
+  else if (cmd === 'publish') publish(rest.includes('--confirm')).catch((e) => die(e.message));
+  else if (cmd === 'prune') {
+    const i = rest.indexOf('--keep');
+    const keep = i >= 0 ? Number(rest[i + 1]) : 3;
+    if (!Number.isInteger(keep) || keep < 1) die('--keep needs a whole number >= 1');
+    prune(rest.includes('--confirm'), keep).catch((e) => die(e.message));
+  } else die('usage: runtime-package.cjs stamp | pack | publish [--confirm] | prune [--keep N] [--confirm]');
+}

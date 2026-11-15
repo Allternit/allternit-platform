@@ -2,7 +2,7 @@
 //!
 //! Clerk can't mint `bots:act` / `agents:read`, so `mcp_edge` accepts a Clerk OAuth token
 //! (scope `profile`) only when its owner approved that token's client for that target:
-//! `bot:<vendorBotId>` or `agents`. Revoking a row refuses the client on its next call.
+//! `bot:<vendorBotId>`, `agents` or `connectors`. Revoking a row refuses the client on its next call.
 //!
 //! Routes (Clerk session or `compute`-scoped API key; 503 `mcp_edge_not_configured` until
 //! `MCP_PUBLIC_URL` is set):
@@ -45,9 +45,9 @@ fn internal(error: sqlx::Error) -> Response {
     (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": "internal" }))).into_response()
 }
 
-/// `bot:<id>` / `agents`, or `None` for anything else.
+/// `bot:<id>` / `agents` / `connectors`, or `None` for anything else.
 fn valid_target(t: &str) -> bool {
-    t == "agents" || t.strip_prefix("bot:").is_some_and(|id| !id.is_empty() && id.len() <= 128 && !id.contains('/'))
+    t == "agents" || t == "connectors" || t.strip_prefix("bot:").is_some_and(|id| !id.is_empty() && id.len() <= 128 && !id.contains('/'))
 }
 
 /// `true` = this client may act for `user` on `target`; stamps `last_used_at` at most once a minute.
@@ -81,7 +81,8 @@ async fn approve_route(State(state): State<Arc<ApiState>>, headers: HeaderMap, J
         Err(e) => return e.into_response(),
     };
     let client = body.client.trim();
-    if client.is_empty() || client.len() > 200 || !valid_target(&body.target) {
+    // `issuer:<iss>` clients are approved by org consent (routes::edge_auth), never per user.
+    if client.is_empty() || client.len() > 200 || !valid_target(&body.target) || client.starts_with(crate::routes::edge_auth::ISSUER_CLIENT_PREFIX) {
         return (StatusCode::BAD_REQUEST, Json(json!({ "error": "invalid_request" }))).into_response();
     }
     let label: String = body.label.trim().chars().take(60).collect();
@@ -196,9 +197,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn targets_are_a_bot_id_or_agents_only() {
-        assert!(valid_target("agents") && valid_target("bot:abc"));
-        for bad in ["", "bot:", "bot:a/b", "bots:abc", "agents:x", "other"] {
+    fn targets_are_a_bot_id_agents_or_connectors_only() {
+        assert!(valid_target("agents") && valid_target("bot:abc") && valid_target("connectors"));
+        for bad in ["", "bot:", "bot:a/b", "bots:abc", "agents:x", "connectors:x", "other"] {
             assert!(!valid_target(bad), "{bad}");
         }
     }

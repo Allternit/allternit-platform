@@ -3,6 +3,11 @@ title: Realtime Audio
 description: Low-latency speech-to-text and text-to-speech sessions through the Allternit LLM gateway
 ---
 
+<Warning>
+Not served on api.allternit.com. This page describes the gateway contract only.
+</Warning>
+
+
 ## Overview
 
 **Status:** Implementation IMPLEMENTED (session registry only), Exposure INTERNAL. Session create/list/get/delete are real. The WebSocket is a placeholder loop: it does not run speech-to-text, a model, or text-to-speech. Session creation returns `501 allternit.not_configured` ("no realtime audio provider configured") unless the gateway is started with `ALLTERNIT_GATEWAY_ALLOW_FAKE_PROVIDERS=1`.

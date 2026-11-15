@@ -133,7 +133,7 @@ pub struct ReqwestSlackHttp;
 #[async_trait]
 impl SlackHttp for ReqwestSlackHttp {
     async fn post_json(&self, url: &str, bearer: Option<&str>, body: &Value) -> Result<(u16, Value), String> {
-        let mut req = reqwest::Client::new()
+        let mut req = crate::net_client::client()
             .post(url)
             .timeout(Duration::from_secs(15))
             .json(body);
@@ -155,7 +155,7 @@ impl SlackHttp for ReqwestSlackHttp {
     }
 
     async fn post_form(&self, url: &str, basic: Option<(&str, &str)>, form: &[(String, String)]) -> Result<(u16, Value), String> {
-        let mut req = reqwest::Client::new()
+        let mut req = crate::net_client::client()
             .post(url)
             .timeout(Duration::from_secs(15))
             .form(form);
@@ -169,7 +169,7 @@ impl SlackHttp for ReqwestSlackHttp {
     }
 
     async fn post_form_bearer(&self, url: &str, bearer: &str, form: &[(String, String)]) -> Result<(u16, Value), String> {
-        let resp = reqwest::Client::new().post(url).timeout(Duration::from_secs(15)).bearer_auth(bearer).form(form).send().await.map_err(|e| e.to_string())?;
+        let resp = crate::net_client::client().post(url).timeout(Duration::from_secs(15)).bearer_auth(bearer).form(form).send().await.map_err(|e| e.to_string())?;
         let status = resp.status().as_u16();
         Ok((status, resp.json::<Value>().await.unwrap_or(Value::Null)))
     }
@@ -190,7 +190,7 @@ impl SlackHttp for ReqwestSlackHttp {
     }
 
     async fn post_bytes(&self, url: &str, content_type: &str, bytes: Vec<u8>) -> Result<u16, String> {
-        let resp = reqwest::Client::new().post(url).timeout(Duration::from_secs(60)).header("content-type", content_type).body(bytes).send().await.map_err(|e| e.to_string())?;
+        let resp = crate::net_client::client().post(url).timeout(Duration::from_secs(60)).header("content-type", content_type).body(bytes).send().await.map_err(|e| e.to_string())?;
         Ok(resp.status().as_u16())
     }
 }

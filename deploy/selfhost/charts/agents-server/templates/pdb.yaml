@@ -1,0 +1,17 @@
+{{- if gt (int .Values.replicaCount) 1 }}
+# Keeps at least one server running through node drains. Only with more than
+# one replica: with one, minAvailable 1 would block every drain.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "agents-server.fullname" . }}
+  labels:
+    {{- include "agents-server.labels" . | nindent 4 }}
+    app.kubernetes.io/component: server
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      {{- include "agents-server.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: server
+{{- end }}

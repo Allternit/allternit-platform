@@ -223,7 +223,7 @@ export const outboundJobs = sqliteTable(
 			.notNull()
 			.references(() => users.id, { onDelete: "cascade" }),
 		messageId: text("message_id").references(() => messages.id, { onDelete: "set null" }),
-		status: text("status", { enum: ["pending_approval", "queued", "sent", "failed"] })
+		status: text("status", { enum: ["pending_approval", "queued", "sending", "sent", "failed"] })
 			.notNull()
 			.default("queued"),
 		payload: text("payload").notNull(),

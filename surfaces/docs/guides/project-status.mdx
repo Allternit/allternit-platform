@@ -1,0 +1,35 @@
+---
+title: Project status pages
+description: "One living status page per project: bots read it before work, update it after, and only exceptions reach you."
+---
+
+Every project, whether it lives in the Projects tab or in Bot Mode, has one status page. It is the shared record of where the project stands, so you do not have to ask each bot.
+
+Open it from **Status page** on a dashboard tile, or pick the **Cover story** [layout](/guides/project-layouts), which shows the whole page.
+
+## What is on the page
+
+- A state: on track, at risk, blocked, needs a decision, or done.
+- One next action line, shown on the Projects index next to the state chip.
+- Nine sections: goal, status, next actions, owners, deadlines, decisions, blockers, outcome and lessons. You can edit any section yourself from the project page.
+- A log of the last 10 changes, with who made each one. Older entries move to the archive, which you can open with Show archive.
+
+## Read first, update last
+
+Bots read the page before they start. The project coordinator and every project worker get the page, plus the project's saved instructions, in their prompt. When a bot finishes, it updates the section it changed with the `project_status` tool (see [project_status tool](/tools/project-status)).
+
+Two rules keep the page honest. A bot never writes progress it did not verify, and marking a project done needs a link to proof. Without a link the update is refused.
+
+## The Project sweep
+
+The Chief of Staff template includes a weekday 08:00 routine called Project sweep. For each active project it reads the page, checks the sources it can reach (threads, GitHub, email, calendar), corrects drift so the sources win over the page, and adds one log line. If a deadline has passed it sets the state to at risk with a note that starts with overdue. It stays quiet when nothing changed, and it never sends, buys, publishes or deletes anything.
+
+## Needs you
+
+Only exceptions reach you. When a project becomes blocked, needs a decision, or is overdue, one item appears in Needs you. There is at most one open item per project and state, and it closes by itself when the state moves on.
+
+## Closing a project
+
+Choose Close project on the project page and write the outcome and lessons. Closing logs the change and pauses the routines linked to the project. Closed projects leave the Active list and show under the Closed filter, and a closed page cannot be edited until you reopen it. Reopening turns back on the routines that the close paused, including cloud-scheduled ones.
+
+For the endpoints, see the [Cowork API](/api/cowork).

@@ -10,7 +10,7 @@
  *
  * Free of CLI/UI imports so bun tests can drive it with a stubbed fetch.
  */
-import { ALLTERNIT_GATEWAY_BASE } from "@/shared/constants/allternitGateway"
+import { gatewayBase } from "@/shared/constants/allternitGateway"
 import { Pairing } from "@/runtime/services/pairing/pairing"
 
 export class PlatformApiError extends Error {
@@ -32,7 +32,7 @@ export class PlatformSignedOutError extends Error {
 }
 
 export function platformApiBase(): string {
-  return ALLTERNIT_GATEWAY_BASE
+  return gatewayBase()
 }
 
 async function deviceToken(): Promise<string | undefined> {

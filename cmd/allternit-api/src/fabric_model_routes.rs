@@ -857,7 +857,7 @@ mod tests {
             while let Ok(Some(_)) = lines.next_line().await {}
         });
 
-        let client = reqwest::Client::new();
+        let client = crate::net_client::client();
         for _ in 0..50 {
             if client.get(format!("{}/health", url)).send().await.is_ok() {
                 break;

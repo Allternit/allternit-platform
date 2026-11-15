@@ -3,6 +3,8 @@ import {
   APIConnectionTimeoutError,
   APIError,
 } from '@allternit/gizzi-sdk/providers/allternit'
+import { describeProviderError, formatProviderErrorHelp, subscriptionAlternative } from './providerErrors.js'
+import { cloudCreditsRefusal } from '@/shared/util/provider-error'
 import type {
   BetaMessage,
   BetaStopReason,
@@ -148,6 +150,25 @@ export function isMediaSizeErrorMessage(msg: AssistantMessage): boolean {
   )
 }
 export const CREDIT_BALANCE_TOO_LOW_ERROR_MESSAGE = 'Credit balance is too low'
+/**
+ * The plain cause and what to run for an Allternit Cloud refusal that is not
+ * a sign-in problem (see providerErrors.ts), or undefined for anything else.
+ */
+export function cloudRefusalHelp(status: number | undefined, message: string, now?: Date): string | undefined {
+  // A credits refusal is known by its code (credits_required / credits_exhausted), whatever the status.
+  const credits = cloudCreditsRefusal(message) !== undefined
+  if (!credits && status !== 402 && status !== 403 && status !== 429) return undefined
+  if (!credits && status !== 402 && !/plan|monthly limit|verified email/i.test(message)) return undefined
+  const help = describeProviderError({
+    provider: 'allternit',
+    status,
+    text: message,
+    alternative: subscriptionAlternative(),
+    now,
+  })
+  return help ? formatProviderErrorHelp(help) : undefined
+}
+
 export const INVALID_API_KEY_ERROR_MESSAGE = 'Not logged in · Please run /login'
 export const INVALID_API_KEY_ERROR_MESSAGE_EXTERNAL =
   'Invalid API key · Fix external API key'
@@ -807,6 +828,22 @@ export async function getAssistantMessageFromError(
     }
   }
 
+  // Allternit Cloud refusals that are not sign-in problems: no credits or
+  // credits used up (402, by `error.code`), the plan's monthly limit, an
+  // unverified email. The 401/403 handlers below would call these "Not logged in".
+  if (error instanceof APIError) {
+    // The SDK keeps the parsed body on `error.error`; the message may not carry it.
+    const body = error.error && typeof error.error === 'object' ? ` ${JSON.stringify(error.error)}` : ''
+    const text = `${error.message}${body}`
+    const cloudHelp = cloudRefusalHelp(error.status, text)
+    if (cloudHelp) {
+      return createAssistantAPIErrorMessage({
+        error: error.status === 402 || cloudCreditsRefusal(text) || /credits|limit/i.test(error.message) ? 'billing_error' : 'authentication_failed',
+        content: cloudHelp,
+      })
+    }
+  }
+
   if (
     error instanceof Error &&
     error.message.toLowerCase().includes('x-api-key')
@@ -1192,10 +1229,8 @@ export function getErrorMessageIfRefusal(
     ? `${API_ERROR_MESSAGE_PREFIX}: Gizzi is unable to respond to this request, which appears to violate our Usage Policy (https://www.allternit.com/legal/aup). Try rephrasing the request or attempting a different approach.`
     : `${API_ERROR_MESSAGE_PREFIX}: Gizzi is unable to respond to this request, which appears to violate our Usage Policy (https://www.allternit.com/legal/aup). Please double press esc to edit your last message or start a new session for Gizzi to assist with a different task.`
 
-  const modelSuggestion =
-    model !== 'claude-sonnet-4-20250514'
-      ? ' If you are seeing this refusal repeatedly, try running /model claude-sonnet-4-20250514 to switch models.'
-      : ''
+  // No model id here: which models exist depends on the user's own brains.
+  const modelSuggestion = ' If you are seeing this refusal repeatedly, try running /model to switch models.'
 
   return createAssistantAPIErrorMessage({
     content: baseMessage + modelSuggestion,

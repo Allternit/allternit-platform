@@ -1,5 +1,5 @@
 /**
- * Gizzi pixel-art support shared by the pet sprite: theme color keys
+ * Gizzi pixel art shared by the header and the pet sprite: theme color keys
  * (gizziSand / gizziVisor / gizziEye / gizzi coral) and a half-block renderer.
  */
 
@@ -13,69 +13,56 @@ export type ArtSegment = [text: string, color: string, bg?: string]
 export type ArtRow = ArtSegment[]
 
 /**
- * Text-only header mark, for terminals that can't show inline images: the
- * official Gizzi mascot (Brand/Gizzi/static/gizzi-mascot.svg) in its own
- * colors, 8 columns by 4 rows. A sand body with the face panel a shade
- * darker keeps one solid silhouette at this size, the way Claude Code's
- * mascot reads. Beacon, ear pods, face panel, eyes, coral nose, hands, four
- * legs. Quadrant blocks give 2x2 pixels per cell; a pixel is half a cell
- * wide and half a cell tall, so the eyes are two pixels wide to stay square.
+ * Header mascot (Allternit Assets/Brand/Gizzi/gizzi-mascot-transparent.png)
+ * as half blocks: two pixel rows per cell, so every feature sits on whole
+ * cells (▀ = top pixel as fg, bottom pixel as bg). Beacon, ear pods, chamfered
+ * head, face panel, square eyes, coral A nose, side hands, body, four legs.
+ * B coral, T sand, V face panel, E eye. 18 columns x 8 rows.
  */
-const TEXT_MARK_PIXELS = [
-  '.......BB.......',
-  '..TTTT....TTTT..',
-  '..TTTTTTTTTTTT..',
-  '.TTVVVVVVVVVVTT.',
-  'TTTVEEVVVVEEVTTT',
-  '.TTVVVVCCVVVVTT.',
-  '..TTTTTTTTTTTT..',
-  '..TT.TT..TT.TT..',
+export const MASCOT_MID = [
+  '........BB........',
+  '..................',
+  '...TTTTT..TTTTT...',
+  '..................',
+  '...TTTTTTTTTTTT...',
+  '..TTVVVVVVVVVVTT..',
+  '..TVVEEVVVVEEVVT..',
+  'TTTVVEEVVVVEEVVTTT',
+  '.TTVVVVVBBVVVVVTT.',
+  '..TVVVVBVVBVVVVT..',
+  '..TTVVVVVVVVVVTT..',
+  '...TTTTTTTTTTTT...',
+  '...TTTTTTTTTTTT...',
+  '....TTTTTTTTTT....',
+  '...TT.TT..TT.TT...',
+  '...TT.TT..TT.TT...',
 ]
 
-export function textMarkRows(): ArtRow[] {
-  return renderQuadrantArt(TEXT_MARK_PIXELS, p =>
-    p === 'B' || p === 'C' ? CORAL : p === 'T' ? SAND : p === 'V' ? VISOR : p === 'E' ? EYE : undefined,
-  )
-}
+/** Small terminals: 10 columns x 3 rows. */
+export const MASCOT_TINY = [
+  '....BB....',
+  '.TTT..TTT.',
+  '.TTTTTTTT.',
+  'TTVEVVEVTT',
+  '.TVVBBVVT.',
+  '.T.T..T.T.',
+]
 
-// Quadrant block for each 2x2 pattern, indexed by bits
-// 1 = top-left, 2 = top-right, 4 = bottom-left, 8 = bottom-right.
-const QUADRANTS = ' ▘▝▀▖▌▞▛▗▚▐▜▄▙▟█'
+export type MascotSize = 'mid' | 'tiny'
 
 /**
- * Four pixels per terminal cell with quadrant blocks. A cell holds at most
- * two colors: the second one becomes the background behind the glyph.
+ * Mascot rows. `coral` colors the beacon and nose (the pulse swaps in a
+ * lighter coral); `blinking` closes the eyes into the face panel.
  */
-export function renderQuadrantArt(
-  pixels: string[],
-  colorOf: (p: string) => string | undefined,
+export function mascotRows(
+  size: MascotSize = 'mid',
+  opts: { coral?: string; blinking?: boolean } = {},
 ): ArtRow[] {
-  const width = pixels[0]!.length
-  const rows: ArtRow[] = []
-  for (let r = 0; r < pixels.length; r += 2) {
-    const cells: ArtSegment[] = []
-    for (let c = 0; c < width; c += 2) {
-      const quad = [
-        colorOf(pixels[r]![c]!),
-        colorOf(pixels[r]![c + 1]!),
-        colorOf(pixels[r + 1]?.[c] ?? '.'),
-        colorOf(pixels[r + 1]?.[c + 1] ?? '.'),
-      ]
-      const fg = quad.find(Boolean)
-      if (!fg) {
-        cells.push([' ', ''])
-        continue
-      }
-      const bg = quad.find(q => q && q !== fg)
-      let bits = 0
-      quad.forEach((q, i) => {
-        if (q === fg) bits |= 1 << i
-      })
-      cells.push(bg ? [QUADRANTS[bits]!, fg, bg] : [QUADRANTS[bits]!, fg])
-    }
-    rows.push(mergeRuns(cells))
-  }
-  return rows
+  const grid = size === 'tiny' ? MASCOT_TINY : MASCOT_MID
+  const coral = opts.coral ?? CORAL
+  return renderPixelArt(opts.blinking ? grid.map(r => r.replace(/E/g, 'V')) : grid, p =>
+    p === 'B' ? coral : p === 'T' ? SAND : p === 'V' ? VISOR : p === 'E' ? EYE : undefined,
+  )
 }
 
 function mergeRuns(cells: ArtSegment[]): ArtRow {
@@ -119,4 +106,74 @@ export function renderPixelArt(
     rows.push(mergeRuns(cells))
   }
   return rows
+}
+
+/**
+ * Pixel fonts for the GIZZI CODE dot-matrix wordmark, 5 pixels tall.
+ * FONT35 letters are 3 wide, FONT45 letters 4 wide (G, Z, C, O, D, E).
+ */
+export const FONT35: Record<string, string[]> = {
+  G: ['.##', '#..', '#.#', '#.#', '.##'], I: ['###', '.#.', '.#.', '.#.', '###'],
+  Z: ['###', '..#', '.#.', '#..', '###'], C: ['.##', '#..', '#..', '#..', '.##'],
+  O: ['.#.', '#.#', '#.#', '#.#', '.#.'], D: ['##.', '#.#', '#.#', '#.#', '##.'],
+  E: ['###', '#..', '##.', '#..', '###'], ' ': ['..', '..', '..', '..', '..'],
+}
+export const FONT45: Record<string, string[]> = {
+  G: ['.###', '#...', '#.##', '#..#', '.###'], I: ['###', '.#.', '.#.', '.#.', '###'],
+  Z: ['####', '..#.', '.#..', '#...', '####'], C: ['.###', '#...', '#...', '#...', '.###'],
+  O: ['.##.', '#..#', '#..#', '#..#', '.##.'], D: ['###.', '#..#', '#..#', '#..#', '###.'],
+  E: ['####', '#...', '###.', '#...', '####'], ' ': ['..', '..', '..', '..', '..'],
+}
+
+/** Eoj's wordmark pick (b2, 2026-11-09): the font, whether the first G is coral, and the braille row the version sits on. */
+export const WORDMARK_FONT = FONT35
+export const WORDMARK_CORAL_G = true
+export const WORDMARK_VERSION_ROW = 0
+
+/** A word as a pixel grid, one blank column between letters. */
+export function wordGrid(word: string, font: Record<string, string[]>): string[] {
+  return Array.from({ length: 5 }, (_, r) =>
+    [...word].map(ch => font[ch]![r]!).join('.'),
+  )
+}
+
+// Braille dot bits for [dx, dy] inside a 2x4 cell.
+const BRAILLE_BITS: Array<[number, number, number]> = [
+  [0, 0, 0x01], [0, 1, 0x02], [0, 2, 0x04], [1, 0, 0x08],
+  [1, 1, 0x10], [1, 2, 0x20], [0, 3, 0x40], [1, 3, 0x80],
+]
+
+/** Pixels as braille dots (U+2800-U+28FF): 2x4 pixels per one-column cell. */
+export function brailleRows(grid: string[]): string[] {
+  const w2 = Math.ceil(grid[0]!.length / 2) * 2
+  const h4 = Math.ceil(grid.length / 4) * 4
+  const g = Array.from({ length: h4 }, (_, r) => (grid[r] ?? '').padEnd(w2, '.'))
+  const out: string[] = []
+  for (let by = 0; by < h4; by += 4) {
+    let line = ''
+    for (let bx = 0; bx < w2; bx += 2) {
+      let v = 0
+      for (const [dx, dy, bit] of BRAILLE_BITS) if (g[by + dy]![bx + dx] !== '.') v |= bit
+      line += v ? String.fromCharCode(0x2800 + v) : ' '
+    }
+    out.push(line)
+  }
+  return out
+}
+
+/**
+ * The GIZZI CODE wordmark as 2 rows of braille. With `coralG` the first G
+ * (and the gap after it) is its own run in coral; the rest takes `ink`.
+ */
+export function wordmarkRows(
+  font: Record<string, string[]> = WORDMARK_FONT,
+  coralG: boolean = WORDMARK_CORAL_G,
+  ink = 'text',
+): ArtRow[] {
+  const grid = wordGrid('GIZZI CODE', font)
+  if (!coralG) return brailleRows(grid).map(t => [[t, ink]])
+  const gw = font.G![0]!.length + 1
+  const g = brailleRows(grid.map(r => r.slice(0, gw)))
+  const rest = brailleRows(grid.map(r => r.slice(gw)))
+  return g.map((t, i) => [[t, CORAL], [rest[i]!, ink]])
 }

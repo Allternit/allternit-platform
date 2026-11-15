@@ -23,6 +23,7 @@ export {
   consoleNav,
   consoleNavEntries,
   consoleNavLabelForPath,
+  consoleNavEntryForPath,
 } from "./navConfig";
 export type {
   ConsoleNavConfig,

@@ -115,7 +115,7 @@ impl OpenRouterProvider {
     pub fn new(config: OpenRouterConfig) -> Arc<Self> {
         Arc::new(Self {
             config,
-            client: reqwest::Client::new(),
+            client: crate::net_client::client(),
             cache: RwLock::new(None),
         })
     }
@@ -347,6 +347,7 @@ impl UpstreamProvider for OpenRouterProvider {
         if no_retention_enabled() {
             enforce_no_retention(&mut request);
         }
+        request.strip_openai_only_fields("openrouter");
         if request.is_streaming() {
             self.chat_completions_streaming(request).await
         } else {

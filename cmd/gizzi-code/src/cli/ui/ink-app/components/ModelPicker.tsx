@@ -11,14 +11,18 @@ import { useKeybindings } from '../keybindings/useKeybinding';
 import { useAppState, useSetAppState } from '../state/AppState';
 import { convertEffortValueToLevel, type EffortLevel, getDefaultEffortForModel, modelSupportsEffort, modelSupportsMaxEffort, resolvePickerEffortPersistence, toPersistableEffort } from '../utils/effort';
 import { getDefaultMainLoopModel, type ModelSetting, modelDisplayString, parseUserSpecifiedModel } from '../utils/model/model';
-import { getModelOptions } from '../utils/model/modelOptions';
-import { buildPickerRows, quotaMarker, selectableValues, toggleFavorite, visibleWindow, type PickerProviderMeta, type PickerQuotaResult, type PickerRow } from '../utils/model/modelPickerModel';
+import { buildModelPickerRows, getModelListSections, getModelOptions, refreshModelListSections, type ModelListSection, type ModelPickerRow } from '../utils/model/modelOptions';
+import { formatContext, quotaMarker, toggleFavorite, visibleWindow, type PickerQuotaResult } from '../utils/model/modelPickerModel';
 import { getSettingsForSource, updateSettingsForSource } from '../utils/settings/settings';
 import { ConfigurableShortcutHint } from './ConfigurableShortcutHint';
 import { Byline } from './design-system/Byline';
 import { KeyboardShortcutHint } from './design-system/KeyboardShortcutHint';
 import { Pane } from './design-system/Pane';
 import { effortLevelToSymbol } from './EffortIndicator';
+import { ModelThinking } from '@/runtime/providers/discovery/model-thinking';
+import { CloudContinue } from '@/runtime/session/cloud-continue';
+import { cloudCreditsDisclosure, type CloudCreditsCode } from '@/shared/util/provider-error';
+import { cloudEntitlement } from '../services/allternitAccount';
 export type Props = {
   initial: string | null;
   sessionModel?: ModelSetting;
@@ -37,32 +41,33 @@ export type Props = {
   skipSettingsWrite?: boolean;
 };
 const NO_PREFERENCE = '__NO_PREFERENCE__';
+type OptionRow = Extract<ModelPickerRow, {
+  kind: "option";
+}>;
 /** Rows (headers + options) rendered at once; the window follows focus. */
 const ROW_WINDOW = 12;
 /**
- * Provider metadata for every discovered `${providerId}/${modelId}` option
- * value, used to group the picker into sections and show per-row context
- * windows. Same require-in-render pattern as modelOptions.ts — Discovery is
- * a runtime module that must not break the picker if unavailable.
+ * The command that signs a CLI provider in (`<bin> <catalog login args>`),
+ * or undefined when the catalog has no login command for it. Same
+ * require-in-render pattern as the quota lookup below.
  */
-function getDiscoveryMeta(): Map<string, PickerProviderMeta> {
-  const map = new Map<string, PickerProviderMeta>();
+function loginCommandFor(providerId: string | undefined): string | undefined {
+  if (!providerId) return undefined;
   try {
-    const { Discovery } = require('../../../../runtime/providers/discovery/index.js') as typeof import('../../../../runtime/providers/discovery/index.js');
-    Discovery.prefetch();
-    for (const dp of Discovery.last()) {
-      for (const m of dp.models) {
-        map.set(`${dp.id}/${m.id}`, {
-          providerId: dp.id,
-          providerName: dp.name,
-          source: dp.source,
-          context: m.context,
-          output: m.output,
-        });
-      }
-    }
-  } catch {}
-  return map;
+    const {
+      findSubprocessSpec,
+      CLI_CATALOG
+    } = require('../../../../runtime/providers/discovery/subprocess.js') as typeof import('../../../../runtime/providers/discovery/subprocess.js');
+    const spec = findSubprocessSpec(providerId);
+    const tool = CLI_CATALOG.find(t => t.id === providerId) as {
+      login?: unknown;
+    } | undefined;
+    const login = Array.isArray(tool?.login) ? tool!.login.filter((a): a is string => typeof a === 'string') : [];
+    if (!spec || login.length === 0) return undefined;
+    return [spec.bin, ...login].join(' ');
+  } catch {
+    return undefined;
+  }
 }
 export function ModelPicker({
     initial,
@@ -84,9 +89,42 @@ export function ModelPicker({
   const isFastMode = useAppState(s => isFastModeEnabled() ? s.fastMode : false);
   const [hasToggledEffort, setHasToggledEffort] = useState(false);
   const effortValue = useAppState(s => s.effortValue);
-  const [effort, setEffort] = useState(effortValue !== undefined ? convertEffortValueToLevel(effortValue) : undefined);
-  const metaMap = useMemo(() => getDiscoveryMeta(), []);
-  const modelOptions = useMemo(() => getModelOptions(isFastMode ?? false), [isFastMode]);
+  // A thinking level id: Claude's low…max, or any level in model-thinking.json (xhigh, minimal, ultra…).
+  const [effort, setEffort] = useState<string | undefined>(effortValue === undefined ? undefined : typeof effortValue === 'string' ? effortValue : convertEffortValueToLevel(effortValue));
+  // The shared model list (the rows `gizzi models` prints). Shown from the
+  // last build at once, then rebuilt on open so new sign-ins and models show.
+  const [sections, setSections] = useState<ModelListSection[]>(() => getModelListSections());
+  const [loading, setLoading] = useState(true);
+  // Cloud rows the account can't run yet (no Cloud credits): listed with
+  // "needs credits"; choosing one prints the disclosure and keeps the old model.
+  const [cloudLock, setCloudLock] = useState<{ check: (modelID: string) => boolean; reason: CloudCreditsCode | null }>();
+  const [notice, setNotice] = useState<string>();
+  useEffect(() => {
+    let cancelled = false;
+    void cloudEntitlement().then(async entitlement => {
+      const check = await CloudContinue.lockCheck(entitlement);
+      if (!cancelled && entitlement && !entitlement.allowed) setCloudLock({ check, reason: entitlement.reason });
+    }).catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const isCloudLocked = (value: string | undefined): boolean => {
+    const prefix = `${CloudContinue.PROVIDER_ID}/`;
+    return Boolean(cloudLock && value?.startsWith(prefix) && cloudLock.check(value.slice(prefix.length)));
+  };
+  useEffect(() => {
+    let cancelled = false;
+    void refreshModelListSections().then(next => {
+      if (cancelled) return;
+      setSections(next);
+      setLoading(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const modelOptions = useMemo(() => getModelOptions(isFastMode ?? false), [isFastMode, sections]);
   const optionsWithInitial = useMemo(() => {
     if (initial !== null && !modelOptions.some(opt => opt.value === initial)) {
       return [...modelOptions, {
@@ -97,25 +135,29 @@ export function ModelPicker({
     }
     return modelOptions;
   }, [modelOptions, initial]);
-  const selectOptions = useMemo(() => optionsWithInitial.map(opt => ({
-    ...opt,
-    value: opt.value === null ? NO_PREFERENCE : opt.value
-  })), [optionsWithInitial]);
+  // Options the shared list does not carry (env custom model, the running
+  // model when no provider lists it) go under "Other".
+  const extras = useMemo(() => optionsWithInitial.flatMap(opt => opt.value === null ? [] : [{
+    value: opt.value,
+    label: opt.label,
+    description: opt.description
+  }]), [optionsWithInitial]);
   const {
     rows,
     matched,
     total
-  } = useMemo(() => buildPickerRows(selectOptions, {
-    metaFor: value => metaMap.get(value),
+  } = useMemo(() => buildModelPickerRows(sections, extras, {
     favorites,
-    query: filter
-  }), [selectOptions, metaMap, favorites, filter]);
-  const values = useMemo(() => selectableValues(rows), [rows]);
-  // Focus can point at a row the filter hid — fall back to the first match.
-  const effectiveFocused = values.includes(focusedValue) ? focusedValue : values[0];
-  const focusedRow = rows.find((r): r is Extract<PickerRow, {
-    kind: "option";
-  }> => r.kind === "option" && r.value === effectiveFocused);
+    query: filter,
+    // With no pick, the session runs the TUI's resolved default.
+    current: initial ?? getDefaultMainLoopModel()
+  }), [sections, extras, favorites, filter, initial]);
+  const values = useMemo(() => rows.flatMap(r => r.kind === "option" ? [r.value] : []), [rows]);
+  // With no model chosen, focus starts on the running default.
+  const currentValue = rows.find((r): r is OptionRow => r.kind === "option" && r.isCurrent)?.value;
+  // Focus can point at a row the filter hid — fall back to the current row, then the first match.
+  const effectiveFocused = values.includes(focusedValue) ? focusedValue : currentValue !== undefined && values.includes(currentValue) ? currentValue : values[0];
+  const focusedRow = rows.find((r): r is OptionRow => r.kind === "option" && r.value === effectiveFocused);
   const focusIndex = rows.findIndex(r => r.kind === "option" && r.value === effectiveFocused);
   const windowRows = visibleWindow(rows, focusIndex === -1 ? 0 : focusIndex, ROW_WINDOW);
 
@@ -143,8 +185,10 @@ export function ModelPicker({
       } = require('../../../../runtime/providers/quota/index.js') as typeof import('../../../../runtime/providers/quota/index.js');
       const supported = new Set(ProviderQuotas.supported());
       const ids = new Set<string>();
-      for (const meta of metaMap.values()) {
-        if (supported.has(meta.providerId)) ids.add(meta.providerId);
+      for (const section of sections) {
+        for (const provider of section.providers) {
+          if (supported.has(provider.id)) ids.add(provider.id);
+        }
       }
       for (const id of ids) {
         void ProviderQuotas.get(id).then(result => {
@@ -158,15 +202,18 @@ export function ModelPicker({
     return () => {
       cancelled = true;
     };
-  }, [metaMap]);
+  }, [sections]);
   const focusedModelName = focusedRow?.label;
   const focusedModel = resolveOptionModel(effectiveFocused);
   const focusedSupportsEffort = focusedModel ? modelSupportsEffort(focusedModel) : false;
   const focusedSupportsMax = focusedModel ? modelSupportsMaxEffort(focusedModel) : false;
+  // The shared per-model thinking table (the same one Desktop, web and iOS pick from).
+  const focusedThinking = focusedModel ? ModelThinking.describe(focusedModel) : undefined;
   const focusedDefaultEffort = getDefaultEffortLevelForOption(effectiveFocused);
-  const displayEffort = effort === "max" && !focusedSupportsMax ? "high" : effort;
+  const displayEffort = focusedThinking ? ModelThinking.check(focusedModel!, effort) ?? focusedDefaultEffort : effort === "max" && !focusedSupportsMax ? "high" : effort;
   const handleFocus = (value: string) => {
     setFocusedValue(value);
+    setNotice(undefined);
     if (!hasToggledEffort && effortValue === undefined) {
       setEffort(getDefaultEffortLevelForOption(value));
     }
@@ -181,7 +228,16 @@ export function ModelPicker({
     if (!focusedSupportsEffort) {
       return;
     }
-    setEffort(prev => cycleEffortLevel(prev ?? focusedDefaultEffort, direction, focusedSupportsMax));
+    if (focusedThinking) {
+      const ids = focusedThinking.levels.map(l => l.id);
+      setEffort(prev => {
+        const at = ids.indexOf(ModelThinking.check(focusedModel!, prev) ?? focusedDefaultEffort);
+        const from = at === -1 ? ids.indexOf(focusedThinking.default) : at;
+        return ids[direction === 'right' ? Math.min(ids.length - 1, from + 1) : Math.max(0, from - 1)];
+      });
+    } else {
+      setEffort(prev => cycleEffortLevel((prev ?? focusedDefaultEffort) as EffortLevel, direction, focusedSupportsMax));
+    }
     setHasToggledEffort(true);
   };
   useKeybindings({
@@ -191,11 +247,15 @@ export function ModelPicker({
     context: "ModelPicker"
   });
   const handleSelect = (value_0: string) => {
+    if (isCloudLocked(value_0)) {
+      setNotice(cloudCreditsDisclosure(cloudLock?.reason));
+      return;
+    }
     logEvent("tengu_model_command_menu_effort", {
       effort: effort as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS
     });
     if (!skipSettingsWrite) {
-      const effortLevel = resolvePickerEffortPersistence(effort, getDefaultEffortLevelForOption(value_0), getSettingsForSource("userSettings")?.effortLevel, hasToggledEffort);
+      const effortLevel = resolvePickerEffortPersistence(effort as EffortLevel | undefined, getDefaultEffortLevelForOption(value_0) as EffortLevel, getSettingsForSource("userSettings")?.effortLevel, hasToggledEffort);
       const persistable = toPersistableEffort(effortLevel);
       if (persistable !== undefined) {
         updateSettingsForSource("userSettings", {
@@ -208,7 +268,7 @@ export function ModelPicker({
       }));
     }
     const selectedModel = resolveOptionModel(value_0);
-    const selectedEffort = hasToggledEffort && selectedModel && modelSupportsEffort(selectedModel) ? effort : undefined;
+    const selectedEffort = (hasToggledEffort && selectedModel && modelSupportsEffort(selectedModel) ? effort : undefined) as EffortLevel | undefined;
     if (value_0 === NO_PREFERENCE) {
       onSelect(null, selectedEffort);
       return;
@@ -267,29 +327,44 @@ export function ModelPicker({
   const showCount = filter !== '' || total > ROW_WINDOW;
   const listContent = <Box flexDirection="column" marginBottom={1}>
       {filter !== '' && <Text>Filter: <Text bold={true}>{filter}</Text>{matched === 0 ? '' : ` (${matched} of ${total})`}</Text>}
-      {matched === 0 && <Text dimColor={true}>No models match {JSON.stringify(filter)} — Backspace to edit, Esc to clear.</Text>}
+      {total === 0 && <Text dimColor={true}>{loading ? 'Loading models…' : 'No models yet. Run gizzi connect to add an account.'}</Text>}
+      {total > 0 && matched === 0 && <Text dimColor={true}>No models match {JSON.stringify(filter)} — Backspace to edit, Esc to clear.</Text>}
       {windowRows.map(row => {
-      if (row.kind === "header") {
+      if (row.kind === "section") {
+        return <Box key={row.key}><Text bold={true}>{row.title}</Text></Box>;
+      }
+      if (row.kind === "provider") {
         const headerQuota = row.providerId ? quotaMarker(quotas[row.providerId], quotaFetchers.has(row.providerId)) : null;
-        return <Box key={row.key}><Text dimColor={true} bold={true}>{row.title}{headerQuota ? ` · ${headerQuota}` : ''}</Text></Box>;
+        return <Box key={row.key} paddingLeft={1}><Text dimColor={true} bold={true}>{row.title}{headerQuota ? ` · ${headerQuota}` : ''}</Text></Box>;
       }
       const isFocused = row.value === effectiveFocused;
-      const isCurrent = row.value === initialValue;
-      const meta = [row.contextLabel, ...row.badges].filter(Boolean).join(' · ');
+      const dim = row.signedIn === false && !isFocused;
+      const tags = [row.isDefault ? 'default' : '', row.isCurrent ? 'current' : '', isCloudLocked(row.value) ? 'needs credits' : ''].filter(Boolean).join(' · ');
+      const contextLabel = row.context ? formatContext(row.context) : null;
+      const thinking = thinkingCell(row.value, isFocused ? displayEffort : undefined);
       return <Box key={row.key} flexDirection="row">
-              <Text color={isFocused ? "suggestion" : undefined}>{isFocused ? figures.pointer : ' '}{' '}{row.favorite ? '★ ' : ''}{row.label}{isCurrent ? ` ${figures.tick}` : ''}</Text>
+              <Text color={isFocused ? "suggestion" : undefined} dimColor={dim}>{isFocused ? figures.pointer : ' '}{' '}{row.favorite ? '★ ' : ''}{row.label}</Text>
+              {tags !== '' && <Text dimColor={true}>{' '}{tags}</Text>}
               <Box flexGrow={1} />
-              {meta !== '' && <Text dimColor={true}>{meta}</Text>}
+              {contextLabel && <Text dimColor={true}>{contextLabel}</Text>}
+              <Box width={THINKING_COLUMN} flexShrink={0} justifyContent="flex-end">
+                <Text color={isFocused && thinking !== '—' ? "suggestion" : undefined} dimColor={!isFocused}>{isFocused && thinking !== '—' ? `‹ ${thinking} ›` : thinking}</Text>
+              </Box>
             </Box>;
     })}
       {showCount && matched > 0 && <Text dimColor={true}>{matched} of {total} models{rows.length > ROW_WINDOW ? ' · ↑/↓ to scroll' : ''}</Text>}
     </Box>;
-  const focusedDetail = focusedRow && (focusedRow.description || focusedQuota) ? <Box marginBottom={1}><Text dimColor={true}>{focusedRow.description}{focusedRow.description && focusedQuota ? ' · ' : ''}{focusedQuota ?? ''}</Text></Box> : null;
-  const effortRow = <Box marginBottom={1} flexDirection="column">{focusedSupportsEffort ? <Text dimColor={true}><EffortLevelIndicator effort={displayEffort} />{" "}{capitalize(displayEffort)} effort{displayEffort === focusedDefaultEffort ? " (default)" : ""}{" "}<Text color="subtle">← → to adjust</Text></Text> : <Text color="subtle"><EffortLevelIndicator effort={undefined} /> Effort not supported{focusedModelName ? ` for ${focusedModelName}` : ""}</Text>}</Box>;
-  const header = <Box marginBottom={1} flexDirection="column"><Text color="remember" bold={true}>Select model</Text><Text dimColor={true}>{headerText ?? "Switch models. Applies to this session and future Gizzi Code sessions. For other/previous model names, specify with --model."}</Text>{sessionModel && <Text dimColor={true}>Currently using {modelDisplayString(sessionModel)} for this session (set by plan mode). Selecting a model will undo this.</Text>}<Text dimColor={true}>↑/↓ navigate · Enter select · Tab ★ favorite · type to filter · Esc {filter ? 'clear filter' : 'cancel'}</Text></Box>;
+  // provider/model · context window · sign-in hint · quota, for the focused row.
+  const focusedLogin = focusedRow?.signedIn === false ? loginCommandFor(focusedRow.providerId) : undefined;
+  const focusedDetailParts = focusedRow ? [focusedRow.value, focusedRow.context ? `${formatContext(focusedRow.context)} context` : null, focusedRow.signedIn === false ? focusedLogin ? `not signed in — run ${focusedLogin}` : 'not signed in' : null, isCloudLocked(focusedRow.value) ? 'needs credits' : null, focusedRow.description && focusedRow.sectionTitle === 'Other' ? focusedRow.description : null, focusedQuota].filter((part): part is string => Boolean(part)) : [];
+  const focusedDetail = focusedDetailParts.length > 0 ? <Box marginBottom={1}><Text dimColor={true}>{focusedDetailParts.join(' · ')}</Text></Box> : null;
+  const effortRow = focusedThinking ? <Box marginBottom={1} flexDirection="column"><Text dimColor={true}><EffortLevelIndicator effort={displayEffort as EffortLevel} />{" "}{focusedThinking.term}:{" "}{focusedThinking.levels.map((l, i) => <Text key={l.id} bold={l.id === displayEffort} dimColor={l.id !== displayEffort}>{i > 0 ? ' · ' : ''}{l.label}{l.id === focusedThinking.default ? '*' : ''}</Text>)}{" "}<Text color="subtle">← → change · * default</Text></Text></Box> : <Box marginBottom={1} flexDirection="column">{focusedSupportsEffort ? <Text dimColor={true}><EffortLevelIndicator effort={displayEffort as EffortLevel} />{" "}{capitalize(displayEffort)} effort{displayEffort === focusedDefaultEffort ? " (default)" : ""}{" "}<Text color="subtle">← → to adjust</Text></Text> : <Text color="subtle"><EffortLevelIndicator effort={undefined} /> Effort not supported{focusedModelName ? ` for ${focusedModelName}` : ""}</Text>}</Box>;
+  const header = <Box marginBottom={1} flexDirection="column"><Text color="remember" bold={true}>Select model</Text><Text dimColor={true}>{headerText ?? "Switch models. Applies to this session and future Gizzi Code sessions. For other/previous model names, specify with --model."}</Text>{sessionModel && <Text dimColor={true}>Currently using {modelDisplayString(sessionModel)} for this session (set by plan mode). Selecting a model will undo this.</Text>}</Box>;
+  const footerHint = <Box marginBottom={1}><Text dimColor={true}>↑/↓ navigate · Enter select · Tab ★ favorite · type to filter · Esc {filter ? 'clear filter' : 'cancel'} · gizzi connect to add an account</Text></Box>;
   const fastModeNotice = isFastModeEnabled() ? showFastModeNotice ? <Box marginBottom={1}><Text dimColor={true}>Fast mode is <Text bold={true}>ON</Text> and available with{" "}{FAST_MODE_MODEL_DISPLAY} only (/fast). Switching to other models turn off fast mode.</Text></Box> : isFastModeAvailable() && !isFastModeCooldown() ? <Box marginBottom={1}><Text dimColor={true}>Use <Text bold={true}>/fast</Text> to turn on Fast mode ({FAST_MODE_MODEL_DISPLAY} only).</Text></Box> : null : null;
   const standaloneHints = isStandaloneCommand && <Text dimColor={true} italic={true}>{exitState.pending ? <>Press {exitState.keyName} again to exit</> : <Byline><KeyboardShortcutHint shortcut="Enter" action="confirm" /><ConfigurableShortcutHint action="select:cancel" context="Select" fallback="Esc" description="exit" /></Byline>}</Text>;
-  const content = <Box flexDirection="column">{header}{listContent}{focusedDetail}{effortRow}{fastModeNotice}{standaloneHints}</Box>;
+  const creditsNotice = notice ? <Box marginBottom={1}><Text color="warning" wrap="wrap">{notice}</Text></Box> : null;
+  const content = <Box flexDirection="column">{header}{listContent}{focusedDetail}{creditsNotice}{effortRow}{footerHint}{fastModeNotice}{standaloneHints}</Box>;
   if (!isStandaloneCommand) {
     return content;
   }
@@ -319,8 +394,24 @@ function cycleEffortLevel(current: EffortLevel, direction: 'left' | 'right', inc
     return levels[(currentIndex - 1 + levels.length) % levels.length]!;
   }
 }
-function getDefaultEffortLevelForOption(value?: string): EffortLevel {
+const THINKING_COLUMN = 16;
+
+/**
+ * The thinking column for one row: the focused row's chosen level, else the
+ * model's default, in its vendor's words. "—" when the shared table lists
+ * no levels for the model (it runs at its own default).
+ */
+function thinkingCell(value: string | undefined, chosen: string | undefined): string {
+  const model = resolveOptionModel(value);
+  const described = model ? ModelThinking.describe(model) : undefined;
+  if (!described) return '—';
+  const id = (model && ModelThinking.check(model, chosen)) || described.default;
+  return described.levels.find(l => l.id === id)?.label ?? id;
+}
+function getDefaultEffortLevelForOption(value?: string): string {
   const resolved = resolveOptionModel(value) ?? getDefaultMainLoopModel();
+  const table = ModelThinking.describe(resolved);
+  if (table) return table.default;
   const defaultValue = getDefaultEffortForModel(resolved);
   return defaultValue !== undefined ? convertEffortValueToLevel(defaultValue) : 'high';
 }

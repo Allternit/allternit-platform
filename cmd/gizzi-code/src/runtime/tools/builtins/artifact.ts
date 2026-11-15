@@ -38,7 +38,7 @@ function summary(a: Artifacts.Payload): string {
 }
 
 /** This session's earlier artifact tool results (the bridge context has none, so load them). */
-async function transcript(ctx: Tool.Context): Promise<MessageV2.WithParts[]> {
+export async function transcript(ctx: Tool.Context): Promise<MessageV2.WithParts[]> {
   if (ctx.messages?.length) return ctx.messages
   try {
     const { Session } = await import("@/runtime/session")

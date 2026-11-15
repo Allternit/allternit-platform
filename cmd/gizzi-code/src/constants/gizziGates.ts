@@ -22,6 +22,10 @@ const GIZZI_GATE_DEFAULTS: Readonly<Record<string, unknown>> = {
   tengu_auto_mode_config: { enabled: 'enabled' },
   // TERMINAL_PANEL: meta+j opens a persistent shell (tmux-backed)
   tengu_terminal_panel: true,
+  // Next-step prompt suggestions (ghost text, tab to accept). Generated with
+  // the session's own model only when that costs nothing extra (CLI brains,
+  // local models) or runs on Allternit Cloud; see promptSuggestionCostReason.
+  tengu_chomp_inflection: true,
 }
 
 export function gizziGateDefault<T>(gate: string, fallback: T): T {

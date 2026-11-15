@@ -323,6 +323,103 @@ impl AgencyStore {
         Ok(rec)
     }
 
+    /// Attention `expires_at` (attention.mdx, "How it works" step 5): every
+    /// open request whose deadline passed becomes `expired`. An `approval`
+    /// (anything not `kind: informational`) resolves as a rejection (fail
+    /// closed, `outcome: rejected`) and the run moves exactly as it would on a
+    /// rejection answer ([`rejection_next`], the same mapping as
+    /// `mod.rs resolve_attention_linked`); an `informational` one gets
+    /// `outcome: none` and the run is left as it is. Requests without
+    /// `expires_at` never expire. Run every 60 s by the executor's resume task;
+    /// returns the runs to re-queue.
+    pub async fn expire_attention(&self) -> anyhow::Result<Vec<String>> {
+        let at = Utc::now();
+        let mut requeue = Vec::new();
+        let _g = self.lock().await;
+        for listed in self.runs_with_status(&["needs_attention"]).await? {
+            if !listed.attention.iter().any(|a| attention_expired(a, at)) {
+                continue;
+            }
+            let id = listed.run["id"].as_str().unwrap_or_default().to_string();
+            let Some(mut rec) = self.load_run(&id).await? else { continue };
+            let due: Vec<Value> = rec.attention.iter().filter(|a| attention_expired(a, at)).cloned().collect();
+            if due.is_empty() {
+                continue;
+            }
+            let v = rec.run["version"].as_i64().unwrap_or(0);
+            let mut next = None;
+            let mut released = Vec::new();
+            for a in &due {
+                let rejected = a["kind"] != "informational";
+                let resolution = json!({ "type": "expiry", "resolved_by": "system", "resolved_at": now(), "receipt_id": new_id("rcpt"),
+                    "outcome": if rejected { "rejected" } else { "none" }, "requested_by": rec.owner, "self_approval": false });
+                for x in rec.attention.iter_mut().filter(|x| x["id"] == a["id"]) {
+                    x["status"] = json!("expired");
+                    x["resolution"] = resolution.clone();
+                }
+                self.emit(&id, v, "attention.expired", json!({ "data": { "attention_id": a["id"], "resolution": resolution } })).await?;
+                released.push((rec.owner.clone(), a["id"].as_str().unwrap_or_default().to_string(), resolution));
+                if rejected && next.is_none() {
+                    next = rejection_next(a["reason"].as_str().unwrap_or_default());
+                }
+            }
+            match next {
+                Some((to, why, again)) => {
+                    self.transition(rec, to, Some(why)).await?;
+                    if again {
+                        requeue.push(id);
+                    }
+                }
+                None => {
+                    self.save(rec).await?;
+                }
+            }
+            // A parent run parked on one of these (a child template's request)
+            // gets the same outcome, as when a person answers on the child.
+            for (owner, child_att, resolution) in released {
+                for pid in self.release_parents(&owner, &child_att, &resolution, "expired").await? {
+                    if !requeue.contains(&pid) {
+                        requeue.push(pid);
+                    }
+                }
+            }
+        }
+        Ok(requeue)
+    }
+
+    /// G2: a child template's request was settled on the child itself
+    /// (answered, or expired unanswered): settle every open parent item linked
+    /// to it with the same resolution (`status` `resolved` or `expired`) and
+    /// move each parent with nothing else open back to `waiting` (its drive
+    /// re-checks the child under the fence). Returns the parent runs to
+    /// re-queue. The caller holds the write lock or runs under the answer path.
+    pub async fn release_parents(&self, owner: &str, child_att: &str, resolution: &Value, status: &str) -> anyhow::Result<Vec<String>> {
+        let event = if status == "expired" { "attention.expired" } else { "attention.resolved" };
+        let mut requeue = Vec::new();
+        for mut p in self.list_runs(owner).await? {
+            if p.run["status"] != "needs_attention" {
+                continue;
+            }
+            let mut hit = None;
+            for a in p.attention.iter_mut().filter(|a| a["reason"] == super::effect_template::CHILD_ATTENTION_REASON && a["status"] == "open" && a["child_attention_id"] == child_att) {
+                a["status"] = json!(status);
+                a["resolution"] = resolution.clone();
+                hit = a["id"].as_str().map(str::to_string);
+            }
+            let Some(pid) = hit else { continue };
+            let run_id = p.run["id"].as_str().unwrap_or_default().to_string();
+            let v = p.run["version"].as_i64().unwrap_or(0);
+            self.emit(&run_id, v, event, json!({ "data": { "attention_id": pid, "resolution": resolution } })).await?;
+            if p.attention.iter().any(|a| a["status"] == "open") {
+                self.save(p).await?;
+                continue;
+            }
+            self.transition(p, "waiting", Some("answered; queued to re-check the template run (committed steps replay from the journal)")).await?;
+            requeue.push(run_id);
+        }
+        Ok(requeue)
+    }
+
     pub async fn lock(&self) -> tokio::sync::MutexGuard<'static, ()> {
         WRITE_LOCK.lock().await
     }
@@ -386,11 +483,9 @@ impl AgencyStore {
             return self.transition(rec, "failed", Some("budget exhausted")).await;
         }
         let mut rec = rec;
-        let att = json!({
-            "id": new_id("att"), "object": "attention_request", "run_id": run_id, "status": "open",
-            "reason": "budget_exhausted", "title": format!("Budget exhausted ({dim}). Raise the budget or stop the run."),
-            "created_at": now(), "resolution": null
-        });
+        let att = new_attention(run_id, json!({
+            "reason": "budget_exhausted", "title": format!("Budget exhausted ({dim}). Raise the budget or stop the run.")
+        }));
         rec.attention.push(att.clone());
         self.emit(run_id, v, "attention.requested", json!({ "data": { "attention": att } })).await?;
         self.transition(rec, "needs_attention", Some("budget_exhausted")).await
@@ -425,12 +520,10 @@ impl AgencyStore {
         let v = rec.run["version"].as_i64().unwrap_or(0);
         self.emit(run_id, v, "budget.threshold", json!({ "data": { "dimension": format!("daily_{scope}_{dimension}"), "percent": 100, "spend_halted": true } })).await?;
         let mut rec = rec;
-        let att = json!({
-            "id": new_id("att"), "object": "attention_request", "run_id": run_id, "status": "open",
+        let att = new_attention(run_id, json!({
             "reason": super::guard::CAP_REASON, "title": super::guard::CAP_TITLE,
-            "detail": format!("The {scope} daily {dimension} cap is reached. Spend stopped; approve after the cap resets or is raised to continue."),
-            "created_at": now(), "resolution": null
-        });
+            "detail": format!("The {scope} daily {dimension} cap is reached. Spend stopped; approve after the cap resets or is raised to continue.")
+        }));
         rec.attention.push(att.clone());
         self.emit(run_id, v, "attention.requested", json!({ "data": { "attention": att } })).await?;
         self.transition(rec, "needs_attention", Some(super::guard::CAP_TITLE)).await
@@ -451,12 +544,10 @@ impl AgencyStore {
             return Ok(false);
         }
         let v = rec.run["version"].as_i64().unwrap_or(0);
-        let att = json!({
-            "id": new_id("att"), "object": "attention_request", "run_id": run_id, "status": "open",
+        let att = new_attention(run_id, json!({
             "reason": super::guard::SPEND_REASON, "title": super::guard::SPEND_TITLE,
-            "detail": format!("This run has spent ${spent:.2}, past the ${threshold:.2} approval threshold. Approve to continue or reject to stop."),
-            "created_at": now(), "resolution": null
-        });
+            "detail": format!("This run has spent ${spent:.2}, past the ${threshold:.2} approval threshold. Approve to continue or reject to stop.")
+        }));
         rec.attention.push(att.clone());
         self.emit(run_id, v, "attention.requested", json!({ "data": { "attention": att } })).await?;
         self.transition(rec, "needs_attention", Some(super::guard::SPEND_TITLE)).await?;
@@ -473,11 +564,11 @@ impl AgencyStore {
             return Ok(rec);
         }
         let v = rec.run["version"].as_i64().unwrap_or(0);
-        let mut att = json!({ "id": new_id("att"), "object": "attention_request", "run_id": run_id, "status": "open",
-            "reason": reason, "title": title, "detail": detail, "created_at": now(), "resolution": null });
-        if let (Some(a), Some(e)) = (att.as_object_mut(), extra.as_object()) {
+        let mut fields = json!({ "reason": reason, "title": title, "detail": detail });
+        if let (Some(a), Some(e)) = (fields.as_object_mut(), extra.as_object()) {
             a.extend(e.clone());
         }
+        let att = new_attention(run_id, fields);
         rec.attention.push(att.clone());
         self.emit(run_id, v, "attention.requested", json!({ "data": { "attention": att } })).await?;
         self.transition(rec, "needs_attention", Some(title)).await
@@ -496,11 +587,11 @@ impl AgencyStore {
         rec.run["budget_usage"]["spend_halted"] = json!(true);
         let mut rec = self.save(rec).await?;
         let v = rec.run["version"].as_i64().unwrap_or(0);
-        let mut att = json!({ "id": new_id("att"), "object": "attention_request", "run_id": run_id, "status": "open",
-            "reason": reason, "title": title, "detail": detail, "created_at": now(), "resolution": null });
-        if let (Some(a), Some(e)) = (att.as_object_mut(), extra.as_object()) {
+        let mut fields = json!({ "reason": reason, "title": title, "detail": detail });
+        if let (Some(a), Some(e)) = (fields.as_object_mut(), extra.as_object()) {
             a.extend(e.clone());
         }
+        let att = new_attention(run_id, fields);
         rec.attention.push(att.clone());
         self.emit(run_id, v, "attention.requested", json!({ "data": { "attention": att } })).await?;
         self.transition(rec, "needs_attention", Some(title)).await
@@ -535,5 +626,108 @@ impl AgencyStore {
         let mut v: Vec<(&(String, String, String), &(Value, u64))> = g.objects.iter().filter(|(k, _)| k.0 == ty && k.2 == owner).collect();
         v.sort_by(|a, b| b.1 .1.cmp(&a.1 .1));
         Ok(v.into_iter().map(|(_, (o, _))| o.clone()).collect())
+    }
+}
+
+/// An open attention request past its `expires_at` (RFC 3339). No deadline,
+/// an unparsable one, or a request no longer open never expires.
+pub fn attention_expired(a: &Value, at: chrono::DateTime<Utc>) -> bool {
+    a["status"] == "open"
+        && a["expires_at"].as_str().and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok()).is_some_and(|t| t.with_timezone(&Utc) <= at)
+}
+
+/// Hours a person has to answer an attention request before it expires
+/// (`approval`: as a rejection, fail closed). Most requests park a run that
+/// holds a budget, a lock or a person's goal; without a deadline an unanswered
+/// one parked the run forever and the expiry sweep never acted.
+pub const DEFAULT_ATTENTION_TTL_HOURS: i64 = 72;
+
+/// `ALLTERNIT_AGENCY_ATTENTION_TTL_HOURS` (0 = no default deadline), else
+/// [`DEFAULT_ATTENTION_TTL_HOURS`].
+pub fn attention_ttl_hours() -> i64 {
+    std::env::var("ALLTERNIT_AGENCY_ATTENTION_TTL_HOURS").ok().and_then(|v| v.trim().parse::<i64>().ok()).filter(|h| *h >= 0).unwrap_or(DEFAULT_ATTENTION_TTL_HOURS)
+}
+
+/// A new open attention request on `run_id`: `fields` (reason, title,
+/// detail, step fields) over the defaults. `kind` defaults to `approval`;
+/// `on_expiry` follows `kind` (attention.mdx). `expires_at` defaults to
+/// `at` + `ttl_hours` (none when 0); an `expires_at` in `fields` wins, `null`
+/// included (a wake gate, or a parent copying its child's deadline).
+pub fn open_attention(run_id: &str, fields: Value, at: chrono::DateTime<Utc>, ttl_hours: i64) -> Value {
+    let deadline = (ttl_hours > 0).then(|| (at + chrono::Duration::hours(ttl_hours)).to_rfc3339_opts(chrono::SecondsFormat::Secs, true));
+    let mut att = json!({ "id": new_id("att"), "object": "attention_request", "run_id": run_id, "status": "open",
+        "kind": "approval", "expires_at": deadline, "created_at": now(), "resolution": null });
+    if let (Some(a), Some(f)) = (att.as_object_mut(), fields.as_object()) {
+        a.extend(f.clone());
+    }
+    let on_expiry = if att["kind"] == "informational" { "none" } else { "reject" };
+    att["on_expiry"] = json!(on_expiry);
+    att
+}
+
+/// [`open_attention`] now, with the configured deadline.
+pub fn new_attention(run_id: &str, fields: Value) -> Value {
+    open_attention(run_id, fields, Utc::now(), attention_ttl_hours())
+}
+
+/// Where a run goes when an attention request of `reason` is rejected (by a
+/// person or by expiry): `(status, why, re-queue)`, or `None` to leave it.
+/// Mirrors the rejection arms of `mod.rs resolve_attention_linked`.
+pub fn rejection_next(reason: &str) -> Option<(&'static str, &'static str, bool)> {
+    match reason {
+        "budget_exhausted" => Some(("failed", "budget exhausted; the request expired unanswered")),
+        r if r == super::guard::SPEND_REASON || r == super::guard::CAP_REASON => Some(("failed", "attention expired unanswered; the run stopped (fail closed)")),
+        r if matches!(r, super::safety::RUN_CAP_REASON | super::safety::STUCK_REASON | super::safety::UNKNOWN_EFFECT_REASON) => {
+            Some(("failed", "attention expired unanswered; the run stopped (fail closed)"))
+        }
+        _ => None,
+    }
+    .map(|(to, why)| (to, why, false))
+    .or_else(|| {
+        (reason == super::executor::generic::TASK_WAIT_REASON || reason == super::effect_template::CHILD_ATTENTION_REASON)
+            .then_some(("waiting", "attention expired unanswered (rejected); queued for execution", true))
+    })
+}
+
+#[cfg(test)]
+mod expiry_tests {
+    use super::*;
+
+    #[test]
+    fn a_new_request_expires_by_default_unless_its_step_says_otherwise() {
+        let at = chrono::DateTime::parse_from_rfc3339("2026-11-13T12:00:00Z").unwrap().with_timezone(&Utc);
+        let a = open_attention("run_1", json!({ "reason": "spend_threshold", "title": "t" }), at, 72);
+        assert_eq!(a["expires_at"], "2026-11-16T12:00:00Z");
+        assert_eq!((a["kind"].as_str(), a["on_expiry"].as_str(), a["status"].as_str()), (Some("approval"), Some("reject"), Some("open")));
+        assert!(!attention_expired(&a, at) && attention_expired(&a, at + chrono::Duration::hours(72)), "the sweep acts on the default deadline");
+        // A template's own deadline, or an explicit null (wake gate), wins.
+        let t = open_attention("run_1", json!({ "expires_at": "2026-11-13T13:00:00Z" }), at, 72);
+        assert_eq!(t["expires_at"], "2026-11-13T13:00:00Z");
+        assert!(open_attention("run_1", json!({ "expires_at": null }), at, 72)["expires_at"].is_null());
+        assert!(open_attention("run_1", json!({}), at, 0)["expires_at"].is_null(), "TTL 0 = no default deadline");
+        assert_eq!(open_attention("run_1", json!({ "kind": "informational" }), at, 72)["on_expiry"], "none");
+    }
+
+    #[test]
+    fn only_open_requests_past_their_deadline_expire() {
+        let at = chrono::DateTime::parse_from_rfc3339("2026-11-12T12:00:00Z").unwrap().with_timezone(&Utc);
+        assert!(attention_expired(&json!({ "status": "open", "expires_at": "2026-11-12T11:59:59Z" }), at));
+        assert!(attention_expired(&json!({ "status": "open", "expires_at": "2026-11-12T12:00:00Z" }), at));
+        assert!(!attention_expired(&json!({ "status": "open", "expires_at": "2026-11-12T12:00:01Z" }), at));
+        assert!(!attention_expired(&json!({ "status": "open", "expires_at": null }), at));
+        assert!(!attention_expired(&json!({ "status": "open" }), at));
+        assert!(!attention_expired(&json!({ "status": "open", "expires_at": "tomorrow" }), at));
+        assert!(!attention_expired(&json!({ "status": "resolved", "expires_at": "2026-11-12T11:00:00Z" }), at));
+    }
+
+    #[test]
+    fn an_expired_approval_moves_the_run_like_a_rejection() {
+        assert_eq!(rejection_next("budget_exhausted").map(|n| (n.0, n.2)), Some(("failed", false)));
+        assert_eq!(rejection_next(super::super::guard::SPEND_REASON).map(|n| n.0), Some("failed"));
+        assert_eq!(rejection_next(super::super::guard::CAP_REASON).map(|n| n.0), Some("failed"));
+        assert_eq!(rejection_next(super::super::safety::STUCK_REASON).map(|n| n.0), Some("failed"));
+        assert_eq!(rejection_next(super::super::executor::generic::TASK_WAIT_REASON).map(|n| (n.0, n.2)), Some(("waiting", true)));
+        assert_eq!(rejection_next(super::super::effect_template::CHILD_ATTENTION_REASON).map(|n| (n.0, n.2)), Some(("waiting", true)));
+        assert_eq!(rejection_next("routing_policy"), None);
     }
 }

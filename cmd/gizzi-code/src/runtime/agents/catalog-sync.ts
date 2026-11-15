@@ -16,6 +16,7 @@
 import fs from "fs/promises"
 import path from "path"
 import { CLOUD_URLS } from "@/shared/constants/cloudUrls"
+import { isSelfHosted } from "@/shared/selfhost/offline"
 import { Global } from "@/runtime/context/global"
 import { Log } from "@/shared/util/log"
 import { catalogAgent, isModelClass, permissionFromTools, type ModelClass } from "./builtin-catalog"
@@ -61,6 +62,14 @@ export namespace CatalogSync {
   let customs: Custom[] = []
   let timer: ReturnType<typeof setInterval> | undefined
   let running: Promise<void> | undefined
+  // Tokens the server answered 401/403 for. Skipped on later ticks so a revoked
+  // credential is not retried every 10 minutes for the life of the process.
+  const rejected = new Set<string>()
+
+  /** Forget rejected tokens (tests). */
+  export function resetRejected() {
+    rejected.clear()
+  }
 
   export function dir() {
     return path.join(Global.Path.home, ".gizzi", "agents", "allternit")
@@ -92,8 +101,11 @@ export namespace CatalogSync {
 
   /** undefined = signed out / offline / rejected: leave everything as is. */
   async function fetchRows(): Promise<Row[] | undefined> {
+    // Self-hosted: keep the bundled catalog; never call api.allternit.com.
+    if (isSelfHosted()) return undefined
     const list = await tokens()
     for (const token of list) {
+      if (rejected.has(token)) continue
       let response: Response
       try {
         response = await fetch(`${base()}/api/v1/subagent-types`, {
@@ -103,7 +115,10 @@ export namespace CatalogSync {
       } catch {
         return undefined
       }
-      if (response.status === 401 || response.status === 403) continue
+      if (response.status === 401 || response.status === 403) {
+        rejected.add(token)
+        continue
+      }
       if (!response.ok) return undefined
       const json = (await response.json().catch(() => undefined)) as { types?: unknown } | undefined
       if (!json || !Array.isArray(json.types)) return undefined

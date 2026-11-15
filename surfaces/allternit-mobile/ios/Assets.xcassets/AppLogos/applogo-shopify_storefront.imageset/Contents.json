@@ -1,0 +1,12 @@
+{
+  "images": [
+    {
+      "filename": "shopify_storefront.png",
+      "idiom": "universal"
+    }
+  ],
+  "info": {
+    "author": "xcode",
+    "version": 1
+  }
+}

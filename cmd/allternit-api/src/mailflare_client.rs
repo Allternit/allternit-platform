@@ -201,7 +201,7 @@ impl MailflareClient {
     pub fn new(config: MailflareConfig) -> Self {
         Self {
             config,
-            http: Client::new(),
+            http: crate::net_client::client(),
         }
     }
 

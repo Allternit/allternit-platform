@@ -9,12 +9,16 @@ services/vault-viewer/server/public/
 dist/
 dist-bundle/
 target/
+.shared-target/
 .DS_Store
 .beads/
 *.log
 *.png
 !surfaces/platform.allternit.com/public/favicon.png
 !services/remote-control-push/favicon.png
+# iMessage app icons: App Store Connect rejects the upload without them (build 33, 2026-11-12)
+!surfaces/allternit-mobile/ios/AllternitMessages/MessagesAssets.xcassets/**/*.png
+!surfaces/allternit-mobile/ios/Assets.xcassets/**/*.png
 !surfaces/platform.allternit.com/public/billing/*.png
 *.mov
 *.zip
@@ -44,6 +48,8 @@ _tmp_*/
 _archive/
 coverage/
 build/
+# Desktop macOS Keychain addon output (scripts/prepare-keychain-addon.cjs builds it)
+surfaces/allternit-desktop/native/keychain/build/
 # electron-builder resources live under surfaces/allternit-desktop/build/
 # (icons, installer art, LICENSE.txt) — the NSIS license field hard-fails
 # without build/LICENSE.txt (desktop-v1.1.1 run 13).
@@ -107,7 +113,7 @@ surfaces/allternit-desktop/resources/bin/*
 services/voice/.packaging-venv/
 
 # repo reorg 2026-07-22: keep accidental/scratch output out of the tree
-Desktop/
+/Desktop/
 output/
 dispatch-screenshots/
 
@@ -133,12 +139,12 @@ cmd/gizzi-code/packages/sdk/dist/
 cmd/gizzi-code/vendor/cloudflared/
 cmd/gizzi-code/vendor/mesh-node/
 cmd/gizzi-code/vendor/allternit-factory/
-surfaces/allternit-mobile/ios/Frameworks/Mesh.xcframework/
+surfaces/allternit-mobile/ios/Frameworks/Mesh.xcframework
 infrastructure/mesh/tsnet-ios/Mesh.xcframework/
 # D3 spike: prebuilt libgit2.xcframework — fetch via Frameworks/fetch-libgit2.sh
-surfaces/allternit-mobile/ios/Frameworks/libgit2.xcframework/
+surfaces/allternit-mobile/ios/Frameworks/libgit2.xcframework
 # Voice: sherpa-onnx iOS xcframework — fetch via Frameworks/fetch-sherpa-onnx.sh
-surfaces/allternit-mobile/ios/Frameworks/SherpaOnnxC.xcframework/
+surfaces/allternit-mobile/ios/Frameworks/SherpaOnnxC.xcframework
 infrastructure/mesh/tsnet-ios/Harness/harness
 
 # Publication edition photos are pipeline artifacts and deploy with the site
@@ -154,3 +160,10 @@ docs/desktop-cloud-mvp/*.mov
 .logs/
 .pids/
 /tmp/
+
+# Downloaded by build-desktop.sh; left untracked it trips the release guard
+surfaces/allternit-desktop/resources/lume/
+
+# SourceKit-LSP build server config (machine-specific absolute paths; run `xcode-build-server config` locally)
+buildServer.json
+.sourcekit-lsp/

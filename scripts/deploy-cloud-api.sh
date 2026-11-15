@@ -18,7 +18,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SERVER="root@mail"
+SERVER="${CLOUD_API_DEPLOY_SERVER:-root@mail}"
 BUILD_TREE="/opt/allternit-build"
 PKG="cmd/allternit-cloud-api"
 BIN="allternit-cloud-api"
@@ -53,6 +53,15 @@ for d in src tests migrations_pg migrations; do
   fi
 done
 
+# Keep the crate manifest and shared source imports in the same snapshot.
+# Syncing only src left fresh Cloud source unable to compile on the server.
+run rsync -a "${REPO_ROOT}/${PKG}/Cargo.toml" "${SERVER}:${BUILD_TREE}/${PKG}/Cargo.toml"
+run rsync -a "${REPO_ROOT}/Cargo.lock" "${SERVER}:${BUILD_TREE}/Cargo.lock"
+run ssh "$SERVER" "mkdir -p ${BUILD_TREE}/cmd/allternit-api/src"
+for shared in answer_contract.rs net_client.rs office_session_guard.rs email_otp.rs; do
+  run rsync -a "${REPO_ROOT}/cmd/allternit-api/src/${shared}" "${SERVER}:${BUILD_TREE}/cmd/allternit-api/src/${shared}"
+done
+
 step "2/6 Touch changed files (rsync -a preserves mtimes; cargo skips otherwise)"
 if [[ "$DRY_RUN" -eq 0 ]]; then
   # No mapfile: macOS ships bash 3.2. Paths have no spaces, so a plain for works.
@@ -72,7 +81,7 @@ run ssh "$SERVER" "source \$HOME/.cargo/env && cd ${BUILD_TREE} && cargo build -
 
 step "4/6 Test suite"
 if [[ "$RUN_TESTS" -eq 1 ]]; then
-  run ssh "$SERVER" "source \$HOME/.cargo/env && cd ${BUILD_TREE} && cargo test --release -p ${BIN} --lib 2>&1 | tail -3"
+  run ssh "$SERVER" "set -o pipefail; source \$HOME/.cargo/env && cd ${BUILD_TREE} && cargo test --release -p ${BIN} --lib 2>&1 | tail -3"
 else
   echo "   skipped (--fast)"
 fi

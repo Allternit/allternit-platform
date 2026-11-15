@@ -65,6 +65,7 @@ async fn ctx() -> Ctx {
         include_str!("../../../migrations_pg/067_platform_agent_knowledge.sql"),
         include_str!("../../../migrations_pg/080_platform_billing.sql"),
         include_str!("../../../migrations_pg/084_platform_payment_methods.sql"),
+        include_str!("../../../migrations_pg/126_key_governance.sql"),
     ] {
         sqlx::raw_sql(&sql.replace("public.", "")).execute(&state.db).await.expect("migration applies");
     }

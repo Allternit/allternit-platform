@@ -73,6 +73,10 @@ pub enum Kind {
     PhoneStep,
     /// A phone task or skill replay ended (`phone_task`, `phone_replay`).
     PhoneRunCompleted,
+    /// The phone guard held an action for the owner (`phone_guard`).
+    PhoneApprovalRequested,
+    /// A phone hold was approved, denied, expired or changed (`phone_guard`).
+    PhoneApprovalResolved,
 }
 
 impl Kind {
@@ -107,6 +111,8 @@ impl Kind {
             Kind::AttentionResolved => Some("attention.resolved"),
             Kind::PhoneStep => Some("phone.step"),
             Kind::PhoneRunCompleted => Some("phone.run.completed"),
+            Kind::PhoneApprovalRequested => Some("phone.approval.requested"),
+            Kind::PhoneApprovalResolved => Some("phone.approval.resolved"),
         }
     }
 }
@@ -117,13 +123,16 @@ pub fn classify(event_type: &str, payload: &Value) -> Option<Kind> {
     match event_type {
         // Our own echoes are not "new messages".
         "channel.message.received" if payload["own"].as_bool() != Some(true) => Some(Kind::MessageReceived),
+        // A bot posted on its own (the main bot reaching out, a check-in): new message for its owner.
+        "bot.message.posted" => Some(Kind::MessageReceived),
         "call.ended" => {
             let missed = payload["missed"].as_bool() == Some(true)
                 || payload["answered"].as_bool() == Some(false)
                 || matches!(payload["reason"].as_str(), Some("missed" | "no_answer"));
             Some(Kind::CallEnded { missed })
         }
-        // Includes an outbound email held for human approval (request_review).
+        // An outbound email held for the owner's OK also writes `approval.requested`
+        // (`inbox_needs::record_email_draft`), which carries its inbox id.
         "thread.needs_user" => Some(Kind::NeedsUser),
         "inbox.changed" => Some(Kind::InboxChanged),
         "inbox.item.created" => Some(Kind::InboxItemCreated),
@@ -141,13 +150,15 @@ pub fn classify(event_type: &str, payload: &Value) -> Option<Kind> {
         "attention.resolved" => Some(Kind::AttentionResolved),
         "phone.step" => Some(Kind::PhoneStep),
         "phone.run.completed" => Some(Kind::PhoneRunCompleted),
+        "phone.approval.requested" => Some(Kind::PhoneApprovalRequested),
+        "phone.approval.resolved" => Some(Kind::PhoneApprovalResolved),
         _ => None,
     }
 }
 
 /// The ledger types the Desktop feed reads (an index filter, kept in step
 /// with [`Kind::feed`] by `feed_types_match_classify`).
-const FEED_TYPES: &[&str] = &["channel.message.received", "call.ended", "thread.needs_user", "inbox.changed"];
+const FEED_TYPES: &[&str] = &["channel.message.received", "bot.message.posted", "call.ended", "thread.needs_user", "inbox.changed"];
 
 fn max_rowid(conn: &Connection, user_id: &str) -> rusqlite::Result<i64> {
     conn.query_row(
@@ -309,6 +320,7 @@ mod tests {
         // Every type the feed can show is in its SQL filter, and vice versa.
         let samples = [
             ("channel.message.received", json!({})),
+            ("bot.message.posted", json!({})),
             ("call.ended", json!({ "reason": "no_answer" })),
             ("thread.needs_user", json!({})),
             ("inbox.changed", json!({})),

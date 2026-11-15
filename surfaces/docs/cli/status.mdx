@@ -1,0 +1,37 @@
+---
+title: gizzi status
+description: "Show the current session, and with --services the health of Allternit services"
+---
+
+## Overview
+
+`gizzi status` prints the model, directory, version and harness mode of the current session. If bots are paused it also prints a `Bots: paused` line.
+
+Add `--services` to check Allternit services instead. It reads the public status feed at `https://status.allternit.com/api/v1/status.json` and prints one line per component with its state, plus any open incident. Checks are measured by our monitoring, not a guarantee.
+
+## Flags
+
+| Flag | What it does |
+|---|---|
+| `--services` | Show service status from status.allternit.com |
+| `--json` | Print machine-readable JSON. With `--services` this is the status feed as returned |
+| `--inline` | Print the session summary as plain lines (session mode only) |
+
+## Exit codes with --services
+
+| Code | Meaning |
+|---|---|
+| `0` | Every component is operational |
+| `1` | At least one component is degraded, or under maintenance |
+| `2` | At least one component is down, or the status feed could not be reached |
+
+Session mode (no `--services`) exits 0.
+
+## Example
+
+```bash
+gizzi status --services
+gizzi status --services --json | jq '.overall'
+```
+
+`gizzi doctor` also reports whether the status feed shows an open incident. See [gizzi doctor](/cli/doctor) and [System status](/guides/system-status).

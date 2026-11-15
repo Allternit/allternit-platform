@@ -16,6 +16,8 @@ import { SignUpPage } from "@/pages/SignUpPage";
 import { RunsPage } from "@/pages/RunsPage";
 import { SchedulesPage } from "@/pages/SchedulesPage";
 import { ApprovalsPage } from "@/pages/ApprovalsPage";
+import { CloudGate } from "@/components/console-ui/CloudGate";
+import { isCloudGateway } from "@/lib/availability";
 import { FabricPage } from "@/pages/FabricPage";
 import { PortalLandingPage } from "@/pages/PortalLandingPage";
 import { ModelsPage } from "@/pages/ModelsPage";
@@ -52,11 +54,14 @@ import { SpendLimitsPage } from "@/pages/console/manage/SpendLimitsPage";
 import { SecurityPage } from "@/pages/console/manage/SecurityPage";
 import { WebhooksPage } from "@/pages/console/manage/WebhooksPage";
 import { TagsPage } from "@/pages/console/manage/TagsPage";
+import { AuditLogPage } from "@/pages/console/manage/AuditLogPage";
 import { PlatformProjectsPage } from "@/pages/console/platform/ProjectsPage";
 import { PlatformAgentsPage } from "@/pages/console/platform/AgentsPage";
 import { PlatformConversationsPage } from "@/pages/console/platform/ConversationsPage";
+import { PlatformDecisionsPage } from "@/pages/console/platform/DecisionsPage";
 import { PlatformUsagePage } from "@/pages/console/platform/UsagePage";
 import { PlatformComputersPage } from "@/pages/console/platform/ComputersPage";
+import { PlatformPhonesPage } from "@/pages/console/platform/PhonesPage";
 import { PlatformWebhooksPage } from "@/pages/console/platform/WebhooksPage";
 import { PlatformBillingPage } from "@/pages/console/platform/BillingPage";
 import { SetupPage } from "@/pages/SetupPage";
@@ -390,7 +395,7 @@ export default function App() {
         path="/files/*"
         element={
           <ConsoleRoute>
-            <FilesPage />
+            {isCloudGateway() ? <CloudGate feature="files" /> : <FilesPage />}
           </ConsoleRoute>
         }
       />
@@ -406,7 +411,7 @@ export default function App() {
         path="/batches/*"
         element={
           <ConsoleRoute>
-            <BatchesPage />
+            {isCloudGateway() ? <CloudGate feature="batches" /> : <BatchesPage />}
           </ConsoleRoute>
         }
       />
@@ -439,7 +444,7 @@ export default function App() {
         path="/analytics/caching/*"
         element={
           <ConsoleRoute>
-            <CachingPage />
+            {isCloudGateway() ? <CloudGate feature="caching" /> : <CachingPage />}
           </ConsoleRoute>
         }
       />
@@ -472,7 +477,7 @@ export default function App() {
         path="/manage/service-accounts/*"
         element={
           <ConsoleRoute>
-            <ServiceAccountsPage />
+            {isCloudGateway() ? <CloudGate feature="serviceAccounts" /> : <ServiceAccountsPage />}
           </ConsoleRoute>
         }
       />
@@ -480,7 +485,7 @@ export default function App() {
         path="/manage/spend-limits/*"
         element={
           <ConsoleRoute>
-            <SpendLimitsPage />
+            {isCloudGateway() ? <Navigate to="/platform/billing" replace /> : <SpendLimitsPage />}
           </ConsoleRoute>
         }
       />
@@ -493,10 +498,18 @@ export default function App() {
         }
       />
       <Route
+        path="/manage/audit-log/*"
+        element={
+          <ConsoleRoute>
+            <AuditLogPage />
+          </ConsoleRoute>
+        }
+      />
+      <Route
         path="/manage/webhooks/*"
         element={
           <ConsoleRoute>
-            <WebhooksPage />
+            {isCloudGateway() ? <Navigate to="/platform/webhooks" replace /> : <WebhooksPage />}
           </ConsoleRoute>
         }
       />
@@ -504,7 +517,7 @@ export default function App() {
         path="/manage/tags/*"
         element={
           <ConsoleRoute>
-            <TagsPage />
+            {isCloudGateway() ? <CloudGate feature="tags" /> : <TagsPage />}
           </ConsoleRoute>
         }
       />
@@ -522,7 +535,7 @@ export default function App() {
         path="/gateway/routing-policy/*"
         element={
           <ConsoleRoute>
-            <RoutingPolicyPage />
+            {isCloudGateway() ? <CloudGate feature="routingPolicy" /> : <RoutingPolicyPage />}
           </ConsoleRoute>
         }
       />
@@ -530,11 +543,11 @@ export default function App() {
         path="/gateway/credentials/*"
         element={
           <ConsoleRoute>
-            <RouteCredentialsPage />
+            {isCloudGateway() ? <CloudGate feature="routeCredentials" /> : <RouteCredentialsPage />}
           </ConsoleRoute>
         }
       />
-      {/* Platform API (developer /v1): projects, agents, conversations, computers, usage, webhooks. */}
+      {/* Platform API (developer /v1): projects, agents, conversations, computers, phones, usage, webhooks. */}
       <Route
         path="/platform/projects"
         element={
@@ -560,10 +573,26 @@ export default function App() {
         }
       />
       <Route
+        path="/platform/decisions"
+        element={
+          <ConsoleRoute>
+            <PlatformDecisionsPage />
+          </ConsoleRoute>
+        }
+      />
+      <Route
         path="/platform/computers"
         element={
           <ConsoleRoute>
             <PlatformComputersPage />
+          </ConsoleRoute>
+        }
+      />
+      <Route
+        path="/platform/phones"
+        element={
+          <ConsoleRoute>
+            <PlatformPhonesPage />
           </ConsoleRoute>
         }
       />

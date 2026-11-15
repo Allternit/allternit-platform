@@ -18,6 +18,9 @@ import { phoneService } from './phone-service.js';
 import { meshManager } from './mesh-manager.js';
 import { deleteSecret, readSecret, writeSecret } from './secure-store.js';
 
+// Keychain-sealed in packaged builds. unified-main registers this module's
+// channels with handleGuardedSecrets, so the Keychain is unlocked before any
+// handler reaches these; a locked Keychain throws instead of reading as "no key".
 const secrets: SecretStore = { get: readSecret, set: writeSecret, delete: deleteSecret };
 
 /**

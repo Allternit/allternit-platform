@@ -1,0 +1,40 @@
+---
+title: Trusting outside issuers
+description: "How the MCP edge accepts ID-JAGs from a trusted Claude or Okta org, maps them to Allternit users and issues edge tokens."
+---
+
+An org admin can trust an outside identity issuer (a Claude organization, an Okta tenant) so its members reach `mcp.allternit.com` without signing in to Allternit. The edge runs a small authorization server for this, following the MCP extension [Enterprise-Managed Authorization](https://modelcontextprotocol.io/extensions/auth/enterprise-managed-authorization).
+
+## Admin API
+
+Clerk session JWT; changes need the Clerk role `org:admin` in that org. Other members may read; non-members get `403`.
+
+| Route | Body |
+|---|---|
+| `GET /api/v1/orgs/:org/trusted-issuers` | |
+| `POST /api/v1/orgs/:org/trusted-issuers` | `{ "issuer", "jwks_uri"?, "kind": "claude" \| "okta" \| "other", "label", "targets": ["connectors", "agents"] }` |
+| `DELETE /api/v1/orgs/:org/trusted-issuers/:id` | |
+
+The managed configs for the other direction live at `GET|PUT|DELETE /api/v1/orgs/:org/managed-auth[/:connector_id]`. `PUT` takes `{ as_issuer, token_endpoint, resource, client_id, client_secret?, roles, scopes, enabled }`; `GET` never returns the secret (`has_secret`) and the list includes the org's `issuer_url`.
+
+## The edge authorization server
+
+`POST /oauth2/edge/token` takes the RFC 7523 JWT-bearer grant (`assertion` = the ID-JAG). It has its own AS metadata and JWKS. An assertion is accepted only when all of these hold:
+
+- `iss` is a trusted issuer of some org (`mcp_trusted_issuers`, not revoked);
+- the signature checks against that issuer's JWKS (cached, a new `kid` triggers a refetch);
+- `aud` is the edge AS issuer and `resource` is an edge resource (`<MCP_PUBLIC_URL>/connectors`, the agents server);
+- `exp` and `iat` are sane and the `jti` has not been seen (`edge_jti_seen`, kept until `exp`);
+- `email` is present and verified.
+
+The user is the Clerk user with that **verified** email who is a member of the org that trusts `iss`. Zero matches, or more than one, is `invalid_grant`: the edge never guesses. Issuer-specific claim mapping lives in one function, so a new issuer kind is one change.
+
+The edge then issues its own access token (ES256, `aud` = the resource, `scope`, `sub` = the Clerk user id, at most one hour). The edge accepts both these tokens and Clerk tokens. Protected resource metadata lists Clerk first, then the edge AS.
+
+## Consent
+
+Adding a trusted issuer is the org's consent: `client_id = issuer:<iss>` counts as approved for that org's members on the targets the admin picked (`connectors`, `agents`). Members see no per-app approval screen on this path. Bots are never reachable this way; they stay per person.
+
+## Claude
+
+Claude's exact claims and keys path are not published. The edge implements the extension spec as written; Claude-issued assertions are treated as verified only once Claude's connector setup guide confirms them. See [Use your Allternit connectors in other AI apps](/guides/connectors-in-other-apps) for the member side.

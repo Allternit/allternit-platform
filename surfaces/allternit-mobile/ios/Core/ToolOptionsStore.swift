@@ -113,4 +113,31 @@ final class ToolOptionsStore: ObservableObject {
         guard !parts.isEmpty else { return body }
         return (parts + [body]).joined(separator: " ")
     }
+
+    /// `text` without the leading tool markers, keeping a style prefix.
+    func withoutToolMarkers(_ text: String) -> String {
+        var body = text
+        let markers = ["[web_search_enabled]", "[research_enabled]"]
+        while let marker = markers.first(where: { body.hasPrefix($0) }) {
+            body = String(body.dropFirst(marker.count)).trimmingCharacters(in: .whitespaces)
+        }
+        return body
+    }
+
+    /// Undoes `enrichedText` so a failed send hands back what the person typed.
+    func strippedText(_ text: String) -> String {
+        var body = text
+        // "[research_enabled] " comes from chats sent on the web (ChatComposer buildEnrichedInput).
+        let prefixes = ["[web_search_enabled] ", "[research_enabled] "] + ComposerResponseStyle.allCases.map(\.promptPrefix)
+        var changed = true
+        while changed {
+            changed = false
+            for prefix in prefixes where body.hasPrefix(prefix) {
+                body.removeFirst(prefix.count)
+                body = body.trimmingCharacters(in: .whitespaces)
+                changed = true
+            }
+        }
+        return body
+    }
 }

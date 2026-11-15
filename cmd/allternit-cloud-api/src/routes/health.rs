@@ -4,6 +4,7 @@
 //! - GET /api/v1/health - Basic health check with DB connectivity
 //! - GET /api/v1/health/ready - Readiness probe for Kubernetes
 //! - GET /api/v1/health/live - Liveness probe
+//! - GET /api/v1/health/computers - Cloud computer provisioning health
 //! - GET /api/v1/metrics - Prometheus metrics endpoint
 
 use axum::http::header;
@@ -231,4 +232,137 @@ pub async fn metrics(State(state): State<Arc<ApiState>>) -> impl IntoResponse {
         [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
         metrics_output,
     )
+}
+
+// ---------------------------------------------------------------------------
+// Cloud computer provisioning health (public, for the status page prober)
+// ---------------------------------------------------------------------------
+
+/// Hard budget for the whole probe.
+const COMPUTERS_BUDGET: std::time::Duration = std::time::Duration::from_secs(2);
+/// A result is reused this long so a 1-minute prober cannot load the database.
+const COMPUTERS_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(30);
+/// Provisioning failures in the last hour that mark the lane degraded.
+const COMPUTERS_ERROR_THRESHOLD: i64 = 3;
+
+static COMPUTERS_CACHE: std::sync::Mutex<Option<(std::time::Instant, serde_json::Value)>> =
+    std::sync::Mutex::new(None);
+
+/// Pure rollup: reason codes only, no counts or identifiers.
+pub(crate) fn computers_status(
+    db_ok: bool,
+    enabled_hosts: i64,
+    hosts_with_capacity: i64,
+    recent_errors: i64,
+) -> (&'static str, Vec<&'static str>) {
+    let mut reasons = Vec::new();
+    if !db_ok {
+        reasons.push("database_unreachable");
+        return ("down", reasons);
+    }
+    if enabled_hosts == 0 {
+        reasons.push("no_enabled_hosts");
+        return ("down", reasons);
+    }
+    if hosts_with_capacity == 0 {
+        reasons.push("no_host_capacity");
+    }
+    if recent_errors >= COMPUTERS_ERROR_THRESHOLD {
+        reasons.push("recent_provisioning_failures");
+    }
+    if reasons.is_empty() {
+        ("ok", reasons)
+    } else {
+        ("degraded", reasons)
+    }
+}
+
+async fn probe_computers(db: &sqlx::PgPool) -> (&'static str, Vec<&'static str>) {
+    if sqlx::query("SELECT 1").fetch_one(db).await.is_err() {
+        return computers_status(false, 0, 0, 0);
+    }
+    let hosts: Option<(i64, i64)> = sqlx::query_as(
+        "SELECT COUNT(*)::bigint, \
+                COUNT(*) FILTER (WHERE memory_mb_total > memory_mb_allocated \
+                                  AND cpu_cores_total > cpu_cores_allocated \
+                                  AND disk_gb_total > disk_gb_allocated)::bigint \
+         FROM provisioned_hosts WHERE enabled = TRUE",
+    )
+    .fetch_one(db)
+    .await
+    .ok();
+    let errors: Option<i64> = sqlx::query_scalar(
+        "SELECT COUNT(*)::bigint FROM provisioned_instances \
+         WHERE status = 'error' AND updated_at > NOW() - INTERVAL '1 hour'",
+    )
+    .fetch_one(db)
+    .await
+    .ok();
+    match (hosts, errors) {
+        (Some((enabled, with_capacity)), Some(errs)) => {
+            computers_status(true, enabled, with_capacity, errs)
+        }
+        // Tables unreadable while the connection works: the lane is not usable.
+        _ => ("down", vec!["provisioning_state_unreadable"]),
+    }
+}
+
+/// Cloud computer provisioning health
+///
+/// GET /api/v1/health/computers
+///
+/// Public, unauthenticated. Reports whether provisioning can work: database
+/// reachable, at least one enabled host with free capacity, and no burst of
+/// recent provisioning failures. Never returns secrets, host names, or counts.
+/// 200 for ok/degraded, 503 for down. Cached for 30 seconds.
+pub async fn computers_health(State(state): State<Arc<ApiState>>) -> impl IntoResponse {
+    let cached = COMPUTERS_CACHE
+        .lock()
+        .ok()
+        .and_then(|guard| guard.as_ref().cloned())
+        .filter(|(at, _)| at.elapsed() < COMPUTERS_CACHE_TTL)
+        .map(|(_, body)| body);
+    let body = match cached {
+        Some(body) => body,
+        None => {
+            let (status, reasons) =
+                match tokio::time::timeout(COMPUTERS_BUDGET, probe_computers(&state.db)).await {
+                    Ok(result) => result,
+                    Err(_) => ("degraded", vec!["probe_timeout"]),
+                };
+            let body = serde_json::json!({
+                "status": status,
+                "checked_at": Utc::now().to_rfc3339(),
+                "details": { "reasons": reasons },
+            });
+            if let Ok(mut guard) = COMPUTERS_CACHE.lock() {
+                *guard = Some((std::time::Instant::now(), body.clone()));
+            }
+            body
+        }
+    };
+    let code = if body["status"] == "down" {
+        axum::http::StatusCode::SERVICE_UNAVAILABLE
+    } else {
+        axum::http::StatusCode::OK
+    };
+    (code, Json(body))
+}
+
+#[cfg(test)]
+mod computers_tests {
+    use super::computers_status;
+
+    #[test]
+    fn rolls_up_reason_codes() {
+        assert_eq!(computers_status(true, 2, 1, 0), ("ok", vec![]));
+        assert_eq!(computers_status(false, 2, 1, 0).0, "down");
+        assert_eq!(computers_status(true, 0, 0, 0), ("down", vec!["no_enabled_hosts"]));
+        assert_eq!(computers_status(true, 2, 0, 0), ("degraded", vec!["no_host_capacity"]));
+        assert_eq!(
+            computers_status(true, 2, 0, 5),
+            ("degraded", vec!["no_host_capacity", "recent_provisioning_failures"])
+        );
+        assert_eq!(computers_status(true, 1, 1, 2).0, "ok");
+    }
 }

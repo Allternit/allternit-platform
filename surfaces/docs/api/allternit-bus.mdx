@@ -42,6 +42,8 @@ All authenticated routes require a valid bearer token in the `Authorization` hea
 |--------|------|-------------|
 | `POST` | `/api/v1/photon/agents/:agent_id/inbox` | Deliver a message to an agent inbox. |
 | `GET` | `/api/v1/photon/agents/:agent_id/inbox` | List messages in an agent inbox. |
+| `POST` | `/api/v1/photon/outbound/:id/approve` | Owner approves a held Photon text; it is sent once. |
+| `POST` | `/api/v1/photon/outbound/:id/reject` | Owner rejects a held Photon text; nothing is sent. |
 | `PUT` | `/api/v1/agents/:agent_id/secrets/:key` | Set or update an encrypted agent secret. |
 | `POST` | `/api/v1/agents/:agent_id/secrets/resolve` | Resolve one or more agent secrets by reference. |
 | `POST` | `/api/v1/agents/:agent_id/connectors/resolve` | Resolve connector credentials for an agent. |
@@ -140,37 +142,30 @@ curl -H "Authorization: Bearer $TOKEN" \
 POST /webhooks/photon
 ```
 
-Public webhook called by Photon.codes when an inbound SMS or message arrives. The payload is routed to the agent whose identity channel matches the `to` phone number. No bearer token is required.
+Public webhook for Photon 2.0 (Beta) events, signed with [Standard Webhooks](https://www.standardwebhooks.com/). There is no bearer token; the signature is the authentication.
 
-#### Request body
+Set `PHOTON_WEBHOOK_SECRET` to the destination's `whsec_...` signing secret (Photon returns it once when the destination is created). Every request must carry `webhook-id`, `webhook-timestamp` (Unix seconds, within 5 minutes of the server clock) and `webhook-signature` (`v1,<base64>`; HMAC-SHA256 over `id.timestamp.rawBody` with the base64-decoded secret, compared in constant time). A missing, wrong or stale signature, or an unset `PHOTON_WEBHOOK_SECRET`, answers `401 unauthorized` and nothing is stored.
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `from` | string | Yes | Originating address. |
-| `to` | string | Yes | Destination phone number. |
-| `body` | string | Yes | Message body. |
-| `channel` | string | Yes | Channel the message arrived on. |
-| `message_id` | string | Yes | External message identifier. |
+The body is Photon's public event JSON. A `message.received` event is routed to the agent whose identity channel has `phone_provider = 'photon'` and `phone_number` equal to the event's `data.object.receivedBy.handle`, and stored in its inbox keyed by the event id, so a retried delivery is stored once. Other event types are accepted and ignored. The answer is `204 No Content`.
 
-#### Example request
-
-```bash
-curl -X POST http://127.0.0.1:8013/webhooks/photon \
-  -H "Content-Type: application/json" \
-  -d '{
-    "from": "+15551234567",
-    "to": "+15559876543",
-    "body": "Hello, can you help me?",
-    "channel": "sms",
-    "message_id": "photon_msg_9c1d..."
-  }'
-```
-
-#### Example response
+#### Example event (abridged)
 
 ```json
 {
-  "status": "accepted"
+  "id": "pho_evt_...",
+  "type": "message.received",
+  "source": "imessage.photon",
+  "apiVersion": "2026-07-01",
+  "data": {
+    "projectId": "pho_prj_...",
+    "object": {
+      "platform": "imessage",
+      "status": "received",
+      "content": { "type": "text", "format": "plain", "text": "ping" },
+      "sentBy": { "handle": "+17735520158", "kind": "human" },
+      "receivedBy": { "handle": "+16289979661", "kind": "agent" }
+    }
+  }
 }
 ```
 
@@ -596,6 +591,27 @@ curl -X POST http://127.0.0.1:8013/api/v1/photon/sessions/sess_9c1d.../bridge \
 | `501 Not Implemented` | `mailflare_not_configured` | `ALLTERNIT_MAILFLARE_URL` / `ALLTERNIT_MAILFLARE_ADMIN_KEY` are not set. |
 | `501 Not Implemented` | `phone_pool_not_configured` | `ALLTERNIT_BOT_PHONE_POOL` is not set. |
 | `501 Not Implemented` | `phone_pool_empty` | `ALLTERNIT_BOT_PHONE_POOL` is empty. |
+
+## Photon outbound texts (Photon 2.0 Beta)
+
+An agent can text a person on a Photon iMessage line. Every outbound text is held for the owner and goes only to the owner's own handles.
+
+**1. Hold.** Post to the inbox route with `surface: "photon"`:
+
+```bash
+curl -X POST http://127.0.0.1:8013/api/v1/photon/agents/agent_018f3a7c.../inbox \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"from":"agent","content":"Allternit test: reply OK","surface":"photon",
+       "to":"+17735520158","space_id":"pho_spc_...","sender_id":"pho_usr_..."}'
+```
+
+The answer is `202 {"id":"pho_hold_...","status":"held"}`. Nothing is sent yet. `to` must be listed in `ALLTERNIT_PHOTON_OWNER_HANDLES` (comma-separated E.164; empty means no one), otherwise the call is `403 forbidden`.
+
+**2. Approve.** `POST /api/v1/photon/outbound/:id/approve` sends the text once with Photon's `POST /v1/projects/{projectId}/messages` (header `Idempotency-Key` = the hold id; body `spaceId`, `senderId`, `content {type:"text", format:"plain", text}`). The answer is `{"state":"sent","vendorMessageId":"pho_msg_...","vendorStatus":"dispatched"}`. Photon delivers asynchronously, so `dispatched` is not `delivered`; read the message from Photon's `GET /v1/projects/{projectId}/messages/{messageId}` for the final status. A second approve returns `409`. `POST .../reject` ends the hold without sending. A Photon refusal returns `502 photon_failed` and the hold is marked `failed`.
+
+**Credentials.** The runtime reads the agent's sealed vault entries `photon` (project API key) and `photon_project` (project id), then falls back to the environment variables `PHOTON_API_KEY` and `PHOTON_PROJECT_ID`. With neither it answers `503 photon_not_configured`. `PHOTON_API_BASE` overrides `https://api.photon.codes`.
+
+**The person texts first.** A shared Photon iMessage line cannot start a conversation. Add the person's number to the line (`POST /v1/projects/{projectId}/platforms/imessage/assignments` with `{"handle":"+1..."}`, or the dashboard), then have them text the line once. Their first message creates the space and the Photon user ids (`pho_spc_...`, `pho_usr_...`) that a send needs.
 
 ## Related pages
 

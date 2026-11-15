@@ -7,6 +7,7 @@ import { getAPIProvider } from './model/providers.js'
 import { get3PModelCapabilityOverride } from './model/modelSupportOverrides.js'
 import { isEnvTruthy } from './envUtils.js'
 import { resolveAntModel, getAntModelOverrideConfig } from './model/antModels.js'
+import { ModelThinking } from '@/runtime/providers/discovery/model-thinking'
 // TODO(types): entrypoints/sdk/runtimeTypes.ts does not export EffortLevel;
 // the canonical definition lives in src/utils/effort.ts ('low' | 'medium' |
 // 'high' | 'max') — mirror it here (sibling pattern, cf. sessionHistory.ts).
@@ -27,6 +28,11 @@ export type EffortValue = EffortLevel | number
 export function modelSupportsEffort(model: string): boolean {
   const m = model.toLowerCase()
   if (isEnvTruthy(process.env.GIZZI_CODE_ALWAYS_ENABLE_EFFORT)) {
+    return true
+  }
+  // The shared per-model thinking table (model-thinking.json) decides first,
+  // for every vendor: Claude, OpenAI, Gemini, DeepSeek, Z.ai, CLI brains too.
+  if (ModelThinking.describe(model)) {
     return true
   }
   const supported3P = get3PModelCapabilityOverride(model, 'effort')
@@ -161,6 +167,14 @@ export function resolveAppliedEffort(
   if (envOverride === null) {
     return undefined
   }
+  // A model in the thinking table takes exactly its listed levels; anything
+  // else (or nothing chosen) leaves the model's own default in place.
+  if (ModelThinking.of(model)) {
+    const chosen = envOverride ?? appStateEffortValue
+    return typeof chosen === 'string'
+      ? (ModelThinking.check(model, chosen) as EffortValue | undefined)
+      : undefined
+  }
   const resolved =
     envOverride ?? appStateEffortValue ?? getDefaultEffortForModel(model)
   // API rejects 'max' on non-Opus-4.6 models — downgrade to 'high'.
@@ -184,6 +198,26 @@ export function getDisplayedEffortLevel(
 }
 
 /**
+ * The thinking level to show for `model`, in its vendor's words ("Extra
+ * high", "Minimal"…). Table models show the chosen level when they take it,
+ * else their default; other models fall back to the Claude effort levels.
+ * Null when the model has no thinking setting.
+ */
+export function getDisplayedThinkingLabel(
+  model: string,
+  effortValue: EffortValue | undefined,
+): string | null {
+  const described = ModelThinking.describe(model)
+  if (described) {
+    const id =
+      (typeof effortValue === 'string' && ModelThinking.check(model, effortValue)) ||
+      described.default
+    return (described.levels.find(l => l.id === id)?.label ?? id).toLowerCase()
+  }
+  return modelSupportsEffort(model) ? getDisplayedEffortLevel(model, effortValue) : null
+}
+
+/**
  * Build the ` with {level} effort` suffix shown in Logo/Spinner.
  * Returns empty string if the user hasn't explicitly set an effort value.
  * Delegates to resolveAppliedEffort() so the displayed level matches what
@@ -196,6 +230,7 @@ export function getEffortSuffix(
   if (effortValue === undefined) return ''
   const resolved = resolveAppliedEffort(model, effortValue)
   if (resolved === undefined) return ''
+  if (ModelThinking.of(model)) return ` with ${getDisplayedThinkingLabel(model, resolved)} effort`
   return ` with ${convertEffortValueToLevel(resolved)} effort`
 }
 

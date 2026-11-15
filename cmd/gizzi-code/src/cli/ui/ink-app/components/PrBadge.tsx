@@ -1,16 +1,18 @@
 import React from 'react';
 import { Link, Text } from '../ink';
-import type { PrReviewState } from '../utils/ghPrStatus';
+import type { PrChecks, PrReviewState } from '../utils/ghPrStatus';
 type Props = {
   number: number;
   url: string;
   reviewState?: PrReviewState;
+  checks?: PrChecks | null;
   bold?: boolean;
 };
 export function PrBadge({
     number,
     url,
     reviewState,
+    checks,
     bold
 }: Props) {
   const t1 = getPrStatusColor(reviewState);
@@ -28,7 +30,8 @@ export function PrBadge({
 
   const t8 = <Link url={url} fallback={label}>{t7}</Link>;
 
-  const t9 = <Text>{t5}{" "}{t8}</Text>;
+  // `PR #123 ✓4 ✗1 ●2`: CI checks on the head commit (open /pr for the list).
+  const t9 = <Text>{t5}{" "}{t8}{checks?.pass ? <Text color="success"> ✓{checks.pass}</Text> : null}{checks?.fail ? <Text color="error"> ✗{checks.fail}</Text> : null}{checks?.pending ? <Text color="warning"> ●{checks.pending}</Text> : null}</Text>;
 
   return t9;
 }

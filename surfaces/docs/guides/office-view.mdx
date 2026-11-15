@@ -1,0 +1,129 @@
+---
+title: "Office view"
+description: "Enter the whole Allternit facility, choose your avatar, roam the campus, and work with your bots upstairs."
+---
+
+Office opens the full Allternit facility inside the app. On first entry, choose
+**Create my avatar** or walk as a bot from **My bots**. Your main avatar stays
+available when you switch to a bot's appearance. **Browse characters** opens the
+existing character library and editor.
+
+On a return visit, Office resumes your saved character and a valid room position.
+The host app stores this state per account and organization on this device.
+It is not a cross-device cloud save. Standalone facility visitors have a separate
+browser-local saved character that now survives opening a new tab.
+
+## iPhone release versions
+
+TestFlight build 13 predates the native full-facility entry. It opens the older
+bot-floor Office, so it does not include free roaming or main-avatar selection.
+**Build 14 (version 1.0)** includes the full-facility entry. Update Allternit in
+TestFlight, then open **Office** to create your avatar and roam. A website
+update does not change the Office route inside an older installed app.
+
+The facility-site compatibility release for the older Office bot floor starts phone screens with
+the drawer closed. Use **Bots** to open it and **×** to hide it. Escape also
+hides it when using a keyboard. Picking a bot opens its panel again. Hiding the
+panel keeps an unsent message and restores the full floor framing. Reopen Office
+to load the current hosted page. This compatibility release does not add free
+roaming or avatar selection to build 13.
+
+## Roam and work
+
+All Office controls sit in one thin toolbar across the top. The room you are in
+is on the left, with a back arrow while you walk. On desktop the toolbar shows
+**Rooms**, **Open** (when the room has a product site), **Character**,
+**Workspace**, **Artifacts** and a sound button. On a phone the same actions are
+in the menu button at the right.
+
+Use WASD, drag to look, and Shift to run on a keyboard. Phones use the facility's
+touch controls. **Rooms** lists all destinations. Walk between connected rooms
+and outside, or choose a room to travel there. Characters appear once their
+clothes and hair have loaded.
+
+Choose **Workspace** to go to the Bots Floor upstairs. A list of your bots opens
+beside it while the world keeps moving. The floor receives your real roster, appearances, desk content, statuses and questions. Choose a bot in
+the room or the Workspace panel to open its real conversation. **Back to roaming**
+closes the conversation without resetting your avatar or the world. Movement is
+paused while you type in a conversation or use the character chooser.
+
+The native iPhone entry uses the same full-facility route. Picking a bot opens
+its native chat. Returning to Office restores the saved character and room.
+Build 14 has passed a signed device archive and includes this native entry.
+Physical-device performance and the signed-in walking experience are being
+tested through TestFlight.
+
+## Switch character
+
+Choose **Character** in the toolbar to restore **My avatar**, edit it, or select one of **My bots**.
+Search finds a bot by name or role. Public avatar-library choices are also
+available in the editor. A:// uses the living orb; builder characters retain
+their recipe rig, and sprite-only avatars retain their artwork. The app's vector
+pet/geometric avatars are rendered from their canonical components into textures.
+An unavailable or unsupported appearance is labelled; it is not replaced by an
+unrelated bot. Appearance changes do not change your account, permissions, jobs,
+or chat identity.
+
+## Compact bot Workspace
+
+**System → Workspace** remains the compact bot floor. It keeps the existing
+team/chat panel, 2D/3D controls, hiring, timeline, film, share picture and optional
+public live link. It does not open the whole campus inside the System drawer.
+
+## Sharing and privacy
+
+The picture is made on your device and shows bot avatars, names and the A:// mark. Nothing is uploaded to make it.
+
+The **live link** is off by default. Turn it on and Allternit gives you a public address that shows your floor read-only, refreshed about every 30 seconds.
+
+What a public floor shows, and only this:
+
+- each bot's name, role line, colour and avatar
+- whether it is working, waiting, talking or idle, and when it last changed
+
+What it never shows: task text, questions, thread titles, chat messages, desk screens, files, or who you talk to. The public page has no answer, open, hire or chat controls.
+
+Turn the link off and it stops working at once. If Allternit can't reach the cloud at that moment, the app tells you the link is still turning off and keeps trying until it stops. Turning it on again makes a new address, so an old link stays dead. Anyone with the address can see the floor while it is on, so share it like a link to a page, not like a password.
+
+## For developers
+
+### Floor routes on the runtime
+
+`allternit-api` serves four routes under `/api/v1/floor` (`cmd/allternit-api/src/floor_routes.rs`). Field names are camelCase and match `src/lib/office/floor-types.ts` in allternit-ai.
+
+| Route | Answer |
+| --- | --- |
+| `GET /floor/state` | `{ bots: FloorBotState[] }` for every bot you own. `status` comes from the bot's non-incognito threads: `needs_you` is `waiting`, `working` or `planning` is `working`, otherwise `idle`. `lastKind`, `lastText` and `updatedAt` come from the newest thread event. `meeting` is not set by the runtime. |
+| `GET /floor/events?since=&until=&limit=` | `{ events: FloorEvent[] }`, oldest first, times in milliseconds, `limit` up to 2000 (default 500, window default last 24 hours). `thread.started`, `thread.completed`, `thread.failed` and `thread.needs_user` become `started`, `finished`, `failed` and `needs_you`. Bot-to-bot hops from `agent_hops` become `handoff` with `toBotId`. Incognito threads are left out. Event ids are `be:<id>` and `hop:<id>`. |
+| `GET /floor/share` and `PUT /floor/share` | `{ enabled, url, revokePending }`. `PUT { enabled }` turns the live link on or off. The runtime must be paired; otherwise `409 runtime_not_paired`. If the cloud can't confirm an off, `PUT` answers `502 revoke_pending`, `revokePending` stays true, and the runtime retries every 60 seconds. |
+
+Migration `V283__floor_share.sql` adds an index on `bot_events(event_type, occurred_at)` and the `floor_share` table (whether the link is on, its token, and a pending revoke).
+
+### Live link
+
+1. `PUT /floor/share { enabled: true }` posts the projection to the cloud at `POST /api/v1/runtime/floor-share`, signed with the same runtime relay signature as `/api/v1/runtime/events`. The cloud answers with a random token (192 bits). The runtime stores it and returns `https://3dfacility.allternit.com/?embed=public&t=<token>`.
+2. While the link is on, the runtime pushes the projection every 60 seconds.
+3. The cloud (`routes/floor_shares.rs`, table `floor_shares`, migration `115_floor_shares.sql`) rebuilds the projection from an allowlist when it writes, so a runtime cannot store task text even by mistake.
+4. `GET /api/v2/public/floors/:token` on the cloud API host (`https://api.allternit.com`) returns the floor with no auth. It is rate limited with the other public routes, answers `404` for an unknown or disabled token, and sends `Cache-Control: private, no-store`, `X-Robots-Tag: noindex` and CORS for `https://3dfacility.allternit.com` only.
+5. Turning the link off sets it off locally first, then tells the cloud. If the cloud cannot be reached the call returns `502 revoke_pending` and the runtime retries every 60 seconds until the cloud confirms.
+
+### Frame messages
+
+Full Office loads `?embed=facility`. The version-1 `allternit:facility` handshake
+carries the host-owned visitor config and saved main character. Visitor updates
+carry appearance, room and validated pose; panel state stops movement while the
+host's bot conversation is open. No account token enters the frame.
+
+The existing `allternit:workspace` namespace still carries the real roster,
+selection, thread content, replay, snapshots and bot actions. Both ends validate
+origin and window source. The compact System Workspace keeps
+`?embed=workspace&ui=office&chrome=none`. Public floors use `?embed=public&t=…`
+and never accept the private visitor initialization.
+
+The native iPhone full-facility wrapper sends its account-scoped saved visitor
+on ready and stores visitor updates in UserDefaults. Bot selection opens the
+native chat. The earlier inline fixed-floor panel is retained by the dedicated
+workspace route for consumers that still use it.
+
+See [Facility and Workspace architecture](/architecture/facility-workspace) for
+source paths and the integration acceptance tests.

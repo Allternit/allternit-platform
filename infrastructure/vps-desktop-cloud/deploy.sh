@@ -57,12 +57,15 @@ install_binary() {
   # Keep only the newest 5 backups: every deploy adds an ~80 MB copy, and 251
   # of them filled the prod disk (2026-10-08). rollback.sh uses the newest.
   ssh_cmd "ls -1t ${API_DIR}/bin/backups/allternit-api.* 2>/dev/null | tail -n +6 | xargs -r rm -f"
+  # Copy beside the live binary, check it, then swap in one step: a cut-short
+  # copy crashed the loader on start and took the service down (2026-11-01).
   if [ -f "${SRC_DIR}/target/release/allternit-api" ]; then
-    scp_cmd "${SRC_DIR}/target/release/allternit-api" "${API_DIR}/bin/allternit-api"
+    scp_cmd "${SRC_DIR}/target/release/allternit-api" "${API_DIR}/bin/allternit-api.new"
   else
-    ssh_cmd "cp ${SRC_DIR}/target/release/allternit-api ${API_DIR}/bin/allternit-api"
+    ssh_cmd "cp ${SRC_DIR}/target/release/allternit-api ${API_DIR}/bin/allternit-api.new"
   fi
-  ssh_cmd "chmod +x ${API_DIR}/bin/allternit-api"
+  ssh_cmd "cmp ${SRC_DIR}/target/release/allternit-api ${API_DIR}/bin/allternit-api.new"
+  ssh_cmd "chmod +x ${API_DIR}/bin/allternit-api.new && mv -f ${API_DIR}/bin/allternit-api.new ${API_DIR}/bin/allternit-api"
 }
 
 install_env() {
@@ -165,8 +168,56 @@ start_service() {
   else
     log_error "Service failed to start"
     ssh_cmd "journalctl -u allternit-api -n 50 --no-pager"
+    # Never leave production crash-looping: put the last good binary back.
+    local last_good
+    last_good="$(ssh_cmd "ls -1t ${API_DIR}/bin/backups/allternit-api.* 2>/dev/null | head -1")"
+    if [ -n "${last_good}" ]; then
+      log_warn "Rolling back to ${last_good}"
+      ssh_cmd "cp -p ${last_good} ${API_DIR}/bin/allternit-api && systemctl restart allternit-api"
+    fi
     exit 1
   fi
+}
+
+# Installs the office engine when CI left a release beside this script. Its
+# failure never takes the API down: the old engine goes back, and a sheet with no
+# engine still works from its snapshot.
+install_office_engine() {
+  local bundle="${SRC_DIR}/infrastructure/vps-desktop-cloud/office-engine.tar.gz"
+  local engine_dir="/opt/allternit-office-engine"
+  if ! ssh_cmd "test -f ${bundle}"; then
+    log_warn "No office engine release to install; leaving it as it is."
+    return 0
+  fi
+  log_info "Installing office engine..."
+  local release
+  release="$(ssh_cmd "sha256sum ${bundle} | cut -c1-16")"
+  ssh_cmd "mkdir -p ${engine_dir}/releases/${release} && tar -xzf ${bundle} -C ${engine_dir}/releases/${release} && chmod -R a+rX ${engine_dir}"
+  scp_cmd "./allternit-office-engine.service" "/etc/systemd/system/allternit-office-engine.service"
+  local previous
+  previous="$(ssh_cmd "readlink ${engine_dir}/current || true")"
+  # Swap in one step, by renaming a link over the old one.
+  ssh_cmd "ln -sfn ${engine_dir}/releases/${release} ${engine_dir}/current.new && mv -Tf ${engine_dir}/current.new ${engine_dir}/current"
+  ssh_cmd "systemctl daemon-reload && systemctl enable allternit-office-engine && systemctl restart allternit-office-engine"
+  sleep 3
+  if ssh_cmd "curl -fsS --max-time 5 http://127.0.0.1:8099/health >/dev/null"; then
+    log_info "Office engine is healthy (${release})"
+    ssh_cmd "cd ${engine_dir}/releases && ls -1t | grep -vx ${release} | tail -n +3 | xargs -r rm -rf"
+  else
+    log_error "Office engine failed its health check"
+    ssh_cmd "journalctl -u allternit-office-engine -n 30 --no-pager || true"
+    if [ -n "${previous}" ]; then
+      log_warn "Rolling the office engine back to ${previous}"
+      ssh_cmd "ln -sfn ${previous} ${engine_dir}/current.new && mv -Tf ${engine_dir}/current.new ${engine_dir}/current && systemctl restart allternit-office-engine"
+    else
+      ssh_cmd "systemctl disable --now allternit-office-engine || true"
+    fi
+  fi
+  ssh_cmd "rm -f ${bundle}"
+  # api.allternit.com is answered by the cloud API, and both read this on their next start.
+  for env_file in /opt/allternit-cloud-api/.env ${ETC_DIR}/api.env; do
+    ssh_cmd "test -f ${env_file} && (grep -q '^OFFICE_ENGINE_URL=' ${env_file} || echo 'OFFICE_ENGINE_URL=http://127.0.0.1:8099' >> ${env_file}) || true"
+  done
 }
 
 print_summary() {
@@ -184,12 +235,41 @@ print_summary() {
   echo ""
 }
 
+# deploy-allternit-api-contabo.yml installs the same binary. Both take
+# /var/lock/allternit-api-deploy and record the live build's commit in
+# ${API_DIR}/DEPLOYED ("<sha> <committer epoch> <utc> <workflow>"), so they never
+# swap at once and an older build never replaces a newer one. CI passes
+# DEPLOY_SHA / DEPLOY_EPOCH; without them there is no age check.
+DEPLOY_STAMP="${API_DIR}/DEPLOYED"
+
+newer_build_live() {
+  [[ "${DEPLOY_EPOCH:-}" =~ ^[0-9]+$ ]] || return 1
+  local live_epoch
+  live_epoch="$(ssh_cmd "cut -d' ' -f2 ${DEPLOY_STAMP} 2>/dev/null" || true)"
+  [[ "${live_epoch}" =~ ^[0-9]+$ ]] && (( live_epoch > DEPLOY_EPOCH ))
+}
+
+record_deployed() {
+  ssh_cmd "echo '${DEPLOY_SHA:-unknown} ${DEPLOY_EPOCH:-0} $(date -u +%Y-%m-%dT%H:%M:%SZ) deploy-desktop-cloud-vps' > ${DEPLOY_STAMP}"
+}
+
 print_banner
 ensure_src
-install_binary
+if [ "${VPS_HOST}" = "local" ] || [ "${VPS_HOST}" = "localhost" ] || [ "${VPS_HOST}" = "127.0.0.1" ]; then
+  exec 9>/var/lock/allternit-api-deploy
+  flock -w 3600 9 || { log_error "Another allternit-api deploy held the lock for an hour"; exit 1; }
+fi
+if newer_build_live; then
+  log_warn "A newer allternit-api build is live ($(ssh_cmd "cat ${DEPLOY_STAMP}")); keeping it and deploying the rest."
+  SKIP_BINARY=1
+else
+  install_binary
+fi
 install_env
 install_incus_certs
 install_service
 install_backup
 start_service
+[ -n "${SKIP_BINARY:-}" ] || record_deployed
+install_office_engine
 print_summary

@@ -21,12 +21,16 @@ struct ChatError: Equatable, Sendable {
 
     /// Builds a card from the finish frame's metadata fields.
     init(name: String?, message: String?, raw: String) {
-        let isModelError = name == "ProviderModelNotFoundError"
+        let isNoBrain = name == "no_brain"
+        let isModelError = name == "ProviderModelNotFoundError" || isNoBrain
         self.name = name
         self.isModelError = isModelError
         self.raw = raw
 
-        if isModelError {
+        if isNoBrain {
+            self.title = AgentChatClientError.noBrainMessage
+            self.detail = "Choose the brain this chat runs on, then send again."
+        } else if isModelError {
             self.title = "Model not available"
             self.detail = "The model for this chat couldn't be found. Pick another model and try again."
         } else {

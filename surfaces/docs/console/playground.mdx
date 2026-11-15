@@ -1,0 +1,58 @@
+---
+title: 'Playground'
+description: 'Try models in the console with a short-lived project key, inspect the request, and save prompts.'
+---
+
+The console Playground sends real requests to the Allternit API in one of three modes (see [Modes](#modes)). It works for any signed-in user, with no paired runtime.
+
+## How it authenticates
+
+When you open the Playground, the console asks for a playground key for the selected project:
+
+`POST /api/v1/platform/projects/:id/playground-key`
+
+The response is `{ "object": "playground_key", "key": "...", "expires_at": "..." }`. The key has the `inference` scope, lasts 15 minutes, is not listed on the API keys page, and replaces your previous playground key for that project. The console keeps it in memory only. It is never written to browser storage.
+
+Requests made this way are recorded with the client label `playground` in [usage and logs](/console/usage-and-logs).
+
+## Modes
+
+Pick the mode at the top of the Playground. Chat completions uses the short-lived playground key and your Allternit credits. Responses and Messages are Platform API routes: the console calls them with your signed-in session for the selected project, so they bill that project and count toward its spend cap.
+
+| Mode | Endpoint |
+|---|---|
+| Chat completions | `POST /v1/chat/completions` |
+| Responses | `POST /v1/responses`, in model mode |
+| Messages | `POST /v1/messages` |
+
+In Responses mode, a follow-up turn shows "continues `resp_...`". It sends the previous response id, so the model sees the earlier turns. Start a new conversation to clear it.
+
+Some settings do not apply to every mode. The Playground lists them as "Not sent in ... mode" and leaves them out of the request.
+
+## What you can set
+
+The model list comes live from `GET /v1/models`. You can set the sampling parameters the endpoint accepts (`temperature`, `top_p`, `max_tokens`, `stream`), edit tool definitions, set `response_format` or a JSON schema, and attach an image to a message. Fields the endpoint does not know are passed through to the upstream provider.
+
+## Inspector
+
+After each call the inspector shows the request body, the response, the response headers and the `x-request-id` header. The same identifier appears in the Logs page. You can export the request as curl, Python or TypeScript. The snippet follows the mode you picked, so it calls the same endpoint.
+
+## Saved prompts and sharing
+
+Prompts are stored per project.
+
+| Method and path | Purpose |
+|---|---|
+| `GET`, `POST /api/v1/platform/projects/:id/prompts` | List and create |
+| `GET`, `PATCH`, `DELETE /api/v1/platform/projects/:id/prompts/:prompt_id` | Read, update, delete |
+| `POST`, `DELETE /api/v1/platform/projects/:id/prompts/:prompt_id/share` | Create or remove a share link |
+| `GET /api/v1/platform/shared-prompts/:token` | Read a shared prompt |
+
+A prompt is returned as `{ id, name, body, share_url?, updated_at }`. A shared prompt read returns only `{ name, body }`, with no project or owner identifiers. Share links work for signed-in users only. A prompt from a project you cannot access returns 404.
+
+## Related
+
+- [Chat completions](/api/chat-completions)
+- [Navigation](/console/navigation)
+- [Models and pricing](/console/models-and-pricing)
+- [Projects](/console/projects)

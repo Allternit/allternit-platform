@@ -2,6 +2,147 @@
 
 ## Unreleased
 
+- **Allternit Cloud models need credits.** Free accounts no longer include about $2 a month of Cloud usage. On an account with no Cloud credits, `gizzi models` and `/model` keep Cloud rows listed and tag them `needs credits` (a row served through an API key you connected stays unlocked); choosing one in `/model` keeps your current model and prints the packs ($10, $25, $50, $100) and https://ai.allternit.com/settings/billing. Cloud's 402 `credits_required` / `credits_exhausted` is matched by its code, not its text, in the TUI and on the session error (`metadata.code`), so Desktop and web can show the same disclosure. `/keep-going` with no credits shows the packs and opens Settings › Billing.
+
+- Fix: a `gizzi serve` whose paired credential was revoked on the server no longer calls the platform forever. Instance registration stops its refresh loop on the first 401 and logs one warning to run `gizzi pair`; the subagent catalog sync skips tokens the server rejected (401/403) for the rest of the process. Network errors and 5xx keep retrying.
+
+## 2.13.0 (2026-11-14)
+
+- **Custom tools on CLI workers.** `gizzi worker --tools-file <path>` (or `ALLTERNIT_WORKER_TOOLS_FILE`) runs a self-hosted agent's custom tools as commands: `{"tools":{"<name>":{"command":[...],"timeout_ms":30000}}}`. Before, the CLI worker answered custom tools with an error.
+- **Custom tools reach subagents and `batch`.** A subagent's tool calls go to the root session, so its custom tools run on the same workers.
+- **Clashing tool names are refused before the message is stored.** A custom tool named like a built-in or MCP tool gets `409 custom_tool_conflict` with the tool and what it clashes with.
+- **`gizzi runtime status`** shows how many server replicas are live. Workers release a session's worker when it goes idle; `--help` explains `reclaim_older_than_ms`.
+- **`gizzi models pull` / `verify`** print the Freeweights verification line.
+
+## 2.12.0 (2026-11-14)
+
+- **Plans with no computer.** `gizzi connect` shows plan rows that run on Allternit ("no computer needed"), shows the risk notice in the terminal and asks `[y/N]` before connecting. Connected plans appear as `plan/<vendor>/<model>` and `copilot-plan/<model>`.
+- **ChatGPT direct sign-in.** `gizzi connect chatgpt` signs in to your ChatGPT plan on this machine (OpenAI's open sign-in, PKCE, loopback); models appear as `chatgpt/<model>`. `gizzi connect status|disconnect <id>`, `--json` for Desktop.
+- **Plans answer only you.** Plan models chat only, with tools off, and only for messages you type in the TUI. `gizzi run`/`-p`, bots, missions, cron jobs and side calls refuse them.
+- Fix: macOS Keychain reads returned empty for printable secrets.
+
+## 2.11.1 (2026-11-14)
+
+- **Smaller model requests when a session has tool rules.** Tools that a session's permission rules deny (for example a hosted agent's "deny everything, then its own tools") are no longer sent to the model at all. Before, their schemas went out on every request and a short hosted-agent turn cost about 134k input tokens.
+
+## 2.11.0 (2026-11-13)
+
+- **`gizzi connect`:** list every connection with the same four status words and connect from the terminal — keys, device codes, paste-back.
+
+## 2.10.0 (2026-11-13)
+
+- **Fixed: the bash tool works again in the installed binary.** Since the compiled builds embedded the shell parser, every bash call in gizzi 2.9.0 (including the copy inside Allternit Desktop) failed with "asset.startsWith is not a function". Running from source was not affected.
+- **`gizzi worker`:** runs sandboxed tools for a self-hosted Allternit Agents Server. It polls the server over outbound HTTPS, claims work for one environment, and runs bash and file tools in `/workspace` (sandbox-exec on macOS, bubblewrap on Linux) with the environment's network rule (`none`, `limited` or `full`). Flags: `--server`, `--environment`, `--environment-key`, `--block-ms`, `--drain`, `--reclaim-older-than-ms`, `--auto-stop`, `--on-work`.
+- **`gizzi runtime register --self-hosted`** and **`gizzi runtime status`** connect the CLI to your own Agents Server and show its workers and queue depth.
+- **Self-hosted model providers:** Amazon Bedrock, Google Vertex AI, Microsoft Foundry and an HTTP gateway (Anthropic Messages, Bedrock, Vertex or OpenAI-chat format), picked by the server's settings.
+- With `ALLTERNIT_SELF_HOSTED=1`, gizzi makes no calls to allternit.com.
+
+## 2.9.0 (2026-11-12)
+
+- **Run code on attached files:** the new `run_code` tool runs Python on attached CSV, XLSX and JSON files in a strict OS sandbox (no network, no access to your home folder) and returns tables, charts and files. Claude Code and Codex brains reach it through the bridge.
+- **Edit a sent message:** `/edit` (alias `/edit-last`) rewinds to your last message and puts its text back in the composer. On Desktop and the web, replaced replies are kept as versions you can flip between after a reload.
+- **Share a thread:** `/share` publishes a read-only link to the current thread; `/share off` turns it off.
+- **Memory:** `gizzi memory list`, `gizzi memory edit <id> "<text>"` and `gizzi memory forget <id>`.
+- `gizzi usage` shows your Allternit Cloud inference usage (`--days`, `--group-by`, `--project`).
+- **Fixed:** an attached upload no longer crashes the turn; CSV, JSON and spreadsheet attachments reach the model as text instead of being rejected by the provider.
+
+## 2.8.0 (2026-11-12)
+
+- **Service status:** `gizzi status --services` shows status.allternit.com's components; `gizzi doctor` checks it; `/status` has a Services line.
+- **Fixed:** `gizzi teleport <session>` accepts a Claude or Codex session id again (2.7.0 rejected it with "must start with ses"). The same fix covers the apps' Teleport action.
+- `gizzi phone` task follow prints the step label and the waiting label.
+
+## 2.7.0 (2026-11-11)
+
+- Pet offers: after a failed command or turn the terminal pet offers a fix; type `/fix` to run it. `/pet offers on|off` turns offers off. Failures also reach the Desktop pet.
+- A turn can turn on the computer tools for itself with `metadata.tools.computer: true`.
+- Phone tasks and runs with approvals.
+
+## 2.6.0 (2026-11-10)
+
+### Added
+- **`gizzi debug model`:** the config files, the merged values, the default model with its reason, and whether the runtime and the TUI agree.
+- **`gizzi models --json`**, and `default`, `current` and `not signed in` tags on the rows. The last line shows the default model and why.
+- **Live model lists** for the Codex, Antigravity and Grok CLIs, cached for 6 hours (`gizzi models --refresh` re-reads them).
+
+### Changed
+- **One model list:** `gizzi models` and the `/model` picker show the same rows in the same order: sections, signed-in CLIs in a fixed order, models in the vendor's order. The picker has section and provider headers and a detail line.
+- **One default model:** your pick, else Allternit Cloud on a paid plan, else the first signed-in CLI brain. `gizzi run`, `gizzi exec`, the TUI, swarm, mission and ACP all use it.
+- **`--effort`** accepts every level the picked model has.
+- Swarm and mission workers use your default CLI brain unless you pass `--brain`.
+
+### Fixed
+- The TUI no longer starts on `antigravity/default`, and a run with no `--model` no longer uses a stale local model from an old config file.
+- The model and thinking level you pick now reach the Antigravity, Grok and Kimi CLIs. Before, those CLIs ran their own default.
+- Retired model ids are gone from the list (old Claude ids, `gemini-3.7-flash-high`); a saved choice of one moves to its replacement.
+- Models a CLI marks as hidden, a duplicate Ollama entry, and placeholder models for local servers that report no models are no longer listed.
+- Antigravity (Keychain sign-in) and Qwen (API-key setup) no longer show as signed out.
+- A failed `gizzi run` or `gizzi exec` turn exits with code 1.
+
+## 2.5.0 (2026-11-10)
+
+### Added
+- **Missions:** `gizzi mission start "<goal>"` or `/mission <goal>`. An orchestrator plans 1 to 5 milestones, you approve or edit the plan, and a detached runner works each milestone with parallel workers, runs its check command and retries failures up to a limit. `gizzi mission land` merges a finished mission. `--on <runtime>` runs the orchestrator's turns on a paired computer.
+- **Pause all bots:** `gizzi agents bot pause`, `resume` and `pause --status` (short form `gizzi bot pause`). While paused, routines, loops and automatic replies are on hold on every surface; your own messages still run. A `bots paused` chip shows in the footer and in `/status`.
+- **Mac Messages tools in a session:** a held iMessage send shows as waiting for your approval, a message draft shows who it is for and its text, and a Messages search shows its matches.
+
+### Changed
+- Gizzi's own loops and scheduled agent routines obey the pause switch.
+
+## 2.4.0 (2026-11-09)
+
+### Added
+- **`/usage`:** your Allternit plan (Free, Plus, Max or Ultra), credits, Cloud balance and the monthly meter, then each signed-in CLI brain's plan limits. A `credits` chip in the footer.
+- **Thinking levels per model in `/model`:** a second column shows each model's level, and ←/→ cycles only the levels that model takes.
+- **`/customize`:** the A://TERNIT OFFICIAL shelves and the directory for skills, MCP servers and commands. Enter opens an item's page; `a` adds it the way Desktop does.
+- **MCP Apps:** a tool result that comes with an app gets a **View in browser** line.
+- **`/decisions`:** every question and approval agents are waiting on, across all sessions, answered from one list, with a `⚑` footer badge.
+- **`gizzi computers ls/start/stop`** and **`gizzi run --on <runtime>`** to run a turn on a paired computer.
+- **`/pr`** with live checks and `✓ ✗ ●` counts on the PR badge, **`/projects`**, **`/routines`** (next runs, pause and resume) and **`gizzi artifact share`**.
+- **Edit a plan before it runs:** press `e` on a plan approval to open it in `$EDITOR`.
+- **Errors after an edit, on by default:** each Edit or Write tool line shows new errors from the file's language server (TypeScript, Python, Go when installed). `GIZZI_DISABLE_LSP_DIAGNOSTICS=1` turns it off.
+- **Long-running MCP tools** run as tasks with status in the tool line; Esc cancels them.
+- **Web search through Allternit's own route** when you're signed in, with the public endpoint only as a fallback.
+- **Review presets:** `/review security|perf|tests|diff`, with one findings format and a verdict line.
+
+### Changed
+- The `/teleport` placeholder is gone; use `gizzi teleport` and `gizzi run --on`.
+
+### Fixed
+- Prompt slash commands reach a CLI brain with their full prompt, not just their name.
+- The Max plan no longer shows as "Super".
+
+## 2.3.1 (2026-11-09)
+
+### Fixed
+- **Remote Control:** slash commands that only run in the terminal (like `/remote`) no longer show up on the phone or web as raw markup, and the session title comes from your first real prompt.
+- **Remote Control:** after the engine restarts (for example a Desktop update), the terminal re-sends the whole session at once, so a turn that ran meanwhile isn't missing on other surfaces.
+- The context meter no longer drops to 0% after you stop a turn with Esc.
+
+## 2.3.0 (2026-11-09)
+
+### Added
+- **PDFs from templates:** `gizzi pdf render <invoice|report|ticket|minutes|receipt> --data x.json -o out.pdf` and `gizzi pdf templates`. Three themes, Letter or A4, `--html` for the page instead.
+- **Measured loops:** a loop can carry a Loop Card (instrument command, better is lower or higher, keep bar, noise runs, pairs). Each attempt is measured against an A/A noise floor, kept and committed or reverted, and written to a ledger, rejects included. `/loop` prints the card.
+- **Teleport:** `gizzi teleport <session> --to cloud|local` moves a live Claude or Codex session, with your uncommitted changes, between this Mac and your cloud computer, and resumes it there.
+- **Message delivery:** messages to agents show Queued, Pushed, Delivered and Read. A closed Claude session is woken with `claude --bg --resume` to take a message; Codex turns are steered or started.
+- One machine id per computer (`~/.allternit/machine-id`), shared with Desktop, so gizzi and Desktop on one Mac count as one machine.
+- **Remote Control:** a terminal session shows up live in Desktop, ai.allternit.com, the phone app and iOS with a Terminal badge. From there you can read it, steer it, answer its approvals and questions, and stop it. `/remote` shows a QR code and links; `/desktop` opens the session in Desktop.
+- **CLI brains in the TUI:** `claude-cli/…` and `codex-cli/…` models run in the terminal app. The model list follows Desktop's rule: Allternit Cloud plus your own signed-in CLIs and keys. `--model` works at launch.
+- **Steer or queue while the agent works:** Enter steers, Tab queues, Ctrl+X Enter stops and sends. Next-step suggestions are on, and a recap shows when you come back.
+- **Output:** one tool line per call with live command output, highlighted code, 256-color diffs, and a done or stopped line with time, files and tools. A failed turn shows its real cause and a command to run.
+- **Swarms and the Factory board:** `gizzi swarm`, `gizzi board`, `/swarm`, `/board` and a footer badge.
+- **New startup header:** an animated pixel Gizzi (the real image in iTerm2, WezTerm, Kitty and Ghostty) and the braille wordmark with the version on the same line. Set `headerArt` to `auto`, `image`, `blocks` or `none`.
+- `artifact_check`: the model looks at a page or design at phone, tablet and laptop widths (the app renders it) and gets pictures, sideways scroll, script errors and blank screens; with a reference picture, a likeness and the regions that differ. It says stop after 3 checks without progress.
+
+### Changed
+- Unfinished commands are hidden unless `GIZZI_EXPERIMENTAL_COMMANDS=1`. Docs links point to docs.allternit.com.
+
+### Fixed
+- A loop or routine step killed by a signal now counts as failed, not passed.
+- `pane_render` sync events now carry a native video's duration, fps, motion blur, audio and timeout; without them the app dropped the request.
+- Saving settings no longer stops running agents or drops waiting questions.
+
 ## 2.2.15 (2026-10-27)
 
 ### Added

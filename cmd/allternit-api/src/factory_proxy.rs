@@ -80,7 +80,7 @@ fn client(timeout: Option<Duration>) -> reqwest::Client {
     if let Some(t) = timeout {
         b = b.timeout(t);
     }
-    b.build().unwrap_or_else(|_| reqwest::Client::new())
+    b.build().unwrap_or_else(|_| crate::net_client::client())
 }
 
 /// Headers forwarded to the engine.

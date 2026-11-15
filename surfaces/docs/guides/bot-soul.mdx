@@ -1,0 +1,29 @@
+---
+title: "Bot Soul"
+description: "One file, SOUL.md, holds who your bot is. Edit it from the bot page on the web, the phone or iOS and the bot uses it in the next chat."
+---
+
+A bot's **Soul** is a single plain file, `SOUL.md`, that says who the bot is: its voice, what it cares about and how it treats you. Every chat with the bot reads it first.
+
+## Edit the Soul
+
+1. Open the bot and tap the **Soul** tile.
+2. Change the **Description** (the short line shown on the bot's card) and the text of the Soul in the same screen.
+3. Leave the screen, or tap **Save**. The next message to the bot uses the new text.
+
+**Edit with chat** opens the same chat you already use to rewrite a Soul by talking to the bot.
+
+If the Soul was changed somewhere else while you were editing (another device, or the bot itself), Allternit tells you it **changed elsewhere** and lets you reload the new text or keep yours. Nothing is overwritten silently.
+
+## Files next to the Soul
+
+Each bot keeps a few plain files in its workspace: `SOUL.md`, `USER.md` (what the bot knows about you), `AGENTS.md` (working rules), `TOOLS.md` and `HEARTBEAT.md`. All of them live in the top folder of the bot's workspace, and the same copy is used on the web, the phone and iOS.
+
+- `SOUL.md`, `AGENTS.md` and `USER.md` are read into every chat.
+- `TOOLS.md` and `HEARTBEAT.md` are kept for the bot's tools and routines.
+
+## If your Soul edits did nothing before
+
+Older builds of the web app saved the Soul in a different folder (`.allternit/bot/SOUL.md`) that chat never read. The first time you open a bot after the update, Allternit moves those files to the top folder. If both copies existed, the one saved last wins and the other is kept as `.allternit/bot/SOUL.md.pre-unify` so nothing is lost.
+
+See also [Bot page](/guides/bot-page) and [Memory and Learning](/guides/memory-and-learning).

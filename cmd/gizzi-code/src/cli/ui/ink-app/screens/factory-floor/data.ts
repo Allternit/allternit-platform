@@ -54,9 +54,34 @@ export async function loadAgents(run: EngineRunner = runEngine): Promise<Section
   }
 }
 
+/**
+ * The campaign the floor shows when none is named: the newest one. The
+ * engine's `workspace board` requires a campaign, so asking it with none
+ * printed clap's "required arguments were not provided" in the Needs-you
+ * section.
+ */
+async function newestCampaign(run: EngineRunner): Promise<string | null> {
+  const { data } = await run<unknown>(["workspace", "campaign", "list"], { timeoutMs: FLOOR_TIMEOUT_MS })
+  const list = Array.isArray(data) ? data : Array.isArray((data as { campaigns?: unknown[] })?.campaigns) ? (data as { campaigns: unknown[] }).campaigns : []
+  const ids = (list as { id?: string; created_at?: string; createdAt?: string }[])
+    .filter((c) => typeof c?.id === "string")
+    .sort((a, b) => String(b.createdAt ?? b.created_at ?? "").localeCompare(String(a.createdAt ?? a.created_at ?? "")))
+  return ids[0]?.id ?? null
+}
+
 export async function loadBoard(campaign?: string, run: EngineRunner = runEngine): Promise<Section<Board>> {
   try {
-    const args = ["workspace", "board", ...(campaign ? [campaign] : [])]
+    const id = campaign ?? (await newestCampaign(run))
+    if (!id) {
+      return failed(
+        new FactoryEngineError({
+          code: "not_found",
+          fact: "No campaign in this workspace yet, so nothing is waiting on you",
+          action: 'Start one with `gizzi workspace campaign new "<intent>"`, or a swarm with `gizzi swarm "<task>"`.',
+        }),
+      )
+    }
+    const args = ["workspace", "board", id]
     const { data } = await run<Board>(args, { timeoutMs: FLOOR_TIMEOUT_MS })
     if (!data || !data.summary || !data.campaign) {
       return failed(new FactoryEngineError({ code: "transport", fact: "The engine's `workspace board` reply isn't a board" }))

@@ -19,6 +19,16 @@ const envBase =
 /** Gateway base with no trailing slash. Loopback fallback flips to the public Backend B URL once deployed. */
 export const ALLTERNIT_GATEWAY_BASE = (envBase ?? "http://127.0.0.1:8013").replace(/\/+$/, "")
 
+/**
+ * The gateway base read now (env at call time, same precedence and fallback).
+ * Callers that run late (HTTP requests) use this so a test or a re-pointed
+ * process sees the current env instead of the value frozen at import time.
+ */
+export function gatewayBase(): string {
+  const base = process.env.ALLTERNIT_API_URL ?? process.env.Allternit_API_URL ?? process.env.GIZZI_GATEWAY_URL
+  return (base ?? "http://127.0.0.1:8013").replace(/\/+$/, "")
+}
+
 /** Join an absolute API path onto the gateway base. */
 export function gatewayUrl(path: string): string {
   return `${ALLTERNIT_GATEWAY_BASE}${path.startsWith("/") ? path : `/${path}`}`

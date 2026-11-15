@@ -1,0 +1,26 @@
+---
+title: 'Approvals'
+description: 'One list of actions waiting for a person, from the twin and from hosted computers.'
+---
+
+Scope `twin` or `computers`; a key only sees approvals from sources its scopes cover.
+
+| Method | Path | |
+|---|---|---|
+| `GET` | `/v1/approvals` | List (filters `status`, `account_id`, `source`) |
+| `GET` | `/v1/approvals/{id}` | Retrieve |
+| `POST` | `/v1/approvals/{id}` | Resolve: `{ "decision": "approve" \| "deny", "reason"? }` |
+
+Object: `id` (`apr_`), `source` (`twin` or `computer`), `source_ref`, `account_id`, `conversation_id`, `response_id`, `kind`, `proposed_action`, `status` (`pending`, `approved`, `denied`, `expired`, `consumed`), `expires_at` (twin: the runtime's deadline when it sends one, otherwise `null` and the approval never expires; computer: the executor's deadline, otherwise 300 seconds), `created_at`, `resolved_at`, `resolved_by`.
+
+Whether a key may approve a computer action follows the project's `approval_mode` (`403 approval_requires_owner` otherwise). The older routes under `/v1/accounts/{id}/approvals` and `/v1/computers/{id}/approvals` still work and use the same resolver.
+
+## With responses
+
+When an agent's turn raises an approval, the agent's tool call fails with a "try again once they approve" result and the turn ends. The approval carries that turn's `response_id`, and while it is pending `GET /v1/responses/{id}` reads `status: "requires_action"` with `required_actions: [{ "type": "approval", "approval_id": "apr_…" }]` (see [Responses](/api/platform/responses)). Resolve it here, or follow the `approval.requested` / `approval.resolved` [webhooks](/api/platform/webhooks), then send a new response with `previous_response_id`. Nothing resumes on its own. Computer approvals come from your own `POST /v1/computers/{id}/toolset` calls, so their `response_id` and `conversation_id` are `null`.
+
+### Texts and calls
+
+When an agent with autonomy `ask` tries to text or call, the approval has `kind` for that action and `proposed_action.summary` carries what it wants to do, for example `text +15555550123`, with the text or call purpose in the proposed action. Approve it, then send a new response with `previous_response_id`. The agent's next attempt sends exactly the approved text. One approval allows one send: after the send the approval reads `consumed`, and the next text raises a new approval. If you deny it, nothing is sent, and the agent's next attempt raises a new approval.
+
+Webhooks: `approval.requested`, `approval.resolved`, `approval.expired`.

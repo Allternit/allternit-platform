@@ -1,0 +1,12 @@
+{
+  "images": [
+    {
+      "filename": "sms_alert.png",
+      "idiom": "universal"
+    }
+  ],
+  "info": {
+    "author": "xcode",
+    "version": 1
+  }
+}

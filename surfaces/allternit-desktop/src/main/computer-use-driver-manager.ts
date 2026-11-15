@@ -393,6 +393,16 @@ class ComputerUseDriverManager {
     return env;
   }
 
+  /**
+   * Where the running Allternit Driver answers, for in-process clients
+   * (driver-rpc.ts: the desktop pet's passive reads). Null while it is not up,
+   * so callers on a build or OS without the driver simply read nothing.
+   */
+  getAllternitDriverEndpoint(): { endpoint: string; token: string | null } | null {
+    if (!this.driverAlive() || !this.driverEndpoint) return null;
+    return { endpoint: this.driverEndpoint, token: this.driverToken };
+  }
+
   getStatus(): ComputerUseDriverStatus {
     const executable = this.resolveExecutable();
     const socketAlive = Boolean(this.socketPath && fs.existsSync(this.socketPath));

@@ -507,7 +507,7 @@ async fn onboarding_discover(State(state): State<Arc<AppState>>) -> impl IntoRes
     let ollama_url = state.config.ollama_url();
 
     // Check Ollama
-    let ollama_running = reqwest::Client::new()
+    let ollama_running = crate::net_client::client()
         .get(format!("{}/api/tags", ollama_url.trim_end_matches('/')))
         .timeout(std::time::Duration::from_secs(5))
         .send()
@@ -516,7 +516,7 @@ async fn onboarding_discover(State(state): State<Arc<AppState>>) -> impl IntoRes
         .unwrap_or(false);
 
     let ollama_models = if ollama_running {
-        match reqwest::Client::new()
+        match crate::net_client::client()
             .get(format!("{}/api/tags", ollama_url.trim_end_matches('/')))
             .timeout(std::time::Duration::from_secs(5))
             .send()
@@ -549,7 +549,7 @@ async fn onboarding_discover(State(state): State<Arc<AppState>>) -> impl IntoRes
     };
 
     // Check LM Studio (default port 1234)
-    let lmstudio_running = reqwest::Client::new()
+    let lmstudio_running = crate::net_client::client()
         .get("http://localhost:1234/v1/models")
         .timeout(std::time::Duration::from_secs(3))
         .send()
@@ -558,7 +558,7 @@ async fn onboarding_discover(State(state): State<Arc<AppState>>) -> impl IntoRes
         .unwrap_or(false);
 
     let lmstudio_models = if lmstudio_running {
-        match reqwest::Client::new()
+        match crate::net_client::client()
             .get("http://localhost:1234/v1/models")
             .timeout(std::time::Duration::from_secs(3))
             .send()
@@ -701,7 +701,7 @@ struct ValidationResult {
 }
 
 async fn validate_openai_key(key: &str) -> Result<ValidationResult, String> {
-    let client = reqwest::Client::new();
+    let client = crate::net_client::client();
     let res = client
         .get("https://api.openai.com/v1/models")
         .header("Authorization", format!("Bearer {}", key))
@@ -740,7 +740,7 @@ async fn validate_openai_key(key: &str) -> Result<ValidationResult, String> {
 }
 
 async fn validate_anthropic_key(key: &str) -> Result<ValidationResult, String> {
-    let client = reqwest::Client::new();
+    let client = crate::net_client::client();
     let res = client
         .get("https://api.anthropic.com/v1/models")
         .header("x-api-key", key)
@@ -791,7 +791,7 @@ async fn validate_google_key(_key: &str) -> Result<ValidationResult, String> {
 }
 
 async fn validate_groq_key(key: &str) -> Result<ValidationResult, String> {
-    let client = reqwest::Client::new();
+    let client = crate::net_client::client();
     let res = client
         .get("https://api.groq.com/openai/v1/models")
         .header("Authorization", format!("Bearer {}", key))
@@ -830,7 +830,7 @@ async fn validate_groq_key(key: &str) -> Result<ValidationResult, String> {
 }
 
 async fn validate_openrouter_key(key: &str) -> Result<ValidationResult, String> {
-    let client = reqwest::Client::new();
+    let client = crate::net_client::client();
     let res = client
         .get("https://openrouter.ai/api/v1/models")
         .header("Authorization", format!("Bearer {}", key))
@@ -873,7 +873,7 @@ async fn validate_openrouter_key(key: &str) -> Result<ValidationResult, String> 
 async fn validate_kimi_key(key: &str) -> Result<ValidationResult, String> {
     // Kimi does not expose a public model list endpoint, so we validate by
     // making a tiny chat completion request.
-    let client = reqwest::Client::new();
+    let client = crate::net_client::client();
     let res = client
         .post("https://api.kimi.com/coding/v1/chat/completions")
         .header("Authorization", format!("Bearer {}", key))

@@ -243,7 +243,7 @@ describe('iPhone Phone Link', () => {
     // bad password → asked again, with the reason
     await new Promise<void>((resolve) => {
       const on = (s: PhoneLinkStatus) => {
-        if (s.state === 'apple_id' && /didn't work/.test(s.detail ?? '')) {
+        if (s.state === 'apple_id' && /didn't work/.test(s.error?.message ?? '')) {
           manager.off('status', on);
           resolve();
         }

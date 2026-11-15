@@ -108,6 +108,130 @@ export function loadIncusHostEnv(env: Record<string, string>, file = path.join(o
   }
 }
 
+/**
+ * The Node allternit-api runs the Meetings bot with (ALLTERNIT_MEETING_NODE).
+ * A real Node >= 20 on PATH or in a common install dir wins: on macOS,
+ * @livekit/rtc-node under Electron logs duplicate ObjC WebRTC classes (Electron
+ * links its own WebRTC), which can crash. Otherwise Electron's own Node, run
+ * with ELECTRON_RUN_AS_NODE=1 (`electron: true`; allternit-api sets that on the
+ * child only, never on itself). An exported ALLTERNIT_MEETING_NODE wins.
+ */
+export interface MeetingNode {
+  node: string;
+  electron: boolean;
+}
+
+export function nodeCandidates(
+  platform: NodeJS.Platform = process.platform,
+  env: NodeJS.ProcessEnv = process.env,
+  home: string = os.homedir(),
+  readdir: (dir: string) => string[] = (dir) => fs.readdirSync(dir),
+): string[] {
+  const exe = platform === 'win32' ? 'node.exe' : 'node';
+  const dirs = (env.PATH ?? env.Path ?? '').split(platform === 'win32' ? ';' : ':').filter(Boolean);
+  if (platform === 'win32') {
+    for (const base of [env.ProgramFiles, env['ProgramFiles(x86)'], env.LOCALAPPDATA && path.join(env.LOCALAPPDATA, 'Programs')]) {
+      if (base) dirs.push(path.join(base, 'nodejs'));
+    }
+    if (env.NVM_SYMLINK) dirs.push(env.NVM_SYMLINK);
+  } else {
+    dirs.push('/opt/homebrew/bin', '/usr/local/bin', '/usr/bin', path.join(home, '.volta', 'bin'));
+    // nvm installs, newest first.
+    try {
+      const nvm = path.join(home, '.nvm', 'versions', 'node');
+      const versions = readdir(nvm).filter((v) => /^v\d+/.test(v));
+      versions.sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
+      for (const v of versions) dirs.push(path.join(nvm, v, 'bin'));
+    } catch {
+      // no nvm
+    }
+  }
+  const join = platform === 'win32' ? path.win32.join : path.posix.join;
+  return [...new Set(dirs.map((d) => join(d, exe)))];
+}
+
+let meetingNodeCache: MeetingNode | null = null;
+
+export function resolveMeetingNode(
+  deps: {
+    env?: NodeJS.ProcessEnv;
+    candidates?: string[];
+    exists?: (file: string) => boolean;
+    version?: (node: string) => string;
+    execPath?: string;
+  } = {},
+): MeetingNode {
+  const env = deps.env ?? process.env;
+  if (env.ALLTERNIT_MEETING_NODE) {
+    return { node: env.ALLTERNIT_MEETING_NODE, electron: env.ALLTERNIT_MEETING_NODE_ELECTRON === '1' };
+  }
+  const exists = deps.exists ?? ((f: string) => fs.existsSync(f));
+  const version =
+    deps.version ??
+    ((node: string) => execFileSync(node, ['--version'], { encoding: 'utf8', timeout: 3000, windowsHide: true }).trim());
+  let tried = 0;
+  for (const node of deps.candidates ?? nodeCandidates(process.platform, env)) {
+    if (!exists(node)) continue;
+    // Each probe blocks the main process briefly; stop after a few.
+    if (++tried > 6) break;
+    try {
+      const m = /^v(\d+)\./.exec(version(node));
+      if (m && Number(m[1]) >= 20) return { node, electron: false };
+    } catch {
+      // not runnable (a broken shim, a timeout)
+    }
+  }
+  return { node: deps.execPath ?? process.execPath, electron: true };
+}
+
+function meetingNodeEnv(): Record<string, string> {
+  meetingNodeCache ??= resolveMeetingNode();
+  return {
+    ALLTERNIT_MEETING_NODE: meetingNodeCache.node,
+    ALLTERNIT_MEETING_NODE_ELECTRON: meetingNodeCache.electron ? '1' : '0',
+  };
+}
+
+/**
+ * The staged Meetings bot (scripts/prepare-meeting-bot.cjs): the active runtime
+ * package's meeting-bot/ when it has one, else the app's bundled copy. Dev runs
+ * fall back to resources/meeting-bot, then services/meeting-bot once built.
+ * Empty when none has dist/runner.js; allternit-api then reports bot_missing.
+ */
+function resolveMeetingBotDir(): string {
+  if (process.env.ALLTERNIT_MEETING_BOT_DIR) return process.env.ALLTERNIT_MEETING_BOT_DIR;
+  const repoRoot = path.resolve(__dirname, '..', '..', '..', '..');
+  const candidates = app.isPackaged
+    ? [runtimeResource('meeting-bot')]
+    : [
+        runtimeResource('meeting-bot'),
+        path.join(__dirname, '..', '..', 'resources', 'meeting-bot'),
+        path.join(repoRoot, 'services', 'meeting-bot'),
+      ];
+  return candidates.find((dir) => fs.existsSync(path.join(dir, 'dist', 'runner.js'))) ?? '';
+}
+
+/**
+ * Allternit Tune's source folder (services/model-training, staged by the
+ * electron-builder extraResources entry `model-training`, source only): the
+ * active runtime package's copy when it has one, else the app's bundled copy.
+ * Dev runs fall back to the repo folder. allternit-api's Studio host installs
+ * the engine's venv from it (cmd/allternit-api/src/studio/engines.rs); empty
+ * leaves allternit-api to look next to its own binary.
+ */
+function resolveTuneSourceDir(): string {
+  if (process.env.ALLTERNIT_TUNE_SOURCE) return process.env.ALLTERNIT_TUNE_SOURCE;
+  const repoRoot = path.resolve(__dirname, '..', '..', '..', '..');
+  const candidates = app.isPackaged
+    ? [runtimeResource('model-training')]
+    : [runtimeResource('model-training'), path.join(repoRoot, 'services', 'model-training')];
+  return (
+    candidates.find(
+      (dir) => fs.existsSync(path.join(dir, 'allternit_tune')) && fs.existsSync(path.join(dir, 'requirements.txt')),
+    ) ?? ''
+  );
+}
+
 // Port ownership: the packaged app owns the production gateway port (8013)
 // and reclaims it on launch. A dev desktop (worktree Electron, npm run dev)
 // binds the dev port instead, so a dev build can run side by side with the
@@ -151,7 +275,6 @@ export class BackendManager {
    */
   private humanProofSecret: string | null = null;
   private lastConfig: BackendLaunchConfig | null = null;
-  private resolvedBinaryPath: string | null | undefined;
   /**
    * Crash-respawn state. Respawns use capped exponential backoff with jitter
    * so a binary that fails instantly on startup cannot hot-loop the machine.
@@ -223,7 +346,8 @@ export class BackendManager {
     if (!binaryPath) {
       const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
       if (isDev) {
-        const candidate = path.resolve(__dirname, '../../../cmd/allternit-api');
+        // __dirname is surfaces/allternit-desktop/dist/main: four levels up is the repo root.
+        const candidate = path.resolve(__dirname, '../../../../cmd/allternit-api');
         if (!fs.existsSync(path.join(candidate, 'Cargo.toml'))) {
           throw new Error(`allternit-api is unavailable: no binary and no development Cargo project at ${candidate}`);
         }
@@ -310,6 +434,12 @@ export class BackendManager {
       // Desktop's own subscription gateway, the fallback when no Sessions
       // computer answers (empty on a cloud computer, whose image sets its own).
       ...subsGatewayManager.getApiEnvironment(),
+      // Meetings: the bot runs on this computer (the runtime's
+      // /webhooks/meeting-bot/* routes spawn `<node> <dir>/dist/runner.js`).
+      ALLTERNIT_MEETING_BOT_DIR: resolveMeetingBotDir(),
+      // Studio: the Allternit Tune engine source the host installs and runs.
+      ALLTERNIT_TUNE_SOURCE: resolveTuneSourceDir(),
+      ...meetingNodeEnv(),
       ...(config.extraEnv ?? {}),
     };
     loadTartHostEnv(env);
@@ -608,11 +738,9 @@ export class BackendManager {
     return this.stderrLines.slice(-5);
   }
 
+  // Not cached: callers can run before the runtime package is chosen at launch,
+  // and a cached bundled path would keep the app on the bundled binary.
   private resolveBinaryPath(logDiscovery = true): string | null {
-    if (this.resolvedBinaryPath !== undefined) {
-      return this.resolvedBinaryPath;
-    }
-
     const binaryName = process.platform === 'win32' ? 'allternit-api.exe' : 'allternit-api';
 
     // __dirname is dist/main; go up four levels to reach the repo root.
@@ -630,7 +758,6 @@ export class BackendManager {
 
     for (const candidate of candidates) {
       if (fs.existsSync(candidate)) {
-        this.resolvedBinaryPath = candidate;
         if (logDiscovery) {
           log.info(`[BackendManager] Found binary at: ${candidate}`);
         }
@@ -639,7 +766,6 @@ export class BackendManager {
     }
 
     log.error('[BackendManager] allternit-api binary not found. Searched:', candidates);
-    this.resolvedBinaryPath = null;
     return null;
   }
 

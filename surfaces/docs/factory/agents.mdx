@@ -196,6 +196,20 @@ Only `PROBLEM` turns the check red.
 
 On Desktop, Code mode's terminal wall shows the same panes as xterm tiles, so a keystroke in either shows up in both.
 
+### Hand-off lanes
+
+A bot project's team view (the project pane's **Team**, or **Open team lanes** on the Team card) opens on **Lanes**. **Graph** and **List** are one click away; phones show **Lanes** and **List**.
+
+- **Bot cards** sit on top: avatar, name, binding, state, context used (`ctx 41%`), the bot's role, and the node the bot is on now. A bot with no current node shows its next ready node (**Up next**, with **+N** for more queued), else **Ready for a task**.
+- **One lane per team link**, in the direction work moves. For `delegates_to` and `directs` the lane runs from → to. For `checks` it runs from the checked bot to its checker, so **builder → checker · checks** holds the work the checker reviews.
+- **Nodes in a lane:** a campaign node goes in the lane whose target is its assignee and whose source owns a node it waits on (`blocked_by`). A node with no such match goes in its assignee's first lane. With no campaign, each bot's current node stands in. Nodes in flight come first, then waiting ones, then finished ones; a lane shows four, then **+N more**.
+- **Status line:** **With &lt;bot&gt;** (working), **Checking**, **Needs you**, **Up next**, **Waiting on another step**, **Done** or **Failed**.
+- **Open a node card** to see its intent, its files, its proof count and deliveries, plus **Open node** (the Node page) and **Take over**. **Take over** shows for a Terminal bot whose pane is running; it switches to Code mode and focuses that bot's pane, where you can type into its session. It doesn't pause the bot.
+- **Layout:** each lane is one card wide and sits centred under the two bots it joins. Lanes keep their left-to-right order and move aside just enough not to overlap; a row holds as many lanes as there are bots, and more start a second row. Wide teams scroll sideways.
+- **Lines:** on Desktop a rounded line runs from a dot under each bot to a handle on top of each of its lanes (the left handle takes the bot further left). Lanes with work in flight draw in blue with a moving pulse, which stops when reduce motion is on. Phones stack the lanes without lines; each lane's header names both bots with their faces.
+
+Cost per bot is not shown: the usage API has no per-bot spend yet. The cards show context used instead.
+
 ## Worktrees
 
 A Terminal bot that works in a worktree gets an [Agent Tree](/factory/trees): its own branch `ao/<slug>` from fresh `origin/main`, owned by the bot and seeded from the warm base. `gizzi agents down <bot> --rm-worktree` lands it, or pauses it when it holds unmerged or uncommitted work. People and sessions use the same `gizzi agents tree` verbs.

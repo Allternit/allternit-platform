@@ -12,7 +12,7 @@ All eval metric endpoints require the caller to be an organization owner or admi
 ## Base URL
 
 ```text
-https://api.allternit.com/api/v1/admin/eval/metrics
+http://127.0.0.1:8013/api/v1/admin/eval/metrics
 ```
 
 For local development:
@@ -44,7 +44,7 @@ http://127.0.0.1:8013/api/v1/admin/eval/metrics
 ## List metrics
 
 ```bash
-curl https://api.allternit.com/api/v1/admin/eval/metrics \
+curl http://127.0.0.1:8013/api/v1/admin/eval/metrics \
   -H "Authorization: Bearer $ADMIN_TOKEN"
 ```
 
@@ -72,7 +72,7 @@ curl https://api.allternit.com/api/v1/admin/eval/metrics \
 ## Score a prediction
 
 ```bash
-curl -X POST https://api.allternit.com/api/v1/admin/eval/metrics/score \
+curl -X POST http://127.0.0.1:8013/api/v1/admin/eval/metrics/score \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -108,7 +108,7 @@ curl -X POST https://api.allternit.com/api/v1/admin/eval/metrics/score \
 ## Score consistency
 
 ```bash
-curl -X POST https://api.allternit.com/api/v1/admin/eval/metrics/consistency \
+curl -X POST http://127.0.0.1:8013/api/v1/admin/eval/metrics/consistency \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{

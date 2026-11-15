@@ -40,7 +40,6 @@ use allternit_api::cloud_agents_routes::cloud_agents_router;
 use allternit_api::user_profile_routes::{enrollment_router, user_profile_router};
 use allternit_api::agent_workspace_routes::agent_workspace_router;
 use allternit_api::agents_v1_routes::agents_v1_router;
-use allternit_api::alabs_routes::alabs_router;
 use allternit_api::analytics_routes::analytics_router;
 use allternit_api::artifact_routes::artifact_router;
 use allternit_api::audit_log_routes::audit_log_router;
@@ -71,7 +70,6 @@ use allternit_api::file_routes::file_router;
 use allternit_api::h5i_routes::h5i_router;
 use allternit_api::har_api_routes::har_api_router;
 use allternit_api::bot_event_routes::bot_event_router;
-use allternit_api::model_training_routes::model_training_router;
 use allternit_api::photon_routes::photon_router;
 use allternit_api::health::health_router;
 use allternit_api::inference_router_routes::inference_router_router;
@@ -301,6 +299,8 @@ async fn main() {
 
     // Memory-plane index: background embedding backfill / re-embed (WP-M1a).
     allternit_api::memory_index::spawn_indexer(db.clone());
+
+    allternit_api::llm_gateway::failover::install_alert_sink(db.clone());
 
     // Shared gateway state (P2.9): with GATEWAY_SHARED_STATE=sqlite, failover
     // cooldowns and gateway rate-limit counters live in SQLite so multiple
@@ -647,6 +647,8 @@ async fn main() {
             Arc::new(allternit_api::channel_transports::ChannelLaneTransport::new(state.clone(), Arc::new(allternit_api::gateway_runner::SubsTransport(state.clone())))),
         )),
     );
+    // Phone approval holds: loops without an AppState reach the DB through this.
+    allternit_api::phone_guard::install(state.db.clone(), state.data_dir.clone());
     allternit_api::channel_discord_app::init(state.db.clone());
     // Vendor bots' `post_message` start conversations through the same path as the app.
     allternit_api::channel_start::register_vendor_starter(&state);
@@ -947,6 +949,30 @@ async fn main() {
         });
     }
 
+    // Status snapshot for the phone's Live Activity, widget and badge (inert until paired).
+    {
+        let state = Arc::clone(&state);
+        let mut shutdown_rx = shutdown_tx.subscribe();
+        tokio::spawn(async move {
+            tokio::select! {
+                _ = shutdown_rx.recv() => {}
+                _ = allternit_api::status_snapshot::run(state) => {}
+            }
+        });
+    }
+
+    // Office view: pushes the public floor projection to the cloud every 60 s while the live link is on.
+    {
+        let state = Arc::clone(&state);
+        let mut shutdown_rx = shutdown_tx.subscribe();
+        tokio::spawn(async move {
+            tokio::select! {
+                _ = shutdown_rx.recv() => {}
+                _ = allternit_api::floor_routes::run(state) => {}
+            }
+        });
+    }
+
     // MCP Events client lifecycle: refresh subscriptions before they lapse, resume after
     // re-auth, unsubscribe when a connector is removed or its OAuth grant revoked.
     {
@@ -996,9 +1022,22 @@ async fn main() {
         });
     }
 
+    // Freeweights Studio: training jobs on this computer (`/api/v1/studio`).
+    // Jobs left running by an earlier process are reattached or marked failed.
+    let studio_host = allternit_api::studio::StudioHost::new(
+        allternit_api::studio::StudioConfig::from_data_dir(&data_dir),
+    );
+    {
+        let studio_host = studio_host.clone();
+        tokio::spawn(async move { studio_host.recover().await });
+    }
+
     // ── Build V1 API routes (all merged, then nested under /api/v1) ───────────
     let v1_routes = provider_router()
+        .merge(allternit_api::connections_routes::connections_router())
         .merge(inbox_router())
+        .merge(allternit_api::bots_pause::router())
+        .merge(allternit_api::messages_mac::router())
         .merge(file_router())
         .merge(memory_router())
         .merge(me_router())
@@ -1023,6 +1062,9 @@ async fn main() {
         .merge(allternit_api::phone_seen_routes::phone_seen_router())
         .merge(agent_preferences_router())
         .merge(agent_workspace_router())
+        .merge(allternit_api::agent_package_routes::agent_package_router())
+        .merge(allternit_api::bot_hub_routes::bot_hub_router())
+        .merge(allternit_api::memory_map_routes::memory_map_router())
         // A thread placed on another Allternit (P4.2): its session's calls
         // pass through to where it lives.
         .merge(agent_session_router().route_layer(axum::middleware::from_fn_with_state(
@@ -1031,6 +1073,7 @@ async fn main() {
         )))
         .merge(allternit_api::card_meta::card_meta_router())
         .merge(allternit_api::placement::placement_router())
+        .merge(allternit_api::teleport_routes::teleport_router())
         .merge(beta_session_router())
         .merge(cloud_agents_router())
         .merge(beta_deployment_router())
@@ -1086,10 +1129,13 @@ async fn main() {
         .merge(allternit_api::tag_routes::tag_router())
         .merge(inference_router_router())
         .merge(bot_event_router())
+        .merge(allternit_api::floor_routes::floor_router())
         .merge(allternit_api::thread_routes::thread_router())
         .merge(allternit_api::bot_routing::bot_routing_router())
         .merge(allternit_api::bot_suggestions::bot_suggestions_router())
         .merge(allternit_api::thread_bot_tools::thread_bot_tools_router())
+        .merge(allternit_api::worker_bot_tools::worker_bot_tools_router())
+        .merge(allternit_api::project_send_tools::project_send_tools_router())
         .merge(allternit_api::events_feed::events_feed_router())
         .merge(allternit_api::agent_gateway_routes::agent_gateway_router())
         .merge(allternit_api::gateway_runner::gateway_runner_router())
@@ -1113,8 +1159,9 @@ async fn main() {
         .merge(allternit_api::coordinator_routes::coordinator_router())
         .merge(allternit_api::delegate_routes::delegate_router())
         .merge(allternit_api::morning_brief::brief_router())
+        .merge(allternit_api::main_bot_reach_out::reach_out_router())
         .merge(allternit_api::slack_webhook_routes::slack_binding_router())
-        .merge(model_training_router())
+        .merge(allternit_api::studio::router(studio_host.clone()))
         .merge(photon_router())
         .merge(allternit_api::enterprise_auth::router())
         .merge(allternit_api::eval_routes::router())
@@ -1128,6 +1175,7 @@ async fn main() {
         .merge(allternit_api::sandbox_template_routes::router())
         .merge(allternit_api::skills_routes::skills_router())
         .merge(allternit_api::skill_catalog_install::skill_catalog_router())
+        .merge(allternit_api::agent_capability_import::agent_import_router())
         .merge(allternit_api::long_running_task_routes::long_running_task_router())
         .merge(allternit_api::bot_desktop_templates::router())
         .merge(allternit_api::bot_desktop_capacity::router())
@@ -1157,6 +1205,8 @@ async fn main() {
         .merge(allternit_api::phone_runs::router())
         .merge(allternit_api::phone_replay::router())
         .merge(allternit_api::phone_task::router())
+        // Phone approval holds: guard check, hold read, hold crop.
+        .merge(allternit_api::phone_guard::router())
         .merge(allternit_api::subscription_routes::router())
         .merge(allternit_api::computer_embed::api_router())
         .merge(allternit_api::bot_group_routes::router())
@@ -1195,7 +1245,6 @@ async fn main() {
         .merge(office_router())
         .merge(office_cli_router())
         .merge(office_engine_v1_router())
-        .merge(alabs_router())
         .merge(automation_router())
         .merge(brain_router())
         .merge(memory_drive_router())
@@ -1432,6 +1481,12 @@ async fn main() {
         // peer gateways carry the internal service token, not a Clerk JWT —
         // the inbox handler gates itself per-handler, same as internal_routes.
         .merge(allternit_api::content_artifact_relay::content_artifact_relay_inbox_router())
+        // Allternit Meetings in-call turns (/api/v1/meeting-turns/*): the pod's runner
+        // has no Clerk session; each handler checks the internal service token.
+        .merge(allternit_api::meeting_turn_stream::meeting_turns_router())
+        // Allternit Meetings bot on this runtime: cloud-api relays status/start/stop
+        // (/webhooks/meeting-bot/*) signed with the device token (RelayedAuth verifies).
+        .merge(allternit_api::meeting_bot_host::meeting_bot_host_router(data_dir.clone(), app_config.api_port()))
         // Desktop Cloud host self-registration from bootstrap cloud-init.
         .merge(allternit_api::desktop_host_admin::public_router())
         // Private Fabric node daemon enrollment and heartbeat.
@@ -1681,7 +1736,11 @@ async fn main() {
         );
         let mut shutdown_rx = shutdown_tx.subscribe();
         tokio::spawn(async move {
-            axum::serve(admin_listener, admin_app)
+            // Connect info: auth_middleware decides "local" from the TCP peer.
+            axum::serve(
+                admin_listener,
+                admin_app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+            )
                 .with_graceful_shutdown(async move {
                     let _ = shutdown_rx.recv().await;
                 })
@@ -1745,6 +1804,9 @@ async fn main() {
 
         // Stop the background loops first, then let in-flight requests finish.
         let _ = shutdown_tx.send(());
+        // Meetings bot runners live in their own process groups; stop them
+        // (and the PulseAudio the host started) before the process exits.
+        allternit_api::meeting_bot_host::shutdown().await;
         tokio::time::sleep(DRAIN_TIMEOUT).await;
         let _ = server_shutdown_tx.send(());
         // Graceful shutdown waits for every open connection, and the UI's
@@ -1758,7 +1820,9 @@ async fn main() {
     match listener {
         Some(listener) => {
             // Peer addresses let the rate limiter tell the desktop's own
-            // loopback UI apart from LAN/public callers (when bound to 0.0.0.0).
+            // loopback UI apart from LAN/public callers (when bound to 0.0.0.0),
+            // and auth_middleware's self-hosted/local-dev fallback requires a
+            // loopback peer. Without connect info no request is local.
             axum::serve(
                 listener,
                 app.into_make_service_with_connect_info::<std::net::SocketAddr>(),

@@ -5,10 +5,236 @@ description: 'Changelog for the Allternit platform, SDKs, and Gizzi Code CLI'
 
 # Release Notes
 
+## Next — Freeweights Studio on more hardware
+
+Arrives with the next Desktop runtime, the next `gizzi` release and the next web update. It is not live yet.
+
+- **More computers:** Allternit Tune is built to run on Apple Silicon, NVIDIA (Linux and Windows), AMD (Linux), Intel GPUs (Linux and Windows) and CPU only. Every one is **Not yet tested by Allternit on this hardware**. CPU runs `lora` only, slowly. Intel Macs are not supported. See [Hardware](/surfaces/model-lab#hardware).
+- **MLX on Mac:** `lora` and `qlora` train with MLX, and **Also make → MLX** writes MLX files. The MLX adapter is mlx-lm's own format, not PEFT.
+- **Studio API:** `fit` on each engine, `resources.backend`, `outputs.mlx`, `base.path`, absolute output paths, and the new error codes `method_not_supported`, `backend_not_supported`, `output_not_supported`, `hardware_unavailable` and `invalid_base`. See [Studio API](/api/studio).
+- **Gizzi Code:** `gizzi studio run` takes `--backend` and `--mlx`.
+- **Engines:** Axolotl, LLaMA-Factory and torchtune are published at a pinned commit; Unsloth runs unmodified under AGPL-3.0 as a separate process. See [Where the engines come from](/api/studio#where-the-engines-come-from).
+
+## 2026-11-15 — Freeweights Studio: training on your own computer
+
+- **New:** a [Studio API](/api/studio) at `/api/v1/studio` on each computer's Allternit API. It lists engines, runs one fine-tune job at a time, streams events, and registers outputs as local models. It replaces the old `/api/v1/model-training` routes, which are removed.
+- **Allternit Tune:** the default engine, Apache-2.0. It runs `lora`, `qlora`, `dpo` and `full` through TRL and PEFT on Apple Silicon and on NVIDIA with Linux. The MLX backend is not available yet. Windows, AMD, Intel and CPU-only computers are refused with the reason.
+- **Checked base models:** a job can pin the signed Freeweights manifest hash of its base model. A different manifest is refused with `manifest_mismatch`.
+- **Desktop:** bundles Allternit Tune. Job outputs stay on the computer.
+- **Gizzi Code:** `gizzi studio`. See [Fine-tune with gizzi studio](/cli/studio).
+- **iPhone:** the Models screen shows training jobs with status, log tail and cancel. You create jobs on Desktop or the web.
+- **Web and PWA (live):** [Freeweights Studio](/surfaces/model-lab) opens on the Freeweights catalog, with search as you type and publisher logos. On the phone layout and the PWA it is in the drawer's More, and the phone model picker has a chip. The Engine tab says there is no model engine on the device.
+- **Train tab (web, phone layout and PWA; Desktop with its next build):** pick an engine, a base model, a dataset and a method, then follow the job. **Also make** adds a merged model and GGUF files (Q4_K_M, Q8_0, F16) to a job. The Engine tab's Quantize, Merge LoRA and Evaluate cards are removed: they called a route that was never served. Evaluation is not available yet.
+- **Docs:** the Studio page no longer describes the `/api/model-lab/jobs` route, which was never served.
+
+## 2026-11-14 — Freeweights in the apps: models are checked before they run
+
+- **New:** Allternit apps read the [Freeweights](/tools/freeweights) catalog. Every model pulled to a computer is checked by its hash. The result shows as "Verified by Freeweights", "Matches the publisher's hash", "Pinned by Allternit" or "Not verified".
+- **Desktop, web, phone and PWA:** Model Lab is now [Freeweights Studio](/surfaces/model-lab) (same view id). Settings, then Models, has the catalog on the phone layout.
+- **iPhone:** the Models screen has a Freeweights section. **Send to computer** pulls the model on your paired computer.
+- **Gizzi Code:** `gizzi models pull`, `gizzi models verify` and `gizzi models search --catalog-source freeweights`. See [Models and providers](/cli/models#pull-and-verify-local-models).
+- **Local Engine and API:** `POST /models/verify`, a `verification` field on every model, and an `allow_unverified` option on downloads. Data with no hash is refused unless you allow it. See [Local Engine API](/api/local-engine).
+- **If Freeweights is down:** pulls fall back to the publisher and are checked against its hash. A catalog that answers but fails its signature check is an error.
+- **Where:** engine, API and Gizzi in the next runtime and Gizzi Code release. The Desktop, web, phone and PWA UI and the iOS build ship with their own releases.
+
+## 2026-11-13 — Desktop on Mac: Keychain prompt no longer freezes the app
+
+- **Fixed:** on Mac, Allternit Desktop reads its Keychain key off the main thread. If macOS asks for your password, the app keeps working. The startup window says "macOS is asking for permission. Click Always Allow."
+- **Choices:** **Allow** works for that launch. **Always Allow** stops future prompts. **Deny** shows **Try again** and **Quit**.
+- **Your data stays:** a slow or denied Keychain no longer discards your saved sign-in and keys.
+- **Where:** Desktop on Mac, in the next Desktop build. Windows and Linux are unchanged. See [Desktop](/surfaces/desktop#macos-signing).
+
+## 2026-11-12 — Edit and resend, share a thread, Memory page, run code on files
+
+- **Edit a sent message:** change a message you sent and send it again. The earlier reply stays as a version you can flip back to, even after a reload. See [Edit and versions](/guides/chat-sessions#edit-and-versions).
+- **Share a thread by link:** anyone with the link can read the thread, signed in or not. **Stop sharing** turns the link off. See [Share a thread](/guides/share-a-thread).
+- **Memory page:** Settings → Memory lists what Allternit knows about you. Edit or delete one memory at a time. See [Memory](/guides/memory).
+- **Run code on attached files:** attach a CSV, spreadsheet or JSON file and choose **Analyze**. Python runs in a sandbox with no network and returns tables, charts and files. See [Analyze files](/guides/analyze-files).
+- **Fewer screens:** 28 views that no menu opened are gone.
+- **Where:** web, phone and PWA now. Desktop 1.1.14 (runtime r20261113.0132), Gizzi Code 2.9.0 (`/edit`, `/share`, `gizzi memory list|edit|forget`, `run_code`), and iOS 1.0.3 on TestFlight.
+
+## 2026-11-12 — Allternit for Android is on Google Play
+
+- **New:** [Allternit for Android](https://play.google.com/store/apps/details?id=com.allternit.app) is on Google Play. allternit.com, ai.allternit.com and m.allternit.com now show the Google Play badge next to the App Store one, and `allternit.com/app` sends Android phones to Google Play. See [Get the app](/guides/get-the-app).
+- **New short link:** `allternit.com/play` opens the Google Play page. `allternit.com/android` still downloads the version with Phone Link.
+- **Gizzi Code:** `/mobile` now shows QR codes for the App Store and Google Play pages.
+
+## 2026-11-12 — Platform API: Decisions, Responses, Messages, Approvals; SMS moves to /v1/texts
+
+- **New:** [Decisions](/api/platform/decisions), [Responses](/api/platform/responses), an Anthropic-shaped [Messages](/api/platform/messages) call, [Approvals](/api/platform/approvals), and [Conversations](/api/platform/conversations) with items.
+- **Breaking (private beta):** SMS moved from `/v1/messages` to `/v1/texts`, and the object is now `text`. `POST /v1/messages` is now the model call. Webhook events `message.received` and `message.status` keep their names.
+- **MCP:** `decide` and `respond` tools for project keys. New key scope `decisions`.
+
+## 2026-11-12 — Console fixes and project rate limits
+
+- **Clear states instead of errors:** pages that have no backend on Allternit Cloud now say so, or are hidden from the menu. They no longer show failed requests.
+- **Models:** the Models page shows only live catalog data, with a retry when the catalog can't load. Tools, vision and retirement badges appear only when the catalog reports them.
+- **Fabric:** no longer calls `localhost`. It shows when `VITE_ALLTERNITOS_URL` is set.
+- **Renamed menu items:** Hosted computers and Agent computers, Project webhooks and Organization webhooks, Project usage, and Project billing.
+- **Rate limits:** a new per-project view shows the limit, current use and concurrent call cap. See [Idempotency and limits](/api/platform/idempotency-and-limits#project-limits-in-the-console).
+
+## 2026-11-11 — Pet offers: your bot notices errors and offers a fix
+
+- **Desktop:** with **Read other apps' windows** turned on (off until you choose), the pet reads the window it walks over through the Allternit Driver, shows an eye while it reads, walks to a window with an error and offers **Fix it**. Fix it opens quick work with the error text attached and a draft; nothing is sent until you send. Password managers, banking apps and sites, Messages and private browser windows are never read. Mute an app from the bubble or by pressing and holding the pet. See [Pet offers](/guides/bot-avatars#pet-offers).
+- **Web, phone layout and PWA:** a failed bot run shows a card next to your bot, or a sheet at the bottom on a phone, that opens the bot's quick chat with the error.
+- **iPhone:** a banner when a run fails while you're on another screen. See [iPhone app](/guides/iphone-app#failed-run-banner).
+- **Android (Phone Link):** error and crash dialogs from other apps can bring up a notification with **Fix it** and **Mute**. Off until you turn it on. See [Android app](/guides/android-app#error-offers).
+- **Gizzi Code:** the terminal pet offers `/fix` after a failed command or turn, and tells the Desktop pet. `/pet offers on|off` turns it off. See [Work views](/cli/work#fix-a-failed-command).
+- **Developers:** a turn can turn on the computer tools for itself with `metadata.tools.computer: true`. See [Computer toolset](/tools/computer-toolset#turn-the-tools-on-for-one-turn).
+
+## 2026-11-11 — Mobile: a rating prompt
+
+- **Rating prompt:** the iPhone app may show Apple's rating sheet after a chat answer once you have used it for a few days, and **Settings → Rate Allternit** opens the App Store review page. The Google Play version of the Android app may show Google Play's review card when it opens. Counters stay on your device. It ships in the next build after iPhone 1.0.1. See [iPhone app](/guides/iphone-app#rating-the-app) and [Android app](/guides/android-app#rating-the-app).
+
+## 2026-11-09 — Gizzi Code: your plan, thinking levels, Customize and MCP Apps
+
+- **Your Allternit plan in `/usage`:** Free, Plus, Max or Ultra, your credits and Cloud balance, the monthly meter, and the plan limits of each CLI brain you're signed in to (Claude Code, Codex, Kimi). Before, the usage panel assumed an Anthropic plan. The footer shows `credits $41.20` next to the context meter. See [Usage](/cli/usage).
+- **Thinking levels per model in `/model`:** a second column shows each model's level from the same table Desktop uses. ← → cycles only the levels that model takes (Extra high, Ultra, Minimal…), and the level reaches the model. `/effort` accepts every level. See [Models](/cli/models#thinking-levels).
+- **`/customize`:** the A://TERNIT OFFICIAL shelves and the directory for skills, MCP servers and commands. Enter opens an item's page, `a` adds it, writing the same files Desktop's Add writes. See [Customize](/cli/customize).
+- **MCP Apps:** a tool result that comes with an app gets a **View in browser** line that opens the app with its real result. See [MCP](/cli/mcp#mcp-apps-in-the-terminal).
+- **Fixed:** the Max plan showed as "Super" in Gizzi's plan readouts.
+
+## 2026-11-09 — Allternit for iPhone is on the App Store
+
+- **Get it from the App Store:** [Allternit for iPhone](https://apps.apple.com/app/id6828841999) is free and needs iOS 17 or later. It is not listed in the EU countries or China yet.
+- **Short links:** `allternit.com/ios` opens the App Store page. `allternit.com/app` sends an iPhone to the App Store, an Android phone to the Android install, and any other device to the download page.
+- **On m.allternit.com in iPhone Safari:** the first-run sheet now offers the App Store app first and **Add to Home Screen** second. Safari also shows Apple's app banner on m.allternit.com and allternit.com. Android is unchanged: install from [allternit.com/android](https://allternit.com/android). See [Get the app](/guides/get-the-app).
+
+## 2026-11-09 — Desktop: New Window, and one machine counts once
+
+- **New Window:** **File › New Window** (`Cmd/Ctrl+Shift+N`) opens another Allternit Desktop window on the same account and sessions. The Window menu lists them with a colour dot. See [Desktop](/surfaces/desktop#new-window).
+- **A machine is one machine:** Desktop and the gizzi CLI now send a stable machine id when they pair, so a renamed Mac or a changed network name no longer counts against your machine limit, and signing in again on the same Mac replaces its old entry instead of adding a second one. Each account still uses its own slot on a shared computer.
+
+## 2026-11-04 — iPhone: every bot look shows, faces stay whole
+
+- **Pack looks show on iPhone:** bots dressed in drawn pack art (Clawd Crew, Duet Carry, Gizzi YouTube: Clawd, Pinch, Gem and more) showed a placeholder pattern on iPhone, because the phone couldn't read those pictures. They now show the look you picked in Edit bot.
+- **Faces no longer clipped:** sprite looks were cut off at the top (the crop box was flipped upside down) and some were drawn bigger than their tile. Every look is now trimmed and fitted the same way as on Desktop and the web.
+- **No more placeholder pattern:** a bot with no look, or one the app can't draw, shows Gizzi, as on the web.
+- **Play steps aside while you type:** the waiting-games button hides while the message box has text, on iPhone, Desktop and the web ([Waiting games](/surfaces/waiting-games)).
+- **iPhone Code mode:** the sessions **Deck** shows tall cards you swipe through, the send key is the Return key, and the A:// orb (or the bot) shows while a reply streams.
+- **Clearer connector errors on iPhone:** a connector that isn't set up yet says so in plain words instead of showing an error code.
+
+## 2026-11-03 — Customize: a page for every item, eight official skills
+
+- **Item pages before you add:** click any card in Customize › Discover to open its page: description, maker, version, source and the start of its SKILL.md. **Contents** shows every file before anything installs. Before, clicking a directory skill added it straight away. See [Customize](/guides/customize#item-pages).
+- **More official skills:** Clone Website, Mobile App Design, Word Documents, PowerPoint Decks, Agent Orchestrator and Steer Parallel Agent join ALabs Course Pipeline and Codebase To Course on the A://TERNIT OFFICIAL shelf, each with a cover.
+- **MCP servers, commands, CLI tools and webhooks:** each section now has a hero and an A://TERNIT OFFICIAL shelf: Lens Vault, `/review`, `/handoff`, `/standup`, `/explain`, gizzi and the inbound webhook trigger. See [Customize](/guides/customize#mcp-servers-commands-cli-tools-and-webhooks).
+- **Fixed: added items now run.** Before, Add in these sections wrote files that gizzi never read: a new MCP server or command showed in the list but never worked, and a new CLI tool didn't appear at all. MCP servers now go into gizzi's `gizzi.json` and commands into its `command/` folder. Create webhook makes a real signed trigger.
+- **Category icons:** each category and card in Discover shows its own icon instead of one icon for the whole section.
+- **Phones:** a skill's Contents tab puts the file list above the file, so text keeps the full width.
+
+## 2026-11-03 — Claude and Codex limits show in Usage
+
+- **Claude limits:** the Usage cards and the model picker rings now show Claude's 5-hour and weekly use all the time. Before, they showed only after you hit a limit.
+- **Codex limits:** Codex's 5-hour and weekly use show again. Before, a Codex session opened without a message hid them.
+- **Fewer empty cards:** Usage shows a card only for an account with a plan, a limit or spending in the last 30 days. Local engines (Ollama, LM Studio, Bonsai) get no card.
+
+## 2026-11-03 — Gizzi RPG and Gizzi Brawl in the waiting games
+
+- **Two more waiting games:** the Play window's game list now has **Gizzi RPG** (all six chapters of *Gizzi: The Assistants*) and **Gizzi Brawl**, on Desktop, the web, the phone app and iPhone. On a phone, Brawl turns sideways to fill the window.
+- **Games pick up where you left them:** closing the window, switching games or a ready reply now pauses a game instead of ending it. See [Waiting games](/surfaces/waiting-games#the-games).
+
+## 2026-11-03 — Allternit's own shelf in Customize; real app icons
+
+- **A://TERNIT OFFICIAL:** Customize › Skills and Plugins now open with a shelf of the skills and plugins Allternit makes (ALabs Course Pipeline, Codebase To Course, Excel, PowerPoint, Word, Chrome), each with a matching cover, version and **Add**. See [Customize](/guides/customize).
+- **Section heroes:** Skills, Plugins and Connectors lead with an ink panel and their A://TERNIT lockup.
+- **App icons:** connectors show the vendor's own App Store icon when we have one, else its mark on its brand colour, in Customize, MCP Apps and bot settings.
+- **Has a screen:** the tag on a connector opens its app in ACI › MCP Apps.
+- **Bot Capabilities:** a bot's Skills tile is now Capabilities: switch skills, connectors, MCP servers and tools on or off for that bot only. See [Bot page](/guides/bot-page#capabilities).
+- **Add from a Git repo:** install the skills in any GitHub repo or folder from Customize › Add.
+- **Import an agent:** bring skills, MCP servers, instructions and memory from Claude Code, Codex, OpenClaw or Hermes on this computer.
+- **A model per delegated task:** an agent can run a subagent task on a small, standard or deep model. See [Subagents](/guides/subagents#model-classes).
+
+## 2026-11-02 — Thinking levels reach the model; the $100 plan is now Max
+
+- **Thinking levels work:** the level you pick now reaches the model. Before, it was dropped on the way. Each model offers its own levels, from its vendor: Claude effort up to Max, OpenAI reasoning up to Ultra, Gemini thinking level, DeepSeek and GLM deep thinking. See [Thinking levels](/api/providers#thinking-levels).
+- **Newer models in Claude Code and Codex:** Fable 5.1 and the 5.5 family, and every GPT model Codex lists.
+- **Plan names:** the $100 plan is now called Max. Plus and Ultra keep their names. Prices, credits and current subscriptions do not change.
+- **Claude plan names:** Claude accounts show Anthropic's new names, Max and Ultra, instead of Max (5x) and Max (20x).
+
+## 2026-11-02 — iPhone screens match Desktop; session chats follow their kind
+
+- **Create and edit a bot on iPhone:** the same form as Desktop, with the same looks, options and first thread. Edit opens that form filled in.
+- **Artifact sessions:** a session's chat now follows its kind, so a spreadsheet no longer shows a Docs chat, on Desktop, the web and iPhone. Session composers are the Home composer.
+- **Teach on iPhone:** skills and recordings load through your connected computer.
+- **MCP Apps and Customize on iPhone:** Desktop's directory, real app logos and icons.
+- **Automation Tasks on iPhone and phone web:** Desktop's tabs, view switch, task details and Graph.
+- **Waiting games:** Big Fish lets you eat and grow, and Bot Race keeps the word above the keyboard.
+- **Phone Code prompt:** no boxed ends. **Skills icon:** a puzzle piece.
+
+## 2026-11-01 — Schedules keep their timezone; unsaved work is protected
+
+- **Sheets with no computer:** existing workbooks now keep their charts and formatting through a cloud service. Your workbook is processed on Allternit's server while it's open.
+- **Keychain prompts:** Mac runtime updates are signed with the Developer ID under stable names, so Keychain approval lasts across updates.
+- **Video:** Allternit's media and upload routes support range requests, and iPhone cards load a frame without downloading the whole file.
+- **Schedules:** routines and loops run in the timezone they were saved with. Before this, a server in UTC ran them at the wrong hour.
+- **Closing with unsaved changes:** a browser tab warns you, and Desktop asks **Leave** or **Stay**. Closing an editor inside Allternit saves first and asks only if that fails.
+- **Sheets exports:** `.xlsx` files made from a sheet keep their cell formatting.
+- **iPhone:** New task and New project now open their menus; a coding mistake had disconnected them, so tapping did nothing. Create buttons on those forms are readable. Motion and video cards show real previews. Rows under **Your artifacts** can be deleted, and Recents opens a session from another install on its editor.
+- **Admin site:** deploys work again.
+
+## 2026-11-01 — Bots rail back to one row per bot
+
+The same changes apply on Desktop, on ai.allternit.com (including the phone layout) and in the m.allternit.com app. The iPhone app gets it in the next app build.
+
+- **Bots rail:** a bot's threads no longer list under its row, so the rail stays short. Each row still shows the bot's status and the last line from its newest thread. Open threads from the bot's **Threads** and **Tasks** tabs.
+
+## 2026-10-31 — Loops run, editors save on close, and the iPhone catches up
+
+- **Loops run:** local loops now fire on schedule, and **Run now** and **Stop** work. Needs the current runtime on your computer.
+- **Heartbeats:** creating and editing on the web now reach the real scheduler. Full task names are kept, and saving no longer makes duplicate jobs.
+- **Editors on iPhone:** edits save when you close the editor, switch to Chat or leave the app, and a failed save asks before you leave. Save no longer opens the share sheet. Agents can edit the open file.
+- **Projects:** code and design projects now reach every device, and renames and deletes carry across. The iPhone can create both.
+- **Project pages on iPhone:** Team and Flow are live maps, with Lanes, take-over, Save as template, a Folder card, and Status close, reopen and proof links.
+- **Automation on iPhone:** New task, Edit, and the Agent Heartbeats list and agent picker.
+- **Artifact cards on iPhone:** previews of the real content, and view-only PDFs open in a native reader.
+
+## 2026-10-30 — Code prompt: dashed frame, model on the top edge, usage line
+
+The same changes apply on Desktop, on ai.allternit.com (including the phone layout) and in the m.allternit.com app.
+
+- **Dashed frame:** Code's prompt is one input line in a dashed frame, with the cache state at the top left and the model at the top right.
+- **Usage line:** a line under the status row shows the last run's tokens, cached share and cost, when the provider reports them.
+- **Context bar position:** the usage panel sets the context bar to **Bottom** (the default) or **Above**, on its own line above the prompt.
+- **iPhone app:** the app has the same prompt, in the next app build.
+- **Fixes:** on the dark terminal surface in light mode, the model, mode and usage text no longer read brown, and the Stop button is clear. On a phone, the prompt's placeholder stays on one row.
+
+## 2026-10-29 — Bot workspace in the system drawer; hand-off lanes redrawn
+
+The same changes apply on Desktop, on ai.allternit.com (including the phone layout) and in the m.allternit.com app.
+
+- **Workspace tab:** the system drawer has a **Workspace** tab with your bots at their desks on the 3D facility's bots' floor, in 2D, 2.5D or 3D, each as its own avatar with its live status. Click a bot to open its chat. See [System drawer](/guides/system-drawer).
+- **Hand-off lanes redrawn:** each lane now sits centred under the two bots it joins, with rounded lines and dots, bot faces in the lane header and the bot's role on its card. See [Hand-off lanes](/factory/agents#hand-off-lanes).
+
+## 2026-10-29 — The HUD opens where you are and keeps its place
+
+- **Opens on your display:** the HUD opens on the display under the pointer, remembers where you put it on each display (also after a restart), and can no longer end up off screen. On a monitor above or left of the main one, growing the HUD no longer throws it onto the main display.
+- **Ready to type:** the cursor is in the message box every time the HUD opens, and the first open is as fast as later ones.
+- **Room for replies:** the window grows for replies, with a minimum reply height, up to 520 px; past that the replies scroll inside the HUD. Long drafts scroll inside the message box.
+- **Open in app:** a button and `Cmd/Ctrl+O` move the HUD's chat to the main window. `Cmd+W` and `Alt+F4` hide the HUD instead of throwing away the draft.
+- **Your choice on click-away:** the HUD stays pinned by default; turn on **Hide when I click away** to hide it when you click another app.
+- **Hotkey conflicts shown:** if another app owns `Cmd/Ctrl+Shift+H`, `Alt+Shift+H` or `Cmd/Ctrl+Shift+A`, the HUD and the tray menu say so.
+- **Keyboard and accessibility:** `⌥/Alt+arrow keys` move the HUD by 20 px, `⌥⇧/Alt+Shift+arrow keys` resize it, replies are announced to screen readers, reduce transparency gives solid surfaces, and signed out the HUD offers **Sign in**.
+- **Fixes:** Linux: the HUD no longer becomes impossible to click. Windows and Linux: the HUD no longer covers system menus and notifications. The screenshot button shows an error instead of failing silently. Wayland: drag the top strip to move the HUD. Opening the HUD from the app no longer shows the desktop pet's version of it. See [HUD](/surfaces/desktop#hud).
+
+## 2026-10-29 — Hand-off lanes for Factory teams and bot tasks
+
+The same changes apply on Desktop, on ai.allternit.com (including the phone layout) and in the m.allternit.com app.
+
+- **Factory team view:** a bot project's team now opens on lanes. Bot cards show state, context used and the current node; under them, one lane per team link holds the nodes handed along it. Open a node for its files, **Open node** and **Take over** (a running Terminal bot's pane). **Graph** and **List** are still there. See [Hand-off lanes](/factory/agents#hand-off-lanes).
+- **Bot Tasks tab:** when a thread used subagents, the Tasks tab shows the bot and each subagent type as cards with a lane of the tasks handed to each, above the steps. See [Bot threads](/guides/bot-threads).
+- **System drawer:** the Bots tab has a **Lanes** view next to List and Graph. See [System drawer](/guides/system-drawer).
+
+## 2026-10-29 — Long HUD drafts and the Gizzi summary show in full
+
+- **HUD drafts:** a long message in the HUD pushed the composer's bottom row (attach, voice, model, send) past the edge of the window. The HUD now grows upward while the draft needs room and shrinks back as it gets shorter. See [HUD](/surfaces/desktop#hud).
+- **Gizzi's summary bubble:** hovering the system dot on Gizzi showed a cut-off summary. The bubble now shows the counts, the first waiting item and "Click the dot to open." on one line each, and cuts a long line with "…". See [System drawer](/guides/system-drawer).
+
 ## 2026-10-28 — The HUD pen closes again, and the HUD is one card
 
 - **Pen fixed:** the HUD's pen button opened a grey layer over the whole screen with no way out. It now opens the drawing layer with colors, width, Clear, Save and Done; **Done** or `Escape` closes it. See [HUD](/surfaces/desktop#hud).
 - **One card:** the HUD no longer sits in a frosted window. The message box and the Agent mode, Plugins and Artifacts row are one card with no line between them, in light or dark.
+- **HUD menus open in full:** the model picker, the context meter and the Agent mode, Plugins and Artifacts menus were cut off at the edge of the HUD. The HUD now grows while a menu is open and shrinks back when it closes. `Escape` with a menu open closes the menu, not the HUD.
 - **Menu bar icon:** the A is drawn with square blocks on whole pixels, like the wordmark. Before, each block blurred into a "+" on a standard (non-Retina) display.
 
 ## 2026-10-28 — Longer tasks run in Chat

@@ -7,7 +7,7 @@
 
 use axum::{
     body::Bytes,
-    extract::State,
+    extract::{DefaultBodyLimit, Extension, State},
     http::{header, HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::post,
@@ -17,6 +17,8 @@ use serde_json::json;
 use std::sync::Arc;
 use tracing::warn;
 
+use crate::auth::AuthUser;
+use crate::office_session_guard::{forward_session_op, OPEN_BODY_LIMIT};
 use crate::AppState;
 
 pub fn office_engine_router() -> Router<Arc<AppState>> {
@@ -28,10 +30,14 @@ pub fn office_engine_router() -> Router<Arc<AppState>> {
         .route("/office/extract", post(proxy_office_extract))
         .route("/office/markdown", post(proxy_office_markdown))
         .route("/office/markdown-url", post(proxy_office_markdown_url))
+        .route("/office/pdf/render", post(proxy_office_pdf_render))
         .route("/office/xlsx/parse", post(proxy_office_xlsx_parse))
         .route("/office/xlsx/recalc", post(proxy_office_xlsx_recalc))
         .route("/office/xlsx/read", post(proxy_office_xlsx_read))
-        .route("/office/xlsx/session/{op}", post(proxy_office_xlsx_session))
+        .route(
+            "/office/xlsx/session/{op}",
+            post(proxy_office_xlsx_session).layer(DefaultBodyLimit::max(OPEN_BODY_LIMIT)),
+        )
 }
 
 /// v1 mount of the same proxy at `/api/v1/office/engines/*`, per the add-in
@@ -47,10 +53,14 @@ pub fn office_engine_v1_router() -> Router<Arc<AppState>> {
         .route("/office/engines/extract", post(proxy_office_extract))
         .route("/office/engines/markdown", post(proxy_office_markdown))
         .route("/office/engines/markdown-url", post(proxy_office_markdown_url))
+        .route("/office/engines/pdf/render", post(proxy_office_pdf_render))
         .route("/office/engines/xlsx/parse", post(proxy_office_xlsx_parse))
         .route("/office/engines/xlsx/recalc", post(proxy_office_xlsx_recalc))
         .route("/office/engines/xlsx/read", post(proxy_office_xlsx_read))
-        .route("/office/engines/xlsx/session/{op}", post(proxy_office_xlsx_session))
+        .route(
+            "/office/engines/xlsx/session/{op}",
+            post(proxy_office_xlsx_session).layer(DefaultBodyLimit::max(OPEN_BODY_LIMIT)),
+        )
 }
 
 /// POST /api/office/parse → POST {OFFICE_ENGINE_URL}/parse
@@ -118,6 +128,17 @@ async fn proxy_office_markdown_url(
     proxy_office_engine(state, "/markdown-url", headers, body).await
 }
 
+/// POST /api/office/pdf/render → POST {OFFICE_ENGINE_URL}/pdf/render
+/// Template + theme + JSON data in, `application/pdf` bytes out (native PDF
+/// writer, no headless browser). Errors come back as JSON from the engine.
+async fn proxy_office_pdf_render(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    proxy_office_engine(state, "/pdf/render", headers, body).await
+}
+
 /// POST /api/office/xlsx/parse → POST {OFFICE_ENGINE_URL}/xlsx/parse
 async fn proxy_office_xlsx_parse(
     State(state): State<Arc<AppState>>,
@@ -147,22 +168,25 @@ async fn proxy_office_xlsx_read(
 
 /// POST /api/office/xlsx/session/:op → POST {OFFICE_ENGINE_URL}/xlsx/session/:op
 /// Workbook session API for the sheets editor (open/range/formulas/
-/// session-recalc/save/close), forwarded generically.
+/// session-recalc/save/close). Sessions belong to whoever opened them: see
+/// `office_session_guard`.
 async fn proxy_office_xlsx_session(
     State(state): State<Arc<AppState>>,
+    user: Option<Extension<AuthUser>>,
     axum::extract::Path(op): axum::extract::Path<String>,
-    headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    const ALLOWED: &[&str] = &["open", "range", "formulas", "session-recalc", "save", "close"];
-    if !ALLOWED.contains(&op.as_str()) {
-        return (
-            StatusCode::NOT_FOUND,
-            Json(json!({ "error": "unknown_session_op" })),
-        )
-            .into_response();
+    let Some(Extension(user)) = user else {
+        return (StatusCode::UNAUTHORIZED, Json(json!({ "error": "unauthorized" }))).into_response();
+    };
+    let reply =
+        forward_session_op(&state.config.office_engine_url(), &user.user_id, &op, body.to_vec()).await;
+    let status = StatusCode::from_u16(reply.status).unwrap_or(StatusCode::BAD_GATEWAY);
+    let mut response = (status, reply.body).into_response();
+    if let Some(value) = reply.content_type.and_then(|value| value.parse().ok()) {
+        response.headers_mut().insert(header::CONTENT_TYPE, value);
     }
-    proxy_office_engine(state, &format!("/xlsx/session/{op}"), headers, body).await
+    response
 }
 
 async fn proxy_office_engine(
@@ -177,7 +201,7 @@ async fn proxy_office_engine(
         upstream_path,
     );
 
-    let client = reqwest::Client::new();
+    let client = crate::net_client::client();
     let mut request = client.post(&target);
     if let Some(content_type) = headers
         .get(header::CONTENT_TYPE)

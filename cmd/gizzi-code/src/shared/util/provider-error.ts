@@ -315,3 +315,68 @@ export function formatRetryStatus(input: {
     detail: `${reason} | retry in ${remaining}s | attempt ${input.attempt}`,
   }
 }
+
+/**
+ * Allternit Cloud's "needs credits" refusal (HTTP 402, `error.code`
+ * `credits_required` when the account has no credits row, `credits_exhausted`
+ * when its balance is at or below 0). Matched by code, never by message
+ * text, so every surface (TUI, `gizzi models`, the session error the web
+ * adapter reads) shows the same disclosure.
+ */
+export type CloudCreditsCode = "credits_required" | "credits_exhausted"
+
+export const CLOUD_BILLING_URL = "https://ai.allternit.com/settings/billing"
+export const CLOUD_PACK_LABELS = ["$10", "$25", "$50", "$100"] as const
+
+export type CloudCreditsRefusal = {
+  code: CloudCreditsCode
+  /** The server's own sentence, when the body carried one. */
+  message?: string
+  /** Pack labels from the body (`$10`…), when it carried them. */
+  packs?: string[]
+  billingUrl?: string
+}
+
+function isCloudCreditsCode(value: unknown): value is CloudCreditsCode {
+  return value === "credits_required" || value === "credits_exhausted"
+}
+
+/**
+ * The credits refusal in an error body, an SDK error message that embeds the
+ * body ("402 {\"error\":{...}}"), or an already-parsed object; undefined for
+ * anything else.
+ */
+export function cloudCreditsRefusal(raw: unknown): CloudCreditsRefusal | undefined {
+  const source = normalizeRaw(raw)
+  if (!source) return undefined
+  const parsed = parseJsonObject(source) ?? parseEmbeddedJsonObject(source)
+  const body = (parsed?.error && typeof parsed.error === "object" ? parsed.error : parsed) as Record<string, unknown> | undefined
+  const code = body?.code
+  if (!isCloudCreditsCode(code)) {
+    // A truncated or wrapped body still names its code.
+    const match = source.match(/"code"\s*:\s*"(credits_required|credits_exhausted)"/)
+    return match ? { code: match[1] as CloudCreditsCode } : undefined
+  }
+  const packs = Array.isArray(body?.packs)
+    ? body!.packs.flatMap((p: unknown) => {
+        const label = (p as { label?: unknown } | null)?.label
+        return typeof label === "string" && label.trim() ? [label.trim()] : []
+      })
+    : []
+  const message = typeof body?.message === "string" && body.message.trim() ? body.message.trim() : undefined
+  const billingUrl = typeof body?.billing_url === "string" && /^https:\/\//.test(body.billing_url) ? body.billing_url : undefined
+  return { code, message, packs: packs.length ? packs : undefined, billingUrl }
+}
+
+/**
+ * The one-line disclosure: "Allternit Cloud models need credits. Packs: $10,
+ * $25, $50, $100. Buy: https://ai.allternit.com/settings/billing · or choose a plan."
+ */
+export function cloudCreditsDisclosure(
+  code?: CloudCreditsCode | null,
+  opts: { packs?: string[]; billingUrl?: string } = {},
+): string {
+  const lead = code === "credits_exhausted" ? "Your Allternit Cloud credits are used up." : "Allternit Cloud models need credits."
+  const packs = (opts.packs?.length ? opts.packs : CLOUD_PACK_LABELS).join(", ")
+  return `${lead} Packs: ${packs}. Buy: ${opts.billingUrl ?? CLOUD_BILLING_URL} · or choose a plan.`
+}

@@ -1,0 +1,12 @@
+{
+  "images": [
+    {
+      "filename": "ip2location.png",
+      "idiom": "universal"
+    }
+  ],
+  "info": {
+    "author": "xcode",
+    "version": 1
+  }
+}

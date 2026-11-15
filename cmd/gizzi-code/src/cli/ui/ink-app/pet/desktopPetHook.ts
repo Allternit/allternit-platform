@@ -41,6 +41,14 @@ function post(path: 'state' | 'bubble', body: Record<string, unknown>): void {
   }).catch(() => {})
 }
 
+let turnFailed = false
+
+/** A turn error or failed command happened: the Desktop pet shows `failed` now and again when the turn ends. */
+export function reportDesktopPetFailure(): void {
+  turnFailed = true
+  reportDesktopPet('failed')
+}
+
 export function reportDesktopPet(signal: DesktopPetSignal): void {
   post('state', { state: signal })
 }
@@ -69,7 +77,10 @@ export function useDesktopPetHook(s: { isLoading: boolean; toolRunning: boolean;
     const prev = last.current
     if (signal === prev) return
     last.current = signal
-    if (signal === 'idle' && prev !== 'waiting') reportDesktopPet('turn-done')
+    if (signal === 'idle' && turnFailed) {
+      turnFailed = false
+      reportDesktopPet('failed')
+    } else if (signal === 'idle' && prev !== 'waiting') reportDesktopPet('turn-done')
     else reportDesktopPet(signal)
   }, [signal])
   useEffect(() => {

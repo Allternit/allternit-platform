@@ -6,7 +6,7 @@
 //! and who may see it:
 //!
 //! * **Platform API webhooks** (`platform`): what a project endpoint may
-//!   subscribe to. [`PLATFORM_EVENTS`] is the 051 list plus the P3 `call.*` events, `usage.threshold` and `phone.*`.
+//!   subscribe to. [`PLATFORM_EVENTS`] is the 051 list plus the P3 `call.*` events, `usage.threshold`, `phone.*` and `mail.received`.
 //! * **MCP agents server** (`agents`, scope `agents:read`, `/mcp`): agent,
 //!   approval, thread, inbox, message, call, subscription and usage events.
 //! * **MCP vendor-bot connector** (`bot`, scope `bots:act`, `/mcp/bots/:id`):
@@ -109,24 +109,35 @@ pub static REGISTRY: &[EventType] = &[
         agents: true,
         bot: false,
         filters: &[BOT, THREAD],
-        payload: &[P_BOT, P_THREAD, ("approval_id", "Approval id."), ("summary", "What the agent wants to do."), ("run_id", "The run waiting on it, when there is one.")],
+        payload: &[P_BOT, P_THREAD, ("approval_id", "Approval id in the source system (the runtime's approval id, or a computer's grant id)."), ("summary", "What the agent wants to do."), ("run_id", "The run waiting on it, when there is one."), ("source", "Platform: twin or computer."), ("status", "Platform: pending."), ("account_id", "Platform: the account, when there is one."), ("computer_id", "Platform, computer source: the computer."), ("approval", "Platform: the approval object (id `apr_…` for GET/POST /v1/approvals/{id}, kind, proposed_action, conversation_id and response_id when known, expires_at: twin default 24 h).")],
         runtime_aliases: &["approval.requested", "agent.approval.requested"],
     },
     EventType {
         name: "approval.resolved",
         title: "Approval decisions",
-        description: "An approval was granted or denied.",
-        platform: false,
+        description: "An approval was granted or denied (through POST /v1/approvals/{id}, an older approve route, or the owner in the Allternit app).",
+        platform: true,
         agents: true,
         bot: false,
         filters: &[BOT, THREAD],
-        payload: &[P_BOT, P_THREAD, ("approval_id", "Approval id."), ("decision", "approved | denied.")],
+        payload: &[P_BOT, P_THREAD, ("approval_id", "Approval id in the source system."), ("decision", "approved | denied."), ("source", "Platform: twin or computer."), ("status", "Platform: approved | denied."), ("account_id", "Platform: the account, when there is one."), ("reason", "Platform: the reason sent with the decision, when one was."), ("approval", "Platform: the approval object (id `apr_…`; resolved_by = the API key id, console:<user> for the owner in the console, runtime when decided in the Allternit app).")],
         runtime_aliases: &["approval.resolved", "agent.run.approval_resolved"],
+    },
+    EventType {
+        name: "approval.expired",
+        title: "Expired approvals",
+        description: "A held action waited past its expires_at with no decision; it will not run.",
+        platform: true,
+        agents: false,
+        bot: false,
+        filters: &[],
+        payload: &[("approval_id", "Approval id in the source system."), ("source", "twin or computer."), ("status", "expired."), ("account_id", "The account, when there is one."), ("approval", "The approval object (id `apr_…`, kind, expires_at = the deadline it passed).")],
+        runtime_aliases: &[],
     },
     EventType {
         name: "agent.run.completed",
         title: "Finished agent runs",
-        description: "An agent run finished.",
+        description: "An agent run finished. Pushed by default only for a failed run or one that ran 2 minutes or longer.",
         platform: false,
         agents: true,
         bot: false,
@@ -307,16 +318,63 @@ pub static REGISTRY: &[EventType] = &[
         agents: false,
         bot: false,
         filters: &[],
-        payload: &[("run_id", "Run id."), ("serial", "Phone serial, when one was named."), ("ok", "Whether it reached its goal (boolean)."), ("status", "Task: done, failed, max_steps or timeout. Skill: succeeded, diverged or failed."), ("skill", "Skill name, for a skill run."), ("source", "task, skill or routine."), ("steps", "Steps run (number)."), ("failed", "Steps that failed (number)."), ("model_calls", "Model calls made (number)."), ("duration_ms", "Milliseconds (number).")],
+        payload: &[("run_id", "Run id."), ("serial", "Phone serial, when one was named."), ("ok", "Whether it reached its goal (boolean)."), ("status", "Task: done, failed, max_steps or timeout. Skill: succeeded, diverged or failed. Either: denied, approval_timeout or phone_locked."), ("skill", "Skill name, for a skill run."), ("source", "task, skill or routine."), ("steps", "Steps run (number)."), ("failed", "Steps that failed (number)."), ("model_calls", "Model calls made (number)."), ("duration_ms", "Milliseconds, not counting time spent waiting on a hold (number)."), ("held_ms", "Milliseconds spent waiting on holds (number)."), ("holds", "The run's holds: [{approval_id, effect, state}].")],
         runtime_aliases: &["phone.run.completed"],
+    },
+    EventType {
+        name: "phone.fleet_run.completed",
+        title: "Phone fleet runs finished",
+        description: "Every run of a fleet run (POST /v1/phones/runs) ended, or none could start. Each run's own end is phone.run.completed; the whole fleet run is GET /v1/phones/runs/{id}.",
+        platform: true,
+        agents: false,
+        bot: false,
+        filters: &[],
+        payload: &[("fleet_run_id", "Fleet run id (pfr_)."), ("kind", "task or skill."), ("runs", "Runs started (number)."), ("succeeded", "Runs that reached their goal (number)."), ("failed", "Runs that ended without it (number)."), ("not_started", "Phones whose run could not start (number).")],
+        runtime_aliases: &[],
+    },
+    EventType {
+        name: "phone.approval.requested",
+        title: "Phone action needs approval",
+        description: "A sensitive action on one of your linked phones (pay, delete, send, call, a credential, a money app, a security setting) is held until the owner approves it in the Allternit app. API keys can't approve. Never carries screenshots or screen text.",
+        platform: true,
+        agents: false,
+        bot: false,
+        filters: &[],
+        payload: &[("approval_id", "The hold's approval id (hold_id on the retry)."), ("run_id", "The run the action belongs to, when there is one."), ("serial", "Phone serial."), ("effect", "pay, delete, send, call, credential, money_app or security_setting."), ("tool", "Phone tool, e.g. phone.tap."), ("state", "requested.")],
+        runtime_aliases: &["phone.approval.requested"],
+    },
+    EventType {
+        name: "phone.approval.resolved",
+        title: "Phone approval resolved",
+        description: "A held phone action was approved, denied, expired or changed (approved, but the screen no longer matched). Never carries screenshots or screen text.",
+        platform: true,
+        agents: false,
+        bot: false,
+        filters: &[],
+        payload: &[("approval_id", "The hold's approval id."), ("run_id", "The run the action belongs to, when there is one."), ("serial", "Phone serial."), ("effect", "The hold's effect."), ("tool", "Phone tool, e.g. phone.tap."), ("state", "approved, denied, expired or changed.")],
+        runtime_aliases: &["phone.approval.resolved"],
+    },
+    EventType {
+        name: "mail.received",
+        title: "Mail received",
+        description: "An email arrived at one of the project's mailboxes (/v1/mailboxes). Carries any one-time codes and sign-in links found in it; the full body is in GET /v1/mailboxes/{id}/messages/{message_id}.",
+        platform: true,
+        agents: false,
+        bot: false,
+        filters: &[],
+        payload: &[("message", "The mail message object (id, mailbox_id, from, to, subject, snippet, codes, links, is_verification, received_at).")],
+        runtime_aliases: &[],
     },
 ];
 
 /// Event types a Platform API webhook can subscribe to: the 051 list, the P3
-/// `call.*` events, `usage.threshold` (P5 spend caps), and P4's `approval.requested`
+/// `call.*` events, `usage.threshold` (P5 spend caps), the approvals lifecycle
+/// (`approval.requested`, plus `approval.resolved` / `approval.expired` from
+/// `/v1/approvals`), P4's `approval.requested`
 /// and `inbox.item.created` (from the project's hosted runtime, per account),
-/// and `phone.*` (the project owner's own phones, from their Desktop).
-pub const PLATFORM_EVENTS: [&str; 11] = ["approval.requested", "message.received", "message.status", "registration.updated", "call.started", "call.ended", "call.transcript.ready", "inbox.item.created", "usage.threshold", "phone.step", "phone.run.completed"];
+/// `phone.*` (the project owner's own phones, from their Desktop), and
+/// `mail.received` (the project's mailboxes).
+pub const PLATFORM_EVENTS: [&str; 17] = ["approval.requested", "approval.resolved", "approval.expired", "message.received", "message.status", "registration.updated", "call.started", "call.ended", "call.transcript.ready", "inbox.item.created", "usage.threshold", "phone.step", "phone.run.completed", "phone.fleet_run.completed", "phone.approval.requested", "phone.approval.resolved", "mail.received"];
 
 pub fn find(name: &str) -> Option<&'static EventType> {
     REGISTRY.iter().find(|e| e.name == name)
@@ -482,8 +540,12 @@ mod tests {
         assert_eq!(from_runtime("call.ended", &json!({})), Some("call.ended"));
         assert_eq!(from_runtime("phone.step", &json!({})), Some("phone.step"));
         assert_eq!(from_runtime("phone.run.completed", &json!({})), Some("phone.run.completed"));
+        assert_eq!(from_runtime("phone.approval.requested", &json!({})), Some("phone.approval.requested"));
+        assert_eq!(from_runtime("phone.approval.resolved", &json!({})), Some("phone.approval.resolved"));
         assert_eq!(from_runtime("inbox.changed", &json!({})), None);
+        assert_eq!(from_runtime("approval.resolved", &json!({})), Some("approval.resolved"));
         // Platform-only events can't be injected by a runtime.
+        assert_eq!(from_runtime("approval.expired", &json!({})), None);
         assert_eq!(from_runtime("message.status", &json!({})), None);
         assert_eq!(from_runtime("registration.updated", &json!({})), None);
     }
@@ -500,6 +562,10 @@ mod tests {
         }
         let approval = events.iter().find(|e| e["name"] == "approval.requested").unwrap();
         assert_eq!(approval["servers"], json!(["agents", "platform"]));
+        let resolved = events.iter().find(|e| e["name"] == "approval.resolved").unwrap();
+        assert_eq!(resolved["servers"], json!(["agents", "platform"]));
+        let expired = events.iter().find(|e| e["name"] == "approval.expired").unwrap();
+        assert_eq!(expired["servers"], json!(["platform"]));
         let msg = events.iter().find(|e| e["name"] == "message.received").unwrap();
         assert_eq!(msg["servers"], json!(["agents", "bot", "platform"]));
     }

@@ -47,6 +47,7 @@ import { registerLeaderToolUseConfirmQueue, unregisterLeaderToolUseConfirmQueue,
 import { endInteractionSpan } from '../utils/telemetry/sessionTracing';
 import { useLogMessages } from '../hooks/useLogMessages';
 import { useReplBridge } from '../hooks/useReplBridge';
+import { useLiveSession } from '../hooks/useLiveSession';
 import { type Command, type CommandResultDisplay, type ResumeEntrypoint, getCommandName, isCommandEnabled } from '../commands';
 import type { PromptInputMode, QueuedCommand, VimMode } from '../types/textInputTypes';
 import { MessageSelector, selectableUserMessagesFilter, messagesAfterAreOnlySynthetic } from '../components/MessageSelector';
@@ -130,11 +131,11 @@ import { getGlobalConfig, saveGlobalConfig, getGlobalConfigWriteCount } from '..
 import { hasConsoleBillingAccess } from '../utils/billing';
 import { logEvent, type AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS } from './../services/analytics/index.ts';
 import { getFeatureValue_CACHED_MAY_BE_STALE } from './../services/analytics/growthbook.ts';
-import { textForResubmit, handleMessageFromStream, type StreamingToolUse, type StreamingThinking, isCompactBoundaryMessage, getMessagesAfterCompactBoundary, getContentText, createUserMessage, createAssistantMessage, createTurnDurationMessage, createAgentsKilledMessage, createApiMetricsMessage, createSystemMessage, createCommandInputMessage, createRunTelemetryMessage, formatCommandInputTags } from '../utils/messages';
+import { textForResubmit, handleMessageFromStream, type StreamingToolUse, type StreamingThinking, isCompactBoundaryMessage, getMessagesAfterCompactBoundary, getContentText, createUserMessage, createAssistantMessage, createTurnDurationMessage, createAgentsKilledMessage, createApiMetricsMessage, createSystemMessage, createCommandInputMessage, createRunTelemetryMessage, formatCommandInputTags, getAssistantMessageText } from '../utils/messages';
 import { getContextWindowForModel } from '../utils/context';
 import { renderModelName } from '../utils/model/model';
 import { quotaChipForProvider, resolveQuotaProviderId } from '../utils/telemetry/providerQuota';
-import { contextRatioFromMessages, turnUsageEstimated } from '../utils/telemetry/turnSignals';
+import { contextRatioFromMessages, turnOutcome, turnUsageEstimated } from '../utils/telemetry/turnSignals';
 import { generateSessionTitle } from '../utils/sessionTitle';
 import { BASH_INPUT_TAG, COMMAND_MESSAGE_TAG, COMMAND_NAME_TAG, LOCAL_COMMAND_STDOUT_TAG } from '../constants/xml';
 import { escapeXml } from '../utils/xml';
@@ -387,6 +388,7 @@ import { useIssueFlagBanner } from '../hooks/useIssueFlagBanner';
 import { CompanionSprite, CompanionFloatingBubble, MIN_COLS_FOR_FULL_SPRITE } from '../pet/CompanionSprite';
 import { fireCompanionObserver } from '../pet/observer';
 import { useDesktopPetHook } from '../pet/desktopPetHook';
+import { handlePetFailure } from '../pet/petOffersSettings';
 import { DevBar } from '../components/DevBar';
 // Session manager removed - using AppState now
 import type { RemoteSessionConfig } from '../remote/RemoteSessionManager';
@@ -398,6 +400,7 @@ import { AlternateScreen } from '../ink/components/AlternateScreen';
 import { DashboardScreen } from './DashboardScreen';
 import { BotsPaneScreen } from './bots-pane/BotsPaneScreen';
 import { FactoryFloorScreen } from './factory-floor/FactoryFloorScreen';
+import { SwarmBoardScreen } from './factory-floor/SwarmBoardScreen';
 import { InProcessDashboardSource } from '../dashboard/InProcessSource';
 import { ScrollKeybindingHandler } from '../components/ScrollKeybindingHandler';
 import { useMessageActions, MessageActionsKeybindings, MessageActionsBar, type MessageActionsState, type MessageActionsNav, type MessageActionCaps } from '../components/messageActions';
@@ -1386,7 +1389,7 @@ export function REPL({
   } = useUnseenDivider(messages.length);
   if (feature('AWAY_SUMMARY')) {
     // biome-ignore lint/correctness/useHookAtTopLevel: feature() is a compile-time constant
-    useAwaySummary(messages, setMessages, isLoading);
+    useAwaySummary(messages, setMessages, isLoading, mainLoopModel);
   }
   const [cursor, setCursor] = useState<MessageActionsState | null>(null);
   const cursorNavRef = useRef<MessageActionsNav | null>(null);
@@ -1815,7 +1818,7 @@ export function REPL({
     if (wt.creationDurationMs < 15_000) return;
     worktreeTipShownRef.current = true;
     const secs = Math.round(wt.creationDurationMs / 1000);
-    setMessages(prev => [...prev, createSystemMessage(`Worktree creation took ${secs}s. For large repos, set \`worktree.sparsePaths\` in .claude/settings.json to check out only the directories you need — e.g. \`{"worktree": {"sparsePaths": ["src", "packages/foo"]}}\`.`, 'info')]);
+    setMessages(prev => [...prev, createSystemMessage(`Worktree creation took ${secs}s. For large repos, set \`worktree.sparsePaths\` in .gizzi/settings.json to check out only the directories you need — e.g. \`{"worktree": {"sparsePaths": ["src", "packages/foo"]}}\`.`, 'info')]);
   }, [setMessages]);
 
   // Hide spinner when the only in-progress tool is Sleep
@@ -2289,6 +2292,8 @@ export function REPL({
     if (was !== now) repinScroll();
     prevDialogRef.current = focusedInputDialog;
   }, [focusedInputDialog, repinScroll]);
+  const onCancelRef = useRef<() => void>(() => {});
+  onCancelRef.current = onCancel;
   function onCancel() {
     if (focusedInputDialog === 'elicitation') {
       // Elicitation dialog handles its own Escape, and closing it shouldn't affect any loading state.
@@ -2378,6 +2383,12 @@ export function REPL({
     screen,
     abortSignal: abortController?.signal,
     popCommandFromQueue: handleQueuedCommandOnCancel,
+    // esc while the agent works removes the newest queued-for-after message;
+    // put its text back in an empty prompt so it isn't lost.
+    onQueuedForAfterRemoved: (cmd: QueuedCommand) => {
+      const text = cmd.preExpansionValue ?? cmd.value;
+      if (inputValue === '' && typeof text === 'string') setInputValue(text);
+    },
     vimMode,
     isLocalJSXCommand: toolJSX?.isLocalJSXCommand,
     isSearchingHistory,
@@ -2653,6 +2664,14 @@ export function REPL({
           setIsMessageSelectorVisible(true);
         }
       },
+      restoreLastUserMessage: () => {
+        const lastUserMsg = messagesRef.current.findLast(selectableUserMessagesFilter);
+        if (!lastUserMsg) return false;
+        // rewindConversationTo's setMessages races stream appends: cancel first (idempotent).
+        onCancel();
+        restoreMessageSyncRef.current(lastUserMsg);
+        return true;
+      },
       onChangeAPIKey: reverify,
       readFileState: readFileState.current,
       setToolJSX,
@@ -2877,6 +2896,32 @@ export function REPL({
       } else {
         setMessages(oldMessages => [...oldMessages, newMessage]);
       }
+      // Pet offers: a turn error, or an agent Bash result that failed with a known error line.
+      try {
+        const sayInTerminal = (bubble: string) => setAppState(prev => prev.companionReaction === bubble ? prev : {
+          ...prev,
+          companionReaction: bubble
+        });
+        if (newMessage.type === 'assistant' && 'isApiErrorMessage' in newMessage && newMessage.isApiErrorMessage) {
+          handlePetFailure({
+            cwd: getOriginalCwd(),
+            text: getAssistantMessageText(newMessage) ?? '',
+            needMatch: false,
+            say: sayInTerminal
+          });
+        } else if (newMessage.type === 'user' && Array.isArray(newMessage.message?.content)) {
+          for (const block of newMessage.message.content) {
+            if (block.type === 'tool_result' && block.is_error && typeof block.content === 'string' && /^Exit code [1-9]/.test(block.content)) {
+              handlePetFailure({
+                cwd: getOriginalCwd(),
+                text: block.content,
+                needMatch: true,
+                say: sayInTerminal
+              });
+            }
+          }
+        }
+      } catch {}
       // Block ticks on API errors to prevent tick → error → tick
       // runaway loops (e.g., auth failure, rate limit, blocking limit).
       // Cleared on compact boundary (above) or successful response (below).
@@ -3412,13 +3457,18 @@ export function REPL({
         // Skipped on abort and in loop mode, same as the duration line.
         if (shouldQuery && !abortController.signal.aborted && !proactiveActive && !store.getState().isBriefOnly) {
           const telemetryBaseline = turnTelemetryBaselineRef.current;
+          // A failed or empty turn gets "✕ Stopped after …", never a "Done" line.
+          const outcome = turnOutcome(messagesRef.current, telemetryBaseline?.messageCount ?? 0);
           const telemetryMessage = createRunTelemetryMessage({
+            files: outcome.files,
+            stopped: outcome.failed || outcome.empty ? { cause: outcome.cause ?? (outcome.empty ? 'the model returned nothing' : undefined) } : undefined,
             model: renderModelName(mainLoopModelParam),
             durationMs: turnDurationMs > 0 ? turnDurationMs : undefined,
             inputTokens: telemetryBaseline ? Math.max(0, getTotalInputTokens() - telemetryBaseline.inputTokens) : undefined,
             outputTokens: telemetryBaseline ? Math.max(0, getTotalOutputTokens() - telemetryBaseline.outputTokens) : undefined,
             usageEstimated: turnUsageEstimated(messagesRef.current, telemetryBaseline?.messageCount ?? 0),
-            toolCount: getTurnToolCount() > 0 ? getTurnToolCount() : undefined,
+            // CLI brains run their own tools, which the turn counter never sees.
+            toolCount: getTurnToolCount() > 0 ? getTurnToolCount() : outcome.tools > 0 ? outcome.tools : undefined,
             costUSD: telemetryBaseline ? Math.max(0, getTotalCostUSD() - telemetryBaseline.costUSD) : undefined,
             contextRatio: contextRatioFromMessages(messagesRef.current, getContextWindowForModel(mainLoopModelParam, undefined)) ?? undefined
           });
@@ -3616,10 +3666,18 @@ export function REPL({
   }, options?: {
     fromKeybinding?: boolean;
     forceImmediate?: boolean;
+    queueAfter?: boolean;
   }) => {
     // Re-pin scroll to bottom on submit so the user always sees the new
     // exchange (matches common agent auto-scroll behavior).
     repinScroll();
+
+    // Stop + send (ctrl+x enter, ctrl+s): stop the running turn the same way
+    // esc does, then send below as a fresh turn. abort('interrupt') alone
+    // leaves a running Bash tool going, so the message only queued.
+    if (options?.forceImmediate && isLoading && !activeRemote.isRemoteMode) {
+      onCancelRef.current();
+    }
 
     // Sending a prompt yourself takes over from a limit pause (slash
     // commands like /resume-now handle the pause themselves).
@@ -4032,7 +4090,8 @@ export function REPL({
       // handlePromptSubmit only uses it for debug log + telemetry event.
       streamMode: streamModeRef.current,
       hasInterruptibleToolInProgress: hasInterruptibleToolInProgressRef.current,
-      forceImmediate: options?.forceImmediate
+      forceImmediate: options?.forceImmediate,
+      queueAfter: options?.queueAfter
     });
 
     // Restore stash that was deferred above. Two cases:
@@ -4339,6 +4398,8 @@ export function REPL({
     sendBridgeResult
   } = useReplBridge(messages, setMessages, abortControllerRef, commands, mainLoopModel);
   sendBridgeResultRef.current = sendBridgeResult;
+  // Live session: this terminal as an engine session every surface can watch and steer.
+  useLiveSession(messages, isLoading, abortControllerRef, mainLoopModel);
   useAfterFirstRender();
 
   // Track prompt queue usage for analytics. Fire once per transition from
@@ -5025,6 +5086,19 @@ export function REPL({
       </KeybindingSetup>;
     return <AlternateScreen mouseTracking={isMouseTrackingEnabled()}>
         {factoryReturn}
+      </AlternateScreen>;
+  }
+
+  if (screen === 'board') {
+    // Full-screen live Factory board (/board, b on the factory floor). Same
+    // shape as the factory branch; the screen exits back to 'prompt' itself.
+    const boardReturn = <KeybindingSetup>
+        <AnimatedTerminalTitle isAnimating={titleIsAnimating} title={terminalTitle} disabled={titleDisabled} noPrefix={showStatusInTerminalTab} />
+        <GlobalKeybindingHandlers {...globalKeybindingProps} />
+        <SwarmBoardScreen />
+      </KeybindingSetup>;
+    return <AlternateScreen mouseTracking={isMouseTrackingEnabled()}>
+        {boardReturn}
       </AlternateScreen>;
   }
 

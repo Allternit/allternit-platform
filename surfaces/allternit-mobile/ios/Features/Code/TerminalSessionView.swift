@@ -2,170 +2,217 @@ import SwiftUI
 import UIKit
 import SwiftTerm
 
-/// Interactive terminal flipped to from the code thread: attaches to a pty on
-/// the standalone gizzi-code server (Core/API/PtyClient.swift) and renders it
-/// with SwiftTerm.
-///
-/// The session is injected by the hosting thread view, so flipping between
-/// chat and terminal (or navigating away and back) reattaches to the SAME
-/// shell — ptys survive client disconnects server-side.
-struct TerminalSessionView: View {
-    @ObservedObject var session: PtySession
+/// The phone terminal's dark palette (phone.css "Phone Code terminal:
+/// real-terminal look"): one dark surface, mono cells, the accessory keys
+/// on a slightly lighter strip.
+enum TerminalPalette {
+    static let background = Color(hex: "#0D0F12")
+    static let foreground = Color(hex: "#E4E6EA")
+    static let secondary = Color(hex: "#9AA0A8")
+    static let strip = Color(hex: "#14171B")
+    static let key = Color(hex: "#1D2126")
+    static let keyPressed = Color(hex: "#2A2F36")
+    static let line = Color(hex: "#23272D")
+    static let keyBorder = Color(hex: "#2C3137")
+    static let pressedBorder = Color(hex: "#3A4048")
+}
+
+/// The Ctrl latch (PhoneCodeTerminal.tsx `useCtrlLatch`): the next keyboard
+/// input becomes its control byte, like a physical Ctrl key.
+@MainActor
+final class TerminalCtrlLatch: ObservableObject {
+    @Published private(set) var isOn = false
+
+    func toggle() { isOn.toggle() }
+
+    /// A–Z and [\]^_ become control bytes; `?` becomes DEL.
+    func transform(_ data: String) -> String {
+        guard isOn else { return data }
+        isOn = false
+        return String(String.UnicodeScalarView(data.unicodeScalars.map { scalar -> UnicodeScalar in
+            if scalar == "?" { return "\u{7f}" }
+            let upper = Character(scalar).uppercased().unicodeScalars.first ?? scalar
+            if ("A"..."Z").contains(upper) || "[\\]^_".unicodeScalars.contains(upper) {
+                return UnicodeScalar(upper.value & 31) ?? scalar
+            }
+            return scalar
+        }))
+    }
+}
+
+/// Esc / Tab / Ctrl / arrows under the terminal (PhoneCodeTerminal.tsx
+/// `AccessoryKeys`). The same bytes go to a shell pty or a bot's pane.
+struct TerminalAccessoryKeys: View {
+    @ObservedObject var latch: TerminalCtrlLatch
+    let send: (String) -> Void
+
+    private static let keys: [(label: String, name: String, data: String)] = [
+        ("Esc", "Escape", "\u{1b}"), ("Tab", "Tab", "\t"),
+        ("←", "Arrow left", "\u{1b}[D"), ("↑", "Arrow up", "\u{1b}[A"),
+        ("↓", "Arrow down", "\u{1b}[B"), ("→", "Arrow right", "\u{1b}[C"),
+    ]
 
     var body: some View {
-        ZStack {
-            Color.black.ignoresSafeArea()
-            PtyTerminalRepresentable(session: session)
+        HStack(spacing: 2) {
+            ForEach(Self.keys.prefix(2), id: \.name) { key in keyButton(key) }
+            Button(action: { latch.toggle() }) {
+                keyLabel("Ctrl", pressed: latch.isOn)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Control")
+            .accessibilityAddTraits(latch.isOn ? .isSelected : [])
+            ForEach(Self.keys.dropFirst(2), id: \.name) { key in keyButton(key) }
+        }
+        .padding(4)
+        .background(TerminalPalette.strip)
+        .overlay(alignment: .top) { Rectangle().fill(TerminalPalette.line).frame(height: 1) }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Terminal accessory keys")
+    }
 
+    private func keyButton(_ key: (label: String, name: String, data: String)) -> some View {
+        Button(action: { send(key.data) }) {
+            keyLabel(key.label, pressed: false)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(key.name)
+    }
+
+    private func keyLabel(_ text: String, pressed: Bool) -> some View {
+        Text(text)
+            .font(.system(size: 15, design: .monospaced))
+            .foregroundColor(TerminalPalette.foreground)
+            .frame(maxWidth: .infinity, minHeight: 44)
+            .background(pressed ? TerminalPalette.keyPressed : TerminalPalette.key)
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+/// One shell tile: a pty on the computer's gizzi-code, drawn by SwiftTerm
+/// with the accessory keys under it. Detaches on disappear; the pty keeps
+/// running server-side and replays its scrollback on the next attach.
+struct TerminalSessionView: View {
+    @ObservedObject var session: PtySession
+    @StateObject private var latch = TerminalCtrlLatch()
+
+    var body: some View {
+        VStack(spacing: 0) {
             switch session.state {
-            case .connecting:
-                VStack(spacing: 8) {
-                    ProgressView("Connecting…")
-                        .tint(.white)
-                        .foregroundColor(.white)
-                    if let name = session.attachedInstanceName {
-                        Text(name)
-                            .font(.caption)
-                            .foregroundColor(.white.opacity(0.6))
-                    }
-                }
             case .failed(let message):
-                statusBanner(icon: "exclamationmark.triangle", text: message, showsRetry: true)
+                statusLine(message.isEmpty ? "Terminal disconnected. Open a new terminal to reconnect." : message)
             case .exited:
-                statusBanner(icon: "power", text: "Process exited.", showsRetry: true)
-            case .live:
+                statusLine("Terminal disconnected. Open a new terminal to reconnect.")
+            case .connecting, .live:
                 EmptyView()
             }
+            ZStack {
+                TerminalSurfaceView(
+                    attach: { view in
+                        session.onOutput = { [weak view] text in view?.feed(text: text) }
+                    },
+                    onInput: { [weak session, weak latch] text in
+                        guard let session else { return }
+                        session.send(latch?.transform(text) ?? text)
+                    },
+                    onResize: { [weak session] cols, rows in session?.resize(cols: cols, rows: rows) }
+                )
+                .padding(8)
+                if session.state == .connecting {
+                    ProgressView()
+                        .tint(TerminalPalette.secondary)
+                }
+            }
+            TerminalAccessoryKeys(latch: latch) { data in session.send(data) }
         }
+        .background(TerminalPalette.background)
         .task {
             await session.start()
         }
         .onDisappear {
-            // Detach when flipping back to chat — the emulator UIView is
-            // destroyed, so output arriving while hidden would be lost.
-            // Reappearing reconnects to the SAME pty (PtySession keeps the
-            // id) and the server's full scrollback replay restores the
-            // screen exactly as left.
             session.stop()
         }
     }
 
-    private func statusBanner(icon: String, text: String, showsRetry: Bool) -> some View {
-        VStack(spacing: 12) {
-            Image(systemName: icon)
-                .font(.title2)
-                .foregroundColor(.white.opacity(0.7))
-            Text(text)
-                .font(.subheadline)
-                .foregroundColor(.white.opacity(0.7))
-                .multilineTextAlignment(.center)
-            if showsRetry {
-                Button("New Session") {
-                    Task { await session.retry() }
-                }
-                .font(.subheadline.weight(.semibold))
-            }
-        }
-        .padding(24)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color.black)
+    /// `.phone-terminal-status`: the tile's error, in the status colours.
+    private func statusLine(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 13))
+            .foregroundColor(Theme.statusError)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(8)
+            .background(Theme.statusError.opacity(0.12))
+            .accessibilityAddTraits(.isStaticText)
     }
 }
 
-// MARK: - SwiftTerm representable
+// MARK: - SwiftTerm surface
 
-/// `TerminalView` wrapper mirroring the WKWebView representable idiom
-/// (SandboxedArtifactWebView): output is fed imperatively via
-/// `PtySession.onOutput`, input flows back through the delegate — nothing is
-/// synced in `updateUIView`, so SwiftUI passes never disturb the emulator.
-private struct PtyTerminalRepresentable: UIViewRepresentable {
-    let session: PtySession
+/// A SwiftTerm `TerminalView` in the phone terminal's look (15pt mono,
+/// 8pt padding, Terminal.app's dark profile). Output is pushed imperatively
+/// through the view `attach` hands out; input and grid size flow back
+/// through the closures. Nothing syncs in `updateUIView`, so SwiftUI passes
+/// never disturb the emulator.
+struct TerminalSurfaceView: UIViewRepresentable {
+    var fontSize: CGFloat = 15
+    let attach: @MainActor (TerminalView) -> Void
+    let onInput: @MainActor (String) -> Void
+    let onResize: @MainActor (Int, Int) -> Void
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(session: session)
+        Coordinator(onInput: onInput, onResize: onResize)
     }
 
     func makeUIView(context: Context) -> TerminalView {
         let terminalView = TerminalView(frame: .zero)
         terminalView.terminalDelegate = context.coordinator
-        session.onOutput = { [weak terminalView] text in
-            terminalView?.feed(text: text)
-        }
-
-        // Accessory row (voice-to-terminal, image-to-terminal, control
-        // keys) docked above the system keyboard — the hosting controller
-        // is retained on the Coordinator, since `inputAccessoryView` does
-        // not retain the controller that owns its view.
-        let accessoryController = TerminalAccessoryController(session: session)
-        let hostingController = UIHostingController(rootView: TerminalAccessoryView(controller: accessoryController))
-        hostingController.view.backgroundColor = .clear
-        let targetWidth = UIScreen.main.bounds.width
-        let fittingSize = hostingController.sizeThatFits(in: CGSize(width: targetWidth, height: .greatestFiniteMagnitude))
-        hostingController.view.frame = CGRect(x: 0, y: 0, width: targetWidth, height: fittingSize.height)
-        context.coordinator.accessoryHostingController = hostingController
-        terminalView.inputAccessoryView = hostingController.view
-
+        terminalView.font = UIFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
+        terminalView.nativeBackgroundColor = UIColor(TerminalPalette.background)
+        terminalView.nativeForegroundColor = UIColor(TerminalPalette.foreground)
+        terminalView.backgroundColor = UIColor(TerminalPalette.background)
+        // The phone terminal draws its own key row under the cells.
+        terminalView.inputAccessoryView = nil
+        attach(terminalView)
         return terminalView
     }
 
-    func updateUIView(_ uiView: TerminalView, context: Context) {
-        // Nothing to sync — output is pushed via onOutput, and re-feeding
-        // here would corrupt the emulator state on every SwiftUI pass.
-    }
+    func updateUIView(_ uiView: TerminalView, context: Context) {}
 
     /// Non-isolated like SandboxedArtifactWebView.Coordinator: SwiftTerm is a
     /// pre-concurrency module, so the delegate requirements are non-isolated
-    /// witnesses; calls into the @MainActor session hop explicitly.
-    final class Coordinator: NSObject {
-        let session: PtySession
-        /// Retained here — `inputAccessoryView` does not retain the
-        /// `UIHostingController` that owns its view. Built in `makeUIView`
-        /// (properly MainActor-isolated), not here: this plain `NSObject`
-        /// initializer is nonisolated, so it can't synchronously call
-        /// `TerminalAccessoryController`'s `@MainActor` initializer.
-        var accessoryHostingController: UIHostingController<TerminalAccessoryView>?
+    /// witnesses; calls into main-actor state hop explicitly.
+    final class Coordinator: NSObject, @unchecked Sendable {
+        let onInput: @MainActor (String) -> Void
+        let onResize: @MainActor (Int, Int) -> Void
 
-        init(session: PtySession) {
-            self.session = session
+        init(onInput: @escaping @MainActor (String) -> Void, onResize: @escaping @MainActor (Int, Int) -> Void) {
+            self.onInput = onInput
+            self.onResize = onResize
         }
     }
 }
 
-extension PtyTerminalRepresentable.Coordinator: TerminalViewDelegate {
-    /// User keystrokes → pty stdin (text frames, verbatim).
+extension TerminalSurfaceView.Coordinator: TerminalViewDelegate {
     func send(source: TerminalView, data: ArraySlice<UInt8>) {
         let text = String(decoding: data, as: UTF8.self)
-        let session = self.session
-        Task { @MainActor in session.send(text) }
+        let onInput = self.onInput
+        Task { @MainActor in onInput(text) }
     }
 
-    /// SwiftTerm auto-resizes the emulator when the view's frame changes;
-    /// forward the new grid size over REST (resize never goes over the socket).
     func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) {
-        let session = self.session
-        Task { @MainActor in session.resize(cols: newCols, rows: newRows) }
+        let onResize = self.onResize
+        Task { @MainActor in onResize(newCols, newRows) }
     }
 
-    func setTerminalTitle(source: TerminalView, title: String) {
-        // The thread's navigation title stays the session title.
-    }
+    func setTerminalTitle(source: TerminalView, title: String) {}
 
-    func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {
-    }
+    func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
 
-    func scrolled(source: TerminalView, position: Double) {
-    }
+    func scrolled(source: TerminalView, position: Double) {}
 
-    /// Rendered-range repaint hint — SwiftTerm redraws itself; no-op here.
-    /// (Required since SwiftTerm 1.2.2; `bell`/`clipboardRead`/`iTermContent`
-    /// have library defaults and stay unimplemented.)
-    func rangeChanged(source: TerminalView, startY: Int, endY: Int) {
-    }
+    func rangeChanged(source: TerminalView, startY: Int, endY: Int) {}
 
     func requestOpenLink(source: TerminalView, link: String, params: [String: String]) {
-        guard let url = URL(string: link),
-              let scheme = url.scheme,
-              scheme.hasPrefix("http") else { return }
+        guard let url = URL(string: link), let scheme = url.scheme, scheme.hasPrefix("http") else { return }
         Task { @MainActor in UIApplication.shared.open(url) }
     }
 

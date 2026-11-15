@@ -41,6 +41,29 @@ export function externalMetadataToAppState(
   })
 }
 
+/**
+ * A model pick (/model, the inline picker, /config): pin it in the runtime
+ * config — picking is the only thing that pins — and record it in
+ * state/model.json `recent`, the list Desktop and the runtime read. A
+ * `provider/default` pick (the CLI's own default, no model flag) pins as is.
+ */
+export function persistModelPick(model: string): void {
+  const ref = model.trim()
+  const slash = ref.indexOf('/')
+  if (slash <= 0) return
+  void import('@/runtime/providers/default-brain')
+    .then(({ pinBrain }) => pinBrain(ref))
+    .catch(() => {})
+  void import('@/runtime/providers/provider')
+    .then(({ Provider }) =>
+      Provider.recordRecentModel({
+        providerID: ref.slice(0, slash),
+        modelID: ref.slice(slash + 1),
+      }),
+    )
+    .catch(() => {})
+}
+
 export function onChangeAppState({
   newState,
   oldState,
@@ -113,12 +136,7 @@ export function onChangeAppState({
     // Save to settings
     updateSettingsForSource('userSettings', { model: newState.mainLoopModel })
     setMainLoopModelOverride(newState.mainLoopModel)
-    const pinned = String(newState.mainLoopModel)
-    if (pinned.includes('/')) {
-      void import('@/runtime/providers/default-brain').then(({ pinBrain }) =>
-        pinBrain(pinned).catch(() => {}),
-      )
-    }
+    persistModelPick(String(newState.mainLoopModel))
   }
 
   // expandedView → persist as showExpandedTodos + showSpinnerTree for backwards compat

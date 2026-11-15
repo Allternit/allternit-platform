@@ -24,9 +24,24 @@ import {
   QUIET_BUTTON_CLASS,
   SETTINGS_SELECT_CLASS,
 } from "@/components/console-ui";
+import { isCloudGateway } from "@/lib/availability";
+import {
+  ErrorRetry,
+  MUTED as CLOUD_MUTED,
+  RefreshButton,
+  ReportFilters,
+  ReportTable,
+  dayLabel,
+  useCsvDownload,
+  useReportFilters,
+  useUsageReport,
+} from "./cloudReport";
 import {
   dateDaysAgo,
   downloadCsv,
+  formatUsd,
+  sumReportRows,
+  type ReportGroupBy,
   formatTokenCount,
   getGatewayUsage,
   listGatewayKeys,
@@ -56,7 +71,7 @@ interface ModelRow {
   spend_microdollars: number;
 }
 
-export function UsagePage(): React.ReactNode {
+function RuntimeUsagePage(): React.ReactNode {
   const [data, setData] = useState<UsageResponse | null>(null);
   const [keys, setKeys] = useState<GatewayKeyRef[]>([]);
   const [loading, setLoading] = useState(true);
@@ -490,6 +505,135 @@ export function UsagePage(): React.ReactNode {
       )}
     </ListPage>
   );
+}
+
+const CLOUD_GROUPS: ReportGroupBy[] = ["model", "project", "key", "client", "day"];
+
+/** Allternit Cloud: the per-user report (GET /api/v1/me/usage/report). */
+function CloudUsagePage(): React.ReactNode {
+  const filters = useReportFilters(30);
+  const [groupBy, setGroupBy] = useState<ReportGroupBy>("model");
+  const base = {
+    from: filters.from,
+    to: filters.to,
+    projectId: filters.projectId,
+    scope: filters.scope,
+  };
+  const daily = useUsageReport({ ...base, groupBy: "day" });
+  const grouped = useUsageReport(groupBy === "day" ? null : { ...base, groupBy });
+  const csv = useCsvDownload(
+    { ...base, groupBy },
+    `allternit-usage-${groupBy}-${filters.from}.csv`,
+  );
+
+  const dayRows = daily.rows ?? [];
+  const tableRows = groupBy === "day" ? dayRows : grouped.rows ?? [];
+  const totals = useMemo(() => sumReportRows(dayRows), [dayRows]);
+  const chartData = useMemo(
+    () =>
+      dayRows
+        .slice()
+        .sort((a, b) => a.group.localeCompare(b.group))
+        .map((r) => ({ day: dayLabel(r.group), input: r.prompt_tokens, output: r.completion_tokens })),
+    [dayRows],
+  );
+  const loading = daily.loading || (groupBy !== "day" && grouped.loading);
+  const error = daily.error ?? (groupBy !== "day" ? grouped.error : null) ?? csv.error;
+  const reload = () => {
+    daily.reload();
+    if (groupBy !== "day") grouped.reload();
+  };
+  const initial = loading && daily.rows === null;
+
+  return (
+    <ListPage
+      title="Usage"
+      subtitle="Requests and tokens across your projects and API keys."
+      filters={
+        <ReportFilters filters={filters}>
+          <select
+            value={groupBy}
+            onChange={(e) => setGroupBy(e.target.value as ReportGroupBy)}
+            aria-label="Group by"
+            className={SETTINGS_SELECT_CLASS}
+          >
+            {CLOUD_GROUPS.map((g) => (
+              <option key={g} value={g}>
+                Group by {g === "key" ? "API key" : g}
+              </option>
+            ))}
+          </select>
+        </ReportFilters>
+      }
+      primaryAction={{ label: csv.busy ? "Preparing…" : "Download CSV", onClick: () => void csv.run() }}
+    >
+      {error && <ErrorRetry message={error} onRetry={reload} />}
+      {initial ? (
+        <SkeletonRow lines={6} />
+      ) : daily.rows === null ? null : (
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <StatCard
+              label="Tokens in"
+              value={formatTokenCount(totals.prompt_tokens)}
+              hint={`${totals.requests.toLocaleString()} requests`}
+            />
+            <StatCard label="Tokens out" value={formatTokenCount(totals.completion_tokens)} />
+            <StatCard label="Spend" value={formatUsd(totals.cost_usd)} hint="Billed requests only" />
+          </div>
+
+          {chartData.length === 0 ? (
+            <EmptyState
+              icon={<HugeiconsIcon icon={Analytics01Icon} size={32} />}
+              title="No usage in this range"
+              caption="Send a request with a project API key and it appears here once it is billed."
+            />
+          ) : (
+            <>
+              <div className="rounded-xl border border-solid border-[var(--border-subtle)] bg-[var(--bg-secondary)] p-4">
+                <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-[var(--text-tertiary)]">
+                  Token usage per day
+                </h3>
+                <div className="h-52">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={chartData} margin={{ left: -12, right: 8, top: 4, bottom: 0 }}>
+                      <CartesianGrid stroke="var(--border-subtle)" vertical={false} />
+                      <XAxis dataKey="day" axisLine={false} tickLine={false} tick={{ fill: CLOUD_MUTED, fontSize: 10 }} />
+                      <YAxis
+                        axisLine={false}
+                        tickLine={false}
+                        tick={{ fill: CLOUD_MUTED, fontSize: 10 }}
+                        tickFormatter={(v: number) => formatTokenCount(v)}
+                      />
+                      <Tooltip
+                        contentStyle={{
+                          backgroundColor: "var(--bg-secondary)",
+                          border: "1px solid var(--border-subtle)",
+                          borderRadius: "8px",
+                        }}
+                        formatter={(v: number) => formatTokenCount(v)}
+                      />
+                      <Area type="monotone" dataKey="input" name="Tokens in" stroke="var(--accent-primary)" fill="var(--accent-primary)" fillOpacity={0.18} strokeWidth={1.5} />
+                      <Area type="monotone" dataKey="output" name="Tokens out" stroke="var(--accent-highlight)" fill="var(--accent-highlight)" fillOpacity={0.18} strokeWidth={1.5} />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+              <ReportTable rows={tableRows} groupBy={groupBy} projectNames={filters.projectNames} />
+            </>
+          )}
+          <p className="m-0 text-[12px] text-[var(--text-tertiary)]">
+            Only billed requests are counted. Requests that failed before billing do not appear.
+          </p>
+          <RefreshButton loading={loading} onClick={reload} />
+        </div>
+      )}
+    </ListPage>
+  );
+}
+
+export function UsagePage(): React.ReactNode {
+  return isCloudGateway() ? <CloudUsagePage /> : <RuntimeUsagePage />;
 }
 
 export default UsagePage;

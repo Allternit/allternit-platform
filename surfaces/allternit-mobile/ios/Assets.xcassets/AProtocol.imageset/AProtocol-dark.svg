@@ -1,0 +1,36 @@
+<svg viewBox="0 0 150 50" xmlns="http://www.w3.org/2000/svg" shape-rendering="geometricPrecision">
+  <!-- A:// — the Allternit protocol mark. A pixel-construct "A://" assembled from
+       matrix blocks: A + block colon + two staircase slashes. Coral core block
+       echoes the Matrix trademark's center block. Grid: 10-unit pitch, 8.5 blocks. -->
+  <g fill="#F0EEE6">
+    <!-- A -->
+    <rect x="20.75" y="0.75"  width="8.5" height="8.5" rx="1.5"/>
+    <rect x="10.75" y="10.75" width="8.5" height="8.5" rx="1.5"/>
+    <rect x="30.75" y="10.75" width="8.5" height="8.5" rx="1.5"/>
+    <rect x="0.75"  y="20.75" width="8.5" height="8.5" rx="1.5"/>
+    <rect x="10.75" y="20.75" width="8.5" height="8.5" rx="1.5"/>
+    <rect x="30.75" y="20.75" width="8.5" height="8.5" rx="1.5"/>
+    <rect x="40.75" y="20.75" width="8.5" height="8.5" rx="1.5"/>
+    <rect x="0.75"  y="30.75" width="8.5" height="8.5" rx="1.5"/>
+    <rect x="40.75" y="30.75" width="8.5" height="8.5" rx="1.5"/>
+    <rect x="0.75"  y="40.75" width="8.5" height="8.5" rx="1.5"/>
+    <rect x="40.75" y="40.75" width="8.5" height="8.5" rx="1.5"/>
+    <!-- colon -->
+    <rect x="60.75" y="10.75" width="8.5" height="8.5" rx="1.5"/>
+    <rect x="60.75" y="30.75" width="8.5" height="8.5" rx="1.5"/>
+    <!-- slash 1 -->
+    <rect x="80.75"  y="30.75" width="8.5" height="8.5" rx="1.5"/>
+    <rect x="80.75"  y="40.75" width="8.5" height="8.5" rx="1.5"/>
+    <rect x="90.75"  y="20.75" width="8.5" height="8.5" rx="1.5"/>
+    <rect x="100.75" y="0.75"  width="8.5" height="8.5" rx="1.5"/>
+    <rect x="100.75" y="10.75" width="8.5" height="8.5" rx="1.5"/>
+    <!-- slash 2 -->
+    <rect x="120.75" y="30.75" width="8.5" height="8.5" rx="1.5"/>
+    <rect x="120.75" y="40.75" width="8.5" height="8.5" rx="1.5"/>
+    <rect x="130.75" y="20.75" width="8.5" height="8.5" rx="1.5"/>
+    <rect x="140.75" y="0.75"  width="8.5" height="8.5" rx="1.5"/>
+    <rect x="140.75" y="10.75" width="8.5" height="8.5" rx="1.5"/>
+  </g>
+  <!-- core block -->
+  <rect x="20.75" y="20.75" width="8.5" height="8.5" rx="1.5" fill="#D97757"/>
+</svg>

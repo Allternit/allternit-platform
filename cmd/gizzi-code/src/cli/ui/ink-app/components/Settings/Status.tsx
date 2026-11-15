@@ -10,7 +10,7 @@ import { type AppState, useAppState } from '../../state/AppState';
 import { getCwd } from '../../utils/cwd';
 import { getCurrentSessionTitle } from '../../utils/sessionStorage';
 import { buildAccountProperties, buildAPIProviderProperties, buildIDEProperties, buildInstallationDiagnostics, buildInstallationHealthDiagnostics, buildMcpProperties, buildMemoryDiagnostics, buildSandboxProperties, buildSettingSourcesProperties, type Diagnostic, getModelDisplayLabel, type Property } from '../../utils/status';
-import { countUserTurns, getAuthMethodDescription } from '../../utils/statusModel';
+import { countUserTurns, formatServicesLine, getAuthMethodDescription, getServicesLine } from '../../utils/statusModel';
 import type { ThemeName } from '../../utils/theme';
 import { ConfigurableShortcutHint } from '../ConfigurableShortcutHint';
 type Props = {
@@ -69,18 +69,23 @@ function buildSecondarySection({
   mainLoopModel,
   mcp,
   theme,
-  context
+  context,
+  services
 }: {
   mainLoopModel: AppState['mainLoopModel'];
   mcp: AppState['mcp'];
   theme: ThemeName;
   context: LocalJSXCommandContext;
+  services?: string | null;
 }): Property[] {
   const modelLabel = getModelDisplayLabel(mainLoopModel);
   return [{
     label: 'Model',
     value: modelLabel
-  }, ...buildIDEProperties(mcp.clients, context.options.ideInstallationStatus, theme), ...buildMcpProperties(mcp.clients, theme), ...buildSandboxProperties(), ...buildSettingSourcesProperties()];
+  }, ...buildIDEProperties(mcp.clients, context.options.ideInstallationStatus, theme), ...buildMcpProperties(mcp.clients, theme), ...buildSandboxProperties(), ...buildSettingSourcesProperties(), ...(services ? [{
+    label: 'Services',
+    value: services
+  }] : [])];
 }
 export async function buildDiagnostics(): Promise<Diagnostic[]> {
   return [...(await buildInstallationDiagnostics()), ...(await buildInstallationHealthDiagnostics()), ...(await buildMemoryDiagnostics())];
@@ -115,6 +120,16 @@ export function Status({
   const mainLoopModel = useAppState(_temp);
   const mcp = useAppState(_temp2);
   const [theme] = useTheme();
+  const [services, setServices] = React.useState<string | null>(null);
+  React.useEffect(() => {
+    let live = true;
+    void getServicesLine().then(l => {
+      if (live) setServices(formatServicesLine(l));
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
   useInput((input, _key, event) => {
     if (input === 'c') {
       event.stopImmediatePropagation();
@@ -137,7 +152,8 @@ export function Status({
       mainLoopModel,
       mcp,
       theme,
-      context
+      context,
+      services
     });
 
   const t3 = [t1, t2];

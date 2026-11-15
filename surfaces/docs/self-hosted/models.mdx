@@ -1,0 +1,79 @@
+---
+title: 'Models'
+description: 'Model providers for the self-hosted Agents Server, gateway formats, the model map and the model_not_mapped error.'
+---
+
+<Note>
+**Status: Private beta.** The Bedrock, Vertex AI and Foundry adapters and the gateway formats have been checked against local mocks only, not against real provider accounts.
+</Note>
+
+The agent loop runs on the server, so the server makes every model call. Workers never call a model. Set the provider once in the settings file under `inference`.
+
+## Providers
+
+| `inference.provider` | Calls | Credentials (`inference.credentials`) |
+|---|---|---|
+| `anthropic` | The Anthropic API | `api_key` |
+| `bedrock` | Amazon Bedrock | `aws_access_key_id`, `aws_secret_access_key`, optional `aws_session_token`, `aws_region` |
+| `vertex` | Google Vertex AI | `gcp_service_account_json`, `gcp_project`, `gcp_region` |
+| `foundry` | Microsoft Foundry | `foundry_endpoint`, `foundry_api_key` |
+| `gateway` | Your own gateway or proxy | none here; use `inference.gateway.headers` |
+
+Every credential is a secret reference (`env:`, `file:` or `vault:`), never a literal value.
+
+```yaml
+inference:
+  provider: bedrock
+  credentials:
+    aws_access_key_id: env:AWS_ACCESS_KEY_ID
+    aws_secret_access_key: env:AWS_SECRET_ACCESS_KEY
+    aws_region: us-east-1
+  model_map:
+    claude-sonnet: YOUR_BEDROCK_MODEL_ID
+```
+
+## Gateway formats
+
+With `provider: gateway`, the server sends requests to `inference.gateway.base_url` in one of four formats:
+
+| `inference.gateway.format` | Request shape |
+|---|---|
+| `anthropic-messages` | Anthropic Messages API |
+| `bedrock-invoke` | Bedrock Converse API (`/model/{id}/converse`). It does not send InvokeModel requests. |
+| `vertex-raw-predict` | Vertex AI rawPredict |
+| `openai-chat` | OpenAI-style chat completions |
+
+`inference.gateway.headers` adds headers to every request, for example an auth header. Values may be secret references.
+
+```yaml
+inference:
+  provider: gateway
+  gateway:
+    format: anthropic-messages
+    base_url: https://llm-gateway.example.internal
+    headers:
+      x-api-key: env:GATEWAY_KEY
+  model_map:
+    claude-sonnet: sonnet-prod
+    claude-haiku: haiku-prod
+```
+
+## The model map
+
+`inference.model_map` maps a model name to the provider's model id. Clients use the **map keys** as model names (for example `claude-sonnet`). The server and gizzi translate them to provider ids, so a client never needs the provider's id.
+
+- With `gateway`, the map is required.
+- A model that is not in the map is refused with **`422 model_not_mapped`** before any outbound call.
+- The check runs when you create an agent (gateway provider) and when you create a session.
+
+```json
+{
+  "error": {
+    "type": "unprocessable_error",
+    "code": "model_not_mapped",
+    "message": "..."
+  }
+}
+```
+
+Change the map and restart the server to add a model.

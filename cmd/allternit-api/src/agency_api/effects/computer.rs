@@ -156,7 +156,7 @@ pub async fn dispatch(st: &crate::AppState, owner: &str, target: &str, actions: 
         }
         let run_id = format!("agency-{}", &allternit_factory_engine::receipts::jcs::sha256_tagged(key.as_bytes()).replace("sha256:", "")[..24]);
         let body = json!({ "mode": "direct", "actions": actions, "run_id": run_id, "session_id": run_id, "target_scope": "desktop" });
-        let resp = reqwest::Client::new().post(format!("{}/v1/computer-use/execute", acu_base(st)))
+        let resp = crate::net_client::client().post(format!("{}/v1/computer-use/execute", acu_base(st)))
             .timeout(std::time::Duration::from_secs(120)).json(&body).send().await
             .map_err(|e| anyhow!("computer-use gateway unreachable: {e}"))?;
         let status = resp.status();
@@ -232,7 +232,7 @@ mod tests {
         // The run-level contract is dispatch's; also show WHICH adapter
         // claimed each read-only action (a "none" adapter_id means the
         // gateway never routed the action — the regression this test pins).
-        let probe = reqwest::Client::new().post(format!("{}/v1/computer-use/execute", url.trim_end_matches('/')))
+        let probe = crate::net_client::client().post(format!("{}/v1/computer-use/execute", url.trim_end_matches('/')))
             .json(&json!({ "mode": "direct", "actions": actions, "run_id": "g2-live-readonly-probe",
                            "session_id": "g2-live-readonly-probe", "target_scope": "desktop" }))
             .timeout(std::time::Duration::from_secs(120)).send().await;

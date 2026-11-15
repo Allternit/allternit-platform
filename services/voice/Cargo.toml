@@ -19,6 +19,8 @@ tower-http = { workspace = true, features = ["cors"] }
 tempfile = { workspace = true }
 sherpa-onnx = "1.13"
 sha2 = "0.10"
+# Shared verification state type (contracts/model-source)
+allternit-model-source = { path = "../model-source" }
 tar = { workspace = true }
 bzip2 = { version = "0.4", features = ["static"] }
 tokio-stream = { workspace = true }

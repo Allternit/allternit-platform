@@ -12,7 +12,7 @@ import { Installation } from "@/shared/installation"
 
 import { Database, NotFoundError, eq, and, or, gte, isNull, isNotNull, desc, like, inArray, lt } from "@/runtime/session/storage/db"
 import type { SQL } from "@/runtime/session/storage/db"
-import { SessionTable, MessageTable, PartTable } from "@/runtime/session/session.sql"
+import { SessionTable, MessageTable, PartTable, MessageBranchTable } from "@/runtime/session/session.sql"
 import { SessionTrace } from "@/runtime/session/trace"
 import { ProjectTable } from "@/runtime/context/project/project.sql"
 import { Storage } from "@/runtime/session/storage/storage"
@@ -73,6 +73,7 @@ export namespace Session {
       limit: row.limit_state ?? undefined,
       environment: row.environment ?? undefined,
       glance: row.glance ?? undefined,
+      mission: row.mission ?? undefined,
       title: row.title,
       version: row.version,
       summary,
@@ -123,6 +124,7 @@ export namespace Session {
       limit_state: info.limit ?? null,
       environment: info.environment ?? null,
       glance: info.glance ?? null,
+      mission: info.mission ?? null,
       slug: info.slug,
       directory: info.directory,
       title: info.title,
@@ -169,6 +171,18 @@ export namespace Session {
     return `${title} (fork #1)`
   }
 
+  export const Mission = z.object({
+    id: z.string(),
+    goal: z.string(),
+    /** 1-based milestone being worked on; equals `total` once done. */
+    milestone: z.number(),
+    total: z.number(),
+    status: z.string(),
+    /** "Mission · M2/5" — the label surfaces show. */
+    label: z.string(),
+    at: z.number(),
+  })
+
   export const Info = z
     .object({
       id: Identifier.schema("session"),
@@ -208,7 +222,12 @@ export namespace Session {
             .object({
               modelID: z.string(),
               label: z.string(),
-              funds: z.object({ kind: z.enum(["balance", "plan", "free", "none"]), usd: z.number().optional() }),
+              // "free" stays readable for sessions paused before the free allowance ended (2026-11-15).
+              funds: z.object({
+                kind: z.enum(["balance", "plan", "free", "none"]),
+                usd: z.number().optional(),
+                reason: z.enum(["credits_required", "credits_exhausted"]).optional(),
+              }),
             })
             .optional(),
         })
@@ -253,6 +272,12 @@ export namespace Session {
           at: z.number(),
         })
         .optional(),
+      /**
+       * Set on a mission's orchestrator session (`gizzi mission`): which
+       * mission it runs and where it stands, so surfaces can label the row
+       * "Mission · M2/5".
+       */
+      mission: Mission.optional(),
       summary: z
         .object({
           additions: z.number(),
@@ -492,30 +517,63 @@ export namespace Session {
         title,
       })
       const msgs = await messages({ sessionID: input.sessionID })
-      const idMap = new Map<string, string>()
+      await copyMessages(session.id, msgs, input.messageID)
+      return session
+    },
+  )
 
-      for (const msg of msgs) {
-        if (input.messageID && msg.info.id >= input.messageID) break
-        const newID = Identifier.ascending("message")
-        idMap.set(msg.info.id, newID)
+  /**
+   * Write `msgs` (gizzi's stored message + parts shape) into `sessionID`
+   * with fresh, ascending message and part ids, keeping each assistant
+   * message's link to its user message. Stops before `stopBefore` when given.
+   * Shared by `fork` and `importSession`.
+   */
+  async function copyMessages(sessionID: string, msgs: MessageV2.WithParts[], stopBefore?: string) {
+    const idMap = new Map<string, string>()
+    for (const msg of msgs) {
+      if (stopBefore && msg.info.id >= stopBefore) break
+      const newID = Identifier.ascending("message")
+      idMap.set(msg.info.id, newID)
 
-        const parentID = msg.info.role === "assistant" && msg.info.parentID ? idMap.get(msg.info.parentID) : undefined
-        const cloned = await updateMessage({
-          ...msg.info,
-          sessionID: session.id,
-          id: newID,
-          ...(parentID && { parentID }),
+      const parentID = msg.info.role === "assistant" && msg.info.parentID ? idMap.get(msg.info.parentID) : undefined
+      const cloned = await updateMessage({
+        ...msg.info,
+        sessionID,
+        id: newID,
+        ...(parentID && { parentID }),
+      })
+
+      for (const part of msg.parts) {
+        await updatePart({
+          ...part,
+          id: Identifier.ascending("part"),
+          messageID: cloned.id,
+          sessionID,
         })
-
-        for (const part of msg.parts) {
-          await updatePart({
-            ...part,
-            id: Identifier.ascending("part"),
-            messageID: cloned.id,
-            sessionID: session.id,
-          })
-        }
       }
+    }
+  }
+
+  /**
+   * Create a session from a transcript in gizzi's own stored shape (POST
+   * /session/import). The self-hosted Agents Server uses it to rebuild a
+   * session from its Postgres events after a restart, so the next turn sees
+   * the earlier messages. Messages are written in the order given, with new
+   * ids, through the same writer `fork` uses.
+   */
+  export const importSession = fn(
+    z.object({
+      title: z.string().optional(),
+      agentID: z.string().optional(),
+      messages: z.array(MessageV2.WithParts),
+    }),
+    async (input) => {
+      const session = await createNext({
+        directory: Instance.directory,
+        title: input.title,
+        agentID: input.agentID,
+      })
+      await copyMessages(session.id, input.messages)
       return session
     },
   )
@@ -747,6 +805,22 @@ export namespace Session {
       const row = db
         .update(SessionTable)
         .set({ paused: input.paused ?? null, time_updated: Date.now() })
+        .where(eq(SessionTable.id, input.sessionID))
+        .returning()
+        .get()
+      if (!row) throw new NotFoundError({ message: `Session not found: ${input.sessionID}` })
+      const info = fromRow(row)
+      Database.effect(() => Bus.publish(Event.Updated, { info }))
+      return info
+    })
+  }
+
+  /** Set or clear a session's mission label (`gizzi mission`). */
+  export function setMission(input: { sessionID: string; mission: Info["mission"] | null }) {
+    return Database.use((db) => {
+      const row = db
+        .update(SessionTable)
+        .set({ mission: input.mission ?? null, time_updated: Date.now() })
         .where(eq(SessionTable.id, input.sessionID))
         .returning()
         .get()
@@ -1072,6 +1146,8 @@ export namespace Session {
     Database.use((db) => {
       db.delete(PartTable).where(eq(PartTable.session_id, sessionID)).run()
       db.delete(MessageTable).where(eq(MessageTable.session_id, sessionID)).run()
+      // Earlier turn versions point at the cleared messages; they go too.
+      db.delete(MessageBranchTable).where(eq(MessageBranchTable.session_id, sessionID)).run()
       Database.effect(() => Bus.publish(Event.Cleared, { sessionID }))
     })
   })
@@ -1127,7 +1203,14 @@ export namespace Session {
     }
   })
 
-  export const updateMessage = fn(MessageV2.Info, async (input) => {
+  export const updateMessage = fn(MessageV2.Info, async (input) => writeMessage(input, true))
+
+  /**
+   * Store a message; publish message.updated only when `publish`. A caller
+   * that stores the parts next (a live terminal's sync) publishes once they
+   * are in, so a surface never reads the message without its text.
+   */
+  export function writeMessage(input: MessageV2.Info, publish: boolean) {
     // Cloud environment secrets never reach storage, the bus or the model.
     const msg = SecretRedactor.deep(input)
     const time_created = msg.time.created
@@ -1142,15 +1225,16 @@ export namespace Session {
         })
         .onConflictDoUpdate({ target: MessageTable.id, set: { data } })
         .run()
-      Database.effect(() =>
-        Bus.publish(MessageV2.Event.Updated, {
-          info: msg,
-        }),
-      )
+      if (publish)
+        Database.effect(() =>
+          Bus.publish(MessageV2.Event.Updated, {
+            info: msg,
+          }),
+        )
     })
     SessionTrace.append({ sessionID, kind: "message.updated", messageID: id, data: msg, time: Date.now() })
     return msg
-  })
+  }
 
   export const removeMessage = fn(
     z.object({

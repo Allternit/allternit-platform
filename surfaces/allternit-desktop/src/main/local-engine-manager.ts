@@ -117,7 +117,8 @@ export class LocalEngineManager {
     if (!binaryPath) {
       const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
       if (isDev) {
-        const candidate = path.resolve(__dirname, '../../../services/local-engine');
+        // __dirname is surfaces/allternit-desktop/dist/main: four levels up is the repo root.
+        const candidate = path.resolve(__dirname, '../../../../services/local-engine');
         if (!fs.existsSync(path.join(candidate, 'Cargo.toml'))) {
           throw new Error(`local-engine is unavailable: no binary and no development Cargo project at ${candidate}`);
         }

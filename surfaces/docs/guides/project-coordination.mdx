@@ -43,6 +43,7 @@ These are authenticated private data-plane routes, not a promise of public Cloud
 | POST | `/api/v1/projects/:project_id/start` | Start existing project threads. |
 | GET / PUT | `/api/v1/projects/:project_id/bots` | Read or set project team membership. |
 | GET / POST / PUT / DELETE | `/api/v1/projects/:project_id/delegate…` | The [Delegate](/guides/project-delegate) board: tasks, assignment and Auto. |
+| GET | `/api/v1/project-workspaces` | List registered workspaces with `projectId`, `key` and status page `status`. |
 | GET / PUT | `/api/v1/project-workspaces/:project_key` | Read or register a project workspace. |
 | POST | `/api/v1/project-workspaces/:project_key/threads` | Create a workspace thread. |
 

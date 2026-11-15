@@ -792,6 +792,7 @@ async fn apply_entitlement_and_sync_subscription(
             plan_tier_id,
             status,
             customer_id.as_deref(),
+            billing_subscriptions::subscription_period_end(subscription),
         )
         .await?;
         if let Some(customer_id) = customer_id {
@@ -1793,6 +1794,7 @@ mod tests {
                 plan_tier TEXT NOT NULL,
                 status TEXT NOT NULL,
                 stripe_customer_id TEXT,
+                current_period_end TIMESTAMPTZ,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             )
@@ -2720,6 +2722,7 @@ mod tests {
                 "pro",
                 "active",
                 Some("cus_x"),
+                None,
             )
             .await
             .unwrap();

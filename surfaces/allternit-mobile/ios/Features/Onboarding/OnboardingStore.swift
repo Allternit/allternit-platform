@@ -36,25 +36,37 @@ enum OnboardingPersona: String, CaseIterable, Sendable {
     }
 }
 
-/// First-launch onboarding state (Phase 10). Persisted app-wide
-/// (UserDefaults), mirroring SettingsStore's pattern:
-/// - `isComplete` gates the flow in AllternitApp (root swap before the
-///   workspace); `-reset-onboarding` clears it via `reset()`.
-/// - `persona` is the work-profile answer — sent as `metadata.persona` on
-///   session create (SessionContext) and used to reorder the Phase-9 home
-///   suggestion rows (EmptyChatStateView).
-/// - `suggestTasks` is the "Suggest personalized tasks" checkbox; persisted
-///   for the future backend-personalized suggestions consumer.
-/// - `pendingPrompt` is IN-MEMORY ONLY: a starter-task card tap on the last
-///   onboarding page stashes its prompt here; ChatContentView moves it into
-///   the composer once (fill-not-send, like the suggestion rows).
+/// First-run setup state. Persisted app-wide (UserDefaults), mirroring
+/// SettingsStore's pattern:
+/// - `isComplete` gates the setup in AllternitApp (root swap before the
+///   workspace). It is true once setup finished on this phone
+///   (`completedOnDevice`, persisted) or the setup gate let an existing user
+///   through for this launch only (`skippedThisLaunch`: the server could not
+///   answer and a computer is paired — asked again next launch, like the web
+///   phone). `-reset-onboarding` and Settings → Replay setup set `forceRun`.
+/// - `persona` / `suggestTasks` are answers from the earlier "Hey there!"
+///   onboarding (retired for the web phone setup); kept so existing answers
+///   still reach `metadata.persona` and the home suggestion order.
+/// - `pendingPrompt` is IN-MEMORY ONLY: a prompt for the composer to fill
+///   once (fill-not-send, like the suggestion rows).
 @MainActor
 final class OnboardingStore: ObservableObject {
     static let shared = OnboardingStore()
 
-    /// Onboarding gate — true once the flow is finished or skipped.
-    @Published var isComplete: Bool {
-        didSet { defaults.set(isComplete, forKey: Keys.complete) }
+    /// Setup finished on this phone (persisted).
+    @Published private(set) var completedOnDevice: Bool {
+        didSet { defaults.set(completedOnDevice, forKey: Keys.complete) }
+    }
+    /// The gate skipped setup for this launch only (not persisted).
+    @Published private(set) var skippedThisLaunch = false
+    /// Show setup without asking the server (Replay setup, `-reset-onboarding`).
+    @Published private(set) var forceRun = false
+
+    /// Onboarding gate — true once setup is finished, or skipped this launch.
+    /// Setting false replays setup.
+    var isComplete: Bool {
+        get { completedOnDevice || skippedThisLaunch }
+        set { if newValue { complete() } else { replay() } }
     }
     /// Work-profile radio-grid selection (nil until answered).
     @Published var persona: OnboardingPersona? {
@@ -77,24 +89,41 @@ final class OnboardingStore: ObservableObject {
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
-        self.isComplete = defaults.bool(forKey: Keys.complete)
+        self.completedOnDevice = defaults.bool(forKey: Keys.complete)
         self.persona = defaults.string(forKey: Keys.persona)
             .flatMap(OnboardingPersona.init(rawValue:))
         self.suggestTasks = defaults.object(forKey: Keys.suggestTasks) as? Bool ?? true
     }
 
-    /// Marks the flow done (finish, Get Started, or "Go to app" skip).
+    /// Marks setup done on this phone (finished, or the server says it is done).
     func complete() {
-        isComplete = true
+        forceRun = false
+        completedOnDevice = true
     }
 
-    /// `-reset-onboarding` (DEBUG): clears every onboarding flag so the next
-    /// launch lands on page 1 again (fresh-install behavior).
+    /// The gate let an existing user through without setup, for this launch only.
+    func skipThisLaunch() {
+        skippedThisLaunch = true
+    }
+
+    /// Settings → Replay setup: the root swaps back to the first-run setup,
+    /// which runs without waiting for the server's answer.
+    func replay() {
+        forceRun = true
+        skippedThisLaunch = false
+        completedOnDevice = false
+    }
+
+    /// `-reset-onboarding` (DEBUG): clears every onboarding flag and shows the
+    /// first-run setup from its first step on this launch.
     func reset() {
         defaults.removeObject(forKey: Keys.complete)
         defaults.removeObject(forKey: Keys.persona)
         defaults.removeObject(forKey: Keys.suggestTasks)
-        isComplete = false
+        completedOnDevice = false
+        skippedThisLaunch = false
+        // DEBUG reset means "show setup on this launch", whatever the server says.
+        forceRun = true
         persona = nil
         suggestTasks = true
         pendingPrompt = nil

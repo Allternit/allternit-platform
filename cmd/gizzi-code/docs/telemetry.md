@@ -170,6 +170,7 @@ Telemetry is **on by default** and **opt-out**:
 | `GIZZI_DISABLE_TELEMETRY=1`, `DISABLE_TELEMETRY=1` | Environment (legacy upstream names, still honored) |
 | `GIZZI_DISABLE_NONESSENTIAL_TRAFFIC=1` | Environment, also disables auto-updates, release notes, etc. |
 | `DO_NOT_TRACK=1` | Environment (RuntimeTelemetry) |
+| `ALLTERNIT_SELF_HOSTED=1` | Environment. Self-hosted mode: everything above, plus no calls at all to `*.allternit.com` / `*.gizziio.com` (see `docs/SELFHOST.md`) |
 | `gizzi config telemetry off` | Persistent (`telemetry.json` under `~/.config/gizzi-code/` or `$XDG_CONFIG_HOME/gizzi-code/`) |
 
 The kill switch is evaluated at the earliest init point

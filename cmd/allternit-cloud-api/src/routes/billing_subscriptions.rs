@@ -1,4 +1,4 @@
-//! Subscription plans (Plus / Super / Ultra): plan catalog, Stripe Checkout subscription
+//! Subscription plans (Plus / Max / Ultra; the Max plan keeps the id `super`): plan catalog, Stripe Checkout subscription
 //! creation, and the Stripe customer billing portal.
 //!
 //! Plans are a static server-side catalog like `CREDIT_PACKS` in `routes::billing_checkout`:
@@ -9,7 +9,7 @@
 //!
 //! - `GET /api/v1/billing/plans` (public): the catalog WITHOUT Stripe price ids.
 //! - `GET /api/v1/billing/subscription` (Clerk session or API token): the caller's
-//!   current Free / Plus / Super / Ultra plan (active Stripe row, else Free).
+//!   current Free / Plus / Max / Ultra plan (active Stripe row, else Free).
 //! - `POST /api/v1/billing/subscribe` (Clerk session or API token): Checkout Session `mode=subscription` whose
 //!   `subscription_data[metadata]` carries `clerk_user_id` / `allternit_plan_tier` /
 //!   `allternit_plan_id` — the contract `routes::billing_webhooks` consumes.
@@ -63,7 +63,7 @@ pub struct SubscriptionPlan {
 
 const SUBSCRIPTION_PLANS: &[SubscriptionPlan] = &[
     SubscriptionPlan { id: "plus", label: "Plus", price_usd: 20.00, monthly_credits_usd: 22.00, rollover_cap_usd: 10.00, plan_tier: "pro", price_env: "STRIPE_PRICE_PLUS", photo_avatars_per_month: 5 },
-    SubscriptionPlan { id: "super", label: "Super", price_usd: 100.00, monthly_credits_usd: 110.00, rollover_cap_usd: 50.00, plan_tier: "team", price_env: "STRIPE_PRICE_SUPER", photo_avatars_per_month: 25 },
+    SubscriptionPlan { id: "super", label: "Max", price_usd: 100.00, monthly_credits_usd: 110.00, rollover_cap_usd: 50.00, plan_tier: "team", price_env: "STRIPE_PRICE_SUPER", photo_avatars_per_month: 25 },
     SubscriptionPlan { id: "ultra", label: "Ultra", price_usd: 200.00, monthly_credits_usd: 220.00, rollover_cap_usd: 100.00, plan_tier: "team", price_env: "STRIPE_PRICE_ULTRA", photo_avatars_per_month: 50 },
 ];
 
@@ -104,6 +104,9 @@ pub struct CurrentSubscriptionResponse {
     label: String,
     plan_tier: String,
     status: String,
+    /// When the plan renews (RFC 3339), once a Stripe event has reported it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    renews_at: Option<String>,
 }
 
 pub fn routes() -> Router<Arc<ApiState>> {
@@ -117,7 +120,7 @@ pub fn routes() -> Router<Arc<ApiState>> {
 fn product_label(plan_id: &str) -> &'static str {
     match plan_id {
         "plus" => "Plus",
-        "super" => "Super",
+        "super" => "Max",
         "ultra" => "Ultra",
         _ => "Free",
     }
@@ -130,40 +133,63 @@ async fn get_current_subscription(
     let user_id = crate::auth::resolve_user_scoped(&state.db, &headers, "billing")
         .await?
         .id;
-    if crate::auth::is_admin_user(&user_id) {
-        return Ok(Json(CurrentSubscriptionResponse {
+    Ok(Json(current_subscription_for(&state.db, &user_id).await?))
+}
+
+/// The plan id an account is on now (`free`, `plus`, `super` (Max) or `ultra`): the same answer
+/// `GET /api/v1/billing/subscription` gives, for other routes that sign or gate on the plan
+/// (`routes::freeweights` entitlement claim). Caller authentication is the caller's job.
+pub(crate) async fn current_plan_id(db: &PgPool, user_id: &str) -> Result<String, ApiError> {
+    Ok(current_subscription_for(db, user_id).await?.plan_id)
+}
+
+/// Source of truth for "which plan is this account on": admins read as Ultra, else the newest
+/// open Stripe subscription row (active/trialing first), else Free.
+async fn current_subscription_for(
+    db: &PgPool,
+    user_id: &str,
+) -> Result<CurrentSubscriptionResponse, ApiError> {
+    if crate::auth::is_admin_user(user_id) {
+        return Ok(CurrentSubscriptionResponse {
             plan_id: "ultra".to_string(),
             label: "Ultra".to_string(),
             plan_tier: "team".to_string(),
             status: "active".to_string(),
-        }));
+            renews_at: None,
+        });
     }
     let row: Option<BillingSubscription> = sqlx::query_as(
         r#"
-        SELECT user_id, plan_id, plan_tier, status, stripe_customer_id
+        SELECT user_id, plan_id, plan_tier, status, stripe_customer_id,
+               EXTRACT(EPOCH FROM current_period_end)::BIGINT AS renews_at_epoch
         FROM billing_subscriptions
         WHERE user_id = $1 AND status IN ('active', 'trialing', 'past_due', 'unpaid')
         ORDER BY (status IN ('active', 'trialing')) DESC, updated_at DESC
         LIMIT 1
         "#,
     )
-    .bind(&user_id)
-    .fetch_optional(&state.db)
+    .bind(user_id)
+    .fetch_optional(db)
     .await?;
-    Ok(Json(match row {
+    Ok(match row {
         Some(sub) => CurrentSubscriptionResponse {
             label: product_label(&sub.plan_id).to_string(),
             plan_id: sub.plan_id,
             plan_tier: sub.plan_tier,
             status: sub.status,
+            renews_at: sub
+                .renews_at_epoch
+                .and_then(|secs| chrono::DateTime::<chrono::Utc>::from_timestamp(secs, 0))
+                .map(|at| at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)),
         },
         None => CurrentSubscriptionResponse {
             plan_id: "free".to_string(),
             label: "Free".to_string(),
             plan_tier: "free".to_string(),
             status: "none".to_string(),
+            renews_at: None,
         },
-    }))
+    })
 }
 
 async fn list_plans() -> Json<PlansResponse> {
@@ -202,7 +228,7 @@ async fn create_subscription(
         Ok(trusted) => trusted,
         Err(error) => return error.into_response(),
     };
-    if let Err(error) = ensure_purchase_allowed(trusted, plan.price_usd, "The Super and Ultra plans") {
+    if let Err(error) = ensure_purchase_allowed(trusted, plan.price_usd, "The Max and Ultra plans") {
         return error.into_response();
     }
     let Ok(secret_key) = std::env::var("STRIPE_SECRET_KEY") else {
@@ -460,6 +486,16 @@ pub(crate) struct BillingSubscription {
     pub plan_tier: String,
     pub status: String,
     pub stripe_customer_id: Option<String>,
+    /// `current_period_end` as unix seconds (NULL until a Stripe event reports it).
+    pub renews_at_epoch: Option<i64>,
+}
+
+/// A subscription's `current_period_end` (unix seconds). Newer Stripe API
+/// versions report it per item rather than on the subscription.
+pub(crate) fn subscription_period_end(subscription: &serde_json::Value) -> Option<i64> {
+    subscription["current_period_end"]
+        .as_i64()
+        .or_else(|| subscription["items"]["data"][0]["current_period_end"].as_i64())
 }
 
 /// Upsert the local mirror of a Stripe subscription from a `customer.subscription.*` event.
@@ -471,18 +507,21 @@ pub(crate) async fn upsert_billing_subscription(
     plan_tier: &str,
     status: &str,
     stripe_customer_id: Option<&str>,
+    current_period_end: Option<i64>,
 ) -> Result<(), ApiError> {
     sqlx::query(
         r#"
         INSERT INTO billing_subscriptions (
-            stripe_subscription_id, user_id, plan_id, plan_tier, status, stripe_customer_id, updated_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP)
+            stripe_subscription_id, user_id, plan_id, plan_tier, status, stripe_customer_id,
+            current_period_end, updated_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, to_timestamp($7::BIGINT), CURRENT_TIMESTAMP)
         ON CONFLICT (stripe_subscription_id) DO UPDATE SET
             user_id = excluded.user_id,
             plan_id = excluded.plan_id,
             plan_tier = excluded.plan_tier,
             status = excluded.status,
             stripe_customer_id = excluded.stripe_customer_id,
+            current_period_end = COALESCE(excluded.current_period_end, billing_subscriptions.current_period_end),
             updated_at = CURRENT_TIMESTAMP
         "#,
     )
@@ -492,6 +531,7 @@ pub(crate) async fn upsert_billing_subscription(
     .bind(plan_tier)
     .bind(status)
     .bind(stripe_customer_id)
+    .bind(current_period_end)
     .execute(db)
     .await
     .map_err(ApiError::DatabaseError)?;
@@ -562,7 +602,8 @@ pub(crate) async fn billing_subscription_for(
 ) -> Result<Option<BillingSubscription>, ApiError> {
     sqlx::query_as::<_, BillingSubscription>(
         r#"
-        SELECT user_id, plan_id, plan_tier, status, stripe_customer_id
+        SELECT user_id, plan_id, plan_tier, status, stripe_customer_id,
+               EXTRACT(EPOCH FROM current_period_end)::BIGINT AS renews_at_epoch
         FROM billing_subscriptions
         WHERE stripe_subscription_id = $1
         "#,
@@ -649,6 +690,17 @@ pub(crate) fn ensure_purchase_allowed(trusted: bool, price_usd: f64, unlock_hint
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn period_end_reads_the_subscription_or_its_first_item() {
+        assert_eq!(subscription_period_end(&serde_json::json!({ "current_period_end": 1798761600 })), Some(1798761600));
+        // Newer Stripe API versions report it per item.
+        assert_eq!(
+            subscription_period_end(&serde_json::json!({ "items": { "data": [{ "current_period_end": 1798761601 }] } })),
+            Some(1798761601)
+        );
+        assert_eq!(subscription_period_end(&serde_json::json!({})), None);
+    }
+
     use super::*;
     use std::sync::Mutex;
 
@@ -842,7 +894,7 @@ mod tests {
         let _guard = ENV_LOCK.lock().unwrap();
         std::env::set_var("STRIPE_PRICE_PLUS", "price_plus");
         std::env::set_var("STRIPE_PRICE_SUPER", "price_super");
-        // Bought Plus, switched to Super in the billing portal: the metadata
+        // Bought Plus, switched to Max in the billing portal: the metadata
         // still says plus, the item's price says super.
         let switched = serde_json::json!({
             "metadata": { "allternit_plan_id": "plus", "allternit_plan_tier": "pro" },
@@ -966,15 +1018,15 @@ mod tests {
 
     #[test]
     fn purchase_gate_limits_untrusted_buyers_to_the_first_purchase_max() {
-        // Untrusted: $20 Plus and $25 pack pass, $50 pack / $100 Super blocked.
-        assert!(ensure_purchase_allowed(false, 20.0, "The Super and Ultra plans").is_ok());
+        // Untrusted: $20 Plus and $25 pack pass, $50 pack / $100 Max blocked.
+        assert!(ensure_purchase_allowed(false, 20.0, "The Max and Ultra plans").is_ok());
         assert!(ensure_purchase_allowed(false, 25.0, "The $50 and $100 packs").is_ok());
         let error = ensure_purchase_allowed(false, 50.0, "The $50 and $100 packs").unwrap_err();
         assert!(error.to_string().contains("First purchases are limited to $25"), "{error}");
         assert!(error.to_string().contains("$50 and $100 packs unlock automatically"), "{error}");
-        assert!(ensure_purchase_allowed(false, 100.0, "The Super and Ultra plans").is_err());
+        assert!(ensure_purchase_allowed(false, 100.0, "The Max and Ultra plans").is_err());
         // Trusted buyers are never gated.
         assert!(ensure_purchase_allowed(true, 100.0, "The $50 and $100 packs").is_ok());
-        assert!(ensure_purchase_allowed(true, 200.0, "The Super and Ultra plans").is_ok());
+        assert!(ensure_purchase_allowed(true, 200.0, "The Max and Ultra plans").is_ok());
     }
 }

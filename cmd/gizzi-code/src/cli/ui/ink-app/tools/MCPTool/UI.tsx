@@ -17,8 +17,10 @@ import type { ProgressMessage } from '../../types/message';
 import { formatNumber } from '../../utils/format';
 import { createHyperlink } from '../../utils/hyperlink';
 import { getContentSizeEstimate, type MCPToolResult } from '../../utils/mcpValidation';
+import { appViewFor } from '../../services/mcp/appView';
 import { jsonParse, jsonStringify } from '../../utils/slowOperations';
 import type { inputSchema } from './MCPTool';
+import { formatMessagesResult } from './messagesResult';
 
 // Threshold for displaying warning about large MCP responses
 const MCP_OUTPUT_WARNING_THRESHOLD_TOKENS = 10_000;
@@ -116,6 +118,14 @@ export function renderToolResultMessage(output: string | MCPToolResult, _progres
           </Text>
         </MessageResponse>;
     }
+  }
+  const messagesView = formatMessagesResult(mcpOutput, input);
+  if (messagesView !== null) {
+    return <MessageResponse>
+        <Box flexDirection="column">
+          {messagesView.lines.map((line, i) => <Text key={i} dimColor={i > 0 && messagesView.kind === 'search'}>{line}</Text>)}
+        </Box>
+      </MessageResponse>;
   }
   const estimatedTokens = getContentSizeEstimate(mcpOutput);
   const showWarning = estimatedTokens > MCP_OUTPUT_WARNING_THRESHOLD_TOKENS;
@@ -364,4 +374,26 @@ export function trySlackSendCompact(output: string | MCPToolResult, input: unkno
     channel: label.startsWith('#') ? label : `#${label}`,
     url
   };
+}
+
+/**
+ * MCP Apps: the normal result, then one line that opens the tool's ui://
+ * app in the browser (services/mcp/appView.ts writes the host page).
+ */
+export function renderToolResultWithAppView(output: string | MCPToolResult, progressMessagesForMessage: ProgressMessage<ToolProgressData>[], options: {
+  verbose: boolean;
+  input?: unknown;
+}): React.ReactNode {
+  const base = renderToolResultMessage(output, progressMessagesForMessage, options);
+  const view = appViewFor(output);
+  if (!view) return base;
+  return <Box flexDirection="column" width="100%">
+      {base}
+      <MessageResponse height={1}>
+        <Text>
+          <Text color="suggestion">⧉ MCP App</Text> · <Ansi>{createHyperlink(view.url, 'View in browser')}</Ansi>
+          <Text dimColor> {view.file}</Text>
+        </Text>
+      </MessageResponse>
+    </Box>;
 }

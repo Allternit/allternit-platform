@@ -22,12 +22,93 @@ import { workbookSaveRequestSchema } from '@allternit/office-xlsx-engine/shared/
 interface SessionEntry {
   dir: string
   info: WorkbookSessionInfo
+  lastUsed: number
 }
 
-export function createXlsxSessionRouter(getClient: () => XlsxSidecarClient | null): Hono {
+export interface XlsxSessionLimits {
+  /** Open sessions across everyone; past it, open answers 429. */
+  maxSessions: number
+  /** A session unused this long is closed and its files removed. */
+  idleMs: number
+  maxFileBytes: number
+  /** What a file may claim to unpack to, so a zip bomb never reaches the parser. */
+  maxUnpackedBytes: number
+  now: () => number
+}
+
+const DEFAULT_LIMITS: XlsxSessionLimits = {
+  maxSessions: 64,
+  idleMs: 3 * 60 * 60 * 1000,
+  maxFileBytes: 48 * 1024 * 1024,
+  maxUnpackedBytes: 1024 * 1024 * 1024,
+  now: Date.now,
+}
+
+const SWEEP_MS = 5 * 60 * 1000
+const MAX_UNPACK_ENTRIES = 10_000
+
+/**
+ * What a zip's central directory claims it unpacks to, or null when it can't
+ * be read as a plain zip (a workbook has no business being a zip64). Not a .xlsx
+ * at all (.xls, .csv) is left to the parser.
+ */
+export function zipUnpackedBytes(file: Buffer): number | null {
+  if (file.length < 22 || file.readUInt32LE(0) !== 0x04034b50) return 0
+  let end = -1
+  for (let at = file.length - 22; at >= Math.max(0, file.length - 22 - 0xffff); at -= 1) {
+    if (file.readUInt32LE(at) === 0x06054b50) {
+      end = at
+      break
+    }
+  }
+  if (end < 0) return null
+  const count = file.readUInt16LE(end + 10)
+  const start = file.readUInt32LE(end + 16)
+  if (count === 0xffff || start === 0xffffffff || count > MAX_UNPACK_ENTRIES) return null
+  let total = 0
+  let at = start
+  for (let n = 0; n < count; n += 1) {
+    if (at + 46 > file.length || file.readUInt32LE(at) !== 0x02014b50) return null
+    const size = file.readUInt32LE(at + 24)
+    if (size === 0xffffffff) return null
+    total += size
+    at += 46 + file.readUInt16LE(at + 28) + file.readUInt16LE(at + 30) + file.readUInt16LE(at + 32)
+  }
+  return total
+}
+
+export function createXlsxSessionRouter(
+  getClient: () => XlsxSidecarClient | null,
+  limitOverrides: Partial<XlsxSessionLimits> = {},
+): Hono {
+  const limits = { ...DEFAULT_LIMITS, ...limitOverrides }
   const app = new Hono()
   const infos = new Map<string, WorkbookSessionInfo>()
   const entries = new Map<string, SessionEntry>()
+
+  async function closeSession(sessionId: string): Promise<void> {
+    const entry = entries.get(sessionId)
+    entries.delete(sessionId)
+    infos.delete(sessionId)
+    await getClient()?.close(sessionId).catch(() => undefined)
+    if (entry) await rm(entry.dir, { recursive: true, force: true }).catch(() => undefined)
+  }
+
+  async function closeIdleSessions(): Promise<void> {
+    const cutoff = limits.now() - limits.idleMs
+    for (const [sessionId, entry] of [...entries]) {
+      if (entry.lastUsed <= cutoff) await closeSession(sessionId)
+    }
+  }
+
+  setInterval(() => void closeIdleSessions(), SWEEP_MS).unref?.()
+
+  /** The live session a request names; using it keeps it alive. */
+  function useSession(sessionId: string): SessionEntry | undefined {
+    const entry = entries.get(sessionId)
+    if (entry) entry.lastUsed = limits.now()
+    return entry
+  }
 
   const unavailable = (c: { json: (body: unknown, status: 503) => Response }) =>
     c.json({ error: 'xlsx_sidecar_unavailable', detail: 'sidecar binary not found' }, 503)
@@ -44,15 +125,24 @@ export function createXlsxSessionRouter(getClient: () => XlsxSidecarClient | nul
     }
     if (!payload.bytesBase64) return c.json({ error: 'expected { name, bytesBase64 }' }, 400)
 
+    const file = Buffer.from(payload.bytesBase64, 'base64')
+    if (file.length > limits.maxFileBytes) return c.json({ error: 'workbook too large' }, 413)
+    const unpacked = zipUnpackedBytes(file)
+    if (unpacked === null || unpacked > limits.maxUnpackedBytes) {
+      return c.json({ error: 'workbook too large to open' }, 413)
+    }
+    await closeIdleSessions()
+    if (entries.size >= limits.maxSessions) return c.json({ error: 'engine busy' }, 429)
+
     const dir = await mkdtemp(join(tmpdir(), 'office-engine-session-'))
     try {
       const path = join(dir, (payload.name ?? 'workbook.xlsx').replace(/[/\\]/g, '_'))
-      await writeFile(path, Buffer.from(payload.bytesBase64, 'base64'))
-      const file = await openWorkbookSession(client, path, infos)
-      const info = infos.get(file.sessionId)
+      await writeFile(path, file)
+      const opened = await openWorkbookSession(client, path, infos)
+      const info = infos.get(opened.sessionId)
       if (!info) throw new Error('session info missing after open')
-      entries.set(file.sessionId, { dir, info })
-      return c.json(file)
+      entries.set(opened.sessionId, { dir, info, lastUsed: limits.now() })
+      return c.json(opened)
     } catch (err) {
       await rm(dir, { recursive: true, force: true })
       return c.json({ error: 'open failed', detail: (err as Error).message }, 422)
@@ -67,7 +157,7 @@ export function createXlsxSessionRouter(getClient: () => XlsxSidecarClient | nul
     if (!body?.sessionId || !body?.sheetId || !body?.range) {
       return c.json({ error: 'expected { sessionId, sheetId, range }' }, 400)
     }
-    if (!entries.has(body.sessionId)) return c.json({ error: 'unknown session' }, 404)
+    if (!useSession(body.sessionId)) return c.json({ error: 'unknown session' }, 404)
     try {
       return c.json(
         await client.readRange({ sessionId: body.sessionId, sheetId: body.sheetId, range: body.range }),
@@ -85,7 +175,7 @@ export function createXlsxSessionRouter(getClient: () => XlsxSidecarClient | nul
     if (!body?.sessionId || !body?.sheetId) {
       return c.json({ error: 'expected { sessionId, sheetId }' }, 400)
     }
-    if (!entries.has(body.sessionId)) return c.json({ error: 'unknown session' }, 404)
+    if (!useSession(body.sessionId)) return c.json({ error: 'unknown session' }, 404)
     try {
       return c.json(await client.readFormulaCells({ sessionId: body.sessionId, sheetId: body.sheetId }))
     } catch (err) {
@@ -101,7 +191,7 @@ export function createXlsxSessionRouter(getClient: () => XlsxSidecarClient | nul
     if (!body?.sessionId || !Array.isArray(body?.edits) || !Array.isArray(body?.reads)) {
       return c.json({ error: 'expected { sessionId, edits, reads }' }, 400)
     }
-    const entry = entries.get(body.sessionId)
+    const entry = useSession(body.sessionId)
     if (!entry) return c.json({ error: 'unknown session' }, 404)
     try {
       return c.json(
@@ -127,7 +217,7 @@ export function createXlsxSessionRouter(getClient: () => XlsxSidecarClient | nul
     } catch (err) {
       return c.json({ error: 'invalid save request', detail: (err as Error).message }, 400)
     }
-    const entry = entries.get(parsed.sessionId)
+    const entry = useSession(parsed.sessionId)
     if (!entry) return c.json({ error: 'unknown session' }, 404)
 
     try {
@@ -138,7 +228,7 @@ export function createXlsxSessionRouter(getClient: () => XlsxSidecarClient | nul
       const file = await openWorkbookSession(client, entry.info.path, infos)
       const nextInfo = infos.get(file.sessionId)
       if (!nextInfo) throw new Error('session info missing after save')
-      entries.set(file.sessionId, { dir: entry.dir, info: nextInfo })
+      entries.set(file.sessionId, { dir: entry.dir, info: nextInfo, lastUsed: limits.now() })
       const bytes = await readFile(entry.info.path)
       return c.json({
         canceled: false,
@@ -153,14 +243,9 @@ export function createXlsxSessionRouter(getClient: () => XlsxSidecarClient | nul
 
   /** POST /close — `{ sessionId }` → closes the sidecar session, drops temp files. */
   app.post('/close', async (c) => {
-    const client = getClient()
     const body = await c.req.json().catch(() => null)
     if (!body?.sessionId) return c.json({ error: 'expected { sessionId }' }, 400)
-    const entry = entries.get(body.sessionId)
-    if (client) await client.close(body.sessionId).catch(() => undefined)
-    infos.delete(body.sessionId)
-    entries.delete(body.sessionId)
-    if (entry) await rm(entry.dir, { recursive: true, force: true })
+    await closeSession(body.sessionId)
     return c.json({ ok: true })
   })
 

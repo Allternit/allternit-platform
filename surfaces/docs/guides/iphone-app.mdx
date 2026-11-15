@@ -1,16 +1,142 @@
 ---
-title: Your iPhone with the Allternit app
-description: "Pair the Allternit iPhone app with Allternit Desktop so your bot can see the iPhone's screen while you share it, and use the app's own browser. No cable, board or developer account."
+title: Allternit for iPhone
+description: "The native Allternit app for iPhone. Sign in, find your way around, reach your computer, let your bots see the iPhone's screen and use its browser, and manage or delete your account."
 ---
 
-The **Allternit app** for iPhone, from the App Store, lets your bots use your iPhone in two ways:
+Allternit for iPhone is the native app version of [m.allternit.com](https://m.allternit.com). It uses the same account as ai.allternit.com and Allternit Desktop, so your chats, bots, projects and settings are the same everywhere. It needs iOS 17 or later.
+
+## Sign in
+
+Install **Allternit** from [the App Store](https://apps.apple.com/app/id6828841999) and open it. The sign-in screen is the same one m.allternit.com shows, with its moving preview of what Allternit does. You can:
+
+- **Continue with Apple**, **GitHub** or **Google**,
+- **Continue with email**, or
+- **Create an account** (under **New here?**).
+
+The first time you open it, **Meet your bots** sets up your team:
+
+1. Pick bots for your team from a list you can filter by category. Bots already on your account aren't made twice.
+2. Choose who leads: A:// as it comes (you can rename it, up to 24 characters), A:// dressed as one of the cast with a name you choose, a bot you already have, a bot from another service you connect now, a new bot you make (a job, a name and a look), or an imported bot. Import takes a team file (.json) or a bot package (.zip) exported from Allternit, from Files or a link. Bots from a team file come in for chat, without the file's rooms, routines or playbooks. Before a package comes in, the app shows its name, description and what it holds (memory, skills, tasks, docs and so on). Its files are copied to the bot's folder on your computer, so a computer must be connected; any file that can't be copied is listed after the import. A package can hold up to 50 MB of files. If you already have a main bot, this step is skipped. A bot from another service (Claude, Duet, ChatGPT, Grok or Meta AI) connects right there: pick how to connect, read what it can do and the terms, and tap connect. **Make it my main bot** is on unless you turn it off.
+3. Turn each bot's routines on or off, and tap one to set when it runs: every day, weekdays or chosen days, at a time. You can also add your own routine. The calendar above shows them by day, week or month: tap an empty time to add a routine there, or drag one to move it in 15-minute steps.
+4. Allow notifications, so you hear when a bot needs you. You can change this later in **Settings → Notifications**.
+5. Pick a first job and edit it.
+
+Nothing is created until you tap **Start the job**. The last step shows what was made, with the reason for anything that failed, and **Retry what didn't finish** tries only those again. The first job is sent to your main bot's chat. If your computer is offline, you can still pick the team and finish later.
+
+## Getting around
+
+The app looks and works like m.allternit.com: the same white (or graphite, in dark mode) screens, header, drawer and composer.
+
+The header shows ☰ on the left, the screen's title, and the new-chat button on the right. Tap **Recents** in the drawer for **all chats at a glance**, as a list, a grid or a deck. Every overview (this one, the Bots home, a bot's Threads and Tasks, Projects and Artifacts) uses the same List · Grid · Deck switch, and each remembers its own choice. Each card shows **Working** while its reply streams and **New reply** when something arrived since you last looked. Tap ⋯ on a card to open, rename or archive it, tap **X** to archive it, or swipe a deck card up.
+
+Tap ☰ (or swipe from the left edge) to open the drawer. Press and hold ☰ to see your bots and open one. The drawer has:
+
+- the **A://** button, which switches between **Home**, **Bots**, **Code** and **ACI**, the same modes as the phone web app,
+- **Inbox** (the tray button at the top): everything your bots are waiting on you for, such as approvals, held messages, missed calls and failed runs. Tap the button on a row, or swipe right for it; swipe left to snooze it for an hour or dismiss it,
+- **Search**,
+- the mode's own rows. In Home these are **Projects**, **Artifacts**, **Automation Tasks**, **Customize** and **More**. In ACI they are **MCP Apps**, **ACI Extensions**, **Computers** and **Teach**. **More** has **Show in rail** switches to hide or show rows; a dot on **More** means something is hidden,
+- **Teammates** (in Home): the bots that are working or need you right now. Tap one to open its chat,
+- **Recents**: tap the word to see every chat as List · Grid · Deck. Beside it is a filter for type, status (All, Active, Completed, Archived) and last activity. A chat shows **Working** while it answers and a dot when it has something new. Swipe left on a chat to delete it, swipe right to pin it, and press and drag a pinned chat to move it,
+- **New chat** at the bottom. Press and hold it in Home or Code and pick **Continue CLI session** to bring a Claude Code, Codex, Grok or other CLI session from your computer into Allternit. The app copies it and leaves the original as it was,
+- **Phones** (the phone button at the bottom, with a count of unread messages): your bots' phones. Open one to see its number, email and conversations, unread first. **Give a bot a phone** connects one (see [Connect a bot](#connect-a-bot)),
+- your account, which opens **Settings**.
+
+### The composer
+
+Home's composer is the same as the web's: **+** to add files, the **Auto** pill for how freely the chat works (Auto, Ask before actions, Read-only), the model, the context meter, and voice. The context meter is five small blocks beside the model. They fill as you use your plan, or as the chat's context fills, and the number next to them is how full the context is. Tap it to see what fills the context and how much of your plan is left. Under it, **Agent mode**, **Plugins** and **Artifacts** open their decks, with the same custom icons as Allternit Desktop. **Agent mode** lists Agent Swarm, Deep Research, Build, Docs, Sheets, Slides, Image and Video, then **Artifact** last: Allternit picks the format that fits (a doc, deck, sheet, site, image or video), says which in one line, and makes it. A new chat starts without templates. Pick **Docs**, **Slides**, **Sites** or **Sheets** in **Agent mode**, and that kind's templates open below the composer; tap one to start from it. The Bots home uses the same composer, with a **To:** row to send to your main bot as a new project or to one bot.
+
+### Waiting games
+
+A **Play** button (a game controller) is always in the bot, group chat and Code composers, from the moment the session opens. It steps aside while you type and comes back when the box is empty. On Home it shows beside Stop when a reply takes longer than 5 seconds. Tap it to open a small game window above the message box. **Full screen** makes it fill the screen, and ✕ closes it. Pick from ten games: Big Fish, Bot Race (your first four bots race you; the keyboard opens so you can type), Token Catch, Meteor Dodge, Bug Bash, Stack Deploy, Context Snake, Bot Memory, Gizzi RPG and Gizzi Brawl. They are the same games as Desktop and the web. Every game picks up where you left it when you close the window or switch games. Gizzi RPG and Gizzi Brawl are the full live games and need a connection; Brawl turns sideways, so hold the phone sideways to play it ([Waiting games](/surfaces/waiting-games#the-games)).
+
+When the reply lands, the window says **Reply ready** and pauses the game: tap **Back to chat** or **Keep playing**. Only the chat that started the reply can mark it ready. Your best scores and the last game you played are kept on the phone. Turn the button off in **Settings → Appearance → Waiting games**.
+
+In **Big Fish**, eat smaller fish to grow; bigger ones are marked with `!`. In **Bot Race**, the word stays at the top, above the keyboard.
+
+### Bots and their colours
+
+On the Bots home, **Your team** shows each bot in the same round tile, with a ring while it works and an amber dot when it needs you. Your main bot, A://, shows as the Allternit orb, and its name is drawn as the pixel A:// mark wherever it appears. When you pick one bot in **To:**, or open a bot's chat, the screen and the drawer take on that bot's colour, and your messages in its chat do too. The colour is the one set for the bot, or else the main colour of its picture. Bots with a black-and-white picture keep the plain screen. In a bot's own chat, its picture stands in for Gizzi over the greeting.
+
+### Code mode
+
+The Code header has ☰ on the left and the sessions button (a task list) on the right. On the Code home, the gizzi code logo sits between them and **What's new** sits under the sessions button. In a session, the session's name takes the middle: tap it to rename the session, copy its ID or archive it.
+
+The Code prompt is one input line in a dashed frame. The model sits on the frame's top edge at the right, and the prompt cache's state (**cache warm**, **cache expiring** or **cache cold**) sits at the left when the provider reports it. After a run in this session, a line under the icon row shows that run's tokens in, cached share and cost. Tap the context meter and set **Context bar** to **Bottom** (the blocks in the icon row, the default) or **Above** (a thin bar just above the prompt). See [Terminal and prompt](/code/terminal-and-prompt#prompt).
+
+The view button sits at the bottom right of the composer. Its icon shows which view you are in, and a tap opens a short list of three:
+
+- **Code:** the session as a chat.
+- **Terminal:** the same session drawn as a terminal: a dark screen, your messages as `❯` lines, each tool step as `●` with its result under it, and a **Working…** line with a timer while the agent runs.
+- **Shell:** a plain command shell on your computer.
+
+The shell has no composer, so the view button sits at its bottom right, above the keys. From the shell you get back to Code or Terminal in two taps. The app remembers Code or Terminal for each session.
+
+The sessions button opens your code sessions as List · Grid · Deck. **Deck** shows each session as a tall card with its last messages; swipe sideways through them. Tap one to open it.
+
+The send key is the terminal's Return key (↵). While the agent works, the A:// orb (or, in a bot's chat, that bot) plays under the reply and on each running step, as on Desktop.
+
+The Code composer shows its controls as icons in one row under the `❯` line, so all of them fit:
+
+- **On the left:** the computer it runs on, the working folder, the branch, the worktree switch (on the main branch only) and the permission mode.
+- **On the right:** the model, the context meter and the view button.
+
+The context meter is five blocks and a percent that show how full the session's context window is. Tap it to see what fills the window (messages, system prompt, tools, MCP tools, memory files and skills) and your plan's limits. Before a session has its first reply, the blocks show your plan's usage instead. It shows in the terminal look too.
+
+**+** adds files.
+
+Once a session has started, the **Panes** button appears left of the sessions button. It is not on the Code home. It lists the same panes as Allternit Desktop. Each opens as a sheet:
+
+| Pane | What it shows |
+|---|---|
+| Session panel | The agent's plan as a checklist (Progress); the computer, folder, branch and permission mode; the context window; the session's pull requests; what it made (artifacts, published pages and files it wrote); how many background tasks run; the agent tree its folder sits in, with running processes and checkpoints (tap **Rewind** on a checkpoint to put the tree's files back to it; the current state is saved first, so **Undo** takes you back); and the connectors the session loaded |
+| Terminal | The computer's shell |
+| Changes | The files the session changed, with their diffs |
+| Browser | The dev server running in the terminal |
+| Computer | Your computers, to watch or drive one |
+| Files | The project's files |
+| Artifacts | Your artifacts library |
+| Transcript | Every message in the session, as plain text |
+| Background tasks | The shells and subagents the session started, with their output. **Stop** ends a running one |
+| Code map | The project's most important files, with how many files import each one |
+
+The Code prompt sits between two dashed lines, open at the ends.
+
+### Teach
+
+Teach skills and recordings are saved on your computer, so the phone loads them through your connected computer; without one it asks you to connect. Recording happens in Allternit Desktop or the browser extension; on the phone you can import a `.har` file, edit, replay or schedule skills.
+
+Teach shows what you have taught the agent. Open it from the ACI drawer's **Teach** row, or from the suggestion card on the Agent view. **ACI** at the top left takes you back.
+
+You record a site in Allternit Desktop or the Allternit browser extension: click through the flow once and it's saved as a skill the agent can replay. On the iPhone you can:
+
+- **See your skills.** The **Skills** list shows each skill's site and number of steps, and whether it is saved as a skill file or scheduled. Recordings that have no skill yet show **Not analyzed**.
+- **Edit a skill.** Tap one to open it. You can rename it and change its goal. Tap a step to rewrite it or change its type (Page, API, Shell or Note); the arrows move it and the bin deletes it. **Add step** adds one at the end. Under **Inputs**, change each input's name, label, example and type, or add and delete inputs. A **Secret** input never keeps an example. Edits stay on the phone until **Save changes**; **Undo changes** puts them back. **Run on a schedule** saves your edits first.
+- **Set how an input is used.** Each input has **Required**, plus the setting its type needs: **Format** for a date, a date and time or a number (how it's typed into the page, like MM/DD/YYYY or de-DE), **Root** for a file or folder (where it may come from; it can be `{{profile.key}}`), **Saved login** for a secret (a credential id), and **Choices**, one per line, for a choice.
+- **Run or Replay it.** A skill with recorded steps shows **Run**, which plays those steps back exactly, without the model. Run needs Allternit Desktop, because it drives Desktop's own browser. On the iPhone, **Run** lists the recorded steps it would play and offers Replay instead. **Replay** asks for the input values, then the agent runs the skill in the Agent browser. Both ask before any step that submits, pays, sends or deletes.
+- **Run it on a schedule.** Pick the bot it runs as, how often (hourly, daily at 9:00, weekdays at 9:00, or your own cron line) and the input values. It shows up in Automation Tasks.
+- **Save the skill file.** **Save skill** shows the exact SKILL.md for the skill. Allternit Desktop writes it into `~/.allternit/skills/`; on the iPhone, **Copy SKILL.md** or **Share** it (to Files, AirDrop or a message).
+- **Edit your business profile.** **Business profile** holds values you set once, like your ERP address or reports folder. Each has a key, a label, a value and a type (Text, Web address, Email, Folder or Number), and any skill uses it as `{{profile.key}}`.
+- **Import a recording.** **Teach**, or the button on the empty screen, imports a recording (.har). Review shows what will be sent and the recording's **Actions**: a recording from Allternit Desktop lists each click, page and typed value with its time, and × leaves one out. A .har has network traffic only, so its list is empty. Add a note for the agent, then **Analyze** turns it into a skill.
+- **Delete a skill.**
+
+Recording itself happens in Allternit Desktop or the browser extension.
+
+## Your computer
+
+Code, Automation and a bot's computer run on a computer paired to your account: Allternit Desktop on your Mac or PC, or a cloud computer. The app reaches it through Allternit's cloud, the same way m.allternit.com does, so the phone doesn't need to be on the same network.
+
+If you don't have a computer paired yet, those screens show **Connect a computer**. Pair one in Allternit Desktop, or open **Settings → Devices** to see what is paired.
+
+## Let your bots use this iPhone
+
+The app can also let your bots use your iPhone in two ways:
 
 - **See the screen.** When you tap **Share screen**, the app streams the iPhone's screen to your Allternit Desktop, from anywhere. You can watch it in Allternit on your computer, on ai.allternit.com and in the m.allternit.com phone app, and your bot can take screenshots of it.
 - **Use the app's browser.** While the Allternit app is open, your bot can open web pages in the app's own browser, read them, click, type, scroll and go back.
 
 You don't need a cable, a jailbreak, an Apple developer account or Developer Mode. The iPhone only connects out to Allternit, so it works on any network.
 
-## What works and what doesn't
+### What works and what doesn't
 
 | | Without the Bluetooth board | With the Bluetooth board |
 |---|---|---|
@@ -21,18 +147,18 @@ You don't need a cable, a jailbreak, an Apple developer account or Developer Mod
 
 In Allternit these iPhones are marked **Screen only**. If a bot tries to tap one, it gets the answer "Taps on native apps need the Bluetooth board". To let a bot tap and type on an iPhone today, use the [Allternit USB Agent](/guides/usb-agent).
 
-## Pair the iPhone
+### Pair the iPhone
 
 You need Allternit Desktop running on your computer, signed in to the same account as the app.
 
-1. Install **Allternit** from the App Store and sign in.
-2. In the app, open **Settings → Phones → Let your bots use this iPhone**, and pick your computer.
+1. Install **Allternit** from [the App Store](https://apps.apple.com/app/id6828841999) and sign in.
+2. In the app, open **Settings → Computers → Let your bots use this iPhone**, and pick your computer.
 3. The app shows a 6-digit code. Allternit Desktop shows a card with the iPhone's name and the same code.
 4. Check that the two codes match, then choose **Approve** on Desktop. Choose **Deny** if you didn't start this or the codes differ.
 
 The iPhone now shows in **Settings → Computers → Phones** and in the rail's phone list. You can see the steps there too, under **Connect with the Allternit iPhone app**.
 
-## Share the screen
+### Share the screen
 
 Tap **Share screen** in the Allternit app, then **Start Broadcast**. iOS asks each time; only you can start it. While it's on, the app shows "Your bot can see this screen" with a **Stop** button, and iOS shows its own recording indicator.
 
@@ -40,7 +166,7 @@ When the iPhone isn't sharing, its row says "Open the Allternit app on your iPho
 
 The iPhone only sends video while someone is watching. When nobody is, the broadcast pauses.
 
-## What your bot can do
+### What your bot can do
 
 Your bot uses the same phone tools it uses for every phone. These iPhones have the serial `app:` followed by an id, and `phone.devices` lists them with the route `iphone-app-store`.
 
@@ -57,12 +183,211 @@ The browser tools work only while the Allternit app is open on the iPhone. Other
 
 Taps, swipes, `phone.open_app`, `phone.home`, plain-English `phone.task` runs, texts and calls are not available on these iPhones.
 
-## Privacy
+### Privacy
 
 - The screen goes from the iPhone to your own Desktop through Allternit's relay, sealed with a key only the iPhone and your Desktop hold. Allternit doesn't store it.
 - Each iPhone gets its own key. Remove the iPhone in the app, or in Allternit, to revoke it.
 - Nothing is shared until you tap **Start Broadcast**, and **Stop** ends it at once.
 
+## Bots
+
+Bots mode lists your bots with their status. In the drawer, the **Bots** row shows how many threads are waiting on you. Open a bot for its threads, tasks, artifacts, routines, memory and channels. A bot's **Routines** has an **On a schedule** section where you can change when each one runs. Group chats and the live stage are there too. A group chat can have up to 6 bots, including bots that run on another service, such as Grok or Poke; those show **Runs on …** and answer through their own connection. If one of them needs approval or doesn't answer, the room says so. If a bot has a computer, you can watch it and take control from the phone. If that computer's screen sharing has a password, the app asks for it. On a Mac that is the name and password of an account on the Mac, not your Allternit sign-in. The app keeps it only while the screen is open.
+
+### A bot's chat
+
+A bot's chat opens on its stage: the bot large at the top, what it is doing under it, cards for threads that need you and work it suggests (**Go ahead** or **Not now**), and **Hand it a file**. Under those, as on the web:
+
+- **Working · step 2 of 3** (or **Plan**): the thread's checklist while a step is unfinished. With no checklist, it lists what the bot is doing this turn, one line per tool. While it works, **Stop** stops the reply and **Take over** opens the bot's computer.
+- **Since you were last here**: the bot's other threads that moved and the routines it ran since you last opened its chat, with failed runs counted. Tap a thread to open it. It doesn't show the first time you open a bot.
+- **What I made** (**So far** while it works): a montage of what the bot saved from its threads and the steps it finished, one frame every few seconds. Tap a tick to jump, or a saved artifact to open it.
+- The next routine, such as **Next routine "Menu board refresh" in 3.0h**.
+
+For **Hand it a file**, pick files or photos, then choose **Plan it first**, **Just do it** or **Ask me questions**. The conversation is under the stage. Swipe up on the stage, or send a message, and the bot moves up into the header. Tap its picture in the header to bring it back.
+
+The composer is the same as on the web. Above the message box are the thread's tabs: the open thread (**Main chat** or the thread's name), **Threads**, **Tasks** and **Bot**. Under it are **Agent mode**, **Plugins** and **Artifacts**. On **Threads**, what you type starts a new thread. On **Tasks**, it asks for a task in this thread. **Bot** shows the bot's page with the tabs still at the bottom.
+
+A group chat opens the same way: the bots in a row at the top, the last thing one of them said, and two suggestions to send. Swipe up or send to move them into the **N bots · you** pill in the header, and tap the pill to bring them back. Its composer is the bot chat's, without the tabs.
+
+### Backgrounds
+
+Bot chats, group chats and bot project homes sit on a slow moving background, the same ones as on the web: twenty **ASCII** looks drawn in characters (the A-block mark, Clay Contours, Code Rain, Northern Lights and more) and thirteen **Classic** looks (Aurora, Glass mesh, Constellation and more). Colours come from the screen: the bot's colour, or the group members' colours. Code mode can show one too.
+
+- **Settings → General → Background** sets the default: pick the set, then a tile. Under the tiles, **Show on** turns the background on or off for bot chats, group chats, bot project homes and Code mode (Code is off until you turn it on), and **Movement** is Still, Slow or Normal. An ASCII look adds **Colours** (as designed, the bot's colour, or mono), **Characters**, **Character size**, **Density** and **Veil behind messages**, a fade from 20% to 70% that keeps text easy to read.
+- **One screen's own look:** in a bot's chat, ⋯ → **Background**; in a group chat, the brush at the top right; in a Code session, tap its name → **Background**. A look picked there applies to that bot, room or Code folder only, and Settings never changes it. **Same as Settings** goes back to the default.
+- A look whose sky is the other tone from your theme (a night sky in light mode) is drawn with its light and dark swapped, so text stays readable. In Code the veil is never below 55%.
+- While a bot, a room or Code shows a background, the drawer carries the same background behind frosted glass.
+- An ASCII background reacts to your finger: drag to push the characters aside, tap to send a ring outward. The A-block mark leans away from your finger and scatters on a tap. Taps and scrolls still reach the screen.
+- In Code, the background shows in the Code view only, not in the Terminal look or the Shell.
+- With **Reduce motion** on (in iOS or in Settings) or Movement set to Still, the background holds still and doesn't react to touch.
+
+### Create and edit a bot
+
+In the Bots drawer, tap **⋯** then **Create bot**, or tap add on the Bots home. Name your bot, then choose its look: **Library**, **Describe**, **Your photo** or **Initials**. **More options** holds the accent colour, what it does, job instructions, tools, computer, brain and model. Tap **Create** and the bot opens in its first thread. The look editor needs a connection. Every look you pick shows the same everywhere in the app as on the web: the pack characters (including the drawn Clawd Crew, Duet Carry and Gizzi YouTube art), your photo or a character you described, each fitted whole in its tile. A bot with no look, or a look the app can't draw, shows Gizzi.
+
+To edit, open the bot's page and tap **Edit bot**, or choose **Edit bot** from the **⋯** menu in a thread. It's the same form, filled in. Workspace files, the model and other settings stay under **Workspace** on the bot's page. The Skills tile shows a puzzle piece.
+
+## Connect a bot
+
+**Connect** on a bot's page (also **Give a bot a phone** in Phones, and the bot's Phone and Channels screens) gives it a way to reach people:
+
+- **Phone number:** search by area code, local or toll-free, and buy one. Or choose **Port my existing number** to move a number you already have: enter it with the country code and the app follows the carrier's progress, which usually takes a few business days. Your number keeps working until the port completes. Then register it for texting as a business or as an individual; the individual path texts you a code. Carrier review shows its status as it goes.
+- **Email:** the bot gets an address. You can give it a different name (the old address stops working), choose who can email it, how it replies and who it may answer. **Company domain** adds an address like support@yourcompany.com: the app shows the four DNS records to add (press and hold to copy) and checks them live, then moves the bot to the domain once they verify. You can skip the check and come back later.
+- **Telegram:** name the bot, tap **Confirm** in Telegram, then **Start**. If your computer can't do that, paste a bot token instead.
+- **Slack, Discord, Teams and WhatsApp Business:** the sign-in page opens in the app. When you close it, the app waits for the connection. Discord then lets you pick channels.
+
+**Bots from other services** (Connect a vendor bot): accept the terms, then sign in on the window that opens on your computer. The phone checks for up to about 5 minutes. Some products ask for API keys. You can make the connected bot your main bot.
+
+Not on the phone: WhatsApp personal. Use Desktop or ai.allternit.com for it.
+
+## Artifacts
+
+**Artifacts** in the drawer is your library: the things you and your bots made, filtered by kind and by mine or shared. Artifacts made in a chat are saved to it. AI that a page runs is billed to you, as on the web. Links that leave Allternit open in Safari.
+
+Every artifact session opens on its own editor or pane, and its chat follows that session's kind: a Sheets session shows Sheets, whatever mode was last picked on Home. The composer is the same one as Home, with the same + menu, model picker, permissions, voice and sending while a reply runs. The only difference is that the mode menu becomes a fixed label for the session's kind.
+
+Cards show a preview of the real content, including motion artifacts and a frame from each video. Rows under **Your artifacts** have a **…** button with **Delete**, which removes the row, its chat and the artifact if it's yours. PDFs you can only view open in a reader where you can zoom, save and sign.
+
+When you chat with an agent in a Docs, Sheets, Slides or Design session, it works directly on the open file with the same tools as the web, and you don't need to keep the editor on screen. Its changes save to the file, and in Docs they show as tracked changes under the agent's name. If a change fails or can't be saved, a banner says so and the agent is told. Your computer needs to be reachable, as it does for chat.
+
+Every artifact opens full screen in the same window and editors as Desktop and m.allternit.com, signed in, inside the app. The window has its version menu, share and export. If you only have view access, it opens read-only.
+
+**Make something new** starts a session for that kind:
+
+- **Docs, Sheets, Slides and Design** open on the editor straight away. **Chat** and **Document** at the top switch between the editor and the chat. They stay listed under **Your artifacts** on the phone that started them, and Recents reopens them on the editor. Your edits are saved when you tap **Save**, when you close the editor or switch to **Chat**, and when you leave the app. If they can't be saved, the app says so and you choose to keep editing or leave anyway. Saving doesn't open the share sheet; **Save As** gives you a copy of the file. A workbook made in Sheets works with no computer connected. Existing workbooks open with their charts and formatting, with no computer needed. If that service can't be reached, the workbook opens with its data and a notice that charts and advanced formatting aren't shown, and the original file is kept. Docs opens fitted to the screen width, and Slides opens without its thumbnails, which the panel button brings back.
+- **Other kinds** start in the chat. What the agent makes opens in the editor when you switch to it.
+
+The agent can't edit an open Docs, Sheets or Slides file from the phone. What it makes in that session opens as its own artifact.
+
+Exports and downloads from the window, such as MP4, CSV, XLSX, DOCX and PNG, open the share sheet so you can save them to Files or Photos. **PDF** opens the print sheet, which can save a PDF. PDFs, images and videos have a **Save or share** button. Files over 512 MB can't be saved on the phone.
+
+## Projects
+
+**Projects** in the drawer lists your projects in the same two columns as the web. The **List · Grid · Deck** switch changes the layout. The filter button shows one kind, sorts, and shows archived projects. Search and **New project** float at the bottom.
+
+**New** makes a chat, code or design project. A code project asks for a folder on your computer, which you can skip. A design project opens on its canvas. Code and design projects you made on Desktop or the web show here once you've opened Allternit there with this version.
+
+A canvas drawn on another computer reaches the phone once that project has been opened there. Until then the phone warns you, because editing first replaces it.
+
+A bot project opens on the same page as on the web:
+
+- **Header:** the name, **Customize appearance**, project settings, pin, and a menu with Edit details, Archive, Save as template and Delete. **Needs you** opens the thread waiting on you.
+- **Composer:** write to Al, the coordinator. To start one bot on a new thread, tap it under **Memory, files and more**.
+- **Dashboard:** the project opens on a dashboard. **Customize** in the header picks one of ten layouts, or **Yours** to choose the tiles yourself. It also sets the page's icon and background.
+- **Threads and conversation:** the project's threads, Al's replies and any decisions waiting on you.
+- **Memory, files and more:** your bots, Team, Campaign, Delegate, Artifacts, Routines, Status page, Memory and Context sit under this button.
+- **Folder:** choose a folder on your computer for the project's bots to work in. It's kept on this phone and sent with your messages, and threads show it under the top bar.
+- **Status:** close or reopen the project and add a proof link when you mark it done.
+
+**Graph**, **Delegate**, **Board**, **Flow** and **Open team lanes** open full screen. Team and Flow are live maps: drag to move, pinch to zoom, and tap a bot or step to open it. Team also has **Lanes**, showing work handed between bots, where you can take over a Terminal bot, and both have a plain **List**. Flow can save a finished run as a template. **Board** shows what's happening now, what's next and what needs you. A thread that hasn't started yet opens on its plan and turns into the chat when it starts.
+
+## Automation Tasks
+
+**Automation Tasks** in the drawer shows your goals, routines, loops and heartbeats. The filter button picks the type, the sort order and the view:
+
+- **List:** one card per task, with its status and a run button.
+- **Graph:** each task with its next and last run, and **Run now**.
+- **Calendar:** Day, Week or Month. Tap an empty time to add a task and tap a task to open it. Press and hold a task, then drag to move it.
+
+Schedules run in the timezone the task was saved with, whichever computer or server runs them.
+
+Type tabs and the **List**, **Graph** and **Calendar** switch sit on the screen, as on Desktop.
+
+**New task** creates a goal, routine, loop or heartbeat, and a goal can also set up a routine and a monitoring loop in one step. To change a task, open it and tap **Edit**.
+
+On **Agent Heartbeats**, pick an agent to add, edit, pause, run or remove its periodic tasks. Changes save right away, to the scheduler and to the agent's `HEARTBEAT.md`.
+
+Loops run on your computer on their schedule, and need a computer on the current version of Allternit. A loop's details show its next run, last run and run history, with **Stop** on a run in progress. If your computer was asleep, the loop runs again when it wakes; it doesn't make up the runs it missed.
+
+## Calls
+
+A bot can call you. While the app is open, the call rings full screen with the caller's name, **Answer** and **Decline**. The ring respects the silent switch, but the phone still vibrates. Tapping a ring notification opens the same screen. If the call has already ended, the notification opens that conversation instead.
+
+On a call you have a timer, **Mute**, **Speaker** (the earpiece is used until you turn it on) and **End**. The call keeps going if you leave the app. A call you didn't answer shows **Missed call**, with **Open conversation**. A call answered on another device stops ringing.
+
+The app needs microphone access to answer. If it's off, the app says so and offers **Open Settings**. When the app is closed, a call arrives as a notification, not the full iPhone call screen. To have calls vibrate without ringing, turn off **Settings → Notifications → Incoming calls → Ring sound** (this iPhone only).
+
+You can call people who joined through a bot's invite: tap the phone button in the bot's chat or **Call** on its page, then pick the person. The call screen shows **Calling…** with **Speaker** and **Cancel**, and you hear a ringing tone until they pick up. If the person has a bot that answers for them, it connects at once. Otherwise the call ends with **No answer**, **Declined** or **Busy**.
+
+## Settings
+
+Settings opens from your account in the drawer. Its groups and order are the same as on m.allternit.com, and the card at the top shows your name and email.
+
+Most Settings screens work in the app:
+
+- **Notifications:** this iPhone's switches (response completions, approval requests, incoming calls and sound, plus the iOS permission with **Send a test**), then your account's phone notifications per event, critical alerts by text (after a 6-digit code check) and quiet hours. Account changes apply to every device.
+- **General → Chat font:** Default, Serif or System, for your bots' replies.
+- **Customize → Discover:** the Allternit skill directory (From Allternit, For you, More skills and Categories). **Add** installs a skill on your computer.
+- **Skills and Plugins:** what's installed on your computer, with a switch for each and **Remove from this computer**. In **Skills**, **+** writes a new skill: a name, when to use it, and its instructions, saved to `~/.allternit/skills/` on your computer. Uploading a skill or plugin package and the plugin marketplace need Desktop or the web.
+- **Subagents:** the built-in types and your own. Create one, edit its name, when to use it, model, step limit, tools, instructions and face, reset a built-in or delete your own.
+- **Your twin:** edit how your twin speaks and what bots may say for you. Accept, edit or dismiss what bots suggest, and add, edit or delete memories.
+- **MCP servers** (also in Customize): the servers on your computer, each with its status (Connected, Not connected, Failed, Needs sign-in or Off) and a switch. Add or edit one (name, description, command, arguments one per line, tags), see its tools, connect or disconnect it now, or remove it. Servers that come from another app's settings, such as Claude, Codex or Gemini, are read-only here; the screen says where to change them.
+- **Memory Drive:** pick a drive, then read, edit and save files. If a file changed meanwhile, the app offers to reload it. **History** lists a file's versions: see what changed, compare with the current file, or **Restore this version**, which saves it as a new version so nothing is lost. **Keep a copy** copies the drive to a folder on your computer or to your own git repository; the access token is stored sealed and never shown again. **Delete memories forever** asks you to type *delete forever*. Imports stay on Desktop and the web.
+
+## Rating the app
+
+After you have used Allternit for a while, the app may show Apple's rating sheet a couple of seconds after a chat answer finishes. It never appears while an answer is still streaming. Apple decides whether the sheet actually shows, and limits it to a few times a year. You can rate at any time from **Settings → Rate Allternit**, which opens the App Store review page.
+
+The app keeps its counters on your iPhone only. Nothing about them is sent to Allternit.
+
+## Models and thinking levels
+
+Tap the model name in the composer. A strip at the top shows each provider with its usage ring. Your current model comes next, with its own thinking setting: Claude's effort, OpenAI's reasoning, Gemini's thinking level, or DeepSeek's and GLM's deep thinking. Then every model is listed under its provider. Star a model to keep it under **Favorites**. See [Thinking levels](/api/providers#thinking-levels).
+
+The **+** sheet has **Sketch**: draw with Apple's tools and attach the drawing.
+
+## Failed run banner
+
+If one of your bots' runs fails while you're on another screen, a banner with that bot's picture slides in at the top: "That run failed. Fix it?" It stays for 8 seconds. Tap it to open the bot's chat with a message asking it to fix the failure already in the composer; nothing is sent until you send it. Press and hold the banner to mute these offers for that screen. No banner shows for the chat you're looking at, because you can already see the error there.
+
+The app reads nothing outside Allternit for this: it only uses Allternit's own failed runs. Turn the banner off with the **Pet offers** switch in **Settings**. The setting stays on this iPhone. The same offers on other devices are described in [Pet offers](/guides/bot-avatars#pet-offers).
+
+## Notifications and links
+
+Notifications from your bots, threads and calls arrive as iPhone notifications. Tapping one opens the chat, thread or bot it is about. An approval opens **Decisions**, where you can answer it. Your [notification settings and quiet hours](/guides/notifications) apply to the iPhone too.
+
+Links to ai.allternit.com and m.allternit.com open in the app when it is installed: a bot (`/b/…`), an invite (`/i/…`), Settings (`/settings`) or a chat (`?session=…`).
+
+## Phone tasks: Review, status cards and Run on my phone
+
+When a bot asks to do something sensitive on your linked phone, the item in **Needs you** says **Review**, not Approve. Tap it, or the **Review** button on the notification, to open the Review pane. It shows the phone's screen at that step, the goal and the action. **Approve** turns on only after the screen has loaded; **Deny** always works. If the screen moved since the bot asked, the pane says it changed and asks again. If nobody answered in 5 minutes, it says the task expired and nothing was done.
+
+To start a task on your phone from a chat, tap **+** in the composer and pick **Run on my phone**. A chip that reads "On" and the phone's name appears above the text field, and your next message becomes the task. Tap the X on the chip to go back to a normal message. If no phone is linked, the phone is offline, you are signed out or your phone minutes are used up, the row says so instead.
+
+Each task shows a status card in the chat: the phone's latest screen (when one was kept), the step, and a status of running, needs you, done, denied, timed out, phone locked, phone offline or failed. The card offers **Review**, **Run again** or **Open Phone Link** to match its state.
+
+### Shortcuts and Siri
+
+Three Shortcuts actions drive your linked phone. They are not in the ready-made Allternit shortcuts; add them in the Shortcuts app.
+
+| Action | What it does |
+|---|---|
+| Run a Phone Task | Starts a task on your phone (or the one you name). |
+| Run a Phone Routine | Replays one of your saved phone routines. |
+| Phone Task Status | Says how your latest phone task is going. |
+
+Each one answers in plain words when you are signed out, when no phone is linked, when the phone is offline, and when the task was not started (for example because your bots are paused). Siri never approves a phone step; it says "Open Allternit to read the whole item".
+
+You can also use the [Allternit iMessage app](/guides/imessage-app) inside a Messages conversation.
+
+## Plans and credits
+
+In the United States, **Settings → Billing** links to the web to buy credits or change your plan. Elsewhere, manage your plan on [ai.allternit.com](https://ai.allternit.com). The app shows your plan, credits and usage in every country.
+
+Settings → Billing shows your plan as a member card (Plus graphite, Max gold, Ultra platinum) with your renewal date. On the US App Store the plans show as tickets that open checkout on the web. Settings → Usage shows a card per account that has a plan or limits, with its limits and resets. Engines that run on your own computer get no card.
+
+## Delete your account
+
+Go to **Settings → Account → Delete account**, read what happens, type `DELETE` and tap **Delete my account**.
+
+- You are signed out on every device and can't sign back in to that account.
+- Deleting your account doesn't cancel a paid plan. Cancel it in Billing on the web first so you aren't charged again.
+- Credits left on the account are not refunded.
+- To have stored chats, bots, memory and files erased right away, email privacy@allternit.com.
+
+Want a copy first? Export your data from **Settings → Privacy → Export data** before you delete. You can also delete your account on the web: see [Delete your account](/guides/delete-account).
+
 ## For developers
 
-The node routes, the pairing handshake and the viewer stream format are in the [Phone Stream Relay API](/api/phone-stream-relay#iphones-with-the-allternit-app).
+The app is SwiftUI in the platform repo at `surfaces/allternit-mobile/ios` (bundle id `com.allternit.mobile`, project generated by XcodeGen from `project.yml`). It talks to cloud-api at `api.allternit.com`. Calls that belong to a computer go through the runtime relay (`POST /api/v1/runtime-devices/:id/proxy`, `Core/API/RuntimeRelayClient.swift`). Push is described in [iPhone push (APNs)](/api/ios-push). Call audio uses the LiveKit Swift SDK (`Core/Calls/CallAudio.swift`) with the `{token, url, room}` cloud-api returns from `/api/v1/phone/…/answer`. Web-rendered artifacts load `ai.allternit.com/a/<id>` in a WKWebView that receives the record and the Clerk token from the app (`Features/Artifacts/Views/ArtifactLiveWebView.swift`). Meet your bots uses the web's template catalog, generated into `Features/Onboarding/MeetBotCatalogData.swift` by `Scripts/meet-bot-catalog/`. Universal Links come from `public/.well-known/apple-app-site-association` in allternit-ai and are parsed by `Core/DeepLinkRouter.swift`.
+
+The phone node routes, the pairing handshake and the viewer stream format are in the [Phone Stream Relay API](/api/phone-stream-relay#iphones-with-the-allternit-app).

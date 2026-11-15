@@ -215,6 +215,9 @@ const windowAPI = {
   setAlwaysOnTop: (enabled: boolean): Promise<void> =>
     ipcRenderer.invoke('window:set-always-on-top', enabled),
   getState: (): Promise<WindowState> => ipcRenderer.invoke('window:get-state'),
+  /** This window's number, tint slot and the open-window count (null outside a main window). */
+  getIdentity: (): Promise<{ number: number; tintIndex: number; count: number } | null> =>
+    ipcRenderer.invoke('window:get-identity'),
   getBounds: (): Promise<WindowBounds> => ipcRenderer.invoke('window:get-bounds'),
   setBounds: (bounds: Partial<WindowBounds>): Promise<void> =>
     ipcRenderer.invoke('window:set-bounds', bounds),
@@ -398,15 +401,28 @@ const meshAPI = {
 
 // ─── Shell ────────────────────────────────────────────────────────────────────
 
+interface HudPrefs {
+  hideOnBlur: boolean;
+  /** Global HUD / Quick Chat chords and whether registering each succeeded. */
+  hotkeys: Array<{ accelerator: string; registered: boolean }>;
+}
+
 const shellAPI = {
   openExternal: (url: string): Promise<void> => ipcRenderer.invoke('shell:open-external', url),
+  openPrivacySettings: (pane: 'fullDisk' | 'automation'): Promise<{ supported: false } | { supported: true; opened: boolean }> =>
+    ipcRenderer.invoke('shell:open-privacy-settings', pane),
+  messagesAccessHint: (): Promise<{ supported: false } | { supported: true; appName: string; appPath: string }> =>
+    ipcRenderer.invoke('shell:messages-access-hint'),
   openDesign: (): Promise<void> => ipcRenderer.invoke('shell:open-design'),
+  /** Real PDF of an HTML page via Chromium printToPDF. `pdf` is base64. */
+  printToPdf: (req: { html: string; pageSize?: 'Letter' | 'A4'; landscape?: boolean; printBackground?: boolean }): Promise<{ ok: boolean; pdf?: string; bytes?: number; error?: string }> =>
+    ipcRenderer.invoke('shell:print-to-pdf', req),
   openOfficeWindow: (): Promise<void> => ipcRenderer.invoke('shell:open-office-window'),
   openBotsWindow: (): Promise<void> => ipcRenderer.invoke('shell:open-bots-window'),
   openMainWindow: (): Promise<void> => ipcRenderer.invoke('shell:open-main-window'),
   openRemoteControl: (runtimeId?: string): Promise<void> => ipcRenderer.invoke('shell:open-remote-control', runtimeId),
   openFabricSession: (runtimeId?: string): Promise<void> => ipcRenderer.invoke('shell:open-fabric-session', runtimeId),
-  openHud: (): Promise<void> => ipcRenderer.invoke('shell:open-hud'),
+  openHud: (options?: { sessionId?: string }): Promise<void> => ipcRenderer.invoke('shell:open-hud', options),
   closeHud: (): Promise<void> => ipcRenderer.invoke('shell:close-hud'),
   toggleHud: (): Promise<void> => ipcRenderer.invoke('shell:toggle-hud'),
   moveHudBy: (delta: { x: number; y: number; width: number; height: number }): Promise<void> =>
@@ -417,8 +433,11 @@ const shellAPI = {
   // HUD bridge but are namespaced under `window.allternit.shell.hud` and use
   // `shell:*` / `shell:hud:*` IPC channels.
   hud: {
-    open: (): Promise<void> => ipcRenderer.invoke('shell:open-hud'),
+    /** Open the plain HUD; `sessionId` retargets it to that chat (`onGoto`). */
+    open: (options?: { sessionId?: string }): Promise<void> => ipcRenderer.invoke('shell:open-hud', options),
     close: (): Promise<void> => ipcRenderer.invoke('shell:close-hud'),
+    /** "Open in app": hide the HUD (handing its session to the main window) and focus the app. */
+    handoff: (): Promise<void> => ipcRenderer.invoke('shell:hud:handoff'),
     toggle: (): Promise<void> => ipcRenderer.invoke('shell:toggle-hud'),
     setIgnoreMouse: (ignore: boolean): void => ipcRenderer.send('shell:hud:ignore-mouse', ignore),
     moveBy: (delta: { x: number; y: number; width: number; height: number }): Promise<void> =>
@@ -428,7 +447,6 @@ const shellAPI = {
     setBounds: (bounds: { x?: number; y?: number; width?: number; height?: number }): Promise<void> =>
       ipcRenderer.invoke('shell:set-hud-bounds', bounds),
     resetLayout: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('shell:hud:reset-layout'),
-    setFrost: (showing: boolean): Promise<{ ok: boolean }> => ipcRenderer.invoke('shell:hud:frost', showing),
     setWorkspaceTransfer: (transferring: boolean): void =>
       ipcRenderer.send('shell:hud:workspace-transfer', transferring),
     reportSession: (sessionId: string | null): void =>
@@ -456,6 +474,16 @@ const shellAPI = {
       ipcRenderer.on('shell:hud:goto', listener);
       return () => ipcRenderer.removeListener('shell:hud:goto', listener);
     },
+    /** Fired after every show+focus of the HUD window; put the caret back in the composer. */
+    onShown: (callback: () => void): (() => void) => {
+      const listener = () => callback();
+      ipcRenderer.on('shell:hud:shown', listener);
+      return () => ipcRenderer.removeListener('shell:hud:shown', listener);
+    },
+    getPrefs: (): Promise<HudPrefs> => ipcRenderer.invoke('shell:hud:get-prefs'),
+    setPrefs: (prefs: { hideOnBlur?: boolean }): Promise<HudPrefs> => ipcRenderer.invoke('shell:hud:set-prefs', prefs),
+    /** Count a menu/picker/dialog in (true) or out (false) so hide-on-blur ignores it. */
+    suppressBlur: (on: boolean): void => ipcRenderer.send('shell:hud:suppress-blur', on),
     onChanged: (callback: (state: { open: boolean; sessionId: string | null }) => void): (() => void) => {
       const listener = (_: IpcRendererEvent, state: unknown) =>
         callback(state as { open: boolean; sessionId: string | null });
@@ -696,6 +724,16 @@ function streamUnsubscribe(serial: string): void {
 // ─── Phone Link (phone-link.ts) ───────────────────────────────────────────────
 // Apple ID credentials pass through once to main; nothing here stores them.
 
+const selfhostAPI = {
+  /** Keychain-sealed credentials for the self-hosted server panel. A missing secret is null. */
+  credentials: {
+    get: (name: string): Promise<string | null> => ipcRenderer.invoke('selfhost:credentials:get', name),
+    set: (name: string, value: string): Promise<{ success: boolean; error?: string }> =>
+      ipcRenderer.invoke('selfhost:credentials:set', name, value),
+    delete: (name: string): Promise<{ success: boolean }> => ipcRenderer.invoke('selfhost:credentials:delete', name),
+  },
+};
+
 const phoneLinkAPI = {
   status: (): Promise<unknown> => ipcRenderer.invoke('phone-link:status'),
   devices: (): Promise<unknown> => ipcRenderer.invoke('phone-link:devices'),
@@ -720,6 +758,35 @@ const phoneLinkAPI = {
     ipcRenderer.on('phone-link:status-changed', listener);
     return () => ipcRenderer.removeListener('phone-link:status-changed', listener);
   },
+};
+
+// ─── Meetings presence (allternit-ai src/views/meetings/MeetingsHost.tsx) ──────
+// The app window reports which calls Gizzi is in; main shows them in the tray
+// menu and the macOS menu bar, and a tray click asks the app to open that
+// meeting. A bridge call, not the window event: under context isolation a
+// CustomEvent's detail does not reach the preload.
+
+const meetingsAPI = {
+  reportPresence: (detail: unknown): void => ipcRenderer.send('meetings:presence', detail),
+  onOpen: (callback: (meetingId: string) => void): (() => void) => {
+    const listener = (_event: IpcRendererEvent, meetingId: unknown) => {
+      if (typeof meetingId === 'string') callback(meetingId);
+    };
+    ipcRenderer.on('meetings:open', listener);
+    return () => { ipcRenderer.removeListener('meetings:open', listener); };
+  },
+};
+
+// ─── Voice provider keys (voice-keys-ipc.ts) ──────────────────────────────────
+// The renderer's KeyStore (allternit-ai src/lib/voice/byok/desktopStore.ts) caches
+// these in memory; main keeps them in secure-store. readClipboard backs the
+// Paste button (renderer clipboard-read permission stays denied).
+
+const voiceKeysAPI = {
+  get: (): Promise<string | null> => ipcRenderer.invoke('voiceKeys:get'),
+  set: (json: string): Promise<boolean> => ipcRenderer.invoke('voiceKeys:set', json),
+  clear: (): Promise<boolean> => ipcRenderer.invoke('voiceKeys:clear'),
+  readClipboard: (): Promise<string | null> => ipcRenderer.invoke('voiceKeys:readClipboard'),
 };
 
 const phonesAPI = {
@@ -1218,6 +1285,8 @@ const teachAPI = {
 // ─── Expose ───────────────────────────────────────────────────────────────────
 
 const allternitDesktopAPI = {
+  /** Main asks Leave or Stay when an editor blocks a close (will-prevent-unload). */
+  promptsBeforeUnload: true,
   sdk: sdkAPI,
   connection: connectionAPI,
   backend: backendAPI,
@@ -1241,6 +1310,7 @@ const allternitDesktopAPI = {
   permissionGuide: permissionGuideAPI,
   phones: phonesAPI,
   phoneLink: phoneLinkAPI,
+  selfhost: selfhostAPI,
   featureFlags: featureFlagsAPI,
   findInPage: findInPageAPI,
   locale: localeAPI,
@@ -1257,6 +1327,8 @@ const allternitDesktopAPI = {
   teach: teachAPI,
   artifactPreview: artifactPreviewAPI,
   voice: voiceAPI,
+  voiceKeys: voiceKeysAPI,
+  meetings: meetingsAPI,
 };
 
 contextBridge.exposeInMainWorld('allternit', allternitDesktopAPI);
@@ -1324,6 +1396,41 @@ contextBridge.exposeInMainWorld('allternitCompanion', {
     setReducedMotion: (reduced: boolean) => ipcRenderer.send('companion:motion-pref', reduced),
   },
   toggleMain: () => ipcRenderer.invoke('companion:toggle-main'),
+  // Pet offers (pet-offers-v1). Renderers hear which offer shows (never its
+  // screen text), mute an app, accept, edit the device-local settings and the
+  // block list. Only the app window may report an in-app failure.
+  offers: {
+    onOffer: (callback: (offer: unknown) => void) => {
+      const listener = (_event: IpcRendererEvent, offer: unknown) => callback(offer ?? null);
+      ipcRenderer.on('companion:offer-state', listener);
+      return () => ipcRenderer.removeListener('companion:offer-state', listener);
+    },
+    current: () => ipcRenderer.invoke('companion:offer-current'),
+    mute: (appId?: string) => ipcRenderer.invoke('companion:offer-mute', appId),
+    accept: (id: string) => ipcRenderer.invoke('companion:offer-accept', id),
+    getSettings: () => ipcRenderer.invoke('companion:offer-settings-get'),
+    setSettings: (patch: Record<string, unknown>) => ipcRenderer.invoke('companion:offer-settings-set', patch),
+    listApps: () => ipcRenderer.invoke('companion:apps'),
+    report: (offer: Record<string, unknown>) => ipcRenderer.invoke('companion:offer', offer),
+  },
+  // System drawer (Settings → Developer). The app window reports its summary
+  // and hears "open"; the pet reads it for its dot, hovers and clicks the dot.
+  system: {
+    report: (summary: unknown) => ipcRenderer.send('companion:system-report', summary),
+    get: () => ipcRenderer.invoke('companion:system-get'),
+    on: (callback: (summary: unknown) => void) => {
+      const listener = (_event: IpcRendererEvent, summary: unknown) => callback(summary);
+      ipcRenderer.on('companion:system', listener);
+      return () => ipcRenderer.removeListener('companion:system', listener);
+    },
+    hover: (on: boolean) => ipcRenderer.send('companion:system-hover', on),
+    open: () => ipcRenderer.invoke('companion:system-open'),
+    onOpen: (callback: (tab: string | null) => void) => {
+      const listener = (_event: IpcRendererEvent, tab: unknown) => callback(typeof tab === 'string' ? tab : null);
+      ipcRenderer.on('companion:system-open', listener);
+      return () => ipcRenderer.removeListener('companion:system-open', listener);
+    },
+  },
 });
 
 // The agent cursor overlay (companion.html?surface=agent-cursor): show/hide

@@ -1,0 +1,156 @@
+[
+  {
+    "id": "allternit-tune",
+    "name": "Allternit Tune",
+    "license": "Apache-2.0",
+    "version": "0.1.0",
+    "methods": [
+      "lora",
+      "qlora",
+      "full",
+      "dpo"
+    ],
+    "hardware": [
+      "apple-silicon",
+      "cuda-linux",
+      "cuda-windows",
+      "rocm-linux",
+      "xpu-linux",
+      "xpu-windows",
+      "cpu"
+    ],
+    "install_state": "not_installed",
+    "limits": {
+      "max_seq_len": 8192,
+      "mlx_unsupported_methods": [
+        "dpo",
+        "full"
+      ]
+    },
+    "published": true,
+    "process": "embedded",
+    "default": true,
+    "backends": [
+      {
+        "id": "torch",
+        "status": "available"
+      },
+      {
+        "id": "mlx",
+        "status": "available"
+      }
+    ],
+    "notes": "PyTorch on every computer; MLX on a Mac for LoRA and QLoRA. QLoRA uses bitsandbytes 4-bit off the Mac. On the CPU only LoRA runs, and slowly."
+  },
+  {
+    "id": "unsloth-upstream",
+    "name": "Unsloth (upstream, unmodified)",
+    "license": "AGPL-3.0",
+    "version": "2026.11.4",
+    "methods": [
+      "lora",
+      "qlora"
+    ],
+    "hardware": [
+      "cuda-linux",
+      "cuda-windows",
+      "xpu-linux",
+      "xpu-windows"
+    ],
+    "install_state": "not_installed",
+    "limits": {},
+    "published": false,
+    "process": "separate_process",
+    "default": false,
+    "backends": [
+      {
+        "id": "torch",
+        "status": "available"
+      }
+    ],
+    "notes": "Upstream Unsloth, unmodified, installed on this computer under AGPL-3.0. `unsloth train` has no DPO."
+  },
+  {
+    "id": "axolotl",
+    "name": "Axolotl",
+    "license": "Apache-2.0",
+    "version": "0.21.1",
+    "methods": [
+      "lora",
+      "qlora",
+      "full",
+      "dpo"
+    ],
+    "hardware": [
+      "cuda-linux"
+    ],
+    "install_state": "not_installed",
+    "limits": {},
+    "published": false,
+    "process": "separate_process",
+    "default": false,
+    "backends": [
+      {
+        "id": "torch",
+        "status": "available"
+      }
+    ]
+  },
+  {
+    "id": "llama-factory",
+    "name": "LLaMA-Factory",
+    "license": "Apache-2.0",
+    "version": "0.9.5",
+    "methods": [
+      "lora",
+      "qlora",
+      "full",
+      "dpo"
+    ],
+    "hardware": [
+      "cuda-linux",
+      "cuda-windows"
+    ],
+    "install_state": "not_installed",
+    "limits": {},
+    "published": false,
+    "process": "separate_process",
+    "default": false,
+    "backends": [
+      {
+        "id": "torch",
+        "status": "available"
+      }
+    ]
+  },
+  {
+    "id": "torchtune",
+    "name": "torchtune",
+    "license": "BSD-3-Clause",
+    "version": "0.6.1",
+    "methods": [
+      "lora",
+      "qlora",
+      "full",
+      "dpo"
+    ],
+    "hardware": [
+      "apple-silicon",
+      "cuda-linux",
+      "rocm-linux",
+      "xpu-linux"
+    ],
+    "install_state": "not_installed",
+    "limits": {},
+    "published": false,
+    "process": "separate_process",
+    "default": false,
+    "backends": [
+      {
+        "id": "torch",
+        "status": "available"
+      }
+    ],
+    "notes": "torchtune is no longer maintained upstream; 0.6.1 is the last release. Kept for people who already use its recipes."
+  }
+]

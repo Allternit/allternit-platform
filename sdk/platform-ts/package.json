@@ -1,7 +1,7 @@
 {
   "name": "@allternit/platform",
   "version": "0.1.0",
-  "description": "TypeScript SDK for the Allternit Platform API (agents, conversations, numbers, messaging, webhooks, usage).",
+  "description": "TypeScript SDK for the Allternit Platform API (agents, conversations, numbers, messaging, webhooks, usage) and the self-hosted Agents Server.",
   "license": "Apache-2.0",
   "type": "module",
   "main": "./dist/index.js",
@@ -10,6 +10,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./selfhost": {
+      "types": "./dist/selfhost/index.d.ts",
+      "import": "./dist/selfhost/index.js"
     }
   },
   "files": [
@@ -22,6 +26,7 @@
   "scripts": {
     "generate": "python3 ../../scripts/platform-sdk/generate.py",
     "generate:check": "python3 ../../scripts/platform-sdk/generate.py --check",
+    "generate:selfhost": "python3 ../../scripts/platform-sdk/generate.py --spec cmd/allternit-api/openapi/selfhost-v1.yaml --out sdk/platform-ts/src/selfhost --out-py sdk/platform-python/allternit_platform/_selfhost_generated.py --client-name SelfHostClient",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --test test/*.test.ts"

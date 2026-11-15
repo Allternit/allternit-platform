@@ -398,12 +398,49 @@ fn start_prompt(summary: &str) -> String {
     )
 }
 
-fn connect_row(source: &str, label: &str, connector: Option<&str>, reason: &str) -> Value {
+fn connect_row(source: &str, connector: &str, can_connect: bool, reason: &str) -> Value {
     json!({
         "source": source,
+        "connector": connector,
         "reason": reason,
-        "action": connector.map(|c| json!({ "kind": "connect", "connector": c, "label": format!("Connect {label}") })),
+        "action": can_connect.then(|| json!({ "kind": "connect", "connector": connector, "label": format!("Connect {source}") })),
     })
+}
+
+/// "Can wait" rows. Tools held from one app share a line instead of taking one line each.
+fn can_wait_rows(wait: &[(Level, Value)]) -> Vec<Value> {
+    let mut rows: Vec<Value> = Vec::new();
+    let mut seen: Vec<&str> = Vec::new();
+    for (l, i) in wait {
+        if i["attentionKind"].as_str() != Some("tool_changed") {
+            rows.push(json!({ "title": clean(i["summary"].as_str().unwrap_or(""), 160), "note": l.as_str(), "id": i["id"] }));
+            continue;
+        }
+        let server_id = i["serverId"].as_str().unwrap_or("");
+        if seen.contains(&server_id) {
+            continue;
+        }
+        seen.push(server_id);
+        let held: Vec<&Value> = wait.iter().map(|(_, w)| w).filter(|w| w["attentionKind"].as_str() == Some("tool_changed") && w["serverId"].as_str().unwrap_or("") == server_id).collect();
+        let connector = (!i["connector"].is_null()).then(|| i["connector"].clone());
+        rows.push(json!({ "title": held_tools_title(&held, connector.as_ref(), server_id), "note": l.as_str(), "id": i["id"], "connector": connector }));
+    }
+    rows
+}
+
+fn held_tools_title(held: &[&Value], connector: Option<&Value>, server_id: &str) -> String {
+    use crate::mcp_server_routes::{server_label, tool_label};
+    let server = server_label(connector, server_id);
+    let names: Vec<String> = held.iter().map(|h| tool_label(h["tool"].as_str().unwrap_or_default())).collect();
+    let reason = |want: &str| held.iter().all(|h| h["change"]["reason"].as_str() == Some(want));
+    if let [one] = names.as_slice() {
+        let did = if reason("new") { format!("added a new tool, {one}") } else { format!("changed its {one} tool") };
+        return format!("{server} {did}. It stays off until you approve it in your inbox.");
+    }
+    let verb = if reason("new") { "added" } else if reason("changed") { "changed" } else { "updated" };
+    let shown = names.iter().take(3).cloned().collect::<Vec<_>>().join(", ");
+    let more = if names.len() > 3 { format!(" and {} more", names.len() - 3) } else { String::new() };
+    format!("{server} {verb} {} tools ({shown}{more}). They stay off until you approve them in your inbox.", names.len())
 }
 
 fn brief_text(b: &Value, bot_name: &str) -> String {
@@ -457,8 +494,8 @@ async fn build_brief(db: &DbHandle, user_id: &str, bot_id: &str, bot: &BotRow, d
         })
         .collect();
     match mail {
-        Source::NotConnected => unchecked.push(connect_row("Gmail", "Gmail", Some(GMAIL), "Not connected, so I didn't look at your mail.")),
-        Source::Failed => unchecked.push(connect_row("Gmail", "Gmail", None, "I couldn't read it just now.")),
+        Source::NotConnected => unchecked.push(connect_row("Gmail", GMAIL, true, "Not connected, so I didn't look at your mail.")),
+        Source::Failed => unchecked.push(connect_row("Gmail", GMAIL, false, "I couldn't read it just now.")),
         Source::Ok(msgs) if !msgs.is_empty() => match triage_mail(db, bot, bot_id, &msgs).await {
             Some(verdicts) => {
                 for (m, (needs_you, reason)) in msgs.iter().zip(verdicts) {
@@ -480,11 +517,11 @@ async fn build_brief(db: &DbHandle, user_id: &str, bot_id: &str, bot: &BotRow, d
     }
     let calendar: Vec<Value> = match cal {
         Source::NotConnected => {
-            unchecked.push(connect_row("Calendar", "Calendar", Some(CALENDAR), "Not connected, so I don't know today's schedule."));
+            unchecked.push(connect_row("Calendar", CALENDAR, true, "Not connected, so I don't know today's schedule."));
             vec![]
         }
         Source::Failed => {
-            unchecked.push(connect_row("Calendar", "Calendar", None, "I couldn't read it just now."));
+            unchecked.push(connect_row("Calendar", CALENDAR, false, "I couldn't read it just now."));
             vec![]
         }
         Source::Ok(ev) => ev
@@ -493,9 +530,7 @@ async fn build_brief(db: &DbHandle, user_id: &str, bot_id: &str, bot: &BotRow, d
             .map(|e| json!({ "start": e.start, "end": e.end, "title": e.title, "allDay": e.all_day }))
             .collect(),
     };
-    for (l, i) in wait.iter().take(MAX_CAN_WAIT) {
-        can_wait.push(json!({ "title": clean(i["summary"].as_str().unwrap_or(""), 160), "note": l.as_str(), "id": i["id"] }));
-    }
+    can_wait.extend(can_wait_rows(&wait));
     can_wait.truncate(MAX_CAN_WAIT);
 
     // The bot's own words: one opening line and a short reason per needs-you row.
@@ -791,6 +826,27 @@ async fn intro_reply(State(state): State<Arc<AppState>>, Extension(user): Extens
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn held_tools_from_one_app_share_a_line() {
+        let held = |tool: &str, server: &str| (Level::Normal, json!({ "attentionKind": "tool_changed", "id": tool, "tool": tool, "serverId": server, "change": { "reason": "changed" }, "summary": "x",
+            "connector": if server == "drive" { json!({ "id": "google-drive", "name": "Google Drive", "url": "https://x" }) } else { Value::Null } }));
+        let wait = vec![
+            held("search_files", "drive"),
+            (Level::Low, json!({ "kind": "memory_import", "summary": "Old memories" })),
+            held("list_recent_files", "drive"),
+            held("get_file_metadata", "drive"),
+            held("create_file", "drive"),
+            held("copy_file", "drive"),
+            held("read", "200f102a-4fc6-45e1-8044-e08de2da7d45"),
+        ];
+        let rows = can_wait_rows(&wait);
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0]["title"], "Google Drive changed 5 tools (Search files, List recent files, Get file metadata and 2 more). They stay off until you approve them in your inbox.");
+        assert_eq!(rows[0]["connector"]["name"], "Google Drive");
+        assert_eq!(rows[2]["title"], "A connected app changed its Read tool. It stays off until you approve it in your inbox.");
+        assert!(rows[2]["connector"].is_null());
+    }
 
     #[test]
     fn local_date_follows_the_offset() {

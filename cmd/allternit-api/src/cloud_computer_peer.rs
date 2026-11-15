@@ -201,7 +201,7 @@ async fn pair(cloud: &str, mesh_node: &Path) -> Result<PairedConfig, PairError> 
     let Some(token) = crate::phone_sync::runtime_bearer() else {
         return Err(PairError::Retry("this computer isn't signed in yet (no runtime device token)".into()));
     };
-    let reply = reqwest::Client::new()
+    let reply = crate::net_client::client()
         .post(format!("{cloud}/api/v1/computers/paired/self"))
         .bearer_auth(token)
         .timeout(Duration::from_secs(30))
@@ -238,7 +238,7 @@ enum Report {
 
 async fn report(config: &PairedConfig, mesh_ip: &str) -> Report {
     let url = format!("{}/api/v1/computers/paired/{}/report", config.cloud_url.trim_end_matches('/'), config.computer_id);
-    let sent = reqwest::Client::new()
+    let sent = crate::net_client::client()
         .post(url)
         .header("x-allternit-computer-secret", &config.secret)
         .json(&serde_json::json!({ "meshIp": mesh_ip, "vncReady": false }))

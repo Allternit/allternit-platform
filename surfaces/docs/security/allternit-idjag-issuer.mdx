@@ -1,0 +1,69 @@
+---
+title: Allternit as an ID-JAG issuer
+description: "The per-org issuer Allternit runs for managed connector sign-in: endpoints, token claims, keys and the runtime's managed auth kind."
+---
+
+Allternit signs **ID-JAGs** (Identity Assertion JWT Authorization Grants, [draft-ietf-oauth-identity-assertion-authz-grant](https://datatracker.ietf.org/doc/draft-ietf-oauth-identity-assertion-authz-grant/)) for members of an org that turned on [managed authorization](/guides/managed-authorization) for a connector. The connector's authorization server (AS) trusts the org's issuer URL and trades the ID-JAG for an access token with the RFC 7523 JWT-bearer grant. This is the MCP extension `io.modelcontextprotocol/enterprise-managed-authorization` (SEP-990).
+
+## Issuer
+
+One issuer per Clerk organization:
+
+```text
+<ALLTERNIT_IDJAG_ISSUER_BASE>/oauth2/org/<clerk_org_id>
+```
+
+The base defaults to `https://api.allternit.com`. Under the issuer:
+
+| Path | What |
+|---|---|
+| `GET /.well-known/oauth-authorization-server` | RFC 8414 metadata: `issuer`, `jwks_uri`, `token_endpoint`, `grant_types_supported` (includes `urn:ietf:params:oauth:grant-type:token-exchange`). |
+| `GET /.well-known/openid-configuration` | The same document. |
+| `GET /jwks.json` | The signing keys. |
+| `POST /token` | RFC 8693 token exchange for Clerk-session callers (web and Desktop): `requested_token_type=urn:ietf:params:oauth:token-type:id-jag`, `audience` = the vendor AS issuer, `resource` = the vendor MCP URL. |
+
+## The ID-JAG
+
+- Header: `typ: oauth-id-jag+jwt`, `alg: ES256`, `kid` = base64url SHA-256 of the public key.
+- Claims: `iss` (the org issuer), `sub` (Clerk user id), `email`, `email_verified: true`, `aud` (the vendor AS issuer), `client_id` (Allternit's client id at that AS), `resource`, `scope`, `jti`, `iat`, `exp` (at most 300 seconds after `iat`).
+- Issued only when the user is a member of the org, a managed config for that org and connector is enabled, the member's role is in its roles, and the user's primary email is verified. Every issuance is logged (`idjag_issuance_log`).
+
+The key is ES256 from `ALLTERNIT_IDJAG_ES256_PEM`. When it is unset every issuer endpoint answers `503 idjag_not_configured`: it fails closed. To rotate, publish the new key in the JWKS next to the old one, switch the signing key, and drop the old key after the longest token lifetime (300 s) has passed.
+
+## Runtime calls (allternit-api to cloud-api)
+
+The user's runtime asks cloud-api with its **device credential** (`Authorization: Bearer <device token>` and `x-allternit-runtime-id`), the same one its `runtime-devices/me/*` calls use. The device token belongs to the user the runtime is paired as; the runtime refuses to ask for anyone else.
+
+| Call | Answer |
+|---|---|
+| `GET /api/v1/managed-auth/configs` | `{ "configs": [ { "org_id", "connector_id", "as_issuer", "token_endpoint", "resource", "scopes" } ] }`, only enabled configs this user may use. No secrets. |
+| `POST /api/v1/managed-auth/id-jag` with `{ "connector_id", "org_id"? }` | `{ "id_jag", "token_endpoint", "client_id", "client_secret"?, "expires_in" }`. |
+
+Errors are `{ "error": { "code", "message" } }` with codes `not_configured`, `not_member`, `role_not_allowed`, `email_unverified`, `idjag_not_configured`. The runtime shows its own plain wording for each.
+
+## The `managed` connector auth kind
+
+In `cmd/allternit-api/src/connector_routes.rs` and `managed_auth.rs`:
+
+1. `POST /api/v1/connectors/:id/connect` with no `via` checks the user's configs (cached one minute). An enabled config for that connector wins over the connector's own sign-in. `via: "managed"` asks for it explicitly; any other `via` (for example `"oauth2"`) skips it.
+2. The runtime gets an ID-JAG, then posts `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer&assertion=<ID-JAG>` (plus `scope`) to the vendor `token_endpoint`, with `client_secret_basic` client auth, or `client_id` in the body for a public client. The token endpoint must be HTTPS. A response without `expires_in` is treated as one hour so it still renews.
+3. The token set is stored sealed in two places, written together: a `connector_connections` row (`auth_type = 'managed'`, account key `managed:<org id>`, made the default account) and an `mcp_connectors` + `mcp_oauth_sessions` pair for the vendor's MCP server (`resource`), which is what chat turns and the [MCP edge](/guides/connectors-in-other-apps) serve. The client secret is not stored on the runtime; each renewal fetches it again with the new ID-JAG.
+4. Expiry (60 s early) or a `401` from the connector gets a new ID-JAG and a new grant, with no UI. A refresh token, if the AS returns one, is kept but renewal always re-grants.
+5. A refusal answers `409` with `{ "error": "managed_auth_failed", "code", "message", "fallback": { "via": "oauth2", "label": "Connect with sign-in instead" } }`. `fallback` is there only when the connector has a normal sign-in. The runtime never falls back by itself.
+
+`POST /connectors/:id/refresh` re-grants a managed connection. `DELETE /connectors/:id/disconnect` removes the managed rows and the MCP connector the grant created. A managed connection on a connector served by the open-connector service runs through its MCP server; its REST `execute` answers `409 managed_use_mcp`.
+
+### Directory hints
+
+`assets/connectors.meta.json` may carry `"managed": { "as_issuer", "token_endpoint", "resource" }` on a connector, which the listing passes on as `managed` to prefill the admin form. Only add it with a link to the vendor's docs confirming that its AS accepts outside ID-JAG issuers. None is marked today. The meta file only lists the connectors served in-process, so a hint for an open-connector-served connector belongs in the admin form ("Custom MCP server") instead.
+
+### Local endpoints
+
+| Route | For |
+|---|---|
+| `GET /api/v1/managed-auth/configs` | Settings: which connectors sign in through the org. Unpaired or another account: `{ "configs": [], "reason" }`. |
+| `POST /api/v1/managed-auth/id-jag` with `{ "server_url" }` or `{ "connector_id" }` | gizzi's `allternit` IdP mode. Returns the ID-JAG, `token_endpoint`, `client_id`, `client_secret`, `as_issuer`, `resource`, `scopes` with `Cache-Control: no-store`. `404` = not managed; `503` = can't tell right now (not paired, cloud down). |
+
+## gizzi
+
+gizzi's IdP mode **allternit** (`cmd/gizzi-code/src/runtime/services/mcp/xaaAllternit.ts`) is on whenever gizzi is signed in to Allternit (`ALLTERNIT_API_URL` and a token). Connecting to an MCP server, gizzi asks the local allternit-api for an ID-JAG for that server URL and runs the JWT-bearer step itself, so no browser opens. `404` or `503` means the normal OAuth flow runs; any other failure is an error, never a quiet switch to the consent flow. `GIZZI_DISABLE_ALLTERNIT_XAA=1` turns the mode off. `GIZZI_ENABLE_XAA` still gates only the generic external-IdP mode (`oauth.xaa`).

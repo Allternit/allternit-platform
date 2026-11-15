@@ -33,7 +33,7 @@ export function TranscriptSharePrompt({
   useDebouncedDigitInput(t2);
   const t3 = <Box><Text color="ansi:cyan">{BLACK_CIRCLE} </Text><Text bold={true}>Can the Gizzi team look at your session transcript to help us improve Gizzi Code?</Text></Box>;
 
-  const t4 = <Box marginLeft={2}><Text dimColor={true}>Learn more: https://docs.gizziio.com/data-usage#session-quality-surveys</Text></Box>;
+  const t4 = <Box marginLeft={2}><Text dimColor={true}>Learn more: https://docs.allternit.com/security/overview#data-protection</Text></Box>;
 
   const t5 = <Box width={10}><Text><Text color="ansi:cyan">1</Text>: Yes</Text></Box>;
 

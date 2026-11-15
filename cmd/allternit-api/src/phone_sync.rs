@@ -98,7 +98,7 @@ pub struct HttpSource;
 impl NumberSource for HttpSource {
     async fn list(&self, cloud_url: &str, bearer: &str) -> Result<(u16, Value), String> {
         let url = format!("{cloud_url}/api/v1/runtime-devices/me/phone-numbers");
-        let resp = reqwest::Client::new().get(&url).bearer_auth(bearer).timeout(Duration::from_secs(15)).send().await.map_err(|e| e.to_string())?;
+        let resp = crate::net_client::client().get(&url).bearer_auth(bearer).timeout(Duration::from_secs(15)).send().await.map_err(|e| e.to_string())?;
         let status = resp.status().as_u16();
         Ok((status, resp.json::<Value>().await.unwrap_or(Value::Null)))
     }

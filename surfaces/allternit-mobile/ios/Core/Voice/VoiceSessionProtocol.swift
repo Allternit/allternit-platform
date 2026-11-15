@@ -10,7 +10,10 @@ import Foundation
 /// Where a session's engine runs (`session.ready.engine`).
 enum VoiceEngineKind: String, Sendable, Equatable {
     case device
-    case cloud
+    /// The user's own OpenAI account (`ByokVoiceTransport`).
+    case openai
+    /// The user's own ElevenLabs account reads replies; listening on this phone.
+    case elevenlabs
 }
 
 /// A server → client event. Unknown event types and fields are ignored per
@@ -53,7 +56,7 @@ enum VoiceServerEvent: Sendable, Equatable {
         switch type {
         case "session.ready":
             guard let sessionId = string("sessionId") else { return nil }
-            let engine = string("engine").flatMap(VoiceEngineKind.init(rawValue:)) ?? .cloud
+            let engine = string("engine").flatMap(VoiceEngineKind.init(rawValue:)) ?? .device
             return .ready(Ready(
                 sessionId: sessionId,
                 engine: engine,

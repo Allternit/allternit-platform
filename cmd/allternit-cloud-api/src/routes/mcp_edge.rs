@@ -8,11 +8,18 @@
 //!   `aud` = `<MCP_PUBLIC_URL>/bots/<id>`).
 //! * `POST /mcp/server` and `POST /mcp` — the read-only agents server (scope
 //!   `agents:read`, `aud` = `MCP_PUBLIC_URL`).
-//! * `GET /.well-known/oauth-protected-resource[/mcp/bots/<id>]` — RFC 9728
-//!   metadata, naming Clerk as the authorization server.
+//! * `POST /mcp/connectors` — the connector gateway: every connector the user
+//!   connected in Allternit as one MCP server (scope `connectors:use`, `aud` =
+//!   `<MCP_PUBLIC_URL>/connectors`), relayed to `/webhooks/mcp-edge/connectors`.
+//! * `GET /.well-known/oauth-protected-resource[/mcp/bots/<id>|/mcp/connectors]` —
+//!   RFC 9728 metadata, naming Clerk as the authorization server, then the edge
+//!   authorization server (`routes::edge_auth`) when it is configured.
 //!
-//! The Clerk OAuth token is verified here (signature, issuer, expiry, `aud`,
-//! scope). The owner's runtimes are then tried, connected ones first, and the
+//! The OAuth token is verified here (signature, issuer, expiry, `aud`, scope):
+//! a Clerk token, or an edge access token the edge authorization server issued
+//! for a trusted outside issuer's ID-JAG. An edge token's client
+//! (`issuer:<iss>`) is approved by org consent (`edge_auth::org_consent`), not
+//! by a per-user approval; bots never accept one. The owner's runtimes are then tried, connected ones first, and the
 //! call is forwarded **synchronously** over the signed runtime relay
 //! (`x-allternit-runtime-sig`, which also wakes a sleeping computer) to
 //! allternit-api's `/webhooks/mcp-edge/*`, carrying the verified user in
@@ -59,6 +66,7 @@ use crate::ApiState;
 
 pub const BOT_SCOPE: &str = "bots:act";
 pub const AGENTS_SCOPE: &str = "agents:read";
+pub const CONNECTORS_SCOPE: &str = "connectors:use";
 /// The one scope Clerk can issue that we accept (Clerk can't mint `bots:act` / `agents:read`).
 /// A token carrying it is honoured only for a client its owner approved (`mcp_oauth_approvals`).
 pub const CLERK_SCOPE: &str = "profile";
@@ -67,6 +75,7 @@ pub const BUDGET: Duration = Duration::from_secs(25);
 const DEFAULT_ISSUER: &str = "https://allternit.com/__clerk";
 const BOTS_RUNTIME_PATH: &str = "/webhooks/mcp-edge/bots";
 const SERVER_RUNTIME_PATH: &str = "/webhooks/mcp-edge/server";
+const CONNECTORS_RUNTIME_PATH: &str = "/webhooks/mcp-edge/connectors";
 const CLIENT_HEADER: &str = "x-allternit-mcp-client";
 /// How long a bot → runtime answer is trusted before the owner's runtimes are tried afresh.
 const HOLDER_TTL: Duration = Duration::from_secs(600);
@@ -79,6 +88,7 @@ pub fn routes() -> Router<Arc<ApiState>> {
         .route("/", get(home_page))
         .route("/mcp/bots/:vendor_bot_id", get(bot_endpoint).post(bot_endpoint))
         .route("/mcp/server", get(agents_endpoint).post(agents_endpoint))
+        .route("/mcp/connectors", get(connectors_endpoint).post(connectors_endpoint))
         .route("/mcp", get(agents_endpoint).post(agents_endpoint))
         .route("/.well-known/oauth-protected-resource", get(well_known_agents))
         .route("/.well-known/oauth-protected-resource/*rest", get(well_known_at))
@@ -118,6 +128,8 @@ fn resource_metadata_url(resource: &str) -> String {
 enum Target {
     Bot(String),
     Agents,
+    /// The connector gateway (`/mcp/connectors`).
+    Connectors,
 }
 
 impl Target {
@@ -125,6 +137,7 @@ impl Target {
         match self {
             Target::Bot(id) => format!("{base}/bots/{id}"),
             Target::Agents => base.to_string(),
+            Target::Connectors => format!("{base}/connectors"),
         }
     }
     /// `mcp_oauth_approvals.target`.
@@ -132,18 +145,21 @@ impl Target {
         match self {
             Target::Bot(id) => format!("bot:{id}"),
             Target::Agents => "agents".to_string(),
+            Target::Connectors => "connectors".to_string(),
         }
     }
     fn scope(&self) -> &'static str {
         match self {
             Target::Bot(_) => BOT_SCOPE,
             Target::Agents => AGENTS_SCOPE,
+            Target::Connectors => CONNECTORS_SCOPE,
         }
     }
     fn runtime_path(&self) -> String {
         match self {
             Target::Bot(id) => format!("{BOTS_RUNTIME_PATH}/{id}"),
             Target::Agents => SERVER_RUNTIME_PATH.to_string(),
+            Target::Connectors => CONNECTORS_RUNTIME_PATH.to_string(),
         }
     }
 }
@@ -154,13 +170,27 @@ fn bot_id_from_resource_path(rest: &str) -> Option<&str> {
     (!id.is_empty() && !id.contains('/')).then_some(id)
 }
 
+/// The resource a `.well-known` suffix (`mcp/bots/<id>`, `mcp/connectors`, …) describes.
+fn target_from_resource_path(rest: &str) -> Target {
+    if rest.trim_matches('/') == "mcp/connectors" {
+        return Target::Connectors;
+    }
+    bot_id_from_resource_path(rest).map(|id| Target::Bot(id.to_string())).unwrap_or(Target::Agents)
+}
+
 fn metadata(target: &Target, base: &str) -> Value {
+    // Clerk first; then the edge authorization server (trusted outside issuers),
+    // which never issues for a bot.
+    let mut servers = vec![oauth_issuer()];
+    if !matches!(target, Target::Bot(_)) {
+        servers.extend(crate::routes::edge_auth::edge_as_if_configured());
+    }
     json!({
         "resource": target.resource(base),
-        "authorization_servers": [oauth_issuer()],
+        "authorization_servers": servers,
         "scopes_supported": [CLERK_SCOPE],
         "bearer_methods_supported": ["header"],
-        "resource_name": match target { Target::Bot(_) => "Allternit vendor bot", Target::Agents => "Allternit Agents" }
+        "resource_name": match target { Target::Bot(_) => "Allternit vendor bot", Target::Agents => "Allternit Agents", Target::Connectors => "Allternit Connectors" }
     })
 }
 
@@ -215,6 +245,9 @@ struct Caller {
     client: String,
     /// A Clerk-scoped token: only valid once the owner approved `client` for this target.
     needs_approval: bool,
+    /// An edge access token for a trusted outside issuer: `client` is
+    /// `issuer:<iss>`, approved by org consent instead of the owner.
+    via_issuer: bool,
 }
 
 /// The 403 for an unapproved client, with where the owner approves it.
@@ -247,7 +280,7 @@ fn check_claims(claims: &Value, target: &Target, base: &str) -> Result<Caller, R
         let (Some(user_id), Some(client)) = (claims.get("sub").and_then(Value::as_str).filter(|s| !s.is_empty()), ["azp", "client_id", "cid"].iter().find_map(|k| claims[k].as_str()).filter(|c| !c.is_empty())) else {
             return Err(invalid("Token has no subject or client"));
         };
-        return Ok(Caller { user_id: user_id.to_string(), client: client.to_string(), needs_approval: true });
+        return Ok(Caller { user_id: user_id.to_string(), client: client.to_string(), needs_approval: true, via_issuer: false });
     }
     if !claim_has_audience(claims, &resource) {
         return Err(invalid("Invalid audience"));
@@ -258,7 +291,16 @@ fn check_claims(claims: &Value, target: &Target, base: &str) -> Result<Caller, R
     let Some(user_id) = claims.get("sub").and_then(Value::as_str).filter(|s| !s.is_empty()) else {
         return Err(invalid("Token has no subject"));
     };
-    Ok(Caller { user_id: user_id.to_string(), client: client_label(claims), needs_approval: false })
+    // Our own edge token (only `EdgeBackend::verify` can produce these claims):
+    // its client still needs the org's consent on every call.
+    let via_issuer = claims["iss"].as_str() == Some(crate::routes::edge_auth::edge_as_issuer().as_str());
+    Ok(Caller { user_id: user_id.to_string(), client: client_label(claims), needs_approval: via_issuer, via_issuer })
+}
+
+/// The 403 for an outside issuer's member whose org doesn't (or no longer) allow that app here.
+fn org_consent_required(resource: &str, target: &Target, client: &str) -> Response {
+    let msg = "Your organization has not allowed this app for this Allternit server. An org admin can allow it in Allternit: Settings, Connectors, Outside AI apps.";
+    refusal(resource, StatusCode::FORBIDDEN, json!({ "error": "org_consent_required", "client": client, "target": target.approval_target(), "message": msg }), Some(("insufficient_scope", msg)))
 }
 
 // ─── backend seam ─────────────────────────────────────────────────────────────
@@ -282,8 +324,13 @@ pub trait EdgeBackend: Send + Sync {
     async fn runtimes(&self, user_id: &str) -> Result<Vec<String>, String>;
     /// One signed, synchronous call to `path` on the runtime, as `user_id`.
     async fn forward(&self, user_id: &str, runtime_id: &str, path: &str, client: &str, body: &[u8]) -> Result<(u16, Vec<u8>), Unreached>;
-    /// `true` = `user_id` approved OAuth `client` for `target` (`bot:<id>` / `agents`).
+    /// `true` = `user_id` approved OAuth `client` for `target` (`bot:<id>` / `agents` / `connectors`).
     async fn is_approved(&self, user_id: &str, client: &str, target: &str) -> Result<bool, String>;
+    /// `true` = an org `user_id` belongs to trusts the issuer behind `client`
+    /// (`issuer:<iss>`) for `target` (`edge_auth::org_consent`).
+    async fn org_consent(&self, _user_id: &str, _client: &str, _target: &str) -> Result<bool, String> {
+        Ok(false)
+    }
     /// `(owner, key id)` when `token` is a live `allternit-bot` CLI key (`abk_…`) for exactly this vendor bot.
     async fn verify_cli_key(&self, _token: &str, _vendor_bot_id: &str) -> Result<Option<(String, String)>, String> {
         Ok(None)
@@ -297,7 +344,30 @@ pub trait EdgeBackend: Send + Sync {
     async fn verify_project_key(&self, _token: &str) -> Result<Option<crate::routes::platform_v1::PlatformCaller>, String> {
         Ok(None)
     }
+    /// One MCP phone tool for a project key with `phones`, as a `tools/call` result.
+    async fn phone_call(&self, _key: &crate::routes::platform_v1::PlatformCaller, _name: &str, _args: &Value) -> Value {
+        crate::routes::platform_v1::phones::mcp_result(Err(crate::routes::platform_v1::PlatformError::service_unavailable("phones_unavailable", "Phones are not available here.")))
+    }
+    // ─── mail tools (scope `mail`) ───
+    /// Run one `/v1/mailboxes` MCP tool as a project key.
+    async fn mail_tool(&self, _key: &crate::routes::platform_v1::PlatformCaller, _name: &str, _args: &Value) -> Result<Value, String> {
+        Err("Mail tools are not available.".into())
+    }
+    // ─── decide / respond tools (scopes `decisions`, `agents`, `inference`) ───
+    /// Run one `decide` or `respond` tool as a project key.
+    async fn model_tool(&self, _key: &crate::routes::platform_v1::PlatformCaller, _name: &str, _args: &Value) -> Result<Value, String> {
+        Err("The decide and respond tools are not available.".into())
+    }
 }
+
+/// A project key with this scope also gets the phone tools on `/mcp`
+/// (`platform_v1::phones::mcp_tools`), answered here through the same
+/// operations as `/v1/phones`, never relayed to the hosted runtime.
+const PHONES_SCOPE: &str = crate::routes::platform_v1::phones::SCOPE;
+/// Same for the mail tools (`platform_v1::mailboxes::MCP_TOOLS`).
+const MAIL_SCOPE: &str = "mail";
+/// Scope for the `decide` tool; `respond` needs `agents` or `inference`.
+const DECISIONS_SCOPE: &str = "decisions";
 
 /// A Platform API project key on the agents server (spec §4 MCP): the project's
 /// hosted runtime answers, as the project's runtime owner. Needs the `agents`
@@ -308,17 +378,17 @@ fn project_key_caller(target: &Target, resource: &str, key: &crate::routes::plat
     if *target != Target::Agents {
         return Err(refuse(StatusCode::FORBIDDEN, "insufficient_scope", "A project API key opens the agents server (/mcp) only."));
     }
-    if !key.has_scope("agents") {
-        return Err(refuse(StatusCode::FORBIDDEN, "insufficient_scope", "This API key lacks the 'agents' scope."));
+    if !key.has_scope("agents") && !key.has_scope(PHONES_SCOPE) && !key.has_scope(MAIL_SCOPE) && !key.has_scope(DECISIONS_SCOPE) && !key.has_scope("inference") {
+        return Err(refuse(StatusCode::FORBIDDEN, "insufficient_scope", "This API key lacks the 'agents' (or 'phones', 'mail', 'decisions' or 'inference') scope."));
     }
     if key.account_id.is_some() {
         return Err(refuse(
             StatusCode::FORBIDDEN,
             "account_bound_key",
-            "This API key is bound to one account; the MCP agents server needs a project-wide key with the 'agents' scope.",
+            "This API key is bound to one account; the MCP agents server needs a project-wide key with the 'agents', 'phones', 'mail', 'decisions' or 'inference' scope.",
         ));
     }
-    Ok(Caller { user_id: crate::routes::platform_v1::hosting::runtime_owner(&key.project_id), client: format!("platform-key:{}", key.key_id), needs_approval: false })
+    Ok(Caller { user_id: crate::routes::platform_v1::hosting::runtime_owner(&key.project_id), client: format!("platform-key:{}", key.key_id), needs_approval: false, via_issuer: false })
 }
 
 /// Which of the owner's runtimes answered for a bot last time.
@@ -364,7 +434,13 @@ enum Outcome {
     /// Every reachable runtime said it doesn't hold the bot.
     NotFound,
     Unreachable,
+    /// The runtime has no connector gateway route yet (Allternit before
+    /// managed connector auth): it answered the relay with 404/405.
+    RuntimeTooOld,
 }
+
+/// Said to the outside app when the owner's Allternit predates the gateway.
+const RUNTIME_TOO_OLD_MESSAGE: &str = "Your Allternit app needs an update before other apps can use your connectors. Open Allternit and update it, then try again.";
 
 async fn deliver(backend: &dyn EdgeBackend, target: &Target, caller: &Caller, body: &[u8]) -> Outcome {
     let runtimes = match backend.runtimes(&caller.user_id).await {
@@ -381,8 +457,9 @@ async fn deliver(backend: &dyn EdgeBackend, target: &Target, caller: &Caller, bo
             order.insert(0, known);
         }
     }
-    // The agents server reads whichever computer is best; only a bot has to be found.
-    if matches!(target, Target::Agents) {
+    // The agents server and the connector gateway use whichever computer is
+    // best (connected first); only a bot has to be found.
+    if matches!(target, Target::Agents | Target::Connectors) {
         order.truncate(1);
     }
     if order.is_empty() {
@@ -401,6 +478,9 @@ async fn deliver(backend: &dyn EdgeBackend, target: &Target, caller: &Caller, bo
                     if (200..300).contains(&status) {
                         remember_holder(&caller.user_id, bot, runtime_id);
                     }
+                }
+                if matches!(target, Target::Connectors) && (status == 404 || status == 405) {
+                    return Outcome::RuntimeTooOld;
                 }
                 return Outcome::Answer(status, reply);
             }
@@ -422,10 +502,19 @@ async fn serve(backend: &dyn EdgeBackend, base: &str, target: Target, method: &M
     let Some(token) = headers.get(header::AUTHORIZATION).and_then(|v| v.to_str().ok()).and_then(|v| v.strip_prefix("Bearer ")).map(str::trim).filter(|t| !t.is_empty()) else {
         return refusal(&resource, StatusCode::UNAUTHORIZED, json!({ "error": "unauthorized" }), None);
     };
+    // A project key with `phones` also gets the phone tools (answered here).
+    let mut phone_key: Option<crate::routes::platform_v1::PlatformCaller> = None;
+    let mut mail_key: Option<crate::routes::platform_v1::PlatformCaller> = None;
+    let mut model_key: Option<crate::routes::platform_v1::PlatformCaller> = None;
     let caller = if crate::routes::platform_v1::caller::is_project_key_token(token) {
         match backend.verify_project_key(token).await {
             Ok(Some(key)) => match project_key_caller(&target, &resource, &key) {
-                Ok(c) => c,
+                Ok(c) => {
+                    mail_key = key.has_scope(MAIL_SCOPE).then(|| key.clone());
+                    model_key = (!model_tools_for(&key).is_empty()).then(|| key.clone());
+                    phone_key = key.has_scope(PHONES_SCOPE).then_some(key);
+                    c
+                }
                 Err(resp) => return resp,
             },
             Ok(None) => return refusal(&resource, StatusCode::UNAUTHORIZED, json!({ "error": "invalid_token", "message": "Invalid or revoked API key" }), Some(("invalid_token", "The key is invalid"))),
@@ -439,7 +528,7 @@ async fn serve(backend: &dyn EdgeBackend, base: &str, target: Target, method: &M
         let invalid = |msg: &str| refusal(&resource, StatusCode::UNAUTHORIZED, json!({ "error": "invalid_token", "message": msg }), Some(("invalid_token", "The key is invalid")));
         let Target::Bot(bot) = &target else { return invalid("This key opens one vendor bot only") };
         match backend.verify_cli_key(token, bot).await {
-            Ok(Some((user_id, key_id))) => Caller { user_id, client: format!("cli-key:{key_id}"), needs_approval: false },
+            Ok(Some((user_id, key_id))) => Caller { user_id, client: format!("cli-key:{key_id}"), needs_approval: false, via_issuer: false },
             Ok(None) => return invalid("Invalid or revoked key"),
             Err(error) => {
                 tracing::warn!("mcp edge: cli key lookup failed: {error}");
@@ -457,8 +546,14 @@ async fn serve(backend: &dyn EdgeBackend, base: &str, target: Target, method: &M
         }
     };
     if caller.needs_approval {
-        match backend.is_approved(&caller.user_id, &caller.client, &target.approval_target()).await {
+        let approved = if caller.via_issuer {
+            backend.org_consent(&caller.user_id, &caller.client, &target.approval_target()).await
+        } else {
+            backend.is_approved(&caller.user_id, &caller.client, &target.approval_target()).await
+        };
+        match approved {
             Ok(true) => {}
+            Ok(false) if caller.via_issuer => return org_consent_required(&resource, &target, &caller.client),
             Ok(false) => return approval_required(&resource, &target, &caller.client),
             Err(error) => {
                 tracing::warn!("mcp edge: approval lookup failed: {error}");
@@ -491,6 +586,10 @@ async fn serve(backend: &dyn EdgeBackend, base: &str, target: Target, method: &M
         }
     }
     // MCP Events: the edge owns subscriptions; nothing goes to the runtime.
+    // The connector gateway has no events (yet): its spec doesn't advertise them.
+    if rpc_method.starts_with("events/") && target == Target::Connectors {
+        return rpc_reply(&era, mcp_protocol::rpc_err(&id, mcp_protocol::codes::METHOD_NOT_FOUND, "Events are not available on the connector gateway"));
+    }
     if rpc_method.starts_with("events/") {
         if let Some(reply) = mcp_protocol::preflight(&spec, &era, &id, rpc_method) {
             return rpc_reply(&era, reply);
@@ -503,15 +602,57 @@ async fn serve(backend: &dyn EdgeBackend, base: &str, target: Target, method: &M
         return rpc_reply(&era, mcp_protocol::finish(&spec, &era, rpc_method, reply));
     }
 
+    // Phone and mail tools are answered here for a project key, never relayed.
+    let edge_key = phone_key.as_ref().or(mail_key.as_ref()).or(model_key.as_ref());
+    if let Some(key) = edge_key {
+        let tool = request["params"]["name"].as_str().unwrap_or_default();
+        if rpc_method == "tools/call" {
+            if let Some(pk) = phone_key.as_ref().filter(|_| crate::routes::platform_v1::phones::is_mcp_tool(tool)) {
+                let result = backend.phone_call(pk, tool, &request["params"]["arguments"]).await;
+                return rpc_reply(&era, mcp_protocol::finish(&spec, &era, rpc_method, mcp_protocol::rpc_ok(&id, result)));
+            }
+            if let Some(dk) = model_key.as_ref().filter(|_| MODEL_TOOLS.contains(&tool)) {
+                let result = mail_tool_result(model_tool_call(backend, dk, tool, &request["params"]["arguments"]).await);
+                return rpc_reply(&era, mcp_protocol::finish(&spec, &era, rpc_method, mcp_protocol::rpc_ok(&id, result)));
+            }
+            if let Some(mk) = mail_key.as_ref().filter(|_| crate::routes::platform_v1::mailboxes::MCP_TOOLS.contains(&tool)) {
+                let result = mail_tool_result(backend.mail_tool(mk, tool, &request["params"]["arguments"]).await);
+                return rpc_reply(&era, mcp_protocol::finish(&spec, &era, rpc_method, mcp_protocol::rpc_ok(&id, result)));
+            }
+        }
+        // A key without `agents` never reaches the hosted runtime: the edge is its whole server.
+        if !key.has_scope("agents") {
+            if let Some(reply) = mcp_protocol::preflight(&spec, &era, &id, rpc_method) {
+                if reply.is_null() {
+                    return StatusCode::ACCEPTED.into_response();
+                }
+                return rpc_reply(&era, reply);
+            }
+            let reply = match rpc_method {
+                "tools/list" => mcp_protocol::rpc_ok(&id, json!({ "tools": edge_tools(phone_key.is_some(), mail_key.is_some(), model_key.as_ref()) })),
+                "tools/call" => mcp_protocol::rpc_err(&id, mcp_protocol::codes::INVALID_PARAMS, format!("Unknown tool: {tool}")),
+                _ => mcp_protocol::rpc_err(&id, mcp_protocol::codes::METHOD_NOT_FOUND, format!("Method not found: {rpc_method}")),
+            };
+            return rpc_reply(&era, mcp_protocol::finish(&spec, &era, rpc_method, reply));
+        }
+    }
+
     let outcome = match tokio::time::timeout(BUDGET, deliver(backend, &target, &caller, &body)).await {
         Ok(o) => o,
         Err(_) => Outcome::Unreachable,
     };
     match outcome {
         Outcome::Unreachable => rpc_error(id, OFFLINE_MESSAGE),
+        Outcome::RuntimeTooOld => rpc_error(id, RUNTIME_TOO_OLD_MESSAGE),
         Outcome::NotFound => (StatusCode::NOT_FOUND, Json(json!({ "error": "not_found" }))).into_response(),
         Outcome::Answer(status, reply) => {
-            let reply = if rpc_method == "initialize" && status == 200 { advertise_events(reply) } else { reply };
+            let reply = if rpc_method == "initialize" && status == 200 && target != Target::Connectors { advertise_events(reply) } else { reply };
+            let reply = if rpc_method == "tools/list" && status == 200 && phone_key.is_some() { with_phone_tools(reply) } else { reply };
+            let reply = if rpc_method == "tools/list" && status == 200 && mail_key.is_some() { with_mail_tools(reply) } else { reply };
+            let reply = match model_key.as_ref().filter(|_| rpc_method == "tools/list" && status == 200) {
+                Some(k) => with_model_tools(reply, k),
+                None => reply,
+            };
             let status = StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY);
             let mut resp = Response::new(axum::body::Body::from(reply));
             *resp.status_mut() = status;
@@ -530,8 +671,30 @@ fn edge_spec(target: &Target) -> mcp_protocol::ServerSpec {
     let spec = match target {
         Target::Bot(_) => mcp_protocol::servers::vendor_bot(env!("CARGO_PKG_VERSION")),
         Target::Agents => mcp_protocol::servers::agents(env!("CARGO_PKG_VERSION")),
+        Target::Connectors => return connectors_spec(),
     };
     mcp_protocol::servers::with_events(spec)
+}
+
+/// The connector gateway: tools only, no events.
+fn connectors_spec() -> mcp_protocol::ServerSpec {
+    mcp_protocol::ServerSpec {
+        name: "allternit-connectors",
+        version: env!("CARGO_PKG_VERSION"),
+        capabilities: json!({ "tools": { "listChanged": false } }),
+        instructions: Some(
+            "Tools from the connectors this user connected in Allternit, named <connector>__<tool>. A tool that needs \
+confirmation in Allternit is refused here with the setting that allows it; tell the user in the refusal's words.",
+        ),
+    }
+}
+
+/// A relayed `tools/list` answer, plus the phone tools (key with `phones`).
+fn with_phone_tools(reply: Vec<u8>) -> Vec<u8> {
+    let Ok(mut v) = serde_json::from_slice::<Value>(&reply) else { return reply };
+    let Some(tools) = v.pointer_mut("/result/tools").and_then(Value::as_array_mut) else { return reply };
+    tools.extend(crate::routes::platform_v1::phones::mcp_tools());
+    serde_json::to_vec(&v).unwrap_or(reply)
 }
 
 /// A relayed `initialize` answer comes from the runtime, which doesn't know
@@ -546,6 +709,110 @@ fn advertise_events(reply: Vec<u8>) -> Vec<u8> {
         None => reply,
     }
 }
+
+// ─── mail tools (scope `mail`) ─── BEGIN
+// `/v1/mailboxes` as MCP tools for Platform API project keys on `/mcp`. A key
+// with `agents` gets them next to the runtime's tools; a key with `mail` but
+// not `agents` gets only these (initialize, tools/list, tools/call, ping are
+// answered here and nothing reaches a runtime).
+
+fn mail_tool_result(out: Result<Value, String>) -> Value {
+    match out {
+        Ok(v) => json!({ "content": [{ "type": "text", "text": v.to_string() }], "structuredContent": v, "isError": false }),
+        Err(msg) => json!({ "content": [{ "type": "text", "text": msg }], "isError": true }),
+    }
+}
+
+/// The tools a project key without `agents` sees: phone and/or mail tools.
+fn edge_tools(phones: bool, mail: bool, model: Option<&crate::routes::platform_v1::PlatformCaller>) -> Vec<Value> {
+    let mut tools: Vec<Value> = Vec::new();
+    if phones {
+        tools.extend(crate::routes::platform_v1::phones::mcp_tools());
+    }
+    if mail {
+        tools.extend(crate::routes::platform_v1::mailboxes::mcp_tool_defs());
+    }
+    if let Some(k) = model {
+        tools.extend(model_tools_for(k));
+    }
+    tools
+}
+
+/// A relayed `tools/list` answer plus the mail tools.
+fn with_mail_tools(reply: Vec<u8>) -> Vec<u8> {
+    let Ok(mut v) = serde_json::from_slice::<Value>(&reply) else { return reply };
+    match v.pointer_mut("/result/tools").and_then(Value::as_array_mut) {
+        Some(tools) => {
+            tools.extend(crate::routes::platform_v1::mailboxes::mcp_tool_defs());
+            serde_json::to_vec(&v).unwrap_or(reply)
+        }
+        None => reply,
+    }
+}
+// ─── mail tools (scope `mail`) ─── END
+
+// ─── decide / respond tools ─── BEGIN
+// `POST /v1/decisions` and `POST /v1/responses` as MCP tools, answered in
+// process through the same handler logic (no HTTP hop). `decide` needs the
+// `decisions` scope; `respond` needs `agents` or `inference`.
+const MODEL_TOOLS: [&str; 2] = ["decide", "respond"];
+
+/// The decide / respond tool definitions this key may see.
+fn model_tools_for(key: &crate::routes::platform_v1::PlatformCaller) -> Vec<Value> {
+    let mut tools = Vec::new();
+    if key.has_scope(DECISIONS_SCOPE) {
+        tools.push(json!({
+            "name": "decide",
+            "description": "Answer typed questions about some input: yes/no probabilities, a choice among options, or a score. Returns one answer per question.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "input": { "description": "Text, or a list of input items, the questions are about." },
+                    "questions": { "type": "array", "description": "1 to 16 questions, each { name, type: predicate|choice|score, instructions, choices?, levels? }.", "items": { "type": "object" } }
+                },
+                "required": ["input", "questions"]
+            }
+        }));
+    }
+    if key.has_scope("agents") || key.has_scope("inference") {
+        tools.push(json!({
+            "name": "respond",
+            "description": "Get one model or agent response. Give model or agent, not both. Pass previous_response_id to continue a stored response.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "model": { "type": "string", "description": "A model id; needs the inference scope." },
+                    "agent": { "type": "string", "description": "An agent id; needs the agents scope." },
+                    "input": { "description": "Text, or a list of input items." },
+                    "previous_response_id": { "type": "string" }
+                },
+                "required": ["input"]
+            }
+        }));
+    }
+    tools
+}
+
+/// Run `decide` or `respond`, enforcing the scope the tool needs.
+async fn model_tool_call(backend: &dyn EdgeBackend, key: &crate::routes::platform_v1::PlatformCaller, tool: &str, args: &Value) -> Result<Value, String> {
+    if !model_tools_for(key).iter().any(|t| t["name"] == tool) {
+        return Err(format!("insufficient_scope: this API key cannot call {tool}."));
+    }
+    backend.model_tool(key, tool, args).await
+}
+
+/// A relayed `tools/list` answer plus the decide / respond tools.
+fn with_model_tools(reply: Vec<u8>, key: &crate::routes::platform_v1::PlatformCaller) -> Vec<u8> {
+    let Ok(mut v) = serde_json::from_slice::<Value>(&reply) else { return reply };
+    match v.pointer_mut("/result/tools").and_then(Value::as_array_mut) {
+        Some(tools) => {
+            tools.extend(model_tools_for(key));
+            serde_json::to_vec(&v).unwrap_or(reply)
+        }
+        None => reply,
+    }
+}
+// ─── decide / respond tools ─── END
 
 // ─── human page ───────────────────────────────────────────────────────────────
 
@@ -589,8 +856,9 @@ th{{color:var(--muted);font-weight:600}}ol{{padding-left:20px}}
 
 <h2>Servers</h2>
 <table><thead><tr><th scope="col">URL</th><th scope="col">What it is</th></tr></thead><tbody>
-<tr><td><code>{base}</code></td><td>Agents server: read your agents and their runs. OAuth scope <code>agents:read</code>.</td></tr>
+<tr><td><code>{base}</code></td><td>Agents server: read your agents and their runs. OAuth scope <code>agents:read</code>. A Platform API key with the <code>phones</code> scope adds the phone tools.</td></tr>
 <tr><td><code>{base}/bots/&lt;bot id&gt;</code></td><td>Vendor bot connector: act through one bot. OAuth scope <code>bots:act</code>.</td></tr>
+<tr><td><code>{base}/connectors</code></td><td>Connector gateway: the connectors you connected in Allternit, as one server. OAuth scope <code>connectors:use</code>.</td></tr>
 </tbody></table>
 <p>Protocol versions: {versions}. Streamable HTTP, <code>POST</code> JSON-RPC. Modern clients can call <code>server/discover</code>.</p>
 
@@ -659,6 +927,11 @@ async fn agents_endpoint(State(state): State<Arc<ApiState>>, method: Method, hea
     serve(&ProdBackend::new(&state), &base, Target::Agents, &method, &headers, body).await
 }
 
+async fn connectors_endpoint(State(state): State<Arc<ApiState>>, method: Method, headers: HeaderMap, body: Bytes) -> Response {
+    let Some(base) = public_mcp_url() else { return not_configured() };
+    serve(&ProdBackend::new(&state), &base, Target::Connectors, &method, &headers, body).await
+}
+
 async fn well_known_agents() -> Response {
     match public_mcp_url() {
         Some(base) => Json(metadata(&Target::Agents, &base)).into_response(),
@@ -666,23 +939,23 @@ async fn well_known_agents() -> Response {
     }
 }
 
-/// `…/oauth-protected-resource/mcp/bots/<id>` describes that connector; every
-/// other suffix describes the agents server. Nothing says whether the bot exists.
+/// `…/oauth-protected-resource/mcp/bots/<id>` describes that connector,
+/// `…/mcp/connectors` the connector gateway; every other suffix describes the
+/// agents server. Nothing says whether the bot exists.
 async fn well_known_at(Path(rest): Path<String>) -> Response {
     let Some(base) = public_mcp_url() else { return not_configured() };
-    let target = bot_id_from_resource_path(&rest).map(|id| Target::Bot(id.to_string())).unwrap_or(Target::Agents);
-    Json(metadata(&target, &base)).into_response()
+    Json(metadata(&target_from_resource_path(&rest), &base)).into_response()
 }
 
 // ─── production backend ───────────────────────────────────────────────────────
 
 struct ProdBackend<'a> {
-    state: &'a ApiState,
+    state: &'a Arc<ApiState>,
     events: crate::routes::mcp_events::PgEventsStore<'a>,
 }
 
 impl<'a> ProdBackend<'a> {
-    fn new(state: &'a ApiState) -> Self {
+    fn new(state: &'a Arc<ApiState>) -> Self {
         Self { state, events: crate::routes::mcp_events::PgEventsStore { db: &state.db } }
     }
 }
@@ -708,11 +981,41 @@ impl EdgeBackend for ProdBackend<'_> {
         }
     }
 
+    async fn phone_call(&self, key: &crate::routes::platform_v1::PlatformCaller, name: &str, args: &Value) -> Value {
+        use crate::routes::platform_v1::phones;
+        let host = phones::ProdPhoneHost(self.state.clone());
+        phones::mcp_result(phones::mcp_call(&self.state.db, &host, key, name, args).await)
+    }
+    // ─── mail tools (scope `mail`) ───
+    async fn mail_tool(&self, key: &crate::routes::platform_v1::PlatformCaller, name: &str, args: &Value) -> Result<Value, String> {
+        use crate::routes::platform_v1::mailboxes;
+        mailboxes::mcp_call(self.state, key, &mailboxes::ProdMailHost, name, args).await.map_err(|e| format!("{}: {}", e.code, e.message))
+    }
+
+    // ─── decide / respond tools ───
+    async fn model_tool(&self, key: &crate::routes::platform_v1::PlatformCaller, name: &str, args: &Value) -> Result<Value, String> {
+        use crate::routes::platform_v1 as p;
+        // Lanes 1 and 2 expose these two functions.
+        let out = match name {
+            "decide" => p::decisions::decide_for_mcp(self.state, key, args.clone()).await,
+            _ => p::responses::respond_for_mcp(self.state, key, args.clone()).await,
+        };
+        out.map_err(|e| format!("{}: {}", e.code, e.message))
+    }
+
     async fn is_approved(&self, user_id: &str, client: &str, target: &str) -> Result<bool, String> {
         crate::routes::mcp_oauth_approvals::is_approved(&self.state.db, user_id, client, target).await.map_err(|e| e.to_string())
     }
 
+    async fn org_consent(&self, user_id: &str, client: &str, target: &str) -> Result<bool, String> {
+        crate::routes::edge_auth::org_consent(&self.state.db, user_id, client, target).await
+    }
+
     async fn verify(&self, token: &str) -> Result<Value, String> {
+        // An edge access token is checked against our own key, never sent to Clerk.
+        if let Some(result) = crate::routes::edge_auth::verify_access_token(token) {
+            return result;
+        }
         crate::auth::clerk::verified_claims(token).await.map_err(|e| e.to_string())
     }
 
@@ -790,13 +1093,15 @@ mod tests {
         cli_keys: HashMap<String, (String, String, String)>,
         /// (owner, client, target) the owner approved.
         approvals: Vec<(String, String, String)>,
+        /// (user, client, target) an org of the user consented to (trusted issuer).
+        consents: Vec<(String, String, String)>,
         events: crate::routes::mcp_events::testing::MemStore,
         project_keys: HashMap<String, crate::routes::platform_v1::PlatformCaller>,
     }
 
     impl Fake {
         fn new(runtimes: &[&str]) -> Self {
-            Self { tokens: HashMap::new(), runtimes: runtimes.iter().map(|r| r.to_string()).collect(), replies: Mutex::new(HashMap::new()), calls: Mutex::new(vec![]), verified: AtomicUsize::new(0), cli_keys: HashMap::new(), approvals: vec![], events: Default::default(), project_keys: HashMap::new() }
+            Self { tokens: HashMap::new(), runtimes: runtimes.iter().map(|r| r.to_string()).collect(), replies: Mutex::new(HashMap::new()), calls: Mutex::new(vec![]), verified: AtomicUsize::new(0), cli_keys: HashMap::new(), approvals: vec![], consents: vec![], events: Default::default(), project_keys: HashMap::new() }
         }
         fn approved(mut self, user: &str, client: &str, target: &str) -> Self {
             self.approvals.push((user.into(), client.into(), target.into()));
@@ -847,11 +1152,19 @@ mod tests {
         async fn is_approved(&self, user_id: &str, client: &str, target: &str) -> Result<bool, String> {
             Ok(self.approvals.contains(&(user_id.to_string(), client.to_string(), target.to_string())))
         }
+        async fn org_consent(&self, user_id: &str, client: &str, target: &str) -> Result<bool, String> {
+            Ok(self.consents.contains(&(user_id.to_string(), client.to_string(), target.to_string())))
+        }
         async fn verify_cli_key(&self, token: &str, vendor_bot_id: &str) -> Result<Option<(String, String)>, String> {
             Ok(self.cli_keys.get(token).filter(|k| k.0 == vendor_bot_id).map(|k| (k.1.clone(), k.2.clone())))
         }
         async fn verify_project_key(&self, token: &str) -> Result<Option<crate::routes::platform_v1::PlatformCaller>, String> {
             Ok(self.project_keys.get(token).cloned())
+        }
+        async fn phone_call(&self, key: &crate::routes::platform_v1::PlatformCaller, name: &str, args: &Value) -> Value {
+            // Recorded with runtime "edge": answered here, never forwarded.
+            self.calls.lock().unwrap().push((key.owner_user_id.clone(), "edge".into(), format!("phone:{name}"), key.key_id.clone(), args.to_string().into_bytes()));
+            crate::routes::platform_v1::phones::mcp_result(Ok(json!({ "ok": true, "tool": name })))
         }
         async fn runtimes(&self, _user: &str) -> Result<Vec<String>, String> {
             Ok(self.runtimes.clone())
@@ -974,6 +1287,44 @@ mod tests {
         let calls = f.calls.lock().unwrap();
         assert_eq!((calls[0].0.as_str(), calls[0].3.as_str()), ("platform:proj_9", "platform-key:ak_proj_9"));
         assert_eq!(f.verified.load(Ordering::SeqCst), 0, "a project key is never treated as a Clerk token");
+    }
+
+    #[tokio::test]
+    async fn a_phones_key_gets_the_phone_tools_answered_at_the_edge() {
+        let f = Fake::new(&["rt1"]).project_key(PKEY, "proj_9", None, &["phones"]);
+        let (s, _, b) = post(&f, Target::Agents, &bearer(PKEY), LIST).await;
+        let names: Vec<_> = b["result"]["tools"].as_array().unwrap().iter().filter_map(|t| t["name"].as_str()).collect();
+        assert_eq!(s, StatusCode::OK);
+        for want in ["phones_list", "phone_screenshot", "phone_tap", "phone_type", "phone_open_app", "phone_task", "phone_run_status", "phone_skill_run", "phone_history", "phone_live_url"] {
+            assert!(names.contains(&want), "{want} missing from {names:?}");
+        }
+        let call = r#"{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"phone_tap","arguments":{"serial":"R5C","x":10,"y":20}}}"#;
+        let (s, _, b) = post(&f, Target::Agents, &bearer(PKEY), call).await;
+        assert_eq!((s, b["result"]["isError"].as_bool(), b["result"]["structuredContent"]["tool"].as_str()), (StatusCode::OK, Some(false), Some("phone_tap")));
+        let (s, _, b) = post(&f, Target::Agents, &bearer(PKEY), r#"{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"agents_list","arguments":{}}}"#).await;
+        assert_eq!((s, b["error"]["code"].as_i64()), (StatusCode::OK, Some(mcp_protocol::codes::INVALID_PARAMS)));
+        let (_, _, b) = post(&f, Target::Agents, &bearer(PKEY), r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}"#).await;
+        assert!(b["result"]["capabilities"].is_object(), "{b}");
+        let calls = f.calls.lock().unwrap();
+        assert_eq!(calls.len(), 1, "a phones-only key never reaches the hosted runtime");
+        assert_eq!((calls[0].0.as_str(), calls[0].1.as_str(), calls[0].2.as_str()), ("dev", "edge", "phone:phone_tap"), "the owner's phones, as the key");
+        assert_eq!(serde_json::from_slice::<Value>(&calls[0].4).unwrap()["x"], 10);
+    }
+
+    #[tokio::test]
+    async fn an_agents_and_phones_key_gets_the_runtime_tools_plus_the_phone_tools() {
+        let f = Fake::new(&["rt1"])
+            .project_key(PKEY, "proj_9", None, &["agents", "phones"])
+            .reply("rt1", Ok((200, r#"{"jsonrpc":"2.0","id":7,"result":{"tools":[{"name":"agents_list","inputSchema":{"type":"object"}}]}}"#)));
+        let (s, _, b) = post(&f, Target::Agents, &bearer(PKEY), LIST).await;
+        let names: Vec<_> = b["result"]["tools"].as_array().unwrap().iter().filter_map(|t| t["name"].as_str()).collect();
+        assert_eq!(s, StatusCode::OK);
+        assert!(names.contains(&"agents_list") && names.contains(&"phone_task"), "{names:?}");
+        // An agents-only key sees no phone tools.
+        let f = Fake::new(&["rt1"]).project_key(PKEY, "proj_9", None, &["agents"]);
+        let call = r#"{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"phone_tap","arguments":{}}}"#;
+        post(&f, Target::Agents, &bearer(PKEY), call).await;
+        assert_eq!(f.paths(), [("rt1".to_string(), SERVER_RUNTIME_PATH.to_string())], "relayed, not answered as a phone tool");
     }
 
     #[tokio::test]
@@ -1273,6 +1624,86 @@ mod tests {
         assert_eq!(post(&f, bot("b-note"), &bearer("t"), note).await.0, StatusCode::ACCEPTED);
     }
 
+    // ── connector gateway and edge-issued tokens ─────────────────────────────
+
+    const CONNECTORS: &str = "https://mcp.allternit.com/mcp/connectors";
+
+    #[tokio::test]
+    async fn a_runtime_without_the_gateway_route_gets_an_update_message_not_a_bare_405() {
+        // Live test 2026-11-04: a pre-gateway runtime answered the relay 405 and
+        // the outside app saw an empty 405.
+        for old in [404u16, 405] {
+            let f = Fake::new(&["rt1"]).token("conn", claims(CONNECTORS, CONNECTORS_SCOPE, "user_c")).reply("rt1", Ok((old, "")));
+            let (status, _, body) = post(&f, Target::Connectors, &bearer("conn"), LIST).await;
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(body["error"]["message"], RUNTIME_TOO_OLD_MESSAGE);
+        }
+    }
+
+    #[tokio::test]
+    async fn the_connector_gateway_relays_to_the_best_runtime_with_its_own_scope_and_approval() {
+        let f = Fake::new(&["rt-live", "rt-asleep"]).token("conn", claims(CONNECTORS, CONNECTORS_SCOPE, "user_c"));
+        let (status, _, _) = post(&f, Target::Connectors, &bearer("conn"), LIST).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(f.paths(), [("rt-live".to_string(), "/webhooks/mcp-edge/connectors".to_string())]);
+        // A connectors token opens nothing else, and no other token opens the gateway.
+        let f = Fake::new(&["rt1"]).token("conn", claims(CONNECTORS, CONNECTORS_SCOPE, "u")).token("agents", claims(BASE, AGENTS_SCOPE, "u")).token("bot", claims(&format!("{BASE}/bots/b1"), BOT_SCOPE, "u"));
+        assert_eq!(post(&f, Target::Agents, &bearer("conn"), LIST).await.0, StatusCode::UNAUTHORIZED);
+        assert_eq!(post(&f, bot("b1"), &bearer("conn"), LIST).await.0, StatusCode::UNAUTHORIZED);
+        assert_eq!(post(&f, Target::Connectors, &bearer("agents"), LIST).await.0, StatusCode::UNAUTHORIZED);
+        assert_eq!(post(&f, Target::Connectors, &bearer("bot"), LIST).await.0, StatusCode::UNAUTHORIZED);
+        assert!(f.calls.lock().unwrap().is_empty());
+        // A Clerk token needs the owner's approval for `connectors`; an agents approval doesn't carry over.
+        let f = Fake::new(&["rt1"]).token("tok", clerk_claims("user_c", Some("c1"))).approved("user_c", "c1", "agents");
+        assert_eq!(post(&f, Target::Connectors, &bearer("tok"), LIST).await.2["target"], "connectors");
+        let f = Fake::new(&["rt1"]).token("tok", clerk_claims("user_c", Some("c1"))).approved("user_c", "c1", "connectors");
+        assert_eq!(post(&f, Target::Connectors, &bearer("tok"), LIST).await.0, StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn the_connector_gateway_answers_events_itself_as_unavailable_and_relays_nothing() {
+        let f = Fake::new(&["rt1"]).token("conn", claims(CONNECTORS, CONNECTORS_SCOPE, "u"));
+        let (_, _, body) = post(&f, Target::Connectors, &bearer("conn"), r#"{"jsonrpc":"2.0","id":3,"method":"events/list"}"#).await;
+        assert_eq!(body["error"]["code"], mcp_protocol::codes::METHOD_NOT_FOUND);
+        assert!(f.calls.lock().unwrap().is_empty());
+        assert!(edge_spec(&Target::Connectors).capabilities.get("events").is_none());
+    }
+
+    fn edge_claims(aud: &str, scope: &str, sub: &str) -> Value {
+        json!({ "iss": crate::routes::edge_auth::edge_as_issuer(), "sub": sub, "aud": aud, "scope": scope, "client_id": "issuer:https://idp.example" })
+    }
+
+    #[tokio::test]
+    async fn an_edge_issued_token_needs_its_orgs_consent_on_every_call_and_a_personal_approval_does_not_count() {
+        let client = "issuer:https://idp.example";
+        let f = Fake::new(&["rt1"]).token("edge", edge_claims(CONNECTORS, CONNECTORS_SCOPE, "user_e")).approved("user_e", client, "connectors");
+        let (status, headers, body) = post(&f, Target::Connectors, &bearer("edge"), LIST).await;
+        assert_eq!((status, body["error"].as_str()), (StatusCode::FORBIDDEN, Some("org_consent_required")));
+        assert!(headers.contains_key(header::WWW_AUTHENTICATE));
+        assert!(f.calls.lock().unwrap().is_empty());
+
+        let mut f = Fake::new(&["rt1"]).token("edge", edge_claims(CONNECTORS, CONNECTORS_SCOPE, "user_e"));
+        f.consents.push(("user_e".into(), client.into(), "connectors".into()));
+        assert_eq!(post(&f, Target::Connectors, &bearer("edge"), LIST).await.0, StatusCode::OK);
+        assert_eq!(f.calls.lock().unwrap()[0].3, client, "the runtime sees which issuer's app is calling");
+        // Consent for connectors doesn't open the agents server.
+        let mut f = Fake::new(&["rt1"]).token("edge", edge_claims(BASE, AGENTS_SCOPE, "user_e"));
+        f.consents.push(("user_e".into(), client.into(), "connectors".into()));
+        assert_eq!(post(&f, Target::Agents, &bearer("edge"), LIST).await.2["error"], "org_consent_required");
+    }
+
+    #[test]
+    fn the_connector_gateway_has_its_own_metadata_and_bots_never_list_the_edge_authorization_server() {
+        assert_eq!(target_from_resource_path("mcp/connectors"), Target::Connectors);
+        assert_eq!(target_from_resource_path("/mcp/connectors/"), Target::Connectors);
+        assert_eq!(target_from_resource_path("mcp/bots/connectors"), bot("connectors"));
+        let m = metadata(&Target::Connectors, BASE);
+        assert_eq!((m["resource"].as_str(), m["resource_name"].as_str()), (Some(CONNECTORS), Some("Allternit Connectors")));
+        assert_eq!(m["authorization_servers"][0], oauth_issuer(), "Clerk stays first");
+        assert_eq!(metadata(&bot("b1"), BASE)["authorization_servers"].as_array().unwrap().len(), 1);
+        assert_eq!(resource_metadata_url(CONNECTORS), "https://mcp.allternit.com/.well-known/oauth-protected-resource/mcp/connectors");
+    }
+
     // ── well-known and routing ────────────────────────────────────────────────
 
     #[test]
@@ -1357,7 +1788,7 @@ mod tests {
         };
 
         std::env::remove_var("MCP_PUBLIC_URL");
-        for (m, u) in [("POST", "/mcp/bots/b1"), ("POST", "/mcp/server"), ("POST", "/mcp"), ("GET", "/.well-known/oauth-protected-resource"), ("GET", "/.well-known/oauth-protected-resource/mcp/bots/b1")] {
+        for (m, u) in [("POST", "/mcp/bots/b1"), ("POST", "/mcp/server"), ("POST", "/mcp"), ("POST", "/mcp/connectors"), ("GET", "/.well-known/oauth-protected-resource"), ("GET", "/.well-known/oauth-protected-resource/mcp/bots/b1"), ("GET", "/.well-known/oauth-protected-resource/mcp/connectors")] {
             let (status, _, body) = send(m, u).await;
             assert_eq!((status, body["error"].as_str()), (StatusCode::SERVICE_UNAVAILABLE, Some("mcp_edge_not_configured")), "{u}");
         }
@@ -1371,8 +1802,10 @@ mod tests {
         assert_eq!((doc["resource"].as_str(), doc["scopes_supported"][0].as_str()), (Some(BASE), Some("profile")));
         let (_, _, doc) = send("GET", "/.well-known/oauth-protected-resource/mcp/server").await;
         assert_eq!(doc["resource"].as_str(), Some(BASE));
+        let (_, _, doc) = send("GET", "/.well-known/oauth-protected-resource/mcp/connectors").await;
+        assert_eq!(doc["resource"].as_str(), Some("https://mcp.allternit.com/mcp/connectors"));
         // A real route with no token: the OAuth challenge, via the same paths on the mcp host.
-        for u in ["/mcp/bots/b1", "/mcp/server", "/mcp"] {
+        for u in ["/mcp/bots/b1", "/mcp/server", "/mcp", "/mcp/connectors"] {
             let (status, headers, _) = send("POST", u).await;
             assert_eq!(status, StatusCode::UNAUTHORIZED, "{u}");
             assert!(headers[header::WWW_AUTHENTICATE].to_str().unwrap().contains("oauth-protected-resource"), "{u}");

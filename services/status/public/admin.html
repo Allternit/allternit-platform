@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Status admin</title>
+<style>
+:root{--bg:#fff;--fill:#f5f5f5;--line:#e5e5e5;--ink:#141413;--ink2:#52525b;--ok:#1a7f4b;--bad:#b42323;--warn:#8a5a00;color-scheme:light}
+@media (prefers-color-scheme:dark){:root{--bg:#0F0F0F;--fill:#262626;--line:#2f2f2f;--ink:#f4f4f5;--ink2:#b4b4bb;--ok:#4cc98a;--bad:#f28383;--warn:#e8b04a;color-scheme:dark}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 -apple-system,BlinkMacSystemFont,"Inter","Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+main{max-width:720px;margin:0 auto;padding:16px}
+h1{font-size:22px;margin:8px 0 4px}
+h2{font-size:17px;margin:28px 0 8px}
+p.lead{color:var(--ink2);margin:0 0 16px;font-size:14px}
+fieldset{border:1px solid var(--line);border-radius:12px;padding:14px;margin:0 0 14px;background:var(--fill)}
+legend{font-weight:600;padding:0 6px}
+label{display:block;font-size:14px;font-weight:600;margin:10px 0 4px}
+input[type=text],input[type=password],input[type=datetime-local],select,textarea{width:100%;font:inherit;padding:10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);min-height:44px}
+textarea{min-height:88px;resize:vertical}
+.checks{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:4px 12px}
+.checks label{font-weight:400;display:flex;gap:8px;align-items:center;margin:0;min-height:36px}
+button{font:inherit;font-weight:600;padding:10px 16px;min-height:44px;border-radius:8px;border:1px solid var(--ink);background:var(--ink);color:var(--bg);cursor:pointer;margin-top:12px}
+button.secondary{background:transparent;color:var(--ink)}
+button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,summary:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+#msg{min-height:24px;font-size:14px;margin:8px 0}
+#msg.err{color:var(--bad)}#msg.ok{color:var(--ok)}
+.inc{border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin:0 0 10px}
+.inc h3{margin:0;font-size:16px}
+.tags{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0;font-size:13px}
+.tag{border:1px solid var(--line);border-radius:999px;padding:1px 8px;background:var(--fill)}
+.tag.draft{border-color:var(--warn);color:var(--warn)}
+.upd{font-size:14px;color:var(--ink2);margin:4px 0 0}
+details{margin-top:8px}
+summary{cursor:pointer;font-weight:600;font-size:14px;min-height:32px}
+.row{display:flex;gap:10px;flex-wrap:wrap}
+.row>*{flex:1 1 200px}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Status admin</h1>
+  <p class="lead">Open, update and resolve incidents, schedule maintenance, and publish automatic drafts. Every action is logged. Needs JavaScript.</p>
+
+  <fieldset>
+    <legend>Admin token</legend>
+    <label for="token">Token</label>
+    <input id="token" type="password" autocomplete="current-password" spellcheck="false">
+    <div class="row">
+      <button type="button" id="load">Load incidents</button>
+      <button type="button" class="secondary" id="forget">Forget token</button>
+    </div>
+  </fieldset>
+
+  <div id="msg" role="status" aria-live="polite"></div>
+
+  <h2>Incidents</h2>
+  <div id="list"><p class="lead">Enter the token and load.</p></div>
+
+  <h2>Open an incident</h2>
+  <form id="open">
+    <fieldset>
+      <legend>New incident</legend>
+      <label for="o-title">Title</label>
+      <input id="o-title" name="title" type="text" maxlength="200" required>
+      <div class="row">
+        <div><label for="o-impact">Impact</label>
+          <select id="o-impact" name="impact"><option value="degraded">Degraded</option><option value="down">Down</option><option value="maintenance">Maintenance</option></select></div>
+        <div><label for="o-status">Status</label>
+          <select id="o-status" name="status"><option value="investigating">Investigating</option><option value="identified">Identified</option><option value="monitoring">Monitoring</option></select></div>
+      </div>
+      <label id="o-comp-l">Components</label>
+      <div class="checks comps" role="group" aria-labelledby="o-comp-l" data-name="o"></div>
+      <label for="o-body">Message</label>
+      <textarea id="o-body" name="body" maxlength="5000" required></textarea>
+      <button type="submit">Open incident</button>
+    </fieldset>
+  </form>
+
+  <h2>Schedule maintenance</h2>
+  <form id="maint">
+    <fieldset>
+      <legend>Maintenance window (your local time)</legend>
+      <label for="m-title">Title</label>
+      <input id="m-title" name="title" type="text" maxlength="200" required>
+      <div class="row">
+        <div><label for="m-start">Starts</label><input id="m-start" type="datetime-local" required></div>
+        <div><label for="m-end">Ends</label><input id="m-end" type="datetime-local" required></div>
+      </div>
+      <label id="m-comp-l">Components</label>
+      <div class="checks comps" role="group" aria-labelledby="m-comp-l" data-name="m"></div>
+      <label for="m-body">Message</label>
+      <textarea id="m-body" maxlength="5000" required></textarea>
+      <button type="submit">Schedule</button>
+    </fieldset>
+  </form>
+</main>
+<script>
+(function () {
+  "use strict";
+  var $ = function (id) { return document.getElementById(id); };
+  var tokenEl = $("token");
+  try { tokenEl.value = sessionStorage.getItem("status-admin-token") || ""; } catch (e) {}
+  var components = [];
+
+  function say(text, ok) { var m = $("msg"); m.textContent = text; m.className = ok ? "ok" : "err"; }
+  function esc(s) { return String(s).replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
+  function token() { var t = tokenEl.value.trim(); try { sessionStorage.setItem("status-admin-token", t); } catch (e) {} return t; }
+
+  function api(method, path, body) {
+    return fetch(path, {
+      method: method,
+      headers: { "authorization": "Bearer " + token(), "content-type": "application/json" },
+      body: body ? JSON.stringify(body) : undefined
+    }).then(function (r) {
+      return r.json().catch(function () { return {}; }).then(function (j) {
+        if (!r.ok) throw new Error((j && j.error) || ("HTTP " + r.status));
+        return j;
+      });
+    });
+  }
+
+  function checked(name) {
+    return [].slice.call(document.querySelectorAll('input[name="' + name + '-comp"]:checked')).map(function (i) { return i.value; });
+  }
+
+  function renderComps() {
+    document.querySelectorAll(".comps").forEach(function (box) {
+      var n = box.getAttribute("data-name");
+      box.innerHTML = components.map(function (c) {
+        return '<label><input type="checkbox" name="' + n + '-comp" value="' + esc(c.id) + '"> ' + esc(c.name) + "</label>";
+      }).join("");
+    });
+  }
+
+  function load() {
+    return api("GET", "/api/admin/incidents").then(function (j) {
+      var list = j.incidents || [];
+      if (!list.length) { $("list").innerHTML = '<p class="lead">No incidents.</p>'; return; }
+      $("list").innerHTML = list.map(function (i) {
+        var last = i.updates[i.updates.length - 1] || {};
+        var tags = [i.state === "open" ? "Open" : "Resolved", "Impact: " + i.impact, i.kind === "maintenance" ? "Maintenance" : null,
+          i.auto ? "Automatic" : "Edited by hand", i.component_ids.join(", ")].filter(Boolean);
+        return '<article class="inc" aria-label="' + esc(i.title) + '">' +
+          "<h3>" + esc(i.title) + "</h3>" +
+          '<div class="tags">' + (i.draft ? '<span class="tag draft">Draft, not public</span>' : "") +
+          tags.map(function (t) { return '<span class="tag">' + esc(t) + "</span>"; }).join("") + "</div>" +
+          '<p class="upd">' + esc(last.status || "") + ": " + esc(last.body || "") + " (" + esc((last.ts || "").replace("T", " ").slice(0, 16)) + " UTC)</p>" +
+          (i.draft ? '<button type="button" data-publish="' + esc(i.id) + '">Publish</button>' : "") +
+          '<details><summary>Update</summary><form data-patch="' + esc(i.id) + '" data-title="' + esc(i.title) + '" data-status="' + esc(last.status || "") + '">' +
+          '<label for="t-' + esc(i.id) + '">Title</label><input id="t-' + esc(i.id) + '" type="text" maxlength="200" value="' + esc(i.title) + '">' +
+          '<label for="s-' + esc(i.id) + '">Status</label><select id="s-' + esc(i.id) + '">' +
+          ["investigating", "identified", "monitoring", "resolved"].map(function (s) { return '<option value="' + s + '"' + (s === last.status ? " selected" : "") + ">" + s[0].toUpperCase() + s.slice(1) + "</option>"; }).join("") +
+          '</select><label for="b-' + esc(i.id) + '">Message (optional)</label><textarea id="b-' + esc(i.id) + '" maxlength="5000"></textarea>' +
+          '<button type="submit">Save update</button></form></details></article>';
+      }).join("");
+    });
+  }
+
+  function reload(text) { say(text, true); return load(); }
+  function fail(e) { say(e.message || String(e), false); }
+
+  fetch("/api/v1/targets.json").then(function (r) { return r.json(); }).then(function (t) { components = t.components || []; renderComps(); }).catch(function () {});
+
+  $("load").addEventListener("click", function () { load().then(function () { say("Loaded.", true); }, fail); });
+  $("forget").addEventListener("click", function () { tokenEl.value = ""; try { sessionStorage.removeItem("status-admin-token"); } catch (e) {} say("Token removed from this tab.", true); });
+
+  $("list").addEventListener("click", function (e) {
+    var id = e.target && e.target.getAttribute && e.target.getAttribute("data-publish");
+    if (!id) return;
+    api("POST", "/api/admin/incidents/" + encodeURIComponent(id) + "/publish").then(function () { return reload("Published."); }).catch(fail);
+  });
+  $("list").addEventListener("submit", function (e) {
+    var f = e.target, id = f.getAttribute("data-patch");
+    if (!id) return;
+    e.preventDefault();
+    var body = { schema: "allternit.admin.incident.patch/v1" };
+    var title = f.querySelector("input").value.trim(), status = f.querySelector("select").value;
+    var msg = f.querySelector("textarea").value.trim();
+    if (title && title !== f.getAttribute("data-title")) body.title = title;
+    if (status !== f.getAttribute("data-status")) body.status = status;
+    if (msg) { body.body = msg; body.status = status; }
+    if (Object.keys(body).length === 1) return fail(new Error("Nothing changed."));
+    api("PATCH", "/api/admin/incidents/" + encodeURIComponent(id), body).then(function () { return reload("Saved."); }).catch(fail);
+  });
+
+  $("open").addEventListener("submit", function (e) {
+    e.preventDefault();
+    var ids = checked("o");
+    if (!ids.length) return fail(new Error("Pick at least one component."));
+    api("POST", "/api/admin/incidents", {
+      schema: "allternit.admin.incident.create/v1", title: $("o-title").value.trim(), impact: $("o-impact").value,
+      status: $("o-status").value, component_ids: ids, body: $("o-body").value.trim()
+    }).then(function () { e.target.reset(); return reload("Incident opened."); }).catch(fail);
+  });
+
+  $("maint").addEventListener("submit", function (e) {
+    e.preventDefault();
+    var ids = checked("m");
+    if (!ids.length) return fail(new Error("Pick at least one component."));
+    var s = new Date($("m-start").value), en = new Date($("m-end").value);
+    if (isNaN(s) || isNaN(en)) return fail(new Error("Set both times."));
+    api("POST", "/api/admin/maintenance", {
+      schema: "allternit.admin.maintenance.create/v1", title: $("m-title").value.trim(), component_ids: ids,
+      body: $("m-body").value.trim(), starts_at: s.toISOString(), ends_at: en.toISOString()
+    }).then(function () { e.target.reset(); return reload("Maintenance scheduled."); }).catch(fail);
+  });
+})();
+</script>
+</body>
+</html>

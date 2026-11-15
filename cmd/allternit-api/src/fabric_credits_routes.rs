@@ -436,6 +436,7 @@ async fn admin_grant_credits(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
     headers: axum::http::HeaderMap,
+    peer: Option<axum::extract::ConnectInfo<std::net::SocketAddr>>,
     Json(req): Json<GrantRequest>,
 ) -> Result<Json<Value>, ApiError> {
     // Server-to-server path: cloud-api's Stripe webhook authenticates with
@@ -445,7 +446,7 @@ async fn admin_grant_credits(
     // keeps the handler safe even if it is ever mounted without the
     // middleware in front of it.
     if user.user_id == crate::auth::INTERNAL_SERVICE_USER_ID
-        && crate::internal_auth::require_internal_token(&headers, &state).is_ok()
+        && crate::internal_auth::require_internal_token(&headers, peer, &state).is_ok()
     {
         return internal_grant_credits(state, req).await;
     }

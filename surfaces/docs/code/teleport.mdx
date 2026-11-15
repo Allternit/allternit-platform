@@ -1,0 +1,46 @@
+---
+title: 'Teleport'
+description: 'Move a live Code session between your Mac and your cloud computer without losing the conversation.'
+---
+
+**Teleport** moves a running Claude or Codex coding session from one computer to another. The whole conversation comes with it, so the session picks up where it stopped. Use it to hand a long task to your always-on cloud computer before you close the laptop, or to bring a session back to your Mac to look at it.
+
+## What moves
+
+- **The conversation.** The session's own file, byte for byte. Allternit checks its checksum on arrival.
+- **The model and effort.** The session keeps the model and reasoning effort it was using.
+- **The code.** The cloud computer clones your repo at the newest commit your remote already has. Anything beyond that, such as unpushed commits, edits and new untracked files, travels with the session as a patch and an archive, and is applied on top of the clone. If a change does not fit what the cloud already has, the cloud's version stays and the command reports how many conflicts there were. Bringing the session back works the same way in reverse: only what changed in the cloud is applied to your Mac.
+
+Teleport to the cloud stops with a clear message only when the workspace has no reachable git remote to clone from.
+
+## What happens on arrival
+
+The cloud computer installs the conversation, applies your code, and resumes the session with the same model and effort. It sends a short handoff note first, then replays any prompts you had queued, in order. The transfer only counts as done once the resumed session produces its first new output; until then the badge stays Local. If the resume fails, nothing is lost: run the same teleport again to retry the resume.
+
+## Teleport from the app
+
+In a Code session, open the session menu (the title at the top, or the three dots on a phone or in a session row) and choose **Teleport to cloud**. The header badge changes from **Local** to **Cloud** once the session is running there. Choose **Bring back to this Mac** to return it.
+
+On the phone and the m.allternit.com app the same action is in the session menu, and the session bar shows a **Local** or **Cloud** chip. On iPhone, open the session overview, tap the three dots on a Code session, and choose Teleport to cloud.
+
+Teleport needs a Mac running Allternit Desktop (or a phone paired to one) and a connected cloud computer. On plain web with no Mac behind it, the action is hidden.
+
+## Teleport from the terminal
+
+```bash
+gizzi teleport <session> --to cloud
+gizzi teleport <session> --to local --base <commit>
+```
+
+`<session>` is the gizzi session id or the Claude or Codex session id. Add `--harness codex` for a Codex session, `--target` when you have more than one computer connected, and `--model` when the session has no model recorded. When bringing a session back, `--base` is the commit the session left your Mac on, so the cloud changes can be applied as a patch.
+
+The command prints how to resume natively, for example `claude --resume <id>`.
+
+## Safety rules
+
+- Retrying the same move is safe. The same request gives the same result, and a changed conversation is a new transfer.
+- A session that already lives on the destination is refused, so two computers never both own it.
+- Bringing a session back never overwrites a Mac copy that changed after it left. It stops and suggests a fork.
+- Only Claude and Codex sessions can teleport today.
+
+For the HTTP contract, see the Teleports API page.

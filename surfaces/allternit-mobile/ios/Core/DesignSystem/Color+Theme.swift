@@ -32,34 +32,29 @@ extension Color {
 // ramps. Asset-catalog colors (Color("…")) adapt automatically; the static
 // constants below are for code-path fallbacks and non-adaptive contexts.
 struct Theme {
-    // MARK: - Legacy statics (dark values kept for call-sites that haven't
-    // migrated to asset-catalog colors yet).
-    static let bgPrimary = Color(hex: "#1A1612")
-    static let bgSecondary = Color(hex: "#2A211A")
-    static let accentPrimary = Color(hex: "#D97757")
-    static let textPrimary = Color(hex: "#ECECEC")
-    static let textSecondary = Color(hex: "#9B9B9B")
-    static let borderSubtle = Color(hex: "#2C2621")
+    // MARK: - Surfaces and text (m.allternit.com phone tokens, light + graphite
+    // dark; adaptive through the asset catalog). No tan: white + neutral fill.
+    static let bgPrimary = Color("BgPrimary")
+    static let bgSecondary = Color("BgSecondary")
+    static let accentPrimary = Color("AccentPrimary")
+    static let textPrimary = Color("TextPrimary")
+    static let textSecondary = Color("TextSecondary")
+    static let borderSubtle = Color("BorderSubtle")
 
-    // MARK: - Design tokens v2 (theme.css values)
+    /// `--bg-elevated` — cards and sheets.
+    static let bgPanel = Color("BgPanel")
+    /// `--neutral-fill` (opaque) — chips, trays, rows.
+    static let bgTertiary = Color("BgTertiary")
 
-    /// `--bg-secondary` — raised panel surface.
-    static let bgPanel = Color(hex: "#2A211A")
-    /// `--bg-tertiary`.
-    static let bgTertiary = Color(hex: "#362B22")
+    /// Translucent bars and sheets over the page.
+    static let glassBg = Color("BgPrimary").opacity(0.82)
+    static let glassBgThick = Color("BgPrimary").opacity(0.95)
 
-    /// `--glass-bg` — dark: rgba(28, 22, 17, 0.74), light: rgba(253, 248, 243, 0.75).
-    static let glassBg = Color(.sRGB, red: 28 / 255, green: 22 / 255, blue: 17 / 255, opacity: 0.74)
-    /// `--glass-bg-thick` — dark: rgba(33, 26, 20, 0.94), light: rgba(253, 248, 243, 0.95).
-    static let glassBgThick = Color(.sRGB, red: 33 / 255, green: 26 / 255, blue: 20 / 255, opacity: 0.94)
-
-    /// Warm sand border ramp — dark: rgba(212, 176, 140, …).
-    /// `--border-subtle` (.10), `--border-default` (.16), `--border-strong` (.24).
-    static let borderWarmSubtle = Color(.sRGB, red: 212 / 255, green: 176 / 255, blue: 140 / 255, opacity: 0.10)
-    static let borderWarmDefault = Color(.sRGB, red: 212 / 255, green: 176 / 255, blue: 140 / 255, opacity: 0.16)
-    static let borderWarmStrong = Color(.sRGB, red: 212 / 255, green: 176 / 255, blue: 140 / 255, opacity: 0.24)
-    /// `--shadow-glow` — 0 0 20px rgba(212, 176, 140, 0.2).
-    static let shadowGlow = Color(.sRGB, red: 212 / 255, green: 176 / 255, blue: 140 / 255, opacity: 0.2)
+    /// `--polish-hairline` ramp (text at 8% / 11% / 14%).
+    static let borderWarmSubtle = Color("BorderSubtle")
+    static let borderWarmDefault = Color("TextPrimary").opacity(0.11)
+    static let borderWarmStrong = Color("BorderStrong")
+    static let shadowGlow = Color.black.opacity(0.06)
 
     /// Per-mode accents (theme.css `--accent-*`).
     /// These are adaptive via Color("AccentChat") etc.; statics are dark fallbacks.

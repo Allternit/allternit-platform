@@ -629,7 +629,9 @@ async fn distill(State(state): State<Arc<AppState>>, headers: HeaderMap, Json(re
     }
 
     let prompt = build_prompt(&endpoints, &events, &narration, &note);
-    let model = crate::memory_extraction::extraction_model();
+    let Some(model) = crate::memory_extraction::extraction_model() else {
+        return crate::config::no_brain_error().into_response();
+    };
     let reply = crate::usage_ledger::scope(
         crate::usage_ledger::LedgerCtx::surface("teach").tenant(None, Some(&user.user_id)),
         crate::gizzi_completion::complete_ephemeral_structured(&prompt, Some(SYSTEM_PROMPT), Some(&model), &reply_schema()),

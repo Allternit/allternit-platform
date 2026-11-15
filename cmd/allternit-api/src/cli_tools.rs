@@ -418,7 +418,7 @@ pub(crate) fn resolve_binary(binary: &str) -> Option<PathBuf> {
 /// installed or signed in shows up in the model picker.
 pub(crate) async fn reload_gizzi() {
     let url = format!("{}/instance/dispose", crate::agent_session_routes::gizzi_base());
-    if let Err(error) = reqwest::Client::new().post(url).timeout(Duration::from_secs(10)).send().await {
+    if let Err(error) = crate::net_client::client().post(url).timeout(Duration::from_secs(10)).send().await {
         tracing::warn!(%error, "could not reload gizzi after a CLI install or sign-in");
     }
 }
@@ -431,7 +431,7 @@ static CODE_RE: Lazy<regex::Regex> =
 static ANSI_RE: Lazy<regex::Regex> =
     Lazy::new(|| regex::Regex::new(r"\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07]*\x07").unwrap());
 
-fn strip_ansi(text: &str) -> String {
+pub(crate) fn strip_ansi(text: &str) -> String {
     ANSI_RE.replace_all(text, "").into_owned()
 }
 
@@ -484,23 +484,32 @@ fn session(key: &str) -> Option<Shared> {
 
 /// Start (or restart) a CLI's own sign-in for `key`, keeping its output.
 /// Waits up to 3 s for the link so the first response usually carries it.
-pub(crate) async fn start_login(
-    key: &str,
-    binary: &std::path::Path,
-    argv: &[&str],
-    hint: Option<String>,
-) -> Result<Value, String> {
-    start_login_with_env(key, binary, argv, hint, &[]).await
+/// `env` goes on the CLI: an added account's config dir
+/// (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`), so its sign-in lands in that home, or
+/// the catalog's `loginRemoteEnv` (`NO_BROWSER=1`).
+/// Stops a pending login process for `key`, if one is running, and waits
+/// briefly for it to exit (brain runner logout and shutdown).
+pub(crate) async fn stop_login(key: &str) {
+    let Some(session) = LOGINS.lock().unwrap().remove(key) else {
+        return;
+    };
+    if let Some(kill) = session.lock().await.kill.take() {
+        let _ = kill.send(());
+    }
+    for _ in 0..20 {
+        if session.lock().await.exited {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
 }
 
-/// `start_login` with extra env on the CLI: an added account's config dir
-/// (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`), so its sign-in lands in that home.
 pub(crate) async fn start_login_with_env(
     key: &str,
     binary: &std::path::Path,
     argv: &[&str],
     hint: Option<String>,
-    env: &[(&str, &std::path::Path)],
+    env: &[(&str, &std::ffi::OsStr)],
 ) -> Result<Value, String> {
     if let Some(old) = LOGINS.lock().unwrap().remove(key) {
         if let Ok(mut old) = old.try_lock() {

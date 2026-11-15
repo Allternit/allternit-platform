@@ -343,6 +343,21 @@ Deletes the agent and its database row. Best-effort cleanup of related runtime s
 }
 ```
 
+### Copy a bot to another computer
+
+Bots are stored per computer. The apps use these two routes to put a bot on the account's cloud computer before a cloud routine or Always on failover needs it.
+
+```http
+GET /api/v1/agents/:id/package
+PUT /api/v1/agents/:id/package
+```
+
+`GET` returns `{id, agent, files, version}`. `agent` holds the bot's row fields: name, description, type, brain (`provider`, `model`), system prompt, tools, skills, `owns`, avatar, character, tags, modes and `config` (including `botBrain`; not `availability`, since Always on belongs to the home computer). `files` maps workspace paths to text: `SOUL.md`, `USER.md`, `AGENTS.md`, `TOOLS.md`, `HEARTBEAT.md`, `MEMORY.md`, `memory/MEMORY.md`, `GIZZI.md`, the vendor agent file under the bot folder, `SYSTEM_LAW.md` and `.md`/`.json`/`.txt` files in `.allternit/bot/` (1 MB per file, 64 files).
+
+Never in a package: credentials, the identity key, inbound email addresses, phone numbers, channel and connector bindings, and sign-ins. Config keys that name any of these (`secret`, `token`, `password`, `credential`, `api_key`, `phone`, `email`, `channel`, `binding`, `messaging`, `webhook`, `vmOperator`, `session`) are removed. They stay on the home computer.
+
+`PUT` takes the same body and creates or updates the bot with the same `id` for the signed-in user, then writes the files. On update, the receiving computer keeps its own private config keys. Returns `{ok, id, files}`; `409 agent_id_taken` when another account owns that id on this computer.
+
 ## Subagents
 
 Subagents are agents whose `mode` is `subagent` and whose `parent_agent_id` points to an orchestrator or the primary Companion. They are created through the same checklist as any other agent.
@@ -421,7 +436,7 @@ curl -X POST https://api.allternit.com/api/agents/agent_018f3a7c.../subagents \
 POST /api/agents/companion/ensure
 ```
 
-Idempotently ensures the user has a primary "Allternit Companion" agent. If one already exists, the existing agent is returned; otherwise a new orchestrator is created with a runnable local model. If the user's configured default is empty or an unconfigured fallback, the Companion uses `ollama` / `qwen2.5:0.5b` so it runs out of the box.
+Idempotently ensures the user has a primary "Allternit Companion" agent. If one already exists, the existing agent is returned; otherwise a new orchestrator is created on the user's chosen default model. There is no default model: when the user has not chosen one, no Companion is created and the call returns `409 {"error":"no_brain","message":"Pick a brain first."}`.
 
 #### Example response (created)
 
@@ -491,7 +506,7 @@ Returns all agent templates, built-ins first.
 POST /api/agents/from-template
 ```
 
-Creates a live orchestrator and its subagents from a template. The model can be overridden with `brain`; otherwise the user's default model is used, falling back to a local Ollama model.
+Creates a live orchestrator and its subagents from a template. The model can be set with `brain`; otherwise the user's chosen default model is used. With neither, the call returns `409 {"error":"no_brain","message":"Pick a brain first."}`.
 
 #### Request body
 

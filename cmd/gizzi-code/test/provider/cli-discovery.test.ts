@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
-import { currentCliPath, customCliFile, customSubprocessSpecs, harnessBinDir, headlessArgv, knownInstallPaths, markCloudComputerSandbox, prependHarnessBin, PROVIDER_ENV_KEYS, SUBPROCESS_PROVIDERS } from "../../src/runtime/providers/discovery/subprocess"
+import { currentCliPath, customCliFile, customSubprocessSpecs, harnessBinDir, headlessArgv, knownInstallPaths, markCloudComputerSandbox, prependHarnessBin, PROVIDER_ENV_KEYS, retiredModelId, SUBPROCESS_PROVIDERS } from "../../src/runtime/providers/discovery/subprocess"
 import type { Provider } from "../../src/runtime/providers/provider"
 import { cliModel, stripProviderPrefix } from "../../src/runtime/providers/cli-model"
 
@@ -89,9 +89,9 @@ describe("CLI models the built-in list doesn't have", () => {
   })
 
   test("a model id that repeats its provider names the model after it", () => {
-    expect(stripProviderPrefix("claude-cli", "claude-cli/claude-sonnet-5")).toBe("claude-sonnet-5")
+    expect(stripProviderPrefix("claude-cli", "claude-cli/claude-sonnet-5-5")).toBe("claude-sonnet-5-5")
     expect(stripProviderPrefix("openrouter", "anthropic/claude-sonnet-4")).toBe("anthropic/claude-sonnet-4")
-    expect(stripProviderPrefix("claude-cli", "claude-sonnet-5")).toBe("claude-sonnet-5")
+    expect(stripProviderPrefix("claude-cli", "claude-sonnet-5-5")).toBe("claude-sonnet-5-5")
   })
 
   test("a CLI path that vanished mid-session is found again", async () => {
@@ -126,6 +126,14 @@ describe("the shared CLI catalog and the user's own CLIs", () => {
     }
     // Env overrides come from the catalog too.
     expect(PROVIDER_ENV_KEYS["claude-cli"]).toEqual({ path: "MULTICA_CLAUDE_PATH", model: "MULTICA_CLAUDE_MODEL" })
+  })
+
+  test("saved choices of retired model ids map to the current ids", () => {
+    expect(retiredModelId("claude-cli", "claude-sonnet-5")).toBe("claude-sonnet-5-5")
+    expect(retiredModelId("antigravity", "gemini-3.7-flash-high")).toBe("gemini-3.8-flash-high")
+    expect(retiredModelId("kimi", "kimi-k2.7-code")).toBe("kimi-for-coding")
+    expect(retiredModelId("grok", "default")).toBe("grok-4.6")
+    expect(retiredModelId("grok", "grok-4.5")).toBe("grok-4.5")
   })
 
   test("headless argv: prompt is one element, models only fill {model}, flags can't be smuggled", () => {

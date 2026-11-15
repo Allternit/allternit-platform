@@ -76,6 +76,10 @@ const outputSchema = lazySchema(() =>
       .describe('Whether the user modified the proposed changes'),
     replaceAll: z.boolean().describe('Whether all occurrences were replaced'),
     gitDiff: gitDiffSchema().optional(),
+    lspKey: z
+      .string()
+      .optional()
+      .describe('Key for the language-server errors shown on the tool line'),
   }),
 )
 type OutputSchema = ReturnType<typeof outputSchema>

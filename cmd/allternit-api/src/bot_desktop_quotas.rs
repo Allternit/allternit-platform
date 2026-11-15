@@ -398,7 +398,7 @@ async fn emit_stripe_usage_record(minutes: i64, provider: &str, os: &str) {
         None => return,
     };
 
-    let client = reqwest::Client::new();
+    let client = crate::net_client::client();
     let params = [
         ("quantity", minutes.to_string()),
         ("timestamp", Utc::now().timestamp().to_string()),

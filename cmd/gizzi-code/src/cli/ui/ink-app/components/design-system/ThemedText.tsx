@@ -15,9 +15,9 @@ export type Props = {
   readonly color?: keyof Theme | Color;
 
   /**
-   * Same as `color`, but for background. Must be a theme key.
+   * Same as `color`, but for background: a theme key or a raw color.
    */
-  readonly backgroundColor?: keyof Theme;
+  readonly backgroundColor?: keyof Theme | Color;
 
   /**
    * Dim the color using the theme's inactive color.
@@ -100,7 +100,7 @@ export default function ThemedText(t0) {
   const theme = getTheme(themeName);
   const hoverColor = useContext(TextHoverColorContext);
   const resolvedColor = !color && hoverColor ? resolveColor(hoverColor, theme) : dimColor ? theme.inactive as Color : resolveColor(color, theme);
-  const resolvedBackgroundColor = backgroundColor ? theme[backgroundColor] as Color : undefined;
+  const resolvedBackgroundColor = resolveColor(backgroundColor, theme);
   const t8 = <Text color={resolvedColor} backgroundColor={resolvedBackgroundColor} bold={bold} italic={italic} underline={underline} strikethrough={strikethrough} inverse={inverse} wrap={wrap}>{children}</Text>;
 
   return t8;

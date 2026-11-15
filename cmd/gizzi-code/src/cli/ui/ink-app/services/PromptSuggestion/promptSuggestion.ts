@@ -19,6 +19,8 @@ import {
   logEvent,
 } from '../analytics/index.js'
 import { currentLimits } from '../claudeAiLimits.js'
+import { getLocalProviderConfig, isLoopbackURL } from '../api/localModel.js'
+import { getInitialSettings } from '../../utils/settings/settings.js'
 import { isSpeculationEnabled, startSpeculation } from './speculation.js'
 
 export { shouldEnablePromptSuggestion } from './promptSuggestionGate.js'
@@ -87,7 +89,13 @@ export async function tryGenerateSuggestion(
     logSuggestionSuppressed('last_response_error', undefined, undefined, source)
     return null
   }
-  const cacheReason = getParentCacheSuppressReason(lastAssistantMessage)
+  // The prompt-cache check only matters for a metered Anthropic key; CLI
+  // brains and local models cost nothing extra either way.
+  const cacheReason = isNoExtraCostSuggestionModel(
+    cacheSafeParams.toolUseContext.options.mainLoopModel,
+  )
+    ? null
+    : getParentCacheSuppressReason(lastAssistantMessage)
   if (cacheReason) {
     logSuggestionSuppressed(cacheReason, undefined, undefined, source)
     return null
@@ -97,6 +105,14 @@ export async function tryGenerateSuggestion(
   const suppressReason = getSuggestionSuppressReason(appState)
   if (suppressReason) {
     logSuggestionSuppressed(suppressReason, undefined, undefined, source)
+    return null
+  }
+  // Suggestions run on the session's current model. Never spend a metered
+  // API key on them unless the user opted in (promptSuggestionOnApiKeys).
+  const model = cacheSafeParams.toolUseContext.options.mainLoopModel
+  const costReason = getSuggestionCostSuppressReason(model)
+  if (costReason) {
+    logSuggestionSuppressed(costReason, undefined, undefined, source)
     return null
   }
 
@@ -172,6 +188,32 @@ export async function executePromptSuggestion(
       currentAbortController = null
     }
   }
+}
+
+/**
+ * True when one more call on this model costs the user nothing extra: a CLI
+ * brain on their own subscription (claude-cli/…, codex-cli/…, kimi-cli/…) or
+ * a gizzi.json model served from this machine (loopback endpoint).
+ */
+export function isNoExtraCostSuggestionModel(model: string | undefined): boolean {
+  if (!model) return false
+  const provider = model.includes('/') ? model.slice(0, model.indexOf('/')) : ''
+  if (provider.endsWith('-cli')) return true
+  const local = getLocalProviderConfig(model)
+  return local !== undefined && isLoopbackURL(local.config.baseURL)
+}
+
+/**
+ * Suggestions are generated on CLI brains, local models and Allternit Cloud.
+ * Any other model is a metered API key: skip unless the user opted in.
+ */
+export function getSuggestionCostSuppressReason(
+  model: string | undefined,
+): string | null {
+  if (isNoExtraCostSuggestionModel(model)) return null
+  if (model?.startsWith('allternit/')) return null
+  if (getInitialSettings()?.promptSuggestionOnApiKeys === true) return null
+  return 'metered_model'
 }
 
 const MAX_PARENT_UNCACHED_TOKENS = 10_000

@@ -2,10 +2,28 @@ import type { ContentBlockParam } from '@allternit/gizzi-sdk/providers/allternit
 import type { Command } from '../commands.js'
 import { ALLTERNIT_GATEWAY_BASE } from '@/shared/constants/allternitGateway'
 
+const LOOP_CARD = `
+| Field | Answer |
+|---|---|
+| Outcome | what the user will feel when this works |
+| Metric and direction | the one number to move, lower or higher |
+| Instrument | the command that prints that number (last number on stdout) |
+| Noise floor | spread over unchanged A/A runs |
+| Baseline | value now, with n |
+| Keep bar | fractional gain required, fixed before iterating |
+| Min pairs | paired runs per attempt |
+| Budget and stop rule | max iterations; stop after N attempts inside the noise |
+| Ledger | every attempt, rejects included |
+`
+
+const CARD_ONLY = /^\s*card\s*$/i
+
 const LOOPS_PROMPT = (id: string, args: string) => `
 You are in Loop Mode (Loop ID: ${id}). Your instruction is:
 "${args}"
 
+First print the Loop Card below, filled in as far as the instruction allows. A blank row means this is not a measured loop yet: say so and run the plain loop. If the Metric and Instrument rows are filled in, tell the user the same fields can be saved on a loop (metric: command, direction, keepBar, noiseRuns, minPairs) so Allternit measures every attempt, keeps or reverts it, and records a ledger row. Read earlier rejected attempts before trying again.
+${LOOP_CARD}
 Follow this loop execution process:
 1. Parse the command/script to run, and the completion or exit condition (if specified).
 2. Execute the script or command.
@@ -28,6 +46,9 @@ const loops: Command = {
   contentLength: 0,
   source: 'builtin',
   async getPromptForCommand(args): Promise<ContentBlockParam[]> {
+    if (CARD_ONLY.test(args)) {
+      return [{ type: 'text', text: 'Print this Loop Card as a blank template for the user to fill in, then ask which row to start with:\n' + LOOP_CARD }]
+    }
     const id = `loop-${Date.now()}`
     try {
       await fetch(`${ALLTERNIT_GATEWAY_BASE}/api/v1/tasks`, {

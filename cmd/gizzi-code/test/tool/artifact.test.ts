@@ -825,3 +825,20 @@ describe("Artifacts.validate for ops", () => {
     expect(Artifacts.validate("ops", "text/html", "<p>")).toContain("isn't valid")
   })
 })
+
+
+describe("versioned card write enforcement", () => {
+  test("refuses raw layouts and invalid data before creating an offline payload", async () => {
+    expect(Artifacts.validate("card", "application/vnd.allternit.openui", 'root = Answer("Bypass", [])')).toBeDefined()
+    expect(Artifacts.validate("card", "text/plain", "bypass")).toBeDefined()
+    expect(Artifacts.validate("card", "application/vnd.allternit.answer+json", "{}")).toBeDefined()
+    await expect(Artifacts.create({ kind: "card", title: "Bypass", body_format: "application/vnd.allternit.answer+json", body: "{}" })).rejects.toThrow()
+  })
+
+  test("accepts a fixed template and rejects malformed record widths", () => {
+    const body = { version: 1, template: "table", title: "Records", data: { headers: ["Name"], rows: [["A"]], source: "User" } }
+    expect(Artifacts.validate("card", "application/vnd.allternit.answer+json", JSON.stringify(body))).toBeUndefined()
+    body.data.rows = [["A", "B"]]
+    expect(Artifacts.validate("card", "application/vnd.allternit.answer+json", JSON.stringify(body))).toContain("match its headers")
+  })
+})

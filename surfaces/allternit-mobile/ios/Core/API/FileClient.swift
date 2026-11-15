@@ -39,13 +39,17 @@ struct FileReadResult: Decodable, Sendable {
 /// `baseURL` the caller resolved (see `InstanceConnection`); it does no
 /// instance/mesh resolution itself.
 final class FileClient: @unchecked Sendable {
-    private let client: APIClient
+    private let endpointBaseURL: URL
 
     init(baseURL: URL = AppConfig.gizziCodeBaseURL) {
-        self.client = APIClient(
-            baseURL: baseURL,
-            tokenProvider: { try await AuthManager.shared.getToken() }
-        )
+        self.endpointBaseURL = baseURL
+    }
+
+    /// Per-call target: the given base URL, or — for the static default —
+    /// whatever `InstanceConnection.resolve()` picks now (explicit URL →
+    /// mesh → the relay to the user's computer).
+    private func client() async throws -> APIClient {
+        try await InstanceConnection.gizziClient(for: endpointBaseURL)
     }
 
     /// `GET v1/file/tree?path=` — one directory level, not recursive. `path`
@@ -55,12 +59,12 @@ final class FileClient: @unchecked Sendable {
         if let path, !path.isEmpty {
             route += "?path=\(Self.escapeQuery(path))"
         }
-        return try await client.get(path: route)
+        return try await client().get(path: route)
     }
 
     /// `GET v1/file/read?path=`.
     func read(path: String) async throws -> FileReadResult {
-        try await client.get(path: "v1/file/read?path=\(Self.escapeQuery(path))")
+        try await client().get(path: "v1/file/read?path=\(Self.escapeQuery(path))")
     }
 
     private static func escapeQuery(_ value: String) -> String {

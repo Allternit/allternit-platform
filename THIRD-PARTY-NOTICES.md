@@ -68,7 +68,7 @@ This file contains notices for open-source software incorporated into this produ
 
 **Source:** https://github.com/RikkaApps/Shizuku (master, commit b844bc491f1790c72328e1a8e5b2349f8978f0ea)
 
-**Used in:** `surfaces/allternit-mobile/android/app/src/main/java/com/allternit/phonelink/core/AdbMessage.kt`, `core/AdbClient.kt`
+**Used in:** `surfaces/allternit-mobile/android/app/src/phonelink/java/com/allternit/phonelink/core/AdbMessage.kt`, `core/AdbClient.kt`
 
 **The adb wire-protocol constants, message framing and the CNXN → STLS → TLS connection flow are adapted from Shizuku's `manager/.../adb/AdbMessage.kt`, `AdbProtocol.kt` and `AdbClient.kt`. Rewritten without BouncyCastle (the TLS certificate is built in-tree, `core/AdbCert.kt`) and TLS-only. No Shizuku app, binder service or native code is included.**
 

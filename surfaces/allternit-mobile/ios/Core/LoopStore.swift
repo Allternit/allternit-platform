@@ -79,9 +79,10 @@ final class LoopStore: ObservableObject {
     func createLoop(
         command: String,
         exitCondition: String?,
-        maxIterations: Int
+        maxIterations: Int,
+        metric: LoopMetric? = nil
     ) async throws -> Loop {
-        let loop = try await client.createLoop(command: command, exitCondition: exitCondition, maxIterations: maxIterations)
+        let loop = try await client.createLoop(command: command, exitCondition: exitCondition, maxIterations: maxIterations, metric: metric)
         loops.insert(loop, at: 0)
         await refresh()
         return loop

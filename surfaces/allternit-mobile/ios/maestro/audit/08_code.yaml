@@ -6,7 +6,10 @@ appId: com.allternit.mobile
     arguments:
       skip-auth: true
       sidebar: true
-- tapOn: "Code"
+- tapOn:
+    id: "modeDial"
+- tapOn:
+    id: "modeDialOptioncode"
 - takeScreenshot: code_list
 - tapOn: "Open sidebar"
 - takeScreenshot: code_sidebar_open

@@ -19,6 +19,7 @@
 import type {
   AgentEvent,
   AgentTask,
+  CliToolVerdict,
   ExecutionLog,
   RuntimeDriver,
   TaskHandle,
@@ -35,7 +36,7 @@ import { RuntimeService, RuntimeNotFoundError, type RegisteredRuntime } from "@/
 import { ExecutionLogService } from "@/runtime/execution-log"
 import { Log } from "@/shared/util/log"
 import { PROVIDER_ENV_KEYS } from "@/runtime/runtime-discovery"
-import { findSubprocessSpec, headlessArgv } from "@/runtime/providers/discovery/subprocess"
+import { findSubprocessSpec, headlessArgv, retiredModelId } from "@/runtime/providers/discovery/subprocess"
 import { currentCliPath } from "@/runtime/providers/discovery/subprocess"
 import {
   ClientSideConnection,
@@ -183,6 +184,8 @@ export class LocalCliDriver implements RuntimeDriver {
       toolsOff: task?.toolsOff,
       subagents: task?.subagents,
       model: task?.model,
+      effort: task?.effort,
+      approval: task?.approveTool ? { mode: task.permissionMode ?? "default" } : undefined,
     })
 
     // CLIs whose records lack what they send: their provider calls pass through BrainRelay.
@@ -204,6 +207,7 @@ export class LocalCliDriver implements RuntimeDriver {
           bot: task?.bot,
           sessionID: task?.sessionID,
           bridgeName: task?.mcp?.name,
+          approveTool: task?.approveTool,
         })) {
           if (event.type === "error" || (event.type === "finish" && event.finishReason === "error")) failed = true
           yield event
@@ -216,9 +220,9 @@ export class LocalCliDriver implements RuntimeDriver {
       } else if (adapter.mode === "openclaw-json") {
         yield* this.runOpenclawJson(handle, argv, message, task?.cwd, env)
       } else if (adapter.mode === "acp") {
-        yield* this.runAcp(handle, argv, task?.cwd, env)
+        yield* this.runAcp(handle, argv, task?.cwd, env, adapter.acpModelConfig)
       } else if (adapter.mode === "codex-app-server") {
-        for await (const event of this.runCodexAppServer(handle, argv, message, task?.cwd, task?.systemPrompt, env, task?.model)) {
+        for await (const event of this.runCodexAppServer(handle, argv, message, task?.cwd, task?.systemPrompt, env, sessionModel(task?.model, this.cliName))) {
           if (event.type === "error" || (event.type === "finish" && event.finishReason === "error")) failed = true
           yield event
         }
@@ -484,6 +488,8 @@ export class LocalCliDriver implements RuntimeDriver {
       bot?: AgentTask["bot"]
       sessionID?: string
       bridgeName?: string
+      /** The caller asks its own user (AgentTask.approveTool). */
+      approveTool?: AgentTask["approveTool"]
     },
   ): AsyncIterable<AgentEvent> {
     let lastVendorId: string | undefined
@@ -588,6 +594,15 @@ export class LocalCliDriver implements RuntimeDriver {
           })
           if (verdict.allow) writeControlResponse(stdin, requestId, input)
           else writeControlDeny(stdin, requestId, "message" in verdict ? verdict.message : `${toolName} was refused.`)
+          return
+        }
+        if (requestId && options.approveTool && evt.request?.subtype === "can_use_tool") {
+          const toolName = String(evt.request?.tool_name ?? "")
+          const verdict = await options
+            .approveTool({ id: evt.request?.tool_use_id ? String(evt.request.tool_use_id) : undefined, name: toolName, input: input ?? {} })
+            .catch((err): CliToolVerdict => ({ allow: false, message: err instanceof Error ? err.message : String(err) }))
+          if (verdict.allow === true) writeControlResponse(stdin, requestId, verdict.input ?? input)
+          else writeControlDeny(stdin, requestId, verdict.message)
           return
         }
         if (requestId) {
@@ -1018,6 +1033,7 @@ export class LocalCliDriver implements RuntimeDriver {
     argv: string[],
     cwd?: string,
     env?: Record<string, string>,
+    modelConfig?: boolean,
   ): AsyncIterable<AgentEvent> {
     const task = this.tasks.get(handle.taskId)
     const taskCwd = cwd || task?.cwd || process.cwd()
@@ -1185,6 +1201,21 @@ export class LocalCliDriver implements RuntimeDriver {
         })
         {
           log.info("acp gate decision", { taskId: handle.taskId, allow: verdict.allow, fallback: verdict.fallback ?? false, ...("reason" in verdict ? { reason: verdict.reason } : {}) })
+          // An in-process caller (the Gizzi TUI) asks its own user after the gate allows.
+          if (verdict.allow && task?.approveTool) {
+            const call = (request.toolCall ?? {}) as { toolCallId?: unknown; title?: unknown; kind?: unknown; rawInput?: unknown }
+            const asked = await task
+              .approveTool({
+                id: call.toolCallId ? String(call.toolCallId) : undefined,
+                name: String(call.title ?? call.kind ?? "tool"),
+                input: call.rawInput && typeof call.rawInput === "object" ? (call.rawInput as Record<string, unknown>) : {},
+              })
+              .catch((): CliToolVerdict => ({ allow: false, message: "not approved" }))
+            const picked = asked.allow ? pickAllow() : options.find((item) => String(item.kind).includes("reject"))
+            return picked
+              ? { outcome: { outcome: "selected" as const, optionId: picked.optionId } }
+              : { outcome: { outcome: "cancelled" as const } }
+          }
           const chosen = verdict.allow
             ? pickAllow()
             : options.find((item) => String(item.kind).includes("reject"))
@@ -1253,11 +1284,13 @@ export class LocalCliDriver implements RuntimeDriver {
       const agentCapabilities = (init as { agentCapabilities?: unknown })?.agentCapabilities
       const mcpServers = acpMcpServers(task?.mcp, agentCapabilities) as any
       let session: { sessionId: string } | undefined
+      let configOptions: unknown
       // Resume the vendor's session from the previous turn when it supports
       // session/load; a failed load falls back to a fresh session.
       if (task?.vendorSessionId && acpCanLoadSession(agentCapabilities)) {
         try {
-          await acp.loadSession({ sessionId: task.vendorSessionId, cwd: taskCwd, mcpServers })
+          const loaded = await acp.loadSession({ sessionId: task.vendorSessionId, cwd: taskCwd, mcpServers })
+          configOptions = (loaded as { configOptions?: unknown } | undefined)?.configOptions
           // session/load replays history as notifications; drop the replay.
           events.length = 0
           contextUsage = undefined
@@ -1269,8 +1302,22 @@ export class LocalCliDriver implements RuntimeDriver {
           })
         }
       }
-      if (!session) session = await acp.newSession({ cwd: taskCwd, mcpServers })
+      if (!session) {
+        const created = await acp.newSession({ cwd: taskCwd, mcpServers })
+        configOptions = (created as { configOptions?: unknown }).configOptions
+        session = created
+      }
       events.push({ type: "vendor_session", id: session.sessionId })
+      // The picked model (and thinking level) for CLIs that take it over ACP only.
+      if (modelConfig) {
+        const model = sessionModel(task?.model, this.cliName)
+        if (model && !Array.isArray(configOptions)) {
+          log.warn("acp agent lists no configOptions; the CLI's default model runs", { cli: this.cliName, model })
+        }
+        for (const call of acpModelConfig(this.cliName, configOptions, model, task?.effort)) {
+          await acp.setSessionConfigOption({ sessionId: session.sessionId, ...call })
+        }
+      }
 
       const promptText = withInstructions(task?.prompt ?? "", task?.systemPrompt)
       const attachmentBlocks = task?.attachments?.length
@@ -1690,9 +1737,15 @@ export class LocalCliDriver implements RuntimeDriver {
       if (!threadId) throw new Error("codex app-server did not return thread.id")
       events.push({ type: "vendor_session", id: threadId })
 
+      const effort = this.tasks.get(handle.taskId)?.effort
+      const serviceTier = this.tasks.get(handle.taskId)?.serviceTier
       await request("turn/start", {
         threadId,
         input: [{ type: "text", text: prompt }],
+        // The picker's reasoning level (codex debug models lists each model's).
+        ...(effort ? { effort } : {}),
+        // The picker's Fast: Codex's priority service tier for this turn.
+        ...(serviceTier ? { serviceTier } : {}),
       })
       // Each MCP server's tools, for the context panel (asked while the servers are up).
       const mcpStatus = request("mcpServerStatus/list", {}).catch(() => undefined)
@@ -1873,6 +1926,12 @@ interface CliAdapter {
    * not hold their prompt and tool schemas.
    */
   relayEnv?: (sessionID: string) => Record<string, string>
+  /**
+   * ACP only: the model and thinking level are set with
+   * session/set_config_option after the session starts (the CLI takes no
+   * model flag in ACP mode).
+   */
+  acpModelConfig?: boolean
   /** Build the final argv. */
   buildArgv(
     baseCmd: string[],
@@ -1891,6 +1950,10 @@ interface CliAdapter {
       subagents?: AgentTask["subagents"]
       /** The session's model (the picker's choice); the CLI validates it. */
       model?: string
+      /** The thinking level, already checked against model-thinking.json. */
+      effort?: string
+      /** The caller approves tools itself (AgentTask.approveTool), starting in this permission mode. */
+      approval?: { mode: string }
     },
   ): string[]
 }
@@ -1904,14 +1967,78 @@ function claudeStreamJsonInput(message: string): string {
   )
 }
 
-/** A real model id from the session, not a placeholder ("default", the provider id). */
-function sessionModel(model: string | undefined, providerID: string): string | undefined {
+/**
+ * A real model id from the session, not a placeholder ("default", the provider
+ * id), with a retired id moved to its replacement (cli-catalog.json `retired`)
+ * so the CLI never gets an id it no longer has.
+ */
+export function sessionModel(model: string | undefined, providerID: string): string | undefined {
   const id = model?.trim()
-  return id && id !== "default" && id !== providerID ? id : undefined
+  if (!id || id === "default" || id === providerID) return undefined
+  return retiredModelId(providerID, id)
 }
 
-function modelFlag(modelEnv?: string): string[] {
-  return modelEnv ? ["--model", modelEnv] : []
+function modelFlag(modelEnv?: string, flag = "--model"): string[] {
+  return modelEnv ? [flag, modelEnv] : []
+}
+
+/** The env override for a CLI's model (MULTICA_<CLI>_MODEL), when one is set. */
+function envModel(providerID: string): string | undefined {
+  const key = PROVIDER_ENV_KEYS[providerID]?.model
+  return key ? process.env[key] || undefined : undefined
+}
+
+/** agy's --effort levels (`agy --help`). */
+const AGY_EFFORTS = new Set(["low", "medium", "high", "xhigh", "max"])
+
+type AcpConfigOption = {
+  id?: string
+  category?: string | null
+  currentValue?: string
+  options?: Array<{ value?: string; options?: Array<{ value?: string }> }>
+}
+
+/** Every value of an ACP select config option (flat or grouped). */
+function acpOptionValues(option: AcpConfigOption): string[] {
+  return (option.options ?? []).flatMap((item) =>
+    item.options ? item.options.map((o) => o.value).filter((v): v is string => typeof v === "string") : typeof item.value === "string" ? [item.value] : [],
+  )
+}
+
+/**
+ * The ACP `session/set_config_option` calls that put the session on the
+ * picked model and thinking level, from the session's own configOptions.
+ * The model matches a value exactly or as `<provider>/<id>` (Kimi's aliases,
+ * e.g. `kimi-code/kimi-for-coding`). A model the CLI does not offer throws:
+ * running the CLI's default instead would hide a wrong pick.
+ */
+export function acpModelConfig(
+  cliName: string,
+  configOptions: unknown,
+  model: string | undefined,
+  effort: string | undefined,
+): { configId: string; value: string }[] {
+  const options = Array.isArray(configOptions) ? (configOptions as AcpConfigOption[]) : []
+  const find = (id: string) => options.find((o) => o.id === id || o.category === id)
+  const calls: { configId: string; value: string }[] = []
+  if (model) {
+    const option = find("model")
+    if (option?.id) {
+      const values = acpOptionValues(option)
+      const value = values.find((v) => v === model) ?? values.find((v) => v.endsWith(`/${model}`))
+      if (!value) {
+        throw new Error(`${cliName} has no model "${model}". It offers: ${values.join(", ") || "none"}.`)
+      }
+      if (value !== option.currentValue) calls.push({ configId: option.id, value })
+    }
+  }
+  if (effort) {
+    const option = find("thinking") ?? find("thought_level")
+    if (option?.id && acpOptionValues(option).includes(effort) && effort !== option.currentValue) {
+      calls.push({ configId: option.id, value: effort })
+    }
+  }
+  return calls
 }
 
 /** OpenCode's built-in provider API bases (models.dev `api`), the ones the relay stands in for. */
@@ -1949,6 +2076,8 @@ const CLI_ADAPTERS: Record<string, CliAdapter> = {
         // gates instead of bypassPermissions (runtime/bots/bot-turn.ts).
         ...claudePermissionFlags(ctx),
         "--disallowedTools", "AskUserQuestion",
+        // The picker's effort level (low, medium, high, xhigh, max).
+        ...(ctx.effort ? ["--effort", ctx.effort] : []),
         // An internal completion: answer from the text alone, no tools at all.
         ...(ctx.toolsOff ? ["--tools", ""] : []),
         ...claudeSessionFlags(ctx),
@@ -2096,10 +2225,13 @@ const CLI_ADAPTERS: Record<string, CliAdapter> = {
     },
   },
 
-  // Moonshot Kimi — ACP.
+  // Moonshot Kimi — ACP. `kimi acp` ignores the root `-m` (its acp action
+  // never reads it), so the model and thinking level go over ACP
+  // session/set_config_option after session/new (acpModelConfig).
   "kimi-cli": {
     mode: "acp",
     supportsAttachments: true,
+    acpModelConfig: true,
     buildArgv: ([command]) => [command, "acp"],
   },
 
@@ -2122,10 +2254,17 @@ const CLI_ADAPTERS: Record<string, CliAdapter> = {
     buildArgv: ([command], message) => [command, "-p", "--mode", "json", message],
   },
 
-  // Antigravity (agy) — one-shot text.
+  // Antigravity (agy) — one-shot text. Without --model agy runs its own
+  // default, whatever the picker chose.
   antigravity: {
     mode: "one-shot-text",
-    buildArgv: ([command], message) => [command, "--print", message],
+    buildArgv: ([command], message, ctx) => [
+      command,
+      ...modelFlag(sessionModel(ctx.model, "antigravity") ?? envModel("antigravity")),
+      ...(ctx.effort && AGY_EFFORTS.has(ctx.effort) ? ["--effort", ctx.effort] : []),
+      "--print",
+      message,
+    ],
   },
 
   // Hermes — ACP stdio.
@@ -2135,11 +2274,20 @@ const CLI_ADAPTERS: Record<string, CliAdapter> = {
     buildArgv: ([command]) => [command, "acp"],
   },
 
-  // Grok Build — ACP stdio.
+  // Grok Build — ACP stdio. Model and effort are `grok agent` options, so
+  // they go before the `stdio` subcommand (`grok agent --help`).
   grok: {
     mode: "acp",
     supportsAttachments: true,
-    buildArgv: ([command]) => [command, "agent", "--no-leader", "--always-approve", "stdio"],
+    buildArgv: ([command], _message, ctx) => [
+      command,
+      "agent",
+      ...modelFlag(sessionModel(ctx.model, "grok") ?? envModel("grok"), "-m"),
+      ...(ctx.effort ? ["--reasoning-effort", ctx.effort] : []),
+      "--no-leader",
+      "--always-approve",
+      "stdio",
+    ],
   },
 
   // Kiro CLI — ACP stdio.
@@ -2196,8 +2344,7 @@ function textAdapter(name: string): CliAdapter | undefined {
   return {
     mode: "one-shot-text",
     buildArgv: ([command], message, ctx) => {
-      const envModel = PROVIDER_ENV_KEYS[name]?.model ? process.env[PROVIDER_ENV_KEYS[name]!.model!] : undefined
-      return headlessArgv(spec, command, message, sessionModel(ctx.model, name) ?? envModel)
+      return headlessArgv(spec, command, message, sessionModel(ctx.model, name) ?? envModel(name))
     },
   }
 }

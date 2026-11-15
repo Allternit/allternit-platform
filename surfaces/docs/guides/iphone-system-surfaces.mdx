@@ -1,0 +1,163 @@
+---
+title: "Allternit on your iPhone: notifications, Live Activities, Shortcuts, widget"
+description: "Answer your bots from the Lock Screen, watch a bot in a Live Activity, add the Allternit widget and controls, and use Allternit actions in Shortcuts and Siri."
+---
+
+Available in the next app update.
+
+This guide covers the parts of Allternit that work outside the app on your iPhone. Each one uses the same account, bots and inbox as the app. For the app itself, see [Allternit for iPhone](/guides/iphone-app).
+
+## Notification buttons
+
+When a bot needs your OK, the notification can carry buttons. Press and hold the notification on the Lock Screen to see them.
+
+- **Approve** approves the item. **Deny** denies it. **Reply** sends a text message to the bot and leaves the item waiting.
+- You get **Review** instead of Approve when the full text does not fit in a notification: long text, attachments, or an email draft whose full text and recipient are not shown. Review opens the app. Deny and Reply stay.
+- Every button asks you to unlock the phone first.
+- If the bot changed the item after the notification was sent, the button answers "changed" and nothing is approved. Open the app to see the new version.
+- For a private item, the notification shows generic text, such as "A bot is waiting for your OK." The app fetches the real text after the notification arrives and replaces it.
+
+Other notifications have their own buttons: **Reply** and **Open** on a bot reply, **Open** on a finished run, **Retry** and **Snooze** when something needs a fix.
+
+## Live Activity
+
+A Live Activity shows the bot that is working, with its current step, on the Lock Screen and in the Dynamic Island. When a bot needs you, the activity turns into the question. If the full text is short and not private, it has Approve and Deny buttons. Otherwise it shows a generic line and Open.
+
+To turn automatic Live Activities on or off, go to **Settings → Notifications** in the app and use the Live Activities switch.
+
+- **iOS 17.2 or later:** an activity starts by itself when a bot begins work.
+- **iOS 17.0 and 17.1:** use the **Watch a bot** shortcut to start one by hand.
+
+An activity ends when the work ends, and restarts before it reaches 8 hours. If you run **Watch a bot** while nothing is running, the activity shows idle until the next update from the bot.
+
+## The widget
+
+There is one Allternit widget with two faces. The front shows status: which bots are working and what needs you. The back shows action buttons. Tap the flip arrow in the corner to turn it over. It turns back to the front after 10 minutes.
+
+- **Sizes:** small and medium on the Home Screen, and the rectangular and circular widgets on the Lock Screen. The Lock Screen versions show status only and do not flip.
+- **Add it:** touch and hold the Home Screen, tap **+**, search for Allternit, pick a size and tap **Add Widget**. For the Lock Screen, touch and hold the Lock Screen, tap **Customize**, then tap the widget area.
+- **Configure it:** touch and hold the widget, tap **Edit Widget**, and choose the bot or routine it should use.
+
+## Control Center and the Action Button
+
+On iOS 18 or later you can add six controls: **Call main bot**, **Ask a bot**, **Hand off a task**, **Show what needs me**, **Run favourite routine** and **Pause all bots**. Each one opens the app to the right place or screen.
+
+- **Control Center:** swipe down to open it, touch and hold an empty spot, tap **Add a Control**, and pick an Allternit control.
+- **Lock Screen:** touch and hold the Lock Screen, tap **Customize**, and replace a bottom button with an Allternit control.
+- **Action Button:** open **Settings → Action Button**, swipe to **Controls**, tap the choose button, and pick an Allternit control.
+
+## Shortcuts, Siri and Spotlight
+
+Allternit adds actions to the Shortcuts app. Search for "Allternit" when you add an action.
+
+| Action | What it returns |
+| --- | --- |
+| Ask a Bot | The bot's answer as text, or "still working" with the conversation |
+| Call Main Bot | Opens the call |
+| New Chat with a Bot | Opens the chat |
+| Hand Off a Task to the Team | The project it created |
+| Run a Routine | The routine, started |
+| Start a Code Task on My Computer | The conversation |
+| Send to a Bot | The conversation (text, link, file or image) |
+| Show What Needs Me | A list of items |
+| Approve an Item | The result: approved, sent, changed, already handled or offline |
+| Deny an Item | The result |
+| Reply to a Bot | The conversation |
+| Snooze an Item | The time it is snoozed until |
+| Bot status | A list of bots with status, step and time. Filter: all, working or needs me |
+| Get last routine result | The routine, its status and time |
+| Find a conversation | A list of conversations whose title contains your text |
+| Get latest artifact from a bot | The file |
+| Watch a bot | Starts a Live Activity |
+| Pause all bots | The paused state |
+| Resume all bots | The paused state |
+| Pause or resume all bots | The paused state (you choose with a switch) |
+| Stop a run | Stopped |
+| Turn quiet hours on or off | The quiet hours state |
+| Switch active computer | The computer |
+| Set a bot's brain | The bot and its model |
+| Remember this | Saved |
+| Create a routine | The routine |
+
+Approve an Item and Deny an Item only run inside the app, not from an extension.
+
+**App Shortcuts.** Ten of these work in Siri and Spotlight with no setup. One phrase for each:
+
+| App Shortcut | Say |
+| --- | --- |
+| Ask a bot | "Ask a bot in Allternit" |
+| Call main bot | "Call my main bot in Allternit" |
+| New chat with a bot | "Start a chat in Allternit" |
+| Hand off a task | "Hand off a task in Allternit" |
+| Run a routine | "Run a routine in Allternit" |
+| Send to a bot | "Send to a bot in Allternit" |
+| What needs me | "What needs me in Allternit" |
+| Bot status | "Bot status in Allternit" |
+| Pause all bots | "Pause all bots in Allternit" |
+| Remember this | "Remember this in Allternit" |
+
+**Limits.**
+- Get latest artifact from a bot returns text artifacts only.
+- Create a routine repeats daily, on weekdays, or every 1 to 4 hours.
+- Find a conversation matches the title only.
+- Start a Code Task on My Computer needs a computer that is online.
+
+### Recipe: Take Screenshot, then Send to a bot
+
+An action cannot capture your screen, so you chain two actions.
+
+1. In Shortcuts, tap **+** to make a new shortcut.
+2. Add **Take Screenshot**.
+3. Add **Send to a Bot**. Set **File or image** to the screenshot, pick the bot, and add text if you want.
+4. Add the shortcut to the Action Button or Back Tap, or run it from Siri.
+
+### Recipe: Show what needs me, then Approve
+
+1. Add **Show What Needs Me**.
+2. Add **Choose from List** and pass it the result.
+3. Add **Approve an Item** and pass it the chosen item.
+
+Approve runs only after you unlock the phone. If the item changed, you get "changed" and nothing is approved.
+
+### Recipe: a Focus that lets only chosen bots through
+
+1. Open **Settings → Focus**, choose a Focus (for example Work) and tap **Add Filter**.
+2. Under Apps, choose **Allternit**, then **Set bot notifications**.
+3. Pick the allowed bots. Leave the list empty to allow every bot. Choose whether approval requests still notify loudly.
+
+During that Focus, other bots still notify, but quietly and without sound. Nothing is dropped.
+
+## Pause all bots
+
+One switch pauses every bot. It stops bots from starting work on their own: scheduled routines and loops started from the runtime, incoming channel messages, Slack and email replies, and bots reaching out to you. It does not delete anything, and routines that came due while paused move to the next slot.
+
+The switch is in:
+- the Bots view on the web, in the phone layout and in Desktop, in the header
+- the Bots screen in the iPhone app
+- Control Center (the Pause all bots control)
+- Shortcuts and Siri (Pause all bots, Resume all bots)
+- the terminal: `gizzi agents bot pause` and `gizzi agents bot resume`
+
+When bots are paused, a banner says so on the Bots view.
+
+## Share to a bot from any app
+
+In any app, tap **Share**, then **Allternit**, and pick the bot. The first time you send to a bot, Allternit asks for your consent for that bot. You can share text, links, files and images. A share can hold up to 10 files and 10 MB. If the phone is offline, the share waits and goes out the next time you open the app.
+
+## Text messages
+
+When a bot drafts a text message, the chat shows a draft card with the recipient and text. **Send with Messages** opens the system Messages compose sheet with the text filled in. Nothing is sent until you tap Send there.
+
+If you use Allternit on a Mac, your bots can also send through the Mac Messages tool. It is off by default. Turn it on in **Settings → Notifications**, and give the Mac the access it asks for (Full Disk Access and Automation). Every send waits for your approval in the inbox. Nothing sends by itself.
+
+## Not available yet and known limits
+
+- Web notifications: Chrome and Edge show the first two buttons. Safari and the iPhone Home Screen app show none.
+- Widget push updates need iOS 26. On earlier versions, the widget updates when the app does.
+- Files shared to a bot reach it as links, not as inline attachments.
+- Get latest artifact from a bot returns text artifacts only.
+- Create a routine does not support custom schedules.
+- Gizzi Code loops and Gizzi cron routines are not covered by Pause all bots yet.
+- Control Center and Action Button controls open the app. They do not act on their own, and Pause all bots opens the app too.
+- The Hand off a task control opens the main bot chat.
+- Messages: a draft shows "Sent" only until the view reloads.

@@ -30,16 +30,15 @@ KnowledgeFile = TypedDict('KnowledgeFile', {'id': str, 'object': Literal['knowle
 AgentTool = Literal['send_text', 'call', 'email', 'channel_post', 'calendar', 'web_fetch', 'web_search', 'knowledge_search', 'ask_human', 'transfer']
 Autonomy = Literal['draft', 'ask', 'tell', 'limits']
 StockVoice = Literal['af_alloy', 'af_aoede', 'af_bella', 'af_heart', 'af_jessica', 'af_kore', 'af_nicole', 'af_nova', 'af_river', 'af_sarah', 'af_sky', 'am_adam', 'am_echo', 'am_eric', 'am_fenrir', 'am_liam', 'am_michael', 'am_onyx', 'am_puck', 'am_santa', 'bf_alice', 'bf_emma', 'bf_isabella', 'bf_lily', 'bm_daniel', 'bm_fable', 'bm_george', 'bm_lewis']
-Conversation = TypedDict('Conversation', {'id': str, 'object': Literal['conversation'], 'agent_id': str, 'account_id': str, 'metadata': Dict[str, Any], 'created_at': str, 'messages': List["ConversationMessage"]}, total=False)
+Conversation = TypedDict('Conversation', {'id': str, 'object': Literal['conversation'], 'agent_id': Optional[str], 'account_id': Optional[str], 'metadata': Dict[str, Any], 'item_count': int, 'created_at': str, 'messages': List["ConversationMessage"]}, total=False)
 ConversationMessage = TypedDict('ConversationMessage', {'id': str, 'object': Literal['conversation.message'], 'conversation_id': str, 'role': Literal['user', 'assistant'], 'content': str, 'status': Literal['completed', 'failed'], 'error': Optional[str], 'created_at': str}, total=False)
 ModelKey = TypedDict('ModelKey', {'provider': Literal['anthropic', 'openai', 'xai'], 'object': Literal['model_key'], 'masked': str, 'created_at': str, 'updated_at': str}, total=False)
-UsageRow = TypedDict('UsageRow', {'group': Optional[str], 'meter': Literal['voice_min_allternit', 'voice_min_byok', 'agent_month', 'tokens_in', 'tokens_out', 'number_local_month', 'number_tollfree_month', 'sms_segment', 'mms', 'registration_passthrough_cents', 'recording_min_month'], 'unit': Optional[str], 'quantity': float, 'events': int}, total=False)
+ProjectTracing = TypedDict('ProjectTracing', {'object': Literal['project.tracing'], 'project_id': str, 'endpoint': str, 'header_names': List[str], 'service_name': str, 'enabled': bool, 'last_export_at': Optional[str], 'last_error': Optional[str], 'created_at': str, 'updated_at': str}, total=False)
+UsageRow = TypedDict('UsageRow', {'group': Optional[str], 'meter': Literal['voice_min_allternit', 'voice_min_byok', 'agent_month', 'tokens_in', 'tokens_out', 'number_local_month', 'number_tollfree_month', 'sms_segment', 'mms', 'registration_passthrough_cents', 'recording_min_month', 'computer_minute', 'computer_action', 'mailbox_month', 'identity_month'], 'unit': Optional[str], 'quantity': float, 'events': int}, total=False)
 PhoneNumber = TypedDict('PhoneNumber', {'id': str, 'object': Literal['phone_number'], 'account_id': Optional[str], 'e164': str, 'type': Literal['local', 'toll_free'], 'sms_state': Literal['pending_registration', 'active', 'rejected', 'blocked'], 'simulated': bool, 'created_at': str}, total=False)
 PhoneNumberList = TypedDict('PhoneNumberList', {'data': List["PhoneNumber"], 'has_more': bool, 'next_cursor': Optional[str]}, total=False)
-Message = TypedDict('Message', {'id': str, 'object': Literal['message'], 'account_id': Optional[str], 'number_id': str, 'direction': Literal['inbound', 'outbound'], 'from': str, 'to': str, 'body': str, 'segments': int, 'status': Literal['sent', 'simulated', 'received', 'failed'], 'error_code': Optional[str], 'media': List[Dict[str, Any]], 'created_at': str}, total=False)
-MessageList = TypedDict('MessageList', {'data': List["Message"], 'has_more': bool, 'next_cursor': Optional[str]}, total=False)
 WebhookEndpoint = TypedDict('WebhookEndpoint', {'id': str, 'object': Literal['webhook_endpoint'], 'url': str, 'events': List[str], 'description': Optional[str], 'created_at': str}, total=False)
-Event = TypedDict('Event', {'id': str, 'object': Literal['event'], 'type': Literal['approval.requested', 'message.received', 'message.status', 'registration.updated', 'inbox.item.created', 'call.started', 'call.ended', 'call.transcript.ready', 'usage.threshold', 'phone.step', 'phone.run.completed', 'webhook.test'], 'created': int, 'project_id': str, 'account_id': Optional[str], 'data': Dict[str, Any]}, total=False)
+Event = TypedDict('Event', {'id': str, 'object': Literal['event'], 'type': Literal['approval.requested', 'approval.resolved', 'approval.expired', 'message.received', 'message.status', 'registration.updated', 'inbox.item.created', 'call.started', 'call.ended', 'call.transcript.ready', 'usage.threshold', 'phone.step', 'phone.run.completed', 'phone.fleet_run.completed', 'phone.approval.requested', 'phone.approval.resolved', 'mail.received', 'webhook.test'], 'created': int, 'project_id': str, 'account_id': Optional[str], 'data': Dict[str, Any]}, total=False)
 Computer = TypedDict('Computer', {'id': str, 'object': Literal['computer'], 'name': str, 'status': Literal['provisioning', 'starting', 'running', 'stopping', 'stopped', 'error', 'deleted'], 'account_id': Optional[str], 'key_id': str, 'created_at': str, 'started_at': Optional[str], 'metadata': Dict[str, Any]}, total=False)
 ComputerList = TypedDict('ComputerList', {'data': List["Computer"], 'has_more': bool, 'next_cursor': Optional[str]}, total=False)
 ComputerEvent = TypedDict('ComputerEvent', {'id': str, 'type': Literal['computer.action'], 'ts': str, 'data': Dict[str, Any]}, total=False)
@@ -48,13 +47,40 @@ ComputerSettings = TypedDict('ComputerSettings', {'hosted_driver_enabled': bool,
 ToolsetCall = TypedDict('ToolsetCall', {'toolset': Literal['computer', 'browser'], 'member': str, 'input': Dict[str, Any], 'run_id': str, 'turn_id': str, 'call_index': int, 'model_frame': Dict[str, Any], 'coordinate_space': Literal['pixels', 'normalized_1000'], 'approval_grant': str, 'browser_session_id': str, 'enable': List[str], 'agent_id': str, 'agent_name': str, 'step': str}, total=False)
 ToolsetResult = TypedDict('ToolsetResult', {'is_error': bool, 'content': List[Dict[str, Any]], 'browser_state': Dict[str, Any], 'screen': Dict[str, Any], 'error': str}, total=False)
 ToolsetApprovalRequired = TypedDict('ToolsetApprovalRequired', {'error': Dict[str, Any], 'approval': Dict[str, Any], 'result': "ToolsetResult"}, total=False)
+Mailbox = TypedDict('Mailbox', {'id': str, 'object': Literal['mailbox'], 'account_id': str, 'agent_id': Optional[str], 'address': str, 'display_name': Optional[str], 'created_at': str}, total=False)
+MailboxList = TypedDict('MailboxList', {'data': List["Mailbox"], 'has_more': bool, 'next_cursor': Optional[str]}, total=False)
+MailMessage = TypedDict('MailMessage', {'id': str, 'object': Literal['mail_message'], 'mailbox_id': str, 'from': str, 'to': str, 'subject': Optional[str], 'snippet': Optional[str], 'codes': List[str], 'links': List[str], 'is_verification': bool, 'received_at': str}, total=False)
+MailMessageList = TypedDict('MailMessageList', {'data': List["MailMessage"], 'has_more': bool, 'next_cursor': Optional[str]}, total=False)
+Identity = TypedDict('Identity', {'id': str, 'object': Literal['identity'], 'account_id': str, 'agent_id': Optional[str], 'number': Union["PhoneNumber", Optional[Any]], 'mailbox': Union["Mailbox", Optional[Any]], 'phone_serial': Optional[str], 'bundle': Dict[str, Any], 'created_at': str}, total=False)
+IdentityList = TypedDict('IdentityList', {'data': List["Identity"], 'has_more': bool, 'next_cursor': Optional[str]}, total=False)
 Phone = TypedDict('Phone', {'object': Literal['phone'], 'serial': str, 'name': Optional[str], 'model': Optional[str], 'online': bool, 'desktop_online': bool, 'last_seen_at': Optional[str], 'call_bridge': Optional[Dict[str, Any]]}, total=False)
 PhoneList = TypedDict('PhoneList', {'data': List["Phone"], 'has_more': bool, 'next_cursor': Optional[str]}, total=False)
 PhoneSkillList = TypedDict('PhoneSkillList', {'data': List[Dict[str, Any]], 'has_more': bool, 'next_cursor': Optional[str]}, total=False)
 PhoneStep = TypedDict('PhoneStep', {'object': Literal['phone.step'], 'id': str, 'run_id': str, 'serial': str, 'at': str, 'tool': str, 'label': str, 'args': Dict[str, Any], 'ok': bool, 'error': Optional[str], 'duration_ms': int, 'source': Optional[str], 'snapshot': bool}, total=False)
 PhoneHistory = TypedDict('PhoneHistory', {'object': Literal['phone.history'], 'serial': str, 'steps': List["PhoneStep"], 'runs': List[Dict[str, Any]], 'retention_days': int, 'max_steps': int}, total=False)
+PhoneLiveView = TypedDict('PhoneLiveView', {'object': Literal['phone.live_view'], 'id': str, 'serial': str, 'view_only': Literal[True], 'expires_in': int, 'expires_at': str, 'viewer_url': str, 'stream_url': str}, total=False)
+PhoneFleetRun = TypedDict('PhoneFleetRun', {'object': Literal['phone.fleet_run'], 'id': str, 'kind': Literal['task', 'skill'], 'goal': Optional[str], 'skill': Optional[str], 'status': Literal['running', 'completed'], 'created_at': str, 'completed_at': Optional[str], 'counts': Dict[str, Any], 'runs': List[Dict[str, Any]], 'not_started': List[Dict[str, Any]]}, total=False)
 PhoneRunStarted = TypedDict('PhoneRunStarted', {'object': Literal['phone.run'], 'run_id': str, 'serial': Optional[str], 'skill': Optional[str], 'status': Literal['running']}, total=False)
 PhoneToolResult = TypedDict('PhoneToolResult', {'object': Literal['phone.tool_result'], 'ok': bool, 'run_id': str, 'tool': str, 'error': str, 'message': str}, total=False)
+PhoneApprovalRequired = TypedDict('PhoneApprovalRequired', {'error': Dict[str, Any], 'approval_id': str, 'inbox_id': str, 'expires_at': str}, total=False)
+DecisionQuestion = TypedDict('DecisionQuestion', {'name': str, 'type': Literal['predicate', 'choice', 'score'], 'instructions': str, 'choices': List[Dict[str, Any]], 'levels': List[Dict[str, Any]]}, total=False)
+DecisionRequest = TypedDict('DecisionRequest', {'input': Union[str, List[Dict[str, Any]]], 'instructions': str, 'questions': Union[List["DecisionQuestion"], Dict[str, Any]], 'latency_budget_ms': int, 'allow_abstain': bool, 'metadata': Dict[str, Any], 'context': Any, 'options': List[Dict[str, Any]], 'kind': str, 'question': str}, total=False)
+DecisionAnswer = TypedDict('DecisionAnswer', {'name': str, 'type': Literal['predicate', 'choice', 'score', 'refusal'], 'probability': float, 'choice': str, 'score': float, 'probabilities': List[Dict[str, Any]], 'confidence': float, 'backend': str, 'reason': Literal['abstained', 'unavailable', 'budget_exhausted']}, total=False)
+DecisionOutcome = TypedDict('DecisionOutcome', {'status': Literal['success', 'failure', 'error', 'skipped'], 'label': str, 'detail': str}, total=False)
+Decision = TypedDict('Decision', {'id': str, 'object': Literal['decision'], 'created_at': str, 'answers': List["DecisionAnswer"], 'backend': str, 'latency_ms': int, 'usage': Dict[str, Any], 'outcomes': Dict[str, Any], 'metadata': Dict[str, Any]}, total=False)
+DecisionList = Dict[str, Any]
+ContentPart = TypedDict('ContentPart', {'type': Literal['input_text', 'output_text', 'input_image'], 'text': str, 'image_url': str}, total=False)
+ItemInput = TypedDict('ItemInput', {'type': Literal['message', 'function_call_output'], 'role': Literal['user', 'assistant', 'system', 'developer'], 'content': Union[str, List["ContentPart"]], 'call_id': str, 'output': str}, total=False)
+Item = TypedDict('Item', {'id': str, 'object': Literal['item'], 'type': Literal['message', 'function_call', 'function_call_output', 'tool_call', 'approval_request'], 'conversation_id': Optional[str], 'response_id': Optional[str], 'status': Literal['in_progress', 'completed', 'failed', 'incomplete'], 'role': Optional[Literal['user', 'assistant', 'system', 'developer']], 'content': List["ContentPart"], 'call_id': str, 'name': str, 'arguments': str, 'output': Any, 'input': Any, 'error': Optional[str], 'approval_id': str, 'proposed_action': Dict[str, Any], 'created_at': str}, total=False)
+ItemList = Dict[str, Any]
+ResponseRequest = TypedDict('ResponseRequest', {'model': str, 'agent': str, 'input': Union[str, List["ItemInput"]], 'instructions': str, 'tools': List[Dict[str, Any]], 'tool_choice': Any, 'stream': bool, 'store': bool, 'conversation': str, 'previous_response_id': str, 'metadata': Dict[str, Any], 'max_output_tokens': int, 'temperature': float}, total=False)
+Response = TypedDict('Response', {'id': str, 'object': Literal['response'], 'status': Literal['in_progress', 'completed', 'failed', 'incomplete', 'requires_action'], 'model': Optional[str], 'agent_id': Optional[str], 'conversation_id': Optional[str], 'previous_response_id': Optional[str], 'output': List["Item"], 'incomplete_details': Optional[Dict[str, Any]], 'required_actions': List[Dict[str, Any]], 'usage': Dict[str, Any], 'error': Optional[Dict[str, Any]], 'metadata': Dict[str, Any], 'created_at': str, 'completed_at': Optional[str]}, total=False)
+ModelMessageRequest = TypedDict('ModelMessageRequest', {'model': str, 'system': Union[str, List[Dict[str, Any]]], 'messages': List[Dict[str, Any]], 'tools': List[Dict[str, Any]], 'tool_choice': Dict[str, Any], 'max_tokens': int, 'temperature': float, 'stream': bool, 'metadata': Dict[str, Any], 'thread': Dict[str, Any]}, total=False)
+ModelMessage = TypedDict('ModelMessage', {'id': str, 'type': Literal['message'], 'role': Literal['assistant'], 'content': List[Dict[str, Any]], 'model': str, 'stop_reason': Literal['end_turn', 'tool_use', 'max_tokens'], 'usage': Dict[str, Any]}, total=False)
+Text = TypedDict('Text', {'id': str, 'object': Literal['text'], 'account_id': Optional[str], 'number_id': str, 'direction': Literal['inbound', 'outbound'], 'from': str, 'to': str, 'body': str, 'segments': int, 'status': Literal['sent', 'simulated', 'received', 'failed'], 'error_code': Optional[str], 'media': List[Dict[str, Any]], 'created_at': str}, total=False)
+TextList = TypedDict('TextList', {'data': List["Text"], 'has_more': bool, 'next_cursor': Optional[str]}, total=False)
+Approval = TypedDict('Approval', {'id': str, 'object': Literal['approval'], 'source': Literal['twin', 'computer'], 'source_ref': str, 'account_id': Optional[str], 'conversation_id': Optional[str], 'response_id': Optional[str], 'kind': str, 'proposed_action': Dict[str, Any], 'status': Literal['pending', 'approved', 'denied', 'expired', 'consumed'], 'expires_at': Optional[str], 'created_at': str, 'resolved_at': Optional[str], 'resolved_by': Optional[str]}, total=False)
+ApprovalList = Dict[str, Any]
 
 
 class AccountsResource:
@@ -344,7 +370,7 @@ class ConversationsResource:
     def __init__(self, client: Transport) -> None:
         self._client = client
 
-    def list(self, id: str, *, limit: int = NOT_GIVEN, after: str = NOT_GIVEN, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+    def list_agent_conversations(self, id: str, *, limit: int = NOT_GIVEN, after: str = NOT_GIVEN, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
         """List an agent's conversations
 
         The agent's conversations, oldest first, without their messages (use getConversation for those). A key bound to an account sees only that account's agent. Requires the `agents` scope.
@@ -358,8 +384,8 @@ class ConversationsResource:
             _query['after'] = after
         return self._client.request("GET", f"/v1/agents/{_q(id)}/conversations", query=_query, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
 
-    def list_all(self, id: str, *, limit: int = NOT_GIVEN, after: str = NOT_GIVEN, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Iterator["Conversation"]:
-        """Every item of ``list``, fetching pages as you iterate."""
+    def list_agent_conversations_all(self, id: str, *, limit: int = NOT_GIVEN, after: str = NOT_GIVEN, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Iterator["Conversation"]:
+        """Every item of ``list_agent_conversations``, fetching pages as you iterate."""
         _query: Dict[str, Any] = {}
         if limit is not NOT_GIVEN:
             _query['limit'] = limit
@@ -372,7 +398,7 @@ class ConversationsResource:
             return self._client.request("GET", f"/v1/agents/{_q(id)}/conversations", query=q, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
         return self._client.paginate(_fetch, after if after is not NOT_GIVEN else None)
 
-    def create(self, id: str, *, metadata: Dict[str, Any] = NOT_GIVEN, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "Conversation":
+    def create_agent_conversation(self, id: str, *, metadata: Dict[str, Any] = NOT_GIVEN, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "Conversation":
         """Start a conversation
 
         Opens a conversation with the agent, in the agent's account. No message is sent yet.
@@ -399,7 +425,8 @@ class ConversationsResource:
         then `RUN_FINISHED` or `RUN_ERROR` (`{message, code}`). `runId` is echoed (generated when
         missing). Refusals before the stream starts are plain errors, as for messages:
         `402 spend_cap_reached` / `payment_method_required`, `409 conversation_busy`,
-        `503 runtime_starting`. The reply is stored and metered like any conversation message.
+        `503 runtime_starting` or `503 computer_capacity` (the host has no memory for another awake
+        runtime). Both carry `Retry-After: 30`. The reply is stored and metered like any conversation message.
 
         ``POST /v1/agents/{id}/ag-ui``
         """
@@ -425,11 +452,32 @@ class ConversationsResource:
     def get(self, id: str, *, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "Conversation":
         """Retrieve a conversation
 
-        The conversation with its latest 200 messages, oldest first.
+        The conversation with its latest 200 messages inline (`messages`, oldest first, the `conversation.message` shape SDK 0.3.x reads) and `item_count`, the number of items (list them all, including function and tool calls, with listConversationItems). Requires the `agents` scope.
 
         ``GET /v1/conversations/{id}``
         """
         return self._client.request("GET", f"/v1/conversations/{_q(id)}", timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def update(self, id: str, *, metadata: Dict[str, Any], timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "Conversation":
+        """Update a conversation
+
+        Replaces the conversation's `metadata`. Requires the `agents` scope.
+
+        ``PATCH /v1/conversations/{id}``
+        """
+        _body: Dict[str, Any] = {}
+        if metadata is not NOT_GIVEN:
+            _body['metadata'] = metadata
+        return self._client.request("PATCH", f"/v1/conversations/{_q(id)}", body=_body, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def delete(self, id: str, *, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+        """Delete a conversation
+
+        Deletes the conversation and its items. Requires the `agents` scope.
+
+        ``DELETE /v1/conversations/{id}``
+        """
+        return self._client.request("DELETE", f"/v1/conversations/{_q(id)}", timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
 
     def send_message(self, id: str, *, content: str, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "ConversationMessage":
         """Send a message
@@ -440,7 +488,8 @@ class ConversationsResource:
         "output"?, "error"?}`; arguments and results are cut at 8,000 characters) as it uses
         tools, then `message.completed` (the stored reply) or `error`. Clients should skip
         event names they don't know. The first message starts the
-        project's hosted runtime: `503 runtime_starting` means retry in a few seconds.
+        project's hosted runtime: `503 runtime_starting` (or `503 computer_capacity` when the host is full)
+        means retry after the `Retry-After` header (30 seconds).
         One message at a time per conversation (`409 conversation_busy`). A project at its
         monthly spend cap gets `402 spend_cap_reached`; one with no card on file gets
         `402 payment_method_required`. Each reply records `tokens_in` and
@@ -461,10 +510,160 @@ class ConversationsResource:
         _body['stream'] = True
         return self._client.stream_request("POST", f"/v1/conversations/{_q(id)}/messages", body=_body, idempotency_key=idempotency_key, timeout=timeout, extra_headers=extra_headers)
 
+    def list(self, *, limit: int = NOT_GIVEN, after: str = NOT_GIVEN, agent_id: str = NOT_GIVEN, account_id: str = NOT_GIVEN, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+        """List conversations
+
+        The project's conversations, newest first, without their items. A key bound to an account sees only that account's. Requires the `agents` scope.
+
+        ``GET /v1/conversations``
+        """
+        _query: Dict[str, Any] = {}
+        if limit is not NOT_GIVEN:
+            _query['limit'] = limit
+        if after is not NOT_GIVEN:
+            _query['after'] = after
+        if agent_id is not NOT_GIVEN:
+            _query['agent_id'] = agent_id
+        if account_id is not NOT_GIVEN:
+            _query['account_id'] = account_id
+        return self._client.request("GET", f"/v1/conversations", query=_query, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def list_all(self, *, limit: int = NOT_GIVEN, after: str = NOT_GIVEN, agent_id: str = NOT_GIVEN, account_id: str = NOT_GIVEN, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Iterator["Conversation"]:
+        """Every item of ``list``, fetching pages as you iterate."""
+        _query: Dict[str, Any] = {}
+        if limit is not NOT_GIVEN:
+            _query['limit'] = limit
+        if after is not NOT_GIVEN:
+            _query['after'] = after
+        if agent_id is not NOT_GIVEN:
+            _query['agent_id'] = agent_id
+        if account_id is not NOT_GIVEN:
+            _query['account_id'] = account_id
+        def _fetch(cursor: Optional[str]) -> Page:
+            q = dict(_query)
+            if cursor is not None:
+                q['after'] = cursor
+            return self._client.request("GET", f"/v1/conversations", query=q, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+        return self._client.paginate(_fetch, after if after is not NOT_GIVEN else None)
+
+    def create(self, *, agent_id: str = NOT_GIVEN, account_id: str = NOT_GIVEN, metadata: Dict[str, Any] = NOT_GIVEN, items: List["ItemInput"] = NOT_GIVEN, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "Conversation":
+        """Create a conversation
+
+        Opens a conversation, optionally with an agent, an account and starting items (up to 20). Without `agent_id` it can be used with `model` responses. `items` are allowed only without `agent_id` (an agent's runtime keeps its own session history; 409 `conversation_has_agent`). No model run happens.
+
+        ``POST /v1/conversations``
+        """
+        _body: Dict[str, Any] = {}
+        if agent_id is not NOT_GIVEN:
+            _body['agent_id'] = agent_id
+        if account_id is not NOT_GIVEN:
+            _body['account_id'] = account_id
+        if metadata is not NOT_GIVEN:
+            _body['metadata'] = metadata
+        if items is not NOT_GIVEN:
+            _body['items'] = items
+        return self._client.request("POST", f"/v1/conversations", body=_body, idempotency_key=idempotency_key, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def list_items(self, id: str, *, limit: int = NOT_GIVEN, after: str = NOT_GIVEN, order: Literal['asc', 'desc'] = NOT_GIVEN, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "ItemList":
+        """List a conversation's items
+
+        Messages, function calls, tool calls and approval requests in a stable order. `order` is `asc` (default) or `desc`. Requires the `agents` scope.
+
+        ``GET /v1/conversations/{id}/items``
+        """
+        _query: Dict[str, Any] = {}
+        if limit is not NOT_GIVEN:
+            _query['limit'] = limit
+        if after is not NOT_GIVEN:
+            _query['after'] = after
+        if order is not NOT_GIVEN:
+            _query['order'] = order
+        return self._client.request("GET", f"/v1/conversations/{_q(id)}/items", query=_query, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def list_items_all(self, id: str, *, limit: int = NOT_GIVEN, after: str = NOT_GIVEN, order: Literal['asc', 'desc'] = NOT_GIVEN, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Iterator["Item"]:
+        """Every item of ``list_items``, fetching pages as you iterate."""
+        _query: Dict[str, Any] = {}
+        if limit is not NOT_GIVEN:
+            _query['limit'] = limit
+        if after is not NOT_GIVEN:
+            _query['after'] = after
+        if order is not NOT_GIVEN:
+            _query['order'] = order
+        def _fetch(cursor: Optional[str]) -> Page:
+            q = dict(_query)
+            if cursor is not None:
+                q['after'] = cursor
+            return self._client.request("GET", f"/v1/conversations/{_q(id)}/items", query=q, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+        return self._client.paginate(_fetch, after if after is not NOT_GIVEN else None)
+
+    def create_items(self, id: str, *, items: List["ItemInput"], idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "ItemList":
+        """Append items
+
+        Adds up to 20 items without running the model. Only on a conversation without an agent (409 `conversation_has_agent`; an agent's runtime keeps its own session history). Requires the `agents` scope.
+
+        ``POST /v1/conversations/{id}/items``
+        """
+        _body: Dict[str, Any] = {}
+        if items is not NOT_GIVEN:
+            _body['items'] = items
+        return self._client.request("POST", f"/v1/conversations/{_q(id)}/items", body=_body, idempotency_key=idempotency_key, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def get_item(self, id: str, item_id: str, *, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "Item":
+        """Retrieve an item
+
+        Requires the `agents` scope.
+
+        ``GET /v1/conversations/{id}/items/{item_id}``
+        """
+        return self._client.request("GET", f"/v1/conversations/{_q(id)}/items/{_q(item_id)}", timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
 
 class UsageResource:
     def __init__(self, client: Transport) -> None:
         self._client = client
+
+    def get_project_tracing(self, id: str, *, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "ProjectTracing":
+        """The project's trace export settings
+
+        Where the project's spans go. Header values are never returned, only their names. `404 tracing_not_configured` when none is set. Requires the `usage` scope.
+
+        ``GET /v1/projects/{id}/tracing``
+        """
+        return self._client.request("GET", f"/v1/projects/{_q(id)}/tracing", timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def put_project_tracing(self, id: str, *, endpoint: str, headers: Dict[str, Any] = NOT_GIVEN, service_name: str = NOT_GIVEN, enabled: bool = NOT_GIVEN, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "ProjectTracing":
+        """Set the project's trace export
+
+        Send a span for every agent turn, phone run and call of this project to an OTLP/HTTP collector (Langfuse, Arize Phoenix, any OpenTelemetry collector), as OTLP protobuf following the OpenTelemetry GenAI conventions. `endpoint` is the collector's OTLP base URL (`/v1/traces` is appended) or its full traces URL; it must be a public https URL. `headers` are encrypted at rest; leave them out to keep the stored ones. Export runs in the background and never fails or slows a request. Not available to account-bound keys.
+
+        ``PUT /v1/projects/{id}/tracing``
+        """
+        _body: Dict[str, Any] = {}
+        if endpoint is not NOT_GIVEN:
+            _body['endpoint'] = endpoint
+        if headers is not NOT_GIVEN:
+            _body['headers'] = headers
+        if service_name is not NOT_GIVEN:
+            _body['service_name'] = service_name
+        if enabled is not NOT_GIVEN:
+            _body['enabled'] = enabled
+        return self._client.request("PUT", f"/v1/projects/{_q(id)}/tracing", body=_body, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def delete_project_tracing(self, id: str, *, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+        """Turn off and forget the project's trace export
+
+        ``DELETE /v1/projects/{id}/tracing``
+        """
+        return self._client.request("DELETE", f"/v1/projects/{_q(id)}/tracing", timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def test_project_tracing(self, id: str, *, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+        """Send one test span
+
+        Sends one `allternit.tracing.test` span to the collector now and reports its answer.
+
+        ``POST /v1/projects/{id}/tracing/test``
+        """
+        return self._client.request("POST", f"/v1/projects/{_q(id)}/tracing/test", idempotency_key=idempotency_key, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
 
     def get_spend_cap(self, *, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "SpendCap":
         """The project's monthly spend cap and spend so far
@@ -654,14 +853,16 @@ class NumbersResource:
         return self._client.request("POST", f"/v1/numbers/{_q(id)}/simulate_inbound", body=_body, idempotency_key=idempotency_key, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
 
 
-class MessagingResource:
+class TextsResource:
     def __init__(self, client: Transport) -> None:
         self._client = client
 
-    def list_messages(self, *, limit: int = NOT_GIVEN, after: str = NOT_GIVEN, number_id: str = NOT_GIVEN, account_id: str = NOT_GIVEN, direction: Literal['inbound', 'outbound'] = NOT_GIVEN, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "MessageList":
+    def list(self, *, limit: int = NOT_GIVEN, after: str = NOT_GIVEN, number_id: str = NOT_GIVEN, account_id: str = NOT_GIVEN, direction: Literal['inbound', 'outbound'] = NOT_GIVEN, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "TextList":
         """List texts
 
-        ``GET /v1/messages``
+        SMS and MMS on the project's numbers. Formerly `/v1/messages`. The webhook events `message.received` and `message.status` keep their names. Requires the `messaging` scope.
+
+        ``GET /v1/texts``
         """
         _query: Dict[str, Any] = {}
         if limit is not NOT_GIVEN:
@@ -674,10 +875,10 @@ class MessagingResource:
             _query['account_id'] = account_id
         if direction is not NOT_GIVEN:
             _query['direction'] = direction
-        return self._client.request("GET", f"/v1/messages", query=_query, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+        return self._client.request("GET", f"/v1/texts", query=_query, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
 
-    def list_messages_all(self, *, limit: int = NOT_GIVEN, after: str = NOT_GIVEN, number_id: str = NOT_GIVEN, account_id: str = NOT_GIVEN, direction: Literal['inbound', 'outbound'] = NOT_GIVEN, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Iterator["Message"]:
-        """Every item of ``list_messages``, fetching pages as you iterate."""
+    def list_all(self, *, limit: int = NOT_GIVEN, after: str = NOT_GIVEN, number_id: str = NOT_GIVEN, account_id: str = NOT_GIVEN, direction: Literal['inbound', 'outbound'] = NOT_GIVEN, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Iterator["Text"]:
+        """Every item of ``list``, fetching pages as you iterate."""
         _query: Dict[str, Any] = {}
         if limit is not NOT_GIVEN:
             _query['limit'] = limit
@@ -693,15 +894,15 @@ class MessagingResource:
             q = dict(_query)
             if cursor is not None:
                 q['after'] = cursor
-            return self._client.request("GET", f"/v1/messages", query=q, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+            return self._client.request("GET", f"/v1/texts", query=q, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
         return self._client.paginate(_fetch, after if after is not NOT_GIVEN else None)
 
-    def send_message(self, *, number_id: str, to: str, body: str, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "Message":
+    def create(self, *, number_id: str, to: str, body: str, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "Text":
         """Send a text
 
-        Refused when texting isn't active on the number, the person sent STOP, or they never texted first and have no consent recorded.
+        Refused when texting isn't active on the number, the person sent STOP, or they never texted first and have no consent recorded. Ids keep their `msg_` prefix. The webhook events `message.received` and `message.status` keep their names.
 
-        ``POST /v1/messages``
+        ``POST /v1/texts``
         """
         _body: Dict[str, Any] = {}
         if number_id is not NOT_GIVEN:
@@ -710,14 +911,14 @@ class MessagingResource:
             _body['to'] = to
         if body is not NOT_GIVEN:
             _body['body'] = body
-        return self._client.request("POST", f"/v1/messages", body=_body, idempotency_key=idempotency_key, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+        return self._client.request("POST", f"/v1/texts", body=_body, idempotency_key=idempotency_key, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
 
-    def get_message(self, id: str, *, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "Message":
+    def get(self, id: str, *, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "Text":
         """Retrieve a text
 
-        ``GET /v1/messages/{id}``
+        ``GET /v1/texts/{id}``
         """
-        return self._client.request("GET", f"/v1/messages/{_q(id)}", timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+        return self._client.request("GET", f"/v1/texts/{_q(id)}", timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
 
 
 class WebhooksResource:
@@ -750,7 +951,7 @@ class WebhooksResource:
             return self._client.request("GET", f"/v1/webhooks", query=q, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
         return self._client.paginate(_fetch, after if after is not NOT_GIVEN else None)
 
-    def create(self, *, url: str, events: List[Literal['*', 'approval.requested', 'message.received', 'message.status', 'registration.updated', 'inbox.item.created', 'call.started', 'call.ended', 'call.transcript.ready', 'usage.threshold', 'phone.step', 'phone.run.completed']], description: str = NOT_GIVEN, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+    def create(self, *, url: str, events: List[Literal['*', 'approval.requested', 'approval.resolved', 'approval.expired', 'message.received', 'message.status', 'registration.updated', 'inbox.item.created', 'call.started', 'call.ended', 'call.transcript.ready', 'usage.threshold', 'phone.step', 'phone.run.completed', 'phone.fleet_run.completed', 'phone.approval.requested', 'phone.approval.resolved', 'mail.received']], description: str = NOT_GIVEN, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
         """Create a webhook endpoint
 
         `url` must be public https. The response carries `secret` once.
@@ -1018,7 +1219,7 @@ class TwinResource:
         """
         return self._client.request("POST", f"/v1/accounts/{_q(id)}/inbox/{_q(item_id)}/resolve", idempotency_key=idempotency_key, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
 
-    def list_approvals(self, id: str, *, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+    def list_account_approvals(self, id: str, *, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
         """List approvals
 
         `?status=pending|approved|denied|all`, newest first.
@@ -1324,7 +1525,7 @@ class PhonesResource:
             _body['brain'] = brain
         return self._client.request("POST", f"/v1/phones/skills/{_q(name)}/run", body=_body, idempotency_key=idempotency_key, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
 
-    def get_history(self, serial: str, *, run_id: str = NOT_GIVEN, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "PhoneHistory":
+    def get_history(self, serial: str, *, run_id: str = NOT_GIVEN, limit: int = NOT_GIVEN, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "PhoneHistory":
         """A phone's run history
 
         Every phone tool call on this phone (500 steps / 30 days), newest run first. Typed text, numbers and message bodies are redacted on the Desktop; frames and screen text stay there.
@@ -1334,13 +1535,16 @@ class PhonesResource:
         _query: Dict[str, Any] = {}
         if run_id is not NOT_GIVEN:
             _query['run_id'] = run_id
+        if limit is not NOT_GIVEN:
+            _query['limit'] = limit
         return self._client.request("GET", f"/v1/phones/{_q(serial)}/history", query=_query, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
 
-    def call_tool(self, serial: str, *, name: str, arguments: Dict[str, Any] = NOT_GIVEN, run_id: str = NOT_GIVEN, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "PhoneToolResult":
+    def call_tool(self, serial: str, *, name: str, arguments: Dict[str, Any] = NOT_GIVEN, run_id: str = NOT_GIVEN, hold_id: str = NOT_GIVEN, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "PhoneToolResult":
         """Run one phone tool
 
-        One phone tool through the Desktop phone gateway, exactly as a bot calls it: `phone.devices`, `phone.screenshot`, `phone.read_ui`, `phone.screen_text`, `phone.tap`, `phone.type`, `phone.find_and_tap`, `phone.swipe`, `phone.home`, `phone.back`, `phone.key`, `phone.open_app`, `phone.sms.read`, `phone.sms.send`, `phone.call.dial`.
+        One phone tool through the Desktop phone gateway, exactly as a bot calls it: `phone.devices`, `phone.screenshot`, `phone.read_ui`, `phone.screen_text`, `phone.tap`, `phone.type`, `phone.find_and_tap`, `phone.swipe`, `phone.home`, `phone.back`, `phone.key`, `phone.open_app`, `phone.sms.read`, `phone.sms.send`, `phone.call.dial`. An iPhone running the Allternit app (serial `app:<phoneId>`) is screen only plus its in-app browser: `phone.screenshot`, `phone.devices` and `phone.web.open`, `phone.web.snapshot`, `phone.web.click`, `phone.web.type`, `phone.web.scroll`, `phone.web.back`, `phone.web.wait` (the app must be open; taps on native apps answer `not_supported`).
         `phone.sms.send` and `phone.call.dial` wait for the person to approve on their Desktop (up to 80 s; then 503 `phone_timeout`); a refusal is a 200 result with `ok: false, error: approval_denied`. Tool failures are 200 with `ok: false`. 409 `phone_offline` when the phone isn't connected, 503 `phone_desktop_offline` / `phone_gateway_unavailable` when the Desktop or its phone gateway isn't running. The call is a `phone.step` webhook like any other.
+        A sensitive action (pay, delete, send, call, a credential, a money app, a security setting) is held: 409 `approval_required` with `approval_id`, `inbox_id` and `expires_at`, and a `phone.approval.requested` webhook. Nothing runs and no phone-minute is billed. The project owner approves in the Allternit app; an API key can't approve. Then repeat the same call with `hold_id` set to the `approval_id` (or `_hold` in `arguments`) within 10 minutes, with a new `Idempotency-Key` if you send one. The approval covers that one action.
 
         ``POST /v1/phones/{serial}/tool``
         """
@@ -1351,12 +1555,14 @@ class PhonesResource:
             _body['arguments'] = arguments
         if run_id is not NOT_GIVEN:
             _body['run_id'] = run_id
+        if hold_id is not NOT_GIVEN:
+            _body['hold_id'] = hold_id
         return self._client.request("POST", f"/v1/phones/{_q(serial)}/tool", body=_body, idempotency_key=idempotency_key, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
 
     def run_task(self, serial: str, *, goal: str, max_steps: int = NOT_GIVEN, bot_id: str = NOT_GIVEN, brain: str = NOT_GIVEN, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "PhoneRunStarted":
         """Give a phone a goal
 
-        The phone task loop on the Desktop (read the screen, one action, repeat) with `bot_id`'s brain, `brain`, or the default. Answers 202 with the `run_id`; each step is a `phone.step` webhook and the end is `phone.run.completed`. Tasks never send texts or place calls. At most 5 minutes.
+        The phone task loop on the Desktop (read the screen, one action, repeat) with `bot_id`'s brain, `brain`, or the default. Answers 202 with the `run_id`; each step is a `phone.step` webhook and the end is `phone.run.completed`. Tasks never send texts or place calls. At most 5 minutes. A sensitive step waits up to 5 minutes for the owner's approval with the budget paused (status `waiting_approval`, `phone.approval.requested`); the run ends `denied`, `approval_timeout` or `phone_locked` when it can't go on. `duration_ms` and phone minutes leave out held time.
 
         ``POST /v1/phones/{serial}/task``
         """
@@ -1370,6 +1576,644 @@ class PhonesResource:
         if brain is not NOT_GIVEN:
             _body['brain'] = brain
         return self._client.request("POST", f"/v1/phones/{_q(serial)}/task", body=_body, idempotency_key=idempotency_key, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def get_live_view(self, serial: str, *, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "PhoneLiveView":
+        """Watch a phone live
+
+        A view-only live view of the phone's screen for 10 minutes: `viewer_url` is a page you can open or put in an iframe, and `stream_url` is the raw stream (`{type:"meta"}` JSON, then H.264 Annex-B frames) for your own player. Both URLs carry the live view id as their only credential and stop working after `expires_in` seconds; neither can send input. A new view needs a new call. 409 `phone_offline` when the phone isn't connected to the Desktop.
+
+        ``POST /v1/phones/{serial}/live``
+        """
+        return self._client.request("POST", f"/v1/phones/{_q(serial)}/live", idempotency_key=idempotency_key, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def start_fleet_run(self, *, serials: List[str], goal: str = NOT_GIVEN, skill: str = NOT_GIVEN, inputs: Dict[str, Any] = NOT_GIVEN, max_steps: int = NOT_GIVEN, bot_id: str = NOT_GIVEN, brain: str = NOT_GIVEN, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "PhoneFleetRun":
+        """Run one task or skill on many phones
+
+        Starts one background run per listed phone: a task (`goal`) or a saved skill (`skill`). Answers 202 with the fleet run; phones whose run could not start are in `not_started` with the error. Every run counts against the plan's concurrent phone-run limit (Sandbox 1, Pay as you go 5, Growth 25, Enterprise by contract); asking for more than the room left is 429 `phone_run_limit` and starts nothing. Each run ends with `phone.run.completed`; the whole fleet run with `phone.fleet_run.completed`.
+
+        ``POST /v1/phones/runs``
+        """
+        _body: Dict[str, Any] = {}
+        if serials is not NOT_GIVEN:
+            _body['serials'] = serials
+        if goal is not NOT_GIVEN:
+            _body['goal'] = goal
+        if skill is not NOT_GIVEN:
+            _body['skill'] = skill
+        if inputs is not NOT_GIVEN:
+            _body['inputs'] = inputs
+        if max_steps is not NOT_GIVEN:
+            _body['max_steps'] = max_steps
+        if bot_id is not NOT_GIVEN:
+            _body['bot_id'] = bot_id
+        if brain is not NOT_GIVEN:
+            _body['brain'] = brain
+        return self._client.request("POST", f"/v1/phones/runs", body=_body, idempotency_key=idempotency_key, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def get_fleet_run(self, id: str, *, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "PhoneFleetRun":
+        """A fleet run
+
+        The fleet run and each phone's run (status, ok, start and end).
+
+        ``GET /v1/phones/runs/{id}``
+        """
+        return self._client.request("GET", f"/v1/phones/runs/{_q(id)}", timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+
+class MailboxesResource:
+    def __init__(self, client: Transport) -> None:
+        self._client = client
+
+    def list(self, *, limit: int = NOT_GIVEN, after: str = NOT_GIVEN, account_id: str = NOT_GIVEN, agent_id: str = NOT_GIVEN, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "MailboxList":
+        """List mailboxes
+
+        ``GET /v1/mailboxes``
+        """
+        _query: Dict[str, Any] = {}
+        if limit is not NOT_GIVEN:
+            _query['limit'] = limit
+        if after is not NOT_GIVEN:
+            _query['after'] = after
+        if account_id is not NOT_GIVEN:
+            _query['account_id'] = account_id
+        if agent_id is not NOT_GIVEN:
+            _query['agent_id'] = agent_id
+        return self._client.request("GET", f"/v1/mailboxes", query=_query, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def list_all(self, *, limit: int = NOT_GIVEN, after: str = NOT_GIVEN, account_id: str = NOT_GIVEN, agent_id: str = NOT_GIVEN, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Iterator["Mailbox"]:
+        """Every item of ``list``, fetching pages as you iterate."""
+        _query: Dict[str, Any] = {}
+        if limit is not NOT_GIVEN:
+            _query['limit'] = limit
+        if after is not NOT_GIVEN:
+            _query['after'] = after
+        if account_id is not NOT_GIVEN:
+            _query['account_id'] = account_id
+        if agent_id is not NOT_GIVEN:
+            _query['agent_id'] = agent_id
+        def _fetch(cursor: Optional[str]) -> Page:
+            q = dict(_query)
+            if cursor is not None:
+                q['after'] = cursor
+            return self._client.request("GET", f"/v1/mailboxes", query=q, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+        return self._client.paginate(_fetch, after if after is not NOT_GIVEN else None)
+
+    def create_mailbox(self, *, account_id: str = NOT_GIVEN, agent_id: str = NOT_GIVEN, local_part: str = NOT_GIVEN, display_name: str = NOT_GIVEN, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "Mailbox":
+        """Create a mailbox for an account or agent
+
+        An address on Allternit Mail (`local_part@bots.allternit.com`; `-2`, `-3`… when taken). With `agent_id`, the account is the agent's. Needs a card on file; live projects are billed `mailbox_month` ($2 a month). Requires the `mail` scope.
+
+        ``POST /v1/mailboxes``
+        """
+        _body: Dict[str, Any] = {}
+        if account_id is not NOT_GIVEN:
+            _body['account_id'] = account_id
+        if agent_id is not NOT_GIVEN:
+            _body['agent_id'] = agent_id
+        if local_part is not NOT_GIVEN:
+            _body['local_part'] = local_part
+        if display_name is not NOT_GIVEN:
+            _body['display_name'] = display_name
+        return self._client.request("POST", f"/v1/mailboxes", body=_body, idempotency_key=idempotency_key, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def get_mailbox(self, id: str, *, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "Mailbox":
+        """Retrieve a mailbox
+
+        ``GET /v1/mailboxes/{id}``
+        """
+        return self._client.request("GET", f"/v1/mailboxes/{_q(id)}", timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def delete_mailbox(self, id: str, *, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+        """Delete a mailbox
+
+        Removes the address. A mailbox inside an identity answers `409 mailbox_in_identity`; delete the identity instead.
+
+        ``DELETE /v1/mailboxes/{id}``
+        """
+        return self._client.request("DELETE", f"/v1/mailboxes/{_q(id)}", timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def list_mail_messages(self, id: str, *, limit: int = NOT_GIVEN, after: str = NOT_GIVEN, verification: bool = NOT_GIVEN, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "MailMessageList":
+        """List a mailbox's messages
+
+        Newest first. Each carries the one-time codes and sign-in links found in it.
+
+        ``GET /v1/mailboxes/{id}/messages``
+        """
+        _query: Dict[str, Any] = {}
+        if limit is not NOT_GIVEN:
+            _query['limit'] = limit
+        if after is not NOT_GIVEN:
+            _query['after'] = after
+        if verification is not NOT_GIVEN:
+            _query['verification'] = verification
+        return self._client.request("GET", f"/v1/mailboxes/{_q(id)}/messages", query=_query, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def list_mail_messages_all(self, id: str, *, limit: int = NOT_GIVEN, after: str = NOT_GIVEN, verification: bool = NOT_GIVEN, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Iterator["MailMessage"]:
+        """Every item of ``list_mail_messages``, fetching pages as you iterate."""
+        _query: Dict[str, Any] = {}
+        if limit is not NOT_GIVEN:
+            _query['limit'] = limit
+        if after is not NOT_GIVEN:
+            _query['after'] = after
+        if verification is not NOT_GIVEN:
+            _query['verification'] = verification
+        def _fetch(cursor: Optional[str]) -> Page:
+            q = dict(_query)
+            if cursor is not None:
+                q['after'] = cursor
+            return self._client.request("GET", f"/v1/mailboxes/{_q(id)}/messages", query=q, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+        return self._client.paginate(_fetch, after if after is not NOT_GIVEN else None)
+
+    def get_mail_message(self, id: str, mid: str, *, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+        """Read one message
+
+        ``GET /v1/mailboxes/{id}/messages/{mid}``
+        """
+        return self._client.request("GET", f"/v1/mailboxes/{_q(id)}/messages/{_q(mid)}", timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def read_mail_otp(self, id: str, *, wait_seconds: int = NOT_GIVEN, since: str = NOT_GIVEN, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+        """Wait for the newest one-time code
+
+        The newest message with a code or sign-in link received after `since` (default the last 10 minutes), waiting up to `wait_seconds` for one to arrive. `found` is false when none came.
+
+        ``POST /v1/mailboxes/{id}/otp``
+        """
+        _body: Dict[str, Any] = {}
+        if wait_seconds is not NOT_GIVEN:
+            _body['wait_seconds'] = wait_seconds
+        if since is not NOT_GIVEN:
+            _body['since'] = since
+        return self._client.request("POST", f"/v1/mailboxes/{_q(id)}/otp", body=_body, idempotency_key=idempotency_key, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def send_mail(self, id: str, *, to: str, subject: str, text: str = NOT_GIVEN, html: str = NOT_GIVEN, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+        """Send an email from a mailbox
+
+        Live projects only. The call is the approval, so the send is queued at once; `pending_approval` only when Allternit Mail held it and could not release it.
+
+        ``POST /v1/mailboxes/{id}/send``
+        """
+        _body: Dict[str, Any] = {}
+        if to is not NOT_GIVEN:
+            _body['to'] = to
+        if subject is not NOT_GIVEN:
+            _body['subject'] = subject
+        if text is not NOT_GIVEN:
+            _body['text'] = text
+        if html is not NOT_GIVEN:
+            _body['html'] = html
+        return self._client.request("POST", f"/v1/mailboxes/{_q(id)}/send", body=_body, idempotency_key=idempotency_key, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+
+class IdentitiesResource:
+    def __init__(self, client: Transport) -> None:
+        self._client = client
+
+    def list(self, *, limit: int = NOT_GIVEN, after: str = NOT_GIVEN, account_id: str = NOT_GIVEN, agent_id: str = NOT_GIVEN, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "IdentityList":
+        """List agent identities
+
+        ``GET /v1/identities``
+        """
+        _query: Dict[str, Any] = {}
+        if limit is not NOT_GIVEN:
+            _query['limit'] = limit
+        if after is not NOT_GIVEN:
+            _query['after'] = after
+        if account_id is not NOT_GIVEN:
+            _query['account_id'] = account_id
+        if agent_id is not NOT_GIVEN:
+            _query['agent_id'] = agent_id
+        return self._client.request("GET", f"/v1/identities", query=_query, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def list_all(self, *, limit: int = NOT_GIVEN, after: str = NOT_GIVEN, account_id: str = NOT_GIVEN, agent_id: str = NOT_GIVEN, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Iterator["Identity"]:
+        """Every item of ``list``, fetching pages as you iterate."""
+        _query: Dict[str, Any] = {}
+        if limit is not NOT_GIVEN:
+            _query['limit'] = limit
+        if after is not NOT_GIVEN:
+            _query['after'] = after
+        if account_id is not NOT_GIVEN:
+            _query['account_id'] = account_id
+        if agent_id is not NOT_GIVEN:
+            _query['agent_id'] = agent_id
+        def _fetch(cursor: Optional[str]) -> Page:
+            q = dict(_query)
+            if cursor is not None:
+                q['after'] = cursor
+            return self._client.request("GET", f"/v1/identities", query=q, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+        return self._client.paginate(_fetch, after if after is not NOT_GIVEN else None)
+
+    def create_identity(self, *, account_id: str = NOT_GIVEN, agent_id: str = NOT_GIVEN, area_code: str = NOT_GIVEN, number_type: Literal['local', 'toll_free'] = NOT_GIVEN, phone_serial: str = NOT_GIVEN, local_part: str = NOT_GIVEN, display_name: str = NOT_GIVEN, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "Identity":
+        """Give an agent a number, a mailbox and a phone in one call
+
+        Gets a number (simulated in sandbox; in live the first available, in `area_code` when given), a mailbox and, with `phone_serial`, binds one of the owner's linked phones. Requires the `numbers` and `mail` scopes, plus `phones` (and an unbound key) with `phone_serial`. Billed as the Agent identity bundle ($9 a month, meter `identity_month`).
+
+        ``POST /v1/identities``
+        """
+        _body: Dict[str, Any] = {}
+        if account_id is not NOT_GIVEN:
+            _body['account_id'] = account_id
+        if agent_id is not NOT_GIVEN:
+            _body['agent_id'] = agent_id
+        if area_code is not NOT_GIVEN:
+            _body['area_code'] = area_code
+        if number_type is not NOT_GIVEN:
+            _body['number_type'] = number_type
+        if phone_serial is not NOT_GIVEN:
+            _body['phone_serial'] = phone_serial
+        if local_part is not NOT_GIVEN:
+            _body['local_part'] = local_part
+        if display_name is not NOT_GIVEN:
+            _body['display_name'] = display_name
+        return self._client.request("POST", f"/v1/identities", body=_body, idempotency_key=idempotency_key, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def get_identity(self, id: str, *, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "Identity":
+        """Retrieve an identity
+
+        ``GET /v1/identities/{id}``
+        """
+        return self._client.request("GET", f"/v1/identities/{_q(id)}", timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def delete_identity(self, id: str, *, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+        """Delete an identity
+
+        Releases the number and removes the mailbox.
+
+        ``DELETE /v1/identities/{id}``
+        """
+        return self._client.request("DELETE", f"/v1/identities/{_q(id)}", timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+
+class DecisionsResource:
+    def __init__(self, client: Transport) -> None:
+        self._client = client
+
+    def list(self, *, limit: int = NOT_GIVEN, after: str = NOT_GIVEN, account_id: str = NOT_GIVEN, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "DecisionList":
+        """List decisions
+
+        The project's stored decisions, newest first, in the usual cursor envelope (`limit` 1 to 100, default 20; pass `next_cursor` as `after`). A key bound to an account sees only that account's decisions; `account_id` narrows a project-wide key (`403 account_mismatch` for a bound key naming another account). Each item is the same `Decision` that `GET /v1/decisions/{id}` returns. Requires the `decisions` scope.
+
+        ``GET /v1/decisions``
+        """
+        _query: Dict[str, Any] = {}
+        if limit is not NOT_GIVEN:
+            _query['limit'] = limit
+        if after is not NOT_GIVEN:
+            _query['after'] = after
+        if account_id is not NOT_GIVEN:
+            _query['account_id'] = account_id
+        return self._client.request("GET", f"/v1/decisions", query=_query, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def list_all(self, *, limit: int = NOT_GIVEN, after: str = NOT_GIVEN, account_id: str = NOT_GIVEN, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Iterator["Decision"]:
+        """Every item of ``list``, fetching pages as you iterate."""
+        _query: Dict[str, Any] = {}
+        if limit is not NOT_GIVEN:
+            _query['limit'] = limit
+        if after is not NOT_GIVEN:
+            _query['after'] = after
+        if account_id is not NOT_GIVEN:
+            _query['account_id'] = account_id
+        def _fetch(cursor: Optional[str]) -> Page:
+            q = dict(_query)
+            if cursor is not None:
+                q['after'] = cursor
+            return self._client.request("GET", f"/v1/decisions", query=q, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+        return self._client.paginate(_fetch, after if after is not NOT_GIVEN else None)
+
+    def create(self, *, input: Union[str, List[Dict[str, Any]]] = NOT_GIVEN, instructions: str = NOT_GIVEN, questions: Union[List["DecisionQuestion"], Dict[str, Any]] = NOT_GIVEN, latency_budget_ms: int = NOT_GIVEN, allow_abstain: bool = NOT_GIVEN, metadata: Dict[str, Any] = NOT_GIVEN, context: Any = NOT_GIVEN, options_: List[Dict[str, Any]] = NOT_GIVEN, kind: str = NOT_GIVEN, question: str = NOT_GIVEN, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "Decision":
+        """Ask one or more questions about some input
+
+        Answers up to 16 typed questions about one input (text or JSON), with a probability
+        and a confidence for each. Question types: `predicate` (yes or no;
+        `probability` is P(yes)), `choice` (2 to 255 `choices`; the answer names the best one
+        and gives every probability), `score` (2 to 10 ordered `levels`; `score` is the
+        probability-weighted level index scaled to 0..1, with the per-level distribution).
+        A `questions` object keyed by name (Google style) is accepted and normalised to the
+        array form. The single-question Agency body (`context`, `options`, `kind`, `question`)
+        is also accepted on this route and answered in the Agency shape. Questions run
+        together under one `latency_budget_ms`; a question the backends cannot answer in time
+        comes back as a `refusal` answer (`reason`: `abstained`, `unavailable` or
+        `budget_exhausted`), not a failed request. Each answer names the `backend` that answered
+        it; the top-level `backend` is the one that answered the most questions. Limits: 1 to 16
+        questions, `input` text plus shared `instructions` up to 4 KiB (`400 input_too_large`), each question's instructions plus choice or level texts up to 4 KiB (`400 question_too_large`). Image inputs are not
+        supported yet (`400 image_not_supported`). When `latency_budget_ms` is omitted it
+        defaults to `5000 + 15 * input_bytes + 3000 * questions` ms, clamped to 10000-120000;
+        input bytes count the shared `instructions` plus the input text, and an Agency body
+        counts as one question. These limits are sized to the current scoring hardware and rise
+        as it grows. Billed per answered question (`decision_questions`
+        meter; refusals are not billed, `usage.questions` counts answered ones). Requires the
+        `decisions` scope.
+
+        ``POST /v1/decisions``
+        """
+        _body: Dict[str, Any] = {}
+        if input is not NOT_GIVEN:
+            _body['input'] = input
+        if instructions is not NOT_GIVEN:
+            _body['instructions'] = instructions
+        if questions is not NOT_GIVEN:
+            _body['questions'] = questions
+        if latency_budget_ms is not NOT_GIVEN:
+            _body['latency_budget_ms'] = latency_budget_ms
+        if allow_abstain is not NOT_GIVEN:
+            _body['allow_abstain'] = allow_abstain
+        if metadata is not NOT_GIVEN:
+            _body['metadata'] = metadata
+        if context is not NOT_GIVEN:
+            _body['context'] = context
+        if options_ is not NOT_GIVEN:
+            _body['options'] = options_
+        if kind is not NOT_GIVEN:
+            _body['kind'] = kind
+        if question is not NOT_GIVEN:
+            _body['question'] = question
+        return self._client.request("POST", f"/v1/decisions", body=_body, idempotency_key=idempotency_key, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def get(self, id: str, *, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "Decision":
+        """Retrieve a decision
+
+        The stored decision, with any outcomes recorded so far. Requires the `decisions` scope.
+
+        ``GET /v1/decisions/{id}``
+        """
+        return self._client.request("GET", f"/v1/decisions/{_q(id)}", timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def update(self, id: str, *, outcomes: Dict[str, Any], timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "Decision":
+        """Record what happened after a decision
+
+        Adds an outcome per question name (`success`, `failure`, `error` or `skipped`, with an optional label and detail). Outcomes feed back into the decision backends. Requires the `decisions` scope.
+
+        ``PATCH /v1/decisions/{id}``
+        """
+        _body: Dict[str, Any] = {}
+        if outcomes is not NOT_GIVEN:
+            _body['outcomes'] = outcomes
+        return self._client.request("PATCH", f"/v1/decisions/{_q(id)}", body=_body, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+
+class ResponsesResource:
+    def __init__(self, client: Transport) -> None:
+        self._client = client
+
+    def create(self, *, input: Union[str, List["ItemInput"]], model: str = NOT_GIVEN, agent: str = NOT_GIVEN, instructions: str = NOT_GIVEN, tools: List[Dict[str, Any]] = NOT_GIVEN, tool_choice: Any = NOT_GIVEN, store: bool = NOT_GIVEN, conversation: str = NOT_GIVEN, previous_response_id: str = NOT_GIVEN, metadata: Dict[str, Any] = NOT_GIVEN, max_output_tokens: int = NOT_GIVEN, temperature: float = NOT_GIVEN, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "Response":
+        """Create a response
+
+        Runs one turn. Give exactly one of `model` (runs on the model router; your `tools` come
+        back as `function_call` items for you to run, then you continue with
+        `previous_response_id`) or `agent` (runs on the project's hosted runtime with the
+        agent's own tools). `conversation` and `previous_response_id` are mutually exclusive.
+        With `stream: true` the answer is server-sent events: `response.created`,
+        `response.output_item.added`, `response.output_text.delta` (`{"delta"}`),
+        `response.output_text.done`, `response.function_call_arguments.done`,
+        `response.tool_call.started` / `response.tool_call.completed` / `response.tool_call.failed`
+        (hosted tools, arguments and results cut at 8,000 characters),
+        `response.output_item.done`, then `response.completed`, `response.incomplete` or `response.failed`, and `error`
+        for failures before the stream starts. Clients should skip event names they don't know.
+        When an agent's action needs the owner's approval, that tool call fails with a "try
+        again once they approve" result and the turn ends; this answer (and its stream) still
+        ends `completed`, because the approval is raised after the turn finishes. While it is
+        pending, `GET /v1/responses/{id}` reads `status: requires_action` with one
+        `required_actions` entry per pending approval. Resolve it with `POST /v1/approvals/{id}`
+        (or follow the `approval.requested` / `approval.resolved` webhooks), then send a new
+        response with `previous_response_id`. Errors before the stream starts are
+        plain errors: `400 invalid_request` for `agent` with `store: false`, `agent` with client
+        `tools`, or mixing `model` and `agent` turns in one conversation;
+        `400 missing_function_call_output` when a `function_call` of the previous response has no
+        matching `function_call_output` in `input`; `409 previous_response_not_latest` when
+        `previous_response_id` is not the latest response of its conversation;
+        `402 spend_cap_reached`, `402 payment_method_required`, `409 conversation_busy`,
+        `503 runtime_starting` / `computer_capacity` (both with `Retry-After: 30`). Token usage is recorded as
+        `tokens_in` and `tokens_out`. Requires the `inference` scope with `model`, or the
+        `agents` scope with `agent`.
+
+        ``POST /v1/responses``
+        """
+        _body: Dict[str, Any] = {}
+        if model is not NOT_GIVEN:
+            _body['model'] = model
+        if agent is not NOT_GIVEN:
+            _body['agent'] = agent
+        if input is not NOT_GIVEN:
+            _body['input'] = input
+        if instructions is not NOT_GIVEN:
+            _body['instructions'] = instructions
+        if tools is not NOT_GIVEN:
+            _body['tools'] = tools
+        if tool_choice is not NOT_GIVEN:
+            _body['tool_choice'] = tool_choice
+        if store is not NOT_GIVEN:
+            _body['store'] = store
+        if conversation is not NOT_GIVEN:
+            _body['conversation'] = conversation
+        if previous_response_id is not NOT_GIVEN:
+            _body['previous_response_id'] = previous_response_id
+        if metadata is not NOT_GIVEN:
+            _body['metadata'] = metadata
+        if max_output_tokens is not NOT_GIVEN:
+            _body['max_output_tokens'] = max_output_tokens
+        if temperature is not NOT_GIVEN:
+            _body['temperature'] = temperature
+        return self._client.request("POST", f"/v1/responses", body=_body, idempotency_key=idempotency_key, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def create_stream(self, *, input: Union[str, List["ItemInput"]], model: str = NOT_GIVEN, agent: str = NOT_GIVEN, instructions: str = NOT_GIVEN, tools: List[Dict[str, Any]] = NOT_GIVEN, tool_choice: Any = NOT_GIVEN, store: bool = NOT_GIVEN, conversation: str = NOT_GIVEN, previous_response_id: str = NOT_GIVEN, metadata: Dict[str, Any] = NOT_GIVEN, max_output_tokens: int = NOT_GIVEN, temperature: float = NOT_GIVEN, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Iterator[SSEEvent]:
+        """``create`` with ``stream: true``: yields the raw server-sent events."""
+        _body: Dict[str, Any] = {}
+        if model is not NOT_GIVEN:
+            _body['model'] = model
+        if agent is not NOT_GIVEN:
+            _body['agent'] = agent
+        if input is not NOT_GIVEN:
+            _body['input'] = input
+        if instructions is not NOT_GIVEN:
+            _body['instructions'] = instructions
+        if tools is not NOT_GIVEN:
+            _body['tools'] = tools
+        if tool_choice is not NOT_GIVEN:
+            _body['tool_choice'] = tool_choice
+        if store is not NOT_GIVEN:
+            _body['store'] = store
+        if conversation is not NOT_GIVEN:
+            _body['conversation'] = conversation
+        if previous_response_id is not NOT_GIVEN:
+            _body['previous_response_id'] = previous_response_id
+        if metadata is not NOT_GIVEN:
+            _body['metadata'] = metadata
+        if max_output_tokens is not NOT_GIVEN:
+            _body['max_output_tokens'] = max_output_tokens
+        if temperature is not NOT_GIVEN:
+            _body['temperature'] = temperature
+        _body['stream'] = True
+        return self._client.stream_request("POST", f"/v1/responses", body=_body, idempotency_key=idempotency_key, timeout=timeout, extra_headers=extra_headers)
+
+    def get(self, id: str, *, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "Response":
+        """Retrieve a response
+
+        A stored response (`store` was not false) with its output items. While an approval its turn raised is pending, `status` is `requires_action` and `required_actions` lists the pending approvals (one `approval` entry with its `approval_id` each, oldest first). Requires the `inference` or `agents` scope.
+
+        ``GET /v1/responses/{id}``
+        """
+        return self._client.request("GET", f"/v1/responses/{_q(id)}", timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def list_input_items(self, id: str, *, limit: int = NOT_GIVEN, after: str = NOT_GIVEN, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "ItemList":
+        """List a response's input items
+
+        The items the response was given, in order. Needed because `input` is not echoed on the response object (OpenAI parity). Requires the `inference` or `agents` scope.
+
+        ``GET /v1/responses/{id}/input_items``
+        """
+        _query: Dict[str, Any] = {}
+        if limit is not NOT_GIVEN:
+            _query['limit'] = limit
+        if after is not NOT_GIVEN:
+            _query['after'] = after
+        return self._client.request("GET", f"/v1/responses/{_q(id)}/input_items", query=_query, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def list_input_items_all(self, id: str, *, limit: int = NOT_GIVEN, after: str = NOT_GIVEN, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Iterator["Item"]:
+        """Every item of ``list_input_items``, fetching pages as you iterate."""
+        _query: Dict[str, Any] = {}
+        if limit is not NOT_GIVEN:
+            _query['limit'] = limit
+        if after is not NOT_GIVEN:
+            _query['after'] = after
+        def _fetch(cursor: Optional[str]) -> Page:
+            q = dict(_query)
+            if cursor is not None:
+                q['after'] = cursor
+            return self._client.request("GET", f"/v1/responses/{_q(id)}/input_items", query=q, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+        return self._client.paginate(_fetch, after if after is not NOT_GIVEN else None)
+
+
+class MessagesResource:
+    def __init__(self, client: Transport) -> None:
+        self._client = client
+
+    def create(self, *, model: str, messages: List[Dict[str, Any]], max_tokens: int, system: Union[str, List[Dict[str, Any]]] = NOT_GIVEN, tools: List[Dict[str, Any]] = NOT_GIVEN, tool_choice: Dict[str, Any] = NOT_GIVEN, temperature: float = NOT_GIVEN, metadata: Dict[str, Any] = NOT_GIVEN, thread: Dict[str, Any] = NOT_GIVEN, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "ModelMessage":
+        """Create a message (Anthropic shape)
+
+        Anthropic Messages-compatible turn on the model router. Content blocks: `text`, `image`,
+        `tool_use`, `tool_result`. No thinking blocks, server tools or files. `thread` backs the
+        call with a durable conversation (no 5-minute expiry): `{"type":"create"}` starts one
+        (`system` and `tools` are set here), `{"type":"continue","previous_message_id":"mdl_…"}`
+        continues it; `system` or `tools` on a continue are `400 thread_fingerprint_mismatch`.
+        Model messages use `mdl_` ids; text messages (SMS) are under `/v1/texts`.
+        With `stream: true` the answer is server-sent events: `message_start`,
+        `content_block_start`, `content_block_delta` (`text_delta` or `input_json_delta`),
+        `content_block_stop`, `message_delta` (`stop_reason`, `usage`), `message_stop`, and
+        `error`. Requires the `inference` scope.
+
+        ``POST /v1/messages``
+        """
+        _body: Dict[str, Any] = {}
+        if model is not NOT_GIVEN:
+            _body['model'] = model
+        if system is not NOT_GIVEN:
+            _body['system'] = system
+        if messages is not NOT_GIVEN:
+            _body['messages'] = messages
+        if tools is not NOT_GIVEN:
+            _body['tools'] = tools
+        if tool_choice is not NOT_GIVEN:
+            _body['tool_choice'] = tool_choice
+        if max_tokens is not NOT_GIVEN:
+            _body['max_tokens'] = max_tokens
+        if temperature is not NOT_GIVEN:
+            _body['temperature'] = temperature
+        if metadata is not NOT_GIVEN:
+            _body['metadata'] = metadata
+        if thread is not NOT_GIVEN:
+            _body['thread'] = thread
+        return self._client.request("POST", f"/v1/messages", body=_body, idempotency_key=idempotency_key, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def create_stream(self, *, model: str, messages: List[Dict[str, Any]], max_tokens: int, system: Union[str, List[Dict[str, Any]]] = NOT_GIVEN, tools: List[Dict[str, Any]] = NOT_GIVEN, tool_choice: Dict[str, Any] = NOT_GIVEN, temperature: float = NOT_GIVEN, metadata: Dict[str, Any] = NOT_GIVEN, thread: Dict[str, Any] = NOT_GIVEN, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Iterator[SSEEvent]:
+        """``create`` with ``stream: true``: yields the raw server-sent events."""
+        _body: Dict[str, Any] = {}
+        if model is not NOT_GIVEN:
+            _body['model'] = model
+        if system is not NOT_GIVEN:
+            _body['system'] = system
+        if messages is not NOT_GIVEN:
+            _body['messages'] = messages
+        if tools is not NOT_GIVEN:
+            _body['tools'] = tools
+        if tool_choice is not NOT_GIVEN:
+            _body['tool_choice'] = tool_choice
+        if max_tokens is not NOT_GIVEN:
+            _body['max_tokens'] = max_tokens
+        if temperature is not NOT_GIVEN:
+            _body['temperature'] = temperature
+        if metadata is not NOT_GIVEN:
+            _body['metadata'] = metadata
+        if thread is not NOT_GIVEN:
+            _body['thread'] = thread
+        _body['stream'] = True
+        return self._client.stream_request("POST", f"/v1/messages", body=_body, idempotency_key=idempotency_key, timeout=timeout, extra_headers=extra_headers)
+
+
+class ApprovalsResource:
+    def __init__(self, client: Transport) -> None:
+        self._client = client
+
+    def list(self, *, limit: int = NOT_GIVEN, after: str = NOT_GIVEN, status: Literal['pending', 'approved', 'denied', 'expired', 'consumed'] = NOT_GIVEN, account_id: str = NOT_GIVEN, source: Literal['twin', 'computer'] = NOT_GIVEN, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "ApprovalList":
+        """List approvals
+
+        Held actions from the twin and computers in one list, newest first. The list holds only the sources the key's scopes allow (`twin` scope → twin rows, `computers` scope → computer rows). Requires the `twin` or `computers` scope.
+
+        ``GET /v1/approvals``
+        """
+        _query: Dict[str, Any] = {}
+        if limit is not NOT_GIVEN:
+            _query['limit'] = limit
+        if after is not NOT_GIVEN:
+            _query['after'] = after
+        if status is not NOT_GIVEN:
+            _query['status'] = status
+        if account_id is not NOT_GIVEN:
+            _query['account_id'] = account_id
+        if source is not NOT_GIVEN:
+            _query['source'] = source
+        return self._client.request("GET", f"/v1/approvals", query=_query, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def list_all(self, *, limit: int = NOT_GIVEN, after: str = NOT_GIVEN, status: Literal['pending', 'approved', 'denied', 'expired', 'consumed'] = NOT_GIVEN, account_id: str = NOT_GIVEN, source: Literal['twin', 'computer'] = NOT_GIVEN, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Iterator["Approval"]:
+        """Every item of ``list``, fetching pages as you iterate."""
+        _query: Dict[str, Any] = {}
+        if limit is not NOT_GIVEN:
+            _query['limit'] = limit
+        if after is not NOT_GIVEN:
+            _query['after'] = after
+        if status is not NOT_GIVEN:
+            _query['status'] = status
+        if account_id is not NOT_GIVEN:
+            _query['account_id'] = account_id
+        if source is not NOT_GIVEN:
+            _query['source'] = source
+        def _fetch(cursor: Optional[str]) -> Page:
+            q = dict(_query)
+            if cursor is not None:
+                q['after'] = cursor
+            return self._client.request("GET", f"/v1/approvals", query=q, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+        return self._client.paginate(_fetch, after if after is not NOT_GIVEN else None)
+
+    def get(self, id: str, *, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "Approval":
+        """Retrieve an approval
+
+        Requires the `twin` or `computers` scope.
+
+        ``GET /v1/approvals/{id}``
+        """
+        return self._client.request("GET", f"/v1/approvals/{_q(id)}", timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def resolve(self, id: str, *, decision: Literal['approve', 'deny'], reason: str = NOT_GIVEN, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "Approval":
+        """Approve or deny
+
+        The API key is recorded as the actor. Whether a key may approve a given source follows that source's rules (a computer approval needs the project's `approval_mode` to be `api_key`; 403 `approval_requires_owner` otherwise). The older per-account and per-computer approve and deny routes call the same resolver. Webhooks `approval.requested`, `approval.resolved` and `approval.expired` report the lifecycle.
+
+        ``POST /v1/approvals/{id}``
+        """
+        _body: Dict[str, Any] = {}
+        if decision is not NOT_GIVEN:
+            _body['decision'] = decision
+        if reason is not NOT_GIVEN:
+            _body['reason'] = reason
+        return self._client.request("POST", f"/v1/approvals/{_q(id)}", body=_body, idempotency_key=idempotency_key, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
 
 
 def _q(v: str) -> str:
@@ -1386,7 +2230,7 @@ class GeneratedResources:
         self.conversations = ConversationsResource(client)
         self.usage = UsageResource(client)
         self.numbers = NumbersResource(client)
-        self.messaging = MessagingResource(client)
+        self.texts = TextsResource(client)
         self.webhooks = WebhooksResource(client)
         self.voice = VoiceResource(client)
         self.realtime = RealtimeResource(client)
@@ -1394,3 +2238,9 @@ class GeneratedResources:
         self.twin = TwinResource(client)
         self.computers = ComputersResource(client)
         self.phones = PhonesResource(client)
+        self.mailboxes = MailboxesResource(client)
+        self.identities = IdentitiesResource(client)
+        self.decisions = DecisionsResource(client)
+        self.responses = ResponsesResource(client)
+        self.messages = MessagesResource(client)
+        self.approvals = ApprovalsResource(client)

@@ -113,8 +113,11 @@ export namespace PermissionNext {
    * `mcp_app` gates a model-initiated call to an MCP App tool whose install
    * permission mode (allternit-api) requires the user's confirmation. The mode
    * is the user's own choice, so no session mode or earlier approval waives it.
+   *
+   * `project_send` gates a bot's main chat sending work into another project:
+   * the person approves every send, with the project and full message on the card.
    */
-  export const ALWAYS_ASK = new Set(["subscription", "mcp_app"])
+  export const ALWAYS_ASK = new Set(["subscription", "mcp_app", "project_send"])
 
   /**
    * Classes a one-task grant ("Allow for this task") never covers: money,
@@ -366,6 +369,34 @@ export namespace PermissionNext {
     delete s.pending[requestID]
     Bus.publish(Event.Replied, { sessionID: existing.info.sessionID, requestID, reply: "reject" })
     existing.reject(new RejectedError())
+  }
+
+  /**
+   * An ask raised in another process (a live terminal session, see
+   * TerminalLive). It is published like any other ask, so every surface shows
+   * its card and answers it through `reply`; the promise settles with the
+   * person's decision. Policy was already applied where the tool runs.
+   */
+  export async function relay(info: Request): Promise<{ allow: boolean; message?: string }> {
+    const s = await state()
+    return new Promise((resolve) => {
+      s.pending[info.id] = {
+        info,
+        ruleset: [],
+        resolve: () => resolve({ allow: true }),
+        reject: (e: any) => resolve({ allow: false, message: e instanceof CorrectedError ? e.message : undefined }),
+      }
+      Bus.publish(Event.Asked, info)
+    })
+  }
+
+  /** A relayed ask answered where it was raised: close its card everywhere without deciding it again. */
+  export async function settle(requestID: string, reply: Reply) {
+    const s = await state()
+    const existing = s.pending[requestID]
+    if (!existing) return
+    delete s.pending[requestID]
+    Bus.publish(Event.Replied, { sessionID: existing.info.sessionID, requestID, reply })
   }
 
   export const reply = fn(
@@ -749,6 +780,22 @@ export namespace PermissionNext {
       const rule = ruleset.findLast((r) => Wildcard.match(permission, r.permission))
       if (!rule) continue
       if (rule.pattern === "*" && rule.action === "deny") result.add(tool)
+    }
+    return result
+  }
+
+  /**
+   * Tools whose last matching rule is deny `*`. Unlike `disabled`, this has no
+   * mode logic (bypass, dontAsk, plan, GIZZI_SKIP_PERMISSIONS): `evaluate` never
+   * skips a configured deny, so a tool hidden here could never run anyway.
+   * Used to keep denied tool schemas out of the model request.
+   */
+  export function hidden(tools: string[], ruleset: Ruleset): Set<string> {
+    const result = new Set<string>()
+    for (const tool of tools) {
+      const permission = EDIT_TOOLS.includes(tool) ? "edit" : tool
+      const rule = ruleset.findLast((r) => Wildcard.match(permission, r.permission))
+      if (rule && rule.pattern === "*" && rule.action === "deny") result.add(tool)
     }
     return result
   }

@@ -390,6 +390,19 @@ pub async fn sweep(db: &PgPool, connected: &HashSet<String>, now: DateTime<Utc>)
     if let Err(e) = super::team::prune(db).await {
         tracing::warn!("team roster: prune failed: {e}");
     }
+    // Rows that never sent a presence heartbeat (old phones, desktops from before
+    // presence, provisioned computers) are skipped by the loop below, so nothing
+    // else ever clears their 'online'. Readers already treat a stale last_seen_at as
+    // offline; make the column agree. Rows with a heartbeat are left to the loop
+    // (it also owns relay_disconnected_at and the alerts).
+    sqlx::query(
+        "UPDATE runtime_devices SET status = 'offline' \
+         WHERE revoked_at IS NULL AND status = 'online' AND last_heartbeat_at IS NULL \
+           AND (last_seen_at IS NULL OR last_seen_at < $1)",
+    )
+    .bind(now - crate::services::node_resolution::staleness_window())
+    .execute(db)
+    .await?;
     let rows: Vec<(String, String, Option<DateTime<Utc>>, Option<DateTime<Utc>>, Value)> = sqlx::query_as(
         "SELECT id, user_id, last_heartbeat_at, relay_disconnected_at, next_due FROM runtime_devices \
          WHERE revoked_at IS NULL AND user_id IS NOT NULL AND last_heartbeat_at IS NOT NULL",
@@ -521,6 +534,37 @@ mod tests {
         assert_eq!(events(&db, "attention.resolved").await, 3);
         let open: i64 = sqlx::query_scalar("SELECT count(*) FROM runtime_presence_alerts WHERE resolved_at IS NULL").fetch_one(&db).await.unwrap();
         assert_eq!(open, 0);
+    }
+
+    #[tokio::test]
+    async fn sweep_offlines_stale_online_rows_that_never_sent_a_heartbeat() {
+        let db = schema().await;
+        let now = Utc::now();
+        for id in ["stale", "fresh", "revoked", "never_seen"] {
+            seed_runtime_device(&db, id, "u1").await;
+        }
+        let set = |id: &'static str, seen: Option<DateTime<Utc>>| {
+            let db = db.clone();
+            async move {
+                sqlx::query("UPDATE runtime_devices SET last_seen_at = $2 WHERE id = $1").bind(id).bind(seen).execute(&db).await.unwrap();
+            }
+        };
+        set("stale", Some(now - Duration::days(30))).await;
+        set("fresh", Some(now - Duration::seconds(30))).await;
+        set("revoked", Some(now - Duration::days(30))).await;
+        set("never_seen", None).await;
+        sqlx::query("UPDATE runtime_devices SET revoked_at = $1 WHERE id = 'revoked'").bind(now).execute(&db).await.unwrap();
+
+        sweep(&db, &HashSet::new(), now).await.unwrap();
+
+        let status = |id: &'static str| {
+            let db = db.clone();
+            async move { sqlx::query_scalar::<_, String>("SELECT status FROM runtime_devices WHERE id = $1").bind(id).fetch_one(&db).await.unwrap() }
+        };
+        assert_eq!(status("stale").await, "offline");
+        assert_eq!(status("never_seen").await, "offline");
+        assert_eq!(status("fresh").await, "online");
+        assert_eq!(status("revoked").await, "online", "revoked rows are not touched");
     }
 
     #[test]

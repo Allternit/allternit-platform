@@ -1,7 +1,10 @@
 //! Allternit Platform API (`/v1`): the developer-facing surface.
 //!
-//! One module per area (`accounts`, `agents`, `conversations`, `ag_ui` (AG-UI frontends), `numbers`, `messages`, `calls` (voice and realtime), `webhooks`,
-//! `channels`, `twin`, `computers`, `phones` (the owner's own phones, relayed to their Desktop), `usage`). Also `billing` (spend caps) and `stripe_plan` (Stripe meters, dry run by default).
+//! One module per area (`accounts`, `agents`, `conversations`, `ag_ui` (AG-UI frontends), `numbers`, `texts` (SMS, formerly `/v1/messages`), `calls` (voice and realtime), `webhooks`,
+//! `channels`, `twin`, `computers`, `phones` (the owner's own phones, relayed to their Desktop), `mailboxes` (email on Allternit Mail), `identities` (number + mailbox + phone in one call), `project_tracing` (OTLP trace export to the developer's collector), `usage`,
+//! and the parity-program areas: `items` (the shared conversation/response transcript
+//! store, no routes), `decisions`, `responses`, `model_messages` (Anthropic-shaped
+//! `/v1/messages`) and `approvals`). Also `billing` (spend caps) and `stripe_plan` (Stripe meters, dry run by default).
 //! Hosted agents run on a per-project runtime (`hosting`).
 //! Each area exposes `register(RouteTable) -> RouteTable`; `build_table` below
 //! is the single list. The route table records every `(method, path)` it
@@ -28,28 +31,39 @@ pub mod accounts;
 pub mod ag_ui;
 pub mod agent_tools;
 pub mod agents;
+pub mod approvals;
 pub mod billing;
 pub mod caller;
 pub mod calls;
 pub mod channels;
 pub mod computers;
 pub mod console;
+pub mod console_governance;
+pub mod console_playground;
+pub mod console_pricing;
 pub mod conversations;
+pub mod decisions;
 pub mod error;
 pub mod events;
 pub mod hosting;
+pub mod identities;
+pub mod items;
 pub mod knowledge;
 pub mod limits;
-pub mod messages;
+pub mod mailboxes;
 pub mod model_keys;
+pub mod model_messages;
 pub mod numbers;
 pub mod page;
 pub mod phones;
 pub mod project_billing;
+pub mod project_tracing;
 pub mod projects;
+pub mod responses;
 pub mod slots;
 pub mod spend;
 pub mod stripe_plan;
+pub mod texts;
 pub mod twin;
 pub mod usage;
 pub mod usage_events;
@@ -214,7 +228,7 @@ fn build_table() -> RouteTable {
     let table = ag_ui::register(table);
     let table = model_keys::register(table);
     let table = numbers::register(table);
-    let table = messages::register(table);
+    let table = texts::register(table);
     let table = calls::register(table);
     let table = webhooks::register(table);
     let table = billing::register(table);
@@ -222,6 +236,14 @@ fn build_table() -> RouteTable {
     let table = twin::register(table);
     let table = computers::register(table);
     let table = phones::register(table);
+    let table = mailboxes::register(table);
+    let table = identities::register(table);
+    let table = project_tracing::register(table);
+    // Platform API parity program (lanes 1-4 fill these in; nothing else edits this list).
+    let table = decisions::register(table);
+    let table = responses::register(table);
+    let table = model_messages::register(table);
+    let table = approvals::register(table);
     usage::register(table)
 }
 
@@ -249,14 +271,22 @@ pub fn router_gated(state: &Arc<ApiState>, gate: Gate) -> Router<Arc<ApiState>> 
 }
 
 pub fn router_with_agency(state: &Arc<ApiState>, gate: Gate, agency: Arc<crate::routes::agency_forward::AgencyForward>) -> Router<Arc<ApiState>> {
+    if let Some(c) = &state.credential_cipher {
+        project_tracing::set_cipher(c.clone());
+    }
     let ps = PlatformState { api: state.clone(), gate, agency };
 
     let v1 = build_table()
         .router
         .layer(axum::middleware::from_fn_with_state(ps.clone(), v1_middleware));
 
+    // Console route files, one per lane (console Waves 1–6): every one sits
+    // behind console_gate with the projects and keys routes.
     let console = console::routes()
         .merge(project_billing::routes())
+        .merge(console_playground::routes())
+        .merge(console_pricing::routes())
+        .merge(console_governance::routes())
         .layer(axum::middleware::from_fn_with_state(ps, console_gate));
 
     Router::new().merge(v1).merge(console)
@@ -286,10 +316,16 @@ async fn v1_middleware(
     mut request: Request,
     next: Next,
 ) -> Response {
-    // The Agency API owns `/v1/agents` for everything but project keys, whether or not
-    // the Platform API is switched on.
+    // The Agency API owns `/v1/agents` and `/v1/decisions` for everything but project
+    // keys, whether or not the Platform API is switched on. Clerk and `allternit_*`
+    // callers of `/v1/decisions` (Desktop, computer use) keep reaching the agency node;
+    // project keys and console sessions get the Platform Decisions resource
+    // (`decisions.rs`), every method: `GET /v1/decisions` (the list) included.
+    // Handlers that call the agency node (`decisions.rs`) take it from here, so tests
+    // can point `router_with_agency` at a stand-in node.
+    request.extensions_mut().insert(ps.agency.clone());
     let console_project = console_project(&request);
-    if request.uri().path() == "/v1/agents" {
+    if matches!(request.uri().path(), "/v1/agents" | "/v1/decisions") {
         let project_key = request
             .headers()
             .get(header::AUTHORIZATION)
@@ -318,7 +354,10 @@ async fn v1_middleware(
             let (headers, test) = (request.headers().clone(), test_principal(&request));
             console_v1_caller(db, headers, test, project_id).await
         }
-        _ => caller::authenticate(db, token).await,
+        _ => {
+            let client_ip = crate::services::api_keys::client_ip_from_request(&request);
+            caller::authenticate_from(db, token, client_ip).await
+        }
     };
     let caller = match authenticated {
         Ok(c) => c,
@@ -407,6 +446,8 @@ mod tests_p2_tools;
 #[cfg(test)]
 mod tests_p5_console;
 #[cfg(test)]
+mod tests_governance;
+#[cfg(test)]
 mod tests_p3;
 #[cfg(test)]
 mod tests_p5;
@@ -414,3 +455,7 @@ mod tests_p5;
 mod tests_p4;
 #[cfg(test)]
 mod tests_p6_computers;
+#[cfg(test)]
+mod tests_p7_phones;
+#[cfg(test)]
+mod tests_p7_mail;

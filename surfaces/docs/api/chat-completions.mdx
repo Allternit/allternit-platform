@@ -66,7 +66,7 @@ curl https://api.allternit.com/v1/chat/completions \
 | `tools` | array | no | Function-tool definitions. Only `type: "function"` tools are accepted. |
 | `tool_choice` | string \| object | no | Tool-selection strategy. |
 | `parallel_tool_calls` | boolean | no | Whether the model may call multiple tools in parallel. |
-| `reasoning_effort` | string | no | Reasoning control: `none`, `minimal`, `low`, `medium`, `high`, or `xhigh`. |
+| `reasoning_effort` | string | no | Reasoning control: `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max` or `ultra`. Each model takes only its own levels; see [Thinking levels](/api/providers#thinking-levels). |
 | `service_tier` | string | no | Provider service tier: `auto`, `default`, `flex`, `priority`, or `scale`. |
 | `citations` | boolean | no | Ask providers that support source citations to include them. |
 | `context_cache_id` | string | no | Prepend a reusable context cache created via `/v1/context-caches`. |
@@ -341,12 +341,47 @@ curl https://api.allternit.com/v1/tokens \
 
 On the hosted Cloud API, a user who turned on handoff in Settings > Open models gets a refused completion re-run on an open-lane model, after the hard-line filter. The handed-off response carries the `x-allternit-handoff: from->to` header and an `allternit.handoff` object (in a stream, as a first chunk with no choices). Pass `allternit.handoff_model` to pick the open model, or `allternit.handoff: false` to skip handoff for one request. With handoff on, streams start after their first 400 characters. Full reference: [Open lane and refusal handoff](/api/open-lane).
 
+## Credits (Cloud API)
+
+On the hosted Cloud API (`https://api.allternit.com/v1`), a call to an Allternit Cloud model is paid from the account's credit balance (one credit is one US dollar). There is no free monthly allowance. The same check runs for model calls made by an [artifact](/api/artifact-runtime), billed to its viewer. Calls that route through the person's own provider key, plan and Copilot models (`plan/…`, `copilot/…`) and platform project runtimes are billed their own way and skip it.
+
+| Account credits | Result |
+|---|---|
+| Balance above $0 | The call runs. Credits from any source count: packs, a plan's monthly credits, granted credits. |
+| No credits row | `402` with code `credits_required` |
+| Balance at or below $0 | `402` with code `credits_exhausted` |
+
+The `402` is always a JSON body, sent before any stream starts, so a streaming client gets it as the HTTP response, not as an event:
+
+```json
+{
+  "error": {
+    "type": "billing_error",
+    "code": "credits_required",
+    "message": "Allternit Cloud models need credits. Buy credits or choose a plan.",
+    "balance_usd": 0,
+    "packs": [
+      { "id": "credits_10", "label": "$10", "credits_usd": 10, "price_usd": 10 }
+    ],
+    "billing_url": "https://ai.allternit.com/settings/billing"
+  }
+}
+```
+
+- `packs` lists the same four packs as `GET /api/v1/billing/packs` ($10, $25, $50, $100). The example shows one.
+- For `credits_exhausted` the message is `Your Allternit Cloud credits are used up. Add credits to keep going.`
+- To check before sending, read `cloud_models` on `GET /api/v1/billing/credits` (see [Cloud billing](/api/cloud-billing#credit-balance-and-cloud-models)).
+
+**Signed-in sessions.** A Clerk session (the Allternit apps with no computer) may call a Cloud catalog alias by its bare id, such as `glm-5.3`, with the same credits check. Other models that are not plan models stay refused for a session with `403`. The apps save these chats in the [plan chat store](/api/connections#plan-chat-store) under `allternit/<alias>`.
+
 ## Error codes
 
 | HTTP status | Code | Meaning |
 |-------------|------|---------|
 | 400 | `allternit.invalid_request` | Malformed request body or parameter. |
 | 401 | `allternit.authentication_failed` | Missing or invalid API key. |
+| 402 | `credits_required` | Cloud API: the account has no Cloud credits. See [Credits](#credits-cloud-api). |
+| 402 | `credits_exhausted` | Cloud API: the account's balance is at or below $0. |
 | 403 | `allternit.permission_denied` | Model not allowed for this key. |
 | 429 | `allternit.rate_limited` | Per-key rate limit exceeded. |
 | 429 | `allternit.budget_exceeded` | Monthly key or tenant budget exhausted. |

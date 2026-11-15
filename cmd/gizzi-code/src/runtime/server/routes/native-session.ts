@@ -5,6 +5,8 @@ import { lazy } from "@/shared/util/lazy"
 import { errors } from "@/runtime/server/error"
 import { NativeSource } from "@/runtime/session/native-source"
 import { Session } from "@/runtime/session"
+import { runTeleport } from "@/runtime/teleport/run"
+import { resumeNative } from "@/runtime/teleport/resume"
 
 const Harness = z.string().min(1)
 
@@ -50,6 +52,66 @@ export const NativeSessionRoutes = lazy(() =>
           return c.json({ error: "Native session not found" }, 404)
         }
         return c.json(shown)
+      },
+    )
+    .post(
+      "/teleport",
+      describeRoute({
+        summary: "Move a live Claude or Codex session between this Mac and a connected cloud computer",
+        operationId: "nativeSession.teleport",
+        responses: { 200: { description: "Where the session resumes", content: { "application/json": { schema: resolver(z.any()) } } }, ...errors(400) },
+      }),
+      validator(
+        "json",
+        z.object({
+          sessionId: z.string().min(1),
+          to: z.enum(["cloud", "local"]),
+          harness: z.enum(["claude", "codex"]).default("claude"),
+          targetId: z.string().optional(),
+          model: z.string().optional(),
+          effort: z.string().optional(),
+          base: z.string().optional(),
+        }),
+      ),
+      async (c) => {
+        const body = c.req.valid("json")
+        try {
+          const result = await runTeleport({ session: body.sessionId, to: body.to, harness: body.harness, targetId: body.targetId, model: body.model, effort: body.effort, base: body.base })
+          return c.json(result)
+        } catch (e) {
+          return c.json({ error: e instanceof Error ? e.message : String(e) }, 400)
+        }
+      },
+    )
+    .post(
+      "/teleport-resume",
+      describeRoute({
+        summary: "Resume a teleported session natively; answers after the first new output",
+        operationId: "nativeSession.teleportResume",
+        responses: { 200: { description: "Resumed", content: { "application/json": { schema: resolver(z.any()) } } }, ...errors(400) },
+      }),
+      validator(
+        "json",
+        z.object({
+          sessionId: z.string().min(1),
+          harness: z.enum(["claude", "codex"]),
+          nativeId: z.string().min(1),
+          cwd: z.string().min(1),
+          model: z.string().min(1),
+          effort: z.string().optional(),
+          handoff: z.string(),
+          queued: z.array(z.string()).default([]),
+        }),
+      ),
+      async (c) => {
+        const b = c.req.valid("json")
+        try {
+          const started = await resumeNative({ sessionID: b.sessionId, harness: b.harness, nativeId: b.nativeId, cwd: b.cwd, model: b.model, effort: b.effort, handoff: b.handoff, queued: b.queued })
+          started.done.catch(() => {})
+          return c.json({ ok: true, vendorSessionId: started.vendorSessionId })
+        } catch (e) {
+          return c.json({ error: e instanceof Error ? e.message : String(e) }, 400)
+        }
       },
     )
     .post(

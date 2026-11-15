@@ -103,7 +103,7 @@ async fn page_agent_run(
 
     let session_id = uuid::Uuid::new_v4().to_string();
     let runtime = runtime_base(&state);
-    let client = reqwest::Client::new();
+    let client = crate::net_client::client();
 
     let payload = json!({
         "title": goal.chars().take(80).collect::<String>(),
@@ -151,7 +151,7 @@ async fn page_agent_stream(
     Path(session_id): Path<String>,
 ) -> Response {
     let runtime = runtime_base(&state);
-    let client = reqwest::Client::new();
+    let client = crate::net_client::client();
 
     let resp = match client
         .get(format!("{}/v1/event", runtime))
@@ -229,7 +229,7 @@ async fn page_agent_stop(
     Path(session_id): Path<String>,
 ) -> Response {
     let runtime = runtime_base(&state);
-    let client = reqwest::Client::new();
+    let client = crate::net_client::client();
 
     match client
         .post(format!(
@@ -256,7 +256,7 @@ async fn page_agent_status(
     Path(session_id): Path<String>,
 ) -> Response {
     let runtime = runtime_base(&state);
-    let client = reqwest::Client::new();
+    let client = crate::net_client::client();
 
     // The gizzi runtime has no dedicated status endpoint; proxy to the stream
     // health-check-style and return a stub status. Phase 2 can implement a

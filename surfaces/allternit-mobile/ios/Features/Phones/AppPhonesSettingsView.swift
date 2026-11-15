@@ -12,11 +12,26 @@ struct AppPhonesSettingsView: View {
     @State private var loadError: String?
     @State private var phoneName = UIDevice.current.name
     @State private var isUnpairConfirmPresented = false
+    @State private var boardsState: BoardsState = .loading
+    /// True once this phone has seen at least one board. Until then the
+    /// section stays hidden, so people without a board never see it.
+    @AppStorage("linkBoardsSeen") private var hasSeenBoards = false
+    @State private var stopping: Set<String> = []
+    @State private var stopNotes: [String: String] = [:]
+
+    private enum BoardsState: Equatable {
+        case loading
+        case loaded([LinkBoard])
+        case unreachable
+        /// An older runtime answered 404: the section is hidden.
+        case unsupported
+    }
 
     var body: some View {
         List {
             if let credentials = phone.credentials {
                 pairedSection(credentials)
+                boardsSection(credentials)
                 screenSection
                 unpairSection
             } else {
@@ -33,9 +48,12 @@ struct AppPhonesSettingsView: View {
         .navigationTitle("Phones")
         .navigationBarTitleDisplayMode(.inline)
         .task {
-            if phone.credentials == nil { await loadRuntimes() }
+            if phone.credentials == nil { await loadRuntimes() } else { await loadBoards() }
         }
-        .refreshable { await loadRuntimes() }
+        .refreshable {
+            await loadRuntimes()
+            if phone.credentials != nil { await loadBoards() }
+        }
         .confirmationDialog("Unpair this iPhone?", isPresented: $isUnpairConfirmPresented, titleVisibility: .visible) {
             Button("Unpair", role: .destructive) {
                 Task {
@@ -174,6 +192,153 @@ struct AppPhonesSettingsView: View {
         } footer: {
             Text("Bots reach this app only while it's open. They can use the ACI browser here; a banner shows when they do, with Stop.")
         }
+    }
+
+    // MARK: - Allternit Link boards
+
+    @ViewBuilder
+    private func boardsSection(_ c: AppPhoneCredentials) -> some View {
+        switch boardsState {
+        case .unsupported:
+            EmptyView()
+        case .loading:
+            if hasSeenBoards {
+                Section {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                        Text("Looking for Allternit Link boards…")
+                            .font(.subheadline)
+                            .foregroundColor(Color("TextSecondary"))
+                    }
+                } header: {
+                    Text("Allternit Link")
+                }
+            }
+        case .unreachable:
+            if hasSeenBoards {
+                Section {
+                    Text("Couldn't reach \(c.runtimeName) to check your boards.")
+                        .font(.subheadline)
+                        .foregroundColor(Theme.statusError)
+                    Button("Try again") { Task { await loadBoards() } }
+                        .font(.subheadline)
+                } header: {
+                    Text("Allternit Link")
+                }
+            }
+        case .loaded(let boards):
+            if !boards.isEmpty {
+                Section {
+                    ForEach(boards) { board in
+                        boardRow(board, isThisPhone: board.phone == c.serial)
+                    }
+                } header: {
+                    Text("Allternit Link")
+                } footer: {
+                    Text("Setup and pairing are done in Allternit Desktop. A board is armed only by pressing its own button; this app can only stop it.")
+                }
+            }
+        }
+    }
+
+    private func boardRow(_ board: LinkBoard, isThisPhone: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(board.online ? Theme.statusSuccess : Color("TextSecondary").opacity(0.5))
+                    .frame(width: 8, height: 8)
+                    .accessibilityHidden(true)
+                Text(board.name)
+                    .font(.subheadline)
+                    .foregroundColor(Color("TextPrimary"))
+                Spacer()
+                Text(board.status.label)
+                    .font(.subheadline)
+                    .foregroundColor(Color("TextSecondary"))
+                    .multilineTextAlignment(.trailing)
+            }
+            Text(boardDetail(board, isThisPhone: isThisPhone))
+                .font(.caption)
+                .foregroundColor(Color("TextSecondary"))
+            if isThisPhone { assistiveSteps }
+            if board.armed {
+                let busy = stopping.contains(board.boardId)
+                Button(action: { Task { await stopBoard(board) } }) {
+                    HStack(spacing: 6) {
+                        if busy { ProgressView() }
+                        Text(busy ? "Stopping…" : "Stop")
+                            .font(.subheadline.weight(.semibold))
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 36)
+                }
+                .buttonStyle(.bordered)
+                .tint(Theme.statusError)
+                .disabled(busy)
+                .accessibilityLabel("Stop \(board.name)")
+            }
+            if let note = stopNotes[board.boardId] {
+                Text(note)
+                    .font(.caption)
+                    .foregroundColor(Theme.statusError)
+            }
+        }
+        .padding(.vertical, 4)
+        .accessibilityElement(children: .contain)
+    }
+
+    private func boardDetail(_ board: LinkBoard, isThisPhone: Bool) -> String {
+        var parts: [String] = []
+        parts.append(board.link?.label ?? "Not linked")
+        parts.append(board.armed ? "Armed" : "Not armed")
+        if isThisPhone { parts.append("Paired with this iPhone") }
+        else if let other = board.phone, !other.isEmpty { parts.append("Paired with another phone") }
+        else { parts.append("Not paired with a phone") }
+        return parts.joined(separator: " · ")
+    }
+
+    /// Only a person can do these; none can be done remotely.
+    private var assistiveSteps: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text("To use this board with this iPhone, do these yourself:")
+                .font(.caption.weight(.semibold))
+                .foregroundColor(Color("TextPrimary"))
+            Text("1. Turn on AssistiveTouch (Settings → Accessibility → Touch).")
+            Text("2. Start the screen broadcast below.")
+            Text("3. Press the button on the board.")
+        }
+        .font(.caption)
+        .foregroundColor(Color("TextSecondary"))
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func loadBoards() async {
+        if case .loaded = boardsState {} else { boardsState = .loading }
+        switch await LinkBoardsClient.shared.boards() {
+        case .boards(let boards):
+            boardsState = .loaded(boards)
+            if !boards.isEmpty { hasSeenBoards = true }
+        case .unsupported: boardsState = .unsupported
+        case .unreachable: boardsState = .unreachable
+        }
+    }
+
+    private func stopBoard(_ board: LinkBoard) async {
+        stopping.insert(board.boardId)
+        stopNotes[board.boardId] = nil
+        let result = await LinkBoardsClient.shared.stop(boardId: board.boardId)
+        stopping.remove(board.boardId)
+        switch result {
+        case .stopped: break
+        case .uncertain:
+            stopNotes[board.boardId] = "Couldn't confirm it stopped. Press the button on the board to be sure."
+        case .boardOffline:
+            stopNotes[board.boardId] = "The board is offline. Press its button if it is still moving."
+        case .desktopOffline:
+            stopNotes[board.boardId] = "Allternit Desktop isn't reachable. Press the board's button to stop it."
+        case .failed(let message):
+            stopNotes[board.boardId] = message
+        }
+        await loadBoards()
     }
 
     private var screenSection: some View {

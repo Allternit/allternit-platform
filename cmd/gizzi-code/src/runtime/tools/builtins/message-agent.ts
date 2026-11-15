@@ -99,7 +99,9 @@ const DESCRIPTION = `Hand work to another of your user's bots, or message a team
 - target: the bot's name, @handle or id. Lookup is case-insensitive; unknown
   targets error with the list of bots, ambiguous targets list the choices.
   Call with target "list" (no message) to see your teammates and what each
-  one does, then route the work to the bot that owns it.
+  one does, then route the work to the bot that owns it. When a teammate
+  owns a kind of task (its "owns" list), hand that task to it instead of
+  doing it yourself.
 - message: the plain-text task or message. It travels as a tool parameter —
   never shell-interpreted, never forwarded into a running turn.
 
@@ -201,8 +203,9 @@ export const MessageAgentTool = Tool.define("message_agent", {
 
     return {
       title: `Messaged ${target.name}`,
-      output: `delivered to ${target.name}'s inbox; the reply arrives as a background completion`,
-      metadata: { target: target.name, from: sender.name, delivered: true, receipt: { state: "stored" } },
+      // Stored in the target's inbox file only; it is not delivered until the target's next turn picks it up.
+      output: `stored in ${target.name}'s inbox (not delivered yet); it is read when ${target.name} starts its next turn, and the reply arrives as a background completion`,
+      metadata: { target: target.name, from: sender.name, delivered: false, state: "stored", receipt: { state: "stored" } },
     }
   },
 })

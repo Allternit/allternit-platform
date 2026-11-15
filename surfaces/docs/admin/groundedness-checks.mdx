@@ -12,7 +12,7 @@ All groundedness endpoints require the caller to be an organization owner or adm
 ## Base URL
 
 ```text
-https://api.allternit.com/api/v1/admin/groundedness-checks
+http://127.0.0.1:8013/api/v1/admin/groundedness-checks
 ```
 
 For local development:
@@ -37,7 +37,7 @@ http://127.0.0.1:8013/api/v1/admin/groundedness-checks
 ## Run a check
 
 ```bash
-curl -X POST https://api.allternit.com/api/v1/admin/groundedness-checks \
+curl -X POST http://127.0.0.1:8013/api/v1/admin/groundedness-checks \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -109,7 +109,7 @@ curl -X POST https://api.allternit.com/api/v1/admin/groundedness-checks \
 ## List historical checks
 
 ```bash
-curl -G https://api.allternit.com/api/v1/admin/groundedness-checks \
+curl -G http://127.0.0.1:8013/api/v1/admin/groundedness-checks \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -d "limit=20" \
   -d "offset=0"

@@ -33,7 +33,7 @@ A configurable threshold (default `0.3`) turns the score into a boolean `flagged
 ## Create a check
 
 ```bash
-curl -X POST https://api.allternit.com/api/v1/admin/prompt-leak-checks \
+curl -X POST http://127.0.0.1:8013/api/v1/admin/prompt-leak-checks \
   -H "Authorization: Bearer $ALLTERNIT_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -76,7 +76,7 @@ curl -X POST https://api.allternit.com/api/v1/admin/prompt-leak-checks \
 ## List historical checks
 
 ```bash
-curl "https://api.allternit.com/api/v1/admin/prompt-leak-checks?limit=50&offset=0" \
+curl "http://127.0.0.1:8013/api/v1/admin/prompt-leak-checks?limit=50&offset=0" \
   -H "Authorization: Bearer $ALLTERNIT_TOKEN"
 ```
 

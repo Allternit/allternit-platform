@@ -127,6 +127,10 @@ struct AutomationTasksListView: View {
 
                 Divider().background(Color("BorderSubtle"))
 
+                // Runs on the user's computer: "Connect a computer" when none answers.
+
+                ConnectComputerView()
+
 
 
                 content

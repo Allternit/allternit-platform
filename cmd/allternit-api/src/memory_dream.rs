@@ -475,7 +475,8 @@ pub fn gizzi_completer(owner: String) -> Complete {
     Arc::new(move |prompt: String| {
         let owner = owner.clone();
         Box::pin(async move {
-            let model = crate::memory_extraction::extraction_model();
+            // No brain chosen → no dream pass (never a model nobody picked).
+            let model = crate::memory_extraction::extraction_model()?;
             crate::usage_ledger::scope(
                 crate::usage_ledger::LedgerCtx::surface("memory").tenant(None, Some(&owner)),
                 crate::gizzi_completion::complete_ephemeral_structured(&prompt, Some(SYSTEM), Some(&model), &schema()),

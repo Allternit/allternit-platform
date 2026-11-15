@@ -81,7 +81,7 @@ impl Recommender {
         hardware: &HardwareProfile,
     ) -> RecommendResponse {
         let intent = request.intent.to_lowercase();
-        let limit = request.limit.max(1).min(50);
+        let limit = request.limit.clamp(1, 50);
 
         // Pull the merged catalog. Cap candidates so assessment stays fast.
         let candidates = catalog.catalog(CatalogSource::All, 100).await;
@@ -166,7 +166,7 @@ fn score_candidate(
 
     // Parameter proxy for capability: curated total, else parsed from the name.
     let params_b = entry.requirements.as_ref().map(|r| r.total_params_b).unwrap_or_else(|| parse_params_b(&a.repo_id));
-    let capability_score = ((params_b as f64 / 70.0).min(1.0)).max(0.05);
+    let capability_score = (params_b as f64 / 70.0).clamp(0.05, 1.0);
 
     // Speed score: log-scaled around 40 tok/s.
     let tok_s = a.estimated_tok_per_second.context_4k.max(1.0) as f64;

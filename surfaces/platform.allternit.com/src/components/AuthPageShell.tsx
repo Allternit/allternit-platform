@@ -64,7 +64,7 @@ export function AuthPageShell({ title, subtitle, children }: AuthPageShellProps)
               Privacy
             </a>
             <a href="https://status.allternit.com" target="_blank" rel="noopener noreferrer" className="transition-colors hover:text-[var(--text-primary)]">
-              Status
+              System status
             </a>
           </div>
         </div>

@@ -147,18 +147,23 @@ pub fn routes() -> Router<Arc<ApiState>> {
         .route("/api/v1/billing/checkout", post(create_checkout))
 }
 
+/// The credit pack catalog as `GET /api/v1/billing/packs` returns it. The
+/// Cloud credits 402 body (`inference_settlement::credits_required_body`)
+/// carries the same list.
+pub(crate) fn credit_pack_catalog() -> Vec<CreditPackResponse> {
+    CREDIT_PACKS
+        .iter()
+        .map(|pack| CreditPackResponse {
+            id: pack.id,
+            label: pack.label,
+            credits_usd: pack.credits_usd,
+            price_usd: pack.credits_usd,
+        })
+        .collect()
+}
+
 async fn list_packs() -> Json<PacksResponse> {
-    Json(PacksResponse {
-        packs: CREDIT_PACKS
-            .iter()
-            .map(|pack| CreditPackResponse {
-                id: pack.id,
-                label: pack.label,
-                credits_usd: pack.credits_usd,
-                price_usd: pack.credits_usd,
-            })
-            .collect(),
-    })
+    Json(PacksResponse { packs: credit_pack_catalog() })
 }
 
 async fn create_checkout(
@@ -475,7 +480,7 @@ impl ReqwestStripeCheckout {
         idempotency_key: Option<&str>,
         form: &[(String, String)],
     ) -> Result<Value, ApiError> {
-        let mut request = reqwest::Client::new()
+        let mut request = crate::net_client::client()
             .post(url)
             .basic_auth(secret_key, None::<&str>)
             .form(form);
@@ -533,7 +538,7 @@ impl StripeCheckout for ReqwestStripeCheckout {
     }
 
     async fn get_object(&self, secret_key: &str, path: &str, query: &[(String, String)]) -> Result<Value, ApiError> {
-        let request = reqwest::Client::new()
+        let request = crate::net_client::client()
             .get(format!("https://api.stripe.com{path}"))
             .basic_auth(secret_key, None::<&str>)
             .query(query);
@@ -541,7 +546,7 @@ impl StripeCheckout for ReqwestStripeCheckout {
     }
 
     async fn delete_object(&self, secret_key: &str, path: &str, form: &[(String, String)]) -> Result<Value, ApiError> {
-        let request = reqwest::Client::new()
+        let request = crate::net_client::client()
             .delete(format!("https://api.stripe.com{path}"))
             .basic_auth(secret_key, None::<&str>)
             .form(form);

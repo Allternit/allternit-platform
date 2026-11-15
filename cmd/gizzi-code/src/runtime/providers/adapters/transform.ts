@@ -4,6 +4,7 @@ import type { JSONSchema7 } from "@ai-sdk/provider"
 import type { Provider } from "@/runtime/providers/provider"
 import type { ModelsDev } from "@/runtime/providers/adapters/models"
 import { iife } from "@/shared/util/iife"
+import { ModelThinking } from "@/runtime/providers/discovery/model-thinking"
 import { Flag } from "@/runtime/context/flag/flag"
 import {
   DEFAULT_OUTPUT_TOKEN_MAX,
@@ -267,7 +268,31 @@ export namespace ProviderTransform {
 
   const WIDELY_SUPPORTED_EFFORTS = ["low", "medium", "high"]
 
+  /** One option set per level from the shared thinking table, in the SDK's own shape. */
+  function tableVariants(model: Provider.Model): Record<string, Record<string, any>> | undefined {
+    const entry = ModelThinking.of(model.api.id) ?? ModelThinking.of(model.id)
+    if (!entry) return undefined
+    const option = (level: string): Record<string, any> => {
+      switch (model.api.npm) {
+        case "@ai-sdk/anthropic":
+          return { thinking: { type: "adaptive" }, effort: level }
+        case "@ai-sdk/google":
+          return { thinkingConfig: { includeThoughts: true, thinkingLevel: level } }
+        case "@ai-sdk/openai":
+          return { reasoningEffort: level, reasoningSummary: "auto", include: ["reasoning.encrypted_content"] }
+        default:
+          // OpenAI-compatible APIs (DeepSeek, Z.ai, gateways) take reasoning_effort.
+          return { reasoningEffort: level }
+      }
+    }
+    // Gemini 2.5 takes token budgets, not levels: keep the rules below for it.
+    if (model.api.npm === "@ai-sdk/google" && model.api.id.includes("2.5")) return undefined
+    return Object.fromEntries(entry.levels.map((level) => [level, option(level)]))
+  }
+
   export function variants(model: Provider.Model): Record<string, Record<string, any>> {
+    const fromTable = tableVariants(model)
+    if (fromTable) return fromTable
     if (!model.capabilities.reasoning) return {}
 
     const id = model.id.toLowerCase()

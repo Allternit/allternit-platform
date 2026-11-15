@@ -36,7 +36,7 @@ export function SelectEventMode({
   const subtitle = `${totalHooksCount} ${t1} configured`;
   const t2 = restrictedByPolicy && <Box flexDirection="column"><Text color="suggestion">{figures.info} Hooks Restricted by Policy</Text><Text dimColor={true}>Only hooks from managed settings can run. User-defined hooks from ~/.claude/settings.json, .claude/settings.json, and .claude/settings.local.json are blocked.</Text></Box>;
 
-  const t3 = <Box flexDirection="column"><Text dimColor={true}>{figures.info} This menu is read-only. To add or modify hooks, edit settings.json directly or ask Gizzi.{" "}<Link url="https://docs.gizziio.com/hooks">Learn more</Link></Text></Box>;
+  const t3 = <Box flexDirection="column"><Text dimColor={true}>{figures.info} This menu is read-only. To add or modify hooks, edit settings.json directly or ask Gizzi.{" "}<Link url="https://docs.allternit.com/cli/configuration">Learn more</Link></Text></Box>;
 
   const t4 = value => {
       onSelectEvent(value as HookEvent);

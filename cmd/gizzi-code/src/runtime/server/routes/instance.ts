@@ -98,7 +98,7 @@ export function InstanceRoutes() {
         const providerDefault = Object.fromEntries(
           Object.entries(providerMap).map(([k, v]) => [
             k,
-            Provider.sort(Object.values((v as any).models ?? {}))[0]?.id ?? "",
+            Provider.sort(Object.values((v as any).models ?? {}) as { id: string }[])[0]?.id ?? "",
           ]),
         )
         const providerAuth = await ProviderAuth.methods().catch(() => ({}))

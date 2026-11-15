@@ -1,0 +1,71 @@
+---
+title: Customize
+description: The Skills, Connectors and Plugins directory, its section heroes, and the A://TERNIT OFFICIAL shelf of items Allternit makes itself.
+---
+
+**Customize** is where you choose what your chats and bots can use: **Skills**, **Connectors** and **Plugins**, plus MCP servers, commands, CLI tools and webhooks under **More**. Each section has **Yours** (what you turned on) and **Discover** (what you can add).
+
+In Gizzi Code, `/customize` shows the same shelves and adds items the same way. See [Customize in the terminal](/cli/customize).
+
+## Discover
+
+Discover opens with the section's hero: an ink panel led by the section lockup, such as **A://TERNIT SKILLS**, then one featured item with **Add** and **View**. Connectors' hero is a set of curated collections you can page through.
+
+Below the hero:
+
+- **A://TERNIT OFFICIAL** (Skills and Plugins): the skills and plugins Allternit makes and maintains. Each card has a cover with its name, kind and version, a short description and **Add**. An item already added shows **Added**. Official skills: ALabs Course Pipeline, Codebase To Course, Clone Website, Mobile App Design, Word Documents, PowerPoint Decks, Agent Orchestrator and Steer Parallel Agent.
+- **For you** and **More**: other items you can add, by author and category, one full row each (as many cards as fit across). Allternit's own items show their cover; directory items show their maker's logo; the rest show their category's icon.
+- **Categories**: each with its own icon. Open one to see everything in it.
+
+In **Connectors**, **Messaging** lists Telegram, Email, Phone number, Discord, Slack, Microsoft Teams and WhatsApp as the same cards as every other connector. A card opens the channel's page: **Connect** (or **Connect another**), and under **Your connections**, who can message each connection and which bot answers new chats there.
+
+## Item pages
+
+Click any card, official cover or the hero's **View** to open the item's page before you add it. A directory skill's page shows its description, who makes it, its version and source, and the start of its SKILL.md. **Contents** lists every file in the skill, read from its source (bundled with Allternit, or the GitHub commit it would install), with Markdown shown rendered or as source. **Add** installs it from the page. After you add a skill, its page is the installed copy, with versions, **Download** and **Copy link**.
+
+On a phone, ai.allternit.com and the m.allternit.com app show the same page, sized for the screen.
+
+## MCP servers, commands, CLI tools and webhooks
+
+The sections under **More** have the same hero and A://TERNIT OFFICIAL shelf, then a directory of more items. Add does the real thing in each:
+
+| Section | Official items | Directory | What Add does |
+| --- | --- | --- | --- |
+| MCP servers | Lens Vault (search your synced context vault) | 15 servers. Remote, nothing to install: Context7, DeepWiki, GitMCP, Microsoft Learn, Cloudflare Docs, AWS Knowledge, Hugging Face. Local: Playwright, Chrome DevTools, Filesystem, Memory, Sequential Thinking (need Node.js), Fetch, Git, Time (need uv). | Adds the server to `mcp` in `~/.config/gizzi-code/gizzi.json`. Its tools are available from the next message. Local servers are pinned to a checked version. |
+| Commands | `/review`, `/handoff`, `/standup`, `/explain` | `/test`, `/fix`, `/commit`, `/pr`, `/plan`, `/refactor`, `/docs`, `/security`, `/debug`, `/changelog`, `/onboard`, `/todo` | Writes the prompt to `~/.config/gizzi-code/command/<name>.md`. Type the command in any chat. |
+| CLI tools | gizzi | The coding agents Allternit can run as brains (Claude Code, Codex, Gemini CLI, Cursor Agent and the rest of the CLI catalog) | gizzi: nothing, Allternit Desktop links it at `~/.local/bin/gizzi`. A coding agent's page shows **Install** (after you accept its maker's terms) or **Sign in**, the same steps as **Settings › Coding tools**. |
+| Webhooks | Inbound trigger | Sources: GitHub, Stripe, Linear, Shopify, Zapier, Make, n8n, forms and your own code | A source's page is the guided setup: pick the events, the bot and what it should do, then paste the address (and secret) into the sender. See [Start a bot from another app](/guides/webhook-triggers). |
+
+Each item's page shows exactly what Add writes or opens. **Add › Add MCP server** and **Add › Create command** write to the same places. **Add › Create webhook** opens Settings › Webhooks. The Webhooks list shows your webhook triggers, and its switch turns a trigger on or off.
+
+A `gizzi.json` that is not plain JSON (for example, one with comments) is never rewritten. Add the server with `gizzi mcp add` instead.
+
+## Add from a Git repo
+
+In Skills or Plugins, choose **Add › From a Git repo** and paste a GitHub link to a repo or a folder (for example `https://github.com/anthropics/skills/tree/main/skills/pdf`). Press **Look** to see the skills it holds: every folder with a SKILL.md. Untick any you don't want and press **Install**. The skills install on the computer Allternit runs on, are versioned like directory skills, and are switched on. A Claude plugin repo installs its skills; its commands and MCP servers are not added.
+
+## Import an agent
+
+**Add › Import an agent** finds Claude Code, Codex, OpenClaw and Hermes on this computer and shows what each has:
+
+- **Skills**: copied into Allternit.
+- **MCP servers** with a web address: added as your MCP connectors. Secret values are never read; the dialog names the keys or sign-in to add in ACI › MCP Apps. Servers that run a local command are listed and not added.
+- **Instructions** (CLAUDE.md, AGENTS.md or SOUL.md): put in a bot's Soul, added below what it has or replacing it. The old Soul is kept as `SOUL.pre-import.md`.
+- **Memory**: brought into [Memory Drive](/guides/memory-drive).
+
+## Official covers
+
+Every official cover uses the same frame: ink, the A://TERNIT wordmark, the item's short name in the wordmark's block type, and its kind and version. The picture on the right is generated from one fixed prompt, so all covers match. A cover whose picture fails to load keeps the frame without the picture.
+
+## For developers
+
+- Page before install: `DirectoryDetail` in allternit-ai `src/views/customize/CustomizeView.tsx` reads `GET /api/v1/skills/catalog/:id/files` (allternit-api `skill_catalog_install.rs`): `{version, source, files: [{path, size, text}]}`, text only for UTF-8 files up to 200 KB. Same sources as install, nothing written to disk.
+- More sections: official items are in `src/views/customize/section-official.ts`; the MCP server and command directories in `section-directory.ts` (each remote server answered `initialize` without sign-in, each local package is pinned to the version checked on 2026-11-03). CLI tools read `GET /api/v1/cli-tools/catalog` and install through `CliConnectFlow`.
+- Load: every `useFileSystem` on a page shares one capability scan (reused for 30 s unless capabilities change), the home folder comes from listing `~` through the files API, and a folder's files other than SKILL.md, config.json, plugin.json, package.json and .mcp.json are read when opened.
+- Messaging: `MessagingConnectorsSection` and `MessagingDetail` in allternit-ai `src/components/gateway/MessagingConnectors.tsx`; a channel page's route id is `messaging:<provider>`. Add goes through `createMcp` / `createCommand` in `src/plugins/capabilityWriter.ts` (`writeGizziMcp`, `writeGizziCommand`). The scanner (`src/plugins/fileSystem.ts`) reads gizzi's `gizzi.json`, its `command/` folder, and `~/.allternit/cli-tools`. Webhooks list `GET /api/v1/webhook-triggers` and toggle with `PATCH` (`src/lib/webhook-api.ts`).
+- Shelf and covers: allternit-ai `src/views/customize/OfficialShelf.tsx`. Official skills are the skill catalog entries with `origin: "allternit"` (`src/plugins/catalog/native-plugins.ts`, edited by hand) and install through the catalog installer. A new official skill also needs its folder in the platform repo's `.agents/skills/` and a line in `resolve()` in `skill_catalog_install.rs`, which bundles it into the API. Official plugins are registry plugins whose author is Allternit.
+- New cover: generate art with the prompt in `public/official-covers/PROMPT.md`, save it in that folder and add the item to `OFFICIAL_COVERS`, keyed by its display name without "Allternit" (for example `excel`). An item with no entry still gets a cover: its first word in block type, no picture.
+- Section hero: `src/views/customize/SectionHero.tsx`; Connectors: `ConnectorHero.tsx`.
+- Add from a Git repo: `AddFromGitDialog.tsx` → `POST /api/v1/skills/install-from-git` (`{url, dry_run}` lists `{skills, plugin}`; `{url, paths}` installs, pinned to the listed commit), in allternit-api `skill_catalog_install.rs`.
+- Import an agent: `ImportAgentDialog.tsx` → `GET /api/v1/agent-import/scan` and `POST /api/v1/agent-import/skills` (allternit-api `agent_capability_import.rs`); MCP servers through `POST /mcp/connectors`, the Soul through the bot workspace file API, memory through `/memory/drive/import-agents`.
+- Block type: `src/components/brand/block-type.ts` holds the full A:// alphabet (letters, digits, punctuation), copied from the brand master `Brand/Allternit/block-type/glyphs.json`. `AProtocolWordmark` (lockups such as A://TERNIT OFFICIAL) and `BlockText` (a word without the mark) both use it. Change the master first.

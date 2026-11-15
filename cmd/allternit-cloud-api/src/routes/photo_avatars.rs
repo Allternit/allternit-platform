@@ -4,7 +4,7 @@
 //!
 //! The other two lanes (the user's ChatGPT subscription on a Sessions computer, the user's own
 //! OpenAI key) run client-side; this one runs on Allternit's key, so the monthly allowance lives
-//! on the plan catalog (`SubscriptionPlan::photo_avatars_per_month`: Plus 5, Super 25, Ultra 50,
+//! on the plan catalog (`SubscriptionPlan::photo_avatars_per_month`: Plus 5, Max 25, Ultra 50,
 //! no active subscription 0).
 //!
 //! Routes (Clerk session or API token with the `compute` scope):
@@ -556,7 +556,7 @@ pub async fn generate_for_user(
     if limit == 0 {
         return err(
             StatusCode::PAYMENT_REQUIRED,
-            json!({ "error": "no_subscription", "limit": 0, "message": "Photo avatars are included with Plus, Super and Ultra." }),
+            json!({ "error": "no_subscription", "limit": 0, "message": "Photo avatars are included with Plus, Max and Ultra." }),
         );
     }
     let paused = || {

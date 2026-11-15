@@ -30,7 +30,7 @@ use crate::AppState;
 // Projection caps — Hermes group-chat.ts model, spec AD-2.
 pub const MAX_PROJECTION_MESSAGES: usize = 16;
 pub const MAX_MESSAGE_CHARS: usize = 1200;
-pub const MAX_PROJECTION_BYTES: usize = 48 * 1024;
+pub const MAX_PROJECTION_BYTES: usize = 256 * 1024;
 
 /// Keys recognized as the message array inside a projection document.
 const MESSAGE_ARRAY_KEYS: [&str; 2] = ["messages", "log"];
@@ -436,6 +436,13 @@ impl GroupRoomsStore {
 /// total serialized size ≤ `MAX_PROJECTION_BYTES` (oldest messages dropped
 /// until it fits). Returns `RoomError::ProjectionTooLarge` only when there is
 /// no trimmable message array and the document still exceeds the cap.
+fn complete_answer(text: &str) -> bool {
+    let Some((opening, rest)) = text.trim().split_once('\n') else { return false };
+    if !matches!(opening.trim_end(), "```openui" | "```openui-lang") { return false }
+    let Some(body) = rest.strip_suffix("\n```") else { return false };
+    crate::answer_contract::validate(body.trim_end_matches('\r')).is_ok()
+}
+
 pub fn enforce_projection_caps(mut value: Value) -> Result<Value, RoomError> {
     let mut array_key: Option<String> = None;
     if let Some(obj) = value.as_object_mut() {
@@ -461,7 +468,7 @@ pub fn enforce_projection_caps(mut value: Value) -> Result<Value, RoomError> {
     if let Some(messages) = value.get_mut(&key).and_then(|v| v.as_array_mut()) {
         for message in messages.iter_mut() {
             if let Some(Value::String(text)) = message.get_mut("text") {
-                if text.chars().count() > MAX_MESSAGE_CHARS {
+                if text.chars().count() > MAX_MESSAGE_CHARS && !complete_answer(text) {
                     let truncated: String = text.chars().take(MAX_MESSAGE_CHARS).collect();
                     *text = truncated;
                 }

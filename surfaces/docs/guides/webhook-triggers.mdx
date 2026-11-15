@@ -1,0 +1,51 @@
+---
+title: 'Start a bot from another app'
+description: 'Webhooks: GitHub, Stripe, Linear, Shopify, Zapier, Make, n8n, a form or your own code posts to a private address, and one of your bots starts work on it.'
+---
+
+A webhook starts one of your bots when something happens in another app: a pull request opens, a payment fails, a form is sent. Each webhook gets a private address. The app posts events there, your computer checks them, and the bot starts a new thread. The bot asks you before any action.
+
+## Set one up
+
+1. Open **Customize › Webhooks › Discover** (or **Settings › Webhooks**, or a bot's **Webhooks** tab) and choose a source under **Connect a source**.
+2. Tick the events that should start the bot. With no events ticked, every delivery starts it.
+3. Choose the bot, write what it should do, and choose **Tools**: **Ask me before each action** or **Plan only, no actions**.
+4. Press **Create webhook**. The page shows the **Address** and, for most sources, a **Secret**. The secret is shown once.
+5. Follow the steps on the page to paste the address (and secret) into the app. For Stripe, Linear and Shopify, the app makes the secret: paste it back into the **Signing secret** field and press **Save**.
+6. The page says **Waiting for the first delivery** until something arrives. Press **Send a test event** to run the bot on sample data now.
+
+## What each source checks
+
+| Source | How a delivery is checked | Event name |
+| --- | --- | --- |
+| GitHub | `X-Hub-Signature-256` with the secret Allternit made | `X-GitHub-Event` plus the body's `action`, such as `pull_request.opened` |
+| Stripe | `Stripe-Signature` with Stripe's `whsec_` secret, within 5 minutes | the body's `type`, such as `invoice.paid` |
+| Linear | `Linear-Signature` with Linear's signing secret | `type.action`, such as `Issue.create` |
+| Shopify | `X-Shopify-Hmac-Sha256` with the store's signing key | `X-Shopify-Topic`, such as `orders/create` |
+| Zapier, Make, n8n, forms | The private address is the key; only deliveries through it count | the body's `event` or `type` field |
+| Your own code | `X-Allternit-Signature`: hex HMAC-SHA256 of the body with the secret | `X-Allternit-Event`, else the body's `event` or `type` |
+
+A GitHub `ping` is a connection check: it shows as **Received** and starts no bot. An event you didn't tick is listed as **Skipped**.
+
+## Where events go
+
+The address is on Allternit's cloud (`https://api.allternit.com/channels/in/…`). The cloud holds each event and relays it to the computer the webhook belongs to, waking a cloud computer if it is asleep. A Desktop that is off gets the events when it is back, for up to 24 hours. The cloud never reads or keeps the secret: your computer checks the signature.
+
+## The webhook's page
+
+Open a webhook under **Yours** to see:
+
+- its address, a **Make a public address** button if it has none, and the signing secret field when one is still needed;
+- what the bot does, and its tools setting;
+- **Deliveries**: every event with its status (**Bot ran**, **Received**, **Skipped**, **Refused** with the reason, or **Bot run failed**) and **Open thread** for the bot's work;
+- the on/off switch and **Delete**.
+
+A webhook starts at most 120 bot runs an hour. Deliveries past that are skipped and listed.
+
+## Limits
+
+- Webhooks start Allternit bots. A bot that runs on another vendor can't take webhook events.
+- A webhook never bypasses tool approval, whatever its settings.
+- Event data reaches the bot as untrusted data, never as instructions.
+
+For the API, see [Webhook triggers API](/api/webhook-triggers).

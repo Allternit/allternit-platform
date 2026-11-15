@@ -1,0 +1,131 @@
+---
+title: "Swarms and the board"
+description: "Hand one task to several CLI agents at once, watch them on a live board, steer them, wait for them and land their work, all from the terminal."
+---
+
+A **swarm** gives one task (or one task each) to several Terminal bots at once. Each worker runs a CLI agent, such as Claude Code or Codex, in its own git worktree and on its own branch. You watch all of them on one live **board**, steer any of them, wait for them to finish, and then land their branches.
+
+A swarm is a thin layer over the Factory engine. It isn't a second engine. Starting one runs the same steps as `gizzi agents up` and `gizzi orchestration send`, and the board reads the engine's own event stream.
+
+## Start a swarm
+
+```bash
+cd my-repo
+gizzi swarm "add type hints to calc.py" --workers 2 --brain claude-cli/claude-sonnet-5
+```
+
+Run it from inside the git repo the workers should change. For each worker Gizzi:
+
+1. makes a worktree next to the repo (`<repo>-<swarm>-w1`) on branch `swarm/<swarm>/w1`, from the commit you're on;
+2. adds the worker to the team file `.allternit/teams/<swarm>/team.yaml` and runs `agents up` with that worktree as its workdir;
+3. waits for its pane to be ready, then sends it the task with a note saying which worker it is and which branch to commit to.
+
+| Option | What it does |
+|---|---|
+| `--workers N` (`-n`) | How many workers, 1 to 12. The default is 2. |
+| `--task "…"` | One task per worker. Repeat it, and each worker gets its own task. This sets the number of workers. |
+| `--brain <brain>` | Which CLI agent runs each worker: `claude-cli/<model>`, `codex-cli/<model>`, `kimi-cli`, `grok-cli` or `gizzi`. The default is `claude-cli/claude-sonnet-5`. These run on your own subscription, so the board's cost column says `plan`. |
+| `--dry-run` | Print the worktrees, branches and tasks, and start nothing. |
+| `--json` | Print the swarm record as one JSON document. |
+
+A task longer than 600 characters, or one with line breaks, goes into a file. The worker gets one line telling it to read that file.
+
+## Watch it: `gizzi board`
+
+```text
+┌ Factory · 2 bots · 1 working · 1 done ─────────────────────────── ⟳ live ┐
+│ #   BOT            BRAIN                       STATE      AGE    COST  BRANCH            │
+│ ─ sw-iukw5h · add type hints to calc.py                                                   │
+│ ❯ 1  w1@sw-iukw5h  claude-cli/claude-sonnet-5  ● working  1m07s  plan  swarm/sw-iukw5h/w1 │
+│     └ ✶ Editing calc.py…                                                                   │
+│   2  w2@sw-iukw5h  claude-cli/claude-sonnet-5  ✓ done     38s    plan  swarm/sw-iukw5h/w2 │
+│     └ ✻ Brewed for 19s · done 11:15 AM                                                     │
+└──────────────────────────────────────────────────────────────────────────────────────────┘
+ ↑↓ move · 1-9 jump · n next waiting · ⏎ attach · s steer · x stop · l land · q quit
+```
+
+The board shows one row per running bot: every swarm worker, plus any other Terminal bot the engine has running. Bots that are offline are left out. `gizzi agents ps` still lists them. Each row has the bot, its brain, its state, how long it has been running, its cost and its branch. The line under it is the last thing its pane printed, with the agent's prompt box and footer hints removed.
+
+| State | Meaning |
+|---|---|
+| `◌ starting` | The pane is starting, or its task hasn't been delivered yet |
+| `● working` | The agent is working |
+| `▲ waiting` | The agent stopped at a question or a permission prompt only a person can answer. Press `n` to jump to it and `⏎` to answer it in its pane. |
+| `✓ done` | It finished. A finished worker stays on the board as done, with its time frozen, until you land it, even after the engine reports its pane as idle again. |
+| `✗ failed` | Its pane died or never started. The line under it says why. |
+
+The header adds up the states, and `⟳ live` means the board is connected to the engine.
+
+| Key | What it does |
+|---|---|
+| `↑` `↓` (or `k` `j`), `1`–`9` | Select a row |
+| `n` | Jump to the next waiting bot |
+| `⏎` | Attach to the bot's pane. The engine's pane view takes over the screen. `ctrl+b q` detaches and brings the board back. |
+| `s` | Steer. Type a message and press `⏎` to send it to the bot. If the pane is busy, the engine holds the message in the bot's mailbox, and the board delivers it once the pane is free. A worker that was done goes back to working. |
+| `x` | Stop the bot's pane. It asks first. |
+| `l` | Land a swarm worker, which merges its branch (see below). It asks first. |
+| `q`, `Esc` | Quit |
+
+`gizzi board --once` prints one frame and exits, which is useful in scripts or over SSH.
+
+### How the board stays live
+
+The board doesn't poll. It reads the engine's HTTP service (`127.0.0.1:3018` when Allternit Desktop runs it, `3011` for `allternit-factory serve`, or `$ALLTERNIT_FACTORY_PORT`):
+
+- `GET /api/factory/events` (Server-Sent Events) says when a bot changes state or the ledger moves. The board then reads `GET /api/factory/agents` again.
+- `GET /api/factory/agents/:id/stream` (Server-Sent Events) sends a pane's screen when it changes. The last line comes from there.
+
+If the engine isn't serving, the board says so and shows `○ offline`.
+
+## In the TUI: `/board`, `/swarm` and the footer badge
+
+- `/board` opens the same board as a full-screen view, with the same keys, plus `f` for the factory floor. On the factory floor (`ctrl+x f` or `/factory`), `b` opens the board.
+- `/swarm <task> [-n 2] [--brain claude-cli/claude-sonnet-5]` starts a swarm from the TUI and opens the board. Workers appear on it as their panes start.
+- While any bot is working or waiting, the footer shows a badge such as `⚙ 3 bots · 1 waiting`. It turns yellow when a bot is waiting on you.
+
+## Wait for it: `gizzi swarm wait`
+
+```bash
+gizzi swarm wait [<swarm>] [--timeout 600]
+```
+
+This blocks until every worker is done, failed or stopped, and then prints a summary. With no swarm named, it waits for the newest open one. It prints a line when a worker finishes or starts waiting on you. Exit codes: `0` when all are done, `1` when any failed, `3` when the engine isn't serving, and `4` on `--timeout`.
+
+## Land it: `gizzi swarm land`
+
+```bash
+gizzi swarm land [<swarm>] --dry-run      # what would merge
+gizzi swarm land [<swarm>] [--worker w1] [--all]
+```
+
+For each finished worker, landing does four things:
+
+1. It commits anything the worker left uncommitted on its branch.
+2. It merges the branch into the branch the swarm started from, in your main checkout. That checkout must be on that branch and have no uncommitted changes, or the land is refused.
+3. It stops the worker's pane.
+4. It removes the worktree and the branch.
+
+A worker that has no new commits is reported as `nothing`. If a merge conflicts, the merge is aborted, nothing is changed, and the worktree is kept so you can resolve it. When workers worked on the same task as alternatives, land the one you want with `--worker w1`, and stop the others with `x` on the board.
+
+`--all` also lands workers that haven't finished. Workers that are still working are skipped by default.
+
+## Other commands
+
+| Command | What it does |
+|---|---|
+| `gizzi swarm list` | Every swarm on this computer and each worker's state |
+
+## Where it lives
+
+| What | Where |
+|---|---|
+| Swarm records | `~/.allternit/factory/swarms/<swarm>.json` (`$ALLTERNIT_FACTORY_HOME` moves it). This is the only state Gizzi keeps: which bots, worktrees and branches belong to the swarm, and when each finished. |
+| Team file | `<repo>/.allternit/teams/<swarm>/team.yaml`. It's removed when the whole swarm is landed. |
+| Code | `cmd/gizzi-code/src/cli/factory/swarm.ts` (start, stop, land), `board.ts` (rows), `live.ts` (engine streams), `board-tty.ts` (`gizzi board`), and the TUI's `screens/factory-floor/SwarmBoardScreen.tsx` |
+
+## Related
+
+- [Agents](/factory/agents): teams, `team.yaml`, `agents up`
+- [Orchestration](/factory/orchestration): send, the mailbox, drain
+- [Agent Trees](/factory/trees): leased worktrees for longer-lived agent work
+- [Command reference](/factory/commands)

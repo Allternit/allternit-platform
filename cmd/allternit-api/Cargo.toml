@@ -7,6 +7,18 @@ edition = "2021"
 name = "allternit-api"
 path = "src/main.rs"
 
+# Self-hosted Agents Server: a thin second binary that mounts only the
+# `selfhost` router (no Clerk, Stripe or cloud init). See src/selfhost/mod.rs.
+[[bin]]
+name = "allternit-agents-server"
+path = "src/bin/allternit-agents-server.rs"
+
+# Brain runner: first process in a person's sealed runner box. Dials out to
+# cloud-api and runs the vendor CLIs tools-off. See src/brain_runner/mod.rs.
+[[bin]]
+name = "allternit-brain-runner"
+path = "src/bin/allternit-brain-runner.rs"
+
 [dependencies]
 jsonschema = { version = "0.58.6", default-features = false }
 # Vendored OpenSSL: allternit-api links openssl transitively (webauthn-rs-core),
@@ -28,7 +40,7 @@ opentelemetry = { workspace = true }
 opentelemetry_sdk = { workspace = true }
 opentelemetry-http = { workspace = true, features = ["reqwest"] }
 tracing-opentelemetry = { workspace = true }
-tower = { workspace = true }
+tower = { workspace = true, features = ["util"] }
 reqwest = { workspace = true, features = ['json', 'stream'] }
 async-stream = { workspace = true }
 axum-extra = { version = "0.9", features = ["typed-header"] }
@@ -51,16 +63,26 @@ allternit-gc-agents = { workspace = true }
 # Internal crates - Execution
 allternit-driver-interface = { path = "../../platform/contracts/driver-interface" }
 allternit-session-manager = { path = "../../services/session-manager" }
+# Freeweights catalog + signed manifests (contracts/model-source)
+allternit-model-source = { path = "../../services/model-source" }
+# Freeweights Studio contract: job spec v1, states, engine catalog.
+allternit-studio-spec = { path = "../../services/studio-spec", default-features = false }
 allternit-computer-cloud = { path = "../../cmd/allternit-computer-cloud" }
 allternitos-cloud-contracts = { workspace = true }
 
 # WebSocket
 tokio-tungstenite = { workspace = true, features = ["rustls-tls-webpki-roots"] }
 futures = "0.3"
+# Meetings bot host: unpacks the bot account's Chrome profile (tar.zst).
+tar = { workspace = true }
+zstd = { workspace = true }
 
 # SQLite
 rusqlite = { version = "0.31", features = ["bundled", "chrono"] }
 refinery = { version = "0.9", features = ["rusqlite"] }
+# PostgreSQL for the self-hosted Agents Server store (selfhost::store::pg).
+# sqlx 0.8.0's sqlite feature links the same libsqlite3-sys 0.28 as rusqlite.
+sqlx = { workspace = true, features = ["chrono", "postgres", "macros", "migrate", "json"] }
 
 # Utilities
 uuid = { version = "1", features = ["v4", "serde"] }
@@ -133,18 +155,20 @@ allternit-apple-vf-driver = { path = "../../drivers/apple-vf" }
 # Firecracker is Unix-only (tokio::net::UnixStream, nix); the driver never
 # compiles for Windows and the api only mounts it under cfg(target_os = "linux").
 [target.'cfg(unix)'.dependencies]
+# PR_SET_PDEATHSIG for the cloud computer's mesh-node (cloud_computer_peer);
+# openat/O_NOFOLLOW/O_NONBLOCK for run_code output ingest (gizzi_chat_stream).
+libc = "0.2"
 allternit-firecracker-driver = { path = "../../drivers/firecracker" }
 
 # Windows Credential Manager (computer_v2 use_credential source "keychain").
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security_Credentials"] }
 
-# PR_SET_PDEATHSIG for the cloud computer's mesh-node (cloud_computer_peer).
-[target.'cfg(target_os = "linux")'.dependencies]
-libc = "0.2"
 
 [dev-dependencies]
 axum-test = "14"
+# The fake engine API v1 server for the Studio host tests.
+allternit-studio-spec = { path = "../../services/studio-spec", features = ["fake-engine"] }
 tempfile = "3"
 # `ServiceExt::oneshot` for in-process route tests (workspace tower is 0.5;
 # the util feature is additive and matches axum 0.7's service traits).

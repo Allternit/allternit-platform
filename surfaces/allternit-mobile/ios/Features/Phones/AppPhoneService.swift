@@ -99,6 +99,7 @@ final class AppPhoneService: ObservableObject {
     /// The phone id stays, so pairing again reuses `app:<id>`.
     func unpair() async {
         let creds = credentials
+        DeviceAccessStore.shared.disableAll()
         stopControl()
         AppPhoneSharedState.post(AppPhoneSharedState.stopNotification)
         AppPhoneKeychain.clear()
@@ -257,6 +258,7 @@ final class AppPhoneService: ObservableObject {
     /// app is in the foreground (iOS suspends it otherwise anyway).
     func setForeground(_ foreground: Bool) {
         isForeground = foreground
+        if foreground { DeviceAccessStore.shared.refresh() }
         refreshScreenState()
         if foreground {
             startControl()
@@ -282,6 +284,11 @@ final class AppPhoneService: ObservableObject {
         AppPhoneSharedState.post(AppPhoneSharedState.stopNotification)
         AppPhoneSharedState.markEnded()
         refreshScreenState()
+    }
+
+    /// Device Access switches or iOS permissions changed: tell the node.
+    func deviceAccessChanged() {
+        sendState()
     }
 
     /// Sends the `state` event when the ACI browser opens or closes.
@@ -337,7 +344,8 @@ final class AppPhoneService: ObservableObject {
     /// One control socket's life: announce state, then answer requests until
     /// it closes. `onOpen` runs once the first frame went through.
     private func runControl(_ socket: URLSessionWebSocketTask, key: Data, onOpen: () -> Void) async throws {
-        try await sendSealed(["type": "state", "foreground": true, "browserOpen": ACIBrowserBridge.shared.isBrowserOpen],
+        try await sendSealed(["type": "state", "foreground": true, "browserOpen": ACIBrowserBridge.shared.isBrowserOpen,
+                              "deviceAccess": DeviceAccessStore.shared.allowedSnapshot],
                              on: socket, key: key)
         isControlConnected = true
         onOpen()
@@ -384,6 +392,9 @@ final class AppPhoneService: ObservableObject {
             if !isScreenLive { isScreenPromptPresented = true }
             return ["shown": !isScreenLive, "live": isScreenLive]
         default:
+            if method.hasPrefix("device.") {
+                return try await DeviceAccessService.handle(method: method, params: params)
+            }
             if method.hasPrefix("web.") {
                 return try await ACIBrowserBridge.shared.handle(method: method, params: params)
             }
@@ -411,7 +422,8 @@ final class AppPhoneService: ObservableObject {
     private func sendState() {
         guard isControlConnected, let socket = controlSocket, let key = credentials?.sessionKey else { return }
         let state: [String: Any] = ["type": "state", "foreground": isForeground,
-                                    "browserOpen": ACIBrowserBridge.shared.isBrowserOpen]
+                                    "browserOpen": ACIBrowserBridge.shared.isBrowserOpen,
+                                    "deviceAccess": DeviceAccessStore.shared.allowedSnapshot]
         Task { try? await sendSealed(state, on: socket, key: key) }
     }
 }

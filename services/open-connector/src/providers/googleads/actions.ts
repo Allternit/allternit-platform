@@ -1,7 +1,7 @@
 import type { ActionDefinition, JsonSchema } from "../../core/types.ts";
 
 import { s } from "../../core/json-schema.ts";
-import { defineProviderAction } from "../../core/provider-definition.ts";
+import { defineProviderAction, withSavedConnectionInputs } from "../../core/provider-definition.ts";
 import { googleAdsScope } from "./scopes.ts";
 
 const service = "googleads";
@@ -348,12 +348,15 @@ const actions: GoogleAdsActionSource[] = [
   ),
 ];
 
-export const googleAdsActions: ActionDefinition[] = actions.map((source) =>
-  defineProviderAction(service, {
-    ...source,
-    requiredScopes: [googleAdsScope],
-    providerPermissions: [googleAdsScope],
-  }),
+export const googleAdsActions: ActionDefinition[] = withSavedConnectionInputs(
+  actions.map((source) =>
+    defineProviderAction(service, {
+      ...source,
+      requiredScopes: [googleAdsScope],
+      providerPermissions: [googleAdsScope],
+    }),
+  ),
+  { developerToken: ["developerToken"], customerId: ["customerId"] },
 );
 
 export type GoogleAdsActionName =

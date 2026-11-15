@@ -278,6 +278,8 @@ export interface MeshAPI {
 
 export interface ShellAPI {
   openExternal(url: string): Promise<void>;
+  openPrivacySettings(pane: 'fullDisk' | 'automation'): Promise<{ supported: false } | { supported: true; opened: boolean }>;
+  messagesAccessHint(): Promise<{ supported: false } | { supported: true; appName: string; appPath: string }>;
   openRemoteControl(): Promise<void>;
   openFabricSession(): Promise<void>;
   getOfficeHostStatus(): Promise<Record<'word' | 'excel' | 'powerpoint', {
@@ -750,6 +752,13 @@ export interface AllternitDesktopAPI {
   permissionGuide: PermissionGuideAPI;
   phones: PhonesAPI;
   phoneLink: import('../main/phone-link-types').PhoneLinkAPI;
+  selfhost: {
+    credentials: {
+      get: (name: string) => Promise<string | null>;
+      set: (name: string, value: string) => Promise<{ success: boolean; error?: string }>;
+      delete: (name: string) => Promise<{ success: boolean }>;
+    };
+  };
   featureFlags: FeatureFlagsAPI;
   findInPage: FindInPageAPI;
   locale: LocaleAPI;

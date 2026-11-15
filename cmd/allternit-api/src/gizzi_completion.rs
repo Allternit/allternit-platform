@@ -170,6 +170,9 @@ pub async fn complete_for(
 ) -> Option<(String, Usage)> {
     use crate::completion_cache as cc;
     let resolved = model.cloned().unwrap_or_else(default_model);
+    if crate::config::is_no_brain(&resolved.0, &resolved.1) {
+        return None;
+    }
     let model_label = format!("{}/{}", resolved.0, resolved.1);
     let store = crate::llm_gateway::response_cache::ResponseCache::global();
     // Internal calls carry no sampling params or tools of their own; the
@@ -210,6 +213,11 @@ async fn run(
     let gizzi = crate::v1_routes::gizzi_base();
 
     let (provider_id, model_id) = model.cloned().unwrap_or_else(default_model);
+    // No model given and no default brain chosen: nothing to run on.
+    if crate::config::is_no_brain(&provider_id, &model_id) {
+        *provider_error = Some(crate::config::NO_BRAIN_MESSAGE.to_string());
+        return None;
+    }
     let model_label = format!("{}/{}", provider_id, model_id);
 
     let client = Client::builder()

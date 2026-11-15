@@ -123,7 +123,7 @@ struct BrainCaptureSheet: View {
                 }
             }
             .font(.headline)
-            .foregroundColor(.white)
+            .foregroundColor(Color("OnAccent"))
             .frame(maxWidth: .infinity)
             .padding(.vertical, 16)
             .background(Color("AccentPrimary"))

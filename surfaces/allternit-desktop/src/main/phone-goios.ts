@@ -369,6 +369,8 @@ export class GoIos {
   /** Mount the personalized DDI from `basedir` (ensureDdi first so nothing is fetched from a mirror). */
   async imageAuto(udid: string, basedir: string): Promise<void> {
     const res = await this.exec(['image', 'auto', `--basedir=${basedir}`, `--udid=${udid}`], { timeoutMs: 180_000 });
+    // Already mounted (by Xcode, devicectl or an earlier run) is the state we want, not a failure.
+    if (res.code !== 0 && /is already mounted/i.test(res.stderr + res.stdout)) return;
     if (res.code !== 0) throw new Error(lastGoIosError(res.stderr || res.stdout) ?? 'mounting the developer disk image failed');
   }
 

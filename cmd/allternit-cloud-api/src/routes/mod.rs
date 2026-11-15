@@ -1,12 +1,15 @@
 //! Routes module
 
 pub mod agency_forward;
+pub mod office_engine;
 pub mod agent_sessions;
 pub mod api_keys;
 pub mod artifacts_comments;
 pub mod artifacts_suggestions;
 pub mod artifacts_v2;
 pub mod gateway_catalog;
+// Freeweights entitlement claim (signed plan/perks for freeweights.allternit.com).
+pub mod freeweights;
 pub mod approvals;
 pub mod auth;
 pub mod billing_credits;
@@ -37,20 +40,48 @@ pub mod hosted_entitlements;
 pub mod hosted_runtimes;
 pub mod instances;
 pub mod inference_keys;
+pub mod voice_keys;
+pub mod brain_runners;
+pub mod connections;
+pub mod plan_threads;
 pub mod jobs;
+pub mod live_activity;
 pub mod livekit_admin;
 pub mod me_flags;
+/// Allternit Meetings (docs/meetings/CONTRACT.md): user routes, settings,
+/// pod-token routes, link parsing, the session state machine, SSE fan-out.
+pub mod meetings;
+pub mod calendar_oauth;
+pub mod meeting_events;
+pub mod meeting_links;
+pub mod meeting_notify;
+pub mod meeting_pod;
+pub mod meeting_state;
+pub mod org_meeting_settings;
+/// Zoom connect, deauthorization webhook and pod OBF tokens (docs/meetings/ZOOM.md).
+pub mod zoom;
+/// Compute gate: GET /api/v1/account/compute-status (+ acknowledge) and the relay's 409.
+pub mod account_compute;
+pub mod web_search;
 pub mod me_usage;
 pub mod setup_checks;
 pub mod a2a_edge;
 pub mod mcp_edge;
+/// Allternit as an ID-JAG issuer for managed connector auth (WP1).
+pub mod managed_auth;
+/// Trusted outside issuers and the edge JWT-bearer authorization server (WP4).
+pub mod edge_auth;
 pub mod mcp_events;
 pub mod mcp_event_callbacks;
 pub mod allternit_events;
 pub mod runtime_events;
+pub mod floor_shares;
+/// Share a chat thread by link: owner routes + the public /api/v2/public/threads/:token.
+pub mod thread_shares;
 pub mod runtime_presence;
 pub mod mesh;
 pub mod channel_inbound;
+pub mod connect_return;
 pub mod phone;
 pub mod photo_avatars;
 pub mod bot_email;
@@ -62,10 +93,13 @@ pub mod inapp_calls;
 pub mod mcp_oauth_approvals;
 pub mod vendor_bot_keys;
 pub mod web_push;
+pub mod apns;
+pub mod device_read;
 pub mod mail_triage;
 pub mod notifications;
 pub mod channel_onboarding;
 pub mod paired_computers;
+pub mod phone_live;
 pub mod registered_phones;
 pub mod app_phones;
 pub mod mirror;

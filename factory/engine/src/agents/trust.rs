@@ -17,8 +17,8 @@ use std::path::Path;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
-/// Record trust for `workdir` in the stores of `harness` (`claude` or
-/// `kimi`/`kimi-code`; others have no folder prompt). `home` is `$HOME`.
+/// Record trust for `workdir` in the stores of `harness` (`claude`,
+/// `codex` or `kimi`/`kimi-code`; others have no folder prompt). `home` is `$HOME`.
 pub fn pre_trust(harness: &str, workdir: &Path, home: &Path) {
     let name = Path::new(harness.trim())
         .file_name()
@@ -37,9 +37,37 @@ pub fn pre_trust(harness: &str, workdir: &Path, home: &Path) {
         match name.as_str() {
             "claude" | "claude-code" => trust_claude(&home.join(".claude.json"), dir),
             "kimi" | "kimi-code" => trust_kimi(&home.join(".kimi-code").join("workspace-trust"), dir),
+            "codex" => trust_codex(&home.join(".codex").join("config.toml"), dir),
             _ => {}
         }
     }
+}
+
+/// `~/.codex/config.toml` → `[projects."<workdir>"]` with
+/// `trust_level = "trusted"`. The table is appended as text so the person's
+/// comments and layout stay untouched. An existing table (whatever its
+/// trust_level) is the person's choice and is left alone.
+fn trust_codex(store: &Path, workdir: &Path) {
+    let Ok(text) = std::fs::read_to_string(store) else { return };
+    let Ok(doc) = text.parse::<toml_edit::DocumentMut>() else { return };
+    let key = workdir.to_string_lossy().to_string();
+    match doc.get("projects") {
+        None => {}
+        // An inline or dotted `projects` can't take a `[projects."x"]` header.
+        Some(projects) => {
+            let Some(table) = projects.as_table() else { return };
+            if table.contains_key(&key) {
+                return;
+            }
+        }
+    }
+    let escaped = key.replace('\\', "\\\\").replace('"', "\\\"");
+    let mut out = text;
+    if !out.is_empty() && !out.ends_with('\n') {
+        out.push('\n');
+    }
+    out.push_str(&format!("\n[projects.\"{escaped}\"]\ntrust_level = \"trusted\"\n"));
+    let _ = replace_atomically(store, out.as_bytes());
 }
 
 /// `~/.claude.json` → `projects[<workdir>]` gets both dialog flags.
@@ -137,11 +165,57 @@ mod tests {
         assert_eq!(doc["root"], json!(real.to_string_lossy()));
     }
 
+    fn codex_home(body: &str) -> (tempfile::TempDir, std::path::PathBuf) {
+        let home = tempfile::tempdir().unwrap();
+        std::fs::create_dir(home.path().join(".codex")).unwrap();
+        let store = home.path().join(".codex/config.toml");
+        std::fs::write(&store, body).unwrap();
+        (home, store)
+    }
+
+    #[test]
+    fn codex_trust_is_appended_and_idempotent() {
+        let (home, store) = codex_home("# mine\nmodel = \"x\"\n\n[projects.\"/other\"]\ntrust_level = \"trusted\"\n");
+        let work = tempfile::tempdir().unwrap();
+        pre_trust("codex", work.path(), home.path());
+        let text = std::fs::read_to_string(&store).unwrap();
+        assert!(text.starts_with("# mine\nmodel = \"x\"\n\n[projects.\"/other\"]"));
+        let doc: toml::Value = toml::from_str(&text).unwrap();
+        let key = work.path().canonicalize().unwrap().to_string_lossy().to_string();
+        assert_eq!(doc["projects"][&key]["trust_level"].as_str(), Some("trusted"));
+        assert_eq!(doc["projects"]["/other"]["trust_level"].as_str(), Some("trusted"));
+        pre_trust("codex", work.path(), home.path());
+        assert_eq!(std::fs::read_to_string(&store).unwrap(), text);
+    }
+
+    #[test]
+    fn codex_keeps_an_existing_choice() {
+        let work = tempfile::tempdir().unwrap();
+        let key = work.path().canonicalize().unwrap().to_string_lossy().to_string();
+        let body = format!("[projects.\"{key}\"]\ntrust_level = \"untrusted\"\n");
+        let (home, store) = codex_home(&body);
+        pre_trust("codex", work.path(), home.path());
+        let after = std::fs::read_to_string(&store).unwrap();
+        assert!(after.starts_with(&body));
+        // The given path may differ from the canonical one (/var vs /private/var);
+        // only the canonical entry the person chose must stay untouched.
+        let doc: toml::Value = toml::from_str(&after).unwrap();
+        assert_eq!(doc["projects"][&key]["trust_level"].as_str(), Some("untrusted"));
+    }
+
+    #[test]
+    fn codex_without_a_config_writes_nothing() {
+        let home = tempfile::tempdir().unwrap();
+        let work = tempfile::tempdir().unwrap();
+        pre_trust("codex", work.path(), home.path());
+        assert_eq!(std::fs::read_dir(home.path()).unwrap().count(), 0);
+    }
+
     #[test]
     fn other_harnesses_and_no_kimi_install_write_nothing() {
         let home = tempfile::tempdir().unwrap();
         let work = tempfile::tempdir().unwrap();
-        pre_trust("codex", work.path(), home.path());
+        pre_trust("grok", work.path(), home.path());
         pre_trust("kimi", work.path(), home.path());
         assert_eq!(std::fs::read_dir(home.path()).unwrap().count(), 0);
     }

@@ -217,7 +217,9 @@ dependencies = [
  "allternit-factory-engine",
  "allternit-firecracker-driver",
  "allternit-gc-agents",
+ "allternit-model-source",
  "allternit-session-manager",
+ "allternit-studio-spec",
  "allternitos-cloud-contracts",
  "anyhow",
  "async-stream",
@@ -273,6 +275,8 @@ dependencies = [
  "serde_yaml",
  "sha1 0.10.6",
  "sha2 0.10.9",
+ "sqlx",
+ "tar",
  "tempfile",
  "thiserror 1.0.69",
  "tiktoken-rs",
@@ -292,6 +296,7 @@ dependencies = [
  "webauthn-rs",
  "windows-sys 0.59.0",
  "zip 0.6.6",
+ "zstd 0.13.3",
 ]
 
 [[package]]
@@ -458,6 +463,7 @@ dependencies = [
  "http-body-util",
  "hyper 1.10.1",
  "image",
+ "jsonschema",
  "jsonwebtoken",
  "lazy_static",
  "mcp-protocol",
@@ -468,6 +474,7 @@ dependencies = [
  "rand 0.8.6",
  "regex",
  "reqwest 0.12.28",
+ "ring",
  "serde",
  "serde_json",
  "serial_test",
@@ -486,6 +493,7 @@ dependencies = [
  "tower-http",
  "tracing",
  "tracing-subscriber",
+ "url",
  "urlencoding",
  "uuid",
 ]
@@ -1314,16 +1322,20 @@ dependencies = [
 name = "allternit-local-engine"
 version = "0.1.0"
 dependencies = [
+ "allternit-model-source",
  "anyhow",
  "axum",
  "blake3",
  "bytes 1.12.0",
  "chrono",
  "dirs 5.0.1",
+ "hex",
  "regex",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
+ "sha1 0.10.6",
+ "sha2 0.10.9",
  "sysinfo",
  "tempfile",
  "thiserror 1.0.69",
@@ -1431,6 +1443,26 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "allternit-model-source"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "base64 0.22.1",
+ "chrono",
+ "hex",
+ "minisign-verify",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "sha1 0.10.6",
+ "sha2 0.10.9",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "urlencoding",
 ]
 
 [[package]]
@@ -2197,6 +2229,20 @@ dependencies = [
  "walkdir",
  "weezl",
  "zip 0.6.6",
+]
+
+[[package]]
+name = "allternit-studio-spec"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "chrono",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "thiserror 1.0.69",
+ "tokio",
 ]
 
 [[package]]
@@ -8780,6 +8826,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "68354c5c6bd36d73ff3feceb05efa59b6acb7626617f4962be322a825e61f79a"
 
 [[package]]
+name = "minisign-verify"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "871285dc19d8d0ebe0eef3d0e99a205f2a71363b122632cbbfa4a6c370a960ce"
+
+[[package]]
 name = "miniz_oxide"
 version = "0.8.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -15341,6 +15393,7 @@ checksum = "051eb1abcf10076295e815102942cc58f9d5e3b4560e46e53c21e8ff6f3af7b1"
 name = "voice-service"
 version = "0.1.0"
 dependencies = [
+ "allternit-model-source",
  "anyhow",
  "axum",
  "bzip2 0.4.4",

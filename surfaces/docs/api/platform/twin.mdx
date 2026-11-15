@@ -58,7 +58,7 @@ At most 500 items per account. Passwords, payment details and government ids are
 
 ## MCP
 
-A project key with the `agents` scope can open the MCP agents server at `https://mcp.allternit.com/mcp` (`Authorization: Bearer alt_live_…`). Keys bound to one account are refused there (`403 account_bound_key`) because that server lists every agent of the project.
+A project key with the `agents` scope can open the MCP agents server at `https://mcp.allternit.com/mcp` (`Authorization: Bearer alt_live_…`). Keys bound to one account are refused there (`403 account_bound_key`) because that server lists every agent of the project. A key with the `phones` scope gets the [phone tools](/api/platform/phones#mcp-tools) there too, and a key with only `phones` gets just those.
 
 ## For contributors
 

@@ -1,0 +1,10 @@
+{
+  "name": "allternit-phones",
+  "version": "0.1.0",
+  "description": "Drive your Allternit phones, numbers and mailboxes from Claude Code: screenshot and tap, run phone tasks and saved skills, give an agent a number and mailbox, and read one-time codes. Uses Allternit's remote MCP server with a project API key.",
+  "author": { "name": "Allternit", "url": "https://allternit.com" },
+  "homepage": "https://docs.allternit.com/api/platform/sdks/claude-code-codex",
+  "repository": "https://github.com/Allternit/allternit-platform",
+  "license": "Apache-2.0",
+  "keywords": ["allternit", "phone", "android", "iphone", "sms", "otp", "mcp"]
+}

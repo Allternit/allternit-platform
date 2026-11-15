@@ -415,7 +415,8 @@ Before building, releasing, or installing gizzi-code, run `bash scripts/build-st
 from the repo root (enforced by `.steering/bin/guard-build.sh`), build only from
 latest `origin/main`, ship through every official channel (npm + GitHub Release
 via the `gizzi-code/v*` tag, the `Allternit/homebrew-tap` formula, and the Desktop
-sidecar), then `--prune` the builds it replaced. Full rule: root `AGENTS.md`,
+sidecar). The tag's publish workflow updates the tap formula itself (job `homebrew-tap`, secret
+`HOMEBREW_TAP_TOKEN`); if that job warns the secret is missing, bump the formula by hand, then `--prune` the builds it replaced. Full rule: root `AGENTS.md`,
 "one current build per product". Binaries embed `GIZZI_BUILD_SHA` so any copy
 can be traced to its commit.
 

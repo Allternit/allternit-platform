@@ -401,7 +401,7 @@ impl CoworkBackgroundService {
     }
 
     async fn collect_evidence(&self, api_url: &str) -> String {
-        let client = reqwest::Client::new();
+        let client = crate::net_client::client();
         let mut parts = Vec::new();
 
         // Read from gizzi agent-sessions filtered by cowork surface
@@ -450,7 +450,7 @@ impl CoworkBackgroundService {
         role: &str,
         prompt: &str,
     ) -> Option<String> {
-        let client = reqwest::Client::new();
+        let client = crate::net_client::client();
         let body = serde_json::json!({
             "spec": { "id": agent_id, "role": role, "prompt": prompt }
         });
@@ -501,7 +501,7 @@ impl CoworkBackgroundService {
     }
 
     async fn dispatch_suggestion(&self, api_url: &str, decision: &str) -> anyhow::Result<()> {
-        let client = reqwest::Client::new();
+        let client = crate::net_client::client();
         client
             .post(format!("{api_url}/api/v1/cowork/suggestions"))
             .json(&serde_json::json!({ "content": decision, "source": "background_service" }))

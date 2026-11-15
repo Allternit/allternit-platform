@@ -4,6 +4,7 @@
  * Executes AI agent tasks for cron jobs via the Session runtime directly.
  */
 
+import { refuseIfPersonOnly } from "@/runtime/providers/person-plan/rules";
 import { createLogger } from "../utils/logger";
 import type { CronJob, CronRun } from "../types";
 import { Session } from "@/runtime/session";
@@ -62,9 +63,12 @@ export class AgentExecutor {
     });
 
     let model: { providerID: string; modelID: string } | undefined;
+    // Routines never run on the person's own plan (chatgpt/…, plan/…, copilot-plan/…).
+    const personOnly = refuseIfPersonOnly(jobConfig.model, "routine");
+    if (personOnly) throw new Error(personOnly);
     if (jobConfig.model) {
-      // Split on the first slash only: model ids may carry their own
-      // (allternit-devices models are `<host_id>/<model_id>`).
+      // The provider is up to the first slash: a model id can hold more
+      // ("openrouter/x/y"; allternit-devices models are `<host_id>/<model_id>`).
       const slash = jobConfig.model.indexOf("/");
       if (slash > 0 && slash < jobConfig.model.length - 1) {
         model = { providerID: jobConfig.model.slice(0, slash), modelID: jobConfig.model.slice(slash + 1) };

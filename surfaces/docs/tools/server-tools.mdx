@@ -18,7 +18,7 @@ Server tools are useful when:
 Server tools are managed under the organization-scoped admin prefix:
 
 ```text
-https://api.allternit.com/api/v1/admin/server-tools
+http://127.0.0.1:8013/api/v1/admin/server-tools
 ```
 
 Local development:
@@ -161,6 +161,11 @@ If stdout is not valid JSON, the response wraps the captured output:
   "execution_time_ms": 210
 }
 ```
+
+## Related built-in tools
+
+- **`run_code`** (Gizzi agent) runs Python on a chat's attached files in the operating system sandbox on the machine where the agent runs, with the network off. It is not a server tool. See [Cloud Sandboxes](/tools/sandbox#run_code-in-chat).
+- **`code_execution`** (host tool) runs code on the API host. It requires host control and is not sandboxed. Use a server tool when you need isolation.
 
 ## Server tools in the MCP catalog
 

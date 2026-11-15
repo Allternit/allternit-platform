@@ -1,0 +1,102 @@
+---
+title: Connect
+description: List and connect your plans, keys, computers and apps from the terminal, and sign in with ChatGPT on this computer
+---
+
+`gizzi connect` shows the same rows as **Settings → Connections** in Allternit, with the same four words: **Not connected**, **Connecting…**, **Connected** and **Needs you**. See [Connections](/guides/connections) for what each row is.
+
+```bash
+gizzi connect                         # every row, grouped like the app
+gizzi connect claude                  # connect one row
+gizzi connect status claude           # one row's state
+gizzi connect disconnect claude       # remove it (same as --disconnect)
+gizzi connect --json                  # the rows as JSON
+```
+
+## Your plan with no computer
+
+The Claude, Grok and Kimi rows (and ChatGPT on the web) run your plan on an Allternit server, in a private space only your account uses. The row says **Runs on Allternit · no computer needed**.
+
+Before the first connect, Gizzi Code prints the notice the server sends, word for word, and asks:
+
+```text
+$ gizzi connect grok
+Before you connect your Grok plan
+
+  Your plan runs on an Allternit server, in a private space only your account uses.
+  Grok's terms may not allow using a plan this way. Grok could limit or close your account. Allternit does not control that and cannot undo it.
+  You sign in yourself. Your sign-in stays in that private space and Allternit does not copy it anywhere else. Disconnect signs you out and deletes it.
+  Your plan only answers messages you send yourself, in chat. Bots, routines, schedules and agents never use it.
+
+I understand, connect? [y/N] y
+Grok
+Code: 4782-CGRP
+Open: https://accounts.x.ai/oauth2/device?user_code=4782-CGRP
+The code is copied. Paste it on the page.
+Waiting for you to finish. Press Ctrl+C to stop.
+Connected · SuperGrok
+```
+
+Only `y` or `yes` accepts. Anything else sends nothing and points you at the key row instead (`gizzi connect xai-key`). You accept once per vendor; a new version of the notice asks again.
+
+Then you sign in yourself, the way the vendor allows: a code to enter on the vendor's page (Grok, Kimi) or a link to approve and a code to paste back (Claude). The row comes back **Connected** by itself.
+
+## ChatGPT on this computer
+
+`gizzi connect chatgpt` signs in with ChatGPT right here, with OpenAI's open-source **Sign in with ChatGPT**. Your messages go from this computer to ChatGPT directly, not through Allternit, and the sign-in stays on this computer.
+
+```bash
+gizzi connect chatgpt                 # notice, then the ChatGPT page opens in your browser
+gizzi connect status chatgpt          # Connected · ChatGPT Plus · you@example.com
+gizzi connect disconnect chatgpt      # signs you out at OpenAI and deletes the sign-in here
+```
+
+- The same notice shows first (vendor ChatGPT), worded for a sign-in on this computer.
+- The browser comes back to `http://127.0.0.1:1455` (another port if 1455 is busy). Nothing to paste.
+- The first sign-in registers Gizzi Code with your ChatGPT account under the name "Gizzi Code". You can remove it any time in ChatGPT Settings.
+- The sign-in is kept in the macOS Keychain (on Linux, an owner-only file under `~/.gizzi`). It refreshes by itself.
+- Your models show up as `chatgpt/<model>` in `/model` and `gizzi models`.
+- When your plan's limit is reached, the reply says **ChatGPT limit reached** and points you at ChatGPT Settings › Usage.
+
+## Plans answer only you
+
+A plan model answers only a message you type and send in the TUI. Everything else refuses it with a plain message:
+
+| Where | What you see |
+|---|---|
+| `gizzi run`, `gizzi run -p` | "plan/claude/sonnet is your own plan. It answers only messages you send yourself in the chat, so gizzi run cannot use it." Exit code 1. |
+| Bots (`gizzi agents bot create --model …`) | The same, "so bots cannot use it" |
+| Missions, routines and schedules | The same, naming missions or routines |
+| Sub-agents, titles, summaries, compaction | The same, naming them |
+
+Plans are chat only: no tools run, and Gizzi Code sends only your messages and the replies, not its coding prompt.
+
+`plan/…` and `copilot-plan/…` models also need you signed in to Allternit as yourself. `gizzi login` signs this terminal in as a device, which plans do not accept, so those models answer from Allternit on the web, Desktop or the iPhone app. ChatGPT signed in here (`chatgpt/…`) works in the TUI.
+
+## Model ids
+
+| Id | What it is |
+|---|---|
+| `plan/<vendor>/<model>` | Your Claude, ChatGPT, Grok or Kimi plan on Allternit (`plan/claude/sonnet`) |
+| `copilot-plan/<model>` | Your GitHub Copilot plan through Allternit. On the wire it is `copilot/<model>`; in Gizzi Code `copilot/…` is already the GitHub Copilot CLI on your computer |
+| `chatgpt/<model>` | ChatGPT signed in on this computer |
+
+## For Desktop and scripts
+
+Allternit Desktop drives the ChatGPT sign-in through its local runtime. Each command prints JSON lines:
+
+```bash
+gizzi connect chatgpt --json --accept-disclosure 2026-11-14.1
+# {"state":"connecting","authorize_url":"https://auth.openai.com/api/accounts/authorize?…","redirect_uri":"http://127.0.0.1:1455/auth/callback","expires_at":"…"}
+# {"state":"on","found":"ChatGPT Plus · you@example.com","models":["chatgpt/…"]}
+
+gizzi connect status chatgpt --json
+# {"id":"chatgpt","state":"off|connecting|on|needs","found":…,"models":[…],"disclosure":{"version":"2026-11-14.1","accepted_at":…}}
+
+gizzi connect disconnect chatgpt --json
+# {"id":"chatgpt","state":"off","revoked":true}
+```
+
+Without `--accept-disclosure` (and no acceptance stored), `gizzi connect chatgpt --json` prints `{"state":"needs","reason_code":"disclosure_required","disclosure":{…}}` and exits 2, so the app shows that text first. `--json` does not open a browser; the app opens `authorize_url`.
+
+The runtime's `chatgpt` row (`runs_on: "computer"`, login kind `browser_redirect`) answers `POST /api/v1/connections/chatgpt/connect` with the same `409 disclosure_required` until `accept_disclosure` matches, then returns the authorize URL; `GET /api/v1/connections/chatgpt/login` follows `gizzi connect status chatgpt --json`.

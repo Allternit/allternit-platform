@@ -36,7 +36,7 @@ Federation lets you map external identity providers (IdPs) to Allternit workspac
 ## Add an issuer
 
 ```bash
-curl -X POST https://api.allternit.com/api/v1/admin/federation/issuers \
+curl -X POST http://127.0.0.1:8013/api/v1/admin/federation/issuers \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -73,7 +73,7 @@ Issuer URLs must use `https://` and be ≤ 512 characters.
 ## Add a mapping rule
 
 ```bash
-curl -X POST https://api.allternit.com/api/v1/admin/federation/rules \
+curl -X POST http://127.0.0.1:8013/api/v1/admin/federation/rules \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -119,7 +119,7 @@ Valid roles are `owner`, `admin`, and `member`. Omit `workspace_id` for organiza
 ## List rules
 
 ```bash
-curl -X GET https://api.allternit.com/api/v1/admin/federation/rules \
+curl -X GET http://127.0.0.1:8013/api/v1/admin/federation/rules \
   -H "Authorization: Bearer $ADMIN_TOKEN"
 ```
 
@@ -147,7 +147,7 @@ curl -X GET https://api.allternit.com/api/v1/admin/federation/rules \
 ## Update an issuer
 
 ```bash
-curl -X PUT https://api.allternit.com/api/v1/admin/federation/issuers/iss_01hqx8x7x7x7x7x7x7x7x7x \
+curl -X PUT http://127.0.0.1:8013/api/v1/admin/federation/issuers/iss_01hqx8x7x7x7x7x7x7x7x7x \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -159,7 +159,7 @@ curl -X PUT https://api.allternit.com/api/v1/admin/federation/issuers/iss_01hqx8
 ## Update a rule
 
 ```bash
-curl -X PUT https://api.allternit.com/api/v1/admin/federation/rules/fr_01hqx8x7x7x7x7x7x7x7x7x \
+curl -X PUT http://127.0.0.1:8013/api/v1/admin/federation/rules/fr_01hqx8x7x7x7x7x7x7x7x7x \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -174,7 +174,7 @@ curl -X PUT https://api.allternit.com/api/v1/admin/federation/rules/fr_01hqx8x7x
 ## Delete an issuer
 
 ```bash
-curl -X DELETE https://api.allternit.com/api/v1/admin/federation/issuers/iss_01hqx8x7x7x7x7x7x7x7x7x \
+curl -X DELETE http://127.0.0.1:8013/api/v1/admin/federation/issuers/iss_01hqx8x7x7x7x7x7x7x7x7x \
   -H "Authorization: Bearer $ADMIN_TOKEN"
 ```
 

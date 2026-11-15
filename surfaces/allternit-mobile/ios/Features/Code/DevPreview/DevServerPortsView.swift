@@ -125,8 +125,8 @@ struct DevServerPortsView: View {
         FriendlyStateView(
             style: .error,
             icon: "globe",
-            title: "No instance available",
-            message: "Start `gizzi serve --tunnel` on your computer, then retry.",
+            title: "Connect a computer or Allternit Cloud",
+            message: "Open Allternit Desktop on your computer, or wake your cloud computer, then retry.",
             actionTitle: "Retry",
             action: { Task { await resolve() } }
         )
@@ -160,6 +160,13 @@ struct DevServerPortsView: View {
     @MainActor
     private func openPreview(port: Int) async {
         guard let client else { return }
+        // The preview is a live WKWebView page; the cloud relay carries
+        // REST calls, not a browser session, so it needs a direct or mesh
+        // connection to the computer.
+        if RuntimeRelayClient.isRelayURL(client.baseURL) {
+            mintError = "Live preview needs a direct connection to your computer. Start the mesh node in Settings → Infrastructure, or open the page on the computer."
+            return
+        }
         mintingPort = port
         mintError = nil
         do {

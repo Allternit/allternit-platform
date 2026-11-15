@@ -23,6 +23,10 @@ Every number belongs to one [account](/api/platform/accounts). Scope `numbers` (
 { "id": "6f1c…", "object": "phone_number", "account_id": "acct_7Hq…", "e164": "+16125550142", "type": "local", "sms_state": "pending_registration", "simulated": false, "created_at": "2026-10-04T18:12:03Z" }
 ```
 
+## Agent texting and calling
+
+A number bound to an agent also gives that agent outbound texting (`send_text`) and calling (`call`). Both tools follow the same consent, STOP opt-out, card and spend-cap rules as `POST /v1/texts` and `POST /v1/calls`, and are metered the same way. The number must belong to that agent and its project. When you bind, rebind, unbind or release a number, the agent picks up the change on its next turn. See [Agents](/api/platform/agents#texting-and-calling) for autonomy and approvals.
+
 ## Sandbox: simulated numbers
 
 In a sandbox project, `POST /v1/numbers` with just an `account_id` returns a **simulated** number: a fictional `+1 555` number, active at once, that never reaches a carrier and is never billed. Texts you send from it are recorded with status `simulated`; nothing is delivered.

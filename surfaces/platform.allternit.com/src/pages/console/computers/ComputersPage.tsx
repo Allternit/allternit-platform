@@ -2,7 +2,8 @@ import React, { useCallback, useEffect, useState } from "react";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { AlertCircleIcon, MonitorIcon } from "@hugeicons/core-free-icons";
 import { cn } from "@/lib/utils";
-import { formatApiError } from "@/lib/api-client";
+import { formatApiError, isNoRuntime } from "@/lib/api-client";
+import { NoRuntimeState } from "@/components/console-ui/NoRuntimeState";
 import {
   COMPUTER_KINDS,
   type ComputerKindFilter,
@@ -106,12 +107,14 @@ export function ComputersPage(): React.ReactNode {
             runs on the Computer Cloud VPS.
           </p>
         )}
-        {error && !unavailable && (
+        {error && !unavailable && (isNoRuntime(error) ? (
+          <NoRuntimeState className="mb-4" />
+        ) : (
           <p className="mb-4 flex items-center gap-2 rounded-lg border border-solid border-[var(--status-error)]/30 bg-[var(--status-error)]/10 px-3 py-2 text-[13px] text-[var(--status-error)]">
             <HugeiconsIcon icon={AlertCircleIcon} size={14} />
             {error}
           </p>
-        )}
+        ))}
 
         {loading ? (
           <SkeletonRow lines={5} />

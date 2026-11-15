@@ -9,7 +9,8 @@ import {
   TrashIcon,
 } from "@hugeicons/core-free-icons";
 import { cn } from "@/lib/utils";
-import { formatApiError } from "@/lib/api-client";
+import { formatApiError, isNoRuntime } from "@/lib/api-client";
+import { NoRuntimeState } from "@/components/console-ui/NoRuntimeState";
 import {
   type VaultCredential,
   type VaultRecord,
@@ -110,12 +111,14 @@ export function VaultsPage(): React.ReactNode {
         />
       }
     >
-      {error && (
+      {error && (isNoRuntime(error) ? (
+        <NoRuntimeState className="mb-4" />
+      ) : (
         <p className="mb-4 flex items-center gap-2 rounded-lg border border-solid border-[var(--status-error)]/30 bg-[var(--status-error)]/10 px-3 py-2 text-[13px] text-[var(--status-error)]">
           <HugeiconsIcon icon={AlertCircleIcon} size={14} />
           {error}
         </p>
-      )}
+      ))}
 
       {showCreate && (
         <div className="mb-4 space-y-3 rounded-xl border border-solid border-[var(--border-subtle)] bg-[var(--bg-secondary)] p-4">
@@ -338,10 +341,14 @@ export function VaultDetailPage(): React.ReactNode {
     return (
       <div className="space-y-4">
         <LinkBack />
-        <p className="flex items-center gap-2 rounded-lg border border-solid border-[var(--status-error)]/30 bg-[var(--status-error)]/10 px-3 py-2 text-[13px] text-[var(--status-error)]">
-          <HugeiconsIcon icon={AlertCircleIcon} size={14} />
-          {error}
-        </p>
+        {isNoRuntime(error) ? (
+          <NoRuntimeState />
+        ) : (
+          <p className="flex items-center gap-2 rounded-lg border border-solid border-[var(--status-error)]/30 bg-[var(--status-error)]/10 px-3 py-2 text-[13px] text-[var(--status-error)]">
+            <HugeiconsIcon icon={AlertCircleIcon} size={14} />
+            {error}
+          </p>
+        )}
       </div>
     );
   }
@@ -352,12 +359,14 @@ export function VaultDetailPage(): React.ReactNode {
     <div className="space-y-6">
       <LinkBack />
 
-      {error && (
+      {error && (isNoRuntime(error) ? (
+        <NoRuntimeState />
+      ) : (
         <p className="flex items-center gap-2 rounded-lg border border-solid border-[var(--status-error)]/30 bg-[var(--status-error)]/10 px-3 py-2 text-[13px] text-[var(--status-error)]">
           <HugeiconsIcon icon={AlertCircleIcon} size={14} />
           {error}
         </p>
-      )}
+      ))}
 
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 space-y-2">

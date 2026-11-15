@@ -42,7 +42,7 @@ The External Keys API lets organizations register cloud-provider KMS keys for br
 ## Register an external key
 
 ```bash
-curl -X POST https://api.allternit.com/api/v1/admin/external-keys \
+curl -X POST http://127.0.0.1:8013/api/v1/admin/external-keys \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -81,7 +81,7 @@ curl -X POST https://api.allternit.com/api/v1/admin/external-keys \
 ## Validate an external key
 
 ```bash
-curl -X POST https://api.allternit.com/api/v1/admin/external-keys/ek_01hqx8x7x7x7x7x7x7x7x7x/validate \
+curl -X POST http://127.0.0.1:8013/api/v1/admin/external-keys/ek_01hqx8x7x7x7x7x7x7x7x7x/validate \
   -H "Authorization: Bearer $ADMIN_TOKEN"
 ```
 
@@ -104,7 +104,7 @@ curl -X POST https://api.allternit.com/api/v1/admin/external-keys/ek_01hqx8x7x7x
 ## Update an external key
 
 ```bash
-curl -X PUT https://api.allternit.com/api/v1/admin/external-keys/ek_01hqx8x7x7x7x7x7x7x7x7x \
+curl -X PUT http://127.0.0.1:8013/api/v1/admin/external-keys/ek_01hqx8x7x7x7x7x7x7x7x7x \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -117,7 +117,7 @@ Updating `key_ref` resets `validation_status` to `pending` and clears `last_vali
 ## Encrypt with an `aws_kms` key
 
 ```bash
-curl -X POST https://api.allternit.com/api/v1/admin/external-keys/ek_01hqx8x7x7x7x7x7x7x7x7x/encrypt \
+curl -X POST http://127.0.0.1:8013/api/v1/admin/external-keys/ek_01hqx8x7x7x7x7x7x7x7x7x/encrypt \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -137,7 +137,7 @@ curl -X POST https://api.allternit.com/api/v1/admin/external-keys/ek_01hqx8x7x7x
 ## Decrypt with an `aws_kms` key
 
 ```bash
-curl -X POST https://api.allternit.com/api/v1/admin/external-keys/ek_01hqx8x7x7x7x7x7x7x7x7x/decrypt \
+curl -X POST http://127.0.0.1:8013/api/v1/admin/external-keys/ek_01hqx8x7x7x7x7x7x7x7x7x/decrypt \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{

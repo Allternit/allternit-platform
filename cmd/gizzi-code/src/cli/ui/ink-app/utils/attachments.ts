@@ -19,6 +19,7 @@ import {
 } from '../tools/FileReadTool/FileReadTool.js'
 import { FileTooLargeError, readFileInRange } from './readFileInRange.js'
 import { isLocalProviderModel } from '../services/api/localModel.js'
+import { isCliBrainModel } from '../services/api/cliBrain.js'
 import { expandPath } from './path.js'
 import { countCharInString } from './stringUtils.js'
 import { count, uniq } from './array.js'
@@ -2319,8 +2320,12 @@ export function startRelevantMemoryPrefetch(
 ): MemoryPrefetch | undefined {
   // Local-provider models (e.g. local-mlx/*) have no cloud endpoint — the
   // sideQuery would fire at api.allternit.com and dump connection errors
-  // into the session. Skip the prefetch entirely for them.
-  if (isLocalProviderModel(toolUseContext.options.mainLoopModel)) {
+  // into the session. Skip the prefetch entirely for them, and for CLI
+  // brains, which load their own memory (one more CLI run per turn otherwise).
+  if (
+    isLocalProviderModel(toolUseContext.options.mainLoopModel) ||
+    isCliBrainModel(toolUseContext.options.mainLoopModel)
+  ) {
     return undefined
   }
   if (

@@ -23,7 +23,7 @@ impl RailsHttpClient {
         Self {
             base_url: base_url.into(),
             workspace_id: workspace_id.into(),
-            client: reqwest::Client::new(),
+            client: crate::net_client::client(),
         }
     }
 

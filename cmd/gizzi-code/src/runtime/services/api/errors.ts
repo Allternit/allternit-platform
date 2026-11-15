@@ -20,6 +20,7 @@ import {
   isClaudeAISubscriber,
 } from '../../../utils/auth.js'
 import { createAssistantAPIErrorMessage } from '../../../shared/utils/apiErrorMessage.js'
+import { cloudCreditsDisclosure, cloudCreditsRefusal } from '@/shared/util/provider-error'
 import { NO_RESPONSE_REQUESTED } from '../../../shared/utils/syntheticMessages.js'
 import {
   getDefaultMainLoopModelSetting,
@@ -711,6 +712,18 @@ export function getAssistantMessageFromError(
     })
   }
 
+  // Allternit Cloud's "needs credits" 402: matched by `error.code`
+  // (credits_required / credits_exhausted), never by message text.
+  if (error instanceof APIError) {
+    const credits = cloudCreditsRefusal(error.error ?? error.message) ?? cloudCreditsRefusal(error.message)
+    if (credits) {
+      return createAssistantAPIErrorMessage({
+        content: cloudCreditsDisclosure(credits.code, credits),
+        error: 'billing_error',
+      })
+    }
+  }
+
   if (
     error instanceof Error &&
     error.message.includes('Your credit balance is too low')
@@ -1068,10 +1081,8 @@ export function getErrorMessageIfRefusal(
     ? `${API_ERROR_MESSAGE_PREFIX}: Gizzi is unable to respond to this request, which appears to violate our Usage Policy (https://www.allternit.com/legal/aup). Try rephrasing the request or attempting a different approach.`
     : `${API_ERROR_MESSAGE_PREFIX}: Gizzi is unable to respond to this request, which appears to violate our Usage Policy (https://www.allternit.com/legal/aup). Please double press esc to edit your last message or start a new session for Gizzi to assist with a different task.`
 
-  const modelSuggestion =
-    model !== 'claude-sonnet-4-20250514'
-      ? ' If you are seeing this refusal repeatedly, try running /model claude-sonnet-4-20250514 to switch models.'
-      : ''
+  // No model id here: which models exist depends on the user's own brains.
+  const modelSuggestion = ' If you are seeing this refusal repeatedly, try running /model to switch models.'
 
   return createAssistantAPIErrorMessage({
     content: baseMessage + modelSuggestion,

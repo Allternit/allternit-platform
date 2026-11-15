@@ -12,6 +12,18 @@ const IDENTITY_PATH = process.env.ALLTERNIT_RUNTIME_IDENTITY_PATH
 const HEARTBEAT_INTERVAL_MS = 30_000;
 const ROTATION_SKEW_MS = 7 * 24 * 60 * 60 * 1000;
 const LOCAL_GATEWAY_URL = (process.env.ALLTERNIT_GATEWAY_URL || 'http://127.0.0.1:8013').replace(/\/$/, '');
+const LOCAL_GIZZI_URL = (process.env.ALLTERNIT_GIZZI_URL || 'http://127.0.0.1:4096').replace(/\/$/, '');
+
+/**
+ * gizzi-code routes the local allternit-api does not serve (it answers 501):
+ * terminal, file browser, cron, routines/loops and the bus event stream. The
+ * native phone app reaches them over the relay; Desktop routes the same set
+ * (surfaces/allternit-desktop/src/main/relay-gizzi-credential.ts).
+ */
+function isGizziOwnedRelayPath(requestPath: string): boolean {
+  return /^\/v1\/(pty|file|cron|automations|mcp|vcs|path)(\/|\?|$)/.test(requestPath)
+    || /^\/v1\/event(\?|$)/.test(requestPath);
+}
 
 type RuntimeIdentity = {
   runtimeId: string;
@@ -286,7 +298,7 @@ async function handleRelayRequest(socket: WebSocket, message: any): Promise<void
   if (!identity || !requestId || !requestPath.startsWith('/') || requestPath.includes('..') || requestPath.includes('://')) return;
   const allowedPrefixes = [
     '/api/', '/viz', '/sandbox', '/vm-session', '/stream',
-    '/terminal', '/mcp', '/platform', '/metrics', '/alabs', '/cowork',
+    '/terminal', '/mcp', '/platform', '/metrics', '/cowork',
     '/webhooks', '/status', '/health',
     '/ws', '/panes',
     // gizzi-code mirrors its entire route surface under /v1/* (pty, sessions,
@@ -303,6 +315,11 @@ async function handleRelayRequest(socket: WebSocket, message: any): Promise<void
       headers.set('Authorization', `Bearer ${identity.deviceToken}`);
     }
     headers.set('X-Allternit-Desktop-Access-Token', identity.deviceToken);
+    // Another device's request replayed over loopback: the marker keeps the
+    // local API from treating it as a same-machine call (its self-hosted
+    // fallback signs those in as the local user). Same marker the Desktop's
+    // relay sets.
+    headers.set('X-Allternit-Relayed', '1');
     headers.set('X-Allternit-User-Id', identity.userId);
     headers.set('X-Allternit-User-Email', identity.userEmail);
     if (identity.organizationId) headers.set('X-Allternit-Tenant-Id', identity.organizationId);
@@ -311,7 +328,8 @@ async function handleRelayRequest(socket: WebSocket, message: any): Promise<void
       : message.body_encoding === 'base64'
         ? Buffer.from(message.body, 'base64')
         : Buffer.from(message.body, 'utf8');
-    const response = await fetch(`${LOCAL_GATEWAY_URL}${requestPath}`, { method, headers, body });
+    const base = isGizziOwnedRelayPath(requestPath) ? LOCAL_GIZZI_URL : LOCAL_GATEWAY_URL;
+    const response = await fetch(`${base}${requestPath}`, { method, headers, body });
     const responseHeaders: Record<string, string> = {};
     for (const name of ['content-type', 'cache-control', 'content-disposition', 'etag', 'last-modified', 'x-request-id']) {
       const value = response.headers.get(name);
@@ -361,16 +379,20 @@ function handleRelaySocketOpen(relaySocket: WebSocket, message: any): void {
   const requestPath = typeof message.path === 'string' ? message.path : '';
   const allowedPrefixes = [
     '/api/', '/viz', '/sandbox', '/vm-session', '/stream',
-    '/terminal', '/mcp', '/platform', '/metrics', '/alabs', '/cowork',
+    '/terminal', '/mcp', '/platform', '/metrics', '/cowork',
     '/webhooks', '/ws', '/panes', '/status', '/health',
+    // gizzi pty attach (/v1/pty/:id/connect) for the native phone app.
+    '/v1/pty/',
   ];
   if (!identity || !socketId || !requestPath.startsWith('/') || requestPath.includes('..')
     || requestPath.includes('://') || !allowedPrefixes.some((prefix) => requestPath.startsWith(prefix))) return;
   relayLocalSockets.get(socketId)?.close();
-  const local = new WebSocket(`${LOCAL_GATEWAY_URL.replace(/^http/, 'ws')}${requestPath}`, {
+  const socketBase = isGizziOwnedRelayPath(requestPath) ? LOCAL_GIZZI_URL : LOCAL_GATEWAY_URL;
+  const local = new WebSocket(`${socketBase.replace(/^http/, 'ws')}${requestPath}`, {
     headers: {
       Authorization: `Bearer ${identity.deviceToken}`,
       'X-Allternit-Desktop-Access-Token': identity.deviceToken,
+      'X-Allternit-Relayed': '1',
       'X-Allternit-User-Id': identity.userId,
       'X-Allternit-User-Email': identity.userEmail,
       ...(identity.organizationId ? { 'X-Allternit-Tenant-Id': identity.organizationId } : {}),

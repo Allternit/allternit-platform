@@ -4,7 +4,7 @@ What to answer on App Store Connect's App Privacy form, and why. Keep this in
 step with `ios/App/PrivacyInfo.xcprivacy` and
 `ios/AllternitScreen/PrivacyInfo.xcprivacy`.
 
-## iPhone link (Settings → Phones)
+## iPhone link (Settings → Computers → Let your bots use this iPhone)
 
 The owner can pair the app with one of their own Allternit Desktops so their
 bots can see the iPhone screen and use the app's ACI browser

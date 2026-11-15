@@ -1,0 +1,415 @@
+{
+  "status": "Mixed direction and polish approved. Shared styling and core interactions are integrated. Deterministic routing, guarded publication, bounded correction and audit events are implemented for visual-capable Gizzi turns. Source is unreleased; production/cross-device verification and unsupported external paths are not covered by that claim.",
+  "templates": [
+    {
+      "id": "quick-answer",
+      "name": "Quick answer",
+      "family": "Observation"
+    },
+    {
+      "id": "comparison",
+      "name": "Comparison",
+      "family": "Options"
+    },
+    {
+      "id": "decision",
+      "name": "Decision",
+      "family": "Options"
+    },
+    {
+      "id": "plan",
+      "name": "Plan",
+      "family": "Work"
+    },
+    {
+      "id": "how-to",
+      "name": "How-to",
+      "family": "Work"
+    },
+    {
+      "id": "troubleshooting",
+      "name": "Troubleshooting",
+      "family": "Work"
+    },
+    {
+      "id": "status-report",
+      "name": "Status report",
+      "family": "Work"
+    },
+    {
+      "id": "research-brief",
+      "name": "Research brief",
+      "family": "Evidence"
+    },
+    {
+      "id": "table",
+      "name": "Table",
+      "family": "Records"
+    },
+    {
+      "id": "chart",
+      "name": "Chart",
+      "family": "Numbers"
+    },
+    {
+      "id": "form",
+      "name": "Form",
+      "family": "Options"
+    },
+    {
+      "id": "calculator",
+      "name": "Calculator",
+      "family": "Numbers"
+    },
+    {
+      "id": "metric-grid",
+      "name": "Metric grid",
+      "family": "Numbers"
+    },
+    {
+      "id": "fact-sheet",
+      "name": "Fact sheet",
+      "family": "Records"
+    },
+    {
+      "id": "progress-tracker",
+      "name": "Progress tracker",
+      "family": "Work"
+    },
+    {
+      "id": "timeline",
+      "name": "Timeline",
+      "family": "Work"
+    },
+    {
+      "id": "code-explanation",
+      "name": "Code explanation",
+      "family": "Evidence"
+    },
+    {
+      "id": "source-list",
+      "name": "Source list",
+      "family": "Evidence"
+    },
+    {
+      "id": "image-gallery",
+      "name": "Image gallery",
+      "family": "Observation"
+    },
+    {
+      "id": "tabbed-report",
+      "name": "Tabbed report",
+      "family": "Observation"
+    },
+    {
+      "id": "faq",
+      "name": "Questions and answers",
+      "family": "Observation"
+    },
+    {
+      "id": "alert",
+      "name": "Alert",
+      "family": "Observation"
+    },
+    {
+      "id": "option-grid",
+      "name": "Option grid",
+      "family": "Options"
+    },
+    {
+      "id": "evidence-quote",
+      "name": "Evidence quote",
+      "family": "Evidence"
+    },
+    {
+      "id": "weather",
+      "name": "Weather",
+      "family": "Observation"
+    },
+    {
+      "id": "stock",
+      "name": "Stock summary",
+      "family": "Numbers"
+    },
+    {
+      "id": "task-approval",
+      "name": "Task review",
+      "family": "Options"
+    },
+    {
+      "id": "itinerary",
+      "name": "Itinerary",
+      "family": "Work"
+    },
+    {
+      "id": "flight-options",
+      "name": "Flight options",
+      "family": "Options"
+    },
+    {
+      "id": "boarding-pass",
+      "name": "Boarding details",
+      "family": "Work"
+    },
+    {
+      "id": "baggage-tracker",
+      "name": "Baggage tracker",
+      "family": "Work"
+    },
+    {
+      "id": "seat-map",
+      "name": "Seat options",
+      "family": "Options"
+    },
+    {
+      "id": "loyalty-summary",
+      "name": "Loyalty summary",
+      "family": "Numbers"
+    },
+    {
+      "id": "hotel-options",
+      "name": "Hotel options",
+      "family": "Options"
+    },
+    {
+      "id": "restaurant-results",
+      "name": "Restaurant results",
+      "family": "Options"
+    },
+    {
+      "id": "reading-list",
+      "name": "Reading list",
+      "family": "Evidence"
+    },
+    {
+      "id": "transaction-ledger",
+      "name": "Transaction ledger",
+      "family": "Records"
+    },
+    {
+      "id": "spending-breakdown",
+      "name": "Spending breakdown",
+      "family": "Numbers"
+    },
+    {
+      "id": "budget-usage",
+      "name": "Budget usage",
+      "family": "Numbers"
+    },
+    {
+      "id": "income-expenses",
+      "name": "Income and expenses",
+      "family": "Numbers"
+    },
+    {
+      "id": "product-grid",
+      "name": "Product grid",
+      "family": "Records"
+    },
+    {
+      "id": "trading-list",
+      "name": "Trading list",
+      "family": "Records"
+    },
+    {
+      "id": "inventory-risk",
+      "name": "Inventory risk",
+      "family": "Records"
+    },
+    {
+      "id": "shipment-tracker",
+      "name": "Shipment tracker",
+      "family": "Work"
+    },
+    {
+      "id": "exception-board",
+      "name": "Exception board",
+      "family": "Work"
+    },
+    {
+      "id": "tradeoff-table",
+      "name": "Trade-off table",
+      "family": "Options"
+    },
+    {
+      "id": "people-directory",
+      "name": "People directory",
+      "family": "Records"
+    },
+    {
+      "id": "team-breakdown",
+      "name": "Team breakdown",
+      "family": "Records"
+    },
+    {
+      "id": "executive-brief",
+      "name": "Executive brief",
+      "family": "Work"
+    },
+    {
+      "id": "initiative-tracker",
+      "name": "Initiative tracker",
+      "family": "Work"
+    },
+    {
+      "id": "deal-pipeline",
+      "name": "Deal pipeline",
+      "family": "Work"
+    },
+    {
+      "id": "deal-brief",
+      "name": "Deal brief",
+      "family": "Work"
+    },
+    {
+      "id": "account-research",
+      "name": "Account research",
+      "family": "Evidence"
+    },
+    {
+      "id": "followup-review",
+      "name": "Follow-up review",
+      "family": "Options"
+    },
+    {
+      "id": "sentiment-split",
+      "name": "Sentiment split",
+      "family": "Evidence"
+    },
+    {
+      "id": "argument-map",
+      "name": "Argument map",
+      "family": "Evidence"
+    },
+    {
+      "id": "social-posts",
+      "name": "Social evidence",
+      "family": "Evidence"
+    },
+    {
+      "id": "pdf-analysis",
+      "name": "Document analysis",
+      "family": "Evidence"
+    },
+    {
+      "id": "repo-review",
+      "name": "Repository review",
+      "family": "Evidence"
+    },
+    {
+      "id": "agent-roster",
+      "name": "Agent roster",
+      "family": "Records"
+    },
+    {
+      "id": "tool-run",
+      "name": "Tool run",
+      "family": "Work"
+    },
+    {
+      "id": "build-report",
+      "name": "Build report",
+      "family": "Work"
+    },
+    {
+      "id": "deployment-report",
+      "name": "Deployment report",
+      "family": "Work"
+    },
+    {
+      "id": "incident-report",
+      "name": "Incident report",
+      "family": "Work"
+    },
+    {
+      "id": "connector-health",
+      "name": "Connector health",
+      "family": "Records"
+    },
+    {
+      "id": "capability-audit",
+      "name": "Capability audit",
+      "family": "Work"
+    },
+    {
+      "id": "permissions-review",
+      "name": "Permissions review",
+      "family": "Options"
+    },
+    {
+      "id": "invoice-review",
+      "name": "Invoice review",
+      "family": "Options"
+    },
+    {
+      "id": "quote-review",
+      "name": "Quote review",
+      "family": "Options"
+    },
+    {
+      "id": "task-board",
+      "name": "Task board",
+      "family": "Work"
+    },
+    {
+      "id": "workflow-run",
+      "name": "Workflow run",
+      "family": "Work"
+    },
+    {
+      "id": "session-handoff",
+      "name": "Session handoff",
+      "family": "Work"
+    },
+    {
+      "id": "cost-breakdown",
+      "name": "Cost breakdown",
+      "family": "Numbers"
+    },
+    {
+      "id": "design-review",
+      "name": "Design review",
+      "family": "Work"
+    },
+    {
+      "id": "media-shotlist",
+      "name": "Media shot list",
+      "family": "Work"
+    },
+    {
+      "id": "decision-log",
+      "name": "Decision log",
+      "family": "Work"
+    },
+    {
+      "id": "source-verification",
+      "name": "Source verification",
+      "family": "Evidence"
+    },
+    {
+      "id": "goal-tracker",
+      "name": "Goal tracker",
+      "family": "Work"
+    },
+    {
+      "id": "knowledge-map",
+      "name": "Knowledge relationships",
+      "family": "Evidence"
+    },
+    {
+      "id": "file-browser",
+      "name": "File results",
+      "family": "Records"
+    },
+    {
+      "id": "trend-comparison",
+      "name": "Actual and baseline trend",
+      "family": "Numbers"
+    },
+    {
+      "id": "calendar-agenda",
+      "name": "Calendar agenda",
+      "family": "Records"
+    }
+  ]
+}

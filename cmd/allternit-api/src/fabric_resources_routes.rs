@@ -1175,7 +1175,7 @@ mod tests {
 
         // Wait until /health is reachable; the log line is emitted just before
         // the accept loop starts, so a tiny poll prevents 503 race conditions.
-        let client = reqwest::Client::new();
+        let client = crate::net_client::client();
         for _ in 0..50 {
             if client.get(format!("{}/health", url)).send().await.is_ok() {
                 break;

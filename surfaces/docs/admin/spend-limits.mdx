@@ -5,6 +5,11 @@ description: Configure monthly spend caps, request increases, and check organiza
 
 # Spend Limits
 
+<Note>
+These endpoints are served by the Allternit runtime (the Desktop app, or a paired or hosted computer), not by `api.allternit.com`. On Allternit Cloud the console hides this page. On Cloud, set the monthly spend cap per project in the Platform API: see [Billing and spend caps](/api/platform/billing#spend-cap). The console shows it on the Project billing page.
+</Note>
+
+
 Spend limits protect against runaway usage by capping monthly organization spend in USD cents. Organization owners and admins can view the current cap and spend, request an increase, and approve or reject pending increase requests.
 
 ## Base URL
@@ -26,7 +31,7 @@ Spend limits protect against runaway usage by capping monthly organization spend
 ## Get spend limit
 
 ```bash
-curl -X GET https://api.allternit.com/api/v1/admin/spend-limits \
+curl -X GET http://127.0.0.1:8013/api/v1/admin/spend-limits \
   -H "Authorization: Bearer $ADMIN_TOKEN"
 ```
 
@@ -52,7 +57,7 @@ All monetary values are in USD cents. In this example, the cap is `$1,000.00` an
 ## Request a spend-limit increase
 
 ```bash
-curl -X POST https://api.allternit.com/api/v1/admin/spend-limits/increase-request \
+curl -X POST http://127.0.0.1:8013/api/v1/admin/spend-limits/increase-request \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -92,7 +97,7 @@ The `amount` must be greater than `0` USD cents.
 ## Approve an increase request
 
 ```bash
-curl -X POST https://api.allternit.com/api/v1/admin/spend-limits/approve \
+curl -X POST http://127.0.0.1:8013/api/v1/admin/spend-limits/approve \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"amount": 50000}'
@@ -128,7 +133,7 @@ If `amount` is omitted, the pending request amount is used. The organization's `
 ## Reject an increase request
 
 ```bash
-curl -X POST https://api.allternit.com/api/v1/admin/spend-limits/reject \
+curl -X POST http://127.0.0.1:8013/api/v1/admin/spend-limits/reject \
   -H "Authorization: Bearer $ADMIN_TOKEN"
 ```
 
@@ -154,7 +159,7 @@ Rejection requires a pending request. The monthly cap is unchanged.
 ## Check balance
 
 ```bash
-curl -X GET https://api.allternit.com/api/v1/users/me/balance \
+curl -X GET http://127.0.0.1:8013/api/v1/users/me/balance \
   -H "Authorization: Bearer $TOKEN"
 ```
 

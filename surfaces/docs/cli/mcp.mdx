@@ -58,6 +58,12 @@ The behaviors below work the same in both protocol eras:
 
 Gizzi's own MCP servers answer both protocol eras. This includes the knowledge-vault Lens server.
 
+## MCP Apps in the terminal
+
+When a tool's result comes with an app (the tool names a `ui://` resource), the TUI adds one line under the result: **⧉ MCP App · View in browser**. Click it (or open the file path printed after it) to open the app in your browser with the tool's real input and result, the same way Desktop shows it in the chat. The page runs the app in a sandboxed frame. Links the app opens go to new tabs, and actions that need the chat, such as calling another tool, say to open the chat in Allternit Desktop.
+
+The line appears for tool calls Gizzi Code makes itself. A CLI brain calls its own tools, so its results show as plain text.
+
 ## Command reference
 
 | Command | Alias | Description |
@@ -260,6 +266,16 @@ Gizzi pins each MCP server's tools. A pin is a sha256 of the tool's name, descri
 - Removed tools only narrow what the model can do, so they take effect at once.
 
 Bots in the app have the same rule on the server side, for every attached MCP server: a tool change leaves that tool out of the bot's list and opens one **Tool changed** item per tool in your Inbox (Desktop, phone and the PWA). **Approve tool** re-pins that tool and closes the item. See [Red-team suite](/guides/red-team-suite).
+
+## Long-running tools (MCP tasks)
+
+Some servers run slow tools as tasks (MCP revision 2025-11-25). When a server declares task support for `tools/call` and a tool sets `execution.taskSupport` to `optional` or `required`, Gizzi starts the call as a task and checks on it at the interval the server asks for (between 0.25 and 5 seconds) instead of waiting on one request.
+
+- The tool line shows the task's state, time so far and the server's status text, for example `MCP task Working · 42s · Indexing 3,000 files`.
+- **Esc** stops it: Gizzi sends `tasks/cancel` to the server.
+- The result is read with `tasks/result` once the task leaves the working state, so a task that needs input can ask for it.
+- On a 2026-07-28 connection, tasks are an extension the SDK Gizzi uses (`@modelcontextprotocol/client` 2.3.1) does not run yet, so those tools are called normally.
+- The terminal app and the engine (`gizzi run`, the app's Code sessions) both do this. Developers: `src/shared/util/mcp-tasks.ts`, test `test/mcp/tasks.test.ts`.
 
 ## Disabling MCP support
 

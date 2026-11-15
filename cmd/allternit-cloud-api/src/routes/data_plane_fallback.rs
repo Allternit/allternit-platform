@@ -92,7 +92,7 @@ mod tests {
 
     #[test]
     fn only_runtime_namespaces_relay() {
-        for p in ["/api/v1/subscriptions/status", "/api/v1/gateway/provider-accounts", "/api/v1/computers", "/api/v1/subscriptions/gateway/v1/accounts"] {
+        for p in ["/api/v1/subscriptions/status", "/api/v1/gateway/provider-accounts", "/api/v1/computers", "/api/v1/subscriptions/gateway/v1/accounts", "/api/v1/platform/accounts/x/people"] {
             assert!(relays(p), "{p} should relay");
         }
         for p in ["/api/v1/billing/x", "/api/v1/auth/me2", "/api/v1/runtime-devices/x", "/api/v1/admin", "/api/v1/", "/api/v2/x", "/health", "/api/v1/computers/../billing"] {
@@ -101,6 +101,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial]
     async fn unknown_runtime_routes_relay_with_method_path_query_and_body() {
         let _guard = DEV_TOKEN_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var(ALLOW_DEV_TOKEN_ENV, "true");
@@ -134,6 +135,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial]
     async fn no_runtime_online_is_428_pair_a_device() {
         let _guard = DEV_TOKEN_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var(ALLOW_DEV_TOKEN_ENV, "true");

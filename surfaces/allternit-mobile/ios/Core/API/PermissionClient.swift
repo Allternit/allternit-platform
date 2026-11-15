@@ -4,8 +4,9 @@ import Foundation
 /// (`cmd/gizzi-code/src/runtime/tools/guard/permission/next.ts`), mounted at
 /// `/v1/permission` (`cmd/gizzi-code/src/runtime/server/server.ts:464`,
 /// `cmd/gizzi-code/src/runtime/server/routes/permission.ts`) — same shape as
-/// `PtyClient`: always talks directly to `AppConfig.gizziCodeBaseURL`
-/// through a plain `APIClient`.
+/// `PtyClient`: the shared client resolves its target per call through
+/// `InstanceConnection` (explicit URL → mesh → the relay to the user's
+/// computer), so the queue and the `/v1/event` stream work in Release.
 ///
 /// `subscribeToEvents()` streams the bus events behind `permission.ts`'s SSE
 /// `/event` route (`Event.Asked`/`Event.Replied`, `next.ts:101-111`) in
@@ -14,20 +15,24 @@ import Foundation
 final class PermissionClient: @unchecked Sendable {
     static let shared = PermissionClient()
 
-    private let client: APIClient
+    private let endpointBaseURL: URL
 
     init(baseURL: URL = AppConfig.gizziCodeBaseURL) {
-        self.client = APIClient(
-            baseURL: baseURL,
-            tokenProvider: { try await AuthManager.shared.getToken() }
-        )
+        self.endpointBaseURL = baseURL
+    }
+
+    /// Per-call target: the given base URL, or — for the static default —
+    /// whatever `InstanceConnection.resolve()` picks now (explicit URL →
+    /// mesh → the relay to the user's computer).
+    private func client() async throws -> APIClient {
+        try await InstanceConnection.gizziClient(for: endpointBaseURL)
     }
 
     /// `GET /v1/permission` — every pending request across all sessions
     /// (`permission.ts:73-93`, backed by `PermissionNext.list()` at
     /// `next.ts:470-473`). Callers filter down to their own session id.
     func listPending() async throws -> [PermissionRequest] {
-        try await client.get(path: "v1/permission")
+        try await client().get(path: "v1/permission")
     }
 
     /// `POST /v1/permission/:requestID/reply` — body `{ reply, message? }`
@@ -35,7 +40,7 @@ final class PermissionClient: @unchecked Sendable {
     /// The route answers the JSON literal `true` (`c.json(true)`), not a
     /// model — decoded as `Bool` and discarded.
     func reply(requestID: String, reply: PermissionReply, message: String? = nil) async throws {
-        let _: Bool = try await client.post(
+        let _: Bool = try await client().post(
             path: "v1/permission/\(Self.escape(requestID))/reply",
             body: ReplyRequestBody(reply: reply, message: message)
         )
@@ -47,6 +52,7 @@ final class PermissionClient: @unchecked Sendable {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
+                    let client = try await self.client()
                     var request = try await client.authorizedRequest(path: "v1/event")
                     request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
                     request.timeoutInterval = 600

@@ -149,7 +149,7 @@ function SandboxModeTab(t0) {
 
   const t5 = <Text dimColor={true}><Text bold={true} dimColor={true}>Auto-allow mode:</Text>{" "}Commands will try to run in the sandbox automatically, and attempts to run outside of the sandbox fallback to regular permissions. Explicit ask/deny rules are always respected.</Text>;
 
-  const t6 = <Box flexDirection="column" marginTop={1} gap={1}>{t5}<Text dimColor={true}>Learn more:{" "}<Link url="https://docs.gizziio.com/sandboxing">docs.gizziio.com/sandboxing</Link></Text></Box>;
+  const t6 = <Box flexDirection="column" marginTop={1} gap={1}>{t5}<Text dimColor={true}>Learn more:{" "}<Link url="https://docs.allternit.com/cli/permission-profiles">docs.gizziio.com/sandboxing</Link></Text></Box>;
 
   const t7 = <Box flexDirection="column" paddingY={1}>{t1}{t2}{t4}{t6}</Box>;
 

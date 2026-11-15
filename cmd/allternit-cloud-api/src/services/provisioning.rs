@@ -70,9 +70,28 @@ use crate::ApiError;
 
 #[path = "provisioning_free.rs"]
 mod free;
+#[path = "provision_orgo.rs"]
+mod orgo;
+#[path = "provisioning_credit.rs"]
+mod credit;
+#[path = "provisioning_plan_hours.rs"]
+mod plan_hours;
+pub use plan_hours::{
+    month_start, next_month_start, plan_hours_usage, PlanHoursDefaults, PlanHoursTick, PlanHoursUsage,
+    PLAN_HOURS_STOP_REASON, PLAN_OVERAGE_LEDGER_SOURCE, PLUS_PLAN_ID,
+};
+pub use credit::{
+    credit_computers_enabled, start_credit_computer_task, CreditDefaults, CreditStart, CreditTick,
+    CREDIT_LEDGER_SOURCE, CREDIT_SIZE_ID,
+};
 pub use free::{
-    note_runtime_attached, start_free_computer_task, touch_provisioned_activity, FreeDefaults,
-    HostedDriverDefaults, ProvisionedWakeOutcome, WakeReason, WakeResult, HOSTED_POOL_FULL,
+    is_capacity_message, mentions_capacity, note_runtime_attached, start_free_computer_task, touch_provisioned_activity,
+    FreeDefaults, HostedDriverDefaults, ProvisionedWakeOutcome, WakeReason, WakeResult,
+    CAPACITY_RETRY_AFTER_SECONDS, FREE_POOL_FULL, HOSTED_POOL_FULL,
+};
+pub use orgo::{
+    is_orgo_endpoint, orgo_hourly_usd, orgo_size_for, ComputeProvider, ComputeRouting, OrgoBackend,
+    OrgoConfig, OrgoSize, CLOUD_POOL_FULL, ORGO_SCHEME,
 };
 
 /// Why a paid computer is suspended by the billing webhook.
@@ -90,6 +109,22 @@ impl SuspendReason {
             SuspendReason::Cancelled => "subscription_cancelled",
             SuspendReason::Unpaid => "subscription_unpaid",
         }
+    }
+}
+
+/// Incus states other than Running/Stopped read as `Busy`. Log each raw
+/// state at warn the first time it is seen (a state that is really new,
+/// not one warning per instance per pass).
+fn warn_unknown_state_once(raw: &str) {
+    static SEEN: std::sync::OnceLock<Mutex<std::collections::HashSet<String>>> =
+        std::sync::OnceLock::new();
+    let first = SEEN
+        .get_or_init(Default::default)
+        .lock()
+        .map(|mut seen| seen.insert(raw.to_string()))
+        .unwrap_or(false);
+    if first {
+        tracing::warn!(state = raw, "incus: unknown instance state, treating as busy");
     }
 }
 
@@ -165,9 +200,12 @@ pub const BOOTSTRAP_PATH: &str = "/etc/allternit/bootstrap.json";
 /// Cancel lifecycle (plan B2 + round-3 answer): delete the stopped instance
 /// 30 days after cancel; keep the disk snapshot image for 6 months.
 pub const CANCEL_DELETE_AFTER_DAYS: i64 = 30;
-/// `provisioned_instances.tier` values (migration 019).
+/// `provisioned_instances.tier` values (migrations 019, 128).
 pub const TIER_PAID: &str = "paid";
 pub const TIER_FREE: &str = "free";
+/// A credit computer: bought with the USD credit wallet, billed per minute
+/// (`provisioning_credit.rs`). One per account, never a cancel snapshot.
+pub const TIER_CREDIT: &str = "credit";
 /// A `waking` row older than this whose start task is gone is converged by
 /// reconcile from the backend status.
 const WAKE_STALE_SECONDS: i64 = 120;
@@ -229,7 +267,7 @@ impl ProvisionDefaults {
         Self {
             image: env_string(ENV_IMAGE, DEFAULT_IMAGE),
             cpu_cores: env_i64(ENV_CPU, DEFAULT_CPU),
-            memory_mb: env_i64(ENV_MEMORY_MB, DEFAULT_MEMORY_MB),
+            memory_mb: env_i64(ENV_MEMORY_MB, DEFAULT_MEMORY_MB).max(free::MIN_COMPUTER_MEMORY_MB),
             disk_gb: env_i64(ENV_DISK_GB, DEFAULT_DISK_GB),
             profiles: env_string(ENV_PROFILES, DEFAULT_PROFILES)
                 .split(',')
@@ -272,6 +310,44 @@ pub enum BackendStatus {
     NotFound,
 }
 
+/// Which routing class a computer belongs to (`ALLTERNIT_COMPUTE_PROVIDER_*`,
+/// see the Orgo module). Also picks the Orgo size and idle auto-stop.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ComputeClass {
+    /// A paid subscription's computer.
+    Paid,
+    /// An account's free sleeping computer.
+    Free,
+    /// A Platform API project's hosted runtime (owner `platform:<project>`).
+    Platform,
+    /// A `/v1/computers` developer computer (owner `platform-drv:`).
+    HostedDriver,
+    /// A credit computer (tier `credit`, billed from the credit wallet).
+    Credit,
+}
+
+impl ComputeClass {
+    /// A plan or credits computer: someone pays for its hours, so the Orgo
+    /// daily budget (a guard on unpaid usage) never refuses it.
+    pub fn is_paying(self) -> bool {
+        matches!(self, ComputeClass::Paid | ComputeClass::Credit)
+    }
+
+    pub fn for_owner(user_id: &str, tier: &str) -> Self {
+        if tier == TIER_CREDIT {
+            ComputeClass::Credit
+        } else if tier != TIER_FREE {
+            ComputeClass::Paid
+        } else if is_hosted_driver_owner(user_id) {
+            ComputeClass::HostedDriver
+        } else if free::is_platform_runtime_owner(user_id) {
+            ComputeClass::Platform
+        } else {
+            ComputeClass::Free
+        }
+    }
+}
+
 /// Lifecycle request for one container on one fleet host.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProvisionSpec {
@@ -293,12 +369,34 @@ pub struct ProvisionSpec {
     pub storage_pool: String,
     /// cloud-init user-data (the embedded init script + its env contract).
     pub user_data: String,
+    /// Our instance id (`provisioned_instances.id`): the Orgo `Idempotency-Key`.
+    pub instance_id: String,
+    /// Routing class (Orgo size and auto-stop; Incus ignores it).
+    pub class: ComputeClass,
 }
 
 /// Backend seam the scheduling/lifecycle logic programs against. Tests
 /// substitute a mock; production uses [`IncusHttpBackend`].
 #[async_trait]
 pub trait ProvisionBackend: Send + Sync + std::fmt::Debug {
+    /// Provider name, as in [`provider_for_endpoint`] ("incus", "orgo").
+    fn provider(&self) -> &'static str {
+        "incus"
+    }
+    /// True when first boot takes minutes (Orgo: install over the bash API),
+    /// so `drive_create` runs [`ProvisionBackend::first_boot`] in the
+    /// background and the row stays `provisioning` meanwhile.
+    fn provisions_in_background(&self) -> bool {
+        false
+    }
+    /// After `create`: write `files` (the bootstrap contract) and start the
+    /// computer. Orgo also runs its first-boot setup here.
+    async fn first_boot(&self, name: &str, files: &[InstanceFile]) -> Result<(), ProvisionError> {
+        for file in files {
+            self.push_file(name, file).await?;
+        }
+        self.start(name).await
+    }
     async fn create(&self, spec: &ProvisionSpec) -> Result<(), ProvisionError>;
     async fn start(&self, name: &str) -> Result<(), ProvisionError>;
     async fn stop(&self, name: &str) -> Result<(), ProvisionError>;
@@ -331,6 +429,12 @@ pub trait ProvisionBackend: Send + Sync + std::fmt::Debug {
     /// Used for the bootstrap contract: it does not depend on cloud-init
     /// running inside the image.
     async fn push_file(&self, name: &str, file: &InstanceFile) -> Result<(), ProvisionError>;
+    /// Read one file out of a (stopped or running) instance, at most
+    /// `max_bytes`. `Ok(None)` when the file does not exist. Used by the
+    /// meeting reaper to save a bot account's Chrome profile back.
+    async fn pull_file(&self, _name: &str, _path: &str, _max_bytes: usize) -> Result<Option<Vec<u8>>, ProvisionError> {
+        Err(unsupported("file reads"))
+    }
 
     // -- Customer restore points and downloadable copies -------------------
     // Defaults report "unsupported" so backends without them still compile.
@@ -433,6 +537,11 @@ impl ProvisionError {
     pub fn to_api_error(&self) -> ApiError {
         match self {
             ProvisionError::NotFound(message) => ApiError::NotFound(message.clone()),
+            // A capacity refusal keeps its message (it must start with the
+            // pool-full text so it maps to `computer_capacity`).
+            ProvisionError::Api { message, .. } if free::is_capacity_message(message) => {
+                ApiError::ServiceUnavailable(message.clone())
+            }
             other => ApiError::ServiceUnavailable(other.to_string()),
         }
     }
@@ -616,6 +725,83 @@ impl IncusHttpBackend {
         Self { transport }
     }
 
+    /// Create a brain runner box (services::brain_runners), not started:
+    /// first its home volume (a custom volume, so the CLI homes have a real
+    /// quota that does not count the shared image blocks), then the
+    /// container with the runner program as its first process. Unlike a
+    /// computer: nesting off, hard memory limit, no swap, a process cap and
+    /// no cloud-init. An existing home volume is reused (a retry after a
+    /// failed instance create).
+    pub async fn create_runner(&self, spec: &RunnerSpec) -> Result<(), ProvisionError> {
+        let volumes = format!("/1.0/storage-pools/{}/volumes", spec.storage_pool);
+        let (status, json) = self
+            .transport
+            .request(
+                reqwest::Method::POST,
+                &volumes,
+                Some(serde_json::json!({
+                    "name": spec.home_volume,
+                    "type": "custom",
+                    "content_type": "filesystem",
+                    "config": { "size": format!("{}MiB", spec.home_size_mb) },
+                })),
+            )
+            .await?;
+        if status != 409 {
+            if !is_success(status) {
+                return Err(error_from_status(status, &json));
+            }
+            self.wait_operation(&json).await?;
+        }
+
+        let mut config = serde_json::Map::new();
+        for (key, value) in runner_instance_config(spec) {
+            config.insert(key, serde_json::Value::from(value));
+        }
+        let body = serde_json::json!({
+            "name": spec.name,
+            "source": { "type": "image", "alias": spec.image.strip_prefix("local:").unwrap_or(&spec.image) },
+            "type": "container",
+            "config": config,
+            "profiles": spec.profiles,
+            "devices": {
+                "root": { "type": "disk", "path": "/", "pool": spec.storage_pool },
+                "home": {
+                    "type": "disk",
+                    "path": RUNNER_HOME,
+                    "pool": spec.storage_pool,
+                    "source": spec.home_volume,
+                },
+            },
+        });
+        let (status, json) = self
+            .transport
+            .request(reqwest::Method::POST, "/1.0/instances", Some(body))
+            .await?;
+        if !is_success(status) {
+            return Err(error_from_status(status, &json));
+        }
+        self.wait_operation(&json).await
+    }
+
+    /// Delete a brain runner box and its home volume. Missing pieces are
+    /// success, so a half-made box can always be removed.
+    pub async fn delete_runner(&self, name: &str, storage_pool: &str, home_volume: &str) -> Result<(), ProvisionError> {
+        match ProvisionBackend::delete(self, name).await {
+            Ok(()) | Err(ProvisionError::NotFound(_)) => {}
+            Err(error) => return Err(error),
+        }
+        let path = format!("/1.0/storage-pools/{storage_pool}/volumes/custom/{home_volume}");
+        let (status, json) = self.transport.request(reqwest::Method::DELETE, &path, None).await?;
+        if status == 404 {
+            return Ok(());
+        }
+        if !is_success(status) {
+            return Err(error_from_status(status, &json));
+        }
+        self.wait_operation(&json).await
+    }
+
     async fn wait_operation(&self, response: &serde_json::Value) -> Result<(), ProvisionError> {
         let Some(operation) = response
             .get("operation")
@@ -701,6 +887,12 @@ pub fn free_incus_name_for(user_id: &str) -> String {
     incus_name_with_prefix("allternit-free", user_id, "free")
 }
 
+/// Deterministic name of an account's credit computer:
+/// `allternit-credit-<user slug, ≤28>-<12 hex>` (≤ 58 chars, one per account).
+pub fn credit_incus_name_for(user_id: &str) -> String {
+    incus_name_with_prefix("allternit-credit", user_id, "credit")
+}
+
 fn incus_name_with_prefix(prefix: &str, user_id: &str, discriminator: &str) -> String {
     use sha2::{Digest, Sha256};
     let mut slug = String::new();
@@ -723,6 +915,59 @@ fn incus_name_with_prefix(prefix: &str, user_id: &str, discriminator: &str) -> S
     } else {
         format!("{prefix}-{slug}-{}", &hash[..12])
     }
+}
+
+/// Deterministic name of an account's brain runner box:
+/// `allternit-runner-<user slug, ≤28>-<12 hex>` (≤ 58 chars, one per account).
+pub fn runner_incus_name_for(user_id: &str) -> String {
+    incus_name_with_prefix("allternit-runner", user_id, "runner")
+}
+
+/// Where a brain runner's home volume is mounted (the CLI homes).
+pub const RUNNER_HOME: &str = "/home/runner";
+
+/// A brain runner box (services::brain_runners). Never placed through
+/// `provisioned_hosts` bin-packing: the host is fixed by
+/// `ALLTERNIT_RUNNER_HOST` and the RAM budget is the runner ledger's own.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunnerSpec {
+    pub name: String,
+    /// Image alias (`ALLTERNIT_RUNNER_IMAGE`), `local:` prefix optional.
+    pub image: String,
+    pub storage_pool: String,
+    pub profiles: Vec<String>,
+    /// Custom volume mounted at [`RUNNER_HOME`].
+    pub home_volume: String,
+    pub home_size_mb: u32,
+    pub memory_mb: u32,
+    pub cpu_cores: u32,
+    pub max_processes: u32,
+    /// The runner program, run as the container's first process.
+    pub init_cmd: String,
+    /// `environment.*` keys (socket URL and token).
+    pub environment: Vec<(String, String)>,
+}
+
+/// The Incus config keys of a brain runner box, in a fixed order.
+/// Unprivileged, nesting off (nothing inside needs bwrap), hard memory limit
+/// with no swap (the host has none), one CPU, a process cap, and the runner
+/// as `lxc.init.cmd` so no systemd (and none of its inotify watches) runs.
+pub fn runner_instance_config(spec: &RunnerSpec) -> Vec<(String, String)> {
+    let mut config = vec![
+        ("security.privileged".to_string(), "false".to_string()),
+        ("security.nesting".to_string(), "false".to_string()),
+        ("limits.cpu".to_string(), spec.cpu_cores.to_string()),
+        ("limits.memory".to_string(), format!("{}MiB", spec.memory_mb)),
+        ("limits.memory.enforce".to_string(), "hard".to_string()),
+        ("limits.memory.swap".to_string(), "false".to_string()),
+        ("limits.processes".to_string(), spec.max_processes.to_string()),
+        ("raw.lxc".to_string(), format!("lxc.init.cmd = {}", spec.init_cmd)),
+        ("user.allternit.kind".to_string(), "brain-runner".to_string()),
+    ];
+    for (key, value) in &spec.environment {
+        config.push((format!("environment.{key}"), value.clone()));
+    }
+    config
 }
 
 /// Synthetic owners of hosted-driver computers (`/v1/computers`): computers
@@ -774,6 +1019,29 @@ pub fn profiles_for_instance(defaults: &[String], incus_name: &str) -> Vec<Strin
     }
 }
 
+/// Security keys every cloud computer container carries, set on create and
+/// re-applied after a restore (an Incus restore brings back the snapshot's
+/// config, which may predate a key).
+///
+/// - `security.privileged=false`: ADR A3/v1, unprivileged containers,
+///   explicit rather than the host default.
+/// - `security.nesting=true`: gizzi's bash tool and the run_code sandbox run
+///   bwrap inside the container. Without nesting the default AppArmor profile
+///   blocks the mount calls bwrap needs ("Failed to make / slave: Permission
+///   denied"). Nesting relaxes those mount rules only; on an unprivileged
+///   container root inside stays an unprivileged host uid, so this is safe
+///   together with `security.privileged=false`. Never set nesting on a
+///   privileged container.
+pub const CONTAINER_SECURITY_CONFIG: [(&str, &str); 2] =
+    [("security.privileged", "false"), ("security.nesting", "true")];
+
+fn container_security_config() -> serde_json::Map<String, serde_json::Value> {
+    CONTAINER_SECURITY_CONFIG
+        .iter()
+        .map(|(key, value)| (key.to_string(), serde_json::Value::from(*value)))
+        .collect()
+}
+
 /// Alias of the cancel-snapshot image for an instance name.
 pub fn snapshot_alias_for(incus_name: &str) -> String {
     format!("allternit-snap-{incus_name}")
@@ -786,8 +1054,6 @@ impl ProvisionBackend for IncusHttpBackend {
         let mut config = serde_json::json!({
             "limits.cpu": spec.cpu_cores.to_string(),
             "limits.memory": format!("{}MiB", spec.memory_mb),
-            // ADR A3/v1: unprivileged containers, explicit rather than host default.
-            "security.privileged": "false",
             // Incus 6 consumes cloud-init.user-data (config-drive). user.user-data
             // is kept for older LXD-compatible daemons and is otherwise inert.
             "cloud-init.user-data": spec.user_data,
@@ -799,6 +1065,10 @@ impl ProvisionBackend for IncusHttpBackend {
             .find_map(|line| line.strip_prefix("# allternit sha256: "))
         {
             config["user.allternit.binary-sha256"] = sha256.trim().into();
+        }
+        // Unprivileged + nesting (see CONTAINER_SECURITY_CONFIG).
+        for (key, value) in container_security_config() {
+            config[key] = value;
         }
         if let Some(allowance) = &spec.cpu_allowance {
             config["limits.cpu.allowance"] = allowance.as_str().into();
@@ -891,7 +1161,10 @@ impl ProvisionBackend for IncusHttpBackend {
         Ok(match payload.get("status").and_then(|value| value.as_str()) {
             Some("Running") => BackendStatus::Running,
             Some("Stopped") => BackendStatus::Stopped,
-            _ => BackendStatus::Busy,
+            other => {
+                warn_unknown_state_once(other.unwrap_or("<none>"));
+                BackendStatus::Busy
+            }
         })
     }
 
@@ -1091,6 +1364,21 @@ impl ProvisionBackend for IncusHttpBackend {
         if !is_success(status) {
             return Err(error_from_status(status, &json));
         }
+        self.wait_operation(&json).await?;
+        // The restore brings back the snapshot's config. A restore point taken
+        // before nesting was turned on would drop it, and bwrap (bash tool,
+        // run_code) would fail again. PATCH merges only these keys back.
+        let (status, json) = self
+            .transport
+            .request(
+                reqwest::Method::PATCH,
+                &format!("/1.0/instances/{name}"),
+                Some(serde_json::json!({ "config": container_security_config() })),
+            )
+            .await?;
+        if !is_success(status) {
+            return Err(error_from_status(status, &json));
+        }
         self.wait_operation(&json).await
     }
 
@@ -1238,6 +1526,32 @@ impl ProvisionBackend for IncusHttpBackend {
         }
         Ok(())
     }
+
+    async fn pull_file(&self, name: &str, path: &str, max_bytes: usize) -> Result<Option<Vec<u8>>, ProvisionError> {
+        let url = format!("/1.0/instances/{name}/files?path={}", urlencoding::encode(path));
+        let mut response = match self.transport.stream(&url).await {
+            Ok(response) => response,
+            Err(ProvisionError::NotFound(_)) => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        let too_big = || ProvisionError::Api { status: 413, message: format!("{path} is over {max_bytes} bytes") };
+        if response.content_length().is_some_and(|len| len > max_bytes as u64) {
+            return Err(too_big());
+        }
+        let mut out = Vec::new();
+        let read = async {
+            while let Some(chunk) = response.chunk().await.map_err(|error| ProvisionError::Request(error.to_string()))? {
+                if out.len() + chunk.len() > max_bytes {
+                    return Err(too_big());
+                }
+                out.extend_from_slice(&chunk);
+            }
+            Ok(())
+        };
+        // The stream client has no whole-request timeout.
+        tokio::time::timeout(std::time::Duration::from_secs(300), read).await.map_err(|_| ProvisionError::Timeout)??;
+        Ok(Some(out))
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1273,6 +1587,22 @@ impl HostCapacity {
     }
 }
 
+/// Hosts that serve something else and never take a computer, even when they
+/// are registered and enabled: always `host_mail` (the production mail VPS),
+/// plus any ids in `ALLTERNIT_RESERVED_HOSTS` (comma-separated).
+pub const ALWAYS_RESERVED_HOSTS: &[&str] = &["host_mail"];
+
+fn reserved_hosts() -> Vec<String> {
+    let mut hosts = env_list("ALLTERNIT_RESERVED_HOSTS");
+    hosts.extend(ALWAYS_RESERVED_HOSTS.iter().map(|h| h.to_string()));
+    hosts
+}
+
+/// True when `host_id` must never receive a computer (see [`ALWAYS_RESERVED_HOSTS`]).
+pub fn is_reserved_host_with(reserved: &[String], host_id: &str) -> bool {
+    reserved.iter().any(|h| h.eq_ignore_ascii_case(host_id.trim()))
+}
+
 /// Best-free bin-pack (see module header for the full algorithm
 /// description): most free memory wins, tie → most free cpu, tie → lowest
 /// host id for determinism. Returns `None` when no enabled host fits.
@@ -1282,9 +1612,11 @@ pub fn select_host(
     memory_mb: i64,
     disk_gb: i64,
 ) -> Option<String> {
+    let reserved = reserved_hosts();
     hosts
         .iter()
         .filter(|host| host.enabled && host.fits(cpu, memory_mb, disk_gb))
+        .filter(|host| !is_reserved_host_with(&reserved, &host.id))
         .max_by(|a, b| {
             a.free_memory()
                 .cmp(&b.free_memory())
@@ -1448,11 +1780,38 @@ pub struct InstanceView {
     /// The ready signal: the computer's runtime device holds a live relay
     /// connection. Filled in by the routes from the relay hub; `false` here.
     pub runtime_online: bool,
+    /// Where it runs: "incus" or "orgo"; read from the host endpoint scheme
+    /// (`orgo://...` reads "orgo"), see [`provider_for_endpoint`].
+    pub provider: String,
+    /// True for free computers and every computer on Orgo (the idle sweeps
+    /// sleep them); paid computers on Incus stay on.
+    pub sleeps_when_idle: bool,
+    /// "waking" while a start is in flight, "queued" when waiting for a slot;
+    /// null otherwise.
+    pub state_detail: Option<String>,
+    /// Seconds to wait when a start was refused for capacity; null otherwise
+    /// (a refusal is an error response, so a stored computer never has one).
+    pub retry_after_seconds: Option<u64>,
+}
+
+/// Provider name for a host endpoint: the URL scheme when it is not an HTTP
+/// one (`e2b://x` -> "e2b"), else "incus".
+pub fn provider_for_endpoint(endpoint: &str) -> String {
+    match endpoint.split_once("://").map(|(scheme, _)| scheme.to_ascii_lowercase()) {
+        Some(scheme) if !matches!(scheme.as_str(), "http" | "https" | "") => scheme,
+        _ => "incus".to_string(),
+    }
 }
 
 impl From<InstanceRow> for InstanceView {
     fn from(row: InstanceRow) -> Self {
+        let sleeps_when_idle = row.is_free();
+        let state_detail = matches!(row.status.as_str(), "waking" | "provisioning").then(|| "waking".to_string());
         Self {
+            provider: "incus".to_string(),
+            sleeps_when_idle,
+            state_detail,
+            retry_after_seconds: None,
             id: row.id,
             user_id: row.user_id,
             subscription_id: row.subscription_id,
@@ -1484,8 +1843,9 @@ impl From<InstanceRow> for InstanceView {
 // ---------------------------------------------------------------------------
 
 /// Resolves a backend for a fleet host. Production builds an
-/// [`IncusHttpBackend`] from the host's endpoint (cached per host id); tests
-/// substitute a static registry with a mock.
+/// [`IncusHttpBackend`] (or an [`OrgoBackend`] for an `orgo://` endpoint)
+/// from the host's endpoint, cached per host id; tests substitute a static
+/// registry with a mock.
 #[async_trait]
 pub trait BackendRegistry: Send + Sync + std::fmt::Debug {
     async fn backend(
@@ -1510,10 +1870,16 @@ impl BackendRegistry for IncusBackendRegistry {
         if let Some(backend) = self.cache.lock().unwrap().get(host_id) {
             return Ok(backend.clone());
         }
-        let backend: Arc<dyn ProvisionBackend> =
+        // `orgo://<workspace>` hosts are Orgo; everything else is Incus.
+        let backend: Arc<dyn ProvisionBackend> = if is_orgo_endpoint(endpoint) {
+            Arc::new(OrgoBackend::from_endpoint(endpoint).map_err(|error| {
+                ApiError::ServiceUnavailable(format!("Orgo backend for host {host_id}: {error}"))
+            })?)
+        } else {
             Arc::new(IncusHttpBackend::new(endpoint).map_err(|error| {
                 ApiError::ServiceUnavailable(format!("Incus backend for host {host_id}: {error}"))
-            })?);
+            })?)
+        };
         self.cache
             .lock()
             .unwrap()
@@ -1683,6 +2049,30 @@ pub async fn usage_summary(
     Ok(total)
 }
 
+/// Release a host allocation after error/delete (floor at zero). Logs, never
+/// fails: the ledger is best effort next to the row state.
+pub(crate) async fn release_host_allocation(db: &PgPool, host_id: &str, size: ComputerSize) {
+    if let Err(error) = sqlx::query(
+        r#"
+        UPDATE provisioned_hosts
+        SET cpu_cores_allocated = GREATEST(0, cpu_cores_allocated - $1),
+            memory_mb_allocated = GREATEST(0, memory_mb_allocated - $2),
+            disk_gb_allocated = GREATEST(0, disk_gb_allocated - $3),
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = $4
+        "#,
+    )
+    .bind(size.cpu_cores as i32)
+    .bind(size.memory_mb)
+    .bind(size.disk_gb)
+    .bind(host_id)
+    .execute(db)
+    .await
+    {
+        tracing::warn!(%host_id, %error, "failed to release provisioned host allocation");
+    }
+}
+
 async fn user_id_for_instance(db: &PgPool, instance_id: &str) -> Result<Option<String>, ApiError> {
     sqlx::query_scalar("SELECT user_id FROM provisioned_instances WHERE id = $1")
         .bind(instance_id)
@@ -1847,6 +2237,12 @@ pub struct ProvisioningService {
     defaults: ProvisionDefaults,
     free: FreeDefaults,
     hosted: HostedDriverDefaults,
+    /// Provider per class and the Orgo guards (`ALLTERNIT_COMPUTE_PROVIDER_*`).
+    routing: ComputeRouting,
+    /// Credit computer size, prices and retention (`ALLTERNIT_CREDIT_COMPUTER_*`).
+    credit: CreditDefaults,
+    /// Plan computer included hours and the overage flag (`ALLTERNIT_PLAN_OVERAGE`).
+    plan_hours: PlanHoursDefaults,
     registry: Arc<dyn BackendRegistry>,
     /// Downloadable copies being prepared or ready, by export id. In memory:
     /// Incus deletes the file itself after a day, and a restart only means
@@ -1928,6 +2324,9 @@ impl ProvisioningService {
             defaults: ProvisionDefaults::from_env(),
             free: FreeDefaults::from_env(),
             hosted: HostedDriverDefaults::from_env(),
+            routing: ComputeRouting::from_env(),
+            credit: CreditDefaults::from_env(),
+            plan_hours: PlanHoursDefaults::from_env(),
             registry,
             exports: Mutex::new(HashMap::new()),
         }
@@ -1943,6 +2342,29 @@ impl ProvisioningService {
     pub(crate) fn with_free_defaults(mut self, free: FreeDefaults) -> Self {
         self.free = free;
         self
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_routing(mut self, routing: ComputeRouting) -> Self {
+        self.routing = routing;
+        self
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_credit_defaults(mut self, credit: CreditDefaults) -> Self {
+        self.credit = credit;
+        self
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_plan_hours_defaults(mut self, plan_hours: PlanHoursDefaults) -> Self {
+        self.plan_hours = plan_hours;
+        self
+    }
+
+    /// The credit computer settings (size, prices, minimum start, retention).
+    pub fn credit_defaults(&self) -> &CreditDefaults {
+        &self.credit
     }
 
     /// The free-computer settings (sizes, idle window, limits).
@@ -2023,19 +2445,57 @@ impl ProvisioningService {
         Ok(view)
     }
 
-    /// Shared create for both tiers. `tier` is [`TIER_PAID`] (per
-    /// subscription, plan-sized, always on, cancel snapshot) or
-    /// [`TIER_FREE`] (one per account, same image, small, sleeps, no snapshots).
+    /// Shared create for every tier. `tier` is [`TIER_PAID`] (per
+    /// subscription, plan-sized, always on, cancel snapshot), [`TIER_CREDIT`]
+    /// or [`TIER_FREE`] (one per account, same image, small, sleeps, no snapshots).
+    ///
+    /// Capacity fallback: when the class is routed to Orgo and Orgo has no
+    /// room (Orgo's own `insufficient_memory`, the running cap, the daily
+    /// budget or the orgo:// host ledger: every [`orgo::CLOUD_POOL_FULL`]
+    /// refusal), the computer is placed on the standby (Incus) pool instead,
+    /// under that pool's usual admission (host ledger, memory admission and
+    /// idle sleep for free computers). Only when standby has no room either
+    /// does the caller get the `computer_capacity` 503. A wake never moves a
+    /// computer: its disk lives on the provider that made it.
     pub(crate) async fn create_tier(
         &self,
         user_id: &str,
         subscription_id: Option<&str>,
         tier: &str,
     ) -> Result<InstanceView, ApiError> {
+        let class = ComputeClass::for_owner(user_id, tier);
+        let routed_to_orgo = self.routing.provider_for(class) == ComputeProvider::Orgo;
+        match self.create_tier_on(user_id, subscription_id, tier, false).await {
+            Err(ApiError::ServiceUnavailable(message))
+                if routed_to_orgo && message.starts_with(orgo::CLOUD_POOL_FULL) =>
+            {
+                tracing::warn!(%user_id, ?class, "orgo at capacity; placing the computer on the standby pool");
+                match self.create_tier_on(user_id, subscription_id, tier, true).await {
+                    Ok(view) => Ok(view),
+                    Err(fallback) => {
+                        tracing::warn!(%user_id, ?class, error = %fallback, "standby pool has no room either");
+                        Err(ApiError::ServiceUnavailable(message))
+                    }
+                }
+            }
+            other => other,
+        }
+    }
+
+    /// One placement attempt of [`Self::create_tier`]. `standby_only` skips
+    /// Orgo routing and places on the Incus (standby) hosts.
+    async fn create_tier_on(
+        &self,
+        user_id: &str,
+        subscription_id: Option<&str>,
+        tier: &str,
+        standby_only: bool,
+    ) -> Result<InstanceView, ApiError> {
         let free = tier == TIER_FREE;
         // Developer computers (the hosted driver) ride the free lane with
         // their own image, size and pool cap.
         let hosted = free && is_hosted_driver_owner(user_id);
+        let platform = free && free::is_platform_runtime_owner(user_id);
         if let Some(row) = self.live_row_for(user_id, subscription_id, tier).await? {
             if row.status == "suspended" {
                 if let Some(view) = self.resume(row, subscription_id).await? {
@@ -2046,8 +2506,17 @@ impl ProvisioningService {
                 // billing portal): bring the computer to the plan's size.
                 return self.resize_to_plan(row, subscription_id).await;
             } else {
-                return Ok(InstanceView::from(row));
+                return Ok(self.view_of(row).await);
             }
+        }
+        let class = ComputeClass::for_owner(user_id, tier);
+        let want_orgo = !standby_only && self.routing.provider_for(class) == ComputeProvider::Orgo;
+        // A first boot that failed on Orgo minutes ago: wait before buying
+        // another computer (a bad .deb URL would otherwise buy one per call).
+        if want_orgo && self.orgo_first_boot_backoff(user_id, tier).await? {
+            return Err(ApiError::ServiceUnavailable(
+                "This cloud computer's setup failed a few minutes ago; it is retried shortly".to_string(),
+            ));
         }
         self.retire_failed_attempts(user_id, subscription_id, tier).await?;
 
@@ -2066,14 +2535,24 @@ impl ProvisioningService {
             }
         }
 
-        let (plan_id, size) = if free {
-            (None, if hosted { self.hosted.size() } else { self.free.size() })
+        let (plan_id, size) = if tier == TIER_CREDIT {
+            (None, self.credit.size())
+        } else if free {
+            let size = if hosted {
+                self.hosted.size()
+            } else if platform {
+                free::platform_runtime_spec(&self.free).1
+            } else {
+                self.free.size()
+            };
+            (None, size)
         } else {
             self.plan_size(subscription_id).await
         };
         let allocation = allocation_for(tier, size);
-        // Free computers never restore from (or get) a cancel snapshot.
-        let restore: Option<(String, String, String)> = if free {
+        // Free and credit computers never restore from (or get) a cancel
+        // snapshot: only paid computers take one.
+        let restore: Option<(String, String, String)> = if tier != TIER_PAID {
             None
         } else {
             sqlx::query_as(
@@ -2095,6 +2574,8 @@ impl ProvisioningService {
         let instance_id = format!("pi_{}", Uuid::new_v4().simple());
         let incus_name = if free {
             free_incus_name_for(user_id)
+        } else if tier == TIER_CREDIT {
+            credit_incus_name_for(user_id)
         } else {
             incus_name_for(user_id, subscription_id)
         };
@@ -2104,11 +2585,14 @@ impl ProvisioningService {
 
         // 1. Allocate a host (best-free bin-pack under row locks). A restore
         //    is pinned to the host holding its snapshot image.
+        if free && !want_orgo {
+            self.make_room_for_new_free(user_id, size.memory_mb).await?;
+        }
         let mut transaction = self.db.begin().await?;
         let host_rows = sqlx::query_as::<_, HostCapacityRow>(
             r#"
             SELECT id, enabled, cpu_cores_total, memory_mb_total, disk_gb_total,
-                   cpu_cores_allocated, memory_mb_allocated, disk_gb_allocated
+                   cpu_cores_allocated, memory_mb_allocated, disk_gb_allocated, incus_endpoint
             FROM provisioned_hosts
             WHERE enabled = TRUE
             ORDER BY id
@@ -2137,14 +2621,36 @@ impl ProvisioningService {
             transaction.rollback().await?;
             return Err(self.hosted.full_error());
         }
+        // Orgo hosts take exactly the classes routed to Orgo. A restore stays
+        // on the Incus host that holds its snapshot image.
+        let orgo_hosts: Vec<String> = host_rows
+            .iter()
+            .filter(|host| is_orgo_endpoint(&host.incus_endpoint))
+            .map(|host| host.id.clone())
+            .collect();
+        // Awake free computers also need host memory (paid ones reserve
+        // theirs). Orgo computers use no host memory: the Orgo guards apply.
+        let mut memory_blocked: Vec<String> = Vec::new();
+        if free && !want_orgo {
+            for host in &host_rows {
+                if orgo_hosts.contains(&host.id) {
+                    continue;
+                }
+                if !free::host_memory_fits(&mut *transaction, &host.id, size.memory_mb).await? {
+                    memory_blocked.push(host.id.clone());
+                }
+            }
+        }
         let hosts: Vec<HostCapacity> = host_rows
             .into_iter()
             .map(HostCapacityRow::into_capacity)
             .filter(|host| match &restore {
                 Some((_, snapshot_host, _)) => &host.id == snapshot_host,
-                None => true,
+                None => orgo_hosts.contains(&host.id) == want_orgo,
             })
-            .filter(|host| !full_hosts.contains(&host.id))
+            // The per-host awake cap is an Incus limit; Orgo has its own.
+            .filter(|host| !full_hosts.contains(&host.id) || orgo_hosts.contains(&host.id))
+            .filter(|host| !memory_blocked.contains(&host.id))
             // Outside-developer computers (the hosted driver) get their own pool.
             .filter(|host| host_in_pool(&host.id, is_hosted_driver_owner(user_id)))
             .collect();
@@ -2152,6 +2658,18 @@ impl ProvisioningService {
             select_host(&hosts, allocation.cpu_cores, allocation.memory_mb, allocation.disk_gb)
         else {
             transaction.rollback().await?;
+            if free && !memory_blocked.is_empty() {
+                return Err(free::memory_full_error());
+            }
+            if want_orgo && restore.is_none() {
+                if orgo_hosts.is_empty() {
+                    return Err(ApiError::ServiceUnavailable(format!(
+                        "No enabled orgo:// host is registered for {class:?} computers"
+                    )));
+                }
+                // The Orgo host's ledger is the pool size: full = capacity.
+                return Err(orgo::cloud_capacity_error());
+            }
             return Err(ApiError::ServiceUnavailable(match &restore {
                 Some((_, snapshot_host, _)) => format!(
                     "Fleet host {snapshot_host} holding this account's snapshot has no capacity"
@@ -2160,6 +2678,12 @@ impl ProvisioningService {
                 None => "No provisioned fleet host has capacity for this instance".to_string(),
             }));
         };
+        if orgo_hosts.contains(&host_id) {
+            if let Err(error) = orgo::orgo_admits(&mut *transaction, &self.routing, class).await {
+                transaction.rollback().await?;
+                return Err(error);
+            }
+        }
         sqlx::query(
             r#"
             UPDATE provisioned_hosts
@@ -2212,7 +2736,7 @@ impl ProvisioningService {
             transaction.rollback().await?;
             if unique_violation {
                 if let Some(row) = self.live_row_for(user_id, subscription_id, tier).await? {
-                    return Ok(InstanceView::from(row));
+                    return Ok(self.view_of(row).await);
                 }
             }
             return Err(error.into());
@@ -2223,6 +2747,7 @@ impl ProvisioningService {
         let image = match &restore {
             Some((_, _, alias)) => alias.clone(),
             None if hosted => self.hosted.image.clone(),
+            None if platform => free::platform_runtime_spec(&self.free).0,
             None if free => self.free.image.clone(),
             None => self.defaults.image.clone(),
         };
@@ -2250,6 +2775,8 @@ impl ProvisioningService {
                 &incus_name,
                 &image,
                 size,
+                allocation,
+                class,
                 cpu,
                 &bootstrap,
             )
@@ -2286,7 +2813,7 @@ impl ProvisioningService {
         subscription_id: Option<&str>,
     ) -> Result<InstanceView, ApiError> {
         if !matches!(row.status.as_str(), "running" | "stopped") {
-            return Ok(InstanceView::from(row));
+            return Ok(self.view_of(row).await);
         }
         let (plan_id, plan) = self.plan_size(subscription_id).await;
         let current = row.size();
@@ -2307,7 +2834,7 @@ impl ProvisioningService {
             return self.get_for_user(&row.id, &row.user_id).await;
         }
         let Some(host_id) = row.host_id.clone() else {
-            return Ok(InstanceView::from(row));
+            return Ok(self.view_of(row).await);
         };
         let delta = ComputerSize {
             cpu_cores: target.cpu_cores - current.cpu_cores,
@@ -2353,7 +2880,7 @@ impl ProvisioningService {
                     target.cpu_cores, target.memory_mb, target.disk_gb,
                 ),
             );
-            return Ok(InstanceView::from(row));
+            return Ok(self.view_of(row).await);
         }
         let backend = self.backend_for_row(&row).await?;
         if let Err(error) = backend
@@ -2498,6 +3025,7 @@ impl ProvisioningService {
         Ok(Some(self.get_for_user(&row.id, &row.user_id).await?))
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn drive_create(
         &self,
         instance_id: &str,
@@ -2505,6 +3033,8 @@ impl ProvisioningService {
         incus_name: &str,
         image: &str,
         size: ComputerSize,
+        allocation: ComputerSize,
+        class: ComputeClass,
         cpu: CpuShare,
         bootstrap: &BootstrapContract,
     ) -> Result<(), ApiError> {
@@ -2565,44 +3095,48 @@ impl ProvisioningService {
                 (self.defaults.desktop_uid, self.defaults.desktop_gid),
                 node_init.as_ref(),
             ),
+            instance_id: instance_id.to_string(),
+            class,
         };
         backend.create(&spec).await.map_err(|error| error.to_api_error())?;
-        let file = InstanceFile {
+        let files = vec![InstanceFile {
             path: BOOTSTRAP_PATH.to_string(),
             content: serde_json::to_vec(bootstrap).unwrap_or_default(),
             uid: self.defaults.desktop_uid,
             gid: self.defaults.desktop_gid,
             mode: "0600".to_string(),
-        };
+        }];
+        if backend.provisions_in_background() {
+            // Minutes of setup (Orgo): the row stays `provisioning`, the
+            // runtime pairing moves it on; a failure marks it `error`.
+            let db = self.db.clone();
+            let instance_id = instance_id.to_string();
+            let host_id = host_id.to_string();
+            let name = incus_name.to_string();
+            tokio::spawn(async move {
+                match backend.first_boot(&name, &files).await {
+                    Ok(()) => tracing::info!(%instance_id, %name, "cloud computer first boot finished"),
+                    Err(error) => {
+                        // Stop it so a broken computer does not bill at the running rate.
+                        if let Err(stop_error) = backend.stop(&name).await {
+                            tracing::warn!(%instance_id, %stop_error, "failed computer not stopped");
+                        }
+                        orgo::fail_background_create(&db, &instance_id, &host_id, allocation, &error.to_string())
+                            .await;
+                    }
+                }
+            });
+            return Ok(());
+        }
         backend
-            .push_file(incus_name, &file)
+            .first_boot(incus_name, &files)
             .await
-            .map_err(|error| error.to_api_error())?;
-        backend.start(incus_name).await.map_err(|error| error.to_api_error())?;
-        Ok(())
+            .map_err(|error| error.to_api_error())
     }
 
     /// Release a host allocation after error/delete (floor at zero).
     async fn release_allocation(&self, host_id: &str, size: ComputerSize) {
-        if let Err(error) = sqlx::query(
-            r#"
-            UPDATE provisioned_hosts
-            SET cpu_cores_allocated = GREATEST(0, cpu_cores_allocated - $1),
-                memory_mb_allocated = GREATEST(0, memory_mb_allocated - $2),
-                disk_gb_allocated = GREATEST(0, disk_gb_allocated - $3),
-                updated_at = CURRENT_TIMESTAMP
-            WHERE id = $4
-            "#,
-        )
-        .bind(size.cpu_cores as i32)
-        .bind(size.memory_mb)
-        .bind(size.disk_gb)
-        .bind(host_id)
-        .execute(&self.db)
-        .await
-        {
-            tracing::warn!(%host_id, %error, "failed to release provisioned host allocation");
-        }
+        release_host_allocation(&self.db, host_id, size).await;
     }
 
     /// Reconcile/resume found no container: the row becomes `error` with a
@@ -2623,7 +3157,7 @@ impl ProvisioningService {
                 "UPDATE provisioned_instances SET status = 'error', error_message = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 AND status <> 'deleted'",
             )
             .bind(format!(
-                "missing: Incus instance {} not found on host {}",
+                "missing: computer {} not found on host {}",
                 row.incus_name,
                 row.host_id.as_deref().unwrap_or("?")
             ))
@@ -2720,6 +3254,11 @@ impl ProvisioningService {
 
     async fn take_cancel_snapshot(&self, row: &InstanceRow) -> Result<(), ApiError> {
         let backend = self.backend_for_row(row).await?;
+        // Orgo has no images: the stopped computer itself is kept as the copy
+        // (and so is never deleted by the 30-day sweep). Nothing to retry.
+        if backend.provider() == ORGO_SCHEME {
+            return Ok(());
+        }
         let alias = snapshot_alias_for(&row.incus_name);
         if let Err(error) = backend
             .snapshot_to_image(
@@ -2846,7 +3385,34 @@ impl ProvisioningService {
 
     pub async fn get_for_user(&self, instance_id: &str, user_id: &str) -> Result<InstanceView, ApiError> {
         let row = self.fetch_row(instance_id, Some(user_id)).await?;
-        Ok(InstanceView::from(row))
+        let mut views = vec![InstanceView::from(row)];
+        self.fill_providers(&mut views).await;
+        Ok(views.remove(0))
+    }
+
+    /// One row as the owner sees it, with its provider filled in.
+    pub(crate) async fn view_of(&self, row: InstanceRow) -> InstanceView {
+        let mut views = vec![InstanceView::from(row)];
+        self.fill_providers(&mut views).await;
+        views.remove(0)
+    }
+
+    /// Sets each view's `provider` (and `sleeps_when_idle` for Orgo) from its
+    /// host's endpoint (best effort: a failed lookup leaves the defaults).
+    async fn fill_providers(&self, views: &mut [InstanceView]) {
+        let endpoints: Vec<(String, String)> =
+            sqlx::query_as("SELECT id, incus_endpoint FROM provisioned_hosts")
+                .fetch_all(&self.db)
+                .await
+                .unwrap_or_default();
+        for view in views {
+            if let Some((_, endpoint)) = endpoints.iter().find(|(id, _)| Some(id) == view.host_id.as_ref()) {
+                view.provider = provider_for_endpoint(endpoint);
+                if view.provider == ORGO_SCHEME {
+                    view.sleeps_when_idle = true;
+                }
+            }
+        }
     }
 
     pub async fn list_for_user(&self, user_id: &str) -> Result<Vec<InstanceView>, ApiError> {
@@ -2857,7 +3423,9 @@ impl ProvisioningService {
         .bind(user_id)
         .fetch_all(&self.db)
         .await?;
-        Ok(rows.into_iter().map(InstanceView::from).collect())
+        let mut views: Vec<InstanceView> = rows.into_iter().map(InstanceView::from).collect();
+        self.fill_providers(&mut views).await;
+        Ok(views)
     }
 
     /// Start a stopped instance: backend start first, then the row transition
@@ -2870,20 +3438,35 @@ impl ProvisioningService {
                 "A free computer is started with POST /api/v1/provisioned-instances/:id/wake".to_string(),
             ));
         }
-        if row.status != "stopped" {
+        // A paid computer on Orgo sleeps when idle; starting it is a wake.
+        if !matches!(row.status.as_str(), "stopped" | "sleeping") {
             return Err(ApiError::BadRequest(format!(
                 "Instance cannot start from status '{}'",
                 row.status
             )));
         }
         let backend = self.backend_for_row(&row).await?;
+        if backend.provider() == ORGO_SCHEME {
+            let mut transaction = self.db.begin().await?;
+            sqlx::query("SELECT id FROM provisioned_hosts WHERE id = $1 FOR UPDATE")
+                .bind(row.host_id.as_deref())
+                .execute(&mut *transaction)
+                .await?;
+            let class = ComputeClass::for_owner(&row.user_id, &row.tier);
+            if let Err(error) = orgo::orgo_admits(&mut *transaction, &self.routing, class).await {
+                transaction.rollback().await?;
+                return Err(error);
+            }
+            transaction.commit().await?;
+        }
         backend.start(&row.incus_name).await.map_err(|error| error.to_api_error())?;
         sqlx::query(
             r#"
             UPDATE provisioned_instances
             SET status = 'running', last_started_at = CURRENT_TIMESTAMP,
+                last_activity_at = CURRENT_TIMESTAMP,
                 error_message = NULL, updated_at = CURRENT_TIMESTAMP
-            WHERE id = $1 AND status = 'stopped'
+            WHERE id = $1 AND status IN ('stopped', 'sleeping')
             "#,
         )
         .bind(instance_id)
@@ -2957,6 +3540,28 @@ impl ProvisioningService {
             revoke_device(&self.db, device_id).await?;
         }
         self.get_for_user(instance_id, user_id).await
+    }
+
+    /// Account erase: deletes every computer the user has and every kept
+    /// snapshot. A row that never reached a host only needs closing.
+    pub async fn delete_all_for_user(&self, user_id: &str) -> Result<(), ApiError> {
+        let rows = sqlx::query_as::<_, InstanceRow>(&format!(
+            "SELECT {INSTANCE_COLUMNS} FROM provisioned_instances WHERE user_id = $1"
+        ))
+        .bind(user_id)
+        .fetch_all(&self.db)
+        .await?;
+        for row in rows {
+            if row.status != "deleted" && row.host_id.is_some() {
+                self.delete(&row.id, user_id).await?;
+            }
+            // Tolerates an image that is already gone, so a retry is safe.
+            if let (Some(alias), true) = (row.snapshot_image.as_deref(), row.host_id.is_some()) {
+                let backend = self.backend_for_row(&row).await?;
+                backend.delete_image(alias).await.map_err(|error| error.to_api_error())?;
+            }
+        }
+        Ok(())
     }
 
     /// Total running seconds since `since` (closed intervals + the open one
@@ -3278,27 +3883,42 @@ impl ProvisioningService {
     pub async fn reconcile_all(&self) -> Result<(), ApiError> {
         let rows = sqlx::query_as::<_, InstanceRow>(&format!(
             "SELECT {INSTANCE_COLUMNS} FROM provisioned_instances \
-             WHERE status IN ('provisioning', 'running', 'stopped', 'sleeping', 'waking', 'suspended')"
+             WHERE status IN ('provisioning', 'running', 'stopped', 'sleeping', 'waking', 'suspended') \
+             ORDER BY id"
         ))
         .fetch_all(&self.db)
         .await?;
 
         for row in rows {
+            // One bad row (DB or backend failure) must not stop the pass.
+            if let Err(error) = self.reconcile_row(&row).await {
+                tracing::warn!(id = %row.id, %error, "reconcile: row failed, continuing with the next");
+            }
+        }
+        Ok(())
+    }
+
+    /// Converge one row from the backend's status (see [`Self::reconcile_all`]).
+    async fn reconcile_row(&self, row: &InstanceRow) -> Result<(), ApiError> {
+        {
             // A wake whose start task died with the process (restart while
             // `waking`): converge from the backend once it is clearly stale.
             let stale_wake = row.status == "waking"
                 && Utc::now() - row.updated_at > Duration::seconds(WAKE_STALE_SECONDS);
             let id = row.id.clone();
-            let backend = match self.backend_for_row(&row).await {
+            let backend = match self.backend_for_row(row).await {
                 Ok(backend) => backend,
                 Err(error) => {
                     tracing::warn!(%id, %error, "reconcile: backend unavailable, skipping");
-                    continue;
+                    return Ok(());
                 }
             };
             let status = row.status.as_str();
+            // Free computers, and every computer on Orgo, sleep (wakeable)
+            // rather than stop; one found running gets a fresh idle window.
+            let sleeps = row.is_free() || backend.provider() == ORGO_SCHEME;
             match backend.status(&row.incus_name).await {
-                Ok(BackendStatus::NotFound) => self.mark_missing(&row).await?,
+                Ok(BackendStatus::NotFound) => self.mark_missing(row).await?,
                 Ok(BackendStatus::Running) if status == "provisioning" => {
                     sqlx::query(
                         "UPDATE provisioned_instances SET status = 'running', last_started_at = COALESCE(last_started_at, CURRENT_TIMESTAMP), updated_at = CURRENT_TIMESTAMP WHERE id = $1 AND status = 'provisioning'",
@@ -3315,25 +3935,27 @@ impl ProvisioningService {
                     // A sleeping free computer found running (started outside
                     // the wake path) gets a fresh idle window.
                     sqlx::query(
-                        "UPDATE provisioned_instances SET status = 'running', last_started_at = CURRENT_TIMESTAMP, last_activity_at = CASE WHEN tier = 'free' THEN CURRENT_TIMESTAMP ELSE last_activity_at END, updated_at = CURRENT_TIMESTAMP WHERE id = $1",
+                        "UPDATE provisioned_instances SET status = 'running', last_started_at = CURRENT_TIMESTAMP, last_activity_at = CASE WHEN $2 THEN CURRENT_TIMESTAMP ELSE last_activity_at END, updated_at = CURRENT_TIMESTAMP WHERE id = $1",
                     )
                     .bind(&id)
+                    .bind(sleeps)
                     .execute(&self.db)
                     .await?;
                     record_instance_started(&self.db, &id).await?;
                 }
                 Ok(BackendStatus::Stopped) if status == "running" || stale_wake => {
-                    // A free computer that stopped is asleep (wakeable).
+                    // A free (or Orgo) computer that stopped is asleep (wakeable).
                     sqlx::query(
-                        "UPDATE provisioned_instances SET status = CASE WHEN tier = 'free' THEN 'sleeping' ELSE 'stopped' END, last_stopped_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = $1",
+                        "UPDATE provisioned_instances SET status = CASE WHEN $2 THEN 'sleeping' ELSE 'stopped' END, last_stopped_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = $1",
                     )
                     .bind(&id)
+                    .bind(sleeps)
                     .execute(&self.db)
                     .await?;
                     record_instance_stopped(&self.db, &id, "provider_stopped").await?;
                 }
                 Ok(_) => {}
-                Err(ProvisionError::NotFound(_)) => self.mark_missing(&row).await?,
+                Err(ProvisionError::NotFound(_)) => self.mark_missing(row).await?,
                 Err(error) => {
                     tracing::warn!(%id, %error, "reconcile: status poll failed, skipping");
                 }
@@ -3350,12 +3972,17 @@ impl ProvisioningService {
         let plan = plan_id.as_deref().unwrap_or("?");
         let message = error.to_string();
         let no_room = message.contains("capacity");
+        let orgo_full = message.contains(CLOUD_POOL_FULL);
         let subject = if no_room {
             format!("New {plan} cloud computer is waiting for a server")
         } else {
             format!("New {plan} cloud computer failed to create")
         };
-        let next = if no_room {
+        let next = if orgo_full {
+            "The Orgo pool is full: the running cap (ALLTERNIT_ORGO_MAX_RUNNING), the daily budget \
+             (ALLTERNIT_ORGO_DAILY_BUDGET_USD) or the orgo:// host's ledger is used up. Raise the limit or wait; \
+             the computer is retried every 5 minutes."
+        } else if no_room {
             "No server has room for it. Buy a server, set it up like allternit-standby (see infrastructure/provisioned-instance/README.md), \
              and register it in provisioned_hosts. The computer is created within 5 minutes of the server being added."
         } else {
@@ -3481,6 +4108,8 @@ struct HostCapacityRow {
     cpu_cores_allocated: i32,
     memory_mb_allocated: i64,
     disk_gb_allocated: i64,
+    /// `orgo://…` hosts take only the classes routed to Orgo.
+    incus_endpoint: String,
 }
 
 impl HostCapacityRow {
@@ -3518,6 +4147,12 @@ pub fn start_provisioning_lifecycle_task(state: Arc<crate::ApiState>) {
             interval.tick().await;
             if let Err(error) = state.provisioning_service.sweep_lifecycle(Utc::now()).await {
                 tracing::error!("Provisioned instance lifecycle sweep failed: {}", error);
+            }
+            // Brain runner boxes unused for 90 days are destroyed (their
+            // own ledger, never provisioned_instances).
+            let runners = crate::services::brain_runners::shared(&state.db);
+            if let Err(error) = runners.sweep_unused(Utc::now()).await {
+                tracing::error!("Brain runner 90-day sweep failed: {}", error);
             }
         }
     });
@@ -3571,6 +4206,12 @@ pub fn start_provisioning_reconcile_task(state: Arc<crate::ApiState>) {
             interval.tick().await;
             if let Err(error) = state.provisioning_service.reconcile_all().await {
                 tracing::error!("Provisioned instance reconciliation failed: {}", error);
+            }
+            // Brain runner boxes idle for 5 minutes are stopped, freeing
+            // their share of ALLTERNIT_RUNNER_RAM_BUDGET_MB.
+            let runners = crate::services::brain_runners::shared(&state.db);
+            if let Err(error) = runners.sweep_idle(Utc::now()).await {
+                tracing::error!("Brain runner idle sweep failed: {}", error);
             }
         }
     });
@@ -3877,7 +4518,63 @@ mod tests {
             profiles: vec!["default".to_string()],
             storage_pool: "default".to_string(),
             user_data: "#cloud-config\nruncmd: [init]\n".to_string(),
+            instance_id: "pi_test".to_string(),
+            class: ComputeClass::Paid,
         }
+    }
+
+    /// The brain runner box must stay sealed: nesting off, a hard memory cap
+    /// with no swap (the runner host has none), a process cap, the runner as
+    /// the first process, and the CLI homes on their own quota'd volume.
+    #[tokio::test]
+    async fn brain_runners_incus_create_makes_a_sealed_box_with_its_home_volume() {
+        let mock = Arc::new(MockTransport::default());
+        mock.responses.lock().unwrap().extend([
+            (201, serde_json::json!({})), // volume create (sync)
+            create_operation_response("allternit-runner-u-abc"),
+        ]);
+        let backend = IncusHttpBackend::with_transport(Box::new(SharedTransport(mock.clone())));
+        let spec = RunnerSpec {
+            name: "allternit-runner-u-abc".to_string(),
+            image: "local:allternit-brain-runner".to_string(),
+            storage_pool: "runner".to_string(),
+            profiles: vec!["brain-runner".to_string()],
+            home_volume: "allternit-runner-u-abc-home".to_string(),
+            home_size_mb: 256,
+            memory_mb: 768,
+            cpu_cores: 1,
+            max_processes: 256,
+            init_cmd: "/usr/local/bin/allternit-runner-init".to_string(),
+            environment: vec![("ALLTERNIT_RUNNER_TOKEN".to_string(), "tok".to_string())],
+        };
+
+        backend.create_runner(&spec).await.unwrap();
+
+        let requests = mock.requests.lock().unwrap();
+        let (method, path, volume) = &requests[0];
+        assert_eq!((method.as_str(), path.as_str()), ("POST", "/1.0/storage-pools/runner/volumes"));
+        let volume = volume.as_ref().unwrap();
+        assert_eq!(volume["type"], "custom");
+        assert_eq!(volume["config"]["size"], "256MiB");
+        let (method, path, body) = &requests[1];
+        assert_eq!((method.as_str(), path.as_str()), ("POST", "/1.0/instances"));
+        let body = body.as_ref().unwrap();
+        let config = &body["config"];
+        assert_eq!(config["security.nesting"], "false");
+        assert_eq!(config["security.privileged"], "false");
+        assert_eq!(config["limits.memory"], "768MiB");
+        assert_eq!(config["limits.memory.enforce"], "hard");
+        assert_eq!(config["limits.memory.swap"], "false");
+        assert_eq!(config["limits.cpu"], "1");
+        assert_eq!(config["limits.processes"], "256");
+        assert_eq!(config["raw.lxc"], "lxc.init.cmd = /usr/local/bin/allternit-runner-init");
+        assert_eq!(config["environment.ALLTERNIT_RUNNER_TOKEN"], "tok");
+        assert!(config.get("cloud-init.user-data").is_none(), "runners never run cloud-init");
+        assert_eq!(body["source"]["alias"], "allternit-brain-runner");
+        assert_eq!(body["profiles"], serde_json::json!(["brain-runner"]));
+        assert_eq!(body["devices"]["home"]["source"], "allternit-runner-u-abc-home");
+        assert_eq!(body["devices"]["home"]["path"], "/home/runner");
+        assert_eq!(body["devices"]["root"]["pool"], "runner");
     }
 
     #[tokio::test]
@@ -3924,6 +4621,8 @@ mod tests {
         assert_eq!(body["type"], "container");
         assert_eq!(body["source"]["alias"], "allternit-desktop");
         assert_eq!(body["config"]["security.privileged"], "false");
+        // bwrap (bash tool, run_code sandbox) needs nesting in the container.
+        assert_eq!(body["config"]["security.nesting"], "true");
         assert_eq!(body["config"]["limits.cpu"], "2");
         assert_eq!(body["config"]["limits.memory"], "2048MiB");
         // Paid computers keep the Incus CPU defaults.
@@ -3934,6 +4633,52 @@ mod tests {
         assert_eq!(body["devices"]["root"]["pool"], "default");
         assert_eq!(body["devices"]["root"]["size"], "20GiB");
         assert_eq!(requests[1].1, "/1.0/operations/op-1/wait?timeout=60");
+    }
+
+    #[tokio::test]
+    async fn incus_create_free_computer_is_also_unprivileged_with_nesting() {
+        let mock = Arc::new(MockTransport::default());
+        mock.responses
+            .lock()
+            .unwrap()
+            .push_back(create_operation_response("allternit-free-z"));
+        let backend = IncusHttpBackend::with_transport(Box::new(SharedTransport(mock.clone())));
+        let free_spec = ProvisionSpec {
+            cpu_priority: Some(2),
+            ..spec("allternit-free-z")
+        };
+
+        backend.create(&free_spec).await.unwrap();
+
+        let requests = mock.requests.lock().unwrap();
+        let config = &requests[0].2.as_ref().unwrap()["config"];
+        assert_eq!(config["security.privileged"], "false");
+        assert_eq!(config["security.nesting"], "true");
+    }
+
+    #[tokio::test]
+    async fn incus_restore_snapshot_reapplies_nesting_after_the_restore() {
+        let mock = Arc::new(MockTransport::default());
+        let backend = IncusHttpBackend::with_transport(Box::new(SharedTransport(mock.clone())));
+
+        backend.restore_snapshot("n1", "before-update").await.unwrap();
+
+        let requests = mock.requests.lock().unwrap();
+        let calls: Vec<(&str, &str)> = requests
+            .iter()
+            .map(|(method, path, _)| (method.as_str(), path.as_str()))
+            .collect();
+        assert_eq!(
+            calls,
+            vec![("PUT", "/1.0/instances/n1"), ("PATCH", "/1.0/instances/n1")]
+        );
+        assert_eq!(requests[0].2.as_ref().unwrap()["restore"], "before-update");
+        let patch = requests[1].2.as_ref().unwrap();
+        assert_eq!(patch["config"]["security.privileged"], "false");
+        assert_eq!(patch["config"]["security.nesting"], "true");
+        // Only the security keys: limits and devices stay as restored.
+        assert_eq!(patch["config"].as_object().unwrap().len(), 2);
+        assert!(patch.get("devices").is_none());
     }
 
     #[tokio::test]
@@ -4150,6 +4895,8 @@ pub(crate) mod pg_tests {
     const MIGRATION_017: &str = include_str!("../../migrations_pg/017_paired_computers.sql");
     const MIGRATION_066: &str = include_str!("../../migrations_pg/066_paired_computer_orgs.sql");
     const MIGRATION_081: &str = include_str!("../../migrations_pg/081_paired_cloud_computers.sql");
+    const MIGRATION_CREDIT: &str = include_str!("../../migrations_pg/132_credit_computers.sql");
+    const MIGRATION_PLAN_HOURS: &str = include_str!("../../migrations_pg/134_plan_computer_hours.sql");
 
     async fn test_pool() -> PgPool {
         let url = "postgres://allternit:allternit_pg_2026@localhost:5432/allternit_test";
@@ -4237,6 +4984,8 @@ pub(crate) mod pg_tests {
         apply_migration_sql(&pool, &schema, MIGRATION_018).await;
         apply_migration_sql(&pool, &schema, MIGRATION_019).await;
         apply_migration_sql(&pool, &schema, MIGRATION_019).await;
+        apply_migration_sql(&pool, &schema, MIGRATION_CREDIT).await;
+        apply_migration_sql(&pool, &schema, MIGRATION_CREDIT).await;
         for sql in [MIGRATION_017, MIGRATION_066, MIGRATION_081] {
             apply_migration_sql(&pool, &schema, sql).await;
         }
@@ -4310,10 +5059,25 @@ pub(crate) mod pg_tests {
         statuses: Mutex<VecDeque<Result<BackendStatus, ProvisionError>>>,
         files: Mutex<Vec<InstanceFile>>,
         fail_create: bool,
+        /// Reports provider "orgo" (as the registry's Orgo backend would).
+        orgo: bool,
+        /// First boot runs in the background, as on Orgo.
+        background: bool,
+        fail_start: bool,
     }
 
     #[async_trait]
     impl ProvisionBackend for MockBackend {
+        fn provider(&self) -> &'static str {
+            if self.orgo {
+                ORGO_SCHEME
+            } else {
+                "incus"
+            }
+        }
+        fn provisions_in_background(&self) -> bool {
+            self.background
+        }
         async fn create(&self, spec: &ProvisionSpec) -> Result<(), ProvisionError> {
             self.created.lock().unwrap().push(spec.clone());
             if self.fail_create {
@@ -4326,6 +5090,9 @@ pub(crate) mod pg_tests {
         }
         async fn start(&self, name: &str) -> Result<(), ProvisionError> {
             self.calls.lock().unwrap().push(format!("start:{name}"));
+            if self.fail_start {
+                return Err(ProvisionError::Api { status: 502, message: "mock first boot failure".to_string() });
+            }
             Ok(())
         }
         async fn stop(&self, name: &str) -> Result<(), ProvisionError> {
@@ -4418,6 +5185,7 @@ pub(crate) mod pg_tests {
     pub(crate) fn service(pool: PgPool, backend: Arc<MockBackend>) -> ProvisioningService {
         ProvisioningService::with_registry(pool, Arc::new(StaticRegistry { backend }))
             .with_defaults(test_defaults())
+            .with_routing(ComputeRouting::default())
     }
 
     #[tokio::test]
@@ -4951,7 +5719,7 @@ pub(crate) mod pg_tests {
         let service = service(pool.clone(), backend.clone());
 
         let first = service.create("user_1", Some("sub_1")).await.unwrap();
-        assert_eq!((first.cpu_cores, first.memory_mb, first.disk_gb), (4, 8192, 40), "Super base");
+        assert_eq!((first.cpu_cores, first.memory_mb, first.disk_gb), (4, 8192, 40), "Max base");
         assert_eq!(first.plan_id.as_deref(), Some("super"));
         let spec = backend.created.lock().unwrap()[0].clone();
         assert_eq!((spec.cpu_cores, spec.memory_mb, spec.disk_gb), (4, 8192, 40));
@@ -5428,6 +6196,53 @@ pub(crate) mod pg_tests {
     }
 
     #[tokio::test]
+    async fn wake_raises_a_small_free_computer_to_the_memory_floor() {
+        let pool = migrated_pool().await;
+        insert_host(&pool, "host_a", 8, 8192, 100).await;
+        let backend = Arc::new(MockBackend::default());
+        let service = free_service(pool.clone(), backend.clone(), test_free_defaults());
+        let view = service.create_free("user_1").await.unwrap();
+        assert_eq!(view.memory_mb, 2048);
+        set_status(&pool, &view.id, "sleeping").await;
+
+        let result = service.wake(&view.id, Some("user_1"), WakeReason::Owner).await.unwrap();
+        result.task.expect("a start task").await.unwrap();
+        let resizes: Vec<String> = backend
+            .calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|call| call.starts_with("resize:"))
+            .cloned()
+            .collect();
+        assert_eq!(resizes, vec![format!("resize:{}:2c/4096m/10g", view.incus_name)]);
+        assert_eq!(service.fetch_row(&view.id, None).await.unwrap().memory_mb, 4096);
+
+        // Already at the floor: a second sleep and wake resizes nothing more.
+        set_status(&pool, &view.id, "sleeping").await;
+        let again = service.wake(&view.id, Some("user_1"), WakeReason::Owner).await.unwrap();
+        again.task.expect("a start task").await.unwrap();
+        let count = backend.calls.lock().unwrap().iter().filter(|c| c.starts_with("resize:")).count();
+        assert_eq!(count, 1);
+    }
+
+    #[tokio::test]
+    async fn wake_checks_admission_with_the_floored_size() {
+        let pool = migrated_pool().await;
+        // Fits at 2048 but not at 4096: the wake must be refused, not admitted.
+        insert_host(&pool, "host_a", 8, 8192, 100).await;
+        let backend = Arc::new(MockBackend::default());
+        let service = free_service(pool.clone(), backend.clone(), test_free_defaults());
+        let view = service.create_free("user_1").await.unwrap();
+        set_status(&pool, &view.id, "sleeping").await;
+        sqlx::query("UPDATE provisioned_hosts SET memory_mb_total = 3000 WHERE id = 'host_a'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(service.wake(&view.id, Some("user_1"), WakeReason::Owner).await.is_err());
+    }
+
+    #[tokio::test]
     async fn wake_starts_a_sleeping_free_computer_once() {
         let pool = migrated_pool().await;
         insert_host(&pool, "host_a", 8, 8192, 100).await;
@@ -5565,5 +6380,993 @@ pub(crate) mod pg_tests {
         let error = service.wake(&mine.id, Some("user_1"), WakeReason::Owner).await.unwrap_err();
         assert!(matches!(error, ApiError::TooManyRequests(_)), "{error:?}");
         assert_eq!(service.fetch_row(&mine.id, None).await.unwrap().status, "sleeping");
+    }
+
+    #[test]
+    fn provider_reads_the_endpoint_scheme() {
+        assert_eq!(provider_for_endpoint("https://incus.example.com:8443"), "incus");
+        assert_eq!(provider_for_endpoint("unix:///var/lib/incus/unix.socket"), "unix");
+        assert_eq!(provider_for_endpoint("e2b://team"), "e2b");
+        assert_eq!(provider_for_endpoint("host.example.com:8443"), "incus");
+    }
+
+    #[tokio::test]
+    async fn one_failing_row_does_not_stop_the_reconcile_pass() {
+        let pool = migrated_pool().await;
+        insert_host(&pool, "host_a", 8, 32768, 200).await;
+        let backend = Arc::new(MockBackend::default());
+        let service = free_service(pool.clone(), backend.clone(), test_free_defaults());
+        let bad = service.create_free("user_1").await.unwrap();
+        let good = service.create_free("user_2").await.unwrap();
+        // Rows are visited in id order; make the first one's update fail in the DB.
+        let (first, second) = if bad.id < good.id { (&bad, &good) } else { (&good, &bad) };
+        for id in [&first.id, &second.id] {
+            set_status(&pool, id, "stopped").await;
+        }
+        sqlx::query(
+            "CREATE FUNCTION fail_bad_row() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'boom'; END $$ LANGUAGE plpgsql",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(&format!(
+            "CREATE TRIGGER fail_bad_row BEFORE UPDATE ON provisioned_instances \
+             FOR EACH ROW WHEN (OLD.id = '{}') EXECUTE FUNCTION fail_bad_row()",
+            first.id
+        ))
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // The backend says Running for both: each wants stopped -> running.
+        service.reconcile_all().await.unwrap();
+        assert_eq!(service.fetch_row(&first.id, None).await.unwrap().status, "stopped");
+        assert_eq!(service.fetch_row(&second.id, None).await.unwrap().status, "running");
+    }
+
+    // ---- Orgo routing, guards, idle and first boot ---------------------------
+
+    async fn insert_orgo_host(pool: &PgPool, id: &str, cpu: i64, mem: i64, disk: i64) {
+        sqlx::query(
+            r#"
+            INSERT INTO provisioned_hosts (
+                id, name, incus_endpoint, cpu_cores_total, memory_mb_total, disk_gb_total
+            ) VALUES ($1, $1, 'orgo://ws_test', $2, $3, $4)
+            "#,
+        )
+        .bind(id)
+        .bind(cpu as i32)
+        .bind(mem)
+        .bind(disk)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    fn orgo_routing(free: bool, paid: bool) -> ComputeRouting {
+        let pick = |orgo: bool| if orgo { ComputeProvider::Orgo } else { ComputeProvider::Incus };
+        ComputeRouting {
+            platform: ComputeProvider::Incus,
+            paid: pick(paid),
+            free: pick(free),
+            credit: ComputeProvider::Orgo,
+            orgo_max_running: 10,
+            orgo_daily_budget_usd: 1000.0,
+            orgo_paid_idle: Duration::minutes(30),
+            orgo_min_hourly_usd: 0.055,
+        }
+    }
+
+    fn orgo_service(pool: &PgPool, backend: &Arc<MockBackend>, routing: ComputeRouting) -> Arc<ProvisioningService> {
+        Arc::new(
+            service(pool.clone(), backend.clone())
+                .with_free_defaults(test_free_defaults())
+                .with_routing(routing),
+        )
+    }
+
+    #[tokio::test]
+    async fn orgo_hosts_take_only_the_classes_routed_to_them() {
+        let pool = migrated_pool().await;
+        insert_host(&pool, "host_a", 16, 32768, 200).await;
+        // More free memory than host_a: without routing it would win the bin-pack.
+        insert_orgo_host(&pool, "host_o", 64, 262_144, 2000).await;
+        let backend = Arc::new(MockBackend::default());
+
+        let incus_only = orgo_service(&pool, &backend, ComputeRouting::default());
+        let paid = incus_only.create("user_1", Some("sub_1")).await.unwrap();
+        assert_eq!(paid.host_id.as_deref(), Some("host_a"));
+        assert_eq!(paid.provider, "incus");
+        assert!(!paid.sleeps_when_idle);
+
+        let free_on_orgo = orgo_service(&pool, &backend, orgo_routing(true, false));
+        let free = free_on_orgo.create_free("user_2").await.unwrap();
+        assert_eq!(free.host_id.as_deref(), Some("host_o"));
+        assert_eq!(free.provider, "orgo");
+        assert!(free.sleeps_when_idle);
+        // Orgo's idempotency key is our instance id; the class picks its size.
+        let spec = backend.created.lock().unwrap().last().cloned().unwrap();
+        assert_eq!(spec.instance_id, free.id);
+        assert_eq!(spec.class, ComputeClass::Free);
+
+        // A class routed to Orgo with no orgo:// host fails plainly (no Incus fallback).
+        sqlx::query("UPDATE provisioned_hosts SET enabled = FALSE WHERE id = 'host_o'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let paid_on_orgo = orgo_service(&pool, &backend, orgo_routing(false, true));
+        let error = paid_on_orgo.create("user_2", Some("sub_9")).await.unwrap_err();
+        assert!(error.to_string().contains("orgo://"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn orgo_skips_host_memory_but_obeys_the_running_cap() {
+        let pool = migrated_pool().await;
+        // 1 GB: Incus memory admission would refuse a 2 GB free computer here.
+        insert_orgo_host(&pool, "host_o", 64, 1024, 2000).await;
+        let backend = Arc::new(MockBackend::default());
+        let routing = ComputeRouting { orgo_max_running: 1, ..orgo_routing(true, false) };
+        let service = orgo_service(&pool, &backend, routing);
+
+        let first = service.create_free("user_1").await.unwrap();
+        assert_eq!(first.host_id.as_deref(), Some("host_o"));
+
+        let error = service.create_free("user_2").await.unwrap_err();
+        assert!(
+            matches!(&error, ApiError::ServiceUnavailable(m) if is_capacity_message(m)),
+            "the running cap is a computer_capacity 503: {error:?}"
+        );
+        let left: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM provisioned_instances WHERE user_id = 'user_2'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(left, 0, "a refused create leaves no row");
+
+        // Asleep, it no longer counts.
+        set_status(&pool, &first.id, "sleeping").await;
+        service.create_free("user_2").await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn orgo_spend_counts_todays_running_time_and_first_boot_and_the_budget_refuses() {
+        let pool = migrated_pool().await;
+        insert_host(&pool, "host_a", 16, 32768, 200).await;
+        insert_orgo_host(&pool, "host_o", 64, 262_144, 2000).await;
+        let backend = Arc::new(MockBackend::default());
+        let service = orgo_service(&pool, &backend, orgo_routing(true, false));
+        // Free 2 vCPU / 2 GB maps to Orgo 2 cpu / 4 GB: priced as Medium, $0.055/h.
+        let on_orgo = service.create_free("user_1").await.unwrap();
+        let on_incus = service.create("user_2", Some("sub_9")).await.unwrap();
+        assert_eq!(on_incus.host_id.as_deref(), Some("host_a"));
+        set_status(&pool, &on_orgo.id, "running").await;
+
+        let at = |s: &str| DateTime::parse_from_rfc3339(s).unwrap().with_timezone(&Utc);
+        for (id, instance, user, started, ended) in [
+            // 4 h of it fall inside 2026-11-13.
+            ("pus_1", &on_orgo.id, "user_1", "2026-11-12T22:00:00Z", Some("2026-11-13T04:00:00Z")),
+            // Open: 2 h up to noon.
+            ("pus_2", &on_orgo.id, "user_1", "2026-11-13T10:00:00Z", None),
+            // Incus time is free of Orgo charges.
+            ("pus_3", &on_incus.id, "user_2", "2026-11-13T00:00:00Z", None),
+        ] {
+            sqlx::query(
+                "INSERT INTO provisioned_instance_usage_sessions (id, instance_id, user_id, started_at, ended_at) VALUES ($1, $2, $3, $4, $5)",
+            )
+            .bind(id)
+            .bind(instance)
+            .bind(user)
+            .bind(at(started))
+            .bind(ended.map(at))
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        let noon = at("2026-11-13T12:00:00Z");
+        let mut conn = pool.acquire().await.unwrap();
+        let spent = orgo::orgo_spend_today_usd(&mut conn, noon, 0.0).await.unwrap();
+        assert!((spent - 6.0 * 0.055).abs() < 1e-6, "{spent}");
+        // The account bills every computer at least as Medium: the floor applies.
+        let floored = orgo::orgo_spend_today_usd(&mut conn, noon, 0.1).await.unwrap();
+        assert!((floored - 6.0 * 0.1).abs() < 1e-6, "{floored}");
+        // The test pool has one connection: give it back before the next query.
+        drop(conn);
+
+        // Time in first boot is billed by Orgo too: provisioning since 11:00.
+        sqlx::query("UPDATE provisioned_instances SET status = 'provisioning', created_at = $2 WHERE id = $1")
+            .bind(&on_orgo.id)
+            .bind(at("2026-11-13T11:00:00Z"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        let spent = orgo::orgo_spend_today_usd(&mut conn, noon, 0.0).await.unwrap();
+        assert!((spent - 7.0 * 0.055).abs() < 1e-6, "{spent}");
+        drop(conn);
+
+        // A used-up budget refuses Orgo; with standby full too, the capacity 503.
+        sqlx::query("UPDATE provisioned_hosts SET enabled = FALSE WHERE id = 'host_a'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let broke = orgo_service(&pool, &backend, ComputeRouting { orgo_daily_budget_usd: 0.0, ..orgo_routing(true, false) });
+        let error = broke.create_free("user_3").await.unwrap_err();
+        assert!(matches!(&error, ApiError::ServiceUnavailable(m) if is_capacity_message(m)), "{error:?}");
+    }
+
+    #[test]
+    fn select_host_never_places_on_the_mail_host() {
+        // host_mail has far more room, so the bin-pack would pick it.
+        let host = |id: &str, cpu_total: i64, memory_total: i64, disk_total: i64| HostCapacity {
+            id: id.to_string(),
+            enabled: true,
+            cpu_total,
+            memory_total,
+            disk_total,
+            cpu_used: 0,
+            memory_used: 0,
+            disk_used: 0,
+        };
+        let hosts = vec![
+            host("host_mail", 64, 262_144, 4000),
+            host("host_a", 4, 8192, 100),
+        ];
+        assert_eq!(select_host(&hosts, 2, 2048, 20).as_deref(), Some("host_a"));
+        // Alone, it takes nothing.
+        assert_eq!(select_host(&hosts[..1], 1, 1024, 10), None);
+        // Extra reserved ids come from ALLTERNIT_RESERVED_HOSTS; host_mail is always in.
+        let reserved = vec!["host_b".to_string(), "host_mail".to_string()];
+        assert!(is_reserved_host_with(&reserved, "host_b"));
+        assert!(is_reserved_host_with(&reserved, "HOST_MAIL"));
+        assert!(!is_reserved_host_with(&reserved, "host_a"));
+        assert!(ALWAYS_RESERVED_HOSTS.contains(&"host_mail"));
+    }
+
+    #[tokio::test]
+    async fn orgo_daily_budget_never_refuses_a_paying_computer() {
+        let pool = migrated_pool().await;
+        insert_orgo_host(&pool, "host_o", 64, 262_144, 2000).await;
+        let backend = Arc::new(MockBackend::default());
+        // Budget used up from the start; no standby host to fall back to.
+        let routing = ComputeRouting { orgo_daily_budget_usd: 0.0, ..orgo_routing(true, true) };
+        let service = orgo_service(&pool, &backend, routing);
+
+        let plan = service.create("user_1", Some("sub_1")).await.unwrap();
+        assert_eq!(plan.host_id.as_deref(), Some("host_o"), "a plan computer is not refused by the budget");
+        let credit = service.create_tier("user_2", None, TIER_CREDIT).await.unwrap();
+        assert_eq!(credit.host_id.as_deref(), Some("host_o"), "a credits computer is not refused by the budget");
+
+        // Unpaid usage is still guarded.
+        let error = service.create_free("user_free").await.unwrap_err();
+        assert!(matches!(&error, ApiError::ServiceUnavailable(m) if is_capacity_message(m)), "{error:?}");
+
+        // A paying computer's hours never count toward the unpaid budget.
+        set_status(&pool, &plan.id, "running").await;
+        sqlx::query(
+            "INSERT INTO provisioned_instance_usage_sessions (id, instance_id, user_id, started_at) VALUES ('pus_p', $1, 'user_1', $2)",
+        )
+        .bind(&plan.id)
+        .bind(Utc::now() - Duration::hours(3))
+        .execute(&pool)
+        .await
+        .unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        let spent = orgo::orgo_spend_today_usd(&mut conn, Utc::now(), 0.055).await.unwrap();
+        assert_eq!(spent, 0.0);
+        drop(conn);
+        assert!(ComputeClass::Paid.is_paying() && ComputeClass::Credit.is_paying());
+        assert!(!ComputeClass::Free.is_paying() && !ComputeClass::Platform.is_paying());
+    }
+
+    /// orgo:// hosts get the real Orgo backend on a fake Orgo API; every
+    /// other host gets the mock (the standby Incus pool).
+    struct SplitRegistry {
+        orgo: Arc<dyn ProvisionBackend>,
+        standby: Arc<MockBackend>,
+    }
+
+    impl std::fmt::Debug for SplitRegistry {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("SplitRegistry")
+        }
+    }
+
+    #[async_trait]
+    impl BackendRegistry for SplitRegistry {
+        async fn backend(&self, _host_id: &str, endpoint: &str) -> Result<Arc<dyn ProvisionBackend>, ApiError> {
+            Ok(if is_orgo_endpoint(endpoint) { self.orgo.clone() } else { self.standby.clone() })
+        }
+    }
+
+    #[tokio::test]
+    async fn orgo_capacity_refusal_on_create_falls_back_to_standby() {
+        let pool = migrated_pool().await;
+        insert_host(&pool, "host_a", 16, 32768, 200).await;
+        insert_orgo_host(&pool, "host_o", 64, 262_144, 2000).await;
+        let (orgo, orgo_creates) = orgo::tests::capacity_refusing_orgo().await;
+        let standby = Arc::new(MockBackend::default());
+        let service = Arc::new(
+            ProvisioningService::with_registry(pool.clone(), Arc::new(SplitRegistry { orgo, standby: standby.clone() }))
+                .with_defaults(test_defaults())
+                .with_free_defaults(test_free_defaults())
+                .with_routing(orgo_routing(false, true)),
+        );
+
+        // Orgo answers insufficient_memory: the plan computer lands on standby.
+        let paid = service.create("user_1", Some("sub_1")).await.unwrap();
+        assert_eq!(orgo_creates(), 1, "Orgo was asked first");
+        assert_eq!(paid.host_id.as_deref(), Some("host_a"));
+        assert_eq!(paid.provider, "incus");
+        assert_eq!(standby.created.lock().unwrap().len(), 1);
+        let orgo_allocated: i32 = sqlx::query_scalar("SELECT cpu_cores_allocated FROM provisioned_hosts WHERE id = 'host_o'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(orgo_allocated, 0, "the refused Orgo slot is released");
+        let live: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM provisioned_instances WHERE user_id = 'user_1' AND status NOT IN ('error', 'deleted')",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(live, 1, "one live computer, on standby");
+
+        // Credits computers fall back the same way.
+        let credit = service.create_tier("user_2", None, TIER_CREDIT).await.unwrap();
+        assert_eq!(credit.host_id.as_deref(), Some("host_a"));
+
+        // Standby with no room either: computer_capacity.
+        sqlx::query("UPDATE provisioned_hosts SET enabled = FALSE WHERE id = 'host_a'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let error = service.create("user_2", Some("sub_9")).await.unwrap_err();
+        assert!(
+            matches!(&error, ApiError::ServiceUnavailable(m) if m.starts_with(orgo::CLOUD_POOL_FULL)),
+            "{error:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn waking_an_orgo_computer_at_capacity_stays_on_orgo() {
+        let pool = migrated_pool().await;
+        insert_host(&pool, "host_a", 16, 32768, 200).await;
+        insert_orgo_host(&pool, "host_o", 64, 262_144, 2000).await;
+        let backend = Arc::new(MockBackend { orgo: true, ..MockBackend::default() });
+        let routing = ComputeRouting { orgo_max_running: 1, ..orgo_routing(false, true) };
+        let service = orgo_service(&pool, &backend, routing);
+
+        let asleep = service.create("user_1", Some("sub_1")).await.unwrap();
+        assert_eq!(asleep.host_id.as_deref(), Some("host_o"));
+        set_status(&pool, &asleep.id, "sleeping").await;
+        let awake = service.create("user_2", Some("sub_2")).await.unwrap();
+        assert_eq!(awake.host_id.as_deref(), Some("host_o"));
+        set_status(&pool, &awake.id, "running").await;
+
+        // The running cap is full: the wake is refused and nothing moves.
+        let error = service.wake(&asleep.id, Some("user_1"), WakeReason::Relay).await.unwrap_err();
+        assert!(matches!(&error, ApiError::ServiceUnavailable(m) if is_capacity_message(m)), "{error:?}");
+        let (status, host): (String, Option<String>) =
+            sqlx::query_as("SELECT status, host_id FROM provisioned_instances WHERE id = $1")
+                .bind(&asleep.id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(status, "sleeping");
+        assert_eq!(host.as_deref(), Some("host_o"), "its disk is on Orgo: it stays there");
+    }
+
+    #[tokio::test]
+    async fn a_paid_orgo_computer_sleeps_when_idle_wakes_on_relay_and_reconcile_reads_stops_as_sleep() {
+        let pool = migrated_pool().await;
+        insert_orgo_host(&pool, "host_o", 64, 262_144, 2000).await;
+        let backend = Arc::new(MockBackend { orgo: true, ..MockBackend::default() });
+        let service = orgo_service(&pool, &backend, orgo_routing(false, true));
+        let paid = service.create("user_1", Some("sub_1")).await.unwrap();
+        assert_eq!(paid.provider, "orgo");
+        assert!(paid.sleeps_when_idle, "paid computers on Orgo sleep");
+
+        set_status(&pool, &paid.id, "running").await;
+        sqlx::query("UPDATE provisioned_instances SET last_activity_at = $2 WHERE id = $1")
+            .bind(&paid.id)
+            .bind(Utc::now() - Duration::minutes(31))
+            .execute(&pool)
+            .await
+            .unwrap();
+        service.sweep_free(Utc::now()).await.unwrap();
+        assert_eq!(status_of(&pool, &paid.id).await, "sleeping");
+        assert!(backend.calls.lock().unwrap().iter().any(|c| c == &format!("stop:{}", paid.incus_name)));
+
+        // A relay request wakes it like a free computer.
+        let woke = service.wake(&paid.id, None, WakeReason::Relay).await.unwrap();
+        assert!(woke.woke);
+        woke.task.unwrap().await.unwrap();
+        assert_eq!(status_of(&pool, &paid.id).await, "running");
+        assert!(backend.calls.lock().unwrap().iter().any(|c| c == &format!("start:{}", paid.incus_name)));
+        // Just woken: the next sweep leaves it up.
+        service.sweep_free(Utc::now()).await.unwrap();
+        assert_eq!(status_of(&pool, &paid.id).await, "running");
+
+        // Orgo stopping it on its own (its auto-stop) reads as asleep, so the
+        // next relay request wakes it; not "stopped", which nothing wakes.
+        backend.statuses.lock().unwrap().push_back(Ok(BackendStatus::Stopped));
+        service.reconcile_all().await.unwrap();
+        assert_eq!(status_of(&pool, &paid.id).await, "sleeping");
+    }
+
+    #[tokio::test]
+    async fn a_failed_background_first_boot_marks_error_frees_the_slot_and_backs_off() {
+        let pool = migrated_pool().await;
+        insert_orgo_host(&pool, "host_o", 64, 262_144, 2000).await;
+        let backend = Arc::new(MockBackend { orgo: true, background: true, fail_start: true, ..MockBackend::default() });
+        let service = orgo_service(&pool, &backend, orgo_routing(false, true));
+        let view = service.create("user_1", Some("sub_1")).await.unwrap();
+
+        let mut status = String::new();
+        for _ in 0..100 {
+            status = status_of(&pool, &view.id).await;
+            if status == "error" {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        assert_eq!(status, "error");
+        let (cpu, memory): (i32, i64) = sqlx::query_as(
+            "SELECT cpu_cores_allocated, memory_mb_allocated FROM provisioned_hosts WHERE id = 'host_o'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!((cpu, memory), (0, 0), "the failed computer's reservation is released");
+        assert!(
+            backend.calls.lock().unwrap().iter().any(|c| c == &format!("stop:{}", view.incus_name)),
+            "a broken computer is stopped so it stops billing"
+        );
+
+        // Within the backoff the next create buys nothing.
+        let error = service.create("user_1", Some("sub_1")).await.unwrap_err();
+        assert!(error.to_string().contains("setup failed"), "{error}");
+        assert_eq!(backend.created.lock().unwrap().len(), 1);
+    }
+
+    // ---- plan computer hours (provisioning_plan_hours.rs) -------------------
+
+    fn at(text: &str) -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339(text).unwrap().with_timezone(&Utc)
+    }
+
+    /// A pool with the wallet, ledger, email record and migration 134
+    /// (applied twice: idempotent).
+    async fn plan_hours_pool() -> PgPool {
+        let pool = migrated_pool().await;
+        credit_tables(&pool).await;
+        let schema: String = sqlx::query_scalar("SELECT current_schema()").fetch_one(&pool).await.unwrap();
+        apply_migration_sql(&pool, &schema, MIGRATION_PLAN_HOURS).await;
+        apply_migration_sql(&pool, &schema, MIGRATION_PLAN_HOURS).await;
+        insert_host(&pool, "host_a", 16, 32768, 200).await;
+        pool
+    }
+
+    fn plan_hours_service(pool: &PgPool, backend: &Arc<MockBackend>, included: i64, charging: bool) -> ProvisioningService {
+        service(pool.clone(), backend.clone())
+            .with_credit_defaults(CreditDefaults::default())
+            .with_plan_hours_defaults(PlanHoursDefaults { plus_included_hours: included, charging })
+    }
+
+    /// user_1's Plus computer (subscription sub_1), `running`, no sessions.
+    async fn plus_computer(pool: &PgPool, service: &ProvisioningService) -> String {
+        let view = service.create("user_1", Some("sub_1")).await.unwrap();
+        sqlx::query("DELETE FROM provisioned_instance_usage_sessions WHERE instance_id = $1")
+            .bind(&view.id)
+            .execute(pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE provisioned_instances SET status = 'running', plan_id = 'plus' WHERE id = $1")
+            .bind(&view.id)
+            .execute(pool)
+            .await
+            .unwrap();
+        view.id
+    }
+
+    async fn overage_ledger(pool: &PgPool) -> Vec<(f64, String)> {
+        sqlx::query_as(
+            "SELECT amount_usd, transaction_id FROM credit_transactions WHERE source = 'plan_computer_overage' ORDER BY created_at, transaction_id",
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn plan_hours_past_200_bill_each_minute_once_across_repeats_and_restarts() {
+        let pool = plan_hours_pool().await;
+        let backend = Arc::new(MockBackend::default());
+        let service = plan_hours_service(&pool, &backend, 200, true);
+        let id = plus_computer(&pool, &service).await;
+        set_balance(&pool, "user_1", 10.0).await;
+        let start = at("2026-11-01T00:00:00Z");
+        add_session(&pool, &id, start, None).await;
+
+        // Under 200 h: metered, nothing charged.
+        let under = service.meter_plan_hours(&id, start + Duration::hours(150)).await.unwrap().unwrap();
+        assert_eq!((under.running_seconds, under.overage_seconds(), under.charged_minutes), (150 * 3600, 0, 0));
+        assert!(overage_ledger(&pool).await.is_empty());
+
+        // Crossing 200 h mid-month: 30 minutes past at $0.10/h.
+        let now = start + Duration::hours(200) + Duration::minutes(30) + Duration::seconds(20);
+        let ticks = service.bill_plan_computer_hours(now).await.unwrap();
+        assert_eq!(ticks.len(), 1);
+        assert_eq!(ticks[0].charged_minutes, 30);
+        assert!((ticks[0].charged_usd - 0.05).abs() < 1e-9, "{}", ticks[0].charged_usd);
+        assert!((balance_of(&pool, "user_1").await - 9.95).abs() < 1e-9);
+
+        // Repeated ticks and a restarted service (new instance, same rows): no second charge.
+        let restarted = plan_hours_service(&pool, &backend, 200, true);
+        for (svc, when) in [(&service, now), (&restarted, now + Duration::seconds(30)), (&restarted, now)] {
+            let repeat = svc.meter_plan_hours(&id, when).await.unwrap().unwrap();
+            assert_eq!((repeat.charged_minutes, repeat.charged_usd), (0, 0.0));
+        }
+        assert!((balance_of(&pool, "user_1").await - 9.95).abs() < 1e-9);
+        let ledger = overage_ledger(&pool).await;
+        assert_eq!(ledger.len(), 1);
+        assert!((ledger[0].0 + 0.05).abs() < 1e-9);
+        assert_eq!(ledger[0].1, format!("plan_computer_overage:{id}:2026-11:30"));
+
+        // The next minute bills one more minute.
+        let next = restarted.meter_plan_hours(&id, now + Duration::minutes(1)).await.unwrap().unwrap();
+        assert_eq!(next.charged_minutes, 1);
+        assert!((next.charged_usd - 0.10 / 60.0).abs() < 1e-12);
+        let meter: (i64, i64, f64) = sqlx::query_as(
+            "SELECT charged_minutes, waived_minutes, charged_usd FROM plan_computer_hours WHERE instance_id = $1",
+        )
+        .bind(&id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!((meter.0, meter.1), (31, 0));
+        assert!((meter.2 - 31.0 * 0.10 / 60.0).abs() < 1e-9);
+
+        // Low balance past the hours: the 2 h warning once (also covers 24 h),
+        // armed again after a top-up.
+        let low_kinds = |pool: PgPool| async move {
+            sqlx::query_scalar::<_, String>("SELECT kind FROM customer_emails WHERE user_id = 'user_1' ORDER BY id")
+                .fetch_all(&pool)
+                .await
+                .unwrap()
+        };
+        assert!(low_kinds(pool.clone()).await.is_empty(), "$9.95 is ~99 h of runway");
+        set_balance(&pool, "user_1", 0.15).await;
+        restarted.bill_plan_computer_hours(now + Duration::minutes(2)).await.unwrap();
+        restarted.bill_plan_computer_hours(now + Duration::minutes(3)).await.unwrap();
+        assert_eq!(low_kinds(pool.clone()).await, vec!["credit_low_2h".to_string()]);
+        set_balance(&pool, "user_1", 10.0).await;
+        restarted.bill_plan_computer_hours(now + Duration::minutes(4)).await.unwrap();
+        let warned: (Option<DateTime<Utc>>, Option<DateTime<Utc>>) =
+            sqlx::query_as("SELECT warned_24h_at, warned_2h_at FROM plan_computer_hours WHERE instance_id = $1")
+                .bind(&id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(warned, (None, None));
+        assert_eq!(status_of(&pool, &id).await, "running");
+    }
+
+    #[tokio::test]
+    async fn plan_hours_with_the_flag_off_meter_and_waive_so_turning_it_on_never_back_charges() {
+        let pool = plan_hours_pool().await;
+        let backend = Arc::new(MockBackend::default());
+        let off = plan_hours_service(&pool, &backend, 200, false);
+        let id = plus_computer(&pool, &off).await;
+        set_balance(&pool, "user_1", 0.0).await;
+        let start = at("2026-11-01T00:00:00Z");
+        add_session(&pool, &id, start, None).await;
+        let now = start + Duration::hours(210);
+        let tick = off.bill_plan_computer_hours(now).await.unwrap().remove(0);
+        assert_eq!((tick.overage_seconds(), tick.charged_minutes), (10 * 3600, 0));
+        // Past the hours at $0, but charging is off: still running, no ledger.
+        assert_eq!(status_of(&pool, &id).await, "running");
+        assert!(overage_ledger(&pool).await.is_empty());
+
+        // Flag on: only minutes after this point are charged.
+        let on = plan_hours_service(&pool, &backend, 200, true);
+        set_balance(&pool, "user_1", 10.0).await;
+        let later = on.meter_plan_hours(&id, now + Duration::minutes(2)).await.unwrap().unwrap();
+        assert_eq!(later.charged_minutes, 2);
+        assert_eq!(overage_ledger(&pool).await.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn plan_hours_close_the_old_month_then_start_the_new_one_at_zero() {
+        let pool = plan_hours_pool().await;
+        let backend = Arc::new(MockBackend::default());
+        // 1 included hour keeps the numbers small; the rule is the same at 200.
+        let service = plan_hours_service(&pool, &backend, 1, true);
+        let id = plus_computer(&pool, &service).await;
+        set_balance(&pool, "user_1", 10.0).await;
+        add_session(&pool, &id, at("2026-11-30T22:00:00Z"), None).await;
+
+        // 23:59:10 → metered to 23:59: 1 h 59 min run, 59 min over.
+        let late = service.meter_plan_hours(&id, at("2026-11-30T23:59:10Z")).await.unwrap().unwrap();
+        assert_eq!(late.charged_minutes, 59);
+
+        // The first tick in December settles November's last minute, and
+        // December starts with its own included hour.
+        let december = service.meter_plan_hours(&id, at("2026-12-01T00:30:05Z")).await.unwrap().unwrap();
+        assert_eq!(december.period_start, at("2026-12-01T00:00:00Z"));
+        assert_eq!(december.running_seconds, 30 * 60);
+        assert_eq!(december.overage_seconds(), 0);
+        assert_eq!(december.charged_minutes, 1, "November's last minute");
+        let months: Vec<(DateTime<Utc>, i64, i64, DateTime<Utc>)> = sqlx::query_as(
+            "SELECT period_start, running_seconds, charged_minutes, metered_through FROM plan_computer_hours WHERE instance_id = $1 ORDER BY period_start",
+        )
+        .bind(&id)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(months.len(), 2);
+        assert_eq!((months[0].1, months[0].2, months[0].3), (2 * 3600, 60, at("2026-12-01T00:00:00Z")));
+        assert_eq!((months[1].1, months[1].2), (30 * 60, 0));
+        let keys: Vec<String> = overage_ledger(&pool).await.into_iter().map(|(_, key)| key).collect();
+        assert_eq!(keys, vec![format!("plan_computer_overage:{id}:2026-11:59"), format!("plan_computer_overage:{id}:2026-11:60")]);
+        assert!((balance_of(&pool, "user_1").await - (10.0 - 60.0 * 0.10 / 60.0)).abs() < 1e-9);
+    }
+
+    #[tokio::test]
+    async fn plan_computer_past_its_hours_stops_at_zero_is_kept_and_runs_again_with_credits_or_next_month() {
+        let pool = plan_hours_pool().await;
+        let backend = Arc::new(MockBackend::default());
+        let service = plan_hours_service(&pool, &backend, 200, true);
+        let id = plus_computer(&pool, &service).await;
+        let start = at("2026-11-01T00:00:00Z");
+        add_session(&pool, &id, start, None).await;
+        // 10 overage minutes cost ~$0.0167; the wallet holds $0.01.
+        set_balance(&pool, "user_1", 0.01).await;
+
+        let stop_at = start + Duration::hours(200) + Duration::minutes(10);
+        service.bill_plan_computer_hours(stop_at).await.unwrap();
+        assert_eq!(balance_of(&pool, "user_1").await, 0.0, "clamped at zero");
+        let row = service.fetch_row(&id, None).await.unwrap();
+        assert_eq!(row.status, "suspended");
+        assert!(row.cancelled_at.is_none() && row.delete_after.is_none(), "kept: no deletion scheduled");
+        assert!(backend.calls.lock().unwrap().contains(&format!("stop:{}", row.incus_name)));
+        let stopped: (Option<DateTime<Utc>>, i64) = sqlx::query_as(
+            "SELECT plan_overage_stopped_at, (SELECT COUNT(*) FROM provisioned_instance_usage_sessions WHERE instance_id = $1 AND ended_at IS NULL) FROM provisioned_instances WHERE id = $1",
+        )
+        .bind(&id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(stopped, (Some(stop_at), 0), "marked, metering closed");
+        let queued: Vec<(String, String)> =
+            sqlx::query_as("SELECT kind, status FROM customer_emails WHERE user_id = 'user_1'").fetch_all(&pool).await.unwrap();
+        assert_eq!(queued, vec![("plan_hours_stopped".to_string(), "queued".to_string())]);
+
+        // Not metered while stopped; not released the same month at $0.
+        assert!(service.bill_plan_computer_hours(stop_at + Duration::minutes(5)).await.unwrap().is_empty());
+        assert!(service.release_plan_hours_stops(stop_at + Duration::hours(1)).await.unwrap().is_empty());
+
+        // Credits added: released (incus computers come back stopped, for /start).
+        set_balance(&pool, "user_1", 5.0).await;
+        assert_eq!(service.release_plan_hours_stops(stop_at + Duration::hours(2)).await.unwrap(), vec![id.clone()]);
+        assert_eq!(status_of(&pool, &id).await, "stopped");
+
+        // Stopped again at $0; the next month releases it without credits.
+        set_balance(&pool, "user_1", 0.0).await;
+        let row = service.fetch_row(&id, None).await.unwrap();
+        service.stop_plan_for_hours(&row, stop_at + Duration::hours(3)).await.unwrap();
+        assert_eq!(status_of(&pool, &id).await, "suspended");
+        assert!(service.release_plan_hours_stops(at("2026-11-30T23:59:00Z")).await.unwrap().is_empty());
+        assert_eq!(service.release_plan_hours_stops(at("2026-12-01T00:00:30Z")).await.unwrap(), vec![id.clone()]);
+        assert_eq!(status_of(&pool, &id).await, "stopped");
+
+        // A plan that lapsed while stopped for hours is not released here:
+        // resuming a lapsed plan is the billing webhook's job.
+        let row = service.fetch_row(&id, None).await.unwrap();
+        service.stop_plan_for_hours(&row, at("2026-12-20T00:00:00Z")).await.unwrap();
+        sqlx::query("UPDATE billing_subscriptions SET status = 'past_due' WHERE stripe_subscription_id = 'sub_1'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        set_balance(&pool, "user_1", 5.0).await;
+        assert!(service.release_plan_hours_stops(at("2027-01-01T00:01:00Z")).await.unwrap().is_empty());
+        assert_eq!(status_of(&pool, &id).await, "suspended");
+    }
+
+    // ---- credit computers (provisioning_credit.rs) -------------------------
+
+    /// The wallet, its ledger and the email record the credit lane writes.
+    async fn credit_tables(pool: &PgPool) {
+        for statement in [
+            "CREATE TABLE user_credits (user_id TEXT PRIMARY KEY, balance_usd DOUBLE PRECISION NOT NULL DEFAULT 0 CHECK (balance_usd >= 0))",
+            "CREATE TABLE credit_transactions (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, amount_usd DOUBLE PRECISION NOT NULL, transaction_id TEXT NOT NULL UNIQUE, source TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())",
+            "CREATE TABLE customer_emails (id BIGSERIAL PRIMARY KEY, user_id TEXT NOT NULL, kind TEXT NOT NULL, ref TEXT NOT NULL DEFAULT '', email TEXT, status TEXT NOT NULL CHECK (status IN ('sent', 'failed', 'skipped', 'queued')), error TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), UNIQUE (user_id, kind, ref))",
+        ] {
+            sqlx::query(statement).execute(pool).await.unwrap();
+        }
+    }
+
+    async fn set_balance(pool: &PgPool, user_id: &str, balance: f64) {
+        sqlx::query(
+            "INSERT INTO user_credits (user_id, balance_usd) VALUES ($1, $2) ON CONFLICT (user_id) DO UPDATE SET balance_usd = $2",
+        )
+        .bind(user_id)
+        .bind(balance)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    async fn balance_of(pool: &PgPool, user_id: &str) -> f64 {
+        sqlx::query_scalar("SELECT balance_usd FROM user_credits WHERE user_id = $1")
+            .bind(user_id)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    fn credit_service(pool: &PgPool, backend: &Arc<MockBackend>) -> Arc<ProvisioningService> {
+        Arc::new(
+            service(pool.clone(), backend.clone())
+                .with_routing(orgo_routing(false, false))
+                .with_credit_defaults(CreditDefaults::default()),
+        )
+    }
+
+    /// A credit computer for `user_id` (bought with a $10 wallet), with its
+    /// billing cursor at `billed_through`, no metering sessions, `status`.
+    async fn credit_computer(
+        pool: &PgPool,
+        service: &ProvisioningService,
+        user_id: &str,
+        status: &str,
+        billed_through: DateTime<Utc>,
+    ) -> InstanceView {
+        set_balance(pool, user_id, 10.0).await;
+        let CreditStart::Started(view) = service.start_credit(user_id).await.unwrap() else {
+            panic!("a $10 wallet starts a credit computer");
+        };
+        sqlx::query("DELETE FROM provisioned_instance_usage_sessions WHERE instance_id = $1")
+            .bind(&view.id)
+            .execute(pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE provisioned_instances SET status = $2, credit_billed_through = $3 WHERE id = $1")
+            .bind(&view.id)
+            .bind(status)
+            .bind(billed_through)
+            .execute(pool)
+            .await
+            .unwrap();
+        view
+    }
+
+    async fn add_session(pool: &PgPool, instance_id: &str, started: DateTime<Utc>, ended: Option<DateTime<Utc>>) {
+        sqlx::query(
+            "INSERT INTO provisioned_instance_usage_sessions (id, instance_id, user_id, started_at, ended_at) \
+             SELECT $1, id, user_id, $3, $4 FROM provisioned_instances WHERE id = $2",
+        )
+        .bind(format!("pus_{}", Uuid::new_v4().simple()))
+        .bind(instance_id)
+        .bind(started)
+        .bind(ended)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    fn t0() -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339("2026-11-01T10:00:00Z").unwrap().with_timezone(&Utc)
+    }
+
+    #[tokio::test]
+    async fn credit_computers_land_on_orgo_at_the_credit_size() {
+        let pool = migrated_pool().await;
+        credit_tables(&pool).await;
+        insert_host(&pool, "host_a", 16, 32768, 200).await;
+        insert_orgo_host(&pool, "host_o", 64, 262_144, 2000).await;
+        let backend = Arc::new(MockBackend::default());
+        let service = credit_service(&pool, &backend);
+        set_balance(&pool, "user_1", 10.0).await;
+        let CreditStart::Started(view) = service.start_credit("user_1").await.unwrap() else {
+            panic!("started");
+        };
+        assert_eq!(view.tier, TIER_CREDIT);
+        assert_eq!(view.host_id.as_deref(), Some("host_o"));
+        assert_eq!(view.provider, "orgo");
+        assert!(view.sleeps_when_idle);
+        assert_eq!((view.cpu_cores, view.memory_mb, view.disk_gb), (2, 8192, 50));
+        let spec = backend.created.lock().unwrap().last().cloned().unwrap();
+        assert_eq!(spec.class, ComputeClass::Credit);
+        assert_eq!(spec.name, credit_incus_name_for("user_1"));
+        // Asking again returns the same computer (one per account).
+        let CreditStart::Started(again) = service.start_credit("user_1").await.unwrap() else {
+            panic!("started");
+        };
+        assert_eq!(again.id, view.id);
+        assert_eq!(backend.created.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn credit_billing_debits_each_minute_once_at_the_running_and_stopped_rates() {
+        let pool = migrated_pool().await;
+        credit_tables(&pool).await;
+        insert_orgo_host(&pool, "host_o", 64, 262_144, 2000).await;
+        let backend = Arc::new(MockBackend::default());
+        let service = credit_service(&pool, &backend);
+        let view = credit_computer(&pool, &service, "user_1", "stopped", t0()).await;
+        // Ran 6 of the 10 minutes, stopped for the other 4.
+        add_session(&pool, &view.id, t0(), Some(t0() + Duration::minutes(6))).await;
+
+        let now = t0() + Duration::minutes(10) + Duration::seconds(30);
+        let tick = service.bill_credit_minutes(&view.id, now).await.unwrap().unwrap();
+        let expected = 6.0 * 0.10 / 60.0 + 4.0 * 0.005 / 60.0;
+        assert_eq!(tick.minutes, 10);
+        assert!((tick.charged_usd - expected).abs() < 1e-9, "{}", tick.charged_usd);
+        assert!((balance_of(&pool, "user_1").await - (10.0 - expected)).abs() < 1e-9);
+
+        // The same minute again (a repeated tick, a restart): no charge.
+        for again in [now, now + Duration::seconds(20)] {
+            let repeat = service.bill_credit_minutes(&view.id, again).await.unwrap().unwrap();
+            assert_eq!((repeat.minutes, repeat.charged_usd), (0, 0.0));
+        }
+        assert!((balance_of(&pool, "user_1").await - (10.0 - expected)).abs() < 1e-9);
+        let ledger: Vec<(f64, String)> = sqlx::query_as(
+            "SELECT amount_usd, transaction_id FROM credit_transactions WHERE source = 'credit_computer'",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(ledger.len(), 1);
+        assert!((ledger[0].0 + expected).abs() < 1e-9);
+        assert_eq!(ledger[0].1, format!("credit_computer:{}:{}", view.id, (t0() + Duration::minutes(10)).timestamp() / 60));
+
+        // The next minute: stopped the whole minute.
+        let next = service.bill_credit_minutes(&view.id, now + Duration::minutes(1)).await.unwrap().unwrap();
+        assert_eq!(next.minutes, 1);
+        assert!((next.charged_usd - 0.005 / 60.0).abs() < 1e-12);
+    }
+
+    #[tokio::test]
+    async fn credit_computer_stops_at_zero_keeps_its_disk_and_needs_the_minimum_to_restart() {
+        let pool = migrated_pool().await;
+        credit_tables(&pool).await;
+        insert_orgo_host(&pool, "host_o", 64, 262_144, 2000).await;
+        let backend = Arc::new(MockBackend::default());
+        let service = credit_service(&pool, &backend);
+        let view = credit_computer(&pool, &service, "user_1", "running", t0()).await;
+        add_session(&pool, &view.id, t0(), None).await;
+        // 10 running minutes cost ~$0.0167; the wallet holds $0.01.
+        set_balance(&pool, "user_1", 0.01).await;
+
+        let now = t0() + Duration::minutes(10);
+        let ticks = service.bill_credit_computers(now).await.unwrap();
+        assert_eq!(ticks.len(), 1);
+        assert_eq!(balance_of(&pool, "user_1").await, 0.0, "clamped at zero");
+        let row = service.fetch_row(&view.id, None).await.unwrap();
+        assert_eq!(row.status, "suspended");
+        assert_eq!(row.delete_after, Some(now + Duration::days(14)));
+        assert!(backend.calls.lock().unwrap().contains(&format!("stop:{}", row.incus_name)));
+        let open: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM provisioned_instance_usage_sessions WHERE instance_id = $1 AND ended_at IS NULL",
+        )
+        .bind(&view.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(open, 0, "metering closed");
+        let queued: Vec<(String, String)> =
+            sqlx::query_as("SELECT kind, status FROM customer_emails WHERE user_id = 'user_1'")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(queued, vec![("credit_stopped".to_string(), "queued".to_string())]);
+
+        // Suspended computers are not billed.
+        assert!(service.bill_credit_computers(now + Duration::minutes(5)).await.unwrap().is_empty());
+
+        // Restart needs the minimum, then resumes the same computer.
+        set_balance(&pool, "user_1", 4.99).await;
+        assert!(matches!(
+            service.start_credit("user_1").await.unwrap(),
+            CreditStart::InsufficientCredits { balance_usd } if (balance_usd - 4.99).abs() < 1e-9
+        ));
+        set_balance(&pool, "user_1", 5.0).await;
+        let CreditStart::Started(resumed) = service.start_credit("user_1").await.unwrap() else {
+            panic!("$5 restarts it");
+        };
+        assert_eq!(resumed.id, view.id);
+        assert_ne!(resumed.status, "suspended");
+        assert!(resumed.delete_after.is_none());
+        let cursor: Option<DateTime<Utc>> =
+            sqlx::query_scalar("SELECT credit_billed_through FROM provisioned_instances WHERE id = $1")
+                .bind(&view.id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(cursor.unwrap() > now, "the suspended days are not billed");
+    }
+
+    #[tokio::test]
+    async fn credit_runway_warnings_fire_once_and_rearm_after_a_top_up() {
+        let pool = migrated_pool().await;
+        credit_tables(&pool).await;
+        insert_orgo_host(&pool, "host_o", 64, 262_144, 2000).await;
+        let backend = Arc::new(MockBackend::default());
+        let service = credit_service(&pool, &backend);
+        let view = credit_computer(&pool, &service, "user_1", "sleeping", t0()).await;
+        let kinds = || async {
+            sqlx::query_scalar::<_, String>("SELECT kind FROM customer_emails WHERE user_id = 'user_1' ORDER BY id")
+                .fetch_all(&pool)
+                .await
+                .unwrap()
+        };
+
+        // $1 = 10 hours of running time: the 24 h warning, once.
+        set_balance(&pool, "user_1", 1.0).await;
+        service.bill_credit_computers(t0()).await.unwrap();
+        service.bill_credit_computers(t0() + Duration::seconds(5)).await.unwrap();
+        assert_eq!(kinds().await, vec!["credit_low_24h"]);
+
+        // $0.15 = 1.5 hours: the 2 h warning.
+        set_balance(&pool, "user_1", 0.15).await;
+        service.bill_credit_computers(t0() + Duration::seconds(10)).await.unwrap();
+        assert_eq!(kinds().await, vec!["credit_low_24h", "credit_low_2h"]);
+
+        // A top-up past 24 h clears both; dropping again warns again.
+        set_balance(&pool, "user_1", 5.0).await;
+        service.bill_credit_computers(t0() + Duration::seconds(20)).await.unwrap();
+        let warned: (Option<DateTime<Utc>>, Option<DateTime<Utc>>) = sqlx::query_as(
+            "SELECT credit_warned_24h_at, credit_warned_2h_at FROM provisioned_instances WHERE id = $1",
+        )
+        .bind(&view.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(warned, (None, None));
+        set_balance(&pool, "user_1", 1.0).await;
+        service.bill_credit_computers(t0() + Duration::seconds(30)).await.unwrap();
+        assert_eq!(kinds().await, vec!["credit_low_24h", "credit_low_2h", "credit_low_24h"]);
+    }
+
+    #[tokio::test]
+    async fn suspended_credit_computers_get_retention_warnings_then_are_deleted() {
+        let pool = migrated_pool().await;
+        credit_tables(&pool).await;
+        insert_orgo_host(&pool, "host_o", 64, 262_144, 2000).await;
+        let backend = Arc::new(MockBackend::default());
+        let service = credit_service(&pool, &backend);
+        let view = credit_computer(&pool, &service, "user_1", "suspended", t0()).await;
+        let stopped_at = t0();
+        sqlx::query("UPDATE provisioned_instances SET cancelled_at = $2, delete_after = $3 WHERE id = $1")
+            .bind(&view.id)
+            .bind(stopped_at)
+            .bind(stopped_at + Duration::days(14))
+            .execute(&pool)
+            .await
+            .unwrap();
+        let warnings = || async {
+            sqlx::query_scalar::<_, String>("SELECT ref FROM customer_emails WHERE kind = 'credit_delete_warning' ORDER BY id")
+                .fetch_all(&pool)
+                .await
+                .unwrap()
+        };
+
+        service.sweep_credit_retention(stopped_at + Duration::days(3)).await.unwrap();
+        assert!(warnings().await.is_empty(), "nothing before day 7");
+        service.sweep_credit_retention(stopped_at + Duration::days(8)).await.unwrap();
+        service.sweep_credit_retention(stopped_at + Duration::days(9)).await.unwrap();
+        assert_eq!(warnings().await.len(), 1, "day 7 warning once");
+        service.sweep_credit_retention(stopped_at + Duration::days(13) + Duration::hours(1)).await.unwrap();
+        assert_eq!(warnings().await.len(), 2, "day 13 warning");
+
+        service.sweep_credit_retention(stopped_at + Duration::days(14) + Duration::minutes(1)).await.unwrap();
+        let row = service.fetch_row(&view.id, None).await.unwrap();
+        assert_eq!(row.status, "deleted");
+        assert!(backend.calls.lock().unwrap().contains(&format!("delete:{}", row.incus_name)));
+        let allocated: i64 = sqlx::query_scalar("SELECT memory_mb_allocated FROM provisioned_hosts WHERE id = 'host_o'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(allocated, 0, "its host capacity is released");
     }
 }

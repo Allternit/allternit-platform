@@ -6,6 +6,7 @@
 import type { Argv } from "yargs"
 import { randomUUID } from "node:crypto"
 import { cmd } from "@/cli/commands/cmd"
+import { UI } from "@/cli/ui"
 import { Filesystem } from "@/runtime/util/filesystem"
 import {
   createApiContentArtifact,
@@ -14,6 +15,7 @@ import {
   getApiContentArtifactVersion,
   listApiContentArtifacts,
 } from "@/runtime/services/api/allternitApi"
+import { artifactShareStatus, shareArtifact, unshareArtifact } from "@/cli/work/api"
 
 async function readStdin(): Promise<string> {
   const chunks: Buffer[] = []
@@ -161,14 +163,42 @@ export const ArtifactSaveCommand = cmd({
   },
 })
 
+export const ArtifactShareCommand = cmd({
+  command: "share <id>",
+  describe: "publish an artifact and print its share link (--status to check, --off to unpublish)",
+  builder: (yargs: Argv) =>
+    yargs
+      .positional("id", { type: "string", demandOption: true })
+      .option("at", { type: "number", describe: "publish this version (default: current)" })
+      .option("status", { type: "boolean", describe: "only show whether it is shared" })
+      .option("off", { type: "boolean", describe: "stop sharing (removes the link)" }),
+  async handler(args) {
+    const id = String(args.id)
+    try {
+      if (args.off) {
+        await unshareArtifact(id)
+        process.stdout.write(`${id}: no longer shared\n`)
+        return
+      }
+      const s = args.status ? await artifactShareStatus(id) : await shareArtifact(id, args.at)
+      if (!s.published) process.stdout.write(`${id}: not shared. Run \`gizzi artifact share ${id}\`.\n`)
+      else process.stdout.write(`${s.url ?? s.routePath}${s.version != null ? `  (v${s.version})` : ""}\n`)
+    } catch (e) {
+      UI.error((e as Error).message)
+      process.exitCode = 1
+    }
+  },
+})
+
 export const ArtifactCommand = cmd({
   command: "artifact",
-  describe: "content-artifact client for the local gateway (A:// Artifacts API — list/read/create)",
+  describe: "content-artifact client for the local gateway (A:// Artifacts API — list/read/create/share)",
   builder: (yargs: Argv) =>
     yargs
       .command(ArtifactListCommand)
       .command(ArtifactShowCommand)
       .command(ArtifactSaveCommand)
+      .command(ArtifactShareCommand)
       .demandCommand(),
   async handler() {},
 })

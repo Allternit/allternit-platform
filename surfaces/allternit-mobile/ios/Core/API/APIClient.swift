@@ -47,7 +47,7 @@ enum APIRoute: Sendable {
 /// camelCase replies), so no key-decoding strategy is applied globally.
 final class APIClient: @unchecked Sendable {
     static let shared = APIClient(
-        tokenProvider: { try await AuthManager.shared.effectiveToken() },
+        tokenProvider: { try await AuthManager.shared.apiToken() },
         routeProvider: { await EnvironmentStore.shared.apiRoute() }
     )
 
@@ -106,7 +106,8 @@ final class APIClient: @unchecked Sendable {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
 
-        if let token = try await tokenProvider(), !token.isEmpty {
+        let token = try await tokenProvider()
+        if let token, !token.isEmpty {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
         #if DEBUG
@@ -136,11 +137,23 @@ final class APIClient: @unchecked Sendable {
 
     /// Throws a typed APIError for non-2xx responses, surfacing the gateway's
     /// `{ "message" | "error" }` body when present (same shape the web reads).
-    func validate(_ response: URLResponse, data: Data? = nil) throws {
+    func validate(_ response: URLResponse, data: Data? = nil, method: String? = nil) throws {
         guard let httpResponse = response as? HTTPURLResponse else {
             throw APIError.invalidResponse
         }
         guard (200...299).contains(httpResponse.statusCode) else {
+            #if DEBUG
+            let snippet = data.flatMap { String(data: $0.prefix(200), encoding: .utf8) } ?? ""
+            NSLog("[APIClient] %d %@ %@", httpResponse.statusCode, httpResponse.url?.absoluteString ?? "-", snippet)
+            #else
+            // Status and path only (no body), so a failing screen shows in
+            // the device log.
+            NSLog("[APIClient] %d %@", httpResponse.statusCode, httpResponse.url?.path ?? "-")
+            #endif
+            // 409 compute_required: the account has no computer; open the gate.
+            if httpResponse.statusCode == 409, ComputeHTTP.errorCode(data) == "compute_required" {
+                Task { @MainActor in ComputeStatusStore.shared.noteComputeRequired(method: method) }
+            }
             throw APIError.httpError(
                 statusCode: httpResponse.statusCode,
                 message: Self.errorMessage(from: data)
@@ -168,6 +181,17 @@ final class APIClient: @unchecked Sendable {
     /// the proxy envelope, exactly like the web interceptor (which builds
     /// same-origin `/api/*` URLs and forwards `runtimePath(url)`).
     func send(_ request: URLRequest) async throws -> (Data, URLResponse) {
+        // `-sample-workspace` (DEBUG): SampleURLProtocol answers every call,
+        // whatever the route or computer.
+        if SampleURLProtocol.handles(request.url) {
+            return try await session.data(for: request)
+        }
+        // A client built on an `allternit-relay://<runtimeId>` placeholder
+        // (InstanceConnection.resolve → the user's computer via the cloud
+        // relay) always goes through RuntimeRelayClient.
+        if let runtimeId = RuntimeRelayClient.runtimeId(in: request.url) {
+            return try await RuntimeRelayClient.shared.send(request, runtimeId: runtimeId)
+        }
         switch await routeProvider() {
         case .direct:
             return try await session.data(for: request)
@@ -182,6 +206,12 @@ final class APIClient: @unchecked Sendable {
     /// runtime's status/headers/streaming body untouched, so SSE backpressure
     /// is preserved end-to-end (fetch-interceptor.ts:465-467).
     func sendStream(_ request: URLRequest) async throws -> (URLSession.AsyncBytes, URLResponse) {
+        if SampleURLProtocol.handles(request.url) {
+            return try await session.bytes(for: request)
+        }
+        if let runtimeId = RuntimeRelayClient.runtimeId(in: request.url) {
+            return try await RuntimeRelayClient.shared.stream(request, runtimeId: runtimeId)
+        }
         switch await routeProvider() {
         case .direct:
             return try await session.bytes(for: request)
@@ -195,7 +225,7 @@ final class APIClient: @unchecked Sendable {
     func get<T: Decodable>(path: String) async throws -> T {
         let request = try await authorizedRequest(path: path)
         let (data, response) = try await send(request)
-        try validate(response, data: data)
+        try validate(response, data: data, method: "GET")
         do {
             return try JSONDecoder().decode(T.self, from: data)
         } catch {
@@ -277,6 +307,8 @@ final class APIClient: @unchecked Sendable {
     private static let relayForwardedHeaders: Set<String> = [
         "accept", "content-type", "if-none-match", "if-modified-since",
         "last-event-id", "x-request-id",
+        // D16: a person's own act (plan approval); cloud-api forwards it.
+        "x-allternit-human-proof",
     ]
 
     /// Builds the cloud-relay request for an outgoing runtime call

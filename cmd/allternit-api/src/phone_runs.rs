@@ -283,7 +283,9 @@ pub fn frame(data_dir: &FsPath, serial: &str, step: &str) -> Option<Vec<u8>> {
     std::fs::read(dir.join(format!("{step}.png"))).ok()
 }
 
-/// Runs, newest first: `{run_id, serial, started_at, ended_at, steps, failed, source, thumbnail}`.
+/// Runs, newest first: `{run_id, serial, started_at, ended_at, steps, failed, source, thumbnail}`,
+/// plus `status` (`running` | `waiting_approval`, with `approvalId` and `effect`
+/// while a hold waits), `step`, `step_label` and `trail` (`[{n, label, ok}]`) for a task or replay still in progress.
 pub fn runs(steps: &[Step]) -> Vec<Value> {
     let mut order: Vec<String> = Vec::new();
     let mut by: std::collections::HashMap<String, Vec<&Step>> = std::collections::HashMap::new();
@@ -297,7 +299,7 @@ pub fn runs(steps: &[Step]) -> Vec<Value> {
         .iter()
         .map(|id| {
             let list = &by[id];
-            json!({
+            let mut run = json!({
                 "run_id": id,
                 "serial": list[0].serial,
                 "started_at": list[0].at,
@@ -306,7 +308,15 @@ pub fn runs(steps: &[Step]) -> Vec<Value> {
                 "failed": list.iter().filter(|s| !s.ok).count(),
                 "source": list.iter().find_map(|s| s.source.clone()),
                 "thumbnail": list.iter().rev().find_map(|s| s.thumbnail.clone()),
-            })
+            });
+            if let Some(live) = live_of(id) {
+                for k in ["status", "approvalId", "effect", "step", "step_label", "trail"] {
+                    if let Some(v) = live.get(k).filter(|v| !v.is_null()) {
+                        run[k] = v.clone();
+                    }
+                }
+            }
+            run
         })
         .collect();
     out.reverse();
@@ -383,6 +393,11 @@ async fn redact_frame(image_base64: Option<String>, data_dir: &FsPath) -> Option
     crate::computer_safety::black_out(&png, &boxes).ok().map(|out| B64.encode(out))
 }
 
+/// A run's live status from the phone guard (`waiting_approval` while a hold waits).
+pub fn live_of(run_id: &str) -> Option<Value> {
+    crate::phone_guard::live_status(run_id)
+}
+
 // ─── Events (phone.step, phone.run.completed) ─────────────────────────────
 
 /// The owner ledger row of a recorded step: what `phone.step` webhooks carry.
@@ -402,6 +417,146 @@ pub fn step_event(step: &Step) -> Value {
     })
 }
 
+// ─── The phone_task card (a task started on a thread) ─────────────────────
+
+/// Post (or update) the `phone_task` card on the task's thread. The card is a
+/// ledger event on the thread's bot; each status change is a new event for the
+/// same `runId`, and the newest one is the card's state. Nothing is written for
+/// a task with no thread. Card shape:
+/// `{"type":"phone_task","runId","serial","goal","status","step","inboxId?"}`.
+pub fn post_task_card(db: &crate::db::DbHandle, ctx: &crate::phone_guard::TaskCtx, run_id: &str, serial: &str, goal: &str, status: &str, step: u32, inbox_id: Option<&str>) -> bool {
+    post_task_card_with_summary(db, ctx, run_id, serial, goal, status, step, inbox_id, None)
+}
+
+/// [`post_task_card`] plus the run's own result sentence (one line, ~200 chars) on a closed card.
+pub fn post_task_card_with_summary(db: &crate::db::DbHandle, ctx: &crate::phone_guard::TaskCtx, run_id: &str, serial: &str, goal: &str, status: &str, step: u32, inbox_id: Option<&str>, summary: Option<&str>) -> bool {
+    post_run_card(db, ctx, &RunCard { kind: "phone_task", run_id, serial, goal, status, step, step_label: None, inbox_id, summary, trail: None })
+}
+
+/// Most entries a closing card's `trail` (and the live `trail`) keeps.
+pub const TRAIL_MAX: usize = 40;
+
+/// One card event of a run, for any card kind (`phone_task`, `computer_task`).
+pub struct RunCard<'a> {
+    pub kind: &'a str,
+    pub run_id: &'a str,
+    pub serial: &'a str,
+    pub goal: &'a str,
+    pub status: &'a str,
+    pub step: u32,
+    /// What the run is doing now, from `phone_task::step_label` (never typed text).
+    pub step_label: Option<&'a str>,
+    pub inbox_id: Option<&'a str>,
+    pub summary: Option<&'a str>,
+    /// `[{n, label, ok}]`, newest last; clipped to [`TRAIL_MAX`].
+    pub trail: Option<&'a [Value]>,
+}
+
+/// Post one run card on the run's thread (a ledger event on the thread's bot). Card shape:
+/// `{"type":kind,"runId","serial","goal","status","step","stepLabel?","inboxId?","summary?","trail?":[{"n","label","ok"}]}`.
+/// The idempotency key is `phone-task:{run}:{status}:{step}:{inbox}` (`computer-task:` for a
+/// `computer_task`). `false` when the run has no thread.
+pub fn post_run_card(db: &crate::db::DbHandle, ctx: &crate::phone_guard::TaskCtx, c: &RunCard) -> bool {
+    let mut card = json!({
+        "type": c.kind,
+        "runId": c.run_id,
+        "serial": c.serial,
+        "goal": c.goal.chars().take(300).collect::<String>(),
+        "status": c.status,
+        "step": c.step,
+    });
+    if let Some(l) = c.step_label.map(|t| t.split_whitespace().collect::<Vec<_>>().join(" ")).filter(|t| !t.is_empty()) {
+        card["stepLabel"] = json!(l.chars().take(80).collect::<String>());
+    }
+    if let Some(i) = c.inbox_id {
+        card["inboxId"] = json!(i);
+    }
+    if let Some(line) = c.summary.map(|t| t.split_whitespace().collect::<Vec<_>>().join(" ")).filter(|t| !t.is_empty()) {
+        card["summary"] = json!(line.chars().take(200).collect::<String>());
+    }
+    if let Some(t) = c.trail.filter(|t| !t.is_empty()) {
+        card["trail"] = json!(t[t.len().saturating_sub(TRAIL_MAX)..]);
+    }
+    // The status snapshot follows the run even when it has no thread.
+    crate::status_snapshot::note_run_card(&ctx.owner, &card);
+    let Some(thread) = ctx.thread_id.as_deref().map(str::trim).filter(|t| !t.is_empty()) else { return false };
+    let Ok(conn) = db.connect() else { return false };
+    let bot = ctx
+        .bot_id
+        .clone()
+        .filter(|b| !b.trim().is_empty())
+        .or_else(|| conn.query_row("SELECT bot_id FROM bot_threads WHERE id = ?1", rusqlite::params![thread], |r| r.get::<_, String>(0)).ok());
+    drop(conn);
+    let Some(bot) = bot else { return false };
+    let prefix = if c.kind == "computer_task" { "computer-task" } else { "phone-task" };
+    let key = format!("{prefix}:{}:{}:{}:{}", c.run_id, c.status, c.step, c.inbox_id.unwrap_or(""));
+    crate::gateway_runner::led(db, &bot, thread, ctx.session_id.as_deref(), c.kind, ("system", "phone"), card, Some(key))
+}
+
+// ─── The run's latest screen (the status card's thumbnail) ────────────────
+
+/// True when `user_id` owns the run: a hold or a `phone_task` card for it sits on one of their
+/// bots, or the caller is this runtime's paired owner. A run nobody can trace is nobody's.
+fn owns_run(db: &crate::db::DbHandle, user_id: &str, run_id: &str) -> bool {
+    if crate::relay_auth::process_secret().paired_owner().is_some_and(|o| o.to_string() == user_id) {
+        return true;
+    }
+    let Ok(conn) = db.connect() else { return false };
+    let held: i64 = conn
+        .query_row("SELECT COUNT(*) FROM gateway_approvals WHERE owner = ?1 AND correlation_id LIKE ?2", rusqlite::params![user_id, format!("phone:{run_id}:%")], |r| r.get(0))
+        .unwrap_or(0);
+    if held > 0 {
+        return true;
+    }
+    let carded: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM bot_events e JOIN agents a ON a.id = e.bot_id WHERE a.user_id = ?1 AND e.event_type = 'phone_task' AND json_extract(e.payload, '$.runId') = ?2",
+            rusqlite::params![user_id, run_id],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+    carded > 0
+}
+
+/// The newest kept frame of a run, downscaled to 360 px wide, as a JPEG. Frames are already
+/// redacted (OCR) when kept; `None` when the run has none.
+pub fn run_thumb(data_dir: &FsPath, run_id: &str) -> Option<Vec<u8>> {
+    if run_id.is_empty() || !run_id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
+        return None;
+    }
+    let mut best: Option<(String, std::path::PathBuf)> = None;
+    for entry in std::fs::read_dir(root(data_dir)).into_iter().flatten().filter_map(Result::ok) {
+        let dir = entry.path();
+        if !dir.is_dir() {
+            continue;
+        }
+        for step in read_steps(&dir).into_iter().filter(|s| s.run_id == run_id && s.snapshot) {
+            let png = dir.join(format!("{}.png", step.id));
+            if png.is_file() && best.as_ref().map_or(true, |(at, _)| step.at >= *at) {
+                best = Some((step.at.clone(), png));
+            }
+        }
+    }
+    let bytes = std::fs::read(best?.1).ok()?;
+    let img = image::load_from_memory(&bytes).ok()?;
+    let img = if img.width() > 360 { img.resize(360, u32::MAX, image::imageops::FilterType::Triangle) } else { img };
+    let mut out = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::ImageRgb8(img.to_rgb8()).write_to(&mut out, image::ImageFormat::Jpeg).ok()?;
+    Some(out.into_inner())
+}
+
+/// `GET /phones/runs/:run_id/thumb`: owner session only; 404 when the run has no frame or isn't theirs.
+async fn get_run_thumb(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Path(run_id): Path<String>) -> Response {
+    if !owns_run(&state.db, &user.user_id, &run_id) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let dir = state.data_dir.clone();
+    match tokio::task::spawn_blocking(move || run_thumb(&dir, &run_id)).await {
+        Ok(Some(jpg)) => ([("content-type", "image/jpeg"), ("cache-control", "private, no-store")], jpg).into_response(),
+        _ => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
 /// The owner ledger row of a finished task / skill run, from its report.
 pub fn run_event(report: &Value, source: &str) -> Value {
     let steps = report.get("steps").and_then(Value::as_array);
@@ -416,12 +571,23 @@ pub fn run_event(report: &Value, source: &str) -> Value {
         "failed": steps.map(|s| s.iter().filter(|x| x.get("ok").and_then(Value::as_bool) == Some(false)).count()).unwrap_or(0),
         "model_calls": report.get("model_calls"),
         "duration_ms": report.get("duration_ms"),
+        // Time spent waiting on the owner (left out of `duration_ms`) and the
+        // holds the run met: `[{approvalId, effect, state}]`. Statuses add
+        // `denied`, `approval_timeout` and `phone_locked`.
+        "held_ms": report.get("held_ms").and_then(Value::as_u64).unwrap_or(0),
+        "holds": report.get("holds").cloned().unwrap_or_else(|| json!([])),
+        // The conversation the run belongs to, when it started on one.
+        "thread_id": report.get("thread_id"),
+        "session_id": report.get("session_id"),
+        "reason": report.get("reason"),
     })
 }
 
 /// Write a phone event to the owner ledger, which `runtime_events` forwards
 /// to the cloud (Platform API webhooks, MCP Events). Best effort and a no-op
 /// on an unpaired runtime: phone runs never wait on, or fail for, the cloud.
+/// Any type is kept: `phone.step`, `phone.run.completed`, and the guard's
+/// `phone.approval.requested` / `phone.approval.resolved`.
 pub fn record_event(db: &crate::db::DbHandle, event_type: &str, payload: Value, key: String) {
     let Some(owner) = crate::relay_auth::process_secret().paired_owner() else { return };
     let db = db.clone();
@@ -448,6 +614,16 @@ pub fn record_run_completed(db: &crate::db::DbHandle, report: &Value, source: &s
 #[derive(Deserialize)]
 struct HistoryQuery {
     run_id: Option<String>,
+    /// At most this many newest steps (the whole history when absent).
+    limit: Option<usize>,
+}
+
+/// The newest `limit` steps, newest first.
+fn newest(mut shown: Vec<Step>, limit: Option<usize>) -> Vec<Step> {
+    let Some(limit) = limit else { return shown };
+    shown.sort_by(|a, b| b.at.cmp(&a.at));
+    shown.truncate(limit);
+    shown
 }
 
 fn bad(status: StatusCode, message: impl Into<String>) -> Response {
@@ -486,6 +662,7 @@ async fn get_history(
             Some(r) => all.into_iter().filter(|s| s.run_id == r).collect(),
             None => all,
         };
+        let shown = newest(shown, q.limit);
         json!({ "serial": serial, "steps": shown, "runs": runs, "retention_days": RETENTION_DAYS, "max_steps": MAX_STEPS })
     })
     .await
@@ -544,6 +721,7 @@ pub fn router() -> Router<Arc<AppState>> {
             get(get_history).post(post_history).layer(DefaultBodyLimit::max(24 * 1024 * 1024)),
         )
         .route("/phones/:serial/history/:step/snapshot", get(get_snapshot))
+        .route("/phones/runs/:run_id/thumb", get(get_run_thumb))
 }
 
 #[cfg(test)]
@@ -563,6 +741,20 @@ mod tests {
     }
 
     #[test]
+    fn a_live_runs_row_carries_the_step_label_and_trail() {
+        let tmp = tempfile::tempdir().unwrap();
+        ingest(tmp.path(), "link:x", StepIn { run_id: Some("task-live-pill".into()), tool: "phone.tap".into(), ok: true, ..Default::default() }).unwrap();
+        let steps = steps(tmp.path(), "link:x", None);
+        crate::phone_guard::merge_live("task-live-pill", json!({ "status": "running", "step": 2, "step_label": "Open Settings", "trail": [{ "n": 1, "label": "Home", "ok": true }] }));
+        let row = runs(&steps).remove(0);
+        assert_eq!((row["status"].as_str(), row["step"].as_u64(), row["step_label"].as_str()), (Some("running"), Some(2), Some("Open Settings")));
+        assert_eq!(row["trail"][0]["label"], "Home");
+        crate::phone_guard::set_live("task-live-pill", None);
+        let done = runs(&steps).remove(0);
+        assert!(done.get("step_label").is_none());
+    }
+
+    #[test]
     fn ingest_groups_runs_and_bounds_the_path() {
         let tmp = tempfile::tempdir().unwrap();
         for tool in ["phone.read_ui", "phone.tap"] {
@@ -573,5 +765,56 @@ mod tests {
         assert_eq!(runs(&got)[0]["steps"], 2);
         assert!(ingest(tmp.path(), "s", StepIn { tool: "rm".into(), ..Default::default() }).is_err());
         assert!(frame(tmp.path(), "s", "../x").is_none());
+    }
+
+    #[test]
+    fn run_event_carries_holds_and_runs_show_a_waiting_hold() {
+        let report = json!({
+            "run_id": "skill-h1", "status": "approval_timeout", "held_ms": 300000,
+            "holds": [{ "approvalId": "a1", "effect": "pay", "state": "expired" }], "steps": [],
+        });
+        let ev = run_event(&report, "routine");
+        assert_eq!((ev["status"].as_str(), ev["held_ms"].as_u64()), (Some("approval_timeout"), Some(300000)));
+        assert_eq!(ev["holds"][0]["state"], "expired");
+        // An old report with no hold fields still makes a complete event.
+        assert_eq!((run_event(&json!({ "run_id": "x" }), "task")["held_ms"].as_u64(), run_event(&json!({}), "task")["holds"].clone()), (Some(0), json!([])));
+
+        let tmp = tempfile::tempdir().unwrap();
+        let step = ingest(tmp.path(), "link:w", StepIn { run_id: Some("task-live-h1".into()), tool: "phone.read_ui".into(), args: json!({}), ok: true, ..Default::default() }).unwrap();
+        crate::phone_guard::set_live("task-live-h1", Some(json!({ "status": "waiting_approval", "approvalId": "a2", "effect": "delete" })));
+        let waiting = runs(std::slice::from_ref(&step));
+        crate::phone_guard::set_live("task-live-h1", None);
+        assert_eq!((waiting[0]["status"].as_str(), waiting[0]["approvalId"].as_str()), (Some("waiting_approval"), Some("a2")));
+        assert!(runs(&[step])[0].get("status").is_none());
+    }
+
+    #[tokio::test]
+    async fn the_run_thumb_is_the_newest_frame_small_and_only_the_owners() {
+        let dir = std::env::temp_dir().join(format!("phone-thumb-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let st = crate::test_helpers::app_state(&dir).await;
+        let c = st.db.connect().unwrap();
+        c.execute("INSERT INTO agents (id, user_id, name, model, provider, is_bot, config) VALUES ('bot-1','user-a','b','m','p',1,'{}')", []).unwrap();
+        c.execute("INSERT INTO bot_threads (id, user_id, bot_id, title, status, last_activity_at, created_at, updated_at) VALUES ('th-1','user-a','bot-1','Plans','idle','t','t','t')", []).unwrap();
+        // A real 1000x600 frame kept as a step.
+        let mut png = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(1000, 600, image::Rgb([30, 120, 200]))).write_to(&mut png, image::ImageFormat::Png).unwrap();
+        let step = Step { id: uuid::Uuid::new_v4().to_string(), run_id: "task-thumb".into(), serial: "link:1".into(), at: chrono::Utc::now().to_rfc3339(), tool: "phone.tap".into(), label: "tap".into(), ok: true, ..Default::default() };
+        save(&st.data_dir, step, Some(png.into_inner())).unwrap();
+        let ctx = crate::phone_guard::TaskCtx { owner: "user-a".into(), bot_id: Some("bot-1".into()), thread_id: Some("th-1".into()), source: "chat".into(), ..Default::default() };
+        assert!(post_task_card(&st.db, &ctx, "task-thumb", "link:1", "g", "running", 0, None));
+        let get = |user: &str, run: &str| {
+            let (st, user, run) = (st.clone(), user.to_string(), run.to_string());
+            async move { get_run_thumb(State(st), Extension(AuthUser { user_id: user, email: None, name: None, avatar_url: None, tenant_id: None, organization_id: None, organization_role: None, organization_slug: None }), Path(run)).await }
+        };
+        let ok = get("user-a", "task-thumb").await;
+        assert_eq!(ok.status(), StatusCode::OK);
+        assert_eq!(ok.headers()["content-type"], "image/jpeg");
+        let body = axum::body::to_bytes(ok.into_body(), 10_000_000).await.unwrap();
+        let img = image::load_from_memory(&body).unwrap();
+        assert_eq!((img.width(), img.height()), (360, 216));
+        assert_eq!(get("user-b", "task-thumb").await.status(), StatusCode::NOT_FOUND, "not their run");
+        assert_eq!(get("user-a", "task-unknown").await.status(), StatusCode::NOT_FOUND);
+        assert_eq!(get("user-a", "../etc").await.status(), StatusCode::NOT_FOUND);
     }
 }

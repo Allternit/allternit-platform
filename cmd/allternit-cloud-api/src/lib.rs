@@ -4,7 +4,11 @@
 //! Provides REST endpoints and WebSocket event streaming.
 
 pub mod artifacts;
+#[path = "../../allternit-api/src/answer_contract.rs"]
+pub mod answer_contract;
 pub mod auth;
+#[path = "../../allternit-api/src/net_client.rs"]
+pub mod net_client;
 pub mod carriers;
 pub mod channels;
 pub mod db;
@@ -53,6 +57,14 @@ pub const DEFAULT_CORS_ORIGINS: &[&str] = &[
     "https://m.allternit.com",
 ];
 
+/// Production CORS decision: any configured origin on any route, or a
+/// Freeweights origin on a Freeweights route.
+pub fn cors_origin_allowed(origin: &str, path: &str, configured: &[String]) -> bool {
+    configured.iter().any(|allowed| allowed == origin)
+        || (routes::freeweights::FREEWEIGHTS_CORS_ORIGINS.contains(&origin)
+            && routes::freeweights::is_freeweights_cors_path(path))
+}
+
 /// API application state
 pub struct ApiState {
     pub db: sqlx::PgPool,
@@ -68,8 +80,6 @@ pub struct ApiState {
     pub rate_limiter: Arc<RateLimiter>,
     /// Public-route rate limiter for pairing and relay endpoints
     pub public_rate_limiter: Arc<RateLimiter>,
-    /// Tight per-user limiter for the free inference path (no credits row)
-    pub free_inference_rate_limiter: Arc<RateLimiter>,
     /// Cost service for tracking run costs
     pub cost_service: Arc<dyn services::CostService>,
     /// Quota service for free-tier guardrails
@@ -345,14 +355,21 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         // like an OAuth device authorization endpoint.
         .merge(routes::runtime_pairing::routes())
         .merge(routes::runtime_relay::routes())
+        // Brain runner boxes dial in here with their own token (no session,
+        // no compute gate; CONTRACT-connections-2026-11 section 9.7).
+        .merge(routes::brain_runners::routes(services::brain_runners::shared(&state.db)))
         .merge(routes::runtime_viewer::routes())
         // Model hosts (a phone/browser tab serving a small model to its owner's
         // agents): each handler resolves the caller itself; the device socket
         // takes a single-use ticket. All state in memory.
         .merge(routes::model_hosts::routes())
+        .merge(routes::phone_live::routes())
         // Channels hybrid relay: management routes check the Clerk session;
         // /channels/in/:key is public, the unguessable key is the credential.
         .merge(routes::channel_inbound::routes())
+        // Connector sign-ins that run on a user's runtime return here: the OAuth `state`
+        // names the runtime; only its three OAuth callbacks are relayed.
+        .merge(routes::connect_return::routes())
         // Public MCP edge (Clerk OAuth checked in the handler, then relayed to the
         // owner's runtime). Inert (503) until MCP_PUBLIC_URL is set.
         .merge(routes::mcp_edge::routes())
@@ -361,10 +378,21 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         // Keys for the allternit-bot CLI (issue/list/revoke by the owner; instructions by key). Part of the MCP edge: 503 until MCP_PUBLIC_URL is set.
         .merge(routes::vendor_bot_keys::routes())
         .merge(routes::mcp_oauth_approvals::routes())
+        // Managed connector auth: the org ID-JAG issuer, its admin and runtime
+        // routes, and the edge's trusted issuers + JWT-bearer authorization
+        // server. Each handler checks its own credential; 503 without
+        // ALLTERNIT_IDJAG_ES256_PEM.
+        .merge(routes::managed_auth::routes())
+        .merge(routes::edge_auth::routes())
         // The event registry in plain words (signed-in users; Settings › Connected apps).
         .merge(routes::allternit_events::routes())
         // Runtimes forward their bot_events ledger into the event backbone (relay-signature auth in the handler).
         .merge(routes::runtime_events::routes())
+        // Office view live link: the runtime pushes the public floor (relay-signed); GET /api/v2/public/floors/:token is public, 404 when off.
+        .merge(routes::floor_shares::routes())
+        // Shared chat threads: owner routes check the Clerk session (or device token) per request;
+        // GET /api/v2/public/threads/:token is public, 404 once the share is deleted.
+        .merge(routes::thread_shares::routes())
         // Runtime heartbeats (relay-signed) and the owner's presence list (agent network WP4).
         .merge(routes::runtime_presence::routes())
         // Team roster + send (agent network phase 2, WP13).
@@ -383,6 +411,10 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         .merge(routes::inapp_calls::routes())
         // Web Push for rings and messages when the app is closed; 503 push_not_configured until the VAPID env is set.
         .merge(routes::web_push::routes())
+        // Native iOS push tokens (APNs); 503 apns_not_configured until APNS_KEY_P8 / APNS_KEY_ID / APNS_TEAM_ID are set.
+        .merge(routes::apns::routes())
+        // Device read token (iPhone notification extension, widgets): status summary + notification content only.
+        .merge(routes::device_read::routes())
         // Notification preferences per event type (Clerk session or compute key); the push sink reads them.
         .merge(routes::notifications::routes())
         // WhatsApp Embedded Signup + 24h-window send; each handler resolves the user itself.
@@ -448,6 +480,23 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         // Clerk session or `account` API token per-request, 503 without
         // CLERK_SECRET_KEY. Desktop's way to share what web writes directly.
         .merge(routes::me_flags::routes())
+        // Allternit Meetings: user routes (Clerk session, `compute` API
+        // token or device token, checked per request), settings and usage,
+        // and the pod-token routes. Unique prefixes /api/v1/meetings,
+        // /api/v1/meeting-sessions, /api/v1/me/meeting-*,
+        // /api/v1/orgs/:org/meeting-settings.
+        .merge(routes::meetings::routes())
+        // Meetings calendar connections: Google OAuth start (Clerk session)
+        // and callback (state-verified, no session), ICS feeds. Unique prefix
+        // /api/v1/calendar.
+        .merge(routes::calendar_oauth::routes())
+        // Zoom for Meetings: /api/v1/zoom/* and the pod-token
+        // /api/v1/meeting-sessions/:sid/zoom-tokens (docs/meetings/ZOOM.md).
+        .merge(routes::zoom::routes())
+        // Compute gate (which computer the account has, chat-only choice);
+        // Clerk session or `account` API token per-request.
+        .merge(routes::account_compute::routes())
+        .merge(routes::web_search::routes())
         // Setup checklist: live checks for account, brain, computers, channels.
         .merge(routes::setup_checks::routes())
         // Open lane settings (acceptable use, 18+, refusal handoff); Clerk
@@ -468,9 +517,23 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         // per-request and answer 503 billing_not_configured when STRIPE_SECRET_KEY
         // or the plan's STRIPE_PRICE_* id is unset.
         .merge(routes::billing_subscriptions::routes())
+        // Freeweights entitlement claim: Clerk session or alt_ key verified per
+        // request; 503 entitlement_unavailable when
+        // FREEWEIGHTS_ENTITLEMENT_SIGNING_KEY is unset.
+        .merge(routes::freeweights::routes())
         // BYOK inference keys verify the Clerk session per-request and answer
         // 503 inference_keys_not_configured when ALLTERNIT_CREDENTIALS_KEY is unset.
         .merge(routes::inference_keys::routes())
+        // Voice keys saved to the account + the QR handoff relay: signed-in
+        // Clerk session only (API tokens 403), keys returned decrypted to their
+        // owner, sealed at rest with the credential cipher.
+        .merge(routes::voice_keys::routes())
+        // Connect kit account rows (CONTRACT-connections-2026-11): signed-in
+        // Clerk session only (API tokens 403); never gated on compute.
+        .merge(routes::connections::routes())
+        // Plan chat store (CONTRACT-connections-2026-11 section 9.10): Clerk
+        // session only, never gated on compute.
+        .merge(routes::plan_threads::routes())
         // API keys verify the Clerk session per-request and store only hashes.
         .merge(routes::api_keys::routes())
         // Allternit Platform API (/v1/accounts, /v1/usage, … plus console
@@ -504,6 +567,9 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         // the caller's default node. Office state is in-memory per :8013
         // process, so these handlers are node-affine by design (§3.3).
         .merge(routes::office::routes())
+        // Workbook sessions on this host's office engine, for people with no
+        // computer. Clerk session verified per-request; each session is its owner's.
+        .merge(routes::office_engine::routes())
         // Beta namespace (P1): research tasks + playground sessions, relayed
         // to the caller's default node. The WS event stream
         // (/beta/sessions/:id/events/ws) is intentionally not exposed — it
@@ -570,6 +636,7 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         .route("/api/v1/health", get(routes::health::health_check))
         .route("/api/v1/health/ready", get(routes::health::readiness_check))
         .route("/api/v1/health/live", get(routes::health::liveness_check))
+        .route("/api/v1/health/computers", get(routes::health::computers_health))
         .route("/api/v1/metrics", get(routes::health::metrics))
         .with_state(state.clone());
 
@@ -629,13 +696,23 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
                 }
             }
         }
-        let allowed_origins: Vec<_> = origin_list
-            .iter()
-            .filter_map(|s| s.parse::<axum::http::HeaderValue>().ok())
-            .collect();
-
+        // Freeweights origins reach only the Freeweights routes and the public
+        // plan catalog (routes::freeweights::is_freeweights_cors_path), not the
+        // rest of the API.
         CorsLayer::new()
-            .allow_origin(allowed_origins)
+            .allow_origin(tower_http::cors::AllowOrigin::predicate(
+                move |origin: &axum::http::HeaderValue, parts: &axum::http::request::Parts| {
+                    origin
+                        .to_str()
+                        .map(|origin| cors_origin_allowed(origin, parts.uri.path(), &origin_list))
+                        .unwrap_or(false)
+                },
+            ))
+            .expose_headers([
+                axum::http::HeaderName::from_static("x-request-id"),
+                axum::http::HeaderName::from_static("x-next-cursor"),
+                axum::http::header::CONTENT_DISPOSITION,
+            ])
             .allow_methods([
                 Method::GET,
                 Method::POST,
@@ -798,8 +875,13 @@ pub async fn start_server(state: Arc<ApiState>, addr: &str) -> Result<(), ApiErr
         let _ = shutdown_tx.send(());
     });
 
-    // Start server with graceful shutdown
-    axum::serve(listener, router)
+    // Start server with graceful shutdown. ConnectInfo carries the TCP peer so
+    // key IP allowlists can trust `X-Real-IP` only from a loopback proxy
+    // (services::api_keys::client_ip) and the rate limiter can key by address.
+    axum::serve(
+        listener,
+        router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
         .with_graceful_shutdown(async {
             let _ = shutdown_rx.await;
         })
@@ -812,6 +894,19 @@ pub async fn start_server(state: Arc<ApiState>, addr: &str) -> Result<(), ApiErr
 #[cfg(test)]
 mod cors_origin_tests {
     use super::DEFAULT_CORS_ORIGINS;
+
+    #[test]
+    fn freeweights_origins_reach_only_freeweights_routes() {
+        let configured: Vec<String> = DEFAULT_CORS_ORIGINS.iter().map(|o| o.to_string()).collect();
+        for origin in ["https://freeweights.allternit.com", "https://fw-preview.allternit.com"] {
+            assert!(super::cors_origin_allowed(origin, "/api/v1/freeweights/entitlement", &configured));
+            assert!(super::cors_origin_allowed(origin, "/api/v1/billing/plans", &configured));
+            assert!(!super::cors_origin_allowed(origin, "/api/v1/api-keys", &configured));
+            assert!(!super::cors_origin_allowed(origin, "/api/v1/billing/subscription", &configured));
+        }
+        assert!(super::cors_origin_allowed("https://ai.allternit.com", "/api/v1/api-keys", &configured));
+        assert!(!super::cors_origin_allowed("https://evil.example", "/api/v1/freeweights/entitlement", &configured));
+    }
 
     #[test]
     fn desktop_loopback_ui_is_an_allowed_origin() {
@@ -829,9 +924,10 @@ mod migration_tests {
     /// proves the macro resolves the directory relative to the crate root.
     #[tokio::test]
     async fn migrations_pg_applies_cleanly() {
-        let pool = sqlx::PgPool::connect(
-            "postgres://allternit:allternit_pg_2026@localhost:5432/allternit_test",
-        )
+        // CI's Postgres service; TEST_DATABASE_URL points a local run elsewhere (as test_support does).
+        let url = std::env::var("TEST_DATABASE_URL")
+            .unwrap_or_else(|_| "postgres://allternit:allternit_pg_2026@localhost:5432/allternit_test".to_string());
+        let pool = sqlx::PgPool::connect(&url)
         .await
         .expect("connect to the local PG test database (allternit_test)");
         sqlx::migrate!("./migrations_pg")

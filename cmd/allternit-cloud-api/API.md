@@ -905,6 +905,57 @@ or API token answers `401`; a device owned by another user answers `404`.
 
 ---
 
+## Meetings
+
+Send Gizzi to Google Meet, Zoom and Microsoft Teams calls as a bot
+participant ("Gizzi (Allternit)"). Contract: `docs/meetings/CONTRACT.md`.
+Spec: `openapi/meetings.yaml`. Tables: `migrations_pg/130_meetings.sql`.
+
+**Auth:** user routes take a Clerk session, an `allternit_*` API token with the
+`compute` scope, or a runtime device token acting as its owner. Pod routes
+(`/ingest`, `/tool-calls`, `/control-stream`) take only the session's pod token
+(`Bearer mpt_…`), valid until 5 minutes after the session ends.
+
+**Plan:** every user route except `GET /api/v1/me/meeting-settings` answers
+`402 {"error":"meetings_requires_paid_plan"}` on the free plan. Errors are
+`{ "error": "<code>", "message": "<text>" }`.
+
+| Route | What |
+|---|---|
+| `GET /api/v1/meetings?range=now\|today\|week\|upcoming\|past&tz=&cursor=&limit=` | Agenda list, live calls first |
+| `POST /api/v1/meetings` | Add from a Meet/Zoom/Teams link (`400 unsupported_link` otherwise); same call + start answers 200 |
+| `GET /api/v1/meetings/:id` | Meeting with `gizzi`, `live_at` and `latest_session` `{id, state, end_reason, live_at, ended_at, summary}` |
+| `PATCH /api/v1/meetings/:id` | `title`, `auto_join` (`null` follows the rule), `reply_mode` |
+| `DELETE /api/v1/meetings/:id` | Soft delete; 409 while Gizzi is in the call |
+| `POST /api/v1/meetings/:id/sessions` | Send Gizzi (`when: now\|start`); attaches (200) to a bot already in that call |
+| `GET /api/v1/meeting-sessions/:sid` | Session, meeting, participants, pending approvals (owner only) |
+| `GET /api/v1/meeting-sessions/:sid/transcript` | `after_seq`, `limit` (≤ 2000) |
+| `GET /api/v1/meeting-sessions/:sid/artifacts` | Docs, slides, canvases made in the call |
+| `GET /api/v1/meeting-sessions/:sid/events` | SSE, `Last-Event-ID` replays the last 500 frames |
+| `POST /api/v1/meeting-sessions/:sid/control` | `stop_listening`, `resume`, `leave`, `speak` (owner only) |
+| `PATCH /api/v1/meeting-sessions/:sid` | `speak_replies` |
+| `POST /api/v1/meeting-sessions/:sid/approvals/:aid` | `approve` / `deny` a tool request (owner only) |
+| `GET\|PUT /api/v1/me/meeting-settings` | Auto-join rule, recap email, default reply mode |
+| `GET\|PUT /api/v1/orgs/:org/meeting-settings` | Org controls (members read, admins write) |
+| `GET /api/v1/me/meeting-usage` | Bot minutes this UTC month vs the plan |
+| `POST /api/v1/meeting-sessions/:sid/ingest` | Pod batch: participants, transcript, chat, screen notes, state |
+| `POST /api/v1/meeting-sessions/:sid/tool-calls` | Pod tool request: artifact tools run here, personal tools need approval |
+| `GET /api/v1/meeting-sessions/:sid/control-stream` | Pod SSE of control messages |
+
+Session states: `scheduled -> launching -> joining -> waiting_admit -> live <-> paused -> ended`
+(`joining -> live` allowed; any open state can end). Illegal moves from a pod
+answer 409 and are ignored. Ending writes one `meeting_bot_minutes` row
+(`live_at` to `ended_at`, rounded up to whole seconds).
+
+**Env:** `MEETINGS_GLOBAL_CONCURRENT_CAP` (default 20 bots holding a pod across
+the service). Per-plan included minutes and concurrency caps
+(`org_meeting_settings::plan_limits`) are placeholders until pricing is set.
+The web view is behind `flags.meetings` (read-only) on `GET /api/v1/me/flags`: off unless
+`ALLTERNIT_MEETINGS_ENABLED=1`, the user is in `ALLTERNIT_MEETINGS_USER_IDS`, or
+an admin.
+
+---
+
 ## Common Types
 
 ### RunConfig

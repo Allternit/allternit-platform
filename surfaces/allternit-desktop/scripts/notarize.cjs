@@ -13,6 +13,9 @@
  *   APPLE_ID           — Apple developer account email
  *   APPLE_ID_PASSWORD  — App-specific password (not the Apple ID password)
  *   APPLE_TEAM_ID      — Team ID from developer.apple.com (10-char string)
+ *
+ * Or, on a Mac: APPLE_KEYCHAIN_PROFILE — a `notarytool store-credentials` profile.
+ * build-local.cjs sets it to "allternit" when a Developer ID is in the keychain.
  */
 
 'use strict';
@@ -28,11 +31,11 @@ module.exports = async function notarizing(context) {
     return;
   }
 
-  const { APPLE_ID, APPLE_ID_PASSWORD, APPLE_TEAM_ID } = process.env;
+  const { APPLE_ID, APPLE_ID_PASSWORD, APPLE_TEAM_ID, APPLE_KEYCHAIN_PROFILE } = process.env;
 
   // Missing credentials: hard-fail on CI so unsigned release builds never
   // pass silently; keep the local unsigned-build escape hatch.
-  if (!APPLE_ID || !APPLE_ID_PASSWORD || !APPLE_TEAM_ID) {
+  if (!APPLE_KEYCHAIN_PROFILE && (!APPLE_ID || !APPLE_ID_PASSWORD || !APPLE_TEAM_ID)) {
     const missing = [
       ['APPLE_ID', APPLE_ID],
       ['APPLE_ID_PASSWORD', APPLE_ID_PASSWORD],
@@ -47,6 +50,10 @@ module.exports = async function notarizing(context) {
     // an unnotarized build must be VISIBLE in the logs, never silent.
     // Re-arm the hard fail by restoring the throw below once
     // APPLE_ID / APPLE_ID_PASSWORD / APPLE_TEAM_ID secrets are set.
+    if (!process.env.CI) {
+      console.log('[notarize] Local build: not notarized (build-desktop.sh --release or ALLTERNIT_NOTARIZE=1 notarizes).');
+      return;
+    }
     console.warn(
       `[notarize] CI build WITHOUT Apple credentials (missing: ${missing}). ` +
         'Skipping notarization — the DMG is UNSIGNED/UNNOTARIZED and will be ' +
@@ -64,9 +71,9 @@ module.exports = async function notarizing(context) {
     await notarize({
       tool: 'notarytool',
       appPath,
-      appleId: APPLE_ID,
-      appleIdPassword: APPLE_ID_PASSWORD,
-      teamId: APPLE_TEAM_ID,
+      ...(APPLE_KEYCHAIN_PROFILE
+        ? { keychainProfile: APPLE_KEYCHAIN_PROFILE }
+        : { appleId: APPLE_ID, appleIdPassword: APPLE_ID_PASSWORD, teamId: APPLE_TEAM_ID }),
     });
 
     console.log('[notarize] Notarization complete.');

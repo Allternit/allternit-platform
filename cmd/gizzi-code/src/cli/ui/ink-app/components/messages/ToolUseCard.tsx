@@ -41,27 +41,25 @@ export function ToolUseCard({
   // queued or failed tool adds a word.
   const state = isError ? 'error' : isResolved ? 'done' : isQueued ? 'queued' : 'running'
 
+  // A left bar instead of a box: two border rows per tool call made long
+  // turns hard to scan. Coral while it runs, grey when done, red on failure;
+  // the orb shows only while the tool is still working.
+  const bar = isError ? 'error' : isResolved ? 'inactive' : 'gizzi'
   return (
-    <Box
-      flexDirection="column"
-      borderStyle="single"
-      borderColor={isError ? 'red' : isResolved ? 'inactive' : 'gizzi'}
-      paddingX={1}
-      paddingY={0}
-      width="100%"
-    >
+    <Box flexDirection="column" width="100%">
       <Box flexDirection="row" justifyContent="space-between" gap={1}>
         <Box flexDirection="row" flexShrink={1}>
+          <Text color={bar}>{'▎'}</Text>
           <Text bold={true} wrap="truncate">
             {toolName}
           </Text>
           {args}
         </Box>
-        <ToolOrb state={state} toolName={toolName} />
+        {state === 'done' ? null : <ToolOrb state={state} toolName={toolName} />}
       </Box>
       {backgroundTask && (
         <Text dimColor wrap="truncate">
-          ↳ background task: {backgroundTask.id?.slice(0, 8) ?? 'unknown'} (
+          {'  '}↳ background task: {backgroundTask.id?.slice(0, 8) ?? 'unknown'} (
           {backgroundTask.status ?? 'running'})
         </Text>
       )}

@@ -6,7 +6,10 @@ appId: com.allternit.mobile
     arguments:
       skip-auth: true
       sidebar: true
-- tapOn: "ACI"
+- tapOn:
+    id: "modeDial"
+- tapOn:
+    id: "modeDialOptionaci"
 - takeScreenshot: aci_landing
 - tapOn: "Open sidebar"
 - takeScreenshot: aci_sidebar_open

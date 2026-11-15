@@ -1,0 +1,10 @@
+export { BUILTIN_BOT_TEMPLATES } from '@/lib/bots/templates/bots';
+export { PRIMARY_BOT } from '@/lib/bots/templates/bots/primary';
+export { castAvatarConfig } from '@/components/bots/look/bot-looks';
+export { buildAvatarConfigFromEditor, defaultAvatarEditorValues } from '@/views/agent-view/components/create-bot/avatar-config';
+export { botTemplateToFormData, templateInstructions, botCategoryOf } from '@/lib/bots/templates/template-agent';
+export { buildCreateBotPayload, defaultBotFormData } from '@/views/agent-view/components/create-bot/wizard-state';
+export { ruleFromCron, ruleLabel } from "@/components/bots/schedule/routine-rule";
+export { ALLTERNIT_LOOKS as LOOKS, lookAvatarConfig } from "@/components/bots/look/bot-looks";
+export { routineTitle } from "@/components/bots/meet/team-slots";
+export { templateWelcome, templateSuggestions } from '@/lib/bots/bot-greeting';

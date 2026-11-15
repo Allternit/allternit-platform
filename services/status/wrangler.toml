@@ -1,0 +1,50 @@
+# status.allternit.com — one Worker: page, JSON API, cron probes, ingest, admin.
+# Nothing here is deployed yet. Gates (Eoj):
+#   G2  wrangler d1 create allternit-status   -> paste the id into database_id below
+#       wrangler d1 migrations apply allternit-status --remote
+#       wrangler deploy --dry-run, then wrangler deploy (custom domain below)
+#   G3  wrangler secret put ADMIN_TOKEN         (bearer token for /api/admin/*)
+#       wrangler secret put INGEST_HMAC_SECRET  (same value as /etc/allternit-status/ingest.key on allternit-standby)
+#   Email: allternit.com must have Email Routing on, and ALERT_TO must be a
+#   verified destination address in Email Routing (Cloudflare dashboard).
+name = "allternit-status"
+main = "src/index.ts"
+compatibility_date = "2026-11-01"
+compatibility_flags = ["nodejs_compat"]
+
+[[routes]]
+pattern = "status.allternit.com"
+custom_domain = true
+
+# One trigger. The daily rollup runs inside the same handler at 00:05 UTC.
+[triggers]
+crons = ["* * * * *"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "allternit-status"
+database_id = "a2f65199-4af7-4895-a11d-ef7ac18adf36"
+migrations_dir = "migrations"
+
+# public/admin.html and public/status.css. /admin serves admin.html.
+[assets]
+directory = "./public"
+binding = "ASSETS"
+html_handling = "auto-trailing-slash"
+
+# Alert email (Cloudflare Email Workers send_email). The binding name is read
+# from ALERT_BINDING so it can be renamed without a code change.
+[[send_email]]
+name = "ALERT_EMAIL"
+destination_address = "allternitpbc@gmail.com"
+
+[vars]
+ALERT_BINDING = "ALERT_EMAIL"
+ALERT_TO = "allternitpbc@gmail.com"
+ALERT_FROM = "status@allternit.com"
+# "off": auto incidents are saved as admin-only drafts (publish at /admin).
+# "on": auto incidents are public at once.
+# An ISO time: drafts before it, public from it on. Set to the end of the 24 h soak (G9)
+# so it turns on by itself; drafts made during the soak stay drafts in /admin.
+AUTO_INCIDENTS = "2026-11-13T14:05:00Z"
+SITE_URL = "https://status.allternit.com"

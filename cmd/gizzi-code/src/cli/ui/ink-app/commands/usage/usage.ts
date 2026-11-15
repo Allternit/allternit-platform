@@ -23,6 +23,7 @@ import {
   resolveQuotaProviderId,
 } from '../../utils/telemetry/providerQuota.js'
 import { formatResetsIn } from '../../utils/telemetry/runTelemetryModel.js'
+import { accountLines, getAllternitAccount } from '../../services/allternitAccount.js'
 import { reasoningTokensFromMessages } from '../../utils/telemetry/turnSignals.js'
 import type { LocalCommandCall } from '../../types/command.js'
 import type { Message } from '../../types/message.js'
@@ -70,6 +71,48 @@ export async function planQuotaLines(model: string): Promise<string[]> {
       )
     }
   }
+  return lines
+}
+
+/** CLI brains whose own plan limits the runtime can read (ProviderQuotas). */
+const CLI_BRAINS: Array<[string, string]> = [
+  ['claude-cli', 'Claude Code'],
+  ['codex-cli', 'Codex'],
+  ['kimi-cli', 'Kimi'],
+]
+
+/**
+ * The signed-in Allternit plan, credits and Cloud balance, then the plan
+ * limits each CLI brain reports. Shared with Settings › Usage.
+ */
+export async function accountUsageLines(): Promise<string[]> {
+  const bar = (ratio: number) => renderProgressBar(ratio, PROGRESS_BAR_WIDTH)
+  const [account, ...brains] = await Promise.all([
+    getAllternitAccount(),
+    ...CLI_BRAINS.map(([id]) => fetchProviderQuota(id)),
+  ])
+  const lines = accountLines(account, bar, formatResetsIn)
+  const brainLines: string[] = []
+  CLI_BRAINS.forEach(([, name], i) => {
+    const quota = brains[i]
+    // Signed out / not installed: that CLI isn't in use here, so it's left out.
+    if (!quota || quota.status !== 'ok') return
+    const windows = quota.quota.windows
+    const plan = quota.quota.plan ? ` (${quota.quota.plan})` : ''
+    if (windows.length === 0) {
+      brainLines.push(`  ${name}${plan}: signed in, no limits reported`)
+      return
+    }
+    brainLines.push(`  ${name}${plan}`)
+    for (const w of windows) {
+      const resets = formatResetsIn(w.resetAt)
+      brainLines.push(
+        `    ${(w.label ?? w.id).padEnd(10)}${bar(w.usedRatio)}  ${Math.round(w.usedRatio * 100)}% used${resets ? ` · resets in ${resets}` : ''}`,
+      )
+    }
+  })
+  lines.push('', 'CLI brains (your own subscriptions)')
+  lines.push(...(brainLines.length > 0 ? brainLines : ['  No signed-in CLI reports plan limits.']))
   return lines
 }
 
@@ -145,7 +188,7 @@ export const call: LocalCommandCall = async (_args, context) => {
 
   lines.push('')
 
-  lines.push(...(await planQuotaLines(model)))
+  lines.push(...(await accountUsageLines()))
   lines.push('')
 
   return { type: 'text', value: lines.join('\n') }

@@ -1,0 +1,70 @@
+---
+title: 'OpenShip integration'
+description: 'Gateway routing, OAuth ownership, operation contracts and verification for project deployment controls.'
+---
+
+## Architecture
+
+`allternit-ai/src/components/deployments/OpenShipPanel.tsx` is the shared settings UI. `src/lib/deployments/openship.ts` adapts OpenShip's MCP tools through Allternit's existing bridge. The Code project header opens the infrastructure deployment panel.
+
+The browser calls the selected Allternit gateway, never OpenShip directly. Web and phone requests use the paired-runtime relay. OpenShip itself must be reachable from that runtime.
+
+| Route | Role |
+| --- | --- |
+| `GET/POST /api/v1/mcp/connectors` | List or create the authenticated user's saved connection. |
+| `POST /api/v1/mcp/connectors/:id/oauth/start` | Start the existing OAuth consent flow. |
+| `POST /api/mcp/apps` | Discover tools and call them with the connection owner's saved credential. |
+
+`mcp_apps.rs` loads connections by connector ID and authenticated user ID. It retains URL validation, DNS pinning, private-host restrictions, token refresh and tool visibility checks. OAuth storage and callbacks use the existing sealed token implementation. This feature adds no credential database or browser token persistence.
+
+`integration/api-client.ts` classifies the connector routes and MCP bridge as runtime-only. It checks the configured gateway as well as the cached base, so one same-origin relay request cannot send the next OAuth request to the cloud control plane. Cloud `/api/v1/mcp/approvals` remains distinct.
+
+## Provider contract
+
+The adapter follows OpenShip's [MCP tool catalog](https://openship.io/docs/api/mcp-tools), [projects API](https://openship.io/docs/api/projects) and [deployment API](https://openship.io/docs/api/deployments), inspected on November 2, 2026.
+
+It discovers tools before enabling controls. Tool pagination is bounded and repeated cursors fail. Workspace discovery is the only call without a selected `organizationId`; every resource operation passes that ID explicitly. Provider grants continue to enforce access on each call.
+
+| Tool | Use |
+| --- | --- |
+| `get_permissions_workspaces` | Discover workspace names and IDs. |
+| `get_projects` | Read a page of configured projects. |
+| `get_system_servers_destinations` | Read execution destinations for project creation. |
+| `post_projects` | Save a reviewed GitHub project and server binding. |
+| `get_deployments` | Read recent project releases. |
+| `post_deployments` | Submit an approved Git branch and environment. |
+| `get_deployments_by_id_build` | Read persisted build state. |
+| `get_deployments_by_id_logs` | Read a bounded log tail. |
+| `get_deployments_by_id_restore_plan` | Inspect the rollback strategy before approval. |
+| `post_deployments_by_id_rollback` | Request an approved rollback. |
+| `post_deployments_by_id_cancel` | Request an approved cancellation. |
+
+Arguments follow OpenShip's `organizationId`, `id`, `query` and `body` envelope. MCP `isError` and operation-level failures are rejected even when transport status is 200. Unknown list formats fail visibly. The adapter accepts structured content or JSON text results and unwraps the HTTP `data` envelope.
+
+## Release semantics
+
+The UI stores an immutable review snapshot before each mutation and uses a synchronous lock to prevent duplicate approval clicks. Writes are sent once. A lost response blocks another mutation until the user inspects and explicitly refreshes provider records.
+
+Submission must return a deployment ID. Readiness comes from the persisted build status, with `ready` and `no_changes` accepted only when no decision is pending. Queued, unknown, failed, cancelled, partial and action-required states are not success. Polling stops on terminal status or a read failure; the user can refresh status. Hidden pages defer polling, and unmount cancels future polls.
+
+Logs are React text content, never HTML. External links accept only HTTP(S) URLs without embedded credentials. The installation form requires HTTPS and rejects embedded credentials, query strings and fragments.
+
+This first integration does not upload local folders, provision servers, edit secrets or DNS, manage database recovery, or operate an Allternit hosting subscription. Configuration and provider-held decisions remain in OpenShip's dashboard.
+
+## Verification
+
+Run the focused adapter, release UI and routing suites from `allternit-ai`:
+
+```bash
+pnpm exec vitest run src/lib/deployments/openship.test.ts src/components/deployments/OpenShipPanel.test.tsx src/integration/providers-via-runtime-proxy.test.ts --maxWorkers=2 --minWorkers=1
+```
+
+The tests exercise the real client and panel with the network boundary replaced by provider fixtures. They do not establish live OpenShip compatibility or successful production deployment.
+
+A live acceptance pass requires an authorized installation: sign in, deploy a disposable GitHub app, inspect persisted state and logs, open its HTTPS endpoint, deliberately fail a build, and roll back to a prior successful release. Verify credential revocation and separate-user access before general availability.
+
+See the [user guide](/guides/app-deployments) and [MCP servers API](/api/mcp-servers).
+
+## Hosting ownership
+
+Allternit supplies the integration. The user supplies the OpenShip installation, destination servers and provider accounts, and pays those providers directly. Allternit does not buy infrastructure, run the user's application workloads, subsidize hosting or resell compute through this feature. No Allternit hosting budget, billing meter or paid-server bootstrap belongs to this integration.

@@ -19,6 +19,11 @@ describe("session.prompt mobile tool options (metadata.tools)", () => {
       ).toEqual({ webSearch: false, research: false, toolAccess: "always" })
     })
 
+    test("parses the per-turn computer option (pet offers)", () => {
+      expect(SessionPrompt.parseMobileToolOptions({ tools: { computer: true } })).toEqual({ computer: true })
+      expect(SessionPrompt.parseMobileToolOptions({ tools: { computer: "yes" } })).toBeUndefined()
+    })
+
     test("tolerates unknown extra keys in tools", () => {
       expect(
         SessionPrompt.parseMobileToolOptions({ tools: { webSearch: true, futureOption: 1 } }),

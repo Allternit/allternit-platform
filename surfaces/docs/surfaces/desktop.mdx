@@ -35,11 +35,25 @@ Defaults from `src/main/config.ts`:
 
 The Quick Chat window loads the workspace UI with `/?mini=1`.
 
+If another app already owns one of these chords, Allternit can't register it and the shortcut does nothing. The tray menu then lists the chord as "in use by another app", and the HUD shows a notice naming the chord that failed, so you can free it in the other app or use the fallback. Developers: `shell.hud.getPrefs()` returns `hotkeys: [{ accelerator, registered }]` for the HUD and Quick Chat chords.
+
 ## Menu bar icon
 
 The A mark (the A from the app icon, drawn as square blocks on whole pixels in a 19 pt square) sits in the macOS menu bar, beside the other status icons. Click it to open the HUD, the same as `Cmd/Ctrl+Shift+H`. Right-click or Control-click it for the status menu: backend status and mode, Connection Settings, permissions, Show Window, the desktop pet, Allternit Office, Quick Chat, Toggle HUD and Quit. With **menu bar mode** on, a click shows or hides the main window instead. On Windows and Linux the tray shows the colour app icon instead, since a black mark would vanish on a dark taskbar. A click opens the HUD and right-click opens the same menu.
 
 The icon is a template image (`surfaces/allternit-desktop/build/trayTemplate.png` and `@2x`), so macOS draws it white on a dark menu bar. Code: `createTray` in `src/main/unified-main.ts`.
+
+## Messages on your Mac
+
+A bot can read your recent iMessage and SMS chats on this Mac and ask to send a message for you. It is off by default. Turn it on in **Settings → Notifications → Messages (Mac)**. The setting shows only when the active computer is a Mac.
+
+- **Two macOS permissions.** Reading needs **Full Disk Access** for Allternit (System Settings → Privacy & Security → Full Disk Access). Sending needs **Automation** permission for Messages, which macOS asks for the first time. The setting shows whether each one is granted.
+- **Every send waits for you.** A bot never sends on its own. Each message it wants to send appears in **Needs you** and on your phone with the full recipient and text. It sends only after you approve, and only once.
+- **One person at a time.** Search and send cover 1:1 chats only. Group chats are not read and cannot be messaged.
+- **Search is limited.** Up to the last 30 days and 50 messages per search. The bot treats message text as outside content and does not follow instructions in it.
+- **Drafts on any computer.** Without this setting, a bot can still write a draft you send yourself from your phone.
+
+Allternit opens the Messages database read-only and never changes it. The database layout and the AppleScript send are not official Apple interfaces and can break after a macOS update. Routes and tools: [Messages on the Mac](/api/system-surfaces#messages-on-the-mac).
 
 ## HUD
 
@@ -49,11 +63,39 @@ The row above the card has three buttons:
 
 - **Sun or moon:** switches the HUD between light and dark. The HUD keeps its own setting, apart from the main window.
 - **Pen:** opens a drawing layer over the whole screen. Pick a color and a line width, draw, then press **Save** to keep a PNG, **Clear** to start again, or **Done** or `Escape` to close the layer. The HUD stays open.
-- **X:** closes the HUD. `Escape` in the HUD also closes it.
+- **X:** closes the HUD. `Escape` in the HUD also closes it. When a menu is open, `Escape` closes only the menu. `Cmd+W` (and `Alt+F4` on Windows) hides the HUD the same way, so your draft is still there next time.
 
-Drag the dotted handle to move the HUD, or drag its edges to resize it.
+**Open in app** (the button in the HUD, or `Cmd/Ctrl+O` while the HUD is focused) hides the HUD and opens the same chat in the main window. Closing the HUD any other way also hands its chat to the main window.
 
-Code: the HUD is `src/shell/hud/HudShell.tsx` and `hud-shell.css` in allternit-ai. The drawing layer is a separate full-screen window (`createAnnotationWindow` in `src/main/unified-main.ts`) that loads `/hud/annotate`. `ShellApp` renders only `AnnotationView` at that path.
+### Opening and focus
+
+The HUD opens on the display under your pointer. The first time on a display it is 620 × 220, centred, 72 px above the bottom of the usable screen (above the Dock or taskbar). Move or resize it and it reopens there on that display, even after a restart; each display keeps its own spot. If a display is unplugged or changes resolution, the HUD moves back fully onto a screen. It can't be dragged or resized off the screen.
+
+Every time the HUD opens, the cursor is in the message box, ready to type. The HUD window is created in the background shortly after the app starts, so the first open is as fast as later ones.
+
+By default the HUD stays up when you click another app (pinned). Turn on **Hide when I click away** in the HUD's settings to have it hide when you click away. It stays up while one of its own menus, pickers or dialogs is open.
+
+### Replies, keyboard and accessibility
+
+When a reply arrives, the window grows upward so the reply has room, with a minimum height for the reply area, up to 520 px tall. Past that the replies scroll inside the HUD. The window shrinks back when the chat is cleared, and each time the HUD starts it opens at its normal 220 px height. You can still drag it taller by hand. A long draft scrolls inside the message box instead of pushing the reply out of view.
+
+- **Move with the keyboard:** `Alt+arrow keys` (`⌥+arrow keys` on a Mac) move the HUD by 20 px.
+- **Resize with the keyboard:** `Alt+Shift+arrow keys` (`⌥⇧+arrow keys`) resize it.
+- **Screen readers:** the HUD is a named dialog, and new replies are announced as they arrive.
+- **Reduce transparency:** with the system's reduce-transparency setting on, the HUD uses solid surfaces.
+- **Signed out:** when you are signed out, the HUD says so and offers **Sign in** instead of an error about the AI provider.
+
+Menus open in full. When you open the model picker, the context meter or a menu in the Agent mode, Plugins and Artifacts row, the HUD window grows on the side with screen space (above the card first) and the card stays where it is. The added space is transparent and clicks go through it. When the menu closes, the window goes back to its size.
+
+Long drafts show in full. When a draft makes the message box taller than the HUD, the window grows upward with its bottom edge fixed, up to the 520 px limit; the message box takes at most 40% of that, and a longer draft scrolls inside it. As the draft gets shorter it shrinks back, never below the size it had before. If you resize the HUD by hand, that size becomes the new base. For developers: `useHudComposerFit` (`src/shell/hud/composer-fit.ts`) watches the composer (`[data-hud-composer]` on `ChatBottomBar`) and sets the window with `shell.hud.setBounds`. It pauses while a menu has grown the window or a resize handle is dragged.
+
+Drag the dotted handle to move the HUD, or drag its edges to resize it. On Linux with native Wayland the compositor places windows, so the HUD opens where the compositor puts it and you move it by dragging its top strip (the compositor does the move). Launch with `--ozone-platform=x11` to get app-placed positions back.
+
+The HUD floats above other windows on every desktop and over full-screen apps. On Windows and Linux it sits below system menus and notifications.
+
+Developer notes (main process, `surfaces/allternit-desktop`): all size and clamping math is in `src/main/hud-geometry.ts`. Positions are saved per display id in the electron-store key `hudBounds`, and the hide-on-blur choice in `hudHideOnBlur`. IPC: `shell:open-hud` takes `{ sessionId? }` and sends `shell:hud:goto` to the HUD; `shell:hud:handoff` hides the HUD and focuses the main window; every show sends `shell:hud:shown`; `shell:hud:suppress-blur` (true/false) counts open menus; `shell:hud:get-prefs` and `shell:hud:set-prefs` read and write `{ hideOnBlur, hotkeys }`. On Linux, main sends the pointer position on `shell:hud:cursor` while the HUD is open, because click-through can't forward mouse moves there. `shell.hud.windowing.nativeDrag` is true on Wayland. The screenshot button's screen capture is answered by `setDisplayMediaRequestHandler` (the HUD's own display); if it fails the button shows the error. Hotkey→shown timing is logged at debug level as `[HUD] hotkey→shown`.
+
+Code: the HUD is `src/shell/hud/HudShell.tsx` and `hud-shell.css` in allternit-ai. The drawing layer is a separate full-screen window (`createAnnotationWindow` in `src/main/unified-main.ts`) that loads `/hud/annotate`. `ShellApp` renders only `AnnotationView` at that path. The window growth for open menus is `useHudOverlayRoom` in `src/shell/hud/overlay-room.ts`, which calls `shell.hud.setBounds`.
 
 ## App menu
 
@@ -62,15 +104,23 @@ The top-left menu bar has the usual Mac menus:
 | Menu | Items |
 |---|---|
 | Allternit Desktop | About, Check for Updates…, Settings… (`Cmd+,`), Hide, Quit |
-| File | New Session (`Cmd+N`), Quick Chat, Toggle HUD, Close Window |
+| File | New Session (`Cmd+N`), New Window (`Cmd+Shift+N`), Quick Chat, Toggle HUD, Close Window |
 | Edit | Undo, Redo, Cut, Copy, Paste, Select All, Find… |
 | View | Home (`Cmd+1`), Bots (`Cmd+2`), Code (`Cmd+3`), ACI (`Cmd+4`), Toggle Sidebar (`Cmd+\`), Bot Activity, zoom, Enter Full Screen |
-| Window | Minimize, Zoom, window list |
+| Window | Minimize, Zoom, the list of open windows, Bring All to Front |
 | Help | Allternit Docs, Keyboard Shortcuts |
 
 New Session does what the sidebar's **New** does in the current mode. Find, Bot Activity, Quick Chat and Toggle HUD show their shortcuts, but the key presses stay with the workspace, so a shortcut you changed in Settings keeps working.
 
 Developer notes: the menu is built in `src/main/app-menu.ts`. Workspace commands go to the main window as the `window:event:menu-command` event with `{ command }`. The renderer handles them in `allternit-ai/src/shell/desktop-menu.ts`, `ShellApp.tsx` (Settings, modes, sidebar, Find, Bot Activity) and `ShellRail.tsx` (New Session). The web and the PWA have no app menu.
+
+### New Window
+
+**File › New Window** (`Cmd/Ctrl+Shift+N`) opens another workspace window. It uses the same account, the same sessions and the same local servers as the first one, so a bot reply or a status change shows in every window. Use one window per task: a Code session in one, Bots in another.
+
+The **Window** menu lists every open window with a colour dot and its page title (for example "Window 2 · Code"). Click a name to bring that window forward. The window you last used is the one menu commands act on (New Session, the modes, Find, the title-bar buttons). Only the first window's size is remembered for the next launch, and a new window opens a little down and to the right of the others. Closing one window leaves the rest open; **Show Window** from the Dock or the tray opens one again when none are left.
+
+Developers: the windows are tracked in `src/main/main-windows.ts`. `getFocusedMainWindow()` is the window to act on; `broadcastToMainWindows()` sends status that every window shows (engine status, tunnel, permissions, connection, extension and menu bar mode). The single-instance lock is unchanged: launching the app a second time focuses the existing app instead of starting another process.
 
 <a id="keyboard-shortcuts"></a>
 
@@ -83,9 +133,11 @@ These shortcuts work inside the workspace window. You can change them in **Setti
 | Toggle Bot Activity | `Cmd/Ctrl+Shift+M` |
 | Find in page | `Cmd/Ctrl+F` |
 | Toggle HUD | `Cmd/Ctrl+Shift+H` |
-| Toggle Agent Runner | `Cmd/Ctrl+Shift+A` |
+| Toggle Agent Runner | `Cmd/Ctrl+Shift+A` (web only, see below) |
 
 To change a shortcut, click it, then press the new keys. Shortcuts need a modifier key such as Cmd, Ctrl or Alt. If the keys already belong to another action, that action loses them. The clear button turns a shortcut off, and the reset button puts the default back. Your changes are saved on this device only.
+
+On Desktop, `Cmd/Ctrl+Shift+A` is the global Quick Chat hotkey, which takes the keys before the workspace sees them, so the Agent Runner default never fires there. To use Agent Runner from the keyboard on Desktop, give it another shortcut here.
 
 Code: `allternit-ai/src/lib/shortcuts/shell-shortcuts.ts`.
 
@@ -114,7 +166,7 @@ Two rules keep the seal valid:
 - **No dangling symlinks in the bundle.** Signing fails on them. The ACU gateway therefore does not ship a venv, because a venv links to the build machine's Python. `prepare:acu-gateway` installs its packages per target into `resources/computer-use/acu-site/<os>-<arch>`, which is packaged as `computer-use/acu/site-packages`. The gateway runs on the bundled driver Python with that folder on `PYTHONPATH` (`bundledAcuPython` in `src/main/acu-gateway-manager.ts`).
 - **Nothing writes inside the installed app.** The packaged app sets `PYTHONPYCACHEPREFIX` to `<userData>/pycache` at startup, so the bundled Pythons don't write `__pycache__` into `Contents/Resources`.
 
-**Keychain prompt after each update.** macOS ties a Keychain item's **Always Allow** to the app's exact code, and every ad-hoc build has new code. So after each app update, the first launch asks for the Mac password to use **Allternit Desktop Safe Storage**. `safeStorage` reads run on the main process and wait for that answer, so until the user answers, the app does not respond: startup stops after the backend comes up, and Quit times out. The prompt often opens behind other windows. If a Mac build hangs right after an install, check for it first (`pgrep SecurityAgent`, or `sample <main pid>` showing `SecItemCopyMatching` on the main thread). A stable signing identity would end this.
+**Keychain prompt after each update.** macOS ties a Keychain item's **Always Allow** to the app's exact code, and every ad-hoc build has new code. So after an app update, the first launch can ask for the Mac password to use the Keychain item `@allternit/desktop Safe Storage` (account `@allternit/desktop Key`). On Mac, Desktop now reads that key off the main thread with a small native addon (`native/keychain`), so the app keeps working while the prompt is open. The startup window says "macOS is asking for permission. Click Always Allow." The prompt can open behind other windows. **Allow** works for that launch. **Always Allow** stops the prompt on later launches of the same build. **Deny** shows **Try again** and **Quit** ("Allternit needs access to the macOS Keychain") when there is a saved sign-in or key to protect, and leaves them untouched. On a first launch with nothing saved yet, Desktop starts without OS encryption instead. Desktop no longer discards them when the Keychain is slow or denied. Windows and Linux are unchanged. A stable signing identity would end the prompt after each update.
 
 **No in-app app updates.** `update-electron-app` (update.electronjs.org) cannot update these builds. On macOS, Squirrel.Mac needs the new app's signature to match the old one, which ad-hoc signing never does. On Windows, the service serves Squirrel.Windows packages, and Desktop ships an NSIS installer. New app versions come from Homebrew (`brew upgrade --cask allternit`) or a fresh download. Runtime packages (below) still update the parts inside the app.
 
@@ -228,7 +280,7 @@ Desktop is the graphical product for the [Allternit Factory](/factory/overview).
 | Part | Where it shows |
 |---|---|
 | Front door | Bot Mode's launch screen: "What should the team work on?" starts a Campaign |
-| [Agents](/factory/agents) | The team strip on the launch screen and the project page. Each card shows the avatar, `bot@team`, a binding badge (Hosted · Gizzi, Terminal · harness name, Vendor · vendor name · official · exact), state, current node, proof `k/n` and reach. A Team graph shows who delegates to and checks whom |
+| [Agents](/factory/agents) | The team strip on the launch screen and the project page. Each card shows the avatar, `bot@team`, a binding badge (Hosted · Gizzi, Terminal · harness name, Vendor · vendor name · official · exact), state, current node, proof `k/n` and reach. The team view opens on [hand-off lanes](/factory/agents#hand-off-lanes) (what each bot passes to whom); **Graph** shows who delegates to and checks whom |
 | [Orchestration](/factory/orchestration) | Threads, with `standing` and `task` labeled differently. Task threads carry a node strip. Every message shows its delivery state |
 | [Workflows](/factory/workflows) | A template picker in the composer ("Run as: Build, check, prove") and a Flow graph tab on the project page, with live node status, the fail route and the human gate |
 | [Workspace](/factory/workspace) | Project = Campaign. A Board tab on the project page, and the Node page in the shared pane: intent, plan and delivered, `PROGRESS.md` to the side, proof paired to each contract line, and [Approve](/factory/approvals) |
@@ -238,6 +290,15 @@ Desktop is the graphical product for the [Allternit Factory](/factory/overview).
 The views draw the same picture for the same input (no random layout), show "—" when empty, and take counts from the judge, never from narrative. Desktop ships `allternit-factory` and `gizzi` in `resources/bin` and puts `gizzi` on your PATH at first run: on macOS/Linux as a `~/.local/bin/gizzi` link (to the active runtime package's `gizzi` once a runtime update is installed, so the terminal runs the same version as Desktop; a link you pointed elsewhere, such as a Homebrew install, is kept), on Windows as a `%LOCALAPPDATA%\Allternit\bin\gizzi.cmd` shim with that folder appended to your user PATH (open a new terminal to pick it up; the uninstaller removes the shim).
 
 ## How this relates to the Agency Kernel
+
+## Messages on your Mac: permissions
+
+The "Messages on your Mac" tool lets a bot search your Messages history and prepare a text that is sent only after you approve it. macOS needs two permissions for Allternit Desktop, because the Allternit runtime runs as a child of the app.
+
+1. **Full Disk Access** (to read the Messages database). In Settings, open Messages (Mac) and choose the Full Disk Access row. System Settings opens; turn on Allternit Desktop, adding it with the plus button if it is not listed, then restart the app.
+2. **Automation** (to send through Messages). Choose the Automation row, turn on Messages under Allternit Desktop, or approve the prompt the first time a text is sent.
+
+Both rows show a check mark once macOS has granted access. This is macOS only.
 
 ## Runtime updates
 

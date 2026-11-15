@@ -28,7 +28,8 @@ import type { AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS } from 
 import { buildRedirectUri, findAvailablePort } from './oauthPort.js'
 import type { McpHTTPServerConfig, McpSSEServerConfig } from './types.js'
 import { getLoggingSafeMcpBaseUrl } from './utils.js'
-import { performCrossAppAccess, XaaTokenExchangeError } from './xaa.js'
+import { performCrossAppAccess, XaaTokenExchangeError, type XaaResult } from './xaa.js'
+import { isAllternitXaaEnabled, performAllternitXaa } from './xaaAllternit.js'
 import {
   acquireIdpIdToken,
   clearIdpIdToken,
@@ -369,6 +370,10 @@ export function hasMcpDiscoveryButNoToken(
   }
   const serverKey = getServerKey(serverName, serverConfig)
   const entry = getSecureStorage().read()?.mcpOAuth?.[serverKey]
+  // Allternit managed sign-in re-grants silently the same way.
+  if (entry?.allternitManaged && isAllternitXaaEnabled()) {
+    return false
+  }
   return entry !== undefined && !entry.accessToken && !entry.refreshToken
 }
 
@@ -854,6 +859,58 @@ async function performMCPXaaAuth(
   }
 }
 
+/** Write tokens from Allternit managed sign-in to the normal OAuth slot. */
+function saveAllternitXaaTokens(
+  serverName: string,
+  serverConfig: McpSSEServerConfig | McpHTTPServerConfig,
+  tokens: XaaResult,
+): void {
+  const storage = getSecureStorage()
+  const existingData = storage.read() || {}
+  const serverKey = getServerKey(serverName, serverConfig)
+  const prev = existingData.mcpOAuth?.[serverKey]
+  storage.update({
+    ...existingData,
+    mcpOAuth: {
+      ...existingData.mcpOAuth,
+      [serverKey]: {
+        ...prev,
+        serverName,
+        serverUrl: serverConfig.url,
+        accessToken: tokens.access_token,
+        refreshToken: tokens.refresh_token ?? prev?.refreshToken,
+        expiresAt: Date.now() + (tokens.expires_in || 3600) * 1000,
+        scope: tokens.scope,
+        // Renewal asks Allternit again (no client secret kept here).
+        allternitManaged: true,
+        discoveryState: {
+          authorizationServerUrl: tokens.authorizationServerUrl,
+        },
+      },
+    },
+  })
+}
+
+/**
+ * XAA IdP mode "allternit": true when Allternit signed this server in. False
+ * when Allternit has no managed config for it (normal OAuth then runs). Throws
+ * when it is configured but fails — no silent fallback to the consent flow.
+ */
+async function tryAllternitXaaAuth(
+  serverName: string,
+  serverConfig: McpSSEServerConfig | McpHTTPServerConfig,
+): Promise<boolean> {
+  if (!isAllternitXaaEnabled()) return false
+  const tokens = await performAllternitXaa(serverConfig.url, serverName)
+  if (!tokens) return false
+  saveAllternitXaaTokens(serverName, serverConfig, tokens)
+  logEvent('tengu_mcp_oauth_flow_success', {
+    authMethod:
+      'xaa_allternit' as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
+  })
+  return true
+}
+
 export async function performMCPOAuthFlow(
   serverName: string,
   serverConfig: McpSSEServerConfig | McpHTTPServerConfig,
@@ -907,6 +964,11 @@ export async function performMCPOAuthFlow(
       abortSignal,
       options?.skipBrowserOpen,
     )
+    return
+  }
+
+  // Allternit as the IdP: an org-managed server signs in with no browser.
+  if (await tryAllternitXaaAuth(serverName, serverConfig)) {
     return
   }
 
@@ -1631,6 +1693,48 @@ export class ClaudeAuthProvider implements OAuthClientProvider {
       // Fall through. Either id_token isn't cached (xaaRefresh returned
       // undefined) or the exchange errored. Normal path below handles both:
       // !tokenData → undefined → 401 → needs-auth; expired → undefined → same.
+    }
+
+    // Allternit managed sign-in: first connect or an expiring managed token gets a
+    // fresh ID-JAG + grant with no browser. Only for servers Allternit already
+    // signed in, or never-authed ones (null = not managed → normal path below).
+    if (
+      !this.serverConfig.oauth?.xaa &&
+      isAllternitXaaEnabled() &&
+      (tokenData?.allternitManaged || !tokenData?.accessToken) &&
+      !tokenData?.refreshToken &&
+      (!tokenData?.accessToken ||
+        (tokenData.expiresAt - Date.now()) / 1000 <= 300)
+    ) {
+      if (!this._refreshInProgress) {
+        this._refreshInProgress = performAllternitXaa(
+          this.serverConfig.url,
+          this.serverName,
+        )
+          .then(tokens => {
+            if (!tokens) return undefined
+            saveAllternitXaaTokens(this.serverName, this.serverConfig, tokens)
+            return {
+              access_token: tokens.access_token,
+              token_type: 'Bearer',
+              expires_in: tokens.expires_in,
+              scope: tokens.scope,
+              refresh_token: tokens.refresh_token,
+            }
+          })
+          .finally(() => {
+            this._refreshInProgress = undefined
+          })
+      }
+      try {
+        const refreshed = await this._refreshInProgress
+        if (refreshed) return refreshed
+      } catch (e) {
+        logMCPDebug(
+          this.serverName,
+          `XAA(allternit) silent exchange failed: ${errorMessage(e)}`,
+        )
+      }
     }
 
     if (!tokenData) {

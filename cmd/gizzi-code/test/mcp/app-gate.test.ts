@@ -68,6 +68,14 @@ const declining: Ask = async () => {
 }
 
 describe("permission class", () => {
+  test("project_send asks in every mode and no earlier approval covers it", () => {
+    const approvals = [{ permission: "project_send", pattern: "*", action: "allow" as const }]
+    for (const mode of ["default", "acceptEdits", "auto", "yolo", "bypassPermissions"] as const) {
+      expect(PermissionNext.evaluatePolicy("project_send", "p1", { configured: [], approvals, mode, skipPermissions: true }).action).toBe("ask")
+    }
+    expect(PermissionNext.taskGrantable("project_send")).toBe(false)
+  })
+
   test("mcp_app asks in every mode, even ones that allow everything else", () => {
     for (const mode of ["default", "yolo", "auto", "bypassPermissions", "acceptEdits"]) {
       expect(PermissionNext.evaluatePolicy("mcp_app", "x", { configured: [], mode }).action).toBe("ask")

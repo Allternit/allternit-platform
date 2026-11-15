@@ -51,7 +51,7 @@ async fn get_recording(State(state): State<Arc<ApiState>>, headers: HeaderMap, P
 }
 
 /// Same convention as the voice service's `recording::object_key`.
-fn default_key(call_id: &str) -> String {
+pub(crate) fn default_key(call_id: &str) -> String {
     let safe: String = call_id
         .chars()
         .map(|c| if c.is_ascii_alphanumeric() || matches!(c, '-' | '_') { c } else { '_' })

@@ -47,7 +47,7 @@ async fn search_udemy(
     State(_state): State<Arc<AppState>>,
     Json(body): Json<SearchRequest>,
 ) -> impl IntoResponse {
-    let client = reqwest::Client::new();
+    let client = crate::net_client::client();
 
     let mut url = reqwest::Url::parse("https://www.udemy.com/api-2.0/courses/")
         .expect("static Udemy URL is valid");

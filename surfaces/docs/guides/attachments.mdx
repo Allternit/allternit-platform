@@ -27,6 +27,11 @@ In a bot's chat you can also drop files or links on the bot itself, or use **Att
 ## How the agent gets them
 
 - **Documents and text** (PDF, DOCX, CSV, JSON, ZIP, code and any file that turns out to be text) are read on your device, and their text is added to your message.
+- **Data files** (CSV, TSV, XLSX, XLS and JSON) are uploaded to your computer's runtime, so code tools (`run_code` and Analyze) can read the real file and give you tables, charts and new files. See [Analyze files](/guides/analyze-files).
+  - A small text file (20,000 characters or fewer) is also included in the message as text.
+  - A larger one sends a short preview instead: its first 20 lines.
+  - If the upload fails, the file goes as text only and the composer says so (for example, "sales.csv went as text only: the upload for code tools failed."). The message is still sent.
+  - Each file can be up to 20 MB.
 - **Folders** are read the same way: each text file's contents are added under its path, and other files are listed by name. Hidden folders such as `.git`, and `node_modules`, `dist`, `build` and `target`, are skipped when you drag a folder in.
 - **Images** go to the model as images, so it can see them. Photos larger than 2048 px on the long side are scaled down first, and an animated GIF is sent as it is. Up to 10 images go with one message.
 - **Video, audio and other files** (and PDFs with no readable text) are uploaded to your Allternit Cloud storage, and the message carries a link with the file's name, type and size, so the agent can open it. This needs you to be signed in. If you aren't, the message isn't sent and a notice says why.
@@ -54,6 +59,6 @@ When you send a file that has an editor in Allternit, it opens beside the chat (
 | --- | --- | --- |
 | Free | 100 MB | 10 MB |
 | Plus | 2 GB | 100 MB |
-| Super and Ultra | 10 GB | 500 MB |
+| Max and Ultra | 10 GB | 500 MB |
 
 If a file is over your plan's limits, the message is not sent and a notice says why. Nothing is cut off silently. If shared storage is temporarily full, uploads pause and you see the same kind of notice. See the [Files API](/api/files) for the developer view.

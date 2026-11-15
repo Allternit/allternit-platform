@@ -1,0 +1,47 @@
+---
+title: "Cloud API edge"
+description: "How requests reach the production Cloud API, how the client IP is found, and which server flags are on"
+---
+
+**Status: AVAILABLE (internal).** See [status labels](/architecture#status-labels).
+
+## Request path
+
+api.allternit.com is proxied by Cloudflare. Cloudflare connects to nginx on the production host, and nginx proxies to the Cloud API on `127.0.0.1:8082`.
+
+- nginx site: `/etc/nginx/sites-enabled/api-allternit`. This is a regular file, not a link. The copy in `sites-available` is older and is not loaded. Edit the `sites-enabled` file.
+- The Cloud API binds `0.0.0.0:8082`. The `allternit-port-guard` systemd unit drops ports 4096, 8013 and 8082 on `eth0` (IPv4 and IPv6), so 8082 answers only on loopback and the tailnet.
+
+## Client IP
+
+The Cloud API reads the caller's IP only from `X-Real-IP`, and only when the TCP peer is loopback (nginx). See `services::api_keys::client_ip`.
+
+nginx sets `X-Real-IP $remote_addr`. `/etc/nginx/snippets/cloudflare-real-ip.conf` is included in the 443 server block. It lists Cloudflare's edge ranges with `set_real_ip_from` and sets `real_ip_header CF-Connecting-IP`. Then:
+
+- A request through Cloudflare gets the real client IP.
+- A request sent straight to the origin from a non-Cloudflare address keeps its own peer IP. A forged `CF-Connecting-IP` header is ignored.
+
+Cloudflare publishes its ranges at https://www.cloudflare.com/ips. When the list changes, write the snippet again and run `nginx -t` and `systemctl reload nginx`.
+
+To check the client IP, request `https://api.allternit.com/health?probe=<tag>` and look for the tag in `/var/log/nginx/access.log`. The first field must be your public IP, not a Cloudflare address.
+
+## Server flags
+
+These are set in `/opt/allternit-cloud-api/.env`. A change takes effect at the next restart (every deploy restarts the service).
+
+| Flag | Value | Effect |
+|---|---|---|
+| `ALLTERNIT_PLATFORM_API` | `1` | Platform API and console routes |
+| `ALLTERNIT_CUSTOMER_EMAILS` | `1` | Customer emails |
+| `PLATFORM_SPEND_ALERT_EMAILS` | `1` | Spend alert emails to an organization's `spend_alert_email` |
+| `PLATFORM_LOG_BODIES` | `1` | Projects with `log_bodies` keep request and response bodies for 30 days. An hourly sweep deletes expired ones. |
+| `PLATFORM_KEY_IP_ALLOWLIST` | `1` | Key and organization IP allowlists are enforced (403 `ip_not_allowed`). Needs the client IP setup above. |
+
+The console reads `VITE_LOG_BODIES` and `VITE_KEY_IP_ALLOWLIST` at build time (`.github/workflows/deploy-cloudflare-pages.yml`). Keep each pair the same as the server.
+
+Not set: `VITE_ORG_SSO`. SSO, SCIM and custom roles need a paid Clerk add-on, and Allternit does not offer them.
+
+## Related
+
+- [Cloud database migrations](/operations/database-migrations)
+- [Governance](/console/governance)

@@ -43,6 +43,9 @@ All endpoints require a valid Bearer token in the `Authorization` header. See [A
 | GET | `/cowork/projects/:id` | Get a project. |
 | PUT / PATCH | `/cowork/projects/:id` | Update a project. |
 | DELETE | `/cowork/projects/:id` | Delete a project. |
+| GET | `/cowork/projects/:id/status` | Read the project status page. |
+| PATCH | `/cowork/projects/:id/status` | Update one or more sections of the status page. |
+| POST | `/cowork/projects/:id/close` | Close or reopen a project. |
 | GET | `/cowork/projects/:id/files` | List files attached to a project. |
 | POST | `/cowork/projects/:id/files` | Attach a file to a project. |
 | DELETE | `/cowork/projects/:id/files/:file_id` | Remove a file from a project. |
@@ -224,6 +227,51 @@ Response:
   "file": { "id": "file_1a2b3c4d" }
 }
 ```
+
+### Project status page
+
+Every project has one status page, stored in the project's `metadata.status`. It needs no migration, and `GET /cowork/projects` already returns it inside `metadata`. See the [project status guide](/guides/project-status) for how bots and people use it.
+
+`GET /cowork/projects/:id/status` returns `{ "status": { ... } }` with defaults filled in:
+
+```json
+{
+  "status": {
+    "version": 1,
+    "lifecycle": "active",
+    "state": "on_track",
+    "next_action": "Send the draft to legal",
+    "sections": { "goal": { "text": "", "updated_by": "", "updated_at": "" } },
+    "log": [{ "at": "2026-10-30T09:00:00Z", "by": "Chief of Staff", "section": "status", "note": "updated status", "proof_url": null }],
+    "archive": [],
+    "revision": 3,
+    "closed_at": null
+  }
+}
+```
+
+The nine section keys are `goal`, `status`, `next_actions`, `owners`, `deadlines`, `decisions`, `blockers`, `outcome` and `lessons`. `state` is one of `on_track`, `at_risk`, `blocked`, `needs_decision` or `done`. The log keeps the newest 10 entries, newest first; older ones move to `archive` (capped at 200).
+
+`PATCH /cowork/projects/:id/status` merges only the fields you send, inside one transaction, so two bots writing different sections never overwrite each other:
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `by` | string | Who is writing: a bot name, or `you`. |
+| `section` | string | Section to write; use with `text`. |
+| `text` | string | New text for that section. |
+| `state` | string | New project state. |
+| `next_action` | string | One-line next step shown on the project index. |
+| `note` | string | Log line. Defaults to `updated <section>`. |
+| `proof_url` | string | Link to evidence. |
+| `done` | boolean | Mark the project done. |
+
+Every call appends a log entry and bumps `revision`. It returns `{ "status": ... }`.
+
+- `done: true` or `state: "done"` without `proof_url` returns 400 `{ "error": "proof_required" }`.
+- A closed project returns 409 `{ "error": "project_closed" }`.
+- When the state becomes `blocked` or `needs_decision`, or becomes `at_risk` with a note starting with `overdue`, the owner gets one open item in Needs you. There is at most one open item per project and state, and it resolves when the state moves on.
+
+`POST /cowork/projects/:id/close` takes `{ "by", "outcome", "lessons", "reopen"? }`. It sets the lifecycle to `closed`, writes the outcome and lessons sections, sets `closed_at`, logs the change, and pauses every routine linked to the project (routines whose `metadata.projectId` or `workspace_id` equals the project id). It returns `{ "status": ..., "paused_routines": 2 }`. With `reopen: true` it sets the lifecycle back to `active` and turns back on the routines that the close paused. Cloud-scheduled routines are stopped and restarted in the gizzi cron store too.
 
 ## Memory
 

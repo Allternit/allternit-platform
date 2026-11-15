@@ -5,6 +5,7 @@ import fs from "fs/promises"
 import { tmpdir } from "../fixture/fixture"
 import { Instance } from "../../src/project/instance"
 import { ToolRegistry } from "../../src/runtime/tools/builtins/registry"
+import { Flag } from "../../src/runtime/context/flag/flag"
 
 describe("tool.registry", () => {
   test("loads tools from .gizzi/tool (singular)", async () => {
@@ -129,5 +130,24 @@ describe("tool.registry", () => {
       if (prev === undefined) delete process.env.GIZZI_AUTO_INSTALL_DEPS
       else process.env.GIZZI_AUTO_INSTALL_DEPS = prev
     }
+  })
+
+  test("a turn with computer: true gets the computer tools; a turn without it does not", async () => {
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const computerTools = ["computer", "computer_v2", "computers"]
+        const withOption = await ToolRegistry.ids({ computer: true })
+        for (const id of computerTools) expect(withOption).toContain(id)
+        const without = await ToolRegistry.ids()
+        for (const id of computerTools) {
+          if (Flag.GIZZI_ENABLE_COMPUTER_TOOL) expect(without).toContain(id)
+          else expect(without).not.toContain(id)
+        }
+        // computer: false never takes away what the env flag turned on.
+        expect(await ToolRegistry.ids({ computer: false })).toEqual(without)
+      },
+    })
   })
 })

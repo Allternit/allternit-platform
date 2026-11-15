@@ -176,6 +176,8 @@ final class DictationController: ObservableObject {
         let requestBox = UncheckedSendableBox(value: request)
         inputNode.installTap(onBus: 0, bufferSize: 1024, format: inputNode.outputFormat(forBus: 0)) { buffer, _ in
             requestBox.value.append(buffer)
+            // Live mode's speaker look follows the mic.
+            VoiceLevels.shared.pushMic(buffer)
         }
 
         engine.prepare()

@@ -52,3 +52,43 @@ pub async fn write_audit_log(pool: &PgPool, event: AuditEvent) {
         tracing::warn!(action = %event.action, %error, "failed to write audit_log entry");
     }
 }
+
+/// Who an entry belongs to for the console audit page
+/// (`GET /api/v1/platform/audit-log`, migrations_pg/122): the Clerk org and
+/// the project it concerns, plus the caller's trusted IP when known.
+#[derive(Debug, Clone, Default)]
+pub struct AuditScope {
+    pub organization_id: Option<String>,
+    pub project_id: Option<String>,
+    pub ip_address: Option<String>,
+}
+
+/// [`write_audit_log`] with the org, project and IP columns filled. Never
+/// fails the caller.
+pub async fn write_scoped_audit_log(pool: &PgPool, event: AuditEvent, scope: AuditScope) {
+    let details = event.details.map(|value| value.to_string());
+    let result = sqlx::query(
+        r#"
+        INSERT INTO audit_log (id, action, resource_type, resource_id, user_id, user_email, details, success,
+                               organization_id, project_id, ip_address)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        "#,
+    )
+    .bind(format!("al_{}", Uuid::new_v4()))
+    .bind(&event.action)
+    .bind(&event.resource_type)
+    .bind(event.resource_id.as_deref())
+    .bind(event.user_id.as_deref())
+    .bind(event.user_email.as_deref())
+    .bind(details)
+    .bind(event.success)
+    .bind(scope.organization_id.as_deref())
+    .bind(scope.project_id.as_deref())
+    .bind(scope.ip_address.as_deref())
+    .execute(pool)
+    .await;
+
+    if let Err(error) = result {
+        tracing::warn!(action = %event.action, %error, "failed to write audit_log entry");
+    }
+}

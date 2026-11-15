@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: Apache-2.0
+# Local venv, downloaded test models and job output never get committed.
+.scratch/
+.venv/
+__pycache__/
+.pytest_cache/
+*.egg-info/

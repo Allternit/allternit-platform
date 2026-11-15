@@ -1,5 +1,7 @@
 // @ts-nocheck
-import chalk from '@/shared/util/chalk'
+import chalk, { nearestAnsi256 } from '@/shared/util/chalk'
+
+export { nearestAnsi256 }
 import type { Color, TextStyles } from './styles.js'
 
 /**
@@ -63,30 +65,6 @@ export const CHALK_BOOSTED_FOR_XTERMJS = boostChalkLevelForXtermJs()
 export const CHALK_CLAMPED_FOR_TMUX = clampChalkLevelForTmux()
 
 export type ColorType = 'foreground' | 'background'
-
-const CUBE = [0, 95, 135, 175, 215, 255]
-
-/**
- * Nearest xterm-256 color by distance, over the 6x6x6 cube and the gray ramp.
- * chalk's own downgrade rounds each channel on its own, which pulls warm
- * colors toward pink: Gizzi sand rgb(212,176,140) became 181 (215,175,175)
- * and coral rgb(217,119,87) became 174 (215,135,135) in Apple Terminal.
- * Nearest-color gives 180 (215,175,135) and 173 (215,135,95).
- */
-export function nearestAnsi256(r: number, g: number, b: number): number {
-  const level = (v: number) => {
-    let best = 0
-    for (let i = 1; i < 6; i++) if (Math.abs(CUBE[i]! - v) < Math.abs(CUBE[best]! - v)) best = i
-    return best
-  }
-  const [ri, gi, bi] = [level(r), level(g), level(b)]
-  const dist = (x: number, y: number, z: number) => (x - r) ** 2 + (y - g) ** 2 + (z - b) ** 2
-  const cubeIndex = 16 + 36 * ri + 6 * gi + bi
-  const cubeDist = dist(CUBE[ri]!, CUBE[gi]!, CUBE[bi]!)
-  const grayStep = Math.max(0, Math.min(23, Math.round(((r + g + b) / 3 - 8) / 10)))
-  const gray = 8 + grayStep * 10
-  return dist(gray, gray, gray) < cubeDist ? 232 + grayStep : cubeIndex
-}
 
 function rgbColor(r: number, g: number, b: number, type: ColorType, str: string): string {
   if (chalk.level === 2) {

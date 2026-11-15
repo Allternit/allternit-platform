@@ -21,6 +21,8 @@ import os from "node:os"
 import path from "node:path"
 import type { DiscoveredProvider, DiscoveredModel } from "./index"
 import catalog from "./cli-catalog.json"
+import { liveModels } from "./live-models"
+import { cliSignedIn } from "./sign-in"
 
 const execFileAsync = promisify(execFile)
 
@@ -62,15 +64,7 @@ export function markCloudComputerSandbox(
 prependHarnessBin()
 markCloudComputerSandbox()
 
-export function parseCodexModels(stdout: string): DiscoveredModel[] {
-  const catalog = JSON.parse(stdout) as { models?: Array<{ slug?: string; display_name?: string; context_window?: number }> }
-  return (catalog.models ?? []).filter((model) => model.slug).map((model) => ({
-    id: model.slug!,
-    name: model.display_name || model.slug!,
-    context: model.context_window || 272000,
-    output: 32768,
-  }))
-}
+export { parseCodexModels } from "./live-models"
 
 /** One entry of cli-catalog.json (the fields gizzi uses). */
 export interface CatalogTool {
@@ -87,9 +81,27 @@ export interface CatalogTool {
   /** Env var that points the CLI at its own config/sign-in dir (a second account); absent = single-account. */
   accountHomeEnv?: string
   custom?: boolean
+  /** Lower = preferred as the automatic default brain (mirrors Desktop's CLI_DEFAULT_ORDER); absent = never automatic. */
+  defaultRank?: number
+  /** The command that prints the CLI's own model list; `models` is the fallback. */
+  liveModels?: CatalogLiveModels
+  /** Old model id → current id. */
+  retired?: Record<string, string>
+}
+
+export interface CatalogLiveModels {
+  args: string[]
+  parser: "codex-json" | "tsv" | "grok" | "ollama"
 }
 
 export const CLI_CATALOG: CatalogTool[] = (catalog as { tools: CatalogTool[] }).tools
+
+/** A retired model id mapped to its current one (catalog `retired`), else the id unchanged. */
+export function retiredModelId(providerID: string, modelID: string): string {
+  const tool =
+    CLI_CATALOG.find((t) => t.id === providerID) ?? CLI_CATALOG.find((t) => t.aliases?.includes(providerID))
+  return tool?.retired?.[modelID] ?? modelID
+}
 
 /**
  * Per-provider environment overrides matching the Multica Go runtime.
@@ -316,6 +328,12 @@ export interface SubprocessSpec {
   probe?: { args: string[]; expect: string | RegExp }
   /** Added by a user (Settings → Coding tools → Add a CLI) */
   custom?: boolean
+  /** Catalog `defaultRank` (lower = preferred automatic default); absent = never automatic. */
+  defaultRank?: number
+  /** Catalog `liveModels`: the command that prints the CLI's own model list. */
+  liveModels?: CatalogLiveModels
+  /** Catalog `retired`: old model id → current id. */
+  retired?: Record<string, string>
 }
 
 function toSpec(tool: CatalogTool): SubprocessSpec {
@@ -327,9 +345,14 @@ function toSpec(tool: CatalogTool): SubprocessSpec {
     cmd: tool.bin,
     adapter: tool.adapter,
     headless: tool.headless,
-    models: tool.models ?? [],
+    // Catalog order is the vendor's order; `default` rides along on the model.
+    models: (tool.models ?? []).map((model, rank) => ({ ...model, rank })),
     probe: tool.probe ? { args: tool.probe.args, expect: new RegExp(tool.probe.expect) } : undefined,
     custom: tool.custom,
+    // A user-added CLI is never picked as the default on its own, whatever its file says.
+    defaultRank: tool.custom ? undefined : tool.defaultRank,
+    liveModels: tool.custom ? undefined : tool.liveModels,
+    retired: tool.retired,
   }
 }
 
@@ -453,64 +476,47 @@ async function runProbe(bin: string, spec: SubprocessSpec): Promise<boolean> {
   }
 }
 
-async function probeOllamaModels(binPath: string): Promise<DiscoveredModel[]> {
-  try {
-    const proc = Bun.spawn([binPath, "list"], { stdout: "pipe", stderr: "pipe" })
-    const out = await readWithTimeout(proc.stdout, () => {
-      try {
-        proc.kill(9)
-      } catch {
-        // already exited
-      }
-    })
-    if (out === null) return [] // timed out — treat as not available
-    const lines = out.split("\n").slice(1).filter(Boolean)
-    return lines.map((line) => {
-      const [id] = line.trim().split(/\s+/)
-      return { id, name: id, context: 128000, output: 8192 }
-    })
-  } catch {
-    return []
-  }
-}
-
+/**
+ * Every installed, runnable CLI as a provider: catalog order first, then the
+ * user's own CLIs by name (deterministic, not probe-finish order). Models come
+ * from the CLI's own list when the catalog names one (live-models.ts), else
+ * the catalog's static list.
+ */
 export async function discoverSubprocessProviders(): Promise<DiscoveredProvider[]> {
-  const discovered: DiscoveredProvider[] = []
+  // A listed CLI gizzi can't drive yet isn't offered as a brain.
+  const runnable = subprocessSpecs().filter((spec) => spec.adapter !== "unsupported")
+  const ordered = [
+    ...runnable.filter((spec) => !spec.custom),
+    ...runnable.filter((spec) => spec.custom).sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id)),
+  ]
 
-  await Promise.all(
-    // A listed CLI gizzi can't drive yet isn't offered as a brain.
-    subprocessSpecs().filter((spec) => spec.adapter !== "unsupported").map(async (spec) => {
+  const found = await Promise.all(
+    ordered.map(async (spec): Promise<DiscoveredProvider | undefined> => {
       const binPath = await resolveCliPath(spec)
       if (!binPath) return
 
       const alive = await runProbe(binPath, spec)
       if (!alive) return
 
-      let models = spec.models
-      if (spec.id === "codex-cli") {
-        try {
-          const { stdout } = await execFileAsync(binPath, ["debug", "models"], { timeout: 5000 })
-          const available = parseCodexModels(stdout)
-          if (available.length > 0) models = available
-        } catch {
-          // Older Codex versions may not expose debug models; keep the fallback.
-        }
-      }
-      if (spec.id === "ollama-cli" && models.length === 0) {
-        models = await probeOllamaModels(binPath)
-      }
+      const [models, signedIn] = await Promise.all([
+        spec.liveModels ? liveModels(spec, binPath) : Promise.resolve(spec.models),
+        cliSignedIn(spec, binPath).catch(() => undefined),
+      ])
       if (models.length === 0) return
 
-      discovered.push({
+      const provider: DiscoveredProvider = {
         id: spec.id,
         name: spec.name,
         auth_type: "subprocess",
         subprocess_cmd: binPath,
         source: "subprocess",
         models,
-      })
+      }
+      if (signedIn !== undefined) provider.signedIn = signedIn
+      if (spec.defaultRank !== undefined) provider.defaultRank = spec.defaultRank
+      return provider
     }),
   )
 
-  return discovered
+  return found.filter((p): p is DiscoveredProvider => p !== undefined)
 }

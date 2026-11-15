@@ -100,6 +100,16 @@ export const SessionTable = sqliteTable(
     }>(),
     // Glance line (the `glance` tool): one line for the sidebar row.
     glance: text({ mode: "json" }).$type<{ text: string; artifactId?: string; at: number }>(),
+    // Mission label (`gizzi mission`): set on a mission's orchestrator session.
+    mission: text({ mode: "json" }).$type<{
+      id: string
+      goal: string
+      milestone: number
+      total: number
+      status: string
+      label: string
+      at: number
+    }>(),
     ...Timestamps,
     time_compacting: integer(),
     time_archived: integer(),
@@ -140,6 +150,26 @@ export const PartTable = sqliteTable(
     data: text({ mode: "json" }).notNull().$type<PartData>(),
   },
   (table) => [index("part_message_idx").on(table.message_id), index("part_session_idx").on(table.session_id)],
+)
+
+/**
+ * Earlier versions of a turn. `SessionRevert.cleanup()` deletes the messages
+ * at/after the revert pointer on the next send (Retry, Edit); before it does,
+ * it keeps them here as one row so reply versions survive a reload.
+ * `payload` is the removed messages (info + parts, tool outputs capped).
+ */
+export const MessageBranchTable = sqliteTable(
+  "message_branch",
+  {
+    id: text().primaryKey(),
+    session_id: text()
+      .notNull()
+      .references(() => SessionTable.id, { onDelete: "cascade" }),
+    anchor_message_id: text().notNull(),
+    created_at: integer().notNull(),
+    payload: text({ mode: "json" }).notNull().$type<MessageV2.WithParts[]>(),
+  },
+  (table) => [index("message_branch_session_idx").on(table.session_id, table.created_at)],
 )
 
 /** Append-only replay ledger. Mutable message/part tables remain the current-state projection. */
@@ -237,6 +267,32 @@ export const LoopTable = sqliteTable(
     max_iterations: integer().notNull().default(10),
     iteration_log: text({ mode: "json" }).notNull().$type<Array<{ iteration: number; output: string; exitCode: number; timestamp: string }>>(),
     state: text().notNull().default("running"),
+    /** Loop Card measurement: when set the loop is a measured loop. */
+    metric: text({ mode: "json" }).$type<{
+      command: string
+      direction: "lower" | "higher"
+      keepBar: number
+      noiseRuns: number
+      minPairs: number
+      stallLimit?: number
+    }>(),
+    /** One row per attempt, rejects included. */
+    ledger: text({ mode: "json" }).$type<Array<{
+      iteration: number
+      hypothesis: string
+      delta: number | null
+      ci: [number, number] | null
+      n: number
+      noise: number
+      verdict: string
+      why: string
+      outcome: "ACTED" | "NOOP" | "BLOCKED"
+      control: Array<number | null>
+      treatment: Array<number | null>
+      timestamp: string
+    }>>(),
+    cwd: text(),
+    last_outcome: text(),
     ...Timestamps,
   },
   (table) => [

@@ -67,6 +67,8 @@ pub struct RosterBot {
     pub title: Option<String>,
     pub tagline: Option<String>,
     pub description: Option<String>,
+    /// Worker bots (V282): kinds of tasks this bot owns; others hand those to it.
+    pub owns: Vec<String>,
 }
 
 /// The bot whose chat is calling, and where that chat sits.
@@ -207,13 +209,20 @@ pub fn caller_for_session(db: &DbHandle, session_id: &str) -> Option<Caller> {
     Some(Caller { bot_id, user_id, name, session_id: session_id.to_string(), thread_id, project_id })
 }
 
+/// Whether `session_id` is a bot's main chat (or a person's chat running as
+/// their main bot), not a task thread or subagent.
+pub fn is_main_chat(db: &DbHandle, session_id: &str) -> bool {
+    let Ok(Some(bag)) = db.get_session_metadata(session_id) else { return false };
+    bag["botCanonicalFor"].as_str().is_some_and(|v| !v.is_empty()) || bag["mainBotChat"].as_bool() == Some(true)
+}
+
 /// The user's bots other than `exclude`, oldest first.
 pub fn roster(db: &DbHandle, user_id: &str, exclude: &str) -> Vec<RosterBot> {
     let Ok(conn) = db.connect() else { return vec![] };
     let Ok(mut stmt) = conn.prepare(
         "SELECT id, COALESCE(json_extract(config, '$.botProfile.displayName'), name),
                 json_extract(config, '$.botProfile.handle'), json_extract(config, '$.botProfile.title'),
-                json_extract(config, '$.botProfile.tagline'), description
+                json_extract(config, '$.botProfile.tagline'), description, owns
          FROM agents
          WHERE user_id = ?1 AND id != ?2 AND (is_bot = 1 OR json_extract(config, '$.isBot') = 1)
          ORDER BY created_at, id",
@@ -229,6 +238,10 @@ pub fn roster(db: &DbHandle, user_id: &str, exclude: &str) -> Vec<RosterBot> {
             title: blank(r.get(3)?),
             tagline: blank(r.get(4)?),
             description: blank(r.get(5)?),
+            owns: r
+                .get::<_, Option<String>>(6)?
+                .and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok())
+                .unwrap_or_default(),
         })
     })
     .map(|rows| rows.filter_map(Result::ok).collect())
@@ -286,6 +299,9 @@ pub fn roster_text(bots: &[RosterBot]) -> String {
             let about = [b.tagline.as_deref(), b.description.as_deref()].into_iter().flatten().collect::<Vec<_>>().join(" ");
             if !about.is_empty() {
                 line.push_str(&format!(": {}", truncate(&about, 200)));
+            }
+            if !b.owns.is_empty() {
+                line.push_str(&format!(" [owns: {}]", b.owns.join(", ")));
             }
             line
         })
@@ -606,7 +622,7 @@ async fn roster_route(State(state): State<Arc<AppState>>, Extension(user): Exten
         let caller = authorize(&db, &user.user_id, &body.session_id)?;
         let bots = roster(&db, &caller.user_id, &caller.bot_id);
         Ok::<_, RouteError>(json!({
-            "caller": { "id": caller.bot_id, "name": caller.name, "threadId": caller.thread_id, "projectId": caller.project_id },
+            "caller": { "id": caller.bot_id, "name": caller.name, "threadId": caller.thread_id, "projectId": caller.project_id, "mainChat": is_main_chat(&db, &caller.session_id) },
             "bots": bots,
             "text": roster_text(&bots),
         }))
@@ -852,7 +868,7 @@ async fn hop_advance_route(State(state): State<Arc<AppState>>, Extension(user): 
     if !owned {
         return refuse(RouteError::BadRequest("No such hop.".into()));
     }
-    if !["stored", "delivered", "read", "answered", "held", "refused", "failed"].contains(&body.state.as_str()) {
+    if !["stored", "pushed", "delivered", "read", "answered", "held", "refused", "failed"].contains(&body.state.as_str()) {
         return refuse(RouteError::BadRequest("Unknown hop state.".into()));
     }
     hops::advance(&conn, &body.hop_id, &body.state, body.reason.as_deref(), None, None);
@@ -1023,6 +1039,7 @@ mod tests {
             title: None,
             tagline: None,
             description: None,
+            owns: vec![],
         };
         let bots = vec![bot("b1", "Scout", Some("scout-v1")), bot("b2", "Ledger", None), bot("b3", "ledger", None)];
         assert_eq!(match_target("scout", &bots).unwrap().id, "b1");

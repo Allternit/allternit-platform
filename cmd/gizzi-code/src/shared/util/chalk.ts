@@ -168,9 +168,60 @@ function nearestAnsi16(red: number, green: number, blue: number): number {
   return best
 }
 
+const CUBE = [0, 95, 135, 175, 215, 255]
+
+function hueChroma(r: number, g: number, b: number): { hue: number; chroma: number } {
+  const max = Math.max(r, g, b)
+  const chroma = max - Math.min(r, g, b)
+  if (chroma === 0) return { hue: 0, chroma }
+  let hue = max === r ? ((g - b) / chroma) % 6 : max === g ? (b - r) / chroma + 2 : (r - g) / chroma + 4
+  hue *= 60
+  return { hue: hue < 0 ? hue + 360 : hue, chroma }
+}
+
+/**
+ * Nearest xterm-256 color, keeping the hue of colored inputs. Plain
+ * distance (and chalk's per-channel rounding) loses hue on dark tints: the
+ * diff backgrounds rgb(34,92,43) and rgb(122,41,54) became grey 237 (the
+ * prompt background) and plum 89 in Apple Terminal. A colored input (chroma
+ * >= 40) never maps to the gray ramp and pays for hue drift, so they now map
+ * to 22 (dark green) and 88 (dark red). Neutral inputs still use the gray
+ * ramp; Gizzi sand rgb(212,176,140) stays 180 and coral rgb(217,119,87) 173.
+ */
+export function nearestAnsi256(red: number, green: number, blue: number): number {
+  const source = hueChroma(red, green, blue)
+  const colored = source.chroma >= 40
+  let best = 16
+  let bestDistance = Infinity
+  for (let i = 0; i < 216; i++) {
+    const r = CUBE[Math.floor(i / 36)]!
+    const g = CUBE[Math.floor(i / 6) % 6]!
+    const b = CUBE[i % 6]!
+    let distance = (r - red) ** 2 + (g - green) ** 2 + (b - blue) ** 2
+    if (colored) {
+      const target = hueChroma(r, g, b)
+      const drift = target.chroma === 0 ? 180 : Math.min(Math.abs(target.hue - source.hue), 360 - Math.abs(target.hue - source.hue))
+      distance += (drift * 3) ** 2
+    }
+    if (distance < bestDistance) {
+      bestDistance = distance
+      best = 16 + i
+    }
+  }
+  if (colored) return best
+  for (let step = 0; step < 24; step++) {
+    const v = 8 + step * 10
+    const distance = (v - red) ** 2 + (v - green) ** 2 + (v - blue) ** 2
+    if (distance < bestDistance) {
+      bestDistance = distance
+      best = 232 + step
+    }
+  }
+  return best
+}
+
 function toAnsi256(red: number, green: number, blue: number): string {
-  const channel = (value: number) => Math.round((value / 255) * 5)
-  return `5;${16 + 36 * channel(red) + 6 * channel(green) + channel(blue)}`
+  return `5;${nearestAnsi256(red, green, blue)}`
 }
 
 function fg(red: number, green: number, blue: number): string {

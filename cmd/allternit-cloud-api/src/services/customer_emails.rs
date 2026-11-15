@@ -13,6 +13,20 @@
 //!
 //! Sending is on when `ALLTERNIT_CUSTOMER_EMAILS=1`. The team notes (new
 //! sign-up, new paying customer) go out through [`super::ops_alert`] either way.
+//!
+//! Platform spend alerts ([`spend_alert_email`]) go to an org's
+//! `spend_alert_email` (console Security page) when a project crosses 50, 80
+//! or 100% of its monthly cap. They need `ALLTERNIT_CUSTOMER_EMAILS=1` AND
+//! `PLATFORM_SPEND_ALERT_EMAILS=1` (both Eoj gates); otherwise the alert is
+//! only recorded (`platform_spend_alerts`, the `usage.threshold` webhook).
+//! They are not claimed in `customer_emails` (whose rows are per Clerk user):
+//! the `platform_spend_alerts` insert already makes each one fire once.
+//!
+//! Credit computer notices ([`notify_credit`]: about a day / 2 hours of
+//! runway left, stopped at $0, deletion coming) are recorded in
+//! `customer_emails` with status `queued` and not sent, unless
+//! `ALLTERNIT_CREDIT_COMPUTER_EMAILS=1` and [`enabled`]. Their copy is a
+//! draft in Register 1 that Eoj has not approved yet.
 
 use std::process::Stdio;
 
@@ -30,6 +44,13 @@ const DEFAULT_SENDMAIL: &str = "/usr/sbin/sendmail";
 
 pub fn enabled() -> bool {
     matches!(std::env::var(ENV_ENABLED).as_deref(), Ok("1") | Ok("true"))
+}
+
+const ENV_SPEND_ALERTS: &str = "PLATFORM_SPEND_ALERT_EMAILS";
+
+/// Spend alert emails need this switch and [`enabled`].
+pub fn spend_alert_emails_enabled() -> bool {
+    enabled() && matches!(std::env::var(ENV_SPEND_ALERTS).as_deref(), Ok("1") | Ok("true"))
 }
 
 /// Who an email goes to.
@@ -341,6 +362,190 @@ pub fn auto_topup_failed_email(recipient: &Recipient, amount_usd: f64, reason: &
     Email { subject: "Auto top-up failed and is now off".to_string(), body, html }
 }
 
+const ENV_CREDIT_COMPUTER_EMAILS: &str = "ALLTERNIT_CREDIT_COMPUTER_EMAILS";
+
+/// Credit computer notices are sent only with this switch and [`enabled`].
+pub fn credit_computer_emails_enabled() -> bool {
+    enabled() && matches!(std::env::var(ENV_CREDIT_COMPUTER_EMAILS).as_deref(), Ok("1") | Ok("true"))
+}
+
+/// A credit computer event worth telling the owner about.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CreditNotice {
+    /// About 24 hours of running time left on the credits.
+    Low24h,
+    /// About 2 hours left.
+    Low2h,
+    /// The credits reached $0 and the computer stopped; deleted at `delete_after`.
+    Stopped { delete_after: chrono::DateTime<chrono::Utc> },
+    /// Reminder that the stopped computer is deleted at `delete_after`.
+    DeleteWarning { delete_after: chrono::DateTime<chrono::Utc> },
+    /// A plan computer past its included hours stopped at $0. Nothing is
+    /// deleted; it can run again at `resumes_at` (next month) or with credits.
+    PlanHoursStopped { resumes_at: chrono::DateTime<chrono::Utc> },
+}
+
+impl CreditNotice {
+    /// `customer_emails.kind` (migration 133).
+    pub fn kind(&self) -> &'static str {
+        match self {
+            CreditNotice::Low24h => "credit_low_24h",
+            CreditNotice::Low2h => "credit_low_2h",
+            CreditNotice::Stopped { .. } => "credit_stopped",
+            CreditNotice::DeleteWarning { .. } => "credit_delete_warning",
+            CreditNotice::PlanHoursStopped { .. } => "plan_hours_stopped",
+        }
+    }
+}
+
+/// Credit computer notice email. DRAFT copy (Register 1), pending Eoj's
+/// approval; the first lines reuse the contract's in-app strings.
+pub fn credit_notice_email(recipient: &Recipient, notice: CreditNotice) -> Email {
+    let date = |at: chrono::DateTime<chrono::Utc>| at.format("%B %-d, %Y").to_string();
+    let (subject, lead, follow) = match notice {
+        CreditNotice::Low24h => (
+            "About a day of computer time left".to_string(),
+            "About a day of computer time left on your credits.".to_string(),
+            "Add credits to keep your hosted computer running. When the credits reach $0 the computer stops.".to_string(),
+        ),
+        CreditNotice::Low2h => (
+            "About 2 hours of computer time left".to_string(),
+            "About 2 hours of computer time left on your credits.".to_string(),
+            "Add credits to keep your hosted computer running. When the credits reach $0 the computer stops.".to_string(),
+        ),
+        CreditNotice::Stopped { delete_after } => (
+            "Your hosted computer stopped".to_string(),
+            "Your credits ran out and the computer stopped. Add credits to start it again.".to_string(),
+            format!("We keep its disk until {}. After that the computer is deleted.", date(delete_after)),
+        ),
+        CreditNotice::DeleteWarning { delete_after } => (
+            "Your stopped computer will be deleted soon".to_string(),
+            format!("Your stopped hosted computer will be deleted on {}.", date(delete_after)),
+            "Add credits and start it before then to keep it.".to_string(),
+        ),
+        CreditNotice::PlanHoursStopped { resumes_at } => (
+            "Your hosted computer stopped".to_string(),
+            "Your plan's computer hours for this month are used and your credits ran out, so the computer stopped. Add credits to start it again.".to_string(),
+            format!("Nothing is deleted. It can run again on {} when the new month starts.", date(resumes_at)),
+        ),
+    };
+    let body = format!("{}\n\n{lead}\n\n{follow}\n\n— Allternit\n", greeting(recipient));
+    let html = html::layout(
+        &lead,
+        &[
+            html::heading(&subject),
+            html::paragraph(&greeting(recipient)),
+            html::paragraph(&lead),
+            html::paragraph(&follow),
+            html::button("Add credits", "https://ai.allternit.com/settings/billing"),
+        ],
+    );
+    Email { subject, body, html }
+}
+
+/// Record a credit computer notice for `user_id`, once per `reference`.
+/// Queued (not sent) unless [`credit_computer_emails_enabled`]; when it is
+/// on, the email is claimed and sent in the background.
+pub async fn notify_credit(db: &PgPool, user_id: &str, notice: CreditNotice, reference: &str) {
+    if credit_computer_emails_enabled() {
+        let db = db.clone();
+        let user_id = user_id.to_string();
+        let reference = reference.to_string();
+        tokio::spawn(async move {
+            let Some(recipient) = fetch_recipient(&user_id).await else {
+                tracing::warn!(%user_id, kind = notice.kind(), "credit notice: no email from Clerk; not sent");
+                return;
+            };
+            let email = credit_notice_email(&recipient, notice);
+            deliver(&db, &user_id, notice.kind(), &reference, &recipient, &email).await;
+        });
+        return;
+    }
+    if let Err(error) = queue_credit_notice(db, user_id, notice, reference).await {
+        tracing::warn!(%user_id, kind = notice.kind(), %error, "credit notice: could not record");
+    }
+}
+
+/// Insert the notice as `queued`. `false` = this (user, kind, ref) was
+/// already recorded.
+pub async fn queue_credit_notice(
+    db: &PgPool,
+    user_id: &str,
+    notice: CreditNotice,
+    reference: &str,
+) -> Result<bool, sqlx::Error> {
+    let inserted = sqlx::query(
+        r#"
+        INSERT INTO customer_emails (user_id, kind, ref, status)
+        VALUES ($1, $2, $3, 'queued')
+        ON CONFLICT (user_id, kind, ref) DO NOTHING
+        "#,
+    )
+    .bind(user_id)
+    .bind(notice.kind())
+    .bind(reference)
+    .execute(db)
+    .await?;
+    Ok(inserted.rows_affected() == 1)
+}
+
+/// A platform project crossed `percent` of its monthly spend cap.
+#[allow(clippy::too_many_arguments)]
+pub fn spend_alert_email(
+    recipient: &Recipient,
+    project_name: &str,
+    project_id: &str,
+    percent: i64,
+    spent_usd: f64,
+    cap_usd: f64,
+    period: &str,
+    console_url: &str,
+) -> Email {
+    let (spent, cap) = (format_usd(spent_usd), format_usd(cap_usd));
+    let name = one_line(project_name);
+    let reached = percent >= 100;
+    let subject = if reached {
+        format!("{name} reached its monthly spend cap")
+    } else {
+        format!("{name} has used {percent}% of its monthly spend cap")
+    };
+    let lead = format!(
+        "The Allternit Platform project \"{name}\" ({project_id}) has used ${spent} of its ${cap} spend cap for {period} ({percent}%)."
+    );
+    let next = if reached {
+        "Calls that cost money are now refused for this project until the cap is raised or the month ends. The cap resets on the 1st (UTC). You can raise it on the project's billing page in the console."
+    } else {
+        "At 100% the project's calls that cost money are refused until the cap is raised or the month ends. You can change the cap on the project's billing page in the console."
+    };
+    let body = format!("{}\n\n{lead}\n\n{next}\n\n{console_url}\n\n— Allternit\n", greeting(recipient));
+    let html = html::layout(
+        &lead,
+        &[
+            html::heading(if reached { "Spend cap reached" } else { "Spend alert" }),
+            html::paragraph(&greeting(recipient)),
+            html::paragraph(&lead),
+            html::facts_card(
+                "Spend this month",
+                &[
+                    ("Project", name.clone()),
+                    ("Used", format!("${spent}")),
+                    ("Cap", format!("${cap}")),
+                    ("Period", period.to_string()),
+                ],
+            ),
+            html::paragraph(next),
+            html::button("Open billing", console_url),
+        ],
+    );
+    Email { subject, body, html }
+}
+
+/// Send without a `customer_emails` claim, for callers that already make the
+/// send happen once (spend alerts: the `platform_spend_alerts` insert).
+pub async fn send_unclaimed(recipient: &Recipient, email: &Email) -> Result<(), String> {
+    sendmail(recipient, email).await
+}
+
 fn format_usd(value: f64) -> String {
     if (value - value.round()).abs() < 0.005 {
         format!("{}", value.round() as i64)
@@ -503,7 +708,7 @@ pub async fn fetch_recipient(user_id: &str) -> Option<Recipient> {
     let config = super::user_trust::TrustConfig::from_env();
     let secret = config.clerk_secret_key.as_deref()?;
     let url = format!("{}/v1/users/{}", config.clerk_api_base.trim_end_matches('/'), user_id);
-    let user: serde_json::Value = reqwest::Client::new()
+    let user: serde_json::Value = crate::net_client::client()
         .get(url)
         .bearer_auth(secret)
         .timeout(std::time::Duration::from_secs(10))
@@ -637,6 +842,61 @@ pub fn spawn_computer_ready(db: PgPool, user_id: String, instance_id: String) {
     });
 }
 
+/// What the meeting recap email says (Allternit Meetings step 2.9).
+pub struct MeetingRecap<'a> {
+    pub title: &'a str,
+    /// Plain text date, e.g. "Friday, November 13, 2026".
+    pub date: &'a str,
+    pub summary: &'a str,
+    pub decisions: &'a [String],
+    /// `(text, owner)`.
+    pub action_items: &'a [(String, Option<String>)],
+    pub page_url: &'a str,
+}
+
+/// The recap email: title, date, summary, decisions, action items with owners, link to the meeting page.
+pub fn meeting_recap_email(recipient: &Recipient, recap: &MeetingRecap<'_>) -> Email {
+    let title = if recap.title.trim().is_empty() { "your meeting" } else { recap.title.trim() };
+    let items: Vec<String> = recap
+        .action_items
+        .iter()
+        .map(|(text, owner)| match owner.as_deref().map(str::trim).filter(|o| !o.is_empty()) {
+            Some(owner) => format!("{text} ({owner})"),
+            None => text.clone(),
+        })
+        .collect();
+    let mut body = format!("{}\n\nGizzi's recap of {title}, {}.\n\n{}\n", greeting(recipient), recap.date, recap.summary);
+    if !recap.decisions.is_empty() {
+        body.push_str("\nDecisions\n");
+        for d in recap.decisions {
+            body.push_str(&format!("- {d}\n"));
+        }
+    }
+    if !items.is_empty() {
+        body.push_str("\nAction items\n");
+        for i in &items {
+            body.push_str(&format!("- {i}\n"));
+        }
+    }
+    body.push_str(&format!("\nOpen the meeting page: {}\n\n— Allternit\n", recap.page_url));
+    let mut rows = vec![
+        html::heading(&format!("Recap: {title}")),
+        html::paragraph(&format!("{} · {}", recap.date, "Gizzi was in the call")),
+        html::paragraph(recap.summary),
+    ];
+    if !recap.decisions.is_empty() {
+        rows.push(html::paragraph("Decisions"));
+        rows.push(html::bullets(&recap.decisions.iter().map(String::as_str).collect::<Vec<_>>()));
+    }
+    if !items.is_empty() {
+        rows.push(html::paragraph("Action items"));
+        rows.push(html::bullets(&items.iter().map(String::as_str).collect::<Vec<_>>()));
+    }
+    rows.push(html::button("Open the meeting page", recap.page_url));
+    let html = html::layout(&format!("Recap of {title}"), &rows);
+    Email { subject: format!("Recap: {title}"), body, html }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -700,6 +960,23 @@ mod tests {
         assert_eq!(feature_for(at(2027, 3)).id, "agency-kernel");
         assert_eq!(feature_for(at(2027, 4)).id, "montage");
         assert_eq!(feature_for(at(2026, 9)).id, "agency-kernel");
+    }
+
+    #[test]
+    fn credit_notices_use_the_contract_lines_and_the_retention_date() {
+        use chrono::TimeZone;
+        let delete_after = chrono::Utc.with_ymd_and_hms(2026, 11, 27, 9, 0, 0).unwrap();
+        let stopped = credit_notice_email(&eoj(), CreditNotice::Stopped { delete_after });
+        assert!(stopped.body.contains("Your credits ran out and the computer stopped. Add credits to start it again."));
+        assert!(stopped.body.contains("We keep its disk until November 27, 2026."));
+        let low = credit_notice_email(&eoj(), CreditNotice::Low2h);
+        assert!(low.body.contains("About 2 hours of computer time left on your credits."));
+        assert_eq!(CreditNotice::DeleteWarning { delete_after }.kind(), "credit_delete_warning");
+        let resumes_at = chrono::Utc.with_ymd_and_hms(2026, 12, 1, 0, 0, 0).unwrap();
+        let plan = credit_notice_email(&eoj(), CreditNotice::PlanHoursStopped { resumes_at });
+        assert!(plan.body.contains("Nothing is deleted. It can run again on December 1, 2026"));
+        assert!(!plan.body.contains("deleted on"), "a plan computer is never scheduled for deletion");
+        assert_eq!(CreditNotice::PlanHoursStopped { resumes_at }.kind(), "plan_hours_stopped");
     }
 
     #[test]

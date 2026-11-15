@@ -34,8 +34,15 @@ export interface PolicyCatalogModel {
 
 const POLICY_STORAGE_KEY = "allternit:model-gateway:auto-policy";
 
+/**
+ * Used when nothing is saved (every new account). It must resolve to a model
+ * from any non-empty catalog: "balanced" takes the highest quality tier and the
+ * cheapest model within it, and with no tier or price data it still returns
+ * the first catalog entry. A "manual" default made `model: "auto"` resolve to
+ * nothing for every new account. Saved policies are read as saved.
+ */
 export const DEFAULT_AUTO_POLICY: ModelAutoPolicy = {
-  strategy: "manual",
+  strategy: "balanced",
   allowedProviders: [],
   maxInputCentsPer1m: null,
   maxOutputCentsPer1m: null,

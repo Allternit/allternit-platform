@@ -9,6 +9,7 @@
  */
 
 import { api } from "@/lib/api-client";
+import type { DecisionOutcome, V1Decision } from "@/lib/decisions";
 
 export const PROJECT_HEADER = "X-Allternit-Project";
 
@@ -213,12 +214,110 @@ export const USAGE_METER_LABELS: Record<string, string> = {
   number_local_month: "Local number months",
   number_tollfree_month: "Toll-free number months",
   sms_segment: "SMS segments",
+  decision_questions: "Decision questions",
   mms: "MMS messages",
   registration_passthrough_cents: "Carrier registration (cents)",
   recording_min_month: "Recording storage (minute-months)",
   computer_minute: "Hosted computer minutes",
   computer_action: "Hosted computer actions",
+  phone_minutes: "Phone minutes",
+  phone_minutes_included: "Phone minutes (in agent identities)",
+  linked_phone: "Linked phones",
 };
+
+export interface V1Phone {
+  object: "phone";
+  serial: string;
+  name: string | null;
+  model: string | null;
+  online: boolean;
+  desktop_online: boolean;
+  last_seen_at: string | null;
+  call_bridge: { enabled?: boolean; botName?: string } | null;
+}
+
+export interface V1PhoneStep {
+  object: "phone.step";
+  id: string;
+  run_id: string;
+  serial: string;
+  at: string;
+  tool: string;
+  label: string;
+  ok: boolean;
+  error: string | null;
+  duration_ms: number;
+  source: string | null;
+  snapshot: boolean;
+}
+
+export interface V1PhoneRun {
+  object: "phone.run";
+  run_id: string;
+  serial: string;
+  started_at: string;
+  ended_at: string;
+  steps: number;
+  failed: number;
+  source: string | null;
+}
+
+export interface V1PhoneHistory {
+  object: "phone.history";
+  serial: string;
+  steps: V1PhoneStep[];
+  runs: V1PhoneRun[];
+  retention_days: number | null;
+  max_steps: number | null;
+}
+
+/** `POST /v1/phones/:serial/live`: a short-lived viewer for the phone's screen. */
+export interface V1PhoneLive {
+  token: string;
+  viewer_url: string;
+  expires_at: string;
+}
+
+/** Where a project's spans go (`/v1/projects/:id/tracing`). Header values are never returned. */
+export interface V1ProjectTracing {
+  object: "project.tracing";
+  project_id: string;
+  endpoint: string;
+  header_names: string[];
+  service_name: string;
+  enabled: boolean;
+  last_export_at: string | null;
+  last_error: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface V1TracingTest {
+  object: "project.tracing.test";
+  ok: boolean;
+  status: number | null;
+  message: string;
+}
+
+export type ApprovalStatus = "pending" | "approved" | "denied" | "expired" | "consumed";
+export type ApprovalSource = "twin" | "computer";
+
+export interface V1Approval {
+  id: string;
+  object: "approval";
+  source: ApprovalSource;
+  source_ref: string;
+  account_id: string | null;
+  conversation_id?: string | null;
+  response_id?: string | null;
+  kind: string;
+  proposed_action: Record<string, unknown>;
+  status: ApprovalStatus;
+  expires_at: string | null;
+  created_at: string;
+  resolved_at: string | null;
+  resolved_by: string | null;
+}
 
 /** A `/v1` client bound to one project. */
 export function v1(projectId: string) {
@@ -246,6 +345,11 @@ export function v1(projectId: string) {
       api.get<V1Page<V1Conversation>>(`/v1/agents/${enc(agentId)}/conversations${qs({ limit: 50, after })}`, opts),
     getConversation: (id: string) => api.get<V1Conversation>(`/v1/conversations/${enc(id)}`, opts),
 
+    listApprovals: (params: { status?: ApprovalStatus; source?: ApprovalSource; after?: string | null } = {}) =>
+      api.get<V1Page<V1Approval>>(`/v1/approvals${qs({ limit: 50, ...params })}`, opts),
+    decideApproval: (id: string, decision: "approve" | "deny", reason?: string) =>
+      api.post<V1Approval>(`/v1/approvals/${enc(id)}`, { decision, ...(reason ? { reason } : {}) }, opts),
+
     listModelKeys: () => api.get<{ data: V1ModelKey[] }>("/v1/model_keys", opts),
     putModelKey: (provider: ModelProvider, apiKey: string) =>
       api.put<V1ModelKey>(`/v1/model_keys/${provider}`, { api_key: apiKey }, opts),
@@ -271,6 +375,22 @@ export function v1(projectId: string) {
       api.get<V1Page<V1WebhookDelivery>>(`/v1/webhooks/${enc(id)}/deliveries${qs({ limit: 50, after })}`, opts),
     redeliver: (id: string, deliveryId: string) =>
       api.post<{ id: string; queued: boolean }>(`/v1/webhooks/${enc(id)}/deliveries/${enc(deliveryId)}/redeliver`, undefined, opts),
+
+    listPhones: () => api.get<V1Page<V1Phone>>("/v1/phones", opts),
+    phoneHistory: (serial: string, runId?: string | null) =>
+      api.get<V1PhoneHistory>(`/v1/phones/${enc(serial)}/history${qs({ run_id: runId })}`, opts),
+    phoneLive: (serial: string) => api.post<V1PhoneLive>(`/v1/phones/${enc(serial)}/live`, undefined, opts),
+
+    listDecisions: (after?: string | null) => api.get<V1Page<V1Decision>>(`/v1/decisions${qs({ limit: 50, after })}`, opts),
+    getDecision: (id: string) => api.get<V1Decision>(`/v1/decisions/${enc(id)}`, opts),
+    recordOutcomes: (id: string, outcomes: Record<string, DecisionOutcome>) =>
+      api.patch<V1Decision>(`/v1/decisions/${enc(id)}`, { outcomes }, opts),
+
+    getTracing: () => api.get<V1ProjectTracing>(`/v1/projects/${enc(projectId)}/tracing`, opts),
+    putTracing: (input: { endpoint: string; headers?: Record<string, string>; service_name?: string; enabled?: boolean }) =>
+      api.put<V1ProjectTracing>(`/v1/projects/${enc(projectId)}/tracing`, input, opts),
+    deleteTracing: () => api.delete(`/v1/projects/${enc(projectId)}/tracing`, opts),
+    testTracing: () => api.post<V1TracingTest>(`/v1/projects/${enc(projectId)}/tracing/test`, undefined, opts),
   };
 }
 

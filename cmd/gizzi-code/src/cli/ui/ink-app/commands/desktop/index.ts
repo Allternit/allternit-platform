@@ -1,25 +1,14 @@
 import type { Command } from '../../commands'
+import { liveSessionEnabled } from '../../services/liveSession'
 
-function isSupportedPlatform(): boolean {
-  if (process.platform === 'darwin') {
-    return true
-  }
-  if (process.platform === 'win32' && process.arch === 'x64') {
-    return true
-  }
-  return false
-}
-
+// Allternit Desktop runs on macOS, Windows and Linux; the session opens through allternit://.
 const desktop = {
-  type: 'local-jsx',
+  type: 'local',
   name: 'desktop',
   aliases: ['app'],
-  description: 'Continue the current session in Allternit Desktop',
-  availability: ['claude-ai'],
-  isEnabled: isSupportedPlatform,
-  get isHidden() {
-    return !isSupportedPlatform()
-  },
+  description: 'Open this live session in Allternit Desktop',
+  isEnabled: liveSessionEnabled,
+  supportsNonInteractive: false,
   load: () => import('./desktop.js'),
 } satisfies Command
 

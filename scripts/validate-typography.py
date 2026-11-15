@@ -45,6 +45,11 @@ EXEMPT_PATH_PREFIXES = [
     "platform/packages/office-slides-app",
     "platform/packages/office-slides-editor",
     "platform/packages/office-xlsx-engine",
+    # Printed document templates (invoice, report, ...) use system fonts so a
+    # PDF renders the same on every machine; the iPhone bundle is generated
+    # from platform/packages/pdf-templates.
+    "platform/packages/pdf-templates",
+    "surfaces/allternit-mobile/ios/Features/Artifacts/Resources/pdf-templates.js",
     "surfaces/ai.allternit.com/src/lib/design",
     "surfaces/ai.allternit.com/src/lib/openui",
     "surfaces/ai.allternit.com/src/lib/agents/tools/design-extractor.tool.ts",

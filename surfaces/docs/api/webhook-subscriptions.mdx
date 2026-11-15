@@ -69,6 +69,8 @@ All subscription routes require a valid bearer token and an active organization.
 
 Delivery makes up to 3 attempts per event. Connect errors, timeouts and 5xx responses are retried with a backoff of 5 s, then 20 s (base overridable with `ALLTERNIT_WEBHOOK_RETRY_BASE_SECS`); a 4xx response is not retried. Each attempt is recorded and visible through the deliveries endpoint. Only `session.event_created` and `deployment.run_updated` are documented with a payload here; check the deliveries list for the exact body of the others.
 
+After 20 failed deliveries in a row, Allternit switches the subscription off (`active` becomes `false`) and opens a `webhook_disabled` attention item in the inbox of the organization owner (or an admin, when there is no owner). Fix the endpoint, then turn delivery back on with **Update a subscription** and `"active": true`.
+
 ## Create a subscription
 
 ```http

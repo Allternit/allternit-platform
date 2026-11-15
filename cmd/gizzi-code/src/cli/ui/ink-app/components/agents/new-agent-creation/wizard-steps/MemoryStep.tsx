@@ -28,7 +28,7 @@ export function MemoryStep() {
   useKeybinding("confirm:no", goBack, t0);
   const isUserScope = wizardData.location === "userSettings";
   const t1 = isUserScope ? [{
-      label: "User scope (~/.claude/agent-memory/) (Recommended)",
+      label: "User scope (~/.gizzi/agent-memory/) (Recommended)",
       value: "user"
     }, {
       label: "None (no persistent memory)",
@@ -46,7 +46,7 @@ export function MemoryStep() {
       label: "None (no persistent memory)",
       value: "none"
     }, {
-      label: "User scope (~/.claude/agent-memory/)",
+      label: "User scope (~/.gizzi/agent-memory/)",
       value: "user"
     }, {
       label: "Local scope (.claude/agent-memory-local/)",

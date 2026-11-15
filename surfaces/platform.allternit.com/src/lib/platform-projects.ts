@@ -17,6 +17,8 @@ export interface PlatformProject {
   env: ProjectEnv;
   plan: string;
   spend_cap_cents: number;
+  /** Keep request and response bodies for 30 days (Logs replay). */
+  log_bodies?: boolean;
   created_at: string;
   archived_at?: string | null;
 }
@@ -31,6 +33,11 @@ export interface ProjectKey {
   scopes: string[];
   last_used_at?: string | null;
   created_at: string;
+  /** Null or absent = never expires. */
+  expires_at?: string | null;
+  /** Empty or absent = any IP (subject to the organization allowlist). */
+  allowed_cidrs?: string[] | null;
+  kind?: string;
 }
 
 export interface CreatedProjectKey extends ProjectKey {
@@ -47,15 +54,17 @@ interface Page<T> {
 export const PROJECT_KEY_SCOPES: { value: string; label: string; hint: string }[] = [
   { value: "agents", label: "Agents", hint: "Agents and conversations" },
   { value: "voice", label: "Voice", hint: "Calls and realtime sessions" },
-  { value: "messaging", label: "Messaging", hint: "Texts" },
+  { value: "messaging", label: "Messaging", hint: "Texts (/v1/texts)" },
   { value: "numbers", label: "Numbers", hint: "Phone numbers and carrier registration" },
   { value: "channels", label: "Channels", hint: "Channel connections" },
   { value: "twin", label: "Twin", hint: "People, inbox, approvals, autonomy, memory" },
   { value: "webhooks", label: "Webhooks", hint: "Webhook endpoints" },
   { value: "usage", label: "Usage", hint: "Usage reports" },
-  { value: "inference", label: "Inference", hint: "/v1/chat/completions" },
+  { value: "inference", label: "Inference", hint: "/v1/chat/completions, /v1/responses, /v1/messages" },
   { value: "computers", label: "Computers", hint: "Hosted computers and the computer/browser toolsets" },
   { value: "phones", label: "Phones", hint: "Your linked phones: tools, tasks, skills and run history" },
+  { value: "decisions", label: "Decisions", hint: "Typed decisions" },
+  { value: "mail", label: "Mail", hint: "Mailboxes: addresses, inbound mail, one-time codes and sending" },
 ];
 
 /** True when the deployment has the Platform API switched off. */
@@ -79,9 +88,28 @@ export async function listProjectKeys(projectId: string): Promise<ProjectKey[]> 
 
 export async function createProjectKey(
   projectId: string,
-  input: { name: string; scopes: string[]; account_id?: string; accept_terms: boolean },
+  input: {
+    name: string;
+    scopes: string[];
+    account_id?: string;
+    accept_terms: boolean;
+    expires_at?: string;
+    allowed_cidrs?: string[];
+  },
 ): Promise<CreatedProjectKey> {
   return api.post<CreatedProjectKey>(`/api/v1/platform/projects/${encodeURIComponent(projectId)}/keys`, input);
+}
+
+/** Change a key's expiry or IP allowlist. `expires_at: null` clears the expiry; `[]` clears the allowlist. */
+export async function updateProjectKey(
+  projectId: string,
+  keyId: string,
+  input: { expires_at?: string | null; allowed_cidrs?: string[] },
+): Promise<ProjectKey> {
+  return api.patch<ProjectKey>(
+    `/api/v1/platform/projects/${encodeURIComponent(projectId)}/keys/${encodeURIComponent(keyId)}`,
+    input,
+  );
 }
 
 export async function revokeProjectKey(projectId: string, keyId: string): Promise<void> {
@@ -90,7 +118,33 @@ export async function revokeProjectKey(projectId: string, keyId: string): Promis
 
 export async function updateProject(
   projectId: string,
-  input: { name?: string; spend_cap_cents?: number; archived?: boolean },
+  input: { name?: string; spend_cap_cents?: number; archived?: boolean; log_bodies?: boolean },
 ): Promise<PlatformProject> {
   return api.patch<PlatformProject>(`/api/v1/platform/projects/${encodeURIComponent(projectId)}`, input);
+}
+
+export type LimitSource = "plan" | "override";
+
+/** Read-only limits for one project (GET /api/v1/platform/projects/:id/limits). */
+export interface ProjectLimits {
+  object: "project.limits";
+  project_id: string;
+  plan: string;
+  rate_limit: {
+    requests_per_minute: number;
+    source: LimitSource;
+    window_seconds: number;
+    /** Null when the counter could not be read. */
+    used: number | null;
+    remaining: number | null;
+    resets_at: string;
+  };
+  concurrent_calls: {
+    limit: number;
+    source: LimitSource;
+  };
+}
+
+export async function getProjectLimits(projectId: string): Promise<ProjectLimits> {
+  return api.get<ProjectLimits>(`/api/v1/platform/projects/${encodeURIComponent(projectId)}/limits`);
 }

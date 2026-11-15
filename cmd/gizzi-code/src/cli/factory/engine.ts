@@ -30,6 +30,19 @@ export const EXIT = {
   usage: 64,
 } as const
 
+/**
+ * Ports a Factory engine may serve on, most specific first. An explicit
+ * ALLTERNIT_FACTORY_PORT always wins. Otherwise probe both known homes:
+ * Allternit Desktop runs the engine on 3018 (PORTS.FACTORY — its extension
+ * bridge owns 3011; see allternit-desktop src/main/config.ts), while a
+ * CLI/dev `allternit-factory serve` uses the engine default 3011.
+ */
+export function factoryEnginePorts(env: NodeJS.ProcessEnv = process.env): number[] {
+  const fromEnv = Number(env.ALLTERNIT_FACTORY_PORT)
+  if (Number.isInteger(fromEnv) && fromEnv > 0) return [fromEnv]
+  return [3018, 3011]
+}
+
 export type EngineErrorCode = Exclude<keyof typeof EXIT, "ok">
 
 const CODE_BY_EXIT: Record<number, EngineErrorCode> = {
@@ -294,6 +307,49 @@ export async function passThrough(args: string[], opts: Omit<RunEngineOptions, "
       resolve(code ?? (signal ? EXIT.transport : 0))
     })
   })
+}
+
+/**
+ * The pane engine session the Factory's panes live in: `ao`, unless
+ * HERDR_SOCKET_PATH points the engine at another pane server (the engine
+ * spawns there too, so attach must look there).
+ */
+export function paneSessionArgs(env: NodeJS.ProcessEnv = process.env): string[] {
+  return env.HERDR_SOCKET_PATH ? [] : ["--session", "ao"]
+}
+
+/** The pane engine's terminal id (`term_…`) behind a pane id (`w6:p2`), or null. */
+export function terminalIdForPane(paneId: string, opts: { locate?: LocateDeps } = {}): string | null {
+  const engine = locateEngine(opts.locate)
+  if (!engine) return null
+  try {
+    const res = spawnSync(engine.path, ["pane", ...paneSessionArgs(), "pane", "list"], { encoding: "utf8", timeout: 5000 })
+    const doc = JSON.parse((res.stdout || "").trim().split("\n").pop() || "{}") as {
+      result?: { panes?: { pane_id?: string; terminal_id?: string }[] }
+    }
+    return doc.result?.panes?.find((p) => p.pane_id === paneId)?.terminal_id ?? null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Engine argv that attaches the terminal to a bot's pane. The pane server's
+ * attach takes a terminal id, not `bot@team` (`agents attach bot@team`
+ * answered "terminal … not found" for local bots), so a local bot is
+ * resolved to its terminal first. Remote bots keep `agents attach`, which
+ * opens the engine's live mirror.
+ */
+export function attachArgv(agent: {
+  address?: string
+  id: string
+  pane?: { id: string } | null
+  machine?: { id: string } | null
+}): string[] {
+  const address = agent.address ?? agent.id
+  const remote = agent.machine && agent.machine.id !== "local"
+  const term = !remote && agent.pane?.id ? terminalIdForPane(agent.pane.id) : null
+  return term ? ["pane", ...paneSessionArgs(), "terminal", "attach", term] : ["agents", "attach", address]
 }
 
 /** `allternit-factory --version`, first line, or null when it can't be read. */

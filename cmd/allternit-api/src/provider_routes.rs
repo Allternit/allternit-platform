@@ -344,7 +344,7 @@ static ENV_PROVIDER_SPECS: &[(&str, &str, &str, &[&str])] = &[
         "anthropic",
         "Anthropic",
         "ANTHROPIC_API_KEY",
-        &["claude-sonnet-5", "claude-opus-5"],
+        &["claude-sonnet-5-5", "claude-opus-5-5"],
     ),
     (
         "google",
@@ -392,34 +392,56 @@ fn cli_models_for(tool: &crate::cli_catalog::CliTool) -> Vec<&str> {
     tool.model_ids()
 }
 
-/// Per-model display metadata: (model id, description, tier, supports_effort).
+/// Per-model display metadata: (model id, description, tier, unused). Thinking
+/// levels live in `model_thinking` (model-thinking.json).
 /// Tier is flagship | standard | fast | legacy and drives picker grouping on
 /// clients (the Claude-app sheet layout). Unknown models default to
 /// (no description, "standard", false).
 static MODEL_METADATA: &[(&str, &str, &str, bool)] = &[
-    ("claude-opus-5", "For your toughest challenges", "flagship", true),
-    ("claude-sonnet-5", "Most efficient for everyday tasks", "standard", true),
+    ("claude-fable-5-2", "Deepest reasoning for the hardest work", "flagship", true),
+    ("claude-opus-5-5", "For your toughest challenges", "flagship", true),
+    ("claude-sonnet-5-5", "Most efficient for everyday tasks", "standard", true),
+    ("claude-haiku-5-5", "Fastest for quick answers", "fast", true),
     ("gpt-5", "Latest GPT reasoning", "flagship", false),
     ("gpt-5-mini", "Fast GPT mini", "fast", false),
     ("gpt-4o", "Prior-generation flagship", "legacy", true),
+    ("gpt-6.1-sol", "Sol — complex open-ended work", "flagship", false),
     ("gpt-6-astra", "Astra — strongest Codex agent", "flagship", false),
+    ("gpt-6.1-terra", "Terra — everyday coding", "standard", false),
+    ("gpt-6-sol", "Sol — complex open-ended work", "flagship", false),
+    ("gpt-6-luna", "Luna — fast high-volume tasks", "fast", false),
     ("gpt-5.6-sol", "Sol — complex open-ended work", "flagship", false),
     ("gpt-5.6-terra", "Terra — everyday coding", "standard", false),
     ("gpt-5.6-luna", "Luna — fast high-volume tasks", "fast", false),
     ("gemini-2.5-pro", "Long-context reasoning", "flagship", false),
     ("gemini-2.5-flash", "Fastest for quick answers", "fast", false),
+    ("gemini-3.8-flash-high", "Gemini Flash, deepest thinking", "standard", false),
+    ("gemini-3.8-flash-medium", "Gemini Flash, balanced thinking", "standard", false),
+    ("gemini-3.8-flash-low", "Gemini Flash, quickest thinking", "fast", false),
+    ("grok-4.6", "Latest Grok", "flagship", false),
+    ("grok-4.5", "Prior Grok", "standard", false),
     ("sonar-pro", "Web-grounded answers", "standard", false),
     ("kimi-k3", "Kimi K3 reasoning", "flagship", false),
-    ("kimi-k2.7-code", "Kimi coding specialist", "standard", false),
+    ("kimi-for-coding", "Kimi coding specialist", "standard", false),
     ("qwen-max", "Qwen Max", "flagship", false),
     ("qwen-plus", "Qwen Plus", "standard", false),
 ];
 
-fn model_metadata(model: &str) -> Option<(&'static str, &'static str, bool)> {
-    MODEL_METADATA
-        .iter()
-        .find(|(id, _, _, _)| *id == model)
-        .map(|(_, desc, tier, effort)| (*desc, *tier, *effort))
+pub(crate) fn model_metadata(model: &str) -> Option<(&'static str, &'static str, bool)> {
+    let lookup = |model: &str| {
+        MODEL_METADATA
+            .iter()
+            .find(|(id, _, _, _)| *id == model)
+            .map(|(_, desc, tier, effort)| (*desc, *tier, *effort))
+    };
+    // A retired CLI model id (an older gizzi, a saved choice) reads its
+    // replacement's metadata.
+    lookup(model).or_else(|| {
+        crate::cli_catalog::tools()
+            .iter()
+            .find_map(|t| t.retired.get(model))
+            .and_then(|current| lookup(current.as_str()))
+    })
 }
 
 /// Flattened `{id, name, provider, description?, tier, supports_effort}`
@@ -430,16 +452,19 @@ fn model_metadata(model: &str) -> Option<(&'static str, &'static str, bool)> {
 pub fn available_model_catalog() -> Vec<serde_json::Value> {
     let mut out = Vec::new();
     let mut push = |id: &str, name: String, provider: &str, model: &str| {
-        let (description, tier, supports_effort) = model_metadata(model)
+        let (description, tier, _) = model_metadata(model)
             .map(|(d, t, e)| (Some(d), t, e))
             .unwrap_or((None, "standard", false));
+        // Levels come from the shared thinking table; `supports_effort` stays for older clients.
+        let thinking = crate::model_thinking::thinking_json(model);
         out.push(json!({
             "id": id,
             "name": name,
             "provider": provider,
             "description": description,
             "tier": tier,
-            "supports_effort": supports_effort,
+            "supports_effort": !thinking.is_null(),
+            "thinking": thinking,
         }));
     };
     for tool in crate::cli_catalog::tools().iter().filter(|t| t.adapter != "unsupported") {
@@ -1087,7 +1112,7 @@ async fn list_ollama_models(
 
     let ollama_url = state.config.ollama_url();
 
-    let client = reqwest::Client::new();
+    let client = crate::net_client::client();
     match client
         .get(format!("{}/api/tags", ollama_url.trim_end_matches('/')))
         .timeout(std::time::Duration::from_secs(5))
@@ -1156,18 +1181,25 @@ async fn list_ollama_models(
 fn provider_capabilities(id: &str) -> serde_json::Value {
     let (tool_call, vision, context, output, default_model): (bool, bool, u64, u64, &str) = match id
     {
-        "anthropic" => (true, true, 200_000, 32_000, "claude-sonnet-5"),
+        "anthropic" => (true, true, 200_000, 32_000, "claude-sonnet-5-5"),
         "openai" => (true, true, 128_000, 16_384, "gpt-5"),
         "google" => (true, true, 1_000_000, 65_536, "gemini-2.5-pro"),
         "ollama" | "lmstudio" => (true, false, 128_000, 16_384, "llama3.2:3b"),
-        "claude-cli" => (true, true, 200_000, 32_000, "claude-sonnet-5"),
-        "codex-cli" => (true, false, 1_050_000, 128_000, "gpt-6-astra"),
-        "qwen" => (true, false, 128_000, 16_384, "qwen-plus"),
-        "kimi" => (true, false, 128_000, 16_384, "kimi-k3"),
-        "antigravity" | "agy" => (true, true, 1_000_000, 65_536, "gemini-2.5-pro"),
+        "claude-cli" | "claude" => (true, true, 200_000, 32_000, ""),
+        "codex-cli" | "codex" => (true, false, 1_050_000, 128_000, ""),
+        "qwen" | "qwen-cli" => (true, false, 128_000, 16_384, ""),
+        "kimi" | "kimi-cli" => (true, false, 128_000, 16_384, ""),
+        "antigravity" | "agy" => (true, true, 1_000_000, 65_536, ""),
         "zai" | "z.ai" | "glm" => (true, false, 200_000, 16_384, "glm-4.6"),
         _ => (true, false, 128_000, 16_384, ""),
     };
+    // CLI brains report the shared catalog's default (`crate::cli_catalog`)
+    // so this never names a model gizzi no longer registers. Informational
+    // only: nothing selects it for the user.
+    let default_model = crate::cli_catalog::find(id)
+        .filter(|t| !t.models.is_empty())
+        .map(|t| t.default_model())
+        .unwrap_or(default_model);
     json!({
         "tool_call": tool_call,
         "vision": vision,
@@ -1707,7 +1739,20 @@ fn subscription_provider(id: &str) -> Option<(&'static str, SubscriptionProvider
     }
 }
 
-fn home_file(parts: &[&str]) -> std::path::PathBuf {
+/// What a chat's vendor-connect card needs for `id` (catalog id, alias or
+/// binary, or a key-only provider): (canonical id, label, `signIn`).
+pub(crate) fn connect_card_meta(id: &str) -> Option<(String, String, String)> {
+    let id = id.trim();
+    if let Some(tool) = crate::cli_catalog::find(id).or_else(|| crate::cli_catalog::tools().iter().find(|t| t.bin == id)) {
+        return Some((tool.id.clone(), tool.name.clone(), tool.sign_in.clone()));
+    }
+    subscription_provider(id).map(|(_, p)| {
+        let sign_in = if p.api_key_only { "api_key" } else { "subscription" };
+        (p.id.to_string(), p.label.to_string(), sign_in.to_string())
+    })
+}
+
+pub(crate) fn home_file(parts: &[&str]) -> std::path::PathBuf {
     let mut p = std::path::PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".to_string()));
     for part in parts {
         p.push(part);
@@ -1749,7 +1794,7 @@ fn claude_cli_logged_in(binary: &str) -> bool {
 
 /// `(logged in, email)` from `claude auth status`. `home` points the CLI at an
 /// added account's config dir (`CLAUDE_CONFIG_DIR`); `None` is the stock home.
-fn claude_cli_status(binary: &str, home: Option<&std::path::Path>) -> (bool, Option<String>) {
+pub(crate) fn claude_cli_status(binary: &str, home: Option<&std::path::Path>) -> (bool, Option<String>) {
     let mut cmd = std::process::Command::new(binary);
     cmd.args(["auth", "status"])
         .stdout(std::process::Stdio::piped())
@@ -1790,7 +1835,38 @@ fn catalog_auth(id: &str) -> Option<&'static crate::cli_catalog::AuthCheck> {
         .filter(|auth| !auth.files.is_empty() || !auth.env.is_empty())
 }
 
-fn subscription_auth_check(id: &str, binary: &str) -> bool {
+/// Qwen Code with an auth type chosen in `~/.qwen/settings.json`
+/// (`security.auth.selectedType`, e.g. an API-key provider).
+fn qwen_auth_selected(settings: &std::path::Path) -> bool {
+    std::fs::read_to_string(settings)
+        .ok()
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+        .and_then(|value| {
+            value
+                .pointer("/security/auth/selectedType")
+                .and_then(|v| v.as_str())
+                .map(|s| !s.is_empty())
+        })
+        .unwrap_or(false)
+}
+
+/// agy's macOS Keychain item (service "gemini", account "antigravity").
+/// Reading an item's attributes shows no unlock prompt.
+fn antigravity_keychain_signed_in() -> bool {
+    if !cfg!(target_os = "macos") {
+        return false;
+    }
+    std::process::Command::new("/usr/bin/security")
+        .args(["find-generic-password", "-s", "gemini", "-a", "antigravity"])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
+pub(crate) fn subscription_auth_check(id: &str, binary: &str) -> bool {
     match id {
         "claude" | "claude-cli" => claude_cli_logged_in(binary),
         "codex" | "codex-cli" => {
@@ -1800,7 +1876,10 @@ fn subscription_auth_check(id: &str, binary: &str) -> bool {
         "qwen" | "qwen-cli" => {
             cli_alive(binary, &["--version"], None)
                 && (home_file(&[".qwen", "oauth_creds.json"]).exists()
-                    || home_file(&[".config", "qwen", "oauth_creds.json"]).exists())
+                    || home_file(&[".config", "qwen", "oauth_creds.json"]).exists()
+                    // An API-key setup picked in Qwen's own settings leaves no
+                    // oauth_creds.json.
+                    || qwen_auth_selected(&home_file(&[".qwen", "settings.json"])))
         }
         "kimi" | "kimi-cli" => {
             cli_alive(binary, &["--version"], Some("kimi"))
@@ -1817,7 +1896,9 @@ fn subscription_auth_check(id: &str, binary: &str) -> bool {
             cli_alive(binary, &["--version"], None)
                 && (home_file(&[".gemini", "oauth_creds.json"]).exists()
                     || home_file(&[".gemini", "antigravity-cli", "credentials.enc"]).exists()
-                    || home_file(&[".config", "antigravity", "auth.json"]).exists())
+                    || home_file(&[".config", "antigravity", "auth.json"]).exists()
+                    // On macOS agy keeps its sign-in in the Keychain, not a file.
+                    || antigravity_keychain_signed_in())
         }
         "zai" | "z.ai" | "glm" => {
             std::env::var("ZAI_API_KEY").is_ok() || std::env::var("ZHIPU_API_KEY").is_ok()
@@ -1854,18 +1935,29 @@ struct ConnectBody {
     remote: bool,
 }
 
-/// The sign-in argv for a provider: device-code variants when the user is
-/// remote and the CLI has one (Codex, Grok); Claude's own flow already works
-/// remotely (link, then paste the code the page shows).
-fn login_argv(provider: &str, default: &'static [String], remote: bool) -> (Vec<&'static str>, Option<String>) {
-    match (provider, remote) {
-        ("codex-cli", true) => (
-            vec!["login", "--device-auth"],
-            Some("If OpenAI rejects the code, turn on \"device code authorization for Codex\" in ChatGPT Settings → Security, then try again.".to_string()),
-        ),
-        ("grok", true) => (vec!["login", "--device-auth"], None),
-        _ => (default.iter().map(String::as_str).collect(), None),
+/// How to run a provider's sign-in: argv, a hint shown beside it, and env.
+pub(crate) struct LoginCmd {
+    pub(crate) argv: Vec<&'static str>,
+    pub(crate) hint: Option<String>,
+    pub(crate) env: Vec<(&'static str, &'static std::ffi::OsStr)>,
+}
+
+/// The sign-in for a provider: the catalog's headless variant when the user is
+/// remote and the CLI has one (`loginRemote` + `loginRemoteEnv`); Claude's own
+/// flow already works remotely (link, then paste the code the page shows).
+pub(crate) fn login_argv(provider: &str, default: &'static [String], remote: bool) -> LoginCmd {
+    // A remote computer has no browser next to the CLI: use the catalog's
+    // headless / device-code sign-in (`loginRemote`) when the tool has one.
+    if remote {
+        if let Some(tool) = crate::cli_catalog::find(provider).filter(|t| !t.login_remote.is_empty()) {
+            return LoginCmd {
+                argv: tool.login_remote.iter().map(String::as_str).collect(),
+                hint: tool.login_remote_hint.clone(),
+                env: tool.login_remote_env.iter().map(|(k, v)| (k.as_str(), std::ffi::OsStr::new(v.as_str()))).collect(),
+            };
+        }
     }
+    LoginCmd { argv: default.iter().map(String::as_str).collect(), hint: None, env: Vec::new() }
 }
 
 async fn connect_provider(
@@ -2010,8 +2102,8 @@ async fn connect_provider(
 
     // Keep the CLI's own sign-in running with its output captured, so the
     // link / device code / paste prompt reach the UI on any device.
-    let (argv, hint) = login_argv(meta.id, meta.login, remote);
-    match crate::cli_tools::start_login(meta.id, &binary_path, &argv, hint).await {
+    let login = login_argv(meta.id, meta.login, remote);
+    match crate::cli_tools::start_login_with_env(meta.id, &binary_path, &login.argv, login.hint, &login.env).await {
         Ok(login) => Json(json!({
             "status": "started",
             "provider": id,
@@ -2364,9 +2456,11 @@ async fn add_cli_account(
         }))
         .into_response();
     }
-    let (argv, hint) = login_argv(meta.id, meta.login, body.remote);
+    let mut login = login_argv(meta.id, meta.login, body.remote);
     let key = format!("{}:{}", meta.id, acc_id);
-    match crate::cli_tools::start_login_with_env(&key, &binary_path, &argv, hint, &[(env_name, home.as_path())]).await {
+    let mut env: Vec<(&str, &std::ffi::OsStr)> = std::mem::take(&mut login.env);
+    env.push((env_name, home.as_os_str()));
+    match crate::cli_tools::start_login_with_env(&key, &binary_path, &login.argv, login.hint, &env).await {
         Ok(login) => Json(json!({
             "status": "started",
             "provider": id,
@@ -2613,6 +2707,139 @@ struct HuggingFaceModelResult {
     repo_id: String,
     downloads: u64,
     likes: u64,
+    /// Whether the Freeweights catalog lists the repo. `null` when the
+    /// catalog could not be reached (unknown, not "not listed").
+    freeweights: Option<freeweights::Listing>,
+}
+
+/// Freeweights catalog lookups for allternit-api (search annotations and the
+/// Ollama pull verification in local_brain_routes). The catalog is
+/// `{ALLTERNIT_FREEWEIGHTS_URL or https://freeweights.allternit.com}/api/catalog`
+/// (base URL from `allternit-model-source`), cached in memory for 5 minutes.
+pub(crate) mod freeweights {
+    use serde::{Deserialize, Serialize};
+    use std::collections::HashMap;
+    use std::sync::{Arc, OnceLock};
+    use std::time::{Duration, Instant};
+    use tokio::sync::Mutex;
+
+    const TTL: Duration = Duration::from_secs(5 * 60);
+    /// After a failed fetch, wait this long before trying again.
+    const RETRY_AFTER: Duration = Duration::from_secs(30);
+
+    /// `freeweights` annotation on a search row.
+    #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+    pub struct Listing {
+        pub listed: bool,
+        /// SPDX id (or LicenseRef) from the catalog.
+        pub license: Option<String>,
+        /// Catalog section, e.g. `alt.freeweights.qwen`.
+        pub section: Option<String>,
+        /// Freeweights page for the repo.
+        pub detail_url: Option<String>,
+    }
+
+    #[derive(Deserialize)]
+    struct Row {
+        id: String,
+        #[serde(default)]
+        license_id: Option<String>,
+        #[serde(default)]
+        section: Option<String>,
+    }
+
+    #[derive(Deserialize)]
+    struct Catalog {
+        models: Vec<Row>,
+    }
+
+    type Index = Arc<HashMap<String, Listing>>;
+
+    struct Cached {
+        at: Instant,
+        /// `None` = the last fetch failed and nothing good was cached before.
+        index: Option<Index>,
+    }
+
+    fn cache() -> &'static Mutex<Option<Cached>> {
+        static CACHE: OnceLock<Mutex<Option<Cached>>> = OnceLock::new();
+        CACHE.get_or_init(|| Mutex::new(None))
+    }
+
+    pub fn base_url() -> String {
+        allternit_model_source::Client::new()
+            .map(|c| c.base_url().to_string())
+            .unwrap_or_else(|_| allternit_model_source::DEFAULT_BASE_URL.to_string())
+    }
+
+    fn build_index(base: &str, rows: Vec<Row>) -> Index {
+        Arc::new(
+            rows.into_iter()
+                .map(|r| {
+                    let detail_url = r.section.as_ref().map(|s| format!("{base}/{s}/{}/", r.id));
+                    (
+                        r.id,
+                        Listing {
+                            listed: true,
+                            license: r.license_id,
+                            section: r.section,
+                            detail_url,
+                        },
+                    )
+                })
+                .collect(),
+        )
+    }
+
+    async fn fetch(base: &str) -> Result<Index, String> {
+        let res = crate::net_client::client()
+            .get(format!("{base}/api/catalog"))
+            .timeout(allternit_model_source::NETWORK_TIMEOUT)
+            .send()
+            .await
+            .map_err(|e| e.to_string())?;
+        if !res.status().is_success() {
+            return Err(format!("HTTP {}", res.status()));
+        }
+        let c: Catalog = res.json().await.map_err(|e| e.to_string())?;
+        Ok(build_index(base, c.models))
+    }
+
+    /// The catalog index, or `None` when it cannot be reached and nothing is
+    /// cached. A stale index is served when a refresh fails.
+    pub async fn index() -> Option<Index> {
+        let mut guard = cache().lock().await;
+        if let Some(c) = guard.as_ref() {
+            let ttl = if c.index.is_some() { TTL } else { RETRY_AFTER };
+            if c.at.elapsed() < ttl {
+                return c.index.clone();
+            }
+        }
+        let base = base_url();
+        let index = match fetch(&base).await {
+            Ok(index) => Some(index),
+            Err(err) => {
+                tracing::warn!("Freeweights catalog unreachable: {err}");
+                guard.as_ref().and_then(|c| c.index.clone())
+            }
+        };
+        *guard = Some(Cached {
+            at: Instant::now(),
+            index: index.clone(),
+        });
+        index
+    }
+
+    /// Annotation for `repo` against an index (`None` index = unknown).
+    pub fn listing(index: Option<&Index>, repo: &str) -> Option<Listing> {
+        let index = index?;
+        Some(index.get(repo).cloned().unwrap_or(Listing {
+            listed: false,
+            license: None,
+            section: None,
+            detail_url: None,
+        }))
+    }
 }
 
 /// Searches HuggingFace's public model API for GGUF-tagged repos, so the
@@ -2632,7 +2859,7 @@ async fn search_huggingface(
     let search_term = query.q.unwrap_or_default();
     let limit = query.limit.unwrap_or(20).min(50);
 
-    let client = reqwest::Client::new();
+    let client = crate::net_client::client();
     let response = client
         .get("https://huggingface.co/api/models")
         .query(&[
@@ -2676,6 +2903,7 @@ async fn search_huggingface(
         }
     };
 
+    let fw_index = freeweights::index().await;
     let results: Vec<HuggingFaceModelResult> = body
         .as_array()
         .map(|arr| {
@@ -2687,6 +2915,7 @@ async fn search_huggingface(
                         .and_then(|v| v.as_str())?
                         .to_string();
                     Some(HuggingFaceModelResult {
+                        freeweights: freeweights::listing(fw_index.as_ref(), &repo_id),
                         repo_id,
                         downloads: m.get("downloads").and_then(|v| v.as_u64()).unwrap_or(0),
                         likes: m.get("likes").and_then(|v| v.as_u64()).unwrap_or(0),
@@ -2696,7 +2925,11 @@ async fn search_huggingface(
         })
         .unwrap_or_default();
 
-    Json(json!({ "models": results })).into_response()
+    Json(json!({
+        "models": results,
+        "freeweights_catalog": if fw_index.is_some() { "ok" } else { "unreachable" },
+    }))
+    .into_response()
 }
 
 #[cfg(test)]
@@ -2764,7 +2997,9 @@ mod auth_status_kind_tests {
             .iter()
             .filter_map(|m| m.get("id").and_then(|v| v.as_str()).map(str::to_string))
             .collect();
-        assert!(ids.contains(&"antigravity/gemini-3.7-flash-high".to_string()));
+        assert!(ids.contains(&"antigravity/gemini-3.8-flash-high".to_string()));
+        assert!(ids.contains(&"claude-cli/claude-sonnet-5-5".to_string()));
+        assert!(!ids.contains(&"claude-cli/claude-fable-5-1".to_string()), "retired ids aren't offered");
         assert!(ids.contains(&"codex-cli/gpt-5.6-luna".to_string()));
         assert!(ids.contains(&"aider/default".to_string()));
         assert!(!ids.iter().any(|id| id.starts_with("dsh/")), "unsupported CLIs aren't offered as brains");
@@ -2773,8 +3008,22 @@ mod auth_status_kind_tests {
     #[test]
     fn remote_sign_in_prefers_device_codes() {
         let (_, codex) = subscription_provider("codex-cli").unwrap();
-        assert_eq!(login_argv("codex-cli", codex.login, true).0, vec!["login", "--device-auth"]);
-        assert_eq!(login_argv("codex-cli", codex.login, false).0, vec!["login"]);
+        assert_eq!(login_argv("codex-cli", codex.login, true).argv, vec!["login", "--device-auth"]);
+        assert_eq!(login_argv("codex-cli", codex.login, false).argv, vec!["login"]);
+        assert!(login_argv("codex-cli", codex.login, true).hint.is_some(), "codex keeps its device-code hint");
+        let (_, grok) = subscription_provider("grok").unwrap();
+        assert_eq!(login_argv("grok", grok.login, true).argv, vec!["login", "--device-auth"]);
+        let (_, copilot) = subscription_provider("copilot").unwrap();
+        assert_eq!(login_argv("copilot", copilot.login, true).argv, vec!["login", "--device-code"]);
+        // Env-driven headless sign-in applies only when remote.
+        let (_, qoder) = subscription_provider("qodercli").unwrap();
+        assert_eq!(login_argv("qodercli", qoder.login, true).env, vec![("NO_BROWSER", std::ffi::OsStr::new("1"))]);
+        assert!(login_argv("qodercli", qoder.login, false).env.is_empty());
+        // Cline and Kilo sign in by device code everywhere, so `login` is enough.
+        let (_, cline) = subscription_provider("cline").unwrap();
+        assert_eq!(login_argv("cline", cline.login, true).argv, vec!["auth", "cline"]);
+        let (_, kilo) = subscription_provider("kilo").unwrap();
+        assert_eq!(login_argv("kilo", kilo.login, true).argv, vec!["auth", "login", "-p", "kilo"]);
     }
 
     #[test]

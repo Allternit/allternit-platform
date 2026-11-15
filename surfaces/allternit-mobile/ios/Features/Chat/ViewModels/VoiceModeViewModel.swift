@@ -75,6 +75,9 @@ final class VoiceModeViewModel: ObservableObject {
     /// MainActor-only everywhere else and deinit has exclusive access).
     nonisolated(unsafe) private var interruptionObserver: NSObjectProtocol? = nil
 
+    /// The bot's own Kokoro voice id, when it has one (replies on iOS 18+).
+    var botVoice: String?
+
     init(chatViewModel: ChatViewModel, runtimeModelId: String? = nil, effort: String? = nil) {
         self.chatViewModel = chatViewModel
         self.runtimeModelId = runtimeModelId
@@ -130,27 +133,15 @@ final class VoiceModeViewModel: ObservableObject {
                 if let notice { statusLine = notice }
                 startLegacy()
                 return
-            case .cloud:
+            case .device, .openai, .elevenlabs:
                 do {
-                    try await startSession(route: .cloud)
-                    return
-                } catch {
-                    guard isActive else { return }
-                    if preference == .cloud {
-                        statusLine = error.localizedDescription
-                        state = .idle
-                        return
-                    }
-                    notice = VoiceRouter.fallbackNotice(for: error)
-                }
-            case .device:
-                do {
-                    try await startSession(route: .device)
+                    try await startSession(route: route)
                     if let notice { statusLine = notice }
                     return
                 } catch {
                     guard isActive else { return }
-                    notice = error.localizedDescription
+                    // Keep the first reason (e.g. a bad OpenAI key) over later ones.
+                    notice = notice ?? VoiceRouter.fallbackNotice(for: error, from: route)
                 }
             }
         }
@@ -168,7 +159,7 @@ final class VoiceModeViewModel: ObservableObject {
         }
     }
 
-    /// Starts a Voice Session on `route` (.cloud or .device). Throws when it
+    /// Starts a Voice Session on `route` (.device, .openai, .elevenlabs). Throws when it
     /// can't (the caller falls back or surfaces the error).
     private func startSession(route: VoiceRoute) async throws {
         guard await Self.ensureMicPermission() else {
@@ -180,15 +171,13 @@ final class VoiceModeViewModel: ObservableObject {
         options.language = SettingsStore.shared.speechLanguage?.rawValue
             ?? Locale.current.language.languageCode?.identifier ?? "en"
         switch route {
-        case .cloud:
-            options.voice = SettingsStore.shared.cloudVoiceId
-            options.sttModel = "light"
-            factory = {
-                let ticket = try await VoiceCloudClient.shared.mintTicket()
-                return WebSocketVoiceTransport(url: ticket.connectURL)
-            }
-            engineLabel = "Cloud voice"
-        case .device:
+        case .openai:
+            options.voice = SettingsStore.shared.voiceIdentifier
+            try ByokVoiceTransport.requireKey(.openai)  // no key: the router falls back now
+            factory = { try ByokVoiceTransport.openAI() }
+            engineLabel = "On your OpenAI account"
+        case .device, .elevenlabs:
+            if route == .elevenlabs { try ByokVoiceTransport.requireKey(.elevenlabs) }
             let packs = VoicePackManager.shared
             if !packs.isReady {
                 statusLine = "Downloading the voice model…"
@@ -207,9 +196,24 @@ final class VoiceModeViewModel: ObservableObject {
                 throw VoiceClientError.server(code: "pack", message: "The on-device voice model isn't installed.")
             }
             options.voice = SettingsStore.shared.voiceIdentifier
-            let engine = LocalVoiceEngineFactory.make(paths: paths)
-            factory = { engine }
-            engineLabel = "On this device"
+            let listening = SettingsStore.shared.listening
+            if route == .elevenlabs {
+                // Your ElevenLabs account speaks; the device still listens.
+                factory = { try ByokVoiceTransport.elevenLabs(paths: paths, listening: listening) }
+                engineLabel = "Voice by your ElevenLabs account"
+            } else {
+                if KokoroVoices.deviceSupported, !VoicePackManager.kokoro.isReady {
+                    // Replies use the system voice until the Kokoro pack lands;
+                    // the first session fetches it on Wi-Fi in the background.
+                    Task { await VoicePackManager.kokoro.install(cellular: false) }
+                }
+                let engine = LocalVoiceEngineFactory.make(
+                    paths: paths, listening: listening,
+                    kokoroVoice: KokoroVoices.resolve(bot: botVoice),
+                    speed: SettingsStore.shared.speechSpeed)
+                factory = { engine }
+                engineLabel = "On this device"
+            }
         case .legacy:
             return
         }

@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::path::Component;
 use std::sync::Arc;
+use sha2::{Digest, Sha256};
 use tracing::warn;
 
 use crate::agent_workspace_paths::workspace_dir_for;
@@ -31,6 +32,86 @@ pub fn agent_workspace_router() -> Router<Arc<AppState>> {
             get(read_workspace_file).put(write_workspace_file),
         )
 }
+
+
+// ─── One Soul: the workspace root is canonical ───────────────────────────────
+
+/// Persona files whose canonical home is the workspace root. Older web
+/// builds wrote them under `.allternit/bot/`.
+pub(crate) const ROOT_FILES: [&str; 5] = ["SOUL.md", "USER.md", "AGENTS.md", "TOOLS.md", "HEARTBEAT.md"];
+const LEGACY_PREFIX: &str = ".allternit/bot/";
+
+/// `.allternit/bot/<root file>` -> `<root file>`; any other path is unchanged.
+pub(crate) fn canonical_path(path: &str) -> String {
+    let trimmed = path.strip_prefix("./").unwrap_or(path);
+    match trimmed.strip_prefix(LEGACY_PREFIX) {
+        Some(name) if ROOT_FILES.contains(&name) => name.to_string(),
+        _ => path.to_string(),
+    }
+}
+
+fn mtime_of(p: &std::path::Path) -> Option<std::time::SystemTime> {
+    std::fs::metadata(p).and_then(|m| m.modified()).ok()
+}
+
+pub(crate) fn sha256_hex(content: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(content))
+}
+
+/// Move legacy `.allternit/bot/<file>` copies to the root. Legacy only: moved.
+/// Both: the newer mtime wins at the root and the loser is kept as
+/// `.allternit/bot/<file>.pre-unify`. Idempotent and best-effort: errors are
+/// logged, never returned.
+pub(crate) fn unify_legacy_files(dir: &std::path::Path) {
+    let legacy_dir = dir.join(".allternit").join("bot");
+    if !legacy_dir.is_dir() {
+        return;
+    }
+    for name in ROOT_FILES {
+        if let Err(e) = unify_one(dir, &legacy_dir, name) {
+            warn!("workspace unify {} failed: {}", name, e);
+        }
+    }
+}
+
+fn unify_one(dir: &std::path::Path, legacy_dir: &std::path::Path, name: &str) -> std::io::Result<()> {
+    let legacy = legacy_dir.join(name);
+    if !legacy.is_file() {
+        return Ok(());
+    }
+    let root = dir.join(name);
+    let keep = legacy_dir.join(format!("{name}.pre-unify"));
+    if !root.is_file() {
+        return move_file(&legacy, &root);
+    }
+    if std::fs::read(&legacy)? == std::fs::read(&root)? {
+        return std::fs::remove_file(&legacy);
+    }
+    let legacy_newer = match (mtime_of(&legacy), mtime_of(&root)) {
+        (Some(l), Some(r)) => l > r,
+        _ => false,
+    };
+    if legacy_newer {
+        move_file(&root, &keep)?;
+        move_file(&legacy, &root)
+    } else {
+        move_file(&legacy, &keep)
+    }
+}
+
+fn move_file(from: &std::path::Path, to: &std::path::Path) -> std::io::Result<()> {
+    if let Some(parent) = to.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    if std::fs::rename(from, to).is_ok() {
+        return Ok(());
+    }
+    std::fs::copy(from, to)?;
+    std::fs::remove_file(from)
+}
+
+/// Serializes the hash check + write of PUT so two writers cannot both pass.
+static WRITE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// Reject anything that could escape the workspace dir: absolute paths,
 /// `..` components, backslashes, and NUL bytes.
@@ -55,7 +136,7 @@ fn invalid_path() -> axum::response::Response {
 
 /// Verify the agent exists and belongs to the user. Returns None when
 /// authorized, otherwise the error response to return.
-async fn authorize_agent(
+pub(crate) async fn authorize_agent(
     db: &crate::db::DbHandle,
     user_id: String,
     agent_id: String,
@@ -112,6 +193,7 @@ async fn list_workspace_files(
     let workspace_dir = workspace_dir_for(&id);
     let result = tokio::task::spawn_blocking(move || {
         let mut files = Vec::new();
+        unify_legacy_files(&workspace_dir);
         if workspace_dir.is_dir() {
             collect_files(&workspace_dir, &workspace_dir, &mut files)?;
         }
@@ -191,13 +273,19 @@ async fn read_workspace_file(
         return resp;
     }
 
-    let file_path = workspace_dir_for(&id).join(&query.path);
+    let dir = workspace_dir_for(&id);
+    let file_path = dir.join(canonical_path(&query.path));
     let rel_path = query.path.clone();
-    let result = tokio::task::spawn_blocking(move || std::fs::read_to_string(&file_path)).await;
+    let result = tokio::task::spawn_blocking(move || {
+        unify_legacy_files(&dir);
+        std::fs::read_to_string(&file_path)
+    })
+    .await;
 
     match result {
         Ok(Ok(content)) => Json(json!({
             "path": rel_path,
+            "hash": sha256_hex(content.as_bytes()),
             "content": content,
         }))
         .into_response(),
@@ -231,6 +319,9 @@ async fn read_workspace_file(
 struct WriteWorkspaceFileBody {
     path: String,
     content: String,
+    /// sha256 of the content the client last read. Omitted = overwrite.
+    #[serde(default)]
+    expected_hash: Option<String>,
 }
 
 async fn write_workspace_file(
@@ -246,20 +337,47 @@ async fn write_workspace_file(
         return resp;
     }
 
-    let file_path = workspace_dir_for(&id).join(&body.path);
+    let dir = workspace_dir_for(&id);
+    let file_path = dir.join(canonical_path(&body.path));
     let rel_path = body.path.clone();
     let result = tokio::task::spawn_blocking(move || {
+        let _guard = WRITE_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        unify_legacy_files(&dir);
+        if let Some(expected) = body.expected_hash.as_deref() {
+            let current = std::fs::read(&file_path).unwrap_or_default();
+            let current_hash = sha256_hex(&current);
+            if !current_hash.eq_ignore_ascii_case(expected) {
+                return Ok(Err((current_hash, String::from_utf8_lossy(&current).into_owned())));
+            }
+        }
         if let Some(parent) = file_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        std::fs::write(&file_path, body.content.as_bytes())
+        let tmp = file_path.with_extension(format!("tmp-{}", std::process::id()));
+        std::fs::write(&tmp, body.content.as_bytes())?;
+        std::fs::rename(&tmp, &file_path)?;
+        Ok::<_, std::io::Error>(Ok(sha256_hex(body.content.as_bytes())))
     })
     .await;
 
+    let result = match result {
+        Ok(Ok(Err((hash, content)))) => {
+            return (
+                StatusCode::CONFLICT,
+                Json(json!({"error": "changed_elsewhere", "hash": hash, "content": content})),
+            )
+                .into_response()
+        }
+        Ok(Ok(Ok(hash))) => Ok(Ok(hash)),
+        Ok(Err(e)) => Ok(Err(e)),
+        Err(e) => Err(e),
+    };
+
     match result {
-        Ok(Ok(())) => Json(json!({
+        Ok(Ok(hash)) => Json(json!({
             "success": true,
             "path": rel_path,
+            "hash": hash,
         }))
         .into_response(),
         Ok(Err(e)) => {
@@ -278,5 +396,68 @@ async fn write_workspace_file(
             )
                 .into_response()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn write(p: &std::path::Path, s: &str) {
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, s).unwrap();
+    }
+
+    #[test]
+    fn legacy_paths_map_to_root_only_for_persona_files() {
+        assert_eq!(canonical_path(".allternit/bot/SOUL.md"), "SOUL.md");
+        assert_eq!(canonical_path(".allternit/bot/USER.md"), "USER.md");
+        assert_eq!(canonical_path(".allternit/bot/notes.md"), ".allternit/bot/notes.md");
+        assert_eq!(canonical_path("SOUL.md"), "SOUL.md");
+    }
+
+    #[test]
+    fn legacy_only_moves_to_root_and_is_idempotent() {
+        let d = tempfile::tempdir().unwrap();
+        write(&d.path().join(".allternit/bot/SOUL.md"), "old soul");
+        unify_legacy_files(d.path());
+        unify_legacy_files(d.path());
+        assert_eq!(std::fs::read_to_string(d.path().join("SOUL.md")).unwrap(), "old soul");
+        assert!(!d.path().join(".allternit/bot/SOUL.md").exists());
+        assert!(!d.path().join(".allternit/bot/SOUL.md.pre-unify").exists());
+    }
+
+    #[test]
+    fn both_files_newer_wins_and_the_loser_is_kept() {
+        let d = tempfile::tempdir().unwrap();
+        write(&d.path().join("SOUL.md"), "root soul");
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        write(&d.path().join(".allternit/bot/SOUL.md"), "newer legacy");
+        unify_legacy_files(d.path());
+        assert_eq!(std::fs::read_to_string(d.path().join("SOUL.md")).unwrap(), "newer legacy");
+        assert_eq!(
+            std::fs::read_to_string(d.path().join(".allternit/bot/SOUL.md.pre-unify")).unwrap(),
+            "root soul"
+        );
+
+        let e = tempfile::tempdir().unwrap();
+        write(&e.path().join(".allternit/bot/USER.md"), "older legacy");
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        write(&e.path().join("USER.md"), "newer root");
+        unify_legacy_files(e.path());
+        assert_eq!(std::fs::read_to_string(e.path().join("USER.md")).unwrap(), "newer root");
+        assert_eq!(
+            std::fs::read_to_string(e.path().join(".allternit/bot/USER.md.pre-unify")).unwrap(),
+            "older legacy"
+        );
+        assert!(!e.path().join(".allternit/bot/USER.md").exists());
+    }
+
+    #[test]
+    fn hash_is_sha256_hex_of_the_content() {
+        assert_eq!(
+            sha256_hex(b"abc"),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
     }
 }

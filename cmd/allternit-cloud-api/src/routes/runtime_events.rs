@@ -34,6 +34,17 @@
 //! → `approval.requested`, `run.completed` → `agent.run.completed`, registry
 //! names pass through). Unmapped types (and our own outbound echoes) are
 //! `ignored`, not errors, so the forwarder can send its whole outbox cursor.
+//! **`status.snapshot`** is not an event: its `data` is the runtime's whole
+//! status (`needsYou` ids, bots, loops, …). It is kept as that runtime's latest
+//! (`status_snapshots`, answered `accepted`, or `duplicate` when the content is
+//! unchanged), never pushed as an alert, and every inbox id that left
+//! `needsYou` has its delivered iPhone notifications revoked
+//! ([`notifications::ingest_snapshot`]), then plans the Live Activity and widget pushes
+//! ([`super::live_activity::on_snapshot`]).
+//!
+//! Cloud sets `runtimeId` in every event's `data` (the authenticated runtime,
+//! whatever the body said).
+//!
 //! `at` is optional (RFC 3339; default now). `bot_id` / `thread_id` are copied
 //! into `data` (unless `data` already has them) because subscriptions filter
 //! on `data`. `data` must be a JSON object of at most 250 KiB serialized
@@ -61,7 +72,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use sqlx::PgPool;
 
-use super::allternit_events;
+use super::{allternit_events, apns, notifications};
 use super::runtime_relay::sign_runtime_request;
 use crate::ApiState;
 
@@ -74,6 +85,8 @@ pub const MAX_BODY_BYTES: usize = 1024 * 1024;
 pub const MAX_EVENTS: usize = 100;
 /// Leaves room for the delivery envelope inside the 256 KiB MCP cap.
 pub const MAX_DATA_BYTES: usize = 250 * 1024;
+/// The forwarded type that carries the runtime's status, not an event.
+pub const STATUS_SNAPSHOT: &str = "status.snapshot";
 
 pub fn routes() -> Router<Arc<ApiState>> {
     Router::new().route(PATH, post(ingest_route))
@@ -213,6 +226,31 @@ pub async fn ingest(db: &PgPool, user_id: &str, runtime_id: &str, events: Vec<Va
             results.push(json!({ "id": ev.id, "status": "invalid" }));
             continue;
         }
+        if ev.kind == STATUS_SNAPSHOT {
+            if serde_json::to_vec(&data).map(|b| b.len()).unwrap_or(usize::MAX) > MAX_DATA_BYTES {
+                rejected += 1;
+                results.push(json!({ "id": ev.id, "status": "too_large" }));
+                continue;
+            }
+            match notifications::ingest_snapshot(db, user_id, runtime_id, &data).await? {
+                notifications::SnapshotIngest::Unchanged => {
+                    duplicates += 1;
+                    results.push(json!({ "id": ev.id, "status": "duplicate" }));
+                }
+                notifications::SnapshotIngest::Stored { revoke, previous } => {
+                    if !revoke.is_empty() {
+                        let (db, user) = (db.clone(), user_id.to_string());
+                        tokio::spawn(async move {
+                            apns::revoke(&db, &user, &revoke).await;
+                        });
+                    }
+                    tokio::spawn(super::live_activity::on_snapshot(db.clone(), user_id.to_string(), runtime_id.to_string(), previous));
+                    accepted += 1;
+                    results.push(json!({ "id": ev.id, "status": "accepted" }));
+                }
+            }
+            continue;
+        }
         let Some(name) = allternit_events::from_runtime(&ev.kind, &data) else {
             ignored += 1;
             results.push(json!({ "id": ev.id, "status": "ignored" }));
@@ -223,6 +261,7 @@ pub async fn ingest(db: &PgPool, user_id: &str, runtime_id: &str, events: Vec<Va
                 data.as_object_mut().expect("object").entry(key).or_insert(json!(v));
             }
         }
+        data.as_object_mut().expect("object").insert("runtimeId".into(), json!(runtime_id));
         if serde_json::to_vec(&data).map(|b| b.len()).unwrap_or(usize::MAX) > MAX_DATA_BYTES {
             rejected += 1;
             results.push(json!({ "id": ev.id, "status": "too_large" }));
@@ -269,9 +308,40 @@ pub(crate) async fn platform_fan_out(db: &PgPool, user_id: &str, name: &str, dat
             "agent_id": agent, "channel": pick("channel").as_str().map(str::to_string).or_else(|| pick("provider").as_str().map(str::to_string)),
             "from": pick("from"), "text": pick("text"), "thread_id": pick("thread_id"),
         }),
-        "approval.requested" => json!({
-            "agent_id": agent, "approval_id": pick("approvalId"), "action": pick("action"), "summary": pick("summary"), "thread_id": pick("thread_id"),
-        }),
+        "approval.requested" => {
+            let legacy = json!({
+                "agent_id": agent, "approval_id": pick("approvalId"), "action": pick("action"), "summary": pick("summary"), "thread_id": pick("thread_id"),
+            });
+            // The mirror row never blocks the webhook: on a store error the
+            // legacy event still goes out.
+            let mirrored = twin_approval_row(db, project, &account, agent, data).await.unwrap_or_else(|e| {
+                tracing::warn!("platform approvals: twin approval not mirrored: {e}");
+                None
+            });
+            match mirrored {
+                // The legacy fields plus the Platform approval object (`apr_…`,
+                // for /v1/approvals/{id}). Sent even when the row already existed
+                // (the list alias may mirror it first); the ledger id dedupes.
+                Some((row, _)) => {
+                    let mut payload = crate::routes::platform_v1::approvals::event_payload(&row);
+                    for k in ["agent_id", "action", "summary", "thread_id"] {
+                        payload[k] = legacy[k].clone();
+                    }
+                    payload
+                }
+                None => legacy,
+            }
+        }
+        // Decided on the runtime (the owner in the Allternit app, or our own
+        // relay echoed back): the row moves once, and only that move is reported.
+        "approval.resolved" => {
+            if let (Some(source_ref), Some(state)) = (data["approvalId"].as_str(), data["state"].as_str().or_else(|| data["decision"].as_str())) {
+                if let Err(e) = crate::routes::platform_v1::approvals::mirror_twin_resolution(db, project, source_ref, state).await {
+                    tracing::warn!("platform approvals: twin resolution not mirrored: {e}");
+                }
+            }
+            return Ok(());
+        }
         "inbox.item.created" => json!({
             "agent_id": agent, "item_id": pick("itemId"), "kind": pick("kind"), "title": pick("title"), "severity": pick("severity"),
         }),
@@ -281,7 +351,45 @@ pub(crate) async fn platform_fan_out(db: &PgPool, user_id: &str, name: &str, dat
     Ok(())
 }
 
-/// `phone.step` / `phone.run.completed` from a person's own Desktop: the
+/// The `platform_approvals` row for a twin `approval.requested`: linked to the
+/// conversation whose `runtime_session_id` is the event's `thread_id` (and that
+/// conversation's latest response), expiring at the event's `expires_at`, or
+/// never when it carries none. `(row, true)` when this event created it.
+async fn twin_approval_row(
+    db: &PgPool,
+    project: &str,
+    account: &str,
+    agent: &str,
+    data: &Value,
+) -> Result<Option<(crate::routes::platform_v1::approvals::ApprovalRow, bool)>, sqlx::Error> {
+    use crate::routes::platform_v1::approvals;
+    let Some(source_ref) = data["approvalId"].as_str().filter(|s| !s.is_empty() && s.len() <= 128) else { return Ok(None) };
+    let (conversation_id, response_id) = approvals::link_twin(db, project, agent, &approvals::link_keys(data)).await?;
+    let action = data["action"].as_str().unwrap_or("action").to_string();
+    approvals::insert(
+        db,
+        approvals::NewApproval {
+            project_id: project,
+            source: "twin",
+            source_ref,
+            account_id: Some(account),
+            conversation_id,
+            response_id,
+            kind: action.clone(),
+            proposed_action: json!({
+                "action": action, "authority": data.get("authority"), "agent_id": agent,
+                "thread_id": data.get("thread_id"), "remote_ref": data.get("remoteRef"), "summary": data.get("summary"),
+            }),
+            status: "pending",
+            // The event's deadline, or none: twin approvals don't expire on their own.
+            expires_at: approvals::deadline(data),
+        },
+    )
+    .await
+}
+
+/// `phone.step` / `phone.run.completed` / `phone.approval.requested` /
+/// `phone.approval.resolved` from a person's own Desktop: the
 /// phones are theirs, so every live Platform API project they own gets the
 /// event (project-wide, no account) when one of its endpoints subscribes to it. The payload is rebuilt from an allowlist; screen text, frames
 /// and typed values never reach the runtime's ledger row to begin with.
@@ -289,11 +397,44 @@ async fn phone_fan_out(db: &PgPool, user_id: &str, name: &str, data: &Value) -> 
     if user_id.starts_with("platform:") || user_id.starts_with(crate::services::provisioning::HOSTED_DRIVER_OWNER_PREFIX) {
         return Ok(());
     }
+    if name == "phone.run.completed" {
+        // Runs a project started: close, meter minutes, finish fleet runs.
+        // Bookkeeping must never stop the event itself from being delivered.
+        if let Err(e) = crate::routes::platform_v1::phones::on_run_completed(db, user_id, data).await {
+            tracing::warn!("platform phones: run completion not recorded: {e}");
+        }
+    }
+    let approval = name.starts_with("phone.approval.");
+    if approval {
+        // A run that waits on a hold shows `waiting_approval` (bookkeeping, best effort).
+        if let Err(e) = crate::routes::platform_v1::phones::on_approval_event(db, user_id, name, data).await {
+            tracing::warn!("platform phones: hold not recorded: {e}");
+        }
+    }
     let keys: &[&str] = match name {
         "phone.step" => &["step_id", "run_id", "serial", "tool", "label", "ok", "error", "duration_ms", "source", "snapshot"],
-        "phone.run.completed" => &["run_id", "serial", "ok", "status", "skill", "source", "steps", "failed", "model_calls", "duration_ms"],
+        "phone.run.completed" => &["run_id", "serial", "ok", "status", "skill", "source", "steps", "failed", "model_calls", "duration_ms", "held_ms", "holds"],
+        // Never a screenshot, the crop or screen text: only these.
+        "phone.approval.requested" | "phone.approval.resolved" => &["approval_id", "run_id", "serial", "effect", "tool", "state"],
         _ => return Ok(()),
     };
+    // Trace export: every live project of the owner that has it on (best
+    // effort). A hold is not a span of its own; the run's span carries it.
+    let traced: Vec<String> = if approval {
+        Vec::new()
+    } else {
+        sqlx::query_scalar(
+            "SELECT p.id FROM platform_projects p JOIN platform_project_tracing t ON t.project_id = p.id \
+             WHERE p.owner_user_id = $1 AND p.archived_at IS NULL AND t.enabled",
+        )
+        .bind(user_id)
+        .fetch_all(db)
+        .await
+        .unwrap_or_default()
+    };
+    for project in traced {
+        crate::routes::platform_v1::project_tracing::emit(db, &project, crate::routes::platform_v1::project_tracing::phone_span(name, data));
+    }
     // Only projects with an endpoint that wants it: a phone step is frequent,
     // and an event nobody subscribed to would only be stored.
     let projects: Vec<String> = sqlx::query_scalar(
@@ -308,7 +449,10 @@ async fn phone_fan_out(db: &PgPool, user_id: &str, name: &str, data: &Value) -> 
     if projects.is_empty() {
         return Ok(());
     }
-    let payload = Value::Object(keys.iter().map(|k| ((*k).to_string(), data.get(*k).cloned().unwrap_or(Value::Null))).collect());
+    let mut payload = Value::Object(keys.iter().map(|k| ((*k).to_string(), data.get(*k).cloned().unwrap_or(Value::Null))).collect());
+    if let Some(holds) = data.get("holds").filter(|h| name == "phone.run.completed" && h.is_array()) {
+        payload["holds"] = crate::routes::platform_v1::phones::public_holds(holds);
+    }
     for project in projects {
         crate::routes::platform_v1::events::emit_event(db, &project, None, name, payload.clone()).await?;
     }

@@ -1,7 +1,8 @@
 import React, { useState } from "react";
 import { Link } from "react-router-dom";
-import { Archive, CircleNotch, Cube, Key, PencilSimple, Plus, X, CreditCard } from "@phosphor-icons/react";
+import { Archive, CircleNotch, Cube, Key, PencilSimple, Plus, Pulse, X, CreditCard } from "@phosphor-icons/react";
 import { formatApiError } from "@/lib/api-client";
+import { requestLoggingEnabled } from "@/lib/availability";
 import { createProject, updateProject, type PlatformProject, type ProjectEnv } from "@/lib/platform-projects";
 import { Badge, EmptyState, MonoChip, SkeletonCard } from "@/components/console-ui";
 import { DESTRUCTIVE_BUTTON_CLASS, QUIET_BUTTON_CLASS } from "@/components/console-ui/buttonStyles";
@@ -15,6 +16,7 @@ import {
   formatDate,
   usePlatformProjects,
 } from "./shared";
+import { TracingSection } from "./TracingSection";
 
 const PLAN_LABELS: Record<string, string> = {
   sandbox: "Sandbox (free)",
@@ -117,7 +119,7 @@ export function PlatformProjectsPage() {
           <EmptyState
             icon={<Cube size={32} aria-hidden />}
             title="No projects yet"
-            caption="Start with a sandbox project. It is free and uses test keys."
+            caption="Start with a sandbox project. It uses test keys and its usage is not charged; a card is still needed before billable calls."
             ctaLabel="New project"
             onCtaClick={() => setShowNew(true)}
             primaryCta
@@ -148,8 +150,10 @@ function ProjectRow({
   onError: (msg: string | null) => void;
 }) {
   const [editing, setEditing] = useState(false);
+  const [tracing, setTracing] = useState(false);
   const [name, setName] = useState(project.name);
   const [cap, setCap] = useState(String(project.spend_cap_cents / 100));
+  const [logBodies, setLogBodies] = useState(Boolean(project.log_bodies));
   const [busy, setBusy] = useState(false);
   const [confirmArchive, setConfirmArchive] = useState(false);
 
@@ -162,7 +166,9 @@ function ProjectRow({
     setBusy(true);
     onError(null);
     try {
-      await updateProject(project.id, { name: name.trim(), spend_cap_cents: capCents });
+      await updateProject(project.id, { name: name.trim(), spend_cap_cents: capCents,
+        ...(requestLoggingEnabled() ? { log_bodies: logBodies } : {}),
+      });
       setEditing(false);
       await onChanged();
     } catch (err) {
@@ -214,6 +220,9 @@ function ProjectRow({
           <Link to={`/platform/billing?project=${encodeURIComponent(project.id)}`} onClick={onSelect} className={QUIET_BUTTON_CLASS}>
             <CreditCard size={14} aria-hidden /> Billing
           </Link>
+          <button type="button" className={QUIET_BUTTON_CLASS} onClick={() => setTracing((v) => !v)} aria-expanded={tracing}>
+            <Pulse size={14} aria-hidden /> Tracing
+          </button>
           <button type="button" className={QUIET_BUTTON_CLASS} onClick={() => setEditing((v) => !v)} aria-expanded={editing}>
             <PencilSimple size={14} aria-hidden /> Edit
           </button>
@@ -230,6 +239,12 @@ function ProjectRow({
             Monthly spend cap (USD)
             <input value={cap} onChange={(e) => setCap(e.target.value)} inputMode="decimal" className={INPUT_CLASS} />
           </label>
+          {requestLoggingEnabled() && (
+            <label className="flex items-center gap-2 text-[12px] font-medium text-[var(--text-secondary)] sm:col-span-2">
+              <input type="checkbox" checked={logBodies} onChange={(e) => setLogBodies(e.target.checked)} />
+              Keep request and response bodies for 30 days (for Logs replay)
+            </label>
+          )}
           <div className="flex flex-wrap items-center gap-2 sm:col-span-2">
             <button type="button" className={PRIMARY_BUTTON_CLASS} disabled={busy} onClick={() => void save()}>
               {busy ? <CircleNotch size={14} className="animate-spin" aria-hidden /> : null} Save
@@ -252,6 +267,7 @@ function ProjectRow({
           </div>
         </div>
       )}
+      {tracing && <TracingSection projectId={project.id} />}
     </li>
   );
 }

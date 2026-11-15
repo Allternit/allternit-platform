@@ -65,3 +65,13 @@ ALLTERNIT_API_KEY=ak-... gizzi exec "Summarize README.md"
 ```
 
 See [CI Mode](/cli/ci-mode) for full CI pipeline guidance.
+
+## Allternit Cloud on a paired computer
+
+Allternit Cloud chat signs each request with the first credential it finds:
+
+1. `ALLTERNIT_API_KEY`
+2. `ALLTERNIT_API_TOKEN`. Allternit Desktop sets this to the computer's device token, on your own computer and on an Allternit cloud computer.
+3. The device token from `gizzi login` or `gizzi pair`.
+
+Allternit Cloud accepts a device token for chat only, as the computer's owner, and bills the owner's Cloud credits. The same token can't call other Cloud routes.

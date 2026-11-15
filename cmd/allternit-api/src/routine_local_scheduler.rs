@@ -45,8 +45,16 @@
 //!   row (reset by any good run). At [`AUTO_PAUSE_AFTER`] the routine is set
 //!   to `paused`, `metadata.autoPaused` records why, and the bot ledger gets a
 //!   `routine.paused` event, so a broken routine stops and the user is told.
+//! * **Loops.** Local loops (`loops`, V285) run through the same [`execute`],
+//!   with their runs in `loop_runs`. Differences: a loop with no agent runs as
+//!   the owner's main bot; `config.model` overrides the brain; each loop keeps
+//!   one session (`loops.session_id`, else `metadata.loopSessionId`) so a loop
+//!   every five minutes doesn't fill the bot's main chat; `expires_at` is its
+//!   stop rule (the loop model has no iteration cap), and past it the loop is
+//!   `disabled`. Occurrences missed while the computer slept aren't recorded:
+//!   a loop just runs again on waking. Each due loop runs in its own task.
 
-use chrono::{DateTime, Offset, Utc};
+use chrono::{DateTime, Offset, TimeZone, Utc};
 use rusqlite::{params, OptionalExtension};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
@@ -66,6 +74,11 @@ const RUN_OUTPUT_CAP: usize = 8 * 1024;
 pub const AUTO_PAUSE_AFTER: i64 = 3;
 /// A run that takes longer than this is cut off and fails with `outcome_reason = timeout`.
 pub const DEFAULT_TIMEOUT_SECS: i64 = 1800;
+/// A phone replay that stopped at a hold nobody answered: its error starts with this.
+pub const NEEDS_YOU: &str = "approval_timeout: ";
+/// The output of a scheduled phone replay skipped while its last run waits on
+/// the owner's Retry (it never runs back into the same hold on its own).
+const WAITING_ON_YOU: &str = "waiting for you: the last run stopped at a phone step that needs your approval (use Retry)";
 /// Most `skipped` rows written for the occurrences missed in one gap.
 const MISSED_ROWS_CAP: usize = 30;
 /// Longest a run may start after it was due before it counts as missed.
@@ -78,22 +91,26 @@ const META: &str = "CASE WHEN json_valid(metadata) THEN metadata ELSE '{}' END";
 // ─── Schedule ───────────────────────────────────────────────────────────────
 
 /// Next run strictly after `after`, or `None` when the routine is not
-/// tick-scheduled (manual, or a one-shot that already ran).
-pub fn next_run(schedule_type: &str, expression: &str, after: DateTime<Utc>, first: bool) -> Option<DateTime<Utc>> {
+/// tick-scheduled (manual, or a one-shot that already ran). A cron line reads
+/// in the task's saved timezone, or this runtime's zone when it has none.
+pub fn next_run(schedule_type: &str, expression: &str, after: DateTime<Utc>, first: bool, timezone: Option<&str>) -> Option<DateTime<Utc>> {
     match schedule_type {
         "interval" => {
             let secs = crate::automation_routes::parse_interval_seconds(expression)?;
             (secs > 0).then(|| after + chrono::Duration::seconds(secs))
         }
-        "cron" => {
-            // cron_lite evaluates fields in UTC; shift so "0 9 * * *" means
-            // 9:00 in this runtime's local zone.
-            let offset = chrono::Local::now().offset().fix().local_minus_utc() as i64;
-            let shifted = after + chrono::Duration::seconds(offset);
-            crate::cron_lite::next_run_after(expression, shifted)
-                .ok()
-                .map(|t| t - chrono::Duration::seconds(offset))
-        }
+        "cron" => match timezone.and_then(|t| t.parse::<chrono_tz::Tz>().ok()) {
+            Some(zone) => next_cron_in_zone(expression, after, zone),
+            None => {
+                // cron_lite evaluates fields in UTC; shift so "0 9 * * *" means
+                // 9:00 in this runtime's local zone.
+                let offset = chrono::Local::now().offset().fix().local_minus_utc() as i64;
+                let shifted = after + chrono::Duration::seconds(offset);
+                crate::cron_lite::next_run_after(expression, shifted)
+                    .ok()
+                    .map(|t| t - chrono::Duration::seconds(offset))
+            }
+        },
         "once" if first => Some(
             DateTime::parse_from_rfc3339(expression.trim())
                 .map(|t| t.with_timezone(&Utc))
@@ -103,10 +120,56 @@ pub fn next_run(schedule_type: &str, expression: &str, after: DateTime<Utc>, fir
     }
 }
 
+/// cron_lite reads fields in UTC, so it is handed wall-clock time in `zone`.
+/// A time the clocks skip runs an hour on; one they repeat runs the first time.
+fn next_cron_in_zone(expression: &str, after: DateTime<Utc>, zone: chrono_tz::Tz) -> Option<DateTime<Utc>> {
+    let mut wall = after.with_timezone(&zone).naive_local().and_utc();
+    // Bounded: only a DST change can make a wall-clock match fall at or before `after`.
+    for _ in 0..4 {
+        let next = crate::cron_lite::next_run_after(expression, wall).ok()?;
+        let local = next.naive_utc();
+        let at = zone
+            .from_local_datetime(&local)
+            .earliest()
+            .or_else(|| zone.from_local_datetime(&(local + chrono::Duration::hours(1))).earliest())
+            .map(|t| t.with_timezone(&Utc));
+        if let Some(at) = at.filter(|t| *t > after) {
+            return Some(at);
+        }
+        wall = next;
+    }
+    None
+}
+
 // ─── Stored routine (the columns this scheduler needs) ─────────────────────
+
+/// Which kind of task a [`LocalRoutine`] is: where its row and runs live.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TaskKind {
+    Routine,
+    Loop,
+}
+
+impl TaskKind {
+    fn table(self) -> &'static str {
+        match self {
+            TaskKind::Routine => "routines",
+            TaskKind::Loop => "loops",
+        }
+    }
+
+    /// Both tables have the same columns (V285).
+    fn runs_table(self) -> &'static str {
+        match self {
+            TaskKind::Routine => "routine_runs",
+            TaskKind::Loop => "loop_runs",
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct LocalRoutine {
+    pub kind: TaskKind,
     pub id: String,
     pub user_id: String,
     pub agent_id: Option<String>,
@@ -119,16 +182,19 @@ pub struct LocalRoutine {
     pub next_run_at: Option<String>,
     /// Seconds a run may take before it is cut off (`routines.timeout_seconds`; default [`DEFAULT_TIMEOUT_SECS`]).
     pub timeout_seconds: Option<i64>,
+    /// The saved zone its cron line reads in.
+    pub timezone: Option<String>,
     /// How late a scheduled run started, set by [`claim_due`] when it ran past its grace period.
     pub late_by_ms: Option<i64>,
 }
 
 const COLS: &str = "id, user_id, agent_id, name, description, schedule_type, schedule_expression, \
-                    config, metadata, next_run_at, timeout_seconds";
+                    config, metadata, next_run_at, timeout_seconds, timezone";
 
 fn map_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<LocalRoutine> {
     let parse = |s: Option<String>| s.and_then(|s| serde_json::from_str(&s).ok()).unwrap_or(Value::Null);
     Ok(LocalRoutine {
+        kind: TaskKind::Routine,
         id: row.get(0)?,
         user_id: row.get(1)?,
         agent_id: row.get(2)?,
@@ -140,8 +206,51 @@ fn map_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<LocalRoutine> {
         metadata: parse(row.get(8)?),
         next_run_at: row.get(9)?,
         timeout_seconds: row.get(10)?,
+        timezone: row.get(11)?,
         late_by_ms: None,
     })
+}
+
+/// `COLS` for `loops`: a loop has no timeout of its own, so the default applies.
+const LOOP_COLS: &str = "id, user_id, agent_id, name, description, schedule_type, schedule_expression, \
+                         config, metadata, next_run_at, NULL, timezone";
+
+fn map_loop_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<LocalRoutine> {
+    map_row(row).map(|r| LocalRoutine { kind: TaskKind::Loop, ..r })
+}
+
+/// The owner's main bot, else their first: what a loop on the Default Model runs as.
+pub(crate) fn default_bot(conn: &rusqlite::Connection, user_id: &str) -> Option<String> {
+    const CONFIG: &str = "CASE WHEN json_valid(config) THEN config ELSE '{}' END";
+    conn.query_row(
+        &format!(
+            "SELECT id FROM agents
+             WHERE user_id = ?1 AND (COALESCE(is_bot, 0) = 1 OR json_extract({CONFIG}, '$.isBot') = 1)
+             ORDER BY COALESCE(json_extract({CONFIG}, '$.botProfile.chiefOfStaff'), 0) DESC, created_at, id
+             LIMIT 1"
+        ),
+        params![user_id],
+        |r| r.get(0),
+    )
+    .optional()
+    .ok()
+    .flatten()
+}
+
+fn with_runner(conn: &rusqlite::Connection, mut r: LocalRoutine) -> LocalRoutine {
+    if r.agent_id.as_deref().map_or(true, |a| a.trim().is_empty()) {
+        r.agent_id = default_bot(conn, &r.user_id);
+    }
+    r
+}
+
+/// A loop ready to run: an agentless one is given the owner's main bot.
+pub fn get_loop(db: &DbHandle, id: &str) -> rusqlite::Result<Option<LocalRoutine>> {
+    let conn = db.connect()?;
+    let found = conn
+        .query_row(&format!("SELECT {LOOP_COLS} FROM loops WHERE id = ?1"), params![id], map_loop_row)
+        .optional()?;
+    Ok(found.map(|r| with_runner(&conn, r)))
 }
 
 pub fn get_routine(db: &DbHandle, id: &str) -> rusqlite::Result<Option<LocalRoutine>> {
@@ -154,22 +263,22 @@ pub fn get_routine(db: &DbHandle, id: &str) -> rusqlite::Result<Option<LocalRout
 fn backfill(db: &DbHandle, now: DateTime<Utc>) -> rusqlite::Result<()> {
     let conn = db.connect()?;
     flag_agentless(&conn)?;
-    let pending: Vec<(String, String, String, Option<String>)> = {
+    let pending: Vec<(String, String, String, Option<String>, Option<String>)> = {
         let mut stmt = conn.prepare(&format!(
-            "SELECT id, schedule_type, schedule_expression, last_run_at FROM routines
+            "SELECT id, schedule_type, schedule_expression, last_run_at, timezone FROM routines
              WHERE execution_domain = 'local' AND status = 'active' AND next_run_at IS NULL
                AND {HAS_AGENT}
                AND schedule_type IN ('interval', 'cron', 'once')"
         ))?;
-        let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?;
+        let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))?;
         rows.filter_map(Result::ok).collect()
     };
-    for (id, kind, expr, last_run) in pending {
+    for (id, kind, expr, last_run, timezone) in pending {
         // A one-shot that already ran stays unscheduled.
         if kind == "once" && last_run.is_some() {
             continue;
         }
-        if let Some(next) = next_run(&kind, &expr, now, true) {
+        if let Some(next) = next_run(&kind, &expr, now, true, timezone.as_deref()) {
             conn.execute(
                 "UPDATE routines SET next_run_at = ?2 WHERE id = ?1 AND next_run_at IS NULL",
                 params![id, next.to_rfc3339()],
@@ -255,16 +364,22 @@ fn claim_due(db: &DbHandle, now: DateTime<Utc>) -> rusqlite::Result<Vec<LocalRou
     };
     let mut claimed = Vec::new();
     for r in due {
-        let next = next_run(&r.schedule_type, &r.schedule_expression, now, false).map(|t| t.to_rfc3339());
+        let next = next_run(&r.schedule_type, &r.schedule_expression, now, false, r.timezone.as_deref()).map(|t| t.to_rfc3339());
         let changed = conn.execute(
             "UPDATE routines SET next_run_at = ?2 WHERE id = ?1 AND next_run_at = ?3",
             params![r.id, next, r.next_run_at],
         )?;
         if changed == 1 {
+            // Pause all bots: the claim above already moved it to its next slot,
+            // so it is skipped now and runs at that slot after resume (no burst).
+            if crate::bots_pause::is_paused(&conn, &r.user_id) {
+                record_paused_skip(&conn, &r, now);
+                continue;
+            }
             let mut r = r;
             if let Some(due_at) = r.next_run_at.as_deref().and_then(|t| DateTime::parse_from_rfc3339(t).ok()).map(|t| t.with_timezone(&Utc)) {
                 let late = now - due_at;
-                let interval = next_run(&r.schedule_type, &r.schedule_expression, due_at, false).map_or(0, |t| (t - due_at).num_seconds());
+                let interval = next_run(&r.schedule_type, &r.schedule_expression, due_at, false, r.timezone.as_deref()).map_or(0, |t| (t - due_at).num_seconds());
                 let grace = chrono::Duration::seconds(MIN_GRACE_SECS.max(interval / 10));
                 if late > grace {
                     r.late_by_ms = Some(late.num_milliseconds());
@@ -277,6 +392,122 @@ fn claim_due(db: &DbHandle, now: DateTime<Utc>) -> rusqlite::Result<Vec<LocalRou
     Ok(claimed)
 }
 
+/// Stop rule: an active local loop past its `expires_at` is disabled. Returns how many.
+fn expire_loops(db: &DbHandle, now: DateTime<Utc>) -> rusqlite::Result<usize> {
+    let conn = db.connect()?;
+    let dated: Vec<(String, String)> = {
+        let mut stmt = conn.prepare(
+            "SELECT id, expires_at FROM loops
+             WHERE execution_domain = 'local' AND status = 'active' AND expires_at IS NOT NULL",
+        )?;
+        let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        rows.filter_map(Result::ok).collect()
+    };
+    let mut expired = 0;
+    for (id, at) in dated {
+        // Parsed, not compared as text: the offset can differ.
+        let Ok(at) = DateTime::parse_from_rfc3339(at.trim()) else { continue };
+        if at.with_timezone(&Utc) <= now {
+            expired += conn.execute(
+                &format!(
+                    "UPDATE loops SET status = 'disabled', next_run_at = NULL,
+                         metadata = json_set({META}, '$.expiredAt', ?2)
+                     WHERE id = ?1 AND status = 'active'"
+                ),
+                params![id, now.to_rfc3339()],
+            )?;
+        }
+    }
+    Ok(expired)
+}
+
+/// Give every active local loop without a cursor its first run time.
+fn backfill_loops(db: &DbHandle, now: DateTime<Utc>) -> rusqlite::Result<()> {
+    let conn = db.connect()?;
+    let pending: Vec<(String, String, String, Option<String>, Option<String>)> = {
+        let mut stmt = conn.prepare(
+            "SELECT id, schedule_type, schedule_expression, last_run_at, timezone FROM loops
+             WHERE execution_domain = 'local' AND status = 'active' AND next_run_at IS NULL
+               AND schedule_type IN ('interval', 'cron', 'once')",
+        )?;
+        let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))?;
+        rows.filter_map(Result::ok).collect()
+    };
+    for (id, kind, expr, last_run, timezone) in pending {
+        if kind == "once" && last_run.is_some() {
+            continue;
+        }
+        if let Some(next) = next_run(&kind, &expr, now, true, timezone.as_deref()) {
+            conn.execute(
+                "UPDATE loops SET next_run_at = ?2 WHERE id = ?1 AND next_run_at IS NULL",
+                params![id, next.to_rfc3339()],
+            )?;
+        }
+    }
+    Ok(())
+}
+
+/// Claim due loops by advancing their cursor first (compare-and-set), so two
+/// ticks never both run one, and a restart picks up from the stored cursor.
+fn claim_due_loops(db: &DbHandle, now: DateTime<Utc>) -> rusqlite::Result<Vec<LocalRoutine>> {
+    let conn = db.connect()?;
+    let due: Vec<LocalRoutine> = {
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {LOOP_COLS} FROM loops
+             WHERE execution_domain = 'local' AND status = 'active'
+               AND next_run_at IS NOT NULL AND next_run_at <= ?1
+             ORDER BY next_run_at"
+        ))?;
+        let rows = stmt.query_map(params![now.to_rfc3339()], map_loop_row)?;
+        rows.filter_map(Result::ok).collect()
+    };
+    let mut claimed = Vec::new();
+    for r in due {
+        let next = next_run(&r.schedule_type, &r.schedule_expression, now, false, r.timezone.as_deref()).map(|t| t.to_rfc3339());
+        let changed = conn.execute(
+            "UPDATE loops SET next_run_at = ?2 WHERE id = ?1 AND next_run_at = ?3",
+            params![r.id, next, r.next_run_at],
+        )?;
+        if changed == 1 {
+            // Pause all bots: skipped, and due again at its next slot after resume.
+            if crate::bots_pause::is_paused(&conn, &r.user_id) {
+                continue;
+            }
+            claimed.push(with_runner(&conn, r));
+        }
+    }
+    Ok(claimed)
+}
+
+/// Stop rules, then first run times, then the claim: one loop tick's bookkeeping.
+fn prepare_loops(db: &DbHandle, now: DateTime<Utc>) -> Vec<LocalRoutine> {
+    if let Err(e) = expire_loops(db, now) {
+        warn!(error = %e, "local loops: expiry failed");
+    }
+    if let Err(e) = backfill_loops(db, now) {
+        warn!(error = %e, "local loops: backfill failed");
+    }
+    claim_due_loops(db, now).unwrap_or_else(|e| {
+        warn!(error = %e, "local loops: claim failed");
+        Vec::new()
+    })
+}
+
+/// A due routine skipped because its owner paused all bots: one `skipped` row
+/// (`outcome_reason = bots_paused`), so the run history says why it didn't run.
+fn record_paused_skip(conn: &rusqlite::Connection, r: &LocalRoutine, now: DateTime<Utc>) {
+    let at = r.next_run_at.clone().unwrap_or_else(|| now.to_rfc3339());
+    let wrote = conn.execute(
+        "INSERT INTO routine_runs (id, routine_id, status, scheduled_at, started_at, finished_at, duration_ms,
+             output, error, triggered_by, metadata, outcome_reason)
+         VALUES (?1, ?2, 'skipped', ?3, ?4, ?4, 0, 'bots paused', NULL, 'schedule', '{}', 'bots_paused')",
+        params![uuid::Uuid::new_v4().to_string(), r.id, at, now.to_rfc3339()],
+    );
+    if let Err(e) = wrote {
+        warn!(routine = %r.id, error = %e, "could not record a paused skip");
+    }
+}
+
 /// A scheduled run started later than its grace period. Every occurrence skipped
 /// before the one that is about to run gets a `skipped` row
 /// (`outcome_reason = missed_runtime_offline`, at most [`MISSED_ROWS_CAP`]), and a
@@ -286,7 +517,7 @@ fn record_missed(conn: &rusqlite::Connection, r: &LocalRoutine, due_at: DateTime
     let mut t = due_at;
     while t <= now && occurrences.len() <= MISSED_ROWS_CAP {
         occurrences.push(t);
-        match next_run(&r.schedule_type, &r.schedule_expression, t, false) {
+        match next_run(&r.schedule_type, &r.schedule_expression, t, false, r.timezone.as_deref()) {
             Some(n) => t = n,
             None => break,
         }
@@ -331,6 +562,8 @@ pub trait RoutineDriver: Send + Sync {
     fn session_exists(&self, session_id: &str) -> impl Future<Output = bool> + Send;
     fn create_session(&self, bot_id: &str, bot_name: &str) -> impl Future<Output = Result<String, String>> + Send;
     fn send_turn(&self, session_id: &str, bot_id: &str, text: &str) -> impl Future<Output = Result<String, String>> + Send;
+    /// `send_turn` with `"provider/model"` in place of the bot's own model (a loop's `config.model`).
+    fn send_turn_on_model(&self, session_id: &str, bot_id: &str, text: &str, model: &str) -> impl Future<Output = Result<String, String>> + Send;
     fn run_monitor(&self, user_id: &str, command: &str) -> impl Future<Output = Result<String, String>> + Send;
     /// The session a run goes to: the routine's own standing thread, a fresh
     /// generation per run (P4.4). `None` → the bot's main thread.
@@ -352,6 +585,14 @@ pub trait RoutineDriver: Send + Sync {
     ) -> impl Future<Output = Result<String, String>> + Send {
         let _ = (r, skill, serial, inputs);
         std::future::ready(Err("phone skills can't run on this driver".to_string()))
+    }
+    /// A loop with `config.metric` (a Loop Card) is measured by gizzi's
+    /// LoopEngine: `change_command` makes one change per iteration, the
+    /// metric judges it, and the ledger lands in `config.ledger`. `Ok` is a
+    /// one-line summary of the ledger.
+    fn run_measured(&self, r: &LocalRoutine, change_command: &str, timeout_secs: u64) -> impl Future<Output = Result<String, String>> + Send {
+        let _ = (r, change_command, timeout_secs);
+        std::future::ready(Err("measured loops can't run on this driver".to_string()))
     }
     /// What the session's newest turn did so far (text, tools, todo steps, brain).
     fn turn_digest(&self, session_id: &str) -> impl Future<Output = Option<TurnDigest>> + Send {
@@ -382,6 +623,10 @@ impl RoutineDriver for GizziDriver {
         crate::agent_session_routes::send_bot_turn(&self.state.db, session_id, bot_id, text).await
     }
 
+    async fn send_turn_on_model(&self, session_id: &str, bot_id: &str, text: &str, model: &str) -> Result<String, String> {
+        crate::agent_session_routes::send_bot_turn_on_model(&self.state.db, session_id, bot_id, text, model).await
+    }
+
     async fn routine_session(&self, r: &LocalRoutine, agent_id: &str, instruction: &str) -> Option<Result<String, String>> {
         let rt = crate::thread_routes::GizziRuntime { db: self.state.db.clone() };
         Some(
@@ -393,12 +638,94 @@ impl RoutineDriver for GizziDriver {
     async fn run_phone_skill(&self, r: &LocalRoutine, skill: &str, serial: Option<&str>, inputs: &[(String, String)]) -> Result<String, String> {
         // A moved step re-decides on the routine's bot's brain.
         let model = crate::phone_replay::brain(&self.state.db, r.agent_id.as_deref(), None);
-        let report = crate::phone_replay::run_skill(&self.state.data_dir, skill, serial, inputs, model, "routine", None).await?;
+        // A sensitive step asks the routine's owner (no thread: the guard uses `phone:<serial>`).
+        let ctx = crate::phone_guard::TaskCtx { owner: r.user_id.clone(), bot_id: r.agent_id.clone(), source: "routine".into(), ..Default::default() };
+        let report = crate::phone_replay::run_skill(&self.state.db, &self.state.data_dir, skill, serial, inputs, model, "routine", None, &ctx).await?;
         crate::phone_runs::record_run_completed(&self.state.db, &report, "routine");
         if report.get("ok").and_then(Value::as_bool) == Some(true) {
             Ok(phone_skill_summary(skill, &report))
         } else {
-            Err(report.get("error").and_then(Value::as_str).unwrap_or("the phone skill didn't finish").to_string())
+            let why = report.get("error").and_then(Value::as_str).unwrap_or("the phone skill didn't finish").to_string();
+            if report.get("status").and_then(Value::as_str) == Some("approval_timeout") {
+                Err(format!("{NEEDS_YOU}{why}"))
+            } else {
+                Err(why)
+            }
+        }
+    }
+
+    async fn run_measured(&self, r: &LocalRoutine, change_command: &str, timeout_secs: u64) -> Result<String, String> {
+        let client = crate::agent_session_routes::gizzi_client(&axum::http::HeaderMap::new());
+        let base = format!("{}/v1/automations/loops", crate::agent_session_routes::gizzi_base());
+        let body = json!({
+            "command": change_command,
+            "metric": r.config.get("metric"),
+            "cwd": r.config.get("cwd").and_then(Value::as_str),
+            "max_iterations": r.config.get("maxIterations").and_then(Value::as_i64).unwrap_or(10),
+        });
+        let created: Value = client
+            .post(&base)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| format!("the gizzi runtime is not reachable: {e}"))?
+            .error_for_status()
+            .map_err(|e| format!("the gizzi runtime refused the measured loop: {e}"))?
+            .json()
+            .await
+            .map_err(|e| format!("unreadable reply from the gizzi runtime: {e}"))?;
+        let gizzi_id = created.get("id").and_then(Value::as_str).ok_or("the gizzi runtime returned no loop id")?.to_string();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
+        let mut seen = 0usize;
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+            let rows: Value = client
+                .get(&base)
+                .send()
+                .await
+                .map_err(|e| format!("lost the gizzi runtime: {e}"))?
+                .json()
+                .await
+                .map_err(|e| format!("unreadable loop list from the gizzi runtime: {e}"))?;
+            let Some(row) = rows.as_array().and_then(|a| a.iter().find(|l| l.get("id").and_then(Value::as_str) == Some(gizzi_id.as_str()))) else {
+                return Err("the measured loop disappeared from the gizzi runtime".to_string());
+            };
+            let ledger = row.get("ledger").and_then(Value::as_array).cloned().unwrap_or_default();
+            if ledger.len() != seen {
+                seen = ledger.len();
+                // Write the ledger back so the loop's timeline fills while it runs.
+                let trimmed: Vec<Value> = ledger
+                    .iter()
+                    .map(|e| {
+                        let mut e = e.clone();
+                        if let Some(o) = e.as_object_mut() {
+                            o.remove("control");
+                            o.remove("treatment");
+                        }
+                        e
+                    })
+                    .collect();
+                if let Ok(conn) = self.state.db.connect() {
+                    let _ = conn.execute(
+                        "UPDATE loops SET config = json_set(COALESCE(config, '{}'), '$.ledger', json(?2)), updated_at = ?3 WHERE id = ?1",
+                        params![r.id, Value::Array(trimmed).to_string(), Utc::now().to_rfc3339()],
+                    );
+                }
+            }
+            let state = row.get("state").and_then(Value::as_str).unwrap_or("running");
+            if state != "running" {
+                let kept = ledger.iter().filter(|e| e.get("verdict").and_then(Value::as_str) == Some("KEEP")).count();
+                let summary = format!("{} attempts, {} kept, loop {}", ledger.len(), kept, state);
+                if state == "blocked" {
+                    let why = ledger.last().and_then(|e| e.get("why")).and_then(Value::as_str).unwrap_or("blocked");
+                    return Err(format!("measured loop blocked: {why}"));
+                }
+                return Ok(summary);
+            }
+            if std::time::Instant::now() >= deadline {
+                let _ = client.put(format!("{base}/{gizzi_id}")).json(&json!({ "state": "stopped" })).send().await;
+                return Err(format!("measured loop timed out after {timeout_secs} s; it was stopped"));
+            }
         }
     }
 
@@ -453,6 +780,25 @@ fn phone_skill_summary(skill: &str, report: &Value) -> String {
         ));
     }
     out
+}
+
+/// An open `routine_failed` item for this routine says its last phone replay
+/// stopped at a hold nobody answered.
+fn waiting_on_owner(db: &DbHandle, r: &LocalRoutine) -> bool {
+    db.connect()
+        .ok()
+        .and_then(|c| {
+            c.query_row(
+                "SELECT 1 FROM attention_items WHERE id = ?1 AND owner = ?2 AND resolved_at IS NULL
+                   AND json_extract(detail_json, '$.reason') = 'approval_timeout'",
+                params![format!("routine_failed:{}", r.id), r.user_id],
+                |_| Ok(()),
+            )
+            .optional()
+            .ok()
+            .flatten()
+        })
+        .is_some()
 }
 
 /// `config.replay` when it names a phone skill: (skill, serial, inputs).
@@ -558,11 +904,36 @@ async fn resolve_thread<D: RoutineDriver>(db: &DbHandle, driver: &D, bot_id: &st
     Ok(session)
 }
 
-fn previous_output(db: &DbHandle, routine_id: &str) -> Option<String> {
+/// The session a loop runs in: `loops.session_id`, else the one it was given
+/// before (`metadata.loopSessionId`), else a new one it keeps.
+async fn loop_session<D: RoutineDriver>(db: &DbHandle, driver: &D, r: &LocalRoutine, agent_id: &str, bot: &BotInfo) -> Result<String, String> {
+    let own: Option<String> = db.connect().ok().and_then(|conn| {
+        conn.query_row("SELECT session_id FROM loops WHERE id = ?1", params![r.id], |row| row.get(0)).ok().flatten()
+    });
+    let kept = r.metadata.get("loopSessionId").and_then(Value::as_str).map(str::to_string);
+    for session in own.into_iter().chain(kept) {
+        if driver.session_exists(&session).await {
+            return Ok(session);
+        }
+    }
+    let session = driver.create_session(agent_id, &format!("{}: {}", bot.name, r.name)).await?;
+    if let Ok(conn) = db.connect() {
+        let _ = conn.execute(
+            &format!("UPDATE loops SET metadata = json_set({META}, '$.loopSessionId', ?2) WHERE id = ?1"),
+            params![r.id, session],
+        );
+    }
+    Ok(session)
+}
+
+fn previous_output(db: &DbHandle, r: &LocalRoutine) -> Option<String> {
     db.connect().ok()?.query_row(
-        "SELECT output FROM routine_runs WHERE routine_id = ?1 AND status = 'succeeded' AND output IS NOT NULL
-         ORDER BY started_at DESC LIMIT 1",
-        params![routine_id],
+        &format!(
+            "SELECT output FROM {} WHERE routine_id = ?1 AND status = 'succeeded' AND output IS NOT NULL
+             ORDER BY started_at DESC LIMIT 1",
+            r.kind.runs_table()
+        ),
+        params![r.id],
         |r| r.get(0),
     )
     .ok()
@@ -612,6 +983,9 @@ pub struct RunOutcome {
 
 /// `routine_runs.outcome_reason` for a failed run, from its error text.
 pub fn classify(error: &str) -> &'static str {
+    if error.starts_with(NEEDS_YOU) {
+        return "approval_timeout";
+    }
     let e = error.to_lowercase();
     if e.contains("timed out") {
         "timeout"
@@ -635,7 +1009,8 @@ pub fn auto_pause_reason() -> String {
 
 /// Update the failure streak after a run; pauses the routine at
 /// [`AUTO_PAUSE_AFTER`]. Returns true when this run paused it.
-fn record_streak(conn: &rusqlite::Connection, id: &str, status: &str, error: Option<&str>, at: &str) -> bool {
+fn record_streak(conn: &rusqlite::Connection, kind: TaskKind, id: &str, status: &str, error: Option<&str>, at: &str) -> bool {
+    let table = kind.table();
     // A stopped run says nothing about whether the routine works.
     if status == "cancelled" {
         return false;
@@ -643,7 +1018,7 @@ fn record_streak(conn: &rusqlite::Connection, id: &str, status: &str, error: Opt
     if status != "failed" {
         let _ = conn.execute(
             &format!(
-                "UPDATE routines SET metadata = json_remove({META}, '$.consecutiveFailures', '$.lastRunError')
+                "UPDATE {table} SET metadata = json_remove({META}, '$.consecutiveFailures', '$.lastRunError')
                  WHERE id = ?1"
             ),
             params![id],
@@ -652,7 +1027,7 @@ fn record_streak(conn: &rusqlite::Connection, id: &str, status: &str, error: Opt
     }
     let _ = conn.execute(
         &format!(
-            "UPDATE routines SET metadata = json_set({META},
+            "UPDATE {table} SET metadata = json_set({META},
                  '$.consecutiveFailures', COALESCE(json_extract({META}, '$.consecutiveFailures'), 0) + 1,
                  '$.lastRunError', ?2)
              WHERE id = ?1"
@@ -664,7 +1039,7 @@ fn record_streak(conn: &rusqlite::Connection, id: &str, status: &str, error: Opt
     let paused = conn
         .execute(
             &format!(
-                "UPDATE routines SET status = 'paused', next_run_at = NULL,
+                "UPDATE {table} SET status = 'paused', next_run_at = NULL,
                      metadata = json_set({META}, '$.autoPaused',
                          json_object('at', ?2, 'reason', ?3, 'lastError', ?4))
                  WHERE id = ?1 AND status = 'active'
@@ -706,6 +1081,10 @@ fn alert_for_outcome(conn: &rusqlite::Connection, r: &LocalRoutine, outcome: &Ru
         return;
     }
     if outcome.status != "failed" {
+        // A scheduled replay skipped while the owner's Retry is pending keeps the item open.
+        if outcome.output.as_deref() == Some(WAITING_ON_YOU) {
+            return;
+        }
         alerts::resolve_source(conn, &r.user_id, "routine_failed", &r.id, "fixed");
         if r.late_by_ms.is_none() {
             alerts::resolve_source(conn, &r.user_id, "routine_missed", &r.id, "fixed");
@@ -716,6 +1095,9 @@ fn alert_for_outcome(conn: &rusqlite::Connection, r: &LocalRoutine, outcome: &Ru
     let flagged_critical = r.metadata.get("critical").and_then(Value::as_bool).unwrap_or(false);
     let (severity, summary) = if outcome.auto_paused {
         ("critical", format!("\"{}\" was paused after {AUTO_PAUSE_AFTER} failed runs in a row: {}", r.name, truncate(error, 160)))
+    } else if outcome.reason == Some("approval_timeout") {
+        // A phone step waited on the owner and nobody answered: one item, with Retry.
+        (if flagged_critical { "critical" } else { "warn" }, format!("Routine stopped at a step that needs you: {}", r.name))
     } else {
         (if flagged_critical { "critical" } else { "warn" }, format!("\"{}\" failed: {}", r.name, truncate(error, 160)))
     };
@@ -724,14 +1106,18 @@ fn alert_for_outcome(conn: &rusqlite::Connection, r: &LocalRoutine, outcome: &Ru
         kind: "routine_failed".into(),
         severity: severity.into(),
         bot_id: r.agent_id.clone(),
-        source: "routine".into(),
+        source: if r.kind == TaskKind::Loop { "loop".into() } else { "routine".into() },
         source_id: r.id.clone(),
         summary,
         detail: json!({ "routine": r.name, "runId": run_id, "reason": outcome.reason, "error": error, "trigger": trigger.as_str(), "autoPaused": outcome.auto_paused }),
-        retry: Some(json!({ "routineId": r.id })),
+        // The retry action runs routines.
+        retry: (r.kind == TaskKind::Routine).then(|| json!({ "routineId": r.id })),
         ..Default::default()
     });
-    let _ = conn.execute("UPDATE routine_runs SET alerted_at = ?2 WHERE id = ?1", params![run_id, Utc::now().to_rfc3339()]);
+    let _ = conn.execute(
+        &format!("UPDATE {} SET alerted_at = ?2 WHERE id = ?1", r.kind.runs_table()),
+        params![run_id, Utc::now().to_rfc3339()],
+    );
 }
 
 // ─── Live runs ──────────────────────────────────────────────────────────────
@@ -787,12 +1173,19 @@ const STOPPED: &str = "stopped by user";
 /// daemon's to settle.
 pub fn settle_orphaned_runs(db: &DbHandle) -> rusqlite::Result<usize> {
     let now = Utc::now().to_rfc3339();
-    db.connect()?.execute(
-        "UPDATE routine_runs SET status = 'failed', finished_at = ?1, outcome_reason = 'runtime_restart',
-             error = 'The runtime stopped while this run was going.'
-         WHERE status = 'running' AND gizzi_run_id IS NULL",
-        params![now],
-    )
+    let conn = db.connect()?;
+    let mut settled = 0;
+    for table in ["routine_runs", "loop_runs"] {
+        settled += conn.execute(
+            &format!(
+                "UPDATE {table} SET status = 'failed', finished_at = ?1, outcome_reason = 'runtime_restart',
+                     error = 'The runtime stopped while this run was going.'
+                 WHERE status = 'running' AND gizzi_run_id IS NULL"
+            ),
+            params![now],
+        )?;
+    }
+    Ok(settled)
 }
 
 /// Run one routine end to end and record it. Never panics on a bad run —
@@ -804,13 +1197,16 @@ pub async fn execute<D: RoutineDriver>(db: &DbHandle, driver: &D, r: &LocalRouti
     let mut monitor_hash: Option<String> = None;
     let bot = r.agent_id.as_deref().and_then(|id| bot_info(db, id));
 
+    let runs_table = r.kind.runs_table();
     let run_id = uuid::Uuid::new_v4().to_string();
     let opened = db
         .connect()
         .and_then(|conn| {
             conn.execute(
-                "INSERT INTO routine_runs (id, routine_id, status, scheduled_at, started_at, triggered_by, metadata, late_by_ms)
-                 VALUES (?1, ?2, 'running', ?3, ?3, ?4, '{}', ?5)",
+                &format!(
+                    "INSERT INTO {runs_table} (id, routine_id, status, scheduled_at, started_at, triggered_by, metadata, late_by_ms)
+                     VALUES (?1, ?2, 'running', ?3, ?3, ?4, '{{}}', ?5)"
+                ),
                 params![run_id, r.id, started.to_rfc3339(), trigger.as_str(), r.late_by_ms],
             )
         })
@@ -826,17 +1222,35 @@ pub async fn execute<D: RoutineDriver>(db: &DbHandle, driver: &D, r: &LocalRouti
         });
         if let Ok(conn) = db.connect() {
             let _ = conn.execute(
-                "UPDATE routine_runs SET metadata = json_set(COALESCE(metadata, '{}'), '$.sessionId', ?2) WHERE id = ?1",
+                &format!("UPDATE {runs_table} SET metadata = json_set(COALESCE(metadata, '{{}}'), '$.sessionId', ?2) WHERE id = ?1"),
                 params![run_id, session],
             );
         }
     };
 
     let timeout_secs = r.timeout_seconds.filter(|t| *t > 0).unwrap_or(DEFAULT_TIMEOUT_SECS);
+    // A phone replay may wait on the owner: never cut it off inside that wait.
+    let timeout_secs = if phone_replay_of(&r.config).is_some() { timeout_secs.max(crate::phone_guard::WAIT.as_secs() as i64 + 600) } else { timeout_secs };
     let work = async {
         // A phone skill replays with no model turn and needs no bot thread.
         if let Some((skill, serial, inputs)) = phone_replay_of(&r.config) {
+            // After a run stopped at a step that needs the owner, only their
+            // Retry (a manual run) replays it: never back into the hold on a schedule.
+            if !matches!(trigger, Trigger::Manual { .. }) && waiting_on_owner(db, r) {
+                return Ok((WAITING_ON_YOU.to_string(), "skipped"));
+            }
             let out = driver.run_phone_skill(r, &skill, serial.as_deref(), &inputs).await?;
+            return Ok((out, "succeeded"));
+        }
+        // A Loop Card makes this a measured loop: gizzi's engine keeps or reverts each change.
+        if r.kind == TaskKind::Loop && r.config.pointer("/metric/command").and_then(Value::as_str).is_some() {
+            let change = r
+                .config
+                .get("changeCommand")
+                .and_then(Value::as_str)
+                .filter(|c| !c.trim().is_empty())
+                .ok_or("a measured loop needs a change command (config.changeCommand)")?;
+            let out = driver.run_measured(r, change, timeout_secs as u64).await?;
             return Ok((out, "succeeded"));
         }
         let agent_id = r.agent_id.as_deref().ok_or("this routine has no bot; assign it to a bot to run it")?;
@@ -851,17 +1265,26 @@ pub async fn execute<D: RoutineDriver>(db: &DbHandle, driver: &D, r: &LocalRouti
             routine_turn(&r.name, &out)
         } else {
             let mut instruction = instruction_of(r);
-            if let Some(prev) = previous_output(db, &r.id) {
+            if let Some(prev) = previous_output(db, r) {
                 instruction = format!("{instruction}\n\nPrevious run output:\n{}", truncate(&prev, PREVIOUS_OUTPUT_CAP));
             }
             routine_turn(&r.name, &instruction)
         };
-        let session = match driver.routine_session(r, agent_id, &instruction_of(r)).await {
-            Some(result) => result?,
-            None => resolve_thread(db, driver, agent_id, bot).await?,
+        let session = if r.kind == TaskKind::Loop {
+            loop_session(db, driver, r, agent_id, bot).await?
+        } else {
+            match driver.routine_session(r, agent_id, &instruction_of(r)).await {
+                Some(result) => result?,
+                None => resolve_thread(db, driver, agent_id, bot).await?,
+            }
         };
         note_session(&session);
-        let reply = driver.send_turn(&session, agent_id, &text).await?;
+        // A loop's `config.model`, when it's the "provider/model" a brain needs.
+        let model = r.config.get("model").and_then(Value::as_str).filter(|m| r.kind == TaskKind::Loop && m.contains('/'));
+        let reply = match model {
+            Some(model) => driver.send_turn_on_model(&session, agent_id, &text, model).await?,
+            None => driver.send_turn(&session, agent_id, &text).await?,
+        };
         Ok((reply, "succeeded"))
     };
     let timed = async {
@@ -936,9 +1359,11 @@ pub async fn execute<D: RoutineDriver>(db: &DbHandle, driver: &D, r: &LocalRouti
     if let Ok(conn) = db.connect() {
         let stored = if opened {
             conn.execute(
-                "UPDATE routine_runs SET status = ?2, finished_at = ?3, duration_ms = ?4, output = ?5, error = ?6,
-                     metadata = ?7, outcome_reason = ?8
-                 WHERE id = ?1",
+                &format!(
+                    "UPDATE {runs_table} SET status = ?2, finished_at = ?3, duration_ms = ?4, output = ?5, error = ?6,
+                         metadata = ?7, outcome_reason = ?8
+                     WHERE id = ?1"
+                ),
                 params![
                     run_id,
                     outcome.status,
@@ -953,9 +1378,11 @@ pub async fn execute<D: RoutineDriver>(db: &DbHandle, driver: &D, r: &LocalRouti
             .and_then(|n| if n == 1 { Ok(n) } else { Err(rusqlite::Error::QueryReturnedNoRows) })
         } else {
             conn.execute(
-                "INSERT INTO routine_runs (id, routine_id, status, scheduled_at, started_at, finished_at, duration_ms,
-                     output, error, triggered_by, metadata, outcome_reason, late_by_ms)
-                 VALUES (?1, ?2, ?3, ?4, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                &format!(
+                    "INSERT INTO {runs_table} (id, routine_id, status, scheduled_at, started_at, finished_at, duration_ms,
+                         output, error, triggered_by, metadata, outcome_reason, late_by_ms)
+                     VALUES (?1, ?2, ?3, ?4, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)"
+                ),
                 params![
                     run_id,
                     r.id,
@@ -976,16 +1403,19 @@ pub async fn execute<D: RoutineDriver>(db: &DbHandle, driver: &D, r: &LocalRouti
             dead_letter(db, r, &outcome, &run_id, e.to_string());
         }
         let _ = conn.execute(
-            "UPDATE routines SET last_run_at = ?2,
-                 metadata = json_set(
-                     CASE WHEN ?3 IS NULL THEN COALESCE(metadata, '{}')
-                          ELSE json_set(COALESCE(metadata, '{}'), '$.lastMonitorHash', ?3) END,
-                     '$.lastRunStatus', ?4)
-             WHERE id = ?1",
+            &format!(
+                "UPDATE {} SET last_run_at = ?2,
+                     metadata = json_set(
+                         CASE WHEN ?3 IS NULL THEN COALESCE(metadata, '{{}}')
+                              ELSE json_set(COALESCE(metadata, '{{}}'), '$.lastMonitorHash', ?3) END,
+                         '$.lastRunStatus', ?4)
+                 WHERE id = ?1",
+                r.kind.table()
+            ),
             params![r.id, started.to_rfc3339(), monitor_hash, outcome.status],
         );
         outcome.auto_paused =
-            record_streak(&conn, &r.id, outcome.status, outcome.error.as_deref(), &finished.to_rfc3339());
+            record_streak(&conn, r.kind, &r.id, outcome.status, outcome.error.as_deref(), &finished.to_rfc3339());
         alert_for_outcome(&conn, r, &outcome, &run_id, &trigger);
     } else {
         dead_letter(db, r, &outcome, &run_id, "database unavailable".into());
@@ -1018,6 +1448,11 @@ pub async fn execute<D: RoutineDriver>(db: &DbHandle, driver: &D, r: &LocalRouti
             };
             if let Err(e) = append_event(db, agent_id, &event, &finished.to_rfc3339()) {
                 warn!(routine = %r.id, error = %e, "failed to ledger routine run");
+            }
+            // The main bot's morning check-in posted its offers: tell the person (push, quiet hours apply).
+            // A failed run goes the usual way (alert_for_outcome → Inbox "Needs fixing").
+            if outcome.status == "succeeded" && r.metadata["checkIn"].as_bool() == Some(true) {
+                crate::main_bot_reach_out::notify_check_in(db, agent_id, &bot.name, outcome.session_id.as_deref(), &format!("{}:{}", r.id, started.timestamp_millis()));
             }
             if outcome.auto_paused {
                 let paused = AppendEventBody {
@@ -1094,6 +1529,31 @@ pub async fn run_due<D: RoutineDriver>(db: &DbHandle, driver: &D, now: DateTime<
     fired
 }
 
+/// One loop tick, each due loop in turn. Production runs them side by side
+/// ([`tick_loops`]); a loop already running is skipped, never overlapped.
+pub async fn run_due_loops<D: RoutineDriver>(db: &DbHandle, driver: &D, now: DateTime<Utc>) -> usize {
+    let mut fired = 0;
+    for r in prepare_loops(db, now) {
+        let Some(_guard) = FlightGuard::acquire(&r.id) else { continue };
+        execute(db, driver, &r, Trigger::Schedule).await;
+        fired += 1;
+    }
+    fired
+}
+
+/// One loop tick: each due loop in its own task, so a long one doesn't hold up the rest.
+fn tick_loops(state: &Arc<AppState>, now: DateTime<Utc>) {
+    for r in prepare_loops(&state.db, now) {
+        let Some(guard) = FlightGuard::acquire(&r.id) else { continue };
+        let state = state.clone();
+        tokio::spawn(async move {
+            let _guard = guard;
+            let driver = GizziDriver { state: state.clone() };
+            execute(&state.db, &driver, &r, Trigger::Schedule).await;
+        });
+    }
+}
+
 pub async fn run_startup<D: RoutineDriver>(db: &DbHandle, driver: &D) -> usize {
     let routines: Vec<LocalRoutine> = (|| -> rusqlite::Result<Vec<LocalRoutine>> {
         let conn = db.connect()?;
@@ -1107,6 +1567,10 @@ pub async fn run_startup<D: RoutineDriver>(db: &DbHandle, driver: &D) -> usize {
     .unwrap_or_default();
     let mut fired = 0;
     for r in routines {
+        // Pause all bots: a startup routine does not run on this boot.
+        if crate::bots_pause::is_paused_db(db, &r.user_id) {
+            continue;
+        }
         let Some(_guard) = FlightGuard::acquire(&r.id) else { continue };
         execute(db, driver, &r, Trigger::Startup).await;
         fired += 1;
@@ -1123,6 +1587,17 @@ pub fn spawn(state: Arc<AppState>) {
             Err(e) => warn!(error = %e, "could not settle orphaned routine runs"),
             _ => {}
         }
+        // Loops tick on their own: a routine's run mustn't delay them. Started
+        // after the settle above, which can't tell a new run from an orphan.
+        let loops_state = state.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                interval.tick().await;
+                tick_loops(&loops_state, Utc::now());
+            }
+        });
         let fired = run_startup(&state.db, &driver).await;
         if fired > 0 {
             info!(fired, "local startup routines ran");
@@ -1157,6 +1632,8 @@ mod tests {
         creates: AtomicUsize,
         /// Sessions a Stop aborted.
         aborts: Mutex<Vec<String>>,
+        /// Models a turn was sent on.
+        models: Mutex<Vec<String>>,
     }
 
     impl RoutineDriver for Fake {
@@ -1177,6 +1654,10 @@ mod tests {
             }
             self.turns.lock().unwrap().push((s.to_string(), t.to_string()));
             Ok(format!("done: {}", t.lines().next().unwrap_or("")))
+        }
+        async fn send_turn_on_model(&self, s: &str, b: &str, t: &str, model: &str) -> Result<String, String> {
+            self.models.lock().unwrap().push(model.to_string());
+            self.send_turn(s, b, t).await
         }
         async fn run_monitor(&self, _u: &str, _c: &str) -> Result<String, String> {
             Ok(self.monitor.lock().unwrap().clone())
@@ -1238,6 +1719,37 @@ mod tests {
             .unwrap();
     }
 
+    #[tokio::test]
+    async fn a_due_routine_is_skipped_while_paused_and_runs_at_its_next_slot() {
+        let state = setup("paused").await;
+        insert(&state, "r-p", "interval", "1h", json!({}), Some("bot-1"));
+        force_due(&state, "r-p");
+        crate::bots_pause::set(&state.db.connect().unwrap(), "user-a", true, Some("test")).unwrap();
+        let fake = Fake::default();
+        let now = Utc::now();
+        assert_eq!(run_due(&state.db, &fake, now).await, 0, "nothing starts while paused");
+        assert!(fake.turns.lock().unwrap().is_empty());
+        let (next, reason): (String, String) = state
+            .db
+            .connect()
+            .unwrap()
+            .query_row(
+                "SELECT r.next_run_at, x.outcome_reason FROM routines r JOIN routine_runs x ON x.routine_id = r.id WHERE r.id = 'r-p'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(reason, "bots_paused");
+        let next = DateTime::parse_from_rfc3339(&next).unwrap().with_timezone(&Utc);
+        assert!(next > now + chrono::Duration::minutes(59), "kept, moved to its next slot");
+        // Resume: no catch-up burst, and no "missed while offline" notice.
+        crate::bots_pause::set(&state.db.connect().unwrap(), "user-a", false, None).unwrap();
+        assert_eq!(run_due(&state.db, &fake, now + chrono::Duration::minutes(1)).await, 0, "not due again until its slot");
+        assert_eq!(run_due(&state.db, &fake, next).await, 1, "runs at its next slot after resume");
+        assert_eq!(fake.turns.lock().unwrap().len(), 1);
+        assert_eq!(runs(&state, "r-p"), ["skipped", "succeeded"]);
+    }
+
     fn runs(state: &AppState, id: &str) -> Vec<String> {
         let conn = state.db.connect().unwrap();
         let mut stmt = conn.prepare("SELECT status FROM routine_runs WHERE routine_id = ?1 ORDER BY started_at").unwrap();
@@ -1250,16 +1762,125 @@ mod tests {
         stmt.query_map([], |r| r.get(0)).unwrap().map(Result::unwrap).collect()
     }
 
+    fn insert_loop(state: &AppState, id: &str, expr: &str, config: Value, agent: Option<&str>, expires: Option<String>) {
+        state
+            .db
+            .connect()
+            .unwrap()
+            .execute(
+                "INSERT INTO loops (id, user_id, agent_id, name, description, status, schedule_type,
+                     schedule_expression, execution_domain, config, expires_at)
+                 VALUES (?1, 'user-a', ?2, ?3, 'Watch the queue', 'active', 'interval', ?4, 'local', ?5, ?6)",
+                params![id, agent, format!("Loop {id}"), expr, config.to_string(), expires],
+            )
+            .unwrap();
+    }
+
+    fn force_loop_due(state: &AppState, id: &str) {
+        state
+            .db
+            .connect()
+            .unwrap()
+            .execute("UPDATE loops SET next_run_at = ?2 WHERE id = ?1", params![id, (Utc::now() - chrono::Duration::minutes(2)).to_rfc3339()])
+            .unwrap();
+    }
+
+    fn loop_runs(state: &AppState, id: &str) -> Vec<String> {
+        let conn = state.db.connect().unwrap();
+        let mut stmt = conn.prepare("SELECT status FROM loop_runs WHERE routine_id = ?1 ORDER BY started_at").unwrap();
+        stmt.query_map(params![id], |r| r.get(0)).unwrap().map(Result::unwrap).collect()
+    }
+
+    fn loop_status(state: &AppState, id: &str) -> String {
+        state.db.connect().unwrap().query_row("SELECT status FROM loops WHERE id = ?1", params![id], |r| r.get(0)).unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_new_loop_waits_for_its_first_due_time_and_then_fires_once() {
+        let state = setup("loop-due").await;
+        let fake = Fake::default();
+        insert_loop(&state, "l-due", "5m", json!({ "prompt": "Check it" }), Some("bot-1"), None);
+
+        assert_eq!(run_due_loops(&state.db, &fake, Utc::now()).await, 0, "the first tick only sets the cursor");
+        force_loop_due(&state, "l-due");
+        let now = Utc::now();
+        assert_eq!(run_due_loops(&state.db, &fake, now).await, 1);
+        // The cursor moved before the run, so a second tick or a restart doesn't repeat it.
+        assert_eq!(run_due_loops(&state.db, &fake, now).await, 0);
+        assert_eq!(loop_runs(&state, "l-due"), vec!["succeeded"]);
+        let next: Option<String> = state.db.connect().unwrap().query_row("SELECT next_run_at FROM loops WHERE id = 'l-due'", [], |r| r.get(0)).unwrap();
+        assert!(DateTime::parse_from_rfc3339(&next.unwrap()).unwrap().with_timezone(&Utc) > now);
+    }
+
+    #[tokio::test]
+    async fn a_paused_loop_does_not_fire() {
+        let state = setup("loop-paused").await;
+        let fake = Fake::default();
+        insert_loop(&state, "l-paused", "5m", json!({ "prompt": "Check it" }), Some("bot-1"), None);
+        force_loop_due(&state, "l-paused");
+        state.db.connect().unwrap().execute("UPDATE loops SET status = 'paused' WHERE id = 'l-paused'", []).unwrap();
+        assert_eq!(run_due_loops(&state.db, &fake, Utc::now()).await, 0);
+        assert!(loop_runs(&state, "l-paused").is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_loop_past_expires_at_is_disabled_and_does_not_fire() {
+        let state = setup("loop-expired").await;
+        let fake = Fake::default();
+        let past = (Utc::now() - chrono::Duration::minutes(1)).to_rfc3339();
+        insert_loop(&state, "l-expired", "5m", json!({ "prompt": "Check it" }), Some("bot-1"), Some(past));
+        force_loop_due(&state, "l-expired");
+        assert_eq!(run_due_loops(&state.db, &fake, Utc::now()).await, 0);
+        assert_eq!(loop_status(&state, "l-expired"), "disabled");
+    }
+
+    #[tokio::test]
+    async fn a_running_loop_is_not_overlapped() {
+        let state = setup("loop-overlap").await;
+        let fake = Fake::default();
+        insert_loop(&state, "l-overlap", "5m", json!({ "prompt": "Check it" }), Some("bot-1"), None);
+        force_loop_due(&state, "l-overlap");
+        let _running = FlightGuard::acquire("l-overlap").unwrap();
+        assert_eq!(run_due_loops(&state.db, &fake, Utc::now()).await, 0);
+        assert!(loop_runs(&state, "l-overlap").is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_loop_with_no_agent_runs_as_the_main_bot_on_its_own_model_in_its_own_session() {
+        let state = setup("loop-model").await;
+        let fake = Fake::default();
+        insert_loop(&state, "l-model", "5m", json!({ "prompt": "Check it", "model": "openrouter/x/y" }), None, None);
+        for _ in 0..2 {
+            force_loop_due(&state, "l-model");
+            assert_eq!(run_due_loops(&state.db, &fake, Utc::now()).await, 1);
+        }
+        assert_eq!(*fake.models.lock().unwrap(), vec!["openrouter/x/y", "openrouter/x/y"]);
+        let turns = fake.turns.lock().unwrap();
+        assert_eq!(turns.len(), 2);
+        assert_eq!(turns[0].0, turns[1].0, "both runs use the loop's one session");
+        assert_eq!(fake.creates.load(Ordering::SeqCst), 1);
+    }
+
     #[test]
     fn schedule_math() {
         let t = DateTime::parse_from_rfc3339("2026-09-27T10:00:00Z").unwrap().with_timezone(&Utc);
-        assert_eq!(next_run("interval", "30m", t, false), Some(t + chrono::Duration::minutes(30)));
-        assert_eq!(next_run("interval", "bogus", t, false), None);
-        assert_eq!(next_run("manual", "", t, true), None);
-        assert_eq!(next_run("once", "", t, true), Some(t));
-        assert_eq!(next_run("once", "", t, false), None);
-        let later = next_run("cron", "0 9 * * *", t, false).unwrap();
+        assert_eq!(next_run("interval", "30m", t, false, None), Some(t + chrono::Duration::minutes(30)));
+        assert_eq!(next_run("interval", "bogus", t, false, None), None);
+        assert_eq!(next_run("manual", "", t, true, None), None);
+        assert_eq!(next_run("once", "", t, true, None), Some(t));
+        assert_eq!(next_run("once", "", t, false, None), None);
+        let later = next_run("cron", "0 9 * * *", t, false, None).unwrap();
         assert!(later > t && later - t <= chrono::Duration::days(1));
+        // Saved zone: Saturday 10:30 in Chicago, due 15:00 there today, not next week.
+        let sat = DateTime::parse_from_rfc3339("2026-10-31T15:30:00Z").unwrap().with_timezone(&Utc);
+        let expect = DateTime::parse_from_rfc3339("2026-10-31T20:00:00Z").unwrap().with_timezone(&Utc);
+        assert_eq!(next_run("cron", "0 15 * * 6", sat, false, Some("America/Chicago")), Some(expect));
+        // On the morning the US clocks change, 9:00 stays 9:00 on the wall.
+        let before = DateTime::parse_from_rfc3339("2026-11-01T14:30:00Z").unwrap().with_timezone(&Utc);
+        let after_dst = DateTime::parse_from_rfc3339("2026-11-01T15:00:00Z").unwrap().with_timezone(&Utc);
+        assert_eq!(next_run("cron", "0 9 * * *", before, false, Some("America/Chicago")), Some(after_dst));
+        // An unknown zone falls back to this runtime's.
+        assert!(next_run("cron", "0 9 * * *", t, false, Some("Not/AZone")).is_some());
         assert_eq!(fnv1a_hex("a"), "e40c292c");
         assert_eq!(routine_turn("[bot:Ledger] Month close", "x"), "[routine: Month close] x");
         assert_eq!(routine_turn("Weekly report", "x"), "[routine: Weekly report] x");
@@ -1629,5 +2250,93 @@ mod tests {
         let (kind, detail): (String, String) = c.query_row("SELECT kind, detail_json FROM attention_items WHERE kind = 'dead_letter'", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
         assert_eq!(kind, "dead_letter");
         assert!(detail.contains("\"routineId\":\"rd\"") && detail.contains("storeError"), "{detail}");
+    }
+
+    /// The pending phone hold's id, once the replay has made one.
+    async fn pending_hold(state: &AppState) -> String {
+        for _ in 0..200 {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            let id: Option<String> = state.db.connect().unwrap().query_row("SELECT id FROM gateway_approvals WHERE state = 'pending'", [], |r| r.get(0)).optional().unwrap();
+            if let Some(id) = id {
+                return id;
+            }
+        }
+        panic!("the replay never made a hold");
+    }
+
+    fn set_hold(state: &AppState, id: &str, to: &str) {
+        state
+            .db
+            .connect()
+            .unwrap()
+            .execute("UPDATE gateway_approvals SET state = ?2, resolved_at = ?3, actor_type = 'user', actor_id = 'user-a' WHERE id = ?1", params![id, to, Utc::now().to_rfc3339()])
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn an_unanswered_phone_hold_stops_the_routine_once_and_waits_for_retry() {
+        use crate::phone_replay::{Locator, PStep, Skill};
+        let state = setup("phone-hold").await;
+        let now = Utc::now().to_rfc3339();
+        let step = PStep {
+            op: "phone.tap".into(),
+            args: json!({ "x": 50, "y": 25 }),
+            locator: Some(Locator { class: "Button".into(), label: "Delete".into(), resource_id: "del".into(), ..Default::default() }),
+            label: "tap \"Delete\"".into(),
+            ..Default::default()
+        };
+        crate::phone_replay::store(&state.data_dir, &Skill { name: "clear inbox".into(), steps: vec![step], created_at: now.clone(), updated_at: now, ..Default::default() }).unwrap();
+        insert(&state, "rp", "interval", "1h", json!({ "replay": { "kind": "phone", "skill": "clear inbox", "serial": "link:1" } }), Some("bot-1"));
+        let r = get_routine(&state.db, "rp").unwrap().unwrap();
+        let taps = Arc::new(AtomicUsize::new(0));
+        let fake: crate::phone_replay::FakeTool = {
+            let taps = taps.clone();
+            Arc::new(move |name: &str, _args: &Value| match name {
+                "phone.read_ui" => Ok(json!({ "ok": true, "text": "Button \"Delete\" [del] {{0, 0}, {100, 50}}" })),
+                "phone.tap" => {
+                    taps.fetch_add(1, Ordering::SeqCst);
+                    Ok(json!({ "ok": true }))
+                }
+                _ => Err("not on this phone".to_string()),
+            })
+        };
+        let driver = GizziDriver { state: state.clone() };
+        let items = |st: &AppState| -> Vec<(String, Option<String>, Option<String>)> {
+            let c = st.db.connect().unwrap();
+            let mut q = c.prepare("SELECT summary, retry_json, resolved_at FROM attention_items WHERE owner = 'user-a' AND kind = 'routine_failed'").unwrap();
+            q.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).unwrap().map(Result::unwrap).collect()
+        };
+        let holds = |st: &AppState| -> i64 { st.db.connect().unwrap().query_row("SELECT COUNT(*) FROM gateway_approvals", [], |r| r.get(0)).unwrap() };
+
+        // Nobody answers: the hold runs out, as the five-minute wait makes it.
+        let expire = async {
+            let id = pending_hold(&state).await;
+            set_hold(&state, &id, "expired");
+        };
+        let (out, ()) = crate::phone_replay::FAKE_TOOL.scope(fake.clone(), async { tokio::join!(execute(&state.db, &driver, &r, Trigger::Schedule), expire) }).await;
+        assert_eq!((out.status, out.reason), ("failed", Some("approval_timeout")));
+        assert_eq!(taps.load(Ordering::SeqCst), 0);
+        let open = items(&state);
+        assert_eq!(open.len(), 1, "exactly one attention item");
+        assert!(open[0].0.starts_with("Routine stopped at a step that needs you"), "{}", open[0].0);
+        assert_eq!((open[0].1.as_deref(), open[0].2.as_deref()), (Some(r#"{"routineId":"rp"}"#), None));
+        assert_eq!(holds(&state), 1);
+
+        // The next scheduled run does not walk back into a hold.
+        let again = crate::phone_replay::FAKE_TOOL.scope(fake.clone(), execute(&state.db, &driver, &r, Trigger::Schedule)).await;
+        assert_eq!(again.status, "skipped");
+        assert_eq!((holds(&state), taps.load(Ordering::SeqCst), items(&state).len()), (1, 0, 1));
+        assert_eq!(items(&state)[0].2, None, "the item stays open until Retry");
+
+        // Retry (a manual run), approved this time: the step acts once and the item closes.
+        let approve = async {
+            let id = pending_hold(&state).await;
+            set_hold(&state, &id, "approved");
+        };
+        let manual = Trigger::Manual { user_id: "user-a".into() };
+        let (out, ()) = crate::phone_replay::FAKE_TOOL.scope(fake, async { tokio::join!(execute(&state.db, &driver, &r, manual), approve) }).await;
+        assert_eq!(out.status, "succeeded", "{:?}", out.error);
+        assert_eq!(taps.load(Ordering::SeqCst), 1);
+        assert!(items(&state)[0].2.is_some(), "a good run resolves the item");
     }
 }

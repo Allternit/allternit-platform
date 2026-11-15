@@ -118,25 +118,11 @@ impl<S> AuthMiddleware<S> {
             return Some(AuthenticatedUser::development_user());
         }
 
-        // Check if token starts with "allternit_" (our token format)
-        if token.starts_with("allternit_") && token.len() >= 32 {
-            // Placeholder: In production, hash the token and look it up in the database
-            // let token_hash = sha256::digest(token);
-            // let db_token = sqlx::query_as::<_, ApiToken>(...)
-
-            // For now, return a mock user with limited permissions
-            return Some(AuthenticatedUser {
-                user_id: format!("user_{}", &token[4..12]),
-                token_id: format!("token_{}", &token[4..12]),
-                permissions: vec![
-                    "runs:read".to_string(),
-                    "runs:write".to_string(),
-                    "jobs:read".to_string(),
-                    "jobs:write".to_string(),
-                ],
-            });
-        }
-
+        // Anything else is refused. This Tower layer has no database handle, so
+        // it cannot check real tokens; the router authenticates with
+        // `auth_middleware`, which looks up `allternit_*` tokens and `alt_…`
+        // keys in Postgres. An earlier placeholder here accepted any
+        // `allternit_` string of 32+ characters as a mock user — fail closed.
         None
     }
 }
@@ -212,6 +198,15 @@ where
 }
 
 /// Simple auth middleware function for use with axum::middleware::from_fn
+/// Routes a runtime device credential may call: Cloud chat completions only.
+/// `AuthenticatedUser::token_id` for a request authenticated by a Clerk
+/// session on the chat route (person-only models only).
+pub const CLERK_SESSION_TOKEN_ID: &str = "clerk_session";
+
+pub(crate) fn is_device_inference_path(path: &str) -> bool {
+    path == "/v1/chat/completions"
+}
+
 pub async fn auth_middleware(
     State(state): State<Arc<ApiState>>,
     request: Request<Body>,
@@ -240,11 +235,65 @@ pub async fn auth_middleware(
             }
         });
 
+    // A paired computer's own device credential (`allternit_runtime_…`) may
+    // run Cloud inference as the computer's owner, billed to the owner's
+    // credits. Desktop and every cloud computer hand the runtime exactly this
+    // credential; without it their Allternit Cloud chats all failed with
+    // "Unauthorized". Scoped to the chat route: elsewhere device tokens keep
+    // only the narrow routes that already accept them.
+    if let Some(device_token) = token
+        .as_deref()
+        .filter(|t| t.starts_with(crate::routes::runtime_pairing::DEVICE_TOKEN_PREFIX))
+    {
+        if is_device_inference_path(request.uri().path()) {
+            return match crate::routes::runtime_pairing::runtime_device_for_token(&state.db, device_token, None).await {
+                Ok(device) => {
+                    let mut request = request;
+                    request.extensions_mut().insert(AuthContext {
+                        user: AuthenticatedUser {
+                            user_id: device.user_id,
+                            token_id: device.id,
+                            permissions: vec!["inference".to_string()],
+                        },
+                        is_development: false,
+                    });
+                    next.run(request).await
+                }
+                Err(_) => unauthorized_response("Invalid or expired token"),
+            };
+        }
+    }
+
+    // A person's signed-in Clerk session on the chat route: web and iOS send
+    // their plan chats (`plan/…`, `copilot/…`) and no-computer Allternit Cloud
+    // chats (catalog aliases, under the credits gate) here with the session
+    // token, not an API key. chat_completions refuses every other model for
+    // this token id (CLERK_SESSION_TOKEN_ID).
+    if let Some(jwt) = token.as_deref().filter(|t| t.split('.').count() == 3 && !t.starts_with("alt_") && !t.starts_with("allternit_")) {
+        if is_device_inference_path(request.uri().path()) {
+            if let Ok(user) = crate::auth::clerk::user_from_token(jwt).await {
+                let mut request = request;
+                request.extensions_mut().insert(AuthContext {
+                    user: AuthenticatedUser {
+                        user_id: user.id,
+                        token_id: CLERK_SESSION_TOKEN_ID.to_string(),
+                        permissions: vec!["inference".to_string()],
+                    },
+                    is_development: false,
+                });
+                return next.run(request).await;
+            }
+        }
+    }
+
     match token {
         Some(token) => {
-            // Validate against database
-            match validate_token_against_db(&state.db, &token).await {
-                Ok(Some(user)) => {
+            // Validate against database. An `alt_…` key past its expiry is a
+            // 401 and one used from outside its IP allowlist a 403, each with
+            // a message saying so (services::api_keys::check_key_policy).
+            let client_ip = crate::services::api_keys::client_ip_from_request(&request);
+            match validate_token_from_ip(&state.db, &token, client_ip).await {
+                Ok(Ok(Some(user))) => {
                     let mut request = request;
                     request.extensions_mut().insert(AuthContext {
                         user,
@@ -252,7 +301,8 @@ pub async fn auth_middleware(
                     });
                     next.run(request).await
                 }
-                Ok(None) => unauthorized_response("Invalid or expired token"),
+                Ok(Ok(None)) => unauthorized_response("Invalid or expired token"),
+                Ok(Err(rejection)) => key_rejection_response(&rejection),
                 Err(e) => {
                     tracing::error!("Token validation error: {}", e);
                     unauthorized_response("Token validation failed")
@@ -280,10 +330,24 @@ pub(crate) async fn validate_token_against_db(
     db: &sqlx::PgPool,
     token: &str,
 ) -> Result<Option<AuthenticatedUser>, sqlx::Error> {
+    // No client IP here: an `alt_…` key with an IP allowlist is refused.
+    Ok(validate_token_from_ip(db, token, None).await?.unwrap_or(None))
+}
+
+/// [`validate_token_against_db`] with the caller's IP (from the trusted proxy
+/// header). `Ok(Err(_))` is an `alt_…` key that exists but is expired or used
+/// from outside its allowlist; the request middleware answers it with the
+/// rejection's own status and message.
+pub(crate) async fn validate_token_from_ip(
+    db: &sqlx::PgPool,
+    token: &str,
+    client_ip: Option<std::net::IpAddr>,
+) -> Result<Result<Option<AuthenticatedUser>, crate::services::api_keys::KeyRejection>, sqlx::Error> {
+    use crate::services::api_keys::KeyRejection;
     if let Some(token_record) = lookup_api_token(db, token).await? {
         // Check expiration
         if token_record.is_expired() {
-            return Ok(None);
+            return Ok(Ok(None));
         }
 
         // Update last_used_at
@@ -293,22 +357,27 @@ pub(crate) async fn validate_token_against_db(
             .await;
 
         let permissions = token_record.permissions();
-        return Ok(Some(AuthenticatedUser {
+        return Ok(Ok(Some(AuthenticatedUser {
             user_id: token_record.user_id,
             token_id: token_record.id,
             permissions,
-        }));
+        })));
     }
 
     // Modern scoped keys (`alt_…`, sha256-hashed in `api_keys` with a real
     // scopes list). This is the only production validation path for them —
     // without it, keys minted on the platform simply do not work here.
-    if let Ok(Some(key)) = crate::services::api_keys::authenticate_api_key(db, token).await {
-        return Ok(Some(AuthenticatedUser {
-            user_id: key.user_id,
-            token_id: key.id,
-            permissions: key.scopes,
-        }));
+    // Lookup errors fall through as before (no `api_keys` table = no key).
+    match crate::services::api_keys::authenticate_api_key_at(db, token, client_ip).await {
+        Ok(Ok(key)) => {
+            return Ok(Ok(Some(AuthenticatedUser {
+                user_id: key.user_id,
+                token_id: key.id,
+                permissions: key.scopes,
+            })));
+        }
+        Ok(Err(rejection)) if rejection != KeyRejection::Unknown => return Ok(Err(rejection)),
+        _ => {}
     }
 
     // Development overrides — all opt-in and default-OFF. The hardcoded
@@ -321,10 +390,10 @@ pub(crate) async fn validate_token_against_db(
     ) || is_dev_api_token(token)
         || is_legacy_dev_api_token(token)
     {
-        return Ok(Some(AuthenticatedUser::development_user()));
+        return Ok(Ok(Some(AuthenticatedUser::development_user())));
     }
 
-    Ok(None)
+    Ok(Ok(None))
 }
 
 
@@ -492,6 +561,20 @@ pub(crate) fn legacy_dev_api_token_allowed() -> bool {
         .unwrap_or(false)
 }
 
+/// 401 (expired) or 403 (address not allowed) for an `alt_…` key, in the
+/// same `{error, message}` shape as the other auth failures here.
+fn key_rejection_response(rejection: &crate::services::api_keys::KeyRejection) -> Response {
+    let body = serde_json::json!({
+        "error": rejection.code().to_ascii_uppercase(),
+        "message": rejection.message(),
+    });
+    Response::builder()
+        .status(rejection.status())
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(body.to_string()))
+        .unwrap()
+}
+
 fn unauthorized_response(message: &str) -> Response {
     let body = format!(r#"{{"error":"UNAUTHORIZED","message":"{}"}}"#, message);
     Response::builder()
@@ -568,6 +651,18 @@ mod tests {
         assert!(
             user.is_none(),
             "removing the gate env turns the backdoor back off"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn legacy_middleware_rejects_unverified_allternit_tokens() {
+        let _guard = DEV_TOKEN_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::remove_var(ALLOW_DEV_TOKEN_ENV);
+        let forged = "allternit_0000000000000000000000000000000000";
+        assert!(
+            legacy_validator().validate_token(forged).await.is_none(),
+            "a token the layer cannot look up must not authenticate"
         );
     }
 
@@ -784,5 +879,64 @@ mod tests {
         std::env::remove_var("ALLTERNIT_DEV_MODE");
         std::env::remove_var("ALLTERNIT_DEV_BEARER");
         std::env::remove_var("ENVIRONMENT");
+    }
+}
+
+#[cfg(test)]
+mod device_inference_tests {
+    use super::*;
+    use crate::routes::test_support::{test_state, MockGateway};
+    use axum::{body::Body, extract::Extension, http::Request, routing::post, Router};
+    use tower::ServiceExt;
+
+    const DEVICE_TOKEN: &str = "allternit_runtime_device_inference_test_token";
+
+    async fn app() -> Router {
+        let state = test_state(Arc::new(MockGateway::new(None, vec![]))).await;
+        sqlx::query(
+            "INSERT INTO runtime_devices (id, user_id, name, capabilities, status, credential_expires_at, credential_hash) \
+             VALUES ('rt_cloud', 'user_owner', 'Allternit cloud computer', '[]', 'online', '2999-01-01', $1)",
+        )
+        .bind(crate::routes::runtime_pairing::sha256_hex(DEVICE_TOKEN.as_bytes()))
+        .execute(&state.db)
+        .await
+        .unwrap();
+        let who = |Extension(auth): Extension<AuthContext>| async move {
+            format!("{} {}", auth.user.user_id, auth.user.permissions.join(","))
+        };
+        Router::new()
+            .route("/v1/chat/completions", post(who))
+            .route("/api/v1/deployments", post(who))
+            .layer(axum::middleware::from_fn_with_state(state.clone(), auth_middleware))
+            .with_state(state)
+    }
+
+    async fn call(app: Router, path: &str, token: &str) -> (StatusCode, String) {
+        let res = app
+            .oneshot(Request::post(path).header("authorization", format!("Bearer {token}")).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let status = res.status();
+        let body = axum::body::to_bytes(res.into_body(), 1 << 16).await.unwrap();
+        (status, String::from_utf8_lossy(&body).to_string())
+    }
+
+    #[tokio::test]
+    async fn a_paired_computer_runs_cloud_chat_as_its_owner() {
+        let (status, body) = call(app().await, "/v1/chat/completions", DEVICE_TOKEN).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, "user_owner inference");
+    }
+
+    #[tokio::test]
+    async fn a_device_token_still_cannot_reach_other_protected_routes() {
+        let (status, _) = call(app().await, "/api/v1/deployments", DEVICE_TOKEN).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn an_unknown_device_token_is_refused_for_chat() {
+        let (status, _) = call(app().await, "/v1/chat/completions", "allternit_runtime_not_paired").await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
     }
 }

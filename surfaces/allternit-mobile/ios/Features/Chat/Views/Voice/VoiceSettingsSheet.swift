@@ -17,6 +17,9 @@ struct VoiceSettingsSheet: View {
         let detail: String
     }
 
+    /// Opened from a bot's live mode: its own look comes first.
+    var bot: AgentRecord? = nil
+
     @StateObject private var settings = SettingsStore.shared
     @State private var voices: [VoiceOption] = []
     @Environment(\.dismiss) private var dismiss
@@ -25,6 +28,8 @@ struct VoiceSettingsSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
+                    if let bot { LiveModeLookSection(bot: bot) }
+                    LiveModeLookSection()
                     voiceCarousel
                     languageRow
                     speedRow

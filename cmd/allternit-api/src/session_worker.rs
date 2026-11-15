@@ -769,6 +769,13 @@ async fn execute_task(state: &Arc<AppState>, config: &WorkerConfig, task: TaskRo
         Ok(turn) => turn,
         Err(failure) => return fail(state, config, &task, Some(&ctx), failure).await,
     };
+    // No brain saved on the agent: fail visibly instead of sending gizzi an
+    // empty model (there is no default brain to fall back to).
+    let (provider, model) = model_ref(&ctx.agent);
+    if crate::config::is_no_brain(&provider, &model) {
+        let failure = Failure::new(crate::config::NO_BRAIN_CODE, format!("Pick a brain for {}.", ctx.agent.name), false);
+        return fail(state, config, &task, Some(&ctx), failure).await;
+    }
     let body = message_payload(&ctx, &task.payload, &text, &extra_system);
     let client = match reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(5))
@@ -1048,12 +1055,19 @@ async fn stopped(
                     if let Some(run_id) = run_id {
                         finish_deployment_run(conn, &run_id, "cancelled", None, Some("interrupted"))?;
                     }
+                    return Ok(true);
                 }
-                Ok(affected)
+                // A public `user.interrupt` writes its event, then cancels the
+                // task itself; if we saw the event first, the task is already
+                // cancelled (with its terminal events) by the time we get here.
+                let status: Option<String> = conn
+                    .query_row("SELECT status FROM beta_work_tasks WHERE id = ?1", params![task_id], |row| row.get(0))
+                    .optional()?;
+                Ok(status.as_deref() == Some("cancelled"))
             })
             .await;
             match ended {
-                Ok(n) if n > 0 => TaskOutcome::Cancelled,
+                Ok(true) => TaskOutcome::Cancelled,
                 _ => TaskOutcome::LostLease,
             }
         }

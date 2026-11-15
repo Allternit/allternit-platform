@@ -111,6 +111,20 @@ data: {"type":"done","data":{"status":"completed"},"ts":1712345681000}
 
 The API keeps an in-process replay buffer for each run started in the current process, so clients can attach late and still see the full history. Runs created by another process fall back to proxying ACU's single-consumer queue.
 
+### The computer task card (new in this release)
+
+A run started with a bot and a thread also posts `computer_task` cards on that thread's bot ledger. The shape is the [phone task card](/api/phone-holds#live-step-fields-on-the-card-new-in-this-release) with the computer id in `serial`:
+
+```json
+{ "type": "computer_task", "runId": "run-4d1f…", "serial": "cmp-1", "goal": "Export the report",
+  "status": "running", "step": 2, "stepLabel": "Clicking Export" }
+```
+
+- A card is posted at the start, on each new `stepIndex`, on the approval wait (`waiting_approval`, with an `inboxId`), and at the end. The closing card carries `trail`, 40 entries at most.
+- `stepLabel` follows the [step label rule](/api/phone-holds#the-step-label-rule).
+- Phone web tasks (`app:`) already post `phone_task` cards, so they post no `computer_task`.
+- Chat shows the status as "Using computer" with a working orb. See the [status mapping](/api/phone-holds#status-to-text-mapping).
+
 ## Stop a run
 
 ```bash

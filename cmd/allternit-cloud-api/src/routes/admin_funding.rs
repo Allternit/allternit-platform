@@ -145,6 +145,6 @@ async fn put_funding(
     .execute(&state.db)
     .await?;
 
-    let row = upstream_funding::refresh_provider(&state.db, &reqwest::Client::new(), &provider).await?;
+    let row = upstream_funding::refresh_provider(&state.db, &crate::net_client::client(), &provider).await?;
     Ok(Json(provider_view(row, &upstream_funding::configured_providers())))
 }

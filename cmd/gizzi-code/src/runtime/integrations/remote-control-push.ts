@@ -4,6 +4,7 @@ import { Question } from "@/runtime/integrations/question/question"
 import { Pairing } from "@/runtime/services/pairing/pairing"
 import { Session } from "@/runtime/session"
 import { Log } from "@/shared/util/log"
+import { isSelfHosted } from "@/shared/selfhost/offline"
 
 const log = Log.create({ service: "remote-control-push" })
 
@@ -81,6 +82,10 @@ async function notifySubscribers(payload: NotificationPayload) {
 }
 
 export function initRemoteControlPush(): void {
+  if (isSelfHosted()) {
+    log.info("self-hosted mode; remote control push is off")
+    return
+  }
   if (!pushWorkerUrl()) {
     log.info("remote control push worker URL not configured; skipping subscriptions")
     return

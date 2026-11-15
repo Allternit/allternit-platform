@@ -19,12 +19,29 @@ Connecting an iPhone works only in **Allternit Desktop on macOS or Linux**, beca
 
 - **An ESP32-S3 board with native USB** and a USB-C data cable. The tested board is the Seeed Studio XIAO ESP32S3 (the plain one, not Sense or Plus). Desktop installs the USB Agent software on it for you. The board's BOOT button becomes the arm button, and its small light shows when it's armed.
 - **An iPhone with USB-C**, on the same Wi-Fi as your computer. Lightning iPhones need Apple's Lightning to USB 3 Camera Adapter. A USB-C hub with power pass-through keeps the phone charging while the board is in.
-- **UxPlay** on your computer to receive the screen: `brew install uxplay` on macOS, or `sudo apt install uxplay` on Debian and Ubuntu.
+- **UxPlay** on your computer to receive the screen: see [Install UxPlay](#install-uxplay) below.
 - **Allternit Desktop** on macOS or Linux.
 
 ### The firmware
 
 You don't need any tools: **Set up** installs the USB Agent firmware that comes with Desktop, and installs a newer version when Desktop updates (the board's row says **Update available**). The firmware is open source, in `hardware/usb-agent` of the Allternit platform repository. Developers can build and flash their own with `hardware/usb-agent/flash.sh`.
+
+## Install UxPlay
+
+Homebrew has no UxPlay formula, so on macOS you build it from source. This takes a few minutes. Run these commands in Terminal:
+
+```bash
+brew install cmake libplist openssl@3 gstreamer
+git clone --depth 1 https://github.com/FDH2/UxPlay.git
+cd UxPlay
+cmake -S . -B build
+cmake --build build
+cmake --install build --prefix "$(brew --prefix)"
+```
+
+The same steps are in `hardware/usb-agent/install-uxplay.sh` in the public repo. Desktop finds `uxplay` on your PATH or in `/opt/homebrew/bin`.
+
+On Debian and Ubuntu, run `sudo apt install uxplay`.
 
 ## Connect an iPhone
 

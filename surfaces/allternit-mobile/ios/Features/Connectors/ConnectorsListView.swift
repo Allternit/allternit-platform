@@ -58,6 +58,8 @@ struct ConnectorsListView: View {
                 searchBar
                 Divider().background(Color("BorderSubtle"))
                 ScrollView {
+                    // Meetings: the calendar step, until a calendar is connected.
+                    MeetingsConnectorsPrompt()
                     content
                 }
                 .refreshable { await loadConnectors() }
@@ -168,13 +170,7 @@ struct ConnectorsListView: View {
 
     private func connectorRow(_ connector: Connector) -> some View {
         HStack(spacing: 12) {
-            ZStack {
-                Circle().fill(Color("AccentPrimary").opacity(0.12))
-                Text(connector.name.prefix(1).uppercased())
-                    .font(.headline)
-                    .foregroundColor(Color("AccentPrimary"))
-            }
-            .frame(width: 40, height: 40)
+            AppLogoView(id: connector.id, name: connector.name, url: connector.baseURL, size: 40)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(connector.name)
@@ -265,12 +261,29 @@ struct ConnectorsListView: View {
                 apiKeyPrompt = connector
             } else {
                 await loadConnectors()
-                if let message = response.message {
-                    statusAlert = StatusAlert(title: response.status ?? "Connector", message: message)
+                if let alert = Self.alert(for: response.status, message: response.message, name: connector.name) {
+                    statusAlert = alert
                 }
             }
         } catch {
             statusAlert = StatusAlert(title: "Couldn't connect \(connector.name)", message: error.localizedDescription)
+        }
+    }
+
+    /// Plain words for the connect statuses (never the raw code or the
+    /// server's setup instructions, which name environment variables).
+    private static func alert(for status: String?, message: String?, name: String) -> StatusAlert? {
+        switch status {
+        case "connected", "ok":
+            return nil
+        case "oauth_app_registration_required", "owned_oauth_endpoint_mapping_needed", "device_provider_reached":
+            return StatusAlert(title: "Couldn't connect \(name)",
+                               message: "Sign-in for \(name) isn't set up on Allternit yet, so it can't be connected right now.")
+        case "device_authorization_required", "authorization_required":
+            return message.map { StatusAlert(title: "Finish signing in to \(name)", message: $0) }
+        default:
+            guard let message else { return nil }
+            return StatusAlert(title: "Couldn't connect \(name)", message: message)
         }
     }
 

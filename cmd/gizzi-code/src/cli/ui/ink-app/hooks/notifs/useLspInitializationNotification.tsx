@@ -16,7 +16,7 @@ const LSP_POLL_INTERVAL_MS = 5000;
  *
  * Also adds errors to appState.plugins.errors for /doctor display.
  *
- * Only active when ENABLE_LSP_TOOL is set.
+ * Always on in the TUI (built-in servers for diagnostics after edits).
  */
 export function useLspInitializationNotification() {
   const {
@@ -52,7 +52,7 @@ export function useLspInitializationNotification() {
           }
         };
       });
-      const displayName = source.startsWith("plugin:") ? source.split(":")[1] ?? source : source;
+      const displayName = source.startsWith("plugin:") || source.startsWith("builtin:") ? source.split(":")[1] ?? source : source;
       addNotification({
         key: `lsp-error-${source}`,
         jsx: <><Text color="error">LSP for {displayName} failed</Text><Text dimColor={true}> · /plugin for details</Text></>,

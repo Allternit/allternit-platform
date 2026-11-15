@@ -46,7 +46,7 @@ pub async fn loopback_for(target: &str) -> Result<String, String> {
         .filter(|s| !s.is_empty())
         .ok_or("the mesh isn't available here (no mesh bridge)")?;
     let secret = std::env::var("ALLTERNIT_DESKTOP_ACCESS_TOKEN").unwrap_or_default();
-    let reply = reqwest::Client::new()
+    let reply = crate::net_client::client()
         .post(format!("{}/mesh/tcp", base.trim_end_matches('/')))
         .header("x-allternit-desktop-access-token", secret)
         .json(&serde_json::json!({ "target": target }))

@@ -35,6 +35,13 @@ strip = true
 # Use abort instead of unwinding for panics. Smaller and faster for release.
 panic = "abort"
 
+[profile.release.build-override]
+# Never strip proc-macros or build scripts (2026-11-03). macOS's strip (Oct 2026
+# toolchain update) leaves proc-macro dylibs dyld refuses to load ("mis-aligned
+# LINKEDIT string pool"), so rustc fails with E0463 "can't find crate for
+# zeroize_derive" on any fresh release build. They never ship, so size is moot.
+strip = false
+
 [profile.dev.build-override]
 # Build scripts and proc-macros are rebuilt often. Keep them optimized for size.
 opt-level = "z"

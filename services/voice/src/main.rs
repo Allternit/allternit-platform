@@ -5,6 +5,9 @@
 //! - `allternit-voice-service worker`: the phone call worker (LiveKit agent
 //!   `allternit-voice`); needs a build with `--features call-worker`. See
 //!   `services/voice/spec/CALL_WORKER.md`.
+//! - `allternit-voice-service meeting-worker`: the meeting transcription
+//!   worker (LiveKit agent `allternit-meeting`), same feature. See
+//!   `services/voice/spec/MEETING_WORKER.md`.
 
 use std::net::SocketAddr;
 use tracing::info;
@@ -20,7 +23,8 @@ async fn main() -> anyhow::Result<()> {
     match std::env::args().nth(1).as_deref() {
         None | Some("serve") => {}
         Some("worker") => return voice_service::call_worker::run_worker().await,
-        Some(other) => anyhow::bail!("unknown subcommand `{other}` (expected `serve` or `worker`)"),
+        Some("meeting-worker") => return voice_service::meeting_worker::run_worker().await,
+        Some(other) => anyhow::bail!("unknown subcommand `{other}` (expected `serve`, `worker` or `meeting-worker`)"),
     }
 
     let port: u16 = std::env::var("PORT")
@@ -49,7 +53,17 @@ async fn main() -> anyhow::Result<()> {
             info!("warm-up done in {} ms", t.elapsed().as_millis());
         });
     }
-    let app = create_router(state);
+    // The Desktop app's UI (http://127.0.0.1:8013) reads /v1/models and
+    // /v1/voices straight from here. Without CORS the browser blocks those
+    // reads, so Settings and live mode said "voice engine not installed"
+    // while every pack was ready. Only loopback pages may read.
+    let cors = tower_http::cors::CorsLayer::new()
+        .allow_origin(tower_http::cors::AllowOrigin::predicate(|origin, _| {
+            origin.to_str().ok().is_some_and(is_loopback_origin)
+        }))
+        .allow_methods(tower_http::cors::Any)
+        .allow_headers(tower_http::cors::Any);
+    let app = create_router(state).layer(cors);
 
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
     info!("Voice API Service listening on {}", addr);
@@ -123,5 +137,29 @@ mod no_espeak {
             unsafe { *textptr = std::ptr::null() };
         }
         std::ptr::null()
+    }
+}
+
+/// `http://127.0.0.1:<port>`, `http://localhost:<port>` or `http://[::1]:<port>`.
+fn is_loopback_origin(origin: &str) -> bool {
+    let Some(rest) = origin.strip_prefix("http://") else { return false };
+    let host = rest.rsplit_once(':').map_or(rest, |(h, port)| {
+        if port.chars().all(|c| c.is_ascii_digit()) { h } else { rest }
+    });
+    matches!(host, "127.0.0.1" | "localhost" | "[::1]")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_loopback_origin;
+
+    #[test]
+    fn only_loopback_origins_read() {
+        assert!(is_loopback_origin("http://127.0.0.1:8013"));
+        assert!(is_loopback_origin("http://localhost:5173"));
+        assert!(is_loopback_origin("http://[::1]:8013"));
+        assert!(!is_loopback_origin("https://evil.example"));
+        assert!(!is_loopback_origin("http://127.0.0.1.evil.example:80"));
+        assert!(!is_loopback_origin("http://localhost.evil.example"));
     }
 }

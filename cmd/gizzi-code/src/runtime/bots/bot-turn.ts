@@ -38,6 +38,12 @@ export const BotTurnInfo = z.object({
    * Empty/absent = no allowlist configured.
    */
   allowedTools: z.array(z.string()).optional(),
+  /** The bot's skill list from its Skills page; absent or empty means every skill it can see. */
+  allowedSkills: z.array(z.string()).optional(),
+  /** Catalog connectors (app ids, e.g. "github") from its Capabilities page; absent or empty means all. */
+  allowedConnectors: z.array(z.string()).optional(),
+  /** The user's MCP connectors (ids) from its Capabilities page; absent or empty means all. */
+  allowedMcp: z.array(z.string()).optional(),
   /** Tools a person approves each time (`tool_permissions` = always_ask). */
   askTools: z.array(z.string()).optional(),
   /**
@@ -119,6 +125,27 @@ export function skillVisibleToBot(
   return !personalSkillRoots(home).some((root) => location.startsWith(root))
 }
 
+/** Whether this bot's own skill list (its Skills page) leaves the skill on. */
+export function skillOnForBot(bot: BotTurnInfo | undefined, name: string): boolean {
+  const list = bot?.allowedSkills
+  if (!list || list.length === 0) return true
+  return list.some((allowed) => allowed.toLowerCase() === name.toLowerCase())
+}
+
+/** Whether this bot's connector list leaves a catalog connector app on (case-insensitive). */
+export function connectorOnForBot(bot: BotTurnInfo | undefined, app: string): boolean {
+  const list = bot?.allowedConnectors
+  if (!list || list.length === 0) return true
+  return list.some((allowed) => allowed.toLowerCase() === app.toLowerCase())
+}
+
+/** Whether this bot's MCP list leaves one of the user's MCP connectors on. A tool with no connector id is left on. */
+export function mcpOnForBot(bot: BotTurnInfo | undefined, connectorId: string | undefined): boolean {
+  const list = bot?.allowedMcp
+  if (!list || list.length === 0 || !connectorId) return true
+  return list.includes(connectorId)
+}
+
 /* -------------------------------------------------------------------------- */
 /* Claude CLI policy                                                          */
 /* -------------------------------------------------------------------------- */
@@ -135,6 +162,8 @@ const CLAUDE_TOOLS: Record<string, string[]> = {
   // Served by gizzi's own session tools over the CLI bridge (always allowed).
   memory: [],
   computer: [],
+  // gizzi's sandboxed Python tool, also over the CLI bridge; never Claude's Bash.
+  run_code: [],
 }
 
 /** Claude Code tool names for a list of platform / vendor tool ids. */

@@ -2,9 +2,11 @@ import ActivityKit
 import WidgetKit
 import SwiftUI
 
-/// Lock Screen banner + Dynamic Island presentation for the dominant bot
-/// operational state across all subscribed bots, driven by
-/// `BotLiveActivityManager` in the main app target.
+/// Lock Screen banner + Dynamic Island presentation, driven by
+/// `BotLiveActivityManager` in the main app target and by cloud-api pushes.
+/// Option A, bot first: the focus bot (name, step, progress, "+N others");
+/// when it needs the owner, the question, with Approve / Deny only for an
+/// inline question and Open otherwise. Final layout comes with plan I10.
 struct BotLiveActivityWidget: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: BotActivityAttributes.self) { context in
@@ -22,8 +24,10 @@ struct BotLiveActivityWidget: Widget {
                         .foregroundColor(.white)
                 }
                 DynamicIslandExpandedRegion(.bottom) {
-                    if let displayName = context.state.displayName, !displayName.isEmpty {
-                        Text(displayName)
+                    if context.state.question?.isEmpty == false {
+                        QuestionView(state: context.state, onDark: true)
+                    } else if let displayName = context.state.displayName, !displayName.isEmpty {
+                        Text(Self.botLine(context.state, name: displayName))
                             .font(.caption)
                             .foregroundColor(.white.opacity(0.8))
                             .lineLimit(1)
@@ -44,6 +48,7 @@ struct BotLiveActivityWidget: Widget {
                 statusIcon(context: context, size: 16)
             }
         }
+        .smallActivityFamilyIfAvailable()
     }
 
     private func countText(context: ActivityViewContext<BotActivityAttributes>) -> String {
@@ -69,6 +74,19 @@ struct BotLiveActivityWidget: Widget {
             .frame(width: size, height: size)
             .background(color.opacity(0.15))
             .clipShape(Circle())
+    }
+
+    /// "Raven · Drafting the reply · +2 others"
+    fileprivate static func botLine(_ state: BotActivityAttributes.ContentState, name: String) -> String {
+        var parts = [name]
+        if let step = state.step, !step.isEmpty { parts.append(step) }
+        if let others = othersText(state) { parts.append(others) }
+        return parts.joined(separator: " · ")
+    }
+
+    fileprivate static func othersText(_ state: BotActivityAttributes.ContentState) -> String? {
+        guard let others = state.othersCount, others > 0 else { return nil }
+        return others == 1 ? "+1 other" : "+\(others) others"
     }
 
     // MARK: - Status mapping (mirrors BotOperationalStatus in the app target)
@@ -128,15 +146,27 @@ private struct LockScreenView: View {
                 .clipShape(Circle())
 
             VStack(alignment: .leading, spacing: 2) {
-                if let displayName = context.state.displayName, !displayName.isEmpty {
+                if context.state.question?.isEmpty == false {
+                    if let displayName = context.state.displayName, !displayName.isEmpty {
+                        Text(displayName)
+                            .font(.system(.subheadline, design: .monospaced))
+                            .foregroundColor(Color("TextPrimary"))
+                            .lineLimit(1)
+                    }
+                    QuestionView(state: context.state, onDark: false)
+                } else if let displayName = context.state.displayName, !displayName.isEmpty {
                     Text(displayName)
                         .font(.system(.subheadline, design: .monospaced))
                         .foregroundColor(Color("TextPrimary"))
                         .lineLimit(1)
-                    Text(BotLiveActivityWidget.statusLabel(context.state.status))
+                    Text(focusSubtitle)
                         .font(.caption)
                         .foregroundColor(Color("TextSecondary"))
                         .lineLimit(1)
+                    if let progress = context.state.progress {
+                        ProgressView(value: min(max(progress, 0), 1))
+                            .tint(BotLiveActivityWidget.statusColor(context.state.status))
+                    }
                 } else {
                     Text(BotLiveActivityWidget.statusLabel(context.state.status))
                         .font(.system(.subheadline, design: .monospaced))
@@ -156,6 +186,18 @@ private struct LockScreenView: View {
         .padding(16)
     }
 
+    /// Focus bot: its step (or status) and "+N others".
+    private var focusSubtitle: String {
+        var parts: [String] = []
+        if let step = context.state.step, !step.isEmpty {
+            parts.append(step)
+        } else {
+            parts.append(BotLiveActivityWidget.statusLabel(context.state.status))
+        }
+        if let others = BotLiveActivityWidget.othersText(context.state) { parts.append(others) }
+        return parts.joined(separator: " · ")
+    }
+
     private var subtitleText: String {
         var parts: [String] = []
         if context.state.activeBotsCount == 1 {
@@ -170,5 +212,55 @@ private struct LockScreenView: View {
             parts.append(label)
         }
         return parts.joined(separator: " · ")
+    }
+}
+
+/// The focus bot needs the owner. Approve / Deny run in the app process as
+/// `LiveActivityIntent`s (they ask for unlock first); without an inline
+/// question the generic line and Open (`allternit://inbox/<id>`) show.
+private struct QuestionView: View {
+    let state: BotActivityAttributes.ContentState
+    let onDark: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(state.question ?? "")
+                .font(.caption)
+                .foregroundColor(onDark ? .white.opacity(0.9) : Color("TextPrimary"))
+                .lineLimit(3)
+            HStack(spacing: 8) {
+                if state.showsInlineDecision, let inboxId = state.inboxId {
+                    Button(intent: ApproveFromLiveActivityIntent(
+                        inboxId: inboxId, runtimeId: state.runtimeId, contentHash: state.contentHash
+                    )) {
+                        Text("Approve").font(.caption.weight(.semibold))
+                    }
+                    .tint(.green)
+                    Button(intent: DenyFromLiveActivityIntent(
+                        inboxId: inboxId, runtimeId: state.runtimeId, contentHash: state.contentHash
+                    )) {
+                        Text("Deny").font(.caption.weight(.semibold))
+                    }
+                    .tint(.red)
+                } else if let url = state.inboxURL {
+                    Link(destination: url) {
+                        Text("Open").font(.caption.weight(.semibold))
+                    }
+                }
+            }
+            .buttonStyle(.bordered)
+        }
+    }
+}
+
+extension WidgetConfiguration {
+    /// Apple Watch Smart Stack / CarPlay (`.small`) on iOS 18 and later.
+    /// SE-0360 lets the two branches return different opaque types.
+    func smallActivityFamilyIfAvailable() -> some WidgetConfiguration {
+        if #available(iOS 18.0, *) {
+            return self.supplementalActivityFamilies([.small])
+        } else {
+            return self
+        }
     }
 }

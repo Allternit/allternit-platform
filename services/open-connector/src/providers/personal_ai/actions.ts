@@ -1,7 +1,7 @@
 import type { ActionDefinition } from "../../core/types.ts";
 
 import { s } from "../../core/json-schema.ts";
-import { defineProviderAction } from "../../core/provider-definition.ts";
+import { defineProviderAction, withSavedConnectionInputs } from "../../core/provider-definition.ts";
 
 const service = "personal_ai";
 
@@ -75,95 +75,98 @@ export type PersonalAiActionName =
   | "upload_text_document"
   | "upload_url";
 
-export const personalAiActions: ActionDefinition[] = [
-  defineProviderAction(service, {
-    name: "send_message",
-    description: "Send a message to a Personal AI persona and receive a response.",
-    requiredScopes: [],
-    inputSchema: s.object(
-      "The input payload for sending a Personal AI message.",
-      {
-        ...conversationInputFields,
-        events: s.nonEmptyString("The document name to reference from the persona upload library."),
-        isStack: s.boolean("Whether to add the user message to memory."),
-        isDraft: s.boolean("Whether to create a copilot draft message."),
-        metadata: personalAiMetadataSchema,
-      },
-      {
-        optional: ["context", "userName", "sessionId", "sourceName", "events", "isStack", "isDraft", "metadata"],
-      },
-    ),
-    outputSchema: personalAiMessageSchema,
-  }),
-  defineProviderAction(service, {
-    name: "send_instruction",
-    description: "Send a chatgpt or search instruction to a Personal AI persona.",
-    requiredScopes: [],
-    inputSchema: s.object(
-      "The input payload for sending a Personal AI instruction.",
-      {
-        command: s.stringEnum("The Personal AI instruction command to execute.", ["chatgpt", "search"]),
-        ...conversationInputFields,
-        isMessage: s.boolean("Whether the instruction should be treated as a message."),
-      },
-      { optional: ["context", "userName", "sessionId", "sourceName", "isMessage"] },
-    ),
-    outputSchema: personalAiMessageSchema,
-  }),
-  defineProviderAction(service, {
-    name: "upload_memory",
-    description: "Upload one plain text memory to a Personal AI persona memory stack.",
-    requiredScopes: [],
-    inputSchema: s.object(
-      "The input payload for uploading a Personal AI memory.",
-      {
-        text: s.nonEmptyString("The plain text memory to upload."),
-        sourceName: s.nonEmptyString("The source or application name for the memory."),
-        domainName: s.nonEmptyString("The hyphenated domain name of the target Personal AI persona."),
-        createdTime: s.nonEmptyString("The memory time including timezone."),
-        rawFeedText: s.nonEmptyString("The formatted text to store with the memory."),
-        tags: s.nonEmptyString("Comma-delimited tags for the memory."),
-      },
-      { optional: ["createdTime", "rawFeedText", "tags"] },
-    ),
-    outputSchema: uploadMemoryOutputSchema,
-  }),
-  defineProviderAction(service, {
-    name: "upload_text_document",
-    description: "Upload a text document to a Personal AI persona memory library.",
-    requiredScopes: [],
-    inputSchema: s.object(
-      "The input payload for uploading a Personal AI text document.",
-      {
-        text: s.nonEmptyString("The body text to upload as a document."),
-        domainName: s.nonEmptyString("The hyphenated domain name of the target Personal AI persona."),
-        title: s.nonEmptyString("The title of the uploaded document."),
-        startTime: s.dateTime("The UTC start timestamp for the document."),
-        endTime: s.dateTime("The UTC end timestamp for the document."),
-        tags: s.nonEmptyString("Comma-delimited tags for the document."),
-        isStack: s.boolean("Whether to add the document to memory."),
-      },
-      { optional: ["title", "startTime", "endTime", "tags", "isStack"] },
-    ),
-    outputSchema: uploadStatusSchema,
-  }),
-  defineProviderAction(service, {
-    name: "upload_url",
-    description: "Upload public URL content to a Personal AI persona memory library.",
-    requiredScopes: [],
-    inputSchema: s.object(
-      "The input payload for uploading URL content to Personal AI.",
-      {
-        url: s.url("The public URL to upload."),
-        domainName: s.nonEmptyString("The hyphenated domain name of the target Personal AI persona."),
-        title: s.nonEmptyString("The title of the uploaded content."),
-        startTime: s.dateTime("The UTC start timestamp for the content."),
-        endTime: s.dateTime("The UTC end timestamp for the content."),
-        tags: s.nonEmptyString("Comma-delimited tags for the URL content."),
-        isStack: s.boolean("Whether to add the URL content to memory."),
-      },
-      { optional: ["title", "startTime", "endTime", "tags", "isStack"] },
-    ),
-    outputSchema: uploadStatusSchema,
-  }),
-];
+export const personalAiActions: ActionDefinition[] = withSavedConnectionInputs(
+  [
+    defineProviderAction(service, {
+      name: "send_message",
+      description: "Send a message to a Personal AI persona and receive a response.",
+      requiredScopes: [],
+      inputSchema: s.object(
+        "The input payload for sending a Personal AI message.",
+        {
+          ...conversationInputFields,
+          events: s.nonEmptyString("The document name to reference from the persona upload library."),
+          isStack: s.boolean("Whether to add the user message to memory."),
+          isDraft: s.boolean("Whether to create a copilot draft message."),
+          metadata: personalAiMetadataSchema,
+        },
+        {
+          optional: ["context", "userName", "sessionId", "sourceName", "events", "isStack", "isDraft", "metadata"],
+        },
+      ),
+      outputSchema: personalAiMessageSchema,
+    }),
+    defineProviderAction(service, {
+      name: "send_instruction",
+      description: "Send a chatgpt or search instruction to a Personal AI persona.",
+      requiredScopes: [],
+      inputSchema: s.object(
+        "The input payload for sending a Personal AI instruction.",
+        {
+          command: s.stringEnum("The Personal AI instruction command to execute.", ["chatgpt", "search"]),
+          ...conversationInputFields,
+          isMessage: s.boolean("Whether the instruction should be treated as a message."),
+        },
+        { optional: ["context", "userName", "sessionId", "sourceName", "isMessage"] },
+      ),
+      outputSchema: personalAiMessageSchema,
+    }),
+    defineProviderAction(service, {
+      name: "upload_memory",
+      description: "Upload one plain text memory to a Personal AI persona memory stack.",
+      requiredScopes: [],
+      inputSchema: s.object(
+        "The input payload for uploading a Personal AI memory.",
+        {
+          text: s.nonEmptyString("The plain text memory to upload."),
+          sourceName: s.nonEmptyString("The source or application name for the memory."),
+          domainName: s.nonEmptyString("The hyphenated domain name of the target Personal AI persona."),
+          createdTime: s.nonEmptyString("The memory time including timezone."),
+          rawFeedText: s.nonEmptyString("The formatted text to store with the memory."),
+          tags: s.nonEmptyString("Comma-delimited tags for the memory."),
+        },
+        { optional: ["createdTime", "rawFeedText", "tags"] },
+      ),
+      outputSchema: uploadMemoryOutputSchema,
+    }),
+    defineProviderAction(service, {
+      name: "upload_text_document",
+      description: "Upload a text document to a Personal AI persona memory library.",
+      requiredScopes: [],
+      inputSchema: s.object(
+        "The input payload for uploading a Personal AI text document.",
+        {
+          text: s.nonEmptyString("The body text to upload as a document."),
+          domainName: s.nonEmptyString("The hyphenated domain name of the target Personal AI persona."),
+          title: s.nonEmptyString("The title of the uploaded document."),
+          startTime: s.dateTime("The UTC start timestamp for the document."),
+          endTime: s.dateTime("The UTC end timestamp for the document."),
+          tags: s.nonEmptyString("Comma-delimited tags for the document."),
+          isStack: s.boolean("Whether to add the document to memory."),
+        },
+        { optional: ["title", "startTime", "endTime", "tags", "isStack"] },
+      ),
+      outputSchema: uploadStatusSchema,
+    }),
+    defineProviderAction(service, {
+      name: "upload_url",
+      description: "Upload public URL content to a Personal AI persona memory library.",
+      requiredScopes: [],
+      inputSchema: s.object(
+        "The input payload for uploading URL content to Personal AI.",
+        {
+          url: s.url("The public URL to upload."),
+          domainName: s.nonEmptyString("The hyphenated domain name of the target Personal AI persona."),
+          title: s.nonEmptyString("The title of the uploaded content."),
+          startTime: s.dateTime("The UTC start timestamp for the content."),
+          endTime: s.dateTime("The UTC end timestamp for the content."),
+          tags: s.nonEmptyString("Comma-delimited tags for the URL content."),
+          isStack: s.boolean("Whether to add the URL content to memory."),
+        },
+        { optional: ["title", "startTime", "endTime", "tags", "isStack"] },
+      ),
+      outputSchema: uploadStatusSchema,
+    }),
+  ],
+  { domainName: ["domainName"] },
+);

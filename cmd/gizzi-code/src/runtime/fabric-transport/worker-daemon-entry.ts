@@ -19,20 +19,11 @@
 
 import { runFabricWorker } from "./worker"
 import { onParentExit } from "../util/parent-lifeline"
-
-type Level = "info" | "warn" | "error"
-
-function makeLogger() {
-  return (level: Level, event: string, fields?: Record<string, unknown>) => {
-    const line = JSON.stringify({ ts: new Date().toISOString(), level, event, ...(fields ?? {}) })
-    if (level === "error") console.error(line)
-    else console.log(line)
-  }
-}
+import { makeJsonLogger } from "./daemon-util"
 
 let stopping = false
 
-const log = makeLogger()
+const log = makeJsonLogger()
 
 function installSignalHandlers(): void {
   const onSignal = (signal: string) => {

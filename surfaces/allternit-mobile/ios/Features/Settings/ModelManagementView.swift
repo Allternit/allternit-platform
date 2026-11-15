@@ -35,30 +35,33 @@ struct ModelManagementView: View {
 struct ModelManagementListContent: View {
     @ObservedObject var modelStore: ModelStore
     @ObservedObject var store: ProviderManagementStore
+    @StateObject private var freeweights = FreeweightsBrowseStore()
 
     var body: some View {
         List {
             selectedModelSection
             enginesSection
+            FreeweightsSection(store: freeweights)
+            StudioJobsSection()
             Section {
                 NavigationLink("Benchmark") {
                     BenchmarkView()
-                }
-                NavigationLink("On-Device (Experimental)") {
-                    OnDeviceChatView()
                 }
             }
         }
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
         .background(Color("BgPrimary"))
+        .freeweightsDetailSheet(freeweights)
         .task {
             modelStore.fetchModelsIfNeeded()
             await store.load()
         }
         .refreshable {
             modelStore.fetchModelsIfNeeded(force: true)
-            await store.load()
+            async let engines: Void = store.load()
+            async let catalog: Void = freeweights.reload()
+            _ = await (engines, catalog)
         }
     }
 
@@ -74,7 +77,7 @@ struct ModelManagementListContent: View {
                     style: .offline,
                     icon: "wifi.slash",
                     title: "Couldn't load default model",
-                    message: FriendlyErrorMessage.from(error),
+                    message: FriendlyErrorMessage.from(error, doing: "load the default model"),
                     actionTitle: "Retry",
                     action: { modelStore.fetchModelsIfNeeded(force: true) }
                 )
@@ -90,13 +93,17 @@ struct ModelManagementListContent: View {
                 }
                 .font(.subheadline)
 
-                Picker("Reasoning effort", selection: $modelStore.selectedEffort) {
-                    ForEach(ModelEffort.allCases, id: \.self) { effort in
-                        Text(effort.label).tag(effort)
+                if let thinking = modelStore.selectedModel?.effectiveThinking {
+                    Picker(thinking.term, selection: Binding(
+                        get: { thinking.level(modelStore.selectedEffort) },
+                        set: { modelStore.selectedEffort = $0 }
+                    )) {
+                        ForEach(thinking.levels, id: \.id) { level in
+                            Text(level.label).tag(level.id)
+                        }
                     }
+                    .font(.subheadline)
                 }
-                .font(.subheadline)
-                .disabled(modelStore.selectedModel?.supportsEffort != true)
             }
         } header: {
             Text("Default Model")
@@ -116,7 +123,7 @@ struct ModelManagementListContent: View {
                     style: .offline,
                     icon: "wifi.slash",
                     title: "Couldn't load engines",
-                    message: FriendlyErrorMessage.from(error),
+                    message: FriendlyErrorMessage.from(error, doing: "load engines"),
                     actionTitle: "Retry",
                     action: { Task { await store.load() } }
                 )

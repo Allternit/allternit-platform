@@ -1,0 +1,37 @@
+# AppArmor profile for Allternit Self-Hosted Agents worker containers.
+#
+# Why: Ubuntu 23.10 and later set kernel.apparmor_restrict_unprivileged_userns=1.
+# Then a process with no AppArmor profile that allows `userns` cannot set up
+# the user namespace bubblewrap needs, and every bash call in the worker fails
+# ("bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted").
+# This profile gives the worker container the same freedom as
+# apparmor=unconfined, plus `userns`. It applies only to containers started
+# with --security-opt apparmor=allternit-selfhost-worker, so the host keeps
+# the restriction for everything else. You do not need to turn it off.
+#
+# Load it on every Docker host or Kubernetes node that runs workers:
+#   sudo install -m 0644 allternit-selfhost-worker /etc/apparmor.d/allternit-selfhost-worker
+#   sudo apparmor_parser -r /etc/apparmor.d/allternit-selfhost-worker
+# Check:  sudo aa-status | grep allternit-selfhost-worker
+# Then:   compose: ALLTERNIT_WORKER_APPARMOR=allternit-selfhost-worker in .env
+#         Helm:    sandbox.appArmorProfile: {type: Localhost, localhostProfile: allternit-selfhost-worker}
+# Needs AppArmor 4 (Ubuntu 24.04+). Older hosts do not restrict user
+# namespaces through AppArmor; keep apparmor=unconfined there.
+
+abi <abi/4.0>,
+include <tunables/global>
+
+profile allternit-selfhost-worker flags=(attach_disconnected,mediate_deleted) {
+  include <abstractions/base>
+  file,
+  network,
+  capability,
+  mount,
+  umount,
+  pivot_root,
+  signal,
+  ptrace,
+  unix,
+  dbus,
+  userns,
+}

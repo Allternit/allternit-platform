@@ -123,9 +123,11 @@ struct CapabilityInvocationRequest: Codable, Sendable {
 
 /// Result returned by `POST /v1/session-worker/invoke`.
 struct InvocationResult: Codable, Sendable {
-    let ok: Bool
-    let capability: String
-    let nodeId: String
+    // Optional: a computer's allternit-api answers `{"result":{...}}` only;
+    // requiring these failed the decode after the message was accepted.
+    let ok: Bool?
+    let capability: String?
+    let nodeId: String?
     let result: AnyCodable?
     let error: String?
     let leaseId: String?

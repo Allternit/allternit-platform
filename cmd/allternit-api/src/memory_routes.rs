@@ -60,7 +60,7 @@ async fn memory_health(State(state): State<Arc<AppState>>) -> Json<serde_json::V
     let ollama_url = state.config.ollama_url();
     let memory_url = state.config.memory_url();
 
-    let client = reqwest::Client::new();
+    let client = crate::net_client::client();
 
     let ollama_connected = client
         .get(format!("{}/api/tags", ollama_url.trim_end_matches('/')))
@@ -108,7 +108,7 @@ async fn memory_consolidate(
 ) -> impl axum::response::IntoResponse {
     let memory_url = state.config.memory_url();
 
-    let client = reqwest::Client::new();
+    let client = crate::net_client::client();
     match client
         .post(format!(
             "{}/api/consolidate",
@@ -455,7 +455,7 @@ async fn query_memory(
     // Proxy to memory agent if available, otherwise return stub
     let memory_url = state.config.memory_url();
 
-    let client = reqwest::Client::new();
+    let client = crate::net_client::client();
     match client
         .post(format!("{}/api/query", memory_url))
         .header("Content-Type", "application/json")

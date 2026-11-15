@@ -51,22 +51,31 @@ const resolveWasm = (asset: string) => {
   return fileURLToPath(url)
 }
 
+// From source a .wasm import is a path or file:// URL. The compiled binary
+// embeds it as bytes (wasm-embed plugin in script/build-production.js), so
+// treat both. Treating only the string form made every bash call in a compiled
+// gizzi fail with "asset.startsWith is not a function".
+type WasmAsset = string | Uint8Array
+
 const parser = lazy(async () => {
   const { Parser } = await import("web-tree-sitter")
-  const { default: treeWasm } = await import("web-tree-sitter/tree-sitter.wasm" as string, {
+  const { default: treeWasm } = (await import("web-tree-sitter/tree-sitter.wasm" as string, {
     with: { type: "wasm" },
-  })
-  const treePath = resolveWasm(treeWasm)
-  await Parser.init({
-    locateFile() {
-      return treePath
-    },
-  })
-  const { default: bashWasm } = await import("tree-sitter-bash/tree-sitter-bash.wasm" as string, {
+  })) as { default: WasmAsset }
+  if (typeof treeWasm === "string") {
+    const treePath = resolveWasm(treeWasm)
+    await Parser.init({
+      locateFile() {
+        return treePath
+      },
+    })
+  } else {
+    await Parser.init({ wasmBinary: treeWasm } as Parameters<typeof Parser.init>[0])
+  }
+  const { default: bashWasm } = (await import("tree-sitter-bash/tree-sitter-bash.wasm" as string, {
     with: { type: "wasm" },
-  })
-  const bashPath = resolveWasm(bashWasm)
-  const bashLanguage = await Language.load(bashPath)
+  })) as { default: WasmAsset }
+  const bashLanguage = await Language.load(typeof bashWasm === "string" ? resolveWasm(bashWasm) : bashWasm)
   const p = new Parser()
   p.setLanguage(bashLanguage)
   return p

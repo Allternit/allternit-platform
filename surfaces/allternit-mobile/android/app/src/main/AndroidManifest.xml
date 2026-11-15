@@ -2,35 +2,15 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <!-- Shared by both builds. The Google Play build ("play" flavor) is only
+         this: m.allternit.com as a Trusted Web Activity. Phone Link (its code,
+         the mesh library, the accessibility service, services, receivers and
+         permissions) lives in src/phonelink and ships only in the sideloaded
+         build that Allternit Desktop installs. -->
     <uses-permission android:name="android.permission.INTERNET" />
-    <!-- The mesh refreshes its interface list when the default network changes. -->
-    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <!-- Android 13+: Web Push shows under Allternit (notification delegation), so
+         the app needs the runtime notification permission. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
-    <!-- terminate_app (best effort): killBackgroundProcesses. Normal permission. -->
-    <uses-permission android:name="android.permission.KILL_BACKGROUND_PROCESSES" />
-    <!-- Live screen (ShellServerLauncher): turn wireless debugging on after a
-         reboot to start the shell server. A development permission: only
-         `adb shell pm grant` (cable setup) can grant it. -->
-    <uses-permission
-        android:name="android.permission.WRITE_SECURE_SETTINGS"
-        tools:ignore="ProtectedPermissions" />
-
-    <!-- Android 11+ package visibility: launchable apps (list_apps, launch_app,
-         and through them custom-scheme deep links) and browsers for open_url. -->
-    <queries>
-        <intent>
-            <action android:name="android.intent.action.MAIN" />
-            <category android:name="android.intent.category.LAUNCHER" />
-        </intent>
-        <intent>
-            <action android:name="android.intent.action.VIEW" />
-            <category android:name="android.intent.category.BROWSABLE" />
-            <data android:scheme="https" />
-        </intent>
-    </queries>
 
     <application
         android:allowBackup="false"
@@ -41,80 +21,73 @@
         android:supportsRtl="true"
         tools:targetApi="35">
 
+        <!-- Digital Asset Links back to m.allternit.com (its assetlinks.json names
+             this app ID and the release cert), so Chrome shows the site full-screen. -->
+        <meta-data
+            android:name="asset_statements"
+            android:resource="@string/asset_statements" />
+
+        <!-- The Allternit app: m.allternit.com as a Trusted Web Activity. Without
+             a TWA-capable browser it opens as a Custom Tab instead.
+             ${launcherActivity} is set per flavor in app/build.gradle.kts:
+             phonelink = androidbrowserhelper's LauncherActivity; play =
+             com.allternit.app.ReviewLauncherActivity (same launcher, plus the
+             Play in-app review prompt). -->
         <activity
-            android:name=".MainActivity"
-            android:exported="true"
-            android:launchMode="singleTop">
+            android:name="${launcherActivity}"
+            android:exported="true">
+            <meta-data
+                android:name="android.support.customtabs.trusted.DEFAULT_URL"
+                android:value="https://m.allternit.com/" />
+            <meta-data
+                android:name="android.support.customtabs.trusted.STATUS_BAR_COLOR"
+                android:resource="@color/twa_bar" />
+            <meta-data
+                android:name="android.support.customtabs.trusted.NAVIGATION_BAR_COLOR"
+                android:resource="@color/twa_bar" />
+            <!-- Long-press shortcuts (Ask a bot, Hand off a task, Needs you, Call main bot). -->
+            <meta-data
+                android:name="android.app.shortcuts"
+                android:resource="@xml/shortcuts" />
+            <!-- Share target: androidbrowserhelper parses this JSON (SharingUtils) and
+                 opens m.allternit.com/share-target?title=..&text=.. (GET, text only). -->
+            <meta-data
+                android:name="android.support.customtabs.trusted.METADATA_SHARE_TARGET"
+                android:value="@string/share_target" />
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" android:host="m.allternit.com" />
+            </intent-filter>
         </activity>
 
-        <!-- The hands and eyes. Enabled over adb with
-             settings put secure enabled_accessibility_services com.allternit.phonelink/.PhoneLinkAccessibilityService -->
+        <!-- Notification delegation: Chrome hands Web Push to this service, so
+             notifications (and their action buttons) appear under Allternit. -->
         <service
-            android:name=".PhoneLinkAccessibilityService"
-            android:exported="true"
-            android:label="@string/accessibility_label"
-            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
-            <intent-filter>
-                <action android:name="android.accessibilityservice.AccessibilityService" />
-            </intent-filter>
-            <meta-data
-                android:name="android.accessibilityservice"
-                android:resource="@xml/accessibility_service_config" />
-        </service>
-
-        <!-- Hosts the persistent notification. Exported only to DUMP holders (adb shell,
-             system) so `am start-foreground-service` works from the cable. -->
-        <service
-            android:name=".PhoneLinkService"
-            android:exported="true"
-            android:foregroundServiceType="specialUse"
-            android:permission="android.permission.DUMP">
-            <property
-                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Local server that lets the user's own paired computer operate apps on this phone through the accessibility service; the user starts and stops it." />
-        </service>
-
-        <!-- Runs the gomobile tsnet node in a private process so a Go panic
-             there can never take down the phone server. Same-uid binding
-             only (exported=false); the main process supplies start inputs in
-             the bind Intent and receives reports on a Messenger. -->
-        <service
-            android:name=".MeshService"
-            android:exported="false"
-            android:process=":mesh" />
-
-        <receiver
-            android:name=".BootReceiver"
+            android:name="com.google.androidbrowserhelper.trusted.DelegationService"
+            android:enabled="true"
             android:exported="true">
             <intent-filter>
-                <action android:name="android.intent.action.BOOT_COMPLETED" />
-                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+                <action android:name="android.support.customtabs.trusted.TRUSTED_WEB_ACTIVITY_SERVICE" />
+                <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
-            <intent-filter>
-                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
-            </intent-filter>
-        </receiver>
+        </service>
 
-        <!-- One-time cable setup. Only senders holding DUMP (adb shell, system) can reach it. -->
-        <receiver
-            android:name=".ProvisionReceiver"
-            android:exported="true"
-            android:permission="android.permission.DUMP">
-            <intent-filter>
-                <action android:name="com.allternit.phonelink.PROVISION" />
-            </intent-filter>
-        </receiver>
+        <!-- Asks for POST_NOTIFICATIONS on Android 13+ when the site requests
+             notification permission (started via a PendingIntent from DelegationService). -->
+        <activity
+            android:name="com.google.androidbrowserhelper.trusted.NotificationPermissionRequestActivity"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
 
-        <receiver
-            android:name=".StopReceiver"
-            android:exported="false" />
-
-        <receiver
-            android:name=".PairingActionReceiver"
-            android:exported="false" />
     </application>
 </manifest>

@@ -27,7 +27,9 @@ import {
 import {
   buildSessionStatus,
   countUserTurns,
+  formatServicesLine,
   getAuthMethodDescription,
+  getServicesLine,
 } from '../../utils/statusModel.js';
 
 const PROGRESS_BAR_WIDTH = 24;
@@ -39,7 +41,7 @@ function renderProgressBar(ratio: number, width: number): string {
   return '█'.repeat(filled) + '░'.repeat(empty);
 }
 
-function renderInlineStatus(context: LocalJSXCommandContext): string {
+function renderInlineStatus(context: LocalJSXCommandContext, services: string | null = null): string {
   // TODO(types): AppState has no `messages` field (upstream drift shared with
   // dash.ts/session-info.tsx/statusModel.ts); runtime value is always
   // undefined, so the `?? []` fallback was always in effect.
@@ -87,6 +89,9 @@ function renderInlineStatus(context: LocalJSXCommandContext): string {
   lines.push(`  Version:   ${version}`);
   lines.push(`  Auth:      ${getAuthMethodDescription()}`);
   lines.push(`  Turns:     ${countUserTurns(messages)}`);
+  if (services) {
+    lines.push(`  Services:  ${services}`);
+  }
   lines.push('');
 
   lines.push('Context window');
@@ -149,7 +154,7 @@ export async function call(
     return null;
   }
   if (trimmed === '--inline') {
-    onDone(renderInlineStatus(context), { display: 'system' });
+    onDone(renderInlineStatus(context, formatServicesLine(await getServicesLine())), { display: 'system' });
     return null;
   }
   return <Settings onClose={onDone} context={context} defaultTab="Status" />;

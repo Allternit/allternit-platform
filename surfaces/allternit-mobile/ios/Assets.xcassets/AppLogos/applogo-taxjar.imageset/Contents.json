@@ -1,0 +1,12 @@
+{
+  "images": [
+    {
+      "filename": "taxjar.png",
+      "idiom": "universal"
+    }
+  ],
+  "info": {
+    "author": "xcode",
+    "version": 1
+  }
+}

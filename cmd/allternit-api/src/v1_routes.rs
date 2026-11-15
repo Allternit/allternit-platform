@@ -213,12 +213,74 @@ async fn get_or_create_gizzi_session(
     Ok(session_id)
 }
 
+/// Store a coding-session permission ask (one `cowork_approvals` row, keyed by
+/// the gizzi request id) and, the first time, ledger `approval.requested` for
+/// the cloud. Idempotent: gizzi may re-publish the ask after an SSE replay.
+/// The row shows in the Needs-you inbox as `permission:<id>`.
+pub(crate) fn record_gizzi_permission_ask(conn: &rusqlite::Connection, user_id: &str, request_id: &str, content: &str) -> Result<bool, rusqlite::Error> {
+    let fresh = conn.execute(
+        "INSERT OR IGNORE INTO cowork_approvals (id, user_id, content, source) VALUES (?1, ?2, ?3, 'gizzi-permission')",
+        params![request_id, user_id, content],
+    )? == 1;
+    if fresh {
+        // Owner ledger → the cloud event backbone (approval.requested).
+        let _ = crate::runtime_events::record_user_event(
+            conn,
+            user_id,
+            "approval.requested",
+            None,
+            &serde_json::json!({ "approvalId": request_id, "source": "gizzi-permission" }),
+            Some(&format!("approval:{request_id}:requested")),
+        );
+    }
+    Ok(fresh)
+}
+
 /// Shape a gizzi `permission.asked` event's properties into the JSON payload
 /// stored in `cowork_approvals.content`. Keys match what the ApprovalGate
 /// poller reads (actionId, sessionId, riskLevel, summary, details) plus the
 /// raw gizzi fields the decide route needs to relay the decision back to the
 /// runtime (requestId) and the modal renders with (toolName, patterns,
 /// always, messageId).
+/// The `metadata` of the chat stream's `tool_permission` frame: what the
+/// composer's approval card renders. Carries the ask's own card content
+/// (subscription / projectSend / summary) and, for `run_code`, the script,
+/// language and input files so the card shows what will run (the web's
+/// ComposerPermissionInfoBar / RunCodeDetail).
+pub(crate) fn tool_permission_frame_metadata(
+    session_id: &str,
+    request_id: &str,
+    props: &serde_json::Value,
+) -> serde_json::Value {
+    let permission = props.get("permission").and_then(|v| v.as_str());
+    let meta = |key: &str| {
+        props
+            .pointer(&format!("/metadata/{key}"))
+            .cloned()
+            .unwrap_or(serde_json::Value::Null)
+    };
+    let mut out = json!({
+        "sessionId": session_id,
+        "patterns": props.get("patterns").cloned().unwrap_or_else(|| json!([])),
+        "requestId": request_id,
+        "grantKey": permission.and_then(crate::task_grants::approval_grant_key),
+        // D16 cards (send / provider question) render from this.
+        "subscription": meta("subscription"),
+        // Bot-to-project sends: the card shows the project and message.
+        "projectSend": meta("projectSend"),
+        "summary": meta("summary"),
+    });
+    if permission == Some("run_code") {
+        for key in ["code", "language", "files", "code_truncated"] {
+            let value = meta(key);
+            if !value.is_null() {
+                out[key] = value;
+            }
+        }
+    }
+    out
+}
+
 pub(crate) fn gizzi_permission_approval_content(props: &serde_json::Value) -> serde_json::Value {
     let permission = props
         .get("permission")
@@ -251,6 +313,9 @@ pub(crate) fn gizzi_permission_approval_content(props: &serde_json::Value) -> se
 
     if permission == crate::subscription_routes::SUBSCRIPTION_PERMISSION {
         return subscription_approval_content(request_id, session_id, &patterns, &message_id, &metadata);
+    }
+    if permission == crate::project_send_tools::PROJECT_SEND_PERMISSION {
+        return crate::project_send_tools::approval_content(request_id, session_id, &patterns, &message_id, &metadata);
     }
 
     json!({
@@ -383,6 +448,7 @@ pub fn v1_router() -> Router<Arc<AppState>> {
         .route("/health", get(health))
         .route("/models", get(list_available_models))
         .route("/models/recommend", get(recommend_models))
+        .route("/models/thinking", get(model_thinking_table))
         .route("/voice/voices", get(list_voice_presets))
         .route("/voice/tts/stream", post(proxy_voice_tts_stream))
         .route("/voice/stt/stream", post(proxy_voice_stt_stream))
@@ -394,79 +460,180 @@ async fn health() -> impl IntoResponse {
     Json(json!({ "status": "ok" }))
 }
 
-/// GET /api/v1/models — flattened `{id, name, provider}` catalog for the
-/// agent-creation wizard's model picker. Sourced from the same provider specs
-/// as the /providers endpoints; previously fell through to the 501 fallback.
-///
-/// The static catalog only covers compile-time-known providers/models — it
-/// can never include user-installed local models (Sidecar's HF-downloaded
-/// GGUF pulls), which only exist at runtime, one deployment at a time. This
-/// merges in gizzi-code's live `GET /provider` `connected` list on top of
-/// the static entries, so newly-installed local models show up without a
-/// backend redeploy. Falls back to the static-only list if gizzi is
-/// unreachable — this endpoint must never hard-fail just because the
-/// harness happens to be down.
-async fn list_available_models(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    let mut catalog = crate::provider_routes::available_model_catalog();
-    catalog.extend(fetch_live_local_models(&state).await);
-    Json(catalog)
+/// GET /api/v1/models/thinking — the shared thinking table (model-thinking.json):
+/// each vendor's word and level labels, and the levels and default per model
+/// pattern. Pickers match a model id to it the same way the server does
+/// (lowercase, '.' read as '-', provider prefix dropped, trailing '*' a prefix).
+async fn model_thinking_table() -> impl IntoResponse {
+    Json(crate::model_thinking::table_json())
 }
 
-/// Fetches gizzi-code's live provider list and flattens any `connected`
-/// (i.e. actually-available-right-now) provider's models into the same
-/// `{id, name, provider, description, tier, supports_effort}` shape the
-/// static catalog uses. Currently only `sidecar` is a locally-hosted
-/// provider in practice, but this isn't sidecar-specific — any connected
-/// provider the static list doesn't already know about gets included.
-async fn fetch_live_local_models(state: &AppState) -> Vec<serde_json::Value> {
+/// GET /api/v1/models — flattened `{id, name, provider, description, tier,
+/// supports_effort, thinking}` catalog for model pickers.
+///
+/// Live only: the list is the models of the providers gizzi-code reports as
+/// `connected` in its `GET /provider` response (discovered CLI brains,
+/// API-key providers, local providers and Allternit Cloud). There is no
+/// hand-written fallback: if gizzi is unreachable or answers badly, this
+/// returns 503 `models_unavailable` so clients show a retry, never a list of
+/// models the user can't actually run.
+async fn list_available_models(State(state): State<Arc<AppState>>) -> Response {
+    match fetch_live_model_catalog(&state).await {
+        Some(catalog) => Json(catalog).into_response(),
+        None => models_unavailable(),
+    }
+}
+
+/// 503 body shared by /models and /models/recommend when the live list
+/// can't be read.
+fn models_unavailable() -> Response {
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        Json(json!({
+            "error": "models_unavailable",
+            "message": "The model list is unavailable right now. Try again in a moment.",
+        })),
+    )
+        .into_response()
+}
+
+/// Reads gizzi-code's live `GET {terminal_server_url}/provider` and maps it
+/// with [`live_model_catalog`]. `None` when gizzi is unreachable, answers
+/// non-2xx, or the body isn't the expected JSON shape.
+async fn fetch_live_model_catalog(state: &AppState) -> Option<Vec<serde_json::Value>> {
     let base = state.config.terminal_server_url();
-    let client = match reqwest::Client::builder()
+    let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(3))
         .build()
+        .ok()?;
+    let resp = match client
+        .get(format!("{}/provider", base.trim_end_matches('/')))
+        .send()
+        .await
     {
-        Ok(client) => client,
-        Err(_) => return Vec::new(),
+        Ok(resp) => resp,
+        Err(err) => {
+            warn!(error = %err, "gizzi /provider unreachable; model list unavailable");
+            return None;
+        }
     };
+    if !resp.status().is_success() {
+        warn!(status = %resp.status(), "gizzi /provider returned an error; model list unavailable");
+        return None;
+    }
+    let body: serde_json::Value = resp.json().await.ok()?;
+    let catalog = live_model_catalog(&body);
+    if catalog.is_none() {
+        warn!("gizzi /provider body was not the expected shape; model list unavailable");
+    }
+    catalog
+}
 
-    let resp = match client.get(format!("{}/provider", base.trim_end_matches('/'))).send().await {
-        Ok(resp) if resp.status().is_success() => resp,
-        _ => return Vec::new(),
-    };
+/// Providers that run on the user's own machine. Matched on the gizzi
+/// provider id: these exact ids, or any id starting with `local`.
+fn is_local_provider(provider_id: &str) -> bool {
+    matches!(provider_id, "sidecar" | "ollama" | "lmstudio" | "bonsai" | "omlx")
+        || provider_id.starts_with("local")
+}
 
-    let body: serde_json::Value = match resp.json().await {
-        Ok(body) => body,
-        Err(_) => return Vec::new(),
-    };
-
-    let connected: std::collections::HashSet<String> = body
-        .get("connected")
-        .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
-        .unwrap_or_default();
-
-    let all = body.get("all").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+/// Maps a gizzi `GET /provider` body
+/// (`{all: [{id, name, models: {modelId: {name, ..}}}], connected: [ids]}`)
+/// to the `/api/v1/models` catalog. Only providers listed in `connected` are
+/// included. Returns `None` when `all` or `connected` isn't an array.
+///
+/// Tier rule: models of a local provider (see [`is_local_provider`]) are
+/// always `local`; a remote provider's model takes its tier from
+/// `model_metadata` when known, else `standard`. `description` comes from
+/// `model_metadata` (or `null`), `thinking` from the shared thinking table.
+///
+/// `default` / `rank` (the vendor's default model and its 0-based vendor
+/// order) come from gizzi's model entry when it sends them; an older gizzi
+/// that doesn't gets them from the embedded CLI catalog for CLI providers
+/// (retired ids mapped to their replacement), else `false` / `null`. They are
+/// informational: nothing here selects a model for the user.
+///
+/// `hidden: true` (retired Allternit Cloud aliases) passes through only on
+/// those rows: they stay listed so a saved choice keeps resolving, are never
+/// `default`, and sort last in their provider.
+///
+/// Order: providers keep gizzi's `all` order; inside a provider visible rows
+/// come first, sorted by `rank` ascending, rows without a rank after them in model-id
+/// order (gizzi's `models` is a JSON object, read here as a sorted map since
+/// serde_json `preserve_order` is off). Clients (iOS) keep this order.
+fn live_model_catalog(body: &serde_json::Value) -> Option<Vec<serde_json::Value>> {
+    let connected: std::collections::HashSet<&str> = body
+        .get("connected")?
+        .as_array()?
+        .iter()
+        .filter_map(|v| v.as_str())
+        .collect();
+    let all = body.get("all")?.as_array()?;
 
     let mut out = Vec::new();
     for provider in all {
-        let provider_id = match provider.get("id").and_then(|v| v.as_str()) {
-            Some(id) if connected.contains(id) => id.to_string(),
-            _ => continue,
-        };
-        let provider_name = provider.get("name").and_then(|v| v.as_str()).unwrap_or(&provider_id).to_string();
+        let Some(provider_id) = provider.get("id").and_then(|v| v.as_str()) else { continue };
+        if !connected.contains(provider_id) {
+            continue;
+        }
+        let provider_name = provider.get("name").and_then(|v| v.as_str()).unwrap_or(provider_id);
+        let local = is_local_provider(provider_id);
         let Some(models) = provider.get("models").and_then(|v| v.as_object()) else { continue };
+        let cli_tool = crate::cli_catalog::find(provider_id);
+        let mut rows: Vec<(bool, Option<u64>, serde_json::Value)> = Vec::with_capacity(models.len());
         for (model_id, model) in models {
             let model_name = model.get("name").and_then(|v| v.as_str()).unwrap_or(model_id);
-            out.push(json!({
+            let meta = crate::provider_routes::model_metadata(model_id);
+            let tier = if local {
+                "local"
+            } else {
+                meta.map(|(_, t, _)| t).unwrap_or("standard")
+            };
+            let thinking = crate::model_thinking::thinking_json(model_id);
+            // Retired Allternit Cloud aliases: still listed so a saved choice
+            // stays valid, but flagged, never a default, and sorted last.
+            let hidden = model.get("hidden").and_then(|v| v.as_bool()).unwrap_or(false);
+            let (is_default, rank) = model_default_and_rank(cli_tool, model_id, model);
+            let mut row = json!({
                 "id": format!("{}/{}", provider_id, model_id),
                 "name": format!("{} ({})", model_name, provider_name),
                 "provider": provider_id,
-                "description": serde_json::Value::Null,
-                "tier": "local",
-                "supports_effort": false,
-            }));
+                "description": meta.map(|(d, _, _)| d),
+                "tier": tier,
+                "supports_effort": !thinking.is_null(),
+                "thinking": thinking,
+                "default": is_default && !hidden,
+                "rank": rank,
+            });
+            if hidden {
+                row["hidden"] = json!(true);
+            }
+            rows.push((hidden, rank, row));
         }
+        // Stable: visible before hidden, then rank ascending; equal ranks and
+        // the rankless tail keep model-id order.
+        rows.sort_by_key(|(hidden, rank, _)| (*hidden, rank.is_none(), rank.unwrap_or(u64::MAX)));
+        out.extend(rows.into_iter().map(|(_, _, row)| row));
     }
-    out
+    Some(out)
+}
+
+/// A model's `(default, rank)` for `/api/v1/models`: gizzi's own fields when
+/// present, else the embedded CLI catalog's (`tool` is the provider's catalog
+/// entry, `None` for non-CLI providers).
+fn model_default_and_rank(
+    tool: Option<&crate::cli_catalog::CliTool>,
+    model_id: &str,
+    model: &serde_json::Value,
+) -> (bool, Option<u64>) {
+    let is_default = model
+        .get("default")
+        .and_then(|v| v.as_bool())
+        .unwrap_or_else(|| tool.is_some_and(|t| t.is_default_model(model_id)));
+    let rank = model
+        .get("rank")
+        .and_then(|v| v.as_u64())
+        .or_else(|| tool.and_then(|t| t.model_rank(model_id)).map(|r| r as u64));
+    (is_default, rank)
 }
 
 /// GET /api/v1/models/recommend — ranks available models for a task + priority.
@@ -488,15 +655,18 @@ struct RecommendQuery {
 async fn recommend_models(
     State(state): State<Arc<AppState>>,
     Query(query): Query<RecommendQuery>,
-) -> impl IntoResponse {
+) -> Response {
     let task = query.task.as_deref().unwrap_or("balanced").to_lowercase();
     let priority = query.priority.as_deref().unwrap_or("quality").to_lowercase();
 
-    let mut catalog = crate::provider_routes::available_model_catalog();
-    catalog.extend(fetch_live_local_models(&state).await);
+    let Some(catalog) = fetch_live_model_catalog(&state).await else {
+        return models_unavailable();
+    };
 
     let mut recommendations: Vec<serde_json::Value> = catalog
         .into_iter()
+        // Hidden (retired) models stay valid for saved choices but are never offered.
+        .filter(|model| model.get("hidden").and_then(|v| v.as_bool()) != Some(true))
         .map(|model| {
             let (score, reason) = score_model_for_task(&model, &task, &priority);
             let mut rec = model.clone();
@@ -512,7 +682,7 @@ async fn recommend_models(
         b_score.partial_cmp(&a_score).unwrap_or(std::cmp::Ordering::Equal)
     });
 
-    Json(json!({ "task": task, "priority": priority, "recommendations": recommendations }))
+    Json(json!({ "task": task, "priority": priority, "recommendations": recommendations })).into_response()
 }
 
 fn tier_base_weight(tier: &str) -> f64 {
@@ -676,7 +846,7 @@ async fn proxy_voice_stream(service_path: &str, body: Body) -> Response {
 
     // No overall timeout on purpose — these streams are long-lived (same
     // reasoning as the gizzi event-stream client above).
-    let upstream = match reqwest::Client::new()
+    let upstream = match crate::net_client::client()
         .post(format!("{}/v1/{}", voice_base(), service_path))
         .header("Content-Type", "application/json")
         .body(body_bytes)
@@ -746,9 +916,21 @@ struct AgentChatContext {
 /// (agents are not required to have persona files); other read failures are
 /// logged and skipped so they never fail the chat request. MEMORY.md is
 /// deliberately never read this way — too large for every send.
+/// The web serializer stores bot fields as JSON frontmatter at the top of
+/// SOUL.md and AGENTS.md (`---\n{...}\n---\n`). That is data for the editors,
+/// not instructions, so it never goes in the prompt.
+fn strip_json_frontmatter(text: String) -> String {
+    if text.starts_with("---\n{") {
+        if let Some(end) = text[4..].find("\n---\n") {
+            return text[4 + end + 5..].to_string();
+        }
+    }
+    text
+}
+
 fn read_workspace_md(dir: &std::path::Path, name: &str) -> Option<String> {
     match std::fs::read_to_string(dir.join(name)) {
-        Ok(text) => Some(text),
+        Ok(text) => Some(strip_json_frontmatter(text)),
         Err(e) => {
             if e.kind() != std::io::ErrorKind::NotFound {
                 warn!(
@@ -781,6 +963,14 @@ fn read_instruction_files(dir: &std::path::Path) -> Option<String> {
                 .filter(|text| !text.is_empty())
                 .map(|text| format!("--- {} ---\n{}", name, text))
         })
+        .chain(
+            // USER.md (the bot's notes about its user) rides after the
+            // canonical files; it is not part of the pack.ts list.
+            read_workspace_md(dir, "USER.md")
+                .map(|text| text.trim().to_string())
+                .filter(|text| !text.is_empty())
+                .map(|text| format!("--- USER.md ---\n{}", text)),
+        )
         .collect();
     if parts.is_empty() {
         None
@@ -809,6 +999,13 @@ fn user_layers(profile: Option<&str>, writing_style: Option<&str>) -> Option<Str
 /// The `metadata` sent to gizzi for a turn, which gizzi stores on the user
 /// message: only the composer's `metadata.tools`, never anything else from
 /// the send body (in particular never `client_location`).
+///
+/// `metadata.tools` is forwarded whole on purpose: the gizzi runtime owns its
+/// schema (`MobileTools` in cmd/gizzi-code/src/runtime/session/prompt.ts),
+/// so new per-turn options need no change here. One of them is
+/// `computer: true` (contracts/pet-offers `turnOptions.computer`), which turns
+/// on the computer toolset for that turn only; the lease and confirm gates in
+/// computer_toolset.rs / computer_safety.rs still decide every call.
 fn stored_turn_metadata(body: &serde_json::Value) -> Option<serde_json::Value> {
     body.get("metadata")
         .and_then(|m| m.get("tools"))
@@ -1009,6 +1206,8 @@ fn tool_frames_for_part(
     }
     if settled {
         frames.push(if status == "completed" {
+            // run_code's `files[]` + `run` are added by the caller off the
+            // async stream (gizzi_chat_stream::run_code_payload_async).
             json!({
                 "type": "tool_result",
                 "messageId": msg_id,
@@ -1545,6 +1744,9 @@ async fn agent_chat_bridge(
                     .optional()?;
                 row.map(|(system_prompt, provider, model)| {
                     let dir = workspace_dir_for(agent_id);
+                    // Legacy `.allternit/bot/<file>` copies move to the root
+                    // first; a failure never fails the chat.
+                    crate::agent_workspace_routes::unify_legacy_files(&dir);
                     AgentChatContext {
                         system_prompt,
                         provider,
@@ -1694,29 +1896,41 @@ async fn agent_chat_bridge(
 
     // Parse model from runtimeModelId or modelId — strip provider prefix if present.
     // Client-sent model ids always win; without one, fall back to the agent's
-    // provider/model, then to the environment-configurable default so the
-    // packaged app can target any Gizzi provider/model without recompiling.
+    // provider/model, then to the explicit default (env or the user's saved
+    // pick). No choice anywhere → 409 no_brain; the apps ask the user to pick.
     let (default_provider, default_model_id) = default_model();
-    let default_label = format!("{}/{}", default_provider, default_model_id);
+    let default_label = (!crate::config::is_no_brain(&default_provider, &default_model_id))
+        .then(|| format!("{}/{}", default_provider, default_model_id));
     let agent_model_label = if agent.provider.trim().is_empty() || agent.model.trim().is_empty() {
         None
     } else {
         Some(format!("{}/{}", agent.provider, agent.model))
     };
-    let raw_model = body_json
+    let Some(raw_model) = body_json
         .get("runtimeModelId")
         .or_else(|| body_json.get("modelId"))
         .and_then(|v| v.as_str())
+        .filter(|v| !v.trim().is_empty())
         .or(agent_model_label.as_deref())
-        .unwrap_or(&default_label)
+        .or(default_label.as_deref())
         // Frontend model ids use the `provider::model` convention; the runtime
         // expects `provider/model`. Normalize so both forms route.
-        .replace("::", "/");
+        .map(|raw| raw.replace("::", "/"))
+    else {
+        return crate::config::no_brain_error().into_response();
+    };
 
     let (provider_id, model_id) = if let Some((p, m)) = raw_model.split_once('/') {
         (p.to_string(), m.to_string())
     } else {
         (default_provider, raw_model.clone())
+    };
+    // A saved choice of a retired CLI model id (`claude-cli/claude-fable-5-1`)
+    // keeps working: it runs as the catalog's replacement. Only renames the
+    // user's own choice; never picks one.
+    let model_id = match crate::cli_catalog::find(&provider_id) {
+        Some(tool) => tool.current_model_id(&model_id).to_string(),
+        None => model_id,
     };
 
     let gizzi = gizzi_base();
@@ -1846,6 +2060,8 @@ async fn agent_chat_bridge(
     // for the next send unless this turn was already the retry.
     let repair_user = user_id_for_record.clone();
     let repair_chat = chat_id.clone();
+    let skill_chat_id = chat_id.clone();
+    let skill_agent_id = agent_id.clone();
     let repair_note = if resume.is_none() && crate::card_repair::enabled() {
         crate::card_repair::take(&repair_user, &repair_chat)
     } else {
@@ -1905,13 +2121,15 @@ async fn agent_chat_bridge(
             }
         };
 
-        // POST message to gizzi. `effort` (low|medium|high, from the mobile
-        // model picker) is forwarded verbatim — runtimes ignore it for
-        // models without reasoning support.
+        // POST message to gizzi. `effort` is the picker's thinking level. It is
+        // kept only when the model takes it (model-thinking.json) and goes to
+        // gizzi as the turn's `variant`, which gizzi turns into the vendor's
+        // own setting (Claude effort, OpenAI reasoning effort, Gemini thinking
+        // level) or the CLI's flag. gizzi ignores a bare `effort` field.
         let effort = body_json
             .get("effort")
             .and_then(|v| v.as_str())
-            .filter(|s| !s.is_empty());
+            .and_then(|level| crate::model_thinking::checked_level(&model_id, level));
 
         // Composer attachments: `attachments: [{url?, dataBase64?, mediaType,
         // name?}]` — uploaded refs (POST /api/v1/uploads) or inline data URLs.
@@ -1928,8 +2146,9 @@ async fn agent_chat_bridge(
         if let Some(pin) = &provider_routing_pin {
             gizzi_payload["provider"] = pin.clone();
         }
-        if let Some(effort) = effort {
+        if let Some(effort) = &effort {
             gizzi_payload["effort"] = json!(effort);
+            gizzi_payload["variant"] = json!(effort);
         }
         // The session's working folder (its project's folder): gizzi runs
         // the turn's tools and CLI agents there. "" clears it.
@@ -1977,6 +2196,17 @@ async fn agent_chat_bridge(
                 gizzi_payload["metadata"] = json!({});
             }
             gizzi_payload["metadata"]["subscription"] = json!({ "action_id": action_id });
+        }
+        // Fast (the picker's tile): the account's priority tier, only for a
+        // model whose account offers one (model-thinking.json `fast`, Codex).
+        // gizzi sends it as the turn's service tier.
+        if body_json.get("fast").and_then(|v| v.as_bool()) == Some(true)
+            && crate::model_thinking::offers_fast(&model_id)
+        {
+            if !gizzi_payload["metadata"].is_object() {
+                gizzi_payload["metadata"] = json!({});
+            }
+            gizzi_payload["metadata"]["service_tier"] = json!("priority");
         }
 
         // The user's MCP connectors reach gizzi only through the per-user proxy:
@@ -2296,8 +2526,21 @@ async fn agent_chat_bridge(
                         if part_type == "tool"
                             && part.get("sessionID").and_then(|v| v.as_str()) == Some(session_id.as_str())
                         {
-                            for frame in tool_frames_for_part(part, &msg_id, &mut tool_frames_sent) {
+                            for mut frame in tool_frames_for_part(part, &msg_id, &mut tool_frames_sent) {
                                 let settled_ok = frame["type"] == "tool_result";
+                                // run_code: produced files → uploads (once per call, via
+                                // its manifest), `files[]` + `run` on the frame. The file
+                                // I/O runs on the blocking pool, not this stream.
+                                if settled_ok && frame["toolName"] == "run_code" {
+                                    if let Some(payload) = crate::gizzi_chat_stream::run_code_payload_async(
+                                        part.clone(),
+                                        Some(session_id.to_string()),
+                                    )
+                                    .await
+                                    {
+                                        crate::gizzi_chat_stream::merge_run_code_payload(&mut frame, payload);
+                                    }
+                                }
                                 yield Ok(sse_frame(trace_cursor).data(frame.to_string()));
                                 // MCP Apps: a completed tool whose connector declares a
                                 // ui:// resource also yields an `mcp_app` frame.
@@ -2334,6 +2577,18 @@ async fn agent_chat_bridge(
                                     .pointer("/state/status")
                                     .and_then(|v| v.as_str())
                                     .unwrap_or("");
+                                // Only a skill that loaded counts: a refused one ends in `error`.
+                                if status == "completed" {
+                                    crate::skill_use::record_from_part(
+                                        &state.db,
+                                        &user_id_for_record,
+                                        skill_agent_id.as_deref(),
+                                        &skill_chat_id,
+                                        call_id,
+                                        part,
+                                    )
+                                    .await;
+                                }
                                 if status == "running" {
                                     if let Some(link) = dag_link.clone() {
                                         let db = state.db.clone();
@@ -2505,25 +2760,8 @@ async fn agent_chat_bridge(
                             // (e.g. after an SSE reconnect replay); the row is
                             // keyed by the request id so it stays idempotent.
                             let _ = tokio::task::spawn_blocking(
-                                move || -> Result<(), rusqlite::Error> {
-                                    let conn = db.connect()?;
-                                    let fresh = conn.execute(
-                                        "INSERT OR IGNORE INTO cowork_approvals (id, user_id, content, source) \
-                                         VALUES (?1, ?2, ?3, 'gizzi-permission')",
-                                        params![rid, uid, content],
-                                    )? == 1;
-                                    if fresh {
-                                        // Owner ledger → the cloud event backbone (approval.requested).
-                                        let _ = crate::runtime_events::record_user_event(
-                                            &conn,
-                                            &uid,
-                                            "approval.requested",
-                                            None,
-                                            &serde_json::json!({ "approvalId": rid, "source": "gizzi-permission" }),
-                                            Some(&format!("approval:{rid}:requested")),
-                                        );
-                                    }
-                                    Ok(())
+                                move || -> Result<bool, rusqlite::Error> {
+                                    record_gizzi_permission_ask(&db.connect()?, &uid, &rid, &content)
                                 },
                             )
                             .await;
@@ -2539,23 +2777,7 @@ async fn agent_chat_bridge(
                                     .pointer("/tool/messageID")
                                     .and_then(|v| v.as_str())
                                     .unwrap_or(""),
-                                "metadata": {
-                                    "sessionId": session_id,
-                                    "patterns": props
-                                        .get("patterns")
-                                        .cloned()
-                                        .unwrap_or_else(|| json!([])),
-                                    "requestId": request_id,
-                                    "grantKey": props
-                                        .get("permission")
-                                        .and_then(|v| v.as_str())
-                                        .and_then(crate::task_grants::approval_grant_key),
-                                    // D16 cards (send / provider question) render from this.
-                                    "subscription": props
-                                        .pointer("/metadata/subscription")
-                                        .cloned()
-                                        .unwrap_or(serde_json::Value::Null),
-                                },
+                                "metadata": tool_permission_frame_metadata(&session_id, &request_id, &props),
                             }).to_string()));
                         }
                     }
@@ -2710,6 +2932,15 @@ async fn body_to_bytes(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn prompt_files_lose_the_web_json_frontmatter_only() {
+        use super::strip_json_frontmatter as strip;
+        assert_eq!(strip("---\n{\n  \"a\": 1\n}\n---\n# SOUL\nHi".into()), "# SOUL\nHi");
+        assert_eq!(strip("# SOUL\nHi\n---\nmore".into()), "# SOUL\nHi\n---\nmore");
+        assert_eq!(strip("---\ntitle: x\n---\nbody".into()), "---\ntitle: x\n---\nbody");
+        assert_eq!(strip("---\n{unclosed".into()), "---\n{unclosed");
+    }
+
 
     use serde_json::json;
 
@@ -2845,7 +3076,7 @@ mod tests {
     #[tokio::test]
     async fn resume_seed_replays_every_page_after_the_cursor() {
         let gizzi = fake_gizzi(true).await;
-        let client = reqwest::Client::new();
+        let client = crate::net_client::client();
         let seed = super::fetch_resume_seed(&client, &gizzi, "ses_1", 10).await;
         assert_eq!(seed.replayed_through, 12);
         assert!(seed.busy);
@@ -2864,7 +3095,7 @@ mod tests {
     #[tokio::test]
     async fn resume_seed_reports_a_turn_that_already_ended() {
         let gizzi = fake_gizzi(false).await;
-        let seed = super::fetch_resume_seed(&reqwest::Client::new(), &gizzi, "ses_1", 12).await;
+        let seed = super::fetch_resume_seed(&crate::net_client::client(), &gizzi, "ses_1", 12).await;
         assert!(!seed.busy);
         assert!(seed.blocks.is_empty());
         assert_eq!(seed.replayed_through, 12);
@@ -2880,6 +3111,32 @@ mod tests {
         assert_eq!(super::delta_route("step-start"), super::DeltaRoute::Drop);
     }
     use super::*;
+
+    #[test]
+    fn tool_permission_frame_carries_the_run_code_script() {
+        // Seen live 2026-11-12: the Chat approval card for run_code showed only
+        // "python" because the frame dropped the ask's code/files.
+        let props = json!({
+            "permission": "run_code",
+            "patterns": ["python"],
+            "metadata": {
+                "language": "python",
+                "files": ["sales.csv"],
+                "code": "import pandas as pd",
+                "code_truncated": false
+            }
+        });
+        let m = tool_permission_frame_metadata("ses_1", "per_1", &props);
+        assert_eq!(m["code"], "import pandas as pd");
+        assert_eq!(m["files"], json!(["sales.csv"]));
+        assert_eq!(m["language"], "python");
+        assert_eq!(m["code_truncated"], false);
+        assert_eq!(m["patterns"], json!(["python"]));
+        assert_eq!(m["requestId"], "per_1");
+        // Other permissions do not copy arbitrary ask metadata.
+        let bash = json!({ "permission": "bash", "patterns": ["ls"], "metadata": { "code": "x" } });
+        assert!(tool_permission_frame_metadata("ses_1", "per_2", &bash).get("code").is_none());
+    }
 
     #[test]
     fn handoff_frame_reads_the_message_handoff() {
@@ -2920,6 +3177,24 @@ mod tests {
             .map(|loc| crate::client_location::location_layer(&loc))
             .unwrap();
         assert!(layer.starts_with("Where the user is (shared from their device just now, approximate): about 40.71, -74.01"));
+    }
+
+    #[test]
+    fn stored_turn_metadata_passes_the_computer_option_through() {
+        // Pet offers: a Desktop offer sends `metadata.tools.computer: true`;
+        // gizzi turns the computer toolset on for that turn only if the key
+        // arrives untouched next to the composer's other options.
+        let body = json!({
+            "chatId": "c1",
+            "message": "Fix the build error",
+            "metadata": { "tools": { "computer": true, "webSearch": false }, "client_location": { "lat": 1.0 } }
+        });
+        assert_eq!(
+            stored_turn_metadata(&body),
+            Some(json!({ "tools": { "computer": true, "webSearch": false } }))
+        );
+        // No tools object: nothing is stored, so the turn has no computer tools.
+        assert_eq!(stored_turn_metadata(&json!({ "metadata": { "computer": true } })), None);
     }
 
     /// D16: a send to a `subs-*` model mints `chat.send` only for a person's
@@ -3382,5 +3657,114 @@ mod tests {
         assert_eq!(question["summary"], "ChatGPT asks: Continue generating?");
         assert!(question["details"]["consequence"].as_str().unwrap().contains("Nothing is answered for you"));
         assert_eq!(question["requestId"], "perm_q1");
+    }
+
+    #[test]
+    fn model_catalog_lists_only_connected_gizzi_providers() {
+        let body = json!({
+            "all": [
+                { "id": "claude-cli", "name": "Claude Code", "source": "cli",
+                  "models": { "claude-opus-5-5": { "name": "Claude Opus 5.5" } } },
+                { "id": "allternit", "name": "Allternit Cloud", "source": "api",
+                  "models": { "some-new-model": { "name": "Some New Model" } } },
+                { "id": "sidecar", "name": "Sidecar", "source": "local",
+                  "models": { "claude-opus-5-5": { "name": "Local Opus" }, "qwen-coder": {} } },
+                { "id": "openai", "name": "OpenAI", "source": "env",
+                  "models": { "gpt-5": { "name": "GPT-5" } } }
+            ],
+            "connected": ["claude-cli", "allternit", "sidecar"],
+            "default": {}
+        });
+        let catalog = super::live_model_catalog(&body).expect("valid body");
+        let ids: Vec<&str> = catalog.iter().filter_map(|m| m["id"].as_str()).collect();
+        assert_eq!(ids.len(), 4);
+        assert!(ids.contains(&"claude-cli/claude-opus-5-5"));
+        assert!(ids.contains(&"allternit/some-new-model"));
+        assert!(ids.contains(&"sidecar/qwen-coder"));
+        assert!(!ids.iter().any(|id| id.starts_with("openai/")), "not connected, not listed");
+
+        let find = |id: &str| catalog.iter().find(|m| m["id"] == id).unwrap().clone();
+        let opus = find("claude-cli/claude-opus-5-5");
+        assert_eq!(opus["name"], "Claude Opus 5.5 (Claude Code)");
+        assert_eq!(opus["provider"], "claude-cli");
+        assert_eq!(opus["tier"], "flagship", "known model keeps its metadata tier");
+        assert_eq!(opus["description"], "For your toughest challenges");
+        assert_eq!(opus["supports_effort"], json!(!opus["thinking"].is_null()));
+
+        let unknown = find("allternit/some-new-model");
+        assert_eq!(unknown["tier"], "standard", "unknown remote model defaults to standard");
+        assert!(unknown["description"].is_null());
+
+        assert_eq!(find("sidecar/claude-opus-5-5")["tier"], "local", "local providers are always local");
+        let qwen = find("sidecar/qwen-coder");
+        assert_eq!(qwen["name"], "qwen-coder (Sidecar)", "model id stands in for a missing name");
+        assert_eq!(qwen["tier"], "local");
+    }
+
+    #[test]
+    fn model_catalog_orders_by_rank_and_fills_default_from_catalog() {
+        // Older gizzi: no `default`/`rank` on models, so CLI rows take them from
+        // the embedded catalog; the JSON object's alphabetical order is not kept.
+        let old = json!({
+            "all": [
+                { "id": "claude-cli", "name": "Claude Code", "models": {
+                    "claude-haiku-5-5": {}, "claude-opus-5-5": {}, "claude-sonnet-5-5": {}, "zz-unlisted": {} } },
+                { "id": "allternit", "name": "Allternit Cloud", "models": { "b": {}, "a": {} } }
+            ],
+            "connected": ["claude-cli", "allternit"]
+        });
+        let rows = super::live_model_catalog(&old).expect("valid body");
+        let ids: Vec<&str> = rows.iter().filter_map(|m| m["id"].as_str()).collect();
+        assert_eq!(
+            ids,
+            [
+                "claude-cli/claude-opus-5-5",
+                "claude-cli/claude-sonnet-5-5",
+                "claude-cli/claude-haiku-5-5",
+                "claude-cli/zz-unlisted",
+                "allternit/a",
+                "allternit/b",
+            ],
+            "providers keep gizzi order; rank first, rankless after"
+        );
+        let defaults: Vec<&str> = rows.iter().filter(|m| m["default"] == true).filter_map(|m| m["id"].as_str()).collect();
+        assert_eq!(defaults, ["claude-cli/claude-sonnet-5-5"]);
+        assert!(rows.iter().find(|m| m["id"] == "allternit/a").unwrap()["rank"].is_null());
+
+        // Newer gizzi sends them: its values win over the catalog.
+        let new = json!({
+            "all": [{ "id": "allternit", "name": "Allternit Cloud", "models": {
+                "a": { "rank": 1 }, "b": { "rank": 0, "default": true }, "c": {},
+                "0-old": { "rank": 0, "hidden": true, "default": true } } }],
+            "connected": ["allternit"]
+        });
+        let rows = super::live_model_catalog(&new).expect("valid body");
+        let ids: Vec<&str> = rows.iter().filter_map(|m| m["id"].as_str()).collect();
+        assert_eq!(ids, ["allternit/b", "allternit/a", "allternit/c", "allternit/0-old"]);
+        assert_eq!(rows[0]["default"], true);
+        assert_eq!(rows[0]["rank"], 0);
+        assert_eq!(rows[1]["default"], false);
+        assert!(rows[0].get("hidden").is_none(), "visible rows carry no hidden key");
+        assert_eq!(rows[3]["hidden"], true, "hidden rows stay listed, flagged");
+        assert_eq!(rows[3]["default"], false, "a hidden model is never a default");
+    }
+
+    #[test]
+    fn model_catalog_rejects_bad_gizzi_bodies() {
+        assert!(super::live_model_catalog(&json!({})).is_none());
+        assert!(super::live_model_catalog(&json!({ "all": [] })).is_none());
+        assert!(super::live_model_catalog(&json!({ "connected": [] })).is_none());
+        assert!(super::live_model_catalog(&json!("nope")).is_none());
+        assert_eq!(super::live_model_catalog(&json!({ "all": [], "connected": [] })), Some(vec![]));
+    }
+
+    #[test]
+    fn local_provider_rule() {
+        for id in ["sidecar", "ollama", "lmstudio", "bonsai", "omlx", "local-mlx", "localai"] {
+            assert!(super::is_local_provider(id), "{id}");
+        }
+        for id in ["allternit", "claude-cli", "openai", "codex-cli"] {
+            assert!(!super::is_local_provider(id), "{id}");
+        }
     }
 }

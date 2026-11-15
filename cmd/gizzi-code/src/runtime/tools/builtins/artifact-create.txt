@@ -14,7 +14,7 @@ Kinds and body formats (body_format is optional; it is inferred from the kind an
 - ops: application/vnd.allternit.ops+json (a live status sheet for one running thing: a deploy, site, MCP app, server or computer; header, actions and tabs of panels; use the format described in the system prompt under "Ops sheets")
 - motion: application/vnd.allternit.motion+json (scenes + props; use the format described in the system prompt)
 - page: text/html (a complete, self-contained page) or text/markdown
-- card: application/vnd.allternit.openui (OpenUI Lang; use the format described in the system prompt)
+- card: application/vnd.allternit.answer+json (version 1, template ID, title and validated data; use the enforced answer-template contract. No raw component layouts)
 - diagram: text/vnd.mermaid or image/svg+xml
 - image: text/uri-list (the image's URL, not its data)
 - code: text/plain, with meta.language (e.g. "python") and optionally meta.filename

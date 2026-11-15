@@ -7,9 +7,14 @@ import { SkillsCommand } from "@/cli/commands/skills"
 import { UpgradeCommand } from "@/cli/commands/upgrade"
 import { UninstallCommand } from "@/cli/commands/uninstall"
 import { ModelsCommand } from "@/cli/commands/models"
+import { StudioCommand } from "@/cli/commands/studio"
 import { HardwareCommand } from "@/cli/commands/hardware"
 import { ServeCommand } from "@/cli/commands/serve"
 import { PairCommand, LoginCommand } from "@/cli/commands/pair"
+import { ComputersCommand } from "@/cli/commands/computers"
+import { MeetingsCommand } from "@/cli/commands/meetings"
+import { PhoneCommand } from "@/cli/commands/phone"
+import { TeleportCommand } from "@/cli/commands/teleport"
 import { DebugCommand } from "@/cli/commands/debug"
 import { StatsCommand } from "@/cli/commands/stats"
 import { McpCommand } from "@/cli/commands/mcp"
@@ -28,6 +33,8 @@ import { InitCommand } from "@/cli/commands/init"
 import { DoctorCommand } from "@/cli/commands/doctor"
 import { VerificationCommand } from "@/cli/commands/verification"
 import { FabricWorkerCommand } from "@/cli/commands/fabric-worker"
+import { WorkerCommand } from "@/cli/commands/worker"
+import { RuntimeCommand } from "@/cli/commands/runtime"
 import { ProviderCommand } from "@/cli/commands/provider"
 import { AllternitCommand } from "@/cli/commands/allternit"
 import { BrainCommand } from "@/cli/commands/brain"
@@ -35,8 +42,10 @@ import { MemoryCommand } from "@/cli/commands/memory"
 import { ProductsCommand } from "@/cli/commands/products"
 import { HtmlArtifactCommand } from "@/cli/commands/html-artifact"
 import { ArtifactCommand } from "@/cli/commands/artifact"
+import { PdfCommand } from "@/cli/commands/pdf"
 import { ProgramsCommand } from "@/cli/commands/programs"
 import { OrgCommand } from "@/cli/commands/org"
+import { UsageCommand } from "@/cli/commands/usage"
 import { LabsCommand } from "@/cli/commands/labs"
 import { HookCommand } from "@/cli/commands/hook"
 import { TeamMcpCommand } from "@/cli/commands/team-mcp"
@@ -50,11 +59,14 @@ import { ProfileCommand } from "@/cli/commands/profile"
 import { PermissionProfileCommand } from "@/cli/commands/permission-profile"
 import { RemoteCommand } from "@/cli/commands/remote"
 import { CronLegacyStartCommand } from "@/cli/commands/cron"
+import { BotPauseAliasCommand } from "@/cli/commands/bot"
 import { AgentsCommand } from "@/cli/commands/factory/agents"
 import { TeamCommand } from "@/cli/commands/team"
 import { OrchestrationCommand } from "@/cli/commands/factory/orchestration"
 import { WorkflowsCommand } from "@/cli/commands/factory/workflows"
 import { WorkspaceCommand } from "@/cli/commands/factory/workspace"
+import { BoardCommand, SwarmCommand } from "@/cli/commands/factory/swarm"
+import { MissionCommand } from "@/cli/commands/mission"
 
 /**
  * Structural shape shared by every module in the registry. Deliberately
@@ -85,6 +97,11 @@ export const COMMANDS: RegisteredCommand[] = [
   OrchestrationCommand,
   WorkflowsCommand,
   WorkspaceCommand,
+  // Swarms over the Factory: start, watch, wait, land.
+  SwarmCommand,
+  BoardCommand,
+  // Missions: a long goal planned into milestones, each run as a swarm, validated and landed.
+  MissionCommand,
   AcpCommand,
   McpCommand,
   TuiThreadCommand,
@@ -100,9 +117,14 @@ export const COMMANDS: RegisteredCommand[] = [
   UninstallCommand,
   ServeCommand,
   PairCommand,
+  ComputersCommand,
+  MeetingsCommand,
+  PhoneCommand,
+  TeleportCommand,
   LoginCommand,
   WebCommand,
   ModelsCommand,
+  StudioCommand,
   HardwareCommand,
   StatsCommand,
   StatusCommand,
@@ -117,14 +139,19 @@ export const COMMANDS: RegisteredCommand[] = [
   DoctorCommand,
   VerificationCommand,
   FabricWorkerCommand,
+  // Self-hosted Agents Server: sandbox worker, and server profiles (`runtime register --self-hosted`, `runtime status`).
+  WorkerCommand,
+  RuntimeCommand,
   ProviderCommand,
   AllternitCommand,
   BrainCommand,
   MemoryCommand,
   HtmlArtifactCommand,
   ArtifactCommand,
+  PdfCommand,
   ProgramsCommand,
   OrgCommand,
+  UsageCommand,
   ProductsCommand,
   LabsCommand,
   UdemyCommand,
@@ -139,4 +166,6 @@ export const COMMANDS: RegisteredCommand[] = [
   TeamMcpCommand,
   // Hidden: installed cron supervisors still exec `gizzi cron start`.
   CronLegacyStartCommand,
+  // Hidden short form: `gizzi bot pause|resume`.
+  BotPauseAliasCommand,
 ]

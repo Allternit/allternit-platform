@@ -544,6 +544,11 @@ pub struct SendReq {
     /// Files to send with the message, already decoded and size-checked (`channel_files::parse`).
     #[serde(skip)]
     pub files: Vec<crate::channel_files::ChannelFile>,
+    /// The agent session whose turn asked for this send (a `phone_text` tool call).
+    /// A held send's `approval.requested` names it so the cloud can tie the approval
+    /// to that turn's Platform API response. Never from the HTTP body.
+    #[serde(skip)]
+    pub calling_session: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -709,7 +714,13 @@ pub async fn send(db: &DbHandle, tx: &dyn ChannelTransport, owner: &str, thread_
                 Some(a) => a,
                 None => {
                     let cx = Cx { owner: owner.into(), thread_id: thread_id.into(), bot_id: bot_id.clone(), generation, session_id, exec: json!({ "vendor": b.provider }) };
-                    let made = create_approval(db, &cx, "allternit", &format!("post to {}", b.provider), None, json!({ "text": text, "channel": b.channel, "provenance": crate::netops::provenance::latest_tainted(&conn, thread_id) }), Some(&corr)).map_err(|e| e.message)?;
+                    let made = create_approval(db, &cx, "allternit", &format!("post to {}", b.provider), None, {
+                        let mut d = json!({ "text": text, "channel": b.channel, "provenance": crate::netops::provenance::latest_tainted(&conn, thread_id) });
+                        if let Some(sid) = req.calling_session.as_deref().filter(|s| !s.is_empty()) {
+                            d["callingSession"] = json!(sid);
+                        }
+                        d
+                    }, Some(&corr)).map_err(|e| e.message)?;
                     if let Some(why) = &aut_hold {
                         crate::autonomy::finish(db, &act, aut.as_ref(), "held", &corr, text, why, Some(thread_id), json!({ "correlationId": corr, "approvalId": made, "text": text }));
                     }
@@ -1207,7 +1218,7 @@ async fn telegram_managed_available_h(State(state): State<Arc<AppState>>) -> Res
     let available = match state.config.cloud_api_url() {
         Some(base) => {
             let url = format!("{}/api/v1/channel-onboarding/telegram/available", base.trim_end_matches('/'));
-            match reqwest::Client::new().get(&url).timeout(std::time::Duration::from_secs(5)).send().await {
+            match crate::net_client::client().get(&url).timeout(std::time::Duration::from_secs(5)).send().await {
                 Ok(response) if response.status().is_success() => {
                     response.json::<Value>().await.ok().and_then(|v| v["available"].as_bool()).unwrap_or(false)
                 }
@@ -1312,7 +1323,7 @@ async fn channel_send_h(State(state): State<Arc<AppState>>, Extension(user): Ext
         Ok(f) => f,
         Err(e) => return (StatusCode::BAD_REQUEST, Json(json!({ "error": e.sentence(&binding.provider), "code": e.code().to_uppercase() }))).into_response(),
     };
-    let req = SendReq { text: b.text, posting_identity_id: b.posting_identity_id, correlation_id: b.correlation_id, consequential: b.consequential, allternit_approval_id: b.allternit_approval_id, files };
+    let req = SendReq { text: b.text, posting_identity_id: b.posting_identity_id, correlation_id: b.correlation_id, consequential: b.consequential, allternit_approval_id: b.allternit_approval_id, files, calling_session: None };
     outcome_response(send(&state.db, tx.as_ref(), &user.user_id, &thread_id, &req).await)
 }
 
@@ -1472,7 +1483,7 @@ impl ChannelTransport for SlackTransport {
         if let Some(t) = &out.thread {
             body["thread_ts"] = json!(t);
         }
-        let resp = reqwest::Client::new()
+        let resp = crate::net_client::client()
             .post("https://slack.com/api/chat.postMessage")
             .bearer_auth(token)
             .timeout(std::time::Duration::from_secs(15))
@@ -1500,7 +1511,7 @@ impl ChannelTransport for SlackTransport {
         if let Some(c) = cursor {
             q.push(("oldest", c.to_string()));
         }
-        let v: Value = reqwest::Client::new()
+        let v: Value = crate::net_client::client()
             .get("https://slack.com/api/conversations.replies")
             .bearer_auth(token)
             .query(&q)

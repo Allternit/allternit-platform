@@ -15,7 +15,10 @@ run = "CI=true pnpm install --frozen-lockfile --offline --ignore-scripts || CI=t
 [base]
 # `gizzi agents tree base refresh --build` runs these in the base through
 # scripts/build-queue, so every tree starts with warm check and debug output.
-build = ["cargo check --workspace --all-targets", "cargo build -p allternit-api -p allternit-factory"]
+# One command per package: lanes build `cargo build -p allternit-api` alone, and building two
+# packages together unifies features differently, so shared crates get other artifact names
+# and every tree rebuilt them (measured 2026-11-15: 384 s and 8.6 GB per new tree).
+build = ["cargo check --workspace --all-targets", "cargo build -p allternit-api", "cargo build -p allternit-factory"]
 
 [clean]
 build_dirs = ["target", "node_modules", "dist", ".next", "release", ".turbo", ".vite"]

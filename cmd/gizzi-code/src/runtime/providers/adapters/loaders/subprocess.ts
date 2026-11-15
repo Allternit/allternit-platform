@@ -8,6 +8,7 @@
  *   3. Maps driver AgentEvents to LanguageModelV2StreamParts.
  */
 
+import { ModelThinking } from "@/runtime/providers/discovery/model-thinking"
 import type { LanguageModelV2, LanguageModelV2StreamPart } from "@ai-sdk/provider"
 import { RuntimeService } from "@/runtime/runtime-service"
 import { RuntimeDriverFactory } from "@/runtime/runtime-driver-factory"
@@ -16,6 +17,7 @@ import { Log } from "@/shared/util/log"
 import { Token } from "@/shared/util/token"
 import { CliBridge } from "@/runtime/integrations/cli-bridge"
 import { extractSystemText } from "@/runtime/providers/adapters/loaders/system-text"
+import { imageAttachmentNote } from "@/runtime/providers/adapters/loaders/cli-image-attachments"
 import { Server } from "@/runtime/server/server"
 import { VendorSession } from "@/runtime/session/vendor-session"
 import { ContextBreakdown } from "@/runtime/session/context-breakdown"
@@ -211,10 +213,14 @@ export class SubprocessLanguageModel implements LanguageModelV2 {
     stream: ReadableStream<LanguageModelV2StreamPart>
     rawCall: { rawPrompt: unknown; rawSettings: Record<string, unknown> }
   }> {
-    const message = extractLastUserText(options.prompt ?? [])
-    if (!message) {
+    const lastText = extractLastUserText(options.prompt ?? [])
+    if (!lastText) {
       return emptyStream(options.prompt)
     }
+    const message = lastText + (await imageAttachmentNote(options.prompt ?? []).catch((err) => {
+      log.warn("could not save image attachments for the CLI", { err })
+      return ""
+    }))
 
     const { runtime, driver } = await RuntimeDriverFactory.resolveCli(this.providerID)
     const sessionID = resolveTaskSessionID(options?.headers)
@@ -237,6 +243,9 @@ export class SubprocessLanguageModel implements LanguageModelV2 {
       : undefined
     // The request names an account for this CLI (cli_accounts id, or "default").
     const cliAccountId = options?.headers?.["x-gizzi-cli-account"] || undefined
+    // The thinking level, when this model takes it (model-thinking.json).
+    const effort = ModelThinking.check(this.modelId, options?.headers?.["x-gizzi-effort"])
+    const serviceTier = options?.headers?.["x-gizzi-service-tier"] === "priority" ? "priority" : undefined
     const task = await driver.assign({
       taskId: generateTaskId(),
       prompt: message,
@@ -265,6 +274,8 @@ export class SubprocessLanguageModel implements LanguageModelV2 {
       toolsOff,
       subagents,
       cliAccountId,
+      effort,
+      serviceTier,
       // A bot turn: the CLI runs isolated from the user's own settings, with
       // the bot's tool allowlist (runtime/bots/bot-turn.ts).
       bot,

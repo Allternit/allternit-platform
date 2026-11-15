@@ -237,6 +237,15 @@ impl SchedulerService {
         let now = Utc::now();
         debug!("Scheduler tick at {}", now);
 
+        // Meetings `meeting_join` run: auto-join calendar meetings 2 minutes
+        // before start and move due scheduled bots to `launching` (the pod
+        // launcher takes them from there). Independent of the schedules below.
+        match crate::services::meeting_calendar::meeting_join_tick(&state.db, now).await {
+            Ok(stats) if stats != Default::default() => info!("meeting_join: {:?}", stats),
+            Ok(_) => {}
+            Err(e) => error!("meeting_join run failed: {}", e),
+        }
+
         // Claim the enabled schedules that are due. A claimed row is ours
         // alone until it is released, so a second API replica (or the
         // standalone daemon) polling the same database never fires it too.
@@ -654,5 +663,8 @@ fn haversine_distance(lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {
 /// Initialize and start the scheduler service
 pub fn start_scheduler_service(state: Arc<ApiState>, config: SchedulerConfig) {
     let service = SchedulerService::new(config);
+    // Meetings calendar sync rides along with the scheduler (5-minute
+    // cadence per connection; MEETINGS_CALENDAR_SYNC_ENABLED=0 turns it off).
+    crate::services::meeting_calendar::start_calendar_sync_task(state.clone());
     service.start(state);
 }

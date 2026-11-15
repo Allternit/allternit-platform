@@ -1,0 +1,88 @@
+{{- if .Values.migrate.enabled }}
+# Runs `admin migrate` before install and before every upgrade. Hooks run
+# before the release's normal resources exist, so the Job gets its own copy of
+# the settings (a hook ConfigMap) and uses the namespace's default service
+# account with no token.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "agents-server.fullname" . }}-migrate-settings
+  labels:
+    {{- include "agents-server.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migrate
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-10"
+    helm.sh/hook-delete-policy: before-hook-creation
+data:
+  settings.yaml: |
+    {{- include "agents-server.settings" . | nindent 4 }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "agents-server.fullname" . }}-migrate
+  labels:
+    {{- include "agents-server.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migrate
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "0"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: {{ .Values.migrate.backoffLimit }}
+  activeDeadlineSeconds: {{ .Values.migrate.activeDeadlineSeconds }}
+  template:
+    metadata:
+      labels:
+        {{- include "agents-server.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: migrate
+        app.kubernetes.io/part-of: allternit-selfhost
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: migrate
+          image: {{ include "agents-server.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["admin", "migrate"]
+          env:
+            {{- include "agents-server.env" . | nindent 12 }}
+          volumeMounts:
+            - name: settings
+              mountPath: /etc/allternit/settings.yaml
+              subPath: settings.yaml
+              readOnly: true
+            - name: data
+              mountPath: /var/lib/allternit-agents-server
+            - name: tmp
+              mountPath: /tmp
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          {{- with .Values.migrate.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      volumes:
+        - name: settings
+          configMap:
+            name: {{ include "agents-server.fullname" . }}-migrate-settings
+        - name: data
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

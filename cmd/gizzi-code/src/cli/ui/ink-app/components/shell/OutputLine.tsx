@@ -6,6 +6,7 @@ import { createHyperlink } from '../../utils/hyperlink';
 import { jsonParse, jsonStringify } from '../../utils/slowOperations';
 import { renderTruncatedContent } from '../../utils/terminal';
 import { MessageResponse } from '../MessageResponse';
+import { Highlight } from '@/shared/util/highlight';
 import { InVirtualListContext } from '../messageActions';
 import { useExpandShellOutput } from './ExpandShellOutputContext';
 export function tryFormatJson(line: string): string {
@@ -73,7 +74,9 @@ export function OutputLine(t0) {
 
   const formattedContent = t1;
   const color = isError ? "error" : isWarning ? "warning" : undefined;
-  const t2 = <Ansi>{formattedContent}</Ansi>;
+  // Error/warning output keeps its single color; plain output gets the shared
+  // highlighter (✓ green, ✕ red, paths cyan + bold, +N −M counts).
+  const t2 = <Ansi>{color ? formattedContent : Highlight.text(formattedContent)}</Ansi>;
 
   const t3 = <MessageResponse><Text color={color}>{t2}</Text></MessageResponse>;
 

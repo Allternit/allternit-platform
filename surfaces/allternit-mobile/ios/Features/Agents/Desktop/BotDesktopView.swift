@@ -253,6 +253,12 @@ struct BotDesktopView: View {
                     action: { session.retry() }
                 )
             }
+        case .needsCredentials(let needsUsername, let message):
+            connectionOverlay {
+                RFBCredentialsForm(needsUsername: needsUsername, message: message) { username, password in
+                    session.submitCredentials(username: username, password: password)
+                }
+            }
         case .live:
             if session.frame == nil {
                 connectionOverlay {
@@ -306,6 +312,7 @@ struct BotDesktopView: View {
         case .live: return "Live"
         case .reconnecting(let attempt): return "Reconnecting (\(attempt)/\(BotDesktopSession.maxReconnectAttempts))…"
         case .failed: return "Connection failed"
+        case .needsCredentials: return "Sign-in needed"
         }
     }
 
@@ -321,7 +328,7 @@ struct BotDesktopView: View {
 /// keyboard first responder (UIKeyInput for software keyboards, UIPress for
 /// hardware). Points are reported in view coordinates; the parent converts
 /// to framebuffer pixels.
-private struct DesktopInteractionOverlay: UIViewRepresentable {
+struct DesktopInteractionOverlay: UIViewRepresentable {
     var isKeyboardVisible: Bool
     var onTap: (CGPoint) -> Void
     var onRightClick: (CGPoint) -> Void
@@ -349,7 +356,7 @@ private struct DesktopInteractionOverlay: UIViewRepresentable {
     }
 }
 
-private final class DesktopKeyboardCaptureView: UIView, UIKeyInput {
+final class DesktopKeyboardCaptureView: UIView, UIKeyInput {
     var onTap: ((CGPoint) -> Void)?
     var onRightClick: ((CGPoint) -> Void)?
     var onKeysym: ((UInt32, Bool) -> Void)?

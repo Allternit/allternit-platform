@@ -26,7 +26,7 @@ cat error.log | gizzi exec "Diagnose the root cause"
 
 | Flag | Output |
 |------|--------|
-| *(default)* | Plain text response |
+| *(default)* | Tool lines, live command output, the reply and a closing line (see [How Gizzi shows work](/cli/output)) |
 | `--output-format json` | JSON response object |
 | `--output-format stream-json` | Streaming JSON event objects, one per line |
 
@@ -61,6 +61,10 @@ gizzi exec "Draft release notes from CHANGELOG.md" \
   | gizzi exec "Proofread and tighten the language"
 ```
 
+## Plan models are not for headless runs
+
+`gizzi run` (with or without `-p`) refuses a plan model (`plan/…`, `copilot-plan/…`, or a model from a direct plan sign-in) before it starts, with exit code 1. A plan answers only messages you type in the TUI. See [Connect](/cli/connect#plans-answer-only-you).
+
 ## Exit codes
 
 | Code | Meaning |
@@ -71,7 +75,7 @@ gizzi exec "Draft release notes from CHANGELOG.md" \
 | `3` | `--review`: the reviewer returned **FAIL** |
 | `4` | `--review`: the reviewer returned **PARTIAL** (something could not be checked) |
 
-A run whose session pauses before a usage limit (for example the Allternit Cloud free monthly limit) ends at once with exit code `1` and the message `Paused before a usage limit (…) until <date>`. In JSON output it is an `error` event named `SessionPaused`. Run again with `--model` on another provider.
+A run whose session pauses before a usage limit (for example your own subscription's 5-hour limit) ends at once with exit code `1` and the message `Paused before a usage limit (…) until <date>`. In JSON output it is an `error` event named `SessionPaused`. Run again with `--model` on another provider.
 
 ## Review in CI
 

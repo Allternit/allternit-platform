@@ -78,7 +78,7 @@ export function SkillsMenu({
 
   const handleCancel = t2;
   if (skills.length === 0) {
-    const t3 = <Text dimColor={true}>Create skills in .claude/skills/ or ~/.claude/skills/</Text>;
+    const t3 = <Text dimColor={true}>Create skills in .claude/skills/ or ~/.gizzi/skills/</Text>;
 
     const t4 = <Text dimColor={true} italic={true}><ConfigurableShortcutHint action="confirm:no" context="Confirmation" fallback="Esc" description="close" /></Text>;
 

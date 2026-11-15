@@ -65,7 +65,7 @@ export namespace Command {
       },
       [Default.REVIEW]: {
         name: Default.REVIEW,
-        description: "Review recent changes",
+        description: "Review recent changes (presets: security, perf, tests, diff)",
         template: PROMPT_REVIEW,
         hints: [],
       },

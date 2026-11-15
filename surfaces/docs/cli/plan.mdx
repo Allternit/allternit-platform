@@ -54,6 +54,8 @@ When you enter plan mode, the agent switches to a read-only stance:
 
 When the plan is ready, the agent exits plan mode and presents the plan for your approval. After approval, the agent implements the plan using the normal permission rules.
 
+On the approval prompt in the terminal, press `e` (or `ctrl+g`) to open the plan in `$EDITOR`. Change, add, remove or reorder steps, save and close: the prompt shows the edited plan, and the edited plan is what runs when you approve. `e` types into the feedback box instead while **No, keep planning** is selected.
+
 ## Plan file
 
 Each session in plan mode writes its plan to a Markdown file under the Gizzi Code configuration directory:
@@ -105,6 +107,8 @@ When the session's model is an installed coding CLI (one you connected under **P
 The CLI ends its turn as soon as the question is asked, so you can take as long as you need to review. Answer **Yes** and Gizzi starts a build turn that carries the plan out. Answer **No** and reply with notes to revise it. If the plan is presented again before you answer, the newer plan replaces the open question.
 
 In headless runs (`gizzi run`, `gizzi exec`) nobody can answer, so the CLI gives the plan as its final reply instead.
+
+In the Allternit apps, a plan with two or more numbered steps shows as an editable card: you can change, add, remove or reorder steps before you answer, and the agent runs your list. See [Edit and approve an agent's plan](/guides/plan-approval).
 
 ## Related docs
 

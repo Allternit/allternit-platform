@@ -10,8 +10,8 @@
  * column with CUF instead of printing, so nothing overwrites the image and
  * cursor tracking stays exact in both full-frame and diff writes.
  *
- * Terminals without a protocol (Apple Terminal, tmux, basic TERMs) get no
- * placeholders: callers check inlineImageProtocol() and render text instead.
+ * Terminals without a protocol (Apple Terminal, tmux without passthrough,
+ * basic TERMs) get no placeholders: callers check inlineImageProtocol() and render text instead.
  */
 export type InlineImageProtocol = 'iterm' | 'kitty'
 
@@ -21,26 +21,62 @@ const CUF = '\x1b[C'
 const SAVE = '\x1b7'
 const RESTORE = '\x1b8'
 
-export function detectInlineImageProtocol(env: NodeJS.ProcessEnv = process.env): InlineImageProtocol | null {
+/**
+ * Conservative detection from the environment. `force` (the header's
+ * `image` mode) skips the tmux refusal and assumes OSC 1337 when nothing
+ * is detected.
+ */
+export function detectInlineImageProtocol(
+  env: NodeJS.ProcessEnv = process.env,
+  force = false,
+  tmuxPassthrough: () => boolean = tmuxAllowsPassthrough,
+): InlineImageProtocol | null {
   const override = env.GIZZI_INLINE_IMAGES
   if (override === '0' || override === 'false') return null
   if (override === 'iterm' || override === 'kitty') return override
-  // tmux needs passthrough wrapping and per-pane placement; not supported.
-  if (env.TMUX) return null
+  if (env.TMUX) {
+    // tmux eats image escapes unless `allow-passthrough` is on, and Kitty
+    // placements don't survive it; OSC 1337 wrapped in a passthrough DCS does
+    // (iTerm2, WezTerm).
+    const outerIterm = env.LC_TERMINAL === 'iTerm2' || !!env.WEZTERM_EXECUTABLE
+    return (outerIterm || force) && tmuxPassthrough() ? 'iterm' : null
+  }
   const program = env.TERM_PROGRAM ?? ''
-  if (program === 'iTerm.app' || program === 'WezTerm') return 'iterm'
-  if (program === 'ghostty' || env.TERM === 'xterm-kitty' || env.KITTY_WINDOW_ID) return 'kitty'
-  return null
+  const term = env.TERM ?? ''
+  if (program === 'iTerm.app' || program === 'WezTerm' || env.WEZTERM_EXECUTABLE) return 'iterm'
+  if (program === 'ghostty' || env.GHOSTTY_RESOURCES_DIR || term === 'xterm-ghostty' || term === 'xterm-kitty' || env.KITTY_WINDOW_ID) return 'kitty'
+  return force ? 'iterm' : null
+}
+
+let passthrough: boolean | undefined
+function tmuxAllowsPassthrough(): boolean {
+  if (passthrough === undefined) {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { execFileSync } = require('child_process') as typeof import('child_process')
+      const v = execFileSync('tmux', ['show', '-gv', 'allow-passthrough'], { encoding: 'utf8', timeout: 500, stdio: ['ignore', 'pipe', 'ignore'] }).trim()
+      passthrough = v === 'on' || v === 'all'
+    } catch {
+      passthrough = false
+    }
+  }
+  return passthrough
 }
 
 let protocol: InlineImageProtocol | null | undefined
-export function inlineImageProtocol(): InlineImageProtocol | null {
+let forced: InlineImageProtocol | null | undefined
+/** The terminal's image protocol; `force` is the header's `image` mode. */
+export function inlineImageProtocol(force = false): InlineImageProtocol | null {
   if (protocol === undefined) protocol = detectInlineImageProtocol()
-  return protocol
+  if (protocol || !force) return protocol
+  if (forced === undefined) forced = detectInlineImageProtocol(process.env, true)
+  return forced
 }
+
 /** Test hook. */
 export function setInlineImageProtocolForTest(p: InlineImageProtocol | null | undefined): void {
   protocol = p
+  forced = p === undefined ? undefined : p
 }
 
 const heads = new Map<string, string>()
@@ -73,18 +109,24 @@ function escapeFor(p: InlineImageProtocol, pngBase64: string, cols: number, rows
   return out
 }
 
+/** DCS passthrough: tmux forwards the body to the outer terminal. */
+function tmuxWrap(seq: string): string {
+  return `\x1bPtmux;${seq.replace(/\x1b/g, '\x1b\x1b')}\x1b\\`
+}
+
 /**
  * Placeholder text reserving `cols` cells for an image, or null when the
  * terminal can't show images. `key` dedupes registrations.
  */
-export function inlineImagePlaceholder(key: string, pngBase64: string, cols: number, rows = 1): string | null {
-  const p = inlineImageProtocol()
+export function inlineImagePlaceholder(key: string, pngBase64: string, cols: number, rows = 1, force = false): string | null {
+  const p = inlineImageProtocol(force)
   if (!p || cols < 1) return null
   let head = byKey.get(key)
   if (!head) {
     head = String.fromCharCode(HEAD_BASE + byKey.size)
     byKey.set(key, head)
-    heads.set(head, SAVE + escapeFor(p, pngBase64, cols, rows, kittyId(head)) + RESTORE + CUF)
+    const seq = escapeFor(p, pngBase64, cols, rows, kittyId(head))
+    heads.set(head, SAVE + (process.env.TMUX ? tmuxWrap(seq) : seq) + RESTORE + CUF)
   }
   return head + INLINE_IMAGE_FILLER.repeat(cols - 1)
 }
@@ -107,8 +149,8 @@ export function inlineImageClear(key: string): string {
  * cell is a filler so later rows skip the image's cells without printing.
  * Null when the terminal can't show images.
  */
-export function inlineImageBlock(key: string, pngBase64: string, cols: number, rows: number): string[] | null {
-  const first = inlineImagePlaceholder(key, pngBase64, cols, rows)
+export function inlineImageBlock(key: string, pngBase64: string, cols: number, rows: number, force = false): string[] | null {
+  const first = inlineImagePlaceholder(key, pngBase64, cols, rows, force)
   if (first === null) return null
   return [first, ...Array.from({ length: rows - 1 }, () => INLINE_IMAGE_FILLER.repeat(cols))]
 }

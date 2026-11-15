@@ -92,7 +92,7 @@ async fn connect_h(
         return (StatusCode::UNAUTHORIZED, Json(json!({ "error": "not_signed_in" }))).into_response();
     };
     let url = format!("{}/api/v1/channels/whatsapp/accounts", crate::phone_sync::cloud_base().trim_end_matches('/'));
-    let resp = match reqwest::Client::new().get(url).header("authorization", auth).timeout(std::time::Duration::from_secs(10)).send().await {
+    let resp = match crate::net_client::client().get(url).header("authorization", auth).timeout(std::time::Duration::from_secs(10)).send().await {
         Ok(r) => r,
         Err(e) => return (StatusCode::BAD_GATEWAY, Json(json!({ "error": format!("cloud unreachable: {e}") }))).into_response(),
     };

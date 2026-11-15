@@ -23,6 +23,8 @@ import type { AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS } from 
 import { getAPIMetadata } from '../services/api/claude.js'
 import { getAllternitClient } from '../services/api/client.js'
 import { isLocalProviderModel, sideQueryLocalModel } from '../services/api/localModel.js'
+import { isCliBrainModel, sideQueryCliBrain } from '../services/api/cliBrain.js'
+import { isPersonOnlyRef, refusal } from '@/runtime/providers/person-plan/rules'
 import { getModelBetas, modelSupportsStructuredOutputs } from './betas.js'
 import { computeFingerprint } from './fingerprint.js'
 import { normalizeModelStringForAPI } from './model/model.js'
@@ -130,10 +132,13 @@ export async function sideQuery(opts: SideQueryOptions): Promise<BetaMessage> {
 
   // Provider-prefixed models (openrouter/…, local-mlx/…) go to their
   // OpenAI-compatible endpoint, like the main loop, so side queries (auto
-  // mode's classifier included) run on whichever model is chosen.
-  if (isLocalProviderModel(model)) {
+  // mode's classifier included) run on whichever model is chosen. CLI brains
+  // (claude-cli/…) run a text-only turn in the user's own CLI.
+  // The person's own plans answer only the person's composer sends, never a side call.
+  if (isPersonOnlyRef(model)) throw new Error(refusal(model, 'helper'))
+  if (isCliBrainModel(model) || isLocalProviderModel(model)) {
     const start = Date.now()
-    const response = (await sideQueryLocalModel({
+    const response = (await (isCliBrainModel(model) ? sideQueryCliBrain : sideQueryLocalModel)({
       model,
       system: Array.isArray(system) ? system : system ? [{ type: 'text', text: system }] : [],
       messages,

@@ -454,6 +454,9 @@ pub(crate) async fn connect_or_wake_runtime(
     )
     .await?;
     // Not a hosted runtime: a provisioned (free, sleeping) computer?
+    // A waking computer on Orgo restores its disk from storage first, so the
+    // wait for it is longer (`ProvisioningService::wake_wait_for_device`).
+    let mut wake_wait = WAKE_WAIT_TIMEOUT;
     let waking = match outcome {
         crate::services::HostedWakeOutcome::NotWakeable => return Ok(RelayConnect::Offline),
         crate::services::HostedWakeOutcome::NotHosted => {
@@ -463,7 +466,12 @@ pub(crate) async fn connect_or_wake_runtime(
                     return Ok(RelayConnect::Offline)
                 }
                 crate::services::ProvisionedWakeOutcome::AlreadyActive => false,
-                crate::services::ProvisionedWakeOutcome::Waking => true,
+                crate::services::ProvisionedWakeOutcome::Waking => {
+                    if let Some(longer) = provisioning.wake_wait_for_device(runtime_id).await {
+                        wake_wait = longer;
+                    }
+                    true
+                }
             }
         }
         crate::services::HostedWakeOutcome::Waking => true,
@@ -471,8 +479,15 @@ pub(crate) async fn connect_or_wake_runtime(
     };
     // The machine is (or was already) starting: poll the hub until the daemon
     // reconnects, bounded so a wedged boot does not pin the request.
-    let deadline = Instant::now() + WAKE_WAIT_TIMEOUT;
+    let deadline = Instant::now() + wake_wait;
     loop {
+        // A wake the host refused for capacity will not finish: say so now
+        // instead of waiting out the deadline and answering "starting".
+        if waking {
+            if let Some(message) = provisioning.wake_capacity_failure_for_device(runtime_id).await {
+                return Err(ApiError::ServiceUnavailable(message));
+            }
+        }
         if let Some(connection) = relay_hub()
             .read()
             .await
@@ -532,6 +547,8 @@ pub(crate) async fn issue_socket_ticket(
     runtime_id: &str,
     path: String,
 ) -> Result<serde_json::Value, ApiError> {
+    // Compute gate, as for relayed requests (no-op unless the flag is on).
+    crate::routes::account_compute::require_compute(&state.db, user_id).await?;
     let capabilities = runtime_capabilities(&state.db, runtime_id, user_id).await?;
     if !capabilities
         .iter()
@@ -1162,6 +1179,10 @@ pub(crate) async fn relay_request_to_runtime_with(
     extra_allowed: &[&str],
     trusted: HashMap<String, String>,
 ) -> Result<Response, ApiError> {
+    // Compute gate: every relayed request is agent entry. An account with no
+    // computer (or only a suspended one) gets the contract's 409 before any
+    // wake. A no-op unless ALLTERNIT_COMPUTE_GATE=on.
+    crate::routes::account_compute::require_compute(db, user_id).await?;
     let capabilities = runtime_capabilities(db, runtime_id, user_id).await?;
     if !capabilities
         .iter()
@@ -1475,6 +1496,8 @@ fn is_allowed_runtime_path(path: &str) -> bool {
         "/panes",
         "/status",
         "/health",
+        // The connector sidecar's OAuth callback (reached by routes::connect_return).
+        "/oauth/callback",
         // gizzi-code mirrors its entire route surface under /v1/*, so this one
         // prefix covers BYO-VPS boxes (pty, sessions, events, instance, ...).
         "/v1",

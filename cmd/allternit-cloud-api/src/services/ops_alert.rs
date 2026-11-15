@@ -50,7 +50,7 @@ pub fn send_once(key: &str, subject: String, body: String) {
     }
     let key = key.to_string();
     tokio::spawn(async move {
-        let result = reqwest::Client::new()
+        let result = crate::net_client::client()
             .post(url.trim())
             .bearer_auth(token.trim())
             .timeout(Duration::from_secs(15))

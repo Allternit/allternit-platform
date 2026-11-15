@@ -140,9 +140,9 @@ pub(crate) fn pick_template(message: &str) -> &'static AnswerTemplate {
 /// card suggestion (only when the card manual rides along).
 pub(crate) fn template_line(t: &AnswerTemplate, cards: bool) -> String {
     let mut line = format!("Use answer template: {} ({}).", t.name, outline(t));
-    if let (true, Some(card)) = (cards, &t.card) {
+    if cards && t.card.is_some() {
         line.push_str(&format!(
-            " If the user has to pick or adjust, a {card} card can hold that part."
+            " For an interactive answer use the version 1 \"{}\" JSON template; the app owns its layout.", t.id
         ));
     }
     line
@@ -166,7 +166,7 @@ mod tests {
     /// SHA-256 of the two shared files. allternit-ai's answer-shapes.test.ts
     /// pins the same values: change a file in both repos, then both pins.
     const SHAPES_MD_SHA256: &str =
-        "1ad471125703864897a5d723cc11ff462621e3ee4b87d486c2f29f280e85acb3";
+        "534afbf8f28416ad72981ec898e3a7e12a778e1dfbc9ac67b9105e0a19301f08";
     const TEMPLATES_JSON_SHA256: &str =
         "a92ff59eff6128c314c65d224ac64016a7134b404849d0bb3c1d69fd20dbdd7f";
 
@@ -285,13 +285,13 @@ mod tests {
             template_line(cmp, false),
             "Use answer template: Comparison (Criteria, Comparison (table, one row per option), Recommendation, What would change my choice, Next step)."
         );
-        assert!(template_line(cmp, true).ends_with("a Compare card can hold that part."));
+        assert!(template_line(cmp, true).contains("version 1 \"comparison\" JSON template"));
         assert!(!template_line(pick_template("hi"), true).contains("card"));
         assert_eq!(turn_template_line("  ", None), None);
         assert!(
             turn_template_line("plan my week", Some("x tagged `openui` y"))
                 .unwrap()
-                .contains("Checklist card")
+                .contains("version 1 \"plan\" JSON template")
         );
         assert!(!turn_template_line("plan my week", Some("no cards"))
             .unwrap()

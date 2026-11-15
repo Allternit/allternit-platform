@@ -11,8 +11,10 @@ import feedback from './commands/feedback/index.js'
 import clear from './commands/clear/index.js'
 import color from './commands/color/index.js'
 import commit from './commands/commit.js'
+import fix from './commands/fix.js'
 import copy from './commands/copy/index.js'
 import desktop from './commands/desktop/index.js'
+import remote from './commands/remote/index.js'
 import design from './commands/design/index.js'
 import commitPushPr from './commands/commit-push-pr.js'
 import compact from './commands/compact/index.js'
@@ -22,7 +24,9 @@ import cost from './commands/cost/index.js'
 import dash from './commands/dash/index.js'
 import dashboard from './commands/dashboard/index.js'
 import bots from './commands/bots/index.js'
+import customize from './commands/customize/index.js'
 import factory from './commands/factory/index.js'
+import board from './commands/board/index.js'
 import diff from './commands/diff/index.js'
 import ctx_viz from './commands/ctx_viz/index.js'
 import doctor from './commands/doctor/index.js'
@@ -49,14 +53,14 @@ import resume from './commands/resume/index.js'
 import native from './commands/native/index.js'
 import review, { ultrareview } from './commands/review.js'
 import session from './commands/session/index.js'
+import edit from './commands/edit/index.js'
 import share from './commands/share/index.js'
 import skills from './commands/skills/index.js'
 import status from './commands/status/index.js'
 import tasks from './commands/tasks/index.js'
-import teleport from './commands/teleport/index.js'
 import goal from './commands/goal.js'
 import loops from './commands/loops.js'
-import routines from './commands/routines.js'
+import { decisions, pr, projects, routines } from './commands/work/index.js'
 import live from './commands/live/index.js'
 import find from './commands/find/index.js'
 import grep from './commands/grep/index.js'
@@ -64,6 +68,7 @@ import cowork from './commands/cowork/index.js'
 import coworkProject from './commands/cowork-project/index.js'
 import artifact from './commands/artifact/index.js'
 import swarm from './commands/swarm/index.js'
+import mission from './commands/mission/index.js'
 import ontology from './commands/ontology/index.js'
 import directive from './commands/directive/index.js'
 import gc from './commands/gc/index.js'
@@ -181,6 +186,7 @@ import multiline from './commands/multiline/index.js'
 import cd from './commands/cd/index.js'
 import chrome from './commands/chrome/index.js'
 import stickers from './commands/stickers/index.js'
+import { isEnvTruthy } from './utils/envUtils.js'
 import advisor from './commands/advisor.js'
 import { logError } from './utils/log.js'
 import { toError } from './utils/errors.js'
@@ -276,9 +282,7 @@ export const INTERNAL_ONLY_COMMANDS = [
   resetLimits,
   resetLimitsNonInteractive,
   onboarding,
-  share,
   summary,
-  teleport,
   antTrace,
   perfIssue,
   env,
@@ -287,6 +291,28 @@ export const INTERNAL_ONLY_COMMANDS = [
   agentsPlatform,
   autofixPr,
 ].filter(Boolean)
+
+// Commands that are not finished in Gizzi. They call allternit-api routes
+// without the user's token (401) or routes that do not exist, or send
+// people to Claude Code's sticker shop. (/swarm is real now: it starts a
+// Factory swarm, so it stays visible.) Hidden and disabled until they work;
+// GIZZI_EXPERIMENTAL_COMMANDS=1 turns them back on for development.
+const UNFINISHED_COMMANDS = (): Command[] => [
+  cowork,
+  coworkProject,
+  ontology,
+  directive,
+  gc,
+  multimodal,
+  purpose,
+  receipts,
+  security,
+]
+
+function hideUnlessExperimental(cmd: Command): Command {
+  if (isEnvTruthy(process.env.GIZZI_EXPERIMENTAL_COMMANDS)) return cmd
+  return { ...cmd, isHidden: true, isEnabled: () => false }
+}
 
 // Declared as a function so that we don't run this until getCommands is called,
 // since underlying functions read from config, which can't be read at module initialization time
@@ -299,6 +325,7 @@ const COMMANDS = memoize((): Command[] => [
   autoCommand,
   branch,
   btw,
+  fix,
   cd,
   chrome,
   clear,
@@ -307,24 +334,20 @@ const COMMANDS = memoize((): Command[] => [
   config,
   copy,
   desktop,
+  remote,
   design,
-  cowork,
-  coworkProject,
-  swarm,
-  ontology,
-  directive,
-  gc,
-  multimodal,
-  purpose,
-  receipts,
-  security,
+  ...UNFINISHED_COMMANDS().map(hideUnlessExperimental),
   context,
   contextNonInteractive,
   cost,
   dash,
   dashboard,
   bots,
+  customize,
   factory,
+  board,
+  swarm,
+  mission,
   diff,
   doctor,
   editPrompt,
@@ -344,6 +367,9 @@ const COMMANDS = memoize((): Command[] => [
   loops,
   keybindings,
   routines,
+  decisions,
+  pr,
+  projects,
   live,
   installGitHubApp,
   installSlackApp,
@@ -371,7 +397,7 @@ const COMMANDS = memoize((): Command[] => [
   stats,
   status,
   statusline,
-  stickers,
+  hideUnlessExperimental(stickers),
   tag,
   theme,
   timestamps,
@@ -394,6 +420,8 @@ const COMMANDS = memoize((): Command[] => [
   ...(pet ? [pet] : []),
   resumeNow,
   keepGoing,
+  share,
+  edit,
   ...(proactive ? [proactive] : []),
   ...(briefCommand ? [briefCommand] : []),
   ...(assistantCommand ? [assistantCommand] : []),

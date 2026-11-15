@@ -85,7 +85,7 @@ export function ModelPicker({
             type="text"
             value={value}
             onChange={(e) => onChange(e.target.value)}
-            placeholder="provider/model, e.g. openai/gpt-4o-mini"
+            placeholder="model id, e.g. deepseek-v4.1-flash"
             className={INPUT_CLASS}
           />
         )}

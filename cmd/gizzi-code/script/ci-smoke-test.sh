@@ -21,6 +21,11 @@ bash script/ensure-sdk-dist.sh || exit 1
 
 SMOKE_LIST="test/smoke.txt"
 QUAR_LIST="test/quarantine.txt"
+ANSWER_POLICY_TEST="test/session/answer-policy.test.ts"
+if [ ! -f "$ANSWER_POLICY_TEST" ]; then
+  echo "ERROR: required answer-policy scenarios are missing: $ANSWER_POLICY_TEST" >&2
+  exit 2
+fi
 
 if [ ! -f "$SMOKE_LIST" ]; then
   echo "ERROR: $SMOKE_LIST not found" >&2
@@ -72,6 +77,7 @@ while IFS= read -r f; do
 done < <(bun -e 'import("./script/features.mjs").then(m => console.log(m.resolveFeatures().join("\n")))')
 echo "features: ${#feature_args[@]}"
 
+smoke_started=$SECONDS
 if command -v timeout >/dev/null 2>&1; then
   timeout "$SMOKE_TIMEOUT_SECONDS" bun test "${feature_args[@]}" --preload ./test/preload.ts --timeout 30000 "${entries[@]}"
 else
@@ -79,9 +85,26 @@ else
 fi
 rc=$?
 
+# These scenarios use the real runtime/store and a local vendor API fixture.
+# Keep them out of the shared process: legacy mock.module calls replace LLM
+# and provider modules there. They still share the original outer time budget.
+if [ "$rc" -eq 0 ]; then
+  remaining=$((SMOKE_TIMEOUT_SECONDS - (SECONDS - smoke_started)))
+  echo "=== required answer-policy runtime scenarios ==="
+  if [ "$remaining" -le 0 ]; then
+    rc=124
+  elif command -v timeout >/dev/null 2>&1; then
+    timeout "$remaining" bun test "${feature_args[@]}" --tsconfig-override=tsconfig.json --preload ./test/preload.ts --timeout 30000 "$ANSWER_POLICY_TEST"
+    rc=$?
+  else
+    perl -e 'alarm shift; exec @ARGV' -- "$remaining" bun test "${feature_args[@]}" --tsconfig-override=tsconfig.json --preload ./test/preload.ts --timeout 30000 "$ANSWER_POLICY_TEST"
+    rc=$?
+  fi
+fi
+
 echo
 if [ $rc -eq 0 ]; then
-  echo "SMOKE PASS: ${#entries[@]} entries green"
+  echo "SMOKE PASS: ${#entries[@]} entries and required answer-policy scenarios green"
 elif [ $rc -eq 124 ]; then
   echo "SMOKE FAIL: timed out after ${SMOKE_TIMEOUT_SECONDS}s" >&2
 else

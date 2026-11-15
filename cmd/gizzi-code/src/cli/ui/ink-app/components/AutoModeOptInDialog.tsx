@@ -54,7 +54,7 @@ export function AutoModeOptInDialog(t0) {
     };
 
   const onChange = t2;
-  const t3 = <Box flexDirection="column" gap={1}><Text>{AUTO_MODE_DESCRIPTION}</Text><Link url="https://docs.gizziio.com/security" /></Box>;
+  const t3 = <Box flexDirection="column" gap={1}><Text>{AUTO_MODE_DESCRIPTION}</Text><Link url="https://docs.allternit.com/security/overview" /></Box>;
 
   const t4 = true ? [{
       label: "Yes, and make it my default mode",

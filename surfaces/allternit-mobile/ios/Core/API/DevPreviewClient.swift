@@ -26,24 +26,28 @@ struct DevPreviewToken: Decodable, Sendable {
 /// resolution itself.
 final class DevPreviewClient: @unchecked Sendable {
     let baseURL: URL
-    private let client: APIClient
+    private let endpointBaseURL: URL
 
     init(baseURL: URL = AppConfig.gizziCodeBaseURL) {
         self.baseURL = baseURL
-        self.client = APIClient(
-            baseURL: baseURL,
-            tokenProvider: { try await AuthManager.shared.getToken() }
-        )
+        self.endpointBaseURL = baseURL
+    }
+
+    /// Per-call target: the given base URL, or — for the static default —
+    /// whatever `InstanceConnection.resolve()` picks now (explicit URL →
+    /// mesh → the relay to the user's computer).
+    private func client() async throws -> APIClient {
+        try await InstanceConnection.gizziClient(for: endpointBaseURL)
     }
 
     /// `GET v1/pty/:id/ports`.
     func ports(ptyID: String) async throws -> [DevServerPort] {
-        try await client.get(path: "v1/pty/\(Self.escape(ptyID))/ports")
+        try await client().get(path: "v1/pty/\(Self.escape(ptyID))/ports")
     }
 
     /// `POST v1/pty/:id/preview/token`.
     func mintPreviewToken(ptyID: String, port: Int) async throws -> DevPreviewToken {
-        try await client.post(
+        try await client().post(
             path: "v1/pty/\(Self.escape(ptyID))/preview/token",
             body: MintPreviewTokenRequest(port: port)
         )

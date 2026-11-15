@@ -90,7 +90,7 @@ async fn ticket_for(native_id: &str) -> Result<(String, String), Response> {
         ));
     };
     let url = format!("{}/api/v1/computers/paired/{}/peer-ticket", crate::phone_sync::cloud_base(), native_id);
-    let reply = reqwest::Client::new()
+    let reply = crate::net_client::client()
         .post(&url)
         .bearer_auth(token)
         .timeout(Duration::from_secs(20))
@@ -169,7 +169,7 @@ async fn proxy(
         url.push('?');
         url.push_str(&q);
     }
-    let client = reqwest::Client::new();
+    let client = crate::net_client::client();
     let req = match method {
         Method::GET => client.get(&url),
         Method::POST => client.post(&url).header("content-type", "application/json").body(body),

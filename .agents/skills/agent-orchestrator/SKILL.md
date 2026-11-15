@@ -7,7 +7,7 @@ description: Orchestrate external CLI agents (kimi, codex, agy, claude, grok, gi
 
 You are the **orchestrator**: you own scoping, task specs, monitoring, review, and bug-fixing. The **executor** is an external CLI agent running as a **Terminal bot** in an Allternit Factory pane. You never do the bulk implementation yourself — but you always verify it.
 
-The Factory is what Gizzi and Allternit Desktop both run. People and agents type `gizzi <part> <verb>`. The engine underneath (`allternit-factory`) is never typed. Brain page: `Allternit Brain/Products/Factory.md`. Dev docs: `allternit/surfaces/docs/factory/` (commands, determinism, migration). The older orchestration tools are merged into it, and their names are removed, not aliased.
+The Factory is what Gizzi and Allternit Desktop both run. People and agents type `gizzi <part> <verb>`. The engine underneath (`allternit-factory`) is never typed. Docs: https://docs.allternit.com/factory/commands (commands, determinism, migration). The older orchestration tools are merged into it, and their names are removed, not aliased.
 
 **Contract you can rely on** (every `gizzi` Factory verb):
 - `--json` prints one JSON document and nothing else. Mutations take `--dry-run` and print exactly what would change.
@@ -63,7 +63,7 @@ Do the analysis yourself, then write inside the executor's workdir:
 - `docs/<TOPIC>_MAP.md` — the full gap analysis.
 - `docs/<TOPIC>_PHASE_<N>_TASK.md` — one phase only, with constraints, file paths, and a deliverable sentinel/notes file.
 
-Executors can't read outside their workspace, so inline what they need (`Allternit Brain/delegation-runbook.md`).
+Executors can't read outside their workspace, so inline what they need in the task spec.
 
 ## Phase 2 — Spawn
 

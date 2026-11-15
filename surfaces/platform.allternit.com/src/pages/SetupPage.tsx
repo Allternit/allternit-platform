@@ -18,6 +18,7 @@ import {
   usePlatformUser,
 } from "@/lib/platform-auth-client";
 import { api, formatApiError } from "@/lib/api-client";
+import { isHiddenOnCloud } from "@/lib/availability";
 import { createGatewayKey } from "@/lib/gateway-keys";
 import { createApiKey } from "@/lib/api-keys";
 import { createProject, isPlatformDisabled, listProjects } from "@/lib/platform-projects";
@@ -407,7 +408,11 @@ export function SetupPage() {
       await cu.update({ unsafeMetadata: { ...(cu.unsafeMetadata ?? {}), platformPreferences: prefs } });
       setPlacesNote(null);
     } catch {
-      setPlacesNote("Could not save to your account. You can set routing later in Gateway → Routing policy.");
+      setPlacesNote(
+        isHiddenOnCloud("routingPolicy")
+          ? "Could not save to your account. You can change this later from Models."
+          : "Could not save to your account. You can set routing later in Gateway → Routing policy.",
+      );
     }
   }, [clerk, places]);
 
@@ -1069,11 +1074,13 @@ function ConnectedView(props: {
     })).filter((n) => n.t),
     { id: "hw", g: "Where it runs", t: "Your hardware", x: 330, y: 250, conn: hasAny(snap.devices), status: hasAny(snap.devices) ? countText(snap.devices, "paired device") : places.includes("hw") ? "Chosen · pair a machine" : "Available", desc: 'Paired machines run local models. Run "allternit pair" on the machine, then approve it in Devices.', to: "/devices" },
     { id: "managed", g: "Where it runs", t: "Managed compute", x: 330, y: 330, conn: hasAny(snap.runtimes), status: hasAny(snap.runtimes) ? countText(snap.runtimes, "runtime") : places.includes("managed") ? "Chosen · start a runtime" : "Available", desc: "Allternit-managed machines, billed from your credits.", to: "/compute" },
-    { id: "cloud", g: "Where it runs", t: "Cloud suppliers", x: 330, y: 410, conn: places.includes("cloud") && hasAny(snap.suppliers), status: countText(snap.suppliers, "supplier"), desc: "Cloud model suppliers behind one API. Set provider order in Gateway → Routing policy.", to: "/gateway/routing-policy" },
+    { id: "cloud", g: "Where it runs", t: "Cloud suppliers", x: 330, y: 410, conn: places.includes("cloud") && hasAny(snap.suppliers), status: countText(snap.suppliers, "supplier"), desc: isHiddenOnCloud("routingPolicy") ? "Cloud model suppliers behind one API. Browse what each model costs in Models." : "Cloud model suppliers behind one API. Set provider order in Gateway → Routing policy.", to: isHiddenOnCloud("routingPolicy") ? "/models" : "/gateway/routing-policy" },
     { id: "runs", g: "Workloads", t: "Runs", x: 960, y: 240, conn: hasAny(snap.runs), status: countText(snap.runs, "run"), desc: "Start agent runs from the console or the CLI: allternit run.", to: "/runs" },
     { id: "schedules", g: "Workloads", t: "Schedules", x: 960, y: 305, conn: hasAny(snap.schedules), status: countText(snap.schedules, "schedule"), desc: "Run agents on a schedule.", to: "/schedules" },
-    { id: "webhooks", g: "Workloads", t: "Webhooks", x: 960, y: 370, conn: hasAny(snap.webhooks), status: countText(snap.webhooks, "webhook"), desc: "Get called when a run finishes or needs approval.", to: "/manage/webhooks" },
-    { id: "batches", g: "Workloads", t: "Batches", x: 960, y: 435, conn: false, status: "Available", desc: "Send large volumes of requests asynchronously and retrieve results when they complete.", to: "/batches" },
+    { id: "webhooks", g: "Workloads", t: "Webhooks", x: 960, y: 370, conn: hasAny(snap.webhooks), status: countText(snap.webhooks, "webhook"), desc: "Get called when a run finishes or needs approval.", to: isHiddenOnCloud("orgWebhooks") ? "/platform/webhooks" : "/manage/webhooks" },
+    ...(isHiddenOnCloud("batches") ? [] : [
+      { id: "batches", g: "Workloads", t: "Batches", x: 960, y: 435, conn: false, status: "Available", desc: "Send large volumes of requests asynchronously and retrieve results when they complete.", to: "/batches" },
+    ]),
     { id: "curl", g: "SDKs", t: "curl", x: 520, y: 545, conn: lang === "curl", status: lang === "curl" ? "Your first call" : "Available", desc: "Any HTTP client works. The API is OpenAI-compatible.", href: "https://docs.allternit.com" },
     { id: "python", g: "SDKs", t: "Python", x: 640, y: 560, conn: lang === "python", status: lang === "python" ? "Your first call" : "Available", desc: "Use the OpenAI SDK with base_url set to api.allternit.com/v1.", href: "https://docs.allternit.com" },
     { id: "ts", g: "SDKs", t: "TypeScript", x: 760, y: 545, conn: lang === "ts", status: lang === "ts" ? "Your first call" : "Available", desc: "Use the OpenAI SDK with baseURL set to api.allternit.com/v1.", href: "https://docs.allternit.com" },

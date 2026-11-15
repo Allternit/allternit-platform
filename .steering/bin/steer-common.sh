@@ -74,10 +74,12 @@ steer_consult() {
     # Test/override path, e.g. STEER_CONSULT_CMD="cat canned-answer.txt"
     $STEER_CONSULT_CMD < "$prompt_file"
   elif [ -n "$factory" ]; then
-    "$factory" --root "$cwd" orchestration steer consult --cwd "$cwd" --prompt-file "$prompt_file"
+    # The engine prints `text: <answer>`; drop the label so an empty answer
+    # stays empty (gate fails open) instead of reading as a STEER.
+    "$factory" --root "$cwd" orchestration steer consult --cwd "$cwd" --prompt-file "$prompt_file" | sed '1s/^text:[[:space:]]*//'
   elif command -v gizzi >/dev/null 2>&1 \
     && (cd "$cwd" && gizzi orchestration steer --help 2>&1) | grep -qi 'consult'; then
-    (cd "$cwd" && gizzi orchestration steer consult --cwd "$cwd" --prompt-file "$prompt_file")
+    (cd "$cwd" && gizzi orchestration steer consult --cwd "$cwd" --prompt-file "$prompt_file") | sed '1s/^text:[[:space:]]*//'
   else
     (cd "$cwd" && kimi -p "$(cat "$prompt_file")" 2>/dev/null)
   fi

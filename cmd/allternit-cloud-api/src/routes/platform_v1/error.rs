@@ -25,6 +25,9 @@ pub struct PlatformError {
     /// Where to fix it (`payment_method_required`: the console billing page).
     /// Sent as `error.url` only when set.
     pub url: Option<String>,
+    /// A runtime refusal's machine reason and status (`owner_only`, `refused`), sent as `error.reason` / `error.status` when set.
+    pub reason: Option<String>,
+    pub refusal_status: Option<String>,
 }
 
 impl PlatformError {
@@ -36,11 +39,19 @@ impl PlatformError {
             message: message.into(),
             param: None,
             url: None,
+            reason: None,
+            refusal_status: None,
         }
     }
 
     pub fn with_url(mut self, url: impl Into<String>) -> Self {
         self.url = Some(url.into());
+        self
+    }
+
+    pub fn with_refusal(mut self, reason: Option<String>, status: Option<String>) -> Self {
+        self.reason = reason;
+        self.refusal_status = status;
         self
     }
 
@@ -118,7 +129,22 @@ impl IntoResponse for PlatformError {
         if let Some(url) = self.url {
             body["error"]["url"] = json!(url);
         }
-        (self.status, Json(body)).into_response()
+        if let Some(reason) = self.reason {
+            body["error"]["reason"] = json!(reason);
+        }
+        if let Some(status) = self.refusal_status {
+            body["error"]["status"] = json!(status);
+        }
+        let retry_after = self.status == StatusCode::SERVICE_UNAVAILABLE
+            && matches!(self.code.as_str(), "runtime_starting" | "computer_capacity");
+        let mut response = (self.status, Json(body)).into_response();
+        if retry_after {
+            response.headers_mut().insert(
+                axum::http::header::RETRY_AFTER,
+                axum::http::HeaderValue::from(crate::services::provisioning::CAPACITY_RETRY_AFTER_SECONDS),
+            );
+        }
+        response
     }
 }
 
@@ -144,7 +170,7 @@ impl From<ApiError> for PlatformError {
             | ApiError::InvalidToken(m)
             | ApiError::TokenExpired(m) => Self::authentication("unauthorized", m),
             ApiError::TooManyRequests(m) => Self::rate_limit("rate_limited", m),
-            ApiError::ServiceUnavailable(m) if m.starts_with(crate::services::provisioning::HOSTED_POOL_FULL) => {
+            ApiError::ServiceUnavailable(m) if crate::services::provisioning::is_capacity_message(&m) => {
                 Self::service_unavailable("computer_capacity", m)
             }
             ApiError::ServiceUnavailable(m) => {

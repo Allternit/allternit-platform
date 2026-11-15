@@ -8,7 +8,7 @@ type Props = {
 export function CostThresholdDialog({
     onDone
 }: Props) {
-  const t1 = <Box flexDirection="column"><Text>Learn more about how to monitor your spending:</Text><Link url="https://docs.gizziio.com/costs" /></Box>;
+  const t1 = <Box flexDirection="column"><Text>Learn more about how to monitor your spending:</Text><Link url="https://docs.allternit.com/cli/usage" /></Box>;
 
   const t2 = [{
       value: "ok",

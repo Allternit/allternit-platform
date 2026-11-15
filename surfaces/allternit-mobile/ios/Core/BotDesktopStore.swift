@@ -91,7 +91,17 @@ final class BotDesktopStore: ObservableObject {
             } catch is CancellationError {
                 // View went away mid-flight — keep current state.
             } catch {
-                self.update(botId) { $0.error = error.localizedDescription }
+                // A bot that never had a desktop is "off", not an error: the
+                // screen then offers to set one up (web resolveLiveBotDesktop).
+                if error.localizedDescription.contains("no persisted desktop sandbox") {
+                    self.update(botId) {
+                        $0.status = BotDesktopStatus(status: .off, controlState: .unknown, wsURL: nil,
+                                                     streamProtocol: .none, sandboxId: "",
+                                                     takenOverByUserId: nil, takenOverAt: nil)
+                    }
+                } else {
+                    self.update(botId) { $0.error = error.localizedDescription }
+                }
             }
         }
     }

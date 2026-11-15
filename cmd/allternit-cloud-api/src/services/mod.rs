@@ -1,9 +1,11 @@
 //! Core services for Cowork Runtime
 
 pub mod api_keys;
+pub mod account_erase;
 pub mod audit;
 pub mod auto_topup;
 pub mod billing_disputes;
+pub mod brain_runners;
 pub mod cloud_phones;
 pub mod contabo_runtime_service;
 pub mod cost_service;
@@ -13,8 +15,17 @@ pub mod fabric_ledger;
 pub mod executor_service;
 pub mod hosted_runtime_lifecycle;
 pub mod inference_keys;
+pub mod connections;
+pub mod copilot;
+pub mod voice_keys;
 pub mod inference_pool;
 pub mod inference_settlement;
+/// Allternit Meetings: calendar sync (Google + ICS) and the `meeting_join` auto-join run.
+pub mod meeting_calendar;
+/// Allternit Meetings: sealed Chrome profiles of the Meet bot accounts (docs/meetings/BOT-ACCOUNTS.md).
+pub mod bot_profiles;
+/// Allternit Meetings: one pod per meeting session (docs/meetings/CONTRACT.md).
+pub mod meeting_launcher;
 pub mod node_resolution;
 pub mod ops_alert;
 pub mod provisioning;
@@ -53,14 +64,15 @@ pub use hosted_runtime_lifecycle::{
     HostedWakeTarget,
 };
 pub use inference_settlement::{
-    check_inference_allowed, credit_balance_row, meter_json_response, meter_stream_response,
-    settle_inference, StreamSettlement, UsageMeteringBody,
+    check_inference_allowed, cloud_models_entitlement, credit_balance_row, meter_json_response,
+    meter_stream_response, settle_inference, CloudModelsEntitlement, StreamSettlement,
+    UsageMeteringBody,
 };
 pub use inference_pool::{
     check_free_tier_pool, free_tier_pool_policy, FreeTierPoolPolicy, InferencePoolService, PoolRow,
 };
 pub use inference_keys::{
-    byok_base_url, byok_enabled, mask_key, should_route_byok, InferenceKeyInfo,
+    byok_base_url, byok_enabled, is_key_provider, mask_key, should_route_byok, InferenceKeyInfo,
     InferenceKeyService, KeyValidator,
 };
 pub use node_resolution::{
@@ -76,7 +88,9 @@ pub use provisioning::{
     ProvisionDefaults, ProvisionError, ProvisionSpec, ProvisioningService, SuspendReason, INIT_SCRIPT,
     free_incus_name_for, note_runtime_attached, start_free_computer_task,
     touch_provisioned_activity, FreeDefaults, ProvisionedWakeOutcome, WakeReason, WakeResult,
-    TIER_FREE, TIER_PAID,
+    TIER_FREE, TIER_PAID, TIER_CREDIT, credit_computers_enabled, start_credit_computer_task,
+    CreditDefaults, CreditStart, CreditTick, CREDIT_SIZE_ID, plan_hours_usage, PlanHoursDefaults,
+    PlanHoursUsage, PLAN_OVERAGE_LEDGER_SOURCE,
 };
 pub use quota_service::{QuotaService, SharedQuotaService, UserQuota};
 pub use run_service::{RunListFilter, RunService, RunServiceImpl};

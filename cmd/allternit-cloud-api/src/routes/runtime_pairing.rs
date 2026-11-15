@@ -54,6 +54,9 @@ pub struct CreatePairingRequest {
     hostname: Option<String>,
     platform: Option<String>,
     version: Option<String>,
+    /// Stable random id the client keeps for this machine (see migration 119).
+    #[serde(default)]
+    machine_id: Option<String>,
     public_key: String,
     #[serde(default)]
     capabilities: Vec<String>,
@@ -181,6 +184,7 @@ struct PairingRow {
     hostname: Option<String>,
     platform: Option<String>,
     version: Option<String>,
+    machine_id: Option<String>,
     capabilities: String,
     status: String,
     user_id: Option<String>,
@@ -344,8 +348,8 @@ async fn create_pairing(
             public_key_fingerprint, name, runtime_type, hostname, platform,
             version, capabilities, status, user_id, organization_id,
             hosted_instance_id, byo_bootstrap_token_id, provisioned_instance_id,
-            expires_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+            expires_at, machine_id
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
         "#,
     )
     .bind(&pairing_id)
@@ -367,6 +371,7 @@ async fn create_pairing(
     .bind(byo_bootstrap_token_id.as_deref())
     .bind(provisioned_instance_id.as_deref())
     .bind(expires_at)
+    .bind(clean_machine_id(request.machine_id.as_deref()))
     .execute(&state.db)
     .await?;
 
@@ -540,7 +545,7 @@ async fn exchange_pairing(
     let pairing = sqlx::query_as::<_, PairingRow>(
         r#"
         SELECT id, user_code, challenge, public_key, public_key_fingerprint,
-               name, runtime_type, hostname, platform, version, capabilities,
+               name, runtime_type, hostname, platform, version, machine_id, capabilities,
                status, user_id, organization_id, hosted_instance_id,
                byo_bootstrap_token_id, provisioned_instance_id, expires_at
         FROM runtime_pairings
@@ -602,13 +607,19 @@ async fn exchange_pairing(
     // row exists: incrementing first meant a failed insert (or a desktop
     // poll retry) burned a slot even though the handshake never completed.
     // A cloud computer (provisioned or hosted) is entitled by its plan, not by
-    // the machine cap: Plus/Super/Ultra allow one machine, so a customer whose
+    // the machine cap: Plus/Max/Ultra allow one machine, so a customer whose
     // Mac is already paired could never pair the computer they paid for.
     let quota = state.quota_service.ensure_quota(&user_id).await?;
     if pairing.provisioned_instance_id.is_none() && pairing.hosted_instance_id.is_none() {
         state
             .quota_service
-            .check_active_device_cap(&user_id, &quota, pairing.hostname.as_deref(), pairing.platform.as_deref())
+            .check_active_device_cap(
+                &user_id,
+                &quota,
+                pairing.machine_id.as_deref(),
+                pairing.hostname.as_deref(),
+                pairing.platform.as_deref(),
+            )
             .await?;
     }
     let count_daily_pairing = pairing.hosted_instance_id.is_none()
@@ -625,13 +636,42 @@ async fn exchange_pairing(
     );
 
     let mut transaction = state.db.begin().await?;
+    // Re-pairing the same account on the same machine replaces its row (also an
+    // older row from before machine ids, matched by hostname + platform).
+    // Cloud computers are never replaced this way.
+    if pairing.provisioned_instance_id.is_none() && pairing.hosted_instance_id.is_none() {
+        if let Some(machine_id) = pairing.machine_id.as_deref() {
+            let legacy_key = crate::services::quota_service::machine_key(
+                pairing.hostname.as_deref(),
+                pairing.platform.as_deref(),
+            );
+            sqlx::query(
+                r#"
+                UPDATE runtime_devices
+                SET status = 'revoked', revoked_at = CURRENT_TIMESTAMP
+                WHERE user_id = $1 AND revoked_at IS NULL AND name = $2
+                  AND (
+                    machine_id = $3
+                    OR (machine_id IS NULL AND $4::TEXT IS NOT NULL
+                        AND REGEXP_REPLACE(LOWER(NULLIF(hostname, '')), '\.local$', '') || '|' || COALESCE(platform, '') = $4)
+                  )
+                "#,
+            )
+            .bind(&user_id)
+            .bind(&pairing.name)
+            .bind(machine_id)
+            .bind(legacy_key.as_deref())
+            .execute(&mut *transaction)
+            .await?;
+        }
+    }
     sqlx::query(
         r#"
         INSERT INTO runtime_devices (
             id, user_id, organization_id, name, runtime_type, hostname, platform,
             version, capabilities, public_key, public_key_fingerprint,
-            credential_hash, credential_expires_at, status, last_seen_at, kind
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'online', CURRENT_TIMESTAMP, $14)
+            credential_hash, credential_expires_at, status, last_seen_at, kind, machine_id
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'online', CURRENT_TIMESTAMP, $14, $15)
         "#,
     )
     .bind(&runtime_id)
@@ -648,6 +688,7 @@ async fn exchange_pairing(
     .bind(credential_hash)
     .bind(credential_expires_at)
     .bind(kind)
+    .bind(pairing.machine_id.as_deref())
     .execute(&mut *transaction)
     .await?;
     let consumed = sqlx::query(
@@ -820,7 +861,8 @@ async fn exchange_pairing(
 /// the relay can wake (same states `wake_for_device` wakes from). A sleeping
 /// one reads "offline", so clients need this to keep it as a runtime and let
 /// the first relayed request wake it. Only each device's newest instance
-/// counts; a free computer replaced by a paid one is left out.
+/// counts; a free computer replaced by a paid one is left out. Paid and
+/// credit computers on Orgo sleep too (30 idle minutes) and wake the same way.
 async fn wakeable_instances_by_device(
     db: &PgPool,
     user_id: &str,
@@ -828,7 +870,7 @@ async fn wakeable_instances_by_device(
     let rows = sqlx::query_as::<_, (String, String, bool)>(
         r#"
         SELECT DISTINCT ON (device_id) device_id, id,
-               (tier = 'free' AND replaced_by IS NULL
+               (((tier = 'free' AND replaced_by IS NULL) OR tier IN ('paid', 'credit'))
                 AND status IN ('sleeping', 'waking', 'provisioning'))
         FROM provisioned_instances
         WHERE user_id = $1 AND device_id IS NOT NULL AND status <> 'deleted'
@@ -1017,6 +1059,7 @@ async fn rotate_credential(
             previous_credential_expires_at = $1,
             credential_hash = $2,
             credential_expires_at = $3,
+            status = 'online',
             last_seen_at = CURRENT_TIMESTAMP
         WHERE id = $4
         "#,
@@ -1703,6 +1746,8 @@ mod tests {
             ("pi_waking", "user_1", Some("dev_waking"), "free", "waking", None, 0),
             ("pi_running", "user_1", Some("dev_running"), "free", "running", None, 0),
             ("pi_paid", "user_1", Some("dev_paid"), "paid", "stopped", None, 0),
+            // Orgo paid and credit computers sleep and wake like free ones.
+            ("pi_credit", "user_1", Some("dev_credit"), "credit", "sleeping", None, 0),
             ("pi_replaced", "user_1", Some("dev_replaced"), "free", "sleeping", Some("pi_paid"), 0),
             ("pi_nodev", "user_1", None, "free", "sleeping", None, 0),
             ("pi_other", "user_2", Some("dev_other"), "free", "sleeping", None, 0),
@@ -1731,7 +1776,10 @@ mod tests {
         let mut got: Vec<(&str, &str)> =
             wakeable.iter().map(|(d, i)| (d.as_str(), i.as_str())).collect();
         got.sort();
-        assert_eq!(got, vec![("dev_sleep", "pi_sleep"), ("dev_waking", "pi_waking")]);
+        assert_eq!(
+            got,
+            vec![("dev_credit", "pi_credit"), ("dev_sleep", "pi_sleep"), ("dev_waking", "pi_waking")]
+        );
     }
 
     #[tokio::test]
@@ -1949,4 +1997,14 @@ mod tests {
             .await
             .unwrap();
     }
+}
+
+/// A client-supplied machine id, or None if it is not a plain 16-64 character
+/// token (letters, digits, `-`, `_`). A bad value is ignored, not an error:
+/// the pairing then falls back to hostname + platform.
+fn clean_machine_id(raw: Option<&str>) -> Option<String> {
+    let id = raw?.trim();
+    let ok = (16..=64).contains(&id.len())
+        && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+    ok.then(|| id.to_string())
 }

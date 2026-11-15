@@ -31,6 +31,16 @@ MCowBQYDK2VwAyEAfFzE4gMEyDUK/Tb40TsLV5hXAYcD0Lro6gqWijht7ZU=
 
 export const DEFAULT_RUNTIME_FEED = 'https://runtime.allternit.com';
 
+/**
+ * How late a timer fired, in ms (0 when on time). The Electron main thread
+ * can block for minutes on a synchronous Keychain read (a SecurityAgent prompt
+ * nobody has answered); every timer, the runtime check included, waits until
+ * it returns. Logging the delay makes that visible instead of silent.
+ */
+export function timerLateMs(expectedAt: number, now = Date.now()): number {
+  return Math.max(0, now - expectedAt);
+}
+
 export interface RuntimeManifest {
   version: string;
   /** Monotonic build number (commit time, unix seconds). Higher wins. */
@@ -352,6 +362,7 @@ export class RuntimePackages {
 
   private async runCheck(feedUrl: string, fetchImpl: typeof fetch): Promise<string | null> {
     const base = `${feedUrl.replace(/\/$/, '')}/stable/${this.opts.platform}`;
+    this.opts.log?.info('[Runtime] checking', `${base}/latest.json`);
     // latest.json and its .sig are published one after the other: a check that
     // lands between them sees a mismatched pair, so read the pair again once.
     let raw: Buffer | null = null;
@@ -371,7 +382,20 @@ export class RuntimePackages {
       state.active ? (await this.readVerified(state.active))?.build ?? 0 : 0,
       state.pending ? (await this.readVerified(state.pending))?.build ?? 0 : 0,
     );
-    if (entry.build <= currentBuild || entry.shellApi > this.opts.shellApi || state.bad.includes(entry.version)) return null;
+    // Every outcome is logged: a check that returns quietly is indistinguishable from one that never ran.
+    if (entry.build <= currentBuild) {
+      this.opts.log?.info('[Runtime] up to date: feed has', entry.version, `(build ${entry.build}), this app has build ${currentBuild}`, state.pending ? `(${state.pending} staged)` : '');
+      return null;
+    }
+    if (entry.shellApi > this.opts.shellApi) {
+      this.opts.log?.warn('[Runtime] feed has', entry.version, `but it needs shell API ${entry.shellApi} and this app has ${this.opts.shellApi}: an app update is needed to take it`);
+      return null;
+    }
+    if (state.bad.includes(entry.version)) {
+      this.opts.log?.warn('[Runtime] feed has', entry.version, 'but it failed to start here before (marked bad): not retrying it');
+      return null;
+    }
+    this.opts.log?.info('[Runtime] staging', entry.version, `(build ${entry.build}, this app has build ${currentBuild})`);
     if (!/^[A-Za-z0-9._-]+$/.test(entry.version)) throw new Error('bad runtime version');
 
     fs.mkdirSync(this.versionsDir, { recursive: true });

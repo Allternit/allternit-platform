@@ -1,0 +1,59 @@
+---
+title: Managed authorization for your organization
+description: "Org admins turn on sign-in-free connectors for members, and let members of a trusted Claude or Okta org reach Allternit without a second sign-in."
+---
+
+Managed authorization lets an organization decide who can use which connector, so members don't each sign in to every app. It works in two directions:
+
+- **Allternit signs members in to a connector.** An org admin turns it on for a connector. When a member connects, Allternit vouches for them to the connector's sign-in server, and the connector is connected with no sign-in screen.
+- **Another app's org signs members in to Allternit.** An org admin trusts an outside issuer (a Claude organization, an Okta tenant). Members of that org who are also members of your Allternit org reach [your connectors from other AI apps](/guides/connectors-in-other-apps) and the agents server without signing in to Allternit again.
+
+Both follow the MCP extension [Enterprise-Managed Authorization](https://modelcontextprotocol.io/extensions/auth/enterprise-managed-authorization) (an "ID-JAG": a short signed note saying who the user is, for one app).
+
+## Who can change it
+
+Only **org admins** of your Allternit organization can turn these on or off. Other members see the settings read-only. Someone who isn't in an organization only sees the [other apps](/guides/connectors-in-other-apps) card.
+
+## Turn it on for a connector
+
+The connector's own sign-in server has to trust Allternit first. Ask the vendor (or your own team, for a custom MCP server) to add your org's **issuer URL**, shown with a copy button in the panel. It looks like:
+
+```text
+https://api.allternit.com/oauth2/org/<your org id>
+```
+
+The vendor gives you a **client ID** (and usually a **client secret**) for Allternit. Then, in **Settings › Connectors**, open the connector's **Managed authorization** panel and fill in:
+
+| Field | What it is |
+|---|---|
+| Roles | Which org roles may use it (for example admin and member). |
+| Scopes | What Allternit asks the connector for. |
+| Client ID, client secret | What the vendor gave you. The secret is stored sealed and never shown again. |
+
+Press **Save & turn on**. For a server that isn't in the directory, use **Custom MCP server** and also enter its sign-in server (issuer), token address and MCP address.
+
+Allternit doesn't mark any directory connector as ready for this until that vendor documents that it accepts an outside issuer. Until then every connector needs the vendor's setup above.
+
+## What members see
+
+A member whose role is allowed presses **Connect** as usual and is connected with no sign-in screen. The token renews itself; nobody is asked again.
+
+If it fails, Allternit says why in plain words (for example "Your role in the organization isn't allowed to use managed sign-in for this connector" or "Verify the email address on your Allternit account") and offers **Connect with sign-in instead**, the connector's normal sign-in. Allternit never switches to that by itself.
+
+Managed sign-in is only issued to a member whose email address is verified, whose role is allowed, and only while the setting is on. Turn it off and members' next renewal fails; they can still connect with their own sign-in.
+
+## Trust another app's organization
+
+Open **Settings › Connectors › Outside AI apps** and add an issuer:
+
+- **Claude:** your Claude organization's issuer URL, from Claude's organization settings.
+- **Okta:** your Okta tenant's issuer URL.
+- **Other:** any issuer that follows the extension, with its keys address if it isn't the usual one.
+
+Pick what its members may reach: **Connectors**, **Agents**, or both. Bots stay per person. A member is matched to an Allternit account only by a verified email address that belongs to exactly one member of your org. No match, or more than one, and the sign-in is refused; Allternit never guesses.
+
+Claude's own issuer format is not published yet. Allternit implements the extension as written and treats Claude-issued sign-ins as checked only once Claude's connector setup guide confirms the claims it sends.
+
+## For developers
+
+See [Allternit as an ID-JAG issuer](/security/allternit-idjag-issuer) and [Trusting outside issuers](/security/trusting-outside-issuers).

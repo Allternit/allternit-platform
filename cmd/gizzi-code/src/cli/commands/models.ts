@@ -2,7 +2,11 @@ import type { Argv } from "yargs"
 import { Instance } from "@/runtime/context/project/instance"
 import { Provider } from "@/runtime/providers/provider"
 import { ModelsDev } from "@/runtime/providers/adapters/models"
-import { Discovery } from "@/runtime/providers/discovery"
+import { ModelList } from "@/runtime/providers/model-list"
+import { currentDefaultBrain } from "@/runtime/providers/default-brain"
+import { CloudContinue } from "@/runtime/session/cloud-continue"
+import { cloudEntitlement } from "@/cli/ui/ink-app/services/allternitAccount"
+import { cloudCreditsDisclosure } from "@/shared/util/provider-error"
 import { cmd } from "@/cli/commands/cmd"
 import { UI } from "@/cli/ui"
 import { EOL } from "os"
@@ -14,6 +18,10 @@ import {
   downloadRepo,
   type RecommendationIntent,
 } from "@/runtime/services/localEngine"
+import { describeVerification } from "@/runtime/services/modelVerification"
+import { pullModel, verifyModel } from "@/cli/commands/models-pull"
+import { fetchFreeweightsCatalog } from "@/runtime/services/freeweightsCatalog"
+import { Sidecar } from "@/runtime/sidecar"
 
 const SOURCE_BADGE: Record<string, string> = {
   subprocess: UI.Style.TEXT_INFO_BOLD + "[cli]" + UI.Style.TEXT_NORMAL,
@@ -23,12 +31,27 @@ const SOURCE_BADGE: Record<string, string> = {
 }
 
 export const ModelsCommand = cmd({
-  command: "models [provider]",
+  command: "models [provider] [repo]",
   describe: "list, assess, and manage local models",
   builder: (yargs: Argv) => {
     return yargs
+      .positional("repo", {
+        describe: "Hugging Face repo id (org/repo) for `models pull` / `models verify`, or the query for `models search`",
+        type: "string",
+      })
+      .option("allow-unverified", {
+        describe: "pull: accept a model with no hash to check against (otherwise exits non-zero)",
+        type: "boolean",
+        default: false,
+      })
+      .option("catalog-source", {
+        describe: "search: where to search",
+        type: "string",
+        choices: ["all", "freeweights"],
+        default: "all",
+      })
       .positional("provider", {
-        describe: "provider ID to filter models by",
+        describe: "provider ID to filter models by, or: pull | verify | search",
         type: "string",
         array: false,
       })
@@ -41,9 +64,14 @@ export const ModelsCommand = cmd({
         type: "boolean",
       })
       .option("all", {
-        describe: "show all available providers (not just configured ones)",
+        describe: "show every models.dev provider, aggregators like OpenRouter included (default: what the model picker offers)",
         type: "boolean",
-        default: true,
+        default: false,
+      })
+      .option("json", {
+        describe: "print the sections and models as JSON",
+        type: "boolean",
+        default: false,
       })
       .option("catalog", {
         describe: "show the dynamic Hugging Face catalog from the Local Engine",
@@ -82,12 +110,55 @@ export const ModelsCommand = cmd({
         describe: "download and run a model by Hugging Face repo id",
         type: "string",
       })
+      .option("revision", {
+        describe: "pull/verify: branch, tag or commit (default main)",
+        type: "string",
+      })
       .option("quant", {
         describe: "quantization tag (e.g. Q4_K_M)",
         type: "string",
       })
   },
   handler: async (args) => {
+    if (args.provider === "pull" || args.provider === "verify") {
+      const repo = args.repo
+      if (!repo || !repo.includes("/")) {
+        UI.error(`Usage: gizzi models ${args.provider} <org/repo>${args.provider === "pull" ? " [--quant Q4_K_M] [--allow-unverified]" : ""}`)
+        process.exit(1)
+      }
+      try {
+        if (args.provider === "verify") process.exit(await verifyModel(repo, args.quant, args.revision))
+        process.exit(await pullModel(repo, args.quant, Boolean(args["allow-unverified"]), args.revision))
+      } catch (err) {
+        UI.error(err instanceof Error ? err.message : `Failed to ${args.provider}`)
+        process.exit(1)
+      }
+      return
+    }
+
+    if (args.provider === "search") {
+      const q = (args.repo ?? "").trim().toLowerCase()
+      try {
+        const fw = await fetchFreeweightsCatalog()
+        const fwHits = fw.filter((e) => !q || e.id.toLowerCase().includes(q))
+        const badge = UI.Style.TEXT_SUCCESS_BOLD + "[freeweights]" + UI.Style.TEXT_NORMAL
+        for (const e of fwHits.slice(0, args.limit)) UI.println(`  ${e.id}  ${badge}${e.section ? " " + e.section : ""}`)
+        if (args["catalog-source"] !== "freeweights") {
+          const seen = new Set(fwHits.map((e) => e.id.toLowerCase()))
+          const hf = await Sidecar.searchHuggingFace(q, args.limit)
+          for (const m of hf) {
+            if (seen.has(m.repoId.toLowerCase())) continue
+            UI.println(`  ${m.repoId}  ${m.downloads.toLocaleString()} downloads${m.freeweights ? " " + badge : ""}`)
+          }
+        }
+        process.exit(0)
+      } catch (err) {
+        UI.error(err instanceof Error ? err.message : "Search failed")
+        process.exit(1)
+      }
+      return
+    }
+
     // Local-engine actions take precedence over the provider listing.
     if (args.catalog) {
       try {
@@ -179,96 +250,77 @@ export const ModelsCommand = cmd({
 
     if (args.refresh) {
       await ModelsDev.refresh()
-      UI.println(UI.Style.TEXT_SUCCESS_BOLD + "Models cache refreshed" + UI.Style.TEXT_NORMAL)
+      // Make discovery re-read live CLI model lists instead of the cache.
+      process.env.GIZZI_MODELS_REFRESH = "1"
+      if (!args.json) UI.println(UI.Style.TEXT_SUCCESS_BOLD + "Models cache refreshed" + UI.Style.TEXT_NORMAL)
     }
 
     await Instance.provide({
       directory: process.cwd(),
       async fn() {
-        const modelsDev = await ModelsDev.get()
-        const configured = await Provider.list()
+        // With an explicit provider, show it even when the picker would not offer it.
+        const sections = await ModelList.build({ all: Boolean(args.all || args.provider) })
 
-        // Auto-discovered CLI/local providers
-        const discovered = await Discovery.run()
-        const discoveredMap: Record<string, typeof discovered[0]> = {}
-        for (const dp of discovered) discoveredMap[dp.id] = dp
-
-        function printModels(providerID: string, verbose?: boolean) {
-          const devProvider = modelsDev[providerID]
-          const configuredProvider = configured[providerID]
-          const provider = configuredProvider || devProvider
-          if (provider) {
-            const sortedModels = Object.entries(provider.models).sort(([a], [b]) => a.localeCompare(b))
-            for (const [modelID, model] of sortedModels) {
-              process.stdout.write(`${providerID}/${modelID}`)
-              process.stdout.write(EOL)
-              if (verbose) {
-                process.stdout.write(JSON.stringify(model, null, 2))
-                process.stdout.write(EOL)
-              }
-            }
-            return
-          }
-
-          // Discovered but not in models.dev (CLI/local providers)
-          const dp = discoveredMap[providerID]
-          if (dp) {
-            const badge = SOURCE_BADGE[dp.source] ?? ""
-            for (const m of dp.models) {
-              process.stdout.write(`${providerID}/${m.id}  ${badge}`)
-              process.stdout.write(EOL)
-              if (verbose) {
-                process.stdout.write(JSON.stringify({ context: m.context, output: m.output }, null, 2))
-                process.stdout.write(EOL)
-              }
-            }
-          }
-        }
-
-        // Build combined provider ID list
-        const allProviderIDs = new Set<string>([
-          ...(args.all ? Object.keys(modelsDev) : Object.keys(configured)),
-          ...Object.keys(discoveredMap),
-        ])
-
-        if (args.provider) {
-          if (!allProviderIDs.has(args.provider)) {
-            UI.error(`Provider not found: ${args.provider}`)
-            return
-          }
-          printModels(args.provider, args.verbose)
+        if (args.json) {
+          process.stdout.write(JSON.stringify(sections, null, 2) + EOL)
           return
         }
 
-        const sourceRank = (id: string) => {
-          const src = discoveredMap[id]?.source
-          if (src === "platform") return 0
-          if (src === "subprocess") return 1
-          if (src === "local") return 2
-          if (id.startsWith("gizzi")) return 3
-          return 4
-        }
-        const providerIDs = [...allProviderIDs].sort((a, b) => {
-          const d = sourceRank(a) - sourceRank(b)
-          if (d !== 0) return d
-          return a.localeCompare(b)
-        })
+        const configured = args.verbose ? await Provider.list().catch(() => ({}) as Record<string, any>) : {}
+        const modelsDev = args.verbose ? await ModelsDev.get().catch(() => ({}) as Record<string, any>) : {}
 
-        let lastGroup = ""
-        for (const providerID of providerIDs) {
-          const group =
-            discoveredMap[providerID]?.source === "platform"
-              ? "Allternit Cloud"
-              : discoveredMap[providerID]?.source === "subprocess"
-                ? "installed CLI"
-                : discoveredMap[providerID]?.source === "local"
-                  ? "local"
-                  : "other"
-          if (group !== lastGroup) {
-            UI.println(UI.Style.TEXT_DIM + `# ${group}` + UI.Style.TEXT_NORMAL)
-            lastGroup = group
+        if (args.provider) {
+          const found = sections.flatMap((s) => s.providers).find((p) => p.id === args.provider)
+          if (!found) {
+            UI.error(`Provider not found: ${args.provider}`)
+            return
           }
-          printModels(providerID, args.verbose)
+        }
+
+        const dim = (text: string) => UI.Style.TEXT_DIM + text + UI.Style.TEXT_NORMAL
+        // Cloud rows stay listed; on an account with no Cloud credits they read "needs credits".
+        const listsCloud = sections.some((s) =>
+          s.providers.some((p) => p.id === CloudContinue.PROVIDER_ID && (!args.provider || p.id === args.provider)),
+        )
+        const entitlement = listsCloud ? await cloudEntitlement() : undefined
+        const locked = await CloudContinue.lockCheck(entitlement).catch(() => () => false)
+        let anyLocked = false
+        for (const section of sections) {
+          const providers = section.providers.filter((p) => !args.provider || p.id === args.provider)
+          if (providers.length === 0) continue
+          if (!args.provider) UI.println(dim(`# ${section.title}`))
+          for (const provider of providers) {
+            for (const row of provider.models) {
+              const tags: string[] = []
+              if (row.default) tags.push("default")
+              if (row.current) tags.push("current")
+              if (provider.signedIn === false) tags.push("not signed in")
+              if (provider.id === CloudContinue.PROVIDER_ID && locked(row.modelID)) {
+                tags.push("needs credits")
+                anyLocked = true
+              }
+              const ref = row.current ? UI.Style.TEXT_HIGHLIGHT_BOLD + row.ref + UI.Style.TEXT_NORMAL : row.ref
+              process.stdout.write(ref + (tags.length ? "  " + dim(tags.join(" ")) : "") + EOL)
+              if (args.verbose) {
+                const info = configured[provider.id]?.models?.[row.modelID] ?? modelsDev[provider.id]?.models?.[row.modelID]
+                const detail = info ?? { context: row.context, output: row.output }
+                process.stdout.write(JSON.stringify(detail, null, 2) + EOL)
+              }
+            }
+          }
+        }
+
+        if (anyLocked) UI.println(dim(cloudCreditsDisclosure(entitlement?.reason)))
+
+        if (!args.provider) {
+          const brain = await currentDefaultBrain().catch(() => ({ model: null, reason: "", pinned: false }))
+          UI.println(
+            dim(
+              brain.model
+                ? `default: ${brain.model} (${brain.reason})`
+                : "default: none — pick one with /model or --model",
+            ),
+          )
         }
       },
     })

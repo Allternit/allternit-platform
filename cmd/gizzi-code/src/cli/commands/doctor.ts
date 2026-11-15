@@ -11,6 +11,7 @@ import {
   checkCredentialSecurity,
   checkCronDaemon,
   checkGatewayReachability,
+  checkAllternitServices,
   checkProjectInstructions,
   checkVoiceEngine,
   type DoctorCheck,
@@ -189,6 +190,7 @@ export const DoctorCommand = cmd({
 
       // ── Cloud gateway reachability ──
       checks.push(await checkGatewayReachability())
+      checks.push(await checkAllternitServices())
       checks.push(await checkVoiceEngine())
 
       // ── Allternit Factory engine ──

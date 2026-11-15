@@ -2,7 +2,7 @@ import { nativeToolsetFetch } from "@/runtime/tools/computer-toolset/anthropic-n
 import z from "zod/v4"
 import fuzzysort from "fuzzysort"
 import { Config } from "@/runtime/context/config/config"
-import { mapValues, mergeDeep, omit, pickBy, sortBy } from "remeda"
+import { mapValues, mergeDeep, omit, pickBy } from "remeda"
 import { Log } from "@/shared/util/log"
 import { BunProc } from "@/shared/bun"
 import { Plugin } from "@/runtime/integrations/plugin"
@@ -23,6 +23,7 @@ import { ProviderTransform } from "@/runtime/providers/adapters/transform"
 import { BUNDLED_PROVIDERS, NoSuchModelError, type SDK, type LanguageModelV2 } from "@/runtime/providers/adapters/bundled"
 
 // Provider-specific loaders — each provider's config/auth/model logic in its own file
+import { SelfhostInference } from "@/runtime/providers/selfhost-inference"
 import { CUSTOM_LOADERS } from "@/runtime/providers/adapters/loaders"
 import type { CustomModelLoader } from "@/runtime/providers/types"
 import {
@@ -31,9 +32,16 @@ import {
   scanAllternitDevices,
   type DiscoveredProvider,
 } from "@/runtime/providers/discovery"
+import { Installation } from "@/shared/installation"
+import { cloudInferenceToken, getCachedAllternitPlan } from "@/runtime/providers/discovery/allternit-cloud"
+import { ModelList } from "@/runtime/providers/model-list"
+import { resolveDefaultBrain, type DefaultBrain } from "@/runtime/providers/default-brain"
 import { SubprocessLanguageModel } from "@/runtime/providers/adapters/loaders/subprocess"
 import { SubscriptionFabricLanguageModel } from "@/runtime/providers/fabric/language-model"
 import { fabricConfigured, isFabricProviderID } from "@/runtime/providers/fabric/client"
+import { PersonPlanLanguageModel } from "@/runtime/providers/person-plan/language-model"
+import { PERSON_PLAN_RUNTIME } from "@/runtime/providers/person-plan/discovery"
+import { isPersonOnlyProvider } from "@/runtime/providers/person-plan/rules"
 import { discoverSubscriptionFabric } from "@/runtime/providers/fabric/discovery"
 import { cliModel, stripProviderPrefix } from "@/runtime/providers/cli-model"
 import { tapRetryHint } from "@/runtime/providers/retry-hint"
@@ -286,7 +294,58 @@ export namespace Provider {
     }
   }
 
+  function selfhostModel(cfg: SelfhostInference.Config, spec: SelfhostInference.Spec, name: string): Model {
+    const apiID = SelfhostInference.resolveModel(cfg, name)
+    return {
+      id: name,
+      providerID: spec.id,
+      name,
+      api: { id: apiID, url: spec.url, npm: spec.npm(apiID) },
+      status: "active",
+      headers: {},
+      options: {},
+      cost: { input: 0, output: 0, cache: { read: 0, write: 0 } },
+      limit: { context: 200000, output: 32000 },
+      capabilities: {
+        temperature: true,
+        reasoning: true,
+        attachment: true,
+        toolcall: true,
+        input: { text: true, audio: false, image: true, video: false, pdf: true },
+        output: { text: true, audio: false, image: false, video: false, pdf: false },
+        interleaved: false,
+      },
+      release_date: "",
+      variants: {},
+    }
+  }
+
+  /** Self-hosted inference: one provider, the model_map keys as its models, no catalog, no discovery. */
+  function selfhostState(cfg: SelfhostInference.Config) {
+    const spec = SelfhostInference.spec(cfg)
+    const info: Info = {
+      id: spec.id,
+      name: spec.name,
+      source: "config",
+      env: [],
+      options: spec.options,
+      models: {},
+    }
+    for (const name of SelfhostInference.listed(cfg)) info.models[name] = selfhostModel(cfg, spec, name)
+    return {
+      models: new Map<string, LanguageModelV2>(),
+      providers: { [spec.id]: info } as { [providerID: string]: Info },
+      sdk: new Map<number, SDK>(),
+      modelLoaders: {} as { [providerID: string]: CustomModelLoader },
+    }
+  }
+
   const state = Instance.state(async () => {
+    const selfhost = SelfhostInference.load()
+    if (selfhost) {
+      log.info("self-hosted inference", { provider: selfhost.provider, models: SelfhostInference.listed(selfhost).length })
+      return selfhostState(selfhost)
+    }
     using _ = log.time("state")
     const config = await Config.get()
     const modelsDev = await ModelsDev.get()
@@ -542,7 +601,7 @@ export namespace Provider {
         name: dp.name,
         source: "custom",
         env: dp.id === "allternit" ? ["ALLTERNIT_API_KEY"] : [],
-        key: dp.id === "allternit" ? process.env.ALLTERNIT_API_KEY : undefined,
+        key: dp.id === "allternit" ? await cloudInferenceToken() : undefined,
         auth_type: dp.auth_type,
         // Discovered bearer providers (allternit-devices) carry their own token.
         token: dp.token,
@@ -751,6 +810,11 @@ export namespace Provider {
     return runtime === "fabric"
   }
 
+  /** Lanes that run no gizzi tools: Subscription Fabric and the person's own plans (chat only). */
+  function isToollessRuntime(runtime: unknown): boolean {
+    return runtime === "fabric" || runtime === PERSON_PLAN_RUNTIME
+  }
+
   function discoveredModels(dp: DiscoveredProvider): Record<string, Model> {
     const dpModels: Record<string, Model> = {}
     for (const m of dp.models) {
@@ -769,12 +833,12 @@ export namespace Provider {
         options: {},
         release_date: "",
         capabilities: {
-          temperature: !isSubscriptionRuntime(dp.options?.["runtime"]),
+          temperature: !isToollessRuntime(dp.options?.["runtime"]),
           reasoning: false,
           attachment: false,
           // Fabric chat runs in the provider's web UI: gizzi's tools cannot be
           // called there. Also keeps these models out of auto-tier picks.
-          toolcall: !isSubscriptionRuntime(dp.options?.["runtime"]),
+          toolcall: !isToollessRuntime(dp.options?.["runtime"]),
           input:  { text: true, audio: false, image: false, video: false, pdf: false },
           // Fabric replies can carry files the provider made (images,
           // decks, documents); they arrive as file parts on the message.
@@ -839,6 +903,12 @@ export namespace Provider {
         options["headers"] = {
           ...options["headers"],
           ...model.headers,
+        }
+      // Lets the Cloud tell Gizzi Code traffic apart in usage reports (client=gizzi-code).
+      if (model.providerID === "allternit")
+        options["headers"] = {
+          ...options["headers"],
+          "X-Allternit-Client": `gizzi-code/${Installation.VERSION}`,
         }
 
       const key = Bun.hash.xxHash32(JSON.stringify({ providerID: model.providerID, npm: model.api.npm, options }))
@@ -970,6 +1040,17 @@ export namespace Provider {
 
   export async function getModel(providerID: string, modelID: string) {
     modelID = stripProviderPrefix(providerID, modelID)
+    const selfhost = SelfhostInference.load()
+    if (selfhost) {
+      // A name outside model_map (or a provider this server did not register) fails here, before any network call.
+      const spec = SelfhostInference.spec(selfhost)
+      if (providerID !== spec.id) throw new SelfhostInference.ModelNotMappedError(modelID, SelfhostInference.listed(selfhost))
+      const s = await state()
+      const apiID = SelfhostInference.resolveModel(selfhost, modelID)
+      const provider = s.providers[spec.id]
+      // Own-id passthrough (non-gateway, empty model_map): remember the model on the provider.
+      return (provider.models[modelID] ??= { ...selfhostModel(selfhost, spec, modelID), api: { id: apiID, url: spec.url, npm: spec.npm(apiID) } })
+    }
     const s = await state()
     const provider = s.providers[providerID]
     if (!provider) {
@@ -990,6 +1071,8 @@ export namespace Provider {
   }
 
   export async function getLanguage(model: Model, plan?: AuthPlan): Promise<LanguageModelV2> {
+    const selfhost = SelfhostInference.load()
+    if (selfhost) SelfhostInference.resolveModel(selfhost, model.id)
     const s = await state()
     const key = `${model.providerID}/${model.id}`
     if (s.models.has(key)) return s.models.get(key)!
@@ -1005,6 +1088,14 @@ export namespace Provider {
         fabricProvider,
         model.api.id,
       ) as unknown as LanguageModelV2
+      s.models.set(key, language)
+      return language
+    }
+
+    // The person's own plans (chatgpt/…, plan/…, copilot-plan/…): chat only,
+    // and only on a turn the person sent (person-plan/language-model.ts).
+    if (provider?.options?.["runtime"] === PERSON_PLAN_RUNTIME || isPersonOnlyProvider(model.providerID)) {
+      const language = new PersonPlanLanguageModel(model.providerID, model.api.id) as unknown as LanguageModelV2
       s.models.set(key, language)
       return language
     }
@@ -1042,6 +1133,19 @@ export namespace Provider {
   }
 
   export async function prepareAuth(ref: ModelRef): Promise<AuthPlan> {
+    const selfhost = SelfhostInference.load()
+    if (selfhost) {
+      // Credentials come from the server's inference config only; stored auth, env keys and profiles never apply.
+      const model = await getModel(ref.providerID, ref.modelID)
+      return {
+        providerID: ref.providerID,
+        modelID: ref.modelID,
+        baseURL: model.api.url,
+        authType: "api_key",
+        extraHeaders: {},
+        source: "config",
+      }
+    }
     const [provider, model, cfg] = await Promise.all([
       getProvider(ref.providerID),
       getModel(ref.providerID, ref.modelID).catch(() => undefined),
@@ -1142,6 +1246,21 @@ export namespace Provider {
         plan.source = "auth"
         plan.authType = "api_key"
         plan.apiKey = stored.key
+      }
+    }
+
+    // 5c. Allternit Cloud: ALLTERNIT_API_TOKEN (the device token Desktop and every
+    // cloud computer hand gizzi) or this runtime's own paired device token. The
+    // provider was loaded with this key, but a turn always carries a plan and the
+    // SDK takes only the plan's key, so without this every Cloud turn on a computer
+    // with no ALLTERNIT_API_KEY (a Platform runtime, a cloud computer) went out
+    // unsigned and failed "Unauthorized". Read fresh: device tokens rotate.
+    if (!plan.source && ref.providerID === "allternit") {
+      const token = await cloudInferenceToken()
+      if (token) {
+        plan.source = "env"
+        plan.authType = "api_key"
+        plan.apiKey = token
       }
     }
 
@@ -1258,31 +1377,49 @@ export namespace Provider {
     return isFabricProviderID(model.providerID)
   }
 
+  /**
+   * Models that run only on the person's own send: Subscription Fabric (D16)
+   * and the person's plans (chatgpt/…, plan/…, copilot-plan/…). Never picked
+   * for a title, a summary, a small model or any other helper call.
+   */
+  export function isHumanSendOnly(model: { providerID: string }): boolean {
+    return isFabricProviderID(model.providerID) || isPersonOnlyProvider(model.providerID)
+  }
+
   export async function getSmallModel(providerID: string) {
     const cfg = await Config.get()
 
     if (cfg.small_model) {
       const parsed = parseModel(cfg.small_model)
-      return getModel(parsed.providerID, parsed.modelID)
+      // A small_model whose provider/model is gone (CLI uninstalled, local
+      // server off) falls through to the automatic pick instead of failing the turn.
+      const configured = await state().then((s) => s.providers[parsed.providerID]?.models[parsed.modelID])
+      if (configured) return getModel(parsed.providerID, parsed.modelID)
+      log.warn("small_model not available, picking one", { small_model: cfg.small_model })
     }
 
     const provider = await state().then((state) => state.providers[providerID])
     if (provider) {
       let priority = [
-        "claude-haiku-4-5",
-        "claude-haiku-4.5",
-        "3-5-haiku",
-        "3.5-haiku",
-        "gemini-3-flash",
-        "gemini-2.5-flash",
-        "gpt-5-nano",
+        "claude-haiku-5-5",
+        "claude-haiku",
+        "gemini-3.8-flash",
+        "gemini-3",
+        "flash",
+        "gpt-6-luna",
+        "luna",
+        "mini",
+        "nano",
       ]
       if (providerID.startsWith("gizzi") || providerID.startsWith("gizziio")) {
         priority = ["gpt-5-nano"]
       }
+      // Match at a word start so "mini" never matches "gemini".
+      const matches = (model: string, item: string) =>
+        new RegExp(`(^|[^a-z0-9])${item.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`, "i").test(model)
       for (const item of priority) {
         for (const model of Object.keys(provider.models)) {
-          if (model.includes(item)) return getModel(providerID, model)
+          if (matches(model, item)) return getModel(providerID, model)
         }
       }
     }
@@ -1309,59 +1446,116 @@ export namespace Provider {
     return undefined
   }
 
-  const priority = ["gpt-5", "claude-sonnet-4", "big-pickle", "gemini-3-pro"]
-  export function sort(models: Model[]) {
-    return sortBy(
-      models,
-      [(model) => priority.findIndex((filter) => model.id.includes(filter)), "desc"],
-      [(model) => (model.id.includes("latest") ? 0 : 1), "asc"],
-      [(model) => model.id, "desc"],
-    )
+  /**
+   * Model order: for a catalog CLI the vendor's flagged default first, then
+   * the vendor's order; then current families (gpt-6, claude-sonnet-5,
+   * gemini-3, kimi), `latest`, id. One implementation in ModelList.
+   */
+  export function sort<T>(models: T[]): T[] {
+    // Callers pass registry models and loosely typed route payloads; every entry has an `id`.
+    return ModelList.sortModels(models as unknown as { id: string; providerID?: string }[]) as unknown as T[]
+  }
+
+  const AUTO_REF = { providerID: "auto", modelID: "auto" }
+
+  /** The shared default-brain resolver (default-brain.ts) over this config and discovery. */
+  function resolveBrain(cfg: Config.Info): DefaultBrain {
+    const disabled = new Set(cfg.disabled_providers ?? [])
+    const enabled = cfg.enabled_providers ? new Set(cfg.enabled_providers) : undefined
+    return resolveDefaultBrain({
+      modelAuto: cfg.model_auto,
+      currentModel: cfg.model,
+      plan: getCachedAllternitPlan(),
+      providers: Discovery.last().filter((p) => !disabled.has(p.id) && (!enabled || enabled.has(p.id))),
+    })
+  }
+
+  /** The resolver's model as a ref when it is a pin (validated) or a model this machine lists. */
+  async function resolvedRef(cfg: Config.Info, providers: Record<string, Info>): Promise<ModelRef | undefined> {
+    const brain = resolveBrain(cfg)
+    if (!brain.model) return undefined
+    const parsed = parseModel(brain.model)
+    if (parsed.providerID === "auto") return undefined
+    if (brain.pinned) {
+      // A pinned model is an explicit user decision. Validate it and surface
+      // ModelNotFoundError (with suggestions) instead of silently routing a
+      // request to a different provider/model.
+      await getModel(parsed.providerID, parsed.modelID)
+      return parsed
+    }
+    return providers[parsed.providerID]?.models[parsed.modelID] ? parsed : undefined
+  }
+
+  function isAutoRef(model: string | undefined) {
+    return model === "auto" || model === "auto/auto"
   }
 
   export async function defaultModel() {
     const cfg = await Config.get()
+    // list() runs discovery first, so the resolver sees this machine's CLIs.
     const providers = await list()
 
-    // Explicit model config takes priority (lets users pin a specific model)
-    if (cfg.model && cfg.model !== "auto" && cfg.model !== "auto/auto") {
-      const parsed = parseModel(cfg.model)
-      if (parsed.providerID !== "auto") {
-        // A pinned model is an explicit user decision. Validate it and surface
-        // ModelNotFoundError (with suggestions) instead of silently routing a
-        // request to a different provider/model.
-        await getModel(parsed.providerID, parsed.modelID)
-        return parsed
-      }
+    // Explicit "auto": per-request routing (resolveAuto).
+    if (!isAutoRef(cfg.model)) {
+      const ref = await resolvedRef(cfg, providers)
+      if (ref) return ref
     }
 
-    // Default: auto-route. Works as long as any provider is authenticated.
+    // Fallback: auto-route. Works as long as any provider is authenticated.
     // resolveAuto() picks the cheapest capable model per request at runtime.
     if (Object.keys(providers).length > 0) {
-      return { providerID: "auto", modelID: "auto" }
+      return AUTO_REF
     }
 
     // Nothing authenticated yet — tell the user
     throw new Error("No providers found. Run `gizzi auth add` to connect a provider.")
   }
 
+  type RecentModel = { providerID: string; modelID: string }
+  const RECENT_MAX = 20
+
+  function modelStateFile() {
+    return path.join(GlobalPaths.state, "model.json")
+  }
+
+  async function readRecent(): Promise<RecentModel[]> {
+    return (await Filesystem.readJson<{ recent?: RecentModel[] }>(modelStateFile())
+      .then((x) => (Array.isArray(x.recent) ? x.recent : []))
+      .catch(() => [])) as RecentModel[]
+  }
+
+  /** Record a model the user ran: `state/model.json` `recent`, newest first, unique, at most 20. */
+  export async function recordRecentModel(ref: { providerID: string; modelID: string }): Promise<void> {
+    if (!ref.providerID || !ref.modelID || ref.providerID === "auto") return
+    const file = modelStateFile()
+    const existing = await Filesystem.readJson<Record<string, unknown>>(file).catch(() => ({}) as Record<string, unknown>)
+    const base = existing && typeof existing === "object" && !Array.isArray(existing) ? existing : {}
+    const previous = Array.isArray(base["recent"]) ? (base["recent"] as RecentModel[]) : []
+    const recent = [
+      { providerID: ref.providerID, modelID: ref.modelID },
+      ...previous.filter(
+        (entry) =>
+          entry &&
+          typeof entry.providerID === "string" &&
+          typeof entry.modelID === "string" &&
+          !(entry.providerID === ref.providerID && entry.modelID === ref.modelID),
+      ),
+    ].slice(0, RECENT_MAX)
+    await Filesystem.writeJson(file, { ...base, recent }).catch((err) =>
+      log.warn("failed to record recent model", { error: err }),
+    )
+  }
+
   /** @deprecated kept for callers that need a concrete model ref for display purposes */
   export async function defaultModelConcrete() {
     const cfg = await Config.get()
     const providers = await list()
-    if (cfg.model && cfg.model !== "auto" && cfg.model !== "auto/auto") {
-      const parsed = parseModel(cfg.model)
-      if (parsed.providerID !== "auto") {
-        await getModel(parsed.providerID, parsed.modelID)
-        return parsed
-      }
+    if (!isAutoRef(cfg.model)) {
+      const ref = await resolvedRef(cfg, providers)
+      if (ref) return ref
     }
 
-    const recent = (await Filesystem.readJson<{ recent?: { providerID: string; modelID: string }[] }>(
-      path.join(GlobalPaths.state, "model.json"),
-    )
-      .then((x) => (Array.isArray(x.recent) ? x.recent : []))
-      .catch(() => [])) as { providerID: string; modelID: string }[]
+    const recent = await readRecent()
     for (const entry of recent) {
       const provider = providers[entry.providerID]
       if (!provider) continue
@@ -1380,9 +1574,10 @@ export namespace Provider {
   }
 
   const MODEL_ALIASES: Record<string, string> = {
-    "sonnet": "anthropic/claude-sonnet-4-6",
-    "opus": "anthropic/claude-opus-4-6",
-    "haiku": "anthropic/claude-haiku-4-5",
+    "sonnet": "anthropic/claude-sonnet-5-5",
+    "opus": "anthropic/claude-opus-5-5",
+    "haiku": "anthropic/claude-haiku-5-5",
+    "fable": "anthropic/claude-fable-5-2",
     "flash": "google/gemini-2.5-flash",
     "pro": "google/gemini-2.5-pro",
     "gpt4": "openai/gpt-4.1",

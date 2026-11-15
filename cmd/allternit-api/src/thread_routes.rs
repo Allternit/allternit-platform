@@ -681,12 +681,31 @@ fn bot_name(db: &DbHandle, bot_id: &str) -> String {
 /// Tools that write or send. A tainted thread (or a bot below `act_within_scope`) gets these
 /// set to `ask`, so a hijacked model can only propose an action; the proposal becomes an
 /// approval card. A `read_only` bot gets `deny`.
-const WRITE_SEND_TOOLS: [&str; 9] = ["bash", "write", "edit", "send_agent_email", "message_agent", "channel_*", "phone_*", "send_text", "send_email"];
+const WRITE_SEND_TOOLS: [&str; 10] = ["bash", "write", "edit", "send_agent_email", "message_agent", "project_send", "channel_*", "phone_*", "send_text", "send_email"];
+
+/// The send tools a hosted agent can be allowed ([`crate::platform_agents::tool_rules`] patterns).
+const PLATFORM_SEND_TOOLS: [&str; 4] = ["*phone_text*", "*phone_call*", "*allternit_mail*", "*agent_channel_post*"];
 
 /// The gizzi permission ruleset for a thread session: the bot's channel rules, then the
 /// envelope and taint restrictions.
+///
+/// A Platform agent (owner `platform:…`) shares its project's runtime with every other
+/// account's agents, so its threads start from the same rules as its API sessions: deny
+/// everything, then its own tools. Envelope and taint then tighten only the send tools it
+/// was allowed: gizzi applies the last matching rule, so an `ask` on a tool the agent
+/// lacks would loosen that tool's deny. Channel tool rules are owner settings a synthetic
+/// project owner can't make, and are not read for it.
 pub fn session_rules(db: &DbHandle, bot_id: &str, channel: &str, tainted: bool) -> Option<Value> {
-    let mut rules: Vec<Value> = crate::channel_tools::channel_rules(db, bot_id, channel).and_then(|v| v.as_array().cloned()).unwrap_or_default();
+    let platform = db
+        .connect()
+        .ok()
+        .and_then(|c| c.query_row("SELECT user_id FROM agents WHERE id = ?1", params![bot_id], |r| r.get::<_, String>(0)).ok())
+        .is_some_and(|o| o.starts_with("platform:"));
+    let mut rules: Vec<Value> = if platform {
+        crate::platform_agents::tool_rules(&crate::platform_agents::agent_tools(db, bot_id)).as_array().cloned().unwrap_or_default()
+    } else {
+        crate::channel_tools::channel_rules(db, bot_id, channel).and_then(|v| v.as_array().cloned()).unwrap_or_default()
+    };
     let envelope = crate::autonomy::envelope_of(db, bot_id);
     let action = match envelope.as_str() {
         "read_only" => Some("deny"),
@@ -694,7 +713,12 @@ pub fn session_rules(db: &DbHandle, bot_id: &str, channel: &str, tainted: bool) 
         _ => tainted.then_some("ask"),
     };
     if let Some(action) = action {
-        for tool in WRITE_SEND_TOOLS {
+        let tighten: Vec<&str> = if platform {
+            PLATFORM_SEND_TOOLS.into_iter().filter(|p| rules.iter().any(|r| r["permission"] == *p && r["action"] == "allow")).collect()
+        } else {
+            WRITE_SEND_TOOLS.to_vec()
+        };
+        for tool in tighten {
             rules.push(json!({ "permission": tool, "action": action, "pattern": "*" }));
         }
     }
@@ -1092,6 +1116,29 @@ pub(crate) fn is_canonical(db: &DbHandle, t: &ThreadView) -> bool {
 }
 
 /// Close the current generation with its checkpoint and open `session` as the next.
+/// A hand-off can finish while its caller is gone. `sync_user_threads` then sees
+/// the new session with no thread and imports it as its own "Thread", and gizzi
+/// keeps returning that session for every later hand-off. The import is the same
+/// conversation, so it folds back into the thread being advanced.
+fn fold_imported_copy(conn: &rusqlite::Connection, t: &ThreadView, session: &str) -> rusqlite::Result<()> {
+    let copy: Option<String> = conn
+        .query_row(
+            "SELECT b.id FROM bot_threads b
+             JOIN bot_thread_sessions s ON s.thread_id = b.id
+             WHERE s.session_id = ?1 AND b.id != ?2 AND b.bot_id = ?3 AND b.created_by = 'import'
+               AND (SELECT COUNT(*) FROM bot_thread_sessions o WHERE o.thread_id = b.id) = 1",
+            params![session, t.id, t.bot_id],
+            |r| r.get(0),
+        )
+        .optional()?;
+    if let Some(copy) = copy {
+        conn.execute("UPDATE bot_events SET thread_id = ?2 WHERE thread_id = ?1", params![copy, t.id])?;
+        conn.execute("DELETE FROM bot_thread_sessions WHERE thread_id = ?1", params![copy])?;
+        conn.execute("DELETE FROM bot_threads WHERE id = ?1", params![copy])?;
+    }
+    Ok(())
+}
+
 fn advance(db: &DbHandle, actor: (&str, &str), t: &ThreadView, session: &str, body: &HandoffBody) -> Result<(), String> {
     let canonical = is_canonical(db, t);
     let next_gen = t.generation.max(1) + 1;
@@ -1105,15 +1152,16 @@ fn advance(db: &DbHandle, actor: (&str, &str), t: &ThreadView, session: &str, bo
     });
     {
         let conn = db.connect().map_err(|e| e.to_string())?;
-        conn.execute(
-            "UPDATE bot_thread_sessions SET ended_at = ?3, checkpoint_summary = ?4 WHERE thread_id = ?1 AND generation = ?2",
-            params![t.id, next_gen - 1, ts, body.summary.trim()],
-        )
-        .map_err(|e| e.to_string())?;
+        fold_imported_copy(&conn, t, session).map_err(|e| e.to_string())?;
         conn.execute(
             "INSERT INTO bot_thread_sessions (thread_id, generation, session_id, model, context_window, reason, started_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![t.id, next_gen, session, body.model, body.context_window, body.reason, ts],
+        )
+        .map_err(|e| e.to_string())?;
+        conn.execute(
+            "UPDATE bot_thread_sessions SET ended_at = ?3, checkpoint_summary = ?4 WHERE thread_id = ?1 AND generation = ?2",
+            params![t.id, next_gen - 1, ts, body.summary.trim()],
         )
         .map_err(|e| e.to_string())?;
         conn.execute(
@@ -1712,6 +1760,7 @@ pub fn bot_project_overview(db: &DbHandle, user_id: &str) -> rusqlite::Result<Ve
             "lastActivityAt": activity,
             "archived": meta.get("archived").and_then(Value::as_bool).unwrap_or(false),
             "favorite": meta.get("favorite").and_then(Value::as_bool).unwrap_or(false),
+            "status": meta.get("status").cloned().unwrap_or(Value::Null),
         }));
     }
     out.sort_by(|a, b| b["lastActivityAt"].as_str().cmp(&a["lastActivityAt"].as_str()));
@@ -1930,6 +1979,45 @@ mod tests {
         let status = resp.status();
         let bytes = resp.into_body().collect().await.unwrap().to_bytes();
         (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
+    }
+
+    /// Morning briefing paused itself on `UNIQUE constraint failed: bot_thread_sessions.session_id`:
+    /// a hand-off finished while its caller was gone, the chat import made the
+    /// new session its own "Thread", and every later run got that session back.
+    #[tokio::test]
+    async fn handoff_folds_back_a_session_the_import_took() {
+        let state = setup("fold-import").await;
+        let rt = FakeRt::default();
+        let t = create(&state.db, &rt, "user-a", body("Morning briefing")).await.unwrap();
+        {
+            let conn = state.db.connect().unwrap();
+            conn.execute(
+                "INSERT INTO bot_threads (id, user_id, bot_id, kind, title, status, current_session_id, created_by, last_activity_at, created_at, updated_at)
+                 VALUES ('dup', 'user-a', 'bot-1', 'task', 'Thread', 'idle', 'next-1', 'import', 't', 't', 't')",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO bot_thread_sessions (thread_id, generation, session_id, reason, started_at) VALUES ('dup', 1, 'next-1', 'start', 't')",
+                [],
+            )
+            .unwrap();
+        }
+        let handoff: HandoffBody = serde_json::from_value(json!({ "reason": "routine_run" })).unwrap();
+        let moved = do_handoff(&state.db, &rt, "user-a", &t.id, handoff).await.unwrap();
+        assert_eq!(moved.current_session_id.as_deref(), Some("next-1"));
+        assert_eq!(moved.generation, t.generation + 1);
+        assert!(load(&state.db, "dup").unwrap().is_none(), "the imported copy is gone");
+
+        // A session that belongs to a thread the user really has stays an error.
+        let other = create(&state.db, &rt, "user-a", body("Other")).await.unwrap();
+        let taken = other.current_session_id.clone().unwrap();
+        let conn = state.db.connect().unwrap();
+        conn.execute("UPDATE bot_thread_sessions SET session_id = 'next-2' WHERE session_id = ?1", params![taken]).unwrap();
+        drop(conn);
+        let handoff: HandoffBody = serde_json::from_value(json!({ "reason": "routine_run" })).unwrap();
+        assert!(do_handoff(&state.db, &rt, "user-a", &t.id, handoff).await.is_err());
+        assert!(load(&state.db, &other.id).unwrap().is_some());
     }
 
     #[test]
@@ -2251,6 +2339,31 @@ mod tests {
         let r = rt.restricted.lock().unwrap().clone();
         assert_eq!(r.len(), 1, "only the mention thread is restricted");
         assert_eq!(r[0].1, json!([{ "permission": "bash", "action": "deny", "pattern": "*" }]));
+    }
+
+    /// A Platform agent's phone thread got only channel/envelope rules (none by default), so on a
+    /// shared project runtime bash and write were reachable from a call and every schema was sent.
+    #[tokio::test]
+    async fn a_platform_agents_thread_starts_from_deny_all_plus_its_own_tools() {
+        let state = setup("platform-rules").await;
+        crate::platform_agents::upsert_bot(&state.db, "platform:proj_1", "agent_p", &json!({ "name": "Desk", "tools": ["send_text"] })).unwrap();
+        let rt = FakeRt::default();
+        let mut b = body("Call from +14155550123");
+        b.bot_id = "agent_p".into();
+        b.created_by = Some("phone".into());
+        create(&state.db, &rt, "platform:proj_1", b).await.unwrap();
+        let r = rt.restricted.lock().unwrap().clone();
+        assert_eq!(r.len(), 1, "the platform agent's thread is restricted");
+        let rules = r[0].1.as_array().unwrap().clone();
+        assert_eq!(rules[0], json!({ "permission": "*", "pattern": "*", "action": "deny" }));
+        assert!(rules.iter().any(|x| x["permission"] == "*phone_text*" && x["action"] == "allow"));
+        // gizzi applies the last matching rule: bash must end denied even in a tainted thread,
+        // where the send tools the agent has drop to ask.
+        let tainted = session_rules(&state.db, "agent_p", "phone", true).unwrap();
+        let last = |perm: &str| tainted.as_array().unwrap().iter().rev().find(|x| x["permission"] == perm).map(|x| x["action"].clone());
+        assert_eq!(last("bash"), None, "bash is never mentioned after deny-all");
+        assert_eq!(last("*phone_text*"), Some(json!("ask")));
+        assert!(!tainted.as_array().unwrap().iter().any(|x| x["action"] == "ask" && x["permission"] == "*phone_call*"), "a tool the agent lacks never loosens to ask");
     }
 
     #[tokio::test]

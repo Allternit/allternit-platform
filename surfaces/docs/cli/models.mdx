@@ -1,0 +1,147 @@
+---
+title: Models and providers
+description: Which models Gizzi Code offers, how CLI brains run in the TUI, and what each failure message means
+---
+
+Gizzi Code runs on the same model list as the Allternit app. The `/model` picker in the TUI and `gizzi models` both use one rule, kept in `src/runtime/providers/offer.ts` (the same rule as Desktop's model picker).
+
+## What the picker offers
+
+Sections appear in this order:
+
+| Section | What is in it | When it shows |
+|---|---|---|
+| Allternit Cloud | The Cloud catalog, grouped by vendor ("Kimi · via Allternit Cloud") | Always |
+| Your subscriptions | CLI sign-ins you have installed (`claude-cli`, `codex-cli`, `kimi-cli`, any CLI you added), Subscription Fabric (`subs-*`), and the plans you connected: `chatgpt/…` (ChatGPT signed in on this computer), `plan/<vendor>/<model>` and `copilot-plan/<model>` | Always; plans once connected ([Connect](/cli/connect)) |
+| API keys | Providers in `gizzi.json` with an OpenAI-compatible `baseURL` | Only once a key is on file |
+| Local | Servers on this computer (MLX, llama.cpp, Ollama, LM Studio) | Always |
+
+OpenRouter is never its own section. Allternit Cloud uses it to route, so it is not offered on its own. A model ref that names it still runs when you ask for it by name (`gizzi --model openrouter/…`).
+
+## List the models
+
+`gizzi models` prints the models the picker offers, in the picker's order: Allternit Cloud, Your subscriptions, API keys, Local. Under Your subscriptions the CLIs come in a fixed order. Inside a provider, models are in the vendor's order, newest and strongest first. They are not sorted alphabetically.
+
+Each row is `provider/model`. Tags after a row:
+
+| Tag | Meaning |
+|---|---|
+| `default` | That provider's own default model |
+| `current` | The model Gizzi will use now |
+| `not signed in` | The CLI is installed but you are not signed in to it |
+| `needs credits` | An `allternit/` row the account can't run yet: it has no Cloud credits and no key of its own for that model's provider. Free accounts don't include Cloud usage. |
+
+The last line shows the current default and why: `default: provider/model (reason)`.
+
+- For CLIs that can list their own models, Gizzi asks the CLI and caches the list for 6 hours. `gizzi models --refresh` reads it again. Models a CLI marks as hidden are not shown. If the CLI cannot be asked, Gizzi shows its built-in list.
+- `gizzi models --json` prints the same data as JSON.
+- `gizzi models --all` also shows providers the picker does not offer: aggregators such as OpenRouter, and API providers with no key.
+- `gizzi models <provider>` shows one provider. Use `gizzi models claude-cli` for example.
+- Retired Allternit Cloud aliases are not listed, but a saved choice of one keeps working. A retired CLI model id in your config is mapped to its replacement.
+- A local server that is installed but reports no models is not listed.
+
+## Pull and verify local models
+
+These commands use the Local Engine and the [Freeweights](/tools/freeweights) catalog.
+
+| Command | What it does |
+|---|---|
+| `gizzi models pull <org/repo>` | Queues a download through the Local Engine, shows progress, and prints one verification line when it ends. `--quant <tag>` picks a quantization. |
+| `gizzi models verify <org/repo>` | Asks the engine to re-hash the files on disk. An engine build that predates verification prints "Not checked by this engine version". |
+| `gizzi models search <query> --catalog-source freeweights` | Searches the Freeweights catalog. Sidecar Hugging Face results also carry a Freeweights badge. |
+
+`pull` exits with code 2 when the result is `unverified`. Add `--allow-unverified` to accept files that have no hash anywhere. `--download` and `--run` work as before.
+
+## Default model
+
+Gizzi picks the model for a turn in this order:
+
+1. **Your pick.** A model you chose with `/model` in the TUI, with `--model` for one run, or with `model` in the config. A pick stays until you change it.
+2. **Gizzi's choice.** On a paid Allternit plan, Allternit Cloud's default model. Otherwise the first CLI brain that is installed and signed in, in the fixed order, using that CLI's default model. A CLI that is not signed in is never chosen.
+3. **Nothing usable.** Gizzi says so and asks you to pick a model or sign in.
+
+Config keys:
+
+| Key | Meaning |
+|---|---|
+| `model` | The model, as `provider/model` |
+| `model_auto` | `true` means Gizzi chose the model and may change it when your plan or sign-ins change. `false`, or absent with a `model` set, means it is your pick. |
+| `small_model` | The model for background side tasks. If its provider is not available, Gizzi falls back to another small model. |
+
+Global config files are read in this order, and a later file wins. First the legacy `gizzi` config folder, then the `gizzi-code` config folder (`~/.config/gizzi-code`). In each folder: `config.json`, `gizzi.json`, `gizzi.jsonc`, `config.toml`. The TUI and the runtime read the same merged config.
+
+If the model shown is not the one you expect, run `gizzi debug model`. It prints the config files it read, the merged values, the choice and its reason, the runtime default, the TUI default, and `match: yes` or `match: no`.
+
+Swarm and mission workers use your default CLI brain unless you pass `--brain`.
+
+### In the TUI
+
+`/model` shows the same sections and order as `gizzi models`. Type to filter. Rows carry the `default` and `current` tags, and a CLI that is not signed in has a "not signed in" note. Where a model has thinking levels, you set one per model. Picking a model makes it your pick and adds it to your recent models.
+
+Picking a `needs credits` row keeps your current model and prints:
+
+```text
+Allternit Cloud models need credits. Packs: $10, $25, $50, $100. Buy: https://ai.allternit.com/settings/billing · or choose a plan.
+```
+
+### Effort on `gizzi run` and `gizzi exec`
+
+`--effort` accepts the levels the picked model has. An unsupported level is an error that lists the valid ones. A failed run exits with a non-zero code.
+
+## Thinking levels
+
+The picker's second column shows each model's thinking level. It reads the same per-model table Desktop, the web app and iPhone pick from (`model-thinking.json`), so each model offers only the levels it takes. Claude Opus 5.5 takes Low, Medium, High, Extra high and Max. GPT-6 Sol adds Ultra. Gemini 3 takes Low and High. Press ← and → on the focused model to change its level. The row under the list shows every level, with the default marked `*`. A model with `—` has no levels in the table and runs at its own default.
+
+The level you pick reaches the model. A CLI brain gets it as its own flag (Claude Code runs with `--effort xhigh`). Allternit Cloud and other providers get the vendor's own option. `/effort <level>` sets it from the prompt and accepts every level in the table: none, minimal, low, medium, high, xhigh, max and ultra. A level the current model doesn't take is ignored and the model's default applies. The footer shows the level in the vendor's words, for example `effort: extra high`.
+
+## Pick a model at launch
+
+```bash
+gizzi --model claude-cli/claude-sonnet-5-5
+gizzi attach http://127.0.0.1:4096 --model claude-cli/claude-sonnet-5-5
+```
+
+`--model` sets the model for the session, ahead of your settings and `gizzi.json`. `/model` changes it later.
+
+Plan models (`chatgpt/…`, `plan/…`, `copilot-plan/…`) answer only what you type and send in the TUI. They are chat only, never picked as a default or for titles and summaries, and refused in `gizzi run`, bots, missions, routines and sub-agents. See [Plans answer only you](/cli/connect#plans-answer-only-you).
+
+## CLI brains in the TUI
+
+A model under **Your subscriptions** runs in your own signed-in CLI, through the same driver `gizzi run` and Desktop use. It does not use your Allternit Cloud credits.
+
+- The CLI runs its own tools. Its text, thinking and tool calls (Read, Update, Bash…) show in the TUI as they happen.
+- Permissions still apply. The CLI starts in the TUI's permission mode (default, accept edits, plan or bypass), and each tool it asks to run shows the TUI's normal approval prompt, with the diff for an edit and the command for Bash.
+- Each turn resumes the CLI's own session, so it remembers earlier turns. `/clear` starts a new one.
+- Side tasks (titles, recaps, the auto-mode classifier) run as a text-only CLI turn.
+
+This also works when the TUI is attached to Desktop's server with `gizzi attach`.
+
+## When a turn fails
+
+Each failure names the real cause and one or two commands to run. Examples:
+
+| You see | Cause | Run |
+|---|---|---|
+| Allternit Cloud models need credits. Buy credits or choose a plan. | The account has no Cloud credits (`credits_required`). Free accounts don't include Cloud usage. | `/model claude-cli/claude-sonnet-5-5` (your Claude plan), or buy credits at ai.allternit.com/settings/billing |
+| Allternit Cloud plan limit reached for this month | Your plan's monthly limit | `/model …` or `/usage` |
+| Your Allternit Cloud credits are used up. Add credits to keep going. | The balance reached $0 (`credits_exhausted`) | `/usage`, or add credits at ai.allternit.com/settings/billing |
+| OpenRouter rejected the API key (401) | The key in `gizzi.json` or the environment expired or was revoked | `gizzi connect login` to save a new key |
+| Claude Code isn't signed in on this computer | The CLI brain has no sign-in | `claude`, then `/login` in it |
+| Codex isn't installed on this computer | The CLI is missing | Install it, then `gizzi agents harness register` |
+
+The "Not logged in" notice in the prompt footer only appears when the selected model is on Allternit Cloud and no Cloud credential exists: no `ALLTERNIT_API_KEY`, no `ALLTERNIT_API_TOKEN`, and no device token from `gizzi login` or `gizzi pair`.
+
+## Web search on any model
+
+Web search works whatever model you picked. Models with their own search (Claude, ChatGPT, Gemini, CLI brains) use it. Otherwise the `WebSearch` tool in the terminal app and the engine's `websearch` tool ask Allternit's search route (`POST /api/v1/search/web` on api.allternit.com), signed in with your `ALLTERNIT_API_KEY`, `ALLTERNIT_API_TOKEN` or this computer's paired device token. Searches there run on Allternit's search account and return titles, links, dates and a short text for each result, which show as source pills.
+
+If you are signed out, or the route can't answer (not deployed yet, not configured, offline), Gizzi falls back to the public Exa search endpoint as before. Set `GIZZI_DISABLE_ALLTERNIT_SEARCH=1` to skip the route.
+
+Developers: client `src/runtime/tools/builtins/allternit-search.ts` (test `test/tools/allternit-search.test.ts`); route `cmd/allternit-cloud-api/src/routes/web_search.rs`, which needs `EXA_API_KEY` on the server and answers 503 `search_not_configured` without it.
+
+## For developers
+
+- Provider rule: `cmd/gizzi-code/src/runtime/providers/offer.ts` (`ProviderOffer.kind`, `isOffered`, `isCliBrain`). CLI brains come from the CLI catalog (`cli-catalog.json`) and CLIs the user added, not a fixed list.
+- TUI routing: `services/api/cliBrain.ts` drives `RuntimeDriverFactory.resolveCli` and maps driver events to the TUI's messages. Tool calls the CLI already ran carry `cliObserved`, so `query.ts` shows them without running them again.
+- Approvals: `AgentTask.approveTool` and `permissionMode` (`runtime/runtime-driver.ts`). Claude Code gets `--permission-prompt-tool stdio` and each `can_use_tool` request is answered by the caller; ACP CLIs ask after the spawn gate allows.
+- Error text: `services/api/providerErrors.ts` (`describeProviderError`), used by the Cloud path (`errors.ts`), the OpenAI-compatible path (`localModel.ts`) and CLI brains.

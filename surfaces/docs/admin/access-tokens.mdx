@@ -36,7 +36,7 @@ Scopes restrict what the token can do. Common values include:
 ## Create an access token
 
 ```bash
-curl -X POST https://api.allternit.com/api/v1/admin/access-tokens \
+curl -X POST http://127.0.0.1:8013/api/v1/admin/access-tokens \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -78,7 +78,7 @@ curl -X POST https://api.allternit.com/api/v1/admin/access-tokens \
 ## List access tokens
 
 ```bash
-curl -X GET https://api.allternit.com/api/v1/admin/access-tokens \
+curl -X GET http://127.0.0.1:8013/api/v1/admin/access-tokens \
   -H "Authorization: Bearer $ADMIN_TOKEN"
 ```
 
@@ -105,7 +105,7 @@ curl -X GET https://api.allternit.com/api/v1/admin/access-tokens \
 ## Get an access token
 
 ```bash
-curl -X GET https://api.allternit.com/api/v1/admin/access-tokens/at_01hqx8x7x7x7x7x7x7x7x7x \
+curl -X GET http://127.0.0.1:8013/api/v1/admin/access-tokens/at_01hqx8x7x7x7x7x7x7x7x7x \
   -H "Authorization: Bearer $ADMIN_TOKEN"
 ```
 
@@ -128,7 +128,7 @@ curl -X GET https://api.allternit.com/api/v1/admin/access-tokens/at_01hqx8x7x7x7
 ## Revoke an access token
 
 ```bash
-curl -X POST https://api.allternit.com/api/v1/admin/access-tokens/at_01hqx8x7x7x7x7x7x7x7x7x/revoke \
+curl -X POST http://127.0.0.1:8013/api/v1/admin/access-tokens/at_01hqx8x7x7x7x7x7x7x7x7x/revoke \
   -H "Authorization: Bearer $ADMIN_TOKEN"
 ```
 
@@ -146,7 +146,7 @@ Revoked tokens can no longer authenticate.
 ## Rotate an access token
 
 ```bash
-curl -X POST https://api.allternit.com/api/v1/admin/access-tokens/at_01hqx8x7x7x7x7x7x7x7x7x/rotate \
+curl -X POST http://127.0.0.1:8013/api/v1/admin/access-tokens/at_01hqx8x7x7x7x7x7x7x7x7x/rotate \
   -H "Authorization: Bearer $ADMIN_TOKEN"
 ```
 
@@ -175,7 +175,7 @@ Rotation issues a new token, updates the prefix, and clears any previous revocat
 ## Authenticate with an access token
 
 ```bash
-curl -X GET https://api.allternit.com/api/v1/admin/workspaces \
+curl -X GET http://127.0.0.1:8013/api/v1/admin/workspaces \
   -H "Authorization: Bearer at-abc12345-xyz67890-qwerty1234567890"
 ```
 

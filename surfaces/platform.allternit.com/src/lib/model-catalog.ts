@@ -8,6 +8,12 @@ export interface CatalogModel {
   inputPrice: string;
   outputPrice: string;
   context: string;
+  /** The recommended Cloud model (`default: true` in `GET /v1/models`). */
+  isDefault?: boolean;
+  /** Derived only from flags the API row carries: "Tools", "Vision", "JSON". */
+  capabilities: string[];
+  /** Formatted retirement date, only when the row has a non-null `expiration_date`. */
+  retires?: string;
 }
 
 export interface LiveModelInfo {
@@ -24,6 +30,18 @@ export interface LiveModelInfo {
   context_length?: number;
   /** "standard" or "open" (open-weight models with far fewer refusals). */
   lane?: string;
+  /** True on the one recommended model; the API lists it first. */
+  default?: boolean;
+  /** Still routes (saved ids keep working) but is not offered in pickers. */
+  hidden?: boolean;
+  /** Fireworks rows. */
+  supports_tools?: boolean;
+  supports_image_input?: boolean;
+  /** OpenRouter rows. */
+  supported_parameters?: string[];
+  architecture?: { input_modalities?: string[] };
+  /** Null on every row today; a date string once a model has a retirement date. */
+  expiration_date?: string | null;
   extra?: Record<string, unknown>;
 }
 
@@ -80,6 +98,30 @@ function contextLength(model: LiveModelInfo): string {
   return "—";
 }
 
+export function modelCapabilities(model: LiveModelInfo): string[] {
+  const params = Array.isArray(model.supported_parameters) ? model.supported_parameters : [];
+  const modalities = Array.isArray(model.architecture?.input_modalities)
+    ? model.architecture!.input_modalities!
+    : [];
+  const out: string[] = [];
+  if (model.supports_tools === true || params.includes("tools")) out.push("Tools");
+  if (model.supports_image_input === true || modalities.includes("image")) out.push("Vision");
+  if (params.includes("response_format") || params.includes("structured_outputs")) out.push("JSON");
+  return out;
+}
+
+function retireDate(value: unknown): string | undefined {
+  if (typeof value !== "string" || !value) return undefined;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return undefined;
+  return date.toLocaleDateString("en-US", {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  });
+}
+
 export function liveModelToCatalog(model: LiveModelInfo): CatalogModel {
   const upstreamProvider = model.provider || model.owned_by || "cloud";
   return {
@@ -92,6 +134,9 @@ export function liveModelToCatalog(model: LiveModelInfo): CatalogModel {
     inputPrice: formatPrice(model.prompt_price ?? model.extra?.prompt_price),
     outputPrice: formatPrice(model.completion_price ?? model.extra?.completion_price),
     context: contextLength(model),
+    isDefault: (model.default ?? model.extra?.default) === true,
+    capabilities: modelCapabilities(model),
+    retires: retireDate(model.expiration_date),
   };
 }
 
@@ -110,20 +155,12 @@ export async function fetchLiveModelCatalog(
         `Model catalog request failed (${response.status})`,
     );
   }
-  return response.json();
+  const body = (await response.json()) as LiveModelListResponse;
+  // The console never shows hidden rows (stale or duplicate aliases).
+  return { ...body, data: (body.data ?? []).filter((model) => !isHidden(model)) };
 }
 
-export const DRAFT_MODEL_CATALOG: CatalogModel[] = [
-  { id: "llama-3.1-8b", name: "Llama 3.1 8B", family: "Llama", provider: "local", inputPrice: "$0", outputPrice: "$0", context: "128K" },
-  { id: "llama-3.1-70b", name: "Llama 3.1 70B", family: "Llama", provider: "local", inputPrice: "$0", outputPrice: "$0", context: "128K" },
-  { id: "qwen2.5-7b", name: "Qwen 2.5 7B", family: "Qwen", provider: "local", inputPrice: "$0", outputPrice: "$0", context: "128K" },
-  { id: "qwen2.5-72b", name: "Qwen 2.5 72B", family: "Qwen", provider: "local", inputPrice: "$0", outputPrice: "$0", context: "128K" },
-  { id: "mistral-nemo", name: "Mistral Nemo", family: "Mistral", provider: "local", inputPrice: "$0", outputPrice: "$0", context: "128K" },
-  { id: "mistral-large", name: "Mistral Large 2", family: "Mistral", provider: "cloud", inputPrice: "$2.00", outputPrice: "$6.00", context: "128K" },
-  { id: "claude-3-5-sonnet", name: "Claude 3.5 Sonnet", family: "Claude", provider: "cloud", inputPrice: "$3.00", outputPrice: "$15.00", context: "200K" },
-  { id: "claude-3-opus", name: "Claude 3 Opus", family: "Claude", provider: "cloud", inputPrice: "$15.00", outputPrice: "$75.00", context: "200K" },
-  { id: "gpt-4o", name: "GPT-4o", family: "GPT", provider: "cloud", inputPrice: "$5.00", outputPrice: "$15.00", context: "128K" },
-  { id: "gpt-4o-mini", name: "GPT-4o mini", family: "GPT", provider: "cloud", inputPrice: "$0.15", outputPrice: "$0.60", context: "128K" },
-  { id: "gemini-1.5-pro", name: "Gemini 1.5 Pro", family: "Gemini", provider: "cloud", inputPrice: "$3.50", outputPrice: "$10.50", context: "1M" },
-  { id: "gemini-1.5-flash", name: "Gemini 1.5 Flash", family: "Gemini", provider: "cloud", inputPrice: "$0.35", outputPrice: "$1.05", context: "1M" },
-];
+/** A `GET /v1/models` row flagged `hidden: true`. */
+export function isHidden(model: LiveModelInfo): boolean {
+  return (model.hidden ?? model.extra?.hidden) === true;
+}

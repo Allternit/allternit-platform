@@ -30,6 +30,23 @@ else
     log "Incus already installed"
 fi
 
+# -----------------------------------------------------------------------------
+# inotify limits for Incus
+# -----------------------------------------------------------------------------
+# Every unprivileged container maps root to the same host uid, so they all
+# share one fs.inotify.max_user_instances budget. At the Ubuntu default (128)
+# the host runs out, and the next daemon to start fails with "failed to create
+# inotify: Too many open files". On 2026-11-10 that was dnsmasq for incusbr0:
+# no container got an IPv4 address for two days. The 90- prefix sorts after
+# any older 10-*.conf so this file wins. See docs/operations/cloud-computer-network.
+log "setting inotify limits for Incus"
+cat > /etc/sysctl.d/90-incus-inotify.conf <<'SYSCTL'
+# Allternit: unprivileged Incus containers share one host uid's inotify budget.
+fs.inotify.max_user_instances = 8192
+fs.inotify.max_user_watches = 1048576
+SYSCTL
+sysctl -p /etc/sysctl.d/90-incus-inotify.conf
+
 # Idempotently initialise Incus. If already initialised, this is a no-op.
 if [ ! -d /var/lib/incus ] || ! incus info >/dev/null 2>&1; then
     log "initialising Incus"

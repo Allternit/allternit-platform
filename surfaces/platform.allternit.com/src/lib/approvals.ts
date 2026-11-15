@@ -1,88 +1,45 @@
-import { api } from "@/lib/api-client";
+import type { ApprovalSource, ApprovalStatus, V1Approval } from "@/lib/platform-v1";
 
-export type ApprovalStatus = "pending" | "approved" | "denied" | "timed_out" | "cancelled";
-export type ApprovalPriority = "low" | "normal" | "high" | "critical";
+export const APPROVAL_STATUS_LABEL: Record<ApprovalStatus, string> = {
+  pending: "Pending",
+  approved: "Approved",
+  denied: "Denied",
+  expired: "Expired",
+  consumed: "Consumed",
+};
 
-export interface ApprovalRequestSummary {
-  id: string;
-  run_id: string;
-  status: ApprovalStatus;
-  priority: ApprovalPriority;
-  title: string;
-  action_type?: string | null;
-  created_at: string;
-  responded_at?: string | null;
+export const APPROVAL_SOURCE_LABEL: Record<ApprovalSource, string> = {
+  twin: "Twin",
+  computer: "Computer",
+};
+
+export function approvalStatusLabel(status: string): string {
+  return APPROVAL_STATUS_LABEL[status as ApprovalStatus] ?? status;
 }
 
-export interface ApprovalRequest extends ApprovalRequestSummary {
-  step_cursor?: string | null;
-  description?: string | null;
-  action_params?: Record<string, unknown> | null;
-  reasoning?: string | null;
-  requested_by?: string | null;
-  responded_by?: string | null;
-  response_message?: string | null;
-  timeout_seconds?: number | null;
+function scalar(v: unknown): string | null {
+  if (typeof v === "string" && v.trim()) return v.trim();
+  if (typeof v === "number" || typeof v === "boolean") return String(v);
+  return null;
 }
 
-export interface CreateApprovalRequest {
-  run_id: string;
-  step_cursor?: string;
-  priority?: ApprovalPriority;
-  title: string;
-  description?: string;
-  action_type?: string;
-  action_params?: Record<string, unknown>;
-  reasoning?: string;
-  requested_by?: string;
-  timeout_seconds?: number;
-}
-
-export interface ApprovalResponse {
-  approved: boolean;
-  message?: string;
-  modified_params?: Record<string, unknown>;
-}
-
-export async function listApprovals(
-  status?: ApprovalStatus,
-  runId?: string
-): Promise<ApprovalRequestSummary[]> {
-  const params = new URLSearchParams();
-  if (status) params.append("status", status);
-  if (runId) params.append("run_id", runId);
-  const query = params.toString() ? `?${params.toString()}` : "";
-  return api.get<ApprovalRequestSummary[]>(`/api/v1/approvals${query}`);
-}
-
-export async function getApproval(id: string): Promise<ApprovalRequest> {
-  return api.get<ApprovalRequest>(`/api/v1/approvals/${encodeURIComponent(id)}`);
-}
-
-export async function createApproval(req: CreateApprovalRequest): Promise<ApprovalRequest> {
-  return api.post<ApprovalRequest>("/api/v1/approvals", req);
-}
-
-export async function approveApproval(
-  id: string,
-  response?: ApprovalResponse
-): Promise<ApprovalRequest> {
-  return api.post<ApprovalRequest>(
-    `/api/v1/approvals/${encodeURIComponent(id)}/approve`,
-    response ?? { approved: true }
-  );
-}
-
-export async function denyApproval(
-  id: string,
-  response?: ApprovalResponse
-): Promise<ApprovalRequest> {
-  return api.post<ApprovalRequest>(
-    `/api/v1/approvals/${encodeURIComponent(id)}/deny`,
-    response ?? { approved: false }
-  );
-}
-
-export async function cancelApproval(id: string): Promise<ApprovalRequest> {
-  return api.post<ApprovalRequest>(`/api/v1/approvals/${encodeURIComponent(id)}/cancel`);
+/** One line describing what the agent wants to do, from its free-form `proposed_action`. */
+export function summarizeProposedAction(action: V1Approval["proposed_action"] | null | undefined, max = 120): string {
+  if (!action || typeof action !== "object") return "No details";
+  const a = action as Record<string, unknown>;
+  const head = ["summary", "description", "title", "message", "command", "prompt", "action", "tool", "name"]
+    .map((k) => scalar(a[k]))
+    .find((x) => x !== null);
+  let text = head;
+  if (!text) {
+    const parts = Object.entries(a)
+      .map(([k, v]) => {
+        const s = scalar(v);
+        return s ? `${k}: ${s}` : null;
+      })
+      .filter((x): x is string => x !== null);
+    text = parts.length ? parts.join(", ") : Object.keys(a).length ? JSON.stringify(a) : "No details";
+  }
+  text = text.replace(/\s+/g, " ");
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
 }

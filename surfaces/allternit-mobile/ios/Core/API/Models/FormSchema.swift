@@ -30,6 +30,15 @@ struct FormField: Identifiable, Codable, Sendable {
     let min: Double?
     let max: Double?
     let defaultValue: FormValue?
+    /// Where a select's options come from at display time. nil = `options`.
+    /// `.modelCatalog` = the live `GET /api/v1/models` catalog in ModelStore,
+    /// defaulting to the user's selected model, never a hand-written list.
+    var optionsSource: FormOptionsSource? = nil
+}
+
+/// A live option source for a select field.
+enum FormOptionsSource: String, Codable, Sendable {
+    case modelCatalog
 }
 
 /// A form value can be string, number, bool, or array of strings.

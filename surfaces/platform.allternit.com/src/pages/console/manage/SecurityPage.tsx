@@ -21,6 +21,8 @@ import {
   Badge,
 } from "@/components/console-ui";
 import { cn } from "@/lib/utils";
+import { isCloudGateway } from "@/lib/availability";
+import { OrgPolicyPanel } from "@/pages/console/manage/OrgPolicyPanel";
 
 function formatDateTime(iso?: string | null): string {
   if (!iso) return "Never changed";
@@ -52,7 +54,7 @@ interface RetentionDraft {
  * /api/v1/purposes routes do not exist on this gateway, so there is nothing
  * real to call behind it.
  */
-export function SecurityPage(): React.ReactNode {
+function RuntimeSecurityPage(): React.ReactNode {
   const [forbidden, setForbidden] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -448,6 +450,15 @@ export function SecurityPage(): React.ReactNode {
       ]}
     />
   );
+}
+
+/**
+ * Security. On Allternit Cloud this is the organization policy (key expiry,
+ * IP allowlist, spend alerts); on a runtime gateway it is data retention and
+ * residency.
+ */
+export function SecurityPage(): React.ReactNode {
+  return isCloudGateway() ? <OrgPolicyPanel /> : <RuntimeSecurityPage />;
 }
 
 export default SecurityPage;

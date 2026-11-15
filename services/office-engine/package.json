@@ -19,6 +19,7 @@
     "@allternit/office-file-parse": "workspace:*",
     "@allternit/office-pptx-engine": "workspace:*",
     "@allternit/office-xlsx-engine": "workspace:*",
+    "@allternit/pdf-templates": "workspace:*",
     "@firecrawl/anydoc": "0.1.6",
     "@hono/node-server": "^1.13.0",
     "@mozilla/readability": "0.6.0",

@@ -3,6 +3,7 @@ import { Tool } from "@/runtime/tools/builtins/tool"
 import DESCRIPTION from "@/runtime/tools/builtins/websearch.txt"
 import { abortAfterAny } from "@/shared/util/abort"
 import { sourcesFromExaText } from "@/runtime/session/response-parts"
+import { AllternitSearch } from "@/runtime/tools/builtins/allternit-search"
 
 const API_CONFIG = {
   BASE_URL: "https://mcp.exa.ai",
@@ -76,6 +77,22 @@ export const WebSearchTool = Tool.define("websearch", async () => {
           contextMaxCharacters: params.contextMaxCharacters,
         },
       })
+
+      // Allternit's own search route first (any model, signed in); the public
+      // Exa MCP endpoint only when signed out or the route can't answer.
+      const owned = await AllternitSearch.search(params.query, {
+        numResults: params.numResults || API_CONFIG.DEFAULT_NUM_RESULTS,
+        signal: ctx.abort,
+      })
+      if (owned?.length) {
+        const output = AllternitSearch.toText(owned)
+        const sources = sourcesFromExaText(output)
+        return {
+          output,
+          title: `Web search: ${params.query}`,
+          metadata: sources.length ? { sources } : {},
+        }
+      }
 
       const searchRequest: McpSearchRequest = {
         jsonrpc: "2.0",

@@ -324,7 +324,10 @@ fn summary(r: &LoginRead) -> String {
 /// Read every eligible login of one owner. Empty when the switch is off or
 /// no Sessions computer answers.
 pub async fn run_owner(state: &Arc<AppState>, owner: &str) -> Vec<LoginRead> {
-    let model = crate::memory_extraction::extraction_model();
+    let Some(model) = crate::memory_extraction::extraction_model() else {
+        tracing::debug!("no brain chosen; skipping vendor login reads");
+        return Vec::new();
+    };
     let o = owner.to_string();
     let complete = move |prompt: String| {
         let (model, o) = (model.clone(), o.clone());

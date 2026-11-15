@@ -140,6 +140,29 @@ export async function checkGatewayReachability(deps: GatewayCheckDeps = {}): Pro
   }
 }
 
+/**
+ * Allternit services (status.allternit.com). Warns when anything is degraded or
+ * down; never fails doctor, and an unreachable feed (offline) is only info.
+ */
+export async function checkAllternitServices(
+  deps: { fetchStatus?: () => Promise<import("@/cli/utils/serviceStatus").ServiceStatus>; offline?: boolean } = {},
+): Promise<DoctorCheck> {
+  const id = "allternit-services"
+  const section = "Cloud"
+  if (deps.offline ?? isEssentialTrafficOnly()) {
+    return { id, section, status: "info", message: "Allternit services: offline mode — status not checked" }
+  }
+  const sv = await import("@/cli/utils/serviceStatus")
+  try {
+    const status = deps.fetchStatus ? await deps.fetchStatus() : (await sv.fetchServiceStatus()).status
+    return sv.exitCodeFor(status) === 0
+      ? { id, section, status: "pass", message: "Allternit services: all operational" }
+      : { id, section, status: "warn", message: `Allternit services: ${sv.summarizeServices(status)} (see ${sv.statusUrl().replace(/\/api\/.*$/, "")})` }
+  } catch (e) {
+    return { id, section, status: "info", message: `Allternit services: status page not reachable (${e instanceof Error ? e.message : String(e)})` }
+  }
+}
+
 export type CronCheckDeps = {
   isRunning: () => Promise<boolean>
   /** Supervision probe from cron supervision (slice 4); null = not wired. */
@@ -261,18 +284,8 @@ export type FactoryEngineCheckDeps = {
   home?: string
 }
 
-/**
- * Ports a Factory engine may serve on, most specific first. An explicit
- * ALLTERNIT_FACTORY_PORT always wins. Otherwise probe both known homes:
- * Allternit Desktop runs the engine on 3018 (PORTS.FACTORY — its extension
- * bridge owns 3011; see allternit-desktop src/main/config.ts), while a
- * CLI/dev `allternit-factory serve` uses the engine default 3011.
- */
-export function factoryEnginePorts(env: NodeJS.ProcessEnv = process.env): number[] {
-  const fromEnv = Number(env.ALLTERNIT_FACTORY_PORT)
-  if (Number.isInteger(fromEnv) && fromEnv > 0) return [fromEnv]
-  return [3018, 3011]
-}
+export { factoryEnginePorts } from "@/cli/factory/engine"
+import { factoryEnginePorts } from "@/cli/factory/engine"
 
 /**
  * `gizzi doctor` — the Allternit Factory engine: found (and where), its

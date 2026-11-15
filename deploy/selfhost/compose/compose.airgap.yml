@@ -1,0 +1,104 @@
+# Air-gap override for the self-hosted stack. Test use, not production.
+#
+#   docker compose -f docker-compose.yml -f compose.airgap.yml up -d
+#   (or run ./verify-airgap.sh, which does everything)
+#
+# What it changes:
+#   * The `backend` network becomes `internal: true`: no container on it can
+#     reach anything outside it, and no ports are published to the host. The
+#     test talks to the API through the `probe` container.
+#   * `dns-logger` (CoreDNS with the log plugin) is the DNS server for every
+#     container. It logs each query and answers NXDOMAIN. Docker's embedded
+#     resolver still answers compose service names itself and forwards every
+#     other name here. verify-airgap.sh looks up a canary name first to prove
+#     queries arrive, then counts queries for allternit.com (expected: 0).
+#   * `mock-provider` is a small Anthropic Messages mock. The server reaches it
+#     through a gateway (format anthropic-messages) with a model_map
+#     (airgap/settings.airgap.yaml).
+#
+# Needs Docker Compose 2.24 or later (for !override).
+
+x-airgap-dns: &airgap-dns
+  dns:
+    - 172.31.240.53
+  dns_search: []
+
+services:
+  dns-logger:
+    image: coredns/coredns:1.11.3
+    command: ["-conf", "/etc/coredns/Corefile"]
+    volumes:
+      - type: bind
+        source: ./airgap/Corefile
+        target: /etc/coredns/Corefile
+        read_only: true
+    networks:
+      backend:
+        ipv4_address: 172.31.240.53
+
+  mock-provider:
+    image: python:3.12-slim
+    command: ["python", "-u", "/app/server.py"]
+    environment:
+      PORT: "8080"
+    volumes:
+      - type: bind
+        source: ./mock-provider
+        target: /app
+        read_only: true
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    <<: *airgap-dns
+    depends_on: [dns-logger]
+    networks: [backend]
+
+  # The test's window into the internal network. Never restarted by the test,
+  # so API calls keep working while postgres and server restart.
+  probe:
+    image: curlimages/curl:8.10.1
+    entrypoint: ["sh", "-c", "trap 'exit 0' TERM; while :; do sleep 1; done"]
+    <<: *airgap-dns
+    depends_on: [dns-logger]
+    networks: [backend]
+
+  postgres:
+    <<: *airgap-dns
+    depends_on: [dns-logger]
+
+  migrate:
+    <<: *airgap-dns
+    volumes:
+      - type: bind
+        source: ./airgap/settings.airgap.yaml
+        target: /etc/allternit/settings.yaml
+        read_only: true
+
+  server:
+    <<: *airgap-dns
+    # Internal networks publish no ports; drop the host binding.
+    ports: !override []
+    volumes:
+      - type: bind
+        source: ./airgap/settings.airgap.yaml
+        target: /etc/allternit/settings.yaml
+        read_only: true
+      - server-data:/var/lib/allternit-agents-server
+    depends_on:
+      mock-provider:
+        condition: service_healthy
+
+  worker:
+    <<: *airgap-dns
+
+  otel-collector:
+    <<: *airgap-dns
+
+networks:
+  backend:
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.31.240.0/24

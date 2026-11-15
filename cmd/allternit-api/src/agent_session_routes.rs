@@ -155,6 +155,9 @@ pub fn agent_session_router() -> Router<Arc<AppState>> {
             "/agent-sessions/:id/messages",
             get(list_messages).post(send_message),
         )
+        // Earlier versions of turns a Retry/Edit replaced, proxied to gizzi's
+        // `/v1/session/:id/branches` (newest first, max 20).
+        .route("/agent-sessions/:id/branches", get(list_branches))
         .route("/agent-sessions/:id/abort", post(abort_session))
         .route("/agent-sessions/:id/status", get(session_status))
         .route("/agent-sessions/:id/revert", post(revert_session))
@@ -209,6 +212,7 @@ pub fn agent_session_router() -> Router<Arc<AppState>> {
         .route("/native-sessions", get(list_native_sessions))
         .route("/native-sessions/pickup", post(pickup_native_session))
         .route("/native-sessions/spawn", post(spawn_native_session))
+        .route("/native-sessions/teleport", post(teleport_native_session))
         .route("/native-sessions/:harness/:id", get(show_native_session))
         .route("/agent-sessions/:id/fetch-origin", post(fetch_native_origin))
         .route("/agent-sessions/:id/origin", get(get_native_origin))
@@ -340,6 +344,10 @@ struct GizziSessionInfo {
     /// tool): `{ text, artifactId?, at }`; absent once cleared.
     #[serde(default)]
     glance: Option<serde_json::Value>,
+    /// Set on a `gizzi mission` orchestrator session:
+    /// `{ id, goal, milestone, total, status, label: "Mission · M2/5", at }`.
+    #[serde(default)]
+    mission: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -360,7 +368,7 @@ struct GizziMessage {
 struct GizziMessageInfo {
     id: String,
     #[serde(rename = "sessionID")]
-    _session_id: String,
+    session_id: String,
     role: String,
     #[serde(default)]
     time: Option<GizziMessageTimeInfo>,
@@ -423,8 +431,20 @@ pub(crate) struct GizziMessagePart {
     url: Option<String>,
     #[serde(default)]
     tool: Option<String>,
+    /// A tool part's call id — keys the run_code manifest (and lets clients
+    /// match a reloaded part to the live `tool_result.toolCallId`).
+    #[serde(default, rename = "callID", skip_serializing_if = "Option::is_none")]
+    call_id: Option<String>,
     #[serde(default)]
     state: Option<serde_json::Value>,
+    /// run_code only: the produced files `[{name, mediaType, uploadId, size,
+    /// url}]` from the call's manifest — the same list the live
+    /// `tool_result` frame carried. Added by the API, never read from gizzi.
+    #[serde(default, skip_deserializing, skip_serializing_if = "Option::is_none")]
+    files: Option<serde_json::Value>,
+    /// run_code only: `{stdout, stderr, exit_code, timed_out, skipped}`.
+    #[serde(default, skip_deserializing, skip_serializing_if = "Option::is_none")]
+    run: Option<serde_json::Value>,
     /// Injected by gizzi, not typed by the user (e.g. a handoff checkpoint).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     synthetic: Option<bool>,
@@ -506,6 +526,7 @@ fn transform_session(info: GizziSessionInfo, db: &DbHandle) -> serde_json::Value
     metadata.insert("limit".to_string(), json!(info.limit));
     metadata.insert("environment".to_string(), json!(info.environment));
     metadata.insert("glance".to_string(), json!(info.glance));
+    metadata.insert("mission".to_string(), json!(info.mission));
     for (key, value) in stored_metadata {
         metadata.insert(key, value);
     }
@@ -576,7 +597,50 @@ fn extract_reasoning(parts: &[GizziMessagePart]) -> Option<String> {
     }
 }
 
+/// Blocking (run_code manifest reads, first-time ingest): async handlers
+/// call it through `transform_messages_blocking`.
 fn transform_message(message: GizziMessage) -> serde_json::Value {
+    transform_message_with(message, &crate::gizzi_chat_stream::RunCodePaths::current())
+}
+
+/// `transform_message` for a batch, on the blocking pool.
+async fn transform_messages_blocking(messages: Vec<GizziMessage>) -> Vec<serde_json::Value> {
+    tokio::task::spawn_blocking(move || {
+        let paths = crate::gizzi_chat_stream::RunCodePaths::current();
+        messages.into_iter().map(|m| transform_message_with(m, &paths)).collect()
+    })
+    .await
+    .unwrap_or_else(|e| {
+        tracing::warn!(error = %e, "transform_messages task failed");
+        Vec::new()
+    })
+}
+
+/// A completed run_code part gets `files` + `run` from its manifest (the
+/// same payload the live `tool_result` frame carried; ingests once if the
+/// API never saw the call live).
+fn attach_run_code_payload(
+    part: &mut GizziMessagePart,
+    session_id: &str,
+    paths: &crate::gizzi_chat_stream::RunCodePaths,
+) {
+    if part.part_type != "tool" || part.tool.as_deref() != Some("run_code") {
+        return;
+    }
+    let view = json!({ "tool": part.tool, "callID": part.call_id, "state": part.state });
+    if let Some(payload) = crate::gizzi_chat_stream::run_code_payload(&view, Some(session_id), paths) {
+        part.files = payload.get("files").cloned();
+        part.run = payload.get("run").cloned();
+    }
+}
+
+fn transform_message_with(
+    mut message: GizziMessage,
+    run_code_paths: &crate::gizzi_chat_stream::RunCodePaths,
+) -> serde_json::Value {
+    for part in message.parts.iter_mut() {
+        attach_run_code_payload(part, &message.info.session_id, run_code_paths);
+    }
     let content = extract_message_content(&message.parts);
     let content = if content.is_empty() {
         message
@@ -680,7 +744,20 @@ fn run_telemetry(message: &GizziMessage) -> serde_json::Value {
     let tools: Vec<_> = message.parts.iter().filter(|p| p.part_type == "tool").collect();
     let failures = tools
         .iter()
-        .filter(|p| p.state.as_ref().and_then(|s| s.get("status")).and_then(|v| v.as_str()) == Some("error"))
+        .filter(|p| {
+            let state = p.state.as_ref();
+            let errored = state.and_then(|s| s.get("status")).and_then(|v| v.as_str()) == Some("error");
+            // A step the person stopped (Stop, Esc in a Gizzi terminal) is not a failure.
+            let stopped = state
+                .and_then(|s| s.get("error"))
+                .and_then(|v| v.as_str())
+                .map(|e| {
+                    let e = e.trim().to_ascii_lowercase();
+                    e.starts_with("interrupted by user") || e.starts_with("the operation was aborted") || e.starts_with("aborted") || e.starts_with("tool execution aborted") || e.starts_with("request interrupted by user")
+                })
+                .unwrap_or(false);
+            errored && !stopped
+        })
         .count();
     let model_id = match (&info.provider_id, &info.model_id) {
         (Some(p), Some(m)) => Some(format!("{p}/{m}")),
@@ -714,7 +791,9 @@ fn normalize_surface_for_gizzi(surface: &str) -> &str {
     }
 }
 
-fn select_model(metadata: Option<&serde_json::Value>) -> serde_json::Value {
+/// The model a request names, else the explicit platform default. `None` =
+/// no brain was chosen anywhere; callers answer `no_brain`, never guess.
+fn select_model(metadata: Option<&serde_json::Value>) -> Option<serde_json::Value> {
     if let Some(model) = metadata
         .and_then(|value| value.get("model"))
         .and_then(|value| value.as_object())
@@ -723,14 +802,14 @@ fn select_model(metadata: Option<&serde_json::Value>) -> serde_json::Value {
             model.get("providerID").and_then(|value| value.as_str()),
             model.get("modelID").and_then(|value| value.as_str()),
         ) {
-            return json!(GizziModelRef::new(
+            return Some(json!(GizziModelRef::new(
                 provider_id.to_string(),
                 model_id.to_string(),
                 model
                     .get("authProfileId")
                     .and_then(|value| value.as_str())
                     .map(|s| s.to_string()),
-            ));
+            )));
         }
     }
 
@@ -744,11 +823,50 @@ fn select_model(metadata: Option<&serde_json::Value>) -> serde_json::Value {
                 .map(|s| s.to_string()),
         ))
     }) {
-        return json!(GizziModelRef::new(provider_id.to_string(), model_id.to_string(), auth_profile_id));
+        return Some(json!(GizziModelRef::new(provider_id.to_string(), model_id.to_string(), auth_profile_id)));
     }
 
+    default_model_ref()
+}
+
+/// The explicit platform default as a gizzi model ref; `None` when the user
+/// never chose a brain (there is no fallback model).
+fn default_model_ref() -> Option<serde_json::Value> {
     let (provider_id, model_id) = AppConfig::load().default_model();
-    json!(GizziModelRef::new(provider_id, model_id, None))
+    if crate::config::is_no_brain(&provider_id, &model_id) {
+        return None;
+    }
+    Some(json!(GizziModelRef::new(provider_id, model_id, None)))
+}
+
+/// A bot's own saved brain (`agents.provider/model`), when it has one.
+fn agent_saved_model(db: &DbHandle, agent_id: &str) -> Option<serde_json::Value> {
+    let (provider_id, model_id) = db
+        .connect()
+        .ok()?
+        .query_row(
+            "SELECT provider, model FROM agents WHERE id = ?1",
+            params![agent_id],
+            |row| Ok((row.get::<_, Option<String>>(0)?, row.get::<_, Option<String>>(1)?)),
+        )
+        .ok()?;
+    let (provider_id, model_id) = (provider_id?, model_id?);
+    if provider_id.is_empty() || model_id.is_empty() {
+        return None;
+    }
+    Some(json!(GizziModelRef::new(provider_id, model_id, None)))
+}
+
+/// The failure text a server-started bot turn reports when no brain was
+/// chosen: "Pick a brain for <bot>." (shown in the bot's Needs-fixing list).
+pub(crate) fn no_brain_turn_error(db: &DbHandle, bot_id: &str) -> String {
+    let name: Option<String> = db.connect().ok().and_then(|conn| {
+        conn.query_row("SELECT name FROM agents WHERE id = ?1", params![bot_id], |r| r.get(0)).ok()
+    });
+    match name.map(|n| n.trim().to_string()).filter(|n| !n.is_empty()) {
+        Some(name) => format!("Pick a brain for {name}."),
+        None => crate::config::NO_BRAIN_MESSAGE.to_string(),
+    }
 }
 
 async fn gizzi_json<T: serde::de::DeserializeOwned>(
@@ -1075,13 +1193,17 @@ async fn create_session(
                 v.as_bool().unwrap_or(false) || v.as_str() == Some("true")
             });
 
-    // Use the client-supplied model if present; otherwise fall back to the
-    // platform default so Gizzi sessions always know which brain to use.
-    let model_ref = body.model.map(GizziModelRef::normalized).unwrap_or_else(|| {
-        let (default_provider, default_model_id) = AppConfig::load().default_model();
-        GizziModelRef::new(default_provider, default_model_id, None)
-    });
-    payload.insert("model".to_string(), json!(model_ref));
+    // The client's model, else the explicit platform default, else the bound
+    // bot's saved brain. None chosen → the session is created without a
+    // model (gizzi accepts that) and the first turn answers `no_brain`.
+    let model_ref = body
+        .model
+        .map(|m| json!(GizziModelRef::normalized(m)))
+        .or_else(default_model_ref)
+        .or_else(|| body.agent_id.as_deref().and_then(|id| agent_saved_model(&state.db, id)));
+    if let Some(model_ref) = model_ref {
+        payload.insert("model".to_string(), model_ref);
+    }
 
     // Resolve platform agent harness config and forward it into the gizzi session.
     if let Some(ref agent_id) = body.agent_id {
@@ -1286,10 +1408,42 @@ async fn list_messages(headers: HeaderMap, Path(session_id): Path<String>) -> im
     let client = gizzi_client(&headers);
     let path = format!("/v1/session/{}/messages", urlencoding::encode(&session_id));
     match gizzi_json::<Vec<GizziMessage>>(&client, reqwest::Method::GET, &path, None).await {
-        Ok(messages) => Json(
-            messages
+        Ok(messages) => Json(transform_messages_blocking(messages).await).into_response(),
+        Err(response) => response,
+    }
+}
+
+/// A gizzi `message_branch` row: the messages a revert-and-resend removed.
+#[derive(Debug, Deserialize)]
+struct GizziBranch {
+    id: String,
+    #[serde(rename = "anchorMessageId")]
+    anchor_message_id: String,
+    #[serde(rename = "createdAt")]
+    created_at: i64,
+    #[serde(default)]
+    messages: Vec<GizziMessage>,
+}
+
+/// `GET /agent-sessions/:id/branches` → `[{ id, anchorMessageId, createdAt, messages }]`,
+/// newest first. Each message has the same shape as `/agent-sessions/:id/messages`
+/// (`transform_message`), so its `id` is the gizzi message id and `anchorMessageId`
+/// matches the reverted user message's `id` in the transcript before the revert.
+async fn list_branches(headers: HeaderMap, Path(session_id): Path<String>) -> impl IntoResponse {
+    let client = gizzi_client(&headers);
+    let path = format!("/v1/session/{}/branches", urlencoding::encode(&session_id));
+    match gizzi_json::<Vec<GizziBranch>>(&client, reqwest::Method::GET, &path, None).await {
+        Ok(branches) => Json(
+            branches
                 .into_iter()
-                .map(transform_message)
+                .map(|branch| {
+                    json!({
+                        "id": branch.id,
+                        "anchorMessageId": branch.anchor_message_id,
+                        "createdAt": to_iso(Some(branch.created_at)),
+                        "messages": branch.messages.into_iter().map(transform_message).collect::<Vec<_>>(),
+                    })
+                })
                 .collect::<Vec<_>>(),
         )
         .into_response(),
@@ -1297,8 +1451,29 @@ async fn list_messages(headers: HeaderMap, Path(session_id): Path<String>) -> im
     }
 }
 
+/// The owner's own chat turn on a bot thread is an owner input: it is labelled `owner` in
+/// `content_provenance`, so the owner-only rules (`phone_task::refusal`, `task_grants`) see
+/// the owner speak after an outside message. Only a signed-in session with no API key or
+/// agent credential, on a thread that user owns, writes the row. Server-relayed turns
+/// (`system`) and seed messages (`noReply`) are not the owner typing and write nothing.
+fn label_owner_turn(db: &DbHandle, user_id: Option<&str>, has_credential: bool, session_id: &str, body: &SendMessageBody) {
+    let Some(user_id) = user_id.filter(|u| !u.trim().is_empty()) else { return };
+    if has_credential || body.system.is_some() || body.no_reply == Some(true) || body.text.trim().is_empty() {
+        return;
+    }
+    let Ok(conn) = db.connect() else { return };
+    let thread: Option<String> = conn
+        .query_row("SELECT id FROM bot_threads WHERE current_session_id = ?1 AND user_id = ?2 LIMIT 1", params![session_id, user_id], |r| r.get(0))
+        .ok();
+    if let Some(thread) = thread {
+        crate::netops::provenance::label(&conn, &thread, crate::netops::provenance::Trust::Owner, "user", "owner", &body.text);
+    }
+}
+
 async fn send_message(
     State(state): State<Arc<AppState>>,
+    user: Option<axum::extract::Extension<AuthUser>>,
+    credential: Option<axum::extract::Extension<crate::enterprise_auth::CredentialContext>>,
     headers: HeaderMap,
     Path(session_id): Path<String>,
     Json(body): Json<SendMessageBody>,
@@ -1334,12 +1509,23 @@ async fn send_message(
         .into_response();
     }
 
+    label_owner_turn(&state.db, user.as_ref().map(|u| u.0.user_id.as_str()), credential.is_some(), &session_id, &body);
+
     if let Some(resp) = crate::gateway_runner::intercept_message(&session_id, &body.text, body.metadata.as_ref()).await {
         return resp;
     }
     let client = gizzi_client(&headers);
     let path = format!("/v1/session/{}/message", urlencoding::encode(&session_id));
     let mut payload = send_message_payload(&body);
+    // No model named and no platform default: a bot thread runs on what the
+    // thread/bot saved; otherwise the user has to pick a brain first. A
+    // no-reply note starts no turn, so it needs no brain.
+    if payload.get("model").is_none() && body.no_reply != Some(true) {
+        match session_bot_id(&state.db, &session_id).and_then(|bot| stored_turn_model(&state.db, &session_id, &bot)) {
+            Some(model) => payload["model"] = model,
+            None => return crate::config::no_brain_error().into_response(),
+        }
+    }
     // A bot's session: the turn runs as the bot (see `bot_turn_marker`).
     if let Some(bot) = session_bot_marker(&state.db, &session_id) {
         payload["bot"] = bot;
@@ -1354,6 +1540,28 @@ async fn send_message(
 /// The app sends `[{ questionIndex, answer }]` (answer a label or labels);
 /// gizzi wants one label list per question, in order. A body that is already
 /// `string[][]` passes through.
+/// The edited plan on a plan-approval reply (`plan: [{ title, detail? }]`),
+/// kept to gizzi's bounds (50 steps, 500 characters per field). gizzi checks
+/// it again; anything else in the body is not forwarded.
+pub(crate) fn question_plan(body: &serde_json::Value) -> Option<serde_json::Value> {
+    let steps = body.get("plan")?.as_array()?;
+    if steps.len() > 50 {
+        return None;
+    }
+    let clip = |v: Option<&serde_json::Value>| v.and_then(|x| x.as_str()).map(|t| t.trim().chars().take(500).collect::<String>());
+    let out: Vec<serde_json::Value> = steps
+        .iter()
+        .filter_map(|step| {
+            let title = clip(step.get("title")).filter(|t| !t.is_empty())?;
+            Some(match clip(step.get("detail")).filter(|d| !d.is_empty()) {
+                Some(detail) => json!({ "title": title, "detail": detail }),
+                None => json!({ "title": title }),
+            })
+        })
+        .collect();
+    Some(serde_json::Value::Array(out))
+}
+
 fn question_answers(body: &serde_json::Value) -> Vec<Vec<String>> {
     let Some(items) = body.get("answers").and_then(|v| v.as_array()) else {
         return Vec::new();
@@ -1412,7 +1620,10 @@ async fn reply_question(
         None
     };
     let path = format!("/v1/question/{}/reply", urlencoding::encode(&request_id));
-    let payload = json!({ "answers": answers });
+    let mut payload = json!({ "answers": answers });
+    if let Some(plan) = question_plan(&body) {
+        payload["plan"] = plan;
+    }
     match gizzi_json::<serde_json::Value>(&client, reqwest::Method::POST, &path, Some(payload)).await {
         Ok(value) => {
             if let (Some(session), Some(axum::extract::Extension(user))) = (session_id, user) {
@@ -1545,10 +1756,10 @@ fn send_message_payload(body: &SendMessageBody) -> serde_json::Value {
     if let Some(source) = body.source.as_deref().filter(|s| !s.is_empty()) {
         part["metadata"] = json!({ "source": source });
     }
-    let mut payload = json!({
-        "parts": [part],
-        "model": select_model(body.metadata.as_ref()),
-    });
+    let mut payload = json!({ "parts": [part] });
+    if let Some(model) = select_model(body.metadata.as_ref()) {
+        payload["model"] = model;
+    }
     if body.no_reply == Some(true) {
         payload["noReply"] = json!(true);
     }
@@ -1972,7 +2183,8 @@ async fn fetch_event_message(client: &Client, session_id: &str, message_id: Opti
     let messages = gizzi_json::<Vec<GizziMessage>>(client, reqwest::Method::GET, &path, None)
         .await
         .ok()?;
-    pick_event_message(messages, message_id).map(transform_message)
+    let message = pick_event_message(messages, message_id)?;
+    transform_messages_blocking(vec![message]).await.into_iter().next()
 }
 
 /// By id when the event carries one; the newest message otherwise.
@@ -2106,6 +2318,7 @@ async fn transform_bus_event(
                         "limit": info.limit,
                         "environment": info.environment,
                         "glance": info.glance,
+                        "mission": info.mission,
                     },
                     "environment": info.environment,
                 })
@@ -2188,6 +2401,17 @@ async fn transform_bus_event(
             "width": props.get("width"),
             "height": props.get("height"),
             "title": props.get("title"),
+            // Video (media_generate) and artifact_check fields: the app's
+            // parser rejects a video without duration and fps.
+            "duration": props.get("duration"),
+            "fps": props.get("fps"),
+            "motionBlur": props.get("motionBlur"),
+            "audio": props.get("audio"),
+            "timeoutMs": props.get("timeoutMs"),
+            "artifactKind": props.get("artifactKind"),
+            "bodyFormat": props.get("bodyFormat"),
+            "widths": props.get("widths"),
+            "reference": props.get("reference"),
             "time": props.get("time"),
         })),
         "pane_artifact.requested" => Some(json!({
@@ -2415,6 +2639,12 @@ async fn proxy_gizzi(
     }
 }
 
+/// Teleport (Mac <-> cloud computer): gizzi owns the manifest and the transfer, so 8013 forwards it.
+async fn teleport_native_session(headers: HeaderMap, Json(body): Json<serde_json::Value>) -> Response {
+    let client = gizzi_client(&headers);
+    proxy_gizzi(&client, reqwest::Method::POST, "/v1/native-session/teleport", Some(body)).await
+}
+
 async fn list_native_harnesses(headers: HeaderMap) -> Response {
     let client = gizzi_client(&headers);
     proxy_gizzi(&client, reqwest::Method::GET, "/v1/native-session/harnesses", None).await
@@ -2597,7 +2827,7 @@ mod permission_reply_tests {
         let temp = std::env::temp_dir().join(format!("prompt-sync-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&temp).unwrap();
         let db = crate::db::DbHandle::new(temp.join("test.db")).expect("test db");
-        let client = reqwest::Client::new();
+        let client = crate::net_client::client();
         for (gizzi, ours) in [
             ("permission.replied", "permission_replied"),
             ("question.replied", "question_replied"),
@@ -2767,14 +2997,20 @@ async fn get_native_origin(headers: HeaderMap, Path(id): Path<String>) -> Respon
 
 /// Model for a server-initiated turn: the thread's stored model (what the
 /// user picked), else the bot's own `agents.provider/model`, else the
-/// platform default — a routine never silently changes the bot's brain.
-pub(crate) fn bot_turn_model(db: &DbHandle, session_id: &str, bot_id: &str) -> serde_json::Value {
+/// explicit platform default — a routine never silently changes the bot's
+/// brain. `None` = no brain chosen anywhere (see [`no_brain_turn_error`]).
+pub(crate) fn bot_turn_model(db: &DbHandle, session_id: &str, bot_id: &str) -> Option<serde_json::Value> {
+    stored_turn_model(db, session_id, bot_id).or_else(default_model_ref)
+}
+
+/// The thread's stored model, else the bot's saved brain — no default.
+fn stored_turn_model(db: &DbHandle, session_id: &str, bot_id: &str) -> Option<serde_json::Value> {
     let stored = db.get_session_metadata(session_id).ok().flatten();
     if let Some(pick) = stored.as_ref().and_then(|bag| bag.get("projectModel")) {
         if let (Some(provider), Some(model)) = (pick["providerId"].as_str(), pick["modelId"].as_str()) {
             if !provider.is_empty() && !model.is_empty() {
                 let model = model.strip_prefix(&format!("{provider}/")).unwrap_or(model);
-                return json!(GizziModelRef::new(provider.to_string(), model.to_string(), None));
+                return Some(json!(GizziModelRef::new(provider.to_string(), model.to_string(), None)));
             }
         }
     }
@@ -2784,20 +3020,7 @@ pub(crate) fn bot_turn_model(db: &DbHandle, session_id: &str, bot_id: &str) -> s
     if has_model {
         return select_model(stored.as_ref());
     }
-    let agent_model = db.connect().ok().and_then(|conn| {
-        conn.query_row(
-            "SELECT provider, model FROM agents WHERE id = ?1",
-            params![bot_id],
-            |row| Ok((row.get::<_, Option<String>>(0)?, row.get::<_, Option<String>>(1)?)),
-        )
-        .ok()
-    });
-    if let Some((Some(provider_id), Some(model_id))) = agent_model {
-        if !provider_id.is_empty() && !model_id.is_empty() {
-            return json!(GizziModelRef::new(provider_id, model_id, None));
-        }
-    }
-    select_model(None)
+    agent_saved_model(db, bot_id)
 }
 
 /// The bot an A:// target principal names, when it is one of `user_id`'s
@@ -2857,11 +3080,20 @@ pub(crate) fn bot_job_payload(db: &DbHandle, user_id: &str, target: &str, descri
 /// `None` and keep today's behavior.
 pub(crate) fn bot_turn_marker(db: &DbHandle, agent_id: &str, session_id: Option<&str>) -> Option<serde_json::Value> {
     let conn = db.connect().ok()?;
-    let (name, is_bot, config, allowed, perms): (String, i64, Option<String>, Option<String>, Option<String>) = conn
+    #[allow(clippy::type_complexity)]
+    let (name, is_bot, config, allowed, perms, skills, mcp_ids): (
+        String,
+        i64,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    ) = conn
         .query_row(
-            "SELECT name, is_bot, config, allowed_tools, tool_permissions FROM agents WHERE id = ?1",
+            "SELECT name, is_bot, config, allowed_tools, tool_permissions, allowed_skills, mcp_connector_ids FROM agents WHERE id = ?1",
             params![agent_id],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?)),
         )
         .ok()?;
     let parse = |raw: Option<String>| raw.and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok()).unwrap_or(serde_json::Value::Null);
@@ -2895,6 +3127,34 @@ pub(crate) fn bot_turn_marker(db: &DbHandle, agent_id: &str, session_id: Option<
         "askTools": ask_tools,
         "gated": gated,
     });
+    // The bot's Skills page; gizzi hides anything not on a non-empty list.
+    if let Some(list) = parse(skills).as_array().filter(|l| !l.is_empty()) {
+        marker["allowedSkills"] = json!(list);
+    }
+    // The bot's Capabilities page: catalog connectors (its connector bindings,
+    // kept in `config.connectorBindings`) and the user's MCP connectors it may
+    // use. Absent = all; gizzi enforces.
+    let apps: Vec<String> = config
+        .get("connectorBindings")
+        .and_then(serde_json::Value::as_array)
+        .map(|list| {
+            list.iter()
+                .filter_map(|b| b.get("provider").or_else(|| b.get("connectorId")).and_then(serde_json::Value::as_str))
+                .map(|id| id.trim().to_lowercase())
+                .filter(|id| !id.is_empty())
+                .collect()
+        })
+        .unwrap_or_default();
+    if !apps.is_empty() {
+        marker["allowedConnectors"] = json!(apps);
+    }
+    let mcp: Vec<String> = parse(mcp_ids)
+        .as_array()
+        .map(|list| list.iter().filter_map(serde_json::Value::as_str).map(str::to_string).filter(|id| !id.is_empty()).collect())
+        .unwrap_or_default();
+    if !mcp.is_empty() {
+        marker["allowedMcp"] = json!(mcp);
+    }
     bot_account_fields(&config, &mut marker);
     Some(marker)
 }
@@ -2916,15 +3176,20 @@ pub(crate) fn bot_account_fields(config: &serde_json::Value, marker: &mut serde_
 /// The bot marker for a session the app tagged as a bot's (`isBot` with its
 /// `agentId` / `botCanonicalFor` / `botThreadOf`), or `None`.
 pub(crate) fn session_bot_marker(db: &DbHandle, session_id: &str) -> Option<serde_json::Value> {
+    let agent_id = session_bot_id(db, session_id)?;
+    bot_turn_marker(db, &agent_id, Some(session_id))
+}
+
+/// The bot a session belongs to, from its stored metadata bag.
+fn session_bot_id(db: &DbHandle, session_id: &str) -> Option<String> {
     let bag = db.get_session_metadata(session_id).ok().flatten()?;
     if bag.get("isBot").and_then(serde_json::Value::as_bool) != Some(true) {
         return None;
     }
-    let agent_id = ["agentId", "botCanonicalFor", "botThreadOf"]
+    ["agentId", "botCanonicalFor", "botThreadOf"]
         .iter()
-        .find_map(|key| bag.get(*key).and_then(serde_json::Value::as_str).filter(|v| !v.is_empty()))?
-        .to_string();
-    bot_turn_marker(db, &agent_id, Some(session_id))
+        .find_map(|key| bag.get(*key).and_then(serde_json::Value::as_str).filter(|v| !v.is_empty()))
+        .map(str::to_string)
 }
 
 /// Budget for saved bot memory in a server-started turn's instructions.
@@ -3045,12 +3310,15 @@ pub(crate) async fn create_bot_thread_session(
         if let Ok(value) = axum::http::HeaderValue::from_str(&directory) { headers.insert("x-gizzi-directory", value); }
     }
     let client = gizzi_client(&headers);
-    let (provider_id, model_id) = AppConfig::load().default_model();
     let mut payload = serde_json::Map::new();
     payload.insert("title".to_string(), json!(title));
     payload.insert("surface".to_string(), json!(normalize_surface_for_gizzi("chat")));
     payload.insert("agentID".to_string(), json!(bot_id));
-    payload.insert("model".to_string(), json!(GizziModelRef::new(provider_id, model_id, None)));
+    // The explicit default, else the bot's saved brain; a bot with no brain
+    // still gets its thread — its first turn asks the user to pick one.
+    if let Some(model) = default_model_ref().or_else(|| agent_saved_model(db, bot_id)) {
+        payload.insert("model".to_string(), model);
+    }
     if let Some(harness) = resolve_agent_harness(db, bot_id).await {
         payload.insert("harness".to_string(), harness);
     }
@@ -3072,6 +3340,14 @@ pub(crate) async fn create_bot_thread_session(
 /// the streaming phone-call turn so both keep the same session directory,
 /// project permission mode, model and bot identity/memory.
 pub(crate) async fn native_turn_request(db: &DbHandle, session_id: &str, bot_id: &str, text: &str) -> Result<(Client, String, serde_json::Value), String> {
+    native_turn_request_on(db, session_id, bot_id, text, None).await
+}
+
+/// [`native_turn_request`] on `model` instead of the bot's own brain.
+async fn native_turn_request_on(db: &DbHandle, session_id: &str, bot_id: &str, text: &str, model: Option<serde_json::Value>) -> Result<(Client, String, serde_json::Value), String> {
+    let model = model
+        .or_else(|| bot_turn_model(db, session_id, bot_id))
+        .ok_or_else(|| no_brain_turn_error(db, bot_id))?;
     let mut headers = HeaderMap::new();
     if let Some(directory) = db.get_session_metadata(session_id).ok().flatten().and_then(|bag| bag["directory"].as_str().map(str::to_owned)) {
         if let Ok(value) = axum::http::HeaderValue::from_str(&directory) { headers.insert("x-gizzi-directory", value); }
@@ -3085,7 +3361,7 @@ pub(crate) async fn native_turn_request(db: &DbHandle, session_id: &str, bot_id:
     let path = format!("/v1/session/{}/message", urlencoding::encode(session_id));
     let mut payload = json!({
         "parts": [{ "type": "text", "text": text }],
-        "model": bot_turn_model(db, session_id, bot_id),
+        "model": model,
     });
     // A bot running its own thread is still itself (P4.1): its standing
     // instructions and saved memory ride on every server-started turn.
@@ -3116,6 +3392,15 @@ pub(crate) fn gizzi_message_error(body: &[u8]) -> Option<String> {
 
 /// Run one user turn in a session and return the assistant's text.
 pub(crate) async fn send_bot_turn(db: &DbHandle, session_id: &str, bot_id: &str, text: &str) -> Result<String, String> {
+    bot_turn_with_brain(db, session_id, bot_id, text, None).await
+}
+
+/// [`send_bot_turn`] on `"provider/model"` instead of the bot's own model.
+pub(crate) async fn send_bot_turn_on_model(db: &DbHandle, session_id: &str, bot_id: &str, text: &str, model: &str) -> Result<String, String> {
+    bot_turn_with_brain(db, session_id, bot_id, text, Some(model)).await
+}
+
+async fn bot_turn_with_brain(db: &DbHandle, session_id: &str, bot_id: &str, text: &str, brain: Option<&str>) -> Result<String, String> {
     // Vendor-bound bots run through the Agent Gateway; never a native brain,
     // unless the owner opted in to a fallback brain (disclosed in the reply).
     if let Some(vendor) = crate::gateway_runner::intercept_turn_with_fallback(session_id, text, Default::default(), |brain| {
@@ -3126,7 +3411,7 @@ pub(crate) async fn send_bot_turn(db: &DbHandle, session_id: &str, bot_id: &str,
     {
         return vendor;
     }
-    native_turn_on(db, session_id, bot_id, text, None).await
+    native_turn_on(db, session_id, bot_id, text, brain).await
 }
 
 /// The native (placed or local gizzi) half of [`send_bot_turn`]. `brain` =
@@ -3134,7 +3419,8 @@ pub(crate) async fn send_bot_turn(db: &DbHandle, session_id: &str, bot_id: &str,
 async fn native_turn_on(db: &DbHandle, session_id: &str, bot_id: &str, text: &str, brain: Option<&str>) -> Result<String, String> {
     let brain_ref = brain.and_then(|b| b.split_once('/')).map(|(p, m)| json!(GizziModelRef::new(p.to_string(), m.to_string(), None)));
     if let Some(target) = crate::placement::session_target(db, session_id) {
-        let mut body = json!({ "text": text, "metadata": { "model": brain_ref.clone().unwrap_or_else(|| bot_turn_model(db, session_id, bot_id)) } });
+        let model = brain_ref.clone().or_else(|| bot_turn_model(db, session_id, bot_id)).ok_or_else(|| no_brain_turn_error(db, bot_id))?;
+        let mut body = json!({ "text": text, "metadata": { "model": model } });
         if let Some(system) = bot_turn_system(db, session_id, bot_id) {
             body["system"] = json!(format!("+{system}"));
         }
@@ -3142,10 +3428,7 @@ async fn native_turn_on(db: &DbHandle, session_id: &str, bot_id: &str, text: &st
         let reply = crate::placement::call(&target, reqwest::Method::POST, &path, Some(body)).await?;
         return placed_turn_report(&reply);
     }
-    let (client, path, mut payload) = native_turn_request(db, session_id, bot_id, text).await?;
-    if let Some(m) = brain_ref {
-        payload["model"] = m;
-    }
+    let (client, path, payload) = native_turn_request_on(db, session_id, bot_id, text, brain_ref).await?;
     match gizzi_json::<GizziMessage>(&client, reqwest::Method::POST, &path, Some(payload)).await {
         Ok(message) => {
             if let Some(error) = message.info.error.as_ref().and_then(|e| e.message.clone()) {
@@ -3359,6 +3642,19 @@ mod surface_normalize_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn question_plan_keeps_only_bounded_steps() {
+        assert_eq!(question_plan(&json!({ "answers": [] })), None);
+        assert_eq!(question_plan(&json!({ "plan": "x" })), None);
+        let many: Vec<_> = (0..51).map(|_| json!({ "title": "a" })).collect();
+        assert_eq!(question_plan(&json!({ "plan": many })), None);
+        let long = "y".repeat(900);
+        assert_eq!(
+            question_plan(&json!({ "plan": [{ "title": " a " }, { "title": "" }, { "title": "b", "detail": "d", "x": 1 }, { "title": long }] })),
+            Some(json!([{ "title": "a" }, { "title": "b", "detail": "d" }, { "title": "y".repeat(500) }]))
+        );
+    }
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
     use serde_json::{json, Value};
@@ -3381,10 +3677,71 @@ mod tests {
             filename: None,
             url: None,
             tool: None,
+            call_id: None,
             state: None,
+            files: None,
+            run: None,
             synthetic: None,
             metadata: None,
         }
+    }
+
+    /// Transcript reload of a run_code call: the part carries the same
+    /// `files`/`run` as the live frame, also after gizzi pruned the run folder.
+    #[test]
+    fn reload_run_code_part_carries_manifest_files_after_run_folder_is_gone() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = crate::gizzi_chat_stream::RunCodePaths {
+            runs_root: tmp.path().join("gizzi-code/runs"),
+            uploads: tmp.path().join("uploads"),
+        };
+        let out = paths.runs_root.join("ses_r/call_r/out");
+        std::fs::create_dir_all(&out).unwrap();
+        std::fs::write(out.join("plot.png"), b"png-bytes").unwrap();
+        let raw = json!({
+            "info": { "id": "msg_1", "sessionID": "ses_r", "role": "assistant" },
+            "parts": [
+                { "type": "text", "text": "Here is the chart." },
+                { "type": "tool", "tool": "run_code", "callID": "call_r",
+                  "state": { "status": "completed", "input": {}, "output": "{}",
+                    "metadata": { "stdout": "done\n", "stderr": "", "exit_code": 0, "timed_out": false,
+                      "files": [{ "name": "plot.png", "mediaType": "image/png", "size": 9,
+                        "path": out.join("plot.png") }] } } },
+                { "type": "tool", "tool": "bash", "callID": "call_b",
+                  "state": { "status": "completed", "input": {}, "output": "ok" } }
+            ]
+        });
+        let load = |paths: &crate::gizzi_chat_stream::RunCodePaths| {
+            let message: GizziMessage = serde_json::from_value(raw.clone()).unwrap();
+            transform_message_with(message, paths)
+        };
+
+        // The live frame (v1_routes) runs the same payload function first.
+        let live_part = json!({ "type": "tool", "tool": "run_code", "callID": "call_r", "sessionID": "ses_r",
+            "state": raw["parts"][1]["state"] });
+        let mut frame = json!({ "type": "tool_result", "toolCallId": "call_r", "toolName": "run_code" });
+        crate::gizzi_chat_stream::merge_run_code_payload(
+            &mut frame,
+            crate::gizzi_chat_stream::run_code_payload(&live_part, None, &paths).unwrap(),
+        );
+
+        let first = load(&paths);
+        let part = &first["metadata"]["parts"][1];
+        assert_eq!(part["callID"], "call_r");
+        assert_eq!(part["files"], frame["files"]);
+        assert_eq!(part["run"], frame["run"]);
+        assert_eq!(part["files"][0]["name"], "plot.png");
+        assert_eq!(part["files"][0]["size"], 9);
+        assert_eq!(part["run"]["stdout"], "done\n");
+        // Other tools and text parts are untouched.
+        assert!(first["metadata"]["parts"][2].get("files").is_none());
+        assert!(first["metadata"]["parts"][0].get("run").is_none());
+
+        std::fs::remove_dir_all(paths.runs_root.join("ses_r")).unwrap();
+        let reload = load(&paths);
+        assert_eq!(reload["metadata"]["parts"][1]["files"], frame["files"]);
+        let id = frame["files"][0]["uploadId"].as_str().unwrap();
+        assert_eq!(std::fs::read(paths.uploads.join(id)).unwrap(), b"png-bytes");
     }
 
     #[test]
@@ -3876,7 +4233,7 @@ mod tests {
         assert_eq!(r.model_id, "openai/gpt-5");
         let r = GizziModelRef::new("claude-cli".into(), "claude-opus-5".into(), None);
         assert_eq!(r.model_id, "claude-opus-5");
-        let v = select_model(Some(&json!({ "model": { "providerID": "kimi-cli", "modelID": "kimi-cli/kimi-k3" } })));
+        let v = select_model(Some(&json!({ "model": { "providerID": "kimi-cli", "modelID": "kimi-cli/kimi-k3" } }))).unwrap();
         assert_eq!(v["modelID"], "kimi-k3");
     }
 
@@ -3939,6 +4296,123 @@ mod tests {
 
         handle.abort();
     }
+
+    /// `GET /agent-sessions/:id/branches` proxies gizzi's branch rows and gives
+    /// each removed message the `/messages` shape, ids unchanged.
+    #[tokio::test]
+    async fn branches_proxy_returns_old_reply_in_messages_shape() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let seen = Arc::new(Mutex::new(None::<String>));
+        let seen_clone = seen.clone();
+        let gizzi = Router::new().route(
+            "/v1/session/:id/branches",
+            get(move |axum::extract::Path(id): axum::extract::Path<String>| async move {
+                *seen_clone.lock().unwrap() = Some(id.clone());
+                Json(json!([{
+                    "id": "brn_1",
+                    "anchorMessageId": "msg_user2",
+                    "createdAt": 1_762_950_000_000i64,
+                    "messages": [
+                        { "info": { "id": "msg_user2", "sessionID": id, "role": "user", "time": { "created": 1_762_949_990_000i64 } },
+                          "parts": [{ "id": "prt_1", "type": "text", "text": "second question" }] },
+                        { "info": { "id": "msg_asst2", "sessionID": id, "role": "assistant", "time": { "created": 1_762_949_991_000i64, "completed": 1_762_949_995_000i64 } },
+                          "parts": [{ "id": "prt_2", "type": "text", "text": "old reply" }] }
+                    ]
+                }]))
+            }),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = tokio::spawn(async move { axum::serve(listener, gizzi).await.unwrap() });
+        std::env::set_var("TERMINAL_SERVER_URL", format!("http://{}", addr));
+
+        let temp = tempfile::tempdir().unwrap().keep();
+        let state = test_app_state(&temp).await;
+        let response = agent_session_router()
+            .with_state(state)
+            .oneshot(Request::builder().uri("/agent-sessions/ses_abc/branches").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(seen.lock().unwrap().as_deref(), Some("ses_abc"));
+        let branch = &body[0];
+        assert_eq!(branch["id"], "brn_1");
+        assert_eq!(branch["anchorMessageId"], "msg_user2");
+        assert!(branch["createdAt"].as_str().unwrap().starts_with("2025-11-12T"));
+        let messages = branch["messages"].as_array().unwrap();
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0]["id"], "msg_user2");
+        assert_eq!(messages[0]["role"], "user");
+        assert_eq!(messages[0]["content"], "second question");
+        assert_eq!(messages[1]["id"], "msg_asst2");
+        assert_eq!(messages[1]["content"], "old reply");
+        assert_eq!(messages[1]["metadata"]["parts"][0]["id"], "prt_2");
+        handle.abort();
+    }
+
+    /// Regression (phone owner-only rule): the owner's in-app chat turn wrote no
+    /// provenance row, so after a stranger's SMS the stranger stayed the thread's
+    /// "latest input" and an agent-started phone task was refused even though the
+    /// owner had answered. Goes through the real `POST /agent-sessions/:id/messages`.
+    #[tokio::test]
+    async fn owner_chat_turn_counts_for_the_owner_only_phone_rule() {
+        use crate::netops::provenance::{label, Trust};
+        use crate::phone_guard::TaskCtx;
+        let _guard = ENV_LOCK.lock().unwrap();
+        // Nothing may reach a real gizzi from this test.
+        std::env::set_var("TERMINAL_SERVER_URL", "http://127.0.0.1:9");
+        let temp = tempfile::tempdir().unwrap().keep();
+        let state = test_app_state(&temp).await;
+        {
+            let conn = state.db.connect().unwrap();
+            conn.execute("INSERT INTO agents (id, user_id, name, model, provider) VALUES ('b1', 'admin-1', 'Ledger', 'sonnet', 'claude-cli')", []).unwrap();
+            conn.execute(
+                "INSERT INTO bot_threads (id, user_id, bot_id, title, kind, status, current_session_id, last_activity_at, created_at, updated_at)
+                 VALUES ('th-1', 'admin-1', 'b1', 'Phone', 'task', 'working', 's1', '2026-11-10', '2026-11-10', '2026-11-10')",
+                [],
+            )
+            .unwrap();
+            label(&conn, "th-1", Trust::Stranger, "sms", "+15550100", "hey, can your bot call me back?");
+        }
+        let agent_start = TaskCtx { owner: "admin-1".into(), bot_id: Some("b1".into()), thread_id: Some("th-1".into()), session_id: Some("s1".into()), source: "agent".into() };
+        let user = AuthUser { user_id: "admin-1".into(), email: None, name: None, avatar_url: None, tenant_id: None, organization_id: None, organization_role: None, organization_slug: None };
+        let post = |app: Router, text: &str| {
+            let req = Request::builder()
+                .method("POST")
+                .uri("/agent-sessions/s1/messages")
+                .header("content-type", "application/json")
+                .body(Body::from(json!({ "text": text }).to_string()))
+                .unwrap();
+            app.oneshot(req)
+        };
+        let owner_rows = |st: &Arc<AppState>| -> i64 { st.db.connect().unwrap().query_row("SELECT COUNT(*) FROM content_provenance WHERE thread_id = 'th-1' AND trust = 'owner'", [], |r| r.get(0)).unwrap() };
+
+        // A stranger spoke last: an agent may not start a phone action.
+        assert_eq!(crate::phone_task::refusal(&state.db, &agent_start).map(|r| r.0), Some("owner_only"));
+
+        // The same user over an API key / agent credential writes no owner row.
+        let credential = crate::enterprise_auth::CredentialContext { credential_id: "k1".into(), kind: "access_token", scopes: vec!["*".into()] };
+        let as_agent = agent_session_router().with_state(state.clone()).layer(Extension(credential)).layer(Extension(user.clone()));
+        let _ = post(as_agent, "call them back").await.unwrap();
+        assert_eq!(owner_rows(&state), 0);
+        assert_eq!(crate::phone_task::refusal(&state.db, &agent_start).map(|r| r.0), Some("owner_only"));
+
+        // A signed-in caller who doesn't own the thread writes no owner row.
+        let stranger_user = AuthUser { user_id: "someone-else".into(), ..user.clone() };
+        let _ = post(agent_session_router().with_state(state.clone()).layer(Extension(stranger_user)), "call them back").await.unwrap();
+        assert_eq!(owner_rows(&state), 0);
+
+        // The owner answers in the app: the bot may act again.
+        let _ = post(agent_session_router().with_state(state.clone()).layer(Extension(user)), "yes, call them back").await.unwrap();
+        assert_eq!(owner_rows(&state), 1);
+        assert_eq!(crate::phone_task::refusal(&state.db, &agent_start), None);
+
+        // A new outside message after the owner's turn refuses again.
+        label(&state.db.connect().unwrap(), "th-1", Trust::Stranger, "sms", "+15550100", "also text my friend");
+        assert_eq!(crate::phone_task::refusal(&state.db, &agent_start).map(|r| r.0), Some("owner_only"));
+    }
 }
 
 #[cfg(test)]
@@ -3960,6 +4434,7 @@ mod run_telemetry_tests {
             "parts": [
                 {"type": "tool", "tool": "WebSearch", "state": {"status": "completed"}},
                 {"type": "tool", "tool": "WebFetch", "state": {"status": "error"}},
+                {"type": "tool", "tool": "Bash", "state": {"status": "error", "error": "Interrupted by user"}},
                 {"type": "text", "text": "answer"}
             ]
         }));
@@ -3969,7 +4444,8 @@ mod run_telemetry_tests {
         assert_eq!(t["usage"]["inputTokens"], 8200);
         assert_eq!(t["usage"]["estimated"], true);
         assert!(t["usage"].get("cost").is_none());
-        assert_eq!(t["toolCalls"], 2);
+        assert_eq!(t["toolCalls"], 3);
+        // The stopped Bash step is not a failure.
         assert_eq!(t["toolFailures"], 1);
     }
 
@@ -4012,6 +4488,7 @@ mod run_telemetry_tests {
 
 #[cfg(test)]
 mod session_status_tests {
+
     use super::session_status_kind;
     use serde_json::json;
 

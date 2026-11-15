@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import {
+  cloudInferenceToken,
   discoverAllternitCloud,
   getCachedAllternitPlan,
   isPaidAllternitPlan,
@@ -39,6 +40,32 @@ describe("discoverAllternitCloud", () => {
     expect(providers[0]?.source).toBe("platform")
     expect(providers[0]?.models.map((m) => m.id)).toEqual(["llama-3.1-8b", "qwen2.5-7b"])
     expect(providers[0]?.models[1]?.context).toBe(32000)
+    // The server named no default, so none is invented; rank is the server's order.
+    expect(providers[0]?.models.map((m) => [m.rank, !!m.default])).toEqual([[0, false], [1, false]])
+  })
+
+  test("the server's default flag is kept; hidden aliases resolve but go last and are never default", async () => {
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      if (String(input).endsWith("/v1/models")) {
+        return Response.json({
+          data: [
+            { id: "old-alias", hidden: true, default: true },
+            { id: "fast", name: "Fast" },
+            { id: "retired", extra: { hidden: true } },
+            { id: "smart", extra: { name: "Smart", default: true } },
+          ],
+        })
+      }
+      return new Response("not found", { status: 404 })
+    }) as typeof fetch
+
+    const [provider] = await discoverAllternitCloud()
+    expect(provider?.models.map((m) => [m.id, m.rank, !!m.default, !!m.hidden])).toEqual([
+      ["fast", 0, false, false],
+      ["smart", 1, true, false],
+      ["old-alias", 2, false, true],
+      ["retired", 3, false, true],
+    ])
   })
 })
 
@@ -72,5 +99,21 @@ describe("isPaidAllternitPlan", () => {
     expect(isPaidAllternitPlan({ id: "plus", label: "Plus", plan_tier: "pro", status: "active" })).toBe(true)
     expect(isPaidAllternitPlan({ id: "free", label: "Free", plan_tier: "free", status: "none" })).toBe(false)
     expect(isPaidAllternitPlan({ id: "plus", label: "Plus", plan_tier: "pro", status: "canceled" })).toBe(false)
+  })
+})
+
+describe("cloudInferenceToken", () => {
+  // Regression: Desktop and cloud computers pass the device token as
+  // ALLTERNIT_API_TOKEN; the chat provider read only ALLTERNIT_API_KEY, so
+  // every Allternit Cloud chat there went out unsigned ("Unauthorized").
+  test("uses the device token Desktop passes as ALLTERNIT_API_TOKEN", async () => {
+    process.env.ALLTERNIT_API_TOKEN = "allternit_runtime_device"
+    expect(await cloudInferenceToken()).toBe("allternit_runtime_device")
+  })
+
+  test("prefers an explicit ALLTERNIT_API_KEY", async () => {
+    process.env.ALLTERNIT_API_KEY = "alt_key"
+    process.env.ALLTERNIT_API_TOKEN = "allternit_runtime_device"
+    expect(await cloudInferenceToken()).toBe("alt_key")
   })
 })

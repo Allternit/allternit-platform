@@ -2,6 +2,7 @@ import { QuestionTool } from "@/runtime/tools/builtins/question"
 import { PaneBrowserTool } from "@/runtime/tools/builtins/pane-browser"
 import { PaneArtifactTool } from "@/runtime/tools/builtins/pane-artifact"
 import { MediaGenerateTool } from "@/runtime/tools/builtins/media-generate"
+import { ArtifactCheckTool } from "@/runtime/tools/builtins/artifact-check"
 import { ARTIFACT_TOOLS } from "@/runtime/tools/builtins/artifact"
 import { VerifyTool } from "@/runtime/tools/builtins/verify"
 import { BashTool } from "@/runtime/tools/builtins/bash"
@@ -20,6 +21,7 @@ import { SkillTool } from "@/runtime/tools/builtins/skill"
 import { AgentCommunicateTool } from "@/runtime/tools/builtins/agent-communicate"
 import { ListTool } from "@/runtime/tools/builtins/ls"
 import { MultiEditTool } from "@/runtime/tools/builtins/multiedit"
+import { RunCodeTool } from "@/runtime/tools/builtins/run_code"
 import type { Agent } from "@/runtime/loop/agent"
 import { Tool } from "@/runtime/tools/builtins/tool"
 import { Instance } from "@/runtime/context/project/instance"
@@ -41,6 +43,7 @@ import { PlanExitTool, PlanEnterTool } from "@/runtime/tools/builtins/plan"
 import { ApplyPatchTool } from "@/runtime/tools/builtins/apply_patch"
 import { NotebookEditTool } from "@/runtime/tools/builtins/notebook"
 import { MemoryWriteTool } from "@/runtime/tools/builtins/memory-write"
+import { ProjectStatusTool } from "@/runtime/tools/builtins/project-status"
 import { MemoryRecallTool } from "@/runtime/tools/builtins/memory-recall"
 import { VaultQueryTool } from "@/runtime/tools/builtins/vault-query"
 import { VaultWriteTool } from "@/runtime/tools/builtins/vault-write"
@@ -69,6 +72,8 @@ import {
 import { GetAgentEmailStatusTool, SendAgentEmailTool } from "@/runtime/tools/builtins/agent-email"
 import { MessageAgentTool } from "@/runtime/tools/builtins/message-agent"
 import { SuggestTaskTool } from "@/runtime/tools/builtins/suggest-task"
+import { BotCreateTool, VendorConnectTool } from "@/runtime/tools/builtins/worker-bot-tools"
+import { ProjectListTool, ProjectSendTool } from "@/runtime/tools/builtins/project-send"
 import { GrantTaskPermissionTool } from "@/runtime/tools/builtins/grant-task-permission"
 import { ThreadCloseTool, ThreadSearchTool, ThreadUpdateTool } from "@/runtime/tools/builtins/thread-tools"
 import { MdxGraphTool } from "@/runtime/tools/builtins/mdx-graph"
@@ -138,7 +143,14 @@ export namespace ToolRegistry {
     custom.push(tool)
   }
 
-  async function all(): Promise<Tool.Info[]> {
+  /** Per-turn additions to the tool list. */
+  export interface TurnOptions {
+    /** The turn carries `metadata.tools.computer: true` (pet offers): the
+     * computer toolset is on for this turn even without the env flag. */
+    computer?: boolean
+  }
+
+  async function all(turn?: TurnOptions): Promise<Tool.Info[]> {
     const custom = await state().then((x) => x.custom)
     const config = await Config.get()
     const question = ["app", "cli", "desktop"].includes(Flag.GIZZI_CLIENT) || Flag.GIZZI_ENABLE_QUESTION_TOOL
@@ -152,6 +164,8 @@ export namespace ToolRegistry {
       ...(question ? [PaneArtifactTool] : []),
       // Images (native lane renders in the app); needs an app client.
       ...(question ? [MediaGenerateTool] : []),
+      // Looks at an artifact at each width (the app renders it); needs an app client.
+      ...(question && !Flag.GIZZI_DISABLE_ARTIFACT_TOOLS ? [ArtifactCheckTool] : []),
       // Artifacts v2 (artifact_create/update/read): every client. They save to
       // the cloud store when this process has a credential; otherwise the
       // result carries the full payload and the app persists it.
@@ -159,6 +173,8 @@ export namespace ToolRegistry {
       AgentCommunicateTool,
       VerifyTool,
       BashTool,
+      // Python on attached files, OS-sandboxed with network off (Chat analysis).
+      RunCodeTool,
       ReadTool,
       GlobTool,
       GrepTool,
@@ -196,6 +212,7 @@ export namespace ToolRegistry {
       NotebookEditTool,
       MdxGraphTool,
       MemoryWriteTool,
+      ProjectStatusTool,
       MemoryRecallTool,
       VaultQueryTool,
       VaultWriteTool,
@@ -211,6 +228,12 @@ export namespace ToolRegistry {
       ThreadUpdateTool,
       ThreadCloseTool,
       ThreadSearchTool,
+      // Worker bots + vendor connect: gated like suggest_task (app bot chats only).
+      BotCreateTool,
+      VendorConnectTool,
+      // Send work to another project: gated to a bot's main chat; every send asks the person.
+      ProjectListTool,
+      ProjectSendTool,
       ...(Flag.GIZZI_ENABLE_LSP_TOOL ? [LspTool] : []),
       ...(config.experimental?.batch_tool === true ? [BatchTool] : []),
       ...(Flag.GIZZI_CLIENT === "cli" ? [PlanExitTool, PlanEnterTool] : []),
@@ -223,8 +246,9 @@ export namespace ToolRegistry {
       // as a function tool.
       ...(Flag.GIZZI_ENABLE_BROWSER_TOOL ? [BrowserToolsetTool] : []),
       // `computers` (lifecycle + files via allternit-api computer_* tools)
-      // rides the same opt-in as `computer`.
-      ...(Flag.GIZZI_ENABLE_COMPUTER_TOOL ? [ComputerToolsetTool, ComputerV2ToolsetTool, ComputersTool] : []),
+      // rides the same opt-in as `computer`. A turn can also opt in on its own
+      // (`metadata.tools.computer`, contracts/pet-offers): this turn only.
+      ...(Flag.GIZZI_ENABLE_COMPUTER_TOOL || turn?.computer === true ? [ComputerToolsetTool, ComputerV2ToolsetTool, ComputersTool] : []),
       // Subscription capabilities (presentations, documents, deep research)
       // the user's connected subscriptions can run now; every call is
       // confirmed by the user (D16). Empty when the fabric is not set up.
@@ -233,8 +257,8 @@ export namespace ToolRegistry {
     ]
   }
 
-  export async function ids() {
-    return all().then((x) => x.map((t) => t.id))
+  export async function ids(turn?: TurnOptions) {
+    return all(turn).then((x) => x.map((t) => t.id))
   }
 
   export async function tools(
@@ -245,8 +269,9 @@ export namespace ToolRegistry {
     },
     agent?: Agent.Info,
     sessionID?: string,
+    turn?: TurnOptions,
   ) {
-    const tools = await all()
+    const tools = await all(turn)
     const result = await Promise.all(
       tools
         .filter((t) => {

@@ -24,6 +24,16 @@ http://127.0.0.1:8013/api/v1/connectors/oauth/callback
 http://127.0.0.1:8013/oauth/callback
 ```
 
+A node paired with the cloud uses cloud-api return URLs instead, so a sign-in started from a phone or another computer can finish. cloud-api relays them to the callbacks above, picking the node from the OAuth `state` (`art.<runtime_id>.<random>`):
+
+```
+https://api.allternit.com/connect/return/connectors              -> /api/v1/connectors/oauth/callback
+https://api.allternit.com/connect/return/mcp                     -> /mcp/oauth/callback
+https://api.allternit.com/connect/return/sidecar/oauth/callback  -> /oauth/callback
+```
+
+When a connector has no way to issue a sign-in and the vendor runs an official MCP server with dynamic client registration or CIMD, `POST /connectors/:id/connect` signs in to that server instead and answers `{"status": "authorization_required", "authorize_url": "...", "backend": "official_mcp", "mcp_connector_id": "..."}`. See [Connectors › For developers](/guides/connectors#for-developers).
+
 ## Authentication
 
 - Connector management routes require a valid bearer token via the platform auth middleware.
@@ -40,7 +50,7 @@ See [Authentication](/api/authentication).
 | `name` | string | Human-readable name. |
 | `category` | string | Connector category. |
 | `provider` | string | Always `"allternit"` for owned connectors. |
-| `auth_type` | string | `local_cli`, `api_key`, `oauth2`, `device_flow`, `no_auth`, or `unknown`. |
+| `auth_type` | string | `local_cli`, `api_key`, `oauth2`, `device_flow`, `no_auth`, or `unknown`. A connected account may also be `managed` (org sign-in). |
 | `connectable` | boolean | Whether the connector can be connected in the current environment. |
 | `executable` | boolean | Whether the connector has executable actions. |
 | `tier` | integer | Connector tier. |
@@ -119,7 +129,7 @@ Starts a connection flow. The request body and response shape depend on the conn
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `via` | string | No | Force an auth type (`local_cli`, `api_key`, `oauth2`, `device_flow`, `no_auth`). |
+| `via` | string | No | Force an auth type (`local_cli`, `api_key`, `oauth2`, `device_flow`, `no_auth`, `managed`). With no `via`, an enabled [managed authorization](/security/allternit-idjag-issuer#the-managed-connector-auth-kind) config for the connector wins. |
 | `api_key` | string | No | API key for `api_key` connectors. |
 | `add` | boolean | No | `true` adds a new account (a new pending row). Without it, a connector that already has an account reconnects its default. |
 
@@ -157,6 +167,34 @@ curl -X POST http://127.0.0.1:8013/api/v1/connectors/some-oauth/connect \
   "redirect_uri": "http://127.0.0.1:8013/api/v1/connectors/oauth/callback",
   "state": "...",
   "instructions": "Open authorize_url, approve Allternit..."
+}
+```
+
+### Managed example
+
+When the caller's org turned on managed authorization for the connector, connect finishes with no browser:
+
+```json
+{
+  "status": "connected",
+  "connector": "linear",
+  "auth_type": "managed",
+  "owned": true,
+  "org_id": "org_2abc",
+  "mcp_connector_id": "6f1c..."
+}
+```
+
+A refusal is `409` with a plain message and, when the connector has a normal sign-in, the button to offer:
+
+```json
+{
+  "error": "managed_auth_failed",
+  "code": "role_not_allowed",
+  "message": "Your role in the organization isn't allowed to use managed sign-in for this connector. Ask an org admin to add your role.",
+  "connector": "linear",
+  "auth_type": "managed",
+  "fallback": { "via": "oauth2", "label": "Connect with sign-in instead" }
 }
 ```
 
@@ -230,6 +268,8 @@ Executes a tool or action against a connected connector.
 | `method` | string | No | HTTP method for raw passthrough. |
 
 The account is chosen in this order: `connection_id` or `account` if given, else the default, else the most recently used. An account that matches nothing returns `404` with `{ "error": "account_not_found", "accounts": [...] }`; it never falls back to another account. The model-facing connector tools take the same optional `account` string ("Which connected account to use, by email or name. Omit for the default."). A bot's connector binding may carry a `connectionId`; a tool call with no explicit `account` uses it (a bot runtime sends the binding's id in the `x-allternit-connection-id` header of its MCP requests).
+
+Some sidecar actions take a value the connection already saved: a field entered at connect time or an account id recorded when the credential was checked. These inputs are optional in the action schema. Leave them out of `input` and the sidecar uses the saved value of the chosen account; a value you pass wins. If the input is neither passed nor saved, the call fails with `invalid_input`. Current list (provider, input): `googleads` `developerToken` and `customerId`; `sentry` `organizationIdOrSlug`; `agility` `guid`; `personal_ai` `domainName`; `aws_s3` and `aliyun_oss` `bucket` (on `list_objects`); `bugsnag` `organizationId`; `callrail` `accountId`; `bird` `workspaceId`; `devin` `orgId`; `sling` `orgId`; `roboflow` `workspace`; `beeminder` `username`; `calendly` `organizationUri` (on actions that required it); `wit_ai` `appId`. Providers declare these with `withSavedConnectionInputs` in `services/open-connector/src/core/provider-definition.ts`.
 
 ### Example request
 
@@ -310,6 +350,8 @@ curl -X POST http://127.0.0.1:8013/api/v1/connectors/mcp \
 | `404 Not Found` | `account_not_found` | `connection_id` or `account` matches none of the caller's accounts; the body lists them. |
 | `409 Conflict` | `not_connected` | Execute or refresh called before connect. |
 | `409 Conflict` | `duplicate_name` | Server-side naming conflict. |
+| `409 Conflict` | `managed_auth_failed` | Managed sign-in was refused; `code` and `message` say why. |
+| `409 Conflict` | `managed_use_mcp` | Execute on a managed connection whose tools run through its MCP server. |
 | `502 Bad Gateway` | `sidecar_unavailable` | The open-connector sidecar is unreachable. |
 | `502 Bad Gateway` | `provider_request_failed` | Upstream provider request failed. |
 

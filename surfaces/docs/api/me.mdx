@@ -75,9 +75,17 @@ Response:
   "resetsAt": "2026-08-17T00:00:00Z",
   "credits": 150,
   "monthToDateUsageUsd": 12.4,
-  "recentTransactions": []
+  "recentTransactions": [],
+  "cloud_models": {
+    "allowed": true,
+    "reason": null,
+    "balance_usd": 150,
+    "byok_providers": []
+  }
 }
 ```
+
+`cloud_models` says whether the account can run Allternit Cloud models now. It is the same object as on `GET /api/v1/billing/credits`; see [Cloud billing](/api/cloud-billing#credit-balance-and-cloud-models). Cloud models need a credit balance above $0, and Free accounts have no free monthly allowance: a Free account with no credits row reports `credits: 0`, `weeklyLimit: 0` and `weeklyUsed: 0`. A response without `cloud_models` (an older server) means not locked.
 
 If no cloud API is configured or the service is unreachable, the endpoint returns `503 Service Unavailable` with a clear error.
 

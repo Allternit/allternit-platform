@@ -140,7 +140,7 @@ Every subpath kept its old name except five, which moved because the engine alre
 |---|---|
 | Gizzi | The engine binary (`--json`) and its socket. The live wall is the engine's Rust pane view |
 | Desktop Code mode | `/api/factory`, and allternit-api's `/terminal` routes for plain shells. A terminal tile is an engine pane, the same one the TUI shows |
-| Desktop Bot Mode, project pages | `/api/factory` through allternit-api. Team graph, Flow graph, Board and Node page are views in `src/components/factory/` |
+| Desktop Bot Mode, project pages | `/api/factory` through allternit-api. Team lanes, Team graph, Flow graph, Board and Node page are views in `src/components/factory/` (lanes are built by `src/lib/factory/lanes.ts` and drawn by `src/components/handoff-lanes/`) |
 | ai.allternit.com phone layout, m.allternit.com | The same `/api/factory` data through the fabric relay: bot strip over one terminal, Board, Approve |
 
 ## Related

@@ -13,7 +13,6 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use reqwest::Client;
 use rusqlite::params;
 use rusqlite::OptionalExtension;
 use serde::{Deserialize, Serialize};
@@ -398,6 +397,8 @@ struct AgentRow {
     tool_permissions: Option<serde_json::Value>,
     /// MCP connector ids bound to the agent's toolset (JSON array).
     mcp_connector_ids: Option<serde_json::Value>,
+    /// Worker bots (V282): kinds of tasks this bot owns. Always a JSON array.
+    owns: serde_json::Value,
 }
 
 fn parse_json_column(value: Option<String>) -> Option<serde_json::Value> {
@@ -411,7 +412,7 @@ const AGENT_SELECT: &str = "SELECT id, user_id, name, description, type, parent_
         status, workspace_id, avatar, identity_key, trust_tier, harness_config,
         enabled_modes, character_json, allowed_skills, allowed_tools, category, tags,
         data_classification, write_scope, created_at, updated_at, last_run_at,
-        mode, is_primary, delegates, version, is_bot, tool_permissions, mcp_connector_ids
+        mode, is_primary, delegates, version, is_bot, tool_permissions, mcp_connector_ids, owns
      FROM agents";
 
 fn read_agent_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<AgentRow> {
@@ -455,6 +456,7 @@ fn read_agent_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<AgentRow> {
         is_bot: row.get::<_, i64>(35)? != 0,
         tool_permissions: parse_json_column(row.get(36)?),
         mcp_connector_ids: parse_json_column(row.get(37)?),
+        owns: parse_json_column(row.get(38)?).unwrap_or_else(|| json!([])),
     })
 }
 
@@ -638,6 +640,9 @@ struct CreateAgentBody {
     identity_channels: Option<serde_json::Value>,
     #[serde(default)]
     vm_operator: Option<serde_json::Value>,
+    /// Worker bots (V282): kinds of tasks this bot owns.
+    #[serde(default)]
+    owns: Option<Vec<String>>,
 }
 
 fn json_to_string(value: Option<serde_json::Value>) -> Option<String> {
@@ -850,9 +855,10 @@ fn validate_agent_against_checklist(body: &CreateAgentBody) -> Result<(), String
     if body.agent_type.as_deref().unwrap_or("").trim().is_empty() {
         return Err("Agent type is required".to_string());
     }
-    // A bot may leave both empty: it follows the platform default model
-    // (`bot_turn_model` and turn sends fall back to it). Terminal bots
-    // registered without a model pin rely on this.
+    // A bot may leave both empty: it follows the user's chosen default model
+    // (`bot_turn_model` and turn sends fall back to it); with none chosen its
+    // turns answer "Pick a brain for <bot>". Terminal bots registered without
+    // a model pin, and bots created before the user picks a brain, rely on this.
     let follows_default = body.is_bot == Some(true)
         && body.model.trim().is_empty()
         && body.provider.trim().is_empty();
@@ -1027,9 +1033,9 @@ async fn create_agent(
                                 capabilities, system_prompt, tools, max_iterations, temperature, config,
                                 status, workspace_id, avatar, identity_key, trust_tier, harness_config,
                                 enabled_modes, character_json, allowed_skills, allowed_tools, category,
-                                tags, data_classification, write_scope, mode, is_bot)
+                                tags, data_classification, write_scope, mode, is_bot, owns)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18,
-                     ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30)",
+                     ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31)",
             params![
                 final_id,
                 user_id_for_db,
@@ -1061,6 +1067,7 @@ async fn create_agent(
                 body.write_scope,
                 body.mode.unwrap_or_else(|| "primary".to_string()),
                 body.is_bot.unwrap_or(false) as i32,
+                json!(body.owns.unwrap_or_default()).to_string(),
             ],
         )?;
         persist_agent_secrets(&conn, &final_id, &user_id_for_db, secret_refs.as_ref())?;
@@ -1351,6 +1358,7 @@ async fn create_prototype_agent(
                     messaging_config: None,
                     identity_channels: None,
                     vm_operator: None,
+                    owns: None,
                 };
                 persist_agent(&conn, &user_id_for_db, body)?
             }
@@ -1423,16 +1431,12 @@ async fn ensure_companion(
     let db = state.db.clone();
     let user_id = user.user_id;
 
-    // Pick a runnable brain: the user's configured default, unless it is the
-    // unconfigured kimi fallback — then use the local Ollama brain so the
-    // Companion actually runs out of the box.
-    let (mut provider, mut model) = state.config.default_model();
-    if provider.is_empty() || provider == "kimi-for-coding" || provider == "kimi-cli" || provider == "echo" {
-        provider = "ollama".to_string();
-        model = "qwen2.5:0.5b".to_string();
-    }
+    // The Companion runs on the brain the user chose. No choice → an existing
+    // Companion is still returned, but a new one is not created on a guess.
+    let (provider, model) = state.config.default_model();
+    let no_brain = crate::config::is_no_brain(&provider, &model);
 
-    let result = tokio::task::spawn_blocking(move || -> Result<serde_json::Value, rusqlite::Error> {
+    let result = tokio::task::spawn_blocking(move || -> Result<Option<serde_json::Value>, rusqlite::Error> {
         let conn = db.connect()?;
         if let Ok((id, name, model, provider)) = conn.query_row(
             "SELECT id, name, model, provider FROM agents WHERE user_id = ?1 AND is_primary = 1 LIMIT 1",
@@ -1444,11 +1448,14 @@ async fn ensure_companion(
                 row.get::<_, String>(3)?,
             )),
         ) {
-            return Ok(json!({
+            return Ok(Some(json!({
                 "agent": { "id": id, "name": name, "model": model, "provider": provider,
                            "mode": "orchestrator", "is_primary": true },
                 "created": false,
-            }));
+            })));
+        }
+        if no_brain {
+            return Ok(None);
         }
 
         let id = uuid::Uuid::new_v4().to_string();
@@ -1468,16 +1475,17 @@ async fn ensure_companion(
                 "orchestrator", 1,
             ],
         )?;
-        Ok(json!({
+        Ok(Some(json!({
             "agent": { "id": id, "name": "Allternit Companion", "model": model, "provider": provider,
                        "mode": "orchestrator", "is_primary": true },
             "created": true,
-        }))
+        })))
     })
     .await;
 
     match result {
-        Ok(Ok(v)) => (StatusCode::OK, Json(v)).into_response(),
+        Ok(Ok(Some(v))) => (StatusCode::OK, Json(v)).into_response(),
+        Ok(Ok(None)) => crate::config::no_brain_error().into_response(),
         Ok(Err(e)) => {
             warn!("DB error ensuring companion: {}", e);
             (
@@ -1749,7 +1757,7 @@ async fn list_templates(
 }
 
 /// Instantiate a persisted pattern template into a live, runnable agent crew.
-/// Resolves the brain (request override → user default → local Ollama fallback),
+/// Resolves the brain (request override → user default; none → 409 no_brain),
 /// injects it into every node, validates each node against the creation checklist,
 /// then persists the orchestrator and its subagents through the canonical path.
 async fn instantiate_template(
@@ -1761,15 +1769,14 @@ async fn instantiate_template(
     let db = state.db.clone();
     let user_id = user.user_id;
 
-    // Resolve the brain the same way the Companion does so template crews run
-    // out of the box without a configured provider.
-    let (mut provider, mut model) = match body.brain {
-        Some(b) => (b.provider, b.model),
-        None => state.config.default_model(),
+    // Resolve the brain the same way the Companion does: an explicit choice or
+    // nothing — never a silent fallback.
+    let (provider, model) = match body.brain {
+        Some(b) if !crate::config::is_no_brain(&b.provider, &b.model) => (b.provider, b.model),
+        _ => state.config.default_model(),
     };
-    if provider.is_empty() || provider == "kimi-for-coding" || provider == "kimi-cli" || provider == "echo" {
-        provider = "ollama".to_string();
-        model = "qwen2.5:0.5b".to_string();
+    if crate::config::is_no_brain(&provider, &model) {
+        return crate::config::no_brain_error().into_response();
     }
     let template_id = body.template_id.clone();
     let name_override = body.name_override.clone();
@@ -2278,6 +2285,9 @@ struct UpdateAgentBody {
     identity_channels: Option<serde_json::Value>,
     #[serde(default)]
     vm_operator: Option<serde_json::Value>,
+    /// Worker bots (V282): kinds of tasks this bot owns.
+    #[serde(default)]
+    owns: Option<Vec<String>>,
 }
 
 /// Shared merge-semantics UPDATE for PUT and PATCH on `/agents/:id`: only
@@ -2371,6 +2381,7 @@ fn apply_agent_update(
             data_classification = COALESCE(?25, data_classification),
             write_scope = COALESCE(?26, write_scope),
             is_bot = COALESCE(?27, is_bot),
+            owns = COALESCE(?30, owns),
             version = version + 1,
             updated_at = CURRENT_TIMESTAMP
          WHERE id = ?28 AND user_id = ?29",
@@ -2404,6 +2415,7 @@ fn apply_agent_update(
             body.is_bot.map(|b| b as i32),
             id,
             user_id,
+            body.owns.as_ref().map(|o| json!(o).to_string()),
         ],
     )
 }
@@ -2969,7 +2981,7 @@ async fn provision_agent_wallet(
     }
 
     let etrid_url = state.config.etrid_url();
-    let client = Client::new();
+    let client = crate::net_client::client();
     let kind = body.kind.unwrap_or_else(|| "identity".to_string());
     let request_body = json!({
         "agent_id": agent_id,

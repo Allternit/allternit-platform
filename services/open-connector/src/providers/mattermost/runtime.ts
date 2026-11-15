@@ -23,6 +23,20 @@ export const mattermostActionHandlers: Record<string, MattermostActionHandler> =
     const payload = await requestMattermostJson({ path: validationPath, context, phase: "execute" });
     return { user: requireObject(payload, "Mattermost user"), raw: payload };
   },
+  async list_users(input, context) {
+    const payload = await requestMattermostJson({
+      path: "/users",
+      context,
+      phase: "execute",
+      query: compactObject({
+        in_team: optionalString(input.inTeam),
+        in_channel: optionalString(input.inChannel),
+        page: optionalInteger(input.page),
+        per_page: optionalInteger(input.perPage),
+      }),
+    });
+    return { users: readObjectArray(payload, "Mattermost users"), raw: payload };
+  },
   async list_user_teams(_input, context) {
     const payload = await requestMattermostJson({ path: "/users/me/teams", context, phase: "execute" });
     return { teams: readObjectArray(payload, "Mattermost teams"), raw: payload };

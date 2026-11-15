@@ -7,7 +7,6 @@ import {
   ArrowsClockwise,
   Info,
   Coins,
-  Lightning,
   Key,
   X,
 } from "@phosphor-icons/react";
@@ -23,6 +22,7 @@ import { SkeletonRow } from "@/components/settings/SkeletonRow";
 import { QUIET_BUTTON_CLASS } from "@/components/settings/buttonStyles";
 import { formatApiError } from "@/lib/api-client";
 import { PlanPicker, type LiveBillingPlan, type PlanId } from "@/components/PlanPicker";
+import { ComputerOnCreditsCard } from "@/components/billing/ComputerOnCreditsCard";
 import { TransferToOrgPanel } from "@/components/billing/TransferToOrgPanel";
 
 function formatHours(seconds: number): string {
@@ -54,17 +54,10 @@ export interface CreditTransaction {
   amount_usd: number;
 }
 
-export interface FreeInferenceUsage {
-  monthly_allowance_usd: number;
-  used_usd: number;
-  remaining_usd: number;
-}
-
 export interface BillingCredits {
   balance_usd: number;
   month_to_date_usage_usd: number;
   recent_transactions: CreditTransaction[];
-  free_inference?: FreeInferenceUsage;
 }
 
 export interface InferenceProviderKey {
@@ -153,6 +146,7 @@ export function BillingPage() {
   const [currentSubscription, setCurrentSubscription] = useState<{
     plan_id: string;
     status: string;
+    renews_at?: string;
   } | null>(null);
   const [planNotice, setPlanNotice] = useState<string | null>(null);
   // `?plan=plus|super|ultra` (the website's Subscribe buttons) starts that
@@ -257,10 +251,11 @@ export function BillingPage() {
           const payload = (await subscriptionResponse.json().catch(() => null)) as {
             plan_id?: string;
             status?: string;
+            renews_at?: string;
           } | null;
           setCurrentSubscription(
             payload?.plan_id && payload.status
-              ? { plan_id: payload.plan_id, status: payload.status }
+              ? { plan_id: payload.plan_id, status: payload.status, renews_at: payload.renews_at }
               : null,
           );
         }
@@ -584,64 +579,6 @@ export function BillingPage() {
         </div>
       ) : (
         <div className="space-y-3">
-          {credits?.free_inference && (
-            <div className="rounded-xl border border-solid border-[var(--border-subtle)] bg-[var(--bg-secondary)]/40 p-4">
-              <div className="flex items-start gap-3 mb-4">
-                <div className="size-9 shrink-0 rounded-lg bg-[var(--accent-primary)]/10 text-[var(--accent-primary)] flex items-center justify-center">
-                  <Lightning size={18} />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="text-[14px] font-semibold text-[var(--text-primary)]">Free inference</div>
-                  <p className="text-[12px] text-[var(--text-secondary)] mt-1">
-                    Monthly hosted-model allowance for free accounts.
-                  </p>
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <div className="flex items-center justify-between gap-3 text-[12px]">
-                  <span className="text-[var(--text-secondary)]">
-                    ${credits.free_inference.used_usd.toFixed(2)} of $
-                    {credits.free_inference.monthly_allowance_usd.toFixed(2)} used this month — resets monthly
-                  </span>
-                  <span className="font-mono text-[var(--text-primary)]">
-                    {credits.free_inference.monthly_allowance_usd > 0
-                      ? Math.min(
-                          100,
-                          (credits.free_inference.used_usd /
-                            credits.free_inference.monthly_allowance_usd) *
-                            100,
-                        ).toFixed(0)
-                      : "0"}
-                    %
-                  </span>
-                </div>
-                <div className="h-2 rounded-full bg-[var(--bg-primary)] overflow-hidden">
-                  <div
-                    className="h-full rounded-full bg-[var(--accent-primary)] transition-[width]"
-                    style={{
-                      width: `${
-                        credits.free_inference.monthly_allowance_usd > 0
-                          ? Math.min(
-                              100,
-                              (credits.free_inference.used_usd /
-                                credits.free_inference.monthly_allowance_usd) *
-                                100,
-                            )
-                          : 0
-                      }%`,
-                    }}
-                  />
-                </div>
-                {credits.free_inference.remaining_usd <= 0 && (
-                  <p className="text-[12px] text-[var(--status-warning)]">
-                    Allowance used up — buy credits or subscribe to keep using hosted models.
-                  </p>
-                )}
-              </div>
-            </div>
-          )}
-
           <div className="rounded-xl border border-solid border-[var(--border-subtle)] bg-[var(--bg-secondary)]/40 p-4">
             <div className="flex items-start gap-3 mb-4">
               <div className="size-9 shrink-0 rounded-lg bg-[var(--accent-primary)]/10 text-[var(--accent-primary)] flex items-center justify-center">
@@ -720,33 +657,58 @@ export function BillingPage() {
             )}
           </div>
 
+          <ComputerOnCreditsCard onChanged={() => void load()} />
+
           <TransferToOrgPanel onTransferred={() => void load()} />
 
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-            {packs.map((pack) => (
-              <div
-                key={pack.id}
-                className="rounded-xl border border-solid border-[var(--border-subtle)] bg-[var(--bg-secondary)]/40 p-4 flex flex-col"
-              >
-                <div className="text-[10px] uppercase tracking-wide text-[var(--text-tertiary)] mb-1">
-                  {pack.label}
-                </div>
-                <div className="text-[16px] font-semibold text-[var(--text-primary)]">
-                  ${pack.credits_usd.toFixed(2)} credits
-                </div>
-                <div className="text-[11px] text-[var(--text-secondary)] mt-1 mb-3">
-                  Pay ${pack.price_usd.toFixed(2)}
-                </div>
-                <button
-                  type="button"
-                  onClick={() => void handleBuyPack(pack.id)}
-                  disabled={buyingPackId !== null || !billingAvailable}
-                  className={`${QUIET_BUTTON_CLASS} mt-auto justify-center`}
+            {packs.map((pack, index) => {
+              // Vouchers on the plan materials, rising with the amount (same as the app).
+              const tier = (["free", "plus", "max", "ultra"] as const)[Math.min(3, index)];
+              const ink = {
+                free: { text: "#1b1b1a", sub: "rgba(0,0,0,.55)", stamp: ["#1b1b1a", "#fff"], light: false },
+                plus: { text: "#F2F1EC", sub: "rgba(255,255,255,.6)", stamp: ["#F2F1EC", "#111"], light: true },
+                max: { text: "#2B1C07", sub: "rgba(43,28,7,.62)", stamp: ["#2B1C07", "#E7C27A"], light: false },
+                ultra: { text: "#1E2024", sub: "rgba(30,32,36,.6)", stamp: ["#1E2024", "#F1F1EF"], light: false },
+              }[tier];
+              return (
+                <div
+                  key={pack.id}
+                  className="relative flex flex-col overflow-hidden rounded-xl bg-no-repeat"
+                  style={{
+                    color: ink.text,
+                    backgroundImage: `url(/billing/card-${tier}.jpg)`,
+                    backgroundSize: "300% auto",
+                    backgroundPosition: "0% 40%",
+                    border: tier === "free" ? "1px solid var(--border-subtle)" : undefined,
+                    boxShadow: tier === "ultra" ? "0 8px 18px rgba(0,0,0,.2), inset 0 0 0 1px rgba(255,255,255,.55)" : "0 6px 14px rgba(0,0,0,.14)",
+                  }}
                 >
-                  {buyingPackId === pack.id ? "Redirecting…" : "Buy credits"}
-                </button>
-              </div>
-            ))}
+                  <div className="px-3 pb-2 pt-2.5">
+                    <span className="font-mono" style={{ fontSize: 9, fontWeight: 700, letterSpacing: ".14em", padding: "1px 5px", borderRadius: 3, background: ink.stamp[0], color: ink.stamp[1] }}>
+                      {pack.label}
+                    </span>
+                    <div className="mt-2 font-mono text-[22px] leading-none">${pack.credits_usd.toFixed(0)}</div>
+                    <div className="mt-1 text-[10.5px]" style={{ color: ink.sub }}>
+                      Allternit Cloud credit · pay ${pack.price_usd.toFixed(2)}
+                    </div>
+                  </div>
+                  <div className="relative mt-auto px-2 pb-2 pt-2" style={{ borderTop: `1.5px dashed ${ink.light ? "rgba(255,255,255,.3)" : "rgba(0,0,0,.25)"}` }}>
+                    <i aria-hidden="true" className="absolute -left-[7px] -top-[7px] size-3 rounded-full bg-[var(--bg-primary)]" />
+                    <i aria-hidden="true" className="absolute -right-[7px] -top-[7px] size-3 rounded-full bg-[var(--bg-primary)]" />
+                    <button
+                      type="button"
+                      onClick={() => void handleBuyPack(pack.id)}
+                      disabled={buyingPackId !== null || !billingAvailable}
+                      className="w-full rounded-[9px] border-none px-2 py-1.5 text-[11.5px] font-semibold transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+                      style={{ background: ink.stamp[0], color: ink.stamp[1] }}
+                    >
+                      {buyingPackId === pack.id ? "Redirecting…" : `Buy $${pack.price_usd.toFixed(0)}`}
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
           </div>
 
           {checkoutError && (
@@ -762,6 +724,9 @@ export function BillingPage() {
         onSwitch={() => void handleOpenPortal()}
         livePlans={billingAvailable && plans.length > 0 ? plans : undefined}
         busyPlanId={subscribingPlanId}
+        memberName={user?.firstName || (email !== "—" ? email.split("@")[0] : null)}
+        renewsAt={currentSubscription?.renews_at}
+        status={currentSubscription?.status}
       />
 
       {planNotice && <p className="text-[13px] text-[var(--text-secondary)]">{planNotice}</p>}

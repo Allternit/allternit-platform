@@ -1,6 +1,6 @@
 ---
 title: 'Morning Brief API'
-description: 'Fetch or create a bot daily brief, run the first-day introduction, and record the answer to it.'
+description: 'Fetch or create a bot daily brief, run the first-day introduction, record the answer to it, and post the main bot first message.'
 ---
 
 ## Overview
@@ -72,3 +72,23 @@ On a new bot's first open, builds and posts three short bubbles (who you are, th
 ## Storage
 
 `bot_briefs` (unique on user, bot and local date) and `bot_intro` (primary key user and bot), migration `V280`.
+
+## POST /bots/:id/reach-out
+
+The main bot's first message. The app calls it when a bot becomes the main bot.
+
+```json
+{ "sessionId": "ses_..." }
+```
+
+`sessionId` is optional. Without it (or when it is not this bot's main chat) the server uses the bot's pinned main chat, else its newest main chat, else makes one and pins it.
+
+The first call posts a message into that chat (source `bot-reach-out`, no model call) with two or three offers built from the person's connectors, the bot's email address and computers. Each offer is opened as a bot suggestion (a `proposed` task thread, answered with `POST /threads/:id/approve` or `/decline`). It also writes a `bot.message.posted` ledger event, which the Desktop event feed and the cloud push sink treat as a new message, and marks the first-day introduction done.
+
+| Response | Meaning |
+|---|---|
+| `{"status":"posted","sessionId":"ses_...","suggestions":["thr_..."]}` | Posted now |
+| `{"status":"already","suggestions":[]}` | This bot already reached out for this account; nothing is posted |
+| 404 | Not your bot |
+| 502 | The chat could not be found, made or written to; calling again is safe |
+

@@ -1,6 +1,7 @@
 import { execFileNoThrow } from './execFileNoThrow.js'
 import { getBranch, getDefaultBranch, getIsGit } from './git.js'
 import { jsonParse } from './slowOperations.js'
+import { checkState } from '@/cli/work/api'
 
 export type PrReviewState =
   | 'approved'
@@ -10,10 +11,14 @@ export type PrReviewState =
   | 'merged'
   | 'closed'
 
+export type PrChecks = { pass: number; fail: number; pending: number }
+
 export type PrStatus = {
   number: number
   url: string
   reviewState: PrReviewState
+  /** CI checks on the head commit (statusCheckRollup), for `PR #123 ✓4 ✗1`. */
+  checks: PrChecks
 }
 
 const GH_TIMEOUT_MS = 5000
@@ -61,7 +66,7 @@ export async function fetchPrStatus(): Promise<PrStatus | null> {
       'pr',
       'view',
       '--json',
-      'number,url,reviewDecision,isDraft,headRefName,state',
+      'number,url,reviewDecision,isDraft,headRefName,state,statusCheckRollup',
     ],
     { timeout: GH_TIMEOUT_MS, preserveOutputOnError: false },
   )
@@ -76,6 +81,7 @@ export async function fetchPrStatus(): Promise<PrStatus | null> {
       isDraft: boolean
       headRefName: string
       state: string
+      statusCheckRollup?: unknown[]
     }
 
     // Don't show PR status for PRs from the default branch (e.g., main, master)
@@ -99,8 +105,18 @@ export async function fetchPrStatus(): Promise<PrStatus | null> {
       number: data.number,
       url: data.url,
       reviewState: deriveReviewState(data.isDraft, data.reviewDecision),
+      checks: countChecks(data.statusCheckRollup ?? []),
     }
   } catch {
     return null
   }
+}
+
+export function countChecks(rollup: unknown[]): PrChecks {
+  const counts: PrChecks = { pass: 0, fail: 0, pending: 0 }
+  for (const c of rollup) {
+    const state = checkState(c)
+    if (state !== 'skip') counts[state]++
+  }
+  return counts
 }

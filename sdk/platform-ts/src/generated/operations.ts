@@ -221,15 +221,15 @@ export class ConversationsResource {
    *
    * `GET /v1/agents/{id}/conversations`
    */
-  list(id: string, query?: T.ListConversationsQuery, options?: RequestOptions): Promise<T.ListConversationsResponse> {
-    return this._client.request<T.ListConversationsResponse>({ method: "GET", path: `/v1/agents/${encodeURIComponent(id)}/conversations`, query: query, options });
+  listAgentConversations(id: string, query?: T.ListAgentConversationsQuery, options?: RequestOptions): Promise<T.ListAgentConversationsResponse> {
+    return this._client.request<T.ListAgentConversationsResponse>({ method: "GET", path: `/v1/agents/${encodeURIComponent(id)}/conversations`, query: query, options });
   }
 
   /**
-   * Every item of `list`, fetching pages as you iterate.
+   * Every item of `listAgentConversations`, fetching pages as you iterate.
    */
-  listAll(id: string, query?: T.ListConversationsQuery, options?: RequestOptions): AsyncIterable<T.Conversation> {
-    return this._client.paginate<T.Conversation>((after) => this.list(id, { ...(query ?? {}), after } as T.ListConversationsQuery, options) as unknown as Promise<Page<T.Conversation>>);
+  listAgentConversationsAll(id: string, query?: T.ListAgentConversationsQuery, options?: RequestOptions): AsyncIterable<T.Conversation> {
+    return this._client.paginate<T.Conversation>((after) => this.listAgentConversations(id, { ...(query ?? {}), after } as T.ListAgentConversationsQuery, options) as unknown as Promise<Page<T.Conversation>>);
   }
 
   /**
@@ -239,8 +239,8 @@ export class ConversationsResource {
    *
    * `POST /v1/agents/{id}/conversations`
    */
-  create(id: string, body?: T.CreateConversationRequest, options?: RequestOptions): Promise<T.CreateConversationResponse> {
-    return this._client.request<T.CreateConversationResponse>({ method: "POST", path: `/v1/agents/${encodeURIComponent(id)}/conversations`, body: body, options });
+  createAgentConversation(id: string, body?: T.CreateAgentConversationRequest, options?: RequestOptions): Promise<T.CreateAgentConversationResponse> {
+    return this._client.request<T.CreateAgentConversationResponse>({ method: "POST", path: `/v1/agents/${encodeURIComponent(id)}/conversations`, body: body, options });
   }
 
   /**
@@ -258,7 +258,8 @@ export class ConversationsResource {
    * then `RUN_FINISHED` or `RUN_ERROR` (`{message, code}`). `runId` is echoed (generated when
    * missing). Refusals before the stream starts are plain errors, as for messages:
    * `402 spend_cap_reached` / `payment_method_required`, `409 conversation_busy`,
-   * `503 runtime_starting`. The reply is stored and metered like any conversation message.
+   * `503 runtime_starting` or `503 computer_capacity` (the host has no memory for another awake
+   * runtime). Both carry `Retry-After: 30`. The reply is stored and metered like any conversation message.
    *
    * `POST /v1/agents/{id}/ag-ui`
    */
@@ -270,12 +271,34 @@ export class ConversationsResource {
   /**
    * Retrieve a conversation
    *
-   * The conversation with its latest 200 messages, oldest first.
+   * The conversation with its latest 200 messages inline (`messages`, oldest first, the `conversation.message` shape SDK 0.3.x reads) and `item_count`, the number of items (list them all, including function and tool calls, with listConversationItems). Requires the `agents` scope.
    *
    * `GET /v1/conversations/{id}`
    */
   get(id: string, options?: RequestOptions): Promise<T.GetConversationResponse> {
     return this._client.request<T.GetConversationResponse>({ method: "GET", path: `/v1/conversations/${encodeURIComponent(id)}`, options });
+  }
+
+  /**
+   * Update a conversation
+   *
+   * Replaces the conversation's `metadata`. Requires the `agents` scope.
+   *
+   * `PATCH /v1/conversations/{id}`
+   */
+  update(id: string, body: T.UpdateConversationRequest, options?: RequestOptions): Promise<T.UpdateConversationResponse> {
+    return this._client.request<T.UpdateConversationResponse>({ method: "PATCH", path: `/v1/conversations/${encodeURIComponent(id)}`, body: body, options });
+  }
+
+  /**
+   * Delete a conversation
+   *
+   * Deletes the conversation and its items. Requires the `agents` scope.
+   *
+   * `DELETE /v1/conversations/{id}`
+   */
+  delete(id: string, options?: RequestOptions): Promise<T.DeleteConversationResponse> {
+    return this._client.request<T.DeleteConversationResponse>({ method: "DELETE", path: `/v1/conversations/${encodeURIComponent(id)}`, options });
   }
 
   /**
@@ -287,7 +310,8 @@ export class ConversationsResource {
    * "output"?, "error"?}`; arguments and results are cut at 8,000 characters) as it uses
    * tools, then `message.completed` (the stored reply) or `error`. Clients should skip
    * event names they don't know. The first message starts the
-   * project's hosted runtime: `503 runtime_starting` means retry in a few seconds.
+   * project's hosted runtime: `503 runtime_starting` (or `503 computer_capacity` when the host is full)
+   * means retry after the `Retry-After` header (30 seconds).
    * One message at a time per conversation (`409 conversation_busy`). A project at its
    * monthly spend cap gets `402 spend_cap_reached`; one with no card on file gets
    * `402 payment_method_required`. Each reply records `tokens_in` and
@@ -305,12 +329,123 @@ export class ConversationsResource {
   sendMessageStream(id: string, body: Omit<T.SendConversationMessageRequest, "stream">, options?: RequestOptions): AsyncIterable<SSEEvent> {
     return this._client.streamRequest({ method: "POST", path: `/v1/conversations/${encodeURIComponent(id)}/messages`, body: { ...(body ?? {}), stream: true }, options });
   }
+
+  /**
+   * List conversations
+   *
+   * The project's conversations, newest first, without their items. A key bound to an account sees only that account's. Requires the `agents` scope.
+   *
+   * `GET /v1/conversations`
+   */
+  list(query?: T.ListConversationsQuery, options?: RequestOptions): Promise<T.ListConversationsResponse> {
+    return this._client.request<T.ListConversationsResponse>({ method: "GET", path: `/v1/conversations`, query: query, options });
+  }
+
+  /**
+   * Every item of `list`, fetching pages as you iterate.
+   */
+  listAll(query?: T.ListConversationsQuery, options?: RequestOptions): AsyncIterable<T.Conversation> {
+    return this._client.paginate<T.Conversation>((after) => this.list({ ...(query ?? {}), after } as T.ListConversationsQuery, options) as unknown as Promise<Page<T.Conversation>>);
+  }
+
+  /**
+   * Create a conversation
+   *
+   * Opens a conversation, optionally with an agent, an account and starting items (up to 20). Without `agent_id` it can be used with `model` responses. `items` are allowed only without `agent_id` (an agent's runtime keeps its own session history; 409 `conversation_has_agent`). No model run happens.
+   *
+   * `POST /v1/conversations`
+   */
+  create(body?: T.CreateConversationRequest, options?: RequestOptions): Promise<T.CreateConversationResponse> {
+    return this._client.request<T.CreateConversationResponse>({ method: "POST", path: `/v1/conversations`, body: body, options });
+  }
+
+  /**
+   * List a conversation's items
+   *
+   * Messages, function calls, tool calls and approval requests in a stable order. `order` is `asc` (default) or `desc`. Requires the `agents` scope.
+   *
+   * `GET /v1/conversations/{id}/items`
+   */
+  listItems(id: string, query?: T.ListConversationItemsQuery, options?: RequestOptions): Promise<T.ListConversationItemsResponse> {
+    return this._client.request<T.ListConversationItemsResponse>({ method: "GET", path: `/v1/conversations/${encodeURIComponent(id)}/items`, query: query, options });
+  }
+
+  /**
+   * Every item of `listItems`, fetching pages as you iterate.
+   */
+  listItemsAll(id: string, query?: T.ListConversationItemsQuery, options?: RequestOptions): AsyncIterable<T.Item> {
+    return this._client.paginate<T.Item>((after) => this.listItems(id, { ...(query ?? {}), after } as T.ListConversationItemsQuery, options) as unknown as Promise<Page<T.Item>>);
+  }
+
+  /**
+   * Append items
+   *
+   * Adds up to 20 items without running the model. Only on a conversation without an agent (409 `conversation_has_agent`; an agent's runtime keeps its own session history). Requires the `agents` scope.
+   *
+   * `POST /v1/conversations/{id}/items`
+   */
+  createItems(id: string, body: T.CreateConversationItemsRequest, options?: RequestOptions): Promise<T.CreateConversationItemsResponse> {
+    return this._client.request<T.CreateConversationItemsResponse>({ method: "POST", path: `/v1/conversations/${encodeURIComponent(id)}/items`, body: body, options });
+  }
+
+  /**
+   * Retrieve an item
+   *
+   * Requires the `agents` scope.
+   *
+   * `GET /v1/conversations/{id}/items/{item_id}`
+   */
+  getItem(id: string, itemId: string, options?: RequestOptions): Promise<T.GetConversationItemResponse> {
+    return this._client.request<T.GetConversationItemResponse>({ method: "GET", path: `/v1/conversations/${encodeURIComponent(id)}/items/${encodeURIComponent(itemId)}`, options });
+  }
 }
 
 export class UsageResource {
   protected readonly _client: Transport;
   constructor(client: Transport) {
     this._client = client;
+  }
+
+  /**
+   * The project's trace export settings
+   *
+   * Where the project's spans go. Header values are never returned, only their names. `404 tracing_not_configured` when none is set. Requires the `usage` scope.
+   *
+   * `GET /v1/projects/{id}/tracing`
+   */
+  getProjectTracing(id: string, options?: RequestOptions): Promise<T.GetProjectTracingResponse> {
+    return this._client.request<T.GetProjectTracingResponse>({ method: "GET", path: `/v1/projects/${encodeURIComponent(id)}/tracing`, options });
+  }
+
+  /**
+   * Set the project's trace export
+   *
+   * Send a span for every agent turn, phone run and call of this project to an OTLP/HTTP collector (Langfuse, Arize Phoenix, any OpenTelemetry collector), as OTLP protobuf following the OpenTelemetry GenAI conventions. `endpoint` is the collector's OTLP base URL (`/v1/traces` is appended) or its full traces URL; it must be a public https URL. `headers` are encrypted at rest; leave them out to keep the stored ones. Export runs in the background and never fails or slows a request. Not available to account-bound keys.
+   *
+   * `PUT /v1/projects/{id}/tracing`
+   */
+  putProjectTracing(id: string, body: T.PutProjectTracingRequest, options?: RequestOptions): Promise<T.PutProjectTracingResponse> {
+    return this._client.request<T.PutProjectTracingResponse>({ method: "PUT", path: `/v1/projects/${encodeURIComponent(id)}/tracing`, body: body, options });
+  }
+
+  /**
+   * Turn off and forget the project's trace export
+   *
+   * `DELETE /v1/projects/{id}/tracing`
+   */
+  deleteProjectTracing(id: string, options?: RequestOptions): Promise<T.DeleteProjectTracingResponse> {
+    return this._client.request<T.DeleteProjectTracingResponse>({ method: "DELETE", path: `/v1/projects/${encodeURIComponent(id)}/tracing`, options });
+  }
+
+  /**
+   * Send one test span
+   *
+   * Sends one `allternit.tracing.test` span to the collector now and reports its answer.
+   *
+   * `POST /v1/projects/{id}/tracing/test`
+   */
+  testProjectTracing(id: string, options?: RequestOptions): Promise<T.TestProjectTracingResponse> {
+    return this._client.request<T.TestProjectTracingResponse>({ method: "POST", path: `/v1/projects/${encodeURIComponent(id)}/tracing/test`, options });
   }
 
   /**
@@ -466,7 +601,7 @@ export class NumbersResource {
   }
 }
 
-export class MessagingResource {
+export class TextsResource {
   protected readonly _client: Transport;
   constructor(client: Transport) {
     this._client = client;
@@ -475,37 +610,39 @@ export class MessagingResource {
   /**
    * List texts
    *
-   * `GET /v1/messages`
+   * SMS and MMS on the project's numbers. Formerly `/v1/messages`. The webhook events `message.received` and `message.status` keep their names. Requires the `messaging` scope.
+   *
+   * `GET /v1/texts`
    */
-  listMessages(query?: T.ListMessagesQuery, options?: RequestOptions): Promise<T.ListMessagesResponse> {
-    return this._client.request<T.ListMessagesResponse>({ method: "GET", path: `/v1/messages`, query: query, options });
+  list(query?: T.ListTextsQuery, options?: RequestOptions): Promise<T.ListTextsResponse> {
+    return this._client.request<T.ListTextsResponse>({ method: "GET", path: `/v1/texts`, query: query, options });
   }
 
   /**
-   * Every item of `listMessages`, fetching pages as you iterate.
+   * Every item of `list`, fetching pages as you iterate.
    */
-  listMessagesAll(query?: T.ListMessagesQuery, options?: RequestOptions): AsyncIterable<T.Message> {
-    return this._client.paginate<T.Message>((after) => this.listMessages({ ...(query ?? {}), after } as T.ListMessagesQuery, options) as unknown as Promise<Page<T.Message>>);
+  listAll(query?: T.ListTextsQuery, options?: RequestOptions): AsyncIterable<T.Text> {
+    return this._client.paginate<T.Text>((after) => this.list({ ...(query ?? {}), after } as T.ListTextsQuery, options) as unknown as Promise<Page<T.Text>>);
   }
 
   /**
    * Send a text
    *
-   * Refused when texting isn't active on the number, the person sent STOP, or they never texted first and have no consent recorded.
+   * Refused when texting isn't active on the number, the person sent STOP, or they never texted first and have no consent recorded. Ids keep their `msg_` prefix. The webhook events `message.received` and `message.status` keep their names.
    *
-   * `POST /v1/messages`
+   * `POST /v1/texts`
    */
-  sendMessage(body: T.SendMessageRequest, options?: RequestOptions): Promise<T.SendMessageResponse> {
-    return this._client.request<T.SendMessageResponse>({ method: "POST", path: `/v1/messages`, body: body, options });
+  create(body: T.CreateTextRequest, options?: RequestOptions): Promise<T.CreateTextResponse> {
+    return this._client.request<T.CreateTextResponse>({ method: "POST", path: `/v1/texts`, body: body, options });
   }
 
   /**
    * Retrieve a text
    *
-   * `GET /v1/messages/{id}`
+   * `GET /v1/texts/{id}`
    */
-  getMessage(id: string, options?: RequestOptions): Promise<T.GetMessageResponse> {
-    return this._client.request<T.GetMessageResponse>({ method: "GET", path: `/v1/messages/${encodeURIComponent(id)}`, options });
+  get(id: string, options?: RequestOptions): Promise<T.GetTextResponse> {
+    return this._client.request<T.GetTextResponse>({ method: "GET", path: `/v1/texts/${encodeURIComponent(id)}`, options });
   }
 }
 
@@ -818,8 +955,8 @@ export class TwinResource {
    *
    * `GET /v1/accounts/{id}/approvals`
    */
-  listApprovals(id: string, options?: RequestOptions): Promise<T.ListApprovalsResponse> {
-    return this._client.request<T.ListApprovalsResponse>({ method: "GET", path: `/v1/accounts/${encodeURIComponent(id)}/approvals`, options });
+  listAccountApprovals(id: string, options?: RequestOptions): Promise<T.ListAccountApprovalsResponse> {
+    return this._client.request<T.ListAccountApprovalsResponse>({ method: "GET", path: `/v1/accounts/${encodeURIComponent(id)}/approvals`, options });
   }
 
   /**
@@ -1100,8 +1237,9 @@ export class PhonesResource {
   /**
    * Run one phone tool
    *
-   * One phone tool through the Desktop phone gateway, exactly as a bot calls it: `phone.devices`, `phone.screenshot`, `phone.read_ui`, `phone.screen_text`, `phone.tap`, `phone.type`, `phone.find_and_tap`, `phone.swipe`, `phone.home`, `phone.back`, `phone.key`, `phone.open_app`, `phone.sms.read`, `phone.sms.send`, `phone.call.dial`.
+   * One phone tool through the Desktop phone gateway, exactly as a bot calls it: `phone.devices`, `phone.screenshot`, `phone.read_ui`, `phone.screen_text`, `phone.tap`, `phone.type`, `phone.find_and_tap`, `phone.swipe`, `phone.home`, `phone.back`, `phone.key`, `phone.open_app`, `phone.sms.read`, `phone.sms.send`, `phone.call.dial`. An iPhone running the Allternit app (serial `app:<phoneId>`) is screen only plus its in-app browser: `phone.screenshot`, `phone.devices` and `phone.web.open`, `phone.web.snapshot`, `phone.web.click`, `phone.web.type`, `phone.web.scroll`, `phone.web.back`, `phone.web.wait` (the app must be open; taps on native apps answer `not_supported`).
    * `phone.sms.send` and `phone.call.dial` wait for the person to approve on their Desktop (up to 80 s; then 503 `phone_timeout`); a refusal is a 200 result with `ok: false, error: approval_denied`. Tool failures are 200 with `ok: false`. 409 `phone_offline` when the phone isn't connected, 503 `phone_desktop_offline` / `phone_gateway_unavailable` when the Desktop or its phone gateway isn't running. The call is a `phone.step` webhook like any other.
+   * A sensitive action (pay, delete, send, call, a credential, a money app, a security setting) is held: 409 `approval_required` with `approval_id`, `inbox_id` and `expires_at`, and a `phone.approval.requested` webhook. Nothing runs and no phone-minute is billed. The project owner approves in the Allternit app; an API key can't approve. Then repeat the same call with `hold_id` set to the `approval_id` (or `_hold` in `arguments`) within 10 minutes, with a new `Idempotency-Key` if you send one. The approval covers that one action.
    *
    * `POST /v1/phones/{serial}/tool`
    */
@@ -1112,12 +1250,440 @@ export class PhonesResource {
   /**
    * Give a phone a goal
    *
-   * The phone task loop on the Desktop (read the screen, one action, repeat) with `bot_id`'s brain, `brain`, or the default. Answers 202 with the `run_id`; each step is a `phone.step` webhook and the end is `phone.run.completed`. Tasks never send texts or place calls. At most 5 minutes.
+   * The phone task loop on the Desktop (read the screen, one action, repeat) with `bot_id`'s brain, `brain`, or the default. Answers 202 with the `run_id`; each step is a `phone.step` webhook and the end is `phone.run.completed`. Tasks never send texts or place calls. At most 5 minutes. A sensitive step waits up to 5 minutes for the owner's approval with the budget paused (status `waiting_approval`, `phone.approval.requested`); the run ends `denied`, `approval_timeout` or `phone_locked` when it can't go on. `duration_ms` and phone minutes leave out held time.
    *
    * `POST /v1/phones/{serial}/task`
    */
   runTask(serial: string, body: T.RunPhoneTaskRequest, options?: RequestOptions): Promise<T.RunPhoneTaskResponse> {
     return this._client.request<T.RunPhoneTaskResponse>({ method: "POST", path: `/v1/phones/${encodeURIComponent(serial)}/task`, body: body, options });
+  }
+
+  /**
+   * Watch a phone live
+   *
+   * A view-only live view of the phone's screen for 10 minutes: `viewer_url` is a page you can open or put in an iframe, and `stream_url` is the raw stream (`{type:"meta"}` JSON, then H.264 Annex-B frames) for your own player. Both URLs carry the live view id as their only credential and stop working after `expires_in` seconds; neither can send input. A new view needs a new call. 409 `phone_offline` when the phone isn't connected to the Desktop.
+   *
+   * `POST /v1/phones/{serial}/live`
+   */
+  getLiveView(serial: string, options?: RequestOptions): Promise<T.GetPhoneLiveViewResponse> {
+    return this._client.request<T.GetPhoneLiveViewResponse>({ method: "POST", path: `/v1/phones/${encodeURIComponent(serial)}/live`, options });
+  }
+
+  /**
+   * Run one task or skill on many phones
+   *
+   * Starts one background run per listed phone: a task (`goal`) or a saved skill (`skill`). Answers 202 with the fleet run; phones whose run could not start are in `not_started` with the error. Every run counts against the plan's concurrent phone-run limit (Sandbox 1, Pay as you go 5, Growth 25, Enterprise by contract); asking for more than the room left is 429 `phone_run_limit` and starts nothing. Each run ends with `phone.run.completed`; the whole fleet run with `phone.fleet_run.completed`.
+   *
+   * `POST /v1/phones/runs`
+   */
+  startFleetRun(body: T.StartPhoneFleetRunRequest, options?: RequestOptions): Promise<T.StartPhoneFleetRunResponse> {
+    return this._client.request<T.StartPhoneFleetRunResponse>({ method: "POST", path: `/v1/phones/runs`, body: body, options });
+  }
+
+  /**
+   * A fleet run
+   *
+   * The fleet run and each phone's run (status, ok, start and end).
+   *
+   * `GET /v1/phones/runs/{id}`
+   */
+  getFleetRun(id: string, options?: RequestOptions): Promise<T.GetPhoneFleetRunResponse> {
+    return this._client.request<T.GetPhoneFleetRunResponse>({ method: "GET", path: `/v1/phones/runs/${encodeURIComponent(id)}`, options });
+  }
+}
+
+export class MailboxesResource {
+  protected readonly _client: Transport;
+  constructor(client: Transport) {
+    this._client = client;
+  }
+
+  /**
+   * List mailboxes
+   *
+   * `GET /v1/mailboxes`
+   */
+  list(query?: T.ListMailboxesQuery, options?: RequestOptions): Promise<T.ListMailboxesResponse> {
+    return this._client.request<T.ListMailboxesResponse>({ method: "GET", path: `/v1/mailboxes`, query: query, options });
+  }
+
+  /**
+   * Every item of `list`, fetching pages as you iterate.
+   */
+  listAll(query?: T.ListMailboxesQuery, options?: RequestOptions): AsyncIterable<T.Mailbox> {
+    return this._client.paginate<T.Mailbox>((after) => this.list({ ...(query ?? {}), after } as T.ListMailboxesQuery, options) as unknown as Promise<Page<T.Mailbox>>);
+  }
+
+  /**
+   * Create a mailbox for an account or agent
+   *
+   * An address on Allternit Mail (`local_part@bots.allternit.com`; `-2`, `-3`… when taken). With `agent_id`, the account is the agent's. Needs a card on file; live projects are billed `mailbox_month` ($2 a month). Requires the `mail` scope.
+   *
+   * `POST /v1/mailboxes`
+   */
+  createMailbox(body: T.CreateMailboxRequest, options?: RequestOptions): Promise<T.CreateMailboxResponse> {
+    return this._client.request<T.CreateMailboxResponse>({ method: "POST", path: `/v1/mailboxes`, body: body, options });
+  }
+
+  /**
+   * Retrieve a mailbox
+   *
+   * `GET /v1/mailboxes/{id}`
+   */
+  getMailbox(id: string, options?: RequestOptions): Promise<T.GetMailboxResponse> {
+    return this._client.request<T.GetMailboxResponse>({ method: "GET", path: `/v1/mailboxes/${encodeURIComponent(id)}`, options });
+  }
+
+  /**
+   * Delete a mailbox
+   *
+   * Removes the address. A mailbox inside an identity answers `409 mailbox_in_identity`; delete the identity instead.
+   *
+   * `DELETE /v1/mailboxes/{id}`
+   */
+  deleteMailbox(id: string, options?: RequestOptions): Promise<T.DeleteMailboxResponse> {
+    return this._client.request<T.DeleteMailboxResponse>({ method: "DELETE", path: `/v1/mailboxes/${encodeURIComponent(id)}`, options });
+  }
+
+  /**
+   * List a mailbox's messages
+   *
+   * Newest first. Each carries the one-time codes and sign-in links found in it.
+   *
+   * `GET /v1/mailboxes/{id}/messages`
+   */
+  listMailMessages(id: string, query?: T.ListMailMessagesQuery, options?: RequestOptions): Promise<T.ListMailMessagesResponse> {
+    return this._client.request<T.ListMailMessagesResponse>({ method: "GET", path: `/v1/mailboxes/${encodeURIComponent(id)}/messages`, query: query, options });
+  }
+
+  /**
+   * Every item of `listMailMessages`, fetching pages as you iterate.
+   */
+  listMailMessagesAll(id: string, query?: T.ListMailMessagesQuery, options?: RequestOptions): AsyncIterable<T.MailMessage> {
+    return this._client.paginate<T.MailMessage>((after) => this.listMailMessages(id, { ...(query ?? {}), after } as T.ListMailMessagesQuery, options) as unknown as Promise<Page<T.MailMessage>>);
+  }
+
+  /**
+   * Read one message
+   *
+   * `GET /v1/mailboxes/{id}/messages/{mid}`
+   */
+  getMailMessage(id: string, mid: string, options?: RequestOptions): Promise<T.GetMailMessageResponse> {
+    return this._client.request<T.GetMailMessageResponse>({ method: "GET", path: `/v1/mailboxes/${encodeURIComponent(id)}/messages/${encodeURIComponent(mid)}`, options });
+  }
+
+  /**
+   * Wait for the newest one-time code
+   *
+   * The newest message with a code or sign-in link received after `since` (default the last 10 minutes), waiting up to `wait_seconds` for one to arrive. `found` is false when none came.
+   *
+   * `POST /v1/mailboxes/{id}/otp`
+   */
+  readMailOtp(id: string, body?: T.ReadMailOtpRequest, options?: RequestOptions): Promise<T.ReadMailOtpResponse> {
+    return this._client.request<T.ReadMailOtpResponse>({ method: "POST", path: `/v1/mailboxes/${encodeURIComponent(id)}/otp`, body: body, options });
+  }
+
+  /**
+   * Send an email from a mailbox
+   *
+   * Live projects only. The call is the approval, so the send is queued at once; `pending_approval` only when Allternit Mail held it and could not release it.
+   *
+   * `POST /v1/mailboxes/{id}/send`
+   */
+  sendMail(id: string, body: T.SendMailRequest, options?: RequestOptions): Promise<T.SendMailResponse> {
+    return this._client.request<T.SendMailResponse>({ method: "POST", path: `/v1/mailboxes/${encodeURIComponent(id)}/send`, body: body, options });
+  }
+}
+
+export class IdentitiesResource {
+  protected readonly _client: Transport;
+  constructor(client: Transport) {
+    this._client = client;
+  }
+
+  /**
+   * List agent identities
+   *
+   * `GET /v1/identities`
+   */
+  list(query?: T.ListIdentitiesQuery, options?: RequestOptions): Promise<T.ListIdentitiesResponse> {
+    return this._client.request<T.ListIdentitiesResponse>({ method: "GET", path: `/v1/identities`, query: query, options });
+  }
+
+  /**
+   * Every item of `list`, fetching pages as you iterate.
+   */
+  listAll(query?: T.ListIdentitiesQuery, options?: RequestOptions): AsyncIterable<T.Identity> {
+    return this._client.paginate<T.Identity>((after) => this.list({ ...(query ?? {}), after } as T.ListIdentitiesQuery, options) as unknown as Promise<Page<T.Identity>>);
+  }
+
+  /**
+   * Give an agent a number, a mailbox and a phone in one call
+   *
+   * Gets a number (simulated in sandbox; in live the first available, in `area_code` when given), a mailbox and, with `phone_serial`, binds one of the owner's linked phones. Requires the `numbers` and `mail` scopes, plus `phones` (and an unbound key) with `phone_serial`. Billed as the Agent identity bundle ($9 a month, meter `identity_month`).
+   *
+   * `POST /v1/identities`
+   */
+  createIdentity(body: T.CreateIdentityRequest, options?: RequestOptions): Promise<T.CreateIdentityResponse> {
+    return this._client.request<T.CreateIdentityResponse>({ method: "POST", path: `/v1/identities`, body: body, options });
+  }
+
+  /**
+   * Retrieve an identity
+   *
+   * `GET /v1/identities/{id}`
+   */
+  getIdentity(id: string, options?: RequestOptions): Promise<T.GetIdentityResponse> {
+    return this._client.request<T.GetIdentityResponse>({ method: "GET", path: `/v1/identities/${encodeURIComponent(id)}`, options });
+  }
+
+  /**
+   * Delete an identity
+   *
+   * Releases the number and removes the mailbox.
+   *
+   * `DELETE /v1/identities/{id}`
+   */
+  deleteIdentity(id: string, options?: RequestOptions): Promise<T.DeleteIdentityResponse> {
+    return this._client.request<T.DeleteIdentityResponse>({ method: "DELETE", path: `/v1/identities/${encodeURIComponent(id)}`, options });
+  }
+}
+
+export class DecisionsResource {
+  protected readonly _client: Transport;
+  constructor(client: Transport) {
+    this._client = client;
+  }
+
+  /**
+   * List decisions
+   *
+   * The project's stored decisions, newest first, in the usual cursor envelope (`limit` 1 to 100, default 20; pass `next_cursor` as `after`). A key bound to an account sees only that account's decisions; `account_id` narrows a project-wide key (`403 account_mismatch` for a bound key naming another account). Each item is the same `Decision` that `GET /v1/decisions/{id}` returns. Requires the `decisions` scope.
+   *
+   * `GET /v1/decisions`
+   */
+  list(query?: T.ListDecisionsQuery, options?: RequestOptions): Promise<T.ListDecisionsResponse> {
+    return this._client.request<T.ListDecisionsResponse>({ method: "GET", path: `/v1/decisions`, query: query, options });
+  }
+
+  /**
+   * Every item of `list`, fetching pages as you iterate.
+   */
+  listAll(query?: T.ListDecisionsQuery, options?: RequestOptions): AsyncIterable<T.Decision> {
+    return this._client.paginate<T.Decision>((after) => this.list({ ...(query ?? {}), after } as T.ListDecisionsQuery, options) as unknown as Promise<Page<T.Decision>>);
+  }
+
+  /**
+   * Ask one or more questions about some input
+   *
+   * Answers up to 16 typed questions about one input (text or JSON), with a probability
+   * and a confidence for each. Question types: `predicate` (yes or no;
+   * `probability` is P(yes)), `choice` (2 to 255 `choices`; the answer names the best one
+   * and gives every probability), `score` (2 to 10 ordered `levels`; `score` is the
+   * probability-weighted level index scaled to 0..1, with the per-level distribution).
+   * A `questions` object keyed by name (Google style) is accepted and normalised to the
+   * array form. The single-question Agency body (`context`, `options`, `kind`, `question`)
+   * is also accepted on this route and answered in the Agency shape. Questions run
+   * together under one `latency_budget_ms`; a question the backends cannot answer in time
+   * comes back as a `refusal` answer (`reason`: `abstained`, `unavailable` or
+   * `budget_exhausted`), not a failed request. Each answer names the `backend` that answered
+   * it; the top-level `backend` is the one that answered the most questions. Limits: 1 to 16
+   * questions, `input` text plus shared `instructions` up to 4 KiB (`400 input_too_large`), each question's instructions plus choice or level texts up to 4 KiB (`400 question_too_large`). Image inputs are not
+   * supported yet (`400 image_not_supported`). When `latency_budget_ms` is omitted it
+   * defaults to `5000 + 15 * input_bytes + 3000 * questions` ms, clamped to 10000-120000;
+   * input bytes count the shared `instructions` plus the input text, and an Agency body
+   * counts as one question. These limits are sized to the current scoring hardware and rise
+   * as it grows. Billed per answered question (`decision_questions`
+   * meter; refusals are not billed, `usage.questions` counts answered ones). Requires the
+   * `decisions` scope.
+   *
+   * `POST /v1/decisions`
+   */
+  create(body: T.CreateDecisionRequest, options?: RequestOptions): Promise<T.CreateDecisionResponse> {
+    return this._client.request<T.CreateDecisionResponse>({ method: "POST", path: `/v1/decisions`, body: body, options });
+  }
+
+  /**
+   * Retrieve a decision
+   *
+   * The stored decision, with any outcomes recorded so far. Requires the `decisions` scope.
+   *
+   * `GET /v1/decisions/{id}`
+   */
+  get(id: string, options?: RequestOptions): Promise<T.GetDecisionResponse> {
+    return this._client.request<T.GetDecisionResponse>({ method: "GET", path: `/v1/decisions/${encodeURIComponent(id)}`, options });
+  }
+
+  /**
+   * Record what happened after a decision
+   *
+   * Adds an outcome per question name (`success`, `failure`, `error` or `skipped`, with an optional label and detail). Outcomes feed back into the decision backends. Requires the `decisions` scope.
+   *
+   * `PATCH /v1/decisions/{id}`
+   */
+  update(id: string, body: T.UpdateDecisionRequest, options?: RequestOptions): Promise<T.UpdateDecisionResponse> {
+    return this._client.request<T.UpdateDecisionResponse>({ method: "PATCH", path: `/v1/decisions/${encodeURIComponent(id)}`, body: body, options });
+  }
+}
+
+export class ResponsesResource {
+  protected readonly _client: Transport;
+  constructor(client: Transport) {
+    this._client = client;
+  }
+
+  /**
+   * Create a response
+   *
+   * Runs one turn. Give exactly one of `model` (runs on the model router; your `tools` come
+   * back as `function_call` items for you to run, then you continue with
+   * `previous_response_id`) or `agent` (runs on the project's hosted runtime with the
+   * agent's own tools). `conversation` and `previous_response_id` are mutually exclusive.
+   * With `stream: true` the answer is server-sent events: `response.created`,
+   * `response.output_item.added`, `response.output_text.delta` (`{"delta"}`),
+   * `response.output_text.done`, `response.function_call_arguments.done`,
+   * `response.tool_call.started` / `response.tool_call.completed` / `response.tool_call.failed`
+   * (hosted tools, arguments and results cut at 8,000 characters),
+   * `response.output_item.done`, then `response.completed`, `response.incomplete` or `response.failed`, and `error`
+   * for failures before the stream starts. Clients should skip event names they don't know.
+   * When an agent's action needs the owner's approval, that tool call fails with a "try
+   * again once they approve" result and the turn ends; this answer (and its stream) still
+   * ends `completed`, because the approval is raised after the turn finishes. While it is
+   * pending, `GET /v1/responses/{id}` reads `status: requires_action` with one
+   * `required_actions` entry per pending approval. Resolve it with `POST /v1/approvals/{id}`
+   * (or follow the `approval.requested` / `approval.resolved` webhooks), then send a new
+   * response with `previous_response_id`. Errors before the stream starts are
+   * plain errors: `400 invalid_request` for `agent` with `store: false`, `agent` with client
+   * `tools`, or mixing `model` and `agent` turns in one conversation;
+   * `400 missing_function_call_output` when a `function_call` of the previous response has no
+   * matching `function_call_output` in `input`; `409 previous_response_not_latest` when
+   * `previous_response_id` is not the latest response of its conversation;
+   * `402 spend_cap_reached`, `402 payment_method_required`, `409 conversation_busy`,
+   * `503 runtime_starting` / `computer_capacity` (both with `Retry-After: 30`). Token usage is recorded as
+   * `tokens_in` and `tokens_out`. Requires the `inference` scope with `model`, or the
+   * `agents` scope with `agent`.
+   *
+   * `POST /v1/responses`
+   */
+  create(body: Omit<T.CreateResponseRequest, "stream">, options?: RequestOptions): Promise<T.CreateResponseResponse> {
+    return this._client.request<T.CreateResponseResponse>({ method: "POST", path: `/v1/responses`, body: body, options });
+  }
+
+  /**
+   * `create` with `stream: true`: yields the raw server-sent events.
+   */
+  createStream(body: Omit<T.CreateResponseRequest, "stream">, options?: RequestOptions): AsyncIterable<SSEEvent> {
+    return this._client.streamRequest({ method: "POST", path: `/v1/responses`, body: { ...(body ?? {}), stream: true }, options });
+  }
+
+  /**
+   * Retrieve a response
+   *
+   * A stored response (`store` was not false) with its output items. While an approval its turn raised is pending, `status` is `requires_action` and `required_actions` lists the pending approvals (one `approval` entry with its `approval_id` each, oldest first). Requires the `inference` or `agents` scope.
+   *
+   * `GET /v1/responses/{id}`
+   */
+  get(id: string, options?: RequestOptions): Promise<T.GetResponseResponse> {
+    return this._client.request<T.GetResponseResponse>({ method: "GET", path: `/v1/responses/${encodeURIComponent(id)}`, options });
+  }
+
+  /**
+   * List a response's input items
+   *
+   * The items the response was given, in order. Needed because `input` is not echoed on the response object (OpenAI parity). Requires the `inference` or `agents` scope.
+   *
+   * `GET /v1/responses/{id}/input_items`
+   */
+  listInputItems(id: string, query?: T.ListResponseInputItemsQuery, options?: RequestOptions): Promise<T.ListResponseInputItemsResponse> {
+    return this._client.request<T.ListResponseInputItemsResponse>({ method: "GET", path: `/v1/responses/${encodeURIComponent(id)}/input_items`, query: query, options });
+  }
+
+  /**
+   * Every item of `listInputItems`, fetching pages as you iterate.
+   */
+  listInputItemsAll(id: string, query?: T.ListResponseInputItemsQuery, options?: RequestOptions): AsyncIterable<T.Item> {
+    return this._client.paginate<T.Item>((after) => this.listInputItems(id, { ...(query ?? {}), after } as T.ListResponseInputItemsQuery, options) as unknown as Promise<Page<T.Item>>);
+  }
+}
+
+export class MessagesResource {
+  protected readonly _client: Transport;
+  constructor(client: Transport) {
+    this._client = client;
+  }
+
+  /**
+   * Create a message (Anthropic shape)
+   *
+   * Anthropic Messages-compatible turn on the model router. Content blocks: `text`, `image`,
+   * `tool_use`, `tool_result`. No thinking blocks, server tools or files. `thread` backs the
+   * call with a durable conversation (no 5-minute expiry): `{"type":"create"}` starts one
+   * (`system` and `tools` are set here), `{"type":"continue","previous_message_id":"mdl_…"}`
+   * continues it; `system` or `tools` on a continue are `400 thread_fingerprint_mismatch`.
+   * Model messages use `mdl_` ids; text messages (SMS) are under `/v1/texts`.
+   * With `stream: true` the answer is server-sent events: `message_start`,
+   * `content_block_start`, `content_block_delta` (`text_delta` or `input_json_delta`),
+   * `content_block_stop`, `message_delta` (`stop_reason`, `usage`), `message_stop`, and
+   * `error`. Requires the `inference` scope.
+   *
+   * `POST /v1/messages`
+   */
+  create(body: Omit<T.CreateMessageRequest, "stream">, options?: RequestOptions): Promise<T.CreateMessageResponse> {
+    return this._client.request<T.CreateMessageResponse>({ method: "POST", path: `/v1/messages`, body: body, options });
+  }
+
+  /**
+   * `create` with `stream: true`: yields the raw server-sent events.
+   */
+  createStream(body: Omit<T.CreateMessageRequest, "stream">, options?: RequestOptions): AsyncIterable<SSEEvent> {
+    return this._client.streamRequest({ method: "POST", path: `/v1/messages`, body: { ...(body ?? {}), stream: true }, options });
+  }
+}
+
+export class ApprovalsResource {
+  protected readonly _client: Transport;
+  constructor(client: Transport) {
+    this._client = client;
+  }
+
+  /**
+   * List approvals
+   *
+   * Held actions from the twin and computers in one list, newest first. The list holds only the sources the key's scopes allow (`twin` scope → twin rows, `computers` scope → computer rows). Requires the `twin` or `computers` scope.
+   *
+   * `GET /v1/approvals`
+   */
+  list(query?: T.ListApprovalsQuery, options?: RequestOptions): Promise<T.ListApprovalsResponse> {
+    return this._client.request<T.ListApprovalsResponse>({ method: "GET", path: `/v1/approvals`, query: query, options });
+  }
+
+  /**
+   * Every item of `list`, fetching pages as you iterate.
+   */
+  listAll(query?: T.ListApprovalsQuery, options?: RequestOptions): AsyncIterable<T.Approval> {
+    return this._client.paginate<T.Approval>((after) => this.list({ ...(query ?? {}), after } as T.ListApprovalsQuery, options) as unknown as Promise<Page<T.Approval>>);
+  }
+
+  /**
+   * Retrieve an approval
+   *
+   * Requires the `twin` or `computers` scope.
+   *
+   * `GET /v1/approvals/{id}`
+   */
+  get(id: string, options?: RequestOptions): Promise<T.GetApprovalResponse> {
+    return this._client.request<T.GetApprovalResponse>({ method: "GET", path: `/v1/approvals/${encodeURIComponent(id)}`, options });
+  }
+
+  /**
+   * Approve or deny
+   *
+   * The API key is recorded as the actor. Whether a key may approve a given source follows that source's rules (a computer approval needs the project's `approval_mode` to be `api_key`; 403 `approval_requires_owner` otherwise). The older per-account and per-computer approve and deny routes call the same resolver. Webhooks `approval.requested`, `approval.resolved` and `approval.expired` report the lifecycle.
+   *
+   * `POST /v1/approvals/{id}`
+   */
+  resolve(id: string, body: T.ResolveApprovalRequest, options?: RequestOptions): Promise<T.ResolveApprovalResponse> {
+    return this._client.request<T.ResolveApprovalResponse>({ method: "POST", path: `/v1/approvals/${encodeURIComponent(id)}`, body: body, options });
   }
 }
 
@@ -1128,7 +1694,7 @@ export class GeneratedResources {
   conversations: ConversationsResource;
   usage: UsageResource;
   numbers: NumbersResource;
-  messaging: MessagingResource;
+  texts: TextsResource;
   webhooks: WebhooksResource;
   voice: VoiceResource;
   realtime: RealtimeResource;
@@ -1136,13 +1702,19 @@ export class GeneratedResources {
   twin: TwinResource;
   computers: ComputersResource;
   phones: PhonesResource;
+  mailboxes: MailboxesResource;
+  identities: IdentitiesResource;
+  decisions: DecisionsResource;
+  responses: ResponsesResource;
+  messages: MessagesResource;
+  approvals: ApprovalsResource;
   constructor(client: Transport) {
     this.accounts = new AccountsResource(client);
     this.agents = new AgentsResource(client);
     this.conversations = new ConversationsResource(client);
     this.usage = new UsageResource(client);
     this.numbers = new NumbersResource(client);
-    this.messaging = new MessagingResource(client);
+    this.texts = new TextsResource(client);
     this.webhooks = new WebhooksResource(client);
     this.voice = new VoiceResource(client);
     this.realtime = new RealtimeResource(client);
@@ -1150,5 +1722,11 @@ export class GeneratedResources {
     this.twin = new TwinResource(client);
     this.computers = new ComputersResource(client);
     this.phones = new PhonesResource(client);
+    this.mailboxes = new MailboxesResource(client);
+    this.identities = new IdentitiesResource(client);
+    this.decisions = new DecisionsResource(client);
+    this.responses = new ResponsesResource(client);
+    this.messages = new MessagesResource(client);
+    this.approvals = new ApprovalsResource(client);
   }
 }

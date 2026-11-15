@@ -1355,7 +1355,7 @@ export function parseMcpConfig(params: {
         ...(filePath && { file: filePath }),
         path: `mcpServers.${name}`,
         message: `Windows requires 'cmd /c' wrapper to execute npx`,
-        suggestion: `Change command to "cmd" with args ["/c", "npx", ...]. See: https://docs.gizziio.com/mcp#configure-mcp-servers`,
+        suggestion: `Change command to "cmd" with args ["/c", "npx", ...]. See: https://docs.allternit.com/cli/mcp#adding-a-server`,
         mcpErrorMetadata: {
           scope,
           serverName: name,

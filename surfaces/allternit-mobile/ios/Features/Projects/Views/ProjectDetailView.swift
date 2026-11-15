@@ -2,11 +2,15 @@ import PhotosUI
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// Project detail (Claude iOS project view parity): the project name and
-/// description, "Add files" / "Add instructions" entries, the instructions
-/// editor (Save → PUT …/projects/:id), the attached-files list, and the
-/// "Chats in this project" section (agent sessions stamped with this
-/// project's id).
+/// Project detail in the desktop project page's layout (allternit-ai
+/// ChatProjectDetail → BaseProjectView + ProjectCoordinatorWorkspace): a
+/// "Projects / name" breadcrumb, the hero band (folder mark, serif name,
+/// description, the actions, section tabs) following the theme, then Overview
+/// (the project intro, "Start a thread", the coordinator conversation and the
+/// threads), Delegate and Board (the project pane, full screen as on the web's
+/// phone) or Details (status page, memory, "Add files" / "Add instructions",
+/// the instructions editor → PUT …/projects/:id, the attached files), and the
+/// composer at the bottom, which sends to the project's coordinator.
 ///
 /// The old live backend has no files routes and doesn't persist
 /// `metadata.projectId` on session create, so the files list renders its
@@ -21,7 +25,11 @@ struct ProjectDetailView: View {
     let onOpenChat: (AgentSession) -> Void
 
     @StateObject private var projectStore = ProjectStore.shared
+    @ObservedObject private var library = ProjectsLibraryStore.shared
+    @EnvironmentObject private var navigator: BotNavigator
     @Environment(\.dismiss) private var dismiss
+    @StateObject private var dictation = DictationController()
+    @StateObject private var composerAttachments = AttachmentStore()
 
     @State private var instructions: String
     @State private var isEditingInstructions = false
@@ -36,9 +44,42 @@ struct ProjectDetailView: View {
     @State private var isFilePickerPresented = false
     @State private var selectedPhotoItems: [PhotosPickerItem] = []
 
-    @State private var isRenameAlertPresented = false
-    @State private var renameText = ""
     @State private var isDeleteConfirmPresented = false
+    @State private var section: Section = .overview
+    @State private var sheet: DetailSheet? = nil
+    @State private var statusRecord: ProjectStatusRecord? = nil
+    @StateObject private var looks: ProjectLookStore
+    @ObservedObject private var backdrops = StageBackdropStore.shared
+
+    // The project's coordinator (project-workspaces): registered on first use.
+    @State private var coordinatorId: String? = nil
+    @State private var messages: [ProjectMessage] = []
+    @State private var serverThreads: [BotThread] = []
+    @State private var draft = ""
+    @State private var isSending = false
+    @State private var composerError: String? = nil
+    @State private var dictationBase = ""
+    @State private var isDictating = false
+
+    /// The hero band's tabs the phone has (desktop: Overview · Delegate ·
+    /// Board · Details · Browser). Delegate and Board open the pane.
+    private enum Section: String, CaseIterable {
+        case overview, delegate, board, details
+        var label: String { rawValue.capitalized }
+        var icon: String? {
+            switch self {
+            case .overview: return "list.bullet"
+            case .delegate: return "checklist"
+            case .board: return "square.grid.2x2"
+            case .details: return nil
+            }
+        }
+    }
+
+    private enum DetailSheet: String, Identifiable {
+        case customize, settings, edit, memory, status
+        var id: String { rawValue }
+    }
 
     private let projectsClient = ProjectsClient()
     private let chatClient = AgentChatClient()
@@ -47,6 +88,7 @@ struct ProjectDetailView: View {
          onNewChat: @escaping (CoworkProject) -> Void,
          onOpenChat: @escaping (AgentSession) -> Void) {
         self.project = project
+        _looks = StateObject(wrappedValue: ProjectLookStore(scope: "project:chat:\(project.id)"))
         self.onNewChat = onNewChat
         self.onOpenChat = onOpenChat
         _instructions = State(initialValue: project.instructions ?? "")
@@ -59,52 +101,86 @@ struct ProjectDetailView: View {
         projectStore.project(withId: project.id) ?? project
     }
 
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
-                if let actionError {
-                    Text(actionError)
-                        .font(.caption)
-                        .foregroundColor(Theme.statusWarning)
-                }
+    private var libraryRow: LibraryProject? {
+        library.projects(from: [liveProject]).first { $0.mode == .chat && $0.nativeId == project.id }
+    }
+    private var scope: BackdropScope { .project(project.id) }
+    private var workspaceKey: String { "chat-\(project.id)" }
+    private var memorySessionIds: Set<String> {
+        Set(chats.map(\.id)).union(serverThreads.compactMap(\.currentSessionId))
+    }
 
-                descriptionSection
-                addButtonsRow
-                instructionsSection
-                filesSection
-                chatsSection
-            }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 20)
-        }
-        .background(Color("BgPrimary").edgesIgnoringSafeArea(.all))
-        .navigationTitle(liveProject.title)
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Menu {
-                    Button(action: {
-                        renameText = liveProject.title
-                        isRenameAlertPresented = true
-                    }) {
-                        Label("Rename", systemImage: "pencil")
+    var body: some View {
+        VStack(spacing: 0) {
+            breadcrumb
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    hero
+                    VStack(alignment: .leading, spacing: 24) {
+                        if let actionError {
+                            Text(actionError)
+                                .font(.caption)
+                                .foregroundColor(Theme.statusWarning)
+                        }
+                        if section == .overview {
+                            ProjectDashboardView(layout: looks.look.layout, look: looks.look, data: boardData, title: liveProject.title) { sheet = .status }
+                            if chats.isEmpty && serverThreads.isEmpty { overviewIntro }
+                            if !messages.isEmpty {
+                                ProjectConversationView(
+                                    messages: messages,
+                                    threads: serverThreads,
+                                    onOpenThread: { navigator.openThread($0) }
+                                )
+                            }
+                            chatsSection
+                            if !serverThreads.isEmpty {
+                                BotThreadsPanel(botId: nil, greeting: nil, threadsOverride: serverThreads) {
+                                    navigator.openThread($0)
+                                }
+                                .padding(.horizontal, -8)
+                            }
+                        } else {
+                            ProjectStatusCard(projectId: coordinatorId ?? project.id) { sheet = .status }
+                            ProjectCard(title: "Memory") {
+                                ProjectTextButton("View memory") { sheet = .memory }
+                            } content: {
+                                ProjectCardNote("Project memory will show here after a few chats.")
+                            }
+                            addButtonsRow
+                            instructionsSection
+                            filesSection
+                            ProjectFolderCard(projectId: project.id, title: liveProject.title) { saveFolder($0) }
+                        }
                     }
-                    Button(role: .destructive, action: { isDeleteConfirmPresented = true }) {
-                        Label("Delete project", systemImage: "trash")
-                    }
-                } label: {
-                    Image(systemName: "ellipsis.circle")
-                        .font(.system(size: 15, weight: .medium))
-                        .foregroundColor(Color("TextSecondary"))
+                    .padding(.horizontal, 20)
+                    .padding(.top, 28)
+                    .padding(.bottom, 24)
                 }
-                .accessibilityLabel("Project options")
+            }
+            composerCard
+        }
+        .background {
+            let variant = backdrops.variant(for: .project, scope: scope)
+            if variant == "plain" {
+                Color("BgPrimary").edgesIgnoringSafeArea(.all)
+            } else {
+                StageBackdropView(variant: variant, colors: StageBackdrops.sampleColors)
+                    .ignoresSafeArea()
+                    .allowsHitTesting(false)
             }
         }
-        .alert("Rename project", isPresented: $isRenameAlertPresented) {
-            TextField("Project name", text: $renameText)
-            Button("Save") { renameProject() }
-                .disabled(renameText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            Button("Cancel", role: .cancel) {}
+        .toolbar(.hidden, for: .navigationBar)
+        .sheet(item: $sheet) { which in
+            sheetContent(which)
+        }
+        .onChange(of: dictation.transcript) { _, transcript in
+            if isDictating { draft = dictationBase + transcript }
+        }
+        .onChange(of: dictation.isRecording) { _, recording in
+            if !recording && isDictating {
+                draft = dictationBase + dictation.transcript
+                isDictating = false
+            }
         }
         .alert("Delete this project?", isPresented: $isDeleteConfirmPresented) {
             Button("Delete", role: .destructive) { deleteProject() }
@@ -134,19 +210,345 @@ struct ProjectDetailView: View {
         .task {
             await loadFiles()
             await loadChats()
+            coordinatorId = try? await BotProjectClient.shared.workspaceProjectId(key: workspaceKey)
+            while !Task.isCancelled {
+                await refreshCoordinator()
+                statusRecord = try? await BotProjectClient.shared.status(projectId: coordinatorId ?? project.id)
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+            }
         }
+    }
+
+    // MARK: - Sheets
+
+    @ViewBuilder
+    private func sheetContent(_ which: DetailSheet) -> some View {
+        switch which {
+        case .customize:
+            ProjectCustomizeSheet(store: looks, data: boardData, title: liveProject.title, scope: scope,
+                                  backdropColors: StageBackdrops.sampleColors) {
+                Button("Project settings") { sheet = .settings }.frame(minHeight: 44)
+            } manage: {
+                Button("Edit details") { sheet = .edit }.frame(minHeight: 44)
+                if let libraryRow {
+                    Button(libraryRow.isArchived ? "Unarchive" : "Archive") { library.toggleArchive(libraryRow) }.frame(minHeight: 44)
+                }
+                Button("Delete", role: .destructive) { sheet = nil; isDeleteConfirmPresented = true }.frame(minHeight: 44)
+            }
+        case .settings:
+            ProjectSettingsSheet(projectId: project.id, scope: scope, colors: StageBackdrops.sampleColors,
+                                 note: "Appearance is saved on this device. Instructions are saved with the project.",
+                                 placeholder: "How should the coordinator manage this project?")
+                .onDisappear { projectStore.fetchProjectsIfNeeded(force: true) }
+        case .edit:
+            ProjectEditDetailsSheet(title: liveProject.title, details: liveProject.description ?? "") { title, details in
+                try await BotProjectClient.shared.saveDetails(projectId: project.id, title: title, description: details)
+                projectStore.fetchProjectsIfNeeded(force: true)
+            }
+        case .memory:
+            ProjectMemorySheet(sessionIds: memorySessionIds)
+        case .status:
+            ProjectStatusSheet(projectId: coordinatorId ?? project.id) { projectStore.fetchProjectsIfNeeded(force: true) }
+        }
+    }
+
+    // MARK: - Desktop chrome
+
+    /// "Projects / name".
+    private var breadcrumb: some View {
+        HStack(spacing: 8) {
+            Button { dismiss() } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "chevron.left").font(.system(size: 13, weight: .semibold))
+                    Text("Projects")
+                }
+                .foregroundColor(Color("TextSecondary"))
+                .frame(height: 44)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Back to Projects")
+            Text("/").foregroundColor(Color("TextTertiary"))
+            Text(liveProject.title)
+                .foregroundColor(Color("TextPrimary"))
+                .lineLimit(1)
+            Spacer(minLength: 0)
+        }
+        .font(.system(size: 14))
+        .padding(.horizontal, 16)
+        .background(Color("BgPrimary"))
+    }
+
+    /// The hero band: folder mark, serif name, description, section tabs.
+    private var hero: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(alignment: .top, spacing: 16) {
+                Image(systemName: "folder")
+                    .font(.system(size: 46, weight: .regular))
+                    .foregroundColor(Color("TextPrimary"))
+                VStack(alignment: .leading, spacing: 6) {
+                    Button { sheet = .edit } label: {
+                        Text(liveProject.title)
+                            .font(.system(size: 28, design: .serif))
+                            .foregroundColor(Color("TextPrimary"))
+                            .multilineTextAlignment(.leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityHint("Rename project")
+                    if let description = liveProject.description, !description.isEmpty {
+                        Text(description)
+                            .font(.system(size: 14))
+                            .foregroundColor(Color("TextSecondary"))
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+            actionsRow
+            HStack(spacing: 4) {
+                ForEach(Section.allCases, id: \.self) { tab in
+                    let on = section == tab
+                    Button { select(tab) } label: {
+                        HStack(spacing: 6) {
+                            if let icon = tab.icon { Image(systemName: icon).font(.system(size: 12)) }
+                            Text(tab.label)
+                        }
+                        .font(.system(size: 13, weight: on ? .medium : .regular))
+                        .foregroundColor(on ? Color("TextPrimary") : Color("TextSecondary"))
+                        .padding(.horizontal, 8)
+                        .frame(minHeight: 44)
+                        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(on ? Color("BgPanel").opacity(0.7) : Color.clear).padding(.vertical, 6))
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityAddTraits(on ? .isSelected : [])
+                }
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 24)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background {
+            // The project's own look when it has one, else a quiet band in the theme.
+            if let own = backdrops.own(scope) {
+                StageBackdropView(variant: own, colors: [], size: .compact)
+                    .allowsHitTesting(false)
+                    .clipped()
+            } else {
+                ZStack {
+                    Color("BgTertiary")
+                    RadialGradient(colors: [Color("FillNeutral"), .clear],
+                                   center: .init(x: 0.62, y: 0.9), startRadius: 4, endRadius: 260)
+                }
+            }
+        }
+        .overlay(alignment: .bottom) { Rectangle().fill(Color("BorderSubtle")).frame(height: 1) }
+    }
+
+    /// Customize appearance · settings · pin · ⋮ (BaseProjectView headerActions).
+    private var actionsRow: some View {
+        HStack(spacing: 2) {
+            Spacer(minLength: 4)
+            if let libraryRow {
+                ProjectIconButton(systemName: libraryRow.isFavorite ? "pin.fill" : "pin",
+                                  label: libraryRow.isFavorite ? "Unpin project" : "Pin project") {
+                    library.toggleFavorite(libraryRow)
+                }
+            }
+            Button { sheet = .customize } label: {
+                Image(systemName: "slider.horizontal.3")
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundColor(Color("TextPrimary"))
+                    .frame(width: 44, height: 44)
+                    .background(Circle().fill(Color("BgPanel")))
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Customize")
+        }
+    }
+
+    private var boardData: ProjectBoardData {
+        let columns: [String: ProjectBoardWork.Column] = ["waiting": .needsYou, "working": .working, "queued": .queued, "idle": .queued, "resolved": .done]
+        var work = chats.map { chat in
+            ProjectBoardWork(id: chat.id, title: chat.name ?? "Chat", column: .working, owner: nil,
+                             at: ProjectBoardData.date(chat.updatedAt), open: { onOpenChat(chat) })
+        }
+        work += serverThreads.filter { !$0.incognito }.map { t in
+            ProjectBoardWork(id: t.id, title: t.title, column: columns[t.group] ?? .queued, owner: nil,
+                             at: ProjectBoardData.date(t.lastActivityAt), open: { navigator.openThread(t) })
+        }
+        let made = files.map { ProjectBoardMade(id: $0.id, name: $0.name, kind: "File", open: nil) }
+        return ProjectBoardData(status: statusRecord, work: work, people: [], made: made)
+    }
+
+    private func select(_ tab: Section) {
+        switch tab {
+        case .overview, .details:
+            section = tab
+        case .delegate:
+            openPane(.delegate)
+        case .board:
+            openPane(.board)
+        }
+    }
+
+    /// The pane works on the coordinator's project, registered on first use.
+    private func openPane(_ kind: ProjectPaneKind) {
+        Task {
+            do {
+                let id = try await ensureCoordinator()
+                navigator.open(.projectPane(ProjectPaneContext(id: id, title: liveProject.title, botIds: []), kind))
+            } catch {
+                actionError = "Couldn't open \(kind.label): \(FriendlyErrorMessage.from(error.localizedDescription))"
+            }
+        }
+    }
+
+    /// The project intro over its threads (BaseProjectView empty header).
+    private var overviewIntro: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Image(systemName: "folder")
+                .font(.system(size: 20))
+                .foregroundColor(Color("TextPrimary"))
+            Text(liveProject.title)
+                .font(.system(size: 26, design: .serif))
+                .foregroundColor(Color("TextPrimary"))
+            if let description = liveProject.description, !description.isEmpty {
+                Text(description)
+                    .font(.system(size: 15))
+                    .foregroundColor(Color("TextSecondary"))
+            }
+            Text("Keep goals, decisions, and updates here with your project coordinator. Open a thread alongside this conversation for a specific task.")
+                .font(.system(size: 15))
+                .foregroundColor(Color("TextSecondary"))
+                .fixedSize(horizontal: false, vertical: true)
+            Button { onNewChat(liveProject) } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "plus").font(.system(size: 13))
+                    Text("Start a thread")
+                }
+                .font(.system(size: 15))
+                .foregroundColor(Color("TextSecondary"))
+                .padding(.leading, 12)
+                .frame(height: 36)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    /// The composer at the bottom: sends to the project's coordinator
+    /// (ProjectCoordinatorWorkspace `sendCoordinator`), with Threads (N) under it.
+    private var composerCard: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            if let composerError {
+                Text(composerError)
+                    .font(.system(size: 12))
+                    .foregroundColor(Theme.statusError)
+                    .padding(.horizontal, 4)
+            }
+            ComposerView(
+                inputText: $draft,
+                attachmentStore: composerAttachments,
+                isStreaming: false,
+                isSendDisabled: isSending,
+                hasActiveSession: false,
+                onSend: { _ in composerAttachments.clear(); sendToCoordinator() },
+                onStop: {},
+                onVoiceMode: toggleDictation,
+                placeholderOverride: "Ask your coordinator a question or start work…",
+                showsAttach: false
+            )
+            HStack {
+                Spacer()
+                Button {
+                    if let coordinatorId {
+                        navigator.open(.projectPane(ProjectPaneContext(id: coordinatorId, title: liveProject.title, botIds: []), .threads))
+                    } else {
+                        section = .overview
+                    }
+                } label: {
+                    Text("Threads (\(chats.count + serverThreads.count))")
+                        .font(.system(size: 13))
+                        .foregroundColor(Color("TextSecondary"))
+                        .frame(minHeight: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.top, 6)
+        .background(Color("BgPrimary"))
+    }
+
+    private func sendToCoordinator() {
+        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, !isSending else { return }
+        isSending = true
+        composerError = nil
+        draft = ""
+        Task {
+            defer { isSending = false }
+            do {
+                let id = try await ensureCoordinator()
+                try await BotModeClient.shared.sendToCoordinator(projectId: id, text: text)
+                section = .overview
+                await refreshCoordinator()
+            } catch {
+                draft = text
+                composerError = "Your coordinator didn't get that. Try sending it again."
+            }
+        }
+    }
+
+    private func ensureCoordinator() async throws -> String {
+        if let coordinatorId { return coordinatorId }
+        let id = try await BotProjectClient.shared.registerWorkspace(
+            key: workspaceKey, nativeId: project.id, mode: "chat",
+            title: liveProject.title, description: liveProject.description,
+            directory: ProjectFolderStore.shared.folder(for: project.id)?.path
+        )
+        coordinatorId = id
+        return id
+    }
+
+    /// The folder reaches the project's worker sessions through the workspace
+    /// settings. Not registered yet: `ensureCoordinator` sends it on first use.
+    private func saveFolder(_ path: String?) {
+        guard coordinatorId != nil else { return }
+        Task {
+            do {
+                try await BotProjectClient.shared.setWorkspaceDirectory(
+                    key: workspaceKey, nativeId: project.id, mode: "chat",
+                    title: liveProject.title, description: liveProject.description, directory: path
+                )
+            } catch {
+                actionError = "Couldn't save the folder: \(FriendlyErrorMessage.from(error.localizedDescription))"
+            }
+        }
+    }
+
+    private func refreshCoordinator() async {
+        guard let coordinatorId else { return }
+        if let loaded = try? await BotProjectClient.shared.messages(projectId: coordinatorId) { messages = loaded }
+        if let loaded = try? await BotModeClient.shared.listProjectThreads(projectId: coordinatorId) { serverThreads = loaded }
+    }
+
+    private func toggleDictation() {
+        if isDictating {
+            dictation.stop()
+            return
+        }
+        var base = draft
+        if !base.isEmpty, !base.hasSuffix(" ") { base += " " }
+        dictationBase = base
+        isDictating = true
+        Task { await dictation.start() }
     }
 
     // MARK: - Sections
-
-    @ViewBuilder
-    private var descriptionSection: some View {
-        if let description = liveProject.description, !description.isEmpty {
-            Text(description)
-                .font(.subheadline)
-                .foregroundColor(Color("TextSecondary"))
-        }
-    }
 
     /// Claude's project page leads with these two affordances.
     private var addButtonsRow: some View {
@@ -336,7 +738,7 @@ struct ProjectDetailView: View {
     private var chatsSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("Chats in this project")
+                Text("Threads (\(chats.count))")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundColor(Color("TextSecondary"))
                 Spacer()
@@ -364,8 +766,8 @@ struct ProjectDetailView: View {
                 FriendlyInlineStateView(
                     style: .empty,
                     icon: "bubble.left",
-                    title: "No chats yet",
-                    message: "Start a conversation to see it here."
+                    title: "No threads yet",
+                    message: "Start one from the composer."
                 )
             } else {
                 VStack(spacing: 8) {
@@ -406,18 +808,6 @@ struct ProjectDetailView: View {
     }
 
     // MARK: - Actions
-
-    private func renameProject() {
-        let title = renameText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !title.isEmpty, title != liveProject.title else { return }
-        Task {
-            do {
-                try await projectStore.renameProject(id: project.id, title: title)
-            } catch {
-                actionError = "Couldn't rename the project: \(error.localizedDescription)"
-            }
-        }
-    }
 
     private func deleteProject() {
         Task {

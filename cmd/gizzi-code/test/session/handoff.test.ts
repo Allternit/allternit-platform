@@ -1,4 +1,7 @@
-import { describe, expect, test } from "bun:test"
+import { describe, expect, spyOn, test } from "bun:test"
+import { Agent } from "../../src/runtime/loop/agent"
+import { LLM } from "../../src/runtime/session/llm"
+import { Provider } from "../../src/runtime/providers/provider"
 import { Instance } from "../../src/runtime/context/project/instance"
 import { Session } from "../../src/runtime/session"
 import { SessionHandoff } from "../../src/runtime/session/handoff"
@@ -102,6 +105,40 @@ describe("session context handoff", () => {
         await Session.remove(a.session.id)
       },
     })
+  })
+
+  // Morning briefing timed out for 30 minutes on three days: the checkpoint call
+  // to the model had no limit, so the hand-off waited on it for hours.
+  test("a checkpoint call that never answers falls back to the last reply", async () => {
+    await using tmp = await tmpdir({ git: true })
+    process.env.GIZZI_HANDOFF_BATON_MS = "50"
+    const agent = spyOn(Agent, "get").mockResolvedValue({ name: "compaction" } as any)
+    const getModel = spyOn(Provider, "getModel").mockResolvedValue({
+      ...model(100_000),
+      api: { id: "m", npm: "@ai-sdk/anthropic" },
+      capabilities: { attachment: false, input: { text: true, image: false, audio: false, video: false, pdf: false } },
+    })
+    const stream = spyOn(LLM, "stream").mockImplementation(() => new Promise(() => {}) as any)
+    try {
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () => {
+          const first = await Session.create({ title: "Morning briefing", surface: "chat" })
+          await userTurn(first.id, "Today's tasks")
+          const started = Date.now()
+          const { session } = await SessionHandoff.run({ sessionID: first.id, reason: "manual" })
+          expect(stream).toHaveBeenCalled()
+          expect(Date.now() - started).toBeLessThan(5_000)
+          expect(session.id).not.toBe(first.id)
+          expect(((await Session.get(first.id)).handoff?.baton as { written?: string } | undefined)?.written).toBe("fallback")
+        },
+      })
+    } finally {
+      delete process.env.GIZZI_HANDOFF_BATON_MS
+      agent.mockRestore()
+      getModel.mockRestore()
+      stream.mockRestore()
+    }
   })
 
   test("threshold, window math and baton parsing", async () => {

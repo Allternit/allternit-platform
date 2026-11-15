@@ -16,15 +16,15 @@ pub const TEST_PREFIX: &str = "alt_test_";
 
 /// Scopes a project key may carry. `compute` is the pre-existing scope; the
 /// rest are the Platform API areas (spec §3).
-pub const PLATFORM_SCOPES: [&str; 12] = [
+pub const PLATFORM_SCOPES: [&str; 14] = [
     "agents", "voice", "messaging", "numbers", "channels", "twin", "webhooks", "usage",
-    "inference", "compute", "computers", "phones",
+    "inference", "compute", "computers", "phones", "mail", "decisions",
 ];
 
 /// Scopes that grant access to a resource area (everything except usage
 /// reporting, model inference and the legacy compute scope).
-pub const RESOURCE_SCOPES: [&str; 9] = [
-    "agents", "voice", "messaging", "numbers", "channels", "twin", "webhooks", "computers", "phones",
+pub const RESOURCE_SCOPES: [&str; 11] = [
+    "agents", "voice", "messaging", "numbers", "channels", "twin", "webhooks", "computers", "phones", "mail", "decisions",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -141,7 +141,7 @@ impl PlatformCaller {
         } else {
             Err(PlatformError::permission(
                 "insufficient_scope",
-                "This API key has no resource scope (agents, voice, messaging, numbers, channels, twin, webhooks, computers or phones).",
+                "This API key has no resource scope (agents, voice, messaging, numbers, channels, twin, webhooks, computers, phones or mail).",
             ))
         }
     }
@@ -175,10 +175,26 @@ impl PlatformCaller {
     }
 
     pub fn rpm_limit(&self) -> u32 {
-        match self.rpm_override {
-            Some(n) if n > 0 => n as u32,
-            _ => self.plan.rpm(),
-        }
+        effective_rpm(self.plan, self.rpm_override).0
+    }
+}
+
+/// Requests per minute a project gets: its override when set (> 0), else the
+/// plan's. The bool is true when the override applies. One rule for the `/v1`
+/// limiter and the console limits view.
+pub(crate) fn effective_rpm(plan: Plan, rpm_override: Option<i32>) -> (u32, bool) {
+    match rpm_override {
+        Some(n) if n > 0 => (n as u32, true),
+        _ => (plan.rpm(), false),
+    }
+}
+
+/// Concurrent calls a project gets: its override when set (> 0), else the
+/// plan's. The bool is true when the override applies.
+pub(crate) fn effective_call_cap(plan: Plan, call_cap_override: Option<i32>) -> (u32, bool) {
+    match call_cap_override {
+        Some(n) if n > 0 => (n as u32, true),
+        _ => (plan.call_cap(), false),
     }
 }
 
@@ -194,11 +210,28 @@ struct CallerRow {
     plan: String,
     rpm_override: Option<i32>,
     call_cap_override: Option<i32>,
+    expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    allowed_cidrs: Option<Vec<String>>,
 }
 
 /// `Bearer alt_live_… | alt_test_…` → caller. Errors are 401
-/// `authentication_error` with a code the developer can act on.
+/// `authentication_error` with a code the developer can act on. No client IP
+/// is known here, so a key with an IP allowlist is refused; request paths use
+/// [`authenticate_from`].
 pub async fn authenticate(db: &PgPool, token: Option<&str>) -> Result<PlatformCaller, PlatformError> {
+    authenticate_from(db, token, None).await
+}
+
+/// [`authenticate`] with the caller's IP (`X-Real-IP` from a loopback proxy
+/// only, see `services::api_keys::client_ip`). A key past `expires_at` is a
+/// 401 `api_key_expired`; while `PLATFORM_KEY_IP_ALLOWLIST=1`, one used from
+/// outside its `allowed_cidrs` or its organization's `ip_allowlist` is a 403
+/// `ip_not_allowed`.
+pub async fn authenticate_from(
+    db: &PgPool,
+    token: Option<&str>,
+    client_ip: Option<std::net::IpAddr>,
+) -> Result<PlatformCaller, PlatformError> {
     let token = token.ok_or_else(|| {
         PlatformError::authentication(
             "missing_api_key",
@@ -212,7 +245,8 @@ pub async fn authenticate(db: &PgPool, token: Option<&str>) -> Result<PlatformCa
     let row = sqlx::query_as::<_, CallerRow>(
         r#"
         SELECT k.id AS key_id, k.project_id, k.account_id, k.scopes,
-               p.owner_user_id, p.org_id, p.env, p.plan, p.rpm_override, p.call_cap_override
+               p.owner_user_id, p.org_id, p.env, p.plan, p.rpm_override, p.call_cap_override,
+               k.expires_at, k.allowed_cidrs
         FROM api_keys k
         JOIN platform_projects p ON p.id = k.project_id
         LEFT JOIN platform_accounts a ON a.id = k.account_id
@@ -235,6 +269,42 @@ pub async fn authenticate(db: &PgPool, token: Option<&str>) -> Result<PlatformCa
             "invalid_api_key",
             "The API key is invalid or has been revoked.",
         ));
+    }
+
+    if let Err(rejection) =
+        crate::services::api_keys::enforce_key_policy(row.expires_at, row.allowed_cidrs.as_deref(), client_ip)
+    {
+        let message = rejection.message();
+        return Err(if rejection.status() == axum::http::StatusCode::FORBIDDEN {
+            PlatformError::permission(rejection.code(), message)
+        } else {
+            PlatformError::authentication(rejection.code(), message)
+        });
+    }
+    // The project's organization may restrict every key to its own IP list
+    // (`platform_org_policies.ip_allowlist`, console Security page). Only
+    // while IP allowlists are switched on; console sessions never come here.
+    if crate::services::api_keys::ip_allowlist_enabled() {
+        if let Some(org_id) = row.org_id.as_deref() {
+            let org_list: Option<Vec<String>> = sqlx::query_scalar::<_, Option<Vec<String>>>(
+                "SELECT ip_allowlist FROM platform_org_policies WHERE org_id = $1",
+            )
+            .bind(org_id)
+            .fetch_optional(db)
+            .await?
+            .flatten();
+            if crate::services::api_keys::check_key_policy(None, org_list.as_deref(), client_ip, chrono::Utc::now())
+                .is_err()
+            {
+                let message = match client_ip {
+                    Some(ip) => format!(
+                        "This project's organization allows API requests only from its listed IP ranges, and {ip} is not one of them. An org admin can change the list on the console Security page."
+                    ),
+                    None => "This project's organization allows API requests only from its listed IP ranges, and the request's address could not be determined.".to_string(),
+                };
+                return Err(PlatformError::permission("ip_not_allowed", message));
+            }
+        }
     }
 
     // Best-effort, throttled to once a minute per key.

@@ -1,0 +1,46 @@
+---
+title: "Choose how agents run"
+description: "Agents need a computer. Link your own, subscribe, or run a hosted computer on credits."
+---
+
+Pick where your agents run. Allternit Cloud models (with credits), your own API keys and plans you already pay for work without a computer. Agents that click apps, drive a browser or run coding tools need one.
+
+A signed-in account with no computer sees this choice the first time it opens an agent. Free accounts do not get a free hosted computer.
+
+## The three options
+
+| Option | Cost | What you get |
+| --- | --- | --- |
+| Use your own computer | Free | Link the Allternit Desktop app on a Mac, Windows or Linux computer you own. Agents run there. See [Link your computer](/guides/link-your-computer). |
+| Subscribe | Plus $20, Max $100 or Ultra $200 a month | A plan with one hosted computer included. See [Computer pricing](/guides/computer-pricing). |
+| Buy credits | A hosted computer billed per minute while it runs, from $0.10 an hour | A hosted computer paid from your credit balance. See [Computer on credits](/guides/credits-computer). |
+
+Current prices are shown in the app. The numbers above are the current prices and can change.
+
+## What works without a computer
+
+**Works on any device**
+
+- Allternit Cloud models, once the account has credits. Free accounts don't include Cloud usage: buy a credit pack ($1 buys $1 of credit) or choose a plan, which adds credits every month. See [Credits and auto top-up](/guides/credits-and-auto-top-up).
+- Any API key you add.
+- Plans you already pay for, where the vendor allows it. Some work now, and more are coming.
+
+**Needs a computer**
+
+- Clicking apps.
+- Driving a browser.
+- Running command-line coding tools.
+- Keeping agents running while your own machine sleeps.
+
+You can get a computer three ways: link your own (free), subscribe to a plan that includes one, or buy credits. Hosted computers run on Allternit servers.
+
+Choose **Set up a computer later** to skip the choice. Everything under "Works on any device" keeps working. A task that needs a computer shows these options again at that moment. You can pick a computer later from the banner, from Settings, or with `gizzi computers link`.
+
+## Where hosted computers run
+
+Hosted computers run on Allternit servers. They sleep when idle.
+
+## Check your status
+
+- Gizzi Code: `gizzi computers status` shows your state and the three options.
+- API: `GET /api/v1/account/compute-status`. See [Account compute status](/api/account-compute-status).

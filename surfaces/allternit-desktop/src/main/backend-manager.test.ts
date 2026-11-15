@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { BackendManager, loadIncusHostEnv } from './backend-manager.js';
+import { BackendManager, loadIncusHostEnv, nodeCandidates, resolveMeetingNode } from './backend-manager.js';
 
 function connectionRefused(): Error {
   const err = new Error('fetch failed');
@@ -176,5 +176,53 @@ describe('loadIncusHostEnv', () => {
     loadIncusHostEnv(env, path.join(os.tmpdir(), 'does-not-exist-incus-host.env'));
 
     expect(env).toEqual({});
+  });
+});
+
+// The Meetings bot prefers a real Node >= 20: rtc-node under Electron logs
+// duplicate ObjC WebRTC classes on macOS (a crash risk).
+describe('resolveMeetingNode', () => {
+  const versions: Record<string, string> = {
+    '/old/node': 'v18.20.0',
+    '/broken/node': 'throw',
+    '/good/node': 'v22.11.0',
+  };
+  const version = (node: string) => {
+    if (versions[node] === 'throw') throw new Error('ENOENT');
+    return versions[node];
+  };
+
+  it('skips old and broken nodes and picks the first Node >= 20', () => {
+    const r = resolveMeetingNode({
+      env: {},
+      candidates: ['/missing/node', '/old/node', '/broken/node', '/good/node'],
+      exists: (f) => f !== '/missing/node',
+      version,
+      execPath: '/App/Electron',
+    });
+    expect(r).toEqual({ node: '/good/node', electron: false });
+  });
+
+  it('falls back to Electron as Node when no usable Node is installed', () => {
+    const r = resolveMeetingNode({ env: {}, candidates: ['/old/node'], exists: () => true, version, execPath: '/App/Electron' });
+    expect(r).toEqual({ node: '/App/Electron', electron: true });
+  });
+
+  it('honours an exported ALLTERNIT_MEETING_NODE', () => {
+    const r = resolveMeetingNode({ env: { ALLTERNIT_MEETING_NODE: '/custom/node' }, candidates: ['/good/node'], exists: () => true, version });
+    expect(r).toEqual({ node: '/custom/node', electron: false });
+  });
+
+  it('lists PATH first, then install dirs, newest nvm version first', () => {
+    const list = nodeCandidates('darwin', { PATH: '/a:/b' }, '/home/u', () => ['v20.1.0', 'v22.3.0', 'v9.0.0']);
+    expect(list.slice(0, 2)).toEqual(['/a/node', '/b/node']);
+    expect(list).toContain('/opt/homebrew/bin/node');
+    const nvm = list.filter((p) => p.includes('.nvm'));
+    expect(nvm).toEqual(['/home/u/.nvm/versions/node/v22.3.0/bin/node', '/home/u/.nvm/versions/node/v20.1.0/bin/node', '/home/u/.nvm/versions/node/v9.0.0/bin/node']);
+  });
+
+  it('finds node.exe in Program Files on Windows', () => {
+    const list = nodeCandidates('win32', { Path: 'C:\\tools', ProgramFiles: 'C:\\Program Files' }, 'C:\\Users\\u', () => []);
+    expect(list).toEqual(['C:\\tools\\node.exe', 'C:\\Program Files\\nodejs\\node.exe']);
   });
 });

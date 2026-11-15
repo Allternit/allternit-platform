@@ -1,4 +1,5 @@
 import { Installation } from "@/shared/installation"
+import { isPersonOnlyProvider, isPersonTurn, PERSON_TURN_HEADER } from "@/runtime/providers/person-plan/rules"
 import * as TurnRouter from "@/runtime/routing/turn-router"
 import { Provider } from "@/runtime/providers/provider"
 import { Log } from "@/shared/util/log"
@@ -140,6 +141,14 @@ export namespace LLM {
       mergeDeep(input.agent.options),
       mergeDeep(variant),
     )
+    // Fast on the OpenAI API: the priority service tier.
+    if (
+      !input.small &&
+      input.model.api.npm === "@ai-sdk/openai" &&
+      (input.user.metadata as { service_tier?: unknown } | undefined)?.service_tier === "priority"
+    ) {
+      options.serviceTier = "priority"
+    }
     if (isCodex) {
       options.instructions = bot ? SystemPrompt.bot(input.mode).join("\n") : SystemPrompt.instructions()
     }
@@ -231,7 +240,9 @@ export namespace LLM {
       typeCap === undefined ? undefined : kernelCap !== undefined ? Math.min(kernelCap, typeCap) : typeCap
 
     // O8: deterministic tool order so the [tools] prefix segment is stable.
-    const tools = PromptSegments.orderTools(await resolveTools(input))
+    // The person's own plans are chat only: no tools reach them (contract §9.3).
+    const personOnly = isPersonOnlyProvider(input.model.providerID)
+    const tools = personOnly ? {} : PromptSegments.orderTools(await resolveTools(input))
 
     // LiteLLM and some Anthropic proxies require the tools parameter to be present
     // when message history contains tool calls, even if no tools are being used.
@@ -383,6 +394,14 @@ export namespace LLM {
         // Subagents are off for this agent (permission task: deny): CLI brains
         // then get no subagents of their own either (loaders/subprocess.ts).
         ...(tools.task ? {} : { "x-gizzi-subagents-off": "1" }),
+        // The picker's thinking level: CLI brains pass it as their own flag
+        // (claude --effort, codex turn effort); API models get it as options above.
+        ...(!input.small && input.user.variant ? { "x-gizzi-effort": input.user.variant } : {}),
+        // Fast: the account's priority tier (allternit-api sets it only for
+        // models that offer one). CLI brains pass it on (codex turn serviceTier).
+        ...(!input.small && (input.user.metadata as { service_tier?: unknown } | undefined)?.service_tier === "priority"
+          ? { "x-gizzi-service-tier": "priority" }
+          : {}),
         // Subscription Fabric: this send's human action (D16), minted by the
         // chat bridge, and the request id that keys the task's idempotency.
         ...(Provider.isFabricModel(input.model)
@@ -392,6 +411,11 @@ export namespace LLM {
                 ? { "x-allternit-human-action": (input.user.metadata?.subscription as any).action_id }
                 : {}),
             }
+          : {}),
+        // A plan answers only the person's own composer send: the chat bridge
+        // marks that user message `metadata.turn: "person"` (person-plan/rules.ts).
+        ...(personOnly && !input.small && (input.callType ?? "answer") === "answer" && isPersonTurn(input.user.metadata as Record<string, unknown> | undefined)
+          ? { [PERSON_TURN_HEADER]: "person" }
           : {}),
         ...(input.model.providerID.startsWith("gizzi")
           ? {

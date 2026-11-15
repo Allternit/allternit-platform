@@ -107,3 +107,18 @@ No public SSH exposure: the runner only reaches mail over the tailnet.
 
 After that, merging to `main` deploys itself. Watch runs with
 `gh run list --workflow=deploy-cloud-api-contabo.yml`.
+
+
+## Manual deploy source sync (2026-11-05)
+
+Use `CLOUD_API_DEPLOY_SERVER=vps-root scripts/deploy-cloud-api.sh --dry-run`
+for the SSH-key route when Tailscale SSH check mode is unavailable. Remove
+`--dry-run` only for an authorized deployment. Heavy release builds go through
+`scripts/build-queue run cargo-release -- <command>`.
+
+The helper syncs the Cloud crate manifest and lockfile as well as its source,
+tests and SQL files. It also copies the shared `allternit-api` source imports
+(`answer_contract.rs`, `net_client.rs`, `office_session_guard.rs`, `email_otp.rs`).
+An older server-side source copy without these files cannot compile current
+Cloud code. Its test pipeline uses `pipefail`, so a failed test stops the deploy.
+SQL files are only copied; apply new migrations separately before deployment.

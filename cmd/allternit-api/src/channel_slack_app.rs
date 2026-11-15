@@ -475,7 +475,7 @@ async fn slack_connect_h(
     };
     // Ask the cloud which teams this user installed the shared app on (the
     // browser OAuth landed there; per-team tokens never reach a runtime).
-    let mut req = reqwest::Client::new()
+    let mut req = crate::net_client::client()
         .get(format!("{}/api/v1/channels/slack/installs", base.trim_end_matches('/')))
         .timeout(std::time::Duration::from_secs(10));
     if let Some(auth) = headers.get("authorization").and_then(|v| v.to_str().ok()) {
@@ -516,7 +516,7 @@ async fn slack_connect_h(
         let base = base.clone();
         let team_id2 = team_id.clone();
         tokio::spawn(async move {
-            let _ = reqwest::Client::new()
+            let _ = crate::net_client::client()
                 .post(format!("{}/api/v1/channels/slack/installs/{}/claim", base.trim_end_matches('/'), team_id2))
                 .header("authorization", auth)
                 .json(&json!({ "runtimeId": runtime_id }))

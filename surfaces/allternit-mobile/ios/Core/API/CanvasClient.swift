@@ -56,18 +56,12 @@ struct CanvasRecord: Decodable, Sendable {
     }
 }
 
-/// Canvas CRUD over the routes in canvas_routes.rs — the backend's only
-/// persistent artifact store (`GET /v1/artifacts/:id` is a 404 stub). The
-/// web writes one canvas per artifact; this client mirrors that contract so
-/// artifacts round-trip between surfaces.
+/// Canvas CRUD over the routes in canvas_routes.rs (Canvas Protocol specs).
+/// Artifacts no longer round-trip through canvases: the library is Artifacts
+/// v2 (`ArtifactsV2Client`, `/api/v2/artifacts`).
 struct CanvasClient: Sendable {
     private struct ListResponse: Decodable {
         let canvases: [CanvasRecord]
-    }
-
-    private struct WritePayload: Encodable {
-        let title: String
-        let components: [CanvasComponent]
     }
 
     /// Payload that includes a Canvas Protocol spec in `metadata`.
@@ -108,26 +102,6 @@ struct CanvasClient: Sendable {
         return envelope.canvases
     }
 
-    /// POST /api/v1/agent-sessions/:id/canvases — one canvas per artifact,
-    /// matching the web's create shape. Returns the created row's id.
-    func createArtifactCanvas(sessionId: String, artifact: ArtifactRecord) async throws -> String {
-        let escaped = sessionId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? sessionId
-        let created: CreateResponse = try await client.post(
-            path: "agent-sessions/\(escaped)/canvases",
-            body: WritePayload(title: artifact.title, components: [Self.component(for: artifact)])
-        )
-        return created.id
-    }
-
-    /// PATCH /api/v1/canvases/:id — refreshed content for a re-seen artifact.
-    func updateArtifactCanvas(canvasId: String, artifact: ArtifactRecord) async throws {
-        let escaped = canvasId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? canvasId
-        try await client.patch(
-            path: "canvases/\(escaped)",
-            body: WritePayload(title: artifact.title, components: [Self.component(for: artifact)])
-        )
-    }
-
     // MARK: - Canvas Protocol (item #56)
 
     /// POST /api/v1/agent-sessions/:id/canvases — create a canvas carrying a
@@ -160,16 +134,5 @@ struct CanvasClient: Sendable {
     func getCanvas(canvasId: String) async throws -> CanvasRecord {
         let escaped = canvasId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? canvasId
         return try await client.get(path: "canvases/\(escaped)")
-    }
-
-    private static func component(for artifact: ArtifactRecord) -> CanvasComponent {
-        CanvasComponent(
-            type: "artifact",
-            artifactId: artifact.artifactId ?? artifact.id,
-            kind: artifact.artifactType ?? artifact.fileType,
-            title: artifact.title,
-            content: artifact.inlinePreview,
-            url: artifact.url
-        )
     }
 }

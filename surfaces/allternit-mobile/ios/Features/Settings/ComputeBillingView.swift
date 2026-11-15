@@ -1,179 +1,157 @@
 import SwiftUI
 
-/// Settings > Plans & Compute / Compute Billing parity.
+/// Settings → Billing (and Usage): plan, usage bars and credits from the real
+/// routes (`/api/v1/me/usage`, `/api/v1/hosted-runtimes/entitlement`,
+/// `/api/v1/billing/credits`, `/api/v1/billing/subscription`).
 ///
-/// Displays the current plan, plan usage, credits, and upgrade/buy-credits
-/// actions (placeholders until the real purchase flow is wired).
+/// Purchases happen on the web. The "Choose a plan" / "Buy credits" links show on
+/// the US App Store storefront only (StorefrontGate); elsewhere the page
+/// shows plan status with no link and no price.
 struct ComputeBillingView: View {
     @ObservedObject private var usageStore = UsageStore.shared
-    @State private var safariURL: IdentifiableURL? = nil
+    @ObservedObject private var plan = AccountPlanStore.shared
+    @ObservedObject private var storefront = StorefrontGate.shared
+    var title: String = "Billing"
+    @State private var plans: [CatalogPlan] = []
+
+    /// `GET /api/v1/billing/plans` (Plus, Max, Ultra; Max keeps id `super`).
+    struct CatalogPlan: Decodable, Identifiable {
+        let id: String
+        let label: String
+        let priceUsd: Double
+        let monthlyCreditsUsd: Double
+        let rolloverCapUsd: Double
+        enum CodingKeys: String, CodingKey {
+            case id, label
+            case priceUsd = "price_usd"
+            case monthlyCreditsUsd = "monthly_credits_usd"
+            case rolloverCapUsd = "rollover_cap_usd"
+        }
+    }
+    private struct PlansWire: Decodable { let plans: [CatalogPlan] }
+
+    private var memberName: String {
+        let first = AuthManager.shared.currentSession?.user?.firstName?.trimmingCharacters(in: .whitespaces) ?? ""
+        return first.isEmpty ? "Member" : first
+    }
 
     var body: some View {
         List {
-            planSection
-            usageSection
-            creditsSection
-            actionsSection
+            if title != "Usage" {
+                Section {
+                    MemberCardView(
+                        planId: plan.subscription?.planId ?? "free",
+                        member: memberName,
+                        renewsAt: plan.subscription?.isPaid == true ? plan.subscription?.renewsAt : nil,
+                        status: plan.subscription?.status,
+                        width: 320
+                    )
+                    .frame(maxWidth: .infinity)
+                    .listRowBackground(Color.clear)
+                    .listRowInsets(EdgeInsets(top: 8, leading: 0, bottom: 8, trailing: 0))
+                }
+            }
+            Section {
+                HStack {
+                    Text("Current plan")
+                        .font(.subheadline)
+                        .foregroundColor(Color("TextPrimary"))
+                    Spacer()
+                    if plan.isLoading && plan.planName == nil {
+                        ProgressView()
+                    } else {
+                        Text(plan.planName ?? usageStore.planLabel ?? "Free")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(Color("TextSecondary"))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 4)
+                            .background(Color("BgSecondary"))
+                            .clipShape(Capsule())
+                    }
+                }
+                if let status = plan.subscription?.status, plan.subscription?.isPaid == true, status != "active" {
+                    Text(Self.statusCopy(status))
+                        .font(.caption)
+                        .foregroundColor(status == "trialing" ? Color("TextSecondary") : Theme.statusWarning)
+                }
+            } header: {
+                Text("Plan")
+            }
+
+            if title == "Usage" {
+                Section {
+                    AccountUsageCardsView()
+                        .listRowBackground(Color.clear)
+                        .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
+                } header: {
+                    Text("Accounts")
+                } footer: {
+                    Text("Heads-up at 80% · tasks wrap up at 95%")
+                }
+            }
+
+            Section {
+                PlanUsageRows()
+            } header: {
+                Text("Usage")
+            }
+
+            // Plan tickets link out to checkout on the web (US storefront only).
+            if storefront.allowsPurchaseLinks && title != "Usage" && !plans.isEmpty {
+                Section {
+                    ForEach(plans) { p in
+                        let current = plan.subscription?.planId == p.id
+                        PlanTicketView(
+                            planId: p.id,
+                            label: p.label,
+                            price: String(format: "$%.0f", p.priceUsd),
+                            lines: [
+                                String(format: "$%.0f in Allternit Cloud credits each month", p.monthlyCreditsUsd),
+                                String(format: "Unused credits roll over, up to $%.0f", p.rolloverCapUsd),
+                            ],
+                            current: current,
+                            actionTitle: plan.subscription?.isPaid == true ? "Switch on the web" : "Choose",
+                            action: { UIApplication.shared.open(plan.upgradeURL) }
+                        )
+                        .listRowBackground(Color.clear)
+                        .listRowInsets(EdgeInsets(top: 5, leading: 0, bottom: 5, trailing: 0))
+                    }
+                } header: {
+                    Text(plan.subscription?.isPaid == true ? "Change plan" : "Choose a plan")
+                }
+            }
+
+            if storefront.allowsPurchaseLinks && title != "Usage" {
+                Section {
+                    PayLinkRows()
+                } footer: {
+                    Text("Opens allternit.com in your browser.")
+                }
+            }
         }
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
         .background(Color("BgPrimary"))
-        .navigationTitle("Plans & Compute")
+        .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
-        .sheet(item: $safariURL) { item in
-            SafariView(url: item.url)
-        }
         .task {
+            if let wire: PlansWire = try? await APIClient.shared.get(path: "billing/plans") { plans = wire.plans }
             UsageStore.shared.fetchUsageIfNeeded(force: true)
+            AccountPlanStore.shared.load(force: true)
+            StorefrontGate.shared.refresh()
         }
         .refreshable {
             UsageStore.shared.fetchUsageIfNeeded(force: true)
+            AccountPlanStore.shared.load(force: true)
         }
     }
 
-    // MARK: - Plan
-
-    private var planSection: some View {
-        Section {
-            HStack {
-                Text("Current plan")
-                    .font(.subheadline)
-                Spacer()
-                Text(usageStore.snapshot?.plan ?? usageStore.planLabel ?? "Free")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(Color("TextSecondary"))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 4)
-                    .background(Color("BgSecondary"))
-                    .clipShape(Capsule())
-            }
-        } header: {
-            Text("Plan")
-        }
-    }
-
-    // MARK: - Usage
-
-    @ViewBuilder
-    private var usageSection: some View {
-        Section {
-            if usageStore.isLoading {
-                ProgressView()
-                    .frame(maxWidth: .infinity, alignment: .center)
-            } else if let snapshot = usageStore.snapshot, usageStore.percentUsed != nil {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        Text(usageStore.periodLabel)
-                            .font(.subheadline)
-                        Spacer()
-                        if let percentText = usageStore.percentText {
-                            Text("\(percentText) used")
-                                .font(.caption)
-                                .foregroundColor(Color("TextSecondary"))
-                        }
-                    }
-
-                    let percent = (usageStore.percentUsed ?? 0) / 100
-                    ProgressView(value: min(max(percent, 0), 1))
-                        .tint(percent >= 1
-                              ? Theme.statusError
-                              : (percent >= 0.8 ? Theme.statusWarning : Color("AccentPrimary")))
-
-                    if let resetsLabel = usageStore.resetsLabel {
-                        Text("Resets \(resetsLabel)")
-                            .font(.caption)
-                            .foregroundColor(Color("TextSecondary"))
-                    }
-                }
-                .padding(.vertical, 4)
-            } else if case .unavailable(let message) = usageStore.availability {
-                FriendlyInlineStateView(
-                    style: .empty,
-                    icon: "gauge.with.dots.needle.67percent",
-                    title: "Usage unavailable",
-                    message: message
-                )
-            } else {
-                FriendlyInlineStateView(
-                    style: .empty,
-                    icon: "gauge.with.dots.needle.67percent",
-                    title: "Usage metering unavailable",
-                    message: "Usage metering isn't available on this backend."
-                )
-            }
-        } header: {
-            Text("Usage")
-        }
-    }
-
-    // MARK: - Credits
-
-    @ViewBuilder
-    private var creditsSection: some View {
-        Section {
-            if let credits = usageStore.snapshot?.credits {
-                HStack {
-                    Text("Credits")
-                        .font(.subheadline)
-                    Spacer()
-                    Text(String(format: "%g", credits))
-                        .font(.subheadline)
-                        .foregroundColor(Color("TextSecondary"))
-                }
-            } else {
-                FriendlyInlineStateView(
-                    style: .empty,
-                    icon: "creditcard",
-                    title: "No credits balance",
-                    message: "No credits balance returned by this backend."
-                )
-            }
-        } header: {
-            Text("Credits")
-        }
-    }
-
-    // MARK: - Actions
-
-    private var actionsSection: some View {
-        Section {
-            Button(action: {
-                safariURL = IdentifiableURL(url: URL(string: "https://allternit.com/upgrade")!)
-            }) {
-                HStack {
-                    Text("Upgrade plan")
-                        .font(.subheadline)
-                        .foregroundColor(Color("TextPrimary"))
-                    Spacer()
-                    Image(systemName: "arrow.up.right.square")
-                        .font(.caption)
-                        .foregroundColor(Color("TextSecondary"))
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-
-            Button(action: {
-                safariURL = IdentifiableURL(url: URL(string: "https://allternit.com/credits")!)
-            }) {
-                HStack {
-                    Text("Buy credits")
-                        .font(.subheadline)
-                        .foregroundColor(Color("TextPrimary"))
-                    Spacer()
-                    Image(systemName: "creditcard")
-                        .font(.caption)
-                        .foregroundColor(Color("TextSecondary"))
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-        } header: {
-            Text("Actions")
-        } footer: {
-            Text("Billing is handled on allternit.com for now. In-app purchases will be available in a future update.")
-                .font(.caption)
-                .foregroundColor(Color("TextSecondary"))
+    private static func statusCopy(_ status: String) -> String {
+        switch status {
+        case "trialing": return "Free trial"
+        case "past_due": return "Payment past due."
+        case "unpaid": return "Payment failed. Your plan is paused."
+        default: return status.capitalized
         }
     }
 }

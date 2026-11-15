@@ -1,6 +1,6 @@
 # Allternit Phone Link for Android
 
-`com.allternit.phonelink` lets Allternit bots use the AI apps (ChatGPT, Claude, Gemini, Grok, Telegram and others) that are already signed in on the user's own Android phone. It is the `android-app` route in `SPEC-signed-in-apps-routing-2026-10-16.md`.
+Allternit Phone Link (app ID `com.allternit.app` since 0.4.0, `com.allternit.phonelink` before) lets Allternit bots use the AI apps (ChatGPT, Claude, Gemini, Grok, Telegram and others) that are already signed in on the user's own Android phone. It is the `android-app` route in `SPEC-signed-in-apps-routing-2026-10-16.md`.
 
 The phone runs a small HTTP server on port 8200. It speaks the iCTRL protocol (protocol_version 1), the same one as the iPhone runner, so Allternit Desktop's `ictrl-client.ts` and iCTRL's `ictrl_rpc.py` work against it unchanged. An AccessibilityService reads the screen and taps and types. Setup is done once over the USB cable. After that the phone needs no Developer options, and it keeps working after restarts.
 
@@ -24,6 +24,8 @@ app/src/main/java/com/allternit/phonelink/
     MeshMessages.kt             string codec for the main↔mesh-process payloads (pure JVM)
     EncryptedFileSessionStore.kt sessions sealed with a BlobSealer
     Schema.kt                   GET /schema and GET /skill
+    PetNotice.kt                pet offers: contract matcher, block list, cooldown and mute (pure JVM)
+    PetOfferContract.gen.kt     generated from contracts/pet-offers (never edit by hand)
   PhoneLinkAccessibilityService.kt  DeviceOps on the real device (gestures, tree, screenshot)
   PhoneLinkService.kt           foreground service + "Allternit can use your phone's apps · Stop"
   ServerController.kt           process-wide owner of the server
@@ -31,9 +33,10 @@ app/src/main/java/com/allternit/phonelink/
   MeshService.kt                runs the gomobile node in the private :mesh process
   Receivers.kt                  BootReceiver, ProvisionReceiver (DUMP-protected), StopReceiver
   PairingNotifier.kt            Allow/Deny notification (60 s), PairingActionReceiver
+  PetOfferReceiver.kt           Mute action of the "Error help" notification (not exported)
   KeystoreSealer.kt             Android Keystore AES-256-GCM
   GomobileMeshNode.kt           MeshNodeApi backed by the gomobile tsnet AAR
-  MainActivity.kt               status screen (sessions, Stop/Start, Revoke) + TWA design note
+  MainActivity.kt               status screen (sessions, Stop/Start, Revoke); the launcher is the TWA
 scripts/provision.sh            the adb setup sequence below
 scripts/conformance.sh          live run of ictrl_rpc.py against a phone
 ```
@@ -56,13 +59,15 @@ Then:
 cd surfaces/allternit-mobile/android
 export JAVA_HOME=/path/to/jdk-17
 export ANDROID_HOME=$HOME/Library/Android/sdk     # or write sdk.dir in local.properties
-./gradlew :app:testDebugUnitTest :app:assembleDebug
-# APK: app/build/outputs/apk/debug/app-debug.apk
+./gradlew :app:testPhonelinkDebugUnitTest :app:assemblePhonelinkDebug
+# APK: app/build/outputs/apk/phonelink/debug/app-phonelink-debug.apk
+# Google Play bundle (no Phone Link): ./gradlew :app:bundlePlayRelease
+# -> app/build/outputs/bundle/playRelease/app-play-release.aab
 ```
 
 Toolchain: AGP 8.7.3, Kotlin 2.0.21, Gradle 8.10.2, minSdk 26, target/compileSdk 35.
 
-The app has no runtime dependencies beyond the Kotlin stdlib and the mesh AAR (tsnet/userspace WireGuard, built in-tree). Tests use JUnit 4.13.2 (EPL-1.0, test only) and `org.json:json:20240303` (public domain, test only, because android.jar ships only stubs of org.json). Everything else is in-tree. NanoHTTPD was not needed, and the X25519 code is written from RFC 7748 rather than vendored.
+The app has no runtime dependencies beyond the Kotlin stdlib, the mesh AAR and `androidbrowserhelper` (the TWA launcher, Apache-2.0) (tsnet/userspace WireGuard, built in-tree). Tests use JUnit 4.13.2 (EPL-1.0, test only) and `org.json:json:20240303` (public domain, test only, because android.jar ships only stubs of org.json). Everything else is in-tree. NanoHTTPD was not needed, and the X25519 code is written from RFC 7748 rather than vendored.
 
 **APK size.** The universal debug APK is ~91 MB with the mesh included; `libgojni.so` (the Go runtime + tsnet) is 94 MB uncompressed across the four ABIs (23.5 MB arm64). A single-ABI release build pays roughly one ABI's worth (~20 MB compressed). `stripDebugDebugSymbols` cannot strip gomobile's `libgojni.so`.
 
@@ -84,22 +89,23 @@ The unit tests cover:
 Allternit Desktop runs the steps below over adb. `scripts/provision.sh` does the same thing. USB debugging has to be on for this one session, and it can be switched off afterwards.
 
 ```sh
-PKG=com.allternit.phonelink
+PKG=com.allternit.app
+CLS=com.allternit.phonelink   # the classes keep the old Kotlin package
 # 1. install (adb install => PACKAGE_SOURCE_UNSPECIFIED: not a "restricted settings" app)
-adb install -r -g app-debug.apk
+adb install -r -g app-phonelink-debug.apk
 # 2. only needed if the APK was ever opened from a file manager/browser (see below); harmless otherwise
 adb shell appops set $PKG ACCESS_RESTRICTED_SETTINGS allow
 # 3. enable the accessibility service (append to any already enabled, colon-separated)
-adb shell settings put secure enabled_accessibility_services $PKG/.PhoneLinkAccessibilityService
+adb shell settings put secure enabled_accessibility_services $PKG/$CLS.PhoneLinkAccessibilityService
 adb shell settings put secure accessibility_enabled 1
 # 4. Doze/app-standby exemption so the server answers while the phone idles
 adb shell cmd deviceidle whitelist +$PKG
 # 5. notifications (Android 13+ runtime permission)
 adb shell pm grant $PKG android.permission.POST_NOTIFICATIONS
 # 6. start the foreground service
-adb shell am start-foreground-service -n $PKG/.PhoneLinkService
+adb shell am start-foreground-service -n $PKG/$CLS.PhoneLinkService
 # 7. provision: arm ONE auto-approved pairing (loopback only, 10 min), LAN on, name
-adb shell am broadcast -a com.allternit.phonelink.PROVISION -n $PKG/.ProvisionReceiver \
+adb shell am broadcast -a com.allternit.phonelink.PROVISION -n $PKG/$CLS.ProvisionReceiver \
     --ez arm_pairing true --ez allow_remote_access true --es device_name "'Joe moto'" --ei listen_port 8200
 #    -> "Broadcast completed: result=-1, data="provisioned device_id=… remote=true port=8200 armed=true""
 # 8. reach the phone's server from the computer and pair through the forward
@@ -108,14 +114,14 @@ python3 ictrl_rpc.py --host 127.0.0.1:52100 pair --name "$(hostname)"   # or Des
 # 9. from now on use the phone's Wi-Fi address with the same key: <phone-ip>:8200
 ```
 
-You can check the result with `adb shell dumpsys accessibility | grep -A3 "Bound services"`. It should list `com.allternit.phonelink/.PhoneLinkAccessibilityService`.
+You can check the result with `adb shell dumpsys accessibility | grep -A3 "Bound services"`. It should list `com.allternit.app/com.allternit.phonelink.PhoneLinkAccessibilityService`.
 
 ## Away from home: the mesh
 
 On the same Wi-Fi the phone is reachable at its LAN address. Away from that Wi-Fi, the phone can instead join the customer's private Allternit mesh (a Headscale tailnet): provisioning passes two optional extras, and the app embeds a userspace WireGuard node (`tsnet` via gomobile — no OS VPN slot, so it cannot collide with an always-on VPN) that serves the same iCTRL server on the tailnet at `<meshIP>:8200`.
 
 ```sh
-adb shell am broadcast -a com.allternit.phonelink.PROVISION -n $PKG/.ProvisionReceiver \
+adb shell am broadcast -a com.allternit.phonelink.PROVISION -n $PKG/$CLS.ProvisionReceiver \
     --ez arm_pairing true --ez allow_remote_access true \
     --es mesh_control_url "'https://mail.news.allternit.com:8444'" \
     --es mesh_auth_key "'<preauth-key from Desktop>'"
@@ -216,14 +222,32 @@ What had to adapt:
 - Some OEMs (Samsung, Xiaomi) add their own background killers on top of Doze. The `deviceidle` exemption covers stock Android and Motorola. Others may need their battery setting changed by hand.
 - QUICKBOOT_POWERON isn't a protected broadcast, so any app can send it. The worst it does is start the server on a phone that is already provisioned.
 
-## Later: Trusted Web Activity (not built)
+## Build flavors (0.5.2+)
 
-The plan is to wrap m.allternit.com as a TWA in this same app, so one install gives the Allternit phone UI plus Phone Link. This needs three things:
-- `https://m.allternit.com/.well-known/assetlinks.json` with `com.allternit.phonelink` and the release signing certificate's SHA-256;
-- an `asset_statements` resource;
-- `androidx.browser` with a LauncherActivity as the launcher, with this status screen moved behind a "Phone Link" entry.
+- `phonelink` (the default) is the sideloaded APK Allternit Desktop installs. It is `src/main` plus `src/phonelink`: all Phone Link code, `Mesh.aar`, the accessibility service, services, receivers, permissions and the **Phone Link** shortcut. Tests live in `src/testPhonelink`.
+- `play` is the Google Play bundle. It is `src/main` only: the Trusted Web Activity, with just the `INTERNET` permission. Nothing from Phone Link is packaged.
+- The module namespace is `com.allternit.app`, so the generated `R` class carries no Phone Link name. Phone Link classes keep the `com.allternit.phonelink` package, and `src/phonelink/AndroidManifest.xml` names them in full.
 
-It waits on the release signing key and the assetlinks deploy. The design note is in `MainActivity.kt`.
+## The Allternit app (Trusted Web Activity, 0.5.0+)
+
+The launcher icon, labelled **Allternit**, opens m.allternit.com full-screen as a Trusted Web Activity. One install gives the Allternit phone UI and Phone Link.
+- The launcher is `com.google.androidbrowserhelper.trusted.LauncherActivity`, from `androidbrowserhelper` 2.5.0 (Apache-2.0). The play flavor uses the subclass `com.allternit.app.ReviewLauncherActivity` (see the rating prompt section below). Without a TWA-capable browser it opens a Custom Tab, which shows the URL bar.
+- `https://m.allternit.com/.well-known/assetlinks.json` (allternit-ai `public/.well-known/`) names `com.allternit.app`, the release cert `3F:8A:39:51:…:E0:67`, and the Google Play app-signing cert `8D:4C:4F:BE:…:F9:4B`. The app's `asset_statements` string points back at the site. The VIEW filter for `https://m.allternit.com` has `autoVerify`, so links to the site open in the app.
+- This status screen (`MainActivity`) is no longer a launcher entry. It opens from the Phone Link notification and from the icon's long-press **Phone Link** shortcut (`res/xml/shortcuts.xml`).
+- Only the release key and the Play app-signing key pass the asset-links check. A debug-signed build shows the URL bar.
+
+## Rating prompt (play flavor only)
+
+When the app opens, the launcher may show Google Play's in-app review card before the app opens. Rules:
+
+- At least 5 launches and at least 3 days since the first launch.
+- Not within 120 days of the last ask.
+- The app always opens afterwards, with a 3-second timeout on the review flow.
+- Play shows the card only for apps installed from Play.
+
+Code: `app/src/play/java/com/allternit/app/ReviewLauncherActivity.kt` and `ReviewPolicy.kt`. The play flavor makes it the launcher through the manifest placeholder `launcherActivity`; the `phonelink` build keeps `LauncherActivity` and has no prompt. Counters are in `SharedPreferences` on the device; nothing is sent to Allternit.
+
+To reset while testing, clear the app's data (`adb shell pm clear com.allternit.app`).
 
 ## Live conformance
 

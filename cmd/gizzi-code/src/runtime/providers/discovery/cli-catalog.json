@@ -1,6 +1,6 @@
 {
-  "version": 1,
-  "_doc": "The one list of coding CLIs Allternit supports. Read by gizzi (src/runtime/providers/discovery/subprocess.ts — its subprocess brains) and embedded by allternit-api (src/cli_catalog.rs — CLI provider rows, sign-in, GET /api/v1/cli-tools/catalog). adapter: builtin = a protocol adapter in local-cli-driver.ts CLI_ADAPTERS; text = one-shot argv from headless.args ({prompt} is exactly one argv element, never a shell string; {model} from headless.modelArgs); unsupported = listed, not runnable as a brain yet. install.harness = the Factory installs it (pin + licence in factory/pane/src/ao/harness/harness.json); otherwise method npm|uv|brew|script with the pin verified against the registry on the date in _verified. Logos are paths in the web app's public dir.",
+  "version": 2,
+  "_doc": "The one list of coding CLIs Allternit supports. Read by gizzi (src/runtime/providers/discovery/subprocess.ts — its subprocess brains) and embedded by allternit-api (src/cli_catalog.rs — CLI provider rows, sign-in, GET /api/v1/cli-tools/catalog). adapter: builtin = a protocol adapter in local-cli-driver.ts CLI_ADAPTERS; text = one-shot argv from headless.args ({prompt} is exactly one argv element, never a shell string; {model} from headless.modelArgs); unsupported = listed, not runnable as a brain yet. install.harness = the Factory installs it (pin + licence in factory/pane/src/ao/harness/harness.json); otherwise method npm|uv|brew|script with the pin verified against the registry on the date in _verified. Logos are paths in the web app's public dir. Version 2 adds model order and defaults as data: the order of a tool's models[] is the vendor's order (best/newest first) and is meaningful; a model with default: true is the tool's default model (at most one per tool; a tool whose only model is the placeholder \"default\" needs none, otherwise the first model is the default); defaultRank (lower = preferred) ranks the tools that may be picked automatically as the default CLI brain, mirroring Desktop's CLI_DEFAULT_ORDER (allternit-ai src/lib/default-brain.ts) - a tool without it is never an automatic default; liveModels {args, parser: codex-json|tsv|grok|ollama} is the command that prints the CLI's own model list, and models[] is the fallback when it fails; retired maps an old model id to its current id so saved choices keep working.",
   "_verified": "2026-10-19 (npm registry, PyPI, formulae.brew.sh, vendor CLI docs)",
   "tools": [
     {
@@ -22,18 +22,37 @@
       },
       "models": [
         {
-          "id": "claude-sonnet-5",
-          "name": "Claude Sonnet 5",
+          "id": "claude-fable-5-2",
+          "name": "Claude Fable 5.2",
           "context": 200000,
           "output": 64000
         },
         {
-          "id": "claude-opus-5",
-          "name": "Claude Opus 5",
+          "id": "claude-opus-5-5",
+          "name": "Claude Opus 5.5",
           "context": 200000,
-          "output": 32000
+          "output": 64000
+        },
+        {
+          "id": "claude-sonnet-5-5",
+          "name": "Claude Sonnet 5.5",
+          "context": 200000,
+          "output": 64000,
+          "default": true
+        },
+        {
+          "id": "claude-haiku-5-5",
+          "name": "Claude Haiku 5.5",
+          "context": 200000,
+          "output": 64000
         }
       ],
+      "defaultRank": 1,
+      "retired": {
+        "claude-fable-5-1": "claude-fable-5-2",
+        "claude-opus-5": "claude-opus-5-5",
+        "claude-sonnet-5": "claude-sonnet-5-5"
+      },
       "accountHomeEnv": "CLAUDE_CONFIG_DIR",
       "signIn": "subscription",
       "login": [
@@ -70,8 +89,33 @@
       },
       "models": [
         {
+          "id": "gpt-6.1-sol",
+          "name": "GPT-6.1 Sol",
+          "context": 500000,
+          "output": 32768,
+          "default": true
+        },
+        {
           "id": "gpt-6-astra",
-          "name": "GPT-6-Astra",
+          "name": "GPT-6 Astra",
+          "context": 272000,
+          "output": 32768
+        },
+        {
+          "id": "gpt-6.1-terra",
+          "name": "GPT-6.1 Terra",
+          "context": 500000,
+          "output": 32768
+        },
+        {
+          "id": "gpt-6-sol",
+          "name": "GPT-6 Sol",
+          "context": 272000,
+          "output": 32768
+        },
+        {
+          "id": "gpt-6-luna",
+          "name": "GPT-6 Luna",
           "context": 272000,
           "output": 32768
         },
@@ -94,11 +138,24 @@
           "output": 32768
         }
       ],
+      "defaultRank": 2,
+      "liveModels": {
+        "args": [
+          "debug",
+          "models"
+        ],
+        "parser": "codex-json"
+      },
       "accountHomeEnv": "CODEX_HOME",
       "signIn": "subscription",
       "login": [
         "login"
       ],
+      "loginRemote": [
+        "login",
+        "--device-auth"
+      ],
+      "loginRemoteHint": "If OpenAI rejects the code, turn on \"device code authorization for Codex\" in ChatGPT Settings → Security, then try again.",
       "signInPage": "https://chatgpt.com/",
       "install": {
         "harness": "codex"
@@ -129,23 +186,23 @@
       },
       "models": [
         {
+          "id": "qwen-max",
+          "name": "Qwen Max",
+          "context": 131072,
+          "output": 8192,
+          "default": true
+        },
+        {
           "id": "qwen-plus",
           "name": "Qwen Plus",
           "context": 131072,
           "output": 8192
-        },
-        {
-          "id": "qwen-max",
-          "name": "Qwen Max",
-          "context": 131072,
-          "output": 8192
         }
       ],
+      "defaultRank": 4,
       "signIn": "subscription",
-      "login": [
-        "auth"
-      ],
-      "signInPage": "https://qwen.ai/",
+      "login": [],
+      "signInPage": "https://qwenlm.github.io/qwen-code-docs/en/users/configuration/auth/",
       "install": {
         "harness": "qwen"
       },
@@ -175,18 +232,23 @@
       },
       "models": [
         {
+          "id": "kimi-for-coding",
+          "name": "Kimi K2.7 Code",
+          "context": 262144,
+          "output": 16384,
+          "default": true
+        },
+        {
           "id": "kimi-k3",
           "name": "Kimi K3",
           "context": 262144,
           "output": 16384
-        },
-        {
-          "id": "kimi-k2.7-code",
-          "name": "Kimi K2.7 Code",
-          "context": 262144,
-          "output": 16384
         }
       ],
+      "defaultRank": 3,
+      "retired": {
+        "kimi-k2.7-code": "kimi-for-coding"
+      },
       "signIn": "subscription",
       "login": [
         "login"
@@ -221,12 +283,53 @@
       },
       "models": [
         {
-          "id": "gemini-3.7-flash-high",
-          "name": "Gemini 3.7 Flash",
+          "id": "gemini-3.8-flash-high",
+          "name": "Gemini 3.8 Flash (High)",
+          "context": 1000000,
+          "output": 65536,
+          "default": true
+        },
+        {
+          "id": "gemini-3.8-flash-medium",
+          "name": "Gemini 3.8 Flash (Medium)",
           "context": 1000000,
           "output": 65536
+        },
+        {
+          "id": "gemini-3.8-flash-low",
+          "name": "Gemini 3.8 Flash (Low)",
+          "context": 1000000,
+          "output": 65536
+        },
+        {
+          "id": "claude-sonnet-4-6",
+          "name": "Claude Sonnet 4.6 (Thinking)",
+          "context": 200000,
+          "output": 64000
+        },
+        {
+          "id": "claude-opus-4-6-thinking",
+          "name": "Claude Opus 4.6 (Thinking)",
+          "context": 200000,
+          "output": 64000
+        },
+        {
+          "id": "gpt-oss-120b-medium",
+          "name": "GPT-OSS 120B (Medium)",
+          "context": 272000,
+          "output": 32768
         }
       ],
+      "defaultRank": 6,
+      "liveModels": {
+        "args": [
+          "models"
+        ],
+        "parser": "tsv"
+      },
+      "retired": {
+        "gemini-3.7-flash-high": "gemini-3.8-flash-high"
+      },
       "signIn": "subscription",
       "signInPage": "https://antigravity.google/",
       "install": {
@@ -273,7 +376,15 @@
       },
       "aliases": [],
       "category": "coding",
-      "login": [],
+      "login": [
+        "login"
+      ],
+      "loginRemote": [
+        "login"
+      ],
+      "loginRemoteEnv": {
+        "NO_OPEN_BROWSER": "1"
+      },
       "icon": "cursor"
     },
     {
@@ -292,15 +403,36 @@
       },
       "models": [
         {
-          "id": "default",
-          "name": "Grok default",
+          "id": "grok-4.6",
+          "name": "Grok 4.6",
+          "context": 200000,
+          "output": 64000,
+          "default": true
+        },
+        {
+          "id": "grok-4.5",
+          "name": "Grok 4.5",
           "context": 200000,
           "output": 64000
         }
       ],
+      "defaultRank": 5,
+      "liveModels": {
+        "args": [
+          "models"
+        ],
+        "parser": "grok"
+      },
+      "retired": {
+        "default": "grok-4.6"
+      },
       "signIn": "subscription",
       "login": [
         "login"
+      ],
+      "loginRemote": [
+        "login",
+        "--device-auth"
       ],
       "signInPage": "https://grok.com/",
       "install": {
@@ -336,7 +468,7 @@
           "output": 64000
         }
       ],
-      "signIn": "api_key",
+      "signIn": "subscription",
       "install": {
         "harness": "opencode"
       },
@@ -346,7 +478,10 @@
       },
       "aliases": [],
       "category": "coding",
-      "login": [],
+      "login": [
+        "auth",
+        "login"
+      ],
       "icon": "opencode"
     },
     {
@@ -416,7 +551,15 @@
       },
       "aliases": [],
       "category": "coding",
-      "login": [],
+      "login": [
+        "login"
+      ],
+      "loginRemote": [
+        "login"
+      ],
+      "loginRemoteEnv": {
+        "NO_BROWSER": "1"
+      },
       "icon": "qoder"
     },
     {
@@ -448,7 +591,15 @@
       },
       "aliases": [],
       "category": "coding",
-      "login": [],
+      "login": [
+        "login"
+      ],
+      "loginRemote": [
+        "login"
+      ],
+      "loginRemoteEnv": {
+        "NO_BROWSER": "1"
+      },
       "icon": "qoder-cn",
       "install": null
     },
@@ -477,6 +628,10 @@
       "signIn": "subscription",
       "login": [
         "login"
+      ],
+      "loginRemote": [
+        "login",
+        "--use-device-flow"
       ],
       "signInPage": "https://kiro.dev/",
       "install": {
@@ -855,7 +1010,8 @@
           "id": "gemini-2.5-pro",
           "name": "Gemini 2.5 Pro",
           "context": 1000000,
-          "output": 65536
+          "output": 65536,
+          "default": true
         },
         {
           "id": "gemini-2.5-flash",
@@ -955,7 +1111,13 @@
         "expect": "\\d"
       },
       "category": "coding",
-      "login": [],
+      "login": [
+        "login"
+      ],
+      "loginRemote": [
+        "login",
+        "--device-code"
+      ],
       "icon": "copilot"
     },
     {
@@ -1200,7 +1362,10 @@
       },
       "aliases": [],
       "category": "coding",
-      "login": [],
+      "login": [
+        "auth",
+        "cline"
+      ],
       "icon": "cline"
     },
     {
@@ -1249,7 +1414,12 @@
         "expect": "\\d"
       },
       "category": "coding",
-      "login": [],
+      "login": [
+        "auth",
+        "login",
+        "-p",
+        "kilo"
+      ],
       "icon": "kilo"
     },
     {
@@ -1335,6 +1505,11 @@
       "login": [
         "login"
       ],
+      "loginRemote": [
+        "login",
+        "--headless"
+      ],
+      "loginRemoteHint": "After signing in, copy the sign-in details the page shows and paste them here.",
       "signInPage": "https://augmentcode.com",
       "install": {
         "method": "npm",
@@ -1429,9 +1604,7 @@
         }
       ],
       "signIn": "subscription",
-      "login": [
-        "login"
-      ],
+      "login": [],
       "signInPage": "https://hub.continue.dev",
       "install": {
         "method": "npm",
@@ -1605,6 +1778,12 @@
         ]
       },
       "models": [],
+      "liveModels": {
+        "args": [
+          "list"
+        ],
+        "parser": "ollama"
+      },
       "signIn": "none",
       "adapter": "text",
       "aliases": [],

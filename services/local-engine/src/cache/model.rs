@@ -1,5 +1,6 @@
 //! Cached model state.
 
+use allternit_model_source::Verification;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -37,8 +38,12 @@ pub enum ModelSource {
     HuggingFace,
     /// Imported from a local filesystem path.
     LocalPath,
-    /// Produced by an Unsloth training/export job.
+    /// Produced by an Unsloth training/export job (old Model Lab records).
     UnslothOutput,
+    /// An adapter or model a Freeweights Studio job produced
+    /// (`POST /models/studio-output`, called by allternit-api's
+    /// `/api/v1/studio/jobs/{id}/outputs/register`).
+    StudioOutput,
 }
 
 impl std::fmt::Display for ModelSource {
@@ -47,8 +52,18 @@ impl std::fmt::Display for ModelSource {
             ModelSource::HuggingFace => write!(f, "hugging_face"),
             ModelSource::LocalPath => write!(f, "local_path"),
             ModelSource::UnslothOutput => write!(f, "unsloth_output"),
+            ModelSource::StudioOutput => write!(f, "studio_output"),
         }
     }
+}
+
+/// One downloaded file and how it was checked.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FileVerification {
+    pub path: String,
+    pub size: u64,
+    pub sha256: String,
+    pub verification: Verification,
 }
 
 /// Metadata for a model stored locally.
@@ -74,6 +89,14 @@ pub struct CachedModel {
     pub path: PathBuf,
     /// Error message when status is `Failed`.
     pub error_message: Option<String>,
+    /// How the downloaded weights were checked (contract `verification`).
+    /// The weakest state across the weight files; `None` until a download
+    /// or `/models/verify` finishes.
+    #[serde(default)]
+    pub verification: Option<Verification>,
+    /// Per-file result of the last download or verify.
+    #[serde(default)]
+    pub files: Vec<FileVerification>,
     /// When the record was created.
     pub created_at: DateTime<Utc>,
     /// When the record was last updated.
@@ -101,6 +124,8 @@ impl CachedModel {
             downloaded_bytes: 0,
             path,
             error_message: None,
+            verification: None,
+            files: Vec::new(),
             created_at: now,
             updated_at: now,
         }
@@ -125,6 +150,8 @@ impl CachedModel {
             downloaded_bytes: 0,
             path,
             error_message: None,
+            verification: None,
+            files: Vec::new(),
             created_at: now,
             updated_at: now,
         }
@@ -163,6 +190,13 @@ impl CachedModel {
         self.status = ModelStatus::Ready;
         self.downloaded_bytes = self.total_bytes;
         self.error_message = None;
+        self.touch();
+    }
+
+    /// Record how the files were checked.
+    pub fn set_verification(&mut self, verification: Verification, files: Vec<FileVerification>) {
+        self.verification = Some(verification);
+        self.files = files;
         self.touch();
     }
 

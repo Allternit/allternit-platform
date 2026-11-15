@@ -57,8 +57,8 @@ final class VoiceSessionClient {
     // MARK: - Lifecycle
 
     /// Connects, sends `session.start`, waits for `session.ready` and starts
-    /// the mic. Throws the transport's/cloud's error (typed `VoiceCloudError`
-    /// for ticket failures) or `VoiceClientError.server` for a fatal `error`.
+    /// the mic. Throws the transport's error or `VoiceClientError.server`
+    /// for a fatal `error`.
     func start(options: VoiceSessionOptions) async throws {
         self.options = options
         ending = false
@@ -230,10 +230,6 @@ final class VoiceSessionClient {
                 if micMuted { transport?.send(.micMute) }
                 emit(.state(.ready(engine: ready.engine)))
                 emit(.reconnected)
-                return
-            } catch let error as VoiceCloudError {
-                // No minutes / not signed in won't fix itself by retrying.
-                finishFailed(error.localizedDescription)
                 return
             } catch {
                 continue

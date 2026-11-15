@@ -9,7 +9,8 @@ import {
   PencilEdit01Icon,
 } from "@hugeicons/core-free-icons";
 import { cn } from "@/lib/utils";
-import { formatApiError } from "@/lib/api-client";
+import { formatApiError, isNoRuntime } from "@/lib/api-client";
+import { NoRuntimeState } from "@/components/console-ui/NoRuntimeState";
 import {
   type AgentRecord,
   type AgentToolset,
@@ -103,10 +104,14 @@ export function AgentDetailPage(): React.ReactNode {
           <HugeiconsIcon icon={ArrowLeft01Icon} size={14} />
           Back to agents
         </Link>
-        <p className="flex items-center gap-2 rounded-lg border border-solid border-[var(--status-error)]/30 bg-[var(--status-error)]/10 px-3 py-2 text-[13px] text-[var(--status-error)]">
-          <HugeiconsIcon icon={AlertCircleIcon} size={14} />
-          {error}
-        </p>
+        {isNoRuntime(error) ? (
+          <NoRuntimeState />
+        ) : (
+          <p className="flex items-center gap-2 rounded-lg border border-solid border-[var(--status-error)]/30 bg-[var(--status-error)]/10 px-3 py-2 text-[13px] text-[var(--status-error)]">
+            <HugeiconsIcon icon={AlertCircleIcon} size={14} />
+            {error}
+          </p>
+        )}
       </div>
     );
   }
@@ -130,12 +135,14 @@ export function AgentDetailPage(): React.ReactNode {
         Back to agents
       </Link>
 
-      {error && (
+      {error && (isNoRuntime(error) ? (
+        <NoRuntimeState />
+      ) : (
         <p className="flex items-center gap-2 rounded-lg border border-solid border-[var(--status-error)]/30 bg-[var(--status-error)]/10 px-3 py-2 text-[13px] text-[var(--status-error)]">
           <HugeiconsIcon icon={AlertCircleIcon} size={14} />
           {error}
         </p>
-      )}
+      ))}
 
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 space-y-2">

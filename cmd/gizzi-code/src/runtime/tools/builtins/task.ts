@@ -42,6 +42,12 @@ const parameters = z.object({
     .boolean()
     .default(false)
     .describe("Return immediately and notify the parent session when this subagent finishes."),
+  model: z
+    .enum(["small", "standard", "deep", "inherit"])
+    .optional()
+    .describe(
+      "Which model class runs this task: small (quick, cheap lookups), standard, deep (hard reasoning) or inherit (your own model). Leave unset to use the agent's default.",
+    ),
 })
 
 type TaskMetadata = {
@@ -159,12 +165,14 @@ export const TaskTool = Tool.define<typeof parameters, TaskMetadata>("task", asy
       if (msg.info.role !== "assistant") throw new Error("Not an assistant message")
       const info = msg.info
 
-      // Model: the agent's own → models.jobs (explorer/builder jobs) → its model
-      // class (subagents default to small, so delegated work runs cheap) → the
-      // caller's. A class that can't be routed falls back to the caller's model.
+      // Model: the class the caller asked for on this task → the agent's own →
+      // models.jobs (explorer/builder jobs) → its model class (subagents default
+      // to small, so delegated work runs cheap) → the caller's. A class that
+      // can't be routed falls back to the caller's model.
       const parentModel = { modelID: msg.info.modelID, providerID: msg.info.providerID }
       const jobName = ModelJobs.jobForAgent(agent.name)
       const model =
+        (params.model ? await resolveModelClass(params.model, parentModel) : undefined) ??
         agent.model ??
         (jobName ? await ModelJobs.jobModel(jobName) : undefined) ??
         (await resolveModelClass(agent.modelClass ?? (agent.mode === "subagent" ? "small" : "inherit"), parentModel))

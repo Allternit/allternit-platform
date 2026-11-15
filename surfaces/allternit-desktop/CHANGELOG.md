@@ -5,7 +5,7 @@ Releases are tagged `desktop-v<version>`.
 
 ## [Unreleased]
 
-(nothing yet)
+- **Mac: the Keychain prompt no longer freezes the app.** Desktop reads its Keychain key off the main thread. While macOS asks for permission, the startup window says "macOS is asking for permission. Click Always Allow." **Allow** works for that launch, and **Always Allow** stops future prompts. **Deny** shows **Try again** and **Quit**. A slow or denied Keychain no longer discards your saved sign-in and keys. Windows and Linux are unchanged.
 
 ## [1.1.4] — 2026-10-03
 

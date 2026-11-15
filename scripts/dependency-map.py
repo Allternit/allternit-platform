@@ -15,6 +15,8 @@ public repo. It is published to the access-controlled admin site by scripts/buil
 import argparse, collections, datetime, json, os, pathlib, re, subprocess, sys, tomllib
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 MAP = ROOT / 'docs/dependency-map'
+APP_ROOTS = {'allternit/surfaces/allternit-mobile/ios': 'Allternit iOS app (SwiftUI)',
+             'allternit/surfaces/allternit-mobile/android': 'Allternit Android app (TWA + Phone Link)'}
 SKIP = {'.agents', 'node_modules', 'target', 'dist', 'release', 'vendor', 'archive', '.git', 'resources', '.gw-target', '.shared-target'}
 
 # Packages too large to review as one box: {package node: (source folder, label prefix, max files per group)}.
@@ -74,7 +76,7 @@ def generate(ai, strict=True):
             if not rel or any(x in SKIP or x.startswith('.hosted') for x in p.parts): continue
             full = root / rel
             if not full.is_file() or full.is_symlink(): continue
-            if p.name not in ('package.json', 'Cargo.toml') and p.suffix not in ('.ts','.tsx','.js','.jsx','.mjs','.cjs','.rs'): continue
+            if p.name not in ('package.json', 'Cargo.toml') and p.suffix not in ('.ts','.tsx','.js','.jsx','.mjs','.cjs','.rs','.swift','.kt'): continue
             key = repo + '/' + rel
             texts[key] = full.read_text(errors='replace')
             if p.name in ('package.json','Cargo.toml'):
@@ -88,6 +90,12 @@ def generate(ai, strict=True):
                 manifests[key] = (id, data, p.name)
                 if label: packages[label].append(id)
                 if p.name == 'Cargo.toml': cargo[id] = data
+
+    # Native apps have no package.json or Cargo.toml (XcodeGen, Gradle), so their source would otherwise fall into the
+    # repo root and reach everything. Give each app its own owner node.
+    for id, label in APP_ROOTS.items():
+        repo = id.split('/', 1)[0]
+        if repo in roots and any(k.startswith(id + '/') for k in texts): node(id, label, 'package', id)
 
     # Associate source with its nearest manifest; split the shared UI and large packages into feature folders.
     dircount = collections.Counter(str(d) for key in texts for d in pathlib.PurePosixPath(key).parents)
@@ -210,6 +218,16 @@ def generate(ai, strict=True):
     def stale(msg):
         if strict: raise SystemExit(msg)
         warnings.append(msg + ' (skipped; run --validate against current main)')
+    def component_ref(ref):
+        # Curated evidence may name a file or a subfolder inside a component.
+        # Resolve only existing source paths; a typo must still fail validation.
+        if ref in nodes: return ref
+        if ref in files: return files[ref]
+        repo, _, rel = ref.partition('/')
+        if repo in roots and (roots[repo] / rel).exists():
+            parents = [n for n in nodes if ref.startswith(n + '/') and nodes[n]['kind'] not in ('feature', 'journey', 'line')]
+            if parents: return max(parents, key=len)
+        return ref
     work = json.loads((MAP/'features.json').read_text())
     for f in work['features']:
         where = 'features.json ' + f['id']
@@ -227,7 +245,7 @@ def generate(ai, strict=True):
         where = 'features.json ' + j['id']
         if not j['id'].startswith('journey:'): raise SystemExit(f'{where}: journey ids start with journey:')
         if len(j['steps']) < 2: raise SystemExit(f'{where}: a journey needs at least two steps')
-        node(j['id'], j['label'], 'journey', '', description=j['description'], steps=[[s['at'], s['says']] for s in j['steps']])
+        node(j['id'], j['label'], 'journey', '', description=j['description'], steps=[[component_ref(s['at']), s['says']] for s in j['steps']])
     for item in work['features'] + work['journeys']:
         where = 'features.json ' + item['id']
         if not item['evidence']: raise SystemExit(f'{where}: add at least one evidence path')
@@ -236,6 +254,7 @@ def generate(ai, strict=True):
             except SystemExit as ex: stale(str(ex))
         refs = [('touches', r) for r in item.get('touches', [])] + [('step', s['at']) for s in item.get('steps', [])]
         for kind, ref in refs:
+            ref = component_ref(ref)
             if ref not in nodes or nodes[ref]['kind'] in ('feature', 'journey', 'line'):
                 stale(f'{where}: unknown {kind} component {ref!r}'); continue
             edge(item['id'], ref, kind, item['evidence'][0])
@@ -336,6 +355,10 @@ def summary(g, path, r):
         steps = lambda j: [k + 1 for k, (at, _) in enumerate(by[j].get('steps', [])) if at in r['changed'] or any(at.startswith(c + '/') or c.startswith(at + '/') for c in r['changed'])]
         lines.append('  Journeys: ' + ', '.join(label[j] + (f" (step {', '.join(map(str, steps(j)))})" if steps(j) else '') for j in r['journeys']))
     lines.append('  Shipped surfaces reached: ' + names(r['surfaces']))
+    # The iPhone app is native SwiftUI and shares no code with the web build, so a workspace UI change can never
+    # reach it here. Say so, so the plan's Surface Matrix decides the iOS row instead of dropping it.
+    if 'surface:pwa' in r['surfaces'] and 'surface:ios' not in r['surfaces']:
+        lines.append('  Not reachable through code: Allternit iPhone app (native SwiftUI). Decide its row in the Surface Matrix (AGENTS.md).')
     lines.append('  Products reached: ' + (names(r['products']) if len(r['products']) <= 6 else f"{len(r['products'])} (through shared code; Part of is the direct list)"))
     lines.append(f"  Could be affected: {len(r['potentiallyAffected'])} components (run without --summary for the list)")
     return '\n'.join(lines)

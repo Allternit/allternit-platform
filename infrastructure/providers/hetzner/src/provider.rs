@@ -135,9 +135,9 @@ pub struct DeploymentResult {
 /// Headscale preauth key; the BYO-VPS wizard handles the mesh-joined path).
 /// Mirrors `cmd/allternit-hosted-runtime/Dockerfile` pins.
 fn legacy_gizzi_install_script() -> String {
-    const RELEASE: &str = "hosted-runtime-2026.07.16";
+    const RELEASE: &str = "2.9.0";
     const X64_SHA256: &str =
-        "f1d29bad0b3903d77261e7706ff80fd292fefece3ebeaa4bb7f08a51ad2fc694";
+        "5aa323e4c5804a2d1747e6b2b29a7d6da0ce2fb4082c6ad8dc1f1da7ae8d7a3d";
     format!(
         r#"#!/bin/bash
 set -euo pipefail
@@ -145,10 +145,11 @@ set -euo pipefail
 command -v curl >/dev/null 2>&1 || {{ apt-get update -qq && apt-get install -y -qq curl ca-certificates; }}
 mkdir -p /opt/gizzi/bin
 if [ ! -f /opt/gizzi/bin/gizzi-code ]; then
-    curl -fsSL "https://github.com/Allternit/gizzi-code/releases/download/{release}/gizzi-code-linux-x64-native" -o /tmp/gizzi-code.download
-    echo "{sha256}  /tmp/gizzi-code.download" | sha256sum -c -
-    mv /tmp/gizzi-code.download /opt/gizzi/bin/gizzi-code
-    chmod +x /opt/gizzi/bin/gizzi-code
+    curl -fsSL "https://github.com/Allternit/allternit-platform/releases/download/gizzi-code%2Fv{release}/gizzi-code-v{release}-linux-x64.tar.gz" -o /tmp/gizzi.tar.gz
+    echo "{sha256}  /tmp/gizzi.tar.gz" | sha256sum -c -
+    tar -xzf /tmp/gizzi.tar.gz -C /opt/gizzi/bin gizzi-code allternit-factory
+    rm -f /tmp/gizzi.tar.gz
+    chmod +x /opt/gizzi/bin/gizzi-code /opt/gizzi/bin/allternit-factory
 fi
 cat > /etc/systemd/system/gizzi-code.service << 'UNIT'
 [Unit]

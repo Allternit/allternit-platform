@@ -1,0 +1,112 @@
+---
+title: 'Freeweights'
+description: 'The open-weights catalog Allternit apps read, and how a downloaded model is checked'
+---
+
+## Overview
+
+[Freeweights](https://freeweights.allternit.com) is a public catalog of open-weights models. Each entry has a signed manifest that lists the files, their sizes and their sha256 hashes at a pinned commit. Allternit apps read this catalog to show models, and the Local Engine checks every file it downloads against it.
+
+Freeweights is separate from the apps. Its repository is [github.com/Allternit/freeweights](https://github.com/Allternit/freeweights). Its command line tool, `fw`, installs with `brew install allternit/tap/fw` or `pip install allternit-freeweights`.
+
+The public API:
+
+| Path | Returns |
+|---|---|
+| `/api/models` | Search and list models |
+| `/api/models/{id}` | One model |
+| `/api/catalog` | Sizes and license class for the whole catalog |
+| `/manifests/{org}/{repo}.json` and `.json.minisig` | The manifest and its signature |
+
+## Verification states
+
+Every downloaded model has a verification state. It says what the file's sha256 was checked against. It is never blank.
+
+| State | Label in the apps | Checked against |
+|---|---|---|
+| `freeweights_signed` | Verified by Freeweights | The sha256 and size in the Freeweights manifest, whose signature verified |
+| `publisher_hash` | Matches the publisher's hash | The hash the publisher (Hugging Face) lists for the file |
+| `pinned` | Pinned by Allternit | A sha256 that Allternit supplied, for files with no catalog or publisher hash. Voice packs use this |
+| `unverified` | Not verified | Nothing. Only when you explicitly allowed it |
+
+An engine build that predates verification has no state to show. The apps then say "Not checked by this version".
+
+Files at the publisher that are not stored with a sha256 (small JSON, config and tokenizer files) are checked against the publisher's git blob id instead. That counts as `publisher_hash`.
+
+Data with no hash anywhere is an error unless you allow unverified files. Pass `allow_unverified` on the [download request](/api/local-engine#download-a-model), or `--allow-unverified` to `gizzi models pull`.
+
+## Source order and fallback
+
+A download tries sources in this order. A network failure, a size mismatch or a hash mismatch moves to the next source, and a mismatched partial file is deleted.
+
+1. The Freeweights Worker.
+2. The sources listed in the manifest.
+3. The publisher (Hugging Face), only when the catalog cannot be reached or does not list the repo. Files are checked by sha256 or the git blob id.
+
+The catalog counts as down on a network error, a timeout, or a 5xx answer. A repo that Freeweights does not list also goes to the publisher. In both cases the state is `publisher_hash`.
+
+A manifest that answers but fails its check (bad signature, wrong key, missing signature, or a different repo id) is an error. The download does not fall back to the publisher, because a bad manifest is a signal and not an outage.
+
+Set `ALLTERNIT_FREEWEIGHTS_URL` to use a different Freeweights base address. The contract and its fixtures are in `contracts/model-source` in the platform repository.
+
+## Freeweights Studio
+
+[Freeweights Studio](/surfaces/model-lab) (formerly Model Lab) opens on Catalog, which shows the Freeweights catalog. Search runs as you type. You can filter by section and task, see the publisher's logo, and read badges for source, license, redistribution and size. Open a model to see its details, then pull it to the Local Engine on your computer. When the pull ends, the model shows its verification label.
+
+On Desktop it is in the rail's More. On ai.allternit.com it is in More. On the phone layout and the PWA it is in the drawer's More, and the phone model picker has a Freeweights chip. Settings, then Models, still has the catalog on the phone layout. On the web and the PWA the Engine tab says there is no model engine on the device: the engine runs in Desktop or on a connected computer.
+
+### Training
+
+Studio can fine-tune a hosted Freeweights model on a computer you own. The job runs through the [Studio API](/api/studio), or from the terminal with [`gizzi studio`](/cli/studio). The base model is fetched with the same signed-manifest check as a pull. See [Training](/surfaces/model-lab#training).
+
+Some entries say "From the publisher". These are models that cannot be redistributed by Freeweights, for example non-commercial or gated ones, or ones with no manifest. They link out and have no pull button. A repo Freeweights does not list is labeled "Not in Freeweights".
+
+## Link straight to a model
+
+Freeweights model pages use these links. You can use them anywhere.
+
+- **Chat.** `https://ai.allternit.com/?model=MODEL_ID` opens a new chat with that Allternit Cloud model selected. Use an id from `https://api.allternit.com/v1/models`, for example `glm-5.3-flash`. Add `&q=TEXT` to prefill the message. If the model is not available, the chat opens normally and shows a short notice.
+- **Freeweights Studio.** `https://ai.allternit.com/?view=model-lab&model=OWNER/NAME` opens Studio on the Catalog with that model's page open, for example `?view=model-lab&model=Qwen/Qwen3-8B`. If Freeweights does not list the model, the Catalog opens with the id in the search box.
+
+Both links work on the web app, the phone layout and m.allternit.com. If you are not signed in, the link is kept through sign-in and applies afterward. The app removes `model` from the address bar once it has used it, so a reload does not repeat it.
+
+### Desktop
+
+The Desktop app registers the `allternit://` scheme and takes the same two links:
+
+- `allternit://open?model=MODEL_ID` opens a new chat with that model.
+- `allternit://open?view=model-lab&model=OWNER/NAME` opens Freeweights Studio on that model.
+
+Desktop focuses the main window, or opens it if it was closed, and loads the app with the matching `model` and `view` parameters. It accepts only an id made of letters, digits, `.`, `_` and `-`, with one optional `/` between an owner and a name, up to 200 characters. `view` must be `model-lab` or left out. Desktop ignores every other parameter and rejects a link with any other id, such as a URL, a path with `..`, or spaces. It never loads a URL taken from the link.
+
+## iPhone
+
+The Models screen has a Freeweights section. Open a model for its license, size, file count and pinned commit. **Send to computer** starts the pull on your paired computer through the Allternit cloud relay. Pulls run on a computer, not on the phone. With no paired computer, the screen says to pair one in Computers.
+
+## Gizzi Code
+
+```bash
+gizzi models search qwen --catalog-source freeweights
+gizzi models pull Qwen/Qwen3-Embedding-0.6B
+gizzi models verify Qwen/Qwen3-Embedding-0.6B
+```
+
+`pull` accepts `--quant` and `--allow-unverified`, and exits with code 2 when the result is `unverified`. See [Models and providers](/cli/models#pull-and-verify-local-models).
+
+## Accounts
+
+Freeweights accounts are Allternit accounts. Every public read and download stays anonymous. To write or read private repos, the site, apps and the `fw` CLI send a Clerk session or an Allternit `alt_` key with a `freeweights.*` scope. The Freeweights Worker reads the plan, orgs and perks from a signed claim that the Cloud API issues. See [Freeweights entitlement](/api/cloud-billing#freeweights-entitlement).
+
+## When the catalog is down
+
+- Pulls fall back to the publisher and end as `publisher_hash`. Nothing is skipped.
+- Freeweights Studio shows a banner and the saved copy of the catalog with its age. With no saved copy, it says the catalog is unavailable.
+- The iPhone app shows the last answer it saved, with its age.
+- The [status page](https://status.allternit.com) has a Freeweights component with four probes.
+
+## Related pages
+
+- [Local Engine](/tools/local-engine)
+- [Local Engine API](/api/local-engine)
+- [Models and providers](/cli/models)
+- [Freeweights Studio](/surfaces/model-lab)

@@ -13,11 +13,12 @@ type Props = {
 const PLATFORMS: Record<Platform, {
   url: string;
 }> = {
+  // Same links as allternit-ai src/lib/store-links.ts and the www site.
   ios: {
-    url: 'https://install.gizziio.com'
+    url: 'https://apps.apple.com/app/id6828841999'
   },
   android: {
-    url: 'https://install.gizziio.com'
+    url: 'https://play.google.com/store/apps/details?id=com.allternit.app'
   }
 };
 function MobileQRCode({

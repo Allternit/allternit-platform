@@ -1,7 +1,7 @@
 import type { ActionDefinition } from "../../core/types.ts";
 
 import { s } from "../../core/json-schema.ts";
-import { defineProviderAction } from "../../core/provider-definition.ts";
+import { defineProviderAction, withSavedConnectionInputs } from "../../core/provider-definition.ts";
 
 const service = "beeminder";
 
@@ -80,185 +80,188 @@ const datapointSchema = s.object(
   { required: ["id", "timestamp", "daystamp", "value", "comment", "requestid", "updated_at", "raw"] },
 );
 
-export const beeminderActions: ActionDefinition[] = [
-  defineProviderAction(service, {
-    name: "get_user",
-    description: "Get Beeminder user information, including goals and optional diff-based goal details.",
-    inputSchema: s.object(
-      "The input payload for reading a Beeminder user.",
-      {
-        username: usernameSchema,
-        associations: s.boolean("Whether to include full goal and datapoint objects instead of only goal slugs."),
-        diff_since: unixTimestampSchema,
-        skinny: s.boolean(
-          "Whether to return slimmer goal attributes and only each goal's latest datapoint with diff_since.",
-        ),
-        datapoints_count: s.integer("Number of the most recently added datapoints to include for each goal.", {
-          minimum: 1,
-        }),
-      },
-      { optional: ["username", "associations", "diff_since", "skinny", "datapoints_count"] },
-    ),
-    outputSchema: s.object(
-      "The response returned when reading a Beeminder user.",
-      {
-        user: userSchema,
-      },
-      { required: ["user"] },
-    ),
-  }),
-  defineProviderAction(service, {
-    name: "list_goals",
-    description: "List active Beeminder goals for a user.",
-    inputSchema: s.object(
-      "The input payload for listing active Beeminder goals.",
-      {
-        username: usernameSchema,
-      },
-      { required: ["username"] },
-    ),
-    outputSchema: s.object(
-      "The response returned when listing Beeminder goals.",
-      {
-        goals: s.array("The active goals returned by Beeminder.", goalSchema),
-      },
-      { required: ["goals"] },
-    ),
-  }),
-  defineProviderAction(service, {
-    name: "list_archived_goals",
-    description: "List archived Beeminder goals for a user.",
-    inputSchema: s.object(
-      "The input payload for listing archived Beeminder goals.",
-      {
-        username: usernameSchema,
-      },
-      { required: ["username"] },
-    ),
-    outputSchema: s.object(
-      "The response returned when listing archived Beeminder goals.",
-      {
-        goals: s.array("The archived goals returned by Beeminder.", goalSchema),
-      },
-      { required: ["goals"] },
-    ),
-  }),
-  defineProviderAction(service, {
-    name: "get_goal",
-    description: "Read one Beeminder goal, optionally including its datapoints.",
-    inputSchema: s.object(
-      "The input payload for reading a Beeminder goal.",
-      {
-        username: usernameSchema,
-        goal_slug: goalSlugSchema,
-        datapoints: s.boolean("Whether Beeminder should include datapoints in the goal response."),
-      },
-      { optional: ["datapoints"] },
-    ),
-    outputSchema: s.object(
-      "The response returned when reading a Beeminder goal.",
-      {
-        goal: goalSchema,
-      },
-      { required: ["goal"] },
-    ),
-  }),
-  defineProviderAction(service, {
-    name: "list_datapoints",
-    description: "List datapoints for one Beeminder goal with optional count or page parameters.",
-    inputSchema: s.object(
-      "The input payload for listing Beeminder datapoints.",
-      {
-        username: usernameSchema,
-        goal_slug: goalSlugSchema,
-        count: s.integer("Maximum number of datapoints to return. Ignored when page is set.", {
-          minimum: 0,
-        }),
-        page: s.integer("Page number for paginated datapoint results.", {
-          minimum: 1,
-        }),
-        per: s.integer("Number of datapoints per page when page is set.", {
-          minimum: 1,
-        }),
-      },
-      { optional: ["count", "page", "per"] },
-    ),
-    outputSchema: s.object(
-      "The response returned when listing Beeminder datapoints.",
-      {
-        datapoints: s.array("The datapoints returned by Beeminder.", datapointSchema),
-      },
-      { required: ["datapoints"] },
-    ),
-  }),
-  defineProviderAction(service, {
-    name: "create_datapoint",
-    description: "Create one datapoint on a Beeminder goal.",
-    inputSchema: s.object(
-      "The input payload for creating a Beeminder datapoint.",
-      {
-        username: usernameSchema,
-        goal_slug: goalSlugSchema,
-        value: s.number("The datapoint value."),
-        timestamp: unixTimestampSchema,
-        daystamp: s.nonEmptyString("The datapoint daystamp in YYYYMMDD format."),
-        comment: s.nonEmptyString("The datapoint comment."),
-        requestid: s.nonEmptyString(
-          "A caller-supplied idempotency key scoped to the goal. Reusing it avoids duplicate datapoints.",
-        ),
-      },
-      { optional: ["timestamp", "daystamp", "comment", "requestid"] },
-    ),
-    outputSchema: s.object(
-      "The response returned when creating a Beeminder datapoint.",
-      {
-        datapoint: datapointSchema,
-      },
-      { required: ["datapoint"] },
-    ),
-  }),
-  defineProviderAction(service, {
-    name: "update_datapoint",
-    description: "Update one Beeminder datapoint by ID.",
-    inputSchema: s.object(
-      "The input payload for updating a Beeminder datapoint.",
-      {
-        username: usernameSchema,
-        goal_slug: goalSlugSchema,
-        datapoint_id: datapointIdSchema,
-        value: s.number("The updated datapoint value."),
-        timestamp: unixTimestampSchema,
-        daystamp: s.nonEmptyString("The updated datapoint daystamp in YYYYMMDD format."),
-        comment: s.nonEmptyString("The datapoint comment."),
-      },
-      { optional: ["value", "timestamp", "daystamp", "comment"] },
-    ),
-    outputSchema: s.object(
-      "The response returned when updating a Beeminder datapoint.",
-      {
-        datapoint: datapointSchema,
-      },
-      { required: ["datapoint"] },
-    ),
-  }),
-  defineProviderAction(service, {
-    name: "delete_datapoint",
-    description: "Delete one Beeminder datapoint by ID.",
-    inputSchema: s.object(
-      "The input payload for deleting a Beeminder datapoint.",
-      {
-        username: usernameSchema,
-        goal_slug: goalSlugSchema,
-        datapoint_id: datapointIdSchema,
-      },
-      { required: ["username", "goal_slug", "datapoint_id"] },
-    ),
-    outputSchema: s.object(
-      "The response returned when deleting a Beeminder datapoint.",
-      {
-        datapoint: datapointSchema,
-      },
-      { required: ["datapoint"] },
-    ),
-  }),
-];
+export const beeminderActions: ActionDefinition[] = withSavedConnectionInputs(
+  [
+    defineProviderAction(service, {
+      name: "get_user",
+      description: "Get Beeminder user information, including goals and optional diff-based goal details.",
+      inputSchema: s.object(
+        "The input payload for reading a Beeminder user.",
+        {
+          username: usernameSchema,
+          associations: s.boolean("Whether to include full goal and datapoint objects instead of only goal slugs."),
+          diff_since: unixTimestampSchema,
+          skinny: s.boolean(
+            "Whether to return slimmer goal attributes and only each goal's latest datapoint with diff_since.",
+          ),
+          datapoints_count: s.integer("Number of the most recently added datapoints to include for each goal.", {
+            minimum: 1,
+          }),
+        },
+        { optional: ["username", "associations", "diff_since", "skinny", "datapoints_count"] },
+      ),
+      outputSchema: s.object(
+        "The response returned when reading a Beeminder user.",
+        {
+          user: userSchema,
+        },
+        { required: ["user"] },
+      ),
+    }),
+    defineProviderAction(service, {
+      name: "list_goals",
+      description: "List active Beeminder goals for a user.",
+      inputSchema: s.object(
+        "The input payload for listing active Beeminder goals.",
+        {
+          username: usernameSchema,
+        },
+        { required: ["username"] },
+      ),
+      outputSchema: s.object(
+        "The response returned when listing Beeminder goals.",
+        {
+          goals: s.array("The active goals returned by Beeminder.", goalSchema),
+        },
+        { required: ["goals"] },
+      ),
+    }),
+    defineProviderAction(service, {
+      name: "list_archived_goals",
+      description: "List archived Beeminder goals for a user.",
+      inputSchema: s.object(
+        "The input payload for listing archived Beeminder goals.",
+        {
+          username: usernameSchema,
+        },
+        { required: ["username"] },
+      ),
+      outputSchema: s.object(
+        "The response returned when listing archived Beeminder goals.",
+        {
+          goals: s.array("The archived goals returned by Beeminder.", goalSchema),
+        },
+        { required: ["goals"] },
+      ),
+    }),
+    defineProviderAction(service, {
+      name: "get_goal",
+      description: "Read one Beeminder goal, optionally including its datapoints.",
+      inputSchema: s.object(
+        "The input payload for reading a Beeminder goal.",
+        {
+          username: usernameSchema,
+          goal_slug: goalSlugSchema,
+          datapoints: s.boolean("Whether Beeminder should include datapoints in the goal response."),
+        },
+        { optional: ["datapoints"] },
+      ),
+      outputSchema: s.object(
+        "The response returned when reading a Beeminder goal.",
+        {
+          goal: goalSchema,
+        },
+        { required: ["goal"] },
+      ),
+    }),
+    defineProviderAction(service, {
+      name: "list_datapoints",
+      description: "List datapoints for one Beeminder goal with optional count or page parameters.",
+      inputSchema: s.object(
+        "The input payload for listing Beeminder datapoints.",
+        {
+          username: usernameSchema,
+          goal_slug: goalSlugSchema,
+          count: s.integer("Maximum number of datapoints to return. Ignored when page is set.", {
+            minimum: 0,
+          }),
+          page: s.integer("Page number for paginated datapoint results.", {
+            minimum: 1,
+          }),
+          per: s.integer("Number of datapoints per page when page is set.", {
+            minimum: 1,
+          }),
+        },
+        { optional: ["count", "page", "per"] },
+      ),
+      outputSchema: s.object(
+        "The response returned when listing Beeminder datapoints.",
+        {
+          datapoints: s.array("The datapoints returned by Beeminder.", datapointSchema),
+        },
+        { required: ["datapoints"] },
+      ),
+    }),
+    defineProviderAction(service, {
+      name: "create_datapoint",
+      description: "Create one datapoint on a Beeminder goal.",
+      inputSchema: s.object(
+        "The input payload for creating a Beeminder datapoint.",
+        {
+          username: usernameSchema,
+          goal_slug: goalSlugSchema,
+          value: s.number("The datapoint value."),
+          timestamp: unixTimestampSchema,
+          daystamp: s.nonEmptyString("The datapoint daystamp in YYYYMMDD format."),
+          comment: s.nonEmptyString("The datapoint comment."),
+          requestid: s.nonEmptyString(
+            "A caller-supplied idempotency key scoped to the goal. Reusing it avoids duplicate datapoints.",
+          ),
+        },
+        { optional: ["timestamp", "daystamp", "comment", "requestid"] },
+      ),
+      outputSchema: s.object(
+        "The response returned when creating a Beeminder datapoint.",
+        {
+          datapoint: datapointSchema,
+        },
+        { required: ["datapoint"] },
+      ),
+    }),
+    defineProviderAction(service, {
+      name: "update_datapoint",
+      description: "Update one Beeminder datapoint by ID.",
+      inputSchema: s.object(
+        "The input payload for updating a Beeminder datapoint.",
+        {
+          username: usernameSchema,
+          goal_slug: goalSlugSchema,
+          datapoint_id: datapointIdSchema,
+          value: s.number("The updated datapoint value."),
+          timestamp: unixTimestampSchema,
+          daystamp: s.nonEmptyString("The updated datapoint daystamp in YYYYMMDD format."),
+          comment: s.nonEmptyString("The datapoint comment."),
+        },
+        { optional: ["value", "timestamp", "daystamp", "comment"] },
+      ),
+      outputSchema: s.object(
+        "The response returned when updating a Beeminder datapoint.",
+        {
+          datapoint: datapointSchema,
+        },
+        { required: ["datapoint"] },
+      ),
+    }),
+    defineProviderAction(service, {
+      name: "delete_datapoint",
+      description: "Delete one Beeminder datapoint by ID.",
+      inputSchema: s.object(
+        "The input payload for deleting a Beeminder datapoint.",
+        {
+          username: usernameSchema,
+          goal_slug: goalSlugSchema,
+          datapoint_id: datapointIdSchema,
+        },
+        { required: ["username", "goal_slug", "datapoint_id"] },
+      ),
+      outputSchema: s.object(
+        "The response returned when deleting a Beeminder datapoint.",
+        {
+          datapoint: datapointSchema,
+        },
+        { required: ["datapoint"] },
+      ),
+    }),
+  ],
+  { username: ["username"] },
+);

@@ -150,9 +150,9 @@ describe("Allternit Cloud quota credentials", () => {
 })
 
 describe("plan labels", () => {
-  test("Claude: the account's rate-limit tier names the Max multiple", () => {
-    expect(claudePlanLabel({ organizationRateLimitTier: "default_claude_max_5x" })).toBe("Max (5x)")
-    expect(claudePlanLabel({ userRateLimitTier: "default_claude_max_20x", organizationRateLimitTier: "x" })).toBe("Max (20x)")
+  test("Claude: old Max 5x and 20x tiers read as the renamed Max and Ultra plans", () => {
+    expect(claudePlanLabel({ organizationRateLimitTier: "default_claude_max_5x" })).toBe("Max")
+    expect(claudePlanLabel({ userRateLimitTier: "default_claude_max_20x", organizationRateLimitTier: "x" })).toBe("Ultra")
     expect(claudePlanLabel({ subscriptionType: "pro" })).toBe("Pro")
     expect(claudePlanLabel(undefined)).toBeUndefined()
   })
@@ -160,5 +160,27 @@ describe("plan labels", () => {
   test("Codex: rate_limits.plan_type", () => {
     expect(codexPlanLabel({ plan_type: "plus" })).toBe("Plus")
     expect(codexPlanLabel({})).toBeUndefined()
+  })
+})
+
+describe("plan usage readers", () => {
+  test("Claude /usage response: named windows only, utilization in percent", async () => {
+    const { parseClaudeUsage } = await import("../../src/runtime/providers/quota")
+    const windows = parseClaudeUsage({
+      five_hour: { utilization: 70, resets_at: "2026-11-03T19:49:59.855558+00:00" },
+      seven_day: { utilization: 10, resets_at: "2026-11-10T11:59:59+00:00" },
+      seven_day_opus: null,
+      some_program: { utilization: 100, resets_at: "2026-11-05T07:59:00+00:00" },
+    })
+    expect(windows.map((w) => [w.id, w.usedRatio])).toEqual([
+      ["5h", 0.7],
+      ["7d", 0.1],
+    ])
+  })
+
+  test("Codex: a rate_limits record with null windows is skipped", async () => {
+    const { hasCodexWindows } = await import("../../src/runtime/providers/quota")
+    expect(hasCodexWindows({ limit_id: "premium", primary: null, secondary: null })).toBe(false)
+    expect(hasCodexWindows({ limit_id: "codex", primary: { used_percent: 70 } })).toBe(true)
   })
 })

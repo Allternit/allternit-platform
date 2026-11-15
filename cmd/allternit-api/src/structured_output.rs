@@ -64,6 +64,10 @@ pub async fn complete_structured_at(
     schema: &Value,
 ) -> Option<StructuredReply> {
     let (provider_id, model_id) = model.cloned().unwrap_or_else(crate::default_model);
+    if crate::config::is_no_brain(&provider_id, &model_id) {
+        warn!("no brain chosen; skipping structured completion");
+        return None;
+    }
     let client = Client::builder()
         .default_headers(crate::gizzi_provider_auth::gizzi_auth_headers())
         .timeout(Duration::from_secs(180))

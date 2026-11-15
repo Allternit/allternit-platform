@@ -61,8 +61,8 @@ pub const KINDS: &[KindSpec] = &[
     },
     KindSpec {
         kind: "card",
-        default_body_format: "application/vnd.allternit.openui",
-        body_formats: &["application/vnd.allternit.openui"],
+        default_body_format: "application/vnd.allternit.answer+json",
+        body_formats: &["application/vnd.allternit.answer+json", "application/vnd.allternit.openui"],
     },
     KindSpec {
         kind: "diagram",

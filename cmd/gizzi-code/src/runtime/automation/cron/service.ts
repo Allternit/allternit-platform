@@ -32,6 +32,7 @@ import type {
   DaemonStatus,
 } from "./types";
 import { Global } from "@/runtime/context/global";
+import { refreshBotPause, botsPausedCached } from "../pause-gate";
 import { Log } from "@/shared/util/log";
 import { join } from "path";
 import { randomUUID } from "crypto";
@@ -146,7 +147,7 @@ export const CronService = {
     }
 
     // Start the check timer
-    state.timer = setInterval(() => this._checkDueJobs(), state.config.checkIntervalMs);
+    state.timer = setInterval(() => { void refreshBotPause().finally(() => this._checkDueJobs()) }, state.config.checkIntervalMs);
 
     log.info("scheduler started", { intervalMs: state.config.checkIntervalMs });
   },
@@ -570,6 +571,14 @@ export const CronService = {
       if (job.maxRuns && job.runCount >= job.maxRuns) {
         job.status = "disabled";
         state.db.saveJob(job);
+        continue;
+      }
+
+      // Bots paused: skip automatic agent/cowork runs, keep the schedule
+      // (next slot from now, no burst after resume). Runs in progress finish.
+      if (botsPausedCached() && (job.type === "agent" || job.type === "cowork")) {
+        log.info("bots paused, skipping scheduled run", { name: job.name });
+        this._scheduleNextRun(job);
         continue;
       }
 

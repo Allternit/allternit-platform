@@ -3,6 +3,7 @@ import type {
   BetaWebSearchTool20250305,
 } from '@allternit/gizzi-sdk/providers/allternit/resources/beta/messages/messages.mjs'
 import { getAPIProvider } from './../../utils/model/providers.ts'
+import { AllternitSearch } from '@/runtime/tools/builtins/allternit-search'
 import type { PermissionResult } from './../../utils/permissions/PermissionResult.ts'
 import { z } from 'zod/v4'
 import { getFeatureValue_CACHED_MAY_BE_STALE } from '../../services/analytics/growthbook.js'
@@ -398,7 +399,16 @@ export const WebSearchTool = buildTool({
       }
     }
 
-async function fetchExaFallback(query: string): Promise<SearchResult | null> {
+async function fetchExaFallback(query: string, signal?: AbortSignal): Promise<SearchResult | null> {
+  // Allternit's own search route first (signed in); public Exa only after.
+  const owned = await AllternitSearch.search(query, { signal }).catch(() => undefined)
+  if (owned?.length) {
+    return {
+      tool_use_id: 'allternit_search',
+      content: owned.map(r => ({ title: r.title || r.url, url: r.url })),
+      textSummary: AllternitSearch.toText(owned),
+    } as any
+  }
   try {
     const res = await fetch('https://mcp.exa.ai/mcp', {
       method: 'POST',
@@ -461,7 +471,7 @@ async function fetchExaFallback(query: string): Promise<SearchResult | null> {
     ))
 
     if (!hasHits || containsRefusal) {
-      const fallback = await fetchExaFallback(query)
+      const fallback = await fetchExaFallback(query, context.abortController.signal)
       if (fallback) {
         data.results = data.results.filter(r => typeof r !== 'string' || (
           !(r as string).includes('unable to perform') && !(r as string).includes('technical constraints')

@@ -2,13 +2,13 @@
 import { feature } from 'bun:bundle';
 import * as React from 'react';
 import { useMemo } from 'react';
-import { Box } from './../../ink.ts';
+import { Box, Text } from './../../ink.ts';
 import { useAppState } from './../../state/AppState.tsx';
 import { STATUS_TAG, SUMMARY_TAG, TASK_NOTIFICATION_TAG } from '../../constants/xml';
 import { QueuedMessageProvider } from '../../context/QueuedMessageContext';
 import { useCommandQueue } from '../../hooks/useCommandQueue';
 import type { QueuedCommand } from '../../types/textInputTypes';
-import { isQueuedCommandVisible } from '../../utils/messageQueueManager';
+import { isQueuedCommandVisible, isQueuedForAfterTurn } from '../../utils/messageQueueManager';
 import { createUserMessage, EMPTY_LOOKUPS, normalizeMessages } from '../../utils/messages';
 import { jsonParse } from '../../utils/slowOperations';
 import { Message } from '../Message';
@@ -82,7 +82,7 @@ function PromptInputQueuedCommandsImpl(): React.ReactNode {
 
   // createUserMessage mints a fresh UUID per call; without memoization, streaming
   // re-renders defeat Message's areMessagePropsEqual (compares uuid) → flicker.
-  const messages = useMemo(() => {
+  const queued = useMemo(() => {
     if (queuedCommands.length === 0) return null;
     // task-notification is shown via useInboxNotification; most isMeta commands
     // (scheduled tasks, proactive ticks) are system-generated and hidden.
@@ -90,8 +90,11 @@ function PromptInputQueuedCommandsImpl(): React.ReactNode {
     // user sees what arrived.
     const visibleCommands = queuedCommands.filter(isQueuedCommandVisible);
     if (visibleCommands.length === 0) return null;
-    const processedCommands = processQueuedCommands(visibleCommands);
-    return normalizeMessages(processedCommands.map(cmd => {
+    // Steers first (they reach the model at the next tool call), then the
+    // messages queued for after the turn (tab), under their own label.
+    const afterTurn = visibleCommands.filter(isQueuedForAfterTurn);
+    const processedCommands = processQueuedCommands(visibleCommands.filter(cmd => !isQueuedForAfterTurn(cmd)));
+    const messages = normalizeMessages([...processedCommands, ...afterTurn].map(cmd => {
       let content = cmd.value;
       if (cmd.mode === 'bash' && typeof content === 'string') {
         content = `<bash-input>${content}</bash-input>`;
@@ -102,16 +105,25 @@ function PromptInputQueuedCommandsImpl(): React.ReactNode {
         content
       });
     }));
+    return {
+      messages,
+      afterTurnStart: afterTurn.length > 0 ? messages.length - afterTurn.length : -1
+    };
   }, [queuedCommands]);
+  const messages = queued?.messages ?? null;
+  const afterTurnStart = queued?.afterTurnStart ?? -1;
 
   // Don't show leader's queued commands when viewing any agent's transcript
   if (viewingAgent || messages === null) {
     return null;
   }
   return <Box marginTop={1} flexDirection="column">
-      {messages.map((message, i) => <QueuedMessageProvider key={i} isFirst={i === 0} useBriefLayout={useBriefLayout}>
+      {messages.map((message, i) => <React.Fragment key={i}>
+        {i === afterTurnStart && <Box paddingLeft={2}><Text dimColor>queued for after this turn · esc removes the newest</Text></Box>}
+        <QueuedMessageProvider isFirst={i === 0} useBriefLayout={useBriefLayout}>
           <Message message={message} lookups={EMPTY_LOOKUPS} addMargin={false} tools={[]} commands={[]} verbose={false} inProgressToolUseIDs={EMPTY_SET} progressMessagesForMessage={[]} shouldAnimate={false} shouldShowDot={false} isTranscriptMode={false} isStatic={true} />
-        </QueuedMessageProvider>)}
+        </QueuedMessageProvider>
+      </React.Fragment>)}
     </Box>;
 }
 export const PromptInputQueuedCommands = React.memo(PromptInputQueuedCommandsImpl);

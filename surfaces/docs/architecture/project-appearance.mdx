@@ -61,6 +61,8 @@ The client symbol catalog and `validate_appearance` runtime allowlist must chang
 
 `ProjectBanner.tsx` shares the full-width identity band across `BaseProjectView` (including bot project homes) and `ProjectCoordinatorWorkspace` (Chat, Code and Design). Both use the same mode/project recipe key as their icons and settings. The appearance editor bounds its scrolling control area, keeps its footer visible, and separates preview/import/transform controls from color/catalog controls.
 
+A project's background is not part of the `Appearance` record. It is a local setting, `appearance.stageBackground.for.project:<mode>:<id>` (`projectBackdropScope`), read by `ProjectBanner` and `BaseProjectView` through `useStageBackgroundFor('project', scope)`. `AppearanceEditor` holds the pick as a draft and writes it on Save with `saveScopeBackground`. That call writes at once because Save closes the editor in the same batch, and a hook setter's write would be lost when the editor unmounts. A save that changes only the background skips the appearance `PUT`, so a project with no custom icon keeps its fallback.
+
 Project settings pass mode-specific configuration into the shared AppearanceEditor shell. Appearance and Configuration share bounded dialog geometry; the latter is available during appearance errors. `bot-config.css` uses inline-size container queries rather than outer viewport breakpoints for bot phone Workspace & Config.
 
 ## Bot avatar rendering

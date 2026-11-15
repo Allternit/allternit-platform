@@ -20,11 +20,11 @@ Without those variables the script downloads and verifies every file, then print
 
 ## Desktop installers
 
-`scripts/mirror-desktop-release.sh <version>` copies the published `Allternit/desktop` release `v<version>` installers (dmg, exe, AppImage, deb; about 1.9 GB a version) to `desktop/v<version>/`, writes `desktop/latest.json`, and deletes every other `desktop/v*`, so only the current version is kept. Auto-update zips, blockmaps and `latest*.yml` stay on GitHub only. This keeps R2 inside the 10 GB monthly allowance. By default it prints a plan; `--apply` uploads. Credentials come from `R2_ENDPOINT`, `R2_ACCESS_KEY` and `R2_SECRET`, and it needs an authenticated `gh`.
+`scripts/mirror-desktop-release.sh <version>` copies the published `Allternit/desktop` release `v<version>` Linux packages (the `.deb`, and an AppImage if a release has one) to `desktop/v<version>/`, writes `desktop/latest.json`, and deletes every other `desktop/v*`, so only the current version is kept. Mac and Windows installers, auto-update zips, blockmaps and `latest*.yml` stay on GitHub only; the website download buttons and the Homebrew cask use GitHub releases. The Linux packages are what cloud computers' updater and `install.sh` read, and keeping only those keeps the bucket small. By default it prints a plan; `--apply` uploads. Credentials come from `R2_ENDPOINT`, `R2_ACCESS_KEY` and `R2_SECRET`, and it needs an authenticated `gh`.
 
 Cloud computers get new app versions from this mirror: an hourly job on each Incus host (`infrastructure/computer-app-update/`) installs the `linux_deb_x64` package on every cloud computer whose app is older, when Gizzi runs no session, after a snapshot, and rolls back if the app doesn't come back healthy. A release that isn't mirrored never reaches cloud computers.
 
-`latest.json` looks like `{"version": "1.1.3", "assets": {"mac_arm64": "<url>", "mac_x64": "<url>", "win_x64": "<url>", ...}}`. The installer script (`install.allternit.com`) reads it first and falls back to the GitHub API and GitHub release URLs.
+`latest.json` looks like `{"version": "1.1.3", "assets": {"linux_deb_x64": "<url>"}}`. The installer script (`install.allternit.com`) reads it first and falls back to the GitHub API and GitHub release URLs.
 
 ### Release runbook step
 
@@ -47,6 +47,17 @@ Publishing (`surfaces/allternit-desktop/scripts/runtime-package.cjs`):
 node scripts/runtime-package.cjs stamp     # resources/runtime.json (version, platform and screen commits)
 node scripts/runtime-package.cjs pack      # the signed feed for resources/{bin,platform}
 node scripts/runtime-package.cjs publish   # dry run; add --confirm to upload
+node scripts/runtime-package.cjs prune     # dry run; add --confirm to delete old versions (--keep N, default 3)
 ```
 
+`prune` keeps the newest 3 manifests of every platform plus the one each `latest.json` names, and deletes the objects and manifests nothing kept uses. Objects are shared by every version and platform, so an object stays while any kept manifest on any platform references it. It refuses and deletes nothing when a kept manifest references a missing object, and it never touches `desktop/`, `voice-packs/`, `voice-models/`, `phone-link/` or `assets/`. Nothing runs it on a schedule: `publish --confirm` prints the command to run by hand afterwards.
+
 The packed binaries must be the target platform's. A Linux package is packed on any machine with `ALLTERNIT_RUNTIME_PLATFORM=linux-x64` and `ALLTERNIT_RUNTIME_RESOURCES=<dir>`, where `<dir>/bin` holds `allternit-api`, `gizzi-code` and `allternit-factory` built on Linux x64 (the build host is the `alt-linux-build` container on `allternit-standby`, sources in `/srv/alt-build/src`, script `/srv/alt-build/rt.sh`; `allternit-factory` needs Zig 0.15.2) and `<dir>/platform` holds the screens from `npm run prepare:platform-static`. The signing key stays on the publishing Mac (`~/.config/allternit/runtime-signing-ed25519.pem`).
+
+Before you publish a `linux-x64` runtime, stage the meeting bot (the Gizzi Meetings bot that runs on cloud computers). Run this from `surfaces/allternit-desktop`, with the same `<dir>` you pack from:
+
+```bash
+ALLTERNIT_RUNTIME_PLATFORM=linux-x64 ALLTERNIT_RUNTIME_RESOURCES=<dir> node scripts/prepare-meeting-bot.cjs
+```
+
+It writes `meeting-bot/` (the bot's `dist/runner.js` and its production dependencies) and `meeting-bot-native/linux-x64/` (the LiveKit native binding) under `<dir>`. `runtime-package.cjs stamp` and `pack` include both. A runtime package without it cannot run Meetings on that computer: the status check reports `bot_missing`, and Gizzi falls back to another computer or ends the call as `no_runtime`.

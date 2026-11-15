@@ -12,7 +12,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 
+pub mod anthropic;
 pub mod catalog;
+pub mod items_bridge;
 pub mod generic_openai;
 pub mod openrouter;
 
@@ -33,6 +35,9 @@ pub enum ModelRouterError {
 
     #[error("Upstream returned error {status}: {message}")]
     UpstreamError { status: u16, message: String },
+
+    #[error("{model} is unavailable right now. Pick another model.")]
+    ModelUnavailable { model: String },
 
     #[error("Streaming not supported by provider {0}")]
     StreamingNotSupported(String),
@@ -55,7 +60,13 @@ impl From<ModelRouterError> for crate::ApiError {
             ModelRouterError::UpstreamRequestFailed(msg) => crate::ApiError::ServiceUnavailable(msg),
             ModelRouterError::UpstreamError { status, message } => {
                 let code = StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY);
-                if code == StatusCode::UNAUTHORIZED || code == StatusCode::FORBIDDEN {
+                if code == StatusCode::PAYMENT_REQUIRED {
+                    // The upstream account is out of credits: never a client
+                    // error, and its raw body names the vendor.
+                    crate::ApiError::ServiceUnavailable(
+                        "This model is unavailable right now. Pick another model.".to_string(),
+                    )
+                } else if code == StatusCode::UNAUTHORIZED || code == StatusCode::FORBIDDEN {
                     crate::ApiError::Unauthorized(message)
                 } else if code == StatusCode::TOO_MANY_REQUESTS {
                     crate::ApiError::ServiceUnavailable(message)
@@ -65,6 +76,9 @@ impl From<ModelRouterError> for crate::ApiError {
                     crate::ApiError::BadRequest(message)
                 }
             }
+            ModelRouterError::ModelUnavailable { model } => crate::ApiError::ServiceUnavailable(
+                format!("{model} is unavailable right now. Pick another model."),
+            ),
             ModelRouterError::StreamingNotSupported(msg) => crate::ApiError::BadRequest(msg),
             ModelRouterError::InvalidRequest(msg) => crate::ApiError::BadRequest(msg),
             ModelRouterError::Internal(msg) => crate::ApiError::Internal(msg),
@@ -145,9 +159,24 @@ pub struct ChatCompletionRequest {
     pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
+/// Request fields only OpenAI's own API accepts. OpenAI-compatible clients
+/// (gizzi's `allternit` provider among them) send `prompt_cache_key` on every
+/// turn; Groq, Fireworks and others answer 400 "property is unsupported".
+pub const OPENAI_ONLY_FIELDS: [&str; 3] = ["prompt_cache_key", "prompt_cache_retention", "safety_identifier"];
+
 impl ChatCompletionRequest {
     pub fn is_streaming(&self) -> bool {
         self.stream == Some(true)
+    }
+
+    /// Drop the OpenAI-only fields before sending to any other upstream.
+    pub fn strip_openai_only_fields(&mut self, provider_id: &str) {
+        if provider_id.eq_ignore_ascii_case("openai") {
+            return;
+        }
+        for field in OPENAI_ONLY_FIELDS {
+            self.extra.remove(field);
+        }
     }
 }
 
@@ -268,14 +297,25 @@ impl ModelRouter {
         !self.providers.is_empty()
     }
 
-    /// List all models known to the router, starting with the static catalog.
-    /// Live upstream metadata is merged in when a provider is healthy.
+    /// List the models clients may pick, starting with the static catalog.
+    /// The default model (`default_alias`) comes first and every row carries
+    /// `default: true|false`; unlisted aliases come last with `hidden: true` (listed
+    /// rows have no `hidden` key). Live upstream metadata is merged in when a
+    /// provider is healthy.
     pub async fn list_models(&self) -> Vec<ModelInfo> {
         let mut models = Vec::new();
+        // The flag goes on the model the server actually uses as its default:
+        // when the catalog default's provider is out of credits, its row is
+        // left out and the next funded listed model carries `default: true`.
+        let default_alias = self.default_alias();
 
-        for entry in self.alias_map.entries() {
+        for entry in self.alias_map.ordered_entries() {
             // Open-lane models are listed only while their upstream is set.
             if catalog::is_open_lane(entry) && !self.providers.contains_key(&entry.provider) {
+                continue;
+            }
+            // A model whose provider is out of credits would only fail.
+            if crate::services::upstream_funding::provider_out_of_credits(&entry.provider) {
                 continue;
             }
             let mut info = ModelInfo {
@@ -360,6 +400,25 @@ impl ModelRouter {
                     ),
                 );
             }
+            // The same retail price per 1M tokens, as an object clients can
+            // show in the Cloud credits disclosure (CONTRACT-cloud-credits D11).
+            info.extra.insert(
+                "pricing".to_string(),
+                serde_json::json!({
+                    "input_per_1m_usd": retail.prompt_per_1m,
+                    "output_per_1m_usd": retail.completion_per_1m,
+                }),
+            );
+            // Set last so upstream extras can never override these flags.
+            info.extra.insert(
+                "default".to_string(),
+                serde_json::Value::Bool(default_alias == Some(entry.alias.as_str())),
+            );
+            if entry.listed {
+                info.extra.remove("hidden");
+            } else {
+                info.extra.insert("hidden".to_string(), serde_json::Value::Bool(true));
+            }
 
             models.push(info);
         }
@@ -367,9 +426,37 @@ impl ModelRouter {
         models
     }
 
+    /// The model Allternit Cloud recommends, as `GET /v1/models` flags it: the
+    /// catalog's default model, else its first listed one. Open-lane models
+    /// (they need their own terms and credits) and models `GET /v1/models`
+    /// leaves out while their provider is out of credits are never picked. A
+    /// Platform agent on `"allternit"` runs on this model.
+    pub fn default_alias(&self) -> Option<&str> {
+        self.alias_map
+            .ordered_entries()
+            .into_iter()
+            .find(|entry| {
+                entry.listed
+                    && !catalog::is_open_lane(entry)
+                    && !crate::services::upstream_funding::provider_out_of_credits(&entry.provider)
+            })
+            .map(|entry| entry.alias.as_str())
+    }
+
     /// The provider id a model alias routes to, without dispatching.
     pub fn provider_for_alias(&self, alias: &str) -> Option<&str> {
         self.alias_map.resolve(alias).map(|entry| entry.provider.as_str())
+    }
+
+    /// Listed catalog aliases a provider serves, in `GET /v1/models` order
+    /// (the models a saved key for that provider unlocks).
+    pub fn listed_aliases_for_provider(&self, provider_id: &str) -> Vec<String> {
+        self.alias_map
+            .ordered_entries()
+            .into_iter()
+            .filter(|entry| entry.listed && entry.provider == provider_id)
+            .map(|entry| entry.alias.clone())
+            .collect()
     }
 
     /// Whether a model alias is an open-lane model (`lane: "open"`).
@@ -411,8 +498,9 @@ impl ModelRouter {
     /// model only one provider serves is never refused for funding).
     pub fn funded_alternative(&self, alias: &str) -> Option<String> {
         use crate::services::upstream_funding::{provider_below_floor, same_model_key};
+        use crate::services::upstream_funding::provider_out_of_credits;
         let entry = self.alias_map.resolve(alias)?;
-        if !provider_below_floor(&entry.provider) {
+        if !provider_below_floor(&entry.provider) && !provider_out_of_credits(&entry.provider) {
             return None;
         }
         let key = same_model_key(&entry.upstream_id);
@@ -423,6 +511,7 @@ impl ModelRouter {
                 other.provider != entry.provider
                     && self.providers.contains_key(&other.provider)
                     && !provider_below_floor(&other.provider)
+                    && !provider_out_of_credits(&other.provider)
                     && same_model_key(&other.upstream_id) == key
             })
             .map(|other| other.alias.clone())
@@ -458,19 +547,32 @@ impl ModelRouter {
                 .or_insert_with(|| serde_json::json!({ "include_usage": true }));
         }
 
+        use crate::services::upstream_funding::{mark_out_of_credits, provider_out_of_credits};
+        if provider_out_of_credits(&entry.provider) {
+            return Err(ModelRouterError::ModelUnavailable { model: entry.name.clone() });
+        }
+
         // Rewrite the model field to the upstream id before dispatching.
         request.model = entry.upstream_id.clone();
 
-        provider.chat_completions(request).await
+        match provider.chat_completions(request).await {
+            Err(ModelRouterError::UpstreamError { status: 402, .. }) => {
+                mark_out_of_credits(&entry.provider);
+                Err(ModelRouterError::ModelUnavailable { model: entry.name.clone() })
+            }
+            other => other,
+        }
     }
 
     /// Resolve the retail prices (per 1M tokens, USD) for a model alias.
     ///
     /// Live upstream pricing (from the provider's cached model list — no extra
     /// fetches) is treated as our wholesale cost and marked up by
-    /// `INFERENCE_MARKUP` (default 1.5, clamped 1.0..=5.0); the static catalog
-    /// entry is the fallback when the upstream exposes no pricing, in which
-    /// case the wholesale side is unknown (None).
+    /// `INFERENCE_MARKUP` (default 1.5, clamped 1.0..=5.0). When the upstream
+    /// exposes no pricing the static catalog entry is the fallback: an entry
+    /// with `static_price_is_wholesale` (Fireworks) is billed at static ×
+    /// `INFERENCE_MARKUP` with the static price as wholesale; any other entry
+    /// is billed at the static price with the wholesale side unknown (None).
     pub async fn retail_prices(&self, alias: &str) -> Result<RetailPrices, ModelRouterError> {
         let entry = self
             .alias_map
@@ -494,8 +596,10 @@ impl ModelRouter {
 /// Retail prices for a catalog entry given its upstream listing, if any.
 ///
 /// Live upstream pricing is our wholesale cost, marked up by
-/// `INFERENCE_MARKUP`; without it the static catalog price applies and the
-/// wholesale side is unknown.
+/// `INFERENCE_MARKUP`, and always wins. Without it: an entry with
+/// `static_price_is_wholesale` treats the static price the same way (marked
+/// up, recorded as wholesale); any other entry bills the static price as
+/// retail and the wholesale side is unknown.
 fn retail_from(entry: &catalog::ModelAliasEntry, upstream: Option<&ModelInfo>) -> RetailPrices {
     // Provider pricing extras are per-TOKEN USD (OpenRouter convention, see
     // openrouter::fetch_models); the catalog and everything downstream are
@@ -518,6 +622,16 @@ fn retail_from(entry: &catalog::ModelAliasEntry, upstream: Option<&ModelInfo>) -
         };
     }
 
+    if entry.static_price_is_wholesale {
+        let markup = inference_markup();
+        return RetailPrices {
+            prompt_per_1m: entry.prompt_price * markup,
+            completion_per_1m: entry.completion_price * markup,
+            wholesale_prompt_per_1m: Some(entry.prompt_price),
+            wholesale_completion_per_1m: Some(entry.completion_price),
+        };
+    }
+
     RetailPrices {
         prompt_per_1m: entry.prompt_price,
         completion_per_1m: entry.completion_price,
@@ -527,7 +641,8 @@ fn retail_from(entry: &catalog::ModelAliasEntry, upstream: Option<&ModelInfo>) -
 }
 
 /// Retail prices for one model, per 1M tokens USD. The wholesale fields are
-/// our actual upstream cost when live pricing was available.
+/// our upstream cost: live pricing when available, else the static catalog
+/// price of an entry flagged `static_price_is_wholesale`; None otherwise.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RetailPrices {
     pub prompt_per_1m: f64,
@@ -536,7 +651,7 @@ pub struct RetailPrices {
     pub wholesale_completion_per_1m: Option<f64>,
 }
 
-/// The retail markup over live upstream pricing: `INFERENCE_MARKUP`, default
+/// The retail markup over wholesale pricing: `INFERENCE_MARKUP`, default
 /// 1.5, clamped to 1.0..=5.0 so a typo can never give inference away for free
 /// or price it absurdly.
 fn inference_markup() -> f64 {

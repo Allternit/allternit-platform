@@ -109,7 +109,7 @@ export function MCPSettings({
         return;
       }
       if (servers.length === 0 && agentMcpServers.length === 0) {
-        onComplete("No MCP servers configured. Please run /doctor if this is unexpected. Otherwise, run `claude mcp --help` or visit https://docs.gizziio.com/mcp to learn more.");
+        onComplete("No MCP servers configured. Please run /doctor if this is unexpected. Otherwise, run `claude mcp --help` or visit https://docs.allternit.com/cli/mcp to learn more.");
       }
     };
   const t8 = [servers.length, filteredClients.length, agentMcpServers.length, onComplete];

@@ -38,6 +38,7 @@ pub fn local_engine_router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/local-engine/health", get(proxy_health))
         .route("/local-engine/status", get(proxy_status))
+        .route("/local-engine/hardware", get(proxy_hardware))
         .route("/local-engine/catalog", get(proxy_catalog))
         .route("/local-engine/catalog/refresh", post(proxy_catalog_refresh))
         .route("/local-engine/assess", post(proxy_assess))
@@ -46,6 +47,7 @@ pub fn local_engine_router() -> Router<Arc<AppState>> {
         .route("/local-engine/models", get(proxy_list_models))
         .route("/local-engine/models/import", post(proxy_import_model))
         .route("/local-engine/models/download", post(proxy_download_model))
+        .route("/local-engine/models/verify", post(proxy_verify_model))
         .route("/local-engine/runtimes", get(proxy_list_runtimes))
         .route("/local-engine/runtimes/launch", post(proxy_launch_runtime))
         .route("/local-engine/runtimes/:id/stop", post(proxy_stop_runtime))
@@ -70,6 +72,14 @@ async fn proxy_status(State(_state): State<Arc<AppState>>, headers: HeaderMap) -
         return unauthorized();
     }
     proxy_get("/status").await
+}
+
+/// Device profile + model budget for on-device fit (`GET /hardware`).
+async fn proxy_hardware(headers: HeaderMap) -> Response {
+    if get_user(&headers).is_none() {
+        return unauthorized();
+    }
+    proxy_get("/hardware").await
 }
 
 async fn proxy_catalog(
@@ -155,6 +165,20 @@ async fn proxy_download_model(
     proxy_post("/models/download", body).await
 }
 
+/// `{repo}` → re-hash the local files against the Freeweights manifest (or
+/// the publisher's hashes); returns the contract `verification`.
+async fn proxy_verify_model(
+    State(_state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    if get_user(&headers).is_none() {
+        return unauthorized();
+    }
+    // Re-hashing a large model takes a while (sha256 over every file).
+    proxy_post_with_timeout("/models/verify", body, std::time::Duration::from_secs(30 * 60)).await
+}
+
 async fn proxy_launch_runtime(
     State(_state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -217,8 +241,12 @@ async fn proxy_get(path: &str) -> Response {
 }
 
 async fn proxy_post(path: &str, body: Bytes) -> Response {
+    proxy_post_with_timeout(path, body, std::time::Duration::from_secs(30)).await
+}
+
+async fn proxy_post_with_timeout(path: &str, body: Bytes, timeout: std::time::Duration) -> Response {
     let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
+        .timeout(timeout)
         .build()
         .unwrap_or_default();
 

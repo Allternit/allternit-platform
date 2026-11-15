@@ -1,0 +1,21 @@
+{
+  "name": "@allternit/status",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "status.allternit.com: probes, state machine, incidents, admin API and page (Cloudflare Worker + D1).",
+  "scripts": {
+    "dev": "wrangler dev --local --test-scheduled",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "db:migrate:local": "wrangler d1 migrations apply allternit-status --local",
+    "incident": "node scripts/incident.mjs"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260120.0",
+    "@types/node": "25.6.2",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.8",
+    "wrangler": "^3.114.17"
+  }
+}

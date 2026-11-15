@@ -1,5 +1,5 @@
 import Foundation
-import UserNotifications
+@preconcurrency import UserNotifications
 
 /// Local response notifications (Phase 5).
 ///
@@ -9,10 +9,9 @@ import UserNotifications
 /// case where the process is still alive (the SSE connection itself is
 /// cancelled on `.background` — see ChatViewModel.handleScenePhase).
 ///
-/// True APNs server push — notifying when a server-side generation
-/// completes after the app was suspended or terminated — is OUT OF SCOPE
-/// for this phase: it needs backend push plumbing (device-token
-/// registration, push pipeline) plus a notification service extension.
+/// Server push (APNs) — a bot answering after the app was suspended or
+/// closed — is `PushNotificationManager` + cloud-api routes/apns.rs; the
+/// authorization granted here also registers this phone for it.
 enum NotificationService {
     /// System authorization, requested only after the app-owned priming
     /// sheet (AppPermission.notifications) got a Continue.
@@ -37,6 +36,8 @@ enum NotificationService {
     /// granted authorization; a no-op otherwise. Called on stream
     /// completion when the app isn't active (the caller checks app state).
     static func postResponseNotification(preview: String) async {
+        // Settings → Notifications → Response completions.
+        guard NotificationPrefs.isOn(NotificationPrefs.responseKey) else { return }
         let center = UNUserNotificationCenter.current()
         let settings = await center.notificationSettings()
         guard settings.authorizationStatus == .authorized else { return }
@@ -44,7 +45,7 @@ enum NotificationService {
         let content = UNMutableNotificationContent()
         content.title = "Allternit responded"
         content.body = preview.isEmpty ? "Your response is ready." : preview
-        content.sound = .default
+        if NotificationPrefs.isOn(NotificationPrefs.soundKey) { content.sound = .default }
 
         let request = UNNotificationRequest(
             identifier: UUID().uuidString,
@@ -59,10 +60,12 @@ enum NotificationService {
     /// Reuses the same `.notifications` authorization as
     /// `postResponseNotification` — no separate opt-in.
     static func postPermissionRequestNotification(for request: PermissionRequest) async {
+        // Settings → Notifications → Approval requests.
+        guard NotificationPrefs.isOn(NotificationPrefs.approvalKey) else { return }
         let content = UNMutableNotificationContent()
         content.title = "Approval needed"
         content.body = "\(request.permission.capitalized) request is waiting on you."
-        content.sound = .default
+        if NotificationPrefs.isOn(NotificationPrefs.soundKey) { content.sound = .default }
 
         let notificationRequest = UNNotificationRequest(
             identifier: "permission-\(request.id)",

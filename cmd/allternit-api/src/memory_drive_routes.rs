@@ -721,9 +721,10 @@ async fn find_memories_info(State(state): State<Arc<AppState>>, Extension(user):
     use crate::memory_drive_chat_import as chats;
     run(state, user, move |ctx| {
         open(ctx, None, false)?;
-        let (provider, model) = crate::memory_extraction::extraction_model();
+        // null = no brain chosen yet; finding memories answers 409 no_brain.
+        let model = crate::memory_extraction::extraction_model().map(|(provider, model)| format!("{provider}/{model}"));
         Ok(json!({
-            "model": format!("{provider}/{model}"),
+            "model": model,
             "max_conversations": chats::MAX_CONVERSATIONS,
             "max_conversation_chars": chats::MAX_CONVERSATION_CHARS,
             "max_batch_chars": chats::MAX_BATCH_CHARS,
@@ -769,7 +770,9 @@ async fn find_memories(State(state): State<Arc<AppState>>, Extension(user): Exte
         Err(_) => return err(StatusCode::INTERNAL_SERVER_ERROR, "Memory request failed. Retry later."),
     }
     let _slot = find_memories_slots().acquire().await;
-    let model = crate::memory_extraction::extraction_model();
+    let Some(model) = crate::memory_extraction::extraction_model() else {
+        return crate::config::no_brain_error().into_response();
+    };
     let reply = crate::usage_ledger::scope(
         crate::usage_ledger::LedgerCtx::surface("memory").tenant(None, Some(&owner)),
         crate::gizzi_completion::complete_ephemeral_structured(

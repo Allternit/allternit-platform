@@ -6,3 +6,4 @@
 821a5254d765fd52330bcf1bcbd8e8188bdb8dce:tools/system-one-local/test/hook.test.ts:curl-auth-header:146
 a28cb7186ff5d01d0ccbbfde2fdace0bec610d48:cmd/gizzi-code/src/runtime/tools/mcp/apps.ts:generic-api-key:84
 6e1b62b80c5d56139e4b683a7a3912aa264da54c:sdk/mcp-events/test/mcp-events.test.ts:generic-api-key:24
+2fbd8b6ce17f9b87dca61abfac005f462c75c645:cmd/allternit-cloud-api/src/routes/zoom_tests.rs:generic-api-key:62

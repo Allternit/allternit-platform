@@ -2,7 +2,7 @@ openapi: 3.1.0
 info:
   title: Allternit Platform API
   version: "1.0.0"
-  summary: Agents, voice, messaging, numbers, channels, the twin layer, computers and phones, for developers.
+  summary: Agents, voice, messaging, numbers, mailboxes, channels, the twin layer, computers and phones, for developers.
   description: |
     The Allternit Platform API. Base URL `https://api.allternit.com`.
 
@@ -372,7 +372,7 @@ paths:
         required: true
         schema: { type: string, examples: ["agent_0123456789abcdef01234567"] }
     get:
-      operationId: listConversations
+      operationId: listAgentConversations
       summary: List an agent's conversations
       description: The agent's conversations, oldest first, without their messages (use getConversation for those). A key bound to an account sees only that account's agent. Requires the `agents` scope.
       tags: [Conversations]
@@ -394,7 +394,7 @@ paths:
                         items: { $ref: "#/components/schemas/Conversation" }
         default: { $ref: "#/components/responses/Error" }
     post:
-      operationId: createConversation
+      operationId: createAgentConversation
       summary: Start a conversation
       description: Opens a conversation with the agent, in the agent's account. No message is sent yet.
       tags: [Conversations]
@@ -438,7 +438,8 @@ paths:
         then `RUN_FINISHED` or `RUN_ERROR` (`{message, code}`). `runId` is echoed (generated when
         missing). Refusals before the stream starts are plain errors, as for messages:
         `402 spend_cap_reached` / `payment_method_required`, `409 conversation_busy`,
-        `503 runtime_starting`. The reply is stored and metered like any conversation message.
+        `503 runtime_starting` or `503 computer_capacity` (the host has no memory for another awake
+        runtime). Both carry `Retry-After: 30`. The reply is stored and metered like any conversation message.
       tags: [Conversations]
       requestBody:
         required: true
@@ -481,7 +482,7 @@ paths:
     get:
       operationId: getConversation
       summary: Retrieve a conversation
-      description: The conversation with its latest 200 messages, oldest first.
+      description: The conversation with its latest 200 messages inline (`messages`, oldest first, the `conversation.message` shape SDK 0.3.x reads) and `item_count`, the number of items (list them all, including function and tool calls, with listConversationItems). Requires the `agents` scope.
       tags: [Conversations]
       responses:
         "200":
@@ -489,6 +490,46 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Conversation" }
+        default: { $ref: "#/components/responses/Error" }
+    patch:
+      operationId: updateConversation
+      summary: Update a conversation
+      description: Replaces the conversation's `metadata`. Requires the `agents` scope.
+      tags: [Conversations]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [metadata]
+              additionalProperties: false
+              properties:
+                metadata: { type: object, additionalProperties: true }
+      responses:
+        "200":
+          description: The conversation.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Conversation" }
+        default: { $ref: "#/components/responses/Error" }
+    delete:
+      operationId: deleteConversation
+      summary: Delete a conversation
+      description: Deletes the conversation and its items. Requires the `agents` scope.
+      tags: [Conversations]
+      responses:
+        "200":
+          description: Deleted.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, object, deleted]
+                properties:
+                  id: { type: string }
+                  object: { type: string, const: conversation.deleted }
+                  deleted: { type: boolean }
         default: { $ref: "#/components/responses/Error" }
   /v1/conversations/{id}/messages:
     parameters:
@@ -506,7 +547,8 @@ paths:
         "output"?, "error"?}`; arguments and results are cut at 8,000 characters) as it uses
         tools, then `message.completed` (the stored reply) or `error`. Clients should skip
         event names they don't know. The first message starts the
-        project's hosted runtime: `503 runtime_starting` means retry in a few seconds.
+        project's hosted runtime: `503 runtime_starting` (or `503 computer_capacity` when the host is full)
+        means retry after the `Retry-After` header (30 seconds).
         One message at a time per conversation (`409 conversation_busy`). A project at its
         monthly spend cap gets `402 spend_cap_reached`; one with no card on file gets
         `402 payment_method_required`. Each reply records `tokens_in` and
@@ -597,6 +639,103 @@ paths:
                   provider: { type: string }
                   object: { type: string, const: model_key }
                   deleted: { type: boolean, const: true }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/projects/{id}/tracing:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: The project's id, or `current` for the API key's project.
+        schema: { type: string, examples: ["current"] }
+    get:
+      operationId: getProjectTracing
+      summary: The project's trace export settings
+      description: >-
+        Where the project's spans go. Header values are never returned, only their names.
+        `404 tracing_not_configured` when none is set. Requires the `usage` scope.
+      tags: [Usage]
+      responses:
+        "200":
+          description: The trace export settings.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProjectTracing" }
+        default: { $ref: "#/components/responses/Error" }
+    put:
+      operationId: putProjectTracing
+      summary: Set the project's trace export
+      description: >-
+        Send a span for every agent turn, phone run and call of this project to an OTLP/HTTP
+        collector (Langfuse, Arize Phoenix, any OpenTelemetry collector), as OTLP protobuf
+        following the OpenTelemetry GenAI conventions. `endpoint` is the collector's OTLP base
+        URL (`/v1/traces` is appended) or its full traces URL; it must be a public https URL.
+        `headers` are encrypted at rest; leave them out to keep the stored ones. Export runs in
+        the background and never fails or slows a request. Not available to account-bound keys.
+      tags: [Usage]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [endpoint]
+              additionalProperties: false
+              properties:
+                endpoint: { type: string, format: uri, maxLength: 2048, examples: ["https://cloud.langfuse.com/api/public/otel"] }
+                headers:
+                  type: object
+                  maxProperties: 20
+                  additionalProperties: { type: string, maxLength: 4096 }
+                  examples: [{ Authorization: "Basic cGstbGYtLi4uOnNrLWxmLS4uLg==" }]
+                service_name: { type: string, maxLength: 120, default: allternit-platform }
+                enabled: { type: boolean, default: true }
+      responses:
+        "200":
+          description: The stored settings.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProjectTracing" }
+        default: { $ref: "#/components/responses/Error" }
+    delete:
+      operationId: deleteProjectTracing
+      summary: Turn off and forget the project's trace export
+      tags: [Usage]
+      responses:
+        "200":
+          description: Deleted.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  object: { type: string, const: project.tracing }
+                  project_id: { type: string }
+                  deleted: { type: boolean, const: true }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/projects/{id}/tracing/test:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, examples: ["current"] }
+    post:
+      operationId: testProjectTracing
+      summary: Send one test span
+      description: Sends one `allternit.tracing.test` span to the collector now and reports its answer.
+      tags: [Usage]
+      responses:
+        "200":
+          description: What the collector answered.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [object, ok, message]
+                properties:
+                  object: { type: string, const: project.tracing.test }
+                  ok: { type: boolean }
+                  status: { type: [integer, "null"], description: The collector's HTTP status, or null when it couldn't be reached. }
+                  message: { type: string }
         default: { $ref: "#/components/responses/Error" }
   /v1/projects/current/spend_cap:
     get:
@@ -870,11 +1009,12 @@ paths:
             application/json:
               schema: { type: object, properties: { number_id: { type: string }, handled: { type: string } } }
         default: { $ref: "#/components/responses/Error" }
-  /v1/messages:
+  /v1/texts:
     get:
-      operationId: listMessages
+      operationId: listTexts
       summary: List texts
-      tags: [Messaging]
+      description: SMS and MMS on the project's numbers. Formerly `/v1/messages`. The webhook events `message.received` and `message.status` keep their names. Requires the `messaging` scope.
+      tags: [Texts]
       parameters:
         - { $ref: "#/components/parameters/Limit" }
         - { $ref: "#/components/parameters/After" }
@@ -883,16 +1023,16 @@ paths:
         - { name: direction, in: query, schema: { type: string, enum: [inbound, outbound] } }
       responses:
         "200":
-          description: A page of messages.
+          description: A page of texts.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/MessageList" }
+              schema: { $ref: "#/components/schemas/TextList" }
         default: { $ref: "#/components/responses/Error" }
     post:
-      operationId: sendMessage
+      operationId: createText
       summary: Send a text
-      description: Refused when texting isn't active on the number, the person sent STOP, or they never texted first and have no consent recorded.
-      tags: [Messaging]
+      description: Refused when texting isn't active on the number, the person sent STOP, or they never texted first and have no consent recorded. Ids keep their `msg_` prefix. The webhook events `message.received` and `message.status` keep their names.
+      tags: [Texts]
       parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
       requestBody:
         required: true
@@ -901,23 +1041,23 @@ paths:
             schema: { type: object, required: [number_id, to, body], properties: { number_id: { type: string }, to: { type: string }, body: { type: string, maxLength: 1600 } } }
       responses:
         "201":
-          description: The message.
+          description: The text.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/Message" }
+              schema: { $ref: "#/components/schemas/Text" }
         default: { $ref: "#/components/responses/Error" }
-  /v1/messages/{id}:
+  /v1/texts/{id}:
     parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
     get:
-      operationId: getMessage
+      operationId: getText
       summary: Retrieve a text
-      tags: [Messaging]
+      tags: [Texts]
       responses:
         "200":
-          description: The message.
+          description: The text.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/Message" }
+              schema: { $ref: "#/components/schemas/Text" }
         default: { $ref: "#/components/responses/Error" }
   /v1/webhooks:
     get:
@@ -947,7 +1087,7 @@ paths:
               required: [url, events]
               properties:
                 url: { type: string, format: uri }
-                events: { type: array, items: { type: string, enum: ["*", approval.requested, message.received, message.status, registration.updated, inbox.item.created, call.started, call.ended, call.transcript.ready, usage.threshold, phone.step, phone.run.completed] } }
+                events: { type: array, items: { type: string, enum: ["*", approval.requested, approval.resolved, approval.expired, message.received, message.status, registration.updated, inbox.item.created, call.started, call.ended, call.transcript.ready, usage.threshold, phone.step, phone.run.completed, phone.fleet_run.completed, phone.approval.requested, phone.approval.resolved, mail.received] } }
                 description: { type: string, maxLength: 200 }
       responses:
         "201":
@@ -1370,7 +1510,7 @@ paths:
         required: true
         schema: { type: string }
     get:
-      operationId: listApprovals
+      operationId: listAccountApprovals
       summary: List approvals
       description: "`?status=pending|approved|denied|all`, newest first."
       tags: [Twin]
@@ -1811,6 +1951,7 @@ paths:
       tags: [Phones]
       parameters:
         - { name: run_id, in: query, schema: { type: string }, description: "Only this run's steps." }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 500, default: 100 }, description: "At most this many newest steps." }
       responses:
         "200":
           description: Steps and runs.
@@ -1827,6 +1968,7 @@ paths:
       description: |
         One phone tool through the Desktop phone gateway, exactly as a bot calls it: `phone.devices`, `phone.screenshot`, `phone.read_ui`, `phone.screen_text`, `phone.tap`, `phone.type`, `phone.find_and_tap`, `phone.swipe`, `phone.home`, `phone.back`, `phone.key`, `phone.open_app`, `phone.sms.read`, `phone.sms.send`, `phone.call.dial`. An iPhone running the Allternit app (serial `app:<phoneId>`) is screen only plus its in-app browser: `phone.screenshot`, `phone.devices` and `phone.web.open`, `phone.web.snapshot`, `phone.web.click`, `phone.web.type`, `phone.web.scroll`, `phone.web.back`, `phone.web.wait` (the app must be open; taps on native apps answer `not_supported`).
         `phone.sms.send` and `phone.call.dial` wait for the person to approve on their Desktop (up to 80 s; then 503 `phone_timeout`); a refusal is a 200 result with `ok: false, error: approval_denied`. Tool failures are 200 with `ok: false`. 409 `phone_offline` when the phone isn't connected, 503 `phone_desktop_offline` / `phone_gateway_unavailable` when the Desktop or its phone gateway isn't running. The call is a `phone.step` webhook like any other.
+        A sensitive action (pay, delete, send, call, a credential, a money app, a security setting) is held: 409 `approval_required` with `approval_id`, `inbox_id` and `expires_at`, and a `phone.approval.requested` webhook. Nothing runs and no phone-minute is billed. The project owner approves in the Allternit app; an API key can't approve. Then repeat the same call with `hold_id` set to the `approval_id` (or `_hold` in `arguments`) within 10 minutes, with a new `Idempotency-Key` if you send one. The approval covers that one action.
       tags: [Phones]
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"
@@ -1842,12 +1984,18 @@ paths:
                 name: { type: string, description: "e.g. phone.tap (the phone. prefix is optional)." }
                 arguments: { type: object, additionalProperties: true }
                 run_id: { type: string, description: "Group several calls into one run in the history (default: a new api- run)." }
+                hold_id: { type: string, maxLength: 128, description: "On the retry of a held call: the approval_id the owner approved. Sent to the phone as `_hold` in arguments." }
       responses:
         "200":
           description: The tool result.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/PhoneToolResult" }
+        "409":
+          description: "Held for the owner's approval (code approval_required), or another conflict such as phone_offline (then the body is the Error object)."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PhoneApprovalRequired" }
         default: { $ref: "#/components/responses/Error" }
   /v1/phones/{serial}/task:
     parameters:
@@ -1855,7 +2003,7 @@ paths:
     post:
       operationId: runPhoneTask
       summary: Give a phone a goal
-      description: The phone task loop on the Desktop (read the screen, one action, repeat) with `bot_id`'s brain, `brain`, or the default. Answers 202 with the `run_id`; each step is a `phone.step` webhook and the end is `phone.run.completed`. Tasks never send texts or place calls. At most 5 minutes.
+      description: The phone task loop on the Desktop (read the screen, one action, repeat) with `bot_id`'s brain, `brain`, or the default. Answers 202 with the `run_id`; each step is a `phone.step` webhook and the end is `phone.run.completed`. Tasks never send texts or place calls. At most 5 minutes. A sensitive step waits up to 5 minutes for the owner's approval with the budget paused (status `waiting_approval`, `phone.approval.requested`); the run ends `denied`, `approval_timeout` or `phone_locked` when it can't go on. `duration_ms` and phone minutes leave out held time.
       tags: [Phones]
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"
@@ -1879,6 +2027,727 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/PhoneRunStarted" }
         default: { $ref: "#/components/responses/Error" }
+  /v1/phones/{serial}/live:
+    parameters:
+      - { name: serial, in: path, required: true, schema: { type: string }, description: "From GET /v1/phones (not `-`)." }
+    post:
+      operationId: getPhoneLiveView
+      summary: Watch a phone live
+      description: |
+        A view-only live view of the phone's screen for 10 minutes: `viewer_url` is a page you can open or put in an iframe, and `stream_url` is the raw stream (`{type:"meta"}` JSON, then H.264 Annex-B frames) for your own player. Both URLs carry the live view id as their only credential and stop working after `expires_in` seconds; neither can send input. A new view needs a new call. 409 `phone_offline` when the phone isn't connected to the Desktop.
+      tags: [Phones]
+      responses:
+        "200":
+          description: The live view.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PhoneLiveView" }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/phones/runs:
+    post:
+      operationId: startPhoneFleetRun
+      summary: Run one task or skill on many phones
+      description: |
+        Starts one background run per listed phone: a task (`goal`) or a saved skill (`skill`). Answers 202 with the fleet run; phones whose run could not start are in `not_started` with the error. Every run counts against the plan's concurrent phone-run limit (Sandbox 1, Pay as you go 5, Growth 25, Enterprise by contract); asking for more than the room left is 429 `phone_run_limit` and starts nothing. Each run ends with `phone.run.completed`; the whole fleet run with `phone.fleet_run.completed`.
+      tags: [Phones]
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [serials]
+              additionalProperties: false
+              properties:
+                serials: { type: array, minItems: 1, maxItems: 100, uniqueItems: true, items: { type: string } }
+                goal: { type: string, maxLength: 2000, description: "A task for every phone. Give this or skill." }
+                skill: { type: string, maxLength: 80, description: "A saved phone skill to replay on every phone." }
+                inputs: { type: object, additionalProperties: { type: string }, description: "Skill inputs." }
+                max_steps: { type: integer, minimum: 1, maximum: 40 }
+                bot_id: { type: string }
+                brain: { type: string, description: "provider/model" }
+      responses:
+        "202":
+          description: Started.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PhoneFleetRun" }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/phones/runs/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: getPhoneFleetRun
+      summary: A fleet run
+      description: The fleet run and each phone's run (status, ok, start and end).
+      tags: [Phones]
+      responses:
+        "200":
+          description: The fleet run.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PhoneFleetRun" }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/mailboxes:
+    get:
+      operationId: listMailboxes
+      summary: List mailboxes
+      tags: [Mailboxes]
+      parameters:
+        - { $ref: "#/components/parameters/Limit" }
+        - { $ref: "#/components/parameters/After" }
+        - { name: account_id, in: query, schema: { type: string } }
+        - { name: agent_id, in: query, schema: { type: string } }
+      responses:
+        "200":
+          description: A page of mailboxes, oldest first.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MailboxList" }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      operationId: createMailbox
+      summary: Create a mailbox for an account or agent
+      description: An address on Allternit Mail (`local_part@bots.allternit.com`; `-2`, `-3`… when taken). With `agent_id`, the account is the agent's. Needs a card on file; live projects are billed `mailbox_month` ($2 a month). Requires the `mail` scope.
+      tags: [Mailboxes]
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                account_id: { type: string }
+                agent_id: { type: string }
+                local_part: { type: string, description: "The part before @. Lower-cased; letters, digits and dashes. Default: the agent's name." }
+                display_name: { type: string, maxLength: 100 }
+      responses:
+        "201":
+          description: The mailbox.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Mailbox" }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/mailboxes/{id}:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+    get:
+      operationId: getMailbox
+      summary: Retrieve a mailbox
+      tags: [Mailboxes]
+      responses:
+        "200":
+          description: The mailbox.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Mailbox" }
+        default: { $ref: "#/components/responses/Error" }
+    delete:
+      operationId: deleteMailbox
+      summary: Delete a mailbox
+      description: Removes the address. A mailbox inside an identity answers `409 mailbox_in_identity`; delete the identity instead.
+      tags: [Mailboxes]
+      responses:
+        "200":
+          description: Deleted.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string }
+                  object: { type: string, enum: [mailbox] }
+                  deleted: { type: boolean }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/mailboxes/{id}/messages:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+    get:
+      operationId: listMailMessages
+      summary: List a mailbox's messages
+      description: Newest first. Each carries the one-time codes and sign-in links found in it.
+      tags: [Mailboxes]
+      parameters:
+        - { $ref: "#/components/parameters/Limit" }
+        - { $ref: "#/components/parameters/After" }
+        - { name: verification, in: query, description: Only messages that look like verification email., schema: { type: boolean } }
+      responses:
+        "200":
+          description: A page of messages.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MailMessageList" }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/mailboxes/{id}/messages/{mid}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+      - { name: mid, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: getMailMessage
+      summary: Read one message
+      tags: [Mailboxes]
+      responses:
+        "200":
+          description: The message with its `text` and `html` bodies.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: "#/components/schemas/MailMessage" }
+                  - type: object
+                    properties:
+                      text: { type: [string, "null"] }
+                      html: { type: [string, "null"] }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/mailboxes/{id}/otp:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+    post:
+      operationId: readMailOtp
+      summary: Wait for the newest one-time code
+      description: The newest message with a code or sign-in link received after `since` (default the last 10 minutes), waiting up to `wait_seconds` for one to arrive. `found` is false when none came.
+      tags: [Mailboxes]
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                wait_seconds: { type: integer, minimum: 0, maximum: 60, default: 0 }
+                since: { type: string, format: date-time }
+      responses:
+        "200":
+          description: The code, if one arrived.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [object, found]
+                properties:
+                  object: { type: string, enum: [mail_otp] }
+                  found: { type: boolean }
+                  code: { type: [string, "null"] }
+                  codes: { type: array, items: { type: string } }
+                  links: { type: array, items: { type: string } }
+                  message: { oneOf: [{ $ref: "#/components/schemas/MailMessage" }, { type: "null" }] }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/mailboxes/{id}/send:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+    post:
+      operationId: sendMail
+      summary: Send an email from a mailbox
+      description: Live projects only. The call is the approval, so the send is queued at once; `pending_approval` only when Allternit Mail held it and could not release it.
+      tags: [Mailboxes]
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [to, subject]
+              additionalProperties: false
+              properties:
+                to: { type: string, format: email }
+                subject: { type: string, maxLength: 998 }
+                text: { type: string }
+                html: { type: string }
+      responses:
+        "202":
+          description: Accepted.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  object: { type: string, enum: [mail_send] }
+                  mailbox_id: { type: string }
+                  from: { type: string }
+                  to: { type: string }
+                  message_id: { type: [string, "null"] }
+                  status: { type: string, description: "queued or pending_approval" }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/identities:
+    get:
+      operationId: listIdentities
+      summary: List agent identities
+      tags: [Identities]
+      parameters:
+        - { $ref: "#/components/parameters/Limit" }
+        - { $ref: "#/components/parameters/After" }
+        - { name: account_id, in: query, schema: { type: string } }
+        - { name: agent_id, in: query, schema: { type: string } }
+      responses:
+        "200":
+          description: A page of identities.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IdentityList" }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      operationId: createIdentity
+      summary: Give an agent a number, a mailbox and a phone in one call
+      description: Gets a number (simulated in sandbox; in live the first available, in `area_code` when given), a mailbox and, with `phone_serial`, binds one of the owner's linked phones. Requires the `numbers` and `mail` scopes, plus `phones` (and an unbound key) with `phone_serial`. Billed as the Agent identity bundle ($9 a month, meter `identity_month`).
+      tags: [Identities]
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                account_id: { type: string }
+                agent_id: { type: string }
+                area_code: { type: string, pattern: "^[0-9]{3}$" }
+                number_type: { type: string, enum: [local, toll_free] }
+                phone_serial: { type: string }
+                local_part: { type: string }
+                display_name: { type: string, maxLength: 100 }
+      responses:
+        "201":
+          description: The identity.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Identity" }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/identities/{id}:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+    get:
+      operationId: getIdentity
+      summary: Retrieve an identity
+      tags: [Identities]
+      responses:
+        "200":
+          description: The identity.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Identity" }
+        default: { $ref: "#/components/responses/Error" }
+    delete:
+      operationId: deleteIdentity
+      summary: Delete an identity
+      description: Releases the number and removes the mailbox.
+      tags: [Identities]
+      responses:
+        "200":
+          description: Deleted.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string }
+                  object: { type: string, enum: [identity] }
+                  deleted: { type: boolean }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/decisions:
+    get:
+      operationId: listDecisions
+      summary: List decisions
+      description: The project's stored decisions, newest first, in the usual cursor envelope (`limit` 1 to 100, default 20; pass `next_cursor` as `after`). A key bound to an account sees only that account's decisions; `account_id` narrows a project-wide key (`403 account_mismatch` for a bound key naming another account). Each item is the same `Decision` that `GET /v1/decisions/{id}` returns. Requires the `decisions` scope.
+      tags: [Decisions]
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/After"
+        - { name: account_id, in: query, schema: { type: string } }
+      responses:
+        "200":
+          description: A page of decisions.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DecisionList" }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      operationId: createDecision
+      summary: Ask one or more questions about some input
+      description: |
+        Answers up to 16 typed questions about one input (text or JSON), with a probability
+        and a confidence for each. Question types: `predicate` (yes or no;
+        `probability` is P(yes)), `choice` (2 to 255 `choices`; the answer names the best one
+        and gives every probability), `score` (2 to 10 ordered `levels`; `score` is the
+        probability-weighted level index scaled to 0..1, with the per-level distribution).
+        A `questions` object keyed by name (Google style) is accepted and normalised to the
+        array form. The single-question Agency body (`context`, `options`, `kind`, `question`)
+        is also accepted on this route and answered in the Agency shape. Questions run
+        together under one `latency_budget_ms`; a question the backends cannot answer in time
+        comes back as a `refusal` answer (`reason`: `abstained`, `unavailable` or
+        `budget_exhausted`), not a failed request. Each answer names the `backend` that answered
+        it; the top-level `backend` is the one that answered the most questions. Limits: 1 to 16
+        questions, `input` text plus shared `instructions` up to 4 KiB (`400 input_too_large`), each question's instructions plus choice or level texts up to 4 KiB (`400 question_too_large`). Image inputs are not
+        supported yet (`400 image_not_supported`). When `latency_budget_ms` is omitted it
+        defaults to `5000 + 15 * input_bytes + 3000 * questions` ms, clamped to 10000-120000;
+        input bytes count the shared `instructions` plus the input text, and an Agency body
+        counts as one question. These limits are sized to the current scoring hardware and rise
+        as it grows. Billed per answered question (`decision_questions`
+        meter; refusals are not billed, `usage.questions` counts answered ones). Requires the
+        `decisions` scope.
+      tags: [Decisions]
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DecisionRequest" }
+      responses:
+        "201":
+          description: The decision.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Decision" }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/decisions/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, examples: ["dec_0123456789abcdef01234567"] }
+    get:
+      operationId: getDecision
+      summary: Retrieve a decision
+      description: The stored decision, with any outcomes recorded so far. Requires the `decisions` scope.
+      tags: [Decisions]
+      responses:
+        "200":
+          description: The decision.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Decision" }
+        default: { $ref: "#/components/responses/Error" }
+    patch:
+      operationId: updateDecision
+      summary: Record what happened after a decision
+      description: Adds an outcome per question name (`success`, `failure`, `error` or `skipped`, with an optional label and detail). Outcomes feed back into the decision backends. Requires the `decisions` scope.
+      tags: [Decisions]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [outcomes]
+              additionalProperties: false
+              properties:
+                outcomes:
+                  type: object
+                  description: Keyed by question name.
+                  additionalProperties: { $ref: "#/components/schemas/DecisionOutcome" }
+      responses:
+        "200":
+          description: The decision with the outcomes merged in.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Decision" }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/responses:
+    post:
+      operationId: createResponse
+      summary: Create a response
+      description: |
+        Runs one turn. Give exactly one of `model` (runs on the model router; your `tools` come
+        back as `function_call` items for you to run, then you continue with
+        `previous_response_id`) or `agent` (runs on the project's hosted runtime with the
+        agent's own tools). `conversation` and `previous_response_id` are mutually exclusive.
+        With `stream: true` the answer is server-sent events: `response.created`,
+        `response.output_item.added`, `response.output_text.delta` (`{"delta"}`),
+        `response.output_text.done`, `response.function_call_arguments.done`,
+        `response.tool_call.started` / `response.tool_call.completed` / `response.tool_call.failed`
+        (hosted tools, arguments and results cut at 8,000 characters),
+        `response.output_item.done`, then `response.completed`, `response.incomplete` or `response.failed`, and `error`
+        for failures before the stream starts. Clients should skip event names they don't know.
+        When an agent's action needs the owner's approval, that tool call fails with a "try
+        again once they approve" result and the turn ends; this answer (and its stream) still
+        ends `completed`, because the approval is raised after the turn finishes. While it is
+        pending, `GET /v1/responses/{id}` reads `status: requires_action` with one
+        `required_actions` entry per pending approval. Resolve it with `POST /v1/approvals/{id}`
+        (or follow the `approval.requested` / `approval.resolved` webhooks), then send a new
+        response with `previous_response_id`. Errors before the stream starts are
+        plain errors: `400 invalid_request` for `agent` with `store: false`, `agent` with client
+        `tools`, or mixing `model` and `agent` turns in one conversation;
+        `400 missing_function_call_output` when a `function_call` of the previous response has no
+        matching `function_call_output` in `input`; `409 previous_response_not_latest` when
+        `previous_response_id` is not the latest response of its conversation;
+        `402 spend_cap_reached`, `402 payment_method_required`, `409 conversation_busy`,
+        `503 runtime_starting` / `computer_capacity` (both with `Retry-After: 30`). Token usage is recorded as
+        `tokens_in` and `tokens_out`. Requires the `inference` scope with `model`, or the
+        `agents` scope with `agent`.
+      tags: [Responses]
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ResponseRequest" }
+      responses:
+        "200":
+          description: The response (`status` is `failed`, with `error`, when the turn failed), or server-sent events when `stream` is true.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Response" }
+            text/event-stream:
+              schema: { type: string }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/responses/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, examples: ["resp_0123456789abcdef01234567"] }
+    get:
+      operationId: getResponse
+      summary: Retrieve a response
+      description: "A stored response (`store` was not false) with its output items. While an approval its turn raised is pending, `status` is `requires_action` and `required_actions` lists the pending approvals (one `approval` entry with its `approval_id` each, oldest first). Requires the `inference` or `agents` scope."
+      tags: [Responses]
+      responses:
+        "200":
+          description: The response.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Response" }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/responses/{id}/input_items:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      operationId: listResponseInputItems
+      summary: List a response's input items
+      description: The items the response was given, in order. Needed because `input` is not echoed on the response object (OpenAI parity). Requires the `inference` or `agents` scope.
+      tags: [Responses]
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/After"
+      responses:
+        "200":
+          description: A page of items.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ItemList" }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/messages:
+    post:
+      operationId: createMessage
+      summary: Create a message (Anthropic shape)
+      description: |
+        Anthropic Messages-compatible turn on the model router. Content blocks: `text`, `image`,
+        `tool_use`, `tool_result`. No thinking blocks, server tools or files. `thread` backs the
+        call with a durable conversation (no 5-minute expiry): `{"type":"create"}` starts one
+        (`system` and `tools` are set here), `{"type":"continue","previous_message_id":"mdl_…"}`
+        continues it; `system` or `tools` on a continue are `400 thread_fingerprint_mismatch`.
+        Model messages use `mdl_` ids; text messages (SMS) are under `/v1/texts`.
+        With `stream: true` the answer is server-sent events: `message_start`,
+        `content_block_start`, `content_block_delta` (`text_delta` or `input_json_delta`),
+        `content_block_stop`, `message_delta` (`stop_reason`, `usage`), `message_stop`, and
+        `error`. Requires the `inference` scope.
+      tags: [Messages]
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ModelMessageRequest" }
+      responses:
+        "200":
+          description: The assistant message, or server-sent events when `stream` is true.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ModelMessage" }
+            text/event-stream:
+              schema: { type: string }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/conversations:
+    get:
+      operationId: listConversations
+      summary: List conversations
+      description: The project's conversations, newest first, without their items. A key bound to an account sees only that account's. Requires the `agents` scope.
+      tags: [Conversations]
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/After"
+        - { name: agent_id, in: query, schema: { type: string } }
+        - { name: account_id, in: query, schema: { type: string } }
+      responses:
+        "200":
+          description: A page of conversations.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ListEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: "#/components/schemas/Conversation" }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      operationId: createConversation
+      summary: Create a conversation
+      description: Opens a conversation, optionally with an agent, an account and starting items (up to 20). Without `agent_id` it can be used with `model` responses. `items` are allowed only without `agent_id` (an agent's runtime keeps its own session history; 409 `conversation_has_agent`). No model run happens.
+      tags: [Conversations]
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                agent_id: { type: string }
+                account_id: { type: string }
+                metadata: { type: object, additionalProperties: true }
+                items:
+                  type: array
+                  maxItems: 20
+                  items: { $ref: "#/components/schemas/ItemInput" }
+      responses:
+        "201":
+          description: The new conversation.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Conversation" }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/conversations/{id}/items:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      operationId: listConversationItems
+      summary: List a conversation's items
+      description: Messages, function calls, tool calls and approval requests in a stable order. `order` is `asc` (default) or `desc`. Requires the `agents` scope.
+      tags: [Conversations]
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/After"
+        - { name: order, in: query, schema: { type: string, enum: [asc, desc], default: asc } }
+      responses:
+        "200":
+          description: A page of items.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ItemList" }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      operationId: createConversationItems
+      summary: Append items
+      description: Adds up to 20 items without running the model. Only on a conversation without an agent (409 `conversation_has_agent`; an agent's runtime keeps its own session history). Requires the `agents` scope.
+      tags: [Conversations]
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [items]
+              additionalProperties: false
+              properties:
+                items:
+                  type: array
+                  minItems: 1
+                  maxItems: 20
+                  items: { $ref: "#/components/schemas/ItemInput" }
+      responses:
+        "200":
+          description: The appended items, in order.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ItemList" }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/conversations/{id}/items/{item_id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+      - { name: item_id, in: path, required: true, schema: { type: string, examples: ["item_0123456789abcdef01234567"] } }
+    get:
+      operationId: getConversationItem
+      summary: Retrieve an item
+      description: Requires the `agents` scope.
+      tags: [Conversations]
+      responses:
+        "200":
+          description: The item.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Item" }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/approvals:
+    get:
+      operationId: listApprovals
+      summary: List approvals
+      description: Held actions from the twin and computers in one list, newest first. The list holds only the sources the key's scopes allow (`twin` scope → twin rows, `computers` scope → computer rows). Requires the `twin` or `computers` scope.
+      tags: [Approvals]
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/After"
+        - { name: status, in: query, schema: { type: string, enum: [pending, approved, denied, expired, consumed] } }
+        - { name: account_id, in: query, schema: { type: string } }
+        - { name: source, in: query, schema: { type: string, enum: [twin, computer] } }
+      responses:
+        "200":
+          description: A page of approvals.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApprovalList" }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/approvals/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, examples: ["apr_0123456789abcdef01234567"] }
+    get:
+      operationId: getApproval
+      summary: Retrieve an approval
+      description: Requires the `twin` or `computers` scope.
+      tags: [Approvals]
+      responses:
+        "200":
+          description: The approval.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Approval" }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      operationId: resolveApproval
+      summary: Approve or deny
+      description: The API key is recorded as the actor. Whether a key may approve a given source follows that source's rules (a computer approval needs the project's `approval_mode` to be `api_key`; 403 `approval_requires_owner` otherwise). The older per-account and per-computer approve and deny routes call the same resolver. Webhooks `approval.requested`, `approval.resolved` and `approval.expired` report the lifecycle.
+      tags: [Approvals]
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision]
+              additionalProperties: false
+              properties:
+                decision: { type: string, enum: [approve, deny] }
+                reason: { type: string, maxLength: 1000 }
+      responses:
+        "200":
+          description: The approval, resolved.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Approval" }
+        default: { $ref: "#/components/responses/Error" }
+
 components:
   securitySchemes:
     bearerAuth:
@@ -2047,12 +2916,14 @@ components:
       properties:
         id: { type: string }
         object: { type: string, const: conversation }
-        agent_id: { type: string }
-        account_id: { type: string }
+        agent_id: { type: [string, "null"], description: Null for a conversation made without an agent (used with `model` responses). }
+        account_id: { type: [string, "null"] }
         metadata: { type: object, additionalProperties: true }
+        item_count: { type: integer, description: Number of items; list them with listConversationItems. }
         created_at: { type: string, format: date-time }
         messages:
           type: array
+          description: "The latest 200 user and assistant messages, oldest first: on GET /v1/conversations/{id} and the legacy alias routes."
           items: { $ref: "#/components/schemas/ConversationMessage" }
     ConversationMessage:
       type: object
@@ -2073,6 +2944,20 @@ components:
         provider: { type: string, enum: [anthropic, openai, xai] }
         object: { type: string, const: model_key }
         masked: { type: string, description: "Last four characters, e.g. \"…7890\"." }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    ProjectTracing:
+      type: object
+      required: [object, project_id, endpoint, header_names, service_name, enabled, created_at, updated_at]
+      properties:
+        object: { type: string, const: project.tracing }
+        project_id: { type: string }
+        endpoint: { type: string }
+        header_names: { type: array, items: { type: string }, description: Names of the stored headers; values are never returned. }
+        service_name: { type: string }
+        enabled: { type: boolean }
+        last_export_at: { type: [string, "null"], format: date-time }
+        last_error: { type: [string, "null"], description: Why the last export failed; null after a success. }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
     UsageRow:
@@ -2096,6 +2981,10 @@ components:
             - mms
             - registration_passthrough_cents
             - recording_min_month
+            - computer_minute
+            - computer_action
+            - mailbox_month
+            - identity_month
         unit: { type: [string, "null"] }
         quantity: { type: number }
         events: { type: integer }
@@ -2117,29 +3006,6 @@ components:
         data: { type: array, items: { $ref: "#/components/schemas/PhoneNumber" } }
         has_more: { type: boolean }
         next_cursor: { type: [string, "null"] }
-    Message:
-      type: object
-      required: [id, object, number_id, direction, from, to, body, segments, status, created_at]
-      properties:
-        id: { type: string }
-        object: { type: string, const: message }
-        account_id: { type: [string, "null"] }
-        number_id: { type: string }
-        direction: { type: string, enum: [inbound, outbound] }
-        from: { type: string }
-        to: { type: string }
-        body: { type: string }
-        segments: { type: integer }
-        status: { type: string, enum: [sent, simulated, received, failed] }
-        error_code: { type: [string, "null"] }
-        media: { type: array, items: { type: object, additionalProperties: true } }
-        created_at: { type: string, format: date-time }
-    MessageList:
-      type: object
-      properties:
-        data: { type: array, items: { $ref: "#/components/schemas/Message" } }
-        has_more: { type: boolean }
-        next_cursor: { type: [string, "null"] }
     WebhookEndpoint:
       type: object
       required: [id, object, url, events, created_at]
@@ -2157,7 +3023,7 @@ components:
       properties:
         id: { type: string }
         object: { type: string, const: event }
-        type: { type: string, enum: [approval.requested, message.received, message.status, registration.updated, inbox.item.created, call.started, call.ended, call.transcript.ready, usage.threshold, phone.step, phone.run.completed, webhook.test] }
+        type: { type: string, enum: [approval.requested, approval.resolved, approval.expired, message.received, message.status, registration.updated, inbox.item.created, call.started, call.ended, call.transcript.ready, usage.threshold, phone.step, phone.run.completed, phone.fleet_run.completed, phone.approval.requested, phone.approval.resolved, mail.received, webhook.test] }
         created: { type: integer, description: Unix seconds. }
         project_id: { type: string }
         account_id: { type: [string, "null"] }
@@ -2283,6 +3149,75 @@ components:
             approve_url: { type: string }
             approver: { type: string, enum: [owner, api_key] }
         result: { $ref: "#/components/schemas/ToolsetResult" }
+    Mailbox:
+      type: object
+      required: [id, object, account_id, address, created_at]
+      properties:
+        id: { type: string }
+        object: { type: string, enum: [mailbox] }
+        account_id: { type: string }
+        agent_id: { type: [string, "null"] }
+        address: { type: string, format: email }
+        display_name: { type: [string, "null"] }
+        created_at: { type: string, format: date-time }
+    MailboxList:
+      type: object
+      properties:
+        data: { type: array, items: { $ref: "#/components/schemas/Mailbox" } }
+        has_more: { type: boolean }
+        next_cursor: { type: [string, "null"] }
+    MailMessage:
+      type: object
+      required: [id, object, mailbox_id, from, to, codes, links, is_verification, received_at]
+      properties:
+        id: { type: string }
+        object: { type: string, enum: [mail_message] }
+        mailbox_id: { type: string }
+        from: { type: string }
+        to: { type: string }
+        subject: { type: [string, "null"] }
+        snippet: { type: [string, "null"] }
+        codes: { type: array, items: { type: string }, description: One-time codes found, best first. }
+        links: { type: array, items: { type: string }, description: Sign-in and confirm links found. }
+        is_verification: { type: boolean }
+        received_at: { type: string, format: date-time }
+    MailMessageList:
+      type: object
+      properties:
+        data: { type: array, items: { $ref: "#/components/schemas/MailMessage" } }
+        has_more: { type: boolean }
+        next_cursor: { type: [string, "null"] }
+    Identity:
+      type: object
+      required: [id, object, account_id, bundle, created_at]
+      properties:
+        id: { type: string }
+        object: { type: string, enum: [identity] }
+        account_id: { type: string }
+        agent_id: { type: [string, "null"] }
+        number: { oneOf: [{ $ref: "#/components/schemas/PhoneNumber" }, { type: "null" }] }
+        mailbox: { oneOf: [{ $ref: "#/components/schemas/Mailbox" }, { type: "null" }] }
+        phone_serial: { type: [string, "null"] }
+        bundle:
+          type: object
+          properties:
+            name: { type: string }
+            meter: { type: string, enum: [identity_month] }
+            monthly_price_cents: { type: integer }
+            includes:
+              type: object
+              properties:
+                numbers: { type: integer }
+                mailboxes: { type: integer }
+                linked_phone_slots: { type: integer }
+                phone_minutes: { type: integer }
+        created_at: { type: string, format: date-time }
+    IdentityList:
+      type: object
+      properties:
+        data: { type: array, items: { $ref: "#/components/schemas/Identity" } }
+        has_more: { type: boolean }
+        next_cursor: { type: [string, "null"] }
     Phone:
       type: object
       properties:
@@ -2351,6 +3286,56 @@ components:
               source: { type: [string, "null"] }
         retention_days: { type: integer }
         max_steps: { type: integer }
+    PhoneLiveView:
+      type: object
+      properties:
+        object: { type: string, const: phone.live_view }
+        id: { type: string, description: "The live view id; it is the credential in both URLs." }
+        serial: { type: string }
+        view_only: { type: boolean, const: true }
+        expires_in: { type: integer, description: Seconds. }
+        expires_at: { type: string, format: date-time }
+        viewer_url: { type: string, format: uri }
+        stream_url: { type: string, format: uri }
+    PhoneFleetRun:
+      type: object
+      properties:
+        object: { type: string, const: phone.fleet_run }
+        id: { type: string }
+        kind: { type: string, enum: [task, skill] }
+        goal: { type: [string, "null"] }
+        skill: { type: [string, "null"] }
+        status: { type: string, enum: [running, completed] }
+        created_at: { type: string, format: date-time }
+        completed_at: { type: [string, "null"], format: date-time }
+        counts:
+          type: object
+          properties:
+            runs: { type: integer }
+            running: { type: integer }
+            succeeded: { type: integer }
+            failed: { type: integer }
+            not_started: { type: integer }
+        runs:
+          type: array
+          items:
+            type: object
+            properties:
+              object: { type: string, const: phone.run }
+              run_id: { type: string }
+              serial: { type: [string, "null"] }
+              status: { type: string, description: "running, waiting_approval (a step waits on the owner's approval), or the end status (done, failed, max_steps, timeout, succeeded, diverged, denied, approval_timeout, phone_locked)." }
+              ok: { type: [boolean, "null"] }
+              started_at: { type: string, format: date-time }
+              ended_at: { type: [string, "null"], format: date-time }
+        not_started:
+          type: array
+          items:
+            type: object
+            properties:
+              serial: { type: string }
+              code: { type: string }
+              message: { type: string }
     PhoneRunStarted:
       type: object
       properties:
@@ -2370,3 +3355,353 @@ components:
         tool: { type: string }
         error: { type: string, description: "On ok: false, e.g. approval_denied, approval_timeout, rate_limited, not_found, accessibility_off." }
         message: { type: string }
+    PhoneApprovalRequired:
+      type: object
+      description: "A held phone action (409). API keys can't approve: the project owner approves in the Allternit app, then the call is repeated with hold_id."
+      required: [error]
+      properties:
+        error: { type: object, additionalProperties: true, description: "The usual error object, type conflict_error, code approval_required." }
+        approval_id: { type: string, description: "The hold; send it back as hold_id once approved." }
+        inbox_id: { type: string, description: "The owner's \"Needs you\" item." }
+        expires_at: { type: string, format: date-time, description: "The hold expires unanswered after this." }
+    DecisionQuestion:
+      type: object
+      required: [name, type, instructions]
+      properties:
+        name: { type: string, maxLength: 100 }
+        type: { type: string, enum: [predicate, choice, score] }
+        instructions: { type: string }
+        choices:
+          type: array
+          minItems: 2
+          maxItems: 255
+          description: Required for `choice`.
+          items:
+            type: object
+            required: [value]
+            properties:
+              value: { type: string }
+              description: { type: string }
+        levels:
+          type: array
+          minItems: 2
+          maxItems: 10
+          description: Required for `score`, ordered low to high.
+          items:
+            type: object
+            required: [label]
+            properties:
+              label: { type: string }
+              description: { type: string }
+    DecisionRequest:
+      type: object
+      description: The question list, or the single-question Agency body (`context`, `options`, `kind`, `question`).
+      properties:
+        input:
+          description: Text, or items with `input_text` or `input_json` content parts. Text up to 4 KiB. Image parts are not supported yet (`400 image_not_supported`).
+          oneOf:
+            - { type: string }
+            - type: array
+              items:
+                type: object
+                required: [role, content]
+                properties:
+                  role: { type: string }
+                  content: { type: array, items: { type: object, additionalProperties: true } }
+        instructions: { type: string }
+        questions:
+          description: 1 to 16 questions. An object keyed by question name is also accepted.
+          oneOf:
+            - { type: array, minItems: 1, maxItems: 16, items: { $ref: "#/components/schemas/DecisionQuestion" } }
+            - { type: object, additionalProperties: true }
+        latency_budget_ms:
+          type: integer
+          minimum: 1
+          maximum: 120000
+          description: "When omitted: 5000 + 15 * input_bytes + 3000 * questions, clamped to 10000-120000."
+        allow_abstain: { type: boolean, default: false }
+        metadata: { type: object, additionalProperties: true }
+        context: { description: "Agency shape: a string or {text}, text up to 4 KiB. Images are not supported yet." }
+        options: { type: array, items: { type: object, additionalProperties: true }, description: "Agency shape: 2 to 255 {id, text}." }
+        kind: { type: string, description: "Agency shape." }
+        question: { type: string, description: "Agency shape." }
+    DecisionAnswer:
+      type: object
+      required: [name, type]
+      properties:
+        name: { type: string }
+        type: { type: string, enum: [predicate, choice, score, refusal] }
+        probability: { type: number, description: "predicate: P(yes)." }
+        choice: { type: string, description: "choice: the best value." }
+        score: { type: number, minimum: 0, maximum: 1, description: "score: probability-weighted level index scaled to 0..1." }
+        probabilities:
+          type: array
+          items:
+            type: object
+            properties:
+              value: { description: "A choice value (string) or a level index (integer)." }
+              label: { type: string }
+              probability: { type: number }
+        confidence: { type: number }
+        backend: { type: string, description: "The backend that answered this question (e.g. local, open, oracle)." }
+        reason:
+          type: string
+          enum: [abstained, unavailable, budget_exhausted]
+          description: "refusal only: abstained (below the confidence threshold with allow_abstain), unavailable (no backend could answer), budget_exhausted (latency_ms budget ran out)."
+    DecisionOutcome:
+      type: object
+      required: [status]
+      properties:
+        status: { type: string, enum: [success, failure, error, skipped] }
+        label: { type: string }
+        detail: { type: string }
+    Decision:
+      type: object
+      required: [id, object, created_at, answers, backend, latency_ms, usage]
+      properties:
+        id: { type: string }
+        object: { type: string, const: decision }
+        created_at: { type: string, format: date-time }
+        answers: { type: array, items: { $ref: "#/components/schemas/DecisionAnswer" } }
+        backend: { type: string, description: The backend that answered the most questions (each answer has its own `backend`). }
+        latency_ms: { type: integer, examples: [4200] }
+        usage:
+          type: object
+          properties:
+            questions: { type: integer, description: Answered (non-refusal) questions; this is what is billed. }
+            input_tokens: { type: integer }
+        outcomes: { type: object, additionalProperties: { $ref: "#/components/schemas/DecisionOutcome" } }
+        metadata: { type: object, additionalProperties: true }
+    DecisionList:
+      allOf:
+        - $ref: "#/components/schemas/ListEnvelope"
+        - type: object
+          properties:
+            data: { type: array, items: { $ref: "#/components/schemas/Decision" } }
+      examples:
+        - data:
+            - id: dec_0123456789abcdef01234567
+              object: decision
+              created_at: "2026-11-12T15:04:05Z"
+              answers:
+                - { name: is_damaged, type: predicate, probability: 0.93, confidence: 0.86, backend: local }
+              backend: local
+              latency_ms: 4200
+              usage: { questions: 1, input_tokens: 38 }
+              outcomes: {}
+              metadata: { ticket: t_1 }
+          has_more: true
+          next_cursor: "313736323935393834353030303030307c6465635f303061613131626232326363333364643434656535356666"
+    ContentPart:
+      type: object
+      required: [type]
+      properties:
+        type: { type: string, enum: [input_text, output_text, input_image] }
+        text: { type: string }
+        image_url: { type: string }
+    ItemInput:
+      type: object
+      required: [type]
+      description: An item to give the model or append to a conversation.
+      properties:
+        type: { type: string, enum: [message, function_call_output] }
+        role: { type: string, enum: [user, assistant, system, developer] }
+        content:
+          oneOf:
+            - { type: string }
+            - { type: array, items: { $ref: "#/components/schemas/ContentPart" } }
+        call_id: { type: string }
+        output: { type: string }
+    Item:
+      type: object
+      required: [id, object, type, created_at]
+      properties:
+        id: { type: string, description: "`item_…`" }
+        object: { type: string, const: item }
+        type: { type: string, enum: [message, function_call, function_call_output, tool_call, approval_request] }
+        conversation_id: { type: [string, "null"] }
+        response_id: { type: [string, "null"] }
+        status: { type: string, enum: [in_progress, completed, failed, incomplete] }
+        role: { type: [string, "null"], enum: [user, assistant, system, developer, null] }
+        content: { type: array, items: { $ref: "#/components/schemas/ContentPart" }, description: "message items." }
+        call_id: { type: string, description: "function_call, function_call_output; on tool_call, the runtime's tool call id when it sent one (also on the `response.tool_call.*` stream events)." }
+        name: { type: string, description: "function_call, tool_call." }
+        arguments: { type: string, description: "function_call: JSON text." }
+        output: { description: "function_call_output (string) or tool_call (any)." }
+        input: { description: "tool_call." }
+        error: { type: [string, "null"] }
+        approval_id: { type: string, description: "approval_request." }
+        proposed_action: { type: object, additionalProperties: true, description: "approval_request." }
+        created_at: { type: string, format: date-time }
+    ItemList:
+      allOf:
+        - $ref: "#/components/schemas/ListEnvelope"
+        - type: object
+          properties:
+            data: { type: array, items: { $ref: "#/components/schemas/Item" } }
+    ResponseRequest:
+      type: object
+      required: [input]
+      properties:
+        model: { type: string, description: "Exactly one of `model` or `agent`." }
+        agent: { type: string, description: "An agent id." }
+        input:
+          oneOf:
+            - { type: string }
+            - { type: array, items: { $ref: "#/components/schemas/ItemInput" } }
+        instructions: { type: string }
+        tools:
+          type: array
+          items:
+            type: object
+            required: [type, name]
+            properties:
+              type: { type: string, const: function }
+              name: { type: string }
+              description: { type: string }
+              parameters: { type: object, additionalProperties: true, description: JSON Schema. }
+        tool_choice: {}
+        stream: { type: boolean, default: false }
+        store: { type: boolean, default: true }
+        conversation: { type: string, description: "A `conv_…` id. Not with `previous_response_id`." }
+        previous_response_id: { type: string }
+        metadata: { type: object, additionalProperties: true }
+        max_output_tokens: { type: integer, minimum: 1 }
+        temperature: { type: number, minimum: 0, maximum: 2 }
+    Response:
+      type: object
+      required: [id, object, status, output, created_at]
+      properties:
+        id: { type: string, description: "`resp_…`" }
+        object: { type: string, const: response }
+        status:
+          type: string
+          enum: [in_progress, completed, failed, incomplete, requires_action]
+          description: "`requires_action` while an approval the turn raised is pending (see `required_actions`); the stored status (`completed`, `failed` or `incomplete`) again once none is pending."
+        model: { type: [string, "null"] }
+        agent_id: { type: [string, "null"] }
+        conversation_id: { type: [string, "null"] }
+        previous_response_id: { type: [string, "null"] }
+        output: { type: array, items: { $ref: "#/components/schemas/Item" } }
+        incomplete_details:
+          type: [object, "null"]
+          description: "Why the response is `incomplete`; null otherwise."
+          properties:
+            reason: { type: string, enum: [max_output_tokens] }
+        required_actions:
+          type: array
+          description: "One entry per pending approval this response's turn raised, oldest first; empty when none is pending. Resolve each with `POST /v1/approvals/{id}`, then send a new response with `previous_response_id`."
+          examples: [[{ type: approval, approval_id: apr_0123456789abcdef01234567 }]]
+          items:
+            type: object
+            required: [type, approval_id]
+            properties:
+              type: { type: string, const: approval }
+              approval_id: { type: string }
+        usage:
+          type: object
+          properties:
+            input_tokens: { type: integer }
+            output_tokens: { type: integer }
+        error: { type: [object, "null"], additionalProperties: true }
+        metadata: { type: object, additionalProperties: true }
+        created_at: { type: string, format: date-time }
+        completed_at: { type: [string, "null"], format: date-time }
+    ModelMessageRequest:
+      type: object
+      required: [model, messages, max_tokens]
+      properties:
+        model: { type: string }
+        system: { description: A string or text blocks., oneOf: [{ type: string }, { type: array, items: { type: object, additionalProperties: true } }] }
+        messages:
+          type: array
+          items:
+            type: object
+            required: [role, content]
+            properties:
+              role: { type: string, enum: [user, assistant] }
+              content:
+                description: A string or blocks of type text, image, tool_use or tool_result.
+                oneOf: [{ type: string }, { type: array, items: { type: object, additionalProperties: true } }]
+        tools:
+          type: array
+          items:
+            type: object
+            required: [name, input_schema]
+            properties:
+              name: { type: string }
+              description: { type: string }
+              input_schema: { type: object, additionalProperties: true }
+        tool_choice: { type: object, additionalProperties: true }
+        max_tokens: { type: integer, minimum: 1 }
+        temperature: { type: number }
+        stream: { type: boolean, default: false }
+        metadata: { type: object, additionalProperties: true }
+        thread:
+          type: object
+          required: [type]
+          properties:
+            type: { type: string, enum: [create, continue] }
+            previous_message_id: { type: string, description: "Required for `continue`: the `mdl_…` id of the thread's latest message.", examples: ["mdl_0123456789abcdef01234567"] }
+    ModelMessage:
+      type: object
+      required: [id, type, role, content, model, stop_reason, usage]
+      properties:
+        id: { type: string, description: "`mdl_…`", examples: ["mdl_0123456789abcdef01234567"] }
+        type: { type: string, const: message }
+        role: { type: string, const: assistant }
+        content: { type: array, items: { type: object, additionalProperties: true, description: "A `text` block or a `tool_use` block {id, name, input}." } }
+        model: { type: string }
+        stop_reason: { type: string, enum: [end_turn, tool_use, max_tokens] }
+        usage:
+          type: object
+          properties:
+            input_tokens: { type: integer }
+            output_tokens: { type: integer }
+    Text:
+      type: object
+      required: [id, object, number_id, direction, from, to, body, segments, status, created_at]
+      properties:
+        id: { type: string, description: "Keeps the stored `msg_` prefix." }
+        object: { type: string, const: text }
+        account_id: { type: [string, "null"] }
+        number_id: { type: string }
+        direction: { type: string, enum: [inbound, outbound] }
+        from: { type: string }
+        to: { type: string }
+        body: { type: string }
+        segments: { type: integer }
+        status: { type: string, enum: [sent, simulated, received, failed] }
+        error_code: { type: [string, "null"] }
+        media: { type: array, items: { type: object, additionalProperties: true } }
+        created_at: { type: string, format: date-time }
+    TextList:
+      type: object
+      properties:
+        data: { type: array, items: { $ref: "#/components/schemas/Text" } }
+        has_more: { type: boolean }
+        next_cursor: { type: [string, "null"] }
+    Approval:
+      type: object
+      required: [id, object, source, source_ref, kind, proposed_action, status, created_at]
+      properties:
+        id: { type: string, description: "`apr_…`" }
+        object: { type: string, const: approval }
+        source: { type: string, enum: [twin, computer] }
+        source_ref: { type: string, description: The id in the source system. }
+        account_id: { type: [string, "null"] }
+        conversation_id: { type: [string, "null"] }
+        response_id: { type: [string, "null"] }
+        kind: { type: string }
+        proposed_action: { type: object, additionalProperties: true }
+        status: { type: string, enum: [pending, approved, denied, expired, consumed] }
+        expires_at: { type: [string, "null"], format: date-time, description: "Twin: the runtime's deadline when it sends one, else null (a twin approval with no deadline never expires). Computer: the executor's deadline, else 300 seconds after the request." }
+        created_at: { type: string, format: date-time }
+        resolved_at: { type: [string, "null"], format: date-time }
+        resolved_by: { type: [string, "null"] }
+    ApprovalList:
+      allOf:
+        - $ref: "#/components/schemas/ListEnvelope"
+        - type: object
+          properties:
+            data: { type: array, items: { $ref: "#/components/schemas/Approval" } }

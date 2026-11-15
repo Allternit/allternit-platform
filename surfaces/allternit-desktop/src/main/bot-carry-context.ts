@@ -20,6 +20,14 @@ export interface BotCarryContext {
   title: string;
   /** PNG data URL of the window, when Screen Recording is allowed. */
   image?: string;
+  /** From a pet offer's Fix it: the error text, attached as a removable chip. Never logged. */
+  text?: string;
+  /** From a pet offer: the bubble line, used as the prefilled draft. Not sent until the user sends. */
+  intent?: string;
+  /** From a pet offer read off another app: turns sent with this attachment carry metadata.tools.computer = true. */
+  computer?: boolean;
+  /** From a pet offer: its kind (build_failed, stack_trace, error_dialog, run_failed). */
+  kind?: string;
 }
 
 /** Longest side of the picture: enough to read a chart, small enough to send. */
@@ -61,5 +69,18 @@ export async function readBotCarryContext(petBounds: { x: number; y: number; wid
     app: window.app || 'App',
     title: window.title,
     image: allowed ? await captureWindow(window.id, window.bounds) : undefined,
+  };
+}
+
+/** Quick Work context for a pet offer the user accepted (desktop-companion.ts acceptOffer). */
+export function offerCarryContext(offer: { app: string; title: string; text: string; intent: string; computer: boolean; kind: string }): BotCarryContext {
+  return {
+    seq: ++seq,
+    app: offer.app || 'App',
+    title: offer.title,
+    ...(offer.text ? { text: offer.text } : {}),
+    intent: offer.intent,
+    computer: offer.computer,
+    kind: offer.kind,
   };
 }

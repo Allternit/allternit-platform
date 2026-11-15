@@ -55,6 +55,18 @@
       "path": "allternit-ai"
     },
     {
+      "id": "surface:ios",
+      "label": "Allternit iPhone app (App Store)",
+      "kind": "surface",
+      "path": "allternit/surfaces/allternit-mobile"
+    },
+    {
+      "id": "surface:android",
+      "label": "Allternit Android app (Google Play)",
+      "kind": "surface",
+      "path": "allternit/surfaces/allternit-mobile/android"
+    },
+    {
       "id": "surface:platform",
       "label": "platform.allternit.com",
       "kind": "surface",
@@ -251,6 +263,410 @@
       "label": "runtime events feed",
       "kind": "module",
       "path": "allternit/cmd/allternit-api/src/events_feed.rs"
+    },
+    {
+      "id": "allternit/cmd/allternit-api/src/bot_hub_routes.rs",
+      "label": "bot hub routes",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-api/src/bot_hub_routes.rs"
+    },
+    {
+      "id": "allternit/cmd/allternit-api/src/memory_map_routes.rs",
+      "label": "memory map routes",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-api/src/memory_map_routes.rs"
+    },
+    {
+      "id": "allternit/cmd/allternit-api/src/skill_use.rs",
+      "label": "skill use",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-api/src/skill_use.rs"
+    },
+    {
+      "id": "allternit/cmd/allternit-api/src/agent_workspace_routes.rs",
+      "label": "agent workspace routes",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-api/src/agent_workspace_routes.rs"
+    },
+    {
+      "id": "allternit/cmd/allternit-api/src/v1_routes.rs",
+      "label": "v1 routes",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-api/src/v1_routes.rs"
+    },
+    {
+      "id": "allternit/cmd/allternit-cloud-api/src/routes/platform_v1",
+      "label": "platform v1",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-cloud-api/src/routes/platform_v1"
+    },
+    {
+      "id": "allternit/cmd/allternit-cloud-api/src/routes/bot_email.rs",
+      "label": "bot email",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-cloud-api/src/routes/bot_email.rs"
+    },
+    {
+      "id": "allternit/cmd/allternit-api/src/email_otp.rs",
+      "label": "email otp",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-api/src/email_otp.rs"
+    },
+    {
+      "id": "allternit-ai/src/pages/AppEditorPage.tsx",
+      "label": "AppEditorPage",
+      "kind": "module",
+      "path": "allternit-ai/src/pages/AppEditorPage.tsx"
+    },
+    {
+      "id": "allternit/surfaces/allternit-mobile/ios/Features/Bots/BotProjectPage.swift",
+      "label": "BotProjectPage",
+      "kind": "module",
+      "path": "allternit/surfaces/allternit-mobile/ios/Features/Bots/BotProjectPage.swift"
+    },
+    {
+      "id": "allternit/surfaces/allternit-mobile/ios/Features/Automation/Views/AutomationSchedulerView.swift",
+      "label": "AutomationSchedulerView",
+      "kind": "module",
+      "path": "allternit/surfaces/allternit-mobile/ios/Features/Automation/Views/AutomationSchedulerView.swift"
+    },
+    {
+      "id": "allternit/cmd/allternit-api/src/floor_routes.rs",
+      "label": "floor routes",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-api/src/floor_routes.rs"
+    },
+    {
+      "id": "allternit/cmd/allternit-cloud-api/src/routes/floor_shares.rs",
+      "label": "floor shares",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-cloud-api/src/routes/floor_shares.rs"
+    },
+    {
+      "id": "allternit/surfaces/docs/guides/office-view.mdx",
+      "label": "office-view",
+      "kind": "module",
+      "path": "allternit/surfaces/docs/guides/office-view.mdx"
+    },
+    {
+      "id": "allternit-ai/src/components/threads/ThreadComposer.tsx",
+      "label": "ThreadComposer",
+      "kind": "module",
+      "path": "allternit-ai/src/components/threads/ThreadComposer.tsx"
+    },
+    {
+      "id": "allternit-ai/src/views/chat/ChatComposer.tsx",
+      "label": "ChatComposer",
+      "kind": "module",
+      "path": "allternit-ai/src/views/chat/ChatComposer.tsx"
+    },
+    {
+      "id": "allternit-ai/src/shell/ShellApp.tsx",
+      "label": "ShellApp",
+      "kind": "module",
+      "path": "allternit-ai/src/shell/ShellApp.tsx"
+    },
+    {
+      "id": "allternit-ai/src/fabric-session/PhoneProviders.tsx",
+      "label": "PhoneProviders",
+      "kind": "module",
+      "path": "allternit-ai/src/fabric-session/PhoneProviders.tsx"
+    },
+    {
+      "id": "allternit-ai/src/components/bots/stage/backdrop/StageBackdropPicker.tsx",
+      "label": "StageBackdropPicker",
+      "kind": "module",
+      "path": "allternit-ai/src/components/bots/stage/backdrop/StageBackdropPicker.tsx"
+    },
+    {
+      "id": "allternit-ai/src/views/settings/DeleteAccountSection.tsx",
+      "label": "DeleteAccountSection",
+      "kind": "module",
+      "path": "allternit-ai/src/views/settings/DeleteAccountSection.tsx"
+    },
+    {
+      "id": "allternit-ai/src/views/office/OfficeView.tsx",
+      "label": "OfficeView",
+      "kind": "module",
+      "path": "allternit-ai/src/views/office/OfficeView.tsx"
+    },
+    {
+      "id": "allternit-ai/src/views/office/BotWorkspaceView.tsx",
+      "label": "BotWorkspaceView",
+      "kind": "module",
+      "path": "allternit-ai/src/views/office/BotWorkspaceView.tsx"
+    },
+    {
+      "id": "allternit-ai/src/views/office/OfficeFloor.tsx",
+      "label": "OfficeFloor",
+      "kind": "module",
+      "path": "allternit-ai/src/views/office/OfficeFloor.tsx"
+    },
+    {
+      "id": "allternit-ai/src/views/office/facility-visitor.ts",
+      "label": "facility-visitor",
+      "kind": "module",
+      "path": "allternit-ai/src/views/office/facility-visitor.ts"
+    },
+    {
+      "id": "allternit-ai/src/lib/office/portrait-avatar.tsx",
+      "label": "portrait-avatar",
+      "kind": "module",
+      "path": "allternit-ai/src/lib/office/portrait-avatar.tsx"
+    },
+    {
+      "id": "allternit-ai/src/views/code/console/WorkspaceTab.tsx",
+      "label": "WorkspaceTab",
+      "kind": "module",
+      "path": "allternit-ai/src/views/code/console/WorkspaceTab.tsx"
+    },
+    {
+      "id": "allternit-ai/src/components/dispatch/FabricBotMode.tsx",
+      "label": "FabricBotMode",
+      "kind": "module",
+      "path": "allternit-ai/src/components/dispatch/FabricBotMode.tsx"
+    },
+    {
+      "id": "allternit/surfaces/allternit-mobile/ios/Features/Office/Floor/OfficeFloorView.swift",
+      "label": "OfficeFloorView",
+      "kind": "module",
+      "path": "allternit/surfaces/allternit-mobile/ios/Features/Office/Floor/OfficeFloorView.swift"
+    },
+    {
+      "id": "allternit/surfaces/docs/architecture/facility-workspace.mdx",
+      "label": "facility-workspace",
+      "kind": "module",
+      "path": "allternit/surfaces/docs/architecture/facility-workspace.mdx"
+    },
+    {
+      "id": "external:allternit-facility",
+      "label": "Hosted Allternit 3D facility",
+      "kind": "external",
+      "url": "https://3dfacility.allternit.com",
+      "path": "https://3dfacility.allternit.com"
+    },
+    {
+      "id": "allternit-ai/src/views/settings/SettingsView.tsx",
+      "label": "SettingsView",
+      "kind": "module",
+      "path": "allternit-ai/src/views/settings/SettingsView.tsx"
+    },
+    {
+      "id": "allternit/surfaces/allternit-mobile/ios/Features/Settings/DeleteAccountView.swift",
+      "label": "DeleteAccountView",
+      "kind": "module",
+      "path": "allternit/surfaces/allternit-mobile/ios/Features/Settings/DeleteAccountView.swift"
+    },
+    {
+      "id": "allternit/surfaces/allternit-mobile/ios/Core/Auth/AuthManager+DeleteAccount.swift",
+      "label": "AuthManager+DeleteAccount",
+      "kind": "module",
+      "path": "allternit/surfaces/allternit-mobile/ios/Core/Auth/AuthManager+DeleteAccount.swift"
+    },
+    {
+      "id": "allternit/cmd/allternit-cloud-api/src/routes/clerk_webhooks.rs",
+      "label": "clerk_webhooks",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-cloud-api/src/routes/clerk_webhooks.rs"
+    },
+    {
+      "id": "allternit/cmd/allternit-api/src/project_status.rs",
+      "label": "project_status",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-api/src/project_status.rs"
+    },
+    {
+      "id": "allternit/cmd/allternit-api/src/cowork_routes.rs",
+      "label": "cowork_routes",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-api/src/cowork_routes.rs"
+    },
+    {
+      "id": "allternit/cmd/allternit-api/src/coordinator_routes.rs",
+      "label": "coordinator_routes",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-api/src/coordinator_routes.rs"
+    },
+    {
+      "id": "allternit/cmd/gizzi-code/src/runtime/tools/builtins/project-status.ts",
+      "label": "project-status",
+      "kind": "module",
+      "path": "allternit/cmd/gizzi-code/src/runtime/tools/builtins/project-status.ts"
+    },
+    {
+      "id": "allternit-ai/src/lib/bots/templates",
+      "label": "templates",
+      "kind": "module",
+      "path": "allternit-ai/src/lib/bots/templates"
+    },
+    {
+      "id": "allternit-ai/src/components/projects/board",
+      "label": "board",
+      "kind": "module",
+      "path": "allternit-ai/src/components/projects/board"
+    },
+    {
+      "id": "allternit-ai/src/lib/projects/project-look.ts",
+      "label": "project-look",
+      "kind": "module",
+      "path": "allternit-ai/src/lib/projects/project-look.ts"
+    },
+    {
+      "id": "allternit-ai/src/lib/projects/project-board-data.ts",
+      "label": "project-board-data",
+      "kind": "module",
+      "path": "allternit-ai/src/lib/projects/project-board-data.ts"
+    },
+    {
+      "id": "allternit-ai/src/views/BaseProjectView.tsx",
+      "label": "BaseProjectView",
+      "kind": "module",
+      "path": "allternit-ai/src/views/BaseProjectView.tsx"
+    },
+    {
+      "id": "allternit-ai/src/views/project/workspace/ProjectCoordinatorWorkspace.tsx",
+      "label": "ProjectCoordinatorWorkspace",
+      "kind": "module",
+      "path": "allternit-ai/src/views/project/workspace/ProjectCoordinatorWorkspace.tsx"
+    },
+    {
+      "id": "allternit/cmd/allternit-api/migrations/V284__skill_use.sql",
+      "label": "V284__skill_use",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-api/migrations/V284__skill_use.sql"
+    },
+    {
+      "id": "allternit/cmd/allternit-api/src/github_ci.rs",
+      "label": "Live PR and CI provider capability",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-api/src/github_ci.rs"
+    },
+    {
+      "id": "allternit/cmd/allternit-api/src/gateway_runner.rs",
+      "label": "Vendor contract admission",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-api/src/gateway_runner.rs"
+    },
+    {
+      "id": "allternit/cmd/allternit-cloud-api/src/routes/connect_return.rs",
+      "label": "connect return",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-cloud-api/src/routes/connect_return.rs"
+    },
+    {
+      "id": "allternit/cmd/allternit-api/src/oauth_return.rs",
+      "label": "oauth return",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-api/src/oauth_return.rs"
+    },
+    {
+      "id": "allternit/cmd/allternit-api/src/connector_routes.rs",
+      "label": "connector routes",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-api/src/connector_routes.rs"
+    },
+    {
+      "id": "allternit/cmd/allternit-api/src/mcp_directory_routes.rs",
+      "label": "mcp directory routes",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-api/src/mcp_directory_routes.rs"
+    },
+    {
+      "id": "allternit/cmd/allternit-api/src/status_snapshot.rs",
+      "label": "status snapshot",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-api/src/status_snapshot.rs"
+    },
+    {
+      "id": "allternit/cmd/allternit-cloud-api/src/routes/notifications.rs",
+      "label": "notifications",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-cloud-api/src/routes/notifications.rs"
+    },
+    {
+      "id": "allternit/cmd/allternit-cloud-api/src/routes/apns.rs",
+      "label": "apns",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-cloud-api/src/routes/apns.rs"
+    },
+    {
+      "id": "allternit/surfaces/allternit-mobile/ios/AllternitNotifications",
+      "label": "AllternitNotifications",
+      "kind": "module",
+      "path": "allternit/surfaces/allternit-mobile/ios/AllternitNotifications"
+    },
+    {
+      "id": "allternit/cmd/allternit-cloud-api/src/routes/device_read.rs",
+      "label": "device read",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-cloud-api/src/routes/device_read.rs"
+    },
+    {
+      "id": "allternit/surfaces/allternit-mobile/ios/SystemSurfaces",
+      "label": "SystemSurfaces",
+      "kind": "module",
+      "path": "allternit/surfaces/allternit-mobile/ios/SystemSurfaces"
+    },
+    {
+      "id": "allternit/cmd/allternit-api/src/inbox_needs.rs",
+      "label": "inbox needs",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-api/src/inbox_needs.rs"
+    },
+    {
+      "id": "allternit/cmd/allternit-api/src/bots_pause.rs",
+      "label": "bots pause",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-api/src/bots_pause.rs"
+    },
+    {
+      "id": "allternit/cmd/gizzi-code/src/cli/commands/bot.ts",
+      "label": "bot",
+      "kind": "module",
+      "path": "allternit/cmd/gizzi-code/src/cli/commands/bot.ts"
+    },
+    {
+      "id": "allternit/cmd/allternit-api/src/messages_mac.rs",
+      "label": "messages mac",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-api/src/messages_mac.rs"
+    },
+    {
+      "id": "allternit/cmd/allternit-api/src/phone_runs.rs",
+      "label": "phone runs",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-api/src/phone_runs.rs"
+    },
+    {
+      "id": "allternit/cmd/gizzi-code/src/runtime/integrations/cli-bridge/index.ts",
+      "label": "cli-bridge",
+      "kind": "module",
+      "path": "allternit/cmd/gizzi-code/src/runtime/integrations/cli-bridge/index.ts"
+    },
+    {
+      "id": "allternit/cmd/gizzi-code/src/runtime/tools/builtins/run_code.ts",
+      "label": "run_code",
+      "kind": "module",
+      "path": "allternit/cmd/gizzi-code/src/runtime/tools/builtins/run_code.ts"
+    },
+    {
+      "id": "external:freeweights",
+      "label": "Freeweights (open-weights catalog)",
+      "kind": "external",
+      "url": "https://freeweights.allternit.com",
+      "path": "https://freeweights.allternit.com"
+    },
+    {
+      "id": "allternit/services/model-source",
+      "label": "model-source (verified model downloads)",
+      "kind": "crate",
+      "path": "allternit/services/model-source"
+    },
+    {
+      "id": "allternit/services/model-training",
+      "label": "allternit-tune engine (services/model-training)",
+      "kind": "module",
+      "path": "allternit/services/model-training"
     },
     {
       "id": "allternit/cmd/allternit-cloud-api/src/routes/model_hosts.rs",
@@ -831,6 +1247,409 @@
       ]
     },
     {
+      "source": "allternit/cmd/allternit-api/src/bot_hub_routes.rs",
+      "target": "allternit/cmd/allternit-api/src/agent_workspace_routes.rs",
+      "kind": "authorization (authorize_agent) and unified SOUL.md metadata",
+      "evidence": [
+        "allternit/cmd/allternit-api/src/bot_hub_routes.rs"
+      ]
+    },
+    {
+      "source": "allternit/cmd/allternit-api/src/memory_map_routes.rs",
+      "target": "allternit/cmd/allternit-api/src/skill_use.rs",
+      "kind": "skill_use rows (V284) give thread/routine -> skill links",
+      "evidence": [
+        "allternit/cmd/allternit-api/src/memory_map_routes.rs"
+      ]
+    },
+    {
+      "source": "allternit/cmd/allternit-api/src/v1_routes.rs",
+      "target": "allternit/cmd/allternit-api/src/skill_use.rs",
+      "kind": "agent-chat stream records gizzi skill tool calls",
+      "evidence": [
+        "allternit/cmd/allternit-api/src/v1_routes.rs"
+      ]
+    },
+    {
+      "source": "allternit-ai/src/views/office/OfficeFloor.tsx",
+      "target": "external:allternit-facility",
+      "kind": "Hosted full-facility iframe, version-1 visitor bridge and live bot floor protocol",
+      "evidence": [
+        "allternit-ai/src/views/office/OfficeFloor.tsx",
+        "allternit/surfaces/docs/architecture/facility-workspace.mdx"
+      ]
+    },
+    {
+      "source": "allternit/surfaces/allternit-mobile/ios/Features/Office/Floor/OfficeFloorView.swift",
+      "target": "external:allternit-facility",
+      "kind": "Hosted full-facility iframe, version-1 visitor bridge and live bot floor protocol",
+      "evidence": [
+        "allternit/surfaces/allternit-mobile/ios/Features/Office/Floor/OfficeFloorView.swift",
+        "allternit/surfaces/docs/architecture/facility-workspace.mdx"
+      ]
+    },
+    {
+      "source": "allternit-ai/src/lib/openui",
+      "target": "allternit/cmd/gizzi-code/src/runtime/session",
+      "kind": "shared answer policy: app catalog routing and runtime final-response enforcement before public text publication",
+      "evidence": [
+        "allternit-ai/src/lib/openui/answer-policy.ts",
+        "allternit-ai/scripts/sync-answer-contract.ts",
+        "allternit/cmd/gizzi-code/src/runtime/session/answer-policy.ts",
+        "allternit/cmd/gizzi-code/src/runtime/session/prompt.ts",
+        "allternit/cmd/gizzi-code/src/runtime/session/processor.ts"
+      ]
+    },
+    {
+      "source": "allternit-ai/src/lib/openui",
+      "target": "allternit/cmd/allternit-api/src/github_ci.rs",
+      "kind": "uses",
+      "evidence": [
+        "allternit/surfaces/docs/reference/answer-template-contract.mdx"
+      ]
+    },
+    {
+      "source": "allternit-ai/src/lib/bots",
+      "target": "allternit/cmd/allternit-api/src/gateway_runner.rs",
+      "kind": "uses",
+      "evidence": [
+        "allternit/surfaces/docs/reference/answer-template-contract.mdx"
+      ]
+    },
+    {
+      "source": "allternit-ai/src/lib/deployments",
+      "target": "allternit/cmd/allternit-api/src/mcp_*",
+      "kind": "authenticated user-scoped OpenShip tools through POST /api/mcp/apps",
+      "evidence": [
+        "allternit-ai/src/lib/deployments/openship.ts",
+        "allternit/cmd/allternit-api/src/mcp_apps.rs"
+      ]
+    },
+    {
+      "source": "allternit-ai/src/components/deployments",
+      "target": "allternit/cmd/allternit-api/src/mcp_*",
+      "kind": "saved connector discovery and OAuth sign-in through the selected runtime",
+      "evidence": [
+        "allternit-ai/src/components/deployments/OpenShipPanel.tsx",
+        "allternit-ai/src/integration/api-client.ts"
+      ]
+    },
+    {
+      "source": "allternit/cmd/allternit-cloud-api/src/routes/connect_return.rs",
+      "target": "allternit/cmd/allternit-api/src/oauth_return.rs",
+      "kind": "public OAuth sign-in return: api.allternit.com/connect/return/{connectors,mcp,sidecar/oauth/callback} relays the GET over the runtime socket to the runtime named in the OAuth state; only the three callback paths",
+      "evidence": [
+        "allternit/cmd/allternit-cloud-api/src/routes/connect_return.rs",
+        "allternit/cmd/allternit-api/src/oauth_return.rs",
+        "allternit/surfaces/allternit-desktop/src/main/connector-sidecar-manager.ts"
+      ]
+    },
+    {
+      "source": "allternit/cmd/allternit-api/src/connector_routes.rs",
+      "target": "allternit/cmd/allternit-api/src/mcp_directory_routes.rs",
+      "kind": "catalog Connect falls back to the vendor's official MCP server (DCR/CIMD) from assets/official-mcp-servers.json, generated from allternit-ai official-servers.ts",
+      "evidence": [
+        "allternit/cmd/allternit-api/src/official_mcp.rs",
+        "allternit/scripts/gen-official-mcp-servers.mjs",
+        "allternit-ai/src/views/mini-apps/official-servers.ts"
+      ]
+    },
+    {
+      "source": "surface:ios",
+      "target": "allternit/surfaces/allternit-mobile/ios",
+      "kind": "ships",
+      "evidence": [
+        "allternit/surfaces/allternit-mobile/ios/project.yml"
+      ]
+    },
+    {
+      "source": "surface:android",
+      "target": "allternit/surfaces/allternit-mobile/android",
+      "kind": "ships",
+      "evidence": [
+        "allternit/surfaces/allternit-mobile/android/app/build.gradle.kts"
+      ]
+    },
+    {
+      "source": "surface:android",
+      "target": "allternit-ai",
+      "kind": "ships m.allternit.com as a Trusted Web Activity (workspace features arrive with the PWA deploy; only Phone Link is native)",
+      "evidence": [
+        "allternit/surfaces/allternit-mobile/android/app/src/main/AndroidManifest.xml"
+      ]
+    },
+    {
+      "source": "allternit/surfaces/allternit-mobile/ios",
+      "target": "allternit/cmd/allternit-cloud-api",
+      "kind": "authenticated HTTP: account, runtime relay to the user's computer, push",
+      "evidence": [
+        "allternit/surfaces/allternit-mobile/ios/Core/API/RuntimeRelayClient.swift"
+      ]
+    },
+    {
+      "source": "allternit/surfaces/allternit-mobile/ios",
+      "target": "allternit/cmd/allternit-api",
+      "kind": "HTTP + SSE through the runtime relay: agent sessions, chat, bots, automation",
+      "evidence": [
+        "allternit/surfaces/allternit-mobile/ios/Core/API/CoworkTasksClient.swift",
+        "allternit/surfaces/allternit-mobile/ios/Core/API/TwinClient.swift"
+      ]
+    },
+    {
+      "source": "allternit/surfaces/allternit-desktop",
+      "target": "allternit/surfaces/allternit-mobile/android",
+      "kind": "iCTRL JSON-RPC over HTTP (port 8200) to Phone Link",
+      "evidence": [
+        "allternit/surfaces/allternit-mobile/android/README.md"
+      ]
+    },
+    {
+      "source": "allternit/cmd/allternit-api/src/status_snapshot.rs",
+      "target": "allternit/cmd/allternit-cloud-api/src/routes/notifications.rs",
+      "kind": "authenticated HTTP (runtime device bearer): status snapshot with bots and focus, ingested to choose push level and the Live Activity bot",
+      "evidence": [
+        "allternit/cmd/allternit-api/src/status_snapshot.rs",
+        "allternit/cmd/allternit-cloud-api/src/routes/notifications.rs"
+      ]
+    },
+    {
+      "source": "allternit/cmd/allternit-api/src/runtime_events.rs",
+      "target": "allternit/cmd/allternit-cloud-api/src/routes/notifications.rs",
+      "kind": "authenticated HTTP: forwarded runtime events (approval, held send, email draft) become pushes carrying inboxId, inboxKind and contentHash",
+      "evidence": [
+        "allternit/cmd/allternit-api/src/runtime_events.rs",
+        "allternit/cmd/allternit-cloud-api/src/routes/notifications.rs"
+      ]
+    },
+    {
+      "source": "allternit/cmd/allternit-cloud-api/src/routes/apns.rs",
+      "target": "allternit/surfaces/allternit-mobile/ios/AllternitNotifications",
+      "kind": "APNs alert and liveactivity pushes: category buttons, generic body for private items, Live Activity start, update and end",
+      "evidence": [
+        "allternit/cmd/allternit-cloud-api/src/routes/apns.rs",
+        "allternit/cmd/allternit-cloud-api/src/routes/live_activity.rs",
+        "allternit/surfaces/allternit-mobile/ios/AllternitNotifications"
+      ]
+    },
+    {
+      "source": "allternit/surfaces/allternit-mobile/ios/AllternitNotifications",
+      "target": "allternit/cmd/allternit-cloud-api/src/routes/device_read.rs",
+      "kind": "HTTP with a device read token: the extension fetches the real text of a private item by event id",
+      "evidence": [
+        "allternit/surfaces/allternit-mobile/ios/AllternitNotifications",
+        "allternit/cmd/allternit-cloud-api/src/routes/device_read.rs"
+      ]
+    },
+    {
+      "source": "allternit/surfaces/allternit-mobile/ios/SystemSurfaces",
+      "target": "allternit/cmd/allternit-api/src/inbox_needs.rs",
+      "kind": "authenticated HTTP via cloud relay: approve, deny, reply and snooze with contentHash (409 changed on a mismatch)",
+      "evidence": [
+        "allternit/surfaces/allternit-mobile/ios/SystemSurfaces",
+        "allternit/cmd/allternit-api/src/inbox_needs.rs"
+      ]
+    },
+    {
+      "source": "allternit/surfaces/allternit-mobile/ios/SystemSurfaces",
+      "target": "allternit/cmd/allternit-api/src/bots_pause.rs",
+      "kind": "authenticated HTTP via cloud relay: GET and PUT /api/v1/bots/pause",
+      "evidence": [
+        "allternit/surfaces/allternit-mobile/ios/SystemSurfaces",
+        "allternit/cmd/allternit-api/src/bots_pause.rs"
+      ]
+    },
+    {
+      "source": "allternit-ai/src/lib/bots",
+      "target": "allternit/cmd/allternit-api/src/bots_pause.rs",
+      "kind": "authenticated HTTP: GET and PUT /api/v1/bots/pause (Bots view header and phone Bots screen)",
+      "evidence": [
+        "allternit-ai/src/lib/bots/bots-pause.ts",
+        "allternit/cmd/allternit-api/src/bots_pause.rs"
+      ]
+    },
+    {
+      "source": "allternit/cmd/gizzi-code/src/cli/commands/bot.ts",
+      "target": "allternit/cmd/allternit-api/src/bots_pause.rs",
+      "kind": "HTTP: gizzi agents bot pause and resume",
+      "evidence": [
+        "allternit/cmd/gizzi-code/src/cli/commands/bot.ts",
+        "allternit/cmd/allternit-api/src/bots_pause.rs"
+      ]
+    },
+    {
+      "source": "allternit-ai/src/components/chat",
+      "target": "allternit/cmd/allternit-api/src/messages_mac.rs",
+      "kind": "authenticated HTTP: Mac Messages settings and held sends; draft card renders the message_draft tool result",
+      "evidence": [
+        "allternit-ai/src/components/chat/MessageDraftCard.tsx",
+        "allternit/cmd/allternit-api/src/messages_mac.rs"
+      ]
+    },
+    {
+      "source": "allternit/surfaces/allternit-mobile/ios",
+      "target": "allternit/cmd/allternit-cloud-api/src/routes/device_read.rs",
+      "kind": "authenticated HTTP: iMessage extension reads the status snapshot phoneRun through cloud-api status/summary",
+      "evidence": [
+        "allternit/surfaces/allternit-mobile/ios/AllternitMessages/Panel/SharedPhoneRun.swift",
+        "allternit/cmd/allternit-cloud-api/src/routes/device_read.rs",
+        "allternit/cmd/allternit-api/src/status_snapshot.rs"
+      ]
+    },
+    {
+      "source": "allternit/cmd/allternit-api/src/phone_runs.rs",
+      "target": "allternit/surfaces/allternit-mobile/ios",
+      "kind": "per-step thread ledger cards: each run step is written to the conversation thread and rendered as a card",
+      "evidence": [
+        "allternit/cmd/allternit-api/src/phone_runs.rs",
+        "allternit/surfaces/allternit-mobile/ios/Features/Phones/RunStatusViews.swift",
+        "allternit/surfaces/allternit-mobile/ios/Features/Chat/Views/MessageRow.swift"
+      ]
+    },
+    {
+      "source": "allternit/cmd/gizzi-code/src/runtime/integrations/cli-bridge/index.ts",
+      "target": "allternit/cmd/gizzi-code/src/runtime/tools/builtins/run_code.ts",
+      "kind": "MCP tool call: CLI brains (Claude Code, Codex...) call run_code through the allternit MCP bridge; the bridge stages the latest user message's attachments, stashes the result metadata (files[], runDir, exit_code), and the session processor normalizes the name to run_code and merges it into the tool part",
+      "evidence": [
+        "allternit/cmd/gizzi-code/src/runtime/integrations/cli-bridge/index.ts",
+        "allternit/cmd/gizzi-code/src/runtime/integrations/cli-bridge/results.ts",
+        "allternit/cmd/gizzi-code/src/runtime/session/processor.ts",
+        "allternit/cmd/gizzi-code/test/cli-bridge/cli-bridge-run-code.test.ts"
+      ]
+    },
+    {
+      "source": "allternit/services/model-source",
+      "target": "external:freeweights",
+      "kind": "HTTPS: catalog, signed manifests and resolve, then the publisher on fallback",
+      "evidence": [
+        "allternit/services/model-source/src/lib.rs",
+        "allternit/contracts/model-source/README.md"
+      ]
+    },
+    {
+      "source": "allternit/services/local-engine",
+      "target": "allternit/services/model-source",
+      "kind": "in-process call: resolve and fetch_verified for every model download",
+      "evidence": [
+        "allternit/services/local-engine/src/download",
+        "allternit/services/model-source/src/lib.rs"
+      ]
+    },
+    {
+      "source": "allternit/services/voice",
+      "target": "allternit/services/model-source",
+      "kind": "in-process call: voice pack downloads (state pinned)",
+      "evidence": [
+        "allternit/services/model-source/src/lib.rs"
+      ]
+    },
+    {
+      "source": "allternit/cmd/allternit-api",
+      "target": "allternit/services/model-source",
+      "kind": "in-process call: Ollama pull and sidecar install verification; Studio base model and dataset fetch (fetch_verified)",
+      "evidence": [
+        "allternit/cmd/allternit-api/src/provider_routes.rs",
+        "allternit/services/model-source/src/lib.rs",
+        "allternit/cmd/allternit-api/src/studio/runner.rs"
+      ]
+    },
+    {
+      "source": "allternit/services/local-engine",
+      "target": "external:freeweights",
+      "kind": "HTTPS: Freeweights catalog and Worker, then the publisher (ALLTERNIT_FREEWEIGHTS_URL overrides the base)",
+      "evidence": [
+        "allternit/services/local-engine/src/download",
+        "allternit/contracts/model-source/README.md"
+      ]
+    },
+    {
+      "source": "allternit/cmd/allternit-api",
+      "target": "external:freeweights",
+      "kind": "HTTPS: Freeweights annotations on Hugging Face search, cached 5 minutes",
+      "evidence": [
+        "allternit/cmd/allternit-api/src/provider_routes.rs"
+      ]
+    },
+    {
+      "source": "allternit/cmd/gizzi-code/src/runtime/sidecar",
+      "target": "external:freeweights",
+      "kind": "HTTPS: Freeweights catalog badge on sidecar search and pull verification",
+      "evidence": [
+        "allternit/cmd/gizzi-code/src/cli/commands/models.ts",
+        "allternit/cmd/gizzi-code/src/runtime/sidecar"
+      ]
+    },
+    {
+      "source": "allternit/services/status",
+      "target": "external:freeweights",
+      "kind": "HTTPS probes: Freeweights component (4 probes)",
+      "evidence": [
+        "allternit/services/status/contract/targets.json"
+      ]
+    },
+    {
+      "source": "allternit-ai/src/views/model-lab",
+      "target": "external:freeweights",
+      "kind": "HTTPS: Freeweights catalog search and model details (Freeweights Studio)",
+      "evidence": [
+        "allternit-ai/src/views/model-lab"
+      ]
+    },
+    {
+      "source": "allternit/surfaces/allternit-mobile/ios",
+      "target": "external:freeweights",
+      "kind": "HTTPS: Freeweights catalog and model details on the Models screen",
+      "evidence": [
+        "allternit/surfaces/allternit-mobile/ios/Features/Models/ModelsTabView.swift"
+      ]
+    },
+    {
+      "source": "allternit/surfaces/allternit-mobile/ios",
+      "target": "allternit/cmd/allternit-api",
+      "kind": "authenticated HTTP via cloud relay: POST /api/local-engine/models/download and GET /models (Send to computer, then poll)",
+      "evidence": [
+        "allternit/surfaces/allternit-mobile/ios/Features/Models/ModelsTabView.swift",
+        "allternit/cmd/allternit-api/src/local_engine_routes.rs"
+      ]
+    },
+    {
+      "source": "allternit/cmd/allternit-api",
+      "target": "allternit/services/studio-spec",
+      "kind": "in-process call: Studio job spec v1 validation, job states and engine catalog for /api/v1/studio",
+      "evidence": [
+        "allternit/cmd/allternit-api/src/studio/mod.rs",
+        "allternit/services/studio-spec/openapi/studio-api.yaml"
+      ]
+    },
+    {
+      "source": "allternit/cmd/allternit-api",
+      "target": "allternit/services/model-training",
+      "kind": "child process + loopback HTTP: engine API v1 with a per-launch bearer token (venv python -m allternit_tune.server)",
+      "evidence": [
+        "allternit/cmd/allternit-api/src/studio/runner.rs",
+        "allternit/services/studio-spec/openapi/engine-api.yaml"
+      ]
+    },
+    {
+      "source": "allternit/cmd/allternit-api",
+      "target": "allternit/services/local-engine",
+      "kind": "loopback HTTP: POST /models/studio-output registers a finished Studio job output (source studio_output)",
+      "evidence": [
+        "allternit/cmd/allternit-api/src/studio/mod.rs",
+        "allternit/services/local-engine/src/routes/models.rs"
+      ]
+    },
+    {
+      "source": "allternit/surfaces/allternit-desktop",
+      "target": "allternit/services/model-training",
+      "kind": "bundles source (no venv): extraResources model-training + runtime packages; passed to allternit-api as ALLTERNIT_TUNE_SOURCE for the Studio engine install",
+      "evidence": [
+        "allternit/surfaces/allternit-desktop/package.json",
+        "allternit/surfaces/allternit-desktop/scripts/runtime-package.cjs",
+        "allternit/surfaces/allternit-desktop/src/main/backend-manager.ts",
+        "allternit/cmd/allternit-api/src/studio/engines.rs"
+      ]
+    },
+    {
       "source": "allternit/cmd/gizzi-code/src/runtime/providers",
       "target": "allternit/cmd/allternit-cloud-api/src/routes/model_hosts.rs",
       "kind": "HTTP GET /api/v1/model-hosts/v1/models + POST /v1/chat/completions (provider allternit-devices 'Your devices', bearer = API key or runtime device token; rescanned while gizzi runs)",
@@ -842,7 +1661,7 @@
     {
       "source": "allternit-ai/src/lib/model-host",
       "target": "allternit/cmd/allternit-cloud-api/src/routes/model_hosts.rs",
-      "kind": "POST /api/v1/model-hosts/ws-ticket then WebSocket /api/v1/model-hosts/connect (hello/models/chunk/end/error up, ready/request/cancel down): the browser tab serves LFM2.5-350M on WebGPU",
+      "kind": "POST /api/v1/model-hosts/ws-ticket then WebSocket /api/v1/model-hosts/connect (hello/models/chunk/end/error up, ready/request/cancel down): the owner's host device runs the model and streams tokens back",
       "evidence": [
         "allternit-ai/src/lib/model-host/host-client.ts",
         "allternit/surfaces/docs/api/model-host-relay.mdx"

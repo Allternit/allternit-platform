@@ -9,7 +9,8 @@ appId: com.allternit.mobile
 - tapOn:
     text: "Dismiss notifications prompt"
     optional: true
-- tapOn: "Open settings"
+- tapOn:
+    id: "drawerSettings"
 - assertVisible: "Settings"
 - takeScreenshot: settings_root
 - stopApp

@@ -24,7 +24,7 @@ import { LSPServer } from "@/runtime/integrations/lsp/server"
 import { BunProc } from "@/shared/bun"
 import { Installation } from "@/shared/installation"
 import { ConfigMarkdown } from "@/runtime/context/config/markdown"
-import { constants, existsSync } from "fs"
+import { constants, existsSync, readFileSync } from "fs"
 import { Bus } from "@/shared/bus"
 import { GlobalBus } from "@/shared/bus/global"
 import { Event } from "@/runtime/server/event"
@@ -1719,19 +1719,89 @@ export namespace Config {
 
   export type Info = z.output<typeof Info>
 
-  export const global = lazy(async () => {
+  /**
+   * The global config files, in merge order (later wins): the legacy
+   * pre-rename `~/.config/gizzi` dir first as a fallback, then this app's
+   * config dir. Each dir: config.json, gizzi.json, gizzi.jsonc, config.toml.
+   */
+  export function globalConfigFiles(): string[] {
     const legacyConfigDir = path.join(xdgConfig ?? path.join(os.homedir(), ".config"), "gizzi")
+    const names = ["config.json", "gizzi.json", "gizzi.jsonc", "config.toml"]
+    return [legacyConfigDir, Global.Path.config].flatMap((dir) => names.map((name) => path.join(dir, name)))
+  }
+
+  /**
+   * The config files of `GIZZI_CONFIG_DIR`, when set. `Config.get()` merges
+   * them over the global config (same names, same order), so a sandboxed
+   * config dir decides `model` / `small_model` for the TUI as well.
+   */
+  export function configDirOverrideFiles(): string[] {
+    const dir = Flag.GIZZI_CONFIG_DIR
+    if (!dir) return []
+    return ["config.toml", "gizzi.jsonc", "gizzi.json"].map((name) => path.join(dir, name))
+  }
+
+  /**
+   * The merged global config, read synchronously (for UI code that cannot
+   * await). Same files and order as `global()`, then the `GIZZI_CONFIG_DIR`
+   * files on top, and the same parsing:
+   * `{env:VAR}` / `{file:path}` substitution, JSONC with trailing commas,
+   * TOML with `default_model` → `model`. Not schema-validated, and a file
+   * that does not parse is skipped instead of throwing.
+   */
+  export function readGlobalConfigSync(): Record<string, unknown> {
+    let result: Record<string, unknown> = {}
+    for (const filepath of [...globalConfigFiles(), ...configDirOverrideFiles()]) {
+      let text: string
+      try {
+        text = readFileSync(filepath, "utf8")
+      } catch {
+        continue
+      }
+      if (!text.trim()) continue
+      try {
+        const data = filepath.endsWith(".toml") ? parseTomlSync(text) : parseJsoncSync(text, path.dirname(filepath))
+        if (data && typeof data === "object" && !Array.isArray(data))
+          result = mergeDeep(result, data as Record<string, unknown>) as Record<string, unknown>
+      } catch (err) {
+        log.warn("readGlobalConfigSync: skipping unreadable config", { path: filepath, error: err })
+      }
+    }
+    return result
+  }
+
+  function parseTomlSync(text: string): Record<string, unknown> {
+    const parsed = Bun.TOML.parse(text) as Record<string, unknown>
+    const { default_model, ...config } = parsed
+    if (default_model !== undefined && config.model === undefined) config.model = default_model
+    return config
+  }
+
+  function parseJsoncSync(text: string, configDir: string): unknown {
+    text = text.replace(/\{env:([^}]+)\}/g, (_, varName) => process.env[varName] || "")
+    const lines = text.split("\n")
+    for (const match of text.match(/\{file:[^}]+\}/g) ?? []) {
+      const line = lines.find((l) => l.includes(match))
+      if (line?.trim().startsWith("//")) continue
+      let filePath = match.replace(/^\{file:/, "").replace(/\}$/, "")
+      if (filePath.startsWith("~/")) filePath = path.join(os.homedir(), filePath.slice(2))
+      const resolved = path.isAbsolute(filePath) ? filePath : path.resolve(configDir, filePath)
+      const content = readFileSync(resolved, "utf8").trim()
+      text = text.replace(match, () => JSON.stringify(content).slice(1, -1))
+    }
+    const errors: JsoncParseError[] = []
+    const data = parseJsonc(text, errors, { allowTrailingComma: true })
+    if (errors.length) throw new Error(`invalid JSONC (${errors.length} error(s))`)
+    return data
+  }
+
+  export const global = lazy(async () => {
     // Build config through sequential merges to avoid TypeScript type depth limit
     let result: Info = {} as Info
     // Legacy GIZZI config stays as fallback to preserve plugin/provider/MCP defaults.
-    result = mergeDeep(result, await loadFile(path.join(legacyConfigDir, "config.json")))
-    result = mergeDeep(result, await loadFile(path.join(legacyConfigDir, "gizzi.json")))
-    result = mergeDeep(result, await loadFile(path.join(legacyConfigDir, "gizzi.jsonc")))
-    result = mergeDeep(result, await loadFile(path.join(legacyConfigDir, "config.toml")))
-    result = mergeDeep(result, await loadFile(path.join(Global.Path.config, "config.json")))
-    result = mergeDeep(result, await loadFile(path.join(Global.Path.config, "gizzi.json")))
-    result = mergeDeep(result, await loadFile(path.join(Global.Path.config, "gizzi.jsonc")))
-    result = mergeDeep(result, await loadFile(path.join(Global.Path.config, "config.toml")))
+    for (const file of globalConfigFiles()) {
+      result = mergeDeep(result, await loadFile(file))
+    }
 
     const legacy = path.join(Global.Path.config, "config")
     if (existsSync(legacy)) {

@@ -255,6 +255,15 @@ export async function processOutboundQueue(
 		return;
 	}
 	if (job.status !== "queued") return;
+	// Claim the job atomically. The queue delivers at least once, so two consumers can
+	// load the same "queued" job; only the one whose update changes the row sends it.
+	// A crash after the claim leaves the job "sending": it is never re-sent blindly.
+	const claimed = await db
+		.update(outboundJobs)
+		.set({ status: "sending", updatedAt: new Date() })
+		.where(and(eq(outboundJobs.id, job.id), eq(outboundJobs.status, "queued")))
+		.returning({ id: outboundJobs.id });
+	if (claimed.length === 0) return;
 	if (!job.messageId) {
 		await db
 			.update(outboundJobs)

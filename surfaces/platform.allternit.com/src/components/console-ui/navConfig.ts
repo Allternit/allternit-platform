@@ -16,7 +16,6 @@ import {
   BotIcon,
   ComputerIcon,
   DatabaseIcon,
-  LockIcon,
   AiBrain01Icon,
   MonitorIcon,
   PieChartIcon,
@@ -41,14 +40,18 @@ import {
   Calendar02Icon,
   ShieldCheckIcon,
   Wallet01Icon,
-  BookOpen02Icon,
   MagicWandIcon,
   ApiGatewayIcon,
   Route01Icon,
   Key02Icon,
   CubeIcon,
   BubbleChatIcon,
+  SmartPhone01Icon,
+  Audit01Icon,
+  Building03Icon,
+  CheckListIcon,
 } from "@hugeicons/core-free-icons";
+import { fabricEnabled, isCloudGateway, isHiddenOnCloud, type GatedFeature } from "@/lib/availability";
 
 export type ConsoleNavIcon = typeof LayoutDashboardIcon;
 
@@ -56,12 +59,17 @@ export interface ConsoleNavItem {
   to: string;
   label: string;
   icon: ConsoleNavIcon;
+  /** Optional pill rendered next to the item label (e.g. an amber "soon"). */
+  badge?: string;
+  /** Hidden on Allternit Cloud (see src/lib/availability.ts). */
+  cloudHidden?: GatedFeature;
+  /** Only shown when the Fabric backend (VITE_ALLTERNITOS_URL) is configured. */
+  requiresFabric?: boolean;
 }
 
 export interface ConsoleNavGroup {
   label: string;
   icon: ConsoleNavIcon;
-  defaultOpen?: boolean;
   /** Optional pill rendered next to the group label (e.g. an amber "soon"). */
   badge?: string;
   items: ConsoleNavItem[];
@@ -72,32 +80,33 @@ export interface ConsoleNavConfig {
   groups: ConsoleNavGroup[];
 }
 
-export const consoleNav: ConsoleNavConfig = {
+/**
+ * Rail layout (approved 2026-11-13): five top items, then groups that open one
+ * at a time. Labels can repeat across groups (Computers, Usage) because the
+ * rail, palette and breadcrumb always show them with their group.
+ * `/docs` is not here: it lives in the rail footer's link line.
+ */
+const baseConsoleNav: ConsoleNavConfig = {
   top: [
     { to: "/", label: "Dashboard", icon: LayoutDashboardIcon },
+    { to: "/playground", label: "Playground", icon: PlayIcon },
     { to: "/api-keys", label: "API keys", icon: Key01Icon },
+    { to: "/models", label: "Models", icon: SparklesIcon },
+    // Gizzi Code signed in to Allternit Cloud: its requests, tokens and spend (live, not "soon").
+    { to: "/gizzi/usage", label: "Gizzi Code", icon: SourceCodeIcon },
   ],
   groups: [
     {
-      label: "Build",
-      icon: SourceCodeIcon,
-      defaultOpen: true,
-      items: [
-        { to: "/playground", label: "Playground", icon: PlayIcon },
-        { to: "/files", label: "Files", icon: File01Icon },
-        { to: "/skills", label: "Skills", icon: SparklesIcon },
-        { to: "/batches", label: "Batches", icon: Briefcase01Icon },
-      ],
-    },
-    {
       label: "Platform API",
       icon: CubeIcon,
-      defaultOpen: true,
       items: [
         { to: "/platform/projects", label: "Projects", icon: CubeIcon },
         { to: "/platform/agents", label: "Agents", icon: BotIcon },
         { to: "/platform/conversations", label: "Conversations", icon: BubbleChatIcon },
+        { to: "/platform/decisions", label: "Decisions", icon: CheckListIcon },
+        { to: "/approvals", label: "Approvals", icon: ShieldCheckIcon },
         { to: "/platform/computers", label: "Computers", icon: ComputerIcon },
+        { to: "/platform/phones", label: "Phones", icon: SmartPhone01Icon },
         { to: "/platform/usage", label: "Usage", icon: Analytics01Icon },
         { to: "/platform/billing", label: "Billing", icon: Dollar01Icon },
         { to: "/platform/webhooks", label: "Webhooks", icon: WebhookIcon },
@@ -106,15 +115,17 @@ export const consoleNav: ConsoleNavConfig = {
     {
       label: "Managed Agents",
       icon: BotIcon,
-      defaultOpen: true,
       items: [
         { to: "/agents", label: "Overview", icon: BotIcon },
         { to: "/builder", label: "Builder", icon: MagicWandIcon },
-        { to: "/sessions", label: "Sessions", icon: ComputerIcon },
+        { to: "/sessions", label: "Sessions", icon: SourceCodeIcon },
         { to: "/deployments", label: "Deployments", icon: RocketIcon },
         { to: "/computers", label: "Computers", icon: MonitorIcon },
         { to: "/vaults", label: "Vaults", icon: DatabaseIcon },
         { to: "/memory", label: "Memory", icon: AiBrain01Icon },
+        { to: "/skills", label: "Skills", icon: SparklesIcon },
+        { to: "/files", label: "Files", icon: File01Icon, cloudHidden: "files" },
+        { to: "/batches", label: "Batches", icon: Briefcase01Icon, cloudHidden: "batches" },
       ],
     },
     {
@@ -123,65 +134,73 @@ export const consoleNav: ConsoleNavConfig = {
       items: [
         { to: "/analytics/usage", label: "Usage", icon: Analytics01Icon },
         { to: "/analytics/logs", label: "Logs", icon: DocumentValidationIcon },
-        { to: "/analytics/caching", label: "Caching", icon: GaugeIcon },
-        { to: "/analytics/rate-limits", label: "Rate limits", icon: Timer01Icon },
         { to: "/analytics/cost", label: "Cost", icon: Dollar01Icon },
+        { to: "/analytics/rate-limits", label: "Rate limits", icon: Timer01Icon },
+        { to: "/analytics/caching", label: "Caching", icon: GaugeIcon, cloudHidden: "caching" },
       ],
     },
     {
-      label: "Gizzi Code",
-      icon: AiBrain01Icon,
-      badge: "soon",
-      items: [{ to: "/gizzi/usage", label: "Usage", icon: CoinsDollarIcon }],
+      label: "Organization",
+      icon: Building03Icon,
+      items: [
+        { to: "/billing", label: "Credits & billing", icon: Wallet01Icon },
+        { to: "/plans", label: "Plans", icon: LayersIcon },
+        { to: "/manage/members", label: "Members", icon: UserGroupIcon },
+        { to: "/manage/audit-log", label: "Audit log", icon: Audit01Icon },
+        { to: "/manage/spend-limits", label: "Spend limits", icon: CoinsDollarIcon, cloudHidden: "spendLimits" },
+        { to: "/manage/service-accounts", label: "Service accounts", icon: ShieldUserIcon, cloudHidden: "serviceAccounts" },
+        { to: "/manage/security", label: "Security", icon: LockPasswordIcon, cloudHidden: "security" },
+        { to: "/manage/webhooks", label: "Organization webhooks", icon: WebhookIcon, cloudHidden: "orgWebhooks" },
+        { to: "/manage/tags", label: "Tags", icon: Tag01Icon, cloudHidden: "tags" },
+        { to: "/settings", label: "Settings", icon: Setting07Icon },
+      ],
+    },
+    {
+      label: "Cloud",
+      icon: CloudIcon,
+      items: [
+        { to: "/compute", label: "Compute", icon: CpuIcon },
+        { to: "/devices", label: "Devices", icon: DeviceAccessIcon },
+        { to: "/fabric", label: "Fabric", icon: LayersIcon, requiresFabric: true },
+        { to: "/runs", label: "Runs", icon: RocketIcon },
+        { to: "/schedules", label: "Schedules", icon: Calendar02Icon },
+        { to: "/cloud-accounts", label: "Cloud accounts", icon: CloudIcon },
+        { to: "/organizations", label: "Organizations", icon: TeamWorkIcon },
+      ],
     },
     {
       label: "Gateway",
       icon: ApiGatewayIcon,
       items: [
-        { to: "/gateway/routing-policy", label: "Routing policy", icon: Route01Icon },
-        { to: "/gateway/credentials", label: "Route credentials", icon: Key02Icon },
-      ],
-    },
-    {
-      label: "Manage",
-      icon: Setting07Icon,
-      items: [
-        { to: "/manage/rate-limits", label: "Rate limits", icon: Timer01Icon },
-        { to: "/manage/spend-limits", label: "Spend limits", icon: CoinsDollarIcon },
-        { to: "/manage/members", label: "Members", icon: UserGroupIcon },
-        { to: "/manage/service-accounts", label: "Service accounts", icon: ShieldUserIcon },
-        { to: "/manage/security", label: "Security", icon: LockPasswordIcon },
-        { to: "/manage/webhooks", label: "Webhooks", icon: WebhookIcon },
-        { to: "/manage/tags", label: "Tags", icon: Tag01Icon },
-      ],
-    },
-    {
-      label: "Allternit Cloud",
-      icon: CloudIcon,
-      items: [
-        { to: "/organizations", label: "Organizations", icon: TeamWorkIcon },
-        { to: "/compute", label: "Compute", icon: CpuIcon },
-        { to: "/devices", label: "Devices", icon: DeviceAccessIcon },
-        { to: "/fabric", label: "Fabric", icon: LayersIcon },
-        { to: "/runs", label: "Runs", icon: RocketIcon },
-        { to: "/schedules", label: "Schedules", icon: Calendar02Icon },
-        { to: "/approvals", label: "Approvals", icon: ShieldCheckIcon },
-        { to: "/cloud-accounts", label: "Cloud accounts", icon: CloudIcon },
-        { to: "/billing", label: "Billing", icon: Wallet01Icon },
-        { to: "/models", label: "Models", icon: SparklesIcon },
-        { to: "/plans", label: "Plans", icon: LayersIcon },
-      ],
-    },
-    {
-      label: "Resources",
-      icon: BookOpen02Icon,
-      items: [
-        { to: "/docs", label: "Docs", icon: BookOpen02Icon },
-        { to: "/settings", label: "Settings", icon: Setting07Icon },
+        { to: "/gateway/routing-policy", label: "Routing policy", icon: Route01Icon, cloudHidden: "routingPolicy" },
+        { to: "/gateway/credentials", label: "Route credentials", icon: Key02Icon, cloudHidden: "routeCredentials" },
       ],
     },
   ],
 };
+
+export interface ConsoleNavOptions {
+  cloud: boolean;
+  fabric: boolean;
+}
+
+/** Build the nav for a given environment; empty groups are dropped. */
+export function buildConsoleNav(opts: ConsoleNavOptions): ConsoleNavConfig {
+  const keep = (item: ConsoleNavItem) =>
+    !(item.cloudHidden && isHiddenOnCloud(item.cloudHidden, opts.cloud)) &&
+    !(item.requiresFabric && !opts.fabric);
+  return {
+    top: baseConsoleNav.top.filter(keep),
+    groups: baseConsoleNav.groups
+      .map((group) => ({ ...group, items: group.items.filter(keep) }))
+      .filter((group) => group.items.length > 0),
+  };
+}
+
+export const consoleNav: ConsoleNavConfig = buildConsoleNav({
+  cloud: isCloudGateway(),
+  fabric: fabricEnabled(),
+});
 
 /** Every navigable item, flattened with its group label for palette display. */
 export interface ConsoleNavEntry {
@@ -191,17 +210,37 @@ export interface ConsoleNavEntry {
   icon: ConsoleNavIcon;
 }
 
-export const consoleNavEntries: ConsoleNavEntry[] = [
-  ...consoleNav.top.map((item) => ({ ...item, group: null })),
-  ...consoleNav.groups.flatMap((group) =>
-    group.items.map((item) => ({ ...item, group: group.label }))
-  ),
-];
+export function buildConsoleNavEntries(nav: ConsoleNavConfig): ConsoleNavEntry[] {
+  return [
+    ...nav.top.map((item) => ({ ...item, group: null })),
+    ...nav.groups.flatMap((group) =>
+      group.items.map((item) => ({ ...item, group: group.label }))
+    ),
+  ];
+}
+
+export const consoleNavEntries: ConsoleNavEntry[] = buildConsoleNavEntries(consoleNav);
+
+/**
+ * The nav entry a path belongs to. The longest matching URL wins, so nested
+ * pages (e.g. /agents/new) resolve to their own item and never to a shorter
+ * sibling. "/" only matches itself.
+ */
+export function consoleNavEntryForPath(
+  pathname: string,
+  entries: ConsoleNavEntry[] = consoleNavEntries
+): ConsoleNavEntry | undefined {
+  let best: ConsoleNavEntry | undefined;
+  for (const entry of entries) {
+    const hit =
+      entry.to === "/"
+        ? pathname === "/"
+        : pathname === entry.to || pathname.startsWith(`${entry.to}/`);
+    if (hit && (!best || entry.to.length > best.to.length)) best = entry;
+  }
+  return best;
+}
 
 export function consoleNavLabelForPath(pathname: string): string {
-  if (pathname === "/") return "Dashboard";
-  const match = consoleNavEntries.find(
-    (item) => pathname === item.to || pathname.startsWith(`${item.to}/`)
-  );
-  return match?.label ?? "Console";
+  return consoleNavEntryForPath(pathname)?.label ?? "Console";
 }

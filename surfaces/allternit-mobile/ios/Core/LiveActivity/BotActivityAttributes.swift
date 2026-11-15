@@ -23,8 +23,50 @@ struct BotActivityAttributes: ActivityAttributes {
         /// Number of bots that `needsAttention` (waiting_approval, blocked,
         /// failed, degraded).
         var attentionBotsCount: Int
-        /// In single-bot mode, the display name of the pinned bot.
+        /// In single-bot mode, the display name of the pinned bot. Server
+        /// pushes fill it with the focus bot's name.
         var displayName: String?
+
+        // Option A, bot first (plan I3). Optional so older pushes and the
+        // local `BotStatusStore` projection still decode. Key names and
+        // types match cloud-api `routes/live_activity.rs`
+        // `bot_content_state`; absent values are left out of the JSON.
+        // No `Date` values ride in the content state.
+
+        /// The focus bot's id.
+        var botId: String? = nil
+        /// What the focus bot is doing now (server cuts it to 120 characters).
+        var step: String? = nil
+        /// 0...1 when the runtime knows it.
+        var progress: Double? = nil
+        /// Active bots other than the focus bot ("+N others").
+        var othersCount: Int? = nil
+        /// Set while the focus bot needs the owner: the full question when
+        /// `approveInline` is true, else a generic line ("Needs your approval").
+        var question: String? = nil
+        /// Inbox item the question resolves (`approval:<id>`, `attention:<id>`).
+        var inboxId: String? = nil
+        /// Runtime that owns the item; the resolver targets it.
+        var runtimeId: String? = nil
+        var sessionId: String? = nil
+        /// Hash of the approved text; Approve sends it so a changed text is refused.
+        var contentHash: String? = nil
+        /// True only when Approve and Deny may show on the activity.
+        var approveInline: Bool? = nil
+
+        /// Approve / Deny buttons show only with an inline question, an
+        /// inbox id and a content hash; otherwise the activity offers Open.
+        var showsInlineDecision: Bool {
+            approveInline == true && question?.isEmpty == false
+                && inboxId?.isEmpty == false && contentHash?.isEmpty == false
+        }
+
+        /// `allternit://inbox/<id>` for the Open link.
+        var inboxURL: URL? {
+            guard let inboxId, !inboxId.isEmpty,
+                  let encoded = inboxId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) else { return nil }
+            return URL(string: "allternit://inbox/\(encoded)")
+        }
     }
 
     /// Reserved for future variants (e.g., a pinned single-bot activity).

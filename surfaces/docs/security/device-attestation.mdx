@@ -40,7 +40,7 @@ Device attestation endpoints require a Clerk JWT or a valid organization access 
 ## Register an attestation record
 
 ```bash
-curl -X POST https://api.allternit.com/api/v1/admin/device-attestation \
+curl -X POST http://127.0.0.1:8013/api/v1/admin/device-attestation \
   -H "Authorization: Bearer $ALLTERNIT_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -81,7 +81,7 @@ curl -X POST https://api.allternit.com/api/v1/admin/device-attestation \
 ## List attestation records
 
 ```bash
-curl "https://api.allternit.com/api/v1/admin/device-attestation?user_id=usr_01hqx8x7x7x7x7x7x7x7x7x&platform=ios" \
+curl "http://127.0.0.1:8013/api/v1/admin/device-attestation?user_id=usr_01hqx8x7x7x7x7x7x7x7x7x&platform=ios" \
   -H "Authorization: Bearer $ALLTERNIT_TOKEN"
 ```
 
@@ -115,7 +115,7 @@ curl "https://api.allternit.com/api/v1/admin/device-attestation?user_id=usr_01hq
 ## Revoke an attestation record
 
 ```bash
-curl -X DELETE https://api.allternit.com/api/v1/admin/device-attestation/att_01hqx8x7x7x7x7x7x7x7x7x \
+curl -X DELETE http://127.0.0.1:8013/api/v1/admin/device-attestation/att_01hqx8x7x7x7x7x7x7x7x7x \
   -H "Authorization: Bearer $ALLTERNIT_TOKEN"
 ```
 
@@ -124,7 +124,7 @@ Returns `204 No Content` on success.
 ## Verify an attestation token
 
 ```bash
-curl -X POST https://api.allternit.com/api/v1/admin/device-attestation/verify \
+curl -X POST http://127.0.0.1:8013/api/v1/admin/device-attestation/verify \
   -H "Authorization: Bearer $ALLTERNIT_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{

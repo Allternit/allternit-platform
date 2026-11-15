@@ -117,6 +117,14 @@ describe("claude-cli bot spawn args", () => {
     expect(args).not.toContain("--system-prompt")
   })
 
+  test("a code bot's run_code goes over the bridge, never as Claude's Bash or a raw name", () => {
+    const codeBot: BotTurn.BotTurnInfo = { id: "agent-code", allowedTools: ["file_read", "run_code"] }
+    const allowed = after(argv({ bot: codeBot }), "--allowedTools") ?? ""
+    expect(allowed.split(",")).not.toContain("run_code")
+    expect(allowed.split(",")).not.toContain("Bash")
+    expect(allowed).toContain("Read")
+  })
+
   test("a gated bot is isolated, gets its allowlist and no bypassPermissions", () => {
     const gatedBot: BotTurn.BotTurnInfo = {
       id: "agent-1",
@@ -200,5 +208,21 @@ describe("tool decisions for a bot with no allowlist", () => {
   })
   test("a restricted bot still refuses tools outside its allowlist", () => {
     expect(BotTurn.claudeToolDecision({ id: "a", allowedTools: ["file_read"] }, "Bash")).toBe("deny")
+  })
+})
+
+describe("bot connector lists (Capabilities page)", () => {
+  test("a catalog connector off for the bot is refused; no list allows all", () => {
+    const bot = { id: "b1", allowedConnectors: ["github"] }
+    expect(BotTurn.connectorOnForBot(bot, "GitHub")).toBe(true)
+    expect(BotTurn.connectorOnForBot(bot, "slack")).toBe(false)
+    expect(BotTurn.connectorOnForBot({ id: "b2" }, "slack")).toBe(true)
+  })
+  test("an MCP connector off for the bot is not offered; tools with no connector stay", () => {
+    const bot = { id: "b1", allowedMcp: ["conn-1"] }
+    expect(BotTurn.mcpOnForBot(bot, "conn-1")).toBe(true)
+    expect(BotTurn.mcpOnForBot(bot, "conn-2")).toBe(false)
+    expect(BotTurn.mcpOnForBot(bot, undefined)).toBe(true)
+    expect(BotTurn.mcpOnForBot(undefined, "conn-2")).toBe(true)
   })
 })

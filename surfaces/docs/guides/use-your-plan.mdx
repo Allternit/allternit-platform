@@ -1,0 +1,100 @@
+---
+title: Use the AI plan you already pay for
+description: "How to use your ChatGPT, Claude, Grok or Kimi plan in Allternit with no computer, what runs where, the risk you accept, and what an API key does instead."
+---
+
+You may already pay for ChatGPT, Claude, Grok, Kimi, Gemini or GitHub Copilot. This page says what each one does in Allternit. Open **Settings → Connections** and look under **Your AI** to connect. See [Connections](/guides/connections) for how the page works.
+
+## How a plan runs with no computer
+
+You do not need a computer of your own to use your Claude, ChatGPT, Grok or Kimi plan.
+
+- Allternit gives your account one private box on its servers. Only your account uses it.
+- The box runs the vendor's own command-line program, unchanged.
+- You sign in to the vendor yourself, in the sheet the row shows. Allternit never sees your password.
+- You manage your own account with the vendor: your plan, your limits, your billing.
+- Your plan answers only the messages you send yourself, in chat, with tools turned off. Bots, routines, schedules and agents never use it.
+
+## The risk
+
+
+Each vendor sets its own terms for how a plan can be used outside its own apps. Before the first connect, the sheet shows this text and asks you to accept it. The words below are the ones the sheet shows, with `<Vendor>` replaced by the vendor's name:
+
+> Your plan runs on an Allternit server, in a private space only your account uses.
+>
+> `<Vendor>`'s terms may not allow using a plan this way. `<Vendor>` could limit or close your account. Allternit does not control that and cannot undo it.
+>
+> You sign in yourself. Your sign-in stays in that private space and Allternit does not copy it anywhere else. Disconnect signs you out and deletes it.
+>
+> Your plan only answers messages you send yourself, in chat. Bots, routines, schedules and agents never use it.
+
+The buttons are **I understand, connect** and **Use a key instead**. Allternit saves that you accepted, for your account, that vendor and that version of the text. If the text changes, you accept it again. If you would rather not take the risk, use an API key for the same vendor (below).
+
+## What works where
+
+| Plan | With no computer | With your own computer | Another way |
+| --- | --- | --- | --- |
+| Allternit Cloud | Yes, with credits | Yes, with credits | Free accounts don't include Cloud usage. Buy credits or choose a plan. |
+| Claude (Pro or Max) | Yes, on an Allternit server | Yes, through Claude Code on your computer | An Anthropic API key |
+| ChatGPT (Plus or Pro) | On the phone app, Desktop and Gizzi Code, sign in on the device. On the web with no computer, on an Allternit server when the row is on. | Yes. Codex signs in on your computer. | An OpenAI API key |
+| Grok (SuperGrok) | On an Allternit server, when the row is on | Yes, through the Grok CLI on your computer | An xAI API key |
+| Kimi | On an Allternit server, when the row is on | Yes, through the Kimi CLI on your computer | A Kimi API key |
+| Gemini | The Gemini plan can't be used here. A free Google AI Studio key works with no computer. | The Gemini CLI signs in on your computer | A Google AI Studio key |
+| GitHub Copilot | Yes, once connected with your GitHub account, when the row is on | Yes | Connect GitHub as an app |
+
+Each vendor's row is turned on separately. A row that is not on yet says **Not available yet. Use a key for now.** and offers the key row, and it changes by itself without an app update. Older app versions show **Update the app to connect this plan.** The GitHub Copilot row says **Coming soon.** until Allternit has turned it on. Once it is on, you sign in with GitHub and Copilot answers messages you send yourself in chat, with tools off, under the same rules as the other plans. Removing it revokes the sign-in at GitHub.
+
+## ChatGPT: sign in on your own device
+
+On Allternit Desktop, the iPhone app and Gizzi Code, ChatGPT uses OpenAI's own Sign in with ChatGPT. It is a different path from the server box above.
+
+1. Tap the ChatGPT row. The same text as above is shown first, then OpenAI's sign-in page opens.
+2. Sign in to ChatGPT there. The page returns to the app on your device and the row turns **Connected**.
+3. Your tokens stay on that device. Allternit's servers never receive them. Chat with these models goes from your device straight to OpenAI.
+
+Disconnect signs you out at OpenAI and deletes the tokens from the device. If your plan hits its usage limit, the row says **Needs you · ChatGPT limit reached**. Like the server box, this path is for messages you send yourself, in chat, with tools off.
+
+On the web or the phone layout with no computer, the ChatGPT row uses the server box when it is on. If a computer of yours is online and signed in, that computer's row is used instead.
+
+## Your chats sync across devices
+
+A chat with a plan model is saved to your account in Allternit's cloud, so you can open it on your phone, on the web and on Desktop. This works with no computer. It does not change who can use your plan: only you, from a message you send.
+
+## What a plan can't do
+
+A plan model answers in chat only. It does not run tools, so it will not open files, run commands or use apps for you. It does not appear in the bot, routine, schedule or agent model pickers. If you want a bot to run on a vendor's model, use that vendor's API key. Allternit may also limit how often you can send: about 20 messages in 5 minutes, and one message at a time.
+
+## API keys
+
+An API key is billed by the vendor on its own account, not by your plan. It works on every device with no computer, and it works for bots.
+
+- Keys work for OpenAI, Anthropic, Google AI Studio, xAI, OpenRouter, Together, Fireworks, DeepInfra, Groq, DeepSeek and Kimi.
+- Allternit checks the key with the vendor first, then saves it encrypted on your account. It never shows the key again, only the last few characters.
+- If a vendor rejects a key later, the row says **Needs you · The key was rejected**. Paste a new one.
+
+## Connect a plan with no computer
+
+1. Open **Settings → Connections** and tap the plan's row.
+2. Read the text and tap **I understand, connect**.
+3. Follow the steps. Claude shows a link, then asks for the code the vendor gives you. ChatGPT and Grok show a code and a link. Kimi uses one of those two. The row turns **Connected** by itself.
+
+The steps for each vendor are in [Connections](/guides/connections#connect-something).
+
+## Disconnect
+
+Open the row and choose **Remove**. Allternit signs you out of the vendor, deletes your sign-in from the box, and removes the row. When you remove your last plan, the box is deleted. If you delete your Allternit account, the box and everything in it are deleted too. Your accepted-text record is erased with the account.
+
+An idle box stops after 5 minutes and wakes when you next send a message, so the first message after a pause can be slower. A box you have not used for 90 days is deleted, and you sign in again next time.
+
+## If the vendor refuses your plan
+
+The vendor decides what your plan can do. If the account has no active subscription, its limit is used up, or the vendor closes it, your message gets a reply that says so, for example "Kimi didn't accept this message: your Kimi plan isn't active or its limit is used up", and the row says **Needs you · Plan not active or limit used up**. Allternit has no way to undo that and does not work around it. Renew the plan with the vendor, use a key, or pick another brain.
+
+A message never waits forever. If the vendor sends nothing for 60 seconds, the reply says it didn't answer, and you can send again or pick another brain.
+
+## Related
+
+- [Connections](/guides/connections)
+- [Connected subscriptions](/guides/subscriptions)
+- [Coding tools on any computer](/guides/subscriptions#coding-tools-on-any-computer)
+- [Brain runner (operations)](/operations/brain-runner)

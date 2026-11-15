@@ -1,5 +1,7 @@
 // @ts-nocheck
 // biome-ignore-all assist/source/organizeImports: ANT-ONLY import markers must not be reordered
+import { approveCliTool } from './services/api/cliBrain.js'
+import type { CliToolApproval } from '@/runtime/runtime-driver'
 import type {
   ToolResultBlockParam,
   ToolUseBlock,
@@ -67,6 +69,7 @@ const jobClassifier = feature('TEMPLATES')
 import {
   remove as removeFromQueue,
   getCommandsByMaxPriority,
+  isQueuedForAfterTurn,
   isSlashCommand,
 } from './utils/messageQueueManager.js'
 import { notifyCommandLifecycle } from './utils/commandLifecycle.js'
@@ -652,6 +655,9 @@ async function* queryLoop(
               skipCacheWrite,
               agentId: toolUseContext.agentId,
               addNotification: toolUseContext.addNotification,
+              // A CLI brain asks before its own tools through this TUI's prompt.
+              cliToolApproval: (request: CliToolApproval) =>
+                approveCliTool(request, canUseTool, toolUseContext),
               ...(params.taskBudget && {
                 taskBudget: {
                   total: params.taskBudget.total,
@@ -771,8 +777,14 @@ async function* queryLoop(
             if (message.type === 'assistant') {
               assistantMessages.push(message)
 
-              const msgToolUseBlocks = message.message.content.filter(
-                content => content.type === 'tool_use',
+              // A CLI brain already ran the tools it reports (cliBrain.ts):
+              // show them, never run them again.
+              const msgToolUseBlocks = (
+                message.cliObserved
+                  ? []
+                  : message.message.content.filter(
+                      content => content.type === 'tool_use',
+                    )
               ) as ToolUseBlock[]
               if (msgToolUseBlocks.length > 0) {
                 toolUseBlocks.push(...msgToolUseBlocks)
@@ -1420,6 +1432,9 @@ async function* queryLoop(
       sleepRan ? 'later' : 'next',
     ).filter(cmd => {
       if (isSlashCommand(cmd)) return false
+      // A prompt the user queued for after the turn (tab) is not a steer:
+      // useQueueProcessor runs it once this turn ends.
+      if (isQueuedForAfterTurn(cmd)) return false
       if (isMainThread) return cmd.agentId === undefined
       // Subagents only drain task-notifications addressed to them — never
       // user prompts, even if someone stamps an agentId on one.

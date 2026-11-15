@@ -18,6 +18,8 @@
  *   telemetry.json "enabled": false     →  no-telemetry (persistent settings flag)
  */
 
+import { isSelfHosted } from '../selfhost/offline.js'
+
 import { isTelemetryDisabledInSettings } from './telemetrySettings.js'
 
 type PrivacyLevel = 'default' | 'no-telemetry' | 'essential-traffic'
@@ -30,7 +32,8 @@ export function isGizziTelemetryEnvOff(): boolean {
 }
 
 export function getPrivacyLevel(): PrivacyLevel {
-  if (process.env.GIZZI_DISABLE_NONESSENTIAL_TRAFFIC) {
+  // Self-hosted mode (ALLTERNIT_SELF_HOSTED=1) makes no Allternit calls at all.
+  if (isSelfHosted() || process.env.GIZZI_DISABLE_NONESSENTIAL_TRAFFIC) {
     return 'essential-traffic'
   }
   if (
@@ -65,6 +68,9 @@ export function isTelemetryDisabled(): boolean {
  * or null if unrestricted. Used for user-facing "unset X to re-enable" messages.
  */
 export function getEssentialTrafficOnlyReason(): string | null {
+  if (isSelfHosted()) {
+    return 'ALLTERNIT_SELF_HOSTED'
+  }
   if (process.env.GIZZI_DISABLE_NONESSENTIAL_TRAFFIC) {
     return 'GIZZI_DISABLE_NONESSENTIAL_TRAFFIC'
   }

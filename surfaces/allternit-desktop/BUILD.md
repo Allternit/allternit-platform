@@ -64,7 +64,10 @@ npm run prepare:api-binary
 This is also called automatically by `npm run build:electron`, `npm run dist`,
 etc. In practice the binary **must be built locally and staged** — the script
 (`scripts/prepare-api-binary.cjs`) only copies from a local cargo build
-(`target/release` or `target/debug` at the repo root). Its manifest-download
+(`target/release` or `target/debug` at the repo root, or the binary already
+staged in `resources/bin`). When several exist it takes the **newest** one, so
+a binary `build-desktop.sh` just staged wins over an old `target/release`
+leftover. Its manifest-download
 fallback (`src/main/manifest.ts`) points at `github.com/allternit/platform`
 release assets that do not exist yet (and most manifest checksums are empty
 placeholders), so the download path will fail:
@@ -184,3 +187,25 @@ scp release/Allternit-1.0.0.AppImage user@install.gizziio.com:/var/www/install/
 Update download links in:
 - `allternit-websites/projects/gizziio/source/index.html`
 - `www.allternit.com` download page
+
+## Mac signing with a Developer ID
+
+`scripts/build-local.cjs` looks for a `Developer ID Application` certificate in the keychain. If it finds one, the build signs with it. Only a release build (`build-desktop.sh --release`) also notarizes, with the `allternit` notarytool profile; a local build skips notarization unless you set `ALLTERNIT_NOTARIZE=1`. Gatekeeper checks only downloaded apps, and a slow Apple notary queue used to fail every local build. With no certificate, the build stays ad-hoc signed.
+
+One-time setup on the build Mac:
+
+1. In Xcode, open Settings → Accounts → Manage Certificates. Add a **Developer ID Application** certificate. This needs the Account Holder role on a paid Apple Developer Program team.
+2. Create an app-specific password at account.apple.com.
+3. Run `xcrun notarytool store-credentials allternit --apple-id <email> --team-id <team id>` and enter the password when asked. The password stays in the keychain.
+
+Check a finished build with `codesign --verify --deep --strict` and `spctl --assess --type execute --verbose`. Signing and notarization run only on a Mac set up this way. The GitHub release workflow has no Apple secrets and stays ad-hoc.
+
+## Local builds and the Keychain
+
+An ad-hoc build gets a new code hash each time, so macOS asks for the password again after every update. When there is no Developer ID, `build-local.cjs` signs local builds with an `Apple Development` cert from the keychain. The stable team ID keeps **Always Allow** across builds on that Mac. These builds don't open on other Macs, so never publish one. CI builds stay ad-hoc until a Developer ID is set up.
+
+The Keychain key (`@allternit/desktop Safe Storage`, account `@allternit/desktop Key`) is read by a native addon, `native/keychain`, so the read does not block the main thread. `scripts/prepare-keychain-addon.cjs` builds it with one universal `clang++` call (arm64 and x64). The build ships it to `Resources/native/keychain/keychain.node`, and `verify-packaged-resources` requires that file on Mac. If the addon is missing, the packaged-resources check fails the build. Windows and Linux builds don't use it.
+
+## Runtime packages on Mac
+
+`runtime-package.cjs` signs `allternit-api`, `gizzi-code` and `allternit-factory` with the Developer ID before it hashes them, under the same identifiers as the app bundle. Without the certificate it refuses to pack, because ad-hoc binaries bring the Keychain prompts back. Set `ALLTERNIT_RUNTIME_ALLOW_ADHOC=1` only for a local test.

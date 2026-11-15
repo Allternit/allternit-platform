@@ -55,6 +55,11 @@ pub fn cowork_router() -> Router<Arc<AppState>> {
                 .delete(delete_project),
         )
         .route(
+            "/cowork/projects/:id/status",
+            get(get_project_status).patch(patch_project_status),
+        )
+        .route("/cowork/projects/:id/close", post(close_project_status))
+        .route(
             "/cowork/projects/:id/files",
             get(list_project_files).post(create_project_file),
         )
@@ -1351,7 +1356,16 @@ async fn update_project(
             vals.push(v);
         }
         if let Some(v) = body.metadata {
-            sets.push("metadata = ?");
+            // `status` belongs to the status-page endpoints: keep the stored
+            // page so a client writing back a stale metadata copy can't undo
+            // a bot's newer update.
+            sets.push(
+                "metadata = CASE WHEN json_valid(?)
+                       AND json_type(CASE WHEN json_valid(metadata) THEN metadata ELSE '{}' END, '$.status') IS NOT NULL
+                     THEN json_set(?, '$.status', json(json_extract(metadata, '$.status'))) ELSE ? END",
+            );
+            vals.push(v.clone());
+            vals.push(v.clone());
             vals.push(v);
         }
         if let Some(v) = body.git_remote {
@@ -1398,6 +1412,142 @@ async fn update_project(
     }
 }
 
+// ─── Project status pages ─────────────────────────────────────────────────────
+
+fn status_error_response(e: crate::project_status::StatusError) -> axum::response::Response {
+    use crate::project_status::StatusError;
+    match e {
+        StatusError::NotFound => {
+            (StatusCode::NOT_FOUND, Json(json!({"error": "not_found"}))).into_response()
+        }
+        StatusError::ProofRequired => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "proof_required"})),
+        )
+            .into_response(),
+        StatusError::Closed => (
+            StatusCode::CONFLICT,
+            Json(json!({"error": "project_closed"})),
+        )
+            .into_response(),
+        StatusError::BadRequest(msg) => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "bad_request", "message": msg})),
+        )
+            .into_response(),
+        StatusError::Db(e) => {
+            warn!("DB error on project status: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "internal error"})),
+            )
+                .into_response()
+        }
+    }
+}
+
+async fn get_project_status(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    _headers: HeaderMap,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let db = state.db.clone();
+    let user_id = user.user_id;
+    let result = tokio::task::spawn_blocking(move || {
+        let conn = db.connect().map_err(crate::project_status::StatusError::Db)?;
+        crate::project_status::get_status(&conn, &id, &user_id)
+    })
+    .await;
+    match result {
+        Ok(Ok(status)) => Json(json!({ "status": status })).into_response(),
+        Ok(Err(e)) => status_error_response(e),
+        Err(e) => {
+            warn!("DB task panicked: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "internal error"})),
+            )
+                .into_response()
+        }
+    }
+}
+
+async fn patch_project_status(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    _headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(body): Json<crate::project_status::PatchBody>,
+) -> impl IntoResponse {
+    let db = state.db.clone();
+    let user_id = user.user_id;
+    let result = tokio::task::spawn_blocking(move || {
+        let conn = db.connect().map_err(crate::project_status::StatusError::Db)?;
+        crate::project_status::patch_status(&conn, &id, &user_id, &body)
+    })
+    .await;
+    match result {
+        Ok(Ok(status)) => Json(json!({ "status": status })).into_response(),
+        Ok(Err(e)) => status_error_response(e),
+        Err(e) => {
+            warn!("DB task panicked: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "internal error"})),
+            )
+                .into_response()
+        }
+    }
+}
+
+async fn close_project_status(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    _headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(body): Json<crate::project_status::CloseBody>,
+) -> impl IntoResponse {
+    let db = state.db.clone();
+    let user_id = user.user_id;
+    let reopen = body.reopen == Some(true);
+    let pid = id.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        let conn = db.connect().map_err(crate::project_status::StatusError::Db)?;
+        crate::project_status::close_project(&conn, &id, &user_id, &body)
+    })
+    .await;
+    match result {
+        Ok(Ok((status, jobs))) => {
+            // Cloud-scheduled routines run from gizzi's cron store; stop or
+            // restart those jobs too. The local scheduler already skips paused rows.
+            if !jobs.job_ids.is_empty() {
+                use crate::thread_closeout::{CloseKind, CronControl, GizziCron, Stopped};
+                let tag = format!("project-{pid}");
+                let res = if reopen {
+                    GizziCron.reopen(&tag, &jobs.job_ids).await
+                } else {
+                    let stopped = Stopped { job_ids: jobs.job_ids.clone(), ..Default::default() };
+                    GizziCron.close(&tag, &stopped, CloseKind::Paused).await
+                };
+                if let Err(e) = res {
+                    warn!(project = %pid, error = %e, "project close: gizzi cron update failed");
+                }
+            }
+            Json(json!({ "status": status, "paused_routines": jobs.paused })).into_response()
+        }
+        Ok(Err(e)) => status_error_response(e),
+        Err(e) => {
+            warn!("DB task panicked: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "internal error"})),
+            )
+                .into_response()
+        }
+    }
+}
+
 /// Delete a project and what hangs off it, in one transaction. Its bot
 /// threads stay with their bots, detached from the project (the bots' work
 /// isn't lost); the project's team rows and Al's project chat go with it.
@@ -1405,10 +1555,25 @@ async fn update_project(
 /// at a project that no longer existed. Returns whether a project was deleted.
 fn delete_project_rows(conn: &rusqlite::Connection, id: &str, user_id: &str) -> rusqlite::Result<bool> {
     let tx = conn.unchecked_transaction()?;
-    let deleted = tx.execute(
-        "DELETE FROM cowork_projects WHERE id = ?1 AND user_id = ?2",
+    // A registered workspace (a code or design project a browser holds) keeps
+    // an empty row with only its key: that browser re-registers it whenever its
+    // page opens, and a removed row would come back on every other device.
+    let scrubbed = tx.execute(
+        "UPDATE cowork_projects
+         SET title = '', description = NULL, instructions = NULL,
+             metadata = json_object('workspace', json_object('key', json_extract(metadata, '$.workspace.key')), 'workspaceDeleted', 1),
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?1 AND user_id = ?2 AND json_valid(metadata) AND json_extract(metadata, '$.workspace.key') IS NOT NULL",
         params![id, user_id],
     )?;
+    let deleted = if scrubbed > 0 {
+        scrubbed
+    } else {
+        tx.execute(
+            "DELETE FROM cowork_projects WHERE id = ?1 AND user_id = ?2",
+            params![id, user_id],
+        )?
+    };
     if deleted > 0 {
         tx.execute(
             "UPDATE bot_threads SET project_id = NULL WHERE project_id = ?1 AND user_id = ?2",
@@ -2565,6 +2730,8 @@ async fn decide_approval(
             // transient transport failure only warns so a briefly unreachable
             // runtime never blocks the local decision.
             let task_reply = relay.as_ref().is_some_and(|(_, b)| b.get("reply").and_then(|v| v.as_str()) == Some("task"));
+            // `None`: nothing to relay; `Some(Ok)`: gizzi took it; `Some(Err)`: it never got there.
+            let mut relayed: Option<Result<(), String>> = None;
             if let Some((request_id, reply_body)) = relay {
                 let gizzi = gizzi_base();
                 let client = gizzi_client(&headers);
@@ -2574,7 +2741,7 @@ async fn decide_approval(
                     .send()
                     .await
                 {
-                    Ok(resp) if resp.status().is_success() => {}
+                    Ok(resp) if resp.status().is_success() => relayed = Some(Ok(())),
                     Ok(resp) => {
                         let status = resp.status();
                         warn!(
@@ -2589,6 +2756,11 @@ async fn decide_approval(
                                     "agent runtime rejected the permission reply ({})",
                                     status
                                 ),
+                                // The decision is recorded; only the hand-off to the session failed.
+                                "decided": true,
+                                "id": id_for_response,
+                                "decision": label_for_response,
+                                "relayed": false,
                             })),
                         )
                             .into_response();
@@ -2599,6 +2771,7 @@ async fn decide_approval(
                             request_id = %request_id,
                             "failed to relay permission reply to gizzi"
                         );
+                        relayed = Some(Err(format!("the agent runtime could not be reached: {e}")));
                     }
                 }
             }
@@ -2607,6 +2780,16 @@ async fn decide_approval(
                 "id": id_for_response,
                 "decision": label_for_response,
             });
+            // A relay that never reached the session is reported, not swallowed:
+            // the decision stands, and the surface can say the session didn't get it.
+            match relayed {
+                Some(Ok(())) => body["relayed"] = json!(true),
+                Some(Err(e)) => {
+                    body["relayed"] = json!(false);
+                    body["relayError"] = json!(e);
+                }
+                None => {}
+            }
             // One-task grant: the bot thread this ask came from now allows this class.
             if task_reply {
                 let db = state.db.clone();
@@ -2656,6 +2839,45 @@ async fn decide_approval(
         }
     }
 }
+
+/// The Needs-you inbox's approve/deny for a `gizzi-permission` row
+/// (`inbox_needs`, kind `gizzi_permission`). It runs the same decision as the
+/// ApprovalGate card (`POST /cowork/approvals/decide`), so the row closes once
+/// and gizzi gets the same reply. The caller's headers pass through, so the
+/// person-proof checks are unchanged.
+pub(crate) async fn decide_from_inbox(
+    state: &Arc<AppState>,
+    user: &AuthUser,
+    headers: &HeaderMap,
+    approval_id: &str,
+    approve: bool,
+) -> Result<serde_json::Value, axum::response::Response> {
+    let mut headers = headers.clone();
+    if get_user(&headers).is_none() {
+        // auth_middleware sets this header; the extension is the same identity.
+        if let Ok(v) = axum::http::HeaderValue::from_str(&user.user_id) {
+            headers.insert("x-allternit-user-id", v);
+        }
+    }
+    let body = ApprovalDecisionBody {
+        action_id: Some(approval_id.to_string()),
+        id: None,
+        decision: Some(if approve { "approve" } else { "deny" }.to_string()),
+        action: None,
+        answer: None,
+        scope: None,
+    };
+    let resp = decide_approval(State(state.clone()), Extension(user.clone()), headers, Ok(Json(body))).await.into_response();
+    let status = resp.status();
+    let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20).await.unwrap_or_default();
+    let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+    if status.is_success() {
+        Ok(v)
+    } else {
+        Err((status, Json(v)).into_response())
+    }
+}
+
 
 async fn list_suggestions(
     State(state): State<Arc<AppState>>,
@@ -2982,14 +3204,36 @@ mod tests {
     use super::*;
 
     #[test]
-    fn deleting_a_project_detaches_its_threads_and_drops_its_team_and_chat() {
+    fn deleting_a_registered_workspace_leaves_an_empty_row_that_keeps_its_key() {
         let conn = rusqlite::Connection::open_in_memory().unwrap();
         conn.execute_batch(
-            "CREATE TABLE cowork_projects (id TEXT PRIMARY KEY, user_id TEXT NOT NULL);
+            "CREATE TABLE cowork_projects (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, title TEXT, description TEXT, instructions TEXT, metadata TEXT, updated_at TEXT);
              CREATE TABLE bot_threads (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, project_id TEXT);
              CREATE TABLE project_bots (project_id TEXT NOT NULL, bot_id TEXT NOT NULL);
              CREATE TABLE project_messages (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, user_id TEXT NOT NULL);
-             INSERT INTO cowork_projects VALUES ('p1','u1'), ('p2','u1');
+             INSERT INTO cowork_projects (id, user_id, title, metadata) VALUES ('w1','u1','Site','{\"workspace\":{\"key\":\"code-a\",\"directory\":\"/secret\"}}');",
+        )
+        .unwrap();
+        assert!(delete_project_rows(&conn, "w1", "u1").unwrap());
+        let (title, key, deleted, directory): (String, String, i64, Option<String>) = conn
+            .query_row(
+                "SELECT title, json_extract(metadata, '$.workspace.key'), json_extract(metadata, '$.workspaceDeleted'), json_extract(metadata, '$.workspace.directory') FROM cowork_projects WHERE id = 'w1'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!((title.as_str(), key.as_str(), deleted, directory), ("", "code-a", 1, None));
+    }
+
+    #[test]
+    fn deleting_a_project_detaches_its_threads_and_drops_its_team_and_chat() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE cowork_projects (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, title TEXT, description TEXT, instructions TEXT, metadata TEXT, updated_at TEXT);
+             CREATE TABLE bot_threads (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, project_id TEXT);
+             CREATE TABLE project_bots (project_id TEXT NOT NULL, bot_id TEXT NOT NULL);
+             CREATE TABLE project_messages (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, user_id TEXT NOT NULL);
+             INSERT INTO cowork_projects (id, user_id) VALUES ('p1','u1'), ('p2','u1');
              INSERT INTO bot_threads VALUES ('t1','u1','p1'), ('t2','u1','p2');
              INSERT INTO project_bots VALUES ('p1','b1'), ('p2','b1');
              INSERT INTO project_messages VALUES ('m1','p1','u1'), ('m2','p2','u1');",

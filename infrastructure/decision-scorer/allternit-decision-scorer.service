@@ -1,0 +1,43 @@
+[Unit]
+Description=Allternit decisions scorer (llama.cpp, Qwen3.5-4B Q4, loopback only)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=allternit-scorer
+Group=allternit-scorer
+WorkingDirectory=/opt/allternit-decision-scorer/app
+EnvironmentFile=/etc/allternit-decision-scorer.env
+# --prepare installs packages, downloads weights and loads the model before serving
+# state (first start only does the install and the download; later starts just load).
+ExecStart=/opt/allternit-decision-scorer/venv/bin/python -B -s -m allternit_decisions \
+  --state-dir /var/lib/allternit-decision-scorer --host 127.0.0.1 --port 8020 \
+  --engine llamacpp --model qwen3.5-4b --prepare
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=1800
+Nice=5
+MemoryMax=5G
+MemoryHigh=4500M
+CPUQuota=400%
+CPUAffinity=0-3
+TasksMax=256
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/allternit-decision-scorer
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

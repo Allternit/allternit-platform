@@ -9,7 +9,10 @@ export const DEFAULT_BASE_URL = "https://api.allternit.com";
 export const DEFAULT_TIMEOUT_MS = 60_000;
 
 export interface RequestOptions {
-  /** Sent as `Idempotency-Key` on POST. A random UUID is used when omitted. */
+  /**
+   * Sent as `Idempotency-Key` on POST. A random UUID is minted per call when omitted. A retry inside one call
+   * reuses the key; to retry safely across calls (after a timeout, say), pass your own key and reuse it.
+   */
   idempotencyKey?: string;
   /** Abort the request (and, for streams, stop reading). */
   signal?: AbortSignal;
@@ -19,6 +22,8 @@ export interface RequestOptions {
   headers?: Record<string, string>;
   /** Extra query parameters. */
   query?: Record<string, unknown>;
+  /** Called with the status and headers of a successful response (including 204) before the body is read. */
+  onResponse?: (response: { status: number; headers: Headers }) => void;
 }
 
 export interface Page<T> {
@@ -60,6 +65,13 @@ export interface ClientOptions {
   defaultHeaders?: Record<string, string>;
   /** A custom fetch (tests, proxies). Defaults to the global fetch. */
   fetch?: typeof fetch;
+  /**
+   * Retries for a POST (every POST carries an `Idempotency-Key`) after a dropped connection or a
+   * 502/503/504, reusing the same key. A 409 `idempotency_in_progress` is retried once. Default 2; 0 turns it off.
+   */
+  maxRetries?: number;
+  /** First wait between retries in milliseconds; doubles each time. Default 250. */
+  retryBackoffMs?: number;
 }
 
 function env(name: string): string | undefined {
@@ -76,12 +88,21 @@ function uuid(): string {
   });
 }
 
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    const t = setTimeout(resolve, ms);
+    signal?.addEventListener("abort", () => { clearTimeout(t); resolve(); }, { once: true });
+  });
+}
+
 export class HttpTransport implements Transport {
   readonly baseUrl: string;
   readonly timeout: number;
   private readonly apiKey: string;
   private readonly defaultHeaders: Record<string, string>;
   private readonly fetchImpl: typeof fetch;
+  private readonly maxRetries: number;
+  private readonly retryBackoffMs: number;
 
   constructor(opts: ClientOptions = {}) {
     const apiKey = opts.apiKey ?? env("ALLTERNIT_API_KEY");
@@ -95,6 +116,8 @@ export class HttpTransport implements Transport {
     const f = opts.fetch ?? globalThis.fetch;
     if (!f) throw new Error("No global fetch; pass { fetch } (Node 18+ has one built in).");
     this.fetchImpl = f;
+    this.maxRetries = Math.max(0, opts.maxRetries ?? 2);
+    this.retryBackoffMs = Math.max(0, opts.retryBackoffMs ?? 250);
   }
 
   private url(path: string, query?: object, extra?: Record<string, unknown>): string {
@@ -142,34 +165,49 @@ export class HttpTransport implements Transport {
       o.signal?.removeEventListener("abort", onAbort);
     };
 
-    let response: Response;
-    try {
-      response = await this.fetchImpl(this.url(spec.path, spec.query, o.query), {
-        method: spec.method,
-        headers,
-        body,
-        signal: controller.signal,
-      });
-    } catch (err) {
-      done();
-      if (timedOut) throw new APITimeoutError(`Request timed out after ${timeoutMs} ms.`, err);
-      if (o.signal?.aborted) throw err;
-      throw new APIConnectionError(`Could not reach ${this.baseUrl}: ${(err as Error)?.message ?? err}`, err);
-    }
-    if (!response.ok) {
+    const retryable = spec.method === "POST";
+    const target = this.url(spec.path, spec.query, o.query);
+    let netRetries = 0;
+    let inProgressRetried = false;
+    for (;;) {
+      let response: Response;
+      try {
+        response = await this.fetchImpl(target, { method: spec.method, headers, body, signal: controller.signal });
+      } catch (err) {
+        if (timedOut) { done(); throw new APITimeoutError(`Request timed out after ${timeoutMs} ms.`, err); }
+        if (o.signal?.aborted) { done(); throw err; }
+        if (retryable && netRetries < this.maxRetries) {
+          await sleep(this.retryBackoffMs * 2 ** netRetries++, o.signal);
+          continue;
+        }
+        done();
+        throw new APIConnectionError(`Could not reach ${this.baseUrl}: ${(err as Error)?.message ?? err}`, err);
+      }
+      if (response.ok) return { response, done };
       const text = await response.text().catch(() => "");
-      done();
       let parsed: { error?: ErrorBody } | undefined;
       try { parsed = text ? JSON.parse(text) : undefined; } catch { parsed = undefined; }
       const errBody = parsed && typeof parsed.error === "object" ? parsed.error : undefined;
+      if (retryable && !o.signal?.aborted) {
+        if ([502, 503, 504].includes(response.status) && netRetries < this.maxRetries) {
+          await sleep(this.retryBackoffMs * 2 ** netRetries++, o.signal);
+          continue;
+        }
+        if (response.status === 409 && errBody?.code === "idempotency_in_progress" && !inProgressRetried && this.maxRetries > 0) {
+          inProgressRetried = true;
+          await sleep(Math.max(this.retryBackoffMs, 1000), o.signal);
+          continue;
+        }
+      }
+      done();
       throw errorFor(response.status, errBody, response.headers, text.slice(0, 200) || undefined);
     }
-    return { response, done };
   }
 
   async request<T>(spec: RequestSpec): Promise<T> {
     const { response, done } = await this.send(spec, "application/json");
     try {
+      spec.options?.onResponse?.({ status: response.status, headers: response.headers });
       if (response.status === 204) return undefined as T;
       const text = await response.text();
       return (text ? JSON.parse(text) : undefined) as T;

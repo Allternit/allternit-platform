@@ -5,7 +5,7 @@
  * `generated_file` part names it; text deltas carry their durable trace
  * sequence so chat bridges can resume a dropped stream.
  */
-import { describe, expect, mock, test } from "bun:test"
+import { afterAll, describe, expect, mock, test } from "bun:test"
 import path from "path"
 import { Instance } from "../../src/runtime/context/project/instance"
 import { Session } from "../../src/runtime/session"
@@ -21,6 +21,15 @@ import { tmpdir } from "../fixture/fixture"
 Log.init({ print: false })
 
 let streamEvents: unknown[] = []
+
+// Bun keeps a mock.module override for the rest of the run, other test files
+// included, so the real modules go back once this file is done.
+const realLLMModule = { ...(await import("../../src/runtime/session/llm")) }
+const realProviderModule = { ...(await import("../../src/runtime/providers/provider")) }
+afterAll(() => {
+  mock.module("../../src/runtime/session/llm", () => realLLMModule)
+  mock.module("../../src/runtime/providers/provider", () => realProviderModule)
+})
 
 mock.module("../../src/runtime/session/llm", () => ({
   LLM: {

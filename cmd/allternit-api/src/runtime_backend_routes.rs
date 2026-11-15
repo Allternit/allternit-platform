@@ -489,7 +489,7 @@ async fn verify_backend_health(
     url: &str,
     token: Option<&str>,
 ) -> Result<HealthResult, reqwest::Error> {
-    let client = reqwest::Client::new();
+    let client = crate::net_client::client();
     let mut req = client.get(format!("{}/health", url.trim_end_matches('/')));
     if let Some(t) = token {
         req = req.header("Authorization", format!("Bearer {}", t));

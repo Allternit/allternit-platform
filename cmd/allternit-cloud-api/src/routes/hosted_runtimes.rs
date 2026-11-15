@@ -386,7 +386,25 @@ async fn destroy_hosted_runtime(
 ) -> Result<StatusCode, ApiError> {
     let user_id = crate::auth::resolve_user_scoped(&state.db, &headers, "compute").await?.id;
     let row = fetch_instance_for_user(&state, &id, &user_id).await?;
+    destroy_row(&state, &row).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
 
+/// Account erase: destroys every hosted runtime the user still has.
+pub(crate) async fn destroy_all_for_user(state: &ApiState, user_id: &str) -> Result<(), ApiError> {
+    let rows = sqlx::query_as::<_, services::HostedInstanceRow>(
+        "SELECT * FROM hosted_runtime_instances WHERE user_id = $1 AND status != 'destroyed'",
+    )
+    .bind(user_id)
+    .fetch_all(&state.db)
+    .await?;
+    for row in &rows {
+        destroy_row(state, row).await?;
+    }
+    Ok(())
+}
+
+async fn destroy_row(state: &ApiState, row: &services::HostedInstanceRow) -> Result<(), ApiError> {
     if row.provider.as_deref() == Some("contabo") {
         state.contabo_runtime_service.destroy(&row.id).await?;
     } else {
@@ -396,21 +414,21 @@ async fn destroy_hosted_runtime(
     sqlx::query(
         "UPDATE hosted_runtime_instances SET status = 'destroyed', destroyed_at = CURRENT_TIMESTAMP WHERE id = $1",
     )
-    .bind(&id)
+    .bind(&row.id)
     .execute(&state.db)
     .await?;
-    services::record_runtime_stopped(&state.db, &id, "destroyed").await?;
+    services::record_runtime_stopped(&state.db, &row.id, "destroyed").await?;
 
-    if let Some(runtime_id) = row.runtime_device_id {
+    if let Some(runtime_id) = &row.runtime_device_id {
         sqlx::query(
             "UPDATE runtime_devices SET status = 'revoked', revoked_at = CURRENT_TIMESTAMP WHERE id = $1",
         )
-        .bind(&runtime_id)
+        .bind(runtime_id)
         .execute(&state.db)
         .await?;
     }
 
-    Ok(StatusCode::NO_CONTENT)
+    Ok(())
 }
 
 async fn fetch_instance(state: &ApiState, id: &str) -> Result<HostedRuntimeRow, ApiError> {

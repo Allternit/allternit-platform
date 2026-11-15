@@ -74,9 +74,18 @@ fn check_agent(conn: &rusqlite::Connection, agent_id: Option<&str>) -> Result<Op
     Ok(Some(id.to_string()))
 }
 
+/// `cloud` asks for an always-on computer. On an Allternit cloud computer this
+/// API already is one, so the routine is kept on its own local scheduler (the
+/// one with skipped-run rows, Stop, live runs and "Something needs fixing"),
+/// not handed to the gizzi cron daemon. Clients that talk to a cloud computer
+/// show its routines as running in the cloud.
 fn normalize_execution_domain(domain: Option<String>) -> String {
+    normalize_execution_domain_on(domain, crate::cloud_computer_peer::running_on_cloud_computer())
+}
+
+fn normalize_execution_domain_on(domain: Option<String>, on_cloud_computer: bool) -> String {
     match domain.as_deref() {
-        Some("cloud") | Some("hybrid") => "cloud".to_string(),
+        Some("cloud") | Some("hybrid") if !on_cloud_computer => "cloud".to_string(),
         _ => "local".to_string(),
     }
 }
@@ -165,6 +174,9 @@ pub struct Loop {
     pub expires_at: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+    /// When a local loop runs next (the scheduler's cursor).
+    pub next_run_at: Option<String>,
+    pub last_run_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -270,6 +282,9 @@ pub struct CreateRoutineRequest {
 pub struct UpdateRoutineRequest {
     #[serde(default)]
     pub name: Option<String>,
+    /// The goal it supports; an empty string clears it.
+    #[serde(default)]
+    pub goal_id: Option<String>,
     /// Assign the routine to a bot/agent (e.g. a "Needs a bot" routine).
     #[serde(default)]
     pub agent_id: Option<String>,
@@ -301,6 +316,9 @@ pub struct UpdateRoutineRequest {
 
 #[derive(Debug, Deserialize)]
 pub struct CreateLoopRequest {
+    /// The zone its cron line reads in.
+    #[serde(default)]
+    pub timezone: Option<String>,
     pub name: String,
     pub schedule_type: String,
     pub schedule_expression: String,
@@ -328,8 +346,17 @@ pub struct CreateLoopRequest {
 
 #[derive(Debug, Deserialize)]
 pub struct UpdateLoopRequest {
+    /// The zone its cron line reads in.
+    #[serde(default)]
+    pub timezone: Option<String>,
     #[serde(default)]
     pub name: Option<String>,
+    /// The agent that runs it; an empty string goes back to the default model.
+    #[serde(default)]
+    pub agent_id: Option<String>,
+    /// The goal it supports; an empty string clears it.
+    #[serde(default)]
+    pub goal_id: Option<String>,
     #[serde(default)]
     pub description: Option<String>,
     #[serde(default)]
@@ -962,7 +989,7 @@ async fn list_goal_children(
     let loops: Vec<Loop> = {
         let mut stmt = conn
             .prepare(
-                "SELECT id, user_id, workspace_id, agent_id, goal_id, gizzi_job_id, session_id, name, description, status, schedule_type, schedule_expression, execution_domain, config, tags, metadata, expires_at, created_at, updated_at
+                "SELECT id, user_id, workspace_id, agent_id, goal_id, gizzi_job_id, session_id, name, description, status, schedule_type, schedule_expression, execution_domain, config, tags, metadata, expires_at, created_at, updated_at, next_run_at, last_run_at
                  FROM loops WHERE goal_id = ?1 AND user_id = ?2 ORDER BY created_at DESC",
             )
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -1035,16 +1062,27 @@ fn recent_runs_by_routine(
     user_id: &str,
     n: usize,
 ) -> rusqlite::Result<std::collections::HashMap<String, Vec<serde_json::Value>>> {
-    let mut stmt = conn.prepare(
+    recent_runs_by_owner(conn, "routine_runs", "routines", user_id, n)
+}
+
+/// [`recent_runs_by_routine`] for either `routine_runs`/`routines` or `loop_runs`/`loops`.
+fn recent_runs_by_owner(
+    conn: &rusqlite::Connection,
+    runs_table: &str,
+    owner_table: &str,
+    user_id: &str,
+    n: usize,
+) -> rusqlite::Result<std::collections::HashMap<String, Vec<serde_json::Value>>> {
+    let mut stmt = conn.prepare(&format!(
         "SELECT routine_id, id, status, started_at, finished_at, duration_ms, outcome_reason,
                 CASE WHEN json_valid(metadata) THEN json_extract(metadata, '$.apps') END,
                 CASE WHEN json_valid(metadata) THEN json_extract(metadata, '$.model') END
          FROM (
              SELECT rr.*, ROW_NUMBER() OVER (PARTITION BY rr.routine_id ORDER BY rr.scheduled_at DESC) AS rn
-             FROM routine_runs rr JOIN routines r ON r.id = rr.routine_id
+             FROM {runs_table} rr JOIN {owner_table} r ON r.id = rr.routine_id
              WHERE r.user_id = ?1
-         ) WHERE rn <= ?2 ORDER BY routine_id, scheduled_at DESC",
-    )?;
+         ) WHERE rn <= ?2 ORDER BY routine_id, scheduled_at DESC"
+    ))?;
     let rows = stmt.query_map(params![user_id, n as i64], |row| {
         Ok((
             row.get::<_, String>(0)?,
@@ -1194,12 +1232,17 @@ async fn create_routine(
             None
         };
         let daemon_job = build_daemon_job_from_routine(&routine, &job_type, harness_config);
-        let client = reqwest::Client::new();
+        let client = crate::net_client::client();
         match cron_daemon_create_job(&client, daemon_job).await {
             Ok(res) => extract_daemon_job_id(&res),
             Err(e) => {
+                // Saving it anyway would leave a routine that never runs.
                 warn!("failed to create daemon routine job: {}", e);
-                None
+                return Err(RoutineApiError::new(
+                    StatusCode::BAD_GATEWAY,
+                    "cloud_scheduler_unavailable",
+                    "The always-on scheduler isn't answering, so this routine can't run in the cloud. Pick This computer, or try again when your cloud computer is ready.",
+                ));
             }
         }
     } else {
@@ -1337,6 +1380,7 @@ async fn update_routine(
             max_retries = COALESCE(?13, max_retries),
             updated_at = ?14,
             agent_id = COALESCE(?17, agent_id),
+            goal_id = CASE WHEN ?18 IS NULL THEN goal_id ELSE NULLIF(?18, '') END,
             -- Any schedule/status/domain/agent change resets the local
             -- scheduler cursor so it recomputes from the new definition; a
             -- new schedule also re-arms a one-shot that already ran.
@@ -1364,6 +1408,7 @@ async fn update_routine(
             &id,
             &user.user_id,
             new_agent_id.as_ref(),
+            req.goal_id.as_ref(),
         ],
     )
     .map_err(|e| {
@@ -1402,14 +1447,14 @@ async fn update_routine(
             };
             let gizzi_job =
                 build_daemon_job_from_routine(&updated_routine, &job_type, harness_config);
-            let client = reqwest::Client::new();
+            let client = crate::net_client::client();
             if let Err(e) = cron_daemon_update_job(&client, gizzi_job_id, gizzi_job).await {
                 warn!("failed to update daemon routine job: {}", e);
             }
         }
     } else if old_uses_cloud && !new_uses_cloud {
         if let Some(ref gizzi_job_id) = existing.1 {
-            let client = reqwest::Client::new();
+            let client = crate::net_client::client();
             if let Err(e) = cron_daemon_delete_job(&client, gizzi_job_id).await {
                 warn!(
                     "failed to delete daemon routine job on domain change: {}",
@@ -1432,7 +1477,7 @@ async fn update_routine(
             None
         };
         let daemon_job = build_daemon_job_from_routine(&updated_routine, &job_type, harness_config);
-        let client = reqwest::Client::new();
+        let client = crate::net_client::client();
         let daemon_job_id = match cron_daemon_create_job(&client, daemon_job).await {
             Ok(res) => extract_daemon_job_id(&res),
             Err(e) => {
@@ -1478,7 +1523,7 @@ async fn delete_routine(
         .map_err(|_| StatusCode::NOT_FOUND)?;
 
     if let Some(gizzi_job_id) = gizzi_job_id {
-        let client = reqwest::Client::new();
+        let client = crate::net_client::client();
         if let Err(e) = cron_daemon_delete_job(&client, &gizzi_job_id).await {
             warn!("failed to delete daemon routine job: {}", e);
         }
@@ -1545,7 +1590,7 @@ async fn run_routine(
     }
 
     let gizzi_job_id = gizzi_job_id.ok_or(StatusCode::BAD_REQUEST)?;
-    let client = reqwest::Client::new();
+    let client = crate::net_client::client();
     let run = cron_daemon_run_job(&client, &gizzi_job_id)
         .await
         .map_err(|e| {
@@ -1582,7 +1627,7 @@ async fn list_routine_runs(
     let mut sync = json!({"attempted": false, "synced": 0, "error": serde_json::Value::Null});
     if let Some(ref job_id) = gizzi_job_id {
         sync["attempted"] = json!(true);
-        let client = reqwest::Client::new();
+        let client = crate::net_client::client();
         match cron_daemon_list_runs(&client, job_id).await {
             Ok(runs) => {
                 let n = upsert_routine_runs(&conn, &id, &runs);
@@ -1671,7 +1716,7 @@ async fn cancel_routine_run(
         return Err(RoutineApiError::new(StatusCode::CONFLICT, "not_running", "That run already finished."));
     }
     let job_id = gizzi_job_id.ok_or_else(|| RoutineApiError::new(StatusCode::CONFLICT, "not_running", "That run already finished."))?;
-    match cron_daemon_abort_job(&reqwest::Client::new(), &job_id).await {
+    match cron_daemon_abort_job(&crate::net_client::client(), &job_id).await {
         Ok(true) => Ok(Json(json!({ "status": "stopping", "runId": run_id }))),
         Ok(false) => Err(RoutineApiError::new(StatusCode::CONFLICT, "not_running", "That run already finished.")),
         Err(e) => {
@@ -1679,6 +1724,32 @@ async fn cancel_routine_run(
             Err(RoutineApiError::new(StatusCode::BAD_GATEWAY, "stop_failed", &e))
         }
     }
+}
+
+/// A local run in progress as the `live` routes report it: its steps (the
+/// turn's todo list), apps used and latest text.
+async fn local_live_run(state: &Arc<AppState>, id: &str, runs_table: &str) -> Option<serde_json::Value> {
+    let (run_id, session_id) = crate::routine_local_scheduler::live_run(id)?;
+    let started_at: Option<String> = state.db.connect().ok().and_then(|conn| {
+        conn.query_row(&format!("SELECT started_at FROM {runs_table} WHERE id = ?1"), [&run_id], |row| row.get(0)).ok()
+    });
+    let digest = match session_id.as_deref() {
+        Some(session) => crate::agent_session_routes::latest_turn_digest(&state.db, session).await,
+        None => None,
+    }
+    .unwrap_or_default();
+    let text: String = digest.text.chars().rev().take(600).collect::<Vec<_>>().into_iter().rev().collect();
+    Some(json!({
+        "running": true,
+        "runId": run_id,
+        "startedAt": started_at,
+        "sessionId": session_id,
+        "steps": digest.steps,
+        "apps": digest.tools,
+        "model": digest.model,
+        "text": text,
+        "canStop": true,
+    }))
 }
 
 /// The routine's run in progress: its steps (the turn's todo list), the
@@ -1689,36 +1760,13 @@ async fn live_routine_run(
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let user = get_user(&headers).ok_or(StatusCode::UNAUTHORIZED)?;
-    let started_at = |run_id: &str| -> Option<String> {
-        state.db.connect().ok()?.query_row(
-            "SELECT started_at FROM routine_runs WHERE id = ?1",
-            [run_id],
-            |row| row.get(0),
-        ).ok()
-    };
     {
         let conn = state.db.connect().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
         conn.query_row("SELECT 1 FROM routines WHERE id = ?1 AND user_id = ?2", [&id, &user.user_id], |_| Ok(()))
             .map_err(|_| StatusCode::NOT_FOUND)?;
     }
-    if let Some((run_id, session_id)) = crate::routine_local_scheduler::live_run(&id) {
-        let digest = match session_id.as_deref() {
-            Some(session) => crate::agent_session_routes::latest_turn_digest(&state.db, session).await,
-            None => None,
-        }
-        .unwrap_or_default();
-        let text: String = digest.text.chars().rev().take(600).collect::<Vec<_>>().into_iter().rev().collect();
-        return Ok(Json(json!({
-            "running": true,
-            "runId": run_id,
-            "startedAt": started_at(&run_id),
-            "sessionId": session_id,
-            "steps": digest.steps,
-            "apps": digest.tools,
-            "model": digest.model,
-            "text": text,
-            "canStop": true,
-        })));
+    if let Some(live) = local_live_run(&state, &id, "routine_runs").await {
+        return Ok(Json(live));
     }
     // A cloud run in progress, as last synced from the cron daemon.
     let cloud: Option<(String, Option<String>)> = state.db.connect().ok().and_then(|conn| {
@@ -1734,6 +1782,81 @@ async fn live_routine_run(
         Some((run_id, started)) => json!({ "running": true, "runId": run_id, "startedAt": started, "steps": [], "apps": [], "canStop": true }),
         None => json!({ "running": false }),
     }))
+}
+
+/// A loop's runs, newest first, in the shape routines' run route returns.
+async fn list_loop_runs(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let user = get_user(&headers).ok_or(StatusCode::UNAUTHORIZED)?;
+    let conn = state.db.connect().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    conn.query_row("SELECT 1 FROM loops WHERE id = ?1 AND user_id = ?2", [&id, &user.user_id], |_| Ok(()))
+        .map_err(|_| StatusCode::NOT_FOUND)?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, routine_id, gizzi_run_id, status, scheduled_at, started_at, finished_at, duration_ms, output, error, attempt, triggered_by, metadata
+             FROM loop_runs WHERE routine_id = ?1 ORDER BY scheduled_at DESC LIMIT 200",
+        )
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let runs = stmt
+        .query_map([&id], |row| {
+            Ok(RoutineRun {
+                id: row.get(0)?,
+                routine_id: row.get(1)?,
+                gizzi_run_id: row.get(2)?,
+                status: row.get(3)?,
+                scheduled_at: row.get(4)?,
+                started_at: row.get(5)?,
+                finished_at: row.get(6)?,
+                duration_ms: row.get(7)?,
+                output: row.get(8)?,
+                error: row.get(9)?,
+                attempt: row.get(10)?,
+                triggered_by: row.get(11)?,
+                metadata: row
+                    .get::<_, Option<String>>(12)?
+                    .map(|s| serde_json::from_str(&s).unwrap_or(serde_json::Value::Null)),
+            })
+        })
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(json!({ "runs": runs })))
+}
+
+/// Stop a local loop's run in progress. It ends `cancelled` with its output so far.
+async fn cancel_loop_run(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path((id, run_id)): Path<(String, String)>,
+) -> Result<Json<serde_json::Value>, RoutineApiError> {
+    let user = get_user(&headers).ok_or(StatusCode::UNAUTHORIZED)?;
+    {
+        let conn = state.db.connect().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        conn.query_row("SELECT 1 FROM loops WHERE id = ?1 AND user_id = ?2", [&id, &user.user_id], |_| Ok(()))
+            .map_err(|_| StatusCode::NOT_FOUND)?;
+    }
+    if crate::routine_local_scheduler::request_stop(&id, &run_id) {
+        return Ok(Json(json!({ "status": "stopping", "runId": run_id })));
+    }
+    Err(RoutineApiError::new(StatusCode::CONFLICT, "not_running", "That run already finished."))
+}
+
+/// A loop's run in progress. `{running: false}` when idle.
+async fn live_loop_run(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let user = get_user(&headers).ok_or(StatusCode::UNAUTHORIZED)?;
+    {
+        let conn = state.db.connect().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        conn.query_row("SELECT 1 FROM loops WHERE id = ?1 AND user_id = ?2", [&id, &user.user_id], |_| Ok(()))
+            .map_err(|_| StatusCode::NOT_FOUND)?;
+    }
+    Ok(Json(local_live_run(&state, &id, "loop_runs").await.unwrap_or_else(|| json!({ "running": false }))))
 }
 
 async fn get_routine_metrics(
@@ -1825,13 +1948,16 @@ fn row_to_loop(row: &rusqlite::Row) -> Result<Loop, rusqlite::Error> {
         expires_at: row.get(16)?,
         created_at: row.get(17)?,
         updated_at: row.get(18)?,
+        next_run_at: row.get(19)?,
+        last_run_at: row.get(20)?,
     })
 }
 
 async fn list_loops(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
-) -> Result<Json<Vec<Loop>>, StatusCode> {
+    Query(query): Query<ListRoutinesQuery>,
+) -> Result<Json<Vec<serde_json::Value>>, StatusCode> {
     let user = get_user(&headers).ok_or(StatusCode::UNAUTHORIZED)?;
     let conn = state.db.connect().map_err(|e| {
         warn!("db error: {}", e);
@@ -1840,7 +1966,7 @@ async fn list_loops(
 
     let mut stmt = conn
         .prepare(
-            "SELECT id, user_id, workspace_id, agent_id, goal_id, gizzi_job_id, session_id, name, description, status, schedule_type, schedule_expression, execution_domain, config, tags, metadata, expires_at, created_at, updated_at
+            "SELECT id, user_id, workspace_id, agent_id, goal_id, gizzi_job_id, session_id, name, description, status, schedule_type, schedule_expression, execution_domain, config, tags, metadata, expires_at, created_at, updated_at, next_run_at, last_run_at
              FROM loops WHERE user_id = ?1 ORDER BY created_at DESC",
         )
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -1851,7 +1977,30 @@ async fn list_loops(
         .collect::<Result<Vec<_>, _>>()
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    Ok(Json(loops))
+    let mut recent = match query.recent_runs.map(|n| n.min(RECENT_RUNS_CAP)).filter(|n| *n > 0) {
+        Some(n) => Some(recent_runs_by_owner(&conn, "loop_runs", "loops", &user.user_id, n).map_err(|e| {
+            warn!("recent loop runs query failed: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?),
+        None => None,
+    };
+    let out = loops
+        .into_iter()
+        .map(|item| {
+            let mut value = serde_json::to_value(&item).unwrap_or_default();
+            if let Some(map) = recent.as_mut() {
+                let mut runs = map.remove(&item.id).unwrap_or_default();
+                if let Some((run_id, _)) = crate::routine_local_scheduler::live_run(&item.id) {
+                    if !runs.iter().any(|r| r["id"] == run_id.as_str()) {
+                        runs.insert(0, json!({ "id": run_id, "status": "running" }));
+                    }
+                }
+                value["recentRuns"] = json!(runs);
+            }
+            value
+        })
+        .collect();
+    Ok(Json(out))
 }
 
 async fn create_loop(
@@ -1894,6 +2043,8 @@ async fn create_loop(
         expires_at: req.expires_at.clone(),
         created_at: now.clone(),
         updated_at: now.clone(),
+        next_run_at: None,
+        last_run_at: None,
     };
 
     let daemon_job_id = if uses_cloud_scheduler(&loop_item.execution_domain)
@@ -1905,7 +2056,7 @@ async fn create_loop(
             None
         };
         let daemon_job = build_daemon_job_from_loop(&loop_item, &job_type, harness_config);
-        let client = reqwest::Client::new();
+        let client = crate::net_client::client();
         match cron_daemon_create_job(&client, daemon_job).await {
             Ok(res) => extract_daemon_job_id(&res),
             Err(e) => {
@@ -1923,8 +2074,8 @@ async fn create_loop(
     })?;
 
     conn.execute(
-        "INSERT INTO loops (id, user_id, workspace_id, agent_id, goal_id, gizzi_job_id, session_id, name, description, status, schedule_type, schedule_expression, execution_domain, config, tags, metadata, expires_at, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
+        "INSERT INTO loops (id, user_id, workspace_id, agent_id, goal_id, gizzi_job_id, session_id, name, description, status, schedule_type, schedule_expression, execution_domain, config, tags, metadata, expires_at, created_at, updated_at, timezone)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)",
         params![
             &loop_item.id,
             &loop_item.user_id,
@@ -1945,6 +2096,7 @@ async fn create_loop(
             &loop_item.expires_at,
             &loop_item.created_at,
             &loop_item.updated_at,
+            req.timezone.as_ref(),
         ],
     )
     .map_err(|e| {
@@ -1973,7 +2125,7 @@ async fn get_loop(
 
     let loop_item = conn
         .query_row(
-            "SELECT id, user_id, workspace_id, agent_id, goal_id, gizzi_job_id, session_id, name, description, status, schedule_type, schedule_expression, execution_domain, config, tags, metadata, expires_at, created_at, updated_at
+            "SELECT id, user_id, workspace_id, agent_id, goal_id, gizzi_job_id, session_id, name, description, status, schedule_type, schedule_expression, execution_domain, config, tags, metadata, expires_at, created_at, updated_at, next_run_at, last_run_at
              FROM loops WHERE id = ?1 AND user_id = ?2",
             [&id, &user.user_id],
             row_to_loop,
@@ -2039,7 +2191,15 @@ async fn update_loop(
             tags = COALESCE(?8, tags),
             metadata = COALESCE(?9, metadata),
             expires_at = COALESCE(?10, expires_at),
-            updated_at = ?11
+            updated_at = ?11,
+            agent_id = CASE WHEN ?14 IS NULL THEN agent_id ELSE NULLIF(?14, '') END,
+            goal_id = CASE WHEN ?15 IS NULL THEN goal_id ELSE NULLIF(?15, '') END,
+            timezone = COALESCE(?16, timezone),
+            -- A schedule, status or domain change restarts the local cursor from
+            -- the new definition; a new schedule also re-arms a one-shot that ran.
+            next_run_at = CASE WHEN ?3 IS NOT NULL OR ?4 IS NOT NULL OR ?5 IS NOT NULL OR ?6 IS NOT NULL OR ?16 IS NOT NULL
+                               THEN NULL ELSE next_run_at END,
+            last_run_at = CASE WHEN ?4 IS NOT NULL OR ?5 IS NOT NULL THEN NULL ELSE last_run_at END
          WHERE id = ?12 AND user_id = ?13",
         (
             req.name.as_ref(),
@@ -2057,12 +2217,29 @@ async fn update_loop(
             &now,
             &id,
             &user.user_id,
+            req.agent_id.as_ref(),
+            req.goal_id.as_ref(),
+            req.timezone.as_ref(),
         ),
     )
     .map_err(|e| {
         warn!("update loop failed: {}", e);
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
+    // Resuming starts the failure streak over, as it does for a routine.
+    if req.status.as_deref() == Some("active") {
+        conn.execute(
+            "UPDATE loops SET metadata = json_remove(
+                 CASE WHEN json_valid(metadata) THEN metadata ELSE '{}' END,
+                 '$.consecutiveFailures', '$.autoPaused')
+             WHERE id = ?1 AND user_id = ?2",
+            (&id, &user.user_id),
+        )
+        .map_err(|e| {
+            warn!("reset loop run state failed: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+    }
 
     let updated_loop = get_loop(State(state.clone()), headers.clone(), Path(id.clone()))
         .await?
@@ -2078,14 +2255,14 @@ async fn update_loop(
                 None
             };
             let gizzi_job = build_daemon_job_from_loop(&updated_loop, &job_type, harness_config);
-            let client = reqwest::Client::new();
+            let client = crate::net_client::client();
             if let Err(e) = cron_daemon_update_job(&client, gizzi_job_id, gizzi_job).await {
                 warn!("failed to update daemon loop job: {}", e);
             }
         }
     } else if old_uses_cloud && !new_uses_cloud {
         if let Some(ref gizzi_job_id) = existing.1 {
-            let client = reqwest::Client::new();
+            let client = crate::net_client::client();
             if let Err(e) = cron_daemon_delete_job(&client, gizzi_job_id).await {
                 warn!("failed to delete daemon loop job on domain change: {}", e);
             }
@@ -2105,7 +2282,7 @@ async fn update_loop(
             None
         };
         let daemon_job = build_daemon_job_from_loop(&updated_loop, &job_type, harness_config);
-        let client = reqwest::Client::new();
+        let client = crate::net_client::client();
         let daemon_job_id = match cron_daemon_create_job(&client, daemon_job).await {
             Ok(res) => extract_daemon_job_id(&res),
             Err(e) => {
@@ -2148,12 +2325,21 @@ async fn delete_loop(
         .map_err(|_| StatusCode::NOT_FOUND)?;
 
     if let Some(gizzi_job_id) = gizzi_job_id {
-        let client = reqwest::Client::new();
+        let client = crate::net_client::client();
         if let Err(e) = cron_daemon_delete_job(&client, &gizzi_job_id).await {
             warn!("failed to delete daemon loop job: {}", e);
         }
     }
 
+    // Not every connection enforces the table's ON DELETE CASCADE.
+    conn.execute(
+        "DELETE FROM loop_runs WHERE routine_id IN (SELECT id FROM loops WHERE id = ?1 AND user_id = ?2)",
+        [&id, &user.user_id],
+    )
+    .map_err(|e| {
+        warn!("delete loop runs failed: {}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
     conn.execute(
         "DELETE FROM loops WHERE id = ?1 AND user_id = ?2",
         [&id, &user.user_id],
@@ -2167,16 +2353,40 @@ async fn delete_loop(
     Ok(StatusCode::NO_CONTENT)
 }
 
+#[derive(Debug, Deserialize)]
+struct RunLoopQuery {
+    #[serde(default)]
+    dry_run: Option<String>,
+}
+
 async fn run_loop(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Path(id): Path<String>,
+    Query(query): Query<RunLoopQuery>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let user = get_user(&headers).ok_or(StatusCode::UNAUTHORIZED)?;
     let conn = state.db.connect().map_err(|e| {
         warn!("db error: {}", e);
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
+
+    // Dry run never starts anything: it reports what a real run would measure.
+    if matches!(query.dry_run.as_deref(), Some("1") | Some("true")) {
+        let config: String = conn
+            .query_row(
+                "SELECT config FROM loops WHERE id = ?1 AND user_id = ?2",
+                [&id, &user.user_id],
+                |row| row.get(0),
+            )
+            .map_err(|_| StatusCode::NOT_FOUND)?;
+        let config: serde_json::Value = serde_json::from_str(&config).unwrap_or(json!({}));
+        let note = match config.get("metric").and_then(|m| m.get("command")).and_then(|c| c.as_str()) {
+            Some(cmd) => format!("a real run would measure `{}` before and after each change", cmd),
+            None => "no Loop Card on this loop; a real run is a plain scheduled run".to_string(),
+        };
+        return Ok(Json(json!({ "dry_run": true, "outcome": "NOOP", "note": note })));
+    }
 
     let (gizzi_job_id, execution_domain): (Option<String>, String) = conn
         .query_row(
@@ -2187,12 +2397,30 @@ async fn run_loop(
         .map_err(|_| StatusCode::NOT_FOUND)?;
 
     if !uses_cloud_scheduler(&execution_domain) {
-        warn!("loop {} is local-domain; run via local scheduler", id);
-        return Err(StatusCode::NOT_IMPLEMENTED);
+        // Local loops run on this API (routine_local_scheduler). Answer at
+        // once; the run lands in loop_runs and the loop's session.
+        let task = crate::routine_local_scheduler::get_loop(&state.db, &id)
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+            .ok_or(StatusCode::NOT_FOUND)?;
+        let guard = crate::routine_local_scheduler::FlightGuard::acquire(&id).ok_or(StatusCode::CONFLICT)?;
+        let user_id = user.user_id.clone();
+        let state = state.clone();
+        tokio::spawn(async move {
+            let _guard = guard;
+            let driver = crate::routine_local_scheduler::GizziDriver { state: state.clone() };
+            crate::routine_local_scheduler::execute(
+                &state.db,
+                &driver,
+                &task,
+                crate::routine_local_scheduler::Trigger::Manual { user_id },
+            )
+            .await;
+        });
+        return Ok(Json(json!({ "status": "running", "loopId": id, "domain": "local" })));
     }
 
     let gizzi_job_id = gizzi_job_id.ok_or(StatusCode::BAD_REQUEST)?;
-    let client = reqwest::Client::new();
+    let client = crate::net_client::client();
     let run = cron_daemon_run_job(&client, &gizzi_job_id)
         .await
         .map_err(|e| {
@@ -2234,7 +2462,7 @@ async fn list_local_schedules(
 
     let mut loops_stmt = conn
         .prepare(
-            "SELECT id, user_id, workspace_id, agent_id, goal_id, gizzi_job_id, session_id, name, description, status, schedule_type, schedule_expression, execution_domain, config, tags, metadata, expires_at, created_at, updated_at
+            "SELECT id, user_id, workspace_id, agent_id, goal_id, gizzi_job_id, session_id, name, description, status, schedule_type, schedule_expression, execution_domain, config, tags, metadata, expires_at, created_at, updated_at, next_run_at, last_run_at
              FROM loops WHERE user_id = ?1 AND execution_domain = 'local' ORDER BY updated_at DESC",
         )
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -2282,6 +2510,9 @@ pub fn automation_router() -> Router<Arc<AppState>> {
             get(get_loop).put(update_loop).delete(delete_loop),
         )
         .route("/automation/loops/:id/run", post(run_loop))
+        .route("/automation/loops/:id/runs", get(list_loop_runs))
+        .route("/automation/loops/:id/runs/:run_id/cancel", post(cancel_loop_run))
+        .route("/automation/loops/:id/live", get(live_loop_run))
         // Local scheduler poll endpoint
         .route("/automation/local-schedules", get(list_local_schedules))
 }
@@ -2294,6 +2525,16 @@ pub fn automation_router() -> Router<Arc<AppState>> {
 mod tests {
     use super::*;
     use crate::db::DbHandle;
+
+    #[test]
+    fn cloud_routines_stay_on_the_cloud_computers_own_scheduler() {
+        // On a laptop, `cloud` goes to the always-on cron daemon.
+        assert_eq!(normalize_execution_domain_on(Some("cloud".into()), false), "cloud");
+        assert_eq!(normalize_execution_domain_on(Some("hybrid".into()), false), "cloud");
+        // On a cloud computer the local scheduler already is always on.
+        assert_eq!(normalize_execution_domain_on(Some("cloud".into()), true), "local");
+        assert_eq!(normalize_execution_domain_on(None, false), "local");
+    }
 
     fn test_db() -> (String, DbHandle) {
         let id = uuid::Uuid::new_v4().to_string();
@@ -2508,7 +2749,7 @@ mod tests {
 
         let mut loops_stmt = conn
             .prepare(
-                "SELECT id, user_id, workspace_id, agent_id, goal_id, gizzi_job_id, session_id, name, description, status, schedule_type, schedule_expression, execution_domain, config, tags, metadata, expires_at, created_at, updated_at
+                "SELECT id, user_id, workspace_id, agent_id, goal_id, gizzi_job_id, session_id, name, description, status, schedule_type, schedule_expression, execution_domain, config, tags, metadata, expires_at, created_at, updated_at, next_run_at, last_run_at
                  FROM loops WHERE user_id = ?1 AND execution_domain = 'local' ORDER BY updated_at DESC",
             )
             .unwrap();

@@ -5,7 +5,8 @@
 //!   Text conversation tokens (`tokens_in`, `tokens_out`) have no fixed price:
 //!   each row carries its billed amount (`amount_microusd`) = the provider's list
 //!   price + 15% ([`token_charge_microusd`]), or 0 when the agent runs on the
-//!   project's own model key. Hosted agents: the first [`FREE_AGENTS`] agent-months
+//!   project's own model key. Agent turns and model calls (`/v1/responses`
+//!   model mode, `/v1/messages`) both bill this way. Hosted agents: the first [`FREE_AGENTS`] agent-months
 //!   each month are free.
 //! * **Spend** is the UTC calendar month's usage rows × prices, in micro-dollars
 //!   ([`month_spend`]). It is what the month would bill at list price, before any
@@ -20,7 +21,11 @@
 //!   past the cap; the next one is refused.
 //! * **Thresholds.** After usage is recorded, [`check_thresholds`] sends
 //!   `usage.threshold` at 50, 80 and 100% of the cap, each once per project and
-//!   month (`platform_spend_alerts`).
+//!   month (`platform_spend_alerts`). When the project's org set a
+//!   `spend_alert_email` (console Security page) and both
+//!   `ALLTERNIT_CUSTOMER_EMAILS=1` and `PLATFORM_SPEND_ALERT_EMAILS=1` are on,
+//!   that address also gets an email ([`spawn_spend_alert_email`]); otherwise
+//!   the alert is only recorded.
 //! * **Routes.** `GET /v1/projects/current/spend_cap` (scope `usage`) and
 //!   `PUT` (scope `usage`, project-wide key). Over the API a cap can only be
 //!   lowered; raising it is a console action (`PATCH /api/v1/platform/projects/{id}`),
@@ -68,6 +73,15 @@ pub fn unit_price_microusd(meter: &str) -> Option<i64> {
         // toolset actions 0.05¢ each after the first 10,000 a month.
         "computer_minute" => 8_000,
         "computer_action" => 500,
+        // Phones (Eoj 2026-10-29): 2¢ per phone-minute, $5 per linked phone a month.
+        "phone_minutes" => 20_000,
+        "linked_phone" => 5_000_000,
+        // Platform mail and the agent identity bundle (Eoj 2026-10-29).
+        "mailbox_month" => 2_000_000,
+        "identity_month" => 9_000_000,
+        // Decisions (Eoj 2026-11-13): $0.50 per 1,000 questions on live keys.
+        // unit_price_microusd does not see the key mode: `decisions` records live projects only.
+        "decision_questions" => 500,
         _ => return None,
     })
 }
@@ -127,7 +141,21 @@ pub async fn month_spend(db: &PgPool, project_id: &str, now: DateTime<Utc>) -> R
     .bind(end)
     .fetch_all(db)
     .await?;
-    Ok(spend_from_totals(&totals))
+    let plan: Option<String> = sqlx::query_scalar("SELECT plan FROM platform_projects WHERE id = $1").bind(project_id).fetch_optional(db).await?;
+    Ok(spend_from_totals(&on_plan(totals, plan.as_deref() == Some("growth"))))
+}
+
+/// Growth's included phone minutes and linked phones (`stripe_plan::GROWTH_INCLUDED`) cost nothing.
+pub fn on_plan(mut totals: Vec<MeterTotal>, growth: bool) -> Vec<MeterTotal> {
+    if growth {
+        for t in &mut totals {
+            let included = super::stripe_plan::meter_plan(&t.meter)
+                .map(|m| super::stripe_plan::included_units("growth", m) - m.free_units)
+                .unwrap_or(0);
+            t.quantity = (t.quantity - included as f64).max(0.0);
+        }
+    }
+    totals
 }
 
 async fn cap_cents(db: &PgPool, project_id: &str) -> Result<i64, sqlx::Error> {
@@ -150,6 +178,20 @@ pub fn status_allows_work(billing_status: Option<&str>) -> bool {
     matches!(billing_status, Some("active" | "past_due"))
 }
 
+/// `billing_status` of Allternit's own test projects (Eoj 2026-11-13: "it's our
+/// platform, we need a test one"). Set only by an operator in the database
+/// (`operations/platform-test-projects.mdx`); no route or Stripe webhook writes
+/// it, and webhooks only touch projects that have a subscription. It counts as
+/// a payment method on a **sandbox** project only: sandbox usage is never sent
+/// to Stripe (`stripe_plan` reports `env = 'live'` rows), so the work is free,
+/// and the monthly spend cap still applies. On a live project it does nothing.
+pub const INTERNAL_BILLING_STATUS: &str = "internal";
+
+/// A sandbox project an operator marked [`INTERNAL_BILLING_STATUS`].
+pub fn internal_test_project(env: &str, billing_status: Option<&str>) -> bool {
+    env == "sandbox" && billing_status == Some(INTERNAL_BILLING_STATUS)
+}
+
 /// 402 `payment_method_required`, with the console billing page as `error.url`.
 pub fn payment_method_required(project_id: &str) -> PlatformError {
     let url = billing_page_url(project_id);
@@ -164,16 +206,18 @@ pub fn payment_method_required(project_id: &str) -> PlatformError {
 }
 
 /// `Ok` once the project has a card on file and a subscription in good standing
-/// (Eoj 2026-10-08: card required, $0 free usage, sandbox included); otherwise
+/// (Eoj 2026-10-08: card required, $0 free usage, sandbox included), or is one
+/// of Allternit's internal test projects ([`internal_test_project`]); otherwise
 /// `402 payment_method_required`. A failed check refuses the work (fail closed).
 pub async fn require_payment_method(db: &PgPool, project_id: &str) -> Result<(), PlatformError> {
-    let row: Result<Option<(Option<String>, Option<String>)>, sqlx::Error> =
-        sqlx::query_as("SELECT stripe_customer_id, billing_status FROM platform_projects WHERE id = $1")
+    let row: Result<Option<(Option<String>, Option<String>, String)>, sqlx::Error> =
+        sqlx::query_as("SELECT stripe_customer_id, billing_status, env FROM platform_projects WHERE id = $1")
             .bind(project_id)
             .fetch_optional(db)
             .await;
     match row {
-        Ok(Some((Some(_customer), status))) if status_allows_work(status.as_deref()) => Ok(()),
+        Ok(Some((Some(_customer), status, _))) if status_allows_work(status.as_deref()) => Ok(()),
+        Ok(Some((_, status, env))) if internal_test_project(&env, status.as_deref()) => Ok(()),
         Ok(_) => Err(payment_method_required(project_id)),
         Err(error) => {
             tracing::error!(%error, project_id, "platform payment method check failed; refusing billable work");
@@ -255,9 +299,53 @@ pub async fn check_thresholds(db: &PgPool, project_id: &str) -> Result<Vec<i64>,
             "period": period,
         });
         events::emit_event(db, project_id, None, "usage.threshold", data).await?;
+        spawn_spend_alert_email(db, project_id, percent, spent, cap, &period);
         sent.push(percent);
     }
     Ok(sent)
+}
+
+/// Email the project's org `spend_alert_email` about a threshold just recorded
+/// (each threshold once: the `platform_spend_alerts` insert above). Off unless
+/// both email switches are on; runs in the background so usage recording never
+/// waits on mail; failures are logged.
+fn spawn_spend_alert_email(db: &PgPool, project_id: &str, percent: i64, spent_microusd: i64, cap_cents: i64, period: &str) {
+    if !crate::services::customer_emails::spend_alert_emails_enabled() {
+        return;
+    }
+    let (db, project_id, period) = (db.clone(), project_id.to_string(), period.to_string());
+    tokio::spawn(async move {
+        let row: Result<Option<(String, Option<String>)>, sqlx::Error> = sqlx::query_as(
+            "SELECT p.name, o.spend_alert_email FROM platform_projects p \
+             LEFT JOIN platform_org_policies o ON o.org_id = p.org_id WHERE p.id = $1",
+        )
+        .bind(&project_id)
+        .fetch_optional(&db)
+        .await;
+        let (name, address) = match row {
+            Ok(Some((name, Some(address)))) if !address.trim().is_empty() => (name, address),
+            Ok(_) => return,
+            Err(error) => {
+                tracing::warn!(%error, %project_id, "spend alert email: policy lookup failed; alert recorded only");
+                return;
+            }
+        };
+        let recipient = crate::services::customer_emails::Recipient { email: address, first_name: None };
+        let email = crate::services::customer_emails::spend_alert_email(
+            &recipient,
+            &name,
+            &project_id,
+            percent,
+            spent_microusd as f64 / 1_000_000.0,
+            cap_cents as f64 / 100.0,
+            &period,
+            &billing_page_url(&project_id),
+        );
+        match crate::services::customer_emails::send_unclaimed(&recipient, &email).await {
+            Ok(()) => tracing::info!(%project_id, percent, "spend alert email sent"),
+            Err(error) => tracing::error!(%project_id, percent, %error, "spend alert email failed"),
+        }
+    });
 }
 
 /// [`check_thresholds`], logged instead of returned: usage recording never fails on it.
@@ -363,6 +451,10 @@ mod tests {
         let expected = 900_000 + 600_000 + 8_000_000 + 2_000_000 + 3_000_000 + 1_200_000 + 300_000 + 20_000_000 + 200_000 + 345_000;
         assert_eq!(spend_from_totals(&totals), expected);
         assert_eq!(spend_from_totals(&[t("agent_month", 3.0, 0)]), 0, "first three agents are free");
+        // Phones: 2¢ a minute, $5 a phone; Growth includes 3,000 minutes and 25 phones.
+        assert_eq!(spend_from_totals(&[t("phone_minutes", 100.0, 0), t("linked_phone", 2.0, 0)]), 2_000_000 + 10_000_000);
+        assert_eq!(spend_from_totals(&on_plan(vec![t("phone_minutes", 3_100.0, 0), t("linked_phone", 25.0, 0)], true)), 2_000_000);
+        assert_eq!(spend_from_totals(&on_plan(vec![t("phone_minutes", 100.0, 0)], false)), 2_000_000);
         assert_eq!(spend_from_totals(&[t("tokens_in", 1e6, 0)]), 0, "own-key tokens cost nothing");
     }
 

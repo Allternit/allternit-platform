@@ -4,7 +4,7 @@ const pet = {
   type: 'local-jsx',
   name: 'pet',
   description: 'Open your pet: quick chat with your Allternit bot, incognito asks, switch bots',
-  argumentHint: '[pat|mute|unmute]',
+  argumentHint: '[pat|mute|unmute|offers on|off]',
   immediate: true,
   load: () => import('./pet.js'),
 } satisfies Command

@@ -25,7 +25,7 @@ First-party device pairing binds a desktop or VPS runtime to a human account wit
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| POST | `/api/v1/runtime-pairings` | Public | Create a pairing request. |
+| POST | `/api/v1/runtime-pairings` | Public | Create a pairing request. Clients send an optional `machineId` (16 to 64 characters, letters, digits, `-` and `_`): a stable random id for the machine. The active-machine limit counts machines by `machineId` and falls back to hostname plus platform when it is missing. Pairing again from the same account, machine and client name replaces the old device row. |
 | POST | `/api/v1/runtime-pairings/exchange` | Public | Exchange an approved pairing for a device token. |
 | GET | `/api/v1/runtime-pairings/code/:code` | Clerk / device | Inspect a pairing by user code. |
 | POST | `/api/v1/runtime-pairings/code/:code/approve` | Clerk / device | Approve a pairing request. |
@@ -207,6 +207,17 @@ Connect to the ticketed WebSocket:
 wscat -c "wss://api.allternit.com/api/v1/runtime-devices/rt_xyz789/socket?ticket=ticket_uuid"
 ```
 
+The first frame on the socket is the text frame `{"type":"allternit_socket_ready"}`, sent once the runtime has opened its end. Wait for it before sending; every frame after it belongs to the runtime.
+
+### What the runtime does with relayed paths
+
+Allternit Desktop sends most relayed paths to its local allternit-api. These gizzi-code paths go to its local gizzi-code instead, over HTTP and as sockets:
+
+- `/v1/provider`, `/v1/agent`, `/v1/permission`, `/v1/question`, `/v1/session`
+- `/v1/pty` (terminal REST, the `/v1/pty/:id/connect` attach socket, dev-server ports), `/v1/file`, `/v1/cron`, `/v1/automations` (routines and loops), and the `/v1/event` stream
+
+The native phone app (Allternit Mobile) uses the relay the same way the web app does. It lists `/api/v1/runtime-devices` and picks a computer: the account's default computer first, then the computer you picked, then the first one online, then a sleeping cloud computer (the first request wakes it). It then sends terminal, file, diff, permission, automation, Cowork session, Factory activity and ACI calls through `/proxy` and the socket ticket. When no computer answers, the Code and Automation screens show **Connect a computer or Allternit Cloud**, or **Can't reach your computer** when a paired computer is offline. A Desktop build older than this change answers the gizzi-code paths in the second list with `501`.
+
 ### Live desktop viewer token
 
 "Sign in on the cloud computer" opens the computer's desktop in the browser. The desktop is served by the cloud computer itself and tunnelled through its outbound relay connection, so no Sessions computer record and no shared secret are involved. The viewer token uses the same signed format as the Sessions `computers` ws-token (purpose `vnc`, `computer_id` set to the runtime id), is signed with that runtime's own relay key (the digest cloud-api already stores for it, `credential_hash`), and lives 300 seconds. The runtime's allternit-api checks it at `GET /api/v1/runtime-viewer/vnc?token=…` and proxies to its local VNC server (`ALLTERNIT_RUNTIME_VNC_ADDR`, default `127.0.0.1:5900`). `wsUrl` carries a 30-second relay socket ticket: connect right away, and ask again to reconnect.
@@ -284,6 +295,38 @@ A device you own (today an Allternit browser tab with WebGPU) can serve a small 
 ## Artifacts v2
 
 Unlike the relayed namespaces above, artifacts are stored in Cloud API Postgres itself, so every surface sees the same records. That includes the ones made on a cloud computer or by gizzi. Routes are under `/api/v2/artifacts`, plus a no-auth public link route `/api/v2/public/artifacts/{id}` and `/api/v2/org/artifact-settings`. See [Artifacts v2](/api/artifacts-v2).
+
+## Thread shares
+
+Read-only links to a snapshot of a conversation. All routes are under `/api/v2` and need your bearer token, except the public read.
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `POST` | `/api/v2/thread-shares` | Create a share, or return the existing one for the session. |
+| `PUT` | `/api/v2/thread-shares/:token` | Replace the snapshot. |
+| `DELETE` | `/api/v2/thread-shares/:token` | Stop sharing. `204`. |
+| `GET` | `/api/v2/thread-shares?sessionId=` | Find the share for a session. |
+| `GET` | `/api/v2/public/threads/:token` | Public read, no auth. Returns `{title, messages, updatedAt}`. |
+
+```bash
+curl -X POST https://api.allternit.com/api/v2/thread-shares \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"sessionId":"sess_9c1d","title":"Auth review","snapshot":[{"role":"user","text":"Review the auth module","images":[],"tools":[]}]}'
+# 201 (new) or 200 (existing): {"token":"...","url":"https://ai.allternit.com/t/...","updatedAt":"..."}
+```
+
+The server cleans the snapshot. A kept message is exactly `role` (`user` or `assistant`), `text`, `images` and `tools`.
+
+| Limit | Value |
+| --- | --- |
+| Request body | 2 MB |
+| Text per message | 20,000 characters |
+| Images | PNG, JPEG, WebP or GIF data URLs, 300 KB each, 10 per thread |
+| Tool names | names only, 80 characters each, 50 per message |
+| Messages | 2,000 |
+| Title | 300 characters |
+
+Errors: `400` (`bad_body`, `bad_session_id`), `401`, `404` (`not_found`), `413` (`too_large`), `422` (`empty_snapshot`). See [Share a thread by link](/guides/share-a-thread).
 
 ## Provisioned instances
 

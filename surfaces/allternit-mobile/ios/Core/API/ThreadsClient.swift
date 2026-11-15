@@ -20,6 +20,12 @@ final class ThreadsClient: @unchecked Sendable {
     }
 }
 
+/// One step of a thread's checklist: done, active (the one it's on) or pending.
+struct ThreadTodo: Decodable, Hashable {
+    let text: String
+    let state: String
+}
+
 struct BotThreadListResponse: Decodable {
     let threads: [BotThread]
 }
@@ -28,6 +34,9 @@ struct BotThread: Decodable, Identifiable, Hashable {
     let id: String
     let botId: String
     let title: String
+    /// The title without a routine run's `[bot:<name>] ` owner tag (web
+    /// chatSessionTitle): lists and headers show this.
+    var displayTitle: String { AutomationScheduleLogic.displayName(title) }
     let kind: String
     let incognito: Bool
     let status: String
@@ -37,6 +46,21 @@ struct BotThread: Decodable, Identifiable, Hashable {
     let currentSessionId: String?
     let generation: Int
     let lastActivityAt: String
+    /// "user" | "bot" | "import" … — main chat threads are `standing` +
+    /// `import` + "Main chat" (web lib/bots/threads.ts isMainChatThread).
+    var createdBy: String? = nil
+    var projectId: String? = nil
+    /// The bot's checklist for this thread (lib/bots/threads.ts ThreadTodo).
+    var todo: [ThreadTodo]? = nil
+    var summary: String? = nil
+    /// Thread ids this one waits on (the plan graph, ThreadGraph.tsx).
+    var dependsOn: [String]? = nil
+    var archived: Bool? = nil
+    var archivedAt: String? = nil
+
+    var isMainChat: Bool {
+        kind == "standing" && createdBy == "import" && title == "Main chat"
+    }
 
     /// Waiting on you first, then working, queued, idle, resolved.
     var groupOrder: Int {
