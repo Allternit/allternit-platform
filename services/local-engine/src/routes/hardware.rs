@@ -55,11 +55,12 @@ async fn get_hardware(State(state): State<Arc<AppState>>) -> Json<HardwareReport
     if needs_full {
         let profile = state.hardware_profile.clone();
         let dir = models_dir.clone();
-        let report = match tokio::task::spawn_blocking(move || hardware::probe_report(&profile, &dir)).await {
+        let packs = state.packs.clone();
+        let report = match tokio::task::spawn_blocking(move || hardware::probe_report(&profile, &dir, &packs.list_installed())).await {
             Ok(report) => report,
             // The probe never panics by design; if it somehow did, answer
             // with a fresh probe on this thread rather than a 500.
-            Err(_) => hardware::probe_report(&state.hardware_profile, &models_dir),
+            Err(_) => hardware::probe_report(&state.hardware_profile, &models_dir, &state.packs.list_installed()),
         };
         let at = Instant::now();
         *guard = Some(Cached { report, probed_at: at, live_at: at });
@@ -79,9 +80,12 @@ async fn get_hardware(State(state): State<Arc<AppState>>) -> Json<HardwareReport
         }
     }
 
-    match guard.as_ref() {
-        Some(c) => Json(c.report.clone()),
+    let mut report = match guard.as_ref() {
+        Some(c) => c.report.clone(),
         // Unreachable: both branches above leave the cache filled.
-        None => Json(hardware::probe_report(&state.hardware_profile, &models_dir)),
-    }
+        None => hardware::probe_report(&state.hardware_profile, &models_dir, &state.packs.list_installed()),
+    };
+    drop(guard);
+    report.running = state.manager.running().await;
+    Json(report)
 }
