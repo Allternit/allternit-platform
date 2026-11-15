@@ -1,0 +1,25 @@
+allternit-tune
+Copyright 2026 Allternit LLC
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+It replaces the earlier services/model-training code. It does not use, import,
+bundle or depend on unsloth or unsloth_zoo (AGPL-3.0); tools/spdx_gate.py fails
+the build if either is imported or listed as a dependency.
+
+At run time it uses these separately installed libraries, each under its own
+license (none is bundled in this folder):
+  torch          BSD-3-Clause (PyTorch; bundles third-party code under
+                 Apache-2.0, MIT, BSL-1.0, ISC, Zlib per its package metadata)
+  transformers   Apache-2.0
+  peft           Apache-2.0
+  trl            Apache-2.0
+  accelerate     Apache-2.0
+  datasets       Apache-2.0
+  safetensors    Apache-2.0
+  huggingface_hub Apache-2.0
+  bitsandbytes   MIT (QLoRA only)
+
+GGUF export runs llama.cpp's convert_hf_to_gguf.py and llama-quantize (MIT)
+as separate programs when they are already on the computer. They are not
+bundled or downloaded by allternit-tune.
