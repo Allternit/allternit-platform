@@ -79,4 +79,14 @@ class BudgetAndManifestTest {
         // a different key id
         assertEquals("bad_signature", failCode { Minisign.verifyFreeweights(res("manifest.json"), sig.replace("RUQ7KGqy", "RUQ8KGqy")) })
     }
+
+    @Test fun openclOnlyOnAdreno7xxAndNewer() {
+        assertTrue(GpuPolicy.openclAllowed("QTI", "SM8450"))
+        assertTrue(GpuPolicy.openclAllowed("QTI", "SM8650"))
+        assertTrue(GpuPolicy.openclAllowed("QTI", "SM7675"))
+        assertEquals(false, GpuPolicy.openclAllowed("QTI", "SM6225"))
+        assertEquals(false, GpuPolicy.openclAllowed("QTI", "SM8350"))
+        assertEquals(false, GpuPolicy.openclAllowed("Mediatek", "MT6789"))
+        assertEquals(false, GpuPolicy.openclAllowed(null, null))
+    }
 }

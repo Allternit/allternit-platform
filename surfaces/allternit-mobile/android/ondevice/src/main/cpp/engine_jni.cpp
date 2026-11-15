@@ -181,6 +181,9 @@ Java_com_allternit_ondevice_NativeLlama_nativeLoad(JNIEnv * env, jclass, jstring
     cp.abort_callback = abort_cb;
     cp.abort_callback_data = e;
     cp.offload_kqv = gpu != nullptr;
+    // Adreno 610 (Moto g play 2024): ggml-opencl's lazily compiled flash-attention kernel
+    // SIGSEGVs on the first reply. The plain attention path works, so GPU contexts skip FA.
+    if (gpu) cp.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_DISABLED;
     cp.no_perf = false;
     e->ctx = llama_init_from_model(e->model, cp);
     if (!e->ctx) {

@@ -247,8 +247,11 @@ class OnDeviceEngine private constructor(private val app: Context) {
             Log.e(TAG, "native engine failed to load", e)
             JSONArray()
         }
-        devices = d
-        return d
+        val allowed = Build.VERSION.SDK_INT >= 31 && GpuPolicy.openclAllowed(Build.SOC_MANUFACTURER, Build.SOC_MODEL)
+        val usable = GpuPolicy.filter(d, allowed)
+        if (usable.length() != d.length()) Log.i(TAG, "GPU not used on this SoC (${Build.SOC_MODEL}): CPU backend")
+        devices = usable
+        return usable
     }
 
     private fun gb(b: Long) = "%.1f".format(b / 1e9)
