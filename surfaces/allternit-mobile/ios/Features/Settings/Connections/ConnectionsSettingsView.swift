@@ -35,8 +35,10 @@ enum ConnRoute {
         case "cloud-computer": return .page(store.state(id) == .on ? .cloudComputer : .billing)
         case "gizzi": return .page(.gizzi)
         case "local": return .sheet(.onComputer(id))
-        // Signs in on this iPhone (contract §9.9), with or without a computer.
-        case "chatgpt": return .sheet(.chatgptDevice)
+        // The box on Allternit when the server offers it (device code in
+        // Safari); otherwise, or when already signed in here, on this iPhone (§9.9).
+        case "chatgpt":
+            return store.row(id).runsOn == "runner" && !store.chatgptOnDevice ? .sheet(.login(id)) : .sheet(.chatgptDevice)
         case "phone", "allternit": return .none
         default: break
         }
