@@ -42,7 +42,6 @@ pub mod bot_hub_routes;
 pub mod memory_map_routes;
 pub mod skill_use;
 pub mod agents_v1_routes;
-pub mod alabs_routes;
 pub mod allternit_vault;
 pub mod analytics_routes;
 pub mod artifact_routes;

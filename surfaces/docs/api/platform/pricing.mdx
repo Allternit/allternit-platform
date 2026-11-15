@@ -5,6 +5,8 @@ description: 'Plans and usage prices for the Platform API.'
 
 There is no free tier. Every project, sandbox included, needs a card on file and a plan (console → **Project billing**) before it can do billable work; until then billable requests answer `402 payment_method_required`. See [Billing](/api/platform/billing). Using the API means accepting the [Developer Terms](/legal/developer-terms) and the [Acceptable Use Policy](/legal/acceptable-use-policy).
 
+Allternit Cloud model calls made with an account key (outside a project) are paid from the account's Cloud credits. There is no free monthly model allowance: a call from an account with no credits answers `402 credits_required`. See [Chat Completions](/api/chat-completions#credits-cloud-api).
+
 ## Plans
 
 | Plan | Price | Includes |

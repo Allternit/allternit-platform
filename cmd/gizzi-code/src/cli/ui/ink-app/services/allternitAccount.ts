@@ -8,6 +8,8 @@
  * never a made-up plan.
  */
 import { cloudOrigin } from '@/runtime/providers/discovery/allternit-cloud'
+import { CloudContinue } from '@/runtime/session/cloud-continue'
+import { cloudCreditsDisclosure } from '@/shared/util/provider-error'
 
 export type AllternitAccount = {
   /** Plan id: free, plus, super (shown as Max), ultra. */
@@ -17,11 +19,13 @@ export type AllternitAccount = {
   status: string
   /** Credit balance in USD. */
   credits: number
-  /** Monthly grant (paid) or free allowance, USD. */
+  /** A paid plan's monthly grant, USD (0 on Free: Free includes no Cloud usage). */
   monthlyLimit: number
   monthlyUsed: number
   resetsAt?: string
   monthToDateUsd: number
+  /** `cloud_models`: whether Cloud models may run. Absent = the server sent none (not locked). */
+  cloudModels?: CloudContinue.Entitlement
 }
 
 export type AccountResult =
@@ -51,12 +55,19 @@ export function parseAccountUsage(payload: unknown): AllternitAccount | undefine
     label: typeof p.label === 'string' && p.label ? p.label : fallback,
     status: typeof p.status === 'string' ? p.status : 'none',
     credits: num(p.credits),
-    // Named weekly* on the wire, but they carry the monthly grant / allowance.
+    // Named weekly* on the wire, but they carry the monthly grant.
     monthlyLimit: num(p.weeklyLimit),
     monthlyUsed: num(p.weeklyUsed),
     resetsAt: typeof p.resetsAt === 'string' ? p.resetsAt : undefined,
     monthToDateUsd: num(p.monthToDateUsageUsd),
+    cloudModels: CloudContinue.entitlementFrom(p),
   }
+}
+
+/** The Cloud entitlement of the signed-in account, or undefined (signed out, unreachable, or none sent = not locked). */
+export async function cloudEntitlement(opts: { fetchImpl?: typeof fetch } = {}): Promise<CloudContinue.Entitlement | undefined> {
+  const result = await getAllternitAccount(opts).catch(() => undefined)
+  return result?.status === 'ok' ? result.account.cloudModels : undefined
 }
 
 async function credentials(): Promise<string[]> {
@@ -148,9 +159,10 @@ export function accountLines(result: AccountResult, bar: (ratio: number) => stri
     const ratio = Math.min(1, Math.max(0, a.monthlyUsed / a.monthlyLimit))
     const resets = resetsIn(a.resetsAt)
     lines.push(
-      `  ${paid ? 'Monthly' : 'Free monthly'}  ${bar(ratio)}  ${formatUsd(a.monthlyUsed)} of ${formatUsd(a.monthlyLimit)}${resets ? ` · resets in ${resets}` : ''}`,
+      `  Monthly  ${bar(ratio)}  ${formatUsd(a.monthlyUsed)} of ${formatUsd(a.monthlyLimit)}${resets ? ` · resets in ${resets}` : ''}`,
     )
   }
+  if (a.cloudModels && !a.cloudModels.allowed) lines.push(`  Cloud models: ${cloudCreditsDisclosure(a.cloudModels.reason)}`)
   lines.push(`  This month: ${formatUsd(a.monthToDateUsd)} spent from credits`)
   if (!paid) lines.push('  Plans: Plus, Max, Ultra · https://ai.allternit.com/settings/billing')
   return lines

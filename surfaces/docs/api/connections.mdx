@@ -59,7 +59,7 @@ Clients ignore ids they don't know. An id missing from the response falls back t
 
 | Row ids | Source |
 | --- | --- |
-| `allternit` | Always `on`. `found` is the plan name, and for Free "· $2 a month free". |
+| `allternit` | Always `on`. `found` is the plan name. For Free it is "Free · needs credits" with no balance, or "Free · $X credits" with one. |
 | `openai-key`, `anthropic-key`, `google-key`, `xai-key`, `together-key`, `fireworks-key`, `deepinfra-key`, `groq-key`, `deepseek-key`, `kimi-key`, `openrouter-key` | `user_inference_keys`. Providers `anthropic`, `google`, `xai` and `openrouter` are new. |
 | `gemini` | An alias of `google-key`, shown in Your AI as "Free Google AI Studio key". |
 | `openai-voice`, `elevenlabs` | `user_voice_keys`. |
@@ -216,7 +216,7 @@ On Desktop (through Gizzi Code, the engine under it), the iPhone app and Gizzi C
 
 ### Plan chat store
 
-Chats with plan (`plan/<vendor>/<model>`) and Copilot (`copilot/<model>`) models are saved on cloud-api so they sync across the person's devices with no computer. The turn itself goes to `POST /v1/chat/completions`; afterwards the client saves the person's message and the reply here. These routes need a signed-in session (an API token gets `403`, none gets `401`), are scoped to that person (another person's thread is `404`), never need a computer, and are erased with the account.
+Chats with plan (`plan/<vendor>/<model>`), Copilot (`copilot/<model>`) and, with no computer, Allternit Cloud (`allternit/<alias>`) models are saved on cloud-api so they sync across the person's devices with no computer. The turn itself goes to `POST /v1/chat/completions`; afterwards the client saves the person's message and the reply here. These routes need a signed-in session (an API token gets `403`, none gets `401`), are scoped to that person (another person's thread is `404`), never need a computer, and are erased with the account.
 
 | Call | Body | Returns |
 | --- | --- | --- |
@@ -227,7 +227,8 @@ Chats with plan (`plan/<vendor>/<model>`) and Copilot (`copilot/<model>`) models
 
 - `msg` is `{ "role": "user" | "assistant" | "system", "content": string, "model"?: string }`. Content is up to 200,000 characters. Any other role, such as `tool`, is `400`. A stored message also has `at`, an ISO 8601 UTC time set by the server.
 - A summary is `{ "id", "title", "model", "message_count", "created_at", "updated_at" }`. Ids start with `pth_`.
-- `model` on create must be a `plan/…`, `plan-…` or `copilot/…` id, otherwise `400`. A title is cut to 200 characters. A thread holds at most 5,000 messages.
+- `model` on create must be a `plan/…`, `plan-…` or `copilot/…` id, or `allternit/<alias>` where the alias is in the Cloud catalog (`GET /v1/models`, hidden aliases included), otherwise `400`. For example `allternit/glm-5.3` is accepted and `nope` is not.
+- An `allternit/<alias>` thread records a chat with an Allternit Cloud model from an account with no computer. The client sends the turn to `POST /v1/chat/completions` with the bare alias (`glm-5.3`, without `allternit/`), which needs Cloud credits (see [Chat Completions](/api/chat-completions#credits-cloud-api)). With a computer connected, Cloud model chats go through the computer and are not stored here. A title is cut to 200 characters. A thread holds at most 5,000 messages.
 - Deleting a thread is not in this version.
 
 ### GitHub Copilot

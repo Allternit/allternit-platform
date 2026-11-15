@@ -5,6 +5,21 @@ description: "Buy Allternit Cloud credits, and let your balance refill itself fr
 
 Allternit Cloud models and a computer on credits ([Computer on credits](/guides/credits-computer)) are paid from your **credit balance** (one credit = one US dollar). You add credits in **Settings → Billing** on Desktop, ai.allternit.com and the m.allternit.com app.
 
+## Cloud models need credits
+
+Free accounts don't include Cloud usage. An Allternit Cloud model answers only while your credit balance is above $0. Credits from any source count: a pack, a plan's monthly credits, or credits Allternit added to your account.
+
+- **Plans and keys you connect don't need credits.** A plan you already pay for (see [Use your plan](/guides/use-your-plan)) and API keys you add keep working with a $0 balance. If you added your own key for the provider behind a Cloud model, that model uses your key and is not locked.
+- **Locked models stay in the list.** With no credits, Cloud models in the model picker show a lock and **Needs credits**.
+- **The credits window.** Choosing a locked model, or sending a message with one, opens **Allternit Cloud models need credits** (or **Your Cloud credits are used up** once a balance reaches $0). It shows the price of the model you picked per 1M input and output tokens, the $10, $25, $50 and $100 packs, the Plus plan (it includes monthly credits) and **See all plans**. **Not now** closes it. Your previous model stays selected and the message you were typing stays in the composer.
+- **After you buy.** When you come back from checkout, the app reads your balance again and selects the model you picked.
+
+It works the same on Desktop, ai.allternit.com, the phone layout (as a sheet from the bottom) and the m.allternit.com app. On iPhone, the sheet shows the packs and links to ai.allternit.com to buy in the US App Store; elsewhere it shows no price and no link. In Gizzi Code, `gizzi models` marks these rows `needs credits`.
+
+### Cloud models with no computer
+
+With credits, you can chat with Allternit Cloud models without a computer. The reply comes straight from Allternit Cloud, and the chat is saved to your account like a plan chat, so it shows in the sidebar on web, the phone app and iPhone. Tools and agents still need a computer. If a computer is connected, Cloud models keep running through it as before.
+
 ## Ways to add credits
 
 - **Plans** (Plus, Max, Ultra) add a set amount of credits each month. Unused plan credits roll over up to the plan's limit. Settings → Billing shows your plan as a member card with your name and renewal date, and each plan as a ticket. Plus is graphite, Max is gold, Ultra is platinum. A failed payment shows as a stamp on the card.

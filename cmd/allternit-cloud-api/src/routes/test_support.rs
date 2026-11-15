@@ -278,8 +278,7 @@ pub async fn test_state_with_provisioning(
         run_service,
         session_manager,
         rate_limiter: crate::create_rate_limiter(rate_limit_config.clone()),
-        public_rate_limiter: crate::create_rate_limiter(rate_limit_config.clone()),
-        free_inference_rate_limiter: crate::create_rate_limiter(rate_limit_config),
+        public_rate_limiter: crate::create_rate_limiter(rate_limit_config),
         cost_service: Arc::new(crate::services::CostServiceImpl::new(db.clone())),
         quota_service: quota_service.clone(),
         contabo_runtime_service: Arc::new(crate::services::ContaboRuntimeService::new(

@@ -145,8 +145,11 @@ Rules the server enforces:
 - A **shared write or delete** needs the viewer's `storage_shared` consent
   first (`403 consent_required`, with `capability`).
 - **AI** needs `ai` consent. It goes through the hosted model router with the
-  **viewer's** credits or free allowance, with the same checks as
-  `/v1/chat/completions`. The owner is never charged. Prompts are limited to
+  **viewer's** credits, with the same checks as `/v1/chat/completions`. A
+  viewer with no credits gets `402 credits_required`, and one whose balance is
+  at or below $0 gets `402 credits_exhausted` (see
+  [Chat Completions](/api/chat-completions#credits-cloud-api)). The owner is
+  never charged. Prompts are limited to
   100,000 characters and 40 messages, and output to 4,096 tokens. The model is
   chosen by Allternit (`ARTIFACT_RUNTIME_MODEL`), not by the page.
 - **AI and connectors** are refused for viewers outside the artifact's org

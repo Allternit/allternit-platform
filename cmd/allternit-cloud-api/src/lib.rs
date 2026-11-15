@@ -57,6 +57,14 @@ pub const DEFAULT_CORS_ORIGINS: &[&str] = &[
     "https://m.allternit.com",
 ];
 
+/// Production CORS decision: any configured origin on any route, or a
+/// Freeweights origin on a Freeweights route.
+pub fn cors_origin_allowed(origin: &str, path: &str, configured: &[String]) -> bool {
+    configured.iter().any(|allowed| allowed == origin)
+        || (routes::freeweights::FREEWEIGHTS_CORS_ORIGINS.contains(&origin)
+            && routes::freeweights::is_freeweights_cors_path(path))
+}
+
 /// API application state
 pub struct ApiState {
     pub db: sqlx::PgPool,
@@ -72,8 +80,6 @@ pub struct ApiState {
     pub rate_limiter: Arc<RateLimiter>,
     /// Public-route rate limiter for pairing and relay endpoints
     pub public_rate_limiter: Arc<RateLimiter>,
-    /// Tight per-user limiter for the free inference path (no credits row)
-    pub free_inference_rate_limiter: Arc<RateLimiter>,
     /// Cost service for tracking run costs
     pub cost_service: Arc<dyn services::CostService>,
     /// Quota service for free-tier guardrails
@@ -507,6 +513,10 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         // per-request and answer 503 billing_not_configured when STRIPE_SECRET_KEY
         // or the plan's STRIPE_PRICE_* id is unset.
         .merge(routes::billing_subscriptions::routes())
+        // Freeweights entitlement claim: Clerk session or alt_ key verified per
+        // request; 503 entitlement_unavailable when
+        // FREEWEIGHTS_ENTITLEMENT_SIGNING_KEY is unset.
+        .merge(routes::freeweights::routes())
         // BYOK inference keys verify the Clerk session per-request and answer
         // 503 inference_keys_not_configured when ALLTERNIT_CREDENTIALS_KEY is unset.
         .merge(routes::inference_keys::routes())
@@ -682,13 +692,18 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
                 }
             }
         }
-        let allowed_origins: Vec<_> = origin_list
-            .iter()
-            .filter_map(|s| s.parse::<axum::http::HeaderValue>().ok())
-            .collect();
-
+        // Freeweights origins reach only the Freeweights routes and the public
+        // plan catalog (routes::freeweights::is_freeweights_cors_path), not the
+        // rest of the API.
         CorsLayer::new()
-            .allow_origin(allowed_origins)
+            .allow_origin(tower_http::cors::AllowOrigin::predicate(
+                move |origin: &axum::http::HeaderValue, parts: &axum::http::request::Parts| {
+                    origin
+                        .to_str()
+                        .map(|origin| cors_origin_allowed(origin, parts.uri.path(), &origin_list))
+                        .unwrap_or(false)
+                },
+            ))
             .expose_headers([
                 axum::http::HeaderName::from_static("x-request-id"),
                 axum::http::HeaderName::from_static("x-next-cursor"),
@@ -875,6 +890,19 @@ pub async fn start_server(state: Arc<ApiState>, addr: &str) -> Result<(), ApiErr
 #[cfg(test)]
 mod cors_origin_tests {
     use super::DEFAULT_CORS_ORIGINS;
+
+    #[test]
+    fn freeweights_origins_reach_only_freeweights_routes() {
+        let configured: Vec<String> = DEFAULT_CORS_ORIGINS.iter().map(|o| o.to_string()).collect();
+        for origin in ["https://freeweights.allternit.com", "https://fw-preview.allternit.com"] {
+            assert!(super::cors_origin_allowed(origin, "/api/v1/freeweights/entitlement", &configured));
+            assert!(super::cors_origin_allowed(origin, "/api/v1/billing/plans", &configured));
+            assert!(!super::cors_origin_allowed(origin, "/api/v1/api-keys", &configured));
+            assert!(!super::cors_origin_allowed(origin, "/api/v1/billing/subscription", &configured));
+        }
+        assert!(super::cors_origin_allowed("https://ai.allternit.com", "/api/v1/api-keys", &configured));
+        assert!(!super::cors_origin_allowed("https://evil.example", "/api/v1/freeweights/entitlement", &configured));
+    }
 
     #[test]
     fn desktop_loopback_ui_is_an_allowed_origin() {

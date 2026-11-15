@@ -1,0 +1,18 @@
+Launched application with com.allternit.spike.memprobe bundle identifier.
+Waiting for the application to terminate…
+PROBE variant=MemProbe Base model=iPhone15,4 iOS=27.2
+PROBE physicalMemory_MB=5688
+PROBE cold_available_MB=3063 (bytes=3212441976)
+PROBE footprint_MB=8
+PROBE touched_total_MB=256 avail_now_MB=2801 footprint_MB=270
+PROBE touched_total_MB=512 avail_now_MB=2545 footprint_MB=526
+PROBE touched_total_MB=768 avail_now_MB=2288 footprint_MB=783
+PROBE touched_total_MB=1024 avail_now_MB=2032 footprint_MB=1039
+PROBE touched_total_MB=1280 avail_now_MB=1776 footprint_MB=1295
+PROBE touched_total_MB=1536 avail_now_MB=1519 footprint_MB=1552
+PROBE touched_total_MB=1792 avail_now_MB=1263 footprint_MB=1808
+PROBE touched_total_MB=2048 avail_now_MB=1007 footprint_MB=2064
+PROBE touched_total_MB=2304 avail_now_MB=751 footprint_MB=2320
+PROBE touched_total_MB=2560 avail_now_MB=495 footprint_MB=2576
+PROBE STEPTEST_DONE touched_MB=2560 stop_limit_MB=2763 (avail-300)
+App terminated due to signal 15.

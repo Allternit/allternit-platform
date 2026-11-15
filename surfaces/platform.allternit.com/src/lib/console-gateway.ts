@@ -265,8 +265,18 @@ export function gatewayBaseUrl(): string {
 }
 
 /** Register-1 message for a failed gateway call. */
-export function describeGatewayError(status: number, serverMessage?: string): string {
+export function describeGatewayError(
+  status: number,
+  serverMessage?: string,
+  code?: string,
+): string {
   const detail = serverMessage ? ` (${serverMessage})` : "";
+  if (status === 402 && code === "credits_required") {
+    return "Allternit Cloud models need credits. Buy credits or choose a plan on the Billing page (https://ai.allternit.com/settings/billing), then run again.";
+  }
+  if (status === 402 && code === "credits_exhausted") {
+    return "Your Allternit Cloud credits are used up. Add credits on the Billing page (https://ai.allternit.com/settings/billing) to keep going.";
+  }
   switch (status) {
     case 401:
       return `The request wasn't authorized. Run again; if it keeps failing, sign in again.${detail}`;
@@ -364,7 +374,11 @@ export async function gatewayPost(
       (typeof errBody?.error === "string" ? errBody.error : undefined) ??
       errBody?.message;
     throw new GatewayHttpError(
-      describeGatewayError(response.status, msg),
+      describeGatewayError(
+        response.status,
+        msg,
+        typeof nested?.code === "string" ? nested.code : undefined,
+      ),
       response.status,
       headers,
       errBody,

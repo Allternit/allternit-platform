@@ -71,6 +71,8 @@ pub struct JobEvent {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct JobOutput {
     pub kind: String,
+    /// Absolute path on the computer that ran the job, inside the output dir
+    /// the host gave the engine (`ALLTERNIT_STUDIO_OUTPUT_DIR`).
     pub path: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bytes: Option<u64>,

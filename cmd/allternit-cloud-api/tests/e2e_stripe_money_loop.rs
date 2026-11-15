@@ -119,7 +119,6 @@ async fn app(db: &PgPool) -> axum::Router {
         session_manager,
         rate_limiter: create_rate_limiter(limits.clone()),
         public_rate_limiter: create_rate_limiter(limits.clone()),
-        free_inference_rate_limiter: create_rate_limiter(limits),
         cost_service,
         quota_service: quota_service.clone(),
         contabo_runtime_service: contabo(),

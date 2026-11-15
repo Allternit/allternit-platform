@@ -352,6 +352,10 @@ struct SettingsView: View {
                 actionRow("Open on the web", systemImage: "arrow.up.right.square") {
                     safariURL = IdentifiableURL(url: URL(string: "https://ai.allternit.com")!)
                 }
+                PhoneCardDivider()
+                actionRow("Courses", systemImage: "graduationcap") {
+                    safariURL = IdentifiableURL(url: URL(string: "https://labs.allternit.com")!)
+                }
             }
         }
     }
