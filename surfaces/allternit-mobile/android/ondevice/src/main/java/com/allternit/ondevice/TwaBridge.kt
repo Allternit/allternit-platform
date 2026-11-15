@@ -13,7 +13,7 @@ import androidx.browser.customtabs.CustomTabsServiceConnection
 import androidx.browser.customtabs.CustomTabsSession
 import androidx.browser.trusted.Token
 import androidx.browser.trusted.TrustedWebActivityIntentBuilder
-import androidx.browser.trusted.splashscreens.SplashScreenStrategy
+import com.google.androidbrowserhelper.trusted.splashscreens.SplashScreenStrategy
 import com.google.androidbrowserhelper.trusted.FocusActivity
 import com.google.androidbrowserhelper.trusted.SharedPreferencesTokenStore
 import org.json.JSONObject
@@ -86,7 +86,7 @@ object TwaBridge {
                 onLaunched?.run()
                 Log.i(TAG, "TWA launched on our session: $url")
             }
-            if (splash != null) splash.configureTwaBuilder(builder, s, open) else open()
+            if (splash != null) splash.configureTwaBuilder(builder, s) { open() } else open()
         }
         // Notification delegation: remember who may post notifications for us (TwaLauncher does this).
         SharedPreferencesTokenStore(app).store(Token.create(providerPackage, app.packageManager))

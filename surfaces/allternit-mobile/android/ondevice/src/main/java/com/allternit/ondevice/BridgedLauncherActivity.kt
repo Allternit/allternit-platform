@@ -4,7 +4,7 @@ import android.app.Activity
 import android.content.Context
 import androidx.browser.customtabs.CustomTabsCallback
 import androidx.browser.trusted.TrustedWebActivityIntentBuilder
-import androidx.browser.trusted.splashscreens.SplashScreenStrategy
+import com.google.androidbrowserhelper.trusted.splashscreens.SplashScreenStrategy
 import com.google.androidbrowserhelper.trusted.LauncherActivity
 import com.google.androidbrowserhelper.trusted.TwaLauncher
 import com.google.androidbrowserhelper.trusted.TwaProviderPicker
