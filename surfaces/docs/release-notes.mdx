@@ -5,6 +5,16 @@ description: 'Changelog for the Allternit platform, SDKs, and Gizzi Code CLI'
 
 # Release Notes
 
+## Next — Freeweights Studio on more hardware
+
+Arrives with the next Desktop runtime, the next `gizzi` release and the next web update. It is not live yet.
+
+- **More computers:** Allternit Tune is built to run on Apple Silicon, NVIDIA (Linux and Windows), AMD (Linux), Intel GPUs (Linux and Windows) and CPU only. Every one is **Not yet tested by Allternit on this hardware**. CPU runs `lora` only, slowly. Intel Macs are not supported. See [Hardware](/surfaces/model-lab#hardware).
+- **MLX on Mac:** `lora` and `qlora` train with MLX, and **Also make → MLX** writes MLX files. The MLX adapter is mlx-lm's own format, not PEFT.
+- **Studio API:** `fit` on each engine, `resources.backend`, `outputs.mlx`, `base.path`, absolute output paths, and the new error codes `method_not_supported`, `backend_not_supported`, `output_not_supported`, `hardware_unavailable` and `invalid_base`. See [Studio API](/api/studio).
+- **Gizzi Code:** `gizzi studio run` takes `--backend` and `--mlx`.
+- **Engines:** Axolotl, LLaMA-Factory and torchtune are published at a pinned commit; Unsloth runs unmodified under AGPL-3.0 as a separate process. See [Where the engines come from](/api/studio#where-the-engines-come-from).
+
 ## 2026-11-15 — Freeweights Studio: training on your own computer
 
 - **New:** a [Studio API](/api/studio) at `/api/v1/studio` on each computer's Allternit API. It lists engines, runs one fine-tune job at a time, streams events, and registers outputs as local models. It replaces the old `/api/v1/model-training` routes, which are removed.
