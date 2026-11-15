@@ -39,12 +39,23 @@ final class ShellSessionsStore: ObservableObject {
         if !hasLoaded { isLoading = true }
         loadError = nil
         do {
-            // GET /api/v1/agent-sessions → { sessions: [...], count }
-            let envelope: AgentSessionListResponse = try await APIClient.shared.get(path: "agent-sessions")
             // Plan chats saved in the cloud store join the same list; a store
-            // failure just leaves them out (device-only).
+            // failure just leaves them out (device-only). They load on their
+            // own, so a person with no computer (agent-sessions fails) still
+            // sees their plan chats.
             let planThreads = ((try? await PlanThreadClient.shared.list()) ?? []).compactMap(\.asSession)
-            sessions = (envelope.sessions + planThreads).sorted { Self.timestamp(of: $0) > Self.timestamp(of: $1) }
+            // GET /api/v1/agent-sessions → { sessions: [...], count }
+            let agentSessions: [AgentSession]
+            do {
+                let envelope: AgentSessionListResponse = try await APIClient.shared.get(path: "agent-sessions")
+                agentSessions = envelope.sessions
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                if planThreads.isEmpty { throw error }
+                agentSessions = []
+            }
+            sessions = (agentSessions + planThreads).sorted { Self.timestamp(of: $0) > Self.timestamp(of: $1) }
             // First sighting is the baseline: only activity after it counts
             // as unread. The chat on screen is always read.
             for session in sessions where seen[session.id] == nil || session.id == activeId {

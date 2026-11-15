@@ -111,6 +111,35 @@ fn stored(messages: Vec<NewMessage>) -> Result<Value, ApiError> {
 
 type ThreadRow = (String, Option<String>, String, i32, DateTime<Utc>, DateTime<Utc>);
 
+/// Composer tool markers (`[web_search_enabled] `, `[research_enabled] `)
+/// that web and iOS put in front of a message. A plan has no tools, so they
+/// are dropped from plan turns and thread titles.
+pub fn strip_composer_markers(text: &str) -> String {
+    let mut rest = text.trim_start();
+    loop {
+        let Some(after) = rest.strip_prefix('[') else { break };
+        let Some(end) = after.find(']') else { break };
+        let tag = &after[..end];
+        if !tag.ends_with("_enabled") || !tag.chars().all(|c| c.is_ascii_lowercase() || c == '_') {
+            break;
+        }
+        rest = after[end + 1..].trim_start();
+    }
+    rest.trim_end().to_string()
+}
+
+#[cfg(test)]
+mod marker_tests {
+    use super::strip_composer_markers;
+    #[test]
+    fn strips_leading_tool_markers_only() {
+        assert_eq!(strip_composer_markers("[web_search_enabled] Hello"), "Hello");
+        assert_eq!(strip_composer_markers("[web_search_enabled] [research_enabled] Hi [x_enabled]"), "Hi [x_enabled]");
+        assert_eq!(strip_composer_markers("[note] keep"), "[note] keep");
+        assert_eq!(strip_composer_markers("plain"), "plain");
+    }
+}
+
 fn summary((id, title, model, count, created, updated): ThreadRow) -> Value {
     json!({
         "id": id,
@@ -132,7 +161,10 @@ async fn create(State(state): State<Arc<ApiState>>, headers: HeaderMap, body: By
         if !crate::routes::model_router::is_person_only_model(&model) {
             return Err(ApiError::BadRequest("model must be a plan/… or copilot/… model.".to_string()));
         }
-        let title = body.title.map(|t| t.trim().chars().take(MAX_TITLE_CHARS).collect::<String>()).filter(|t| !t.is_empty());
+        let title = body
+            .title
+            .map(|t| strip_composer_markers(&t).chars().take(MAX_TITLE_CHARS).collect::<String>())
+            .filter(|t| !t.is_empty());
         let messages = stored(body.messages)?;
         let id = format!("pth_{}", uuid::Uuid::new_v4().simple());
         let row: ThreadRow = sqlx::query_as(&format!(

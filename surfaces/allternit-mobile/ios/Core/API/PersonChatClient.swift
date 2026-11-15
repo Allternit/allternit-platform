@@ -54,8 +54,30 @@ enum PersonChatEvent: Equatable, Sendable {
 /// `chatgpt/*` straight from the phone to OpenAI's Responses API. No tools,
 /// no attachments, history replayed.
 enum PersonChatClient {
-    static func stream(model: String, messages: [PersonChatMessage]) -> AsyncThrowingStream<PersonChatEvent, Error> {
-        AsyncThrowingStream { continuation in
+    /// Composer markers (`[web_search_enabled] `, style prefixes) are tool
+    /// hints for agent chats; a plan has no tools, so they would only end up
+    /// in the prompt and the saved thread title.
+    static func withoutComposerMarkers(_ messages: [PersonChatMessage]) -> [PersonChatMessage] {
+        let prefixes = ["[web_search_enabled] ", "[research_enabled] "] + ComposerResponseStyle.allCases.map(\.promptPrefix)
+        return messages.map { message in
+            guard message.role == "user" else { return message }
+            var body = message.content
+            var changed = true
+            while changed {
+                changed = false
+                for prefix in prefixes where !prefix.isEmpty && body.hasPrefix(prefix) {
+                    body.removeFirst(prefix.count)
+                    body = body.trimmingCharacters(in: .whitespaces)
+                    changed = true
+                }
+            }
+            return PersonChatMessage(role: message.role, content: body)
+        }
+    }
+
+    static func stream(model: String, messages rawMessages: [PersonChatMessage]) -> AsyncThrowingStream<PersonChatEvent, Error> {
+        let messages = withoutComposerMarkers(rawMessages)
+        return AsyncThrowingStream { continuation in
             let task = Task {
                 do {
                     if PersonModels.isOnDevice(model) {

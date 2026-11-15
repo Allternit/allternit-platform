@@ -655,7 +655,11 @@ async fn plan_turn(
         .iter()
         .map(|m| ChatMessage {
             role: if m.role == "developer" { "system".to_string() } else { m.role.clone() },
-            content: message_text(&m.content),
+            content: if m.role == "user" {
+                crate::routes::plan_threads::strip_composer_markers(&message_text(&m.content))
+            } else {
+                message_text(&m.content)
+            },
         })
         .collect();
     // Copilot (`copilot/<model>`, contract 9.5): the person's own GitHub
