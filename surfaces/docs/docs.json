@@ -785,6 +785,7 @@
                 "group": "Files, Webhooks & Sandbox",
                 "pages": [
                   "api/files",
+                  "api/files-drive",
                   "api/workspace-files",
                   "api/webhooks",
                   "api/webhook-subscriptions",
