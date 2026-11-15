@@ -44,6 +44,24 @@ android {
         release {
             isMinifyEnabled = false
         }
+        // SPIKE S1 branch only: debug installs as com.allternit.app.s1 so it sits
+        // next to the Play-installed com.allternit.app on the test phone instead
+        // of replacing it. Not for main.
+        getByName("debug") {
+            applicationIdSuffix = ".s1"
+        }
+    }
+
+    // SPIKE S1 (Android bridge, plan PLAN-on-device-models-2026-11-15): debug
+    // builds only. The "debug" source set is merged into phonelinkDebug and
+    // playDebug and never into a release build. Everything lives in
+    // spike/s1-bridge/ (see its README). Delete this block with the spike.
+    sourceSets {
+        getByName("debug") {
+            manifest.srcFile("../spike/s1-bridge/AndroidManifest.xml")
+            java.srcDir("../spike/s1-bridge/src")
+            assets.srcDir("../spike/s1-bridge/web")
+        }
     }
 
     compileOptions {
@@ -87,6 +105,9 @@ dependencies {
     // Play In-App Review (the "rate this app" sheet), Google Play build only.
     // The web content cannot call it, so ReviewLauncherActivity asks natively.
     "playImplementation"("com.google.android.play:review:2.0.2")
+    // SPIKE S1, debug builds only: the TWA postMessage API with a target origin
+    // needs androidx.browser 1.6+; androidbrowserhelper 2.5.0 brings 1.4.0.
+    debugImplementation("androidx.browser:browser:1.8.0")
     testImplementation("junit:junit:4.13.2")
     // Real org.json for JVM tests (android.jar only ships stubs). Public domain
     // since 20231013.
