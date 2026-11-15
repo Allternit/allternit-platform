@@ -1,0 +1,1364 @@
+@import './navigationGlass.css';
+
+:root {
+  /* Point to the allternit token chain defined in typography.css */
+  --font-sans: var(--font-allternit-sans);
+  --font-serif: var(--font-allternit-serif);
+  --font-mono: var(--font-allternit-mono);
+
+  /* ==========================================================================
+     SPACING SYSTEM (4px base grid)
+     ========================================================================== */
+  --space-0: 0px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+  --space-20: 80px;
+  --space-24: 96px;
+
+  /* Legacy spacing aliases for backward compatibility */
+  --spacing-xs: var(--space-1);
+  --spacing-sm: var(--space-2);
+  --spacing-md: var(--space-4);
+  --spacing-lg: var(--space-6);
+  --spacing-xl: var(--space-8);
+
+  /* ==========================================================================
+     BORDER RADIUS SYSTEM
+     ========================================================================== */
+  --radius-xs: 4px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
+  --radius-2xl: 24px;
+  --radius-3xl: 28px;
+  --radius-full: 9999px;
+
+  /* ==========================================================================
+     TYPOGRAPHY SCALE
+     ========================================================================== */
+  --text-xs: 11px;
+  --text-sm: 13px;
+  --text-base: 14px;
+  --text-md: 15px;
+  --text-lg: 16px;
+  --text-xl: 18px;
+  --text-2xl: 20px;
+  --text-3xl: 24px;
+
+  --font-weight-normal: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+
+  --line-height-tight: 1.25;
+  --line-height-normal: 1.5;
+  --line-height-relaxed: 1.625;
+
+  /* ==========================================================================
+     TRANSITIONS & ANIMATIONS
+     ========================================================================== */
+  --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-base: 200ms cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-slow: 300ms cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-spring: 400ms cubic-bezier(0.34, 1.56, 0.64, 1);
+
+  /* ==========================================================================
+     SAND NUDE COLOR PALETTE
+     ========================================================================== */
+  --sand-50: #FDF8F3;
+  --sand-100: #F5EDE3;
+  --sand-200: #E8D9C8;
+  --sand-300: #D4BFA8;
+  --sand-400: #C4A78A;
+  --sand-500: #B08D6E;
+  --sand-600: #9A7658;
+  --sand-700: #7D5F46;
+  --sand-800: #664E3A;
+  --sand-900: #4A3829;
+  --sand-950: #2A1F16;
+
+  /* Nude accent colors */
+  --nude-100: #FAF0E6;
+  --nude-200: #F2E2D2;
+  --nude-300: #E6CCB2;
+  --nude-400: #D4B08C;
+  --nude-500: #C49A6C;
+  --nude-600: #A67B5B;
+
+  /* ==========================================================================
+     LIGHT THEME VARIABLES
+     ========================================================================== */
+  --bg-primary: #FDF8F3;
+  --bg-secondary: #F5EDE3;
+  --bg-tertiary: #E8D9C8;
+  --bg-hover: rgba(176, 141, 110, 0.08);
+  --bg-active: rgba(176, 141, 110, 0.12);
+  --bg-elevated: #FFFFFF;
+  --bg-card: #FAF5EF;
+
+  /* Enterprise Background Pattern */
+  --bg-gradient: radial-gradient(circle at top left, #FDF8F3 0%, #F5EDE3 100%);
+  --bg-grid: linear-gradient(to right, rgba(154, 118, 88, 0.03) 1px, transparent 1px),
+             linear-gradient(to bottom, rgba(154, 118, 88, 0.03) 1px, transparent 1px);
+
+  --text-primary: #2A1F16;
+  --text-secondary: #664E3A;
+  --text-tertiary: #9A7658;
+  --text-disabled: rgba(154, 118, 88, 0.5);
+  --text-inverse: #FDF8F3;
+
+  --rail-bg: #F5EDE3;
+  --rail-fg: #2A1F16;
+  --rail-hover: rgba(176, 141, 110, 0.12);
+  --rail-active-bg: #FDF8F3;
+  --rail-active-fg: #B08D6E;
+
+  --border-subtle: rgba(154, 118, 88, 0.1);
+  --border-default: rgba(154, 118, 88, 0.18);
+  --border-strong: rgba(154, 118, 88, 0.28);
+  --border-hover: rgba(154, 118, 88, 0.35);
+  --border-focus: rgba(176, 141, 110, 0.5);
+
+  /* Tailwind-compatible variables */
+  --border: 30 30% 75%;
+  --background: 30 50% 97%;
+
+  --glass-bg: rgba(255, 255, 255, 0.75);
+  --glass-bg-base: rgba(255, 255, 255, 0.75);
+  --glass-bg-thick: rgba(255, 255, 255, 0.95);
+  --glass-bg-elevated: rgba(255, 255, 255, 0.85);
+  --glass-bg-hover: rgba(255, 255, 255, 0.9);
+  --glass-border: rgba(154, 118, 88, 0.15);
+
+  /* LOCKED 2026-09-11 (Eoj): the per-mode accent palettes (chat/cowork/code/
+     browser) are removed — amber is the only accent, via --accent-primary.
+     --accent-bot is retained for the bot surface. */
+  --accent-bot: #B08D6E;
+  --accent-primary: #B08D6E;
+  --accent-secondary: #D4B08C;
+
+  /* Semantic UI surface contract */
+  --surface-canvas: var(--bg-primary);
+  --surface-panel: var(--bg-secondary);
+  --surface-panel-muted: var(--bg-tertiary);
+  --surface-floating: var(--glass-bg-thick);
+  --surface-floating-muted: var(--glass-bg-elevated);
+  --surface-overlay: rgba(255, 255, 255, 0.88);
+  --surface-hover: var(--bg-hover);
+  --surface-active: var(--bg-active);
+
+  --ui-text-primary: var(--text-primary);
+  --ui-text-secondary: var(--text-secondary);
+  --ui-text-muted: var(--text-tertiary);
+  --ui-text-inverse: var(--text-inverse);
+
+  --ui-border-muted: var(--border-subtle);
+  --ui-border-default: var(--border-default);
+  --ui-border-strong: var(--border-strong);
+
+  /* Shell-specific semantic contract */
+  --shell-rail-bg: #ffffff;
+  --shell-view-bg: #ffffff;
+  --verified: #1d9bf0;
+  /* Neutral (untinted) fills for hover/selected/tracks. Use these instead of
+     the warm --surface-hover/--bg-secondary on new surfaces. */
+  --neutral-fill: color-mix(in srgb, var(--text-primary) 5%, transparent);
+  --neutral-fill-strong: color-mix(in srgb, var(--text-primary) 9%, transparent);
+  /* Polish shell (2026-10-07): white card in a neutral tray, hairlines,
+     neutral shadow. Never tan. See src/components/ui/polish/. */
+  --polish-tray: var(--neutral-fill);
+  --polish-card: #ffffff;
+  --polish-hairline: color-mix(in srgb, var(--text-primary) 8%, transparent);
+  --polish-hairline-strong: color-mix(in srgb, var(--text-primary) 14%, transparent);
+  --polish-shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 2px 8px rgba(0, 0, 0, 0.03);
+  /* Neutral text for polish surfaces (the light --text-* tokens are warm brown). */
+  --polish-text: #1F1E1D;
+  --polish-text-2: #6B6A68;
+  --polish-text-3: #9A9996;
+  --polish-muted: color-mix(in srgb, var(--polish-text) 45%, transparent);
+  --shell-frame-bg: var(--shell-view-bg);
+  --shell-panel-bg: var(--surface-panel);
+  --shell-floating-bg: var(--surface-floating);
+  --shell-floating-border: var(--ui-border-muted);
+  --shell-divider: var(--ui-border-muted);
+  --shell-item-hover: var(--surface-hover);
+  --shell-item-active-bg: color-mix(in srgb, var(--accent-primary) 14%, var(--surface-panel));
+  --shell-item-active-fg: var(--accent-primary);
+  --shell-item-fg: var(--ui-text-primary);
+  --shell-item-muted: var(--ui-text-muted);
+  --shell-menu-bg: var(--surface-floating);
+  --shell-menu-border: var(--ui-border-default);
+  --shell-control-bg: color-mix(in srgb, var(--surface-panel) 68%, transparent);
+  --shell-control-active-bg: var(--accent-primary);
+  --shell-control-fg: var(--ui-text-primary);
+  --shell-control-muted-fg: var(--ui-text-secondary);
+  --shell-control-active-fg: var(--ui-text-inverse);
+  --shell-overlay-backdrop: rgba(0, 0, 0, 0.18);
+  --shell-dialog-bg: var(--bg-elevated);
+  --shell-dialog-border: color-mix(in srgb, var(--accent-primary) 22%, var(--ui-border-default));
+  --shell-dialog-title: var(--shell-item-active-fg);
+  --shell-dialog-text: var(--ui-text-secondary);
+  --shell-danger-bg: color-mix(in srgb, var(--status-error) 88%, transparent);
+  --shell-danger-bg-hover: color-mix(in srgb, var(--status-error) 100%, transparent);
+  --shell-danger-soft-bg: var(--status-error-bg);
+  --shell-danger-fg: #ffffff;
+  --shell-vision-target: var(--status-error);
+  --shell-vision-label-bg: color-mix(in srgb, var(--surface-overlay) 88%, transparent);
+  --shell-vision-label-fg: var(--ui-text-primary);
+  --shell-mode-chat-soft: color-mix(in srgb, var(--accent-primary) 16%, var(--surface-panel));
+  --shell-mode-bot-soft: color-mix(in srgb, var(--accent-bot) 16%, var(--surface-panel));
+  --shell-mode-code-soft: color-mix(in srgb, var(--accent-primary) 16%, var(--surface-panel));
+  --shell-mode-browser-soft: color-mix(in srgb, var(--accent-primary) 16%, var(--surface-panel));
+  --shell-mode-chat-strong: color-mix(in srgb, var(--accent-primary) 56%, var(--surface-panel-muted));
+  --shell-mode-bot-strong: color-mix(in srgb, var(--accent-bot) 56%, var(--surface-panel-muted));
+  --shell-mode-code-strong: color-mix(in srgb, var(--accent-primary) 56%, var(--surface-panel-muted));
+  --shell-mode-browser-strong: color-mix(in srgb, var(--accent-primary) 56%, var(--surface-panel-muted));
+  --chat-composer-bg: color-mix(in srgb, var(--surface-floating) 94%, var(--surface-panel) 6%);
+  --chat-composer-glass-bg: rgba(255, 255, 255, 0.5);
+  --chat-composer-glass-border: rgba(255, 255, 255, 0.4);
+  --chat-composer-border: var(--ui-border-default);
+  --chat-composer-hover: var(--shell-item-hover);
+  --chat-composer-menu-bg: var(--shell-menu-bg);
+  --chat-composer-menu-border: var(--shell-menu-border);
+  --chat-composer-muted: var(--ui-text-secondary);
+  --chat-composer-soft: color-mix(in srgb, var(--surface-panel-muted) 72%, transparent);
+  --chat-user-bubble-bg: color-mix(in srgb, var(--ui-text-primary) 4%, transparent);
+  --chat-composer-disabled: color-mix(in srgb, var(--ui-text-muted) 88%, transparent);
+  --chat-mode-pill-bg: color-mix(in srgb, var(--surface-panel-muted) 88%, transparent);
+  --chat-mode-pill-fg: var(--ui-text-primary);
+  --chat-mode-pill-active-bg: color-mix(in srgb, var(--accent-primary) 20%, var(--surface-panel));
+  --chat-mode-pill-active-fg: var(--accent-primary);
+  --an-background: var(--surface-canvas);
+  --an-background-secondary: color-mix(in srgb, var(--surface-panel) 88%, transparent);
+  --an-background-tertiary: color-mix(in srgb, var(--surface-panel-muted) 84%, transparent);
+  --an-foreground: var(--ui-text-primary);
+  --an-foreground-muted: var(--ui-text-secondary);
+  --an-border-color: var(--ui-border-default);
+  --an-primary-color: var(--accent-primary);
+  --an-send-button-bg: var(--accent-primary);
+  --an-send-button-color: var(--ui-text-inverse);
+  --an-input-background: var(--chat-composer-bg);
+  --an-input-placeholder-color: color-mix(in srgb, var(--ui-text-muted) 82%, transparent);
+  --an-input-focus-outline: color-mix(in srgb, var(--accent-primary) 42%, transparent);
+  --an-input-border-radius: 20px;
+  --an-tool-background: color-mix(in srgb, var(--surface-panel) 92%, transparent);
+  --an-tool-border-color: color-mix(in srgb, var(--accent-primary) 18%, var(--ui-border-default));
+  --an-tool-border-radius: 18px;
+  --an-tool-color: var(--ui-text-primary);
+  --an-tool-color-muted: var(--ui-text-secondary);
+  --an-user-message-bg: color-mix(in srgb, var(--accent-primary) 18%, var(--surface-panel));
+  --an-user-message-text: var(--ui-text-primary);
+  --an-context-padding: 10px;
+  --an-shimmer-duration: 2s;
+  --an-shimmer-spread: 96px;
+
+  /* Shadows - Light mode */
+  --shadow-xs: 0 1px 2px rgba(106, 78, 58, 0.04);
+  --shadow-sm: 0 2px 8px rgba(106, 78, 58, 0.06);
+  --shadow-md: 0 4px 16px rgba(106, 78, 58, 0.08);
+  --shadow-lg: 0 8px 32px rgba(106, 78, 58, 0.12);
+  --shadow-xl: 0 16px 48px rgba(106, 78, 58, 0.16);
+  --shadow-glow: 0 0 20px rgba(176, 141, 110, 0.3);
+
+  /* Skeleton - Light */
+  --skeleton-bg: rgba(154, 118, 88, 0.08);
+  --skeleton-shimmer: rgba(154, 118, 88, 0.15);
+  --skeleton-card-bg: var(--bg-secondary);
+  --skeleton-text-height: 1em;
+  --skeleton-avatar-size: 40px;
+  --skeleton-block-height: 100px;
+
+  /* Status colors - Light */
+  --status-success: #22c55e;
+  --status-success-bg: rgba(34, 197, 94, 0.1);
+  --status-warning: #f59e0b;
+  --status-warning-bg: rgba(245, 158, 11, 0.1);
+  --status-error: #ef4444;
+  --status-error-bg: rgba(239, 68, 68, 0.1);
+  /* Alias: 30 call sites use --status-danger; it was never defined, so they rendered uncoloured. */
+  --status-danger: var(--status-error);
+  --status-info: #3b82f6;
+  --status-info-bg: rgba(59, 130, 246, 0.1);
+
+  /* ── View-specific backgrounds (light) ──────────────────────────── */
+  --view-chat-bg:         var(--shell-view-bg);
+  --view-code-bg:         var(--shell-view-bg);
+  --view-browser-bg:      var(--shell-view-bg);
+  --view-settings-bg:     var(--shell-view-bg);
+  --view-cowork-bg:       var(--shell-view-bg);
+  --view-bot-bg:          color-mix(in srgb, var(--accent-bot) 2%, var(--shell-view-bg));
+}
+
+/* Compact density — set by Settings → Appearance → Compact density via
+   <html data-density="compact">. Tightens the spacing scale one notch; the
+   legacy aliases inside :root pick this up automatically. */
+[data-density='compact'] {
+  --space-1: 2px;
+  --space-2: 6px;
+  --space-3: 8px;
+  --space-4: 12px;
+  --space-5: 14px;
+  --space-6: 16px;
+  --space-8: 24px;
+  --space-10: 32px;
+  --space-12: 40px;
+  --space-16: 48px;
+  --space-20: 64px;
+  --space-24: 72px;
+}
+
+/* ==========================================================================
+   DARK THEME VARIABLES
+   ========================================================================== */
+[data-theme='dark'] {
+  --bg-primary: #1F1F1E;
+  --bg-secondary: #262625;
+  --bg-tertiary: #30302E;
+  --bg-hover: rgba(255, 255, 255, 0.05);
+  --bg-active: rgba(255, 255, 255, 0.08);
+  --bg-elevated: #262625;
+  --bg-card: #222221;
+
+  /* Enterprise Background Pattern - Dark */
+  --bg-gradient: radial-gradient(circle at center, #252525 0%, #161616 100%);
+  --bg-grid: linear-gradient(to right, rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+             linear-gradient(to bottom, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+
+  --text-primary: #ECECEC;
+  --text-secondary: #9B9B9B;
+  --text-tertiary: #6E6E6E;
+  --text-disabled: rgba(155, 155, 155, 0.45);
+
+  --rail-bg: #1A1A19;
+  --rail-fg: #ECECEC;
+  --rail-hover: rgba(255, 255, 255, 0.05);
+  --rail-active-bg: #2A2A29;
+  --rail-active-fg: #ECECEB;
+
+  --border-subtle: rgba(255, 255, 255, 0.07);
+  --border-default: rgba(255, 255, 255, 0.10);
+  --border-strong: rgba(255, 255, 255, 0.16);
+  --border-hover: rgba(255, 255, 255, 0.22);
+  --border-focus: rgba(212, 176, 140, 0.45);
+
+  --glass-bg: rgba(31, 31, 30, 0.74);
+  --glass-bg-base: rgba(31, 31, 30, 0.74);
+  --glass-bg-thick: rgba(36, 36, 35, 0.94);
+  --glass-bg-elevated: rgba(40, 40, 39, 0.88);
+  --glass-bg-hover: rgba(48, 48, 46, 0.92);
+  --glass-border: rgba(255, 255, 255, 0.10);
+
+  /* Per-mode accent palettes removed 2026-09-11 (amber-only law); --accent-bot
+     retained for the bot surface. */
+  --font-serif: 'Allternit Serif', Georgia, ui-serif, Cambria, 'Times New Roman', Times, serif;
+  --accent-bot: #2DD4BF;
+  --accent-primary: #D4B08C;
+  --accent-secondary: #B08D6E;
+
+  /* Semantic UI surface contract */
+  --surface-canvas: var(--bg-primary);
+  --surface-panel: var(--bg-secondary);
+  --surface-panel-muted: var(--bg-tertiary);
+  --surface-floating: var(--glass-bg-thick);
+  --surface-floating-muted: var(--glass-bg-elevated);
+  --surface-overlay: rgba(31, 31, 30, 0.9);
+  --surface-hover: var(--bg-hover);
+  --surface-active: var(--bg-active);
+
+  --ui-text-primary: var(--text-primary);
+  --ui-text-secondary: var(--text-secondary);
+  --ui-text-muted: var(--text-tertiary);
+  --ui-text-inverse: #1F1F1E;
+
+  --ui-border-muted: var(--border-subtle);
+  --ui-border-default: var(--border-default);
+  --ui-border-strong: var(--border-strong);
+
+  /* Shell-specific semantic contract */
+  --shell-rail-bg: #1F1F1E;
+  --shell-view-bg: #1F1F1E;
+  --verified: #4db2ff;
+  /* Neutral (untinted) fills for hover/selected/tracks. Use these instead of
+     the warm --surface-hover/--bg-secondary on new surfaces. */
+  --neutral-fill: color-mix(in srgb, var(--text-primary) 5%, transparent);
+  --neutral-fill-strong: color-mix(in srgb, var(--text-primary) 9%, transparent);
+  --polish-tray: var(--neutral-fill);
+  --polish-card: color-mix(in srgb, var(--shell-view-bg) 92%, #ffffff);
+  --polish-hairline: color-mix(in srgb, var(--text-primary) 8%, transparent);
+  --polish-hairline-strong: color-mix(in srgb, var(--text-primary) 15%, transparent);
+  --polish-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --polish-text: var(--text-primary);
+  --polish-text-2: var(--text-secondary);
+  --polish-text-3: var(--text-tertiary);
+  --polish-muted: color-mix(in srgb, var(--polish-text) 45%, transparent);
+  --shell-frame-bg: var(--shell-view-bg);
+  --shell-panel-bg: var(--surface-panel);
+  --shell-floating-bg: var(--surface-floating);
+  --shell-floating-border: var(--ui-border-muted);
+  --shell-divider: var(--ui-border-muted);
+  --shell-item-hover: var(--surface-hover);
+  --shell-item-active-bg: color-mix(in srgb, var(--accent-primary) 16%, var(--surface-panel));
+  --shell-item-active-fg: #ECECEB;
+  --shell-item-fg: var(--ui-text-primary);
+  --shell-item-muted: var(--ui-text-muted);
+  --shell-menu-bg: var(--surface-floating);
+  --shell-menu-border: var(--ui-border-default);
+  --shell-control-bg: color-mix(in srgb, var(--surface-panel) 74%, transparent);
+  --shell-control-active-bg: var(--accent-primary);
+  --shell-control-fg: var(--ui-text-primary);
+  --shell-control-muted-fg: var(--ui-text-secondary);
+  --shell-control-active-fg: #ffffff;
+  --shell-overlay-backdrop: rgba(0, 0, 0, 0.48);
+  --shell-dialog-bg: var(--bg-elevated);
+  --shell-dialog-border: color-mix(in srgb, var(--accent-primary) 26%, var(--ui-border-default));
+  --shell-dialog-title: var(--shell-item-active-fg);
+  --shell-dialog-text: var(--ui-text-secondary);
+  --shell-danger-bg: color-mix(in srgb, var(--status-error) 90%, transparent);
+  --shell-danger-bg-hover: color-mix(in srgb, var(--status-error) 100%, transparent);
+  --shell-danger-soft-bg: var(--status-error-bg);
+  --shell-danger-fg: #ffffff;
+  --shell-vision-target: var(--status-error);
+  --shell-vision-label-bg: color-mix(in srgb, var(--surface-overlay) 88%, transparent);
+  --shell-vision-label-fg: var(--ui-text-primary);
+  --shell-mode-chat-soft: color-mix(in srgb, var(--accent-primary) 16%, var(--surface-panel));
+  --shell-mode-bot-soft: color-mix(in srgb, var(--accent-bot) 16%, var(--surface-panel));
+  --shell-mode-code-soft: color-mix(in srgb, var(--accent-primary) 16%, var(--surface-panel));
+  --shell-mode-browser-soft: color-mix(in srgb, var(--accent-primary) 16%, var(--surface-panel));
+  --shell-mode-chat-strong: color-mix(in srgb, var(--accent-primary) 50%, var(--surface-panel-muted));
+  --shell-mode-bot-strong: color-mix(in srgb, var(--accent-bot) 50%, var(--surface-panel-muted));
+  --shell-mode-code-strong: color-mix(in srgb, var(--accent-primary) 50%, var(--surface-panel-muted));
+  --shell-mode-browser-strong: color-mix(in srgb, var(--accent-primary) 50%, var(--surface-panel-muted));
+  --chat-composer-bg: color-mix(in srgb, var(--surface-floating) 96%, var(--surface-panel) 4%);
+  --chat-composer-glass-bg: rgba(30, 30, 29, 0.45);
+  --chat-composer-glass-border: rgba(255, 255, 255, 0.1);
+  --chat-composer-border: var(--ui-border-default);
+  --chat-composer-hover: var(--shell-item-hover);
+  --chat-composer-menu-bg: var(--shell-menu-bg);
+  --chat-composer-menu-border: var(--shell-menu-border);
+  --chat-composer-muted: var(--ui-text-secondary);
+  --chat-composer-soft: color-mix(in srgb, var(--surface-panel-muted) 76%, transparent);
+  --chat-user-bubble-bg: color-mix(in srgb, var(--ui-text-primary) 6%, transparent);
+  --chat-composer-disabled: color-mix(in srgb, var(--ui-text-muted) 84%, transparent);
+  --chat-mode-pill-bg: color-mix(in srgb, var(--surface-panel-muted) 82%, transparent);
+  --chat-mode-pill-fg: var(--ui-text-primary);
+  --chat-mode-pill-active-bg: color-mix(in srgb, var(--accent-primary) 24%, var(--surface-panel));
+  --chat-mode-pill-active-fg: var(--shell-item-active-fg);
+  --an-background: var(--surface-canvas);
+  --an-background-secondary: color-mix(in srgb, var(--surface-panel) 82%, transparent);
+  --an-background-tertiary: color-mix(in srgb, var(--surface-panel-muted) 86%, transparent);
+  --an-foreground: var(--ui-text-primary);
+  --an-foreground-muted: var(--ui-text-secondary);
+  --an-border-color: var(--ui-border-default);
+  --an-primary-color: var(--accent-primary);
+  --an-send-button-bg: var(--accent-primary);
+  --an-send-button-color: #1F1F1E;
+  --an-input-background: var(--chat-composer-bg);
+  --an-input-placeholder-color: color-mix(in srgb, var(--ui-text-muted) 84%, transparent);
+  --an-input-focus-outline: color-mix(in srgb, var(--accent-primary) 50%, transparent);
+  --an-input-border-radius: 20px;
+  --an-tool-background: color-mix(in srgb, var(--surface-panel) 92%, transparent);
+  --an-tool-border-color: color-mix(in srgb, var(--accent-primary) 22%, var(--ui-border-default));
+  --an-tool-border-radius: 18px;
+  --an-tool-color: var(--ui-text-primary);
+  --an-tool-color-muted: var(--ui-text-secondary);
+  --an-user-message-bg: color-mix(in srgb, var(--accent-primary) 22%, var(--surface-panel));
+  --an-user-message-text: var(--ui-text-primary);
+  --an-context-padding: 10px;
+  --an-shimmer-duration: 2s;
+  --an-shimmer-spread: 96px;
+
+  /* Shadows - Dark mode (stronger for visibility) */
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.35);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.45);
+  --shadow-xl: 0 16px 48px rgba(0, 0, 0, 0.5);
+  --shadow-glow: 0 0 20px rgba(212, 176, 140, 0.2);
+
+  /* Skeleton - Dark */
+  --skeleton-bg: rgba(255, 255, 255, 0.06);
+  --skeleton-shimmer: rgba(255, 255, 255, 0.12);
+  --skeleton-card-bg: var(--bg-secondary);
+
+  /* Status colors - Dark (more saturated for visibility) */
+  --status-success: #4ade80;
+  --status-success-bg: rgba(74, 222, 128, 0.15);
+  --status-warning: #fbbf24;
+  --status-warning-bg: rgba(251, 191, 36, 0.15);
+  --status-error: #f87171;
+  --status-error-bg: rgba(248, 113, 113, 0.15);
+  --status-danger: var(--status-error);
+  --status-info: #60a5fa;
+  --status-info-bg: rgba(96, 165, 250, 0.15);
+
+  /* ── View-specific backgrounds (dark) — all share the same graphite base ─── */
+  --view-chat-bg:         var(--shell-view-bg);
+  --view-code-bg:         var(--shell-view-bg);
+  --view-browser-bg:      var(--shell-view-bg);
+  --view-settings-bg:     var(--shell-view-bg);
+  --view-cowork-bg:       var(--shell-view-bg);
+  --view-bot-bg:          color-mix(in srgb, var(--accent-bot) 5%, var(--shell-view-bg));
+}
+
+/* ==========================================================================
+   ANIMATION KEYFRAMES
+   ========================================================================== */
+@keyframes collapsible-down {
+  from { height: 0; }
+  to { height: var(--radix-collapsible-content-height); }
+}
+
+@keyframes collapsible-up {
+  from { height: var(--radix-collapsible-content-height); }
+  to { height: 0; }
+}
+
+/* Shimmer border animation for input bar */
+@keyframes shimmer-border {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+@keyframes shimmer-pulse {
+  0%, 100% { opacity: 0.2; transform: translateX(-10%); }
+  50% { opacity: 0.5; transform: translateX(10%); }
+}
+
+@keyframes skeleton-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+@keyframes bounce {
+  0%, 100% { transform: translateY(-25%); animation-timing-function: cubic-bezier(0.8, 0, 1, 1); }
+  50% { transform: translateY(0); animation-timing-function: cubic-bezier(0, 0, 0.2, 1); }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slide-up {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* ==========================================================================
+   UTILITY CLASSES
+   ========================================================================== */
+.animate-collapsible-down {
+  animation: collapsible-down 0.2s ease-out;
+}
+
+.animate-collapsible-up {
+  animation: collapsible-up 0.2s ease-out;
+}
+
+.animate-pulse {
+  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+.animate-bounce {
+  animation: bounce 1s infinite;
+}
+
+.animate-fade-in {
+  animation: fade-in var(--transition-base);
+}
+
+.animate-slide-up {
+  animation: slide-up var(--transition-base);
+}
+
+/* Auto-titled session names animating into the Code session header. */
+.code-session-title-in {
+  animation: slide-up var(--transition-base);
+}
+
+.animate-spin {
+  animation: spin 1s linear infinite;
+}
+
+/* Utilities for ChainOfThought. Carets rotate themselves (rotate-90 / rotate-180 by
+   their own open state); no blanket flip under [data-state='open'], which turned
+   every caret inside an open drawer, sheet or popover upside down. */
+.transition-transform { 
+  transition: transform var(--transition-base); 
+}
+
+/* Hide scrollbars while keeping overflow scrollable (used by compact horizontal cards) */
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+/* ==========================================================================
+   SCROLLBAR STYLING
+   ========================================================================== */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: var(--radius-full);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-tertiary);
+}
+
+/* Firefox */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+/* ==========================================================================
+   FOCUS STYLES (Accessibility)
+   ========================================================================== */
+*:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 2px;
+  transition: outline-offset var(--transition-fast);
+}
+
+/* Remove focus outline for mouse users (keep for keyboard) */
+*:focus:not(:focus-visible) {
+  outline: none;
+}
+
+/* ==========================================================================
+   SELECTION STYLES
+   ========================================================================== */
+::selection {
+  background: rgba(212, 176, 140, 0.35);
+  color: var(--text-primary);
+}
+
+[data-theme='dark'] ::selection {
+  background: rgba(176, 141, 110, 0.4);
+}
+
+/* ==========================================================================
+   REDUCED MOTION
+   ========================================================================== */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Settings → General → Reduce motion. Same rules as the media query, for
+   people who want less motion in Allternit without changing it OS-wide. */
+[data-motion='reduced'] *,
+[data-motion='reduced'] *::before,
+[data-motion='reduced'] *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  scroll-behavior: auto !important;
+}
+
+/* Settings → General → Chat font. Applies to the assistant transcript. */
+[data-chat-font='serif'] .assistant-message-group { font-family: var(--font-serif); }
+[data-chat-font='system'] .assistant-message-group {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+}
+
+/* ==========================================================================
+   SETTINGS SURFACE
+   Settings matches the Claude / ChatGPT / Kimi dialogs: neutral greys, white
+   surfaces, one ink primary. Tokens are re-pointed on the dialog root so every
+   nested panel inherits them. The --ui-* and --surface-* aliases are declared
+   again here because var() aliases resolve where they are declared (:root),
+   not where they are used. Status colours are left alone.
+   ========================================================================== */
+.allternit-settings {
+  --settings-sidebar-bg: #FAFAF9;
+  --settings-scrim: rgba(0, 0, 0, 0.32);
+  --text-primary: #1F1E1D;
+  --text-secondary: #6B6A68;
+  --text-tertiary: #8F8D8A;
+  --text-inverse: #FFFFFF;
+  --border-subtle: rgba(0, 0, 0, 0.08);
+  --border-default: rgba(0, 0, 0, 0.11);
+  --border-strong: rgba(0, 0, 0, 0.18);
+  --bg-primary: #FFFFFF;
+  --bg-secondary: #F4F4F3;
+  --bg-tertiary: #ECECEB;
+  --bg-card: #FFFFFF;
+  --bg-elevated: #FFFFFF;
+  --bg-hover: rgba(0, 0, 0, 0.04);
+  --bg-active: rgba(0, 0, 0, 0.07);
+  --accent-primary: #1F1E1D;
+  --accent-secondary: #6B6A68;
+  --settings-switch-on: #1F1E1D;
+  --settings-switch-knob: #FFFFFF;
+  --settings-switch-off: rgba(0, 0, 0, 0.14);
+  --settings-switch-knob-off: #FFFFFF;
+  --settings-link: #2C6ECB;
+  /* The Allternit mark's own colour (avatars, plan card, About). */
+  --settings-brand: #B08D6E;
+}
+
+[data-theme='dark'] .allternit-settings {
+  --settings-sidebar-bg: #1C1C1B;
+  --settings-scrim: rgba(0, 0, 0, 0.55);
+  --shell-view-bg: #232322;
+  --text-primary: #ECECEB;
+  --text-secondary: #A3A29F;
+  --text-tertiary: #7C7B78;
+  --text-inverse: #1C1C1B;
+  --border-subtle: rgba(255, 255, 255, 0.08);
+  --border-default: rgba(255, 255, 255, 0.11);
+  --border-strong: rgba(255, 255, 255, 0.18);
+  --bg-primary: #232322;
+  --bg-secondary: #2C2C2B;
+  --bg-tertiary: #353534;
+  --bg-card: #232322;
+  --bg-elevated: #2C2C2B;
+  --bg-hover: rgba(255, 255, 255, 0.05);
+  --bg-active: rgba(255, 255, 255, 0.08);
+  --accent-primary: #ECECEB;
+  --accent-secondary: #A3A29F;
+  --settings-switch-on: #ECECEB;
+  --settings-switch-knob: #1C1C1B;
+  --settings-switch-off: rgba(255, 255, 255, 0.16);
+  --settings-switch-knob-off: #D6D5D2;
+  --settings-link: #7AAAF0;
+  --settings-brand: #D4B08C;
+}
+
+.allternit-settings,
+[data-theme='dark'] .allternit-settings {
+  --view-settings-bg: var(--shell-view-bg);
+  --surface-canvas: var(--bg-primary);
+  --surface-panel: var(--bg-secondary);
+  --surface-panel-muted: var(--bg-tertiary);
+  --surface-hover: var(--bg-hover);
+  --surface-active: var(--bg-active);
+  --ui-text-primary: var(--text-primary);
+  --ui-text-secondary: var(--text-secondary);
+  --ui-text-muted: var(--text-tertiary);
+  --ui-text-inverse: var(--text-inverse);
+  --ui-border-muted: var(--border-subtle);
+  --ui-border-default: var(--border-default);
+  --ui-border-strong: var(--border-strong);
+  --neutral-fill: color-mix(in srgb, var(--text-primary) 5%, transparent);
+  --neutral-fill-strong: color-mix(in srgb, var(--text-primary) 9%, transparent);
+  --text-muted: var(--text-tertiary);
+  --surface-raised: var(--bg-elevated);
+  --glass-bg: var(--bg-elevated);
+  --shell-item-muted: var(--text-tertiary);
+  --shell-dialog-border: var(--border-default);
+  color: var(--text-primary);
+}
+
+/* Settings selects: bordered field with a quiet chevron, no native chrome. */
+.settings-select {
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Cpath d='M1.5 3.5 5 7l3.5-3.5' fill='none' stroke='%238F8D8A' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  background-size: 10px 10px;
+}
+
+/* Native selects and checks that panels render without the shared class. */
+.allternit-settings select:not([multiple]):not(.settings-select) {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 28px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Cpath d='M1.5 3.5 5 7l3.5-3.5' fill='none' stroke='%238F8D8A' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  background-size: 10px 10px;
+}
+.allternit-settings input[type='checkbox'],
+.allternit-settings input[type='radio'] { accent-color: var(--text-primary); }
+
+.allternit-settings ::selection { background: color-mix(in srgb, var(--settings-link) 25%, transparent); }
+
+/* ==========================================================================
+   BASE STYLES
+   ========================================================================== */
+* {
+  border-color: var(--border-default);
+}
+
+html {
+  width: 100%;
+  height: 100%;
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  width: 100%;
+  min-height: 100dvh;
+  height: 100%;
+  overflow: hidden;
+  background-color: var(--bg-primary);
+  background-image: var(--bg-grid), var(--bg-gradient);
+  background-size: 40px 40px, 100% 100%;
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  line-height: var(--line-height-normal);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ==========================================================================
+   PROSE/MARKDOWN VARIABLES
+   ========================================================================== */
+:root {
+  --prose-body: var(--text-primary);
+  --prose-headings: var(--text-primary);
+  --prose-links: var(--accent-primary);
+  --prose-code: var(--text-primary);
+  --prose-pre-bg: var(--bg-secondary);
+  --prose-pre-code: var(--text-primary);
+  --prose-borders: var(--border-subtle);
+}
+
+[data-theme='dark'] {
+  --prose-pre-bg: #0d1117;
+}
+
+/* ==========================================================================
+   SHADCN SIDEBAR VARIABLES (Legacy compatibility)
+   ========================================================================== */
+:root {
+  --sidebar-background: 30 25% 95%;
+  --sidebar-foreground: 25 20% 20%;
+  --sidebar-primary: 25 15% 30%;
+  --sidebar-primary-foreground: 30 25% 95%;
+  --sidebar-accent: 30 20% 90%;
+  --sidebar-accent-foreground: 25 20% 20%;
+  --sidebar-border: 30 15% 85%;
+  --sidebar-ring: 30 35% 55%;
+}
+
+[data-theme='dark'] {
+  --sidebar-background: 60 2% 12%;
+  --sidebar-foreground: 60 1% 92%;
+  --sidebar-primary: 30 30% 55%;
+  --sidebar-primary-foreground: 60 2% 12%;
+  --sidebar-accent: 60 1% 16%;
+  --sidebar-accent-foreground: 60 1% 92%;
+  --sidebar-border: 60 1% 19%;
+  --sidebar-ring: 30 30% 55%;
+}
+
+/* ==========================================================================
+   GIZZI PERSONA ANIMATIONS
+   ========================================================================== */
+
+@keyframes gizzi-pulse {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 0.8;
+    filter: brightness(1);
+  }
+  50% {
+    transform: scale(1.15);
+    opacity: 0.4;
+    filter: brightness(1.2) blur(2px);
+  }
+}
+
+@keyframes gizzi-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes gizzi-float {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-5px);
+  }
+}
+
+.animate-gizzi-pulse {
+  animation: gizzi-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+.animate-gizzi-float {
+  animation: gizzi-float 4s ease-in-out infinite;
+}
+
+.gizzi-orb {
+  background: linear-gradient(135deg, rgba(96, 165, 250, 0.6), rgba(52, 211, 153, 0.6));
+  box-shadow: 
+    0 4px 24px rgba(52, 211, 153, 0.2),
+    inset 0 2px 4px rgba(255, 255, 255, 0.4),
+    inset 0 -2px 4px rgba(0, 0, 0, 0.1);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  position: relative;
+  border-radius: 9999px;
+}
+
+.gizzi-orb::after {
+  content: "";
+  position: absolute;
+  top: 15%;
+  left: 15%;
+  width: 30%;
+  height: 30%;
+  background: radial-gradient(circle, rgba(255,255,255,0.8) 0%, rgba(255,255,255,0) 70%);
+  border-radius: 50%;
+  pointer-events: none;
+}
+
+.gizzi-orb-thinking {
+  background: linear-gradient(135deg, rgba(168, 85, 247, 0.6), rgba(236, 72, 153, 0.6));
+  box-shadow: 
+    0 4px 24px rgba(236, 72, 153, 0.3),
+    inset 0 2px 4px rgba(255, 255, 255, 0.4);
+}
+
+.gizzi-orb-listening {
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.6), rgba(239, 68, 68, 0.6));
+  box-shadow: 
+    0 4px 24px rgba(239, 68, 68, 0.3),
+    inset 0 2px 4px rgba(255, 255, 255, 0.4);
+}
+
+/* ==========================================================================
+   ARCHITECT LOGO ANIMATIONS
+   ========================================================================== */
+
+@keyframes blueprint-spin {
+  0% { transform: rotate(0deg); }
+  25% { transform: rotate(90deg); }
+  50% { transform: rotate(180deg); }
+  75% { transform: rotate(270deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.animate-blueprint-spin {
+  animation: blueprint-spin 24s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+@keyframes element-breathe {
+  0%, 100% { opacity: 0.6; transform: scaleX(1); }
+  50% { opacity: 1; transform: scaleX(1.08); }
+}
+
+.animate-element-breathe {
+  animation: element-breathe 4s ease-in-out infinite;
+}
+
+
+/* ==========================================================================
+   Allternit MARKDOWN — Dark amber theme for Streamdown (MessageResponse) output
+   ========================================================================== */
+
+/* One reading rhythm for every reply: consistent block spacing, calm
+   headings, hairline tables, theme-token colors (light + dark). Modelled on
+   Claude Desktop's answer layout, in Allternit type. */
+.allternit-markdown { line-height: 1.7; overflow-wrap: break-word; }
+/* A link into one of the user's apps (Slack, GitHub, Linear…) reads as a
+   small source chip with the app's logo (ai-elements/app-source-links.ts). */
+.allternit-markdown .app-source-link {
+  display: inline-flex; align-items: center; gap: 4px; max-width: 100%; vertical-align: 1px;
+  padding: 0 6px 0 3px; border: 1px solid var(--ui-border-muted); border-radius: 6px;
+  background: var(--neutral-fill, var(--surface-hover)); color: var(--ui-text-secondary);
+  font-size: 0.82em; font-weight: 500; line-height: 1.6; text-decoration: none;
+  min-height: 0; height: auto; margin: 0; box-shadow: none;
+}
+.allternit-markdown .app-source-link:hover { color: var(--ui-text-primary); background: var(--surface-hover, var(--neutral-fill-strong)); }
+.allternit-markdown .app-source-link__logo { display: inline-block; width: 13px; height: 13px; flex-shrink: 0; background: center / contain no-repeat; }
+.allternit-markdown > * + * { margin-top: 0.9em; }
+.allternit-markdown > * { margin-bottom: 0; }
+
+.allternit-markdown p { margin: 0; }
+.allternit-markdown > * + p { margin-top: 0.9em; }
+
+.allternit-markdown h1,
+.allternit-markdown h2,
+.allternit-markdown h3,
+.allternit-markdown h4 { color: var(--ui-text-primary); font-weight: 600; line-height: 1.35; letter-spacing: -0.005em; }
+/* Answer hierarchy: the H1 is the answer's title, in the display serif our
+   page titles use; H2 opens a section; H3 is a quieter sub-head. */
+.allternit-markdown h1 { font-family: var(--font-serif); font-weight: 500; font-size: 1.75em; line-height: 1.2; letter-spacing: -0.012em; }
+.allternit-markdown h2 { font-size: 1.2em; line-height: 1.3; letter-spacing: -0.01em; }
+.allternit-markdown h3 { font-size: 1.04em; }
+.allternit-markdown h4 { font-size: 0.95em; color: var(--ui-text-secondary); }
+.allternit-markdown > * + :is(h1, h2, h3, h4) { margin-top: 1.5em; }
+.allternit-markdown > * + h2 { margin-top: 1.7em; }
+.allternit-markdown > * + :is(h3, h4) { margin-top: 1.3em; }
+.allternit-markdown > :is(h1, h2, h3, h4) + * { margin-top: 0.5em; }
+.allternit-markdown > h1 + * { margin-top: 0.75em; }
+/* A short line right under the title is its dateline ("Comparison as of …"). */
+.allternit-markdown > h1 + p.answer-short { margin-top: 0.35em; font-size: 0.86em; line-height: 1.5; color: var(--ui-text-muted); }
+.allternit-markdown > h1 + p.answer-short :is(strong, [data-streamdown="strong"]) { color: var(--ui-text-secondary); }
+.allternit-markdown > h1 + p.answer-short + * { margin-top: 1.1em; }
+/* "Bottom line:" / "TL;DR:" / "Recommendation:" leads read as a quiet callout. */
+.allternit-markdown > p.answer-lead {
+  padding: 9px 14px 9px 13px;
+  border-left: 3px solid var(--ui-border-default);
+  border-radius: 0 8px 8px 0;
+  background: var(--neutral-fill);
+  color: var(--ui-text-primary);
+}
+.allternit-markdown > p.answer-lead + * { margin-top: 1.1em; }
+
+.allternit-markdown ul,
+.allternit-markdown ol { padding-left: 1.4em; }
+.allternit-markdown ul { list-style: disc; }
+.allternit-markdown ol { list-style: decimal; }
+/* Tight, even list rhythm (Streamdown pads each item; loose lists wrap
+   items in <p>). Bold "License:" labels lead their item. */
+.allternit-markdown li { line-height: 1.6; padding: 0 0 0 0.2em; }
+.allternit-markdown li + li { margin-top: 0.3em; }
+.allternit-markdown li > p { margin: 0; }
+.allternit-markdown li > p + p { margin-top: 0.4em; }
+.allternit-markdown li > ul,
+.allternit-markdown li > ol { margin-top: 0.3em; }
+.allternit-markdown li .answer-label { font-weight: 600; color: var(--ui-text-primary); }
+.allternit-markdown li::marker { color: var(--ui-text-muted); }
+.allternit-markdown ol > li::marker { font-variant-numeric: tabular-nums; }
+
+/* Streamdown renders **bold** as <span data-streamdown="strong">. */
+.allternit-markdown :is(strong, [data-streamdown="strong"]) { font-weight: 600; color: var(--ui-text-primary); }
+.allternit-markdown del { opacity: 0.6; text-decoration: line-through; }
+
+.allternit-markdown a {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, currentColor 40%, transparent);
+  text-underline-offset: 3px;
+  transition: text-decoration-color 150ms;
+}
+.allternit-markdown a:hover { text-decoration-color: currentColor; }
+
+/* Inline code: quiet neutral chip */
+.allternit-markdown :not(pre) > code {
+  font-family: var(--font-mono);
+  font-size: 0.86em;
+  padding: 0.12em 0.36em;
+  border-radius: 5px;
+  background: var(--surface-active);
+  color: var(--ui-text-primary);
+}
+
+/* Code block container (Shiki renders inside <pre>) — long lines scroll
+   horizontally instead of being clipped or breaking the chat column. */
+.allternit-markdown pre {
+  border-radius: 10px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  border: 1px solid var(--ui-border-muted);
+  font-size: 0.82rem;
+  line-height: 1.65;
+}
+
+.allternit-markdown blockquote {
+  border-left: 2px solid var(--ui-border-strong, var(--ui-border-default));
+  padding-left: 1em;
+  color: var(--ui-text-secondary);
+}
+
+/* Tables: one hairline rounded container, neutral tinted header, row
+   dividers. Streamdown's copy/download/fullscreen controls stay available
+   but only surface on hover. Wide tables scroll inside the container. */
+.allternit-markdown [data-streamdown="table-wrapper"] {
+  position: relative;
+  display: block;
+  margin-bottom: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+.allternit-markdown > [data-streamdown="table-wrapper"]:first-child { margin-top: 0; }
+.allternit-markdown > * + [data-streamdown="table-wrapper"] { margin-top: 0.9em; }
+.allternit-markdown [data-streamdown="table-wrapper"] > div:first-child:not(:has(table)) {
+  position: absolute; top: 6px; right: 6px; z-index: 1;
+  padding: 2px; border-radius: 7px;
+  background: var(--surface-panel);
+  opacity: 0; transition: opacity 150ms ease;
+}
+/* The controls never depend on hover: clicking or tabbing into a table
+   focuses it (answer-structure.ts makes tables focusable) and shows them,
+   and on touch screens they always show. */
+.allternit-markdown [data-streamdown="table-wrapper"]:hover > div:first-child:not(:has(table)),
+.allternit-markdown [data-streamdown="table-wrapper"]:focus-within > div:first-child:not(:has(table)) { opacity: 1; }
+@media (hover: none) {
+  .allternit-markdown [data-streamdown="table-wrapper"] > div:first-child:not(:has(table)) { opacity: 0.85; }
+}
+.allternit-markdown table:focus { outline: none; }
+.allternit-markdown [data-streamdown="table-wrapper"] > div:has(> table:focus-visible) { outline: 2px solid var(--accent-primary); outline-offset: 2px; }
+/* Every row shows: no height cap or inner scrollbar (Streamdown caps tables
+   at 300px; markdown.tsx also turns that off). Wide tables scroll sideways. */
+.allternit-markdown [data-streamdown="table-wrapper"] > div:has(> table) {
+  border: 1px solid var(--ui-border-muted);
+  border-radius: 10px;
+  background: transparent;
+  max-height: none !important;
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+}
+.allternit-markdown table { width: 100%; border-collapse: collapse; font-size: 0.925em; line-height: 1.55; }
+.allternit-markdown table > * { border: 0; }
+/* A bare table (no Streamdown wrapper) gets the same container. */
+.allternit-markdown > table { display: block; overflow-x: auto; border: 1px solid var(--ui-border-muted); border-radius: 10px; }
+.allternit-markdown thead { background: color-mix(in srgb, var(--ui-text-primary) 4%, transparent); }
+.allternit-markdown th { font-weight: 600; text-align: left; padding: 10px 14px; color: var(--ui-text-primary); border-bottom: 1px solid var(--ui-border-muted); }
+.allternit-markdown td { padding: 10px 14px; vertical-align: top; border-top: 1px solid var(--ui-border-muted); }
+.allternit-markdown tbody tr:first-child td { border-top: 0; }
+
+.allternit-markdown hr { margin: 1.5em 0; border: none; border-top: 1px solid var(--ui-border-muted); }
+
+/* The answer wrapper (markdown.tsx) only carries data-answer-root. */
+.allternit-answer { display: contents; }
+
+/* Source pills: a citation run reads as "[icon] github +2"
+   (ai-elements/source-pills.ts + SourcePills.tsx). */
+.allternit-markdown .source-pills {
+  display: inline-flex; align-items: center; max-width: 100%; vertical-align: 1px;
+  border-radius: 999px; background: var(--neutral-fill);
+  font-size: 0.78em; font-weight: 500; line-height: 1.7; font-style: normal; white-space: nowrap;
+}
+.source-pill,
+.allternit-markdown .source-pills .source-pill {
+  display: inline-flex; align-items: center; gap: 5px; min-width: 0; min-height: 0; height: auto;
+  margin: 0; padding: 0 8px 0 4px; border: 0; border-radius: 999px; box-shadow: none;
+  background: transparent; color: var(--ui-text-secondary);
+  font: inherit; text-decoration: none; text-align: left; cursor: pointer;
+}
+.allternit-markdown .source-pills .source-pill:hover { color: var(--ui-text-primary); background: var(--neutral-fill-strong); }
+.source-pill__icon { display: inline-block; width: 13px; height: 13px; flex-shrink: 0; border-radius: 3px; background: center / contain no-repeat; }
+.source-pill__name { overflow: hidden; text-overflow: ellipsis; }
+.allternit-markdown .source-pills .source-pill__title { display: none; }
+.allternit-markdown .source-pills__more {
+  margin: 0 0 0 -4px; padding: 0 8px 0 4px; border: 0; border-radius: 0 999px 999px 0;
+  background: transparent; color: var(--ui-text-muted); font: inherit; font-variant-numeric: tabular-nums; cursor: pointer;
+}
+.allternit-markdown .source-pills__more:hover,
+.allternit-markdown .source-pills__more[aria-expanded="true"] { color: var(--ui-text-primary); background: var(--neutral-fill-strong); }
+.allternit-markdown .source-pills :focus-visible { outline: 2px solid var(--accent-primary); outline-offset: 1px; }
+/* The list a "+N" opens (portalled, so not under .allternit-markdown). */
+.source-pills-menu {
+  position: fixed; z-index: 60; padding: 6px;
+  border: 1px solid var(--ui-border-muted); border-radius: 12px;
+  background: var(--polish-card, var(--surface-panel)); box-shadow: var(--polish-shadow), 0 8px 28px rgba(0, 0, 0, 0.12);
+  color: var(--ui-text-primary); font-size: 13px; line-height: 1.4;
+}
+.source-pills-menu[data-above] { transform: translateY(-100%); }
+.source-pills-menu__head { padding: 4px 8px 6px; font-size: 11.5px; font-weight: 500; color: var(--ui-text-muted); }
+.source-pills-menu ul { margin: 0; padding: 0; list-style: none; max-height: 260px; overflow-y: auto; }
+.source-pills-menu .source-pill {
+  display: grid; grid-template-columns: 16px minmax(0, 1fr); grid-template-rows: auto auto; column-gap: 8px;
+  width: 100%; padding: 6px 8px; border-radius: 8px; font-size: 13px; color: var(--ui-text-primary); text-decoration: none;
+}
+.source-pills-menu .source-pill:hover,
+.source-pills-menu .source-pill:focus-visible { background: var(--surface-hover, var(--neutral-fill)); outline: none; }
+.source-pills-menu .source-pill__icon { grid-row: 1 / span 2; width: 16px; height: 16px; margin-top: 1px; }
+.source-pills-menu .source-pill__title { grid-column: 2; grid-row: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.source-pills-menu .source-pill__name { grid-column: 2; grid-row: 2; font-size: 11.5px; color: var(--ui-text-muted); }
+@media (prefers-reduced-motion: no-preference) {
+  .source-pills-menu { animation: source-pills-in 140ms cubic-bezier(.2, .7, .3, 1); }
+  .source-pills-menu[data-above] { animation-name: source-pills-in-above; }
+}
+@keyframes source-pills-in { from { opacity: 0; transform: translateY(-3px); } }
+@keyframes source-pills-in-above { from { opacity: 0; transform: translateY(calc(-100% + 3px)); } }
+
+/* Contents row for long answers (ai-elements/AnswerContents.tsx). */
+.answer-contents { display: flex; align-items: flex-start; gap: 8px; margin: 0 0 14px; font-size: 13px; line-height: 1.4; }
+.answer-contents__toggle {
+  display: inline-flex; flex-shrink: 0; align-items: center; gap: 5px; height: 26px; padding: 0 8px;
+  border: 0; border-radius: 8px; background: transparent; color: var(--ui-text-muted); font: inherit; font-weight: 500; cursor: pointer;
+}
+.answer-contents__toggle:hover { color: var(--ui-text-primary); background: var(--neutral-fill); }
+.answer-contents__count { font-variant-numeric: tabular-nums; opacity: 0.8; }
+.answer-contents__caret { transform: rotate(-90deg); transition: transform 150ms ease; }
+.answer-contents[data-open] .answer-contents__caret { transform: none; }
+.answer-contents__list { display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; margin: 0; padding: 0; list-style: none; }
+.answer-contents__item {
+  max-width: 240px; height: 26px; padding: 0 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  border: 1px solid var(--ui-border-muted); border-radius: 999px; background: transparent;
+  color: var(--ui-text-secondary); font: inherit; cursor: pointer;
+}
+.answer-contents__item:hover { color: var(--ui-text-primary); background: var(--neutral-fill); }
+.answer-contents :focus-visible { outline: 2px solid var(--accent-primary); outline-offset: 1px; }
+.allternit-markdown > h2:focus { outline: none; }
+.allternit-markdown > h2 { scroll-margin-top: 16px; }
+
+/* Phone: the title steps down, the Contents chips scroll in one row, and
+   pills / controls get finger-sized targets. */
+@media (max-width: 640px), (pointer: coarse) {
+  .allternit-markdown h1 { font-size: 1.5em; }
+  .allternit-markdown h2 { font-size: 1.12em; }
+  .allternit-markdown > p.answer-lead { padding: 8px 12px 8px 11px; }
+  .allternit-markdown .source-pills { font-size: 0.82em; line-height: 1.9; }
+  .answer-contents__list { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+  .answer-contents__list::-webkit-scrollbar { display: none; }
+  .answer-contents__item, .answer-contents__toggle { height: 32px; }
+  .answer-contents__item { max-width: 200px; }
+  .source-pills-menu .source-pill { padding: 9px 8px; }
+}
+
+/* Chat transcript edge fades. The scroll area is masked (content really
+   fades rather than being painted over): a soft top edge appears once you
+   have scrolled, and text sliding under the composer dissolves over a
+   longer run while more of the thread lies below. The fade depths are
+   registered lengths so they ease in and out as you scroll. */
+@property --chat-fade-top { syntax: '<length>'; inherits: false; initial-value: 0px; }
+@property --chat-fade-bottom { syntax: '<length>'; inherits: false; initial-value: 24px; }
+.chat-scroll-fade {
+  /* Height the floating composer (input + disclaimer) covers. */
+  --chat-composer-clear: 132px;
+  --chat-fade-top: 0px;
+  --chat-fade-bottom: 24px;
+  -webkit-mask-image: linear-gradient(to bottom,
+    transparent 0,
+    #000 var(--chat-fade-top),
+    #000 calc(100% - var(--chat-composer-clear) - var(--chat-fade-bottom)),
+    transparent calc(100% - var(--chat-composer-clear)));
+  mask-image: linear-gradient(to bottom,
+    transparent 0,
+    #000 var(--chat-fade-top),
+    #000 calc(100% - var(--chat-composer-clear) - var(--chat-fade-bottom)),
+    transparent calc(100% - var(--chat-composer-clear)));
+  transition: --chat-fade-top 260ms ease, --chat-fade-bottom 320ms ease;
+}
+.chat-scroll-fade[data-scrolled="true"] { --chat-fade-top: 28px; }
+.chat-scroll-fade[data-more-below="true"] { --chat-fade-bottom: 72px; }
+/* Launch screen: nothing floats over the bottom, so no composer clearance. */
+.chat-scroll-fade[data-launch="true"],
+.chat-scroll-fade[data-launch="true"][data-more-below="true"] { --chat-composer-clear: 0px; --chat-fade-bottom: 0px; }
+@media (prefers-reduced-motion: reduce) { .chat-scroll-fade { transition: none; } }
+
+/* Composer waveform bars — animated during streaming */
+@keyframes allternit-waveform {
+  0%, 100% { height: 3px; opacity: 0.35; }
+  50%       { height: 16px; opacity: 1; }
+}
+
+.allternit-waveform-bar {
+  height: 3px;
+  animation: allternit-waveform 0.75s ease-in-out infinite;
+}
+
+/* Thinking indicator dots — bounce-pulse in sequence */
+@keyframes allternit-thinking-bounce {
+  0%, 80%, 100% { transform: scale(0.6); opacity: 0.3; }
+  40%           { transform: scale(1); opacity: 1; }
+}
+
+.allternit-thinking-dot {
+  animation: allternit-thinking-bounce 1.2s ease-in-out infinite;
+}
+
+.theme {
+  --color-graph-accent: var(--graph-accent);
+  --color-graph-accent-2: var(--graph-accent-2);
+  --color-graph-accent-3: var(--graph-accent-3);
+  --color-graph-frame: var(--graph-frame);
+  --color-graph-muted: var(--graph-muted);
+  --color-graph-faint: var(--graph-faint);
+  --color-contrast-14: var(--contrast-14);
+  --color-contrast-23: var(--contrast-23);
+  --color-contrast-45: var(--contrast-45);
+  --color-contrast-70: var(--contrast-70);
+}
+:root {
+  --graph-accent: oklch(0.5 0.18 255);
+  --graph-accent-2: oklch(0.58 0.14 70);
+  --graph-accent-3: oklch(0.5 0.12 165);
+  --graph-frame: oklch(0.205 0 0 / 0.28);
+  --graph-muted: oklch(0.52 0 0);
+  --graph-faint: oklch(0.82 0 0);
+  --contrast-14: oklch(0.88 0 0);
+  --contrast-23: oklch(0.76 0 0);
+  --contrast-45: oklch(0.48 0 0);
+  --contrast-70: oklch(0.28 0 0);
+}
+.dark {
+  --graph-accent: oklch(0.7 0.12 255);
+  --graph-accent-2: oklch(0.78 0.12 70);
+  --graph-accent-3: oklch(0.78 0.1 165);
+  --graph-frame: oklch(0.48 0 0);
+  --graph-muted: oklch(0.52 0 0);
+  --graph-faint: oklch(0.28 0 0);
+  --contrast-14: oklch(0.22 0 0);
+  --contrast-23: oklch(0.34 0 0);
+  --contrast-45: oklch(0.62 0 0);
+  --contrast-70: oklch(0.84 0 0);
+}
+
+.graph-frame {
+    background-image: repeating-linear-gradient(to right, var(--graph-frame) 0 2px, transparent 2px 7px), repeating-linear-gradient(to bottom, var(--graph-frame) 0 2px, transparent 2px 7px), repeating-linear-gradient(to right, var(--graph-frame) 0 2px, transparent 2px 7px), repeating-linear-gradient(to bottom, var(--graph-frame) 0 2px, transparent 2px 7px);
+    background-repeat: repeat-x, repeat-y, repeat-x, repeat-y;
+    background-position: 0 0, 100% 0, 0 100%, 0 0;
+    background-size: 100% 1px, 1px 100%, 100% 1px, 1px 100%;
+}
+
+.graph-rule {
+    height: 1px;
+    background-image: repeating-linear-gradient(to right, var(--graph-frame) 0 2px, transparent 2px 7px);
+}
+
+.graph-title-ink {
+    color: var(--graph-accent);
+}
+/* Menus and popovers opened from an artifact preview (overlay z 1100, phone
+   sheet z 1200) render in a body portal at z 50 by default and would sit
+   behind it. Lift them while such a window is open. */
+body:has([data-artifact-window='overlay'], [data-artifact-window='sheet']) [data-radix-popper-content-wrapper] {
+  z-index: 1300 !important;
+}
+/* The Contents row sits inside the answer (under its title), so it opts out
+   of the answer's own list numbering and spacing. */
+.allternit-markdown .answer-contents ol,
+.allternit-markdown .answer-contents ul { list-style: none; margin: 0; padding: 0; }
+.allternit-markdown .answer-contents li { margin: 0; padding: 0; line-height: inherit; }
+.allternit-markdown .answer-contents li::marker { content: none; }
+.allternit-markdown .answer-contents-slot { margin: 0; }
