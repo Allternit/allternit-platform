@@ -20,6 +20,7 @@ import {
   isClaudeAISubscriber,
 } from '../../../utils/auth.js'
 import { createAssistantAPIErrorMessage } from '../../../shared/utils/apiErrorMessage.js'
+import { cloudCreditsDisclosure, cloudCreditsRefusal } from '@/shared/util/provider-error'
 import { NO_RESPONSE_REQUESTED } from '../../../shared/utils/syntheticMessages.js'
 import {
   getDefaultMainLoopModelSetting,
@@ -709,6 +710,18 @@ export function getAssistantMessageFromError(
       content: msg,
       error: 'invalid_request',
     })
+  }
+
+  // Allternit Cloud's "needs credits" 402: matched by `error.code`
+  // (credits_required / credits_exhausted), never by message text.
+  if (error instanceof APIError) {
+    const credits = cloudCreditsRefusal(error.error ?? error.message) ?? cloudCreditsRefusal(error.message)
+    if (credits) {
+      return createAssistantAPIErrorMessage({
+        content: cloudCreditsDisclosure(credits.code, credits),
+        error: 'billing_error',
+      })
+    }
   }
 
   if (

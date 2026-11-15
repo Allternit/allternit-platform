@@ -2,7 +2,7 @@ import { APICallError } from "ai"
 import { STATUS_CODES } from "http"
 import { iife } from "@/shared/util/iife"
 import { Log } from "@/shared/util/log"
-import { describeProviderError } from "@/shared/util/provider-error"
+import { cloudCreditsRefusal, describeProviderError, extractProviderErrorCode } from "@/shared/util/provider-error"
 
 const log = Log.create({ service: "provider.error" })
 
@@ -200,15 +200,18 @@ export namespace ProviderError {
           ? object.body
           : undefined
     const originalName = input.error instanceof Error ? input.error.name : undefined
+    // A Cloud credits refusal keeps its own code (credits_required /
+    // credits_exhausted) so clients can open the credits disclosure.
+    const credits = cloudCreditsRefusal(responseBody ?? source)
     const metadata: Record<string, string> = {
       providerID: input.providerID,
-      code: described.code,
+      code: credits?.code ?? described.code,
     }
     if (originalName) metadata.originalName = originalName
 
     return {
       type: "api_error",
-      message: described.message || `Provider "${input.providerID}" request failed`,
+      message: credits?.message || described.message || `Provider "${input.providerID}" request failed`,
       isRetryable: described.code === "rate_limit" || described.code === "overloaded",
       statusCode,
       responseBody,
@@ -226,17 +229,27 @@ export namespace ProviderError {
       }
     }
 
-    const metadata = input.error.url ? { url: input.error.url } : undefined
+    // Keep the body's `error.code` on the session error. Allternit Cloud's
+    // 402 names `credits_required` / `credits_exhausted` there, and the web
+    // adapter and the TUI open the credits disclosure from that code; before
+    // 2026-11-15 only the url survived and the code was lost on the relay path.
+    const metadata: Record<string, string> = {}
+    if (input.error.url) metadata.url = input.error.url
+    const credits = cloudCreditsRefusal(input.error.responseBody)
+    const code = credits?.code ?? extractProviderErrorCode(input.error.responseBody)
+    if (code) metadata.code = code
     return {
       type: "api_error",
-      message: m,
+      message: credits?.message ?? m,
       statusCode: input.error.statusCode,
-      isRetryable: input.providerID.startsWith("openai")
-        ? isOpenAiErrorRetryable(input.error)
-        : input.error.isRetryable,
+      isRetryable: credits
+        ? false
+        : input.providerID.startsWith("openai")
+          ? isOpenAiErrorRetryable(input.error)
+          : input.error.isRetryable,
       responseHeaders: input.error.responseHeaders,
       responseBody: input.error.responseBody,
-      metadata,
+      metadata: Object.keys(metadata).length ? metadata : undefined,
     }
   }
 }

@@ -20,6 +20,9 @@ import { KeyboardShortcutHint } from './design-system/KeyboardShortcutHint';
 import { Pane } from './design-system/Pane';
 import { effortLevelToSymbol } from './EffortIndicator';
 import { ModelThinking } from '@/runtime/providers/discovery/model-thinking';
+import { CloudContinue } from '@/runtime/session/cloud-continue';
+import { cloudCreditsDisclosure, type CloudCreditsCode } from '@/shared/util/provider-error';
+import { cloudEntitlement } from '../services/allternitAccount';
 export type Props = {
   initial: string | null;
   sessionModel?: ModelSetting;
@@ -92,6 +95,24 @@ export function ModelPicker({
   // last build at once, then rebuilt on open so new sign-ins and models show.
   const [sections, setSections] = useState<ModelListSection[]>(() => getModelListSections());
   const [loading, setLoading] = useState(true);
+  // Cloud rows the account can't run yet (no Cloud credits): listed with
+  // "needs credits"; choosing one prints the disclosure and keeps the old model.
+  const [cloudLock, setCloudLock] = useState<{ check: (modelID: string) => boolean; reason: CloudCreditsCode | null }>();
+  const [notice, setNotice] = useState<string>();
+  useEffect(() => {
+    let cancelled = false;
+    void cloudEntitlement().then(async entitlement => {
+      const check = await CloudContinue.lockCheck(entitlement);
+      if (!cancelled && entitlement && !entitlement.allowed) setCloudLock({ check, reason: entitlement.reason });
+    }).catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const isCloudLocked = (value: string | undefined): boolean => {
+    const prefix = `${CloudContinue.PROVIDER_ID}/`;
+    return Boolean(cloudLock && value?.startsWith(prefix) && cloudLock.check(value.slice(prefix.length)));
+  };
   useEffect(() => {
     let cancelled = false;
     void refreshModelListSections().then(next => {
@@ -192,6 +213,7 @@ export function ModelPicker({
   const displayEffort = focusedThinking ? ModelThinking.check(focusedModel!, effort) ?? focusedDefaultEffort : effort === "max" && !focusedSupportsMax ? "high" : effort;
   const handleFocus = (value: string) => {
     setFocusedValue(value);
+    setNotice(undefined);
     if (!hasToggledEffort && effortValue === undefined) {
       setEffort(getDefaultEffortLevelForOption(value));
     }
@@ -225,6 +247,10 @@ export function ModelPicker({
     context: "ModelPicker"
   });
   const handleSelect = (value_0: string) => {
+    if (isCloudLocked(value_0)) {
+      setNotice(cloudCreditsDisclosure(cloudLock?.reason));
+      return;
+    }
     logEvent("tengu_model_command_menu_effort", {
       effort: effort as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS
     });
@@ -313,7 +339,7 @@ export function ModelPicker({
       }
       const isFocused = row.value === effectiveFocused;
       const dim = row.signedIn === false && !isFocused;
-      const tags = [row.isDefault ? 'default' : '', row.isCurrent ? 'current' : ''].filter(Boolean).join(' · ');
+      const tags = [row.isDefault ? 'default' : '', row.isCurrent ? 'current' : '', isCloudLocked(row.value) ? 'needs credits' : ''].filter(Boolean).join(' · ');
       const contextLabel = row.context ? formatContext(row.context) : null;
       const thinking = thinkingCell(row.value, isFocused ? displayEffort : undefined);
       return <Box key={row.key} flexDirection="row">
@@ -330,14 +356,15 @@ export function ModelPicker({
     </Box>;
   // provider/model · context window · sign-in hint · quota, for the focused row.
   const focusedLogin = focusedRow?.signedIn === false ? loginCommandFor(focusedRow.providerId) : undefined;
-  const focusedDetailParts = focusedRow ? [focusedRow.value, focusedRow.context ? `${formatContext(focusedRow.context)} context` : null, focusedRow.signedIn === false ? focusedLogin ? `not signed in — run ${focusedLogin}` : 'not signed in' : null, focusedRow.description && focusedRow.sectionTitle === 'Other' ? focusedRow.description : null, focusedQuota].filter((part): part is string => Boolean(part)) : [];
+  const focusedDetailParts = focusedRow ? [focusedRow.value, focusedRow.context ? `${formatContext(focusedRow.context)} context` : null, focusedRow.signedIn === false ? focusedLogin ? `not signed in — run ${focusedLogin}` : 'not signed in' : null, isCloudLocked(focusedRow.value) ? 'needs credits' : null, focusedRow.description && focusedRow.sectionTitle === 'Other' ? focusedRow.description : null, focusedQuota].filter((part): part is string => Boolean(part)) : [];
   const focusedDetail = focusedDetailParts.length > 0 ? <Box marginBottom={1}><Text dimColor={true}>{focusedDetailParts.join(' · ')}</Text></Box> : null;
   const effortRow = focusedThinking ? <Box marginBottom={1} flexDirection="column"><Text dimColor={true}><EffortLevelIndicator effort={displayEffort as EffortLevel} />{" "}{focusedThinking.term}:{" "}{focusedThinking.levels.map((l, i) => <Text key={l.id} bold={l.id === displayEffort} dimColor={l.id !== displayEffort}>{i > 0 ? ' · ' : ''}{l.label}{l.id === focusedThinking.default ? '*' : ''}</Text>)}{" "}<Text color="subtle">← → change · * default</Text></Text></Box> : <Box marginBottom={1} flexDirection="column">{focusedSupportsEffort ? <Text dimColor={true}><EffortLevelIndicator effort={displayEffort as EffortLevel} />{" "}{capitalize(displayEffort)} effort{displayEffort === focusedDefaultEffort ? " (default)" : ""}{" "}<Text color="subtle">← → to adjust</Text></Text> : <Text color="subtle"><EffortLevelIndicator effort={undefined} /> Effort not supported{focusedModelName ? ` for ${focusedModelName}` : ""}</Text>}</Box>;
   const header = <Box marginBottom={1} flexDirection="column"><Text color="remember" bold={true}>Select model</Text><Text dimColor={true}>{headerText ?? "Switch models. Applies to this session and future Gizzi Code sessions. For other/previous model names, specify with --model."}</Text>{sessionModel && <Text dimColor={true}>Currently using {modelDisplayString(sessionModel)} for this session (set by plan mode). Selecting a model will undo this.</Text>}</Box>;
   const footerHint = <Box marginBottom={1}><Text dimColor={true}>↑/↓ navigate · Enter select · Tab ★ favorite · type to filter · Esc {filter ? 'clear filter' : 'cancel'} · gizzi connect to add an account</Text></Box>;
   const fastModeNotice = isFastModeEnabled() ? showFastModeNotice ? <Box marginBottom={1}><Text dimColor={true}>Fast mode is <Text bold={true}>ON</Text> and available with{" "}{FAST_MODE_MODEL_DISPLAY} only (/fast). Switching to other models turn off fast mode.</Text></Box> : isFastModeAvailable() && !isFastModeCooldown() ? <Box marginBottom={1}><Text dimColor={true}>Use <Text bold={true}>/fast</Text> to turn on Fast mode ({FAST_MODE_MODEL_DISPLAY} only).</Text></Box> : null : null;
   const standaloneHints = isStandaloneCommand && <Text dimColor={true} italic={true}>{exitState.pending ? <>Press {exitState.keyName} again to exit</> : <Byline><KeyboardShortcutHint shortcut="Enter" action="confirm" /><ConfigurableShortcutHint action="select:cancel" context="Select" fallback="Esc" description="exit" /></Byline>}</Text>;
-  const content = <Box flexDirection="column">{header}{listContent}{focusedDetail}{effortRow}{footerHint}{fastModeNotice}{standaloneHints}</Box>;
+  const creditsNotice = notice ? <Box marginBottom={1}><Text color="warning" wrap="wrap">{notice}</Text></Box> : null;
+  const content = <Box flexDirection="column">{header}{listContent}{focusedDetail}{creditsNotice}{effortRow}{footerHint}{fastModeNotice}{standaloneHints}</Box>;
   if (!isStandaloneCommand) {
     return content;
   }
