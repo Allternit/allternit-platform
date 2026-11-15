@@ -4718,11 +4718,20 @@
         "allternit/services/local-engine/src/routes/models.rs",
         "allternit/services/local-engine/src/cache/model.rs",
         "allternit/services/model-training",
+        "allternit/cmd/gizzi-code/src/cli/commands/studio.ts",
+        "allternit/cmd/gizzi-code/src/cli/commands/hardware.ts",
+        "allternit/cmd/gizzi-code/src/runtime/services/studioClient.ts",
+        "allternit/surfaces/allternit-mobile/ios/Core/API/StudioJobsClient.swift",
+        "allternit/surfaces/allternit-mobile/ios/Features/Models/StudioJobsSection.swift",
         "allternit-ai/src/views/model-lab/TrainPanel.tsx",
         "allternit-ai/src/views/model-lab/JobsMonitor.tsx",
         "allternit-ai/src/lib/model-lab/studio-jobs.ts"
       ],
       "decisions": [
+        {
+          "on": "2026-11-15",
+          "note": "Phase 4 hardware merged: studio-spec hardware ids (7, fit and error codes) in allternit-platform #2412; host hardware detection in allternit-api studio/hardware.rs #2418; allternit-tune MLX backend and requirements-<hardware>.txt in services/model-training #2413; gizzi studio, hardware and studioClient #2414; iOS StudioJobsClient and StudioJobsSection #2420; docs #2415; Train panel allternit-ai #1078. Engines are published at Allternit/studio-engines e520474 (Apache-2.0); see the Brain G3 record."
+        },
         {
           "on": "2026-11-15",
           "note": "Train tab on Desktop, web, phone layout and PWA (allternit-ai #1068). Eoj chose to replace the Engine tab's Quantize, Merge LoRA and Evaluate cards (they called /api/model-lab/jobs, never served) with Also make outputs on the Train form: merged model (LoRA methods) and GGUF q4_k_m/q8_0/f16, sent as outputs.merged and outputs.gguf. Evaluation waits until allternit-tune runs evals."
@@ -4764,6 +4773,29 @@
       ]
     },
     {
+      "id": "feature:files-drive",
+      "label": "Files drive: every Allternit computer as a location in Files, Finder, Explorer, Linux, the web Files tab and gizzi files",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "One protocol (files/2, /api/v1/files/v2/*) for every surface: roots under ~/Allternit plus Memory Drive, Code, Models and user folders; stable item IDs, revisions with keep-both conflicts, change feed, 4 MiB chunks under the 5 MiB relay cap. Transports: loopback, mesh (own devices), relay (baseline; cloud computers are relay-only), gateway (guests with signed capability tokens). Files traffic never wakes a computer or touches its idle timer; only the wake-consent call does. A sleeping computer is listed from a plain-names snapshot in the user's own R2. Lands dark behind the per-user flag files_drive.",
+      "touches": [
+        "allternit/contracts/files-drive",
+        "allternit/platform/types/allternit-files-core",
+        "allternit/cmd/allternit-api/src/file_routes.rs",
+        "allternit/cmd/allternit-cloud-api/src/routes/runtime_relay.rs"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-15",
+          "note": "Full scope (all 17 uses + sharing, intelligence, replicas, dedup, portable workspaces); asleep cloud computer = ask before waking; the drive owns gizzi TUI /files (old files-in-context list folds into /context); asleep snapshot keeps plain names, names_encrypted reserved; no-wake covers v2 only until legacy /files/* callers move to v2."
+        }
+      ],
+      "evidence": [
+        "allternit/contracts/files-drive/SPEC.md",
+        "allternit/contracts/files-drive/generate.mjs"
+      ]
+    },
+    {
       "id": "feature:phone-model-host",
       "label": "Run a model on your phone (model host relay)",
       "product": "product:ai-allternit",
@@ -4783,6 +4815,10 @@
         {
           "on": "2026-10-28",
           "note": "Eoj chose 'Phone serves Gizzi': the on-phone model is served to gizzi through the cloud relay so chats keep tools, memory and handoff. Phase 1 is the browser (LFM2.5-350M only; models of 760 MB or more crash Safari tabs on iPhone 15); phase 2 is the Phone Link iOS helper with llama.cpp over the same relay."
+        },
+        {
+          "on": "2026-11-15",
+          "note": "Un-held for on-device models lane W12 ('Let my other devices use this model'): the host device runs the model and cloud-api only relays, only between the owner's own devices. The in-browser WebGPU worker moved to lane W5; the toggle lives in This device (desktop + phone), iOS after W7."
         }
       ],
       "evidence": [

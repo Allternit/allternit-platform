@@ -1,0 +1,15 @@
+{
+  "type": "ErrorBody",
+  "valid": true,
+  "case": "Asleep: opening file content needs consent (setting ask).",
+  "message": {
+    "error": "wake_consent_required",
+    "code": "wake_consent_required",
+    "message": "This computer is asleep. Wake it to open the file?",
+    "computer_state": "asleep",
+    "wake": {
+      "setting": "ask",
+      "consent_path": "/api/v1/computer-files/cmp_cloud_4gb/wake-consent"
+    }
+  }
+}

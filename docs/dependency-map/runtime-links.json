@@ -1650,6 +1650,25 @@
       ]
     },
     {
+      "source": "allternit/cmd/allternit-api",
+      "target": "allternit/services/model-training",
+      "kind": "install: the host runs pip with requirements-<hardware id>.txt from the engine folder (requirements-apple-silicon.txt when present, else the generic file) into the Studio engine venv; ALLTERNIT_STUDIO_HARDWARE, ALLTERNIT_STUDIO_JOB_DIR and ALLTERNIT_STUDIO_OUTPUT_DIR are passed to the engine process",
+      "evidence": [
+        "allternit/cmd/allternit-api/src/studio/engines.rs",
+        "allternit/cmd/allternit-api/src/studio/runner.rs",
+        "allternit/services/model-training/requirements-apple-silicon.txt"
+      ]
+    },
+    {
+      "source": "allternit/cmd/allternit-api",
+      "target": "allternit/services/model-training",
+      "kind": "engine source pin: the Studio engines (Axolotl, LLaMA-Factory, torchtune) are published at Allternit/studio-engines pinned commit e520474 (Apache-2.0), documented in surfaces/docs/api/studio.mdx; the host code does not pin that sha yet, so the pin is a docs claim until engines.rs carries it",
+      "evidence": [
+        "allternit/surfaces/docs/api/studio.mdx",
+        "allternit/cmd/allternit-api/src/studio/engines.rs"
+      ]
+    },
+    {
       "source": "allternit/cmd/gizzi-code/src/runtime/providers",
       "target": "allternit/cmd/allternit-cloud-api/src/routes/model_hosts.rs",
       "kind": "HTTP GET /api/v1/model-hosts/v1/models + POST /v1/chat/completions (provider allternit-devices 'Your devices', bearer = API key or runtime device token; rescanned while gizzi runs)",

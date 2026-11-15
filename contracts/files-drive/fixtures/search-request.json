@@ -1,0 +1,13 @@
+{
+  "type": "SearchRequest",
+  "valid": true,
+  "case": "Search request.",
+  "message": {
+    "query": "apartment lease from last spring",
+    "mode": "semantic",
+    "root_ids": [
+      "rt_home"
+    ],
+    "limit": 20
+  }
+}

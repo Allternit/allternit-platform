@@ -15,7 +15,7 @@ pub mod spec;
 pub use engines::{catalog, EngineInfo, InstallState};
 pub use job::{Job, JobEvent, JobOutput, JobState, TransitionError};
 pub use fit::{check_job, fit, Fit, Selected};
-pub use hardware::{classify, GpuVendor, Hardware, HostHardware};
+pub use hardware::{classify, GpuVendor, Hardware, HostHardware, INTEL_MAC_NO_TORCH};
 pub use spec::{BackendChoice, JobSpec, ValidationError, SPEC_VERSION};
 
 /// Error body for every Studio and engine API: `{ "error": code, "message": text }`.

@@ -1,0 +1,15 @@
+{
+  "type": "SnapshotManifest",
+  "valid": true,
+  "case": "Reserved format, not used in v2: root list sealed with the snapshot subkey.",
+  "message": {
+    "schema": "files-snapshot/1",
+    "computer_id": "cmp_cloud_4gb",
+    "written_at": "2026-11-15T03:12:00Z",
+    "encryption": "files_key_v1",
+    "names_encrypted": true,
+    "ciphertext": "bm90LXJlYWwtY2lwaGVydGV4dC1yb290cw",
+    "nonce": "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3",
+    "key_id": "fk_1"
+  }
+}

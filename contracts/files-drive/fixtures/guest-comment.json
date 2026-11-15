@@ -1,0 +1,16 @@
+{
+  "type": "Comment",
+  "valid": true,
+  "case": "Guest comment role.",
+  "message": {
+    "comment_id": "cm_4",
+    "item_id": "it_doc000002",
+    "author": {
+      "kind": "guest",
+      "id": "gst_7f3k",
+      "display_name": "Dana"
+    },
+    "body": "Page 3 needs a signature.",
+    "created_at": "2026-11-15T14:05:00Z"
+  }
+}

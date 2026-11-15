@@ -1,0 +1,15 @@
+{
+  "type": "ErrorBody",
+  "valid": true,
+  "case": "Asleep and the owner set never.",
+  "message": {
+    "error": "wake_denied",
+    "code": "wake_denied",
+    "message": "Waking from Files is turned off for this computer.",
+    "computer_state": "asleep",
+    "wake": {
+      "setting": "never",
+      "consent_path": "/api/v1/computer-files/cmp_cloud_4gb/wake-consent"
+    }
+  }
+}

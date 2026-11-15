@@ -1,0 +1,16 @@
+{
+  "type": "QueuedDrop",
+  "valid": true,
+  "case": "Guest upload-only while the computer sleeps: queued in the owner's R2.",
+  "message": {
+    "drop_id": "drp_31",
+    "share_id": "sh_upload_only",
+    "guest_id": "gst_7f3k",
+    "name": "W-9.pdf",
+    "size": 88211,
+    "content_hash": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+    "r2_key": "files-drops/cmp_mac_studio/drp_31",
+    "received_at": "2026-11-15T14:05:00Z",
+    "state": "queued"
+  }
+}

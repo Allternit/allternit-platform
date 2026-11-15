@@ -25,6 +25,7 @@ import log from 'electron-log';
 import { runtimeResource } from './runtime-home.js';
 import { PORTS, URLS, factoryEngineUrl, webhookReceiverUrl } from './config.js';
 import { resolveApiDataDir } from './desktop-data-dir.js';
+import { allternitDriverPython } from './computer-use-driver-manager.js';
 import { spawnSidecar } from './process-lifeline.js';
 import { systemOne } from './system-one-manager.js';
 import { subsGatewayManager } from './subs-gateway-manager.js';
@@ -230,6 +231,36 @@ function resolveTuneSourceDir(): string {
       (dir) => fs.existsSync(path.join(dir, 'allternit_tune')) && fs.existsSync(path.join(dir, 'requirements.txt')),
     ) ?? ''
   );
+}
+
+/**
+ * The CPython 3.12 the app ships for the Allternit Driver
+ * (prepare-allternit-driver.cjs stages it per OS), reused so Studio can build its
+ * engine venv on a machine with no Python. An explicit ALLTERNIT_STUDIO_PYTHON
+ * wins; every candidate must exist, otherwise '' and the host falls back to the
+ * first Python 3.10+ on PATH.
+ */
+export function resolveStudioPython(opts: {
+  env?: NodeJS.ProcessEnv;
+  platform?: NodeJS.Platform;
+  arch?: string;
+  resourcesPath?: string;
+  packaged?: boolean;
+  repoRoot?: string;
+  exists?: (file: string) => boolean;
+} = {}): string {
+  const env = opts.env ?? process.env;
+  const platform = opts.platform ?? process.platform;
+  const exists = opts.exists ?? fs.existsSync;
+  const candidates: string[] = [];
+  if (env.ALLTERNIT_STUDIO_PYTHON) candidates.push(env.ALLTERNIT_STUDIO_PYTHON);
+  const resourcesPath = opts.resourcesPath ?? process.resourcesPath;
+  if (resourcesPath) candidates.push(allternitDriverPython(path.join(resourcesPath, 'computer-use', 'driver'), platform));
+  if (!(opts.packaged ?? app.isPackaged) && opts.repoRoot) {
+    const staged = path.join(opts.repoRoot, 'surfaces', 'allternit-desktop', 'resources', 'computer-use', 'driver-python', `${platform}-${opts.arch ?? process.arch}`);
+    candidates.push(platform === 'win32' ? path.join(staged, 'python.exe') : path.join(staged, 'bin', 'python3'));
+  }
+  return candidates.find((file) => exists(file)) ?? '';
 }
 
 // Port ownership: the packaged app owns the production gateway port (8013)
@@ -439,6 +470,7 @@ export class BackendManager {
       ALLTERNIT_MEETING_BOT_DIR: resolveMeetingBotDir(),
       // Studio: the Allternit Tune engine source the host installs and runs.
       ALLTERNIT_TUNE_SOURCE: resolveTuneSourceDir(),
+      ALLTERNIT_STUDIO_PYTHON: resolveStudioPython({ repoRoot: path.resolve(__dirname, '..', '..', '..', '..') }),
       ...meetingNodeEnv(),
       ...(config.extraEnv ?? {}),
     };

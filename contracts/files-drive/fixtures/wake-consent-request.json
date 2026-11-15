@@ -1,0 +1,10 @@
+{
+  "type": "WakeConsentRequest",
+  "valid": true,
+  "case": "User tapped Wake to open a file.",
+  "message": {
+    "reason": "open_file",
+    "item_id": "it_doc000001",
+    "device_id": "dev_iphone16"
+  }
+}

@@ -3,7 +3,7 @@
 The contract for Freeweights Studio training jobs. Apache-2.0. It holds:
 
 - `src/spec.rs`: job spec v1 types and `JobSpec::validate`. Refusals carry stable codes: `rented_not_available`, `publish_not_available`, `unknown_engine`, `unknown_method`, `unsupported_spec_version`, `invalid_base`, `invalid_dataset`, `invalid_spec`. `base` and `dataset` each take exactly one of `repo` or `path`; `resources.backend` is `auto` (default), `torch` or `mlx`.
-- `src/hardware.rs`: the hardware ids `apple-silicon`, `cuda-linux`, `cuda-windows`, `rocm-linux`, `xpu-linux`, `xpu-windows`, `cpu`, and `classify(os, arch, gpus)`, which maps what the host found to one id. AMD GPUs on Windows and Intel Macs map to `cpu` with a reason. The host does the probing.
+- `src/hardware.rs`: the hardware ids `apple-silicon`, `cuda-linux`, `cuda-windows`, `rocm-linux`, `xpu-linux`, `xpu-windows`, `cpu`, and `classify(os, arch, gpus)`, which maps what the host found to one id. AMD GPUs on Windows and Intel Macs map to `cpu` with a reason. On an Intel Mac `HostHardware.torch_unavailable` is also set (the last Intel-Mac PyTorch is 2.2.2; the engines need 2.6+), and every torch-based engine's `fit` is `ok: false` with "Training needs PyTorch 2.6 or newer, which has no build for Intel Macs." The host does the probing.
 - `src/fit.rs`: `fit(engine, host)` builds the `fit` object on an engine card (`ok`, `hardware`, `backend`, `reason`, `warning`, `methods_unavailable`, `outputs_unavailable`). `check_job(spec, host)` refuses a job with `hardware_not_supported` (the engine does not run here), `method_not_supported`, `backend_not_supported` or `output_not_supported`, each with the reason from `fit`. On a Mac, `auto` trains LoRA and QLoRA with MLX and full/DPO with PyTorch (MPS). MLX output is Apple Silicon only. On `cpu` only LoRA runs, and `fit.warning` says it is slow.
 - `src/job.rs`: `JobState` (queued, preparing, running, exporting, succeeded, failed, cancelled, forward-only), `Job`, `JobEvent`, `JobOutput`.
 - `engines.json` + `src/engines.rs`: the engine catalog (`EngineInfo`): the hardware each engine runs on and the pinned upstream version. allternit-tune runs on every id (PyTorch everywhere, MLX on a Mac). `notes` is shown on the card (torchtune is unmaintained upstream; Unsloth has no DPO).
@@ -22,7 +22,7 @@ Output paths (`JobOutput.path`) are always absolute paths on the computer that r
   - `backend`: `{method: backend}` for each method that runs, with `resources.backend` set to `auto`.
   - `outputs`: `{"mlx": "ok" | reason}`. A reason means `output_not_supported`.
   - `warning`: `null`, or the text shown before start.
-- `classify`: `{os, arch, gpus, hardware, cpu_reason}` cases for `classify`. `cpu_reason: true` means the computer falls back to `cpu` and the host must say why.
+- `classify`: `{os, arch, gpus, hardware, cpu_reason}` cases for `classify`. `cpu_reason: true` means the computer falls back to `cpu` and the host must say why. `torch_unavailable` (only on the Intel Mac case) is the exact `fit.reason` every torch-based engine gets there, with `ok: false`.
 
 Change engines.json or `src/fit.rs` and the table together. Reasons are the exact words people see.
 

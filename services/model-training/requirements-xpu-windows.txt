@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: Apache-2.0
+# allternit-tune on an Intel GPU on Windows (XPU wheels, win_amd64). The host installs this file into the engine's venv
+# for ALLTERNIT_STUDIO_HARDWARE=xpu-windows; see README "Requirements per hardware".
+# License of each package in the comment.
+--extra-index-url https://download.pytorch.org/whl/xpu
+torch==2.15.0+xpu             # BSD-3-Clause
+transformers>=5.7,<6           # Apache-2.0 (mlx-lm 0.32.2 needs 5.7+; torch 2.6+ needed by transformers 5)
+peft>=0.17,<1                 # Apache-2.0
+trl>=0.24,<2                  # Apache-2.0
+accelerate>=1.0,<2            # Apache-2.0
+datasets>=3.0,<6              # Apache-2.0
+safetensors>=0.4,<1           # Apache-2.0
+huggingface_hub>=0.30,<3      # Apache-2.0
+bitsandbytes>=0.50.2,<1       # MIT; used only by QLoRA (Intel XPU 4-bit since 0.50)

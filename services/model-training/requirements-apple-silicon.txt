@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: Apache-2.0
+# allternit-tune on a Mac with Apple Silicon: MLX (LoRA, QLoRA) + PyTorch MPS (full, DPO). The host installs this file into the engine's venv
+# for ALLTERNIT_STUDIO_HARDWARE=apple-silicon; see README "Requirements per hardware".
+# License of each package in the comment.
+# torch macOS arm64 wheels are on PyPI (no extra index).
+torch==2.15.0                 # BSD-3-Clause
+mlx==0.32.2                   # MIT
+mlx-lm==0.32.2                # MIT
+transformers>=5.7,<6           # Apache-2.0 (mlx-lm 0.32.2 needs 5.7+; torch 2.6+ needed by transformers 5)
+peft>=0.17,<1                 # Apache-2.0
+trl>=0.24,<2                  # Apache-2.0
+accelerate>=1.0,<2            # Apache-2.0
+datasets>=3.0,<6              # Apache-2.0
+safetensors>=0.4,<1           # Apache-2.0
+huggingface_hub>=0.30,<3      # Apache-2.0
+bitsandbytes>=0.50.2,<1       # MIT; QLoRA with resources.backend torch (MPS 4-bit since 0.50)

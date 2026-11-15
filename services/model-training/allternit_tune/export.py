@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Allternit LLC
-"""Outputs: LoRA adapter, merged model (safetensors), GGUF through llama.cpp.
+"""Outputs: LoRA adapter, merged model (safetensors), GGUF through llama.cpp,
+MLX through mlx-lm (imported only when MLX output is written).
 
 GGUF uses llama.cpp's own convert_hf_to_gguf.py (and llama-quantize for
 k-quants) when they are on this computer. When they are not, the job emits a
@@ -136,3 +137,17 @@ def export_gguf(model_dir: Path, quants: List[str], out: Path, emit: "Emitter") 
     if f16 is not None and "f16" not in quants and f16.exists():
         f16.unlink()
     return written
+
+
+def export_mlx(model_dir: Path, out: Path, emit: "Emitter") -> Path:
+    """Convert a merged Hugging Face model folder to MLX with mlx-lm (Apple
+    Silicon only; the spec check refuses outputs.mlx elsewhere). Weights keep
+    the model's dtype; no quantization."""
+    from mlx_lm.convert import convert
+
+    if out.exists():
+        shutil.rmtree(out)
+    emit.log(f"converting {model_dir} to MLX")
+    convert(str(model_dir), mlx_path=str(out))
+    emit.output("mlx", out, f"MLX model written to {out}")
+    return out

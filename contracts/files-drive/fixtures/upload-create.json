@@ -1,0 +1,40 @@
+{
+  "type": "UploadCreateRequest",
+  "valid": true,
+  "case": "Chunked upload: open a session with the chunk list.",
+  "message": {
+    "root_id": "rt_home",
+    "parent_id": "it_home0000",
+    "name": "Walkthrough.mov",
+    "size": 4252872,
+    "content_hash": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+    "chunker": {
+      "algo": "fastcdc-2020",
+      "hash": "blake3",
+      "min_bytes": 262144,
+      "avg_bytes": 1048576,
+      "max_bytes": 4194304
+    },
+    "chunks": [
+      {
+        "hash": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "offset": 0,
+        "size": 1310720
+      },
+      {
+        "hash": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+        "offset": 1310720,
+        "size": 2097152
+      },
+      {
+        "hash": "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3",
+        "offset": 3407872,
+        "size": 845000
+      }
+    ],
+    "total_chunks": 3,
+    "on_conflict": "keep_both",
+    "modified_at": "2026-11-15T14:05:00Z",
+    "device_name": "iPhone"
+  }
+}

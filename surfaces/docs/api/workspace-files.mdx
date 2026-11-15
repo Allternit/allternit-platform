@@ -5,7 +5,7 @@ description: 'Read, write, list, and manage files on the local workspace filesys
 
 ## Overview
 
-The Workspace Files API exposes filesystem operations for the packaged Allternit Platform app. It resolves paths against the user's home directory (supporting the `~` shorthand) and sandboxes requests through a caller identity derived from the auth header. This API is the HTTP fallback used when the desktop preload does not expose direct filesystem access.
+The Workspace Files API exposes filesystem operations on the computer that runs the Allternit runtime. It resolves paths against the home folder (supporting the `~` shorthand), then checks every path against a scope before it reads or writes anything. What a request may reach depends on where it came from: the Desktop app on the same computer, or another device through the relay. See [Path scoping](#path-scoping).
 
 ## Base URL
 
@@ -21,7 +21,7 @@ http://127.0.0.1:8013/api
 
 ## Authentication
 
-Requests are authorized through the platform auth middleware. The route also accepts a desktop-bootstrap header as a lenient fallback so Electron desktop sessions can operate without requiring the middleware to populate an `AuthUser` extension.
+Requests are authorized through the platform auth middleware. The route also accepts a desktop-bootstrap header as a lenient fallback so Electron desktop sessions can operate without requiring the middleware to populate an `AuthUser` extension. Authentication says who is asking; [path scoping](#path-scoping) decides which paths that request can reach.
 
 ## Endpoints
 
@@ -35,19 +35,95 @@ Requests are authorized through the platform auth middleware. The route also acc
 | `POST` | `/files/mkdir` | Create a directory. |
 | `DELETE` | `/files/delete` | Delete a file or directory. |
 | `POST` | `/files/write` | Write a text file. |
+| `POST` | `/files/bot-writes` | Record a file an agent wrote (local callers only). |
 
 ## Path resolution
 
-All paths are resolved relative to the caller's home directory:
+Paths are resolved against the home folder of the computer running the runtime:
 
-- `~/projects/app` resolves to `<home>/projects/app`.
-- `/absolute/path` is used as-is.
-- `relative/path` resolves to `<home>/relative/path`.
+- `~/Allternit/Inbox` resolves to the `Allternit/Inbox` folder in the home folder.
+- `/absolute/path` is used as written, then checked against the scope.
+- `relative/path` resolves to `relative/path` inside the home folder.
+
+The runtime then makes the path canonical before any check:
+
+- A path with a `..` part is refused, wherever the `..` appears.
+- Symbolic links are followed to where they really point. For a file that does not exist yet (a write or `mkdir` target), the deepest folder that does exist is resolved and the rest of the path is added to it. A link that points at nothing is refused.
+- `/files/delete` resolves the folder that holds the target but not the target itself, so deleting a link removes the link, never what it points at.
+- Folders match whole path parts only: a rule for `~/Allternit` does not cover `~/AllternitX`.
+- Responses carry the canonical path, so `path` fields may differ from what you sent (for example, the real letter case of a folder on a case-insensitive disk).
+
+## Path scoping
+
+Every request is either **local** or **relayed**.
+
+- **Local**: the Desktop app on the same computer, reaching the runtime over loopback with no relay or proxy header.
+- **Relayed**: any request replayed by the cloud relay (it carries `x-allternit-relayed`), any request with a forwarding header (`x-forwarded-for`, `forwarded`, `x-real-ip` and similar), and any request from a non-loopback address. Requests from ai.allternit.com, the m.allternit.com PWA, and the iOS and Android apps to a computer are relayed.
+
+Both kinds of request are refused for anything outside the home folder, for changes to the home folder itself, and for the secret locations listed below.
+
+### Relayed requests
+
+The relay carries the signed-in owner, so a relayed request keeps the features the web app, the PWA and the iOS app use, and nothing more:
+
+| Path | Access |
+|------|--------|
+| The home folder | List one level deep only (secret entries are hidden). Recursive listing is refused. |
+| `~/Allternit` | Read (list) |
+| Everything inside `~/Allternit`, including `Inbox`, `Shared`, `Agent Output`, `Downloads`, `Meetings` and `Scans` | Read, write and delete |
+| `~/agents` (agent workspaces) | Read (list) |
+| Everything inside `~/agents`, such as `~/agents/AGENT_ID/.allternit/manifest.json` and `HEARTBEAT.md` | Read, write and delete |
+| Skill folders `~/.allternit/skills`, `~/.agents/skills`, `~/.codex/skills` | Read (list); read, write and delete inside |
+| Command folders `~/.allternit/commands`, `~/.agents/commands`, `~/.codex/commands`, `~/.config/gizzi-code/command`, `~/.config/gizzi-code/commands`, `~/.claude/commands` | Read (list); read, write and delete inside |
+| Webhook, connector and CLI tool folders: `webhooks`, `connectors` and `cli-tools` under `~/.allternit`, `~/.agents` and `~/.codex` | Read (list); read, write and delete inside |
+| Plugin folders `~/.allternit/plugins`, `~/.agents/plugins`, `~/.codex/plugins` | Read everything. Write only a plugin's manifest (`config.json`, `plugin.json` or `.claude-plugin/plugin.json` in the plugin's own folder). Delete a whole plugin folder. Any other write is refused, because plugins carry code. |
+| `~/.allternit/mcps`, `~/.agents/mcps`, `~/.codex/mcps` | List, read the files directly inside, write or delete the `.json` files directly inside |
+| `~/.config/gizzi-code/gizzi.json`, `~/.config/gizzi/gizzi.json`, `~/.config/allternit-shell/allternit.json`, `~/.config/gizzi/allternit.json`, `~/.config/gizzi-code/allternit.json`, `~/.claude/settings.json`, `~/.codex/config.toml`, `~/.gemini/mcp.json` | Read only (these exact files) |
+
+| `FOLDER/.allternit/shared-context.md`, anywhere in the home folder (a code project's shared notes) | Read and write this exact file. Nothing else in that `.allternit` folder or in the project opens. |
+| A file an agent wrote on this computer (see [Agent-written files](#agent-written-files)) | Read only |
+
+Anything else answers `403`, for example other files in a code project folder such as `~/Desktop/my-app/package.json`.
+
+### Agent-written files
+
+When an agent's tool (`write`, `edit`, `apply_patch`, `notebook`, `workspace-edit` in Gizzi Code) writes a file, Gizzi Code reports the path to the runtime on the same computer with `POST /files/bot-writes` and a JSON body of `{"path": "...", "session_id": "..."}`. The runtime keeps the canonical path in a ledger in its data folder (at most 5,000 paths, each kept 30 days). A relayed request may then read that exact file, so a bot thread's file cards open on the web and phone. It can never write or delete it.
+
+- Only a local request can add a path. A relayed request to `/files/bot-writes` answers `403` with reason `local_only`.
+- Secret locations are never recorded and stay refused.
+- The record is the path, so a file changed after the agent wrote it is still readable. A path no agent wrote is not.
+- Gizzi Code sends reports only when its API base is this computer (`127.0.0.1`, `localhost` or `::1`). A missing report keeps the file closed to other devices. The runtime does not create the `~/Allternit` folders; a write inside them creates the parent folders it needs.
+
+### Local requests
+
+A local request can reach the whole home folder except the secret locations below. Paths outside the home folder (such as `/etc` or `/tmp`) are refused. The Desktop app still reads and writes skills, plugins, commands and MCP folders such as `~/.claude/skills`.
+
+### Secret locations
+
+These are refused for every caller, matched without regard to letter case (so `~/.SSH` is refused too):
+
+- SSH, GPG and password stores: `~/.ssh`, `~/.gnupg`, `~/.password-store`
+- macOS Keychains: `~/Library/Keychains`
+- Cloud and developer credentials: `~/.aws`, `~/.azure`, `~/.kube`, `~/.config/gcloud`, `~/.config/gh`, `~/.config/stripe`, `~/.docker/config.json`, `~/.netrc`, `~/.npmrc`, `~/.pypirc`, `~/.git-credentials`
+- Agent CLI sign-ins: `~/.claude/.credentials.json`, `~/.codex/auth.json`, `~/.gizzi/credentials.json`, `~/.local/share/gizzi-code/auth.json`, `~/.local/share/gizzi-code/fabric-lease.key`, `~/.local/share/tailscale`
+- Allternit keys and private state: `~/.allternit/phone-gateway.json`, `~/.allternit/subscriptions`, `~/.allternit/incus-client`, `~/.allternit/factory/fabric`, `~/.allternit/factory/registry.json`, `~/.allternit/session-caretaker`, `~/.allternit/system-one`, and any `~/.allternit` entry whose name contains `.env`
+- The Allternit data folders: the folder named by `ALLTERNIT_DATA_DIR`, the platform data folder's `allternit` and `@allternit` folders (on macOS, `~/Library/Application Support/allternit` and `~/Library/Application Support/@allternit`)
+
+Recursive listings skip entries in secret locations, and for relayed requests they skip entries outside the allowed paths.
+
+### Names and races
+
+- Names are compared in Unicode NFC and without regard to letter case, the way APFS compares them, so an NFD spelling of a protected name is refused too.
+- Reads and writes open the file without following a symbolic link at the end of the path. They then check where the open file really is (on macOS and Linux) and refuse the request if that is outside the scope. A folder swapped for a link between the check and the open is caught this way. A write opens the file before emptying it, so a refused write never cuts a file short. Listing, `exists`, `mkdir` and `delete` check the path but don't re-check after the action. On Windows only the check before the open applies.
+
+### Computer file transfer
+
+The computer routes that move files to and from a cloud computer or VM (`/computers/COMPUTER_ID/files/upload` and `/computers/COMPUTER_ID/files/download`) check the path on that computer by its text: it must be absolute, must not contain `..`, and must not point into any of the secret locations above (for example `/home/user/.ssh/authorized_keys` or `/root/.aws/credentials`), and `/etc/shadow`, `/etc/gshadow` and `/etc/sudoers` are refused. Both routes go through the same confirmation policy as other computer control actions (`computer.file_read` and `computer.file_write`). The same check runs for the bot desktop file routes, because it lives in the shared upload and download code. Transfer uploads (`/computers/COMPUTER_ID/transfer/file`) always land in a folder the runtime chooses, and answer `403` if that folder resolves into a secret location.
 
 ## List files
 
 ```bash
-curl "https://api.allternit.com/api/files/list?path=~/projects/app&recursive=false" \
+curl "https://api.allternit.com/api/files/list?path=~/Allternit/Shared/app&recursive=false" \
   -H "Authorization: Bearer $ALLTERNIT_API_KEY"
 ```
 
@@ -62,18 +138,18 @@ curl "https://api.allternit.com/api/files/list?path=~/projects/app&recursive=fal
 
 ```json
 {
-  "path": "~/projects/app",
+  "path": "/home/you/Allternit/Shared/app",
   "entries": [
     {
       "name": "src",
-      "path": "~/projects/app/src",
+      "path": "/home/you/Allternit/Shared/app/src",
       "type": "directory",
       "size": null,
       "modified_at": "2026-08-13T12:00:00Z"
     },
     {
       "name": "package.json",
-      "path": "~/projects/app/package.json",
+      "path": "/home/you/Allternit/Shared/app/package.json",
       "type": "file",
       "size": 1024,
       "modified_at": "2026-08-13T11:00:00Z"
@@ -87,7 +163,7 @@ Recursive listings are capped at a depth of 8 and a maximum of 1,000 entries. If
 ## Read a text file
 
 ```bash
-curl "https://api.allternit.com/api/files/read?path=~/projects/app/package.json" \
+curl "https://api.allternit.com/api/files/read?path=~/Allternit/Shared/app/package.json" \
   -H "Authorization: Bearer $ALLTERNIT_API_KEY"
 ```
 
@@ -102,7 +178,7 @@ curl "https://api.allternit.com/api/files/read?path=~/projects/app/package.json"
 ## Read a raw file
 
 ```bash
-curl "https://api.allternit.com/api/files/raw?path=~/projects/app/logo.png" \
+curl "https://api.allternit.com/api/files/raw?path=~/Allternit/Shared/app/logo.png" \
   -H "Authorization: Bearer $ALLTERNIT_API_KEY" \
   --output logo.png
 ```
@@ -114,7 +190,7 @@ The response is returned with the detected `Content-Type` header.
 JSON variant (always returns 200):
 
 ```bash
-curl "https://api.allternit.com/api/files/exists?path=~/projects/app/package.json" \
+curl "https://api.allternit.com/api/files/exists?path=~/Allternit/Shared/app/package.json" \
   -H "Authorization: Bearer $ALLTERNIT_API_KEY"
 ```
 
@@ -129,16 +205,16 @@ curl "https://api.allternit.com/api/files/exists?path=~/projects/app/package.jso
 HEAD variant:
 
 ```bash
-curl -I "https://api.allternit.com/api/files/exists?path=~/projects/app/package.json" \
+curl -I "https://api.allternit.com/api/files/exists?path=~/Allternit/Shared/app/package.json" \
   -H "Authorization: Bearer $ALLTERNIT_API_KEY"
 ```
 
-Returns `200 OK` if the path exists, otherwise `404 Not Found`.
+Returns `200 OK` if the path exists, otherwise `404 Not Found`. Both variants answer `403` for a path outside the caller's scope.
 
 ## Create a directory
 
 ```bash
-curl -X POST "https://api.allternit.com/api/files/mkdir?path=~/projects/app/new-folder" \
+curl -X POST "https://api.allternit.com/api/files/mkdir?path=~/Allternit/Shared/app/new-folder" \
   -H "Authorization: Bearer $ALLTERNIT_API_KEY"
 ```
 
@@ -153,7 +229,7 @@ curl -X POST "https://api.allternit.com/api/files/mkdir?path=~/projects/app/new-
 ## Delete a file or directory
 
 ```bash
-curl -X DELETE "https://api.allternit.com/api/files/delete?path=~/projects/app/old-folder" \
+curl -X DELETE "https://api.allternit.com/api/files/delete?path=~/Allternit/Shared/app/old-folder" \
   -H "Authorization: Bearer $ALLTERNIT_API_KEY"
 ```
 
@@ -168,11 +244,11 @@ curl -X DELETE "https://api.allternit.com/api/files/delete?path=~/projects/app/o
 ## Write a file
 
 ```bash
-curl -X POST "https://api.allternit.com/api/files/write?path=~/projects/app/readme.md" \
+curl -X POST "https://api.allternit.com/api/files/write?path=~/Allternit/Shared/app/readme.md" \
   -H "Authorization: Bearer $ALLTERNIT_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "path": "~/projects/app/readme.md",
+    "path": "~/Allternit/Shared/app/readme.md",
     "content": "# Hello Allternit"
   }'
 ```
@@ -184,7 +260,7 @@ The path may be supplied either as a query parameter or in the JSON body. Parent
 ```json
 {
   "ok": true,
-  "path": "~/projects/app/readme.md",
+  "path": "/home/you/Allternit/Shared/app/readme.md",
   "bytesWritten": 17,
   "operation": "write"
 }
@@ -215,6 +291,7 @@ The `/files/raw` endpoint detects the following common types from the file exten
 |-------------|------|---------|
 | 400 | `{"error": "Missing path"}` | Missing `path` on write. |
 | 401 | — | Missing or invalid bearer token. |
+| 403 | `{"error": "path_not_allowed", "reason": "...", "message": "..."}` | The path is outside the caller's scope. `reason` is one of `parent_dir`, `outside_home`, `protected`, `outside_roots`, `read_only`, `home_itself`, `unresolvable`, `invalid_path`, `no_home`, `local_only`. |
 | 404 | `{"error": "Not found"}` | File or directory does not exist. |
 | 500 | `{"error": "Cannot read file" \| "Cannot create directory" \| "Cannot delete" \| "Cannot write file"}` | Filesystem failure. |
 

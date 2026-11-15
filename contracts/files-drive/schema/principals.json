@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://allternit.com/contracts/files-drive/v1/principals.json",
+  "title": "Files drive: principals",
+  "description": "Who is calling and what they may touch.",
+  "$defs": {
+    "RootGrant": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "root_id",
+        "permissions"
+      ],
+      "properties": {
+        "root_id": {
+          "$ref": "common.json#/$defs/RootId"
+        },
+        "permissions": {
+          "$ref": "common.json#/$defs/Permissions"
+        },
+        "item_scope": {
+          "$ref": "common.json#/$defs/ItemId",
+          "description": "Guests and agents: only this folder and below."
+        }
+      }
+    },
+    "WhoAmIResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "principal",
+        "computer_id",
+        "grants",
+        "freshness"
+      ],
+      "properties": {
+        "principal": {
+          "$ref": "common.json#/$defs/PrincipalRef"
+        },
+        "computer_id": {
+          "$ref": "common.json#/$defs/ComputerId"
+        },
+        "grants": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/RootGrant"
+          }
+        },
+        "freshness": {
+          "$ref": "common.json#/$defs/Freshness"
+        }
+      }
+    },
+    "AgentGrant": {
+      "type": "object",
+      "description": "Scope a runtime agent session carries. No grant, no file access beyond its working folder.",
+      "additionalProperties": false,
+      "required": [
+        "agent_id",
+        "task_id",
+        "root_ids",
+        "tools",
+        "approved_by",
+        "expires_at"
+      ],
+      "properties": {
+        "agent_id": {
+          "type": "string"
+        },
+        "task_id": {
+          "type": "string"
+        },
+        "root_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "common.json#/$defs/RootId"
+          }
+        },
+        "item_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "common.json#/$defs/ItemId"
+          }
+        },
+        "tools": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Fixed tool set the owner approved for this task or rule."
+        },
+        "approved_by": {
+          "$ref": "common.json#/$defs/PrincipalRef"
+        },
+        "expires_at": {
+          "$ref": "common.json#/$defs/Timestamp"
+        }
+      }
+    }
+  }
+}

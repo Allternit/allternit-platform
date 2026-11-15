@@ -1,0 +1,215 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://allternit.com/contracts/files-drive/v1/roots.json",
+  "title": "Files drive: roots",
+  "description": "Named locations on a computer, each with a policy.",
+  "$defs": {
+    "RootKind": {
+      "type": "string",
+      "enum": [
+        "allternit_home",
+        "inbox",
+        "shared",
+        "agent_output",
+        "downloads",
+        "meetings",
+        "scans",
+        "memory_drive",
+        "code",
+        "models",
+        "user_added"
+      ]
+    },
+    "VersionPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "keep_count",
+        "keep_days"
+      ],
+      "properties": {
+        "keep_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000
+        },
+        "keep_days": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 3650
+        }
+      }
+    },
+    "RootPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "read",
+        "write",
+        "shareable",
+        "agent_process",
+        "protected",
+        "offline",
+        "replica",
+        "versions",
+        "trash_days"
+      ],
+      "properties": {
+        "read": {
+          "type": "boolean"
+        },
+        "write": {
+          "type": "boolean"
+        },
+        "shareable": {
+          "type": "boolean",
+          "description": "May be shared with guests."
+        },
+        "agent_process": {
+          "type": "boolean",
+          "description": "Agents may take items here as task inputs."
+        },
+        "protected": {
+          "type": "boolean",
+          "description": "Needs fresh device auth (Face ID, Windows Hello) before listing or reading."
+        },
+        "offline": {
+          "type": "boolean",
+          "description": "Items may be kept offline on own devices."
+        },
+        "replica": {
+          "type": "boolean",
+          "description": "May be replicated to an own device."
+        },
+        "versions": {
+          "$ref": "#/$defs/VersionPolicy"
+        },
+        "trash_days": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 365
+        }
+      }
+    },
+    "Root": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "name",
+        "policy",
+        "root_item_id",
+        "cursor",
+        "provider_ready"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "common.json#/$defs/RootId"
+        },
+        "kind": {
+          "$ref": "#/$defs/RootKind"
+        },
+        "name": {
+          "type": "string"
+        },
+        "path_hint": {
+          "type": "string",
+          "description": "Local path for owner display only. Never sent to guests."
+        },
+        "policy": {
+          "$ref": "#/$defs/RootPolicy"
+        },
+        "root_item_id": {
+          "$ref": "common.json#/$defs/ItemId"
+        },
+        "parent_root_id": {
+          "$ref": "common.json#/$defs/RootId",
+          "description": "Set for the special folders inside ~/Allternit."
+        },
+        "cursor": {
+          "$ref": "common.json#/$defs/Cursor"
+        },
+        "usage_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "provider_ready": {
+          "type": "boolean",
+          "description": "False when the folder exists but no provider fills it yet (e.g. Meetings before that lane ships)."
+        }
+      }
+    },
+    "RootsResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "computer_id",
+        "roots",
+        "freshness"
+      ],
+      "properties": {
+        "computer_id": {
+          "$ref": "common.json#/$defs/ComputerId"
+        },
+        "roots": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Root"
+          }
+        },
+        "freshness": {
+          "$ref": "common.json#/$defs/Freshness"
+        }
+      }
+    },
+    "AddRootRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "local_path",
+        "policy"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "local_path": {
+          "type": "string",
+          "description": "Absolute path on the computer. Must not be inside the secrets deny-list."
+        },
+        "policy": {
+          "$ref": "#/$defs/RootPolicy"
+        }
+      }
+    },
+    "UpdateRootRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "policy": {
+          "$ref": "#/$defs/RootPolicy"
+        }
+      }
+    },
+    "RootResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "root"
+      ],
+      "properties": {
+        "root": {
+          "$ref": "#/$defs/Root"
+        }
+      }
+    }
+  }
+}

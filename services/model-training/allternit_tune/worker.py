@@ -29,16 +29,15 @@ def main(argv: list) -> int:
     emit = Emitter()
     try:
         from .backends import select_backend
-        from .hardware import probe
         from .spec import TrainPlan
 
         with open(argv[0], encoding="utf-8") as fh:
             plan = TrainPlan.from_dict(json.load(fh))
         for note in plan.notes:
             emit.log(note)
-        device = probe()["device"]
-        backend = select_backend(device)
-        emit.log(f"backend {backend.id}")
+        # The backend was picked when the spec was checked (hardware.backend_for).
+        backend = select_backend(plan.backend)
+        emit.log(f"backend {plan.backend} on {plan.hardware}")
         backend.run(plan, emit)
         return 0
     except Exception as exc:  # noqa: BLE001 - every failure becomes an error event

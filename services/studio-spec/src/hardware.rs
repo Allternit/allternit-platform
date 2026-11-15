@@ -93,11 +93,20 @@ pub struct HostHardware {
     pub hardware: Hardware,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    /// Set when PyTorch cannot run on this computer at all (Intel Macs: the
+    /// last torch build there is 2.2.2, and the engines need 2.6+). Every
+    /// torch-based engine's `fit` is then `ok: false` with this reason.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub torch_unavailable: Option<String>,
 }
+
+/// Why no torch engine runs on an Intel Mac.
+pub const INTEL_MAC_NO_TORCH: &str =
+    "Training needs PyTorch 2.6 or newer, which has no build for Intel Macs.";
 
 impl HostHardware {
     pub fn plain(hardware: Hardware) -> HostHardware {
-        HostHardware { hardware, reason: None }
+        HostHardware { hardware, reason: None, torch_unavailable: None }
     }
 }
 
@@ -107,10 +116,17 @@ impl HostHardware {
 /// AMD, AMD over Intel (an Intel iGPU often sits next to a discrete GPU).
 pub fn classify(os: &str, arch: &str, gpus: &[GpuVendor]) -> HostHardware {
     let has = |v: GpuVendor| gpus.contains(&v);
-    let cpu = |why: &str| HostHardware { hardware: Hardware::Cpu, reason: Some(why.to_string()) };
+    let cpu = |why: &str| HostHardware {
+        hardware: Hardware::Cpu,
+        reason: Some(why.to_string()),
+        torch_unavailable: None,
+    };
     match os {
         "macos" if arch == "aarch64" => HostHardware::plain(Hardware::AppleSilicon),
-        "macos" => cpu("Intel Macs have no GPU that PyTorch or MLX can train on, so training uses the CPU."),
+        "macos" => HostHardware {
+            torch_unavailable: Some(INTEL_MAC_NO_TORCH.to_string()),
+            ..cpu("Intel Macs have no GPU that PyTorch or MLX can train on, so training uses the CPU.")
+        },
         "linux" if has(GpuVendor::Nvidia) => HostHardware::plain(Hardware::CudaLinux),
         "linux" if has(GpuVendor::Amd) => HostHardware::plain(Hardware::RocmLinux),
         "linux" if has(GpuVendor::Intel) => HostHardware::plain(Hardware::XpuLinux),

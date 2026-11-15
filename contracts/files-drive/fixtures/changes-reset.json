@@ -1,0 +1,16 @@
+{
+  "type": "ChangesResponse",
+  "valid": true,
+  "case": "Cursor too old: client must re-list.",
+  "message": {
+    "root_id": "rt_home",
+    "changes": [],
+    "cursor": "c1.rt_home.000900",
+    "has_more": false,
+    "reset_required": true,
+    "freshness": {
+      "served_by": "live",
+      "computer_state": "awake"
+    }
+  }
+}

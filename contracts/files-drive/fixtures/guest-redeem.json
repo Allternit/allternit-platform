@@ -1,0 +1,10 @@
+{
+  "type": "GuestRedeemRequest",
+  "valid": true,
+  "case": "Guest opens the link with the passcode.",
+  "message": {
+    "link_token": "view_downloadx9",
+    "passcode": "4417",
+    "guest_name": "Dana"
+  }
+}

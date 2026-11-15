@@ -1,0 +1,20 @@
+{
+  "type": "FilesChanged",
+  "valid": true,
+  "case": "Change event for agents.",
+  "message": {
+    "type": "files.changed",
+    "event_id": "ev_3",
+    "at": "2026-11-15T14:05:00Z",
+    "computer_id": "cmp_mac_studio",
+    "root_id": "rt_home",
+    "item_id": "it_doc000001",
+    "op": "modified",
+    "rev": "7-a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+    "by": {
+      "kind": "owner",
+      "id": "user_2abc",
+      "display_name": "Eoj"
+    }
+  }
+}

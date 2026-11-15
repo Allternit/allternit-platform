@@ -289,6 +289,7 @@ dependencies = [
  "tracing",
  "tracing-opentelemetry",
  "tracing-subscriber",
+ "unicode-normalization",
  "url",
  "urlencoding",
  "usvg",
@@ -1089,6 +1090,14 @@ dependencies = [
  "widestring",
  "windows-sys 0.61.2",
  "wmi",
+]
+
+[[package]]
+name = "allternit-files-core"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

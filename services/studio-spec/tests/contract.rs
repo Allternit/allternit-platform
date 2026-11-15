@@ -260,6 +260,18 @@ fn classify_matches_the_fit_table() {
         let got = classify(case["os"].as_str().unwrap(), case["arch"].as_str().unwrap(), &gpus);
         assert_eq!(got.hardware.id(), case["hardware"], "{case}");
         assert_eq!(got.reason.is_some(), case["cpu_reason"].as_bool().unwrap(), "{case}");
+        // Intel Macs: no PyTorch 2.6+, so every torch-based engine is refused
+        // with exactly this reason (the Python tests read the same case).
+        let want = case["torch_unavailable"].as_str();
+        assert_eq!(got.torch_unavailable.as_deref(), want, "{case}");
+        if let Some(want) = want {
+            for engine in allternit_studio_spec::catalog() {
+                let card = allternit_studio_spec::fit(&engine, &got);
+                assert!(!card.ok, "{} on {case}", engine.id);
+                assert_eq!(card.reason, want, "{}", engine.id);
+                assert!(allternit_studio_spec::check_job(&spec_with(|_| {}), &got).is_err());
+            }
+        }
     }
 }
 

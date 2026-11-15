@@ -5,7 +5,8 @@
 The shape and refusal codes mirror services/studio-spec/src/spec.rs. On top of
 those, this engine refuses what it cannot do: a base model that is not a local
 folder (the host fetches and verifies weights; this engine never downloads
-them), unknown params, MLX output, and methods this computer cannot run.
+them) and unknown params. What this computer cannot run (method, backend, MLX
+output) is refused with the contract's codes and reasons from hardware.py.
 
 Pure Python: importing this module does not import torch.
 """
@@ -19,6 +20,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from . import ENGINE_ID
+from . import hardware as hw
+from .hardware import Host
 
 SPEC_VERSION = 1
 METHODS = ("lora", "qlora", "full", "dpo")
@@ -104,6 +107,13 @@ class TrainPlan:
     max_hours: Optional[float]
     notes: List[str] = field(default_factory=list)
     job_dir: str = ""
+    #: absolute folder outputs are written to (ALLTERNIT_STUDIO_OUTPUT_DIR, else job_dir)
+    output_dir: str = ""
+    #: hardware id from the host (ALLTERNIT_STUDIO_HARDWARE)
+    hardware: str = ""
+    #: mlx, torch-mps, torch-cuda, torch-rocm, torch-xpu or torch-cpu
+    backend: str = ""
+    want_mlx: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -220,15 +230,15 @@ def _params(raw: Any) -> Dict[str, Any]:
     return out
 
 
-def _outputs(raw: Any, method: str) -> Dict[str, Any]:
+def _outputs(raw: Any, method: str, host: Host) -> Dict[str, Any]:
     raw = raw or {}
     if not isinstance(raw, dict):
         raise SpecError("invalid_spec", "outputs must be an object")
-    if raw.get("mlx"):
-        raise SpecError(
-            "invalid_spec",
-            "outputs.mlx is not available: the MLX backend of allternit-tune is waiting on a product decision",
-        )
+    want_mlx = bool(raw.get("mlx"))
+    if want_mlx:
+        reason = hw.output_refusal(host.hardware, "mlx") or host.output_gap("mlx")
+        if reason:
+            raise SpecError("output_not_supported", reason)
     gguf = raw.get("gguf") or []
     if not isinstance(gguf, list) or not all(isinstance(q, str) for q in gguf):
         raise SpecError("invalid_spec", "outputs.gguf must be a list of quant names")
@@ -238,16 +248,18 @@ def _outputs(raw: Any, method: str) -> Dict[str, Any]:
         raise SpecError("invalid_spec", f"unknown GGUF quant: {', '.join(bad)}")
     if method == "full":
         # A full fine-tune has no adapter; the trained model is the merged output.
-        return {"adapter": False, "merged": True, "gguf": gguf}
+        return {"adapter": False, "merged": True, "gguf": gguf, "mlx": want_mlx}
     # The adapter is the training result for LoRA methods, so it is always kept.
-    return {"adapter": True, "merged": bool(raw.get("merged")), "gguf": gguf}
+    return {"adapter": True, "merged": bool(raw.get("merged")), "gguf": gguf, "mlx": want_mlx}
 
 
-def build_plan(spec: Any, unavailable_methods: Optional[Dict[str, str]] = None) -> TrainPlan:
-    """Check a job spec v1 and map it to a TrainPlan.
+def build_plan(spec: Any, host: Host) -> TrainPlan:
+    """Check a job spec v1 against `host` and map it to a TrainPlan.
 
-    `unavailable_methods` maps a method to the reason this computer cannot run
-    it (from the hardware probe). Raises SpecError on the first refusal.
+    Refusals for this computer use the contract's codes: method_not_supported,
+    backend_not_supported, output_not_supported, each with the reason from
+    the fit (hardware.py) or from what the engine's environment is missing.
+    Raises SpecError on the first refusal.
     """
     if not isinstance(spec, dict):
         raise SpecError("invalid_spec", "job spec must be a JSON object")
@@ -274,13 +286,23 @@ def build_plan(spec: Any, unavailable_methods: Optional[Dict[str, str]] = None) 
         raise SpecError("rented_not_available", "rented GPUs are not available yet")
     if spec.get("publish") is not None:
         raise SpecError("publish_not_available", "publishing from a job is not available yet")
-    if unavailable_methods and method in unavailable_methods:
-        raise SpecError("unknown_method", f"{method} cannot run on this computer: {unavailable_methods[method]}")
+    reason = hw.method_refusal(host.hardware, method)
+    if reason:
+        raise SpecError("method_not_supported", reason)
+    choice = resources.get("backend", "auto")
+    if choice not in hw.BACKEND_CHOICES:
+        raise SpecError("invalid_spec", "resources.backend must be auto, torch or mlx")
+    backend, reason = hw.backend_for(host.hardware, method, choice)
+    if backend is None:
+        raise SpecError("backend_not_supported", reason or "")
+    gap = host.env_gap(backend, method)
+    if gap:
+        raise SpecError(*gap)
 
     params = _params(spec.get("params"))
     dataset = _check_dataset(spec["dataset"], method)
     base = resolve_base(spec["base"])
-    outputs = _outputs(spec.get("outputs"), method)
+    outputs = _outputs(spec.get("outputs"), method, host)
 
     max_hours = resources.get("max_hours")
     if max_hours is not None and (not isinstance(max_hours, (int, float)) or max_hours <= 0):
@@ -317,6 +339,9 @@ def build_plan(spec: Any, unavailable_methods: Optional[Dict[str, str]] = None) 
         raise SpecError("invalid_spec", "params.beta is only for method dpo")
 
     notes: List[str] = []
+    warning = hw.fit(host.hardware)["warning"]
+    if warning:
+        notes.append(warning)
     ev = spec.get("eval") or {}
     if isinstance(ev, dict) and ev.get("sets"):
         notes.append("eval sets are not run by allternit-tune 0.1; the job trains and exports only")
@@ -338,4 +363,7 @@ def build_plan(spec: Any, unavailable_methods: Optional[Dict[str, str]] = None) 
         gguf=outputs["gguf"],
         max_hours=float(max_hours) if max_hours is not None else None,
         notes=notes,
+        hardware=host.hardware,
+        backend=backend,
+        want_mlx=outputs["mlx"],
     )

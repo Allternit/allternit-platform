@@ -1,0 +1,17 @@
+{
+  "type": "GuestSessionResponse",
+  "valid": true,
+  "case": "Guest session on an asleep computer: can browse the snapshot, cannot wake.",
+  "message": {
+    "capability_token": "fgt1.eyJ2IjoxfQ.c2ln",
+    "expires_at": "2026-11-15T15:05:00Z",
+    "guest_id": "gst_7f3k",
+    "share": {
+      "role": "view_download",
+      "folder_name": "Closing docs",
+      "owner_display_name": "Eoj",
+      "can_wake": false,
+      "computer_state": "asleep"
+    }
+  }
+}

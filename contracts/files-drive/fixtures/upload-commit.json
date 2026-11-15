@@ -1,0 +1,38 @@
+{
+  "type": "UploadCommitResponse",
+  "valid": true,
+  "case": "Commit creates the item.",
+  "message": {
+    "item": {
+      "id": "it_vid000001",
+      "root_id": "rt_home",
+      "parent_id": "it_home0000",
+      "name": "Walkthrough.mov",
+      "kind": "file",
+      "size": 4252872,
+      "rev": "1-d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+      "meta_version": 1,
+      "content_hash": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+      "mime": "video/quicktime",
+      "created_at": "2026-11-15T14:00:00Z",
+      "modified_at": "2026-11-15T14:05:00Z",
+      "modified_by": {
+        "kind": "own_device",
+        "id": "dev_iphone16",
+        "display_name": "iPhone"
+      },
+      "permissions": {
+        "list": true,
+        "read": true,
+        "write": true,
+        "delete": true,
+        "share": true,
+        "comment": true,
+        "agent_process": false,
+        "transfer": true,
+        "execute": false
+      }
+    },
+    "cursor": "c1.rt_home.000415"
+  }
+}

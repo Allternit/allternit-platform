@@ -1,0 +1,37 @@
+{
+  "type": "StorageDiscovery",
+  "valid": true,
+  "case": "Disks from heartbeats.",
+  "message": {
+    "computer_id": "cmp_mac_studio",
+    "reported_at": "2026-11-15T14:05:00Z",
+    "volumes": [
+      {
+        "volume_id": "vol_int",
+        "label": "Macintosh HD",
+        "kind": "internal",
+        "total_bytes": 994662584320,
+        "free_bytes": 117037858816,
+        "removable": false,
+        "encrypted": true
+      },
+      {
+        "volume_id": "vol_sg",
+        "label": "Seagate",
+        "kind": "external",
+        "total_bytes": 4000787030016,
+        "free_bytes": 2100000000000,
+        "removable": true
+      }
+    ],
+    "root_usage": {
+      "rt_home": 9120044,
+      "rt_models": 61200000000
+    },
+    "replica_host": {
+      "enabled": true,
+      "capacity_bytes": 200000000000,
+      "used_bytes": 9120044
+    }
+  }
+}

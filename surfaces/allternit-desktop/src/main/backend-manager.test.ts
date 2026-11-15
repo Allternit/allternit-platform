@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { BackendManager, loadIncusHostEnv, nodeCandidates, resolveMeetingNode } from './backend-manager.js';
+import { BackendManager, loadIncusHostEnv, nodeCandidates, resolveStudioPython, resolveMeetingNode } from './backend-manager.js';
 
 function connectionRefused(): Error {
   const err = new Error('fetch failed');
@@ -224,5 +224,22 @@ describe('resolveMeetingNode', () => {
   it('finds node.exe in Program Files on Windows', () => {
     const list = nodeCandidates('win32', { Path: 'C:\\tools', ProgramFiles: 'C:\\Program Files' }, 'C:\\Users\\u', () => []);
     expect(list).toEqual(['C:\\tools\\node.exe', 'C:\\Program Files\\nodejs\\node.exe']);
+  });
+});
+
+describe('resolveStudioPython', () => {
+  const base = { packaged: true, resourcesPath: '/r', env: {} };
+  it('uses the bundled CPython per OS only when it exists', () => {
+    const mac = path.join('/r', 'computer-use', 'driver', 'python', 'bin', 'python3');
+    const win = path.join('/r', 'computer-use', 'driver', 'python', 'python.exe');
+    expect(resolveStudioPython({ ...base, platform: 'darwin', exists: (f) => f === mac })).toBe(mac);
+    expect(resolveStudioPython({ ...base, platform: 'linux', exists: (f) => f === mac })).toBe(mac);
+    expect(resolveStudioPython({ ...base, platform: 'win32', exists: (f) => f === win })).toBe(win);
+    expect(resolveStudioPython({ ...base, platform: 'win32', exists: () => false })).toBe('');
+  });
+  it('lets the env override win and falls back to the dev staging dir', () => {
+    expect(resolveStudioPython({ ...base, platform: 'darwin', env: { ALLTERNIT_STUDIO_PYTHON: '/x/py' }, exists: () => true })).toBe('/x/py');
+    const staged = path.join('/repo', 'surfaces', 'allternit-desktop', 'resources', 'computer-use', 'driver-python', 'linux-x64', 'bin', 'python3');
+    expect(resolveStudioPython({ platform: 'linux', arch: 'x64', packaged: false, repoRoot: '/repo', env: {}, exists: (f) => f === staged })).toBe(staged);
   });
 });

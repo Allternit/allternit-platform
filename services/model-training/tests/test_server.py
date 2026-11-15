@@ -13,21 +13,24 @@ from pathlib import Path
 
 import pytest
 
+from allternit_tune.hardware import Host
 from allternit_tune.jobs import JobManager
 from allternit_tune.server import engine_card, serve
 
 TOKEN = "t0ken"
 FAKE = str(Path(__file__).with_name("fake_worker.py"))
-HARDWARE = {"device": "mps", "torch": "2.x", "unavailable": {"qlora": "needs CUDA"}}
+HOST = Host("cpu")
+HARDWARE = {"hardware": "cpu", "torch": "2.x", "mlx_lm": None, "fit": HOST.card()}
 
 
 @pytest.fixture
 def engine(tmp_path, monkeypatch):
-    def start(mode: str = "ok"):
+    def start(mode: str = "ok", output_dir=None):
         monkeypatch.setenv("FAKE_WORKER_MODE", mode)
         manager = JobManager(
             tmp_path / "data",
-            unavailable_methods=HARDWARE["unavailable"],
+            host=HOST,
+            output_dir=output_dir,
             worker_command=lambda plan: [sys.executable, FAKE, str(plan)],
             cancel_grace_s=2,
         )
@@ -78,8 +81,37 @@ def test_engine_card_states_what_this_computer_cannot_run(engine):
     assert status == 200
     assert card["id"] == "allternit-tune" and card["license"] == "Apache-2.0"
     assert card["install_state"] == "installed"
-    assert card["limits"]["unavailable_here"] == {"qlora": "needs CUDA"}
-    assert {"id": "mlx", "status": "pending_decision"} in card["backends"]
+    assert len(card["hardware"]) == 7
+    fit = card["fit"]
+    assert fit["ok"] and fit["hardware"] == "cpu" and fit["backend"] == "torch-cpu"
+    assert set(fit["methods_unavailable"]) == {"qlora", "full", "dpo"}
+    assert "slow" in fit["warning"]
+    assert "Apple Silicon" in fit["outputs_unavailable"]["mlx"]
+    assert {"id": "mlx", "status": "available"} in card["backends"]
+
+
+def test_method_the_hardware_cannot_run_is_422_with_the_fit_reason(engine, spec):
+    _, base = engine()
+    spec["method"] = "qlora"
+    status, body = call(base, "POST", "/v1/jobs", spec)
+    assert status == 422 and body["error"] == "method_not_supported"
+    assert body["message"] == HARDWARE["fit"]["methods_unavailable"]["qlora"]
+    spec["method"] = "lora"
+    spec["outputs"]["mlx"] = True
+    status, body = call(base, "POST", "/v1/jobs", spec)
+    assert status == 422 and body["error"] == "output_not_supported"
+
+
+def test_outputs_land_under_the_host_output_dir_as_absolute_paths(engine, spec, tmp_path, monkeypatch):
+    out = tmp_path / "outputs"
+    out.mkdir()
+    monkeypatch.chdir(tmp_path)
+    _, base = engine("ok", output_dir=Path("outputs"))  # relative on purpose
+    job = call(base, "POST", "/v1/jobs", spec)[1]
+    done = wait_state(base, job["id"], {"succeeded", "failed"})
+    assert done["state"] == "succeeded", done
+    path = Path(done["outputs"][0]["path"])
+    assert path.is_absolute() and path == (out / "adapter").resolve()
 
 
 def test_repo_id_base_is_refused_with_plain_error(engine, spec):

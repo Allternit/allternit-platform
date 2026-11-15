@@ -53,6 +53,8 @@ paths = [
 
   # test fixtures with deliberately fake key material
   '''^cmd/gizzi-code/test/''',
+  # Files drive contract fixtures: fake capability tokens and page cursors by design
+  '''^contracts/files-drive/fixtures/''',
   '''^services/open-connector/src/providers/provider-proxy-loader\.test-helpers\.ts$''',
 
   # docs surface (mintlify content with example keys)

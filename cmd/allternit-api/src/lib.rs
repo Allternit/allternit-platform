@@ -262,6 +262,7 @@ pub mod groundedness_check_routes;
 pub mod latency_budget_routes;
 pub mod prompt_leak_routes;
 pub mod file_routes;
+pub mod files_scope;
 pub mod gizzi_chat_stream;
 pub mod gizzi_completion;
 pub mod completion_cache;

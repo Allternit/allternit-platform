@@ -1,5 +1,5 @@
 {
-  "_about": "Which engine runs which method on which hardware. engines.<engine>.<hardware> is a string (the whole engine is refused: hardware_not_supported, with this reason) or {methods: {method: 'ok' | reason (method_not_supported)}, backend: {method: backend picked with resources.backend=auto}, outputs: {mlx: 'ok' | reason (output_not_supported)}, warning: null | text shown before start}. classify maps what the host found to a hardware id; cpu_reason says the host must explain the CPU fallback. Asserted by services/studio-spec/tests/contract.rs and the allternit-tune Python tests.",
+  "_about": "Which engine runs which method on which hardware. engines.<engine>.<hardware> is a string (the whole engine is refused: hardware_not_supported, with this reason) or {methods: {method: 'ok' | reason (method_not_supported)}, backend: {method: backend picked with resources.backend=auto}, outputs: {mlx: 'ok' | reason (output_not_supported)}, warning: null | text shown before start}. classify maps what the host found to a hardware id; cpu_reason says the host must explain the CPU fallback; torch_unavailable (Intel Macs) means every torch-based engine's fit is ok:false with exactly that reason. Asserted by services/studio-spec/tests/contract.rs and the allternit-tune Python tests.",
   "hardware": [
     "apple-silicon",
     "cuda-linux",
@@ -358,7 +358,8 @@
         "amd"
       ],
       "hardware": "cpu",
-      "cpu_reason": true
+      "cpu_reason": true,
+      "torch_unavailable": "Training needs PyTorch 2.6 or newer, which has no build for Intel Macs."
     },
     {
       "os": "linux",
