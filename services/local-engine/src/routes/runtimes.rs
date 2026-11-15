@@ -31,6 +31,15 @@ pub struct RuntimeInstanceResponse {
     pub port: u16,
     pub status: String,
     pub health: Option<RuntimeHealthResponse>,
+    /// `pack` (verified engine pack) or `fallback` (binary on PATH).
+    pub engine_source: Option<String>,
+    pub pack_id: Option<String>,
+    pub pack_version: Option<String>,
+    pub backend: Option<String>,
+    /// Live numbers while running: mem_bytes, tok_per_sec, ctx_used, ctx_max, idle.
+    pub running: Option<crate::runtime::RunningInfo>,
+    /// `idle` when the engine unloaded it after the idle timeout.
+    pub stop_reason: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -54,6 +63,12 @@ impl From<&RuntimeInfo> for RuntimeInstanceResponse {
                 last_check_at: Some(info.updated_at.to_rfc3339()),
                 error: info.error_message.clone(),
             }),
+            engine_source: info.engine_source.clone(),
+            pack_id: info.pack_id.clone(),
+            pack_version: info.pack_version.clone(),
+            backend: info.backend.clone(),
+            running: info.running.clone(),
+            stop_reason: info.stop_reason.clone(),
         }
     }
 }
@@ -140,6 +155,7 @@ fn map_runtime_error_status(err: &crate::runtime::RuntimeManagerError) -> u16 {
     use crate::runtime::RuntimeManagerError;
     match err {
         RuntimeManagerError::BinaryNotFound(_) | RuntimeManagerError::UnsupportedBackend(_) => 501,
+        RuntimeManagerError::PackVerification(_) => 503,
         RuntimeManagerError::NotFound(_) => 404,
         RuntimeManagerError::NoFreePort => 503,
         _ => 500,

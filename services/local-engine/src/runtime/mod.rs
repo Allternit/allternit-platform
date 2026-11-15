@@ -3,5 +3,6 @@
 pub mod backends;
 pub mod log;
 pub mod manager;
+pub mod usage;
 
-pub use manager::{ProcessManager, RuntimeInfo, RuntimeManagerError, RuntimeRecipe, RuntimeStatus};
+pub use manager::{ProcessManager, RunningInfo, RuntimeInfo, RuntimeManagerError, RuntimeRecipe, RuntimeStatus};

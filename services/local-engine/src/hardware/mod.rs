@@ -356,7 +356,7 @@ pub struct EngineInfo {
     pub id: &'static str,
     pub backend: EngineBackend,
     pub version: Option<String>,
-    /// Engine pack that provides it (W6); null until packs exist.
+    /// Engine pack that provides it; null for a binary found on PATH.
     pub pack_id: Option<String>,
     pub state: EngineState,
 }
@@ -382,6 +382,8 @@ pub struct HardwareReport {
     pub models_dir: String,
     pub budget: Budget,
     pub engines: Vec<EngineInfo>,
+    /// Loaded models with live numbers (filled per request, not cached).
+    pub running: Vec<crate::runtime::RunningInfo>,
 }
 
 fn scale(bytes: u64, percent: u64) -> u64 {
@@ -493,9 +495,35 @@ pub fn find_on_path(name: &str) -> Option<std::path::PathBuf> {
         .find(|full| full.is_file())
 }
 
-fn detect_llamacpp(gpus: &[HardwareGpu], apple_silicon: bool) -> EngineInfo {
+/// Engine state from an installed, signed pack (files are re-hashed before
+/// every spawn, not here). A CPU pack on a machine that has a usable GPU is
+/// `fallback`.
+fn pack_engine(id: &'static str, pack: &crate::engine_packs::InstalledPack, preferred: EngineBackend) -> EngineInfo {
+    let backend = crate::engine_packs::pick::parse_backend(&pack.backend).unwrap_or(EngineBackend::Cpu);
+    let state = if backend == EngineBackend::Cpu && preferred != EngineBackend::Cpu {
+        EngineState::Fallback
+    } else {
+        EngineState::Ready
+    };
+    EngineInfo { id, backend, version: Some(pack.version.clone()), pack_id: Some(pack.pack_id.clone()), state }
+}
+
+fn detect_llamacpp(gpus: &[HardwareGpu], apple_silicon: bool, packs: &[crate::engine_packs::InstalledPack]) -> EngineInfo {
     let preferred = preferred_llamacpp_backend(gpus, apple_silicon);
-    // The runtime manager launches `llama-server` from PATH only (W6 adds packs).
+    // An installed pack wins (the runtime manager launches it first); the
+    // best backend among installed llama.cpp packs is the one it will use.
+    let best = packs
+        .iter()
+        .filter(|p| p.engine == "llamacpp")
+        .min_by_key(|p| match crate::engine_packs::pick::parse_backend(&p.backend) {
+            Some(b) if b == preferred => 0,
+            Some(EngineBackend::Cpu) | None => 2,
+            Some(_) => 1,
+        });
+    if let Some(pack) = best {
+        return pack_engine("llama.cpp", pack, preferred);
+    }
+    // No pack: `llama-server` on PATH is the development fallback.
     let Some(bin) = find_on_path("llama-server") else {
         return EngineInfo { id: "llama.cpp", backend: preferred, version: None, pack_id: None, state: EngineState::Missing };
     };
@@ -508,18 +536,24 @@ fn detect_llamacpp(gpus: &[HardwareGpu], apple_silicon: bool) -> EngineInfo {
     let devices = ask("--list-devices").and_then(|t| parse_llama_devices(&t));
     let version = ask("--version").and_then(|t| parse_llama_version(&t));
     let (state, backend) = llamacpp_state(devices.as_deref(), preferred);
+    // A PATH binary is never `ready`: it is unsigned and unmanaged.
+    let state = if state == EngineState::Installed { state } else { EngineState::Fallback };
     EngineInfo { id: "llama.cpp", backend, version, pack_id: None, state }
 }
 
-fn detect_mlx(apple_silicon: bool) -> EngineInfo {
-    // The runtime manager can't launch MLX yet (UnsupportedBackend); W6 adds it.
-    EngineInfo {
-        id: "mlx",
-        backend: EngineBackend::Metal,
-        version: None,
-        pack_id: None,
-        state: if apple_silicon { EngineState::Missing } else { EngineState::Off },
+fn detect_mlx(apple_silicon: bool, packs: &[crate::engine_packs::InstalledPack]) -> EngineInfo {
+    if !apple_silicon {
+        return EngineInfo { id: "mlx", backend: EngineBackend::Metal, version: None, pack_id: None, state: EngineState::Off };
     }
+    if let Some(pack) = packs.iter().find(|p| p.engine == "mlx") {
+        return pack_engine("mlx", pack, EngineBackend::Metal);
+    }
+    let state = if find_on_path(crate::runtime::backends::mlx::BINARY).is_some() {
+        EngineState::Fallback
+    } else {
+        EngineState::Missing
+    };
+    EngineInfo { id: "mlx", backend: EngineBackend::Metal, version: None, pack_id: None, state }
 }
 
 fn disk_free_bytes(path: &Path) -> u64 {
@@ -541,14 +575,18 @@ fn memory() -> (u64, u64) {
 
 /// Full probe: GPUs, engines, budget. Blocking (runs commands with
 /// timeouts); call it from `spawn_blocking`. Never fails.
-pub fn probe_report(profile: &HardwareProfile, models_dir: &Path) -> HardwareReport {
+pub fn probe_report(
+    profile: &HardwareProfile,
+    models_dir: &Path,
+    packs: &[crate::engine_packs::InstalledPack],
+) -> HardwareReport {
     let (ram_total, ram_available) = memory();
     let gpus = gpu_probe::probe_gpus(ram_total, ram_available);
     let apple_gpu = gpus.iter().find(|g| g.source == gpu_probe::GpuSource::AppleUnified);
     let apple_silicon = apple_gpu.is_some();
     let apple_chip = apple_gpu.map(|g| g.name.trim_start_matches("Apple ").trim().to_string());
     let budget = derive_budget(&gpus, ram_total, apple_silicon);
-    let engines = vec![detect_llamacpp(&gpus, apple_silicon), detect_mlx(apple_silicon)];
+    let engines = vec![detect_llamacpp(&gpus, apple_silicon, packs), detect_mlx(apple_silicon, packs)];
     HardwareReport {
         hardware_id: profile.hardware_id.clone(),
         os: std::env::consts::OS.to_string(),
@@ -564,6 +602,7 @@ pub fn probe_report(profile: &HardwareProfile, models_dir: &Path) -> HardwareRep
         models_dir: models_dir.to_string_lossy().into_owned(),
         budget,
         engines,
+        running: Vec::new(),
     }
 }
 

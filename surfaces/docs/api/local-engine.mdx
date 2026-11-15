@@ -47,6 +47,8 @@ curl https://api.allternit.com/api/local-engine/health \
 | `GET` | `/api/local-engine/health` | Controller health check. |
 | `GET` | `/api/local-engine/status` | Host diagnostics and engine state. |
 | `GET` | `/api/local-engine/hardware` | Device profile and model budget for on-device fit. |
+| `GET` | `/api/local-engine/engines/packs` | Installed engine packs and install progress. |
+| `POST` | `/api/local-engine/engines/packs/ensure` | Install the engine pack(s) this device needs. |
 | `GET` | `/api/local-engine/catalog` | Model catalog. |
 | `POST` | `/api/local-engine/catalog/refresh` | Refresh the catalog. |
 | `POST` | `/api/local-engine/assess` | Assess whether this host can run a model. |
@@ -239,7 +241,25 @@ Each entry has `id` (`llama.cpp` or `mlx`), `backend` (`metal`, `cuda`, `rocm`, 
 | `missing` | Not installed. `backend` is the build this device should get. |
 | `off` | Does not apply on this device, e.g. MLX on hardware other than Apple silicon. |
 
-The llama.cpp entry looks for `llama-server` on `PATH`. Its `version` is the llama.cpp build, e.g. `b10330`. MLX reports `missing` on Apple silicon until engine packs ship, and `off` elsewhere. `pack_id` is `null` until engine packs ship.
+Engines come from signed engine packs (see [Engine packs](#engine-packs)). An installed pack reports `pack_id`, its llama.cpp build or MLX version as `version`, and `ready`, or `fallback` when it is the CPU pack on a device with a usable GPU. With no pack installed, a `llama-server` found on `PATH` is used as a development fallback and reports `fallback` (or `installed` if it did not answer in time) with `pack_id: null`. MLX is `missing` on Apple silicon until its pack is installed, and `off` elsewhere.
+
+### Running models
+
+`running` lists every loaded model with live numbers. It is also in `/status` and in each runtime from `/runtimes`.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `model_id` | string | The model the runtime serves. |
+| `mem_bytes` | integer \| null | Resident memory of the engine process. |
+| `tok_per_sec` | number \| null | Generation speed of the last request. |
+| `first_token_ms` | integer \| null | Time to the first token of the last request. |
+| `ctx_used` | integer \| null | Prompt plus completion tokens of the last request. |
+| `ctx_max` | integer \| null | Context size the runtime was launched with. |
+| `idle_unload_sec` | integer | The engine stops a runtime after this many idle seconds (300; 0 means never). |
+| `idle_sec` | integer | Seconds since the last request finished. |
+| `requests_in_flight` | integer | Requests being answered now. |
+
+A runtime the engine stopped for being idle shows `status: "stopped"` and `stop_reason: "idle"` in `/runtimes`. Launch it again to reload it.
 
 ### Caching
 
@@ -254,6 +274,37 @@ GPU and engine probes run outside commands, each with a 2 second time limit, so 
 | `404 Not Found` | — | The engine is older than this route. Fall back to `/status`. |
 
 A failed GPU probe never turns into an error. It only makes `gpus` shorter.
+
+## Engine packs
+
+```http
+GET /api/local-engine/engines/packs
+POST /api/local-engine/engines/packs/ensure
+```
+
+Inference engines are not in the Desktop installer. The local engine downloads them as signed engine packs: llama.cpp builds per OS and GPU (Metal, CUDA, ROCm, Vulkan, CPU) and, on Apple silicon, the MLX engine. Before any engine starts, the local engine checks the pack's Ed25519 signature and the sha256 of every file. A pack that fails the check is never run. The engine rolls back to the previous version, or removes the pack.
+
+`ensure` picks the pack from the device: Metal on Apple silicon, CUDA for NVIDIA with a working driver (else Vulkan), ROCm for AMD on Linux when ROCm is installed (else Vulkan), Vulkan for Intel, CPU first on Windows on Arm, else CPU. The body is optional: `{"engines": ["llamacpp", "mlx"], "update": false}`. `update: true` also installs a newer version of a pack that is already installed. The call returns at once with `202` when it started an install (`200` when nothing was needed). Progress is in `jobs` here and in `engine_packs` in `/status`.
+
+```json
+{
+  "platform": "darwin-arm64",
+  "dev_feed": false,
+  "installed": [
+    { "pack_id": "llamacpp-metal-macos-arm64", "engine": "llamacpp", "backend": "metal", "version": "b12414", "build": 1794753442, "previous": null, "dir": "~/Library/Application Support/allternit-local-engine/engines/llamacpp-metal-macos-arm64/b12414" }
+  ],
+  "jobs": [
+    { "pack_id": "mlx-metal-macos-arm64", "state": "downloading", "version": "mlx0.30.6-lm2.30.6", "bytes_done": 9300000, "bytes_total": 31000000, "error": null, "started_at": "2026-11-15T18:02:11Z", "finished_at": null }
+  ],
+  "choices": [
+    { "pack_id": "llamacpp-metal-macos-arm64", "engine": "llamacpp", "backend": "metal" },
+    { "pack_id": "mlx-metal-macos-arm64", "engine": "mlx", "backend": "metal" }
+  ],
+  "started": ["mlx-metal-macos-arm64"]
+}
+```
+
+`jobs[].state` is `queued`, `downloading`, `verifying`, `installed` or `failed` (with `error`). A launch while no pack is installed fails with `501` and a message that names the pack to install. A pack that fails its check at launch fails with `503`.
 
 ## List models
 
@@ -592,7 +643,11 @@ POST /api/local-engine/v1/chat/completions
 
 Proxies a chat-completions-shaped request to a healthy local runtime serving the requested `model`. Both non-streaming and streaming (`stream: true`) requests are supported; streaming responses are returned as server-sent events.
 
-The request body is forwarded verbatim, so all standard chat-completions options—`temperature`, `max_tokens`, `tools`, `response_format`, and `stream`—are supported when the underlying backend accepts them.
+The request body is forwarded as sent, so all standard chat-completions options—`temperature`, `max_tokens`, `tools`, `response_format`, and `stream`—are supported when the underlying backend accepts them. Streams pass through token by token.
+
+### Token numbers
+
+Every reply carries real numbers in an `allternit` object: `tok_per_sec`, `first_token_ms`, `ctx_used`, `ctx_max` and `mem_bytes`. On a non-streaming reply it sits next to `usage`. On a stream, set `stream_options.include_usage: true` to get a final chunk with `choices: []`, the OpenAI `usage` (`prompt_tokens`, `completion_tokens`) and the `allternit` object. Without it the engine still reads the numbers (they show in `running`), but sends no usage chunk. llama.cpp replies also keep their `timings` object (`predicted_per_second`, `prompt_ms`); the MLX engine sends the same fields.
 
 ### Request body
 

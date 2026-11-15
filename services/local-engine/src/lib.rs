@@ -11,12 +11,15 @@
 //!   `/models/verify` re-hashing.
 //! - `runtime`: process manager that launches backends such as llama.cpp and
 //!   polls their health endpoints.
+//! - `engine_packs`: signed per-OS engine downloads (llama-server builds,
+//!   the MLX sidecar) and the backend pick.
 //! - `routes`: axum HTTP handlers for `/models/download` and `/status`.
 
 pub mod assess;
 pub mod cache;
 pub mod catalog;
 pub mod download;
+pub mod engine_packs;
 pub mod hardware;
 pub mod recommend;
 pub mod routes;
@@ -40,6 +43,7 @@ pub use sampler::{SystemSample, SystemSampler};
 pub struct AppState {
     pub store: ModelStore,
     pub manager: ProcessManager,
+    pub packs: engine_packs::EnginePacks,
     pub models_dir: PathBuf,
     pub data_dir: PathBuf,
     pub hardware_profile: HardwareProfile,
