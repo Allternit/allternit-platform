@@ -21,7 +21,8 @@ pub struct EngineInfo {
     pub license: String,
     pub version: String,
     pub methods: Vec<String>,
-    /// `apple-silicon`, `cuda-linux`
+    /// Hardware ids the engine runs on (see `crate::Hardware`): `apple-silicon`,
+    /// `cuda-linux`, `cuda-windows`, `rocm-linux`, `xpu-linux`, `xpu-windows`, `cpu`.
     pub hardware: Vec<String>,
     pub install_state: InstallState,
     #[serde(default)]
@@ -37,12 +38,15 @@ pub struct EngineInfo {
     /// Backends listed for the engine, each with a status.
     #[serde(default)]
     pub backends: Vec<Backend>,
+    /// Plain words about the engine shown on its card (e.g. upstream unmaintained).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notes: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Backend {
     pub id: String,
-    /// `planned`, `available`, or `pending_decision` (waits on Eoj, F14-prime).
+    /// `planned`, `available`, or `pending_decision`.
     pub status: String,
 }
 

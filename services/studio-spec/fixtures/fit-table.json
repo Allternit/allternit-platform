@@ -1,0 +1,437 @@
+{
+  "_about": "Which engine runs which method on which hardware. engines.<engine>.<hardware> is a string (the whole engine is refused: hardware_not_supported, with this reason) or {methods: {method: 'ok' | reason (method_not_supported)}, backend: {method: backend picked with resources.backend=auto}, outputs: {mlx: 'ok' | reason (output_not_supported)}, warning: null | text shown before start}. classify maps what the host found to a hardware id; cpu_reason says the host must explain the CPU fallback. Asserted by services/studio-spec/tests/contract.rs and the allternit-tune Python tests.",
+  "hardware": [
+    "apple-silicon",
+    "cuda-linux",
+    "cuda-windows",
+    "rocm-linux",
+    "xpu-linux",
+    "xpu-windows",
+    "cpu"
+  ],
+  "engines": {
+    "allternit-tune": {
+      "apple-silicon": {
+        "methods": {
+          "lora": "ok",
+          "qlora": "ok",
+          "full": "ok",
+          "dpo": "ok"
+        },
+        "backend": {
+          "lora": "mlx",
+          "qlora": "mlx",
+          "full": "torch-mps",
+          "dpo": "torch-mps"
+        },
+        "outputs": {
+          "mlx": "ok"
+        },
+        "warning": null
+      },
+      "cuda-linux": {
+        "methods": {
+          "lora": "ok",
+          "qlora": "ok",
+          "full": "ok",
+          "dpo": "ok"
+        },
+        "backend": {
+          "lora": "torch-cuda",
+          "qlora": "torch-cuda",
+          "full": "torch-cuda",
+          "dpo": "torch-cuda"
+        },
+        "outputs": {
+          "mlx": "MLX files are made only on a Mac with Apple Silicon."
+        },
+        "warning": null
+      },
+      "cuda-windows": {
+        "methods": {
+          "lora": "ok",
+          "qlora": "ok",
+          "full": "ok",
+          "dpo": "ok"
+        },
+        "backend": {
+          "lora": "torch-cuda",
+          "qlora": "torch-cuda",
+          "full": "torch-cuda",
+          "dpo": "torch-cuda"
+        },
+        "outputs": {
+          "mlx": "MLX files are made only on a Mac with Apple Silicon."
+        },
+        "warning": null
+      },
+      "rocm-linux": {
+        "methods": {
+          "lora": "ok",
+          "qlora": "ok",
+          "full": "ok",
+          "dpo": "ok"
+        },
+        "backend": {
+          "lora": "torch-rocm",
+          "qlora": "torch-rocm",
+          "full": "torch-rocm",
+          "dpo": "torch-rocm"
+        },
+        "outputs": {
+          "mlx": "MLX files are made only on a Mac with Apple Silicon."
+        },
+        "warning": null
+      },
+      "xpu-linux": {
+        "methods": {
+          "lora": "ok",
+          "qlora": "ok",
+          "full": "ok",
+          "dpo": "ok"
+        },
+        "backend": {
+          "lora": "torch-xpu",
+          "qlora": "torch-xpu",
+          "full": "torch-xpu",
+          "dpo": "torch-xpu"
+        },
+        "outputs": {
+          "mlx": "MLX files are made only on a Mac with Apple Silicon."
+        },
+        "warning": null
+      },
+      "xpu-windows": {
+        "methods": {
+          "lora": "ok",
+          "qlora": "ok",
+          "full": "ok",
+          "dpo": "ok"
+        },
+        "backend": {
+          "lora": "torch-xpu",
+          "qlora": "torch-xpu",
+          "full": "torch-xpu",
+          "dpo": "torch-xpu"
+        },
+        "outputs": {
+          "mlx": "MLX files are made only on a Mac with Apple Silicon."
+        },
+        "warning": null
+      },
+      "cpu": {
+        "methods": {
+          "lora": "ok",
+          "qlora": "QLoRA needs a GPU. Only LoRA runs on the CPU.",
+          "full": "Full fine-tuning needs a GPU. Only LoRA runs on the CPU.",
+          "dpo": "DPO needs a GPU. Only LoRA runs on the CPU."
+        },
+        "backend": {
+          "lora": "torch-cpu"
+        },
+        "outputs": {
+          "mlx": "MLX files are made only on a Mac with Apple Silicon."
+        },
+        "warning": "Training on the CPU is slow. Use a small base model; even a small LoRA run can take hours."
+      }
+    },
+    "unsloth-upstream": {
+      "apple-silicon": "Unsloth (upstream, unmodified) runs only on Linux with an NVIDIA GPU, Windows with an NVIDIA GPU, Linux with an Intel GPU or Windows with an Intel GPU, not on a Mac with Apple Silicon.",
+      "cuda-linux": {
+        "methods": {
+          "lora": "ok",
+          "qlora": "ok"
+        },
+        "backend": {
+          "lora": "torch-cuda",
+          "qlora": "torch-cuda"
+        },
+        "outputs": {
+          "mlx": "MLX files are made only on a Mac with Apple Silicon."
+        },
+        "warning": null
+      },
+      "cuda-windows": {
+        "methods": {
+          "lora": "ok",
+          "qlora": "ok"
+        },
+        "backend": {
+          "lora": "torch-cuda",
+          "qlora": "torch-cuda"
+        },
+        "outputs": {
+          "mlx": "MLX files are made only on a Mac with Apple Silicon."
+        },
+        "warning": null
+      },
+      "rocm-linux": "Unsloth (upstream, unmodified) runs only on Linux with an NVIDIA GPU, Windows with an NVIDIA GPU, Linux with an Intel GPU or Windows with an Intel GPU, not on Linux with an AMD GPU.",
+      "xpu-linux": {
+        "methods": {
+          "lora": "ok",
+          "qlora": "ok"
+        },
+        "backend": {
+          "lora": "torch-xpu",
+          "qlora": "torch-xpu"
+        },
+        "outputs": {
+          "mlx": "MLX files are made only on a Mac with Apple Silicon."
+        },
+        "warning": null
+      },
+      "xpu-windows": {
+        "methods": {
+          "lora": "ok",
+          "qlora": "ok"
+        },
+        "backend": {
+          "lora": "torch-xpu",
+          "qlora": "torch-xpu"
+        },
+        "outputs": {
+          "mlx": "MLX files are made only on a Mac with Apple Silicon."
+        },
+        "warning": null
+      },
+      "cpu": "Unsloth (upstream, unmodified) runs only on Linux with an NVIDIA GPU, Windows with an NVIDIA GPU, Linux with an Intel GPU or Windows with an Intel GPU, not on the CPU alone."
+    },
+    "axolotl": {
+      "apple-silicon": "Axolotl runs only on Linux with an NVIDIA GPU, not on a Mac with Apple Silicon.",
+      "cuda-linux": {
+        "methods": {
+          "lora": "ok",
+          "qlora": "ok",
+          "full": "ok",
+          "dpo": "ok"
+        },
+        "backend": {
+          "lora": "torch-cuda",
+          "qlora": "torch-cuda",
+          "full": "torch-cuda",
+          "dpo": "torch-cuda"
+        },
+        "outputs": {
+          "mlx": "MLX files are made only on a Mac with Apple Silicon."
+        },
+        "warning": null
+      },
+      "cuda-windows": "Axolotl runs only on Linux with an NVIDIA GPU, not on Windows with an NVIDIA GPU.",
+      "rocm-linux": "Axolotl runs only on Linux with an NVIDIA GPU, not on Linux with an AMD GPU.",
+      "xpu-linux": "Axolotl runs only on Linux with an NVIDIA GPU, not on Linux with an Intel GPU.",
+      "xpu-windows": "Axolotl runs only on Linux with an NVIDIA GPU, not on Windows with an Intel GPU.",
+      "cpu": "Axolotl runs only on Linux with an NVIDIA GPU, not on the CPU alone."
+    },
+    "llama-factory": {
+      "apple-silicon": "LLaMA-Factory runs only on Linux with an NVIDIA GPU or Windows with an NVIDIA GPU, not on a Mac with Apple Silicon.",
+      "cuda-linux": {
+        "methods": {
+          "lora": "ok",
+          "qlora": "ok",
+          "full": "ok",
+          "dpo": "ok"
+        },
+        "backend": {
+          "lora": "torch-cuda",
+          "qlora": "torch-cuda",
+          "full": "torch-cuda",
+          "dpo": "torch-cuda"
+        },
+        "outputs": {
+          "mlx": "MLX files are made only on a Mac with Apple Silicon."
+        },
+        "warning": null
+      },
+      "cuda-windows": {
+        "methods": {
+          "lora": "ok",
+          "qlora": "ok",
+          "full": "ok",
+          "dpo": "ok"
+        },
+        "backend": {
+          "lora": "torch-cuda",
+          "qlora": "torch-cuda",
+          "full": "torch-cuda",
+          "dpo": "torch-cuda"
+        },
+        "outputs": {
+          "mlx": "MLX files are made only on a Mac with Apple Silicon."
+        },
+        "warning": null
+      },
+      "rocm-linux": "LLaMA-Factory runs only on Linux with an NVIDIA GPU or Windows with an NVIDIA GPU, not on Linux with an AMD GPU.",
+      "xpu-linux": "LLaMA-Factory runs only on Linux with an NVIDIA GPU or Windows with an NVIDIA GPU, not on Linux with an Intel GPU.",
+      "xpu-windows": "LLaMA-Factory runs only on Linux with an NVIDIA GPU or Windows with an NVIDIA GPU, not on Windows with an Intel GPU.",
+      "cpu": "LLaMA-Factory runs only on Linux with an NVIDIA GPU or Windows with an NVIDIA GPU, not on the CPU alone."
+    },
+    "torchtune": {
+      "apple-silicon": {
+        "methods": {
+          "lora": "ok",
+          "qlora": "ok",
+          "full": "ok",
+          "dpo": "ok"
+        },
+        "backend": {
+          "lora": "torch-mps",
+          "qlora": "torch-mps",
+          "full": "torch-mps",
+          "dpo": "torch-mps"
+        },
+        "outputs": {
+          "mlx": "torchtune cannot make MLX files. Allternit Tune can."
+        },
+        "warning": null
+      },
+      "cuda-linux": {
+        "methods": {
+          "lora": "ok",
+          "qlora": "ok",
+          "full": "ok",
+          "dpo": "ok"
+        },
+        "backend": {
+          "lora": "torch-cuda",
+          "qlora": "torch-cuda",
+          "full": "torch-cuda",
+          "dpo": "torch-cuda"
+        },
+        "outputs": {
+          "mlx": "MLX files are made only on a Mac with Apple Silicon."
+        },
+        "warning": null
+      },
+      "cuda-windows": "torchtune runs only on a Mac with Apple Silicon, Linux with an NVIDIA GPU, Linux with an AMD GPU or Linux with an Intel GPU, not on Windows with an NVIDIA GPU.",
+      "rocm-linux": {
+        "methods": {
+          "lora": "ok",
+          "qlora": "ok",
+          "full": "ok",
+          "dpo": "ok"
+        },
+        "backend": {
+          "lora": "torch-rocm",
+          "qlora": "torch-rocm",
+          "full": "torch-rocm",
+          "dpo": "torch-rocm"
+        },
+        "outputs": {
+          "mlx": "MLX files are made only on a Mac with Apple Silicon."
+        },
+        "warning": null
+      },
+      "xpu-linux": {
+        "methods": {
+          "lora": "ok",
+          "qlora": "ok",
+          "full": "ok",
+          "dpo": "ok"
+        },
+        "backend": {
+          "lora": "torch-xpu",
+          "qlora": "torch-xpu",
+          "full": "torch-xpu",
+          "dpo": "torch-xpu"
+        },
+        "outputs": {
+          "mlx": "MLX files are made only on a Mac with Apple Silicon."
+        },
+        "warning": null
+      },
+      "xpu-windows": "torchtune runs only on a Mac with Apple Silicon, Linux with an NVIDIA GPU, Linux with an AMD GPU or Linux with an Intel GPU, not on Windows with an Intel GPU.",
+      "cpu": "torchtune runs only on a Mac with Apple Silicon, Linux with an NVIDIA GPU, Linux with an AMD GPU or Linux with an Intel GPU, not on the CPU alone."
+    }
+  },
+  "classify": [
+    {
+      "os": "macos",
+      "arch": "aarch64",
+      "gpus": [],
+      "hardware": "apple-silicon",
+      "cpu_reason": false
+    },
+    {
+      "os": "macos",
+      "arch": "x86_64",
+      "gpus": [
+        "amd"
+      ],
+      "hardware": "cpu",
+      "cpu_reason": true
+    },
+    {
+      "os": "linux",
+      "arch": "x86_64",
+      "gpus": [
+        "intel",
+        "nvidia"
+      ],
+      "hardware": "cuda-linux",
+      "cpu_reason": false
+    },
+    {
+      "os": "linux",
+      "arch": "x86_64",
+      "gpus": [
+        "intel",
+        "amd"
+      ],
+      "hardware": "rocm-linux",
+      "cpu_reason": false
+    },
+    {
+      "os": "linux",
+      "arch": "x86_64",
+      "gpus": [
+        "intel"
+      ],
+      "hardware": "xpu-linux",
+      "cpu_reason": false
+    },
+    {
+      "os": "linux",
+      "arch": "aarch64",
+      "gpus": [],
+      "hardware": "cpu",
+      "cpu_reason": true
+    },
+    {
+      "os": "windows",
+      "arch": "x86_64",
+      "gpus": [
+        "nvidia"
+      ],
+      "hardware": "cuda-windows",
+      "cpu_reason": false
+    },
+    {
+      "os": "windows",
+      "arch": "x86_64",
+      "gpus": [
+        "intel"
+      ],
+      "hardware": "xpu-windows",
+      "cpu_reason": false
+    },
+    {
+      "os": "windows",
+      "arch": "x86_64",
+      "gpus": [
+        "amd"
+      ],
+      "hardware": "cpu",
+      "cpu_reason": true
+    },
+    {
+      "os": "windows",
+      "arch": "x86_64",
+      "gpus": [
+        "amd",
+        "intel"
+      ],
+      "hardware": "xpu-windows",
+      "cpu_reason": false
+    }
+  ]
+}
