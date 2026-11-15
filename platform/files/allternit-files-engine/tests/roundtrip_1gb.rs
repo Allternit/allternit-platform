@@ -91,9 +91,9 @@ fn one_gib_upload_resumes_after_kill_and_sends_only_missing_chunks() {
                     on_conflict: OnConflict::Fail,
                     modified_at: None,
                     device_name: Some("Test Mac".into()),
+                    utc_offset_minutes: Some(-360),
                 },
                 &owner,
-                Some(-360),
             )
             .unwrap();
         session_id = status.session_id.clone();
