@@ -7,7 +7,7 @@
 use super::engines::{EngineDirs, Hardware};
 use super::runner::{pid_alive, EngineLauncher, LaunchRequest, Launched};
 use super::*;
-use allternit_studio_spec::fake_engine::FakeEngine;
+use allternit_studio_spec::fake_engine::{FakeConfig, FakeEngine};
 use axum::body::Body;
 use axum::http::Request;
 use serde_json::{json, Value};
@@ -28,7 +28,8 @@ impl EngineLauncher for FakeLauncher {
     }
 
     async fn launch(&self, req: LaunchRequest) -> Result<Launched, String> {
-        let engine = FakeEngine::start(&req.token, self.delay)
+        let cfg = FakeConfig { output_dir: Some(req.output_dir.clone()), ..FakeConfig::default() };
+        let engine = FakeEngine::start_with(&req.token, self.delay, cfg)
             .await
             .map_err(|e| e.to_string())?;
         let port = engine.addr.port();
@@ -461,7 +462,7 @@ async fn studio_register_output_calls_local_engine() {
         &host,
         "POST",
         &format!("/studio/jobs/{id}/outputs/register"),
-        Some(json!({"kind": "gguf"})),
+        Some(json!({"kind": "merged"})), // the fixture asks for no merged model
     )
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
