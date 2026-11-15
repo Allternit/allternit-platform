@@ -290,7 +290,7 @@ HTTP **428** means the account has no healthy node (pair a desktop/VPS or start 
 
 ## Model hosts
 
-A device you own (today an Allternit browser tab with WebGPU) can serve a small model to your agents. It holds a WebSocket at `/api/v1/model-hosts/connect`, and callers use the OpenAI-compatible routes under `/api/v1/model-hosts/v1` (`models`, `chat/completions`) with a Clerk session, an API token or a paired runtime device token. State is in memory only. See [Model host relay](/api/model-host-relay).
+A device you own (today an Allternit browser tab with WebGPU) can serve a small model to your agents. It holds a WebSocket at `/api/v1/model-hosts/connect`, and callers use the Chat Completions-compatible routes under `/api/v1/model-hosts/v1` (`models`, `chat/completions`) with a Clerk session, an API token or a paired runtime device token. State is in memory only. See [Model host relay](/api/model-host-relay).
 
 ## Artifacts v2
 

@@ -1,9 +1,9 @@
 ---
 title: 'Model host relay'
-description: 'How a device serves a model to its owner over a WebSocket, and the OpenAI-compatible routes that call it.'
+description: 'How a device serves a model to its owner over a WebSocket, and the Chat Completions-compatible routes that call it.'
 ---
 
-A model host is a device that runs a model and serves it to its owner's agents. Today that is an Allternit browser tab with WebGPU (see [Run a model on your phone](/guides/run-a-model-on-your-phone)). The device keeps one WebSocket open to cloud-api; callers use an OpenAI-compatible surface, and cloud-api forwards each request to the device as a frame.
+A model host is a device that runs a model and serves it to its owner's agents. Today that is an Allternit browser tab with WebGPU (see [Run a model on your phone](/guides/run-a-model-on-your-phone)). The device keeps one WebSocket open to cloud-api; callers use an Chat Completions-compatible surface, and cloud-api forwards each request to the device as a frame.
 
 Source: `cmd/allternit-cloud-api/src/routes/model_hosts.rs`.
 
@@ -16,8 +16,8 @@ All routes are on the cloud API (`https://api.allternit.com`).
 | `POST /api/v1/model-hosts/ws-ticket` | Clerk session or `allternit_*` API token (`inference` scope) | Body `{"host_id", "name"}`. Returns `{"ticket", "ws_url"}`. |
 | `GET /api/v1/model-hosts/connect?ticket=…` | The ticket | The device's WebSocket. |
 | `GET /api/v1/model-hosts` | Clerk session or API token | `{"hosts": [{"host_id", "name", "models", "connected_at"}]}` for the caller's online hosts. |
-| `GET /api/v1/model-hosts/v1/models` | Clerk session, API token, or a paired runtime's device token | OpenAI model list of the caller's online models. |
-| `POST /api/v1/model-hosts/v1/chat/completions` | Same as above | OpenAI chat completion, streamed or not. |
+| `GET /api/v1/model-hosts/v1/models` | Clerk session, API token, or a paired runtime's device token | Model list of the caller's online models. |
+| `POST /api/v1/model-hosts/v1/chat/completions` | Same as above | Chat completion, streamed or not. |
 
 A runtime device token (`allternit_runtime_…`, from `gizzi login` pairing) acts as the device's owner, so gizzi can use it as the bearer token for the last two routes. gizzi registers them as the provider `allternit-devices` ("Your devices") with base URL `<cloud>/api/v1/model-hosts/v1`.
 
@@ -54,7 +54,7 @@ The id is `<host_id>/<model_id>`. With nothing online the list is empty, never a
 
 ### Chat completions
 
-- The body is an OpenAI chat completion request, at most 1 MB. `model` must be `<host_id>/<model_id>` of one of the caller's online hosts, otherwise 404 `{"error": {"message", "type": "model_not_found"}}`.
+- The body is an standard Chat Completions request, at most 1 MB. `model` must be `<host_id>/<model_id>` of one of the caller's online hosts, otherwise 404 `{"error": {"message", "type": "model_not_found"}}`.
 - cloud-api rewrites `model` to the bare `<model_id>` and sends the body to the device in a `request` frame.
 - `stream: true`: `text/event-stream`. Each `chunk` frame becomes `data: <chunk json>`, `end` becomes `data: [DONE]`. A device `error`, a disconnect or a 120 s gap becomes `data: {"error": {"message"}}` followed by `data: [DONE]`.
 - `stream` false or absent: the chunks are folded into one `chat.completion`. The content is concatenated, `finish_reason` is the last one sent, and `usage` comes from the last chunk that has it. A device `error` answers 502 `host_error`; a disconnect answers 502 `host_disconnected`.
@@ -71,7 +71,7 @@ Device to cloud:
 |-------|---------|
 | `{"type":"hello","models":[{"id","name","context_length"}]}` | Must be the first frame, within 10 seconds. The list may be empty while the model loads. |
 | `{"type":"models","models":[…]}` | Replaces the model list, for example when loading finishes. |
-| `{"type":"chunk","request_id","data":{…}}` | One OpenAI `chat.completion.chunk`. |
+| `{"type":"chunk","request_id","data":{…}}` | One `chat.completion.chunk`. |
 | `{"type":"end","request_id"}` | The answer is complete. |
 | `{"type":"error","request_id","message"}` | The answer failed. |
 | `{"type":"ping"}` / `{"type":"pong"}` | Keep-alive. |
