@@ -154,7 +154,8 @@ struct FreeweightsSection: View {
             if let id = UserDefaults.standard.string(forKey: "fw-detail"), store.selected == nil {
                 store.selected = store.results.first(where: { $0.id == id })
                     ?? FreeweightsModelSummary(id: id, sha: nil, pipelineTag: nil, libraryName: nil, tags: nil,
-                                               downloads: nil, lastModified: nil, section: nil, license: nil, badges: nil)
+                                               downloads: nil, lastModified: nil, section: nil, license: nil, badges: nil,
+                                               publisherLogo: nil)
             }
             #endif
         }
@@ -215,9 +216,7 @@ private struct FreeweightsRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: FreeweightsFormat.icon(for: model.pipelineTag))
-                .font(.system(size: 17, weight: .medium))
-                .foregroundColor(Color("TextSecondary"))
+            icon
                 .frame(width: 40, height: 40)
                 .background(Color("BgPanel"))
                 .clipShape(RoundedRectangle(cornerRadius: Theme.radiusMD))
@@ -233,7 +232,7 @@ private struct FreeweightsRow: View {
                     .lineLimit(1)
                 HStack(spacing: 6) {
                     if let license = model.license ?? row?.licenseId {
-                        FreeweightsBadge(text: FreeweightsFormat.license(license), dot: FreeweightsFormat.licenseTint(row?.licenseClass))
+                        FreeweightsBadge(text: license, dot: FreeweightsFormat.licenseTint(row?.licenseClass))
                     }
                     if let section = model.section {
                         FreeweightsBadge(text: FreeweightsFormat.section(section))
@@ -255,6 +254,27 @@ private struct FreeweightsRow: View {
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
         .accessibilityHint("Shows license, size and Send to computer")
+    }
+
+    /// The publisher's logo when the API sends one; the task glyph while it
+    /// loads, when it fails, or when there is none.
+    @ViewBuilder
+    private var icon: some View {
+        let glyph = Image(systemName: FreeweightsFormat.icon(for: model.pipelineTag))
+            .font(.system(size: 17, weight: .medium))
+            .foregroundColor(Color("TextSecondary"))
+        if let url = model.publisherLogoURL {
+            AsyncImage(url: url, transaction: Transaction(animation: .easeOut(duration: 0.15))) { phase in
+                if case .success(let image) = phase {
+                    image.resizable().scaledToFit().padding(6)
+                } else {
+                    glyph
+                }
+            }
+            .accessibilityHidden(true)
+        } else {
+            glyph
+        }
     }
 }
 
@@ -382,7 +402,7 @@ struct FreeweightsDetailSheet: View {
         let lic = catalogRow?.licenseId ?? detail?.license ?? summary.license
         Section {
             if let lic {
-                fact("License", "\(FreeweightsFormat.license(lic))\(catalogRow?.licenseClass.map { " (\($0))" } ?? "")")
+                fact("License", "\(lic)\(catalogRow?.licenseClass.map { " (\($0))" } ?? "")")
             }
             if let size = catalogRow?.totalSize, size > 0 {
                 fact("Size", FreeweightsFormat.bytes(size))
@@ -666,11 +686,6 @@ enum FreeweightsFormat {
     /// `alt.freeweights.qwen` → `qwen`.
     static func section(_ value: String) -> String {
         value.replacingOccurrences(of: "alt.freeweights.", with: "")
-    }
-
-    /// `LicenseRef-Fish-Audio-Research` → `Fish-Audio-Research`.
-    static func license(_ value: String) -> String {
-        value.replacingOccurrences(of: "LicenseRef-", with: "")
     }
 
     static func licenseTint(_ licenseClass: String?) -> Color {

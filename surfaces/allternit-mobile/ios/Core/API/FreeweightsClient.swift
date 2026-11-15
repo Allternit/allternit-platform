@@ -18,11 +18,21 @@ struct FreeweightsModelSummary: Codable, Sendable, Identifiable, Equatable {
     let section: String?
     let license: String?
     let badges: [String]?
+    /// Absolute URL of the publisher's logo, or null. Newer worker deploys
+    /// only; absent on older ones.
+    let publisherLogo: String?
 
     enum CodingKeys: String, CodingKey {
         case id, sha, tags, downloads, lastModified, section, license, badges
         case pipelineTag = "pipeline_tag"
         case libraryName = "library_name"
+        case publisherLogo = "publisher_logo"
+    }
+
+    var publisherLogoURL: URL? {
+        guard let publisherLogo, let url = URL(string: publisherLogo),
+              url.scheme == "https" || url.scheme == "http" else { return nil }
+        return url
     }
 
     var org: String { String(id.split(separator: "/").first ?? "") }
@@ -190,14 +200,16 @@ final class FreeweightsClient: @unchecked Sendable {
 
     // MARK: Calls
 
-    /// `GET /api/models?search=&section=&pipeline_tag=&limit=&cursor=`.
+    /// `GET /api/models?search=&section=&pipeline_tag=&sort=rank&limit=&cursor=`.
+    /// Always `sort=rank`: official lab repos and base models first (the
+    /// worker's default with a search term, and its no-search order too).
     func search(query: String = "",
                 section: String? = nil,
                 pipelineTag: String? = nil,
                 limit: Int = 25,
                 cursor: String? = nil) async -> FreeweightsLoad<FreeweightsPage> {
         var components = URLComponents(url: baseURL.appendingPathComponent("api/models"), resolvingAgainstBaseURL: false)!
-        var items = [URLQueryItem(name: "limit", value: String(limit))]
+        var items = [URLQueryItem(name: "sort", value: "rank"), URLQueryItem(name: "limit", value: String(limit))]
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmed.isEmpty { items.append(URLQueryItem(name: "search", value: trimmed)) }
         if let section, !section.isEmpty { items.append(URLQueryItem(name: "section", value: section)) }
