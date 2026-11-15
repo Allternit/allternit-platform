@@ -1,0 +1,28 @@
+name: Spike Files Win cfapi
+
+# Spike only: runs on the spike branch, never on main or PRs.
+on:
+  workflow_dispatch:
+  push:
+    branches: [spike/files-win-cfapi]
+    paths:
+      - 'spikes/files-win-cfapi/**'
+      - '.github/workflows/spike-files-win-cfapi.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  cfapi:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: spikes/files-win-cfapi
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            spikes/files-win-cfapi
+            rust-toolchain.toml
+      - run: rustup show
+      - run: cargo test -- --nocapture --test-threads=1

@@ -1,0 +1,16 @@
+[package]
+name = "files-win-cfapi-spike"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# Own project, not a member of the root workspace.
+[workspace]
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = [
+  "Win32_Foundation",
+  "Win32_Storage_CloudFilters",
+  "Win32_Storage_FileSystem",
+  "Win32_System_CorrelationVector",
+] }
