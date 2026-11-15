@@ -264,6 +264,13 @@ components:
         install_state: { type: string, enum: [not_installed, installing, installed, failed] }
         limits: { type: object, additionalProperties: true }
         published: { type: boolean }
+        source:
+          type: object
+          description: Where the host installs the engine's adapter from (third-party engines). The upstream engine itself is installed unmodified at `version`.
+          required: [repo, sha]
+          properties:
+            repo: { type: string, description: Public git repository of the engine kit and adapter }
+            sha: { type: string, description: Full commit sha the host installs }
         process: { type: string, enum: [embedded, separate_process] }
         default: { type: boolean }
         backends:

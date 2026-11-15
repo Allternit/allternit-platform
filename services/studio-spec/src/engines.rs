@@ -27,9 +27,15 @@ pub struct EngineInfo {
     pub install_state: InstallState,
     #[serde(default)]
     pub limits: BTreeMap<String, serde_json::Value>,
-    /// false = never shipped or published by us (upstream AGPL engines).
+    /// true = offered to users: the host can install and run it from a
+    /// published source (our own engine, or a third-party engine through the
+    /// published studio-engines adapters). Third-party engines are installed
+    /// unmodified from upstream and never redistributed by us.
     #[serde(default = "yes")]
     pub published: bool,
+    /// Where the host installs a third-party engine's adapter from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<EngineSource>,
     /// How the engine runs: `embedded`, `separate_process`.
     #[serde(default)]
     pub process: Option<String>,
@@ -41,6 +47,14 @@ pub struct EngineInfo {
     /// Plain words about the engine shown on its card (e.g. upstream unmaintained).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notes: Option<String>,
+}
+
+/// A public repository pinned by commit sha.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EngineSource {
+    pub repo: String,
+    /// Full commit sha.
+    pub sha: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
