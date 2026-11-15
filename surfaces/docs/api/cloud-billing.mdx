@@ -24,6 +24,37 @@ The PaymentIntent behind the session carries the same metadata as the session (`
 
 `return_url` must be an `https` page on an allowed Allternit host with no query or fragment. The server adds `?checkout=success` or `?checkout=cancelled`.
 
+## Credit balance and Cloud models
+
+| Method | Path | Auth | Notes |
+| --- | --- | --- | --- |
+| GET | `/api/v1/billing/credits` | session, or a key with the `billing` scope | Balance, month-to-date usage, the last 20 ledger rows and `cloud_models`. |
+
+```json
+{
+  "balance_usd": 0,
+  "month_to_date_usage_usd": 0,
+  "recent_transactions": [],
+  "cloud_models": {
+    "allowed": false,
+    "reason": "credits_required",
+    "balance_usd": 0,
+    "byok_providers": ["openrouter"]
+  }
+}
+```
+
+`cloud_models` says whether the account can run Allternit Cloud models now. `GET /api/v1/me/usage` carries the same object, from the same server function.
+
+| Field | Meaning |
+| --- | --- |
+| `allowed` | `true` when the balance is above $0. |
+| `reason` | `null` when allowed, otherwise `credits_required` (no credits row) or `credits_exhausted` (balance at or below $0). These match the `402` codes on [Chat Completions](/api/chat-completions#credits-cloud-api). |
+| `balance_usd` | The current balance. |
+| `byok_providers` | Catalog provider ids the account has its own key for. Cloud models from these providers run on that key and are not locked. |
+
+Clients lock a Cloud model row only when `allowed` is `false` and the row's `provider` (from `GET /v1/models`) is not in `byok_providers`. A response with no `cloud_models` field means not locked, so older servers lock nothing. There is no free monthly allowance, and `free_inference` is no longer returned. On `GET /api/v1/me/usage`, a Free account with no credits row reports `credits: 0` and a weekly limit and usage of 0.
+
 ## Auto top-up
 
 | Method | Path | Notes |

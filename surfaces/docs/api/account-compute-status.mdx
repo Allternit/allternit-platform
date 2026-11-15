@@ -5,7 +5,7 @@ description: "The compute gate: what computer an account has, which paths it can
 
 These routes live in `allternit-cloud-api` and are served at `https://api.allternit.com`. They take a Clerk session or an Allternit API key (`alt_…`, created under ACI › Operator keys; legacy `allternit_*` tokens still work).
 
-A signed-in account with no computer does not reach agent work until it links its own Desktop app, subscribes, or buys credits for a hosted computer. Chat with Allternit Cloud models stays open. Hosted computers run on a third-party cloud provider, managed by Allternit. They sleep when idle.
+A signed-in account with no computer does not reach agent work until it links its own Desktop app, subscribes, or buys credits for a hosted computer. Chat with Allternit Cloud models works without a computer once the account has credits (a balance above $0); Free accounts don't include Cloud usage. Plans and API keys the person connects work without credits. Hosted computers run on a third-party cloud provider, managed by Allternit. They sleep when idle.
 
 ## Get compute status
 
