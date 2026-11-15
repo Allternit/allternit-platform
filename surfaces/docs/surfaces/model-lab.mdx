@@ -1,17 +1,21 @@
 ---
-title: Model Lab
+title: Freeweights Studio
 description: Train, deploy, and chat with open-weights models locally or in the cloud from the Allternit platform shell
 ---
 
 ## Overview
 
-**Model Lab** is the model operations surface inside the Allternit platform shell. It brings together local inference, fine-tuning, model discovery, and cloud deployment so teams can work with open-weights models without leaving the Allternit workspace.
+<Note>
+Freeweights Studio was called Model Lab. Only the name changed. The view id `model-lab`, the URL and the API paths below are the same.
+</Note>
+
+**Freeweights Studio** is the model operations surface inside the Allternit platform shell. It brings together local inference, fine-tuning, model discovery, and cloud deployment so teams can work with open-weights models without leaving the Allternit workspace.
 
 The surface is built around a tabbed view that polls the underlying services every few seconds while it is open, keeping runtime status, job progress, and telemetry live.
 
 ## Base URL / usage
 
-Model Lab runs inside the platform shell:
+Freeweights Studio runs inside the platform shell:
 
 ```text
 https://app.allternit.com/shell?view=model-lab
@@ -38,7 +42,7 @@ https://api.allternit.com/api/local-studio
     Inspect telemetry, manage cached models, launch inference runtimes, and run export/merge/evaluation jobs against the Local Engine controller.
   </Card>
   <Card title="Catalog" icon="/icons/book.svg">
-    Browse Unsloth guides and search the Hugging Face model catalog with hardware-fit estimates.
+    Browse and search the [Freeweights](/tools/freeweights) catalog, with badges for source, license, redistribution and size, plus hardware-fit estimates. Entries marked "From the publisher" link out and have no pull button. Repos Freeweights does not list are labeled "Not in Freeweights". Unsloth guides are here too.
   </Card>
   <Card title="Train" icon="/icons/chip.svg">
     Fine-tune, export, merge, and evaluate open-weights models using job templates and a live job monitor.
@@ -59,7 +63,7 @@ https://api.allternit.com/api/local-studio
 | Tab | Purpose |
 |---|---|
 | **Engine** | Health, status, cached models, active runtimes, and one-click model operations. |
-| **Catalog** | Discover guides and search public model repositories. |
+| **Catalog** | Search the Freeweights catalog and read guides. The grid shows 48 entries at a time. After a pull, the row shows the verification result. |
 | **Train** | Create training/export/merge/evaluation jobs and track their progress. |
 | **Studio** | Native Local Studio controller integration for recipes and serving. |
 | **Cloud** | Save and test cloud endpoint credentials for deployed models. |
@@ -69,7 +73,7 @@ https://api.allternit.com/api/local-studio
 
 ### Local Engine
 
-The **Allternit Local Engine** is the controller that owns cached models and inference runtimes on the host. Model Lab's Engine tab is a visual wrapper around its health, model cache, and runtime lifecycle APIs.
+The **Allternit Local Engine** is the controller that owns cached models and inference runtimes on the host. Freeweights Studio's Engine tab is a visual wrapper around its health, model cache, and runtime lifecycle APIs.
 
 ### Cached models
 
@@ -86,7 +90,7 @@ A recipe tells the Local Engine which backend to use and how to launch it. Suppo
 | `llama_cpp` | CPU/GPU GGUF inference |
 | `mlx` | Apple Silicon inference |
 
-### Model Lab jobs
+### Freeweights Studio jobs
 
 Long-running work is submitted as jobs. Job types map to the operations you can queue from the Engine and Train tabs:
 
@@ -111,7 +115,7 @@ The Cloud tab stores endpoint credentials locally in the browser and runs a ligh
 
 ## Endpoints / commands
 
-### Model Lab jobs
+### Freeweights Studio jobs
 
 | Method | Path | Description |
 |---|---|---|
@@ -254,3 +258,9 @@ data: [DONE]
 - [Agent Studio](/surfaces/agent-studio)
 - [Runtime Backend API](/api/runtime-backend)
 - [Runtime Discovery API](/api/runtime-discovery)
+
+### Pulls and verification
+
+A pull from the catalog goes to the Local Engine. When it finishes, the model shows how it was checked: "Verified by Freeweights", "Matches the publisher's hash", "Pinned by Allternit" or "Not verified". An engine build that predates verification shows "Not checked by this version". Details are on [Freeweights](/tools/freeweights#verification-states).
+
+When the catalog cannot be reached, Studio shows a banner with the age of the saved copy. When the Local Engine is not running or no computer is paired, it says so and the pull button is off. On the phone layout and the PWA, the same catalog is in Settings, then Models.

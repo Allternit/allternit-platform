@@ -39,6 +39,18 @@ The last line shows the current default and why: `default: provider/model (reaso
 - Retired Allternit Cloud aliases are not listed, but a saved choice of one keeps working. A retired CLI model id in your config is mapped to its replacement.
 - A local server that is installed but reports no models is not listed.
 
+## Pull and verify local models
+
+These commands use the Local Engine and the [Freeweights](/tools/freeweights) catalog.
+
+| Command | What it does |
+|---|---|
+| `gizzi models pull <org/repo>` | Queues a download through the Local Engine, shows progress, and prints one verification line when it ends. `--quant <tag>` picks a quantization. |
+| `gizzi models verify <org/repo>` | Asks the engine to re-hash the files on disk. An engine build that predates verification prints "Not checked by this engine version". |
+| `gizzi models search <query> --catalog-source freeweights` | Searches the Freeweights catalog. Sidecar Hugging Face results also carry a Freeweights badge. |
+
+`pull` exits with code 2 when the result is `unverified`. Add `--allow-unverified` to accept files that have no hash anywhere. `--download` and `--run` work as before.
+
 ## Default model
 
 Gizzi picks the model for a turn in this order:

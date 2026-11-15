@@ -4650,6 +4650,41 @@
         "allternit/surfaces/docs/guides/connections.mdx",
         "allternit/surfaces/docs/api/connections.mdx"
       ]
+    },
+    {
+      "id": "feature:freeweights-in-apps",
+      "label": "Freeweights in the apps (catalog, verified pulls, verification labels)",
+      "product": "product:allternit-api",
+      "status": "building",
+      "description": "Allternit apps read the Freeweights catalog and every downloaded model is checked by hash. The model-source contract (services/model-source) resolves a repo to sources in order (Freeweights Worker, manifest sources, then the publisher Hugging Face only when the catalog is down or the repo is not listed) and fetches each file with a sha256 or git blob id check. A manifest that fails its signature check is an error, never a silent fallback. Verification states: freeweights_signed, publisher_hash, pinned, unverified. local-engine downloads through it (POST /models/download with allow_unverified, POST /models/verify, a verification field on every model row); allternit-api annotates Hugging Face search with freeweights data, proxies /api/local-engine/models/verify and ends Ollama pulls with a verification event; voice packs report pinned. Surfaces: Desktop, web, phone and PWA (Model Lab renamed Freeweights Studio, view id model-lab unchanged), iPhone Models screen with Send to computer through the paired computer, Gizzi Code (gizzi models pull, verify, search --catalog-source freeweights, exit 2 on unverified), the status page Freeweights component. Paths in open PRs (allternit-ai src/lib/freeweights, iOS Core/API/FreeweightsClient.swift) are not listed until they merge.",
+      "touches": [
+        "allternit/services/model-source",
+        "allternit/services/local-engine/src/download",
+        "allternit/cmd/allternit-api/src/provider_routes.rs",
+        "allternit/cmd/allternit-api/src/local_engine_routes.rs",
+        "allternit/cmd/allternit-api/src/local_brain_routes.rs",
+        "allternit/cmd/gizzi-code/src/cli/commands/models.ts",
+        "allternit/cmd/gizzi-code/src/runtime/sidecar",
+        "allternit/surfaces/allternit-mobile/ios/Features/Models",
+        "allternit/services/status/contract",
+        "allternit-ai/src/views/model-lab",
+        "allternit-ai/src/components/models",
+        "allternit/surfaces/docs/tools/freeweights.mdx",
+        "allternit/surfaces/docs/tools/local-engine.mdx",
+        "allternit/surfaces/docs/api/local-engine.mdx",
+        "allternit/surfaces/docs/cli/models.mdx",
+        "allternit/surfaces/docs/surfaces/model-lab.mdx"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-14",
+          "note": "Freeweights v3 Phase 1: every surface reads Freeweights through the one model-source contract (contracts/model-source). Source order Freeweights Worker, manifest sources, publisher; a bad manifest is an error, a down catalog falls back to publisher_hash. Data with no hash is refused unless the caller sets allow_unverified. Model Lab is renamed Freeweights Studio in the UI with the view id unchanged. iPhone gets a Freeweights section on the existing Models screen (no new tab) and pulls through the paired computer. Docs: tools/freeweights.mdx."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/tools/freeweights.mdx",
+        "allternit/contracts/model-source/README.md"
+      ]
     }
   ],
   "journeys": [
@@ -5159,6 +5194,41 @@
       "evidence": [
         "allternit/surfaces/docs/guides/connections.mdx",
         "allternit/surfaces/docs/api/connections.mdx"
+      ]
+    },
+    {
+      "id": "journey:freeweights-browse-pull-verify-run",
+      "label": "Browse the Freeweights catalog, pull a model, check it, run it",
+      "description": "From the catalog to a verified model running on the person's computer.",
+      "steps": [
+        {
+          "at": "allternit-ai/src/views/model-lab",
+          "says": "Freeweights Studio lists the catalog with badges for source, license and size. Opening a model shows its details; entries marked From the publisher link out and have no pull button."
+        },
+        {
+          "at": "allternit/cmd/allternit-api/src/provider_routes.rs",
+          "says": "Hugging Face search rows carry freeweights data (listed, license, section) so a listed repo is shown from Freeweights."
+        },
+        {
+          "at": "allternit/cmd/allternit-api/src/local_engine_routes.rs",
+          "says": "The pull goes to the Local Engine on the person's computer through the allternit-api local-engine proxy (from the phone, through the cloud runtime relay)."
+        },
+        {
+          "at": "allternit/services/model-source",
+          "says": "The contract resolves the repo to sources in order, downloads each file and checks its sha256 or git blob id. A failing manifest is an error; a down catalog falls back to the publisher."
+        },
+        {
+          "at": "allternit/services/local-engine/src/download",
+          "says": "Verified files land in the model cache and the model row carries its verification state. POST /models/verify re-hashes them later."
+        },
+        {
+          "at": "allternit/cmd/allternit-api/src/local_brain_routes.rs",
+          "says": "The model is served by a local runtime and shows in the model picker; the app shows its label (Verified by Freeweights, Matches the publisher's hash, Pinned by Allternit or Not verified)."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/tools/freeweights.mdx",
+        "allternit/contracts/model-source/README.md"
       ]
     }
   ]
