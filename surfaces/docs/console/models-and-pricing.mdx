@@ -13,6 +13,7 @@ description: 'Model catalog fields, per-token prices, tool prices, meter rates a
 | `name` | Display name |
 | `provider`, `upstream_id` | Provider and its own model id |
 | `prompt_price`, `completion_price` | Retail USD per token (multiply by one million for the per-million rate) |
+| `pricing` | The same retail price per 1M tokens: `input_per_1m_usd` and `output_per_1m_usd` |
 | `context_length` | Context window in tokens |
 | `lane` | `standard` or `open` |
 | `default` | True for the recommended model |
@@ -48,6 +49,8 @@ New accounts start with the Auto model policy set to `balanced`. It picks the to
 | Device credits | Work on a paired device's organization | `GET /api/v1/credits/balance` |
 
 The Dashboard and the rail show Cloud credits. Device credits appear only when a device is paired.
+
+Cloud credits have no free monthly allowance. A Cloud model call from an account with no credits answers `402 credits_required`, and one at or below $0 answers `402 credits_exhausted`. The `cloud_models` object on `GET /api/v1/billing/credits` says whether the account can run Cloud models now (see [Cloud billing](/api/cloud-billing#credit-balance-and-cloud-models)).
 
 ## Related
 
