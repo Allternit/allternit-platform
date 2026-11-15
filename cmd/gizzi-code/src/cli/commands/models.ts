@@ -13,13 +13,19 @@ import {
   assessRepo,
   recommendRepos,
   downloadRepo,
-  verifyRepo,
   type RecommendationIntent,
 } from "@/runtime/services/localEngine"
 import { describeVerification } from "@/runtime/services/modelVerification"
-import { pullModel, printVerification } from "@/cli/commands/models-pull"
+import { pullModel, verifyModel } from "@/cli/commands/models-pull"
 import { fetchFreeweightsCatalog } from "@/runtime/services/freeweightsCatalog"
 import { Sidecar } from "@/runtime/sidecar"
+
+const SOURCE_BADGE: Record<string, string> = {
+  subprocess: UI.Style.TEXT_INFO_BOLD + "[cli]" + UI.Style.TEXT_NORMAL,
+  local:      UI.Style.TEXT_WARNING_BOLD + "[local]" + UI.Style.TEXT_NORMAL,
+  platform:   UI.Style.TEXT_SUCCESS_BOLD + "[platform]" + UI.Style.TEXT_NORMAL,
+  plugin:     UI.Style.TEXT_SUCCESS_BOLD + "[plugin]" + UI.Style.TEXT_NORMAL,
+}
 
 export const ModelsCommand = cmd({
   command: "models [provider] [repo]",
@@ -101,6 +107,10 @@ export const ModelsCommand = cmd({
         describe: "download and run a model by Hugging Face repo id",
         type: "string",
       })
+      .option("revision", {
+        describe: "pull/verify: branch, tag or commit (default main)",
+        type: "string",
+      })
       .option("quant", {
         describe: "quantization tag (e.g. Q4_K_M)",
         type: "string",
@@ -114,18 +124,9 @@ export const ModelsCommand = cmd({
         process.exit(1)
       }
       try {
-        if (args.provider === "verify") {
-          const r = await verifyRepo(repo, args.quant)
-          printVerification(r.verification)
-          process.exit(describeVerification(r.verification).unverified ? 2 : 0)
-        }
-        process.exit(await pullModel(repo, args.quant, Boolean(args["allow-unverified"])))
+        if (args.provider === "verify") process.exit(await verifyModel(repo, args.quant, args.revision))
+        process.exit(await pullModel(repo, args.quant, Boolean(args["allow-unverified"]), args.revision))
       } catch (err) {
-        const status = (err as { status?: number })?.status
-        if (args.provider === "verify" && status === 404) {
-          printVerification(undefined)
-          process.exit(2)
-        }
         UI.error(err instanceof Error ? err.message : `Failed to ${args.provider}`)
         process.exit(1)
       }

@@ -1,5 +1,5 @@
 import { UI } from "@/cli/ui"
-import { downloadRepo, listModels } from "@/runtime/services/localEngine"
+import { downloadRepo, listModels, verifyRepo, type VerifyFile, type VerifyResult } from "@/runtime/services/localEngine"
 import { describeVerification, pullExitCode, type ModelVerification } from "@/runtime/services/modelVerification"
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
@@ -11,8 +11,8 @@ export function printVerification(v: ModelVerification | undefined | null) {
 }
 
 /** gizzi models pull <repo>: queue the download, stream progress, print the verification line. */
-export async function pullModel(repo: string, quant: string | undefined, allowUnverified: boolean): Promise<number> {
-  const queued = await downloadRepo(repo, quant, { allowUnverified })
+export async function pullModel(repo: string, quant: string | undefined, allowUnverified: boolean, revision?: string): Promise<number> {
+  const queued = await downloadRepo(repo, quant, { allowUnverified, revision })
   let verification = queued.verification
   let last = ""
   for (;;) {
@@ -29,7 +29,7 @@ export async function pullModel(repo: string, quant: string | undefined, allowUn
     if (m.status === "ready") break
     if (m.status === "failed") {
       process.stderr.write("\n")
-      UI.error(`Download failed: ${repo}`)
+      UI.error(`Download failed: ${repo}${m.error ? `: ${m.error}` : ""}`)
       return 1
     }
     await sleep(1000)
@@ -39,10 +39,28 @@ export async function pullModel(repo: string, quant: string | undefined, allowUn
   return pullExitCode(verification, allowUnverified)
 }
 
-const SOURCE_BADGE: Record<string, string> = {
-  subprocess: UI.Style.TEXT_INFO_BOLD + "[cli]" + UI.Style.TEXT_NORMAL,
-  local:      UI.Style.TEXT_WARNING_BOLD + "[local]" + UI.Style.TEXT_NORMAL,
-  platform:   UI.Style.TEXT_SUCCESS_BOLD + "[platform]" + UI.Style.TEXT_NORMAL,
-  plugin:     UI.Style.TEXT_SUCCESS_BOLD + "[plugin]" + UI.Style.TEXT_NORMAL,
+function printFailingFiles(files: VerifyFile[] | undefined) {
+  for (const f of files ?? []) {
+    if (f.ok === false) UI.println(`  ${f.path}${f.reason ? `: ${f.reason}` : ""}`)
+  }
 }
 
+/** Prints the line for a /models/verify result and returns the exit code. */
+export function reportVerify(repo: string, r: VerifyResult): number {
+  if (r.kind === "old_engine") {
+    printVerification(undefined)
+    return 2
+  }
+  if (r.kind === "not_downloaded") {
+    UI.println(UI.Style.TEXT_WARNING_BOLD + `Not downloaded: run gizzi models pull ${repo}` + UI.Style.TEXT_NORMAL)
+    return 2
+  }
+  printVerification(r.data.verification)
+  printFailingFiles(r.data.files)
+  const failing = (r.data.files ?? []).some((f) => f.ok === false) || r.data.ok === false
+  return failing || describeVerification(r.data.verification).unverified ? 2 : 0
+}
+
+export async function verifyModel(repo: string, quant?: string, revision?: string): Promise<number> {
+  return reportVerify(repo, await verifyRepo(repo, quant, revision))
+}
