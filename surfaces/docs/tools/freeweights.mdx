@@ -51,9 +51,13 @@ Set `ALLTERNIT_FREEWEIGHTS_URL` to use a different Freeweights base address. The
 
 ## Freeweights Studio
 
-On Desktop, ai.allternit.com and the m.allternit.com PWA, [Freeweights Studio](/surfaces/model-lab) (formerly Model Lab) shows the catalog. You can search, filter by section and task, and read badges for source, license, redistribution and size. Open a model to see its details, then pull it to the Local Engine on your computer. When the pull ends, the model shows its verification label.
+[Freeweights Studio](/surfaces/model-lab) (formerly Model Lab) opens on Catalog, which shows the Freeweights catalog. Search runs as you type. You can filter by section and task, see the publisher's logo, and read badges for source, license, redistribution and size. Open a model to see its details, then pull it to the Local Engine on your computer. When the pull ends, the model shows its verification label.
 
-On the phone layout and the PWA the catalog is in Settings, then Models.
+On Desktop it is in the rail's More. On ai.allternit.com it is in More. On the phone layout and the PWA it is in the drawer's More, and the phone model picker has a Freeweights chip. Settings, then Models, still has the catalog on the phone layout. On the web and the PWA the Engine tab says there is no model engine on the device: the engine runs in Desktop or on a connected computer.
+
+### Training
+
+Studio can fine-tune a hosted Freeweights model on a computer you own. The job runs through the [Studio API](/api/studio), or from the terminal with [`gizzi studio`](/cli/studio). The base model is fetched with the same signed-manifest check as a pull. See [Training](/surfaces/model-lab#training).
 
 Some entries say "From the publisher". These are models that cannot be redistributed by Freeweights, for example non-commercial or gated ones, or ones with no manifest. They link out and have no pull button. A repo Freeweights does not list is labeled "Not in Freeweights".
 

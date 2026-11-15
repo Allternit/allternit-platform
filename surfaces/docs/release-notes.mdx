@@ -5,6 +5,18 @@ description: 'Changelog for the Allternit platform, SDKs, and Gizzi Code CLI'
 
 # Release Notes
 
+## 2026-11-15 — Freeweights Studio: training on your own computer
+
+- **New:** a [Studio API](/api/studio) at `/api/v1/studio` on each computer's Allternit API. It lists engines, runs one fine-tune job at a time, streams events, and registers outputs as local models. It replaces the old `/api/v1/model-training` routes, which are removed.
+- **Allternit Tune:** the default engine, Apache-2.0. It runs `lora`, `qlora`, `dpo` and `full` through TRL and PEFT on Apple Silicon and on NVIDIA with Linux. The MLX backend is not available yet. Windows, AMD, Intel and CPU-only computers are refused with the reason.
+- **Checked base models:** a job can pin the signed Freeweights manifest hash of its base model. A different manifest is refused with `manifest_mismatch`.
+- **Desktop:** bundles Allternit Tune. Job outputs stay on the computer.
+- **Gizzi Code:** `gizzi studio`. See [Fine-tune with gizzi studio](/cli/studio).
+- **iPhone:** the Models screen shows training jobs with status, log tail and cancel. You create jobs on Desktop or the web.
+- **Web and PWA (live):** [Freeweights Studio](/surfaces/model-lab) opens on the Freeweights catalog, with search as you type and publisher logos. On the phone layout and the PWA it is in the drawer's More, and the phone model picker has a chip. The Engine tab says there is no model engine on the device.
+- **Coming:** the Train tab UI arrives with the next web update.
+- **Docs:** the Studio page no longer describes the `/api/model-lab/jobs` route, which was never served.
+
 ## 2026-11-14 — Freeweights in the apps: models are checked before they run
 
 - **New:** Allternit apps read the [Freeweights](/tools/freeweights) catalog. Every model pulled to a computer is checked by its hash. The result shows as "Verified by Freeweights", "Matches the publisher's hash", "Pinned by Allternit" or "Not verified".
