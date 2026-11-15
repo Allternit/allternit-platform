@@ -2231,6 +2231,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "allternit-studio-spec"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "chrono",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "thiserror 1.0.69",
+ "tokio",
+]
+
+[[package]]
 name = "allternit-substrate"
 version = "0.1.0"
 dependencies = [

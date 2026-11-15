@@ -1,0 +1,38 @@
+{
+  "spec_version": 1,
+  "engine": "allternit-tune",
+  "engine_version": "0.1.0",
+  "base": {
+    "repo": "freeweights/qwen2.5-0.5b-instruct",
+    "revision": "main",
+    "manifest_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "dataset": {
+    "path": "~/data/train.jsonl",
+    "format": "chat"
+  },
+  "method": "lora",
+  "params": {
+    "rank": 16,
+    "alpha": 32,
+    "lr": 0.0002,
+    "epochs": 1,
+    "max_seq_len": 2048
+  },
+  "resources": {
+    "place": "rented",
+    "max_hours": 1
+  },
+  "outputs": {
+    "adapter": true,
+    "merged": false,
+    "gguf": [
+      "q4_k_m"
+    ],
+    "mlx": false
+  },
+  "eval": {
+    "sets": [],
+    "baseline": "base"
+  }
+}

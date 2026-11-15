@@ -1,0 +1,28 @@
+[package]
+name = "allternit-studio-spec"
+version = "0.1.0"
+edition = "2021"
+description = "Freeweights Studio contract: job spec v1, job states, engine and host API schemas, a fake engine"
+license = "Apache-2.0"
+
+[features]
+default = ["fake-engine"]
+# A tiny in-process engine API v1 server other lanes build against.
+fake-engine = ["dep:axum", "dep:tokio"]
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+chrono = { workspace = true }
+axum = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
+
+[dev-dependencies]
+reqwest = { workspace = true }
+serde_yaml = { workspace = true }
+tokio = { workspace = true }
+
+[[example]]
+name = "fake_engine"
+required-features = ["fake-engine"]
