@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Fix: a `gizzi serve` whose paired credential was revoked on the server no longer calls the platform forever. Instance registration stops its refresh loop on the first 401 and logs one warning to run `gizzi pair`; the subagent catalog sync skips tokens the server rejected (401/403) for the rest of the process. Network errors and 5xx keep retrying.
+
 ## 2.13.0 (2026-11-14)
 
 - **Custom tools on CLI workers.** `gizzi worker --tools-file <path>` (or `ALLTERNIT_WORKER_TOOLS_FILE`) runs a self-hosted agent's custom tools as commands: `{"tools":{"<name>":{"command":[...],"timeout_ms":30000}}}`. Before, the CLI worker answered custom tools with an error.
