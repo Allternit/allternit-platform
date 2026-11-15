@@ -33,9 +33,11 @@ _JOB_PATH = re.compile(r"^/v1/jobs/([A-Za-z0-9_-]+)(/events|/cancel)?$")
 
 
 def engine_card(hardware: Dict[str, Any]) -> Dict[str, Any]:
-    """EngineInfo for this computer. `limits.unavailable_here` names each
-    method this computer cannot run and why."""
+    """EngineInfo with `fit` for this computer (hardware.probe()): the hardware
+    id from the host, the backend, and each method or output it cannot make
+    here, with the reason."""
     from .export import find_llama_cpp
+    from .hardware import HARDWARE, fit
 
     llama = find_llama_cpp()
     return {
@@ -44,14 +46,13 @@ def engine_card(hardware: Dict[str, Any]) -> Dict[str, Any]:
         "license": "Apache-2.0",
         "version": __version__,
         "methods": list(METHODS),
-        "hardware": ["apple-silicon", "cuda-linux"],
+        "hardware": list(HARDWARE),
         "install_state": "installed",
         "limits": {
             "max_seq_len": MAX_SEQ_LEN,
             "mlx_unsupported_methods": ["dpo", "full"],
-            "device": hardware.get("device"),
             "torch": hardware.get("torch"),
-            "unavailable_here": dict(hardware.get("unavailable") or {}),
+            "mlx_lm": hardware.get("mlx_lm"),
             "base_model": "local folder only; the host fetches and verifies weights",
             "gguf": "available" if llama["convert"] else "needs llama.cpp (convert_hf_to_gguf.py)",
         },
@@ -59,9 +60,12 @@ def engine_card(hardware: Dict[str, Any]) -> Dict[str, Any]:
         "process": "embedded",
         "default": True,
         "backends": [
-            {"id": "torch", "status": "available" if hardware.get("torch") else "planned"},
-            {"id": "mlx", "status": "pending_decision"},
+            {"id": "torch", "status": "available"},
+            {"id": "mlx", "status": "available"},
         ],
+        "notes": "PyTorch on every computer; MLX on a Mac for LoRA and QLoRA. QLoRA uses "
+                 "bitsandbytes 4-bit off the Mac. On the CPU only LoRA runs, and slowly.",
+        "fit": hardware.get("fit") or fit(hardware["hardware"]),
     }
 
 
@@ -160,7 +164,7 @@ def make_handler(manager: JobManager, token: str, card: Callable[[], Dict[str, A
                 return self._error(422, exc.code, exc.message)
             except JobRunning as exc:
                 return self._error(409, "job_running", str(exc))
-            self._send(201, job.to_json())
+            self._send(201, getattr(job, "created_json", None) or job.to_json())
 
     return Handler
 
@@ -178,19 +182,26 @@ def main(argv: Optional[list] = None) -> int:
     parser.add_argument(
         "--data-dir",
         default=os.environ.get("ALLTERNIT_TUNE_DATA_DIR", str(Path.home() / ".allternit" / "studio" / "allternit-tune")),
-        help="where job folders (outputs, events, logs) are written",
+        help="where job folders (events, logs; outputs too unless ALLTERNIT_STUDIO_OUTPUT_DIR is set) are written",
     )
     args = parser.parse_args(argv)
     if not args.token:
         parser.error("--token (or ALLTERNIT_TUNE_TOKEN) is required")
 
-    from .hardware import probe
+    from .hardware import HardwareError, probe
 
-    hardware = probe()
-    manager = JobManager(Path(args.data_dir).expanduser(), unavailable_methods=hardware["unavailable"])
+    try:
+        hardware = probe()
+    except HardwareError as exc:
+        parser.error(str(exc))
+    output_dir = os.environ.get("ALLTERNIT_STUDIO_OUTPUT_DIR") or None
+    manager = JobManager(Path(args.data_dir), host=hardware["host"],
+                         output_dir=Path(output_dir) if output_dir else None)
     server = serve(manager, args.token, args.port, lambda: engine_card(hardware))
     print(json.dumps({"ready": True, "port": server.server_address[1], "engine": ENGINE_ID,
-                      "version": __version__, "device": hardware["device"]}), flush=True)
+                      "version": __version__, "hardware": hardware["hardware"],
+                      "backend": hardware["fit"]["backend"], "data_dir": str(manager.data_dir),
+                      "output_dir": str(manager.output_dir) if manager.output_dir else None}), flush=True)
     def _on_term(signum: int, frame: Any) -> None:  # noqa: ARG001
         raise KeyboardInterrupt
 

@@ -115,3 +115,39 @@ def load(plan: Any) -> Any:
     if len(dataset) == 0:
         raise DataError("the dataset has no rows")
     return dataset
+
+
+def read_rows(path: str) -> List[Dict[str, Any]]:
+    """Rows of a local .jsonl or .json file, without the datasets library."""
+    import json
+
+    with open(path, encoding="utf-8") as fh:
+        if path.lower().endswith(".jsonl"):
+            rows = [json.loads(line) for line in fh if line.strip()]
+        else:
+            rows = json.load(fh)
+    if not isinstance(rows, list) or not all(isinstance(r, dict) for r in rows):
+        raise DataError("the dataset file must hold one JSON object per row")
+    if not rows:
+        raise DataError("the dataset has no rows")
+    return rows
+
+
+def shape_rows(rows: List[Dict[str, Any]], fmt: str) -> Any:
+    """`shape` for a plain list of rows: (rows with TRL columns, format).
+    These are also the columns mlx-lm reads (text, prompt/completion, messages)."""
+    columns = sorted({key for row in rows for key in row})
+    if fmt == "jsonl":
+        fmt = detect_format(columns)
+    if fmt == "chat":
+        if "messages" in columns:
+            return [{"messages": r["messages"]} for r in rows], fmt
+        if "conversations" in columns:
+            return [_sharegpt_row(r) for r in rows], fmt
+        raise DataError("format chat needs a messages (or conversations) column")
+    missing = [c for c in _REQUIRED[fmt] if c not in columns]
+    if missing:
+        raise DataError(f"format {fmt} needs column(s): {', '.join(missing)}")
+    if fmt == "alpaca":
+        return [_alpaca_row(r) for r in rows], fmt
+    return [{c: r.get(c) for c in _REQUIRED[fmt]} for r in rows], fmt

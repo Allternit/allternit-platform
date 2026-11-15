@@ -6,16 +6,51 @@ Apache-2.0 (see `LICENSE` and `NOTICE`). It speaks engine API v1
 (`services/studio-spec/openapi/engine-api.yaml`) and trains with TRL + PEFT on
 torch. Python package: `allternit_tune`.
 
-| Method | What it does | CUDA (Linux) | Apple Silicon (MPS) |
-|---|---|---|---|
-| `lora` | PEFT LoRA adapters, TRL SFTTrainer | yes | yes (verified) |
-| `qlora` | base loaded 4-bit with bitsandbytes, then LoRA | yes | yes with bitsandbytes 0.50+ (verified) |
-| `dpo` | TRL DPOTrainer with LoRA adapters | yes | yes (verified) |
-| `full` | every weight trains, no adapter | yes | yes (verified; memory bound) |
+Every hardware id in the contract (`services/studio-spec/fixtures/fit-table.json`):
 
-The MLX backend is waiting on a product decision (Decision 3 of the Studio
-Phase 3 plan). The backend interface is `allternit_tune/backends/__init__.py`;
-`MlxBackend` is registered as `pending_decision` and the engine card says so.
+| Hardware id | Backend | Methods | QLoRA through |
+|---|---|---|---|
+| `apple-silicon` | `mlx` for lora/qlora, `torch-mps` for full/dpo | all four | MLX 4-bit (or bitsandbytes on MPS with `resources.backend: torch`) |
+| `cuda-linux`, `cuda-windows` | `torch-cuda` | all four | bitsandbytes |
+| `rocm-linux` | `torch-rocm` (torch reports it as cuda with `torch.version.hip`) | all four | bitsandbytes 0.50+ |
+| `xpu-linux`, `xpu-windows` | `torch-xpu` | all four | bitsandbytes 0.50+ |
+| `cpu` | `torch-cpu` | lora only, slow (`fit.warning`) | refused |
+
+| Method | torch | MLX (mlx-lm 0.32.2) |
+|---|---|---|
+| `lora` | PEFT LoRA, TRL SFTTrainer | `mlx_lm` LoRA on every layer |
+| `qlora` | base loaded 4-bit with bitsandbytes, then LoRA | base converted to 4-bit MLX in the job folder, then LoRA |
+| `dpo` | TRL DPOTrainer with LoRA adapters | refused: mlx-lm has no DPO |
+| `full` | every weight trains, no adapter | refused: Studio runs full on torch-mps |
+
+`resources.backend` is `auto` (the row above), `torch` or `mlx`; `mlx` off a Mac
+or for full/dpo is 422 `backend_not_supported`. A method the hardware cannot
+run is 422 `method_not_supported`, MLX output off a Mac 422
+`output_not_supported`, each with the reason from the fit. The same codes
+carry what the engine's environment is missing (torch cannot see the GPU the
+host named, bitsandbytes missing or too old, mlx-lm missing). Intel Macs
+(`cpu`) are refused: PyTorch's last Intel Mac build is 2.2 and transformers 5
+needs 2.6. Not tested by Allternit yet: ROCm, XPU, Windows, CPU, MLX.
+
+The MLX adapter is mlx-lm's own format (`adapters.safetensors` +
+`adapter_config.json`), not a PEFT adapter. `merged` is the fused, dequantized
+model; `mlx` is the fused model (4-bit after QLoRA). On a PyTorch run with
+`outputs.mlx` (full or DPO on a Mac) the merged model is converted with
+`mlx_lm.convert`. GGUF always goes through llama.cpp.
+
+## Requirements per hardware
+
+The host installs `requirements-<hardware id>.txt` into the engine's venv:
+
+| File | torch | Index |
+|---|---|---|
+| `requirements-apple-silicon.txt` | 2.15.0 + mlx-lm 0.32.2 | PyPI |
+| `requirements-cuda-linux.txt`, `-cuda-windows.txt` | 2.15.0+cu134 | download.pytorch.org/whl/cu134 |
+| `requirements-rocm-linux.txt` | 2.14.1+rocm7.2 (newest ROCm build) | download.pytorch.org/whl/rocm7.2 |
+| `requirements-xpu-linux.txt`, `-xpu-windows.txt` | 2.15.0+xpu | download.pytorch.org/whl/xpu |
+| `requirements-cpu.txt` | 2.15.0+cpu (not macOS) | download.pytorch.org/whl/cpu |
+
+`requirements.txt` stays the generic set (torch from PyPI).
 
 ## Run the engine
 
@@ -27,7 +62,11 @@ python -m allternit_tune.server --port 0 --token <per-launch-token> [--data-dir 
   `ALLTERNIT_TUNE_TOKEN` works instead of `--token`, which keeps the token out of `ps`.
 - Prints one line `{"ready": true, "port": N, ...}` when it is listening.
 - Job folders go to `--data-dir` (default `~/.allternit/studio/allternit-tune`):
-  `jobs/<id>/adapter`, `merged`, `gguf`, plus `plan.json`, `events.jsonl`, `worker.log`.
+  `jobs/<id>/plan.json`, `events.jsonl`, `worker.log`. Outputs (`adapter`,
+  `merged`, `gguf`, `mlx`) go to `ALLTERNIT_STUDIO_OUTPUT_DIR` when the host
+  sets it, else into the job folder. Output paths in events are absolute.
+- `ALLTERNIT_STUDIO_HARDWARE` is the hardware id the host detected. Without
+  it (a run by hand) the engine guesses from the OS and torch.
 - SIGTERM cancels the running job (its worker is stopped) and exits.
 
 Routes: `GET /v1/engine`, `POST /v1/jobs`, `GET /v1/jobs/{id}`,
@@ -51,12 +90,12 @@ cancel stops training at once and a torch crash cannot take the server down.
   `beta` (dpo only). Unknown params are refused, so a typo is never ignored.
 - `outputs`: the adapter is always written for LoRA methods; `merged` writes a
   merged safetensors model in the base model's dtype; `gguf` lists quants
-  (`f16`, `q8_0`, `q4_k_m`, ...). `mlx: true` is refused until the MLX backend exists.
+  (`f16`, `q8_0`, `q4_k_m`, ...). `mlx: true` writes MLX files (Apple Silicon only).
 - `resources.max_hours` stops the job when reached.
 
-The card (`GET /v1/engine`) carries `limits.device` and
-`limits.unavailable_here` (method -> reason) for this computer. A method that
-cannot run here is refused at submit with that reason.
+The card (`GET /v1/engine`) carries `fit` for this computer (`ok`,
+`hardware`, `backend`, `reason`, `warning`, `methods_unavailable`,
+`outputs_unavailable`). A job is refused at submit with those reasons.
 
 ## GGUF
 
