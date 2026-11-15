@@ -351,7 +351,7 @@ enum ConnectionsClient {
                 case "update_app": return "Update the app to connect this plan."
                 case "not_found": return "This isn't offered on your account right now. Use a key for now."
                 case "login_expired": return "Sign-in expired. Sign in again."
-                case "vendor_limited": return message ?? "The vendor limited this plan."
+                case "vendor_limited": return message ?? "This plan isn't active or its limit is used up. Check the subscription, or pick another brain."
                 default:
                     if let message, !message.isEmpty { return message }
                     return describe(APIError.httpError(statusCode: status, message: nil))

@@ -165,7 +165,7 @@ pub fn reason_text(code: &str) -> &'static str {
     match code {
         "login_expired" => "Sign-in expired",
         "key_rejected" => "The key was rejected",
-        "vendor_limited" => "This vendor limited this plan",
+        "vendor_limited" => "Plan not active or limit used up",
         "no_computer" => "Needs your own computer for now",
         "not_available_yet" => "Not available yet",
         "computer_offline" => "Your computer is offline",

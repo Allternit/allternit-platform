@@ -140,7 +140,7 @@ pub struct ChatMessage {
 pub enum TurnEvent {
     Delta(String),
     Done { input_tokens: Option<u32>, output_tokens: Option<u32> },
-    Error { code: &'static str, message: String }, // login_expired | vendor_limited | runner_busy | could_not_start
+    Error { code: &'static str, message: String }, // login_expired | vendor_limited | no_reply | vendor_failed | runner_busy | could_not_start
 }
 
 /// A turn's event stream, boxed so the route holds one type.
@@ -161,6 +161,34 @@ pub enum VendorState {
 
 pub const RUNNER_BUSY: &str = "runner_busy";
 pub const COULD_NOT_START: &str = "could_not_start";
+/// The vendor's CLI went quiet past the idle limit.
+pub const NO_REPLY: &str = "no_reply";
+/// The vendor's CLI failed with something that is not a sign-in or plan problem.
+pub const VENDOR_FAILED: &str = "vendor_failed";
+
+pub fn vendor_limited_text(vendor: Vendor) -> String {
+    let v = vendor.display_name();
+    format!("{v} didn't accept this message: your {v} plan isn't active or its limit is used up. Check your {v} subscription, or pick another brain.")
+}
+
+fn no_reply_text(vendor: Vendor, idle: Duration) -> String {
+    let v = vendor.display_name();
+    format!("{v} didn't answer within {} seconds. Check that your {v} plan is active, then send again, or pick another brain.", idle.as_secs())
+}
+
+fn vendor_failed_text(vendor: Vendor) -> String {
+    let v = vendor.display_name();
+    format!("{v} couldn't answer this message. If your {v} plan isn't active, renew it or pick another brain. Otherwise send again.")
+}
+
+/// CLI failure text the runner did not classify that still reads as a plan
+/// or billing problem (a lapsed subscription, used-up credits).
+fn looks_like_plan_problem(message: &str) -> bool {
+    let lower = message.to_lowercase();
+    ["subscription", "subscribe", "upgrade", "payment", "billing", "insufficient", "quota", "credits", "usage limit", "rate limit", "plan limit", "not entitled", "payment required"]
+        .iter()
+        .any(|needle| lower.contains(needle))
+}
 pub const PLAN_TURN_IN_FLIGHT: &str = "plan_turn_in_flight";
 pub const PLAN_RATE: &str = "plan_rate";
 pub const NOT_FOUND: &str = "not_found";
@@ -1244,9 +1272,9 @@ impl BrainRunnerService {
             }
             let event = match tokio::time::timeout(turn.idle, turn.replies.recv()).await {
                 Err(_) => {
-                    // Silent for 60 s: close the socket and the turn.
+                    // Silent too long: close the socket and the turn.
                     turn.sockets.close(&turn.runner_id);
-                    TurnEvent::Error { code: COULD_NOT_START, message: "Could not start. Try again".to_string() }
+                    TurnEvent::Error { code: NO_REPLY, message: no_reply_text(turn.vendor, turn.idle) }
                 }
                 Ok(None) => TurnEvent::Error { code: COULD_NOT_START, message: "Could not start. Try again".to_string() },
                 Ok(Some(frame)) => match frame.get("type").and_then(Value::as_str) {
@@ -1262,11 +1290,11 @@ impl BrainRunnerService {
                                 let _ = set_vendor_word(&turn.db, &turn.runner_id, turn.vendor, "expired").await;
                                 TurnEvent::Error { code: "login_expired", message }
                             }
-                            Some("vendor_limited") => {
+                            Some(code) if code == "vendor_limited" || looks_like_plan_problem(&message) => {
                                 let _ = set_vendor_word(&turn.db, &turn.runner_id, turn.vendor, "limited").await;
-                                TurnEvent::Error { code: "vendor_limited", message }
+                                TurnEvent::Error { code: "vendor_limited", message: vendor_limited_text(turn.vendor) }
                             }
-                            _ => TurnEvent::Error { code: COULD_NOT_START, message: "Could not start. Try again".to_string() },
+                            _ => TurnEvent::Error { code: VENDOR_FAILED, message: vendor_failed_text(turn.vendor) },
                         }
                     }
                     // Unknown frame types are ignored; keep waiting.
@@ -1409,6 +1437,12 @@ mod tests {
                             "turn" if frame["vendor"] == "claude" => {
                                 vec![json!({ "type": "error", "id": id, "code": "login_expired", "message": "Sign-in expired" })]
                             }
+                            // Kimi stands in for a CLI that fails: by the message it was sent.
+                            "turn" if frame["vendor"] == "kimi" => match frame["messages"][0]["content"].as_str().unwrap_or("") {
+                                "silent" => vec![],
+                                "lapsed" => vec![json!({ "type": "error", "id": id, "code": "cli_failed", "message": "Error: your subscription has ended" })],
+                                _ => vec![json!({ "type": "error", "id": id, "code": "cli_failed", "message": "panic: stream closed" })],
+                            },
                             "turn" => vec![
                                 json!({ "type": "turn_delta", "id": id, "text": "Hi" }),
                                 json!({ "type": "turn_delta", "id": id, "text": " there" }),
@@ -1625,6 +1659,39 @@ mod tests {
         assert!(backend.boxes.lock().unwrap().is_empty());
         // Logout with no box is a no-op, even with the kill switch off.
         service.logout("user_a", Vendor::Claude).await.unwrap();
+    }
+
+    // Regression (2026-11-15): a plan with no subscription, or a CLI that went quiet,
+    // answered "Could not start. Try again", which says neither why nor what to do.
+    #[tokio::test]
+    async fn brain_runner_turn_failures_say_what_to_do() {
+        let db = runner_db().await;
+        let cfg = RunnerConfig { turn_idle_timeout: Duration::from_millis(300), pace_turns: 20, ..test_config() };
+        let (service, _) = service_with(db, cfg);
+        let turn = |text: &str| {
+            let service = service.clone();
+            let messages = vec![ChatMessage { role: "user".to_string(), content: text.to_string() }];
+            async move { service.turn("user_k", Vendor::Kimi, "kimi-code/k3", messages).await.unwrap().collect::<Vec<_>>().await }
+        };
+
+        let lapsed = turn("lapsed").await;
+        assert_eq!(lapsed, vec![TurnEvent::Error {
+            code: "vendor_limited",
+            message: "Kimi didn't accept this message: your Kimi plan isn't active or its limit is used up. Check your Kimi subscription, or pick another brain.".to_string(),
+        }]);
+        assert!(service.vendor_state("user_k").await.unwrap().contains(&(Vendor::Kimi, VendorState::Limited)));
+
+        let broken = turn("broken").await;
+        assert_eq!(broken, vec![TurnEvent::Error {
+            code: VENDOR_FAILED,
+            message: "Kimi couldn't answer this message. If your Kimi plan isn't active, renew it or pick another brain. Otherwise send again.".to_string(),
+        }]);
+
+        let silent = turn("silent").await;
+        assert_eq!(silent, vec![TurnEvent::Error {
+            code: NO_REPLY,
+            message: "Kimi didn't answer within 0 seconds. Check that your Kimi plan is active, then send again, or pick another brain.".to_string(),
+        }]);
     }
 
     #[tokio::test]

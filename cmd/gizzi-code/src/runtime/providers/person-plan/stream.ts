@@ -189,7 +189,7 @@ const PLAN_ERROR_TEXT: Record<string, string> = {
   runner_busy: "Busy. Try again",
   could_not_start: "Could not start. Try again",
   login_expired: "Sign-in expired. Run `gizzi connect` to sign in to that plan again.",
-  vendor_limited: "The vendor limited this plan.",
+  vendor_limited: "This plan isn't active or its limit is used up. Check the subscription, or pick another brain.",
 }
 
 /** The plain message for a refused plan turn. The server's own message wins when it sends one. */
