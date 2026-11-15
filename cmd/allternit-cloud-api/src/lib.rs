@@ -359,6 +359,10 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         // no compute gate; CONTRACT-connections-2026-11 section 9.7).
         .merge(routes::brain_runners::routes(services::brain_runners::shared(&state.db)))
         .merge(routes::runtime_viewer::routes())
+        // Model hosts (a phone/browser tab serving a small model to its owner's
+        // agents): each handler resolves the caller itself; the device socket
+        // takes a single-use ticket. All state in memory.
+        .merge(routes::model_hosts::routes())
         .merge(routes::phone_live::routes())
         // Channels hybrid relay: management routes check the Clerk session;
         // /channels/in/:key is public, the unguessable key is the credential.

@@ -667,6 +667,12 @@
       "label": "allternit-tune engine (services/model-training)",
       "kind": "module",
       "path": "allternit/services/model-training"
+    },
+    {
+      "id": "allternit/cmd/allternit-cloud-api/src/routes/model_hosts.rs",
+      "label": "model host relay",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-cloud-api/src/routes/model_hosts.rs"
     }
   ],
   "edges": [
@@ -1660,6 +1666,24 @@
       "evidence": [
         "allternit/surfaces/docs/api/studio.mdx",
         "allternit/cmd/allternit-api/src/studio/engines.rs"
+      ]
+    },
+    {
+      "source": "allternit/cmd/gizzi-code/src/runtime/providers",
+      "target": "allternit/cmd/allternit-cloud-api/src/routes/model_hosts.rs",
+      "kind": "HTTP GET /api/v1/model-hosts/v1/models + POST /v1/chat/completions (provider allternit-devices 'Your devices', bearer = API key or runtime device token; rescanned while gizzi runs)",
+      "evidence": [
+        "allternit/cmd/gizzi-code/src/runtime/providers/discovery/allternit-devices.ts",
+        "allternit/surfaces/docs/api/model-host-relay.mdx"
+      ]
+    },
+    {
+      "source": "allternit-ai/src/lib/model-host",
+      "target": "allternit/cmd/allternit-cloud-api/src/routes/model_hosts.rs",
+      "kind": "POST /api/v1/model-hosts/ws-ticket then WebSocket /api/v1/model-hosts/connect (hello/models/chunk/end/error up, ready/request/cancel down): the owner's host device runs the model and streams tokens back",
+      "evidence": [
+        "allternit-ai/src/lib/model-host/host-client.ts",
+        "allternit/surfaces/docs/api/model-host-relay.mdx"
       ]
     }
   ]
