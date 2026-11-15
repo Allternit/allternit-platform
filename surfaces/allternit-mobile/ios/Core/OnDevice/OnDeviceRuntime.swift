@@ -216,12 +216,19 @@ final class OnDeviceRuntime: ObservableObject {
         guard loaded != nil else { return }
         #if canImport(UIKit)
         // Finish the unload before iOS suspends the app.
-        var taskId = UIBackgroundTaskIdentifier.invalid
-        taskId = UIApplication.shared.beginBackgroundTask(withName: "ondevice-unload") {
-            UIApplication.shared.endBackgroundTask(taskId)
+        // The expiry handler runs on the main thread; the box ends the task once.
+        final class TaskBox: @unchecked Sendable {
+            var id = UIBackgroundTaskIdentifier.invalid
+            func end() {
+                guard id != .invalid else { return }
+                UIApplication.shared.endBackgroundTask(id)
+                id = .invalid
+            }
         }
+        let box = TaskBox()
+        box.id = UIApplication.shared.beginBackgroundTask(withName: "ondevice-unload") { box.end() }
         await unload(reason: "app in background")
-        UIApplication.shared.endBackgroundTask(taskId)
+        box.end()
         #else
         await unload(reason: "app in background")
         #endif
