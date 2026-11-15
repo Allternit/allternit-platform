@@ -4,6 +4,9 @@ import { Provider } from "@/runtime/providers/provider"
 import { ModelsDev } from "@/runtime/providers/adapters/models"
 import { ModelList } from "@/runtime/providers/model-list"
 import { currentDefaultBrain } from "@/runtime/providers/default-brain"
+import { CloudContinue } from "@/runtime/session/cloud-continue"
+import { cloudEntitlement } from "@/cli/ui/ink-app/services/allternitAccount"
+import { cloudCreditsDisclosure } from "@/shared/util/provider-error"
 import { cmd } from "@/cli/commands/cmd"
 import { UI } from "@/cli/ui"
 import { EOL } from "os"
@@ -275,6 +278,13 @@ export const ModelsCommand = cmd({
         }
 
         const dim = (text: string) => UI.Style.TEXT_DIM + text + UI.Style.TEXT_NORMAL
+        // Cloud rows stay listed; on an account with no Cloud credits they read "needs credits".
+        const listsCloud = sections.some((s) =>
+          s.providers.some((p) => p.id === CloudContinue.PROVIDER_ID && (!args.provider || p.id === args.provider)),
+        )
+        const entitlement = listsCloud ? await cloudEntitlement() : undefined
+        const locked = await CloudContinue.lockCheck(entitlement).catch(() => () => false)
+        let anyLocked = false
         for (const section of sections) {
           const providers = section.providers.filter((p) => !args.provider || p.id === args.provider)
           if (providers.length === 0) continue
@@ -285,6 +295,10 @@ export const ModelsCommand = cmd({
               if (row.default) tags.push("default")
               if (row.current) tags.push("current")
               if (provider.signedIn === false) tags.push("not signed in")
+              if (provider.id === CloudContinue.PROVIDER_ID && locked(row.modelID)) {
+                tags.push("needs credits")
+                anyLocked = true
+              }
               const ref = row.current ? UI.Style.TEXT_HIGHLIGHT_BOLD + row.ref + UI.Style.TEXT_NORMAL : row.ref
               process.stdout.write(ref + (tags.length ? "  " + dim(tags.join(" ")) : "") + EOL)
               if (args.verbose) {
@@ -295,6 +309,8 @@ export const ModelsCommand = cmd({
             }
           }
         }
+
+        if (anyLocked) UI.println(dim(cloudCreditsDisclosure(entitlement?.reason)))
 
         if (!args.provider) {
           const brain = await currentDefaultBrain().catch(() => ({ model: null, reason: "", pinned: false }))

@@ -56,7 +56,7 @@ export function formatComputePaths(paths: ComputePaths | undefined, docsUrl = DO
   const credits = paths?.credits
   const lines = [
     "What works without a computer",
-    "  Works on any device: Allternit Cloud models (included with Free, about $2 a month of usage), any API key you add,",
+    "  Works on any device: Allternit Cloud models (they need credits: a pack or a plan), any API key you add,",
     "  and plans you already pay for where the vendor allows it (GitHub Copilot now; Claude and others later).",
     "  Needs a computer: clicking apps, driving a browser, running coding tools (Codex CLI, Claude Code), and keeping agents",
     "  running while your own machine sleeps.",
