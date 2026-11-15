@@ -86,6 +86,30 @@ fn parse<T: serde::de::DeserializeOwned>(body: &Bytes, shape: &str) -> Result<T,
     serde_json::from_slice(body).map_err(|_| ApiError::BadRequest(format!("Expected a JSON body {shape}.")))
 }
 
+/// The person's words without the leading markers the composers add for the
+/// agent (`[web_search_enabled]`, `[research_enabled]`, `[Use …]`,
+/// `[Execute in … mode]`; web stripAgentDirectives, iOS ToolOptionsStore).
+/// Plan chats have no tools, so the markers mean nothing to the vendor and
+/// showed up as chat titles.
+pub(crate) fn without_app_markers(text: &str) -> &str {
+    let mut rest = text;
+    loop {
+        let trimmed = rest.trim_start();
+        let Some(inner_end) = trimmed.strip_prefix('[').and_then(|t| t.find(']').filter(|&i| !t[..i].contains('\n'))) else {
+            break;
+        };
+        let inner = &trimmed[1..=inner_end];
+        let marker = matches!(inner, "web_search_enabled" | "research_enabled")
+            || inner.starts_with("Use ")
+            || (inner.starts_with("Execute in ") && inner.contains(" mode"));
+        if !marker {
+            break;
+        }
+        rest = &trimmed[inner_end + 2..];
+    }
+    if rest.len() == text.len() { text } else { rest.trim_start() }
+}
+
 /// The stored form of new messages, or a 400.
 fn stored(messages: Vec<NewMessage>) -> Result<Value, ApiError> {
     if messages.len() > MAX_APPEND {
@@ -100,7 +124,8 @@ fn stored(messages: Vec<NewMessage>) -> Result<Value, ApiError> {
         if message.content.chars().count() > MAX_CONTENT_CHARS {
             return Err(ApiError::BadRequest(format!("A message holds at most {MAX_CONTENT_CHARS} characters.")));
         }
-        let mut row = json!({ "role": message.role, "content": message.content, "at": now });
+        let content = if message.role == "user" { without_app_markers(&message.content) } else { &message.content };
+        let mut row = json!({ "role": message.role, "content": content, "at": now });
         if let Some(model) = message.model.filter(|m| !m.trim().is_empty()) {
             row["model"] = Value::String(model);
         }
@@ -111,7 +136,9 @@ fn stored(messages: Vec<NewMessage>) -> Result<Value, ApiError> {
 
 type ThreadRow = (String, Option<String>, String, i32, DateTime<Utc>, DateTime<Utc>);
 
+/// Rows saved before the markers were stripped on write are cleaned on read.
 fn summary((id, title, model, count, created, updated): ThreadRow) -> Value {
+    let title = title.as_deref().map(without_app_markers).filter(|t| !t.is_empty());
     json!({
         "id": id,
         "title": title,
@@ -132,7 +159,10 @@ async fn create(State(state): State<Arc<ApiState>>, headers: HeaderMap, body: By
         if !crate::routes::model_router::is_person_only_model(&model) {
             return Err(ApiError::BadRequest("model must be a plan/… or copilot/… model.".to_string()));
         }
-        let title = body.title.map(|t| t.trim().chars().take(MAX_TITLE_CHARS).collect::<String>()).filter(|t| !t.is_empty());
+        let title = body
+            .title
+            .map(|t| without_app_markers(t.trim()).chars().take(MAX_TITLE_CHARS).collect::<String>())
+            .filter(|t| !t.is_empty());
         let messages = stored(body.messages)?;
         let id = format!("pth_{}", uuid::Uuid::new_v4().simple());
         let row: ThreadRow = sqlx::query_as(&format!(
@@ -179,6 +209,14 @@ async fn fetch(State(state): State<Arc<ApiState>>, headers: HeaderMap, Path(id):
             return Err(ApiError::NotFound("No such thread.".to_string()));
         };
         let mut thread = summary((id, title, model, count, created, updated));
+        let mut messages = messages;
+        if let Some(list) = messages.as_array_mut() {
+            for m in list.iter_mut().filter(|m| m["role"] == "user") {
+                if let Some(clean) = m["content"].as_str().map(|c| without_app_markers(c).to_string()) {
+                    m["content"] = Value::String(clean);
+                }
+            }
+        }
         thread["messages"] = messages;
         Ok(Json(thread).into_response())
     }
@@ -259,6 +297,42 @@ mod tests {
         let status = response.status();
         let bytes = response.into_body().collect().await.unwrap().to_bytes();
         (status, if bytes.is_empty() { Value::Null } else { serde_json::from_slice(&bytes).unwrap() })
+    }
+
+    #[tokio::test]
+    // Regression (2026-11-15): iPhone plan chats were titled "[web_search_enabled] Hello" in the chat list.
+    async fn plan_threads_drop_composer_markers_from_titles_and_user_messages() {
+        let state = test_state(Arc::new(MockGateway::new(None, vec![]))).await;
+        sqlx::raw_sql(include_str!("../../migrations_pg/141_plan_threads.sql")).execute(&state.db).await.expect("141 applies");
+        sqlx::query("INSERT INTO plan_threads (id, user_id, title, model, messages) VALUES ('pth_old', 'user_m', $1, 'plan/claude/opus', $2)")
+            .bind("[web_search_enabled] Hello")
+            .bind(json!([{ "role": "user", "content": "[web_search_enabled] Hello", "at": "2026-11-15T02:57:32Z" }]))
+            .execute(&state.db)
+            .await
+            .unwrap();
+        let router = routes().with_state(state);
+
+        let (status, thread) = send(&router, "POST", "/api/v1/plan-threads", "user_m", Some(json!({
+            "model": "plan/claude/sonnet", "title": "[web_search_enabled] [Use Figma] Plan a trip",
+            "messages": [{ "role": "user", "content": "[web_search_enabled] Plan a trip to [Lisbon]" }],
+        }))).await;
+        assert_eq!(status, StatusCode::CREATED, "{thread}");
+        assert_eq!(thread["title"], "Plan a trip");
+        let id = thread["id"].as_str().unwrap().to_string();
+        send(&router, "POST", &format!("/api/v1/plan-threads/{id}/messages"), "user_m", Some(json!({
+            "messages": [{ "role": "assistant", "content": "[Use] stays in replies" }],
+        }))).await;
+
+        let (_, full) = send(&router, "GET", &format!("/api/v1/plan-threads/{id}"), "user_m", None).await;
+        let contents: Vec<&str> = full["messages"].as_array().unwrap().iter().map(|m| m["content"].as_str().unwrap()).collect();
+        assert_eq!(contents, vec!["Plan a trip to [Lisbon]", "[Use] stays in replies"]);
+
+        let (_, old) = send(&router, "GET", "/api/v1/plan-threads/pth_old", "user_m", None).await;
+        assert_eq!((old["title"].as_str(), old["messages"][0]["content"].as_str()), (Some("Hello"), Some("Hello")));
+        let (_, listed) = send(&router, "GET", "/api/v1/plan-threads", "user_m", None).await;
+        let mut titles: Vec<&str> = listed["threads"].as_array().unwrap().iter().map(|t| t["title"].as_str().unwrap()).collect();
+        titles.sort();
+        assert_eq!(titles, vec!["Hello", "Plan a trip"]);
     }
 
     #[tokio::test]

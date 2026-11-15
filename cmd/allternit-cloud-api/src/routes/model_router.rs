@@ -659,9 +659,12 @@ async fn plan_turn(
     let messages: Vec<ChatMessage> = request
         .messages
         .iter()
-        .map(|m| ChatMessage {
-            role: if m.role == "developer" { "system".to_string() } else { m.role.clone() },
-            content: message_text(&m.content),
+        .map(|m| {
+            let text = message_text(&m.content);
+            ChatMessage {
+                role: if m.role == "developer" { "system".to_string() } else { m.role.clone() },
+                content: if m.role == "user" { crate::routes::plan_threads::without_app_markers(&text).to_string() } else { text },
+            }
         })
         .collect();
     // Copilot (`copilot/<model>`, contract 9.5): the person's own GitHub

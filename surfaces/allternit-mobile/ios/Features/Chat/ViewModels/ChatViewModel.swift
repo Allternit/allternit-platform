@@ -761,7 +761,8 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
     private func startPersonStream(text: String, modelId: String, hasAttachments: Bool) {
         transientError = nil
         draftToRestore = nil
-        let history = Self.personHistory(messages, text: text)
+        // No tools here: the web search / research markers mean nothing to the vendor (a style prefix stays).
+        let history = Self.personHistory(messages, text: ToolOptionsStore.shared.withoutToolMarkers(text))
         let vendor = PersonModels.vendorName(for: modelId)
 
         let assistantId = UUID().uuidString
@@ -770,7 +771,9 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
         streamingMessageId = assistantId
         hasLocalPersonTurns = true
         lastSent = (text, modelId, nil, [])
-        if PlanThreadClient.isStored(model: modelId), !hasAttachments { savePlanTurn(role: "user", content: text, model: modelId) }
+        if PlanThreadClient.isStored(model: modelId), !hasAttachments {
+            savePlanTurn(role: "user", content: ToolOptionsStore.shared.strippedText(text), model: modelId)
+        }
 
         streamTask = Task { [weak self] in
             guard let self else { return }
