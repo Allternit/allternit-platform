@@ -7,6 +7,7 @@ import { SkillsCommand } from "@/cli/commands/skills"
 import { UpgradeCommand } from "@/cli/commands/upgrade"
 import { UninstallCommand } from "@/cli/commands/uninstall"
 import { ModelsCommand } from "@/cli/commands/models"
+import { StudioCommand } from "@/cli/commands/studio"
 import { HardwareCommand } from "@/cli/commands/hardware"
 import { ServeCommand } from "@/cli/commands/serve"
 import { PairCommand, LoginCommand } from "@/cli/commands/pair"
@@ -123,6 +124,7 @@ export const COMMANDS: RegisteredCommand[] = [
   LoginCommand,
   WebCommand,
   ModelsCommand,
+  StudioCommand,
   HardwareCommand,
   StatsCommand,
   StatusCommand,

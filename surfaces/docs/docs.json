@@ -433,6 +433,7 @@
               "cli/installation",
               "cli/configuration",
               "cli/models",
+              "cli/studio",
               "cli/authentication",
               "cli/connect",
               "cli/headless-execution",
