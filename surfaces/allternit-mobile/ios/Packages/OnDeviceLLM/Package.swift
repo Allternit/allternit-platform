@@ -17,8 +17,9 @@ import PackageDescription
 // because the Mac runs GGUF through the signed llama-server engine pack.
 //
 // One mlx-swift version for the whole app: KokoroKit (TTS) pins the same
-// exact 0.30.6. mlx-swift-lm 2.30.6 requires 0.30.6 (upToNextMinor). Bump
-// both packages together, never one.
+// exact 0.31.3. mlx-swift-lm 2.31.3 (the first release with Qwen3.5,
+// `qwen3_5`) requires 0.31.3 (upToNextMinor). Bump both packages together,
+// never one.
 let package = Package(
     name: "OnDeviceLLM",
     platforms: [.iOS(.v17), .macOS(.v14)],
@@ -27,9 +28,10 @@ let package = Package(
     ],
     dependencies: [
         // MIT. Exact, shared with Packages/KokoroKit.
-        .package(url: "https://github.com/ml-explore/mlx-swift", exact: "0.30.6"),
-        // MIT. Exact; same pin as the Mac sidecar (S3 spike).
-        .package(url: "https://github.com/ml-explore/mlx-swift-lm", exact: "2.30.6"),
+        .package(url: "https://github.com/ml-explore/mlx-swift", exact: "0.31.3"),
+        // MIT. Exact. The Mac MLX sidecar depends on this package by path,
+        // so it runs the same pin.
+        .package(url: "https://github.com/ml-explore/mlx-swift-lm", exact: "2.31.3"),
     ],
     targets: [
         .target(name: "FreeweightsVerify"),

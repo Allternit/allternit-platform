@@ -8,6 +8,7 @@
 //   --mlx      fit -> download -> verify -> load -> reply (largest MLX quant that fits)
 //   --llama    same with a small GGUF on llama.cpp
 //   --warn     after the reply, send a memory warning and show the unload
+//   --fm       Apple Foundation Models reply (iOS 26+ with Apple Intelligence on)
 //   --tts      Kokoro synthesis smoke (KokoroKit on the shared mlx-swift)
 // Background the app afterwards (e.g. launch Settings) to see the unload.
 
@@ -40,13 +41,21 @@ private enum LabModels {
                files: ["chat_template.jinja", "config.json", "model.safetensors", "model.safetensors.index.json",
                        "preprocessor_config.json", "processor_config.json", "tokenizer.json", "tokenizer_config.json",
                        "video_preprocessor_config.json", "vocab.json"])])
+    /// Smallest Qwen3.5 MLX build: the one that fits a 2.24 GB phone budget
+    /// (need 1.15 GB). Qwen3.5-2B 4bit above needs 2.47 GB, so it must be
+    /// refused on an iPhone 15 without the increased-memory entitlement.
+    static let qwen35_0_8B = ("mlx-community/Qwen3.5-0.8B-4bit",
+        [Quant(name: "4bit", format: "mlx", engine: .mlx, size: 625_229_487,
+               files: ["chat_template.jinja", "config.json", "model.safetensors", "model.safetensors.index.json",
+                       "preprocessor_config.json", "processor_config.json", "tokenizer.json", "tokenizer_config.json",
+                       "video_preprocessor_config.json", "vocab.json"])])
     static let qwen3_1_7B = ("mlx-community/Qwen3-1.7B-4bit",
         [Quant(name: "4bit", format: "mlx", engine: .mlx, size: 968_080_210,
                files: ["added_tokens.json", "config.json", "merges.txt", "model.safetensors", "model.safetensors.index.json",
                        "special_tokens_map.json", "tokenizer.json", "tokenizer_config.json", "vocab.json"])])
-    static let qwen3_0_6B_gguf = ("ggml-org/Qwen3-0.6B-GGUF",
-        [Quant(name: "Q4_0", format: "gguf", engine: .llamaCpp, size: 428_970_080, files: ["Qwen3-0.6B-Q4_0.gguf"]),
-         Quant(name: "Q8_0", format: "gguf", engine: .llamaCpp, size: 804_753_632, files: ["Qwen3-0.6B-Q8_0.gguf"])])
+    static let qwen35_0_8B_gguf = ("ggml-org/Qwen3.5-0.8B-GGUF",
+        [Quant(name: "Q4_0", format: "gguf", engine: .llamaCpp, size: 563_036_064, files: ["Qwen3.5-0.8B-Q4_0.gguf"]),
+         Quant(name: "Q8_0", format: "gguf", engine: .llamaCpp, size: 833_592_096, files: ["Qwen3.5-0.8B-Q8_0.gguf"])])
 }
 
 @MainActor
@@ -68,8 +77,9 @@ final class Lab: ObservableObject {
         for r in rt.runtimes { say("runtime \(r.id.rawValue): \(r.state.rawValue) \(r.version ?? "") \(r.note ?? "")") }
         say("storage \(rt.storageBytes / 1_000_000) MB used, \(rt.freeDiskBytes / 1_000_000) MB free, installed \(rt.installs.map(\.id))")
 
-        if args.contains("--mlx") { await chat(models: [LabModels.qwen35_2B, LabModels.qwen3_1_7B], args: args) }
-        if args.contains("--llama") { await chat(models: [LabModels.qwen3_0_6B_gguf], args: args) }
+        if args.contains("--mlx") { await chat(models: [LabModels.qwen35_2B, LabModels.qwen35_0_8B, LabModels.qwen3_1_7B], args: args) }
+        if args.contains("--llama") { await chat(models: [LabModels.qwen35_0_8B_gguf], args: args) }
+        if args.contains("--fm") { await appleFM() }
         if args.contains("--tts") { await tts() }
         if args.contains("--delete") {
             for i in rt.installs { await rt.delete(i); say("deleted \(i.id)") }
@@ -126,6 +136,24 @@ final class Lab: ObservableObject {
     }
 
     private var bag = Set<AnyCancellable>()
+
+    private func appleFM() async {
+        let rt = OnDeviceRuntime.shared
+        let a = AppleFMEngine.availability
+        guard case .available = a else { say("apple-fm: not available (\(a.reason ?? "unknown"))"); return }
+        do {
+            try await rt.loadAppleFoundationModel()
+            var reply = ""
+            for try await t in rt.generate([.init(.user, "In one short sentence, what is an iPhone?")], maxTokens: 96, temperature: 0) {
+                reply += t
+            }
+            say("apple-fm reply: \(reply.replacingOccurrences(of: "\n", with: " "))")
+            if let s = rt.lastStats { say(String(format: "apple-fm tok/s %.1f (%d tokens)", s.tokensPerSecond, s.generatedTokens)) }
+            await rt.unload(reason: "lab done")
+        } catch {
+            say("apple-fm: ERROR \(error)")
+        }
+    }
 
     // MARK: Kokoro smoke
 

@@ -36,12 +36,17 @@ public struct GenerationStats: Sendable, Equatable {
     /// Time to first token (prompt processing), seconds.
     public let promptSeconds: Double
     public let generateSeconds: Double
+    /// OpenAI `finish_reason`: "stop" (end token), "length" (hit maxTokens)
+    /// or "cancelled".
+    public let finishReason: String
     public var tokensPerSecond: Double { generateSeconds > 0 ? Double(generatedTokens) / generateSeconds : 0 }
-    public init(promptTokens: Int, generatedTokens: Int, promptSeconds: Double, generateSeconds: Double) {
+    public init(promptTokens: Int, generatedTokens: Int, promptSeconds: Double, generateSeconds: Double,
+                finishReason: String = "stop") {
         self.promptTokens = promptTokens
         self.generatedTokens = generatedTokens
         self.promptSeconds = promptSeconds
         self.generateSeconds = generateSeconds
+        self.finishReason = finishReason
     }
 }
 

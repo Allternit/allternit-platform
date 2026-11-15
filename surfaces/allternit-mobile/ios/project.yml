@@ -43,7 +43,7 @@ packages:
     path: Packages/KokoroKit
   # On-device language models (MLX + Apple Foundation Models engines,
   # minisign/sha256 checks), shared with the Mac MLX sidecar. Same exact
-  # mlx-swift 0.30.6 as KokoroKit: the app links one MLX. llama.cpp (GGUF)
+  # mlx-swift 0.31.3 as KokoroKit: the app links one MLX. llama.cpp (GGUF)
   # is the xcframework below, fetched by
   # Packages/OnDeviceLLM/Frameworks/fetch-llama.sh.
   OnDeviceLLM:

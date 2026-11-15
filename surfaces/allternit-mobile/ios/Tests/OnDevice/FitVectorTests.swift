@@ -22,7 +22,7 @@ final class FitVectorTests: XCTestCase {
         let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "fit-vectors", withExtension: "json"),
                                 "fit-vectors.json missing from the test bundle")
         let vectors = try JSONDecoder().decode([Vector].self, from: Data(contentsOf: url))
-        XCTAssertEqual(vectors.count, 59, "the canonical file has 59 vectors; update this if the spec adds more")
+        XCTAssertEqual(vectors.count, 65, "the canonical file has 65 vectors; update this if the spec adds more")
         for v in vectors {
             let r = Fit.fit(v.budget, v.quants)
             XCTAssertEqual(r.k, v.expect.k, v.name)

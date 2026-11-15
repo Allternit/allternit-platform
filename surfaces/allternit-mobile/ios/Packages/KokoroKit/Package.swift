@@ -30,10 +30,10 @@ let package = Package(
     ],
     dependencies: [
         // MIT. kokoro-ios 4d6d1d8 and MisakiSwift 1.0.6 pin 0.30.2; moved to
-        // 0.30.6 (patch bump, no API change for these sources) so the app
-        // links ONE mlx-swift with Packages/OnDeviceLLM (mlx-swift-lm 2.30.6
-        // requires 0.30.6). Bump both packages together, never one.
-        .package(url: "https://github.com/ml-explore/mlx-swift", exact: "0.30.6"),
+        // 0.31.3 so the app links ONE mlx-swift with Packages/OnDeviceLLM
+        // (mlx-swift-lm 2.31.3, the first with Qwen3.5, requires 0.31.3).
+        // Bump both packages together, never one. Listen-test Kokoro after.
+        .package(url: "https://github.com/ml-explore/mlx-swift", exact: "0.31.3"),
     ],
     targets: [
         // Simulator-only link shims for two Metal symbols (see shims.m).

@@ -21,16 +21,16 @@ public final class MLXEngine: LLMEngine, @unchecked Sendable {
     /// `model_type` values this mlx-swift-lm build can run. A model whose
     /// config.json names another type gets "No build for this device"
     /// instead of a failed load.
-    /// Copied from mlx-swift-lm 2.30.6 `LLMTypeRegistry` (its table is not
-    /// public). Update together with the mlx-swift-lm pin. Note: no
-    /// `qwen3_5` before mlx-swift-lm 2.31.3.
+    /// Copied from mlx-swift-lm 2.31.3 `LLMTypeRegistry` (its table is not
+    /// public). Update together with the mlx-swift-lm pin. 2.31.3 is the
+    /// first release with `qwen3_5` (Qwen3.5).
     public static let supportedModelTypes: Set<String> = [
-        "mistral", "llama", "phi", "phi3", "phimoe", "gemma", "gemma2", "gemma3", "gemma3_text", "gemma3n",
-        "qwen2", "qwen3", "qwen3_moe", "qwen3_next", "minicpm", "starcoder2", "cohere", "openelm", "internlm2",
-        "deepseek_v3", "granite", "granitemoehybrid", "mimo", "mimo_v2_flash", "minimax", "glm4", "glm4_moe",
-        "glm4_moe_lite", "acereason", "falcon_h1", "bitnet", "smollm3", "ernie4_5", "lfm2", "baichuan_m1",
-        "exaone4", "gpt_oss", "lille-130m", "olmoe", "olmo2", "olmo3", "bailing_moe", "lfm2_moe", "nanochat",
-        "nemotron_h", "afmoe", "jamba_3b", "mistral3", "apertus",
+        "mistral", "llama", "phi", "phi3", "phimoe", "gemma", "gemma2", "gemma3", "gemma3_text", "gemma3n", "qwen2",
+        "qwen3", "qwen3_moe", "qwen3_next", "qwen3_5", "qwen3_5_moe", "qwen3_5_text", "minicpm", "starcoder2",
+        "cohere", "openelm", "internlm2", "deepseek_v3", "granite", "granitemoehybrid", "mimo", "mimo_v2_flash",
+        "minimax", "glm4", "glm4_moe", "glm4_moe_lite", "acereason", "falcon_h1", "bitnet", "smollm3", "ernie4_5",
+        "lfm2", "baichuan_m1", "exaone4", "gpt_oss", "lille-130m", "olmoe", "olmo2", "olmo3", "bailing_moe",
+        "lfm2_moe", "nanochat", "nemotron_h", "afmoe", "jamba_3b", "mistral3", "apertus",
     ]
 
     public static func supports(modelType: String) -> Bool { supportedModelTypes.contains(modelType) }
@@ -91,7 +91,8 @@ public final class MLXEngine: LLMEngine, @unchecked Sendable {
                         case let .info(info):
                             continuation.yield(.done(GenerationStats(
                                 promptTokens: info.promptTokenCount, generatedTokens: info.generationTokenCount,
-                                promptSeconds: info.promptTime, generateSeconds: info.generateTime)))
+                                promptSeconds: info.promptTime, generateSeconds: info.generateTime,
+                                finishReason: Self.finishReason(info.stopReason))))
                         default: break
                         }
                     }
@@ -103,6 +104,18 @@ public final class MLXEngine: LLMEngine, @unchecked Sendable {
             continuation.onTermination = { _ in task.cancel() }
         }
     }
+
+    private static func finishReason(_ r: GenerateStopReason) -> String {
+        switch r {
+        case .stop: return "stop"
+        case .length: return "length"
+        case .cancelled: return "cancelled"
+        }
+    }
+
+    /// Bytes MLX holds in live arrays (the loaded weights plus KV cache).
+    /// The Mac sidecar reports it as `mem_bytes`.
+    public static var activeMemoryBytes: Int { MLX.Memory.activeMemory }
 
     private actor State {
         var container: ModelContainer?

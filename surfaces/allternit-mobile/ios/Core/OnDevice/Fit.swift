@@ -72,9 +72,12 @@ struct FitResult: Sendable, Equatable {
 enum Fit {
     private static let gb = 1e9
 
-    /// Memory a quant needs: ram_est, else size x 1.2 + 0.4 GB.
+    /// Memory a quant needs: ram_est, else size x 1.2 + 0.4 GB of native
+    /// runtime overhead. webgpu quants skip the 0.4 GB: a browser budget is
+    /// a GPU buffer cap, not process memory (fit.md "Need").
     static func needBytes(_ q: Quant) -> Double {
-        q.ramEst ?? q.size * 1.2 + 0.4 * gb
+        if let r = q.ramEst { return r }
+        return q.engine == .webgpu ? q.size * 1.2 : q.size * 1.2 + 0.4 * gb
     }
 
     private enum Verdict { case ok, slow, no }

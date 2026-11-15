@@ -45,7 +45,7 @@ final class OnDeviceRuntime: ObservableObject {
     }
 
     static let idleUnloadSeconds = 300
-    static let mlxVersion = "mlx-swift 0.30.6, mlx-swift-lm 2.30.6"
+    static let mlxVersion = "mlx-swift 0.31.3, mlx-swift-lm 2.31.3"
     static let llamaVersion = "llama.cpp b12414"
 
     @Published private(set) var budget: DeviceBudget
@@ -173,10 +173,9 @@ final class OnDeviceRuntime: ObservableObject {
     func load(_ install: OnDeviceInstall) async throws {
         guard install.verified else { throw OnDeviceRuntimeError.notInstalled }
         guard isActive else { throw OnDeviceRuntimeError.backgrounded }
-        let need = Double(install.sizeBytes) * 1.2 + 0.4e9
-        guard need <= budget.fastBytes else {
-            let q = Quant(name: install.quant, format: install.engine == .mlx ? "mlx" : "gguf", engine: install.engine,
-                          size: Double(install.sizeBytes))
+        let q = Quant(name: install.quant, format: install.engine == .mlx ? "mlx" : "gguf", engine: install.engine,
+                      size: Double(install.sizeBytes))
+        guard Fit.needBytes(q) <= budget.fastBytes else {
             throw OnDeviceRuntimeError.wontFit(Fit.fit(budget, [q]).why)
         }
         if loaded?.install?.id == install.id { touch(); return }
