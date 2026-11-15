@@ -17,6 +17,7 @@ use std::sync::Arc;
 
 use allternit_api::selfhost::agent_loop::{ChildConfig, GizziTurnRunner};
 use allternit_api::selfhost::egress_guard::EgressGuard;
+use allternit_api::selfhost::{replica, wake};
 use allternit_api::selfhost::routes_work::spawn_lease_sweeper;
 use allternit_api::selfhost::settings::{config_path, LogFormat, Settings};
 use allternit_api::selfhost::store::pg::PgStore;
@@ -149,7 +150,23 @@ async fn serve(args: Vec<String>) -> Result<(), String> {
 
     let store = open_store(&settings).await?;
     let listen = settings.server.listen.clone();
-    let state = SelfHostState::new(store, settings).map_err(|e| e.to_string())?;
+    let replica_id = replica::load_or_create_id(&settings.data_dir)?;
+    let state = SelfHostState::new(store, settings)
+        .map_err(|e| e.to_string())?
+        .with_replica_id(replica_id);
+    info!(replica = %state.replica.id, "replica id");
+    // Register before taking requests, so every turn this replica claims
+    // has a live owner row; then end what a previous run under this id left.
+    replica::heartbeat_once(&state)
+        .await
+        .map_err(|e| format!("cannot register the replica: {e}"))?;
+    match replica::recover_at_boot(&state).await {
+        Ok(failed) if !failed.is_empty() => {
+            warn!(sessions = failed.len(), "turns left running by the last run ended with server_restarted")
+        }
+        Ok(_) => {}
+        Err(e) => return Err(format!("cannot recover turns of the last run: {e}")),
+    }
     if state.setup_token.is_some() {
         info!("setup token set: POST /v1/api_keys can mint the first admin key while none exists");
     }
@@ -169,6 +186,12 @@ async fn serve(args: Vec<String>) -> Result<(), String> {
     })?;
     let state = state.with_turn_runner(runner);
     let sweeper = spawn_lease_sweeper(state.clone());
+    let replica_task = replica::spawn(state.clone());
+    let wake_task = wake::spawn(state.clone()).await;
+    if wake_task.is_none() {
+        info!("single-node store: wake-ups stay in this process");
+    }
+    let drain_state = state.clone();
     allternit_api::selfhost::metrics_listener::spawn(state.clone()).await?;
     let app = router(state);
 
@@ -199,10 +222,24 @@ async fn serve(args: Vec<String>) -> Result<(), String> {
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),
     )
-    .with_graceful_shutdown(shutdown_signal())
+    .with_graceful_shutdown(async move {
+        shutdown_signal().await;
+        // Keep serving (workers still answer the running turns' tool calls)
+        // while the turns finish, then end the long-polls and SSE streams.
+        let grace = drain_state.settings.shutdown_grace();
+        let failed = replica::drain(&drain_state, grace).await;
+        if !failed.is_empty() {
+            warn!(sessions = failed.len(), "turns still running after server.shutdown_grace ended with server_restarted");
+        }
+        allternit_api::selfhost::routes_work::begin_shutdown();
+    })
     .await;
     let _ = stop_tx.send(true);
     sweeper.abort();
+    replica_task.abort();
+    if let Some(t) = wake_task {
+        t.abort();
+    }
     let _ = tokio::time::timeout(std::time::Duration::from_secs(5), internal_task).await;
     drop(stop_rx);
     if let Err(e) = result {
@@ -245,5 +282,4 @@ async fn shutdown_signal() {
         _ = term => {},
     }
     info!("shutdown signal received");
-    allternit_api::selfhost::routes_work::begin_shutdown();
 }

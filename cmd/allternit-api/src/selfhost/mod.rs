@@ -17,9 +17,11 @@ pub mod admin;
 pub mod agent_loop;
 pub mod auth;
 pub mod egress_guard;
+pub mod idempotency;
 pub mod metrics_listener;
 pub mod routes_agents;
 pub mod routes_environments;
+pub mod replica;
 pub mod routes_info;
 pub mod routes_internal;
 pub mod routes_keys;
@@ -30,6 +32,7 @@ pub mod settings;
 pub mod state;
 pub mod store;
 pub mod telemetry;
+pub mod wake;
 
 use std::borrow::Cow;
 use std::time::Duration;
@@ -62,6 +65,10 @@ pub struct ApiError {
     pub kind: &'static str,
     pub code: Cow<'static, str>,
     pub message: String,
+    /// The clashing custom tool (409 `custom_tool_conflict`), echoed in the body.
+    pub tool: Option<String>,
+    /// What it clashes with: `builtin:<tool>` or `mcp:<server>:<tool>`.
+    pub clashes_with: Option<String>,
 }
 
 impl ApiError {
@@ -76,6 +83,8 @@ impl ApiError {
             kind,
             code: code.into(),
             message: message.into(),
+            tool: None,
+            clashes_with: None,
         }
     }
     pub fn invalid(code: impl Into<Cow<'static, str>>, message: impl Into<String>) -> Self {
@@ -109,7 +118,14 @@ impl ApiError {
         Self::new(StatusCode::SERVICE_UNAVAILABLE, "api_error", code, message)
     }
     pub fn body(&self) -> Value {
-        json!({ "error": { "type": self.kind, "message": self.message, "code": self.code } })
+        let mut b = json!({ "error": { "type": self.kind, "message": self.message, "code": self.code } });
+        if let Some(t) = &self.tool {
+            b["error"]["tool"] = json!(t);
+        }
+        if let Some(c) = &self.clashes_with {
+            b["error"]["clashes_with"] = json!(c);
+        }
+        b
     }
 }
 
@@ -405,6 +421,11 @@ pub fn router(state: SelfHostState) -> Router {
     let cors = cors_layer(&state.settings.server.cors_origins);
     let mut router = route_book()
         .router
+        // A route layer, so the middleware sees `MatchedPath`.
+        .route_layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            idempotency::middleware,
+        ))
         .layer(axum::middleware::from_fn(log_requests));
     if let Some(cors) = cors {
         // Outermost, so a preflight is answered before any auth runs.
@@ -445,7 +466,10 @@ pub fn cors_layer(origins: &[String]) -> Option<CorsLayer> {
                 HeaderName::from_static("last-event-id"),
                 HeaderName::from_static("x-session-secret"),
             ])
-            .expose_headers([HeaderName::from_static("last-event-id")])
+            .expose_headers([
+                HeaderName::from_static("last-event-id"),
+                HeaderName::from_static("idempotency-replayed"),
+            ])
             .max_age(Duration::from_secs(600)),
     )
 }
@@ -493,6 +517,12 @@ async fn health_live() -> Json<Value> {
 }
 
 async fn health_ready(State(st): State<SelfHostState>) -> Response {
+    if st.replica.draining() {
+        // Stopping: take this replica out of the load balancer first.
+        // The contract has no own code for this; the loop takes no turns.
+        return ApiError::unavailable("agent_loop_unavailable", "This server replica is stopping.")
+            .into_response();
+    }
     if let Err(e) = st.store.health().await {
         tracing::warn!(error = %e, "readiness check failed");
         return ApiError::unavailable("store_unavailable", "The database is not reachable.")

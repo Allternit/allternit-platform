@@ -10,7 +10,9 @@ use std::sync::Arc;
 
 use allternit_api::selfhost::admin;
 use allternit_api::selfhost::metrics_listener;
-use allternit_api::selfhost::secrets::{put_sealed_credential, rotate_credentials};
+use allternit_api::selfhost::secrets::{
+    put_sealed_credential, rotate_credentials, rotate_one, RotateOutcome,
+};
 use allternit_api::selfhost::settings::{Settings, SettingsError};
 use allternit_api::selfhost::store::sqlite::SqliteStore;
 use allternit_api::selfhost::store::*;
@@ -153,7 +155,7 @@ async fn one_trace_runs_session_turn_tool_call_and_worker_result() {
         .claim_work(ClaimRequest {
             environment_id: env.id.clone(),
             worker_id: "w1".into(),
-            reclaim_older_than_ms: None,
+            lease_cutoff_offset_ms: None,
             hostname: None,
             version: None,
             now: Utc::now(),
@@ -419,4 +421,58 @@ async fn admin_keys_need_setup_and_a_known_role() {
         1,
         "the last admin key cannot be revoked"
     );
+}
+
+#[tokio::test]
+async fn rotate_does_not_overwrite_a_credential_written_after_the_list() {
+    let dir = tempfile::tempdir().unwrap();
+    let store: DynStore = Arc::new(SqliteStore::open(&dir.path().join("agents-server.db")).unwrap());
+    rotate_race_on(store).await;
+
+    // The same on PostgreSQL when a test database is given.
+    if let Some(url) = std::env::var("SELFHOST_TEST_PG_URL").ok().filter(|u| !u.is_empty()) {
+        let schema = format!("selfhost_ops_{}", uuid::Uuid::new_v4().simple());
+        let pg = allternit_api::selfhost::store::pg::PgStore::connect_in_schema(&url, 60, &schema)
+            .await
+            .expect("connect to SELFHOST_TEST_PG_URL");
+        pg.migrate().await.expect("migrate");
+        rotate_race_on(Arc::new(pg)).await;
+    }
+}
+
+async fn rotate_race_on(store: DynStore) {
+    let old_ring = Keyring::new("old-passphrase", &[] as &[&str]).unwrap();
+    let ring = Keyring::new("new-passphrase", &["old-passphrase"]).unwrap();
+    put_sealed_credential(&store, &old_ring, "github", "old-token").await.unwrap();
+    put_sealed_credential(&store, &old_ring, "gone", "x").await.unwrap();
+
+    // The rotation lists, then the server writes a new value (under the old
+    // key, as a server that has not reloaded would), then the reseal runs.
+    let listed = store.list_credentials().await.unwrap();
+    put_sealed_credential(&store, &old_ring, "github", "new-token").await.unwrap();
+    store.delete_credential("gone").await.unwrap();
+
+    for rec in listed {
+        let name = rec.name.clone();
+        let (outcome, retries) = rotate_one(&store, &ring, rec).await.unwrap();
+        match name.as_str() {
+            "github" => {
+                assert_eq!(outcome, RotateOutcome::Rotated);
+                assert_eq!(retries, 1);
+            }
+            "gone" => assert_eq!(outcome, RotateOutcome::Skipped),
+            other => panic!("unexpected {other}"),
+        }
+    }
+
+    let rec = store.get_credential("github").await.unwrap();
+    assert_eq!(rec.key_id, key_id_for("new-passphrase"));
+    let new_only = Keyring::new("new-passphrase", &[] as &[&str]).unwrap();
+    assert_eq!(new_only.open(std::str::from_utf8(&rec.sealed).unwrap()).unwrap(), "new-token");
+    assert!(store.get_credential("gone").await.is_err());
+
+    // And the whole-run entry point reports clean counts.
+    let report = rotate_credentials(&store, &ring).await.unwrap();
+    assert!(report.rotated.is_empty() && report.failed.is_empty());
+    assert_eq!(report.unchanged, 1);
 }

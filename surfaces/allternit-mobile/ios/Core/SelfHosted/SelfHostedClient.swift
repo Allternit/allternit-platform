@@ -7,8 +7,47 @@ enum SelfHostedError: Error, Equatable {
     case unauthorized           // 401
     case forbidden              // 403
     case unreachable(String)
-    case server(status: Int, code: String?, message: String)
+    case server(status: Int, code: String?, message: String, clashesWith: String? = nil, tool: String? = nil)
     case badResponse
+
+    /// Copy for the codes the 2026-11 server adds; nil for any other error.
+    var friendlyServerMessage: String? {
+        guard case .server(_, let code?, _, let clashes, let tool) = self else { return nil }
+        switch code {
+        case "custom_tool_conflict":
+            let named = tool.map { " (\($0))" } ?? ""
+            return "A custom tool on this agent\(named) has the same name as \(Self.describeClash(clashes)). Rename the tool and send again."
+        case "idempotency_in_progress":
+            return "Still sending your last message…"
+        case "idempotency_key_reuse":
+            return "That message changed while it was sending. Send it again."
+        default:
+            return nil
+        }
+    }
+
+    /// "builtin:list" -> "the built-in tool list"; "mcp:srv:tool" -> "the tool tool from MCP server srv".
+    static func describeClash(_ raw: String?) -> String {
+        guard let raw, !raw.isEmpty else { return "a built-in or connected tool" }
+        if raw.hasPrefix("builtin:") { return "the built-in tool \(raw.dropFirst("builtin:".count))" }
+        if raw.hasPrefix("mcp:") {
+            let rest = raw.dropFirst("mcp:".count)
+            if let i = rest.firstIndex(of: ":") {
+                return "the tool \(rest[rest.index(after: i)...]) from MCP server \(rest[..<i])"
+            }
+        }
+        return raw
+    }
+
+    /// True when sending the same draft again with the same Idempotency-Key is
+    /// safe and right: the first try may or may not have landed.
+    var shouldKeepIdempotencyKey: Bool {
+        switch self {
+        case .unreachable: return true
+        case .server(let status, let code, _, _, _): return status >= 500 || code == "idempotency_in_progress"
+        default: return false
+        }
+    }
 
     var message: String {
         switch self {
@@ -22,7 +61,7 @@ enum SelfHostedError: Error, Equatable {
             return "This key isn’t allowed to do that (403). Use a key with a developer or admin role."
         case .unreachable(let why):
             return "Couldn’t reach the server. Check the address and that this iPhone can see it. \(why)"
-        case .server(let status, _, let message):
+        case .server(let status, _, let message, _, _):
             return "The server answered \(status): \(message)"
         case .badResponse:
             return "The server sent a reply Allternit doesn’t understand. Is this an Allternit Agents Server?"
@@ -73,10 +112,10 @@ struct SelfHostedClient {
         (try await request("GET", "/v1/environments/\(escape(environmentID))/workers") as SHList<SHWorker>).data
     }
 
-    func createSession(agentID: String, environmentID: String, title: String? = nil) async throws -> SHSession {
+    func createSession(agentID: String, environmentID: String, title: String? = nil, idempotencyKey: String) async throws -> SHSession {
         var body: [String: String] = ["agent_id": agentID, "environment_id": environmentID]
         if let title { body["title"] = title }
-        return try await request("POST", "/v1/sessions", body: body)
+        return try await request("POST", "/v1/sessions", body: body, idempotencyKey: idempotencyKey)
     }
 
     func getSession(id: String) async throws -> SHSession {
@@ -84,8 +123,8 @@ struct SelfHostedClient {
     }
 
     @discardableResult
-    func sendMessage(sessionID: String, content: String) async throws -> SHEvent {
-        try await request("POST", "/v1/sessions/\(escape(sessionID))/messages", body: ["content": content])
+    func sendMessage(sessionID: String, content: String, idempotencyKey: String) async throws -> SHEvent {
+        try await request("POST", "/v1/sessions/\(escape(sessionID))/messages", body: ["content": content], idempotencyKey: idempotencyKey)
     }
 
     func interrupt(sessionID: String) async throws {
@@ -173,20 +212,22 @@ struct SelfHostedClient {
         case 401: throw SelfHostedError.unauthorized
         case 403: throw SelfHostedError.forbidden
         default:
-            struct Envelope: Decodable { struct E: Decodable { var message: String?; var code: String? }; var error: E? }
+            struct Envelope: Decodable { struct E: Decodable { var message: String?; var code: String?; var clashesWith: String?; var tool: String?
+                enum CodingKeys: String, CodingKey { case message, code, tool; case clashesWith = "clashes_with" } }; var error: E? }
             let env = body.flatMap { try? JSONDecoder().decode(Envelope.self, from: $0) }
             throw SelfHostedError.server(status: http.statusCode, code: env?.error?.code,
-                                         message: env?.error?.message ?? HTTPURLResponse.localizedString(forStatusCode: http.statusCode))
+                                         message: env?.error?.message ?? HTTPURLResponse.localizedString(forStatusCode: http.statusCode),
+                                         clashesWith: env?.error?.clashesWith, tool: env?.error?.tool)
         }
     }
 
     private func request<T: Decodable>(_ method: String, _ path: String, body: [String: String]? = nil,
-                                       authorized: Bool = true) async throws -> T {
+                                       idempotencyKey: String? = nil, authorized: Bool = true) async throws -> T {
         var req = try makeRequest(method, path, authorized: authorized)
         if let body {
             req.httpBody = try JSONSerialization.data(withJSONObject: body)
             req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            req.setValue(UUID().uuidString, forHTTPHeaderField: "Idempotency-Key")
+            req.setValue(idempotencyKey ?? UUID().uuidString, forHTTPHeaderField: "Idempotency-Key")
         }
         let data: Data, response: URLResponse
         do {

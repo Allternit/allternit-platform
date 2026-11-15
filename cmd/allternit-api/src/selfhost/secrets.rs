@@ -411,45 +411,102 @@ fn open_record(ring: &Keyring, rec: &CredentialRecord) -> Result<String, Credent
 }
 
 /// What [`rotate_credentials`] did.
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
+#[derive(Debug, Default)]
 pub struct RotationReport {
     /// Re-sealed with the current key.
     pub rotated: Vec<String>,
-    /// Already under the current key.
+    /// Already under the current key (including ones another writer re-sealed
+    /// while the run was going).
     pub unchanged: usize,
-    /// Could not be opened with any key in the ring: (name, reason). Left as
-    /// they were.
+    /// Deleted while the run was going; nothing to do.
+    pub skipped: usize,
+    /// How many times a write lost to another writer and was read again.
+    pub retried: usize,
+    /// Could not be re-sealed: (name, reason). Left as they were.
     pub failed: Vec<(String, String)>,
+}
+
+/// How many times one credential is read again after losing a write.
+const ROTATE_MAX_ATTEMPTS: usize = 3;
+
+/// What [`rotate_one`] did with one credential.
+#[derive(Debug, PartialEq, Eq)]
+pub enum RotateOutcome {
+    Rotated,
+    Unchanged,
+    /// Deleted meanwhile.
+    Skipped,
+    Failed(String),
+}
+
+/// Re-seal one credential starting from `rec` (as listed), with
+/// compare-and-set: if another write came first, read it again and retry, up
+/// to 3 times. Returns the outcome and how many times it had to retry.
+pub async fn rotate_one(
+    store: &DynStore,
+    ring: &Keyring,
+    rec: CredentialRecord,
+) -> Result<(RotateOutcome, usize), StoreError> {
+    let mut rec = rec;
+    let mut retries = 0;
+    loop {
+        let sealed = match std::str::from_utf8(&rec.sealed) {
+            Ok(s) => s,
+            Err(_) => return Ok((RotateOutcome::Failed("stored value is not text".into()), retries)),
+        };
+        if !ring.needs_rotation(sealed) && rec.key_id == ring.current_key_id() {
+            return Ok((RotateOutcome::Unchanged, retries));
+        }
+        let new = match ring.reseal(sealed) {
+            Ok(n) => n,
+            Err(e) => return Ok((RotateOutcome::Failed(e.to_string()), retries)),
+        };
+        match store
+            .put_credential_if_unchanged(&rec.name, rec.updated_at, new.as_bytes(), ring.current_key_id())
+            .await
+        {
+            Ok(true) => return Ok((RotateOutcome::Rotated, retries)),
+            Ok(false) => {
+                if retries >= ROTATE_MAX_ATTEMPTS {
+                    return Ok((
+                        RotateOutcome::Failed(format!(
+                            "changed by another writer {} times in a row; run again",
+                            retries + 1
+                        )),
+                        retries,
+                    ));
+                }
+                retries += 1;
+                rec = match store.get_credential(&rec.name).await {
+                    Ok(r) => r,
+                    Err(StoreError::NotFound) => return Ok((RotateOutcome::Skipped, retries)),
+                    Err(e) => return Err(e),
+                };
+            }
+            Err(StoreError::NotFound) => return Ok((RotateOutcome::Skipped, retries)),
+            Err(e) => return Err(e),
+        }
+    }
 }
 
 /// Re-seal every credential that is not under the current key. Rows that
 /// cannot be opened are reported and left alone, so a missing previous key
-/// never destroys data. Safe to run again.
+/// never destroys data. Safe to run again, and safe while the server runs:
+/// each write only lands if the row is unchanged since it was read.
 pub async fn rotate_credentials(
     store: &DynStore,
     ring: &Keyring,
 ) -> Result<RotationReport, StoreError> {
     let mut report = RotationReport::default();
     for rec in store.list_credentials().await? {
-        let sealed = match std::str::from_utf8(&rec.sealed) {
-            Ok(s) => s,
-            Err(_) => {
-                report.failed.push((rec.name.clone(), "stored value is not text".into()));
-                continue;
-            }
-        };
-        if !ring.needs_rotation(sealed) && rec.key_id == ring.current_key_id() {
-            report.unchanged += 1;
-            continue;
-        }
-        match ring.reseal(sealed) {
-            Ok(new) => {
-                store
-                    .put_credential(&rec.name, new.as_bytes(), ring.current_key_id())
-                    .await?;
-                report.rotated.push(rec.name.clone());
-            }
-            Err(e) => report.failed.push((rec.name.clone(), e.to_string())),
+        let name = rec.name.clone();
+        let (outcome, retries) = rotate_one(store, ring, rec).await?;
+        report.retried += retries;
+        match outcome {
+            RotateOutcome::Rotated => report.rotated.push(name),
+            RotateOutcome::Unchanged => report.unchanged += 1,
+            RotateOutcome::Skipped => report.skipped += 1,
+            RotateOutcome::Failed(why) => report.failed.push((name, why)),
         }
     }
     Ok(report)

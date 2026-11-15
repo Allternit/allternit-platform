@@ -16,6 +16,10 @@
 #
 # Air-gap test: docker compose -f docker-compose.yml -f compose.airgap.yml ...
 # (see verify-airgap.sh).
+#
+# The server runs as ONE replica here: on one host more replicas add no
+# availability. For several server replicas on PostgreSQL, use the Helm chart
+# (charts/agents-server, replicaCount).
 
 name: allternit-selfhost
 
@@ -76,6 +80,8 @@ services:
     <<: *server-image
     command: ["serve"]
     restart: unless-stopped
+    # server.shutdown_grace (45s) for running turns to finish, plus 15 s.
+    stop_grace_period: 60s
     environment: *server-env
     volumes:
       - *settings-mount

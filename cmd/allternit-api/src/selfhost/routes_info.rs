@@ -32,5 +32,6 @@ pub async fn server_info(State(st): State<SelfHostState>) -> Json<Value> {
         "auth_modes": auth_modes,
         "public_url": s.server.public_url,
         "max_tool_result_bytes": MAX_TOOL_RESULT_BYTES,
+        "replicas": super::replica::live_count(&st).await,
     }))
 }

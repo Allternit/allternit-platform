@@ -6,7 +6,7 @@
  * sandbox set, and every custom tool of the session's agent, is handed to the
  * server's loopback queue instead of running locally:
  *
- *   POST ${GIZZI_TOOL_HOST_URL}/internal/v1/sessions/{gizzi session id}/tool_calls
+ *   POST ${GIZZI_TOOL_HOST_URL}/internal/v1/sessions/{root gizzi session id}/tool_calls
  *   Authorization: Bearer ${GIZZI_TOOL_HOST_TOKEN}
  *   { tool_call_id, name, input, timeout_ms }
  *
@@ -16,6 +16,11 @@
  * unchanged. Remote mode never falls back to local execution: a missing URL
  * or token, no worker (504), a timeout (408) or any transport failure is a
  * tool error.
+ *
+ * Subagents (task, agent_swarm) run in child sessions with their own gizzi
+ * ids, but the server maps only the session it prompts (the root). A child's
+ * calls therefore go to the root's queue, and a child is offered the root's
+ * custom tools (rootSessionOf).
  *
  * Spec: cmd/allternit-api/openapi/selfhost-v1.yaml (Internal),
  * docs/SELFHOST_WORKER_PROTOCOL.md.
@@ -95,6 +100,71 @@ export namespace RemoteToolHost {
     return sessionID !== undefined && isCustomTool(sessionID, toolID)
   }
 
+  // ─── Root session ─────────────────────────────────────────────────────────
+  //
+  // The server knows one gizzi session per self-hosted session: the one it
+  // prompts (loop.rs adopt -> map_gizzi_session). A subagent's child session
+  // (Session.parentID, any depth) is unknown to it, so its tool calls use the
+  // root's id in the queue URL and the root's custom tool set.
+
+  /** Each session's parent, or null for a root. A session's parent never changes. */
+  const parentBySession = new Map<string, string | null>()
+  const MAX_LINKED_SESSIONS = 5000
+  /** Longest parent chain followed; deeper is treated as a loop. */
+  const MAX_DEPTH = 32
+
+  function remember(sessionID: string, parentID: string | null) {
+    parentBySession.delete(sessionID)
+    parentBySession.set(sessionID, parentID)
+    while (parentBySession.size > MAX_LINKED_SESSIONS) {
+      const oldest = parentBySession.keys().next().value
+      if (oldest === undefined) break
+      parentBySession.delete(oldest)
+    }
+  }
+
+  /** Record a session's parent (undefined: it is a root). */
+  export function linkSession(sessionID: string, parentID: string | undefined): void {
+    remember(sessionID, parentID && parentID !== sessionID ? parentID : null)
+  }
+
+  /** The root of `sessionID` from what is already known, without reading the store. */
+  export function rootSession(sessionID: string): string {
+    let current = sessionID
+    const seen = new Set<string>()
+    for (let depth = 0; depth < MAX_DEPTH; depth++) {
+      seen.add(current)
+      const parent = parentBySession.get(current)
+      if (!parent || seen.has(parent)) return current
+      current = parent
+    }
+    return current
+  }
+
+  /**
+   * The root of `sessionID`, reading each unknown parent from the session
+   * store. A session the store does not have counts as a root.
+   */
+  export async function rootSessionOf(sessionID: string): Promise<string> {
+    let current = sessionID
+    const seen = new Set<string>()
+    for (let depth = 0; depth < MAX_DEPTH; depth++) {
+      seen.add(current)
+      let parent = parentBySession.get(current)
+      if (parent === undefined) {
+        // Imported here: the session module pulls in the whole loop.
+        const { Session } = await import("@/runtime/session")
+        const info = await Session.get(current).catch(() => undefined)
+        if (!info) return current
+        linkSession(current, info.parentID)
+        parent = parentBySession.get(current) ?? null
+      }
+      if (!parent || seen.has(parent)) return current
+      current = parent
+    }
+    return current
+  }
+
   // ─── Custom tools ─────────────────────────────────────────────────────────
   //
   // An agent's custom tools (`type: custom`) reach this child in each turn's
@@ -169,29 +239,65 @@ export namespace RemoteToolHost {
     })
   }
 
+  /** What holds a name a custom tool may not take. */
+  export type Clash =
+    | { kind: "builtin"; name: string }
+    /** `name` is the tool's name as the model gets it (`mcp__<server>__<tool>`). */
+    | { kind: "mcp"; name: string; server: string; tool: string }
+
+  /** A taken name: a plain string is a built-in tool of the agent loop. */
+  export type ReservedTool = string | Clash
+
+  /** The contract's `clashes_with` value: `builtin:<tool>` or `mcp:<server>:<tool>`. */
+  export function clashRef(clash: Clash): string {
+    return clash.kind === "mcp" ? `mcp:${clash.server}:${clash.tool}` : `builtin:${clash.name}`
+  }
+
+  function clashText(clash: Clash): string {
+    return clash.kind === "mcp"
+      ? `the tool "${clash.tool}" of the MCP server "${clash.server}"`
+      : `the built-in tool "${clash.name}"`
+  }
+
   /**
-   * Check a session's custom tools against the names already taken and make
-   * them the session's set (replacing the previous turn's; an empty list
-   * clears it). A custom tool may not shadow a built-in, MCP or sandbox tool:
-   * throws a RemoteToolError (`custom_tool_conflict`) and registers nothing.
-   * Names are compared without case so `Bash` cannot pass for `bash`.
+   * Refuse custom tools that take a name already held by a built-in, MCP or
+   * sandbox tool: throws a RemoteToolError (`custom_tool_conflict`, with
+   * `conflict` = { tool, clashes_with } naming the tool and what holds the name). Names are compared
+   * without case so `Bash` cannot pass for `bash`. Changes nothing.
    */
-  export function registerCustomTools(sessionID: string, tools: CustomTool[], reserved: Iterable<string>): void {
-    if (tools.length) {
-      const taken = new Set<string>()
-      for (const name of [...reserved, ...SANDBOX_TOOLS, ...SERVER_LOCAL_REFUSED, ...Object.keys(ALIASES)]) {
-        taken.add(name.toLowerCase())
-      }
-      for (const tool of tools) {
-        if (taken.has(tool.name.toLowerCase())) {
-          throw new RemoteToolError(
-            `The custom tool "${tool.name}" has the same name as a built-in tool of the agent loop. ` +
-              "Custom tools may not replace built-in tools: rename it on the agent and try again.",
-            "custom_tool_conflict",
-          )
-        }
-      }
+  export function checkCustomTools(tools: CustomTool[], reserved: Iterable<ReservedTool>): void {
+    if (!tools.length) return
+    const taken = new Map<string, Clash>()
+    const take = (clash: Clash) => {
+      const key = clash.name.toLowerCase()
+      if (!taken.has(key)) taken.set(key, clash)
     }
+    for (const entry of reserved) take(typeof entry === "string" ? { kind: "builtin", name: entry } : entry)
+    for (const name of [...SANDBOX_TOOLS, ...SERVER_LOCAL_REFUSED]) take({ kind: "builtin", name })
+    // An alias names the real tool it stands for.
+    for (const [alias, real] of Object.entries(ALIASES)) {
+      if (!taken.has(alias)) taken.set(alias, { kind: "builtin", name: real })
+    }
+    for (const tool of tools) {
+      const clash = taken.get(tool.name.toLowerCase())
+      if (!clash) continue
+      throw new RemoteToolError(
+        `The custom tool "${tool.name}" has the same name as ${clashText(clash)}. ` +
+          "Custom tools may not replace built-in or MCP tools: rename it on the agent and try again.",
+        "custom_tool_conflict",
+        { tool: tool.name, clashes_with: clashRef(clash) },
+      )
+    }
+  }
+
+  /**
+   * Check a session's custom tools against the names already taken
+   * (checkCustomTools) and make them the session's set (replacing the
+   * previous turn's; an empty list clears it). On a clash it throws and
+   * registers nothing.
+   */
+  export function registerCustomTools(sessionID: string, tools: CustomTool[], reserved: Iterable<ReservedTool>): void {
+    checkCustomTools(tools, reserved)
     customBySession.delete(sessionID)
     if (!tools.length) return
     customBySession.set(sessionID, new Map(tools.map((tool) => [tool.name, tool])))
@@ -202,15 +308,34 @@ export namespace RemoteToolHost {
     }
   }
 
-  /** True when `name` is one of the session's registered custom tools. */
+  /**
+   * True when `name` is one of the session's custom tools: its own, or its
+   * root's for a subagent session already linked (linkSession/rootSessionOf).
+   */
   export function isCustomTool(sessionID: string, name: string): boolean {
-    return customBySession.get(sessionID)?.has(name) ?? false
+    return (customBySession.get(sessionID) ?? customBySession.get(rootSession(sessionID)))?.has(name) ?? false
+  }
+
+  /**
+   * The custom tools a session may call: its own registered set, else its
+   * root's (a subagent gets the tools of the agent that started it).
+   */
+  export async function customToolsFor(sessionID: string): Promise<CustomTool[]> {
+    const own = customBySession.get(sessionID)
+    if (own) return [...own.values()]
+    const root = await rootSessionOf(sessionID)
+    return [...(customBySession.get(root)?.values() ?? [])]
   }
 
   export class RemoteToolError extends Error {
     constructor(
       message: string,
       readonly code: string,
+      /**
+       * Set on `custom_tool_conflict`, in the contract's Error fields
+       * (selfhost-v1.yaml): the refused custom tool and what holds its name.
+       */
+      readonly conflict?: { tool: string; clashes_with: string },
     ) {
       super(message)
       this.name = "RemoteToolError"
@@ -334,6 +459,8 @@ export namespace RemoteToolHost {
       )
     }
     const { url, token } = config()
+    // A subagent's call goes to the root's queue: the server knows no other id.
+    const queueSession = await rootSessionOf(ctx.sessionID)
     const tool_call_id = toolCallId(toolID, args, ctx)
     const timeout_ms = timeoutFor(toolID, args)
     const title = titleFor(toolID, args)
@@ -346,7 +473,7 @@ export namespace RemoteToolHost {
 
     let response: Response
     try {
-      response = await fetchImpl(`${url}/internal/v1/sessions/${encodeURIComponent(ctx.sessionID)}/tool_calls`, {
+      response = await fetchImpl(`${url}/internal/v1/sessions/${encodeURIComponent(queueSession)}/tool_calls`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

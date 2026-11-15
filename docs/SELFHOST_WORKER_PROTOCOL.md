@@ -35,17 +35,31 @@ restarts it with backoff when it exits, and reports it on `/health/ready`.
 
 An agent's custom tools (`type: custom`) use the same queue. When the model
 calls one, the worker gets a tool call whose `name` is the custom tool's name
-and whose `input` follows its `input_schema`. The gizzi CLI worker does not
-know custom tools and answers them with `is_error: true`. A worker built on
-the SDK runs them with its own handlers and posts the result like any other.
-Run custom tools only on workers that have handlers for them.
+and whose `input` follows its `input_schema`. A worker runs
+a custom tool when it has a handler for it. Without one it answers with
+`is_error: true`. A worker built on the SDK uses its own handlers. The gizzi
+CLI worker reads command tools from a tools file:
+`gizzi worker --tools-file <path>` or `gizzi worker attach --tools-file <path>` (or env `ALLTERNIT_WORKER_TOOLS`, which also reaches `attach` through the `--on-work` script's environment):
+
+```json
+{"tools": {"<name>": {"command": ["argv", "..."], "timeout_ms": 120000}}}
+```
+
+The tool input JSON goes to the command on stdin. Its stdout is the output
+(the 100 KiB cap applies). A non-zero exit gives `is_error: true`. The command
+runs under the same sandbox policy as the `bash` tool. A name equal to a
+worker built-in tool is rejected at startup. Only commands are supported in
+the file.
+
+Custom tools are also offered to subagent sessions and to `batch`. A tool call
+from a subagent goes to the root session's queue.
 
 The agent loop offers the custom tools to the model on every turn, with
 their name, description and `input_schema`. A custom tool may not reuse the
 name of a built-in tool (compared without case, so `Bash` counts as `bash`),
 and its `input_schema` must describe an object. If either rule is broken, the
-turn fails with a clear error before any message is stored, and nothing is
-queued.
+turn is refused with 409 `custom_tool_conflict` before any message is stored, and
+nothing is queued. A name that clashes with an MCP tool name is refused the same way.
 
 ## Work items
 
@@ -59,9 +73,17 @@ queued.
   later does not run it.
 - The item ends when the session is **archived**, or when the session has had
   no turn running and no pending tool call for **`sessions.idle_timeout`**
-  (default 1 hour). From then on `tool_calls/next` answers 204 with
-  `X-Session-Closed: true`, and the worker completes the item. The next turn
+  (default 30 seconds). From then on `tool_calls/next` answers 204 with
+  `X-Session-Closed: true` (idle release), and the worker completes the item. The next turn
   that needs a tool queues a new item. An interrupt does not end the item.
+- The database enforces one open item per session. The server never queues a
+  second one.
+- **Soft affinity.** For up to 10 seconds after a worker completes or releases a
+  session's item, a claim from that same worker is preferred over other workers,
+  as long as that worker was seen in the last 60 seconds.
+- A ready item whose session has ended (archived, deleted, or idle past
+  `sessions.idle_timeout`) is cancelled when a worker would claim it; the claim
+  moves on to the next item.
 - A worker serves one session at a time. Run one worker per concurrent session.
 - Only 204 with `X-Session-Closed: true` ends the item. A plain 204 is an
   empty wait: poll again, never complete.
@@ -93,7 +115,7 @@ these variables, serves that one item's tool calls, and exits 0 when the
 session finishes (3 if the lease moved to another worker). It does not renew,
 complete or release; the parent worker does.
 
-Other flags: `--block-ms`, `--reclaim-older-than-ms`, `--auto-stop`.
+Other flags: `--block-ms`, `--reclaim-older-than-ms` (floor 30000), `--auto-stop`, `--tools-file`.
 
 ## Lease rules
 
@@ -107,9 +129,11 @@ Other flags: `--block-ms`, `--reclaim-older-than-ms`, `--auto-stop`.
 - If a lease runs out, the item can be claimed again at once, and the server
   returns it to the queue within 5 seconds. This is how work from a dead
   worker comes back.
-- `reclaim_older_than_ms` also lets a claim take a live lease that was last
-  renewed at least that long ago (a stuck worker that still holds a lease).
-  Use a value above the 20 second renew interval. 60000 or more adds nothing.
+- `reclaim_older_than_ms` also lets a claim take a **live** lease that was last
+  renewed at least that many ms ago (a stuck worker that still holds a lease).
+  Expired leases are always claimable without it. Values below **30000** are
+  raised to 30000, because a healthy worker renews every 20 seconds. 60000 or
+  more adds nothing.
 - On shutdown, call `/release`. The item goes back to ready now, with no wait.
 - Finish with `/complete`. Completing twice with the current generation is safe.
 

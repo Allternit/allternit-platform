@@ -23,7 +23,7 @@ NOT_GIVEN: Any = _Unset()
 Error = TypedDict('Error', {'error': Dict[str, Any]}, total=False)
 ListEnvelope = TypedDict('ListEnvelope', {'data': List[Any], 'has_more': bool, 'next_cursor': Optional[str]}, total=False)
 Deleted = TypedDict('Deleted', {'id': str, 'deleted': Literal[True]}, total=False)
-ServerInfo = TypedDict('ServerInfo', {'version': str, 'provider': Literal['anthropic', 'bedrock', 'vertex', 'foundry', 'gateway'], 'features': Dict[str, Any], 'auth_modes': List[Literal['api_key', 'oidc']], 'public_url': Optional[str], 'max_tool_result_bytes': int}, total=False)
+ServerInfo = TypedDict('ServerInfo', {'version': str, 'provider': Literal['anthropic', 'bedrock', 'vertex', 'foundry', 'gateway'], 'features': Dict[str, Any], 'auth_modes': List[Literal['api_key', 'oidc']], 'public_url': Optional[str], 'max_tool_result_bytes': int, 'replicas': int}, total=False)
 McpServer = TypedDict('McpServer', {'name': str, 'url': str, 'headers': Dict[str, Any]}, total=False)
 AgentTool = TypedDict('AgentTool', {'type': Literal['builtin', 'custom'], 'name': str, 'description': str, 'input_schema': Dict[str, Any]}, total=False)
 Agent = TypedDict('Agent', {'id': str, 'object': Literal['agent'], 'name': str, 'instructions': str, 'model': str, 'tools': List["AgentTool"], 'mcp_servers': List["McpServer"], 'skills': List[str], 'metadata': Dict[str, Any], 'status': Literal['ready'], 'created_at': str, 'updated_at': str}, total=False)
@@ -75,7 +75,8 @@ class ServerResource:
         200 when the database answers and the agent loop (the gizzi child) is
         ready. 503 `store_unavailable` when the database does not answer, 503
         `agent_loop_unavailable` while the agent loop is starting or restarting,
-        or when it cannot run (for example the gizzi-code binary is missing). No auth.
+        when it cannot run (for example the gizzi-code binary is missing), or while
+        this replica is stopping (draining after SIGTERM). No auth.
 
         ``GET /health/ready``
         """
@@ -451,10 +452,14 @@ class SessionsResource:
         `session_archived` for an archived session. The agent's model is checked
         against the server's model map again here (it may have changed since the
         session was made): an unmapped model is 422 `model_not_mapped`, with no
-        outbound request. While the agent loop is starting or cannot run, the
-        answer is 503 `agent_loop_unavailable`; a server built without an agent
+        outbound request. While the agent loop is starting or cannot run, or while
+        this replica is stopping, the answer is 503 `agent_loop_unavailable` (send
+        the message again; another replica takes it); a server built without an agent
         loop answers 501 `not_implemented`. In those cases nothing is stored.
-        A turn that fails later ends with an `error` event and status `error`.
+        If a custom tool of the agent has the same name as a built-in tool or an
+        MCP tool, the answer is 409 `custom_tool_conflict`: nothing is stored and
+        the session status is unchanged.
+        A turn that fails later ends with an `error` event and status `error`. If the replica running the turn stops, the event code is `server_restarted`: send the message again.
 
         ``POST /v1/sessions/{id}/messages``
         """
@@ -545,14 +550,20 @@ class WorkResource:
 
         Claimable: an item that is ready, or one whose lease ran out (a worker that
         died). With `reclaim_older_than_ms`, also an item whose lease is still live
-        but was last renewed at least that long ago; pick a value above the 20 s
-        renew interval. Each claim raises the item's `lease_generation`, so the old
+        but was last renewed at least that long ago. Values below 30000 are raised
+        to 30000, because a healthy worker renews every 20 s. Values of 60000 or
+        more add nothing. Each claim raises the item's `lease_generation`, so the old
         worker gets 409 `lease_stale` on its next call. Tool calls the old worker
         took but did not answer are handed out again.
 
         The server also returns expired leases to the queue every 5 seconds.
         Each session has at most one open work item, queued the first time a turn
-        needs a sandbox tool. Auth: environment key of this environment.
+        needs a sandbox tool; the database enforces this. Soft affinity: for up to
+        10 seconds after a worker completes or releases a session's item, a claim from
+        that same worker is preferred over a claim from another worker (only while that
+        worker was seen in the last 60 seconds). A ready item of a session that has
+        ended (archived, deleted or idle past `sessions.idle_timeout`) is cancelled when
+        a worker would claim it, and the claim looks for the next item. Auth: environment key of this environment.
 
         ``POST /v1/environments/{id}/work/claim``
         """
@@ -633,7 +644,7 @@ class ToolCallsResource:
         **Session finished.** When the session will send no more tool calls, the
         server answers 204 with the header `X-Session-Closed: true`. That happens
         when the session is archived, or when it has had no turn running and no
-        pending tool call for `sessions.idle_timeout` (default 1 hour). The worker
+        pending tool call for `sessions.idle_timeout` (default 30 seconds). The worker
         then calls `/complete` for the work item. The session's next turn that
         needs a tool queues a new item. A 204 without the header only means
         "nothing yet, poll again".

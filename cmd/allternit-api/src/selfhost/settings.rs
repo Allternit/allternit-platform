@@ -126,6 +126,10 @@ pub struct ServerSettings {
     /// never implied.
     #[serde(default)]
     pub cors_origins: Vec<String>,
+    /// How long a stopping replica waits for its running turns to finish
+    /// before it fails them with the session error code `server_restarted`.
+    #[serde(default = "default_shutdown_grace")]
+    pub shutdown_grace: String,
 }
 
 impl Default for ServerSettings {
@@ -134,12 +138,17 @@ impl Default for ServerSettings {
             listen: default_listen(),
             public_url: None,
             cors_origins: vec![],
+            shutdown_grace: default_shutdown_grace(),
         }
     }
 }
 
 fn default_listen() -> String {
     DEFAULT_LISTEN.to_string()
+}
+
+fn default_shutdown_grace() -> String {
+    "45s".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -468,7 +477,7 @@ impl Default for SessionsSettings {
 }
 
 fn default_idle_timeout() -> String {
-    "1h".to_string()
+    "30s".to_string()
 }
 
 fn default_no_worker_timeout() -> String {
@@ -634,6 +643,7 @@ impl Settings {
         parse_duration(&self.health.check_interval)
             .ok_or_else(|| invalid("health.check_interval", "use a number and ms, s, m or h"))?;
         for (field, v) in [
+            ("server.shutdown_grace", &self.server.shutdown_grace),
             ("sessions.idle_timeout", &self.sessions.idle_timeout),
             ("sessions.no_worker_timeout", &self.sessions.no_worker_timeout),
         ] {
@@ -690,11 +700,18 @@ impl Settings {
         parse_duration(&self.health.check_interval).unwrap_or(std::time::Duration::from_secs(60))
     }
 
-    /// `sessions.idle_timeout`, default 1 hour.
+    /// `sessions.idle_timeout`, default 30 seconds.
     pub fn idle_timeout(&self) -> std::time::Duration {
         parse_duration(&self.sessions.idle_timeout)
             .filter(|d| !d.is_zero())
-            .unwrap_or(std::time::Duration::from_secs(3600))
+            .unwrap_or(std::time::Duration::from_secs(30))
+    }
+
+    /// `server.shutdown_grace`, default 45 seconds.
+    pub fn shutdown_grace(&self) -> std::time::Duration {
+        parse_duration(&self.server.shutdown_grace)
+            .filter(|d| !d.is_zero())
+            .unwrap_or(std::time::Duration::from_secs(45))
     }
 
     /// `sessions.no_worker_timeout`, default 10 minutes.
@@ -875,17 +892,22 @@ mod tests {
     #[test]
     fn session_timeouts_parse() {
         let s = Settings::from_str("inference: {provider: anthropic}\n").unwrap();
-        assert_eq!(s.idle_timeout(), std::time::Duration::from_secs(3600));
+        assert_eq!(s.idle_timeout(), std::time::Duration::from_secs(30));
         assert_eq!(s.no_worker_timeout(), std::time::Duration::from_secs(600));
+        assert_eq!(s.shutdown_grace(), std::time::Duration::from_secs(45));
         let s = Settings::from_str(
-            "inference: {provider: anthropic}\nsessions: {idle_timeout: 90s, no_worker_timeout: 250ms}\n",
+            "inference: {provider: anthropic}\nserver: {shutdown_grace: 2m}\nsessions: {idle_timeout: 1h, no_worker_timeout: 250ms}\n",
         )
         .unwrap();
-        assert_eq!(s.idle_timeout(), std::time::Duration::from_secs(90));
+        assert_eq!(s.idle_timeout(), std::time::Duration::from_secs(3600));
         assert_eq!(s.no_worker_timeout(), std::time::Duration::from_millis(250));
+        assert_eq!(s.shutdown_grace(), std::time::Duration::from_secs(120));
         let err = Settings::from_str("inference: {provider: anthropic}\nsessions: {idle_timeout: 0s}\n")
             .unwrap_err();
         assert!(err.to_string().contains("sessions.idle_timeout"), "{err}");
+        let err = Settings::from_str("inference: {provider: anthropic}\nserver: {shutdown_grace: soon}\n")
+            .unwrap_err();
+        assert!(err.to_string().contains("server.shutdown_grace"), "{err}");
     }
 
     #[test]

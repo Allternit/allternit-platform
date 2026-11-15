@@ -200,7 +200,7 @@ async fn session_secret_only_works_for_its_own_session() {
     let claim = |w: &str| ClaimRequest {
         environment_id: e.id.clone(),
         worker_id: w.into(),
-        reclaim_older_than_ms: None,
+        lease_cutoff_offset_ms: None,
         hostname: None,
         version: None,
         now: Utc::now(),
@@ -465,7 +465,11 @@ async fn cors_allows_listed_origins_only() {
             .unwrap(),
     )
     .await;
-    assert_eq!(r.headers["access-control-expose-headers"].to_str().unwrap().to_ascii_lowercase(), "last-event-id");
+    let exposed = r.headers["access-control-expose-headers"].to_str().unwrap().to_ascii_lowercase();
+    let mut exposed: Vec<&str> = exposed.split(',').map(str::trim).collect();
+    exposed.sort();
+    // Browser clients read Last-Event-ID (SSE resume) and Idempotency-Replayed.
+    assert_eq!(exposed, ["idempotency-replayed", "last-event-id"]);
 }
 
 // ─── OIDC against a local issuer ────────────────────────────────────────────

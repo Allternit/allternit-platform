@@ -18,9 +18,23 @@ export type Error = {
      * `first_key_must_be_admin` (400), `tool_call_conflict` (409, the tool_call_id belongs to another session),
      * `invalid_body`, `invalid_query`, `invalid_field`, `invalid_limit`, `invalid_cursor`, `invalid_host` (400),
      * `not_implemented` (501, the agent loop is not available), `store_unavailable` (503),
-     * `oidc_unavailable` (503, the identity provider is not reachable), `internal_error` (500).
+     * `oidc_unavailable` (503, the identity provider is not reachable), `internal_error` (500),
+     * `custom_tool_conflict` (409, a custom tool name clashes with a built-in or MCP tool name),
+     * `idempotency_key_reuse` (422, the Idempotency-Key was used with a different body),
+     * `idempotency_in_progress` (409, the first request with this key is still running),
+     * `invalid_idempotency_key` (400, the Idempotency-Key is over 255 characters or not printable ASCII),
+     * `server_restarted` (session error event: the replica running the turn stopped; resend the message).
      */
     code: string;
+    /**
+     * With `custom_tool_conflict`, the custom tool name that clashes.
+     */
+    tool?: string;
+    /**
+     * With `custom_tool_conflict`, what the name clashes with, as `builtin:<tool>`
+     * or `mcp:<server>:<tool>`.
+     */
+    clashes_with?: string;
   };
 };
 
@@ -54,6 +68,10 @@ export type ServerInfo = {
   auth_modes: Array<"api_key" | "oidc">;
   public_url?: (string | null);
   max_tool_result_bytes?: number;
+  /**
+   * Number of live server replicas. Always 1 on SQLite.
+   */
+  replicas?: number;
 };
 
 export type McpServer = {
@@ -300,6 +318,11 @@ export type StatusData = {
 };
 
 export type ErrorData = {
+  /**
+   * Error event code. `server_restarted`: the turn was lost because the
+   * replica running it stopped; send the message again. Other codes are
+   * the codes listed on the Error object.
+   */
   code: string;
   message: string;
 };
@@ -551,7 +574,7 @@ export type ClaimWorkRequest = {
    */
   block_ms?: number;
   /**
-   * Also claim items whose live lease was last renewed at least this long ago. Expired leases are claimable without it. Values of 60000 or more add nothing.
+   * Also take a LIVE lease whose last renew was at least this many ms ago. Expired leases are always claimable without it. Values below 30000 are raised to 30000 (a healthy worker renews every 20 s). Values of 60000 or more add nothing.
    */
   reclaim_older_than_ms?: number;
 };

@@ -12,6 +12,10 @@ import { cmd } from "@/cli/commands/cmd"
  * (same as fabric-worker).
  */
 
+const TOOLS_FILE_HELP =
+  'JSON file of command tools the worker runs for the agent\'s custom tools: {"tools": {"<name>": {"command": ["argv", ...], "timeout_ms": 120000}}}. ' +
+  "Input JSON on stdin, stdout is the result, non-zero exit is an error; runs under the bash sandbox policy (env ALLTERNIT_WORKER_TOOLS)"
+
 const WorkerAttachCommand = cmd({
   command: "attach",
   describe: "serve one claimed work item from env (run inside a per-session sandbox started by --on-work)",
@@ -19,13 +23,15 @@ const WorkerAttachCommand = cmd({
     yargs
       .option("server", { type: "string", describe: "Agents Server URL (env ALLTERNIT_SERVER_URL)" })
       .option("workdir", { type: "string", describe: "tool working directory (env ALLTERNIT_WORKDIR, default /workspace)" })
-      .option("block-ms", { type: "number", default: 25_000, describe: "long-poll wait for the next tool call" }),
+      .option("block-ms", { type: "number", default: 25_000, describe: "long-poll wait for the next tool call" })
+      .option("tools-file", { type: "string", describe: TOOLS_FILE_HELP }),
   handler: async (args) => {
     const { runAttachCommand } = await import("../../runtime/selfhost/worker-entry")
     const code = await runAttachCommand({
       server: args.server as string | undefined,
       workdir: args.workdir as string | undefined,
       blockMs: args.blockMs as number | undefined,
+      toolsFile: args.toolsFile as string | undefined,
     })
     process.exit(code)
   },
@@ -45,14 +51,17 @@ export const WorkerCommand = cmd({
       .option("drain", { type: "boolean", default: false, describe: "run one item (or find none), then exit 0" })
       .option("reclaim-older-than-ms", {
         type: "number",
-        describe: "also claim items whose lease ran out at least this long ago (dead workers)",
+        describe:
+          "also take a live lease whose last renew was at least this long ago; expired leases are always claimable; " +
+          "values below 30000 are raised to 30000 by the server",
       })
       .option("auto-stop", { type: "number", describe: "exit 0 after this many seconds with no work" })
       .option("on-work", {
         type: "string",
         describe: "run this command per claimed item (env: ALLTERNIT_WORK_ID, ALLTERNIT_SESSION_ID, ...); this process keeps the lease",
       })
-      .option("workdir", { type: "string", describe: "tool working directory (env ALLTERNIT_WORKDIR, default /workspace)" }),
+      .option("workdir", { type: "string", describe: "tool working directory (env ALLTERNIT_WORKDIR, default /workspace)" })
+      .option("tools-file", { type: "string", describe: TOOLS_FILE_HELP }),
   handler: async (args) => {
     const { runWorkerCommand } = await import("../../runtime/selfhost/worker-entry")
     const code = await runWorkerCommand({
@@ -66,6 +75,7 @@ export const WorkerCommand = cmd({
       autoStop: args.autoStop as number | undefined,
       onWork: args.onWork as string | undefined,
       workdir: args.workdir as string | undefined,
+      toolsFile: args.toolsFile as string | undefined,
     })
     process.exit(code)
   },

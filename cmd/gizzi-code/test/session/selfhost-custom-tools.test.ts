@@ -4,7 +4,9 @@
  * each turn's `metadata.selfhost.custom_tools` (loop.rs message_body). With
  * GIZZI_TOOL_HOST=remote they are offered to the model for that session, and
  * a call to one is POSTed to the server's internal tool_calls route (the
- * remote tool host), never run here. A custom tool may not shadow a built-in.
+ * remote tool host), never run here. A custom tool may not shadow a built-in
+ * or an MCP tool of the session, and the server can ask before it stores a
+ * message (POST /session/:id/custom-tools/check).
  */
 import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test"
 import path from "path"
@@ -29,11 +31,14 @@ afterAll(() => {
 
 /** The tool record the model got on each build-agent call. */
 const toolLists: Record<string, any>[] = []
+/** Every model call's tool record, by session (subagent turns included). */
+const callsBySession: Record<string, { agent?: string; tools: Record<string, any> }[]> = {}
 
 mock.module("../../src/runtime/session/llm", () => ({
   LLM: {
     stream: async (input: any) => {
       if (input.agent?.name === "build") toolLists.push(input.tools)
+      ;(callsBySession[input.sessionID] ??= []).push({ agent: input.agent?.name, tools: input.tools })
       return {
         fullStream: (async function* () {
           yield { type: "start" }
@@ -88,6 +93,11 @@ mock.module("../../src/runtime/providers/provider", () => ({
 }))
 
 const { SessionPrompt } = await import("../../src/runtime/session/prompt")
+const { SessionRoutes } = await import("../../src/runtime/server/routes/session")
+
+/** A real stdio MCP server with one tool, `echo` (offered as mcp__modern__echo). */
+const MCP_FIXTURE = path.join(import.meta.dir, "../fixture/mcp-modern-stdio-server.ts")
+const MCP_CONFIG = { mcp: { modern: { type: "local", command: [process.execPath, MCP_FIXTURE] } } }
 
 const LOOKUP = {
   type: "custom",
@@ -100,11 +110,11 @@ const LOOKUP = {
   },
 }
 
-async function withProject<T>(fn: () => Promise<T>) {
+async function withProject<T>(fn: () => Promise<T>, config: Record<string, unknown> = {}) {
   const tmp = await tmpdir({
     git: true,
     init: async (dir) => {
-      await Bun.write(path.join(dir, "gizzi.json"), JSON.stringify({}))
+      await Bun.write(path.join(dir, "gizzi.json"), JSON.stringify(config))
     },
   })
   try {
@@ -138,6 +148,7 @@ function restoreEnv(key: string, value: string | undefined) {
 
 beforeEach(() => {
   toolLists.length = 0
+  for (const key of Object.keys(callsBySession)) delete callsBySession[key]
   process.env.GIZZI_TOOL_HOST = "remote"
   process.env.GIZZI_TOOL_HOST_URL = "http://127.0.0.1:4999/"
   process.env.GIZZI_TOOL_HOST_TOKEN = "internal-token"
@@ -150,6 +161,8 @@ afterEach(() => {
   restoreEnv("GIZZI_TOOL_HOST_TOKEN", savedEnv.token)
 })
 
+// Each test opens a fresh project, which starts its MCP servers (bundled ones
+// included) on the first turn: more than bun's default 5s on a cold run.
 describe("self-hosted custom tools", () => {
   test("a turn's custom tools reach the model and run through the remote tool host", async () => {
     await withProject(async () => {
@@ -199,7 +212,7 @@ describe("self-hosted custom tools", () => {
       expect(result.metadata.remote).toBe(true)
       expect(result.metadata.custom).toBe(true)
     })
-  })
+  }, 30_000)
 
   test("a worker error comes back as a tool error", async () => {
     await withProject(async () => {
@@ -216,13 +229,13 @@ describe("self-hosted custom tools", () => {
         ),
       ).rejects.toThrow("No handler for lookup_order.")
     })
-  })
+  }, 30_000)
 
   test("a custom tool that shadows a built-in refuses the turn before anything is stored", async () => {
     await withProject(async () => {
       const s = await Session.create({ title: "Shadowing" })
       await expect(send(s.id, [{ ...LOOKUP, name: "Bash" }])).rejects.toThrow(
-        'The custom tool "Bash" has the same name as a built-in tool',
+        'The custom tool "Bash" has the same name as the built-in tool "bash"',
       )
       expect(toolLists).toHaveLength(0)
       const stored = []
@@ -230,7 +243,28 @@ describe("self-hosted custom tools", () => {
       expect(stored).toHaveLength(0)
       expect(RemoteToolHost.isCustomTool(s.id, "Bash")).toBe(false)
     })
-  })
+  }, 30_000)
+
+  test("a custom tool named like an MCP tool of the session refuses the turn before anything is stored", async () => {
+    await withProject(async () => {
+      const s = await Session.create({ title: "MCP clash" })
+      await expect(send(s.id, [{ ...LOOKUP, name: "mcp__modern__echo" }])).rejects.toThrow(
+        'The custom tool "mcp__modern__echo" has the same name as the tool "echo" of the MCP server "modern"',
+      )
+      expect(toolLists).toHaveLength(0)
+      const stored = []
+      for await (const m of MessageV2.stream(s.id)) stored.push(m)
+      expect(stored).toHaveLength(0)
+      expect(RemoteToolHost.isCustomTool(s.id, "mcp__modern__echo")).toBe(false)
+      const refused = await send(s.id, [{ ...LOOKUP, name: "mcp__modern__echo" }]).catch((e) => e)
+      expect(refused.code).toBe("custom_tool_conflict")
+      expect(refused.conflict).toEqual({ tool: "mcp__modern__echo", clashes_with: "mcp:modern:echo" })
+
+      // A name the MCP server does not hold still goes through, and the MCP tool is offered beside it.
+      await send(s.id, [LOOKUP])
+      expect(Object.keys(toolLists[0])).toEqual(expect.arrayContaining(["lookup_order", "mcp__modern__echo"]))
+    }, MCP_CONFIG)
+  }, 60_000)
 
   test("without remote mode the metadata is ignored", async () => {
     delete process.env.GIZZI_TOOL_HOST
@@ -239,7 +273,205 @@ describe("self-hosted custom tools", () => {
       await send(s.id, [LOOKUP])
       expect(Object.keys(toolLists[0])).not.toContain("lookup_order")
     })
+  }, 30_000)
+})
+
+/**
+ * A real HTTP stand-in for the Agents Server's internal tool queue (the
+ * network edge): records each POST and answers like a worker would.
+ */
+function queueServer(answer: (body: any) => { output: string; is_error: boolean }) {
+  const received: { path: string; auth: string | null; body: any }[] = []
+  const srv = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    async fetch(req) {
+      const body = await req.json()
+      received.push({ path: new URL(req.url).pathname, auth: req.headers.get("authorization"), body })
+      return Response.json(answer(body))
+    },
   })
+  process.env.GIZZI_TOOL_HOST_URL = `http://127.0.0.1:${srv.port}`
+  return { srv, received }
+}
+
+/** A subagent turn the way task.ts runTurn sends it: no metadata, its own disable map. */
+async function subagentTurn(sessionID: string, agent = "builder") {
+  return SessionPrompt.prompt({
+    messageID: Identifier.ascending("message"),
+    sessionID,
+    agent,
+    model: { providerID: "claude-cli", modelID: "claude-sonnet" },
+    tools: { todowrite: false, todoread: false, task: false },
+    parts: [{ id: Identifier.ascending("part"), type: "text", text: "Check order 42." }],
+  })
+}
+
+async function lastAssistant(sessionID: string) {
+  for await (const m of MessageV2.stream(sessionID)) if (m.info.role === "assistant") return m.info
+  throw new Error(`no assistant message in ${sessionID}`)
+}
+
+function toolCtx(sessionID: string, messageID: string) {
+  return {
+    sessionID,
+    messageID,
+    callID: "toolu_batch_1",
+    agent: "build",
+    abort: new AbortController().signal,
+    messages: [],
+    metadata: async () => {},
+    ask: async () => {},
+  } as any
+}
+
+describe("self-hosted custom tools in subagents and batch", () => {
+  test("a subagent is offered the root's custom tools, and its calls go to the root's queue", async () => {
+    const q = queueServer((body) => ({ output: `${body.name}: order ${body.input.order_id} shipped.`, is_error: false }))
+    try {
+      await withProject(async () => {
+        const root = await Session.create({ title: "Root" })
+        await send(root.id, [LOOKUP])
+        const child = await Session.create({ parentID: root.id, title: "Check (@builder subagent)" })
+        const grandchild = await Session.create({ parentID: child.id, title: "Deeper (@builder subagent)" })
+        await subagentTurn(child.id)
+        await subagentTurn(grandchild.id)
+
+        for (const [index, sessionID] of [child.id, grandchild.id].entries()) {
+          const call = callsBySession[sessionID]?.find((c) => c.agent === "builder")
+          expect(call).toBeDefined()
+          expect(Object.keys(call!.tools)).toContain("lookup_order")
+          expect(call!.tools.lookup_order.description).toBe(LOOKUP.description)
+          expect(RemoteToolHost.handles("lookup_order", sessionID)).toBe(true)
+          const result = await call!.tools.lookup_order.execute(
+            { order_id: "42" },
+            { toolCallId: `toolu_sub_lookup_${index}`, messages: [], abortSignal: new AbortController().signal },
+          )
+          expect(result.output).toBe("lookup_order: order 42 shipped.")
+          expect(result.metadata.custom).toBe(true)
+        }
+        expect(q.received.map((r) => r.path)).toEqual([
+          `/internal/v1/sessions/${root.id}/tool_calls`,
+          `/internal/v1/sessions/${root.id}/tool_calls`,
+        ])
+        expect(q.received.map((r) => r.body.name)).toEqual(["lookup_order", "lookup_order"])
+        expect(q.received.every((r) => r.auth === "Bearer internal-token")).toBe(true)
+        // A subagent turn leaves the root's set as it was.
+        expect(RemoteToolHost.isCustomTool(root.id, "lookup_order")).toBe(true)
+        // An unrelated session still has none.
+        const other = await Session.create({ title: "Other" })
+        expect(RemoteToolHost.handles("lookup_order", other.id)).toBe(false)
+      })
+    } finally {
+      q.srv.stop(true)
+    }
+  }, 60_000)
+
+  test("batch forwards a custom tool to the root's queue, from the root and from a subagent", async () => {
+    const q = queueServer((body) => ({ output: `order ${body.input.order_id} shipped.`, is_error: false }))
+    try {
+      await withProject(async () => {
+        const { BatchTool } = await import("../../src/runtime/tools/builtins/batch")
+        const batch = await BatchTool.init()
+        const root = await Session.create({ title: "Root" })
+        await send(root.id, [LOOKUP])
+        const child = await Session.create({ parentID: root.id, title: "Check (@builder subagent)" })
+        await subagentTurn(child.id)
+
+        for (const sessionID of [root.id, child.id]) {
+          const assistant = await lastAssistant(sessionID)
+          const out = await batch.execute(
+            { tool_calls: [{ tool: "lookup_order", parameters: { order_id: "42" } }] },
+            toolCtx(sessionID, assistant.id),
+          )
+          expect(out.metadata.successful).toBe(1)
+          expect(out.metadata.failed).toBe(0)
+          const parts = (await MessageV2.get({ sessionID, messageID: assistant.id })).parts
+          const part = parts.find((p: any) => p.type === "tool" && p.tool === "lookup_order")
+          expect(part.state.status).toBe("completed")
+          expect(part.state.output).toBe("order 42 shipped.")
+          expect(part.state.metadata.custom).toBe(true)
+        }
+        expect(q.received.map((r) => r.path)).toEqual([
+          `/internal/v1/sessions/${root.id}/tool_calls`,
+          `/internal/v1/sessions/${root.id}/tool_calls`,
+        ])
+        expect(q.received.map((r) => r.body.input)).toEqual([{ order_id: "42" }, { order_id: "42" }])
+
+        // A name that is neither a registered nor a custom tool is still refused.
+        const assistant = await lastAssistant(root.id)
+        const bad = await batch.execute(
+          { tool_calls: [{ tool: "lookup_invoice", parameters: {} }] },
+          toolCtx(root.id, assistant.id),
+        )
+        expect(bad.metadata.failed).toBe(1)
+        expect(q.received).toHaveLength(2)
+      })
+    } finally {
+      q.srv.stop(true)
+    }
+  }, 60_000)
+})
+
+describe("custom tool check route", () => {
+  async function check(sessionID: string, body: unknown) {
+    const res = await SessionRoutes().request(`/${sessionID}/custom-tools/check`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    })
+    return { status: res.status, body: await res.json() }
+  }
+
+  test("409 for an MCP or built-in clash, 200 otherwise, and nothing is stored", async () => {
+    await withProject(async () => {
+      const s = await Session.create({ title: "Preflight" })
+
+      // The message route's own body (loop.rs message_body), sent as is.
+      const mcp = await check(s.id, {
+        model: { providerID: "claude-cli", modelID: "claude-sonnet" },
+        agent: "build",
+        parts: [{ type: "text", text: "hi" }],
+        metadata: { selfhost: { session_id: "sesn_1", agent_id: "agent_1", custom_tools: [LOOKUP, { ...LOOKUP, name: "MCP__modern__echo" }] } },
+      })
+      expect(mcp.status).toBe(409)
+      expect(mcp.body.error.code).toBe("custom_tool_conflict")
+      expect(mcp.body.error.tool).toBe("MCP__modern__echo")
+      expect(mcp.body.error.type).toBe("conflict_error")
+      expect(mcp.body.error.clashes_with).toBe("mcp:modern:echo")
+      expect(mcp.body.error.message).toContain('the tool "echo" of the MCP server "modern"')
+
+      const builtin = await check(s.id, { custom_tools: [{ ...LOOKUP, name: "ls" }] })
+      expect(builtin.status).toBe(409)
+      expect(builtin.body.error).toMatchObject({
+        type: "conflict_error",
+        code: "custom_tool_conflict",
+        tool: "ls",
+        clashes_with: "builtin:list",
+      })
+
+      const webfetch = await check(s.id, { custom_tools: [{ ...LOOKUP, name: "WebFetch" }] })
+      expect(webfetch.status).toBe(409)
+      expect(webfetch.body.error.clashes_with).toBe("builtin:webfetch")
+
+      const ok = await check(s.id, { metadata: { selfhost: { custom_tools: [LOOKUP] } } })
+      expect(ok).toEqual({ status: 200, body: { ok: true } })
+      expect(await check(s.id, {})).toEqual({ status: 200, body: { ok: true } })
+
+      const bad = await check(s.id, { custom_tools: [{ name: "has space", input_schema: {} }] })
+      expect(bad.status).toBe(400)
+      expect(bad.body.error).toMatchObject({ type: "invalid_request_error", code: "invalid_custom_tool" })
+
+      // A first message has no gizzi session yet: the check still answers.
+      expect((await check("ses_not_created_yet", { custom_tools: [{ ...LOOKUP, name: "mcp__modern__echo" }] })).status).toBe(409)
+
+      const stored = []
+      for await (const m of MessageV2.stream(s.id)) stored.push(m)
+      expect(stored).toHaveLength(0)
+      expect(RemoteToolHost.isCustomTool(s.id, "lookup_order")).toBe(false)
+      expect(toolLists).toHaveLength(0)
+    }, MCP_CONFIG)
+  }, 60_000)
 })
 
 describe("RemoteToolHost custom tool parsing", () => {
@@ -269,11 +501,16 @@ describe("RemoteToolHost custom tool parsing", () => {
 
   test("registration refuses sandbox tool names and aliases, and replaces the session's set", () => {
     const def = (name: string) => ({ name, description: "", inputSchema: { type: "object" } })
-    expect(() => RemoteToolHost.registerCustomTools("ses_a", [def("read")], [])).toThrow("same name as a built-in")
-    expect(() => RemoteToolHost.registerCustomTools("ses_a", [def("ls")], [])).toThrow("same name as a built-in")
+    expect(() => RemoteToolHost.registerCustomTools("ses_a", [def("read")], [])).toThrow('the built-in tool "read"')
+    expect(() => RemoteToolHost.registerCustomTools("ses_a", [def("ls")], [])).toThrow('the built-in tool "list"')
     expect(() => RemoteToolHost.registerCustomTools("ses_a", [def("MyMcp_tool")], ["mymcp_tool"])).toThrow(
-      "same name as a built-in",
+      'the built-in tool "mymcp_tool"',
     )
+    expect(() =>
+      RemoteToolHost.registerCustomTools("ses_a", [def("MCP__Docs__Search")], [
+        { kind: "mcp", name: "mcp__docs__search", server: "docs", tool: "search" },
+      ]),
+    ).toThrow('the tool "search" of the MCP server "docs"')
     RemoteToolHost.registerCustomTools("ses_a", [def("one")], [])
     expect(RemoteToolHost.isCustomTool("ses_a", "one")).toBe(true)
     RemoteToolHost.registerCustomTools("ses_a", [def("two")], [])

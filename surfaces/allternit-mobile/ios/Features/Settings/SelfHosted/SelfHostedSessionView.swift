@@ -13,6 +13,12 @@ final class SelfHostedSessionModel: ObservableObject {
     @Published var error: String?
 
     private var session: SHSession?
+    /// Idempotency keys for the draft being sent. Kept after a network error,
+    /// 5xx or "still in progress" so a resend of the same text is the same
+    /// request; dropped on success or a definite refusal (new draft, new key).
+    private var pendingText: String?
+    private var createKey = UUID().uuidString
+    private var messageKey = UUID().uuidString
     private var streamTask: Task<Void, Never>?
     private let store = SelfHostedServerStore.shared
 
@@ -26,24 +32,41 @@ final class SelfHostedSessionModel: ObservableObject {
     var waitingForWorker: Bool { status == .waitingForWorker }
     var busy: Bool { sending || status == .running || status == .waitingForWorker }
 
-    func send(_ text: String) async {
-        guard let client = store.client(), !agentID.isEmpty, !environmentID.isEmpty else { return }
+    /// Returns true when the message was accepted, so the view can put the
+    /// text back in the composer when it was not.
+    @discardableResult
+    func send(_ text: String) async -> Bool {
+        guard let client = store.client(), !agentID.isEmpty, !environmentID.isEmpty else { return false }
+        if pendingText != text {
+            pendingText = text
+            createKey = UUID().uuidString
+            messageKey = UUID().uuidString
+        }
         sending = true; error = nil
         defer { sending = false }
         do {
             if session == nil {
-                let created = try await client.createSession(agentID: agentID, environmentID: environmentID)
+                let created = try await client.createSession(agentID: agentID, environmentID: environmentID, idempotencyKey: createKey)
                 session = created
+                createKey = UUID().uuidString
                 startStream(client: client, sessionID: created.id)
             }
-            if let id = session?.id { try await client.sendMessage(sessionID: id, content: text) }
+            if let id = session?.id { try await client.sendMessage(sessionID: id, content: text, idempotencyKey: messageKey) }
+            pendingText = nil
+            return true
         } catch let e as SelfHostedError {
-            switch e {
-            case .server(_, "session_busy"?, _): error = "The agent is still working on the last message."
-            case .server(_, "model_not_mapped"?, _): error = "This agent’s model isn’t set up on the server (model_not_mapped). Pick another agent."
-            default: error = e.message
+            if !e.shouldKeepIdempotencyKey { pendingText = nil }
+            if let copy = e.friendlyServerMessage {
+                error = copy
+            } else {
+                switch e {
+                case .server(_, "session_busy"?, _, _, _): error = "The agent is still working on the last message."
+                case .server(_, "model_not_mapped"?, _, _, _): error = "This agent’s model isn’t set up on the server (model_not_mapped). Pick another agent."
+                default: error = e.message
+                }
             }
         } catch { self.error = error.localizedDescription }
+        return false
     }
 
     func stop() async {
@@ -173,7 +196,7 @@ struct SelfHostedSessionView: View {
                     let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
                     guard !text.isEmpty else { return }
                     draft = ""
-                    Task { await model.send(text) }
+                    Task { if await !model.send(text), draft.isEmpty { draft = text } }
                 }
                 .buttonStyle(SettingsPrimaryButtonStyle())
                 .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.sending || model.agentID.isEmpty)
@@ -203,8 +226,10 @@ private struct EventRow: View {
         case .toolResult(_, let output, let isError):
             card(icon: isError ? "xmark.octagon" : "checkmark.circle", title: isError ? "Tool failed" : "Tool result",
                  body: output, tint: isError ? Theme.statusError : Color("TextSecondary"))
-        case .error(_, let message):
-            SettingsErrorBanner(message: message)
+        case .error(let code, let message):
+            SettingsErrorBanner(message: code == "server_restarted"
+                                ? "The server restarted during this reply. Send the message again."
+                                : message)
         case .status, .unknown:
             EmptyView()
         }

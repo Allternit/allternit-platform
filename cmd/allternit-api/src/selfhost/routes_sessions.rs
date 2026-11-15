@@ -24,7 +24,7 @@ use tokio::sync::broadcast::error::RecvError;
 use super::auth::User;
 use super::routes_agents::check_model;
 use super::store::{
-    DynStore, EventRecord, NewSession, SessionFilter, SessionRecord, StoreError, StoreResult,
+    DynStore, EventRecord, NewSession, SessionFilter, SessionRecord, StoreError, StoreResult, Wake,
     EVENT_TYPES, SESSION_STATUSES,
 };
 use super::{
@@ -33,6 +33,10 @@ use super::{
 };
 
 pub const SSE_KEEPALIVE: Duration = Duration::from_secs(15);
+/// An SSE stream reads the store at least this often, hint or not, so an
+/// event written by another replica shows up even when its NOTIFY is lost
+/// (or there is no listener).
+pub const SSE_SAFETY_READ: Duration = Duration::from_secs(5);
 const REPLAY_PAGE: i64 = 500;
 
 pub fn mount(book: RouteBook) -> RouteBook {
@@ -61,9 +65,28 @@ pub fn mount(book: RouteBook) -> RouteBook {
 /// - `interrupt` stops the running turn. The route then cancels open tool
 ///   calls and sets `interrupted`. The session's work item stays: its worker
 ///   keeps serving the session until it is archived or idle.
+/// - Ownership: the route claims the turn for this replica
+///   (`sessions.turn_replica`, [`super::store::SelfHostStore::claim_turn`])
+///   before it stores the user message. The runner releases it when the
+///   turn ends, before the final status, and only sets that status if the
+///   release says the turn was still its own. An interrupt on another
+///   replica cannot reach this process's task: it changes the status and
+///   clears the owner in the store, and the runner must notice that on its
+///   own (the gizzi runner checks every 2 s) and stop the turn.
 #[async_trait]
 pub trait TurnRunner: Send + Sync + 'static {
     fn available(&self) -> Result<(), ApiError> {
+        Ok(())
+    }
+
+    /// Refuse a message that would clash with the agent's custom tools
+    /// BEFORE it is stored (409 `custom_tool_conflict`). The default accepts.
+    async fn preflight(
+        &self,
+        _state: &SelfHostState,
+        _session: &SessionRecord,
+        _content: &str,
+    ) -> Result<(), ApiError> {
         Ok(())
     }
 
@@ -80,6 +103,22 @@ pub trait TurnRunner: Send + Sync + 'static {
     ) -> Result<(), ApiError>;
 
     async fn interrupt(&self, state: &SelfHostState, session_id: &str) -> Result<(), ApiError>;
+
+    /// Turns this process is running now (for the graceful drain).
+    fn running_turns(&self) -> usize {
+        0
+    }
+
+    /// Stop every local turn task at once (end of the drain; their sessions
+    /// were already failed in the store).
+    fn abort_all(&self) {}
+
+    /// Our session id for a gizzi session id the internal route does not
+    /// know (for example a lineage head gizzi made by a context handoff
+    /// during a turn). None when the runner cannot tell.
+    async fn resolve_gizzi_session(&self, _state: &SelfHostState, _gizzi_session_id: &str) -> Option<String> {
+        None
+    }
 }
 
 /// The agent loop's readiness, as `/health/ready` reports it.
@@ -338,6 +377,13 @@ async fn send_message(
         .unwrap_or_default();
     check_model(&st.settings, model)?;
     st.turn_runner.available()?;
+    if st.replica.draining() {
+        return Err(ApiError::unavailable(
+            "agent_loop_unavailable",
+            "This server replica is stopping. Send the message again.",
+        ));
+    }
+    st.turn_runner.preflight(&st, &cur, &body.content).await?;
     let previous = cur.status.clone();
     let Some(session) = st
         .store
@@ -346,6 +392,36 @@ async fn send_message(
     else {
         return Err(ApiError::conflict("session_busy", "A turn is already running."));
     };
+    let me = st.replica.id.as_str();
+    // Put the status back (and drop our claim) when the turn cannot start.
+    let undo = |claimed: bool| {
+        let st = st.clone();
+        let id = id.clone();
+        let previous = previous.clone();
+        let reason = cur.status_reason.clone();
+        async move {
+            if claimed {
+                let _ = st.store.release_turn(&id, &st.replica.id).await;
+            }
+            let _ = st
+                .store
+                .transition_session_status(&id, &["running"], &previous, reason.as_deref())
+                .await;
+        }
+    };
+    // The turn belongs to this replica from here on. Another replica still
+    // owning it (its last turn is not cleaned up yet) means busy.
+    match st.store.claim_turn(&id, me).await {
+        Ok(true) => {}
+        Ok(false) => {
+            undo(false).await;
+            return Err(ApiError::conflict("session_busy", "A turn is already running."));
+        }
+        Err(e) => {
+            undo(false).await;
+            return Err(e.into());
+        }
+    }
     let mut data = json!({ "role": "user", "content": body.content });
     if let Some(m) = body.metadata {
         data["metadata"] = Value::Object(m);
@@ -353,15 +429,12 @@ async fn send_message(
     let event = match st.append_event(&id, "message", data).await {
         Ok(e) => e,
         Err(e) => {
-            let _ = st.store.set_session_status(&id, &previous, None).await;
+            undo(true).await;
             return Err(e.into());
         }
     };
     if let Err(e) = st.turn_runner.start_turn(&st, &session, &event).await {
-        let _ = st
-            .store
-            .transition_session_status(&id, &["running"], &previous, cur.status_reason.as_deref())
-            .await;
+        undo(true).await;
         return Err(e);
     }
     Ok((StatusCode::ACCEPTED, Json(event_json(&event))))
@@ -384,6 +457,14 @@ async fn interrupt_session(
     {
         st.append_event(&id, "status", json!({ "status": "interrupted", "reason": null }))
             .await?;
+        // The turn may run on another replica, which this process cannot
+        // stop directly. Clearing its owner (compare-and-set on that owner)
+        // frees the session for the next message at once; the owner sees
+        // the status change within 2 s and stops its task.
+        if let Some(owner) = s.turn_replica.as_deref() {
+            st.store.release_turn(&id, owner).await?;
+        }
+        let s = st.store.get_session(&id).await?;
         return Ok(Json(session_json(&s)));
     }
     // The turn finished on its own meanwhile.
@@ -474,9 +555,20 @@ async fn replay(store: &DynStore, session_id: &str, after: i64) -> StoreResult<V
     }
 }
 
+enum Next {
+    Nothing,
+    Send(Arc<EventRecord>),
+    Fill,
+    End,
+}
+
 /// SSE: replay from the store after `Last-Event-ID` (or `after_seq`), then
-/// live events from the broadcaster. A gap in the live seq, or a lagged
-/// receiver, is filled from the store, so no event is lost or repeated.
+/// live events. Events stored by this process come from the broadcaster; a
+/// gap in their seq, or a lagged receiver, is filled from the store. Events
+/// stored by another replica (or by the store itself) are read from the
+/// store after the last seq sent: on a wake hint ([`super::wake`]) and, hint
+/// or not, every [`SSE_SAFETY_READ`]. Every frame goes out in seq order, once.
+/// The stream ends when this replica has finished its graceful drain.
 async fn stream_events(
     State(st): State<SelfHostState>,
     _user: User,
@@ -497,6 +589,8 @@ async fn stream_events(
     };
     // Subscribe before the replay so nothing falls between the two.
     let mut rx = st.subscribe();
+    let mut hints = st.subscribe_wakes();
+    let mut stopped = st.replica.stopped();
     let store = st.store.clone();
     let stream = async_stream::stream! {
         let mut last = start;
@@ -507,6 +601,9 @@ async fn stream_events(
                 return;
             }
         };
+        let mut safety = tokio::time::interval(SSE_SAFETY_READ);
+        safety.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        safety.reset();
         loop {
             for ev in pending.drain(..) {
                 if ev.seq > last {
@@ -514,34 +611,50 @@ async fn stream_events(
                     yield Ok(sse_frame(&ev));
                 }
             }
-            match rx.recv().await {
-                Ok(ev) => {
-                    if ev.session_id != id || ev.seq <= last {
-                        continue;
-                    }
-                    if ev.seq == last + 1 {
-                        last = ev.seq;
-                        yield Ok(sse_frame(&ev));
-                        continue;
-                    }
+            if *stopped.borrow() {
+                return;
+            }
+            // What woke us: a local event to send, a reason to read the
+            // store after `last`, or the end of the stream.
+            let next = tokio::select! {
+                r = rx.recv() => match r {
+                    Ok(ev) if ev.session_id != id || ev.seq <= last => Next::Nothing,
+                    Ok(ev) if ev.seq == last + 1 => Next::Send(ev),
                     // Out of order or missed: the store has everything up to
                     // this seq (appends are serialized per session).
-                    match replay(&store, &id, last).await {
-                        Ok(v) => pending = v,
-                        Err(e) => {
-                            tracing::warn!(error = %e, session_id = %id, "SSE gap fill failed");
-                            return;
-                        }
-                    }
+                    Ok(_) | Err(RecvError::Lagged(_)) => Next::Fill,
+                    Err(RecvError::Closed) => Next::End,
+                },
+                h = hints.recv() => match h {
+                    Ok(Wake::Event { session_id, seq }) if session_id == id && seq > last => Next::Fill,
+                    Ok(Wake::Status { session_id }) if session_id == id => Next::Fill,
+                    Ok(Wake::Resync) | Err(RecvError::Lagged(_)) => Next::Fill,
+                    Ok(_) => Next::Nothing,
+                    Err(RecvError::Closed) => Next::End,
+                },
+                _ = safety.tick() => Next::Fill,
+                // Stopped (send what is stored, then end), or the replica
+                // is gone.
+                r = stopped.changed() => if r.is_ok() { Next::Fill } else { Next::End },
+            };
+            let fill = match next {
+                Next::Nothing => false,
+                Next::Fill => true,
+                Next::End => return,
+                Next::Send(ev) => {
+                    last = ev.seq;
+                    yield Ok(sse_frame(&ev));
+                    false
                 }
-                Err(RecvError::Lagged(_)) => match replay(&store, &id, last).await {
+            };
+            if fill {
+                match replay(&store, &id, last).await {
                     Ok(v) => pending = v,
                     Err(e) => {
-                        tracing::warn!(error = %e, session_id = %id, "SSE lag fill failed");
+                        tracing::warn!(error = %e, session_id = %id, "SSE store read failed");
                         return;
                     }
-                },
-                Err(RecvError::Closed) => return,
+                }
             }
         }
     };

@@ -66,6 +66,8 @@ CREATE TABLE IF NOT EXISTS sessions (
     metadata TEXT NOT NULL DEFAULT '{}',
     agent_snapshot TEXT NOT NULL DEFAULT '{}',
     gizzi_session_id TEXT,
+    turn_replica TEXT,
+    gizzi_replica TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     archived_at TEXT
@@ -95,6 +97,8 @@ CREATE TABLE IF NOT EXISTS work_items (
     worker_id TEXT,
     session_secret_hash TEXT,
     error_message TEXT,
+    preferred_worker_id TEXT,
+    prefer_until TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     completed_at TEXT
@@ -165,14 +169,41 @@ CREATE TABLE IF NOT EXISTS credentials (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS idempotency_keys (
+    principal TEXT NOT NULL,
+    method TEXT NOT NULL,
+    path TEXT NOT NULL,
+    idem_key TEXT NOT NULL,
+    request_hash TEXT NOT NULL,
+    state TEXT NOT NULL CHECK (state IN ('in_progress','done')),
+    status_code INTEGER,
+    response_headers TEXT,
+    response_body BLOB,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (principal, method, path, idem_key)
+);
+CREATE INDEX IF NOT EXISTS idempotency_keys_created ON idempotency_keys (created_at);
+
+CREATE TABLE IF NOT EXISTS server_replicas (
+    replica_id TEXT PRIMARY KEY,
+    started_at TEXT NOT NULL,
+    heartbeat_at TEXT NOT NULL,
+    version TEXT
+);
 "#;
+
+// Indexes on columns added after 1.0, and the one-open-item index, are made
+// by `migrate_limits` (an old database gets the columns, and loses its
+// duplicate open items, first).
 
 const AGENT_COLS: &str =
     "id, name, instructions, model, tools, mcp_servers, skills, metadata, version, created_at, updated_at";
 const ENV_COLS: &str = "id, name, network, allowed_hosts, git, mcp, image, packages, metadata, created_at, updated_at";
-const SESSION_COLS: &str = "id, agent_id, environment_id, title, status, status_reason, last_seq, metadata, agent_snapshot, gizzi_session_id, created_at, updated_at, archived_at";
+const SESSION_COLS: &str = "id, agent_id, environment_id, title, status, status_reason, last_seq, metadata, agent_snapshot, gizzi_session_id, turn_replica, gizzi_replica, created_at, updated_at, archived_at";
 const EVENT_COLS: &str = "id, session_id, seq, type, data, created_at";
-const WORK_COLS: &str = "id, environment_id, session_id, status, lease_generation, lease_expires_at, worker_id, error_message, created_at, updated_at, completed_at";
+const WORK_COLS: &str = "id, environment_id, session_id, status, lease_generation, lease_expires_at, worker_id, error_message, preferred_worker_id, prefer_until, created_at, updated_at, completed_at";
 const TOOL_COLS: &str = "id, session_id, work_id, claimed_generation, name, input, status, output, is_error, created_at, updated_at, completed_at";
 const WORKER_COLS: &str = "environment_id, worker_id, last_seen_at, current_work_id, hostname, version";
 const API_KEY_COLS: &str =
@@ -180,6 +211,7 @@ const API_KEY_COLS: &str =
 const ENV_KEY_COLS: &str =
     "id, environment_id, name, prefix, key_hash, created_at, expires_at, last_used_at, revoked_at";
 const CRED_COLS: &str = "id, name, sealed, key_id, created_at, updated_at";
+const REPLICA_COLS: &str = "replica_id, started_at, heartbeat_at, version";
 
 impl From<rusqlite::Error> for StoreError {
     fn from(e: rusqlite::Error) -> Self {
@@ -269,6 +301,8 @@ fn session_row(row: &Row) -> rusqlite::Result<SessionRecord> {
         metadata: json_col(row, "metadata")?,
         agent_snapshot: json_col(row, "agent_snapshot")?,
         gizzi_session_id: row.get("gizzi_session_id")?,
+        turn_replica: row.get("turn_replica")?,
+        gizzi_replica: row.get("gizzi_replica")?,
         created_at: ts_col(row, "created_at")?,
         updated_at: ts_col(row, "updated_at")?,
         archived_at: ts_opt(row, "archived_at")?,
@@ -297,6 +331,8 @@ fn work_row(row: &Row) -> rusqlite::Result<WorkItem> {
         lease_expires_at: ts_opt(row, "lease_expires_at")?,
         worker_id: row.get("worker_id")?,
         error_message: row.get("error_message")?,
+        preferred_worker_id: row.get("preferred_worker_id")?,
+        prefer_until: ts_opt(row, "prefer_until")?,
         created_at: ts_col(row, "created_at")?,
         updated_at: ts_col(row, "updated_at")?,
         completed_at: ts_opt(row, "completed_at")?,
@@ -370,6 +406,15 @@ fn cred_row(row: &Row) -> rusqlite::Result<CredentialRecord> {
         key_id: row.get("key_id")?,
         created_at: ts_col(row, "created_at")?,
         updated_at: ts_col(row, "updated_at")?,
+    })
+}
+
+fn replica_row(row: &Row) -> rusqlite::Result<ReplicaRecord> {
+    Ok(ReplicaRecord {
+        replica_id: row.get("replica_id")?,
+        started_at: ts_col(row, "started_at")?,
+        heartbeat_at: ts_col(row, "heartbeat_at")?,
+        version: row.get("version")?,
     })
 }
 
@@ -488,6 +533,7 @@ impl SqliteStore {
         conn.pragma_update(None, "foreign_keys", "ON")?;
         conn.execute_batch(SCHEMA)?;
         add_trace_columns(&conn)?;
+        migrate_limits(&conn)?;
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
             kind,
@@ -528,6 +574,177 @@ fn add_trace_columns(conn: &Connection) -> StoreResult<()> {
         }
     }
     Ok(())
+}
+
+/// The column names of a table.
+fn table_columns(conn: &Connection, table: &str) -> StoreResult<Vec<String>> {
+    let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})"))?;
+    let rows = stmt.query_map([], |r| r.get::<_, String>(1))?;
+    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+}
+
+/// Selfhost 1.1 forward migration (Postgres: `003_limits.sql`). Safe to run
+/// on every open; does nothing once applied.
+///
+/// - New columns: `work_items.preferred_worker_id`, `prefer_until`;
+///   `sessions.turn_replica`, `gizzi_replica`.
+/// - One open work item per session: cancel the extra open items of each
+///   session (keep a leased one over a ready one, then the newest; tool
+///   calls claimed under a cancelled item go back to pending), then create
+///   the partial unique index `work_items_one_open`.
+fn migrate_limits(conn: &Connection) -> StoreResult<()> {
+    for (table, column, ty) in [
+        ("work_items", "preferred_worker_id", "TEXT"),
+        ("work_items", "prefer_until", "TEXT"),
+        ("sessions", "turn_replica", "TEXT"),
+        ("sessions", "gizzi_replica", "TEXT"),
+    ] {
+        if !table_columns(conn, table)?.iter().any(|c| c == column) {
+            conn.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {ty}"))?;
+        }
+    }
+    conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS sessions_turn_replica ON sessions (turn_replica)
+             WHERE turn_replica IS NOT NULL;",
+    )?;
+    let has_index: bool = conn.query_row(
+        "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'work_items_one_open')",
+        [],
+        |r| r.get(0),
+    )?;
+    if has_index {
+        return Ok(());
+    }
+    let now = ts(Utc::now());
+    conn.execute_batch("BEGIN IMMEDIATE")?;
+    let res = (|| -> StoreResult<()> {
+        conn.execute_batch(
+            "CREATE TEMP TABLE IF NOT EXISTS selfhost_dup_work (id TEXT PRIMARY KEY);
+             DELETE FROM selfhost_dup_work;
+             INSERT INTO selfhost_dup_work (id)
+             SELECT id FROM (
+                 SELECT id, row_number() OVER (
+                     PARTITION BY session_id
+                     ORDER BY (status = 'leased') DESC, created_at DESC, id DESC
+                 ) AS rn
+                 FROM work_items WHERE status IN ('ready','leased')
+             ) WHERE rn > 1;",
+        )?;
+        conn.execute(
+            "UPDATE tool_calls SET status = 'pending', work_id = NULL, claimed_generation = NULL, updated_at = ?1
+             WHERE status = 'claimed' AND work_id IN (SELECT id FROM selfhost_dup_work)",
+            params![now],
+        )?;
+        conn.execute(
+            "UPDATE work_items SET status = 'cancelled', lease_expires_at = NULL, session_secret_hash = NULL,
+                 error_message = COALESCE(error_message, 'Closed by the 1.1 upgrade: the session had another open work item.'),
+                 completed_at = ?1, updated_at = ?1
+             WHERE id IN (SELECT id FROM selfhost_dup_work)",
+            params![now],
+        )?;
+        conn.execute_batch(
+            "DROP TABLE selfhost_dup_work;
+             CREATE UNIQUE INDEX IF NOT EXISTS work_items_one_open ON work_items (session_id)
+                 WHERE status IN ('ready','leased');",
+        )?;
+        Ok(())
+    })();
+    match res {
+        Ok(()) => {
+            conn.execute_batch("COMMIT")?;
+            Ok(())
+        }
+        Err(e) => {
+            let _ = conn.execute_batch("ROLLBACK");
+            Err(e)
+        }
+    }
+}
+
+/// Is this a unique violation on `work_items_one_open`?
+fn is_open_work_conflict(e: &StoreError) -> bool {
+    matches!(e, StoreError::Backend(m) if m.contains("UNIQUE constraint failed: work_items.session_id"))
+}
+
+/// Append an event inside the caller's transaction.
+fn append_event_c(
+    c: &Connection,
+    sid: &str,
+    event_type: &str,
+    data: &Value,
+    now: &str,
+) -> StoreResult<EventRecord> {
+    let n = c.execute(
+        "UPDATE sessions SET last_seq = last_seq + 1, updated_at = ?2 WHERE id = ?1",
+        params![sid, now],
+    )?;
+    if n == 0 {
+        return Err(StoreError::NotFound);
+    }
+    let seq: i64 = c.query_row("SELECT last_seq FROM sessions WHERE id = ?1", params![sid], |r| r.get(0))?;
+    let id = new_id("evt");
+    c.execute(
+        "INSERT INTO session_events (id, session_id, seq, type, data, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![id, sid, seq, event_type, js(data), now],
+    )?;
+    Ok(c.query_row(
+        &format!("SELECT {EVENT_COLS} FROM session_events WHERE id = ?1"),
+        params![id],
+        event_row,
+    )?)
+}
+
+/// Insert the session's open item (caller holds an IMMEDIATE transaction
+/// and checked there is none). Inherits a live affinity preference from the
+/// session's previous item.
+fn insert_open_work_c(c: &Connection, env: &str, sid: &str, now: DateTime<Utc>) -> StoreResult<WorkItem> {
+    let stamp = ts(now);
+    let pref: Option<(String, String)> = c
+        .query_row(
+            "SELECT preferred_worker_id, prefer_until FROM work_items
+             WHERE session_id = ?1 AND prefer_until > ?2 AND preferred_worker_id IS NOT NULL
+             ORDER BY prefer_until DESC LIMIT 1",
+            params![sid, stamp],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()?;
+    let (pw, pu) = match pref {
+        Some((w, u)) => (Some(w), Some(u)),
+        None => (None, None),
+    };
+    let id = new_id("work");
+    c.execute(
+        "INSERT INTO work_items (id, environment_id, session_id, status, lease_generation,
+             preferred_worker_id, prefer_until, created_at, updated_at)
+         VALUES (?1, ?2, ?3, 'ready', 0, ?4, ?5, ?6, ?6)",
+        params![id, env, sid, pw, pu, stamp],
+    )?;
+    get_work_c(c, &id)
+}
+
+fn find_open_work_c(c: &Connection, sid: &str) -> StoreResult<Option<WorkItem>> {
+    Ok(c
+        .query_row(
+            &format!(
+                "SELECT {WORK_COLS} FROM work_items WHERE session_id = ?1 AND status IN ('ready','leased')
+                 ORDER BY created_at DESC, id DESC LIMIT 1"
+            ),
+            params![sid],
+            work_row,
+        )
+        .optional()?)
+}
+
+/// `updated_at` for a credential write: now, but always after the previous
+/// value, so it works as a version.
+fn next_cred_stamp(prev: Option<DateTime<Utc>>) -> String {
+    // Compare at the stored (microsecond) precision.
+    let now = Utc::now();
+    let now = now - Duration::nanoseconds(i64::from(now.timestamp_subsec_nanos() % 1_000));
+    match prev {
+        Some(p) if p >= now => ts(p + Duration::microseconds(1)),
+        _ => ts(now),
+    }
 }
 
 /// Leased, matching generation, or LeaseStale (NotFound when missing).
@@ -956,26 +1173,7 @@ impl SelfHostStore for SqliteStore {
         let (sid, et) = (session_id.to_string(), event_type.to_string());
         self.call(move |c| {
             let tx = c.transaction_with_behavior(TransactionBehavior::Immediate)?;
-            let now = ts(Utc::now());
-            let n = tx.execute(
-                "UPDATE sessions SET last_seq = last_seq + 1, updated_at = ?2 WHERE id = ?1",
-                params![sid, now],
-            )?;
-            if n == 0 {
-                return Err(StoreError::NotFound);
-            }
-            let seq: i64 =
-                tx.query_row("SELECT last_seq FROM sessions WHERE id = ?1", params![sid], |r| r.get(0))?;
-            let id = new_id("evt");
-            tx.execute(
-                "INSERT INTO session_events (id, session_id, seq, type, data, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                params![id, sid, seq, et, js(&data), now],
-            )?;
-            let out = tx.query_row(
-                &format!("SELECT {EVENT_COLS} FROM session_events WHERE id = ?1"),
-                params![id],
-                event_row,
-            )?;
+            let out = append_event_c(&tx, &sid, &et, &data, &ts(Utc::now()))?;
             tx.commit()?;
             Ok(out)
         })
@@ -1014,14 +1212,39 @@ impl SelfHostStore for SqliteStore {
     async fn enqueue_work(&self, environment_id: &str, session_id: &str) -> StoreResult<WorkItem> {
         let (env, sid) = (environment_id.to_string(), session_id.to_string());
         self.call(move |c| {
-            let id = new_id("work");
-            let now = ts(Utc::now());
-            c.execute(
-                "INSERT INTO work_items (id, environment_id, session_id, status, lease_generation, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, 'ready', 0, ?4, ?4)",
-                params![id, env, sid, now],
-            )?;
-            get_work_c(c, &id)
+            let tx = c.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            if find_open_work_c(&tx, &sid)?.is_some() {
+                return Err(StoreError::Conflict("work_already_open"));
+            }
+            let item = insert_open_work_c(&tx, &env, &sid, Utc::now()).map_err(|e| {
+                if is_open_work_conflict(&e) {
+                    StoreError::Conflict("work_already_open")
+                } else {
+                    e
+                }
+            })?;
+            tx.commit()?;
+            Ok(item)
+        })
+        .await
+    }
+
+    async fn ensure_open_work(
+        &self,
+        environment_id: &str,
+        session_id: &str,
+    ) -> StoreResult<(WorkItem, bool)> {
+        let (env, sid) = (environment_id.to_string(), session_id.to_string());
+        self.call(move |c| {
+            // The IMMEDIATE transaction serializes writers; the unique index
+            // backs it up.
+            let tx = c.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            if let Some(item) = find_open_work_c(&tx, &sid)? {
+                return Ok((item, false));
+            }
+            let item = insert_open_work_c(&tx, &env, &sid, Utc::now())?;
+            tx.commit()?;
+            Ok((item, true))
         })
         .await
     }
@@ -1033,33 +1256,36 @@ impl SelfHostStore for SqliteStore {
 
     async fn find_open_work_for_session(&self, session_id: &str) -> StoreResult<Option<WorkItem>> {
         let sid = session_id.to_string();
-        self.call(move |c| {
-            Ok(c.query_row(
-                &format!(
-                    "SELECT {WORK_COLS} FROM work_items WHERE session_id = ?1 AND status IN ('ready','leased')
-                     ORDER BY created_at DESC, id DESC LIMIT 1"
-                ),
-                params![sid],
-                work_row,
-            )
-            .optional()?)
-        })
-        .await
+        self.call(move |c| find_open_work_c(c, &sid)).await
     }
 
     async fn claim_work(&self, req: ClaimRequest) -> StoreResult<Option<WorkClaim>> {
         self.call(move |c| {
             let tx = c.transaction_with_behavior(TransactionBehavior::Immediate)?;
             let cutoff: Option<String> = req
-                .reclaim_older_than_ms
+                .lease_cutoff_offset_ms
                 .map(|ms| ts(req.now - Duration::milliseconds(ms)));
+            let stamp = ts(req.now);
+            let seen_cutoff = ts(req.now - Duration::seconds(AFFINITY_SEEN_SECS));
+            // Affinity (see the trait doc): skip an item another live worker
+            // is preferred for; the claimer's own preferred items come first.
             let candidate: Option<String> = tx
                 .query_row(
-                    "SELECT id FROM work_items
-                     WHERE environment_id = ?1
-                       AND (status = 'ready' OR (?2 IS NOT NULL AND status = 'leased' AND lease_expires_at <= ?2))
-                     ORDER BY created_at, id LIMIT 1",
-                    params![req.environment_id, cutoff],
+                    "SELECT wi.id FROM work_items wi
+                     WHERE wi.environment_id = ?1
+                       AND (wi.status = 'ready' OR (?2 IS NOT NULL AND wi.status = 'leased' AND wi.lease_expires_at <= ?2))
+                       AND NOT (
+                           wi.prefer_until IS NOT NULL AND wi.prefer_until > ?3
+                           AND wi.preferred_worker_id IS NOT NULL AND wi.preferred_worker_id <> ?4
+                           AND EXISTS (
+                               SELECT 1 FROM workers wk
+                               WHERE wk.environment_id = wi.environment_id
+                                 AND wk.worker_id = wi.preferred_worker_id
+                                 AND wk.last_seen_at >= ?5))
+                     ORDER BY CASE WHEN wi.preferred_worker_id = ?4 AND wi.prefer_until > ?3 THEN 0 ELSE 1 END,
+                              wi.created_at, wi.id
+                     LIMIT 1",
+                    params![req.environment_id, cutoff, stamp, req.worker_id, seen_cutoff],
                     |r| r.get(0),
                 )
                 .optional()?;
@@ -1073,7 +1299,8 @@ impl SelfHostStore for SqliteStore {
             let changed = tx.execute(
                 "UPDATE work_items
                  SET status = 'leased', lease_generation = lease_generation + 1, lease_expires_at = ?3,
-                     worker_id = ?4, session_secret_hash = ?5, updated_at = ?6
+                     worker_id = ?4, session_secret_hash = ?5, updated_at = ?6,
+                     preferred_worker_id = NULL, prefer_until = NULL
                  WHERE id = ?1
                    AND (status = 'ready' OR (?2 IS NOT NULL AND status = 'leased' AND lease_expires_at <= ?2))",
                 params![
@@ -1187,9 +1414,11 @@ impl SelfHostStore for SqliteStore {
             }
             tx.execute(
                 "UPDATE work_items SET status = ?2, error_message = ?3, lease_expires_at = NULL,
-                     session_secret_hash = NULL, completed_at = ?4, updated_at = ?4
+                     session_secret_hash = NULL, completed_at = ?4, updated_at = ?4,
+                     preferred_worker_id = worker_id,
+                     prefer_until = CASE WHEN worker_id IS NULL THEN NULL ELSE ?5 END
                  WHERE id = ?1",
-                params![id, outcome.status().as_str(), msg, ts(now)],
+                params![id, outcome.status().as_str(), msg, ts(now), ts(affinity_end(now))],
             )?;
             let out = get_work_c(&tx, &id)?;
             tx.commit()?;
@@ -1208,12 +1437,15 @@ impl SelfHostStore for SqliteStore {
         self.call(move |c| {
             let tx = c.transaction_with_behavior(TransactionBehavior::Immediate)?;
             let item = fenced(&tx, &id, generation)?;
+            let until = ts(affinity_end(now));
             let now = ts(now);
             tx.execute(
-                "UPDATE work_items SET status = 'ready', lease_expires_at = NULL, worker_id = NULL,
-                     session_secret_hash = NULL, updated_at = ?2
+                "UPDATE work_items SET status = 'ready', lease_expires_at = NULL,
+                     preferred_worker_id = worker_id,
+                     prefer_until = CASE WHEN worker_id IS NULL THEN NULL ELSE ?3 END,
+                     worker_id = NULL, session_secret_hash = NULL, updated_at = ?2
                  WHERE id = ?1",
-                params![id, now],
+                params![id, now, until],
             )?;
             tx.execute(
                 "UPDATE tool_calls SET status = 'pending', work_id = NULL, claimed_generation = NULL, updated_at = ?2
@@ -1238,9 +1470,10 @@ impl SelfHostStore for SqliteStore {
                      SELECT session_id FROM work_items WHERE status = 'leased' AND lease_expires_at <= ?1)",
                 params![cutoff, stamp],
             )?;
+            // The worker is gone: no affinity for it.
             let n = tx.execute(
                 "UPDATE work_items SET status = 'ready', lease_expires_at = NULL, worker_id = NULL,
-                     session_secret_hash = NULL, updated_at = ?2
+                     session_secret_hash = NULL, preferred_worker_id = NULL, prefer_until = NULL, updated_at = ?2
                  WHERE status = 'leased' AND lease_expires_at <= ?1",
                 params![cutoff, stamp],
             )?;
@@ -1398,6 +1631,18 @@ impl SelfHostStore for SqliteStore {
                 params![sid, output, ts(Utc::now())],
             )?;
             Ok(n as u64)
+        })
+        .await
+    }
+
+    async fn has_open_tool_calls(&self, session_id: &str) -> StoreResult<bool> {
+        let sid = session_id.to_string();
+        self.call(move |c| {
+            Ok(c.query_row(
+                "SELECT EXISTS (SELECT 1 FROM tool_calls WHERE session_id = ?1 AND status <> 'done')",
+                params![sid],
+                |r| r.get(0),
+            )?)
         })
         .await
     }
@@ -1672,19 +1917,26 @@ impl SelfHostStore for SqliteStore {
     ) -> StoreResult<CredentialRecord> {
         let (name, sealed, key_id) = (name.to_string(), sealed.to_vec(), key_id.to_string());
         self.call(move |c| {
-            let now = ts(Utc::now());
-            c.execute(
+            let tx = c.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let prev: Option<String> = tx
+                .query_row("SELECT updated_at FROM credentials WHERE name = ?1", params![name], |r| r.get(0))
+                .optional()?;
+            let prev = prev.map(|p| parse_ts(&p)).transpose()?;
+            let now = next_cred_stamp(prev);
+            tx.execute(
                 "INSERT INTO credentials (id, name, sealed, key_id, created_at, updated_at)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?5)
                  ON CONFLICT (name) DO UPDATE SET sealed = excluded.sealed, key_id = excluded.key_id,
                      updated_at = excluded.updated_at",
                 params![new_id("cred"), name, sealed, key_id, now],
             )?;
-            Ok(c.query_row(
+            let out = tx.query_row(
                 &format!("SELECT {CRED_COLS} FROM credentials WHERE name = ?1"),
                 params![name],
                 cred_row,
-            )?)
+            )?;
+            tx.commit()?;
+            Ok(out)
         })
         .await
     }
@@ -1721,6 +1973,321 @@ impl SelfHostStore for SqliteStore {
             Ok(())
         })
         .await
+    }
+
+    async fn put_credential_if_unchanged(
+        &self,
+        name: &str,
+        expected_updated_at: DateTime<Utc>,
+        sealed: &[u8],
+        key_id: &str,
+    ) -> StoreResult<bool> {
+        let (name, sealed, key_id) = (name.to_string(), sealed.to_vec(), key_id.to_string());
+        self.call(move |c| {
+            let tx = c.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let cur: String = tx.query_row(
+                "SELECT updated_at FROM credentials WHERE name = ?1",
+                params![name],
+                |r| r.get(0),
+            )?;
+            if cur != ts(expected_updated_at) {
+                return Ok(false);
+            }
+            let stamp = next_cred_stamp(Some(parse_ts(&cur)?));
+            tx.execute(
+                "UPDATE credentials SET sealed = ?2, key_id = ?3, updated_at = ?4 WHERE name = ?1",
+                params![name, sealed, key_id, stamp],
+            )?;
+            tx.commit()?;
+            Ok(true)
+        })
+        .await
+    }
+
+    // ── Idempotency-Key records ──
+
+    async fn idempotency_begin(
+        &self,
+        scope: &IdempotencyScope,
+        request_hash: &str,
+        now: DateTime<Utc>,
+    ) -> StoreResult<IdempotencyBegin> {
+        let (scope, hash) = (scope.clone(), request_hash.to_string());
+        self.call(move |c| {
+            let tx = c.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let stamp = ts(now);
+            let row = tx
+                .query_row(
+                    "SELECT request_hash, state, status_code, response_headers, response_body, created_at, updated_at
+                     FROM idempotency_keys
+                     WHERE principal = ?1 AND method = ?2 AND path = ?3 AND idem_key = ?4",
+                    params![scope.principal, scope.method, scope.path, scope.key],
+                    |r| {
+                        Ok((
+                            r.get::<_, String>(0)?,
+                            r.get::<_, String>(1)?,
+                            r.get::<_, Option<i64>>(2)?,
+                            r.get::<_, Option<String>>(3)?,
+                            r.get::<_, Option<Vec<u8>>>(4)?,
+                            r.get::<_, String>(5)?,
+                            r.get::<_, String>(6)?,
+                        ))
+                    },
+                )
+                .optional()?;
+            let Some((stored_hash, state, status, headers, body, created, updated)) = row else {
+                tx.execute(
+                    "INSERT INTO idempotency_keys (principal, method, path, idem_key, request_hash, state, created_at, updated_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, 'in_progress', ?6, ?6)",
+                    params![scope.principal, scope.method, scope.path, scope.key, hash, stamp],
+                )?;
+                tx.commit()?;
+                return Ok(IdempotencyBegin::New);
+            };
+            let expired = parse_ts(&created)? <= now - Duration::hours(IDEMPOTENCY_TTL_HOURS);
+            let stale = state == "in_progress"
+                && parse_ts(&updated)? <= now - Duration::seconds(IDEMPOTENCY_TAKEOVER_SECS);
+            if expired || (stale && stored_hash == hash) {
+                tx.execute(
+                    "UPDATE idempotency_keys SET request_hash = ?5, state = 'in_progress', status_code = NULL,
+                         response_headers = NULL, response_body = NULL,
+                         created_at = CASE WHEN ?7 THEN ?6 ELSE created_at END, updated_at = ?6
+                     WHERE principal = ?1 AND method = ?2 AND path = ?3 AND idem_key = ?4",
+                    params![scope.principal, scope.method, scope.path, scope.key, hash, stamp, expired],
+                )?;
+                tx.commit()?;
+                return Ok(IdempotencyBegin::New);
+            }
+            if stored_hash != hash {
+                return Ok(IdempotencyBegin::Mismatch);
+            }
+            if state != "done" {
+                return Ok(IdempotencyBegin::InProgress);
+            }
+            let headers: Vec<(String, String)> = match headers {
+                Some(h) => serde_json::from_str(&h)
+                    .map_err(|e| StoreError::Backend(format!("response_headers: {e}")))?,
+                None => vec![],
+            };
+            Ok(IdempotencyBegin::Replay(StoredResponse {
+                status: status.unwrap_or(200) as u16,
+                headers,
+                body: body.unwrap_or_default(),
+            }))
+        })
+        .await
+    }
+
+    async fn idempotency_finish(
+        &self,
+        scope: &IdempotencyScope,
+        request_hash: &str,
+        response: &StoredResponse,
+        now: DateTime<Utc>,
+    ) -> StoreResult<()> {
+        let headers = serde_json::to_string(&response.headers)
+            .map_err(|e| StoreError::Backend(format!("response_headers: {e}")))?;
+        let (scope, hash, status, body) =
+            (scope.clone(), request_hash.to_string(), response.status as i64, response.body.clone());
+        self.call(move |c| {
+            c.execute(
+                "UPDATE idempotency_keys SET state = 'done', status_code = ?6, response_headers = ?7,
+                     response_body = ?8, updated_at = ?9
+                 WHERE principal = ?1 AND method = ?2 AND path = ?3 AND idem_key = ?4
+                   AND request_hash = ?5 AND state = 'in_progress'",
+                params![scope.principal, scope.method, scope.path, scope.key, hash, status, headers, body, ts(now)],
+            )?;
+            Ok(())
+        })
+        .await
+    }
+
+    async fn idempotency_abandon(
+        &self,
+        scope: &IdempotencyScope,
+        request_hash: &str,
+    ) -> StoreResult<()> {
+        let (scope, hash) = (scope.clone(), request_hash.to_string());
+        self.call(move |c| {
+            c.execute(
+                "DELETE FROM idempotency_keys
+                 WHERE principal = ?1 AND method = ?2 AND path = ?3 AND idem_key = ?4
+                   AND request_hash = ?5 AND state = 'in_progress'",
+                params![scope.principal, scope.method, scope.path, scope.key, hash],
+            )?;
+            Ok(())
+        })
+        .await
+    }
+
+    async fn idempotency_purge(&self, older_than: DateTime<Utc>) -> StoreResult<u64> {
+        self.call(move |c| {
+            let n = c.execute(
+                "DELETE FROM idempotency_keys WHERE created_at < ?1",
+                params![ts(older_than)],
+            )?;
+            Ok(n as u64)
+        })
+        .await
+    }
+
+    // ── Replicas and turn ownership ──
+
+    async fn replica_heartbeat(
+        &self,
+        replica_id: &str,
+        started_at: DateTime<Utc>,
+        version: Option<&str>,
+        now: DateTime<Utc>,
+    ) -> StoreResult<()> {
+        let (id, ver) = (replica_id.to_string(), version.map(str::to_string));
+        self.call(move |c| {
+            c.execute(
+                "INSERT INTO server_replicas (replica_id, started_at, heartbeat_at, version)
+                 VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT (replica_id) DO UPDATE SET started_at = excluded.started_at,
+                     heartbeat_at = excluded.heartbeat_at, version = excluded.version",
+                params![id, ts(started_at), ts(now), ver],
+            )?;
+            Ok(())
+        })
+        .await
+    }
+
+    async fn list_live_replicas(&self, since: DateTime<Utc>) -> StoreResult<Vec<ReplicaRecord>> {
+        self.call(move |c| {
+            let mut stmt = c.prepare(&format!(
+                "SELECT {REPLICA_COLS} FROM server_replicas WHERE heartbeat_at >= ?1
+                 ORDER BY started_at, replica_id"
+            ))?;
+            let rows = stmt.query_map(params![ts(since)], replica_row)?;
+            Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+        })
+        .await
+    }
+
+    async fn list_replicas(&self) -> StoreResult<Vec<ReplicaRecord>> {
+        self.call(|c| {
+            let mut stmt = c.prepare(&format!(
+                "SELECT {REPLICA_COLS} FROM server_replicas ORDER BY started_at, replica_id"
+            ))?;
+            let rows = stmt.query_map([], replica_row)?;
+            Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+        })
+        .await
+    }
+
+    async fn remove_replica(&self, replica_id: &str) -> StoreResult<()> {
+        let id = replica_id.to_string();
+        self.call(move |c| {
+            c.execute("DELETE FROM server_replicas WHERE replica_id = ?1", params![id])?;
+            Ok(())
+        })
+        .await
+    }
+
+    async fn claim_turn(&self, session_id: &str, replica_id: &str) -> StoreResult<bool> {
+        let (sid, rid) = (session_id.to_string(), replica_id.to_string());
+        self.call(move |c| {
+            let n = c.execute(
+                "UPDATE sessions SET turn_replica = ?2
+                 WHERE id = ?1 AND (turn_replica IS NULL OR turn_replica = ?2)",
+                params![sid, rid],
+            )?;
+            if n == 1 {
+                return Ok(true);
+            }
+            get_session_c(c, &sid)?;
+            Ok(false)
+        })
+        .await
+    }
+
+    async fn release_turn(&self, session_id: &str, replica_id: &str) -> StoreResult<bool> {
+        let (sid, rid) = (session_id.to_string(), replica_id.to_string());
+        self.call(move |c| {
+            let n = c.execute(
+                "UPDATE sessions SET turn_replica = NULL WHERE id = ?1 AND turn_replica = ?2",
+                params![sid, rid],
+            )?;
+            Ok(n == 1)
+        })
+        .await
+    }
+
+    async fn set_gizzi_replica(&self, session_id: &str, replica_id: Option<&str>) -> StoreResult<()> {
+        let (sid, rid) = (session_id.to_string(), replica_id.map(str::to_string));
+        self.call(move |c| {
+            let n = c.execute(
+                "UPDATE sessions SET gizzi_replica = ?2 WHERE id = ?1",
+                params![sid, rid],
+            )?;
+            if n == 0 {
+                return Err(StoreError::NotFound);
+            }
+            Ok(())
+        })
+        .await
+    }
+
+    async fn fail_orphaned_turns(
+        &self,
+        dead_replicas: &[String],
+        ownerless_before: Option<DateTime<Utc>>,
+    ) -> StoreResult<Vec<SessionRecord>> {
+        if dead_replicas.is_empty() && ownerless_before.is_none() {
+            return Ok(vec![]);
+        }
+        let dead: Vec<String> = dead_replicas.to_vec();
+        self.call(move |c| {
+            let tx = c.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let candidates: Vec<SessionRecord> = {
+                let mut stmt = tx.prepare(&format!(
+                    "SELECT {SESSION_COLS} FROM sessions
+                     WHERE status IN ('running','waiting_for_worker') ORDER BY id"
+                ))?;
+                let rows = stmt.query_map([], session_row)?;
+                rows.collect::<rusqlite::Result<Vec<_>>>()?
+            };
+            let mut failed = Vec::new();
+            for s in candidates {
+                let orphaned = match &s.turn_replica {
+                    Some(r) => dead.iter().any(|d| d == r),
+                    None => ownerless_before.is_some_and(|t| s.updated_at < t),
+                };
+                if !orphaned {
+                    continue;
+                }
+                let now = ts(Utc::now());
+                tx.execute(
+                    "UPDATE tool_calls SET status = 'done', output = ?2, is_error = 1, completed_at = ?3, updated_at = ?3
+                     WHERE session_id = ?1 AND status <> 'done'",
+                    params![s.id, SERVER_RESTARTED_TOOL_OUTPUT, now],
+                )?;
+                append_event_c(&tx, &s.id, "error", &server_restarted_event(), &now)?;
+                tx.execute(
+                    "UPDATE sessions SET status = 'error', status_reason = ?2, turn_replica = NULL, updated_at = ?3
+                     WHERE id = ?1",
+                    params![s.id, SERVER_RESTARTED, now],
+                )?;
+                append_event_c(&tx, &s.id, "status", &server_restarted_status_event(), &now)?;
+                failed.push(get_session_c(&tx, &s.id)?);
+            }
+            tx.commit()?;
+            Ok(failed)
+        })
+        .await
+    }
+
+    // ── Coordination ──
+
+    async fn sweep_lock(&self) -> StoreResult<Option<SweepGuard>> {
+        // One process owns a SQLite database.
+        Ok(Some(SweepGuard::local()))
+    }
+
+    async fn subscribe_wakes(&self) -> StoreResult<Option<WakeStream>> {
+        Ok(None)
     }
 
     // ── Observability ──

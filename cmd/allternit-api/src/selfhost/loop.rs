@@ -22,7 +22,22 @@
 //!   transcript is read back once and anything the stream missed is added,
 //!   so no part is lost or repeated.
 //! - **End.** Status `idle`, or `error` with an `error` event.
-//! - **Interrupt.** Aborts the gizzi session.
+//! - **Interrupt.** Aborts the gizzi session. An interrupt on another
+//!   replica only changes the store; the turn's watchdog
+//!   ([`TURN_WATCHDOG_EVERY`]) sees the session is no longer active or no
+//!   longer this replica's, aborts the gizzi session and stops the task.
+//! - **Replicas.** The route claims the turn for this replica
+//!   (`turn_replica`); the turn releases it before its final status and sets
+//!   that status only if the release says it still owned the turn.
+//!   `gizzi_replica` names the replica whose child holds the gizzi session;
+//!   on any other replica the session is rebuilt from the events
+//!   (rehydration) and then belongs to this child.
+//! - **Context handoff.** gizzi may move a long session to a new "lineage
+//!   head" session (`handoff` on the old one, `continuesFrom` on the new
+//!   one). The server stays keyed on its own session: before a turn the
+//!   stored id is followed to its head, a tool call from an unknown head is
+//!   traced back through `continuesFrom` ([`TurnRunner::resolve_gizzi_session`]),
+//!   and the head that answered the turn becomes the stored id.
 //! - **Rehydration (step 9).** If gizzi no longer knows the session (404, for
 //!   example after the child restarted), the session is rebuilt from our
 //!   stored events with gizzi's `POST /session/import`, and the new id is
@@ -76,6 +91,15 @@ const STREAM_CONNECT_WAIT: Duration = Duration::from_secs(5);
 const STREAM_DRAIN_WAIT: Duration = Duration::from_secs(3);
 /// An interrupted turn that gizzi does not end within this is stopped.
 const INTERRUPT_GRACE: Duration = Duration::from_secs(10);
+/// How often a running turn checks the store that it is still its own
+/// (still active, still owned by this replica). An interrupt on another
+/// replica, or the keeper failing the turn, is noticed this fast.
+const TURN_WATCHDOG_EVERY: Duration = Duration::from_secs(2);
+/// A turn found lost by the watchdog gets this long to end after gizzi is
+/// told to abort; then its task stops anyway.
+const LOST_TURN_GRACE: Duration = Duration::from_secs(2);
+/// Most handoff links followed to a lineage head or back to its start.
+const MAX_HANDOFF_HOPS: usize = 8;
 
 // ─── Endpoint and readiness ─────────────────────────────────────────────────
 
@@ -177,6 +201,9 @@ struct Inner {
     next_turn: AtomicU64,
     /// `(child generation, session id)` pairs whose MCP servers are set up.
     mcp_done: Mutex<HashSet<(u64, String)>>,
+    /// `(child generation, session id)` pairs whose custom tools passed the
+    /// clash check.
+    preflight_ok: Mutex<HashSet<(u64, String)>>,
     supervisor: Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
 
@@ -232,6 +259,7 @@ impl GizziTurnRunner {
                 turns: Mutex::new(HashMap::new()),
                 next_turn: AtomicU64::new(1),
                 mcp_done: Mutex::new(HashSet::new()),
+                preflight_ok: Mutex::new(HashSet::new()),
                 supervisor: Mutex::new(None),
             }),
         })
@@ -268,6 +296,7 @@ impl GizziTurnRunner {
             turns: Mutex::new(HashMap::new()),
             next_turn: AtomicU64::new(1),
             mcp_done: Mutex::new(HashSet::new()),
+            preflight_ok: Mutex::new(HashSet::new()),
             supervisor: Mutex::new(None),
         });
 
@@ -326,6 +355,87 @@ impl TurnRunner for GizziTurnRunner {
 
     fn loop_status(&self) -> LoopStatus {
         self.inner.endpoint.status()
+    }
+
+    async fn preflight(&self, st: &SelfHostState, session: &SessionRecord, content: &str) -> Result<(), ApiError> {
+        let snap = &session.agent_snapshot;
+        if snapshot_tools(snap, "custom").is_empty() || self.inner.endpoint.status() != LoopStatus::Ready {
+            return Ok(());
+        }
+        let key = (
+            self.inner.endpoint.generation.load(Ordering::SeqCst),
+            session.id.clone(),
+        );
+        if self.inner.preflight_ok.lock().unwrap_or_else(|e| e.into_inner()).contains(&key) {
+            return Ok(());
+        }
+        let dir = self.inner.session_dir(&session.id);
+        if std::fs::create_dir_all(&dir).is_err() {
+            return Ok(());
+        }
+        let Ok(env) = st.store.get_environment(&session.environment_id).await else {
+            return Ok(());
+        };
+        let ctx = TurnCtx {
+            st: st.clone(),
+            inner: self.inner.clone(),
+            session: session.clone(),
+            user_seq: 0,
+            text: content.to_string(),
+            interrupted: Arc::new(AtomicBool::new(false)),
+            slot: Arc::new(Mutex::new(None)),
+            turn_id: 0,
+            traceparent: String::new(),
+        };
+        // MCP servers first, so a clash with one of their tools is seen now.
+        let (mcp, _refused) = allowed_mcp_servers(&st.settings, &env.mcp, snap);
+        setup_mcp(&ctx, &dir, &mcp).await;
+        let body = message_body(&ctx, snap);
+        // The route does not need the session to exist.
+        let gsid = session.gizzi_session_id.clone().unwrap_or_else(|| "preflight".to_string());
+        let path = format!("/v1/session/{}/custom-tools/check", urlencoding::encode(&gsid));
+        match self
+            .inner
+            .call("POST", &path, Some(&dir), Some(&body), Some(Duration::from_secs(15)))
+            .await
+        {
+            Ok(_) => {
+                self.inner.preflight_ok.lock().unwrap_or_else(|e| e.into_inner()).insert(key);
+                Ok(())
+            }
+            Err(GizziError::Http(409, text)) => {
+                let v: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
+                let e = v.get("error").unwrap_or(&v);
+                let tool = e.get("tool").and_then(Value::as_str).unwrap_or_default();
+                let mut message = e
+                    .get("message")
+                    .and_then(Value::as_str)
+                    .unwrap_or("A custom tool clashes with another tool.")
+                    .to_string();
+                if !tool.is_empty() && !message.contains(tool) {
+                    message = format!("{message} (tool: {tool})");
+                }
+                let mut err = ApiError::conflict("custom_tool_conflict", message);
+                err.tool = Some(tool.to_string()).filter(|t| !t.is_empty());
+                err.clashes_with = e
+                    .get("clashes_with")
+                    .and_then(Value::as_str)
+                    .filter(|c| !c.is_empty())
+                    .map(str::to_string);
+                Err(err)
+            }
+            Err(GizziError::Http(400, text)) => {
+                let v: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
+                let message = v["error"]["message"]
+                    .as_str()
+                    .unwrap_or("A custom tool definition is not valid.")
+                    .to_string();
+                Err(ApiError::invalid("invalid_custom_tool", message))
+            }
+            // Old gizzi child (404), timeout, anything else: the turn-time
+            // check still runs.
+            Err(_) => Ok(()),
+        }
     }
 
     async fn start_turn(
@@ -411,6 +521,58 @@ impl TurnRunner for GizziTurnRunner {
             });
         }
         Ok(())
+    }
+
+    fn running_turns(&self) -> usize {
+        self.inner.turns.lock().unwrap_or_else(|e| e.into_inner()).len()
+    }
+
+    fn abort_all(&self) {
+        let handles: Vec<TurnHandle> = self
+            .inner
+            .turns
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .drain()
+            .map(|(_, h)| h)
+            .collect();
+        for h in handles {
+            h.interrupted.store(true, Ordering::SeqCst);
+            h.abort.abort();
+        }
+    }
+
+    async fn resolve_gizzi_session(&self, st: &SelfHostState, gizzi_session_id: &str) -> Option<String> {
+        // A head made by a handoff during a turn of this child. Its folder
+        // is the session folder of one of the turns running here.
+        let running: Vec<String> = self
+            .inner
+            .turns
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .keys()
+            .cloned()
+            .collect();
+        for ours in running {
+            let dir = self.inner.session_dir(&ours);
+            let mut cur = gizzi_session_id.to_string();
+            for _ in 0..MAX_HANDOFF_HOPS {
+                let path = format!("/v1/session/{}", urlencoding::encode(&cur));
+                let Ok(info) = self.inner.call("GET", &path, Some(&dir), None, Some(Duration::from_secs(5))).await else {
+                    break;
+                };
+                let Some(prev) = info.get("continuesFrom").and_then(Value::as_str).filter(|p| !p.is_empty()) else {
+                    break;
+                };
+                if st.work.session_for_gizzi(prev).as_deref() == Some(ours.as_str()) {
+                    tracing::info!(session_id = %ours, gizzi_session_id, from = prev, "tool call from a handoff head mapped to its session");
+                    st.work.map_gizzi_session(gizzi_session_id, &ours);
+                    return Some(ours);
+                }
+                cur = prev.to_string();
+            }
+        }
+        None
     }
 }
 
@@ -817,6 +979,12 @@ fn permission_rules(snap: &Value, mcp: &[Value]) -> Option<Value> {
             rules.push(json!({ "permission": n, "pattern": "*", "action": "allow" }));
         }
     }
+    // Custom tools reach gizzi as remote tools; the deny-all must not hide them.
+    for t in snapshot_tools(snap, "custom") {
+        if let Some(n) = t.get("name").and_then(Value::as_str) {
+            rules.push(json!({ "permission": n, "pattern": "*", "action": "allow" }));
+        }
+    }
     for m in mcp {
         if let Some(n) = m.get("name").and_then(Value::as_str) {
             rules.push(json!({ "permission": format!("{n}_*"), "pattern": "*", "action": "allow" }));
@@ -876,16 +1044,77 @@ enum TurnEnd {
     ModelError(String),
 }
 
+/// Is the turn still this replica's? Active, and `turn_replica` is us. A
+/// store error counts as yes (try again on the next tick).
+async fn still_ours(ctx: &TurnCtx) -> bool {
+    match ctx.st.store.get_session(&ctx.session.id).await {
+        Ok(s) => {
+            ACTIVE.contains(&s.status.as_str())
+                && s.turn_replica.as_deref() == Some(ctx.st.replica.id.as_str())
+        }
+        Err(super::store::StoreError::NotFound) => false,
+        Err(e) => {
+            tracing::warn!(error = %e, session_id = %ctx.session.id, "turn watchdog could not read the session");
+            true
+        }
+    }
+}
+
+/// Tell gizzi to stop the turn's session (best effort).
+async fn abort_gizzi(ctx: &TurnCtx) {
+    let gsid = ctx.slot.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    if let Some(g) = gsid {
+        let path = format!("/v1/session/{}/abort", urlencoding::encode(&g));
+        let dir = ctx.inner.session_dir(&ctx.session.id);
+        if let Err(e) = ctx.inner.call("POST", &path, Some(&dir), Some(&json!({})), Some(Duration::from_secs(5))).await {
+            tracing::warn!(error = %e, session_id = %ctx.session.id, "could not abort the gizzi session");
+        }
+    }
+}
+
 async fn run_turn(ctx: TurnCtx, turn: TurnSpan) {
     use tracing::Instrument;
-    let result = drive(&ctx).instrument(turn.span().clone()).await;
+    let drive_fut = drive(&ctx).instrument(turn.span().clone());
+    tokio::pin!(drive_fut);
+    let mut dog = tokio::time::interval_at(
+        tokio::time::Instant::now() + TURN_WATCHDOG_EVERY,
+        TURN_WATCHDOG_EVERY,
+    );
+    dog.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    // None: the turn was lost and did not end within the grace.
+    let result = loop {
+        tokio::select! {
+            r = &mut drive_fut => break Some(r),
+            _ = dog.tick() => {
+                if ctx.interrupted.load(Ordering::SeqCst) || still_ours(&ctx).await {
+                    continue;
+                }
+                // Interrupted on another replica, archived, or failed by a
+                // keeper that thought this replica dead.
+                tracing::info!(session_id = %ctx.session.id, "turn no longer active here; stopping it");
+                ctx.interrupted.store(true, Ordering::SeqCst);
+                abort_gizzi(&ctx).await;
+                break tokio::time::timeout(LOST_TURN_GRACE, &mut drive_fut).await.ok();
+            }
+        }
+    };
     let st = &ctx.st;
     let id = ctx.session.id.as_str();
-    let outcome = if ctx.interrupted.load(Ordering::SeqCst) {
-        // The interrupt route owns the status now.
+    // Release first: a turn another replica (or a keeper) took over leaves
+    // the status alone. Between the release and the final status the
+    // session is still active, so no new turn can start in between.
+    let owned = match st.store.release_turn(id, &st.replica.id).await {
+        Ok(b) => b,
+        Err(e) => {
+            tracing::warn!(error = %e, session_id = id, "could not release the turn");
+            true
+        }
+    };
+    let outcome = if ctx.interrupted.load(Ordering::SeqCst) || !owned {
+        // The interrupt route (here or on another replica) owns the status.
         TurnOutcome::Interrupted
     } else {
-        match result {
+        match result.expect("a lost turn is always marked interrupted") {
             Ok(TurnEnd::Done) => {
                 finish(st, id, "idle", None).await;
                 TurnOutcome::Completed
@@ -969,6 +1198,13 @@ async fn drive(ctx: &TurnCtx) -> Result<TurnEnd, Failure> {
     };
     sub.stop().await;
     let reply = reply.map_err(Failure::from)?;
+    // gizzi may have answered on a new lineage head (context handoff before
+    // the turn): that head is the session from now on.
+    if let Some(head) = reply["info"]["sessionID"].as_str().filter(|h| !h.is_empty() && *h != gsid) {
+        tracing::info!(session_id = %ctx.session.id, from = %gsid, to = head, "gizzi handed the session off");
+        gsid = head.to_string();
+        adopt(ctx, &gsid).await?;
+    }
     reconcile(ctx, &gsid, &dir, &reply, &sub.tracker).await;
 
     let error = reply
@@ -1015,21 +1251,30 @@ fn message_body(ctx: &TurnCtx, snap: &Value) -> Value {
 /// The gizzi session for this turn: the stored one if gizzi still has it,
 /// else a rebuilt one (rehydration), else a new one.
 async fn ensure_gizzi_session(ctx: &TurnCtx, dir: &Path, mcp: &[Value]) -> Result<String, Failure> {
-    let stored = ctx
-        .st
-        .store
-        .get_session(&ctx.session.id)
-        .await
-        .ok()
-        .and_then(|s| s.gizzi_session_id)
+    let row = ctx.st.store.get_session(&ctx.session.id).await.ok();
+    let stored = row
+        .as_ref()
+        .and_then(|s| s.gizzi_session_id.clone())
         .or_else(|| ctx.session.gizzi_session_id.clone());
+    // The gizzi session lives in another replica's child (or in a child
+    // that held it before this replica's id changed): this child either
+    // does not know it or has an old copy. Rebuild it from the events.
+    let elsewhere = row
+        .as_ref()
+        .and_then(|s| s.gizzi_replica.as_deref())
+        .is_some_and(|r| r != ctx.st.replica.id);
     let gsid = match stored {
+        Some(_) if elsewhere => {
+            tracing::info!(session_id = %ctx.session.id, "gizzi session is on another replica; rebuilding it here");
+            rehydrate(ctx, dir, mcp).await?
+        }
         Some(g) => {
             let path = format!("/v1/session/{}", urlencoding::encode(&g));
             match ctx.inner.call("GET", &path, Some(dir), None, Some(SHORT_CALL)).await {
-                Ok(_) => {
-                    adopt(ctx, &g).await?;
-                    g
+                Ok(info) => {
+                    let head = handoff_head(ctx, dir, &g, info).await;
+                    adopt(ctx, &head).await?;
+                    head
                 }
                 Err(GizziError::Http(404, _)) => rehydrate(ctx, dir, mcp).await?,
                 Err(e) => return Err(e.into()),
@@ -1041,17 +1286,44 @@ async fn ensure_gizzi_session(ctx: &TurnCtx, dir: &Path, mcp: &[Value]) -> Resul
     Ok(gsid)
 }
 
-/// Record the gizzi id: in the store, in the id map the internal route uses,
-/// and in the turn's slot (for interrupt).
+/// Follow `handoff` links from the stored gizzi session to the lineage
+/// head that holds the conversation now. Every session on the way stays
+/// mapped to ours, so a late tool call from any of them still resolves.
+async fn handoff_head(ctx: &TurnCtx, dir: &Path, start: &str, mut info: Value) -> String {
+    let mut cur = start.to_string();
+    for _ in 0..MAX_HANDOFF_HOPS {
+        let Some(next) = info["handoff"]["sessionID"].as_str().filter(|n| !n.is_empty() && *n != cur) else {
+            break;
+        };
+        let path = format!("/v1/session/{}", urlencoding::encode(next));
+        match ctx.inner.call("GET", &path, Some(dir), None, Some(SHORT_CALL)).await {
+            Ok(v) => {
+                ctx.st.work.map_gizzi_session(&cur, &ctx.session.id);
+                cur = next.to_string();
+                info = v;
+            }
+            Err(_) => break,
+        }
+    }
+    cur
+}
+
+/// Record the gizzi id: in the store (with this replica as the one whose
+/// child holds it), in the id map the internal route uses, and in the
+/// turn's slot (for interrupt).
 async fn adopt(ctx: &TurnCtx, gsid: &str) -> Result<(), Failure> {
     ctx.st.work.map_gizzi_session(gsid, &ctx.session.id);
     *ctx.slot.lock().unwrap_or_else(|e| e.into_inner()) = Some(gsid.to_string());
+    let store_err = |e: super::store::StoreError| Failure::new("agent_loop_error", format!("cannot store the gizzi session: {e}"));
     if ctx.session.gizzi_session_id.as_deref() != Some(gsid) {
+        ctx.st.store.set_gizzi_session_id(&ctx.session.id, gsid).await.map_err(store_err)?;
+    }
+    if ctx.session.gizzi_replica.as_deref() != Some(ctx.st.replica.id.as_str()) {
         ctx.st
             .store
-            .set_gizzi_session_id(&ctx.session.id, gsid)
+            .set_gizzi_replica(&ctx.session.id, Some(&ctx.st.replica.id))
             .await
-            .map_err(|e| Failure::new("agent_loop_error", format!("cannot store the gizzi session: {e}")))?;
+            .map_err(store_err)?;
     }
     Ok(())
 }

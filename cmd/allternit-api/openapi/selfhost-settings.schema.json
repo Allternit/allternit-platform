@@ -35,6 +35,12 @@
       "additionalProperties": false,
       "properties": {
         "listen": { "type": "string", "default": "127.0.0.1:8400", "description": "host:port to bind." },
+        "shutdown_grace": {
+          "type": "string",
+          "pattern": "^[0-9]*[1-9][0-9]*(ms|s|m|h)$",
+          "default": "45s",
+          "description": "How long a stopping replica waits for running turns to finish before it fails them with the session error code server_restarted."
+        },
         "public_url": { "type": "string", "format": "uri", "description": "The URL clients use. Shown in /v1/server/info." },
         "cors_origins": {
           "type": "array",
@@ -231,7 +237,7 @@
         "idle_timeout": {
           "type": "string",
           "pattern": "^[0-9]*[1-9][0-9]*(ms|s|m|h)$",
-          "default": "1h",
+          "default": "30s",
           "description": "A session with no turn running and no pending tool call for this long ends its work item. The worker's next tool_calls/next answers 204 with X-Session-Closed: true, and the worker completes the item. The next turn that needs a tool queues a new item."
         },
         "no_worker_timeout": {

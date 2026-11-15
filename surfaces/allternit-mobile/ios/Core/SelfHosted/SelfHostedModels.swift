@@ -8,9 +8,10 @@ struct SHServerInfo: Decodable, Equatable {
     var provider: String
     var authModes: [String]?
     var publicURL: String?
+    var replicas: Int?
 
     enum CodingKeys: String, CodingKey {
-        case version, provider
+        case version, provider, replicas
         case authModes = "auth_modes"
         case publicURL = "public_url"
     }

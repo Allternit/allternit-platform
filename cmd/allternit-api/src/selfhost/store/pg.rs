@@ -22,10 +22,10 @@ use super::*;
 const AGENT_COLS: &str =
     "id, name, instructions, model, tools, mcp_servers, skills, metadata, version, created_at, updated_at";
 const ENV_COLS: &str = "id, name, network, allowed_hosts, git, mcp, image, packages, metadata, created_at, updated_at";
-const SESSION_COLS: &str = "id, agent_id, environment_id, title, status, status_reason, last_seq, metadata, agent_snapshot, gizzi_session_id, created_at, updated_at, archived_at";
+const SESSION_COLS: &str = "id, agent_id, environment_id, title, status, status_reason, last_seq, metadata, agent_snapshot, gizzi_session_id, turn_replica, gizzi_replica, created_at, updated_at, archived_at";
 const EVENT_COLS: &str = "id, session_id, seq, type, data, created_at";
-const WORK_COLS: &str = "id, environment_id, session_id, status, lease_generation, lease_expires_at, worker_id, error_message, created_at, updated_at, completed_at";
-const WORK_COLS_W: &str = "w.id, w.environment_id, w.session_id, w.status, w.lease_generation, w.lease_expires_at, w.worker_id, w.error_message, w.created_at, w.updated_at, w.completed_at";
+const WORK_COLS: &str = "id, environment_id, session_id, status, lease_generation, lease_expires_at, worker_id, error_message, preferred_worker_id, prefer_until, created_at, updated_at, completed_at";
+const WORK_COLS_W: &str = "w.id, w.environment_id, w.session_id, w.status, w.lease_generation, w.lease_expires_at, w.worker_id, w.error_message, w.preferred_worker_id, w.prefer_until, w.created_at, w.updated_at, w.completed_at";
 const TOOL_COLS: &str = "id, session_id, work_id, claimed_generation, name, input, status, output, is_error, created_at, updated_at, completed_at";
 const WORKER_COLS: &str = "environment_id, worker_id, last_seen_at, current_work_id, hostname, version";
 const API_KEY_COLS: &str =
@@ -33,6 +33,7 @@ const API_KEY_COLS: &str =
 const ENV_KEY_COLS: &str =
     "id, environment_id, name, prefix, key_hash, created_at, expires_at, last_used_at, revoked_at";
 const CRED_COLS: &str = "id, name, sealed, key_id, created_at, updated_at";
+const REPLICA_COLS: &str = "replica_id, started_at, heartbeat_at, version";
 
 const UPSERT_WORKER: &str = "INSERT INTO workers (environment_id, worker_id, last_seen_at, current_work_id, hostname, version)
      VALUES ($1, $2, $3, $4, $5, $6)
@@ -103,6 +104,8 @@ fn session_from(r: &PgRow) -> StoreResult<SessionRecord> {
         metadata: r.try_get("metadata")?,
         agent_snapshot: r.try_get("agent_snapshot")?,
         gizzi_session_id: r.try_get("gizzi_session_id")?,
+        turn_replica: r.try_get("turn_replica")?,
+        gizzi_replica: r.try_get("gizzi_replica")?,
         created_at: r.try_get("created_at")?,
         updated_at: r.try_get("updated_at")?,
         archived_at: r.try_get("archived_at")?,
@@ -131,6 +134,8 @@ fn work_from(r: &PgRow) -> StoreResult<WorkItem> {
         lease_expires_at: r.try_get("lease_expires_at")?,
         worker_id: r.try_get("worker_id")?,
         error_message: r.try_get("error_message")?,
+        preferred_worker_id: r.try_get("preferred_worker_id")?,
+        prefer_until: r.try_get("prefer_until")?,
         created_at: r.try_get("created_at")?,
         updated_at: r.try_get("updated_at")?,
         completed_at: r.try_get("completed_at")?,
@@ -204,6 +209,40 @@ fn cred_from(r: &PgRow) -> StoreResult<CredentialRecord> {
         created_at: r.try_get("created_at")?,
         updated_at: r.try_get("updated_at")?,
     })
+}
+
+fn replica_from(r: &PgRow) -> StoreResult<ReplicaRecord> {
+    Ok(ReplicaRecord {
+        replica_id: r.try_get("replica_id")?,
+        started_at: r.try_get("started_at")?,
+        heartbeat_at: r.try_get("heartbeat_at")?,
+        version: r.try_get("version")?,
+    })
+}
+
+fn stored_response_from(r: &PgRow) -> StoreResult<StoredResponse> {
+    let status: Option<i32> = r.try_get("status_code")?;
+    let headers: Option<Value> = r.try_get("response_headers")?;
+    let body: Option<Vec<u8>> = r.try_get("response_body")?;
+    Ok(StoredResponse {
+        status: status.unwrap_or(200) as u16,
+        headers: match headers {
+            Some(h) => serde_json::from_value(h)
+                .map_err(|e| StoreError::Backend(format!("response_headers: {e}")))?,
+            None => vec![],
+        },
+        body: body.unwrap_or_default(),
+    })
+}
+
+/// A unique violation on the named index or constraint.
+fn is_unique_violation(e: &sqlx::Error, constraint: &str) -> bool {
+    match e {
+        sqlx::Error::Database(db) => {
+            db.code().as_deref() == Some("23505") && db.constraint() == Some(constraint)
+        }
+        _ => false,
+    }
 }
 
 fn map_rows<T>(rows: Vec<PgRow>, f: fn(&PgRow) -> StoreResult<T>) -> StoreResult<Vec<T>> {
@@ -382,6 +421,169 @@ async fn requeue_claimed_calls(tx: &mut Tx, session_id: &str, now: DateTime<Utc>
     .await?;
     Ok(())
 }
+
+/// Queue a wake hint. Postgres delivers it when the transaction commits
+/// (and drops it on rollback); identical hints in one transaction are sent
+/// once.
+async fn notify(tx: &mut Tx, wake: Wake) -> StoreResult<()> {
+    sqlx::query("SELECT pg_notify($1, $2)")
+        .bind(WAKE_CHANNEL)
+        .bind(wake.payload())
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
+}
+
+fn status_wake(session_id: &str) -> Wake {
+    Wake::Status {
+        session_id: session_id.to_string(),
+    }
+}
+
+fn session_wake(session_id: &str) -> Wake {
+    Wake::Session {
+        session_id: session_id.to_string(),
+    }
+}
+
+fn work_wake(environment_id: &str) -> Wake {
+    Wake::Work {
+        environment_id: environment_id.to_string(),
+    }
+}
+
+/// Append an event inside `tx` (the session row is locked by the UPDATE, so
+/// seq has no gaps or repeats) and queue its wake hint.
+async fn append_event_tx(
+    tx: &mut Tx,
+    session_id: &str,
+    event_type: &str,
+    data: Value,
+    now: DateTime<Utc>,
+) -> StoreResult<EventRecord> {
+    let seq: Option<i64> = sqlx::query_scalar(
+        "UPDATE sessions SET last_seq = last_seq + 1, updated_at = $2 WHERE id = $1 RETURNING last_seq",
+    )
+    .bind(session_id)
+    .bind(now)
+    .fetch_optional(&mut **tx)
+    .await?;
+    let seq = seq.ok_or(StoreError::NotFound)?;
+    let row = sqlx::query(&format!(
+        "INSERT INTO session_events (id, session_id, seq, type, data, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6) RETURNING {EVENT_COLS}"
+    ))
+    .bind(new_id("evt"))
+    .bind(session_id)
+    .bind(seq)
+    .bind(event_type)
+    .bind(data)
+    .bind(now)
+    .fetch_one(&mut **tx)
+    .await?;
+    let out = event_from(&row)?;
+    notify(
+        tx,
+        Wake::Event {
+            session_id: session_id.to_string(),
+            seq,
+        },
+    )
+    .await?;
+    Ok(out)
+}
+
+/// The work-item insert shared by `enqueue_work` and `ensure_open_work`. A
+/// new item inherits a live affinity preference from the session's
+/// previous item. Returns None when the session already has an open item.
+async fn insert_open_work(
+    tx: &mut Tx,
+    environment_id: &str,
+    session_id: &str,
+    now: DateTime<Utc>,
+) -> StoreResult<Option<WorkItem>> {
+    let row = sqlx::query(&format!(
+        "INSERT INTO work_items (id, environment_id, session_id, status, lease_generation,
+             preferred_worker_id, prefer_until, created_at, updated_at)
+         SELECT $1, $2, $3, 'ready', 0, p.preferred_worker_id, p.prefer_until, $4, $4
+         FROM (SELECT 1) AS one
+         LEFT JOIN LATERAL (
+             SELECT preferred_worker_id, prefer_until FROM work_items
+             WHERE session_id = $3 AND prefer_until > $4 AND preferred_worker_id IS NOT NULL
+             ORDER BY prefer_until DESC LIMIT 1
+         ) AS p ON TRUE
+         ON CONFLICT DO NOTHING
+         RETURNING {WORK_COLS}"
+    ))
+    .bind(new_id("work"))
+    .bind(environment_id)
+    .bind(session_id)
+    .bind(now)
+    .fetch_optional(&mut **tx)
+    .await?;
+    let Some(row) = row else {
+        return Ok(None);
+    };
+    let item = work_from(&row)?;
+    notify(tx, work_wake(environment_id)).await?;
+    Ok(Some(item))
+}
+
+/// Fail one orphaned turn: the check and the change in one transaction,
+/// with the session row locked, so it happens once.
+async fn fail_one_orphan(
+    tx: &mut Tx,
+    session_id: &str,
+    dead_replicas: &[String],
+    ownerless_before: Option<DateTime<Utc>>,
+) -> StoreResult<Option<SessionRecord>> {
+    let cur = session_locked(tx, session_id).await?;
+    if !matches!(cur.status.as_str(), "running" | "waiting_for_worker") {
+        return Ok(None);
+    }
+    let orphaned = match &cur.turn_replica {
+        Some(r) => dead_replicas.iter().any(|d| d == r),
+        None => ownerless_before.is_some_and(|t| cur.updated_at < t),
+    };
+    if !orphaned {
+        return Ok(None);
+    }
+    let now = Utc::now();
+    let calls: Vec<String> = sqlx::query_scalar(
+        "UPDATE tool_calls SET status = 'done', output = $2, is_error = TRUE, completed_at = $3, updated_at = $3
+         WHERE session_id = $1 AND status <> 'done' RETURNING id",
+    )
+    .bind(session_id)
+    .bind(SERVER_RESTARTED_TOOL_OUTPUT)
+    .bind(now)
+    .fetch_all(&mut **tx)
+    .await?;
+    for id in calls {
+        notify(tx, Wake::Call { tool_call_id: id }).await?;
+    }
+    append_event_tx(tx, session_id, "error", server_restarted_event(), now).await?;
+    sqlx::query(
+        "UPDATE sessions SET status = 'error', status_reason = $2, turn_replica = NULL, updated_at = $3
+         WHERE id = $1",
+    )
+    .bind(session_id)
+    .bind(SERVER_RESTARTED)
+    .bind(now)
+    .execute(&mut **tx)
+    .await?;
+    append_event_tx(tx, session_id, "status", server_restarted_status_event(), now).await?;
+    notify(tx, status_wake(session_id)).await?;
+    let row = sqlx::query(&format!("SELECT {SESSION_COLS} FROM sessions WHERE id = $1"))
+        .bind(session_id)
+        .fetch_one(&mut **tx)
+        .await?;
+    Ok(Some(session_from(&row)?))
+}
+
+/// Key of the sweep advisory lock: per schema, so servers that share one
+/// database in different schemas do not block each other.
+const SWEEP_LOCK_SQL: &str =
+    "SELECT pg_try_advisory_xact_lock(hashtext('allternit_selfhost_sweep:' || current_schema()))";
 
 #[async_trait]
 impl SelfHostStore for PgStore {
@@ -655,6 +857,7 @@ impl SelfHostStore for PgStore {
         reason: Option<&str>,
     ) -> StoreResult<SessionRecord> {
         check_session_status(status)?;
+        let mut tx = self.begin().await?;
         let row = sqlx::query(&format!(
             "UPDATE sessions SET status = $2, status_reason = $3, updated_at = $4 WHERE id = $1 RETURNING {SESSION_COLS}"
         ))
@@ -662,9 +865,12 @@ impl SelfHostStore for PgStore {
         .bind(status)
         .bind(reason)
         .bind(Utc::now())
-        .fetch_one(&self.pool)
+        .fetch_one(&mut *tx)
         .await?;
-        session_from(&row)
+        let out = session_from(&row)?;
+        notify(&mut tx, status_wake(id)).await?;
+        tx.commit().await?;
+        Ok(out)
     }
 
     async fn transition_session_status(
@@ -676,6 +882,7 @@ impl SelfHostStore for PgStore {
     ) -> StoreResult<Option<SessionRecord>> {
         check_session_status(to)?;
         let from: Vec<String> = from.iter().map(|s| s.to_string()).collect();
+        let mut tx = self.begin().await?;
         let row = sqlx::query(&format!(
             "UPDATE sessions SET status = $3, status_reason = $4, updated_at = $5
              WHERE id = $1 AND status = ANY($2) RETURNING {SESSION_COLS}"
@@ -685,11 +892,17 @@ impl SelfHostStore for PgStore {
         .bind(to)
         .bind(reason)
         .bind(Utc::now())
-        .fetch_optional(&self.pool)
+        .fetch_optional(&mut *tx)
         .await?;
         match row {
-            Some(r) => Ok(Some(session_from(&r)?)),
+            Some(r) => {
+                let out = session_from(&r)?;
+                notify(&mut tx, status_wake(id)).await?;
+                tx.commit().await?;
+                Ok(Some(out))
+            }
             None => {
+                tx.rollback().await?;
                 // Tell a missing session apart from a status mismatch.
                 self.get_session(id).await?;
                 Ok(None)
@@ -725,6 +938,7 @@ impl SelfHostStore for PgStore {
         .fetch_one(&mut *tx)
         .await?;
         let out = session_from(&row)?;
+        notify(&mut tx, status_wake(id)).await?;
         tx.commit().await?;
         Ok(out)
     }
@@ -738,31 +952,10 @@ impl SelfHostStore for PgStore {
         data: Value,
     ) -> StoreResult<EventRecord> {
         check_event_type(event_type)?;
-        let now = Utc::now();
         let mut tx = self.begin().await?;
         // The row lock on the session serializes appends, so seq has no gaps
         // or repeats.
-        let seq: Option<i64> = sqlx::query_scalar(
-            "UPDATE sessions SET last_seq = last_seq + 1, updated_at = $2 WHERE id = $1 RETURNING last_seq",
-        )
-        .bind(session_id)
-        .bind(now)
-        .fetch_optional(&mut *tx)
-        .await?;
-        let seq = seq.ok_or(StoreError::NotFound)?;
-        let row = sqlx::query(&format!(
-            "INSERT INTO session_events (id, session_id, seq, type, data, created_at)
-             VALUES ($1, $2, $3, $4, $5, $6) RETURNING {EVENT_COLS}"
-        ))
-        .bind(new_id("evt"))
-        .bind(session_id)
-        .bind(seq)
-        .bind(event_type)
-        .bind(data)
-        .bind(now)
-        .fetch_one(&mut *tx)
-        .await?;
-        let out = event_from(&row)?;
+        let out = append_event_tx(&mut tx, session_id, event_type, data, Utc::now()).await?;
         tx.commit().await?;
         Ok(out)
     }
@@ -791,17 +984,40 @@ impl SelfHostStore for PgStore {
     // ── Work queue ──
 
     async fn enqueue_work(&self, environment_id: &str, session_id: &str) -> StoreResult<WorkItem> {
-        let row = sqlx::query(&format!(
-            "INSERT INTO work_items (id, environment_id, session_id, status, lease_generation, created_at, updated_at)
-             VALUES ($1, $2, $3, 'ready', 0, $4, $4) RETURNING {WORK_COLS}"
+        let mut tx = self.begin().await?;
+        match insert_open_work(&mut tx, environment_id, session_id, Utc::now()).await? {
+            Some(item) => {
+                tx.commit().await?;
+                Ok(item)
+            }
+            None => {
+                tx.rollback().await?;
+                Err(StoreError::Conflict("work_already_open"))
+            }
+        }
+    }
+
+    async fn ensure_open_work(
+        &self,
+        environment_id: &str,
+        session_id: &str,
+    ) -> StoreResult<(WorkItem, bool)> {
+        // Insert-or-nothing, then read the winner. The open item can end
+        // between the two steps (completed by its worker); then try again.
+        for _ in 0..5 {
+            let mut tx = self.begin().await?;
+            if let Some(item) = insert_open_work(&mut tx, environment_id, session_id, Utc::now()).await? {
+                tx.commit().await?;
+                return Ok((item, true));
+            }
+            tx.rollback().await?;
+            if let Some(item) = self.find_open_work_for_session(session_id).await? {
+                return Ok((item, false));
+            }
+        }
+        Err(StoreError::Backend(
+            "could not find or queue the session's work item (it kept changing)".into(),
         ))
-        .bind(new_id("work"))
-        .bind(environment_id)
-        .bind(session_id)
-        .bind(Utc::now())
-        .fetch_one(&self.pool)
-        .await?;
-        work_from(&row)
     }
 
     async fn get_work(&self, id: &str) -> StoreResult<WorkItem> {
@@ -825,23 +1041,36 @@ impl SelfHostStore for PgStore {
 
     async fn claim_work(&self, req: ClaimRequest) -> StoreResult<Option<WorkClaim>> {
         let cutoff: Option<DateTime<Utc>> = req
-            .reclaim_older_than_ms
+            .lease_cutoff_offset_ms
             .map(|ms| req.now - Duration::milliseconds(ms));
+        let seen_cutoff = req.now - Duration::seconds(AFFINITY_SEEN_SECS);
         let secret = new_secret("ss");
         let mut tx = self.begin().await?;
+        // Affinity (see the trait doc): skip an item another live worker is
+        // preferred for; the claimer's own preferred items come first.
         let row = sqlx::query(&format!(
             "WITH cand AS (
-                 SELECT id FROM work_items
-                 WHERE environment_id = $1
-                   AND (status = 'ready'
-                        OR ($2::timestamptz IS NOT NULL AND status = 'leased' AND lease_expires_at <= $2))
-                 ORDER BY created_at, id
+                 SELECT wi.id FROM work_items wi
+                 WHERE wi.environment_id = $1
+                   AND (wi.status = 'ready'
+                        OR ($2::timestamptz IS NOT NULL AND wi.status = 'leased' AND wi.lease_expires_at <= $2))
+                   AND NOT (
+                       wi.prefer_until IS NOT NULL AND wi.prefer_until > $6
+                       AND wi.preferred_worker_id IS NOT NULL AND wi.preferred_worker_id <> $4
+                       AND EXISTS (
+                           SELECT 1 FROM workers wk
+                           WHERE wk.environment_id = wi.environment_id
+                             AND wk.worker_id = wi.preferred_worker_id
+                             AND wk.last_seen_at >= $7))
+                 ORDER BY CASE WHEN wi.preferred_worker_id = $4 AND wi.prefer_until > $6 THEN 0 ELSE 1 END,
+                          wi.created_at, wi.id
                  LIMIT 1
-                 FOR UPDATE SKIP LOCKED
+                 FOR UPDATE OF wi SKIP LOCKED
              )
              UPDATE work_items w
              SET status = 'leased', lease_generation = w.lease_generation + 1, lease_expires_at = $3,
-                 worker_id = $4, session_secret_hash = $5, updated_at = $6
+                 worker_id = $4, session_secret_hash = $5, updated_at = $6,
+                 preferred_worker_id = NULL, prefer_until = NULL
              FROM cand WHERE w.id = cand.id
              RETURNING {WORK_COLS_W}"
         ))
@@ -851,6 +1080,7 @@ impl SelfHostStore for PgStore {
         .bind(&req.worker_id)
         .bind(hash_secret(&secret))
         .bind(req.now)
+        .bind(seen_cutoff)
         .fetch_optional(&mut *tx)
         .await?;
         let Some(row) = row else {
@@ -859,6 +1089,7 @@ impl SelfHostStore for PgStore {
         };
         let item = work_from(&row)?;
         requeue_claimed_calls(&mut tx, &item.session_id, req.now).await?;
+        notify(&mut tx, session_wake(&item.session_id)).await?;
         sqlx::query(UPSERT_WORKER)
             .bind(&req.environment_id)
             .bind(&req.worker_id)
@@ -937,16 +1168,20 @@ impl SelfHostStore for PgStore {
         }
         let row = sqlx::query(&format!(
             "UPDATE work_items SET status = $2, error_message = $3, lease_expires_at = NULL,
-                 session_secret_hash = NULL, completed_at = $4, updated_at = $4
+                 session_secret_hash = NULL, completed_at = $4, updated_at = $4,
+                 preferred_worker_id = worker_id,
+                 prefer_until = CASE WHEN worker_id IS NULL THEN NULL ELSE $5::timestamptz END
              WHERE id = $1 RETURNING {WORK_COLS}"
         ))
         .bind(id)
         .bind(outcome.status().as_str())
         .bind(error_message)
         .bind(now)
+        .bind(affinity_end(now))
         .fetch_one(&mut *tx)
         .await?;
         let out = work_from(&row)?;
+        notify(&mut tx, session_wake(&out.session_id)).await?;
         tx.commit().await?;
         Ok(out)
     }
@@ -960,16 +1195,21 @@ impl SelfHostStore for PgStore {
         let mut tx = self.begin().await?;
         let item = fenced(&mut tx, id, generation).await?;
         let row = sqlx::query(&format!(
-            "UPDATE work_items SET status = 'ready', lease_expires_at = NULL, worker_id = NULL,
-                 session_secret_hash = NULL, updated_at = $2
+            "UPDATE work_items SET status = 'ready', lease_expires_at = NULL,
+                 preferred_worker_id = worker_id,
+                 prefer_until = CASE WHEN worker_id IS NULL THEN NULL ELSE $3::timestamptz END,
+                 worker_id = NULL, session_secret_hash = NULL, updated_at = $2
              WHERE id = $1 RETURNING {WORK_COLS}"
         ))
         .bind(id)
         .bind(now)
+        .bind(affinity_end(now))
         .fetch_one(&mut *tx)
         .await?;
         requeue_claimed_calls(&mut tx, &item.session_id, now).await?;
         let out = work_from(&row)?;
+        notify(&mut tx, work_wake(&out.environment_id)).await?;
+        notify(&mut tx, session_wake(&out.session_id)).await?;
         tx.commit().await?;
         Ok(out)
     }
@@ -986,20 +1226,28 @@ impl SelfHostStore for PgStore {
         .bind(now)
         .execute(&mut *tx)
         .await?;
-        let res = sqlx::query(
+        // The worker is gone: no affinity for it.
+        let envs: Vec<String> = sqlx::query_scalar(
             "UPDATE work_items SET status = 'ready', lease_expires_at = NULL, worker_id = NULL,
-                 session_secret_hash = NULL, updated_at = $2
-             WHERE status = 'leased' AND lease_expires_at <= $1",
+                 session_secret_hash = NULL, preferred_worker_id = NULL, prefer_until = NULL, updated_at = $2
+             WHERE status = 'leased' AND lease_expires_at <= $1
+             RETURNING environment_id",
         )
         .bind(cutoff)
         .bind(now)
-        .execute(&mut *tx)
+        .fetch_all(&mut *tx)
         .await?;
+        let moved = envs.len() as u64;
+        let unique: std::collections::BTreeSet<String> = envs.into_iter().collect();
+        for env in unique {
+            notify(&mut tx, Wake::Work { environment_id: env }).await?;
+        }
         tx.commit().await?;
-        Ok(res.rows_affected())
+        Ok(moved)
     }
 
     async fn cancel_open_work_for_session(&self, session_id: &str) -> StoreResult<u64> {
+        let mut tx = self.begin().await?;
         let res = sqlx::query(
             "UPDATE work_items SET status = 'cancelled', lease_expires_at = NULL, session_secret_hash = NULL,
                  completed_at = $2, updated_at = $2
@@ -1007,8 +1255,12 @@ impl SelfHostStore for PgStore {
         )
         .bind(session_id)
         .bind(Utc::now())
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await?;
+        if res.rows_affected() > 0 {
+            notify(&mut tx, session_wake(session_id)).await?;
+        }
+        tx.commit().await?;
         Ok(res.rows_affected())
     }
 
@@ -1040,6 +1292,7 @@ impl SelfHostStore for PgStore {
     // ── Tool calls ──
 
     async fn insert_tool_call(&self, new: NewToolCall) -> StoreResult<(ToolCallRecord, bool)> {
+        let mut tx = self.begin().await?;
         let res = sqlx::query(
             "INSERT INTO tool_calls (id, session_id, name, input, status, is_error, created_at, updated_at)
              VALUES ($1, $2, $3, $4, 'pending', FALSE, $5, $5)
@@ -1050,13 +1303,18 @@ impl SelfHostStore for PgStore {
         .bind(&new.name)
         .bind(&new.input)
         .bind(Utc::now())
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await?;
+        let inserted = res.rows_affected() == 1;
+        if inserted {
+            notify(&mut tx, session_wake(&new.session_id)).await?;
+        }
+        tx.commit().await?;
         let call = self.get_tool_call(&new.id).await?;
         if call.session_id != new.session_id {
             return Err(StoreError::Conflict("tool_call_conflict"));
         }
-        Ok((call, res.rows_affected() == 1))
+        Ok((call, inserted))
     }
 
     async fn get_tool_call(&self, id: &str) -> StoreResult<ToolCallRecord> {
@@ -1112,6 +1370,7 @@ impl SelfHostStore for PgStore {
         is_error: bool,
     ) -> StoreResult<ToolResultOutcome> {
         check_result_size(output)?;
+        let mut tx = self.begin().await?;
         let row = sqlx::query(&format!(
             "UPDATE tool_calls SET status = 'done', output = $2, is_error = $3, completed_at = $4, updated_at = $4
              WHERE id = $1 AND status <> 'done' RETURNING {TOOL_COLS}"
@@ -1120,8 +1379,12 @@ impl SelfHostStore for PgStore {
         .bind(output)
         .bind(is_error)
         .bind(Utc::now())
-        .fetch_optional(&self.pool)
+        .fetch_optional(&mut *tx)
         .await?;
+        if row.is_some() {
+            notify(&mut tx, Wake::Call { tool_call_id: id.to_string() }).await?;
+        }
+        tx.commit().await?;
         match row {
             Some(r) => Ok(ToolResultOutcome {
                 call: tool_from(&r)?,
@@ -1136,16 +1399,31 @@ impl SelfHostStore for PgStore {
 
     async fn cancel_open_tool_calls(&self, session_id: &str, output: &str) -> StoreResult<u64> {
         check_result_size(output)?;
-        let res = sqlx::query(
+        let mut tx = self.begin().await?;
+        let ids: Vec<String> = sqlx::query_scalar(
             "UPDATE tool_calls SET status = 'done', output = $2, is_error = TRUE, completed_at = $3, updated_at = $3
-             WHERE session_id = $1 AND status <> 'done'",
+             WHERE session_id = $1 AND status <> 'done' RETURNING id",
         )
         .bind(session_id)
         .bind(output)
         .bind(Utc::now())
-        .execute(&self.pool)
+        .fetch_all(&mut *tx)
         .await?;
-        Ok(res.rows_affected())
+        let n = ids.len() as u64;
+        for id in ids {
+            notify(&mut tx, Wake::Call { tool_call_id: id }).await?;
+        }
+        tx.commit().await?;
+        Ok(n)
+    }
+
+    async fn has_open_tool_calls(&self, session_id: &str) -> StoreResult<bool> {
+        Ok(sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM tool_calls WHERE session_id = $1 AND status <> 'done')",
+        )
+        .bind(session_id)
+        .fetch_one(&self.pool)
+        .await?)
     }
 
     // ── Workers ──
@@ -1396,7 +1674,7 @@ impl SelfHostStore for PgStore {
             "INSERT INTO credentials (id, name, sealed, key_id, created_at, updated_at)
              VALUES ($1, $2, $3, $4, $5, $5)
              ON CONFLICT (name) DO UPDATE SET sealed = EXCLUDED.sealed, key_id = EXCLUDED.key_id,
-                 updated_at = EXCLUDED.updated_at
+                 updated_at = GREATEST(EXCLUDED.updated_at, credentials.updated_at + interval '1 microsecond')
              RETURNING {CRED_COLS}"
         ))
         .bind(new_id("cred"))
@@ -1433,6 +1711,341 @@ impl SelfHostStore for PgStore {
             return Err(StoreError::NotFound);
         }
         Ok(())
+    }
+
+    async fn put_credential_if_unchanged(
+        &self,
+        name: &str,
+        expected_updated_at: DateTime<Utc>,
+        sealed: &[u8],
+        key_id: &str,
+    ) -> StoreResult<bool> {
+        let res = sqlx::query(
+            "UPDATE credentials SET sealed = $3, key_id = $4,
+                 updated_at = GREATEST($5, updated_at + interval '1 microsecond')
+             WHERE name = $1 AND updated_at = $2",
+        )
+        .bind(name)
+        .bind(expected_updated_at)
+        .bind(sealed)
+        .bind(key_id)
+        .bind(Utc::now())
+        .execute(&self.pool)
+        .await?;
+        if res.rows_affected() == 1 {
+            return Ok(true);
+        }
+        // Lost the race, or the credential is gone.
+        self.get_credential(name).await?;
+        Ok(false)
+    }
+
+    // ── Idempotency-Key records ──
+
+    async fn idempotency_begin(
+        &self,
+        scope: &IdempotencyScope,
+        request_hash: &str,
+        now: DateTime<Utc>,
+    ) -> StoreResult<IdempotencyBegin> {
+        let mut tx = self.begin().await?;
+        let inserted = sqlx::query(
+            "INSERT INTO idempotency_keys (principal, method, path, idem_key, request_hash, state, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, 'in_progress', $6, $6)
+             ON CONFLICT DO NOTHING",
+        )
+        .bind(&scope.principal)
+        .bind(&scope.method)
+        .bind(&scope.path)
+        .bind(&scope.key)
+        .bind(request_hash)
+        .bind(now)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected()
+            == 1;
+        if inserted {
+            tx.commit().await?;
+            return Ok(IdempotencyBegin::New);
+        }
+        // The row exists (committed: the insert waited for any racing
+        // inserter). Lock it so a takeover happens once.
+        let row = sqlx::query(
+            "SELECT request_hash, state, status_code, response_headers, response_body, created_at, updated_at
+             FROM idempotency_keys
+             WHERE principal = $1 AND method = $2 AND path = $3 AND idem_key = $4
+             FOR UPDATE",
+        )
+        .bind(&scope.principal)
+        .bind(&scope.method)
+        .bind(&scope.path)
+        .bind(&scope.key)
+        .fetch_optional(&mut *tx)
+        .await?;
+        let Some(row) = row else {
+            // Deleted in between (abandoned or purged): start over once.
+            tx.rollback().await?;
+            return self.idempotency_begin(scope, request_hash, now).await;
+        };
+        let created_at: DateTime<Utc> = row.try_get("created_at")?;
+        let updated_at: DateTime<Utc> = row.try_get("updated_at")?;
+        let state: String = row.try_get("state")?;
+        let hash: String = row.try_get("request_hash")?;
+        let expired = created_at <= now - Duration::hours(IDEMPOTENCY_TTL_HOURS);
+        let stale = state == "in_progress"
+            && updated_at <= now - Duration::seconds(IDEMPOTENCY_TAKEOVER_SECS);
+        if expired || (stale && hash == request_hash) {
+            sqlx::query(
+                "UPDATE idempotency_keys SET request_hash = $5, state = 'in_progress', status_code = NULL,
+                     response_headers = NULL, response_body = NULL,
+                     created_at = CASE WHEN $7 THEN $6 ELSE created_at END, updated_at = $6
+                 WHERE principal = $1 AND method = $2 AND path = $3 AND idem_key = $4",
+            )
+            .bind(&scope.principal)
+            .bind(&scope.method)
+            .bind(&scope.path)
+            .bind(&scope.key)
+            .bind(request_hash)
+            .bind(now)
+            .bind(expired)
+            .execute(&mut *tx)
+            .await?;
+            tx.commit().await?;
+            return Ok(IdempotencyBegin::New);
+        }
+        let out = if hash != request_hash {
+            IdempotencyBegin::Mismatch
+        } else if state == "done" {
+            IdempotencyBegin::Replay(stored_response_from(&row)?)
+        } else {
+            IdempotencyBegin::InProgress
+        };
+        tx.rollback().await?;
+        Ok(out)
+    }
+
+    async fn idempotency_finish(
+        &self,
+        scope: &IdempotencyScope,
+        request_hash: &str,
+        response: &StoredResponse,
+        now: DateTime<Utc>,
+    ) -> StoreResult<()> {
+        let headers = serde_json::to_value(&response.headers)
+            .map_err(|e| StoreError::Backend(format!("response_headers: {e}")))?;
+        sqlx::query(
+            "UPDATE idempotency_keys SET state = 'done', status_code = $6, response_headers = $7,
+                 response_body = $8, updated_at = $9
+             WHERE principal = $1 AND method = $2 AND path = $3 AND idem_key = $4
+               AND request_hash = $5 AND state = 'in_progress'",
+        )
+        .bind(&scope.principal)
+        .bind(&scope.method)
+        .bind(&scope.path)
+        .bind(&scope.key)
+        .bind(request_hash)
+        .bind(response.status as i32)
+        .bind(headers)
+        .bind(&response.body)
+        .bind(now)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn idempotency_abandon(
+        &self,
+        scope: &IdempotencyScope,
+        request_hash: &str,
+    ) -> StoreResult<()> {
+        sqlx::query(
+            "DELETE FROM idempotency_keys
+             WHERE principal = $1 AND method = $2 AND path = $3 AND idem_key = $4
+               AND request_hash = $5 AND state = 'in_progress'",
+        )
+        .bind(&scope.principal)
+        .bind(&scope.method)
+        .bind(&scope.path)
+        .bind(&scope.key)
+        .bind(request_hash)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn idempotency_purge(&self, older_than: DateTime<Utc>) -> StoreResult<u64> {
+        let res = sqlx::query("DELETE FROM idempotency_keys WHERE created_at < $1")
+            .bind(older_than)
+            .execute(&self.pool)
+            .await?;
+        Ok(res.rows_affected())
+    }
+
+    // ── Replicas and turn ownership ──
+
+    async fn replica_heartbeat(
+        &self,
+        replica_id: &str,
+        started_at: DateTime<Utc>,
+        version: Option<&str>,
+        now: DateTime<Utc>,
+    ) -> StoreResult<()> {
+        sqlx::query(
+            "INSERT INTO server_replicas (replica_id, started_at, heartbeat_at, version)
+             VALUES ($1, $2, $3, $4)
+             ON CONFLICT (replica_id) DO UPDATE SET started_at = EXCLUDED.started_at,
+                 heartbeat_at = EXCLUDED.heartbeat_at, version = EXCLUDED.version",
+        )
+        .bind(replica_id)
+        .bind(started_at)
+        .bind(now)
+        .bind(version)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn list_live_replicas(&self, since: DateTime<Utc>) -> StoreResult<Vec<ReplicaRecord>> {
+        let rows = sqlx::query(&format!(
+            "SELECT {REPLICA_COLS} FROM server_replicas WHERE heartbeat_at >= $1
+             ORDER BY started_at, replica_id"
+        ))
+        .bind(since)
+        .fetch_all(&self.pool)
+        .await?;
+        map_rows(rows, replica_from)
+    }
+
+    async fn list_replicas(&self) -> StoreResult<Vec<ReplicaRecord>> {
+        let rows = sqlx::query(&format!(
+            "SELECT {REPLICA_COLS} FROM server_replicas ORDER BY started_at, replica_id"
+        ))
+        .fetch_all(&self.pool)
+        .await?;
+        map_rows(rows, replica_from)
+    }
+
+    async fn remove_replica(&self, replica_id: &str) -> StoreResult<()> {
+        sqlx::query("DELETE FROM server_replicas WHERE replica_id = $1")
+            .bind(replica_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    async fn claim_turn(&self, session_id: &str, replica_id: &str) -> StoreResult<bool> {
+        let res = sqlx::query(
+            "UPDATE sessions SET turn_replica = $2
+             WHERE id = $1 AND (turn_replica IS NULL OR turn_replica = $2)",
+        )
+        .bind(session_id)
+        .bind(replica_id)
+        .execute(&self.pool)
+        .await?;
+        if res.rows_affected() == 1 {
+            return Ok(true);
+        }
+        self.get_session(session_id).await?;
+        Ok(false)
+    }
+
+    async fn release_turn(&self, session_id: &str, replica_id: &str) -> StoreResult<bool> {
+        let res = sqlx::query(
+            "UPDATE sessions SET turn_replica = NULL WHERE id = $1 AND turn_replica = $2",
+        )
+        .bind(session_id)
+        .bind(replica_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(res.rows_affected() == 1)
+    }
+
+    async fn set_gizzi_replica(&self, session_id: &str, replica_id: Option<&str>) -> StoreResult<()> {
+        let res = sqlx::query("UPDATE sessions SET gizzi_replica = $2 WHERE id = $1")
+            .bind(session_id)
+            .bind(replica_id)
+            .execute(&self.pool)
+            .await?;
+        if res.rows_affected() == 0 {
+            return Err(StoreError::NotFound);
+        }
+        Ok(())
+    }
+
+    async fn fail_orphaned_turns(
+        &self,
+        dead_replicas: &[String],
+        ownerless_before: Option<DateTime<Utc>>,
+    ) -> StoreResult<Vec<SessionRecord>> {
+        if dead_replicas.is_empty() && ownerless_before.is_none() {
+            return Ok(vec![]);
+        }
+        let candidates: Vec<String> = sqlx::query_scalar(
+            "SELECT id FROM sessions
+             WHERE status IN ('running', 'waiting_for_worker')
+               AND (turn_replica = ANY($1)
+                    OR ($2::timestamptz IS NOT NULL AND turn_replica IS NULL AND updated_at < $2))
+             ORDER BY id",
+        )
+        .bind(dead_replicas.to_vec())
+        .bind(ownerless_before)
+        .fetch_all(&self.pool)
+        .await?;
+        let mut failed = Vec::new();
+        for id in candidates {
+            let mut tx = self.begin().await?;
+            match fail_one_orphan(&mut tx, &id, dead_replicas, ownerless_before).await? {
+                Some(s) => {
+                    tx.commit().await?;
+                    failed.push(s);
+                }
+                None => tx.rollback().await?,
+            }
+        }
+        Ok(failed)
+    }
+
+    // ── Coordination ──
+
+    async fn sweep_lock(&self) -> StoreResult<Option<SweepGuard>> {
+        let mut tx = self.begin().await?;
+        let got: bool = sqlx::query_scalar(SWEEP_LOCK_SQL).fetch_one(&mut *tx).await?;
+        if !got {
+            tx.rollback().await?;
+            return Ok(None);
+        }
+        // The lock lives as long as this transaction: the guard keeps it
+        // open and rolls it back on release.
+        Ok(Some(SweepGuard::new(move || {
+            Box::pin(async move {
+                let _ = tx.rollback().await;
+            })
+        })))
+    }
+
+    async fn subscribe_wakes(&self) -> StoreResult<Option<WakeStream>> {
+        let mut listener = sqlx::postgres::PgListener::connect_with(&self.pool).await?;
+        listener.listen(WAKE_CHANNEL).await?;
+        let stream = futures::stream::unfold(listener, |mut l| async move {
+            loop {
+                match l.try_recv().await {
+                    Ok(Some(n)) => {
+                        if let Some(w) = Wake::parse(n.payload()) {
+                            return Some((w, l));
+                        }
+                    }
+                    // The connection dropped; the next call reconnects and
+                    // listens again. Hints in between are lost.
+                    Ok(None) => return Some((Wake::Resync, l)),
+                    Err(e) => {
+                        tracing::warn!(error = %e, "wake listener: reconnect failed; retrying in 1s");
+                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                        return Some((Wake::Resync, l));
+                    }
+                }
+            }
+        });
+        Ok(Some(Box::pin(stream)))
     }
 
     // ── Observability ──

@@ -16,6 +16,11 @@ from ._errors import (
     PaymentRequiredError,
     PermissionDeniedError,
     RateLimitError,
+    CUSTOM_TOOL_CONFLICT,
+    IDEMPOTENCY_IN_PROGRESS,
+    IDEMPOTENCY_KEY_REUSE,
+    SERVER_RESTARTED,
+    has_error_code,
 )
 from ._generated import NOT_GIVEN
 from .selfhost import SelfHostClient, run_custom_tool_worker
@@ -33,4 +38,5 @@ __all__ = [
     "SelfHostClient", "run_custom_tool_worker",
     "AllternitError", "APIConnectionError", "APIError", "APITimeoutError", "AuthenticationError", "ConflictError",
     "InternalServerError", "InvalidRequestError", "NotFoundError", "PaymentRequiredError", "PermissionDeniedError", "RateLimitError",
+    "CUSTOM_TOOL_CONFLICT", "IDEMPOTENCY_IN_PROGRESS", "IDEMPOTENCY_KEY_REUSE", "SERVER_RESTARTED", "has_error_code",
 ]

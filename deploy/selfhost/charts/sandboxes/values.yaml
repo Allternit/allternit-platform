@@ -34,9 +34,24 @@ defaults:
   replicas: 2
   # Worker flags.
   blockMs: 25000             # --block-ms: how long one claim long-polls
-  reclaimOlderThanMs: null   # --reclaim-older-than-ms: take over expired leases older than this
+  # --reclaim-older-than-ms: also take a live lease last renewed at least this
+  # long ago (a stuck worker). Expired leases are always claimable without it.
+  # Below 30000 is raised to 30000 (a healthy worker renews every 20 s).
+  reclaimOlderThanMs: null
   autoStop: null             # --auto-stop SECS: exit after this long with no work
   extraArgs: []
+  # Command tools for the agent's custom tools (the gizzi worker's tools file).
+  # name -> {command: [argv...], timeoutMs}. The tool input JSON goes to the
+  # command on stdin; its stdout is the result; a non-zero exit is an error.
+  # It runs in the same bubblewrap sandbox and network mode as bash, so the
+  # command must exist in the worker image (or in /workspace). A name equal to
+  # a worker built-in tool (bash, read, ...) makes the worker exit at start.
+  # Rendered into a ConfigMap per environment, mounted read-only and passed as
+  # ALLTERNIT_WORKER_TOOLS. A map here is merged with each environment's.
+  customTools: {}
+  # lookup_ticket:
+  #   command: ["/usr/local/bin/lookup-ticket", "--json"]
+  #   timeoutMs: 120000
   autoscaling:
     enabled: false
     minReplicas: 2

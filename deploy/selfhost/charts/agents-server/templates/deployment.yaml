@@ -1,6 +1,4 @@
-{{- if gt (int .Values.replicaCount) 1 }}
-{{- fail "replicaCount must be 1: version 1 of the Agents Server runs a single replica" }}
-{{- end }}
+{{- include "agents-server.checkReplicas" . }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -10,9 +8,14 @@ metadata:
     app.kubernetes.io/component: server
 spec:
   replicas: {{ .Values.replicaCount }}
-  # Never two servers at once: stop the old pod before the new one starts.
+  # Start the new pod before the old one stops. Replicas share PostgreSQL;
+  # a replica that stops fails the turns it still runs after
+  # settings.server.shutdown_grace (session error code server_restarted).
   strategy:
-    type: Recreate
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
   selector:
     matchLabels:
       {{- include "agents-server.selectorLabels" . | nindent 6 }}
@@ -40,8 +43,9 @@ spec:
       {{- end }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
-      # Give an in-flight turn time to write its events.
-      terminationGracePeriodSeconds: 60
+      # settings.server.shutdown_grace + 15s: running turns get the grace
+      # period to finish, then the replica fails what is left and exits.
+      terminationGracePeriodSeconds: {{ include "agents-server.terminationGrace" . }}
       containers:
         - name: server
           image: {{ include "agents-server.image" . }}
@@ -93,6 +97,8 @@ spec:
         - name: settings
           configMap:
             name: {{ include "agents-server.fullname" . }}-settings
+        # Per pod, never shared between replicas: it holds this replica's id
+        # file (replica-id) and its gizzi child's session cache.
         - name: data
           emptyDir:
             sizeLimit: {{ .Values.dataVolume.sizeLimit }}

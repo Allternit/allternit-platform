@@ -4,15 +4,18 @@ Runs `allternit-agents-server`: the API, the agent loop (a gizzi child
 process) and the link to your PostgreSQL. It makes no calls to
 `*.allternit.com`. Sandbox workers are a separate chart (`../sandboxes`).
 
-Version 1 runs one replica. The Deployment uses the `Recreate` strategy, so an
-upgrade stops the old pod before the new one starts. Sessions are rebuilt from
-the events in PostgreSQL after a restart.
+One replica by default. Set `replicaCount` higher to run several replicas on
+the same PostgreSQL (the render fails if the server would use SQLite). The
+Deployment rolls out with `RollingUpdate` (`maxUnavailable: 0`, `maxSurge: 1`):
+the new pod is ready before the old one stops. Sessions are rebuilt from the
+events in PostgreSQL on whichever replica serves them.
 
 ## What it creates
 
 | Resource | Notes |
 |---|---|
-| Deployment | 1 replica, non-root (uid 10001), read-only root filesystem, probes on `/health/live` and `/health/ready`. |
+| Deployment | `replicaCount` replicas (default 1), RollingUpdate, non-root (uid 10001), read-only root filesystem, probes on `/health/live` and `/health/ready`. Each pod has its own data emptyDir (replica id, gizzi cache). |
+| PodDisruptionBudget | Only when `replicaCount` > 1: `minAvailable: 1`. |
 | Service | `http` on 8400; `metrics` on 9464 when `metrics.enabled`. |
 | ConfigMap | The settings file, from `settings` in values. |
 | Job (hook) | `admin migrate`, pre-install and pre-upgrade. The Deployment rolls out only after it succeeds. |
@@ -94,6 +97,10 @@ their credentials are listed in the self-hosted docs ("Models").
 | Key | Default | What it does |
 |---|---|---|
 | `settings` | see values.yaml | The settings file. The chart sets `server.listen` and `observability.prometheus` itself. |
+| `replicaCount` | `1` | Server replicas. More than 1 needs PostgreSQL (`settings.database.url`); the render fails on SQLite. Adds a PodDisruptionBudget. See "Several replicas". |
+| `settings.server.shutdown_grace` | `45s` | On SIGTERM, how long running turns get to finish before the replica fails them (session error code `server_restarted`). |
+| `terminationGracePeriodSeconds` | empty | Empty means `shutdown_grace` + 15 s (60). A value may raise it; one below that fails the render. |
+| `settings.sessions.idle_timeout` | `30s` | An idle session releases its worker after this long. `1h` keeps the worker and its `/workspace` between turns, as in 1.0. |
 | `secret.existingSecret` | `""` | The Secret with the server's secret environment variables. |
 | `secret.keys` | 4 names | Which Secret keys become environment variables. |
 | `otel.endpoint` | `""` | OTLP endpoint. Empty exports nothing. |
@@ -116,9 +123,41 @@ The sandbox workers must be in the same namespace to be let in by default. For
 anything else that calls the API (an ingress controller, other namespaces),
 add it to `networkPolicy.ingressFrom`.
 
+## Several replicas
+
+```yaml
+replicaCount: 3
+```
+
+- PostgreSQL only. The render fails when `settings.database.url` is unset
+  (SQLite or memory, which are per pod).
+- Replicas share all state through the database. Live events between
+  replicas use `LISTEN/NOTIFY`, which needs a direct or session-mode
+  connection in `ALLTERNIT_DATABASE_URL`. Through a transaction-mode pooler
+  (for example PgBouncer in transaction mode) the replicas poll, and events of
+  a turn on another replica arrive 1-5 s late.
+- A turn runs on one replica. If that replica dies, the session ends with
+  error code `server_restarted` within about a minute; the client sends the
+  message again, on any replica.
+- The data volume is an emptyDir per pod. Do not replace it with a shared
+  ReadWriteMany volume: it holds the replica id file.
+- `GET /v1/server/info` reports `replicas`.
+
 ## Upgrades
 
-`helm upgrade` runs the migrate Job first, then replaces the pod. Expect a
-short API outage while the single pod restarts. Sessions in flight pick up
-from their stored events. Back up PostgreSQL before an upgrade
+`helm upgrade` runs the migrate Job first, then rolls the pods one at a time:
+each new pod is ready before an old one stops. A stopping pod gives running
+turns `shutdown_grace` to finish. Back up PostgreSQL before an upgrade
 (OPERATOR-GUIDE.md, "Backups").
+
+### Upgrading from 1.0
+
+- Migration 003 runs at the start of the upgrade (the migrate Job; `serve`
+  also applies it at start). After it, a 1.0 pod cannot start against the
+  database. A 1.0 pod that is still running keeps going until it stops.
+- Rolling back to 1.0 needs a restore of the database backup taken before
+  the upgrade. `helm rollback` alone is not enough.
+- Turns that were running on the 1.0 pod when it stopped end with error code
+  `server_restarted`.
+- The default `sessions.idle_timeout` is now 30 s (was 1 h). Set `1h` to keep
+  the old behaviour.

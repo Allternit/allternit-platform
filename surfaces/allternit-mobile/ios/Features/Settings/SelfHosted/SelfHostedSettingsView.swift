@@ -159,6 +159,7 @@ struct SelfHostedSettingsView: View {
             SettingsCardBox {
                 row("Version", store.info?.version ?? "–")
                 row("Provider", store.info?.provider ?? "–")
+                if let replicas = store.info?.replicas { row("Replicas", "\(replicas)") }
                 row("Workers online", "\(store.workersOnline)")
                 row("Queue depth", "\(store.queueDepth)")
                 if store.workersOnline == 0 {

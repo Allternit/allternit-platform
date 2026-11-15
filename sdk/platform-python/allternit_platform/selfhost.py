@@ -118,6 +118,8 @@ class SelfHostClient(GeneratedResources):
         base_url: Optional[str] = None,
         timeout: float = DEFAULT_TIMEOUT,
         default_headers: Optional[Dict[str, str]] = None,
+        max_retries: int = 2,
+        retry_backoff: float = 0.25,
     ) -> None:
         """``api_key`` is a server API key (``ask_...``), an environment key
         (``aek_...``, for workers) or an OIDC id token. Defaults to
@@ -127,7 +129,8 @@ class SelfHostClient(GeneratedResources):
         if not api_key:
             raise ValueError("No key. Pass api_key=... or set ALLTERNIT_SERVER_API_KEY (ask_... server key or aek_... environment key).")
         base_url = base_url or os.environ.get("ALLTERNIT_SERVER_URL") or DEFAULT_SERVER_URL
-        self.http = Transport(api_key, base_url=base_url, timeout=timeout, default_headers=default_headers)
+        self.http = Transport(api_key, base_url=base_url, timeout=timeout, default_headers=default_headers,
+                              max_retries=max_retries, retry_backoff=retry_backoff)
         super().__init__(self.http)
         self.sessions = SelfHostSessions(self.http)
 
@@ -214,6 +217,10 @@ def run_custom_tool_worker(
     here. Give agents whose tools this worker runs their own environment. A
     tool call with no handler here gets an error result. The session secret is
     never logged or passed to a handler.
+
+    ``reclaim_older_than_ms``: also take a live lease last renewed at least this
+    many ms ago; expired leases are always claimable; values below 30000 are
+    raised to 30000.
     """
     say = log or (lambda _line: None)
     block_ms = min(max(block_ms, 0), 30_000)

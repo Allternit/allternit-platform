@@ -10,6 +10,11 @@ Behavior:
     quotes the result ("Tool result: ...").
   * The newest user text contains RUN_BASH -> a tool_use for the `bash` tool
     with `echo ok > /workspace/a && cat /workspace/a`.
+  * The newest user text contains RUN_TASK and the request offers `task` ->
+    a tool_use for `task` that starts a `builder` subagent with the prompt
+    "RUN_CUSTOM <name>" (<name> from env MOCK_CUSTOM_TOOL, default lookup).
+  * The newest user text contains RUN_CUSTOM <name> and the request offers a
+    tool of that name -> a tool_use for it with {"q": "mock"}.
   * Anything else -> a canned text reply.
 
 Every request is logged to stdout as one JSON line (model, stream, reply kind)
@@ -23,6 +28,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 PORT = int(os.environ.get("PORT", "8080"))
 BASH_COMMAND = os.environ.get("MOCK_BASH_COMMAND", "echo ok > /workspace/a && cat /workspace/a")
+CUSTOM_TOOL = os.environ.get("MOCK_CUSTOM_TOOL", "lookup")
 CANNED_TEXT = "Hello from the mock provider."
 
 
@@ -47,7 +53,7 @@ def tool_result_text(block):
 
 
 def decide(body):
-    """Return ("tool_use", input) or ("text", text) for the request."""
+    """Return ("tool_use", (name, input)) or ("text", text) for the request."""
     messages = body.get("messages") or []
     last_user = next((m for m in reversed(messages) if m.get("role") == "user"), None)
     if last_user is None:
@@ -57,8 +63,18 @@ def decide(body):
     if results:
         return "text", "Tool result: " + " ".join(tool_result_text(r).strip() for r in results)
     text = " ".join(b.get("text", "") for b in content if b.get("type") == "text")
-    if "RUN_BASH" in text and any(t.get("name") == "bash" for t in body.get("tools") or []):
-        return "tool_use", {"command": BASH_COMMAND, "description": "Write ok to a file and print it"}
+    offered = {t.get("name") for t in body.get("tools") or []}
+    if "RUN_TASK" in text and "task" in offered:
+        return "tool_use", ("task", {"description": "Run the custom tool", "subagent_type": "builder",
+                                     "prompt": "RUN_CUSTOM " + CUSTOM_TOOL})
+    if "RUN_CUSTOM" in text:
+        words = text.split("RUN_CUSTOM", 1)[1].split()
+        name = words[0] if words else CUSTOM_TOOL
+        if name in offered:
+            return "tool_use", (name, {"q": "mock"})
+        return "text", "RUN_CUSTOM asked, but the request offered no " + name + " tool."
+    if "RUN_BASH" in text and "bash" in offered:
+        return "tool_use", ("bash", {"command": BASH_COMMAND, "description": "Write ok to a file and print it"})
     if "RUN_BASH" in text:
         # The agent has no bash tool: say so instead of calling an unknown tool.
         return "text", "RUN_BASH asked, but the request offered no bash tool."
@@ -73,8 +89,9 @@ def usage(output_tokens):
 def full_message(body, kind, payload):
     msg_id = "msg_mock_" + uuid.uuid4().hex[:16]
     if kind == "tool_use":
+        name, tool_input = payload
         content = [{"type": "tool_use", "id": "toolu_mock_" + uuid.uuid4().hex[:16],
-                    "name": "bash", "input": payload}]
+                    "name": name, "input": tool_input}]
         stop = "tool_use"
     else:
         content = [{"type": "text", "text": payload}]
@@ -123,7 +140,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(404, {"type": "error", "error": {"type": "not_found_error", "message": path}})
 
         kind, payload = decide(body)
-        log("messages", model=body.get("model"), stream=bool(body.get("stream")), reply=kind)
+        log("messages", model=body.get("model"), stream=bool(body.get("stream")), reply=kind,
+            detail=(payload[0] if kind == "tool_use" else payload[:160]))
         message = full_message(body, kind, payload)
         if not body.get("stream"):
             return self._json(200, message)

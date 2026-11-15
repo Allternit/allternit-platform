@@ -66,6 +66,21 @@ pub enum CallerKind {
     Oidc,
 }
 
+/// A request the idempotency middleware already authenticated. The route's
+/// extractor reuses it instead of looking the bearer up a second time. Only
+/// server code can put it in the request extensions.
+#[derive(Debug, Clone)]
+pub(crate) struct Authenticated(pub Caller);
+
+/// The caller of a client route: the one the idempotency middleware already
+/// resolved, or a fresh lookup.
+async fn resolve_caller(parts: &Parts, st: &SelfHostState) -> Result<Caller, ApiError> {
+    match parts.extensions.get::<Authenticated>() {
+        Some(a) => Ok(a.0.clone()),
+        None => authenticate_user(st, &parts.headers).await,
+    }
+}
+
 /// A person or client signed in with a server API key or OIDC.
 #[derive(Debug, Clone)]
 pub struct Caller {
@@ -154,7 +169,7 @@ impl FromRequestParts<SelfHostState> for User {
     type Rejection = ApiError;
 
     async fn from_request_parts(parts: &mut Parts, st: &SelfHostState) -> Result<Self, ApiError> {
-        let caller = authenticate_user(st, &parts.headers).await?;
+        let caller = resolve_caller(parts, st).await?;
         if !role_allows(caller.role, &parts.method) {
             return Err(ApiError::forbidden(
                 "forbidden",
@@ -173,7 +188,7 @@ impl FromRequestParts<SelfHostState> for Admin {
     type Rejection = ApiError;
 
     async fn from_request_parts(parts: &mut Parts, st: &SelfHostState) -> Result<Self, ApiError> {
-        let caller = authenticate_user(st, &parts.headers).await?;
+        let caller = resolve_caller(parts, st).await?;
         if caller.role != Role::Admin {
             return Err(ApiError::forbidden("forbidden", "This needs the admin role."));
         }
