@@ -9,8 +9,11 @@
 //   allternit-mlx-server  Mac-only OpenAI-compatible loopback server (Hummingbird 2)
 //                         that local-engine spawns like llama-server.
 //
-// Versions: mlx-swift 0.30.6 + mlx-swift-lm 2.30.6, the pair iOS uses too
-// (KokoroKit moves 0.30.2 -> 0.30.6). Build with xcodebuild, not `swift build`:
+// Versions: mlx-swift 0.31.3 + mlx-swift-lm 2.31.3 (Eoj's pin, 2026-11-15), the
+// pair iOS uses too. The canonical OnDeviceLLM core is W7's iOS package
+// (surfaces/allternit-mobile/ios/Packages/OnDeviceLLM); this copy follows it and
+// is replaced by a dependency on it before the MLX pack ships.
+// Build with xcodebuild, not `swift build`:
 // only xcodebuild compiles the Metal shaders into mlx-swift_Cmlx.bundle.
 import PackageDescription
 
@@ -22,8 +25,8 @@ let package = Package(
         .executable(name: "allternit-mlx-server", targets: ["allternit-mlx-server"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/ml-explore/mlx-swift", exact: "0.30.6"),
-        .package(url: "https://github.com/ml-explore/mlx-swift-lm", exact: "2.30.6"),
+        .package(url: "https://github.com/ml-explore/mlx-swift", exact: "0.31.3"),
+        .package(url: "https://github.com/ml-explore/mlx-swift-lm", exact: "2.31.3"),
         .package(url: "https://github.com/hummingbird-project/hummingbird", from: "2.28.0"),
     ],
     targets: [

@@ -347,8 +347,9 @@ impl EnginePacks {
             },
         );
         let this = self.clone();
+        let task_first = first.clone();
         tokio::spawn(async move {
-            let mut job_id = first.clone();
+            let mut job_id = task_first;
             let mut outcome = Err(PackError::Invalid("no pack tried".into()));
             for (i, id) in choices.iter().enumerate() {
                 if i > 0 {

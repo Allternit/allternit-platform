@@ -35,7 +35,7 @@ if [ -n "$IDENT" ]; then
 else
   echo "WARNING: no Developer ID identity; pack is unsigned (dev only)" >&2
 fi
-VERSION="${MLX_PACK_VERSION:-mlx0.30.6-lm2.30.6}"
+VERSION="${MLX_PACK_VERSION:-mlx0.31.3-lm2.31.3}"
 python3 "$HERE/make-manifest.py" "$PACK" --engine mlx --backend metal --version "$VERSION" --os macos --arch arm64 \
   --min-os 14.0 --source-commit "$(git -C "$HERE" rev-parse HEAD)" --entrypoint bin/allternit-mlx-server
 if [ "${NOTARIZE:-0}" = 1 ]; then

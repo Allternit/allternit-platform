@@ -720,6 +720,7 @@ mod tests {
             models_dir: dir.to_string_lossy().into_owned(),
             budget: derive_budget(&[], 32 * GB, true),
             engines: vec![],
+            running: vec![],
         }
     }
 
