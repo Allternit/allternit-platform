@@ -378,6 +378,14 @@ private struct ConnLoginStep: View {
         .onChange(of: scenePhase) { _, next in
             if next == .active { pickUpCopiedCode() }
         }
+        // Closing the sheet before the sign-in ends: drop "Connecting…" and
+        // show the server's real state.
+        .onDisappear {
+            if phase != .done {
+                store.setConnecting(id, false)
+                Task { await store.load() }
+            }
+        }
     }
 
     /// Claude's paste-back code (contract §6): back from Safari with a new
@@ -540,7 +548,18 @@ private struct ConnLoginStep: View {
             guard login.poll else { return }
             while !Task.isCancelled {
                 try await Task.sleep(for: .seconds(2))
-                let poll = try await ConnectionsClient.login(id, target: target)
+                // A poll can fail while the person is in Safari (the app is
+                // suspended); keep polling until the code expires instead of
+                // giving up, so a sign-in finished on the vendor page is picked up.
+                let poll: ConnLoginPoll
+                do {
+                    poll = try await ConnectionsClient.login(id, target: target)
+                } catch is CancellationError {
+                    throw CancellationError()
+                } catch {
+                    if let raw = login.expiresAt, let expires = ISO8601DateFormatter().date(from: raw), expires < Date() { phase = .expired; return }
+                    continue
+                }
                 switch poll.status {
                 case .pending:
                     continue

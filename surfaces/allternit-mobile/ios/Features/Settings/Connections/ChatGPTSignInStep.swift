@@ -94,6 +94,9 @@ struct ChatGPTSignInStep: View {
             if device.signedIn { return }
             if device.disclosureAccepted { await start() } else { phase = .disclosure }
         }
+        // Closing the sheet mid sign-in (passkey refused, Done) must not leave
+        // the row on "Connecting…".
+        .onDisappear { if phase != .exchanging { store.setConnecting("chatgpt", false) } }
     }
 
     private var isSigningIn: Bool {

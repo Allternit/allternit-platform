@@ -140,6 +140,10 @@ final class ConnectionsStore: ObservableObject {
                 row.runsOn = "device"
                 row.personOnly = true
                 row.models = device.models.map(\.id)
+            } else if row.runsOn == "runner" && row.available {
+                // The server runs ChatGPT in the person's box: keep its row, so
+                // sign-in is a device code in Safari (passkeys and Google work
+                // there; they fail inside the in-app sign-in view).
             } else if !(row.state == .on && row.runtimeId != nil) {
                 if device.needs == .loginExpired {
                     row = ConnectionWire(id: "chatgpt", state: .needs, reason: device.needs?.reason, reasonCode: device.needs?.code, source: "device")
