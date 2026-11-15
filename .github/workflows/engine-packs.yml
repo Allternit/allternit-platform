@@ -5,8 +5,11 @@
 # Builds packs and a signed feed as workflow artifacts. It never uploads to
 # runtime.allternit.com: publishing is a separate, human-approved release step.
 #
-# Status (2026-11-15): macOS arm64 packs verified locally on an M1 Pro.
-# Windows and Linux jobs are written to the S3 plan and NOT checked yet.
+# Status (2026-11-15): the macOS arm64 llama.cpp Metal pack is verified locally
+# on an M1 Pro (signed, installed from a dev feed, chat on the local engine).
+# The MLX pack (mlx-metal) builds from W7's OnDeviceLLM package and is NOT
+# built yet; it needs surfaces/allternit-mobile/ios/Packages/OnDeviceLLM on the
+# branch. Windows and Linux jobs are written to the S3 plan and NOT checked yet.
 name: Engine packs
 
 on:
