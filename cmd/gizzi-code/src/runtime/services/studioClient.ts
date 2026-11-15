@@ -155,11 +155,11 @@ const HW_FOR_HOST: Record<string, string> = {
 // Same wording as the web (allternit-ai src/lib/model-lab/studio-jobs.ts).
 export const HARDWARE_LABELS: Record<string, string> = {
   "apple-silicon": "Mac with Apple Silicon",
-  "cuda-linux": "Linux with NVIDIA",
-  "cuda-windows": "Windows with NVIDIA",
-  "rocm-linux": "Linux with AMD (ROCm)",
-  "xpu-linux": "Linux with Intel GPU",
-  "xpu-windows": "Windows with Intel GPU",
+  "cuda-linux": "Linux with an NVIDIA GPU",
+  "cuda-windows": "Windows with an NVIDIA GPU",
+  "rocm-linux": "Linux with an AMD GPU",
+  "xpu-linux": "Linux with an Intel GPU",
+  "xpu-windows": "Windows with an Intel GPU",
   cpu: "CPU only",
 }
 export const BACKEND_LABELS: Record<string, string> = {

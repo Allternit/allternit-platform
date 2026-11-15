@@ -117,18 +117,18 @@ describe("spec and hardware", () => {
     expect(hardwareFit({ hardware: ["apple-silicon"] }, "darwin", "arm64").fits).toBe(true)
     const r = hardwareFit({ hardware: ["cuda-linux"] }, "darwin", "arm64")
     expect(r.fits).toBe(false)
-    expect(r.reason).toContain("Linux with NVIDIA")
+    expect(r.reason).toContain("Linux with an NVIDIA GPU")
   })
 })
 
 describe("hardware names and refusals", () => {
   test("hardware ids use plain names", () => {
     expect(hardwareLabel("apple-silicon")).toBe("Mac with Apple Silicon")
-    expect(hardwareLabel("cuda-linux")).toBe("Linux with NVIDIA")
-    expect(hardwareLabel("cuda-windows")).toBe("Windows with NVIDIA")
-    expect(hardwareLabel("rocm-linux")).toBe("Linux with AMD (ROCm)")
-    expect(hardwareLabel("xpu-linux")).toBe("Linux with Intel GPU")
-    expect(hardwareLabel("xpu-windows")).toBe("Windows with Intel GPU")
+    expect(hardwareLabel("cuda-linux")).toBe("Linux with an NVIDIA GPU")
+    expect(hardwareLabel("cuda-windows")).toBe("Windows with an NVIDIA GPU")
+    expect(hardwareLabel("rocm-linux")).toBe("Linux with an AMD GPU")
+    expect(hardwareLabel("xpu-linux")).toBe("Linux with an Intel GPU")
+    expect(hardwareLabel("xpu-windows")).toBe("Windows with an Intel GPU")
     expect(hardwareLabel("cpu")).toBe("CPU only")
   })
   test("fit lines show backend, untested label, warning and reasons", () => {
