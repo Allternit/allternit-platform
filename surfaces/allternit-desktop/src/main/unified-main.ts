@@ -39,6 +39,7 @@ import { enumerateWindowsFrontToBack, enumerationFailed } from './window-below.j
 import { installAgentCursorWindow } from './agent-cursor-window.js';
 import { startPetHookServer, type PetHookServer } from './pet-hook-server.js';
 import { isPairingLink, pairingCodeFromUrl } from './pairing-link.js';
+import { isModelLink, modelLinkTarget } from './model-link.js';
 import { approvePairing, describePairingRequest } from './pairing-approval.js';
 import { backendManager } from './backend-manager.js';
 import { applyDesktopHumanProof, applyDesktopHumanProofTo, DESKTOP_PROOF_MARKER, HUMAN_PROOF_HEADER, takeDesktopProofParam } from './human-proof.js';
@@ -2714,6 +2715,24 @@ async function handleProtocolCallback(url: string | null): Promise<void> {
       }
       flushSessionLink();
     }
+    return;
+  }
+
+  // Model deep links from a Freeweights page: allternit://open?model=<id> and
+  // allternit://open?view=model-lab&model=<id>. Loaded into the main window as
+  // the same ?model= / ?view= params the web app reads (model-link.ts). Bad
+  // ids are dropped, never passed on.
+  if (isModelLink(url)) {
+    const target = modelLinkTarget(activePlatformUrl, url);
+    if (!target) {
+      log.warn('[Main] rejected model link');
+      return;
+    }
+    if (!mainWindow || mainWindow.isDestroyed()) mainWindow = createMainWindow();
+    void mainWindow.loadURL(target);
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
     return;
   }
 

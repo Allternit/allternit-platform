@@ -298,7 +298,7 @@ async function handleRelayRequest(socket: WebSocket, message: any): Promise<void
   if (!identity || !requestId || !requestPath.startsWith('/') || requestPath.includes('..') || requestPath.includes('://')) return;
   const allowedPrefixes = [
     '/api/', '/viz', '/sandbox', '/vm-session', '/stream',
-    '/terminal', '/mcp', '/platform', '/metrics', '/alabs', '/cowork',
+    '/terminal', '/mcp', '/platform', '/metrics', '/cowork',
     '/webhooks', '/status', '/health',
     '/ws', '/panes',
     // gizzi-code mirrors its entire route surface under /v1/* (pty, sessions,
@@ -379,7 +379,7 @@ function handleRelaySocketOpen(relaySocket: WebSocket, message: any): void {
   const requestPath = typeof message.path === 'string' ? message.path : '';
   const allowedPrefixes = [
     '/api/', '/viz', '/sandbox', '/vm-session', '/stream',
-    '/terminal', '/mcp', '/platform', '/metrics', '/alabs', '/cowork',
+    '/terminal', '/mcp', '/platform', '/metrics', '/cowork',
     '/webhooks', '/ws', '/panes', '/status', '/health',
     // gizzi pty attach (/v1/pty/:id/connect) for the native phone app.
     '/v1/pty/',

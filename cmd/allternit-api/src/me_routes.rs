@@ -158,6 +158,11 @@ struct CloudUsageResponse {
     plan_tier: Option<String>,
     month_to_date_usage_usd: Option<f64>,
     recent_transactions: Option<Vec<serde_json::Value>>,
+    /// Allternit Cloud models entitlement (CONTRACT-cloud-credits-2026-11-15
+    /// D4), passed through as the cloud sent it. The key is snake_case on the
+    /// cloud and here; absent means clients do not lock (D10).
+    #[serde(rename = "cloud_models")]
+    cloud_models: Option<serde_json::Value>,
 }
 
 impl Default for CloudUsageResponse {
@@ -173,12 +178,13 @@ impl Default for CloudUsageResponse {
             plan_tier: None,
             month_to_date_usage_usd: None,
             recent_transactions: None,
+            cloud_models: None,
         }
     }
 }
 
 fn usage_json(usage: &CloudUsageResponse) -> serde_json::Value {
-    json!({
+    let mut body = json!({
         "plan": usage.plan,
         "label": usage.label,
         "status": usage.status,
@@ -189,7 +195,13 @@ fn usage_json(usage: &CloudUsageResponse) -> serde_json::Value {
         "credits": usage.credits,
         "monthToDateUsageUsd": usage.month_to_date_usage_usd,
         "recentTransactions": usage.recent_transactions,
-    })
+    });
+    // Left out, not null, when the cloud sent none (contract D10: absent
+    // means not locked).
+    if let Some(cloud_models) = &usage.cloud_models {
+        body["cloud_models"] = cloud_models.clone();
+    }
+    body
 }
 
 /// Production may not yet expose `/api/v1/me/usage`. Billing subscription +
@@ -232,15 +244,9 @@ async fn fetch_cloud_billing_usage(
         .or_else(|| {
             plan.get(..1).map(|first| format!("{}{}", first.to_uppercase(), plan.get(1..).unwrap_or("")))
         });
-    let free = cred.get("free_inference");
-    let balance = cred.get("balance_usd").and_then(|v| v.as_f64());
-    let free_remaining = free.and_then(|v| v.get("remaining_usd")).and_then(|v| v.as_f64());
-    let credits = match (balance, free_remaining) {
-        (Some(value), _) if value > 0.0 => Some(value),
-        (_, Some(value)) => Some(value),
-        (Some(value), _) => Some(value),
-        _ => None,
-    };
+    // No free allowance since CONTRACT-cloud-credits-2026-11-15: the balance
+    // is what there is to spend.
+    let credits = cred.get("balance_usd").and_then(|v| v.as_f64());
     Some(CloudUsageResponse {
         plan,
         label,
@@ -249,18 +255,13 @@ async fn fetch_cloud_billing_usage(
             .get("plan_tier")
             .and_then(|v| v.as_str())
             .map(str::to_string),
-        weekly_used: free
-            .and_then(|v| v.get("used_usd"))
-            .and_then(|v| v.as_f64())
-            .unwrap_or(0.0),
-        weekly_limit: free
-            .and_then(|v| v.get("monthly_allowance_usd"))
-            .and_then(|v| v.as_f64())
-            .unwrap_or(0.0),
+        weekly_used: 0.0,
+        weekly_limit: 0.0,
         resets_at: None,
         credits,
         month_to_date_usage_usd: cred.get("month_to_date_usage_usd").and_then(|v| v.as_f64()),
         recent_transactions: cred.get("recent_transactions").and_then(|v| v.as_array()).cloned(),
+        cloud_models: cred.get("cloud_models").cloned(),
     })
 }
 

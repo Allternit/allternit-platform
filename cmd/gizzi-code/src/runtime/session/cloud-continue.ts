@@ -1,5 +1,6 @@
 import { cloudOrigin, cloudAuthToken } from "@/runtime/providers/discovery/allternit-cloud"
 import { allternitCredentials } from "@/runtime/providers/quota"
+import type { CloudCreditsCode } from "@/shared/util/provider-error"
 
 /**
  * "Keep going on Allternit Cloud": when the user's own subscription hits its
@@ -28,14 +29,68 @@ export namespace CloudContinue {
     lane?: string
     default?: boolean
     hidden?: boolean
+    /** The catalog provider that serves the row ("openrouter"…); a key the person connected for it unlocks the row. */
+    provider?: string
   }
 
-  export type Funds = { kind: "balance" | "plan" | "free"; usd: number } | { kind: "none" }
+  /**
+   * `none` carries why, when the server said: `credits_required` (no credits
+   * yet) or `credits_exhausted` (used up). Free accounts get no Cloud usage.
+   */
+  export type Funds = { kind: "balance" | "plan"; usd: number } | { kind: "none"; reason?: CloudCreditsCode }
 
   export interface Offer {
     modelID: string
     label: string
     funds: Funds
+  }
+
+  /** `cloud_models` on `/api/v1/billing/credits` and `/api/v1/me/usage`. */
+  export interface Entitlement {
+    allowed: boolean
+    reason: CloudCreditsCode | null
+    balanceUsd: number
+    /** Catalog provider ids the account has its own key for. */
+    byokProviders: string[]
+  }
+
+  /** The entitlement in a credits or usage payload; undefined when the server sent none (= not locked). */
+  export function entitlementFrom(payload: any): Entitlement | undefined {
+    const c = payload?.cloud_models
+    if (!c || typeof c !== "object" || typeof c.allowed !== "boolean") return undefined
+    const reason = c.reason === "credits_required" || c.reason === "credits_exhausted" ? c.reason : null
+    return {
+      allowed: c.allowed,
+      reason: c.allowed ? null : (reason ?? "credits_required"),
+      balanceUsd: num(c.balance_usd) ?? 0,
+      byokProviders: Array.isArray(c.byok_providers) ? c.byok_providers.filter((p: unknown): p is string => typeof p === "string") : [],
+    }
+  }
+
+  /**
+   * Whether a Cloud row is locked: the account may not run Cloud models and
+   * the row's provider is not one it has its own key for (the server routes
+   * that row through the key first). No entitlement = not locked.
+   */
+  export function isLocked(entitlement: Entitlement | undefined, row?: Pick<CatalogModel, "provider">): boolean {
+    if (!entitlement || entitlement.allowed) return false
+    return !(row?.provider && entitlement.byokProviders.includes(row.provider))
+  }
+
+  /**
+   * A lock check by Cloud model id. Reads the catalog only when a locked
+   * account has keys of its own (to learn each row's provider); otherwise
+   * every row shares one answer.
+   */
+  export async function lockCheck(
+    entitlement: Entitlement | undefined,
+    fetchFn: Fetch = fetch,
+  ): Promise<(modelID: string) => boolean> {
+    if (!entitlement || entitlement.allowed) return () => false
+    if (entitlement.byokProviders.length === 0) return () => true
+    const rows = (await catalog(fetchFn)) ?? []
+    const byID = new Map(rows.flatMap((m) => (m.id ? [[m.id, m] as const] : [])))
+    return (modelID) => isLocked(entitlement, byID.get(modelID))
   }
 
   /**
@@ -83,10 +138,13 @@ export namespace CloudContinue {
 
   /**
    * What the account can spend on Cloud: prepaid balance first, then what's
-   * left of a paid plan's monthly grant, then the free monthly allowance.
+   * left of a paid plan's monthly grant. A `cloud_models` entitlement that
+   * says not allowed wins: then there is nothing to spend.
    * `credits` is `/api/v1/billing/credits`, `usage` is `/api/v1/me/usage`.
    */
   export function fundsFrom(credits: any, usage: any): Funds {
+    const entitlement = entitlementFrom(credits) ?? entitlementFrom(usage)
+    if (entitlement && !entitlement.allowed) return { kind: "none", reason: entitlement.reason ?? undefined }
     const balance = num(credits?.balance_usd) ?? 0
     if (balance > 0.005) return { kind: "balance", usd: balance }
     const plan = typeof usage?.plan === "string" ? usage.plan.toLowerCase() : undefined
@@ -94,18 +152,15 @@ export namespace CloudContinue {
     const used = num(usage?.weeklyUsed)
     const grantLeft = grant !== undefined && used !== undefined ? grant - used : 0
     if (plan && plan !== "free" && grantLeft > 0.005) return { kind: "plan", usd: grantLeft }
-    const free = num(credits?.free_inference?.remaining_usd) ?? (plan === "free" ? grantLeft : 0)
-    if (free > 0.005) return { kind: "free", usd: free }
     return { kind: "none" }
   }
 
-  /** "$4.20 Cloud balance" / "$12.00 left on your plan" / "$1.50 free left this month" / "No Cloud credits left". */
+  /** "$4.20 Cloud balance" / "$12.00 left on your plan" / "No Cloud credits". */
   export function fundsLabel(funds: Funds): string {
-    if (funds.kind === "none") return "No Cloud credits left"
+    if (funds.kind === "none") return funds.reason === "credits_exhausted" ? "Cloud credits used up" : "No Cloud credits"
     const usd = `$${funds.usd.toFixed(2)}`
     if (funds.kind === "balance") return `${usd} Cloud balance`
-    if (funds.kind === "plan") return `${usd} left on your plan`
-    return `${usd} free left this month`
+    return `${usd} left on your plan`
   }
 
   /** The note the transcript shows where the session moved to Cloud. */

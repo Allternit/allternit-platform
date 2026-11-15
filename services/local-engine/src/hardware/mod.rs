@@ -567,10 +567,30 @@ fn disk_free_bytes(path: &Path) -> u64 {
         .unwrap_or(0)
 }
 
+/// Available RAM from sysinfo's counters.
+///
+/// macOS (`macos = true`): sysinfo 0.30 computes available as free +
+/// inactive + purgeable minus the pages the compressor occupies. Under heavy
+/// compression the compressor holds more pages than that sum, so it
+/// saturates to 0 (seen on a 32 GB M1 Pro: 644,894 compressor pages vs
+/// 481,096 free + inactive + purgeable). Use total - used instead, where
+/// used = active + wired + compressor + speculative: the Activity Monitor
+/// view. Linux (MemAvailable) and Windows (ullAvailPhys) keep sysinfo's value.
+pub fn available_from(total: u64, used: u64, reported_available: u64, macos: bool) -> u64 {
+    if macos {
+        total.saturating_sub(used)
+    } else {
+        reported_available
+    }
+}
+
+/// (total, available) system RAM in bytes.
 fn memory() -> (u64, u64) {
     let mut sys = System::new();
     sys.refresh_memory();
-    (sys.total_memory(), sys.available_memory())
+    let total = sys.total_memory();
+    let available = available_from(total, sys.used_memory(), sys.available_memory(), cfg!(target_os = "macos"));
+    (total, available)
 }
 
 /// Full probe: GPUs, engines, budget. Blocking (runs commands with
@@ -609,9 +629,16 @@ pub fn probe_report(
 /// Refresh only the fields that move: free RAM, free VRAM, free disk.
 pub fn refresh_live(report: &mut HardwareReport, models_dir: &Path) {
     let (_, ram_available) = memory();
-    report.ram_available_bytes = ram_available;
+    apply_live(report, ram_available, disk_free_bytes(models_dir));
     gpu_probe::refresh_vram_free(&mut report.gpus, ram_available);
-    report.disk_free_bytes = disk_free_bytes(models_dir);
+}
+
+/// Write fresh free-memory readings into a cached report. The Apple unified
+/// GPU's free memory is the free RAM; other GPUs are re-read by
+/// `refresh_vram_free`.
+fn apply_live(report: &mut HardwareReport, ram_available: u64, disk_free: u64) {
+    report.ram_available_bytes = ram_available;
+    report.disk_free_bytes = disk_free;
 }
 
 #[cfg(test)]
@@ -673,6 +700,67 @@ mod tests {
         assert_eq!(llamacpp_state(None, Cuda), (EngineState::Installed, Cuda));
         assert_eq!(preferred_llamacpp_backend(&[gpu(GpuVendor::Intel, None, false), gpu(GpuVendor::Nvidia, Some(GB), true)], false), Cuda);
         assert_eq!(preferred_llamacpp_backend(&[gpu(GpuVendor::Qualcomm, None, false)], false), Cpu);
+    }
+
+    fn apple_report(dir: &Path) -> HardwareReport {
+        let mut gpus = vec![gpu(GpuVendor::Apple, Some(32 * GB), false), gpu(GpuVendor::Intel, None, false)];
+        gpus[0].source = gpu_probe::GpuSource::AppleUnified;
+        HardwareReport {
+            hardware_id: "x".into(),
+            os: "macos".into(),
+            arch: "aarch64".into(),
+            cpu_model: "x".into(),
+            cpu_threads: 1,
+            ram_total_bytes: 32 * GB,
+            ram_available_bytes: 0,
+            gpus,
+            unified_memory: true,
+            apple_chip: None,
+            disk_free_bytes: 0,
+            models_dir: dir.to_string_lossy().into_owned(),
+            budget: derive_budget(&[], 32 * GB, true),
+            engines: vec![],
+        }
+    }
+
+    #[test]
+    fn compressed_mac_memory_is_not_zero() {
+        // Regression (W3, 2026-11-15): vm_stat on a 32 GB M1 Pro under
+        // compression. sysinfo's available = free + inactive + purgeable -
+        // compressor = 3,906 + 471,711 + 5,479 - 644,894 pages, saturating to
+        // 0, so /hardware showed 0 free RAM and 0 free VRAM.
+        const PAGE: u64 = 16_384;
+        let total = 2_097_152 * PAGE;
+        let used = (474_974 + 447_351 + 644_894 + 2_128) * PAGE; // active + wired + compressor + speculative
+        let sysinfo_available = 0;
+        let available = available_from(total, used, sysinfo_available, true);
+        assert_eq!(available, 527_805 * PAGE); // ~8.6 GB, close to Activity Monitor
+        // Linux / Windows keep the OS figure.
+        assert_eq!(available_from(total, used, 5 * GB, false), 5 * GB);
+
+        // The live refresh carries it into both fields the fit UI reads.
+        let dir = tempfile::tempdir().unwrap();
+        let mut report = apple_report(dir.path());
+        apply_live(&mut report, available, 7);
+        gpu_probe::refresh_vram_free(&mut report.gpus, available);
+        assert_eq!(report.ram_available_bytes, available);
+        assert_eq!(report.gpus[0].vram_free_bytes, Some(available), "unified GPU tracks free RAM");
+        assert_eq!(report.gpus[1].vram_free_bytes, None, "static GPUs are left alone");
+        assert_eq!(report.disk_free_bytes, 7);
+    }
+
+    #[test]
+    fn live_refresh_on_this_machine_is_plausible() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut report = apple_report(dir.path());
+        for _ in 0..3 {
+            refresh_live(&mut report, dir.path());
+            let (total, _) = memory();
+            assert!(report.ram_available_bytes > 0, "available RAM read 0");
+            assert!(report.ram_available_bytes <= total);
+            assert_eq!(report.gpus[0].vram_free_bytes, Some(report.ram_available_bytes));
+            assert!(report.disk_free_bytes > 0);
+        }
     }
 
     #[test]

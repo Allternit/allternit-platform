@@ -6,6 +6,9 @@ import {
   exitCodeForState,
   followJob,
   hardwareFit,
+  hardwareLabel,
+  fitLines,
+  plainRefusal,
   specFromFlags,
   StudioError,
 } from "../src/runtime/services/studioClient"
@@ -114,6 +117,32 @@ describe("spec and hardware", () => {
     expect(hardwareFit({ hardware: ["apple-silicon"] }, "darwin", "arm64").fits).toBe(true)
     const r = hardwareFit({ hardware: ["cuda-linux"] }, "darwin", "arm64")
     expect(r.fits).toBe(false)
-    expect(r.reason).toContain("cuda-linux")
+    expect(r.reason).toContain("Linux with an NVIDIA GPU")
+  })
+})
+
+describe("hardware names and refusals", () => {
+  test("hardware ids use plain names", () => {
+    expect(hardwareLabel("apple-silicon")).toBe("Mac with Apple Silicon")
+    expect(hardwareLabel("cuda-linux")).toBe("Linux with an NVIDIA GPU")
+    expect(hardwareLabel("cuda-windows")).toBe("Windows with an NVIDIA GPU")
+    expect(hardwareLabel("rocm-linux")).toBe("Linux with an AMD GPU")
+    expect(hardwareLabel("xpu-linux")).toBe("Linux with an Intel GPU")
+    expect(hardwareLabel("xpu-windows")).toBe("Windows with an Intel GPU")
+    expect(hardwareLabel("cpu")).toBe("CPU only")
+  })
+  test("fit lines show backend, untested label, warning and reasons", () => {
+    const lines = fitLines({ ok: true, hardware: "apple-silicon", backend: "mlx", warning: null, methods_unavailable: { dpo: "DPO needs PyTorch" }, outputs_unavailable: {} })
+    expect(lines).toContain("Runs with MLX")
+    expect(lines).toContain("Not yet tested by Allternit on this hardware")
+    expect(lines).toContain("Not dpo: DPO needs PyTorch")
+  })
+  test("error codes become plain sentences with the host reason", () => {
+    expect(plainRefusal("method_not_supported", "On CPU only LoRA runs.")).toBe("This computer can't train with that method. On CPU only LoRA runs.")
+    expect(plainRefusal("backend_not_supported", "MLX needs a Mac")).toContain("can't use that backend")
+    expect(plainRefusal("output_not_supported", "x")).toContain("can't make that output")
+    expect(plainRefusal("invalid_base", "both given")).toContain("exactly one of a repo or a path")
+    expect(plainRefusal("hardware_unavailable", "driver did not load")).toContain("not available right now")
+    expect(exitCodeForError(new StudioError(422, "backend_not_supported", "x"))).toBe(2)
   })
 })

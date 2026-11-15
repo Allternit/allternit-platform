@@ -64,8 +64,9 @@ pub use hosted_runtime_lifecycle::{
     HostedWakeTarget,
 };
 pub use inference_settlement::{
-    check_inference_allowed, credit_balance_row, meter_json_response, meter_stream_response,
-    settle_inference, StreamSettlement, UsageMeteringBody,
+    check_inference_allowed, cloud_models_entitlement, credit_balance_row, meter_json_response,
+    meter_stream_response, settle_inference, CloudModelsEntitlement, StreamSettlement,
+    UsageMeteringBody,
 };
 pub use inference_pool::{
     check_free_tier_pool, free_tier_pool_policy, FreeTierPoolPolicy, InferencePoolService, PoolRow,

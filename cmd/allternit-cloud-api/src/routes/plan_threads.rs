@@ -1,7 +1,9 @@
 //! Plan chat store (CONTRACT-connections-2026-11 section 9.10).
 //!
 //! Chats with plan (`plan/<vendor>/<model>`) and Copilot (`copilot/<model>`)
-//! models are kept here so they sync across the person's devices with no
+//! models, and no-computer chats with Allternit Cloud models
+//! (`allternit/<alias>`, CONTRACT-cloud-credits-2026-11-15 D7), are kept here
+//! so they sync across the person's devices with no
 //! computer (the agent-session relay needs one and answers 409
 //! `compute_required` under the gate). The turn itself still goes to
 //! `POST /v1/chat/completions`; the client saves the person's message and the
@@ -136,6 +138,18 @@ fn stored(messages: Vec<NewMessage>) -> Result<Value, ApiError> {
 
 type ThreadRow = (String, Option<String>, String, i32, DateTime<Utc>, DateTime<Utc>);
 
+/// A thread's model: a plan or Copilot model, or `allternit/<alias>` for an
+/// alias the catalog resolves (hidden aliases included). Clients send the
+/// bare alias on the wire and store it with the `allternit/` prefix.
+fn storable_model(state: &ApiState, model: &str) -> bool {
+    if crate::routes::model_router::is_person_only_model(model) {
+        return true;
+    }
+    model
+        .strip_prefix("allternit/")
+        .is_some_and(|alias| !alias.is_empty() && state.model_router.upstream_for_alias(alias).is_some())
+}
+
 /// Rows saved before the markers were stripped on write are cleaned on read.
 fn summary((id, title, model, count, created, updated): ThreadRow) -> Value {
     let title = title.as_deref().map(without_app_markers).filter(|t| !t.is_empty());
@@ -156,8 +170,10 @@ async fn create(State(state): State<Arc<ApiState>>, headers: HeaderMap, body: By
         let user = session_user(&state, &headers).await?;
         let body: CreateBody = parse(&body, "{model, title?, messages?}")?;
         let model = body.model.trim().to_string();
-        if !crate::routes::model_router::is_person_only_model(&model) {
-            return Err(ApiError::BadRequest("model must be a plan/… or copilot/… model.".to_string()));
+        if !storable_model(&state, &model) {
+            return Err(ApiError::BadRequest(
+                "model must be a plan/…, copilot/… or allternit/<catalog model> model.".to_string(),
+            ));
         }
         let title = body
             .title
@@ -372,9 +388,11 @@ mod tests {
             Some(json!({ "messages": [{ "role": "user", "content": "x" }] }))).await;
         assert_eq!(status, StatusCode::NOT_FOUND);
 
-        // Only plan/copilot threads, only chat roles.
-        let (status, _) = send(&router, "POST", "/api/v1/plan-threads", "user_a", Some(json!({ "model": "kimi-k3" }))).await;
-        assert_eq!(status, StatusCode::BAD_REQUEST);
+        // Only plan/copilot and allternit/<catalog alias> threads, only chat roles.
+        for model in ["kimi-k3", "nope", "allternit/nope", "allternit/", "xai/grok-4"] {
+            let (status, _) = send(&router, "POST", "/api/v1/plan-threads", "user_a", Some(json!({ "model": model }))).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{model}");
+        }
         let (status, _) = send(&router, "POST", &format!("/api/v1/plan-threads/{id}/messages"), "user_a",
             Some(json!({ "messages": [{ "role": "tool", "content": "x" }] }))).await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
@@ -392,5 +410,26 @@ mod tests {
         assert_eq!(status, StatusCode::NOT_FOUND);
         let (status, _) = send(&router, "DELETE", &format!("/api/v1/plan-threads/{id}"), "user_a", None).await;
         assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    /// CONTRACT-cloud-credits-2026-11-15 D7: no-computer Cloud chats are
+    /// stored here as `allternit/<alias>`, hidden catalog aliases included.
+    #[tokio::test]
+    async fn plan_threads_store_allternit_catalog_models() {
+        let state = test_state(Arc::new(MockGateway::new(None, vec![]))).await;
+        sqlx::raw_sql(include_str!("../../migrations_pg/141_plan_threads.sql")).execute(&state.db).await.expect("141 applies");
+        let router = routes().with_state(state);
+        // glm-5.3 is listed; glm-5.3-fireworks is a hidden (unlisted) alias.
+        for model in ["allternit/glm-5.3", "allternit/glm-5.3-fireworks"] {
+            let (status, thread) = send(&router, "POST", "/api/v1/plan-threads", "user_c", Some(json!({
+                "model": model, "messages": [{ "role": "user", "content": "Hi" }],
+            }))).await;
+            assert_eq!(status, StatusCode::CREATED, "{model}: {thread}");
+            assert_eq!(thread["model"], model);
+        }
+        let (status, _) = send(&router, "POST", "/api/v1/plan-threads", "user_c", Some(json!({ "model": "nope" }))).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let (_, listed) = send(&router, "GET", "/api/v1/plan-threads", "user_c", None).await;
+        assert_eq!(listed["threads"].as_array().unwrap().len(), 2);
     }
 }

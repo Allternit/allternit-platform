@@ -1,8 +1,8 @@
 # Model Provider Disclosures
 
-## Current model (BETA)
+## Current model
 
-During the BETA period, Allternit Cloud does **not** sell bundled model credits or resell inference. Subscription tiers and credit balances shown in the console are **UI-only** unless explicitly marked live.
+Allternit Cloud models are paid from the account's prepaid Cloud credits (packs, a plan's monthly credits, or granted credits). Free accounts don't include Cloud usage: with no credits the API answers `402 credits_required`, and at a balance of 0 or less `402 credits_exhausted`. Each catalog row in `GET /v1/models` carries its retail `pricing` per 1M tokens, and the apps show that price before a person buys credits for a model.
 
 Model inference is currently provided through:
 

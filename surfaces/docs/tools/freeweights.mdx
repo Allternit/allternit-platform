@@ -61,6 +61,24 @@ Studio can fine-tune a hosted Freeweights model on a computer you own. The job r
 
 Some entries say "From the publisher". These are models that cannot be redistributed by Freeweights, for example non-commercial or gated ones, or ones with no manifest. They link out and have no pull button. A repo Freeweights does not list is labeled "Not in Freeweights".
 
+## Link straight to a model
+
+Freeweights model pages use these links. You can use them anywhere.
+
+- **Chat.** `https://ai.allternit.com/?model=MODEL_ID` opens a new chat with that Allternit Cloud model selected. Use an id from `https://api.allternit.com/v1/models`, for example `glm-5.3-flash`. Add `&q=TEXT` to prefill the message. If the model is not available, the chat opens normally and shows a short notice.
+- **Freeweights Studio.** `https://ai.allternit.com/?view=model-lab&model=OWNER/NAME` opens Studio on the Catalog with that model's page open, for example `?view=model-lab&model=Qwen/Qwen3-8B`. If Freeweights does not list the model, the Catalog opens with the id in the search box.
+
+Both links work on the web app, the phone layout and m.allternit.com. If you are not signed in, the link is kept through sign-in and applies afterward. The app removes `model` from the address bar once it has used it, so a reload does not repeat it.
+
+### Desktop
+
+The Desktop app registers the `allternit://` scheme and takes the same two links:
+
+- `allternit://open?model=MODEL_ID` opens a new chat with that model.
+- `allternit://open?view=model-lab&model=OWNER/NAME` opens Freeweights Studio on that model.
+
+Desktop focuses the main window, or opens it if it was closed, and loads the app with the matching `model` and `view` parameters. It accepts only an id made of letters, digits, `.`, `_` and `-`, with one optional `/` between an owner and a name, up to 200 characters. `view` must be `model-lab` or left out. Desktop ignores every other parameter and rejects a link with any other id, such as a URL, a path with `..`, or spaces. It never loads a URL taken from the link.
+
 ## iPhone
 
 The Models screen has a Freeweights section. Open a model for its license, size, file count and pinned commit. **Send to computer** starts the pull on your paired computer through the Allternit cloud relay. Pulls run on a computer, not on the phone. With no paired computer, the screen says to pair one in Computers.
@@ -74,6 +92,10 @@ gizzi models verify Qwen/Qwen3-Embedding-0.6B
 ```
 
 `pull` accepts `--quant` and `--allow-unverified`, and exits with code 2 when the result is `unverified`. See [Models and providers](/cli/models#pull-and-verify-local-models).
+
+## Accounts
+
+Freeweights accounts are Allternit accounts. Every public read and download stays anonymous. To write or read private repos, the site, apps and the `fw` CLI send a Clerk session or an Allternit `alt_` key with a `freeweights.*` scope. The Freeweights Worker reads the plan, orgs and perks from a signed claim that the Cloud API issues. See [Freeweights entitlement](/api/cloud-billing#freeweights-entitlement).
 
 ## When the catalog is down
 

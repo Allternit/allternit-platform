@@ -40,7 +40,7 @@ opentelemetry = { workspace = true }
 opentelemetry_sdk = { workspace = true }
 opentelemetry-http = { workspace = true, features = ["reqwest"] }
 tracing-opentelemetry = { workspace = true }
-tower = { workspace = true }
+tower = { workspace = true, features = ["util"] }
 reqwest = { workspace = true, features = ['json', 'stream'] }
 async-stream = { workspace = true }
 axum-extra = { version = "0.9", features = ["typed-header"] }

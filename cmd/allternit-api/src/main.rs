@@ -40,7 +40,6 @@ use allternit_api::cloud_agents_routes::cloud_agents_router;
 use allternit_api::user_profile_routes::{enrollment_router, user_profile_router};
 use allternit_api::agent_workspace_routes::agent_workspace_router;
 use allternit_api::agents_v1_routes::agents_v1_router;
-use allternit_api::alabs_routes::alabs_router;
 use allternit_api::analytics_routes::analytics_router;
 use allternit_api::artifact_routes::artifact_router;
 use allternit_api::audit_log_routes::audit_log_router;
@@ -1246,7 +1245,6 @@ async fn main() {
         .merge(office_router())
         .merge(office_cli_router())
         .merge(office_engine_v1_router())
-        .merge(alabs_router())
         .merge(automation_router())
         .merge(brain_router())
         .merge(memory_drive_router())

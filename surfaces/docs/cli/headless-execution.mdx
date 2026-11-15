@@ -75,7 +75,7 @@ gizzi exec "Draft release notes from CHANGELOG.md" \
 | `3` | `--review`: the reviewer returned **FAIL** |
 | `4` | `--review`: the reviewer returned **PARTIAL** (something could not be checked) |
 
-A run whose session pauses before a usage limit (for example the Allternit Cloud free monthly limit) ends at once with exit code `1` and the message `Paused before a usage limit (…) until <date>`. In JSON output it is an `error` event named `SessionPaused`. Run again with `--model` on another provider.
+A run whose session pauses before a usage limit (for example your own subscription's 5-hour limit) ends at once with exit code `1` and the message `Paused before a usage limit (…) until <date>`. In JSON output it is an `error` event named `SessionPaused`. Run again with `--model` on another provider.
 
 ## Review in CI
 
