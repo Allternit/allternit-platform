@@ -69,6 +69,13 @@ fn env(step_delay: Duration) -> Env {
     std::fs::create_dir_all(&base).unwrap();
     std::fs::write(base.join("config.json"), "{}").unwrap();
     std::fs::write(base.join(".studio-complete"), "main\n").unwrap();
+    // Fetched with the signed manifest the fixture pins (base.manifest_sha256).
+    let pinned: Value = serde_json::from_str(FIXTURE).unwrap();
+    std::fs::write(
+        base.join(super::runner::MANIFEST_SHA_FILE),
+        pinned["base"]["manifest_sha256"].as_str().unwrap(),
+    )
+    .unwrap();
     let dataset = tmp.path().join("train.jsonl");
     std::fs::write(&dataset, "{\"messages\":[]}\n").unwrap();
     Env {
@@ -91,6 +98,8 @@ fn host(env: &Env, hardware: Hardware) -> StudioHost {
         poll_interval: Duration::from_millis(20),
         start_timeout: Duration::from_secs(5),
         kill_grace: Duration::from_secs(2),
+        // Nothing listens here: a test that reaches Freeweights fails fast.
+        freeweights_url: Some("http://127.0.0.1:9".into()),
     })
 }
 
@@ -255,6 +264,7 @@ fn host_cfg(env: &Env) -> StudioConfig {
         poll_interval: Duration::from_millis(20),
         start_timeout: Duration::from_secs(5),
         kill_grace: Duration::from_secs(2),
+        freeweights_url: Some("http://127.0.0.1:9".into()),
     }
 }
 
@@ -455,4 +465,96 @@ async fn studio_register_output_calls_local_engine() {
     )
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+/// Serves the real signed Qwen3-Embedding manifest from model-source testdata
+/// the way Freeweights does (`/manifests/<org>/<repo>.json` + `.minisig`).
+async fn serve_signed_manifest() -> (String, String) {
+    const QWEN_MANIFEST: &[u8] = include_bytes!(
+        "../../../../services/model-source/testdata/Qwen__Qwen3-Embedding-0.6B.json"
+    );
+    const QWEN_SIG: &[u8] = include_bytes!(
+        "../../../../services/model-source/testdata/Qwen__Qwen3-Embedding-0.6B.json.minisig"
+    );
+    let app = axum::Router::new()
+        .route(
+            "/manifests/Qwen/Qwen3-Embedding-0.6B.json",
+            axum::routing::get(|| async { QWEN_MANIFEST.to_vec() }),
+        )
+        .route(
+            "/manifests/Qwen/Qwen3-Embedding-0.6B.json.minisig",
+            axum::routing::get(|| async { QWEN_SIG.to_vec() }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    use sha2::{Digest, Sha256};
+    (
+        format!("http://{addr}"),
+        hex::encode(Sha256::digest(QWEN_MANIFEST)),
+    )
+}
+
+#[tokio::test]
+async fn studio_manifest_pin_match_and_mismatch() {
+    const QWEN: &str = "Qwen/Qwen3-Embedding-0.6B";
+    let (base, manifest_sha) = serve_signed_manifest().await;
+    let env = env(Duration::from_millis(20));
+    let host = StudioHost::new(StudioConfig {
+        freeweights_url: Some(base.clone()),
+        ..host_cfg(&env)
+    });
+    let other = "ab".repeat(32);
+
+    // Mismatch through the route: refused with 422 before any job exists.
+    let mut wrong = fixture(&env);
+    wrong["base"]["manifest_sha256"] = json!(other);
+    let (status, err) = call(&host, "POST", "/studio/jobs", Some(wrong)).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{err}");
+    assert_eq!(err["error"], "manifest_mismatch");
+    let (_, jobs) = call(&host, "GET", "/studio/jobs", None).await;
+    assert_eq!(jobs["jobs"].as_array().unwrap().len(), 0);
+
+    // Against the manifest Freeweights serves now (nothing cached yet).
+    let spec_for = |pin: &str| {
+        let mut v = fixture(&env);
+        v["base"] = json!({ "repo": QWEN, "manifest_sha256": pin });
+        JobSpec::parse(&v.to_string()).unwrap()
+    };
+    host.check_manifest_pin(&spec_for(&manifest_sha))
+        .await
+        .unwrap();
+    let HostError(status, body) = host
+        .check_manifest_pin(&spec_for(&other))
+        .await
+        .unwrap_err();
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(body.error, "manifest_mismatch");
+    assert!(body.message.contains(&manifest_sha), "{}", body.message);
+    // A revision other than the manifest's pinned commit has no signed manifest.
+    let mut off_rev = spec_for(&manifest_sha);
+    off_rev.base.revision = Some("refs/pr/1".into());
+    let HostError(_, body) = host.check_manifest_pin(&off_rev).await.unwrap_err();
+    assert_eq!(body.error, "manifest_mismatch");
+
+    // The runner refuses too (the manifest could change after the job was
+    // accepted), before downloading any file.
+    let client = host.model_source().unwrap();
+    let root = env.dir.join("models");
+    let err = super::runner::fetch_repo(&client, &root, QWEN, None, true, Some(&other))
+        .await
+        .unwrap_err();
+    assert!(err.contains("not the one this job pins"), "{err}");
+    assert!(!super::runner::repo_dir(&root, QWEN, None)
+        .join(".studio-complete")
+        .exists());
+
+    // Match through the route: a base fetched with the pinned manifest is used.
+    let mut ok = fixture(&env);
+    ok["base"]["manifest_sha256"] = json!(manifest_sha);
+    let cached = super::runner::repo_dir(&root, "freeweights/qwen2.5-0.5b-instruct", Some("main"));
+    std::fs::write(cached.join(super::runner::MANIFEST_SHA_FILE), &manifest_sha).unwrap();
+    let (status, job) = call(&host, "POST", "/studio/jobs", Some(ok)).await;
+    assert_eq!(status, StatusCode::CREATED, "{job}");
+    wait_state(&host, job["id"].as_str().unwrap(), "succeeded").await;
 }

@@ -290,10 +290,12 @@ async fn prepare_and_start(host: &StudioHost, id: &str) -> Result<(), String> {
         None,
     );
     let base_dir = fetch_repo(
+        &host.model_source()?,
         &studio.join("models"),
         &spec.base.repo,
         spec.base.revision.as_deref(),
         true,
+        spec.base.manifest_sha256.as_deref(),
     )
     .await?;
     host.push_event(
@@ -309,10 +311,12 @@ async fn prepare_and_start(host: &StudioHost, id: &str) -> Result<(), String> {
         (None, Some(repo)) => {
             host.push_event(id, "log", &format!("Getting dataset {repo}"), None);
             fetch_repo(
+                &host.model_source()?,
                 &studio.join("datasets"),
                 repo,
                 spec.dataset.revision.as_deref(),
                 false,
+                None,
             )
             .await?
         }
@@ -696,27 +700,82 @@ fn skip_for_training(path: &str, has_safetensors: bool) -> bool {
         || (has_safetensors && lower.ends_with(".bin") && lower.contains("pytorch_model"))
 }
 
+/// File in a fetched folder holding the sha256 of the signed Freeweights
+/// manifest its files were checked against (absent for publisher-hash fetches).
+pub(crate) const MANIFEST_SHA_FILE: &str = ".studio-manifest-sha256";
+
+/// The cache folder [`fetch_repo`] uses for `repo` at `rev`.
+pub(crate) fn repo_dir(root: &Path, repo: &str, rev: Option<&str>) -> PathBuf {
+    let rev_dir = rev.unwrap_or("main").replace(['/', '\\'], "_");
+    root.join(repo.replace('/', "__")).join(rev_dir)
+}
+
+/// sha256 of the signed manifest a finished cache folder was fetched with.
+pub(crate) fn cached_manifest_sha(dir: &Path) -> Option<String> {
+    if !dir.join(".studio-complete").exists() {
+        return None;
+    }
+    std::fs::read_to_string(dir.join(MANIFEST_SHA_FILE))
+        .ok()
+        .map(|s| s.trim().to_ascii_lowercase())
+        .filter(|s| !s.is_empty())
+}
+
+/// Plain message for a pinned manifest that is not the one Freeweights serves.
+pub(crate) fn manifest_mismatch_message(repo: &str, pinned: &str, found: Option<&str>) -> String {
+    match found {
+        Some(found) => format!(
+            "The signed Freeweights manifest for {repo} is not the one this job pins \
+             (base.manifest_sha256 {pinned}, manifest sha256 {found})."
+        ),
+        None => format!(
+            "This job pins {repo} to manifest sha256 {pinned}, but {repo} has no signed \
+             Freeweights manifest at that revision to check it against."
+        ),
+    }
+}
+
 /// Fetch every file of `repo` at `rev` with model-source `fetch_verified`
 /// into `<root>/<org>__<name>/<rev>/` (Decision 5). A finished folder carries
 /// `.studio-complete` and is reused.
+///
+/// `pin` is the job's `base.manifest_sha256`: the folder is reused only when
+/// it was fetched with that manifest, and a fresh fetch refuses (before any
+/// file downloads) unless the signed manifest it resolved has that sha256.
 pub(crate) async fn fetch_repo(
+    client: &allternit_model_source::Client,
     root: &Path,
     repo: &str,
     rev: Option<&str>,
     model: bool,
+    pin: Option<&str>,
 ) -> Result<PathBuf, String> {
-    let rev_dir = rev.unwrap_or("main").replace(['/', '\\'], "_");
-    let dir = root.join(repo.replace('/', "__")).join(&rev_dir);
+    let dir = repo_dir(root, repo, rev);
     let marker = dir.join(".studio-complete");
+    let pin = pin.map(|p| p.trim().to_ascii_lowercase());
     if marker.exists() {
-        return Ok(dir);
+        match &pin {
+            None => return Ok(dir),
+            Some(p) if cached_manifest_sha(&dir).as_deref() == Some(p.as_str()) => return Ok(dir),
+            // Fetched with another manifest (or none): fetch again under the pin.
+            Some(_) => {
+                let _ = std::fs::remove_file(&marker);
+            }
+        }
     }
-    let client = allternit_model_source::Client::new()
-        .map_err(|e| format!("Could not reach Freeweights: {e}"))?;
     let res = client
         .resolve(repo, rev)
         .await
         .map_err(|e| format!("Could not find {repo}: {e}"))?;
+    if let Some(p) = &pin {
+        if res.manifest_sha256.as_deref() != Some(p.as_str()) {
+            return Err(manifest_mismatch_message(
+                repo,
+                p,
+                res.manifest_sha256.as_deref(),
+            ));
+        }
+    }
     let has_st = res.files.keys().any(|f| f.ends_with(".safetensors"));
     std::fs::create_dir_all(&dir)
         .map_err(|e| format!("Could not create {}: {e}", dir.display()))?;
@@ -735,6 +794,15 @@ pub(crate) async fn fetch_repo(
             .await
             .map_err(|e| format!("Could not download {path} from {repo}: {e}"))?;
     }
+    let sha_file = dir.join(MANIFEST_SHA_FILE);
+    match &res.manifest_sha256 {
+        Some(sha) => std::fs::write(&sha_file, format!("{sha}\n")),
+        None => match std::fs::remove_file(&sha_file) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
+            _ => Ok(()),
+        },
+    }
+    .map_err(|e| format!("Could not finish the download: {e}"))?;
     std::fs::write(&marker, format!("{}\n", res.revision))
         .map_err(|e| format!("Could not finish the download: {e}"))?;
     Ok(dir)

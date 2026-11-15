@@ -64,7 +64,7 @@ async fn install_engine(
 
 async fn create_job(State(host): State<StudioHost>, headers: HeaderMap, body: String) -> Res {
     require_user(&headers)?;
-    let job = host.create(&body)?;
+    let job = host.create(&body).await?;
     Ok((StatusCode::CREATED, Json(job)).into_response())
 }
 

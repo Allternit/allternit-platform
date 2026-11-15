@@ -300,15 +300,26 @@ pub async fn studio_output(
         return Err((StatusCode::BAD_REQUEST, format!("cannot access output path: {err}")));
     }
     let id = format!("studio--{}--{}", req.job_id, req.kind);
-    if let Some(existing) = store.get(&id).await {
-        return Ok(existing);
-    }
-    let name = if req.name.trim().is_empty() { id.clone() } else { req.name.trim().to_string() };
-    let mut model = CachedModel::new_local(id.clone(), name, path, ModelSource::StudioOutput);
-    model.revision = req.job_id;
-    model.set_ready();
-    store.insert(model.clone()).await;
-    info!(%id, "studio output registered");
+    let model = match store.get(&id).await {
+        Some(existing) => existing,
+        None => {
+            let name = if req.name.trim().is_empty() { id.clone() } else { req.name.trim().to_string() };
+            let mut model = CachedModel::new_local(id.clone(), name, path, ModelSource::StudioOutput);
+            model.revision = req.job_id;
+            model.set_ready();
+            store.insert(model.clone()).await;
+            info!(%id, "studio output registered");
+            model
+        }
+    };
+    // Kept across restarts: the output lives in its job folder, not models/.
+    // Saved on a repeat too, so a retry after a failed save persists it.
+    store.save_studio_outputs().await.map_err(|err| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("could not save the studio output list: {err}"),
+        )
+    })?;
     Ok(model)
 }
 
@@ -410,5 +421,45 @@ mod tests {
         let mut traversal = req(&adapter);
         traversal.job_id = "../x".into();
         assert!(studio_output(&store, traversal).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn studio_outputs_survive_a_restart() {
+        let tmp = tempfile::tempdir().unwrap();
+        let models_dir = tmp.path().join("models");
+        let kept = tmp.path().join("job_1").join("adapter");
+        let removed = tmp.path().join("job_2").join("model.gguf");
+        std::fs::create_dir_all(&kept).unwrap();
+        std::fs::create_dir_all(removed.parent().unwrap()).unwrap();
+        std::fs::write(&removed, b"gguf").unwrap();
+
+        let store = ModelStore::new(&models_dir);
+        for (path, job_id, kind) in [(&kept, "job_1", "adapter"), (&removed, "job_2", "gguf")] {
+            let req = StudioOutputRequest {
+                path: path.to_string_lossy().into_owned(),
+                name: format!("{job_id}-{kind}"),
+                job_id: job_id.into(),
+                kind: kind.into(),
+            };
+            studio_output(&store, req).await.unwrap();
+        }
+        drop(store);
+
+        // Restart: a fresh store on the same data dir lists both again.
+        let restarted = ModelStore::new(&models_dir);
+        assert_eq!(restarted.load_studio_outputs().await, 2);
+        let model = restarted.get("studio--job_1--adapter").await.unwrap();
+        let listed = CachedModelResponse::from(&model);
+        assert_eq!((listed.source.as_str(), listed.status.as_str()), ("studio_output", "ready"));
+        assert_eq!(listed.name, "job_1-adapter");
+
+        // An output whose files were deleted is not listed after the next restart.
+        std::fs::remove_file(&removed).unwrap();
+        let again = ModelStore::new(&models_dir);
+        assert_eq!(again.load_studio_outputs().await, 1);
+        assert!(again.get("studio--job_2--gguf").await.is_none());
+        let saved: Vec<CachedModel> =
+            serde_json::from_slice(&std::fs::read(again.studio_outputs_file()).unwrap()).unwrap();
+        assert_eq!(saved.len(), 1);
     }
 }

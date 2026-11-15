@@ -45,6 +45,9 @@ pub struct StudioConfig {
     pub start_timeout: Duration,
     /// SIGTERM, then this long, then SIGKILL.
     pub kill_grace: Duration,
+    /// Freeweights base URL for base models and manifests; `None` = model-source
+    /// default (`ALLTERNIT_FREEWEIGHTS_URL`, else freeweights.allternit.com).
+    pub freeweights_url: Option<String>,
 }
 
 impl StudioConfig {
@@ -64,6 +67,7 @@ impl StudioConfig {
             poll_interval: Duration::from_millis(500),
             start_timeout: Duration::from_secs(120),
             kill_grace: Duration::from_secs(5),
+            freeweights_url: None,
         }
     }
 }
@@ -239,9 +243,79 @@ impl StudioHost {
         Ok(self.engine_view(info))
     }
 
+    /// Freeweights client for base models, datasets and manifests.
+    pub(crate) fn model_source(&self) -> Result<allternit_model_source::Client, String> {
+        match &self.0.cfg.freeweights_url {
+            Some(url) => allternit_model_source::Client::with_urls(
+                url.as_str(),
+                allternit_model_source::DEFAULT_PUBLISHER_URL,
+            ),
+            None => allternit_model_source::Client::new(),
+        }
+        .map_err(|e| format!("Could not reach Freeweights: {e}"))
+    }
+
+    /// `base.manifest_sha256` must be the sha256 of the signed Freeweights
+    /// manifest the base model is (or will be) fetched with. Checked before
+    /// the job is accepted: against the cached fetch when it was made with
+    /// that manifest, else against the manifest Freeweights serves now. The
+    /// runner checks again when it fetches (see [`runner::fetch_repo`]).
+    pub(crate) async fn check_manifest_pin(&self, spec: &JobSpec) -> Result<(), HostError> {
+        let Some(pin) = spec.base.manifest_sha256.as_deref() else {
+            return Ok(());
+        };
+        let pin = pin.trim().to_ascii_lowercase();
+        let repo = spec.base.repo.as_str();
+        let mismatch = |message: String| {
+            HostError::new(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "manifest_mismatch",
+                message,
+            )
+        };
+        if pin.len() != 64 || !pin.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err(mismatch(format!(
+                "base.manifest_sha256 must be a sha256 (64 hex characters); got '{pin}'."
+            )));
+        }
+        let rev = spec.base.revision.as_deref();
+        let cached = runner::repo_dir(&self.0.cfg.dir.join("models"), repo, rev);
+        if runner::cached_manifest_sha(&cached).as_deref() == Some(pin.as_str()) {
+            return Ok(());
+        }
+        let client = self.model_source().map_err(&mismatch)?;
+        let found = match client.fetch_manifest_sha(repo).await {
+            Ok(Ok((m, sha))) => {
+                // resolve() only uses the signed manifest at its pinned commit.
+                let commit = m.upstream.commit.as_str();
+                rev.is_none_or(|r| r == "main" || r == commit)
+                    .then_some(sha)
+            }
+            Ok(Err(reason)) => {
+                return Err(mismatch(format!(
+                    "Could not check base.manifest_sha256 for {repo}: {reason}."
+                )))
+            }
+            Err(e) => {
+                return Err(mismatch(format!(
+                    "The Freeweights manifest for {repo} failed verification: {e}."
+                )))
+            }
+        };
+        if found.as_deref() == Some(pin.as_str()) {
+            Ok(())
+        } else {
+            Err(mismatch(runner::manifest_mismatch_message(
+                repo,
+                &pin,
+                found.as_deref(),
+            )))
+        }
+    }
+
     // ── jobs ───────────────────────────────────────────────────────────────
 
-    pub fn create(&self, body: &str) -> Result<Job, HostError> {
+    pub async fn create(&self, body: &str) -> Result<Job, HostError> {
         let spec = JobSpec::parse(body).map_err(|errs| {
             let message = errs
                 .iter()
@@ -269,6 +343,7 @@ impl StudioHost {
                 ),
             ));
         }
+        self.check_manifest_pin(&spec).await?;
         let job = {
             let mut jobs = self.0.jobs.lock().unwrap();
             if let Some(busy) = jobs.values().find(|r| !r.job.state.is_terminal()) {

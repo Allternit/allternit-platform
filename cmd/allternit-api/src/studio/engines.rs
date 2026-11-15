@@ -285,22 +285,49 @@ impl EngineDirs {
     }
 }
 
-/// The Allternit Tune source folder (`services/model-training`): the
-/// `ALLTERNIT_TUNE_SOURCE` env var, else a `model-training` folder next to
-/// the allternit-api binary or in its `../resources`.
+/// The Allternit Tune source folder (`services/model-training`, source only).
+///
+/// 1. `ALLTERNIT_TUNE_SOURCE` when set and non-empty (Desktop sets it to the
+///    active runtime package's `model-training/`, else the app's bundled
+///    `Resources/model-training`; see backend-manager.ts).
+/// 2. Next to the binary: `<exe dir>/model-training`, or one level up
+///    (`Resources/bin/allternit-api` → `Resources/model-training` in the app
+///    bundle; `versions/<v>/bin/allternit-api` → `versions/<v>/model-training`
+///    in a runtime package), or `<exe dir>/../resources/model-training`.
+/// 3. Dev and `cargo run`: the repo copy this binary was built from.
 pub fn tune_source() -> Option<PathBuf> {
-    let is_src =
-        |p: &Path| p.join("allternit_tune").is_dir() && p.join("requirements.txt").is_file();
-    if let Some(p) = std::env::var_os("ALLTERNIT_TUNE_SOURCE").map(PathBuf::from) {
-        return is_src(&p).then_some(p);
+    let env = std::env::var_os("ALLTERNIT_TUNE_SOURCE").filter(|v| !v.is_empty());
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(Path::to_path_buf));
+    tune_source_from(env.map(PathBuf::from), exe_dir.as_deref())
+}
+
+fn is_tune_source(p: &Path) -> bool {
+    p.join("allternit_tune").is_dir() && p.join("requirements.txt").is_file()
+}
+
+fn tune_source_from(env: Option<PathBuf>, exe_dir: Option<&Path>) -> Option<PathBuf> {
+    if let Some(p) = env {
+        // An explicit folder is the answer, right or wrong: never silently use another copy.
+        return is_tune_source(&p).then_some(p);
     }
-    let exe_dir = std::env::current_exe().ok()?.parent()?.to_path_buf();
-    [
-        exe_dir.join("model-training"),
-        exe_dir.join("..").join("resources").join("model-training"),
-    ]
-    .into_iter()
-    .find(|p| is_src(p))
+    let repo_copy = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("services")
+        .join("model-training");
+    exe_dir
+        .into_iter()
+        .flat_map(|d| {
+            [
+                d.join("model-training"),
+                d.join("..").join("model-training"),
+                d.join("..").join("resources").join("model-training"),
+            ]
+        })
+        .chain(std::iter::once(repo_copy))
+        .find(|p| is_tune_source(p))
 }
 
 fn requirements_hash(source: &Path) -> Option<String> {
@@ -383,5 +410,47 @@ mod tests {
         let none = hardware_fit(&tune, Hardware::Unsupported);
         assert!(!none.ok);
         assert!(none.reason.contains("Apple Silicon"));
+    }
+
+    #[test]
+    fn tune_source_finds_bundled_then_repo_copy() {
+        let tmp = tempfile::tempdir().unwrap();
+        let make = |dir: &Path| {
+            std::fs::create_dir_all(dir.join("allternit_tune")).unwrap();
+            std::fs::write(dir.join("requirements.txt"), "torch\n").unwrap();
+        };
+        // Packaged app: Resources/bin/allternit-api finds Resources/model-training.
+        let resources = tmp.path().join("Resources");
+        let bin = resources.join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        make(&resources.join("model-training"));
+        let found = tune_source_from(None, Some(&bin)).unwrap();
+        assert_eq!(
+            found.canonicalize().unwrap(),
+            resources.join("model-training").canonicalize().unwrap()
+        );
+
+        // Dev: no bundled copy next to the binary, so the repo's own folder.
+        let elsewhere = tmp.path().join("target").join("debug");
+        std::fs::create_dir_all(&elsewhere).unwrap();
+        let dev = tune_source_from(None, Some(&elsewhere)).unwrap();
+        assert!(
+            dev.ends_with("services/model-training"),
+            "{}",
+            dev.display()
+        );
+        assert!(is_tune_source(&dev));
+
+        // An explicit folder wins and is never swapped for another copy.
+        let explicit = tmp.path().join("custom");
+        make(&explicit);
+        assert_eq!(
+            tune_source_from(Some(explicit.clone()), Some(&bin)),
+            Some(explicit)
+        );
+        assert_eq!(
+            tune_source_from(Some(tmp.path().join("nope")), Some(&bin)),
+            None
+        );
     }
 }
