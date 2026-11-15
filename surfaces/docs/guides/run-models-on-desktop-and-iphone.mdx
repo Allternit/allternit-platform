@@ -4,19 +4,39 @@ description: "How Allternit Desktop gets its model engines as signed packs, and 
 ---
 
 <Note>
-This page is written from the build plan, and the code for these parts is still being finished. Items marked in the source are checked against the built code before this page is final. Do not rely on the details yet.
+The Desktop section below follows built and tested code. The iPhone section follows the plan and is still being built. Do not rely on its details yet.
 </Note>
 
 ## Desktop engines
 
-Allternit Desktop does not ship the model engines in its installer. It downloads the engine pack that matches your computer, as a signed download.
+Allternit Desktop does not ship the model engines in its installer. The Local Engine downloads the engine pack that matches your computer, as a signed download, the first time it is needed. Desktop prepares packs in the background only if the computer already runs local models.
 
-- Desktop reads your hardware and picks the pack: Metal on a Mac, and the matching pack for NVIDIA, AMD, Intel, Arm or the processor on Windows and Linux. {/* TODO(W6/W7): verify against built code: which OS and GPU packs actually ship in the first release */}
-- Each pack has a signed manifest. Desktop checks the signature and every file's hash before it runs anything, and keeps the previous pack if an update fails. {/* TODO(W6/W7): verify against built code: rollback on a failed install */}
-- A model that has not been used for 5 minutes unloads. {/* TODO(W6/W7): verify against built code: idle unload on Desktop */}
-- On a Mac, models can run on MLX. MLX runs as a separate Swift program that Desktop starts, built from the same code as the iPhone engine. llama.cpp on Metal is the other option. {/* TODO(W6/W7): verify against built code: how Desktop picks MLX or llama.cpp */}
+Which pack it picks:
 
-You do not install anything yourself, and an engine update does not need a new Desktop version. {/* TODO(W6/W7): verify against built code: packs update independently of the installer */}
+| Computer | Pack |
+|---|---|
+| Mac with Apple silicon | llama.cpp on Metal (`llamacpp-metal-macos-arm64`), plus the MLX engine (`mlx-metal-macos-arm64`) |
+| NVIDIA with a working driver | CUDA. Without the driver, Vulkan. |
+| AMD | ROCm on Linux when ROCm is installed. Otherwise Vulkan. |
+| Intel | Vulkan |
+| Windows on Arm | The processor first |
+| No usable GPU | The processor |
+
+A pack goes through these states: queued, downloading, verifying, installed, or failed with a reason. Before it runs anything, the engine checks the signature on the feed and the manifest, and the sha256 of every file. A bad signature is refused. A failed update keeps the previous pack (the install rolls back).
+
+Once a model is loaded:
+
+- It unloads after 5 minutes without use.
+- The engine reports live memory, speed, context used and the idle timer for the running model.
+- Every reply carries the measured speed and first-token time.
+
+Measured on a MacBook Pro with an M1 Pro: Qwen3-0.6B Q4_K_M on Metal at 45.9 tokens per second. Your computer will differ.
+
+Not checked:
+
+- MLX on Mac. The MLX engine builds from the iPhone engine's code, and that is not built yet. Until the MLX pack exists, a model asked to run on MLX falls back to its GGUF build, or says to install the pack.
+- Windows and Linux packs (CUDA, ROCm, Vulkan, processor). They are written and unit-tested for the pick rules, and have not been run.
+- Notarization of the Mac pack, and a packaged Desktop app downloading packs end to end.
 
 ## iPhone
 
