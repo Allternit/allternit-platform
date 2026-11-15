@@ -4,13 +4,14 @@
 //! every chat completion is a real cost. This module is the accounting half of
 //! `routes::model_router`:
 //!
-//! - a pre-dispatch gate (`check_inference_allowed`): users with a
-//!   `user_credits` row and no balance are blocked; users WITHOUT a row must
-//!   have a verified email address (checked against Clerk and cached in
-//!   `user_trust`, see `services::user_trust`) and then get a free monthly
-//!   allowance (`FREE_INFERENCE_MONTHLY_USD`, default $2.00)
-//!   measured from this month's `inference_usage` rows — which
-//!   `settle_inference` writes for them even though no deduction happens;
+//! - a pre-dispatch gate (`check_inference_allowed`): Allternit Cloud models
+//!   need a positive `user_credits` balance, whatever its source (pack,
+//!   monthly plan credits, comp grant). No row is a 402 `credits_required`,
+//!   a row at or below 0 a 402 `credits_exhausted`
+//!   (CONTRACT-cloud-credits-2026-11-15; there is no free allowance);
+//! - `cloud_models_entitlement`: the same rule as a read-only answer for
+//!   clients (`GET /api/v1/billing/credits`, `GET /api/v1/me/usage`), with
+//!   the catalog providers the account brings its own key for;
 //! - `settle_inference`: always writes an `inference_usage` row (the audit
 //!   trail), then deducts the cost via `CostService::deduct_credits_for_usage`
 //!   when the user has a credits row. Settlement failures are logged
@@ -237,9 +238,9 @@ pub fn derive_client(device_token: bool, key_kind: Option<&str>, client_header: 
 }
 
 /// The user's credit balance if they have a `user_credits` row. The Some/None
-/// distinction matters: None means free-allowance user (deduction no-ops,
-/// pre-check enforces the monthly allowance), Some(<= 0) means a paying user
-/// who ran out.
+/// distinction matters: None means no credits row (deduction no-ops, the gate
+/// answers `credits_required`), Some(<= 0) means a row that ran out
+/// (`credits_exhausted`).
 pub async fn credit_balance_row(db: &PgPool, user_id: &str) -> Result<Option<f64>, ApiError> {
     sqlx::query_scalar("SELECT balance_usd FROM user_credits WHERE user_id = $1")
         .bind(user_id)
@@ -248,57 +249,104 @@ pub async fn credit_balance_row(db: &PgPool, user_id: &str) -> Result<Option<f64
         .map_err(ApiError::DatabaseError)
 }
 
-/// Free monthly inference allowance in USD (`FREE_INFERENCE_MONTHLY_USD`,
-/// default 2.00). Applies only to users without a credits row.
-fn free_inference_monthly_usd() -> f64 {
-    std::env::var("FREE_INFERENCE_MONTHLY_USD")
-        .ok()
-        .and_then(|value| value.trim().parse::<f64>().ok())
-        .filter(|value| *value >= 0.0)
-        .unwrap_or(2.0)
+/// Where a person buys Cloud credits (the contract's `billing_url`).
+pub const CLOUD_CREDITS_BILLING_URL: &str = "https://ai.allternit.com/settings/billing";
+/// 402 code: the account has no credits row.
+pub const CREDITS_REQUIRED: &str = "credits_required";
+/// 402 code: the account's credits row is at or below 0.
+pub const CREDITS_EXHAUSTED: &str = "credits_exhausted";
+
+/// The gate's verdict for a balance: `None` when allowed, else the 402 code.
+pub fn credits_reason(balance: Option<f64>) -> Option<&'static str> {
+    match balance {
+        Some(balance) if balance > 0.0 => None,
+        Some(_) => Some(CREDITS_EXHAUSTED),
+        None => Some(CREDITS_REQUIRED),
+    }
 }
 
-/// Pre-dispatch gate. Paying users (`Some` balance) are blocked at or below
-/// zero with a 403 (closest existing variant to 402). Free users (`None` — no
-/// credits row) get `FREE_INFERENCE_MONTHLY_USD` per calendar month, measured
-/// from the `inference_usage` rows `settle_inference` writes for them; at or
-/// over the allowance they are 403'd with an upgrade nudge.
-pub async fn check_inference_allowed(
-    db: &PgPool,
-    user_id: &str,
-    balance: Option<f64>,
-) -> Result<(), ApiError> {
-    match balance {
-        Some(balance) if balance > 0.0 => Ok(()),
-        Some(_) => Err(ApiError::Forbidden(
-            "Inference credits exhausted — add credits to keep using hosted models.".to_string(),
-        )),
-        None => {
-            // Free-allowance users: the Clerk session JWT carries no
-            // email-verified flag, so consult Clerk (cached in user_trust)
-            // before spending our money on a possibly throwaway signup.
-            // Unverified or unconfirmable → 403 (services::user_trust).
-            crate::services::user_trust::email_verification_gate(db, user_id).await?;
-            let month_cost: f64 = sqlx::query_scalar(
-                r#"
-                SELECT COALESCE(SUM(cost_usd), 0)
-                FROM inference_usage
-                WHERE user_id = $1 AND created_at >= date_trunc('month', NOW())
-                "#,
-            )
-            .bind(user_id)
-            .fetch_one(db)
-            .await
-            .map_err(ApiError::DatabaseError)?;
-            let allowance = free_inference_monthly_usd();
-            if month_cost >= allowance {
-                return Err(ApiError::Forbidden(format!(
-                    "Free inference allowance of ${allowance:.2}/month is used up — buy credits or subscribe to keep going."
-                )));
-            }
-            Ok(())
-        }
+/// The person-facing message for a 402 code (contract wording).
+pub fn credits_message(code: &str) -> &'static str {
+    if code == CREDITS_EXHAUSTED {
+        "Your Allternit Cloud credits are used up. Add credits to keep going."
+    } else {
+        "Allternit Cloud models need credits. Buy credits or choose a plan."
     }
+}
+
+/// The contract's 402 body. `packs` is the `GET /api/v1/billing/packs` list.
+pub fn credits_required_body(code: &str, balance_usd: f64) -> Value {
+    serde_json::json!({
+        "error": {
+            "type": "billing_error",
+            "code": code,
+            "message": credits_message(code),
+            "balance_usd": balance_usd,
+            "packs": crate::routes::billing_checkout::credit_pack_catalog(),
+            "billing_url": CLOUD_CREDITS_BILLING_URL,
+        }
+    })
+}
+
+/// Pre-dispatch gate for Allternit Cloud models (the consumer path of
+/// `/v1/chat/completions` and the artifact-runtime model call). A positive
+/// balance is allowed; no credits row is a 402 `credits_required`; a row at
+/// or below 0 is a 402 `credits_exhausted`. BYOK, person models and
+/// platform-project runtimes never reach this call.
+pub fn check_inference_allowed(balance: Option<f64>) -> Result<(), ApiError> {
+    match credits_reason(balance) {
+        None => Ok(()),
+        Some(code) => Err(ApiError::CreditsRequired { code, balance_usd: balance.unwrap_or(0.0).max(0.0) }),
+    }
+}
+
+/// `cloud_models` on `GET /api/v1/billing/credits` and `GET /api/v1/me/usage`
+/// (contract D4, D5): whether this account may run Allternit Cloud models,
+/// and the catalog providers it has its own key for (rows a client must not
+/// lock, because the server routes them through that key first).
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct CloudModelsEntitlement {
+    pub allowed: bool,
+    pub reason: Option<&'static str>,
+    pub balance_usd: f64,
+    pub byok_providers: Vec<String>,
+}
+
+/// The one entitlement function both endpoints use. `balance` is the
+/// caller's [`credit_balance_row`].
+pub async fn cloud_models_entitlement(db: &PgPool, user_id: &str, balance: Option<f64>) -> CloudModelsEntitlement {
+    let reason = credits_reason(balance);
+    CloudModelsEntitlement {
+        allowed: reason.is_none(),
+        reason,
+        balance_usd: balance.unwrap_or(0.0).max(0.0),
+        byok_providers: byok_catalog_providers(db, user_id).await,
+    }
+}
+
+/// Providers the account has an active key for that also route catalog
+/// aliases (`inference_keys::byok_base_url`), while BYOK is switched on. A
+/// failed read lists none: the client then shows locks it would not need,
+/// which the server answers correctly anyway (BYOK routes before the gate).
+async fn byok_catalog_providers(db: &PgPool, user_id: &str) -> Vec<String> {
+    use crate::services::inference_keys::{byok_base_url, byok_enabled};
+    if !byok_enabled() {
+        return Vec::new();
+    }
+    let providers: Vec<String> = match sqlx::query_scalar::<_, String>(
+        "SELECT provider_id FROM user_inference_keys WHERE user_id = $1 AND status = 'active' ORDER BY provider_id",
+    )
+    .bind(user_id)
+    .fetch_all(db)
+    .await
+    {
+        Ok(rows) => rows,
+        Err(error) => {
+            tracing::warn!(%error, user_id, "BYOK key list unavailable for cloud_models; listing none");
+            Vec::new()
+        }
+    };
+    providers.into_iter().filter(|provider| byok_base_url(provider).is_some()).collect()
 }
 
 /// Cost of one completion in USD: `(prompt/1M) * prompt_price + (completion/1M) * completion_price`,
@@ -690,11 +738,8 @@ mod tests {
     use sqlx::PgPool;
 
     async fn test_pool() -> PgPool {
-        // The free-allowance path consults Clerk via services::user_trust;
-        // unit tests here exercise the accounting, not the trust gate, so
-        // bypass it (no test in this suite unsets the variable).
-        std::env::set_var("ALLTERNIT_SKIP_EMAIL_VERIFICATION", "1");
-        let url = "postgres://allternit:allternit_pg_2026@localhost:5432/allternit_test";
+        let url = std::env::var("TEST_DATABASE_URL")
+            .unwrap_or_else(|_| "postgres://allternit:allternit_pg_2026@localhost:5432/allternit_test".to_string());
         let schema = format!("test_{}", uuid::Uuid::new_v4().simple());
         let schema_for_hook = schema.clone();
         let pool = sqlx::postgres::PgPoolOptions::new()
@@ -711,7 +756,7 @@ mod tests {
                     Ok(())
                 })
             })
-            .connect(url)
+            .connect(&url)
             .await
             .unwrap();
         // Inference usage schema (migrations_pg 007 + 009 + 121), minus the users FK.
@@ -901,55 +946,74 @@ mod tests {
         assert_eq!(debits, 0, "plan-cap users are recorded only");
     }
 
+    #[test]
+    fn gate_allows_only_a_positive_balance() {
+        assert!(check_inference_allowed(Some(0.01)).is_ok());
+        for (balance, code) in [(None, CREDITS_REQUIRED), (Some(0.0), CREDITS_EXHAUSTED), (Some(-1.0), CREDITS_EXHAUSTED)] {
+            match check_inference_allowed(balance) {
+                Err(ApiError::CreditsRequired { code: got, balance_usd }) => {
+                    assert_eq!(got, code, "{balance:?}");
+                    assert_eq!(balance_usd, 0.0, "a negative balance reports 0");
+                }
+                other => panic!("{balance:?}: expected CreditsRequired, got {other:?}"),
+            }
+        }
+    }
+
+    /// CONTRACT-cloud-credits-2026-11-15: the 402 body every client reads.
     #[tokio::test]
-    async fn pre_check_blocks_exhausted_balances_and_allows_paying_users() {
-        let pool = test_pool().await;
-        assert!(
-            check_inference_allowed(&pool, "user_1", Some(0.0)).await.is_err()
-        );
-        assert!(
-            check_inference_allowed(&pool, "user_1", Some(-1.0)).await.is_err()
-        );
-        assert!(
-            check_inference_allowed(&pool, "user_1", Some(0.01)).await.is_ok()
-        );
+    async fn no_credits_row_is_a_402_with_the_contract_body_and_four_packs() {
+        use axum::response::IntoResponse;
+        let response = check_inference_allowed(None).unwrap_err().into_response();
+        assert_eq!(response.status(), axum::http::StatusCode::PAYMENT_REQUIRED);
+        let bytes = axum::body::to_bytes(response.into_body(), 1 << 16).await.unwrap();
+        let body: Value = serde_json::from_slice(&bytes).unwrap();
+        let error = &body["error"];
+        assert_eq!(error["type"], "billing_error");
+        assert_eq!(error["code"], "credits_required");
+        assert_eq!(error["message"], "Allternit Cloud models need credits. Buy credits or choose a plan.");
+        assert_eq!(error["balance_usd"], 0.0);
+        assert_eq!(error["billing_url"], "https://ai.allternit.com/settings/billing");
+        let packs = error["packs"].as_array().unwrap();
+        assert_eq!(packs.len(), 4, "{body}");
+        assert_eq!(packs[0], serde_json::json!({ "id": "credits_10", "label": "$10", "credits_usd": 10.0, "price_usd": 10.0 }));
+
+        let response = check_inference_allowed(Some(0.0)).unwrap_err().into_response();
+        let bytes = axum::body::to_bytes(response.into_body(), 1 << 16).await.unwrap();
+        let body: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(body["error"]["code"], "credits_exhausted");
+        assert_eq!(body["error"]["message"], "Your Allternit Cloud credits are used up. Add credits to keep going.");
     }
 
     #[tokio::test]
-    async fn free_allowance_boundary_under_at_over() {
+    async fn entitlement_follows_the_gate_and_lists_byok_catalog_providers() {
         let pool = test_pool().await;
-        // Under the default $2.00 allowance → allowed.
-        settle_inference(&pool, "user_free", "gpt-4o", None, true, &test_prices(), 6_000_000, 2_000_000, false, &InferenceAttribution::default()).await; // $1.50
-        assert!(
-            check_inference_allowed(&pool, "user_free", None).await.is_ok(),
-            "$1.50 < $2.00 must pass"
-        );
-        // Exactly at the allowance → blocked (>=).
-        settle_inference(&pool, "user_free", "gpt-4o", None, true, &test_prices(), 2_000_000, 1_000_000, false, &InferenceAttribution::default()).await; // +$0.60 → $2.10
-        let error = check_inference_allowed(&pool, "user_free", None).await.unwrap_err();
-        assert!(error.to_string().contains("Free inference allowance"), "{error}");
-        // Over → still blocked.
-        assert!(check_inference_allowed(&pool, "user_free", None).await.is_err());
-    }
-
-    #[tokio::test]
-    async fn free_allowance_counts_only_the_current_month() {
-        let pool = test_pool().await;
-        // A heavy usage row from last month must not count against this month.
         sqlx::query(
-            r#"
-            INSERT INTO inference_usage (id, user_id, model, prompt_tokens, completion_tokens, cost_usd, estimated, created_at)
-            VALUES ($1, 'user_free', 'gpt-4o', 0, 0, 100.0, FALSE, date_trunc('month', NOW()) - INTERVAL '1 day')
-            "#,
+            "CREATE TABLE user_inference_keys (user_id TEXT NOT NULL, provider_id TEXT NOT NULL, status TEXT NOT NULL, PRIMARY KEY (user_id, provider_id))",
         )
-        .bind(uuid::Uuid::new_v4().to_string())
         .execute(&pool)
         .await
         .unwrap();
-        assert!(
-            check_inference_allowed(&pool, "user_free", None).await.is_ok(),
-            "last month's spend does not count"
-        );
+        // Active keys of BYOK providers count; a revoked key does not.
+        for (provider, status) in [("openrouter", "active"), ("xai", "active"), ("fireworks", "revoked")] {
+            sqlx::query("INSERT INTO user_inference_keys VALUES ('user_k', $1, $2)")
+                .bind(provider)
+                .bind(status)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        let none = cloud_models_entitlement(&pool, "user_k", None).await;
+        assert!(!none.allowed);
+        assert_eq!(none.reason, Some("credits_required"));
+        assert_eq!(none.byok_providers, vec!["openrouter".to_string(), "xai".to_string()], "active keys only");
+        let spent = cloud_models_entitlement(&pool, "user_k", Some(0.0)).await;
+        assert_eq!((spent.allowed, spent.reason), (false, Some("credits_exhausted")));
+        let funded = cloud_models_entitlement(&pool, "user_other", Some(5.0)).await;
+        assert_eq!((funded.allowed, funded.reason, funded.balance_usd), (true, None, 5.0));
+        assert!(funded.byok_providers.is_empty());
+        let json = serde_json::to_value(&funded).unwrap();
+        assert_eq!(json, serde_json::json!({ "allowed": true, "reason": null, "balance_usd": 5.0, "byok_providers": [] }));
     }
 
     #[tokio::test]

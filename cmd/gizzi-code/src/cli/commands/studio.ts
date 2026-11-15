@@ -6,10 +6,13 @@ import {
   createStudioClient,
   exitCodeForError,
   exitCodeForState,
+  fitLines,
   followJob,
+  plainRefusal,
   hardwareFit,
   specFromFlags,
   StudioError,
+  type EngineFit,
   type EngineInfo,
   type JobEvent,
   type StudioClient,
@@ -24,7 +27,7 @@ function table(rows: string[][]) {
 }
 
 /** Prefer the host's own fit verdict; fall back to a local check for older hosts. */
-function hostFit(e: EngineInfo & { fit?: { ok?: boolean; reason?: string } }): { fits: boolean; reason?: string } {
+function hostFit(e: EngineInfo & { fit?: EngineFit }): { fits: boolean; reason?: string } {
   if (e.fit && typeof e.fit.ok === "boolean") return { fits: e.fit.ok, reason: e.fit.reason }
   return hardwareFit(e)
 }
@@ -63,7 +66,7 @@ async function run(fn: (c: StudioClient) => Promise<number | void>, asJson: bool
   } catch (err) {
     const e = err instanceof StudioError ? err : undefined
     if (asJson) process.stderr.write(JSON.stringify({ error: e?.code ?? "error", message: (err as Error).message }) + "\n")
-    else UI.error(e && e.status === 422 ? `Refused (${e.code}): ${e.message}` : e && e.code !== "unreachable" ? `${e.code}: ${e.message}` : (err as Error).message)
+    else UI.error(e && (e.status === 422 || e.code === "hardware_unavailable") ? plainRefusal(e.code, e.message) : e && e.code !== "unreachable" ? `${e.code}: ${e.message}` : (err as Error).message)
     process.exit(exitCodeForError(err))
   }
 }
@@ -84,6 +87,8 @@ export const StudioCommand = cmd({
       .option("engine", { describe: "run: engine id (when no --spec)", type: "string" })
       .option("base", { describe: "run: base model repo, e.g. freeweights/qwen2.5-0.5b-instruct", type: "string" })
       .option("dataset", { describe: "run: dataset file path (starts with / ~ or .) or Hugging Face repo", type: "string" })
+      .option("backend", { describe: "run: auto | torch | mlx (default auto)", type: "string", choices: ["auto", "torch", "mlx"] })
+      .option("mlx", { describe: "run: also write an MLX model (Apple Silicon only)", type: "boolean", default: false })
       .option("method", { describe: "run: lora | qlora | full | dpo (default lora)", type: "string" })
       .option("follow", { describe: "logs: keep following until the job ends. run: follows by default, --no-follow prints the job id and returns at once", type: "boolean" })
       .option("after", { describe: "logs: only events after this sequence number", type: "number", default: 0 })
@@ -109,6 +114,13 @@ export const StudioCommand = cmd({
             ["ID", "LICENSE", "METHODS", "INSTALL", "HARDWARE"],
             ...rows.map((e) => [e.id, e.license, e.methods.join(","), e.install_state, e.fit.fits ? "fits" : `refused: ${e.fit.reason}`]),
           ])
+          for (const e of engines) {
+            const lines = fitLines(e.fit)
+            if (!lines.length) continue
+            out("")
+            out(e.id)
+            for (const l of lines) out(`  ${l}`)
+          }
           return
         }
         case "install": {
@@ -129,7 +141,14 @@ export const StudioCommand = cmd({
               UI.error("Usage: gizzi studio run --spec <file.json>  (or --engine <id> --base <repo> --dataset <path|repo> [--method lora])")
               return 1
             }
-            spec = specFromFlags({ engine: args.engine as string, base: args.base as string, dataset: args.dataset as string, method: args.method as string | undefined })
+            spec = specFromFlags({ engine: args.engine as string, base: args.base as string, dataset: args.dataset as string, method: args.method as string | undefined, backend: args.backend as string | undefined, mlx: Boolean(args.mlx) })
+          }
+          // Show the host's warning (e.g. CPU is slow) before the job starts.
+          const eng = (spec as { engine?: string })?.engine
+          if (!asJson && eng) {
+            const card = (await c.engines().catch(() => [])).find((x) => x.id === eng)
+            if (card?.fit?.ok && card.fit.warning) process.stderr.write(`Warning: ${card.fit.warning}\n`)
+            if (card?.fit?.ok && card.fit.hardware) process.stderr.write(`${fitLines({ ...card.fit, warning: null, methods_unavailable: {}, outputs_unavailable: {} }).join(" · ")}\n`)
           }
           const job = await c.createJob(spec)
           if (asJson && args.follow === false) { json(job); return 0 }

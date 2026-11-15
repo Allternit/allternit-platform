@@ -1,9 +1,31 @@
+use std::convert::Infallible;
 use std::path::PathBuf;
-use axum::http::{header, HeaderValue};
-use tower::Layer;
+use axum::body::Body;
+use axum::http::{header, HeaderValue, Request, Response, StatusCode};
+use tower::util::BoxCloneService;
+use tower::{Layer, ServiceExt};
 use tower_http::services::{ServeDir, ServeFile};
-use tower_http::set_header::{SetResponseHeader, SetResponseHeaderLayer};
+use tower_http::set_header::SetResponseHeaderLayer;
 use tracing::info;
+
+/// The platform UI service: static files, the SPA fallback, and 404 JSON for API misses.
+pub type PlatformService = BoxCloneService<Request<Body>, Response<Body>, Infallible>;
+
+/// API paths are never app routes. A miss there is a 404 JSON, not the SPA
+/// shell: answering `200 text/html` made every client treat a route this
+/// runtime lacks as a success. Over the phone relay that kept retrying
+/// clients in a loop (Nov 5–9 2026, ~560k relay requests on one day).
+fn is_api_path(path: &str) -> bool {
+    path == "/api" || path.starts_with("/api/") || path == "/v1" || path.starts_with("/v1/")
+}
+
+fn api_not_found(path: &str) -> Response<Body> {
+    let body = serde_json::json!({ "error": "not_found", "message": format!("No API route for {path}") });
+    let mut res = Response::new(Body::from(body.to_string()));
+    *res.status_mut() = StatusCode::NOT_FOUND;
+    res.headers_mut().insert(header::CONTENT_TYPE, HeaderValue::from_static("application/json"));
+    res
+}
 
 /// Resolve the project/package root from the current executable path.
 ///
@@ -64,7 +86,9 @@ pub fn resolve_static_path() -> PathBuf {
 /// heuristically reuses a cached `index.html` after an app update and keeps
 /// booting the previous build's hashed entry chunk (still in its disk cache)
 /// until the heuristic expires. Revalidation on loopback is a cheap 304.
-pub fn platform_service() -> Option<SetResponseHeader<ServeDir<ServeFile>, HeaderValue>> {
+///
+/// Misses under `/api` and `/v1` answer 404 JSON instead of `index.html`.
+pub fn platform_service() -> Option<PlatformService> {
     let static_path = resolve_static_path();
     let index_path = static_path.join("index.html");
 
@@ -88,21 +112,30 @@ pub fn platform_service() -> Option<SetResponseHeader<ServeDir<ServeFile>, Heade
 
     info!("Serving platform UI from: {}", static_path.display());
 
+    let index = ServeFile::new(&index_path);
+    let fallback = tower::service_fn(move |req: Request<Body>| {
+        let index = index.clone();
+        async move {
+            let path = req.uri().path().to_owned();
+            if is_api_path(&path) {
+                return Ok::<_, Infallible>(api_not_found(&path));
+            }
+            let res = index.oneshot(req).await?;
+            Ok(res.map(Body::new))
+        }
+    });
     let serve = ServeDir::new(&static_path)
         .append_index_html_on_directories(true)
-        .fallback(ServeFile::new(&index_path));
-    Some(
-        SetResponseHeaderLayer::overriding(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"))
-            .layer(serve),
-    )
+        .fallback(fallback);
+    let service = SetResponseHeaderLayer::overriding(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"))
+        .layer(serve)
+        .map_response(|res| res.map(Body::new));
+    Some(BoxCloneService::new(service))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::body::Body;
-    use axum::http::Request;
-    use tower::ServiceExt;
 
     #[tokio::test]
     async fn static_responses_are_revalidated() {
@@ -123,6 +156,21 @@ mod tests {
             assert_eq!(
                 res.headers().get(header::CACHE_CONTROL).and_then(|v| v.to_str().ok()),
                 Some("no-cache"),
+                "{uri}"
+            );
+        }
+
+        // API misses are 404 JSON, never the SPA shell.
+        for uri in ["/api/factory/events", "/api/v1/not-a-route", "/v1/nope"] {
+            let res = svc
+                .clone()
+                .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(res.status(), 404, "{uri}");
+            assert_eq!(
+                res.headers().get(header::CONTENT_TYPE).and_then(|v| v.to_str().ok()),
+                Some("application/json"),
                 "{uri}"
             );
         }

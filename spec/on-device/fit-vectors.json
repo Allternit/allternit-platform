@@ -1,0 +1,1643 @@
+[
+ {
+  "name": "mac qwen3.5-4b prefers MLX",
+  "budget": {
+   "kind": "unified",
+   "fast_bytes": 31000000000,
+   "spill_bytes": 0,
+   "apple": true
+  },
+  "quants": [
+   {
+    "name": "Q4_K_M",
+    "format": "gguf",
+    "engine": "llama.cpp",
+    "size": 2700000000
+   },
+   {
+    "name": "4-bit",
+    "format": "mlx",
+    "engine": "mlx",
+    "size": 2500000000
+   }
+  ],
+  "expect": {
+   "k": "ok",
+   "label": "Fits",
+   "quant": "4-bit"
+  }
+ },
+ {
+  "name": "mac qwen3.5-27b MLX fits 31 GB",
+  "budget": {
+   "kind": "unified",
+   "fast_bytes": 31000000000,
+   "spill_bytes": 0,
+   "apple": true
+  },
+  "quants": [
+   {
+    "name": "Q4_K_M",
+    "format": "gguf",
+    "engine": "llama.cpp",
+    "size": 16500000000
+   },
+   {
+    "name": "4-bit",
+    "format": "mlx",
+    "engine": "mlx",
+    "size": 15600000000
+   }
+  ],
+  "expect": {
+   "k": "ok",
+   "label": "Fits",
+   "quant": "4-bit"
+  }
+ },
+ {
+  "name": "mac llama multi-quant GGUF picks largest ok",
+  "budget": {
+   "kind": "unified",
+   "fast_bytes": 31000000000,
+   "spill_bytes": 0,
+   "apple": true
+  },
+  "quants": [
+   {
+    "name": "Q2_K",
+    "format": "gguf",
+    "engine": "llama.cpp",
+    "size": 3000000000
+   },
+   {
+    "name": "Q4_K_M",
+    "format": "gguf",
+    "engine": "llama.cpp",
+    "size": 4900000000
+   },
+   {
+    "name": "Q8_0",
+    "format": "gguf",
+    "engine": "llama.cpp",
+    "size": 8500000000
+   }
+  ],
+  "expect": {
+   "k": "ok",
+   "label": "Fits",
+   "quant": "Q8_0"
+  }
+ },
+ {
+  "name": "mac phi-4-mini GGUF only falls back to GGUF",
+  "budget": {
+   "kind": "unified",
+   "fast_bytes": 31000000000,
+   "spill_bytes": 0,
+   "apple": true
+  },
+  "quants": [
+   {
+    "name": "Q4_K_M",
+    "format": "gguf",
+    "engine": "llama.cpp",
+    "size": 2500000000
+   }
+  ],
+  "expect": {
+   "k": "ok",
+   "label": "Fits",
+   "quant": "Q4_K_M"
+  }
+ },
+ {
+  "name": "mac 70B wont fit picks smallest",
+  "budget": {
+   "kind": "unified",
+   "fast_bytes": 31000000000,
+   "spill_bytes": 0,
+   "apple": true
+  },
+  "quants": [
+   {
+    "name": "Q2_K",
+    "format": "gguf",
+    "engine": "llama.cpp",
+    "size": 26000000000
+   },
+   {
+    "name": "Q4_K_M",
+    "format": "gguf",
+    "engine": "llama.cpp",
+    "size": 40000000000
+   }
+  ],
+  "expect": {
+   "k": "no",
+   "label": "Won't fit",
+   "quant": "Q2_K"
+  }
+ },
+ {
+  "name": "mac no device entry is unknown",
+  "budget": {
+   "kind": "unified",
+   "fast_bytes": 31000000000,
+   "spill_bytes": 0,
+   "apple": true
+  },
+  "quants": null,
+  "expect": {
+   "k": "unknown",
+   "label": "Size not checked",
+   "quant": null
+  }
+ },
+ {
+  "name": "mac empty quants is na",
+  "budget": {
+   "kind": "unified",
+   "fast_bytes": 31000000000,
+   "spill_bytes": 0,
+   "apple": true
+  },
+  "quants": [],
+  "expect": {
+   "k": "na",
+   "label": "No build for this device",
+   "quant": null
+  }
+ },
+ {
+  "name": "mac 30B GGUF fits",
+  "budget": {
+   "kind": "unified",
+   "fast_bytes": 31000000000,
+   "spill_bytes": 0,
+   "apple": true
+  },
+  "quants": [
+   {
+    "name": "Q4_K_M",
+    "format": "gguf",
+    "engine": "llama.cpp",
+    "size": 18600000000
+   }
+  ],
+  "expect": {
+   "k": "ok",
+   "label": "Fits",
+   "quant": "Q4_K_M"
+  }
+ },
+ {
+  "name": "win nvidia qwen3.5-4b GGUF fits",
+  "budget": {
+   "kind": "discrete",
+   "fast_bytes": 12000000000,
+   "spill_bytes": 32000000000
+  },
+  "quants": [
+   {
+    "name": "Q4_K_M",
+    "format": "gguf",
+    "engine": "llama.cpp",
+    "size": 2700000000
+   },
+   {
+    "name": "4-bit",
+    "format": "mlx",
+    "engine": "mlx",
+    "size": 2500000000
+   }
+  ],
+  "expect": {
+   "k": "ok",
+   "label": "Fits",
+   "quant": "Q4_K_M"
+  }
+ },
+ {
+  "name": "win nvidia gemma-4-e4b fits",
+  "budget": {
+   "kind": "discrete",
+   "fast_bytes": 12000000000,
+   "spill_bytes": 32000000000
+  },
+  "quants": [
+   {
+    "name": "Q4_0 QAT",
+    "format": "gguf",
+    "engine": "llama.cpp",
+    "size": 5000000000
+   },
+   {
+    "name": "4-bit",
+    "format": "mlx",
+    "engine": "mlx",
+    "size": 4800000000
+   }
+  ],
+  "expect": {
+   "k": "ok",
+   "label": "Fits",
+   "quant": "Q4_0 QAT"
+  }
+ },
+ {
+  "name": "win nvidia llama multi picks Q8_0 at 10.6 GB",
+  "budget": {
+   "kind": "discrete",
+   "fast_bytes": 12000000000,
+   "spill_bytes": 32000000000
+  },
+  "quants": [
+   {
+    "name": "Q2_K",
+    "format": "gguf",
+    "engine": "llama.cpp",
+    "size": 3000000000
+   },
+   {
+    "name": "Q4_K_M",
+    "format": "gguf",
+    "engine": "llama.cpp",
+    "size": 4900000000
+   },
+   {
+    "name": "Q8_0",
+    "format": "gguf",
+    "engine": "llama.cpp",
+    "size": 8500000000
+   }
+  ],
+  "expect": {
+   "k": "ok",
+   "label": "Fits",
+   "quant": "Q8_0"
+  }
+ },
+ {
+  "name": "win nvidia 27B spills to CPU",
+  "budget": {
+   "kind": "discrete",
+   "fast_bytes": 12000000000,
+   "spill_bytes": 32000000000
+  },
+  "quants": [
+   {
+    "name": "Q4_K_M",
+    "format": "gguf",
+    "engine": "llama.cpp",
+    "size": 16500000000
+   },
+   {
+    "name": "4-bit",
+    "format": "mlx",
+    "engine": "mlx",
+    "size": 15600000000
+   }
+  ],
+  "expect": {
+   "k": "slow",
+   "label": "May be slow",
+   "quant": "Q4_K_M"
+  }
+ },
+ {
+  "name": "win nvidia 30B spills to CPU",
+  "budget": {
+   "kind": "discrete",
+   "fast_bytes": 12000000000,
+   "spill_bytes": 32000000000
+  },
+  "quants": [
+   {
+    "name": "Q4_K_M",
+    "format": "gguf",
+    "engine": "llama.cpp",
+    "size": 18600000000
+   }
+  ],
+  "expect": {
+   "k": "slow",
+   "label": "May be slow",
+   "quant": "Q4_K_M"
+  }
+ },
+ {
+  "name": "win nvidia 70B wont fit smallest quant",
+  "budget": {
+   "kind": "discrete",
+   "fast_bytes": 12000000000,
+   "spill_bytes": 32000000000
+  },
+  "quants": [
+   {
+    "name": "Q2_K",
+    "format": "gguf",
+    "engine": "llama.cpp",
+    "size": 26000000000
+   },
+   {
+    "name": "Q4_K_M",
+    "format": "gguf",
+    "engine": "llama.cpp",
+    "size": 40000000000
+   }
+  ],
+  "expect": {
+   "k": "no",
+   "label": "Won't fit",
+   "quant": "Q2_K"
+  }
+ },
+ {
+  "name": "win nvidia MLX-only model is na",
+  "budget": {
+   "kind": "discrete",
+   "fast_bytes": 12000000000,
+   "spill_bytes": 32000000000
+  },
+  "quants": [
+   {
+    "name": "4-bit",
+    "format": "mlx",
+    "engine": "mlx",
+    "size": 2500000000
+   }
+  ],
+  "expect": {
+   "k": "na",
+   "label": "No build for this device",
+   "quant": null
+  }
+ },
+ {
+  "name": "win nvidia ram_est overrides derived need",
+  "budget": {
+   "kind": "discrete",
+   "fast_bytes": 12000000000,
+   "spill_bytes": 32000000000
+  },
+  "quants": [
+   {
+    "name": "Q4_K_M",
+    "format": "gguf",
+    "engine": "llama.cpp",
+    "size": 2700000000,
+    "ram_est": 13000000000
+   }
+  ],
+  "expect": {
+   "k": "slow",
+   "label": "May be slow",
+   "quant": "Q4_K_M"
+  }
+ },
+ {
+  "name": "winarm 4B fits",
+  "budget": {
+   "kind": "unified",
+   "fast_bytes": 19000000000,
+   "spill_bytes": 0
+  },
+  "quants": [
+   {
+    "name": "Q4_K_M",
+    "format": "gguf",
+    "engine": "llama.cpp",
+    "size": 2700000000
+   },
+   {
+    "name": "4-bit",
+    "format": "mlx",
+    "engine": "mlx",
+    "size": 2500000000
+   }
+  ],
+  "expect": {
+   "k": "ok",
+   "label": "Fits",
+   "quant": "Q4_K_M"
+  }
+ },
+ {
+  "name": "winarm 27B wont fit",
+  "budget": {
+   "kind": "unified",
+   "fast_bytes": 19000000000,
+   "spill_bytes": 0
+  },
+  "quants": [
+   {
+    "name": "Q4_K_M",
+    "format": "gguf",
+    "engine": "llama.cpp",
+    "size": 16500000000
+   },
+   {
+    "name": "4-bit",
+    "format": "mlx",
+    "engine": "mlx",
+    "size": 15600000000
+   }
+  ],
+  "expect": {
+   "k": "no",
+   "label": "Won't fit",
+   "quant": "Q4_K_M"
+  }
+ },
+ {
+  "name": "winarm 30B wont fit",
+  "budget": {
+   "kind": "unified",
+   "fast_bytes": 19000000000,
+   "spill_bytes": 0
+  },
+  "quants": [
+   {
+    "name": "Q4_K_M",
+    "format": "gguf",
+    "engine": "llama.cpp",
+    "size": 18600000000
+   }
+  ],
+  "expect": {
+   "k": "no",
+   "label": "Won't fit",
+   "quant": "Q4_K_M"
+  }
+ },
+ {
+  "name": "winarm ram_est 16 GB is tight",
+  "budget": {
+   "kind": "unified",
+   "fast_bytes": 19000000000,
+   "spill_bytes": 0
+  },
+  "quants": [
+   {
+    "name": "Q4_K_M",
+    "format": "gguf",
+    "engine": "llama.cpp",
+    "size": 9000000000,
+    "ram_est": 16000000000
+   }
+  ],
+  "expect": {
+   "k": "slow",
+   "label": "Tight fit",
+   "quant": "Q4_K_M"
+  }
+ },
+ {
+  "name": "linux amd 27B fits 24 GB VRAM",
+  "budget": {
+   "kind": "discrete",
+   "fast_bytes": 24000000000,
+   "spill_bytes": 64000000000
+  },
+  "quants": [
+   {
+    "name": "Q4_K_M",
+    "format": "gguf",
+    "engine": "llama.cpp",
+    "size": 16500000000
+   },
+   {
+    "name": "4-bit",
+    "format": "mlx",
+    "engine": "mlx",
+    "size": 15600000000
+   }
+  ],
+  "expect": {
+   "k": "ok",
+   "label": "Fits",
+   "quant": "Q4_K_M"
+  }
+ },
+ {
+  "name": "linux amd 30B spills",
+  "budget": {
+   "kind": "discrete",
+   "fast_bytes": 24000000000,
+   "spill_bytes": 64000000000
+  },
+  "quants": [
+   {
+    "name": "Q4_K_M",
+    "format": "gguf",
+    "engine": "llama.cpp",
+    "size": 18600000000
+   }
+  ],
+  "expect": {
+   "k": "slow",
+   "label": "May be slow",
+   "quant": "Q4_K_M"
+  }
+ },
+ {
+  "name": "linux amd 70B picks smallest, slow",
+  "budget": {
+   "kind": "discrete",
+   "fast_bytes": 24000000000,
+   "spill_bytes": 64000000000
+  },
+  "quants": [
+   {
+    "name": "Q2_K",
+    "format": "gguf",
+    "engine": "llama.cpp",
+    "size": 26000000000
+   },
+   {
+    "name": "Q4_K_M",
+    "format": "gguf",
+    "engine": "llama.cpp",
+    "size": 40000000000
+   }
+  ],
+  "expect": {
+   "k": "slow",
+   "label": "May be slow",
+   "quant": "Q2_K"
+  }
+ },
+ {
+  "name": "cpu 0.6B under 1.5 GB fits",
+  "budget": {
+   "kind": "cpu",
+   "fast_bytes": 9600000000,
+   "spill_bytes": 0
+  },
+  "quants": [
+   {
+    "name": "Q4_K_M",
+    "format": "gguf",
+    "engine": "llama.cpp",
+    "size": 400000000
+   },
+   {
+    "name": "4-bit",
+    "format": "mlx",
+    "engine": "mlx",
+    "size": 350000000
+   },
+   {
+    "name": "q4f16",
+    "format": "onnx",
+    "engine": "webgpu",
+    "size": 450000000
+   }
+  ],
+  "expect": {
+   "k": "ok",
+   "label": "Fits",
+   "quant": "Q4_K_M"
+  }
+ },
+ {
+  "name": "cpu 4B file over 1.5 GB is slow",
+  "budget": {
+   "kind": "cpu",
+   "fast_bytes": 9600000000,
+   "spill_bytes": 0
+  },
+  "quants": [
+   {
+    "name": "Q4_K_M",
+    "format": "gguf",
+    "engine": "llama.cpp",
+    "size": 2700000000
+   },
+   {
+    "name": "4-bit",
+    "format": "mlx",
+    "engine": "mlx",
+    "size": 2500000000
+   }
+  ],
+  "expect": {
+   "k": "slow",
+   "label": "May be slow",
+   "quant": "Q4_K_M"
+  }
+ },
+ {
+  "name": "cpu gemma-4-e4b slow",
+  "budget": {
+   "kind": "cpu",
+   "fast_bytes": 9600000000,
+   "spill_bytes": 0
+  },
+  "quants": [
+   {
+    "name": "Q4_0 QAT",
+    "format": "gguf",
+    "engine": "llama.cpp",
+    "size": 5000000000
+   },
+   {
+    "name": "4-bit",
+    "format": "mlx",
+    "engine": "mlx",
+    "size": 4800000000
+   }
+  ],
+  "expect": {
+   "k": "slow",
+   "label": "May be slow",
+   "quant": "Q4_0 QAT"
+  }
+ },
+ {
+  "name": "cpu 27B wont fit",
+  "budget": {
+   "kind": "cpu",
+   "fast_bytes": 9600000000,
+   "spill_bytes": 0
+  },
+  "quants": [
+   {
+    "name": "Q4_K_M",
+    "format": "gguf",
+    "engine": "llama.cpp",
+    "size": 16500000000
+   },
+   {
+    "name": "4-bit",
+    "format": "mlx",
+    "engine": "mlx",
+    "size": 15600000000
+   }
+  ],
+  "expect": {
+   "k": "no",
+   "label": "Won't fit",
+   "quant": "Q4_K_M"
+  }
+ },
+ {
+  "name": "cpu multi-quant picks largest under 1.5 GB",
+  "budget": {
+   "kind": "cpu",
+   "fast_bytes": 9600000000,
+   "spill_bytes": 0
+  },
+  "quants": [
+   {
+    "name": "Q2_K",
+    "format": "gguf",
+    "engine": "llama.cpp",
+    "size": 1000000000
+   },
+   {
+    "name": "Q4_K_M",
+    "format": "gguf",
+    "engine": "llama.cpp",
+    "size": 1400000000
+   },
+   {
+    "name": "Q6_K",
+    "format": "gguf",
+    "engine": "llama.cpp",
+    "size": 2000000000
+   }
+  ],
+  "expect": {
+   "k": "ok",
+   "label": "Fits",
+   "quant": "Q4_K_M"
+  }
+ },
+ {
+  "name": "cpu llama multi all slow picks smallest",
+  "budget": {
+   "kind": "cpu",
+   "fast_bytes": 9600000000,
+   "spill_bytes": 0
+  },
+  "quants": [
+   {
+    "name": "Q2_K",
+    "format": "gguf",
+    "engine": "llama.cpp",
+    "size": 3000000000
+   },
+   {
+    "name": "Q4_K_M",
+    "format": "gguf",
+    "engine": "llama.cpp",
+    "size": 4900000000
+   },
+   {
+    "name": "Q8_0",
+    "format": "gguf",
+    "engine": "llama.cpp",
+    "size": 8500000000
+   }
+  ],
+  "expect": {
+   "k": "slow",
+   "label": "May be slow",
+   "quant": "Q2_K"
+  }
+ },
+ {
+  "name": "browser 0.6B ONNX fits",
+  "budget": {
+   "kind": "unified",
+   "fast_bytes": 2000000000,
+   "spill_bytes": 0,
+   "browser": true,
+   "webgpu": true
+  },
+  "quants": [
+   {
+    "name": "Q4_K_M",
+    "format": "gguf",
+    "engine": "llama.cpp",
+    "size": 400000000
+   },
+   {
+    "name": "4-bit",
+    "format": "mlx",
+    "engine": "mlx",
+    "size": 350000000
+   },
+   {
+    "name": "q4f16",
+    "format": "onnx",
+    "engine": "webgpu",
+    "size": 450000000
+   }
+  ],
+  "expect": {
+   "k": "ok",
+   "label": "Fits",
+   "quant": "q4f16"
+  }
+ },
+ {
+  "name": "browser 1.5 GB ONNX is tight at 1.8 GB need",
+  "budget": {
+   "kind": "unified",
+   "fast_bytes": 2000000000,
+   "spill_bytes": 0,
+   "browser": true,
+   "webgpu": true
+  },
+  "quants": [
+   {
+    "name": "Q4_K_M",
+    "format": "gguf",
+    "engine": "llama.cpp",
+    "size": 1100000000
+   },
+   {
+    "name": "4-bit",
+    "format": "mlx",
+    "engine": "mlx",
+    "size": 1000000000
+   },
+   {
+    "name": "q4f16",
+    "format": "onnx",
+    "engine": "webgpu",
+    "size": 1500000000
+   }
+  ],
+  "expect": {
+   "k": "slow",
+   "label": "Tight fit",
+   "quant": "q4f16"
+  }
+ },
+ {
+  "name": "browser 4B without ONNX is na",
+  "budget": {
+   "kind": "unified",
+   "fast_bytes": 2000000000,
+   "spill_bytes": 0,
+   "browser": true,
+   "webgpu": true
+  },
+  "quants": [
+   {
+    "name": "Q4_K_M",
+    "format": "gguf",
+    "engine": "llama.cpp",
+    "size": 2700000000
+   },
+   {
+    "name": "4-bit",
+    "format": "mlx",
+    "engine": "mlx",
+    "size": 2500000000
+   }
+  ],
+  "expect": {
+   "k": "na",
+   "label": "No browser build",
+   "quant": null
+  }
+ },
+ {
+  "name": "browser without WebGPU is na even with ONNX",
+  "budget": {
+   "kind": "unified",
+   "fast_bytes": 2000000000,
+   "spill_bytes": 0,
+   "browser": true,
+   "webgpu": false
+  },
+  "quants": [
+   {
+    "name": "Q4_K_M",
+    "format": "gguf",
+    "engine": "llama.cpp",
+    "size": 400000000
+   },
+   {
+    "name": "4-bit",
+    "format": "mlx",
+    "engine": "mlx",
+    "size": 350000000
+   },
+   {
+    "name": "q4f16",
+    "format": "onnx",
+    "engine": "webgpu",
+    "size": 450000000
+   }
+  ],
+  "expect": {
+   "k": "na",
+   "label": "No WebGPU",
+   "quant": null
+  }
+ },
+ {
+  "name": "browser no device entry is unknown",
+  "budget": {
+   "kind": "unified",
+   "fast_bytes": 2000000000,
+   "spill_bytes": 0,
+   "browser": true,
+   "webgpu": true
+  },
+  "quants": null,
+  "expect": {
+   "k": "unknown",
+   "label": "Size not checked",
+   "quant": null
+  }
+ },
+ {
+  "name": "phone browser 0.6B ONNX wont fit 0.45 GB",
+  "budget": {
+   "kind": "unified",
+   "fast_bytes": 450000000,
+   "spill_bytes": 0,
+   "browser": true,
+   "webgpu": true
+  },
+  "quants": [
+   {
+    "name": "Q4_K_M",
+    "format": "gguf",
+    "engine": "llama.cpp",
+    "size": 400000000
+   },
+   {
+    "name": "4-bit",
+    "format": "mlx",
+    "engine": "mlx",
+    "size": 350000000
+   },
+   {
+    "name": "q4f16",
+    "format": "onnx",
+    "engine": "webgpu",
+    "size": 450000000
+   }
+  ],
+  "expect": {
+   "k": "no",
+   "label": "Won't fit",
+   "quant": "q4f16"
+  }
+ },
+ {
+  "name": "phone browser tiny model fits",
+  "budget": {
+   "kind": "unified",
+   "fast_bytes": 450000000,
+   "spill_bytes": 0,
+   "browser": true,
+   "webgpu": true
+  },
+  "quants": [
+   {
+    "name": "q4f16",
+    "format": "onnx",
+    "engine": "webgpu",
+    "size": 50000000,
+    "ram_est": 300000000
+   }
+  ],
+  "expect": {
+   "k": "ok",
+   "label": "Fits",
+   "quant": "q4f16"
+  }
+ },
+ {
+  "name": "phone browser 255 MB webgpu fits (need 0.306 GB, no native overhead)",
+  "budget": {
+   "kind": "unified",
+   "fast_bytes": 450000000,
+   "spill_bytes": 0,
+   "browser": true,
+   "webgpu": true
+  },
+  "quants": [
+   {
+    "name": "q4f16",
+    "format": "onnx",
+    "engine": "webgpu",
+    "size": 255000000
+   }
+  ],
+  "expect": {
+   "k": "ok",
+   "label": "Fits",
+   "quant": "q4f16"
+  }
+ },
+ {
+  "name": "phone browser 0.32 GB webgpu is tight (need 0.384 GB)",
+  "budget": {
+   "kind": "unified",
+   "fast_bytes": 450000000,
+   "spill_bytes": 0,
+   "browser": true,
+   "webgpu": true
+  },
+  "quants": [
+   {
+    "name": "q4f16",
+    "format": "onnx",
+    "engine": "webgpu",
+    "size": 320000000
+   }
+  ],
+  "expect": {
+   "k": "slow",
+   "label": "Tight fit",
+   "quant": "q4f16"
+  }
+ },
+ {
+  "name": "phone browser 0.4 GB webgpu wont fit (need 0.48 GB)",
+  "budget": {
+   "kind": "unified",
+   "fast_bytes": 450000000,
+   "spill_bytes": 0,
+   "browser": true,
+   "webgpu": true
+  },
+  "quants": [
+   {
+    "name": "q4f16",
+    "format": "onnx",
+    "engine": "webgpu",
+    "size": 400000000
+   }
+  ],
+  "expect": {
+   "k": "no",
+   "label": "Won't fit",
+   "quant": "q4f16"
+  }
+ },
+ {
+  "name": "phone browser boundary: ram_est exactly 0.8 x cap is ok",
+  "budget": {
+   "kind": "unified",
+   "fast_bytes": 450000000,
+   "spill_bytes": 0,
+   "browser": true,
+   "webgpu": true
+  },
+  "quants": [
+   {
+    "name": "q4f16",
+    "format": "onnx",
+    "engine": "webgpu",
+    "size": 300000000,
+    "ram_est": 360000000
+   }
+  ],
+  "expect": {
+   "k": "ok",
+   "label": "Fits",
+   "quant": "q4f16"
+  }
+ },
+ {
+  "name": "phone browser boundary: ram_est 0.8 x cap + 1 byte is tight",
+  "budget": {
+   "kind": "unified",
+   "fast_bytes": 450000000,
+   "spill_bytes": 0,
+   "browser": true,
+   "webgpu": true
+  },
+  "quants": [
+   {
+    "name": "q4f16",
+    "format": "onnx",
+    "engine": "webgpu",
+    "size": 300000000,
+    "ram_est": 360000001
+   }
+  ],
+  "expect": {
+   "k": "slow",
+   "label": "Tight fit",
+   "quant": "q4f16"
+  }
+ },
+ {
+  "name": "browser webgpu ram_est is used as given",
+  "budget": {
+   "kind": "unified",
+   "fast_bytes": 2000000000,
+   "spill_bytes": 0,
+   "browser": true,
+   "webgpu": true
+  },
+  "quants": [
+   {
+    "name": "q4f16",
+    "format": "onnx",
+    "engine": "webgpu",
+    "size": 450000000,
+    "ram_est": 2100000000
+   }
+  ],
+  "expect": {
+   "k": "no",
+   "label": "Won't fit",
+   "quant": "q4f16"
+  }
+ },
+ {
+  "name": "iphone 2B MLX fits",
+  "budget": {
+   "kind": "unified",
+   "fast_bytes": 4500000000,
+   "spill_bytes": 0,
+   "apple": true
+  },
+  "quants": [
+   {
+    "name": "Q4_K_M",
+    "format": "gguf",
+    "engine": "llama.cpp",
+    "size": 1300000000
+   },
+   {
+    "name": "4-bit",
+    "format": "mlx",
+    "engine": "mlx",
+    "size": 1200000000
+   }
+  ],
+  "expect": {
+   "k": "ok",
+   "label": "Fits",
+   "quant": "4-bit"
+  }
+ },
+ {
+  "name": "iphone 4B MLX 3.4 GB fits under 3.6",
+  "budget": {
+   "kind": "unified",
+   "fast_bytes": 4500000000,
+   "spill_bytes": 0,
+   "apple": true
+  },
+  "quants": [
+   {
+    "name": "Q4_K_M",
+    "format": "gguf",
+    "engine": "llama.cpp",
+    "size": 2700000000
+   },
+   {
+    "name": "4-bit",
+    "format": "mlx",
+    "engine": "mlx",
+    "size": 2500000000
+   }
+  ],
+  "expect": {
+   "k": "ok",
+   "label": "Fits",
+   "quant": "4-bit"
+  }
+ },
+ {
+  "name": "iphone gemma-4-e4b wont fit",
+  "budget": {
+   "kind": "unified",
+   "fast_bytes": 4500000000,
+   "spill_bytes": 0,
+   "apple": true
+  },
+  "quants": [
+   {
+    "name": "Q4_0 QAT",
+    "format": "gguf",
+    "engine": "llama.cpp",
+    "size": 5000000000
+   },
+   {
+    "name": "4-bit",
+    "format": "mlx",
+    "engine": "mlx",
+    "size": 4800000000
+   }
+  ],
+  "expect": {
+   "k": "no",
+   "label": "Won't fit",
+   "quant": "4-bit"
+  }
+ },
+ {
+  "name": "iphone phi-4-mini GGUF fallback fits",
+  "budget": {
+   "kind": "unified",
+   "fast_bytes": 4500000000,
+   "spill_bytes": 0,
+   "apple": true
+  },
+  "quants": [
+   {
+    "name": "Q4_K_M",
+    "format": "gguf",
+    "engine": "llama.cpp",
+    "size": 2500000000
+   }
+  ],
+  "expect": {
+   "k": "ok",
+   "label": "Fits",
+   "quant": "Q4_K_M"
+  }
+ },
+ {
+  "name": "iphone browser-only ONNX model is na",
+  "budget": {
+   "kind": "unified",
+   "fast_bytes": 4500000000,
+   "spill_bytes": 0,
+   "apple": true
+  },
+  "quants": [
+   {
+    "name": "q4f16",
+    "format": "onnx",
+    "engine": "webgpu",
+    "size": 450000000
+   }
+  ],
+  "expect": {
+   "k": "na",
+   "label": "No build for this device",
+   "quant": null
+  }
+ },
+ {
+  "name": "android 4B GGUF fits 5 GB budget",
+  "budget": {
+   "kind": "unified",
+   "fast_bytes": 5000000000,
+   "spill_bytes": 0
+  },
+  "quants": [
+   {
+    "name": "Q4_K_M",
+    "format": "gguf",
+    "engine": "llama.cpp",
+    "size": 2700000000
+   },
+   {
+    "name": "4-bit",
+    "format": "mlx",
+    "engine": "mlx",
+    "size": 2500000000
+   }
+  ],
+  "expect": {
+   "k": "ok",
+   "label": "Fits",
+   "quant": "Q4_K_M"
+  }
+ },
+ {
+  "name": "android 2B ignores MLX, picks GGUF",
+  "budget": {
+   "kind": "unified",
+   "fast_bytes": 5000000000,
+   "spill_bytes": 0
+  },
+  "quants": [
+   {
+    "name": "Q4_K_M",
+    "format": "gguf",
+    "engine": "llama.cpp",
+    "size": 1300000000
+   },
+   {
+    "name": "4-bit",
+    "format": "mlx",
+    "engine": "mlx",
+    "size": 1200000000
+   }
+  ],
+  "expect": {
+   "k": "ok",
+   "label": "Fits",
+   "quant": "Q4_K_M"
+  }
+ },
+ {
+  "name": "android gemma-4-e4b wont fit",
+  "budget": {
+   "kind": "unified",
+   "fast_bytes": 5000000000,
+   "spill_bytes": 0
+  },
+  "quants": [
+   {
+    "name": "Q4_0 QAT",
+    "format": "gguf",
+    "engine": "llama.cpp",
+    "size": 5000000000
+   },
+   {
+    "name": "4-bit",
+    "format": "mlx",
+    "engine": "mlx",
+    "size": 4800000000
+   }
+  ],
+  "expect": {
+   "k": "no",
+   "label": "Won't fit",
+   "quant": "Q4_0 QAT"
+  }
+ },
+ {
+  "name": "android MLX-only model is na",
+  "budget": {
+   "kind": "unified",
+   "fast_bytes": 5000000000,
+   "spill_bytes": 0
+  },
+  "quants": [
+   {
+    "name": "4-bit",
+    "format": "mlx",
+    "engine": "mlx",
+    "size": 2500000000
+   }
+  ],
+  "expect": {
+   "k": "na",
+   "label": "No build for this device",
+   "quant": null
+  }
+ },
+ {
+  "name": "android ram_est 4.5 GB is tight",
+  "budget": {
+   "kind": "unified",
+   "fast_bytes": 5000000000,
+   "spill_bytes": 0
+  },
+  "quants": [
+   {
+    "name": "Q4_K_M",
+    "format": "gguf",
+    "engine": "llama.cpp",
+    "size": 2700000000,
+    "ram_est": 4500000000
+   }
+  ],
+  "expect": {
+   "k": "slow",
+   "label": "Tight fit",
+   "quant": "Q4_K_M"
+  }
+ },
+ {
+  "name": "android ram_est overrides derived need (derived would fit)",
+  "budget": {
+   "kind": "unified",
+   "fast_bytes": 5000000000,
+   "spill_bytes": 0
+  },
+  "quants": [
+   {
+    "name": "Q4_K_M",
+    "format": "gguf",
+    "engine": "llama.cpp",
+    "size": 2700000000,
+    "ram_est": 5500000000
+   }
+  ],
+  "expect": {
+   "k": "no",
+   "label": "Won't fit",
+   "quant": "Q4_K_M"
+  }
+ },
+ {
+  "name": "discrete boundary: need = 0.9 x VRAM is ok",
+  "budget": {
+   "kind": "discrete",
+   "fast_bytes": 12000000000,
+   "spill_bytes": 32000000000
+  },
+  "quants": [
+   {
+    "name": "Q4_K_M",
+    "format": "gguf",
+    "engine": "llama.cpp",
+    "size": 3000000000,
+    "ram_est": 10800000000
+   }
+  ],
+  "expect": {
+   "k": "ok",
+   "label": "Fits",
+   "quant": "Q4_K_M"
+  }
+ },
+ {
+  "name": "discrete boundary: need = 0.9 x VRAM + 1 byte is slow",
+  "budget": {
+   "kind": "discrete",
+   "fast_bytes": 12000000000,
+   "spill_bytes": 32000000000
+  },
+  "quants": [
+   {
+    "name": "Q4_K_M",
+    "format": "gguf",
+    "engine": "llama.cpp",
+    "size": 3000000000,
+    "ram_est": 10800000001
+   }
+  ],
+  "expect": {
+   "k": "slow",
+   "label": "May be slow",
+   "quant": "Q4_K_M"
+  }
+ },
+ {
+  "name": "discrete boundary: need = VRAM + 0.5 x RAM is slow",
+  "budget": {
+   "kind": "discrete",
+   "fast_bytes": 12000000000,
+   "spill_bytes": 32000000000
+  },
+  "quants": [
+   {
+    "name": "Q4_K_M",
+    "format": "gguf",
+    "engine": "llama.cpp",
+    "size": 3000000000,
+    "ram_est": 28000000000
+   }
+  ],
+  "expect": {
+   "k": "slow",
+   "label": "May be slow",
+   "quant": "Q4_K_M"
+  }
+ },
+ {
+  "name": "discrete boundary: need = VRAM + 0.5 x RAM + 1 byte wont fit",
+  "budget": {
+   "kind": "discrete",
+   "fast_bytes": 12000000000,
+   "spill_bytes": 32000000000
+  },
+  "quants": [
+   {
+    "name": "Q4_K_M",
+    "format": "gguf",
+    "engine": "llama.cpp",
+    "size": 3000000000,
+    "ram_est": 28000000001
+   }
+  ],
+  "expect": {
+   "k": "no",
+   "label": "Won't fit",
+   "quant": "Q4_K_M"
+  }
+ },
+ {
+  "name": "unified boundary: need = 0.8 x budget is ok",
+  "budget": {
+   "kind": "unified",
+   "fast_bytes": 31000000000,
+   "spill_bytes": 0,
+   "apple": true
+  },
+  "quants": [
+   {
+    "name": "Q4_K_M",
+    "format": "gguf",
+    "engine": "llama.cpp",
+    "size": 3000000000,
+    "ram_est": 24800000000
+   }
+  ],
+  "expect": {
+   "k": "ok",
+   "label": "Fits",
+   "quant": "Q4_K_M"
+  }
+ },
+ {
+  "name": "unified boundary: need = 0.8 x budget + 1 byte is tight",
+  "budget": {
+   "kind": "unified",
+   "fast_bytes": 31000000000,
+   "spill_bytes": 0,
+   "apple": true
+  },
+  "quants": [
+   {
+    "name": "Q4_K_M",
+    "format": "gguf",
+    "engine": "llama.cpp",
+    "size": 3000000000,
+    "ram_est": 24800000001
+   }
+  ],
+  "expect": {
+   "k": "slow",
+   "label": "Tight fit",
+   "quant": "Q4_K_M"
+  }
+ },
+ {
+  "name": "unified boundary: need = budget is tight",
+  "budget": {
+   "kind": "unified",
+   "fast_bytes": 31000000000,
+   "spill_bytes": 0,
+   "apple": true
+  },
+  "quants": [
+   {
+    "name": "Q4_K_M",
+    "format": "gguf",
+    "engine": "llama.cpp",
+    "size": 3000000000,
+    "ram_est": 31000000000
+   }
+  ],
+  "expect": {
+   "k": "slow",
+   "label": "Tight fit",
+   "quant": "Q4_K_M"
+  }
+ },
+ {
+  "name": "unified boundary: need = budget + 1 byte wont fit",
+  "budget": {
+   "kind": "unified",
+   "fast_bytes": 31000000000,
+   "spill_bytes": 0,
+   "apple": true
+  },
+  "quants": [
+   {
+    "name": "Q4_K_M",
+    "format": "gguf",
+    "engine": "llama.cpp",
+    "size": 3000000000,
+    "ram_est": 31000000001
+   }
+  ],
+  "expect": {
+   "k": "no",
+   "label": "Won't fit",
+   "quant": "Q4_K_M"
+  }
+ },
+ {
+  "name": "cpu boundary: file 1.5 GB - 1 byte is ok",
+  "budget": {
+   "kind": "cpu",
+   "fast_bytes": 9600000000,
+   "spill_bytes": 0
+  },
+  "quants": [
+   {
+    "name": "Q4_K_M",
+    "format": "gguf",
+    "engine": "llama.cpp",
+    "size": 1499999999,
+    "ram_est": 2000000000
+   }
+  ],
+  "expect": {
+   "k": "ok",
+   "label": "Fits",
+   "quant": "Q4_K_M"
+  }
+ },
+ {
+  "name": "cpu boundary: file exactly 1.5 GB is slow",
+  "budget": {
+   "kind": "cpu",
+   "fast_bytes": 9600000000,
+   "spill_bytes": 0
+  },
+  "quants": [
+   {
+    "name": "Q4_K_M",
+    "format": "gguf",
+    "engine": "llama.cpp",
+    "size": 1500000000,
+    "ram_est": 2000000000
+   }
+  ],
+  "expect": {
+   "k": "slow",
+   "label": "May be slow",
+   "quant": "Q4_K_M"
+  }
+ },
+ {
+  "name": "cpu boundary: need = 0.6 x RAM is slow",
+  "budget": {
+   "kind": "cpu",
+   "fast_bytes": 9600000000,
+   "spill_bytes": 0
+  },
+  "quants": [
+   {
+    "name": "Q4_K_M",
+    "format": "gguf",
+    "engine": "llama.cpp",
+    "size": 3000000000,
+    "ram_est": 9600000000
+   }
+  ],
+  "expect": {
+   "k": "slow",
+   "label": "May be slow",
+   "quant": "Q4_K_M"
+  }
+ },
+ {
+  "name": "cpu boundary: need = 0.6 x RAM + 1 byte wont fit",
+  "budget": {
+   "kind": "cpu",
+   "fast_bytes": 9600000000,
+   "spill_bytes": 0
+  },
+  "quants": [
+   {
+    "name": "Q4_K_M",
+    "format": "gguf",
+    "engine": "llama.cpp",
+    "size": 3000000000,
+    "ram_est": 9600000001
+   }
+  ],
+  "expect": {
+   "k": "no",
+   "label": "Won't fit",
+   "quant": "Q4_K_M"
+  }
+ }
+]

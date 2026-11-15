@@ -38,6 +38,7 @@ pub fn local_engine_router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/local-engine/health", get(proxy_health))
         .route("/local-engine/status", get(proxy_status))
+        .route("/local-engine/hardware", get(proxy_hardware))
         .route("/local-engine/catalog", get(proxy_catalog))
         .route("/local-engine/catalog/refresh", post(proxy_catalog_refresh))
         .route("/local-engine/assess", post(proxy_assess))
@@ -71,6 +72,14 @@ async fn proxy_status(State(_state): State<Arc<AppState>>, headers: HeaderMap) -
         return unauthorized();
     }
     proxy_get("/status").await
+}
+
+/// Device profile + model budget for on-device fit (`GET /hardware`).
+async fn proxy_hardware(headers: HeaderMap) -> Response {
+    if get_user(&headers).is_none() {
+        return unauthorized();
+    }
+    proxy_get("/hardware").await
 }
 
 async fn proxy_catalog(

@@ -34,6 +34,7 @@ struct AllternitApp: App {
         // onboarding gate (the ChatView site clears the dictation/priming
         // flags). Clearing here means THIS launch lands on page 1.
         PhoneSurfacesGallery.installIfRequested()
+        CloudCreditsGallery.installIfRequested()
         if launchArgumentEnabled("reset-onboarding") {
             OnboardingStore.shared.reset()
         }

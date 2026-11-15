@@ -1400,6 +1400,7 @@ mod billing_tests {
 
     struct Ctx {
         db: PgPool,
+        state: Arc<ApiState>,
         app: Router,
         upstream: Arc<FakeUpstream>,
         /// The model gateway as production mounts it: `auth_middleware` in front
@@ -1424,7 +1425,7 @@ mod billing_tests {
             .route("/v1/chat/completions", axum::routing::post(crate::routes::model_router::chat_completions))
             .layer(axum::middleware::from_fn_with_state(state.clone(), crate::auth::middleware::auth_middleware))
             .with_state(state.clone());
-        Ctx { db: state.db.clone(), app, upstream, gateway }
+        Ctx { db: state.db.clone(), state: state.clone(), app, upstream, gateway }
     }
 
     async fn key(c: &Ctx) -> (String, String) {
@@ -1575,16 +1576,16 @@ mod billing_tests {
     /// A project's hosted runtime runs its `"allternit"` agents on Allternit
     /// Cloud with its own device token (owner `platform:<project>`). The project
     /// pays for those turns, so the consumer gates must not refuse it: they did
-    /// (no verified email, no free allowance left) and every hosted agent turn
-    /// failed. Nothing is charged to a user's credits; a project that can't pay
-    /// is refused, and a consumer computer keeps every gate.
+    /// (no verified email, no free allowance left, later no credits row) and
+    /// every hosted agent turn failed. Nothing is charged to a user's credits;
+    /// a project that can't pay is refused, and a consumer computer keeps every
+    /// gate.
     #[tokio::test]
     async fn a_platform_runtime_runs_cloud_inference_for_its_project() {
         let c = ctx().await;
         sqlx::raw_sql(&include_str!("../../../migrations_pg/125_inference_attribution.sql").replace("public.", "")).execute(&c.db).await.expect("migration 125 applies");
         // The personal credit balance the gateway reads (migrations_pg/001, minimal).
         sqlx::query("CREATE TABLE IF NOT EXISTS user_credits (user_id TEXT PRIMARY KEY, balance_usd DOUBLE PRECISION)").execute(&c.db).await.unwrap();
-        sqlx::raw_sql(&include_str!("../../../migrations_pg/011_user_trust.sql").replace("public.", "")).execute(&c.db).await.expect("migration 011 applies");
         let (project_id, _) = key(&c).await;
         let device = |id: &str, owner: String| {
             let db = c.db.clone();
@@ -1599,7 +1600,7 @@ mod billing_tests {
                     .execute(&db)
                     .await
                     .unwrap();
-                // Its free allowance is long used up: the consumer path would refuse it.
+                // Old usage, and no credits row: the consumer path refuses it.
                 sqlx::query("INSERT INTO inference_usage (id, user_id, model, prompt_tokens, completion_tokens, cost_usd) VALUES ($1, $2, 'gpt-4o', 1, 1, 100.0)")
                     .bind(format!("old_{id}"))
                     .bind(&owner)
@@ -1611,8 +1612,6 @@ mod billing_tests {
         };
         let runtime = device("rt_proj", format!("platform:{project_id}")).await;
         let consumer = device("rt_user", "user_free".to_string()).await;
-        // The consumer's email is verified, so only its spent allowance refuses it.
-        sqlx::query("INSERT INTO user_trust (user_id, email_verified) VALUES ('user_free', TRUE)").execute(&c.db).await.unwrap();
         let complete = |token: String| {
             let gateway = c.gateway.clone();
             async move {
@@ -1637,10 +1636,88 @@ mod billing_tests {
         .unwrap();
         assert_eq!((client.as_deref(), credits), (Some("runtime"), 0), "recorded as the runtime's call, no credits involved");
 
-        assert_eq!(complete(consumer).await.0, 403, "a consumer computer still needs its allowance");
+        let (s, b) = complete(consumer).await;
+        assert_eq!(s, 402, "a consumer computer still needs credits: {b}");
+        assert!(b.contains("\"credits_required\""), "{b}");
 
         sqlx::query("UPDATE platform_projects SET stripe_customer_id = NULL, stripe_subscription_id = NULL, billing_status = NULL WHERE id = $1").bind(&project_id).execute(&c.db).await.unwrap();
         let (s, b) = complete(runtime).await;
         assert_eq!(s, 402, "a project that can't pay gets no Cloud inference: {b}");
+    }
+
+    /// CONTRACT-cloud-credits-2026-11-15 D6: a signed-in Clerk session (web or
+    /// iOS with no computer) may run an Allternit Cloud catalog alias, under
+    /// the same credits gate; a direct BYOK ref stays refused.
+    #[tokio::test]
+    async fn a_clerk_session_runs_catalog_models_only_with_credits() {
+        use crate::auth::middleware::{AuthContext, CLERK_SESSION_TOKEN_ID};
+        use crate::auth::AuthenticatedUser;
+        let c = ctx().await;
+        sqlx::raw_sql(&include_str!("../../../migrations_pg/125_inference_attribution.sql").replace("public.", "")).execute(&c.db).await.expect("migration 125 applies");
+        sqlx::query("CREATE TABLE IF NOT EXISTS user_credits (user_id TEXT PRIMARY KEY, balance_usd DOUBLE PRECISION)").execute(&c.db).await.unwrap();
+        sqlx::query("INSERT INTO users (id) VALUES ('user_funded'), ('user_none')").execute(&c.db).await.unwrap();
+        sqlx::query("INSERT INTO user_credits (user_id, balance_usd) VALUES ('user_funded', 5.0)").execute(&c.db).await.unwrap();
+        let complete = |user: &str, model: &str| {
+            let session = AuthContext {
+                user: AuthenticatedUser {
+                    user_id: user.to_string(),
+                    token_id: CLERK_SESSION_TOKEN_ID.to_string(),
+                    permissions: vec!["inference".to_string()],
+                },
+                is_development: false,
+            };
+            let app = Router::new()
+                .route("/v1/chat/completions", axum::routing::post(crate::routes::model_router::chat_completions))
+                .layer(axum::Extension(session))
+                .with_state(c.state.clone());
+            let body = json!({ "model": model, "messages": [{ "role": "user", "content": "Reply with exactly: pong" }] });
+            async move {
+                let req = Request::builder().method("POST").uri("/v1/chat/completions").header("content-type", "application/json").body(Body::from(body.to_string())).unwrap();
+                let resp = app.oneshot(req).await.unwrap();
+                let status = resp.status().as_u16();
+                let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20).await.unwrap();
+                (status, serde_json::from_slice::<Value>(&bytes).unwrap_or(Value::Null))
+            }
+        };
+
+        let (s, b) = complete("user_funded", "gpt-4o").await;
+        assert_eq!(s, 200, "a funded session runs a catalog alias: {b}");
+        assert_eq!(b["choices"][0]["message"]["content"], "hello");
+
+        let (s, b) = complete("user_none", "gpt-4o").await;
+        assert_eq!(s, 402, "{b}");
+        assert_eq!(b["error"]["code"], "credits_required");
+        assert_eq!(b["error"]["packs"].as_array().map(Vec::len), Some(4));
+
+        sqlx::query("INSERT INTO user_credits (user_id, balance_usd) VALUES ('user_none', 0)").execute(&c.db).await.unwrap();
+        let (s, b) = complete("user_none", "gpt-4o").await;
+        assert_eq!((s, b["error"]["code"].as_str()), (402, Some("credits_exhausted")), "{b}");
+
+        let (s, b) = complete("user_funded", "xai/grok-4").await;
+        assert_eq!(s, 403, "a direct BYOK ref is not open to a session: {b}");
+    }
+
+    /// CONTRACT-cloud-credits-2026-11-15 D11: every `/v1/models` row carries
+    /// its retail price per 1M tokens.
+    #[tokio::test]
+    async fn every_model_row_has_retail_pricing() {
+        let c = ctx().await;
+        let app = Router::new()
+            .route("/v1/models", axum::routing::get(crate::routes::model_router::list_models))
+            .with_state(c.state.clone());
+        let resp = app.oneshot(Request::builder().uri("/v1/models").body(Body::empty()).unwrap()).await.unwrap();
+        assert_eq!(resp.status().as_u16(), 200);
+        let bytes = axum::body::to_bytes(resp.into_body(), 1 << 22).await.unwrap();
+        let body: Value = serde_json::from_slice(&bytes).unwrap();
+        let rows = body["data"].as_array().unwrap();
+        assert!(!rows.is_empty());
+        for row in rows {
+            let pricing = &row["pricing"];
+            assert!(pricing["input_per_1m_usd"].is_number() && pricing["output_per_1m_usd"].is_number(), "{row}");
+        }
+        // gpt-4o's live wholesale $2 / $8 per 1M with the default 1.5x markup.
+        let gpt = rows.iter().find(|row| row["id"] == "gpt-4o").expect("gpt-4o listed");
+        let price = |key: &str| gpt["pricing"][key].as_f64().unwrap();
+        assert!((price("input_per_1m_usd") - 3.0).abs() < 1e-9 && (price("output_per_1m_usd") - 12.0).abs() < 1e-9, "{gpt}");
     }
 }

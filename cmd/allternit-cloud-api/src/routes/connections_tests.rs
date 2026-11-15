@@ -135,7 +135,7 @@ async fn rows_keys_and_logins_on_the_real_schema() {
     let rows = body["connections"].as_array().unwrap();
     let find = |id: &str| rows.iter().find(|row| row["id"] == id).unwrap_or_else(|| panic!("no {id}")).clone();
     assert_eq!(body["version"], 1);
-    assert_eq!(find("allternit")["found"], "Free · $2 a month free");
+    assert_eq!(find("allternit")["found"], "Free · needs credits");
     assert_eq!(find("this-mac")["found"], "Studio Mac");
     assert_eq!(find("slack")["found"], "Acme");
     for id in ["chatgpt", "local", "codex", "claude-code"] {

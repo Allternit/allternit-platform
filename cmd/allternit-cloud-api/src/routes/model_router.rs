@@ -122,10 +122,10 @@ pub(crate) async fn inference_attribution(
 /// token (client `runtime`) owned by `platform:<project>`. Such a runtime runs
 /// the project's `"allternit"` agents on Allternit Cloud, and the project pays
 /// for those turns (`platform_v1::conversations::meter_turn` bills their tokens),
-/// so the consumer gates (verified email, the free allowance and its rate
-/// limit, the free-tier pool policy) don't apply and no user's credits are
-/// charged; the project's own spend gate applies instead. Without this every
-/// Cloud turn of a hosted agent was refused: `platform:…` has no Clerk email.
+/// so the consumer gates (the Cloud credits gate, the free-tier pool policy)
+/// don't apply and no user's credits are charged; the project's own spend
+/// gate applies instead. Without this every Cloud turn of a hosted agent was
+/// refused: `platform:…` has no credits row.
 pub(crate) fn platform_runtime_project<'a>(user_id: &'a str, client: Option<&str>) -> Option<&'a str> {
     if client != Some("runtime") {
         return None;
@@ -217,8 +217,13 @@ async fn chat_completions_attributed(
     if is_person_only_model(&request.model) {
         return plan_turn(state, &auth.user.user_id, request, &attribution).await;
     }
-    // A Clerk session (web/iOS composer) may only run the person's own plans.
-    if auth.user.token_id == crate::auth::middleware::CLERK_SESSION_TOKEN_ID {
+    // A Clerk session (web/iOS composer with no computer) may run the
+    // person's own plans and Allternit Cloud catalog aliases; the credits gate
+    // below still applies (CONTRACT-cloud-credits D6). Any other model
+    // (a direct BYOK ref such as `xai/grok-4`) stays refused.
+    if auth.user.token_id == crate::auth::middleware::CLERK_SESSION_TOKEN_ID
+        && state.model_router.upstream_for_alias(&request.model).is_none()
+    {
         return Err(ApiError::Forbidden(
             "Use an Allternit API key for this model; a signed-in session can only chat with your own plans.".to_string(),
         ));
@@ -255,8 +260,8 @@ async fn chat_completions_attributed(
     }
 
     // BYOK first: when the user has their own key for the alias's provider,
-    // the call routes through it — their money, so our allowance, free rate
-    // limit, pool breaker, and pool policy do not apply. Early return keeps
+    // the call routes through it — their money, so the credits gate, pool
+    // breaker, and pool policy do not apply. Early return keeps
     // the shared path below readable.
     if let Some(provider_id) = state.model_router.provider_for_alias(&alias) {
         if inference_keys::should_route_byok(
@@ -300,33 +305,13 @@ async fn chat_completions_attributed(
     }
     let alias = request.model.clone();
 
-    // Pre-check: a paying user with an exhausted balance is blocked before we
-    // spend upstream money; free users (no credits row) are bounded by the
-    // monthly free allowance and a tight per-user rate limit.
+    // Pre-check (CONTRACT-cloud-credits-2026-11-15): Allternit Cloud models
+    // need a positive balance, checked before we spend upstream money. No
+    // credits row → 402 `credits_required`; a row at or below 0 → 402
+    // `credits_exhausted`. A platform runtime bills its project instead.
     let balance = inference_settlement::credit_balance_row(&state.db, &user_id).await?;
     if platform_runtime.is_none() {
-        inference_settlement::check_inference_allowed(&state.db, &user_id, balance).await?;
-    }
-    if balance.is_none() && platform_runtime.is_none() {
-        if let Err(info) = state.free_inference_rate_limiter.check(&user_id).await {
-            tracing::warn!(user_id = %user_id, "free inference rate limit exceeded");
-            let body = serde_json::json!({
-                "error": "RATE_LIMIT_EXCEEDED",
-                "message": "Free inference rate limit reached — add credits for higher limits.",
-                "retry_after": info.reset_after.as_secs(),
-            });
-            let mut response = (
-                StatusCode::TOO_MANY_REQUESTS,
-                [(
-                    axum::http::header::RETRY_AFTER,
-                    info.reset_after.as_secs().to_string(),
-                )],
-                Json(body),
-            )
-                .into_response();
-            info.add_headers(&mut response);
-            return Ok(response);
-        }
+        inference_settlement::check_inference_allowed(balance)?;
     }
 
     // Open lane: an `-open` model needs the terms, credits and a clean

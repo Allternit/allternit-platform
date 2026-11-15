@@ -305,7 +305,6 @@ fn build_state(db: PgPool, container_api_url: &str) -> Arc<ApiState> {
     };
     let rate_limiter = create_rate_limiter(rate_limit_config.clone());
     let public_rate_limiter = create_rate_limiter(rate_limit_config.clone());
-    let free_inference_rate_limiter = create_rate_limiter(rate_limit_config);
 
     Arc::new(ApiState {
         db: db.clone(),
@@ -316,7 +315,6 @@ fn build_state(db: PgPool, container_api_url: &str) -> Arc<ApiState> {
         session_manager,
         rate_limiter,
         public_rate_limiter,
-        free_inference_rate_limiter,
         cost_service,
         quota_service: quota_service.clone(),
         contabo_runtime_service: Arc::new(services::ContaboRuntimeService::new(

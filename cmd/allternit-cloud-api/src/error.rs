@@ -105,6 +105,16 @@ pub enum ApiError {
     /// built by `routes::account_compute::compute_required_body`.
     #[error("Compute required")]
     ComputeRequired(serde_json::Value),
+
+    /// Cloud credits gate (CONTRACT-cloud-credits-2026-11-15): an Allternit
+    /// Cloud model call by an account with no positive credit balance. 402
+    /// with the contract body (`{"error":{"type":"billing_error","code":...,
+    /// "packs":[...]}}`), built by
+    /// `services::inference_settlement::credits_required_body`. `code` is
+    /// `credits_required` (no credits row) or `credits_exhausted` (a row at
+    /// or below 0).
+    #[error("Credits required: {code}")]
+    CreditsRequired { code: &'static str, balance_usd: f64 },
 }
 
 impl From<sqlx::migrate::MigrateError> for ApiError {
@@ -128,6 +138,11 @@ impl IntoResponse for ApiError {
         // The compute gate's body is a contract shared by every client.
         if let ApiError::ComputeRequired(body) = &self {
             return (StatusCode::CONFLICT, Json(body.clone())).into_response();
+        }
+        // So is the Cloud credits gate's.
+        if let ApiError::CreditsRequired { code, balance_usd } = &self {
+            let body = crate::services::inference_settlement::credits_required_body(code, *balance_usd);
+            return (StatusCode::PAYMENT_REQUIRED, Json(body)).into_response();
         }
 
         let (status, error_code, message) = match &self {
@@ -223,6 +238,12 @@ impl IntoResponse for ApiError {
                 StatusCode::CONFLICT,
                 "compute_required",
                 "Agents need a computer. Link your own, subscribe, or buy credits.".to_string(),
+            ),
+            // Answered above with its contract body; kept for exhaustiveness.
+            ApiError::CreditsRequired { code, .. } => (
+                StatusCode::PAYMENT_REQUIRED,
+                *code,
+                crate::services::inference_settlement::credits_message(code).to_string(),
             ),
             ApiError::PreconditionRequired(msg) => (
                 StatusCode::PRECONDITION_REQUIRED,

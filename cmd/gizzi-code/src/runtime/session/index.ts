@@ -222,7 +222,12 @@ export namespace Session {
             .object({
               modelID: z.string(),
               label: z.string(),
-              funds: z.object({ kind: z.enum(["balance", "plan", "free", "none"]), usd: z.number().optional() }),
+              // "free" stays readable for sessions paused before the free allowance ended (2026-11-15).
+              funds: z.object({
+                kind: z.enum(["balance", "plan", "free", "none"]),
+                usd: z.number().optional(),
+                reason: z.enum(["credits_required", "credits_exhausted"]).optional(),
+              }),
             })
             .optional(),
         })

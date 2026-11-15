@@ -39,7 +39,7 @@ https://api.allternit.com/api/local-studio
 
 <CardGroup cols={2}>
   <Card title="Engine" icon="/icons/bars.svg">
-    Inspect telemetry, manage cached models, launch inference runtimes, and run export/merge/evaluation jobs against the Local Engine controller.
+    Inspect telemetry, manage cached models, and launch inference runtimes on the Local Engine.
   </Card>
   <Card title="Catalog" icon="/icons/book.svg">
     Browse and search the [Freeweights](/tools/freeweights) catalog, with badges for source, license, redistribution and size, plus hardware-fit estimates. Entries marked "From the publisher" link out and have no pull button. Repos Freeweights does not list are labeled "Not in Freeweights". Unsloth guides are here too.
@@ -63,7 +63,7 @@ https://api.allternit.com/api/local-studio
 | Tab | Purpose |
 |---|---|
 | **Engine** | Health, status, cached models, active runtimes, and one-click model operations. On the web and the PWA it says there is no model engine on the device: the engine runs in Desktop or on a connected computer. |
-| **Catalog** | Search the Freeweights catalog and read guides. The grid shows 48 entries at a time. After a pull, the row shows the verification result. |
+| **Catalog** | Search the Freeweights catalog and read guides. Entries use the same cards as freeweights.allternit.com, in a Grid (the default), List or Deck view, 48 at a time. Each card shows whether the model fits this device. After a pull, the card shows the verification result. |
 | **Train** | Fine-tune a model on a computer you own and follow the job. See [Training](#training). |
 | **Studio** | Native Local Studio controller integration for recipes and serving. |
 | **Cloud** | Save and test cloud endpoint credentials for deployed models. |
@@ -81,11 +81,33 @@ https://api.allternit.com/api/local-studio
 
 Studio opens on the Catalog tab, on the Freeweights catalog. Search runs as you type. Models show the publisher's logo.
 
-## Training
+### Fit on this device
 
-<Warning>
-The Train tab on Desktop, the web and the PWA is arriving with the next web update. The API, `gizzi studio` and the iOS job list below work now.
-</Warning>
+Fit is measured against the device you are using. On Desktop, the Local Engine reports the memory it can use for models. In a browser, the measure is what one tab can hold with WebGPU. Each card shows one of these labels: "Fits", "Tight fit", "May be slow", "Won't fit", "No build for this device" (in a browser: "No browser build") or "Size not checked". The size on the card is the file you download for the build that fits, not the whole repo. "Size not checked" means Freeweights has no file sizes for that model yet, so it has no download button. "Recommended for this device" lists the models that fit best. The chips "Fits this device" and the engine chips (GGUF, MLX, ONNX) filter the grid.
+
+### The model page
+
+Opening a card shows the model's page. Its top part is the same as the model page on freeweights.allternit.com: the From, Subject, Date, Commit and Signed lines, the card face with Facts, and the `fw get` and `fw verify` commands.
+
+The buttons follow the site:
+
+| Button | When it shows | What it does |
+|---|---|---|
+| Download | Desktop, and a build fits | Downloads the build picked in the table |
+| Run with Allternit Cloud | The model is served on Allternit Cloud | Opens the console to create an API key |
+| Chat with it | The model is served on Allternit Cloud, or it is downloaded on Desktop | Starts a chat with that model |
+| Fine-tune in Studio | A text-generation base that Studio can train | Opens Train with the model |
+| Run at home | A build needs 96 GB or less | Opens Allternit Compute |
+| Get help | Always | Opens Allternit Services |
+| Open on Freeweights | Always | Opens the model on freeweights.allternit.com |
+
+Below the buttons, the table lists every build with its format, engine, file size, the memory it needs and its fit here. The build marked "best for this device" is picked first. When no build fits, the smallest build is marked "smallest build" instead. On the web, the phone layout and the PWA, downloads go to a connected computer. A notice at the top of the catalog says so and has the Sign in or Connect a computer button.
+
+### Open a model by link
+
+`https://ai.allternit.com/?view=model-lab&model=OWNER/NAME` opens Studio on the Catalog with that model's page open. On Desktop, use `allternit://open?view=model-lab&model=OWNER/NAME`. If Freeweights does not list the model, the Catalog opens with the id in the search box. The links, the chat variant and the accepted id characters are in [Link straight to a model](/tools/freeweights#link-straight-to-a-model).
+
+## Training
 
 Training runs on a computer you own, not on the device you are holding. Engines are listed with their install state.
 
@@ -93,13 +115,36 @@ Training runs on a computer you own, not on the device you are holding. Engines 
 2. Pick a base model from the hosted Freeweights catalog.
 3. Pick a dataset: a dataset repo, or a path on the computer.
 4. Pick a method: `lora`, `qlora`, `dpo` or `full`.
-5. Start the job. One job runs per computer at a time.
-6. Follow the log. Cancel the job if you need to stop it.
-7. When the job succeeds, register an output (adapter, merged model or GGUF) into the local model cache. The Local Engine then lists it as a model.
+5. Under **Also make**, pick extra outputs if you want them: a merged model (LoRA methods only; a full fine-tune always writes the whole model) and GGUF files (Q4_K_M, Q8_0, F16). GGUF needs llama.cpp on the computer. Without it, the job still finishes and its log says which GGUF files it skipped.
+6. Start the job. One job runs per computer at a time.
+7. Follow the log. Cancel the job if you need to stop it.
+8. When the job succeeds, register an output (adapter, merged model or GGUF) into the local model cache. The Local Engine then lists it as a model.
 
 The web and the PWA need a connected computer. Desktop uses its own computer. On a connected computer, Desktop bundles Allternit Tune and installs it on first use.
 
-Hardware: Apple Silicon, or NVIDIA on Linux. Windows, AMD, Intel and CPU-only computers are refused with the reason (`hardware_not_supported`). Allternit Tune uses the TRL and PEFT torch backend on both. The MLX backend is not available yet. Rented GPUs and publishing a result to Freeweights are not available yet.
+### Hardware
+
+Allternit Tune picks the hardware from what the computer reports. Every row below is **Not yet tested by Allternit on this hardware**, so treat a first run as a trial and check the output.
+
+| Computer | Runs | Backend | QLoRA | Not yet tested by Allternit on this hardware |
+|---|---|---|---|---|
+| Mac with Apple Silicon (`apple-silicon`) | `lora`, `qlora`, `dpo`, `full` | MLX for `lora` and `qlora`. PyTorch on Metal for `dpo` and `full`. | MLX 4-bit | Yes |
+| Linux with an NVIDIA GPU (`cuda-linux`) | all four | PyTorch (CUDA) | bitsandbytes | Yes |
+| Windows with an NVIDIA GPU (`cuda-windows`) | all four | PyTorch (CUDA) | bitsandbytes | Yes |
+| Linux with an AMD GPU (`rocm-linux`) | all four | PyTorch (ROCm) | bitsandbytes 0.50 or newer | Yes |
+| Linux with an Intel GPU (`xpu-linux`) | all four | PyTorch (XPU) | bitsandbytes 0.50 or newer | Yes |
+| Windows with an Intel GPU (`xpu-windows`) | all four | PyTorch (XPU) | bitsandbytes 0.50 or newer | Yes |
+| CPU only (`cpu`) | `lora` only, slowly. The job shows a warning before it starts. | PyTorch (CPU) | Not available | Yes |
+
+Intel Macs are not supported: PyTorch has no build for them that the trainer can use. AMD GPUs on Windows train on the CPU. Studio shows the reason from the computer's check before you start. Rented GPUs and publishing a result to Freeweights are not available yet.
+
+On a Mac you can set the backend to `torch` instead of `auto`. `mlx` is refused for `dpo`, for `full`, and on any computer that is not an Apple Silicon Mac.
+
+**MLX output.** Turn on **MLX** under **Also make** on an Apple Silicon Mac to get MLX files. The MLX adapter is in mlx-lm's own format (`adapters.safetensors` and `adapter_config.json`), not a PEFT adapter, so tools that load PEFT adapters cannot read it. After QLoRA the MLX model stays 4-bit, while the merged model is written dequantized. A `full` or `dpo` run on a Mac trains on PyTorch, then converts the merged model to MLX.
+
+**Python.** Desktop uses its bundled Python 3.12. On any other computer the trainer needs Python 3.10 or newer on the computer.
+
+**Licences.** See [Where the engines come from](/api/studio#where-the-engines-come-from).
 
 If you pin the base model with its manifest hash and the signed Freeweights manifest differs, the job is refused with `manifest_mismatch`. Job outputs are kept on the computer after the job ends.
 
@@ -126,14 +171,16 @@ A recipe tells the Local Engine which backend to use and how to launch it. Suppo
 
 ### Freeweights Studio jobs
 
-Long-running work is submitted as jobs. Job types map to the operations you can queue from the Engine and Train tabs:
+A job is one fine-tune run on one computer. Merging and quantizing are outputs of that job, not separate jobs:
 
-| Type | Purpose |
+| Output | Written when |
 |---|---|
-| `training` | Fine-tune a base model, typically with LoRA or GRPO |
-| `export` | Quantize or export a trained model |
-| `merge` | Merge a LoRA adapter into a base model |
-| `evaluation` | Run a benchmark such as MMLU, ARC, HellaSwag, TruthfulQA, or Winogrande |
+| `adapter` | Always, for `lora`, `qlora` and `dpo` |
+| `merged` | Always for `full`; for the LoRA methods when **Also make → Merged model** is on (`outputs.merged` in the job spec) |
+| `mlx` | When **Also make → MLX** is on (`outputs.mlx`). Apple Silicon only |
+| `gguf` | One file per quant picked under **Also make** (`outputs.gguf`, for example `["q4_k_m"]`). Needs llama.cpp on the computer |
+
+Evaluation is not available yet. The job spec has an `eval` field, and Allternit Tune ignores it.
 
 ### Brain registration
 
@@ -159,6 +206,7 @@ Training jobs are served by the Studio host on each computer, under `/api/v1/stu
 |---|---|---|
 | `GET` | `/api/local-engine/health` | Controller health check |
 | `GET` | `/api/local-engine/status` | Host telemetry and engine state |
+| `GET` | `/api/local-engine/hardware` | Device profile and model budget for on-device fit ([details](/api/local-engine#hardware)) |
 | `GET` | `/api/local-engine/models` | List cached models |
 | `POST` | `/api/local-engine/models/import` | Import a model from disk |
 | `POST` | `/api/local-engine/models/download` | Queue a model download |
