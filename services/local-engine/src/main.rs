@@ -4,7 +4,7 @@ use allternit_local_engine::catalog::CatalogService;
 use allternit_local_engine::hardware;
 use allternit_local_engine::recommend::Recommender;
 use allternit_local_engine::routes::{
-    assess, catalog, chat, health, models, recommend, runtimes, status,
+    assess, catalog, chat, hardware as hardware_routes, health, models, recommend, runtimes, status,
 };
 use allternit_local_engine::runtime::ProcessManager;
 use allternit_local_engine::sampler::SystemSampler;
@@ -66,6 +66,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .merge(catalog::create_router(state.clone()))
         .merge(assess::create_router(state.clone()))
         .merge(recommend::create_router(state.clone()))
+        .merge(hardware_routes::create_router(state.clone()))
         .merge(status::create_router(state));
 
     let host = std::env::var("HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
