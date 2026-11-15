@@ -337,6 +337,8 @@ export namespace Provider {
       providers: { [spec.id]: info } as { [providerID: string]: Info },
       sdk: new Map<number, SDK>(),
       modelLoaders: {} as { [providerID: string]: CustomModelLoader },
+      // Self-hosted inference serves one fixed provider: no device relay.
+      devices: undefined as DevicesWatch | undefined,
     }
   }
 
