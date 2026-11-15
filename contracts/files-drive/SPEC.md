@@ -180,7 +180,7 @@ fd1.<base64url(claims JSON)>.<base64url(Ed25519 signature over "fd1." + payload 
 
 ## 9. Wake consent
 
-Today `connect_or_wake_runtime` (`runtime_relay.rs`) wakes a stopped computer on any relayed request. For Files paths (`/api/v1/files/v2/*`, and legacy `/api/v1/files/*`) cloud-api changes that:
+Today `connect_or_wake_runtime` (`runtime_relay.rs`) wakes a stopped computer on any relayed request. For v2 Files paths (`/api/v1/files/v2/*`) cloud-api changes that. Legacy `/api/v1/files/*` keeps today's wake behaviour for now: its callers (web plugin discovery, iOS MCP and HEARTBEAT screens, `filesApi`) cannot handle `wake_consent_required`. When steps 26 (web) and 19 (iOS) move those callers to v2, the same change puts legacy paths under these rules too:
 
 1. **Files requests never wake and never touch activity.** The relay does not call `wake_for_device` or `touch_runtime_activity` for them.
 2. **Metadata is answered from the snapshot.** While the computer sleeps, `roots`, `list`, `stat`, `changes` and name `search` are answered from the asleep snapshot (section 11) with `served_by: snapshot`, `computer_state: asleep`.
