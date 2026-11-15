@@ -1017,7 +1017,10 @@
         "allternit/cmd/allternit-cloud-api/src/routes/billing_*",
         "allternit/cmd/allternit-cloud-api/src/services",
         "allternit-ai/src/components/chat",
-        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/commands/keep-going"
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/commands/keep-going",
+        "allternit/cmd/allternit-cloud-api/src/routes/me_usage.rs",
+        "allternit/cmd/allternit-cloud-api/src/routes/model_router.rs",
+        "allternit/cmd/allternit-cloud-api/src/routes/artifact_runtime.rs"
       ],
       "decisions": [
         {
@@ -1051,6 +1054,10 @@
         {
           "on": "2026-11-10",
           "note": "Cloud list checked against the real provider accounts. Added claude-sonnet-5.5, gpt-6.1-sol (OpenRouter) and kimi-k3.1-pro (Together); claude-sonnet-4.6 hidden. Fireworks rows now carry the 1.5\u00d7 retail markup (were billed at the provider price)."
+        },
+        {
+          "on": "2026-11-15",
+          "note": "Allternit Cloud models need credits (CONTRACT-cloud-credits-2026-11-15): the $2 a month free allowance, its email check and its rate limit are gone. /v1/chat/completions and the artifact-runtime model call allow a positive user_credits balance only; no row is 402 credits_required, a row at or below 0 is 402 credits_exhausted, with a billing_error body carrying the four packs and billing_url. GET /api/v1/billing/credits (free_inference removed) and GET /api/v1/me/usage carry the same cloud_models {allowed, reason, balance_usd, byok_providers}; /me/usage for a Free account with no row reports credits 0, weekly 0/0. /v1/models rows add pricing {input_per_1m_usd, output_per_1m_usd} (retail). Setup checks and the Connections Cloud row ('Free \u00b7 needs credits' / 'Free \u00b7 $X credits') follow the same rule."
         }
       ],
       "evidence": [
@@ -4634,7 +4641,8 @@
         "allternit/surfaces/allternit-mobile/ios/Features/Settings/Connections/ConnectionsStore.swift",
         "allternit/cmd/gizzi-code/src/cli/commands/connect-flow.ts",
         "allternit/cmd/gizzi-code/src/cli/commands/connect-model.ts",
-        "allternit/cmd/gizzi-code/src/cli/commands/connect-run.ts"
+        "allternit/cmd/gizzi-code/src/cli/commands/connect-run.ts",
+        "allternit/cmd/allternit-cloud-api/src/routes/plan_threads.rs"
       ],
       "decisions": [
         {
@@ -4644,6 +4652,10 @@
         {
           "on": "2026-11-13",
           "note": "connect kit: hub A, setup A, fewest-step sign-ins; brain runner gated on vendors. Connections page = option A (Brains split into Works on any device, Needs your computer, Coming soon); day-one setup = Your AI, Your phone, Main bot, Connected, with no computer step; Add a computer is offered as Later, if you need it. Claude, Grok and Kimi plans on Allternit wait for vendor answers (plan Phase 0); Copilot waits for a GitHub App. Contract: CONTRACT-connections-2026-11.md. Kit routes never call require_compute."
+        },
+        {
+          "on": "2026-11-15",
+          "note": "No-computer Cloud chats (CONTRACT-cloud-credits D6, D7): a signed-in Clerk session may send an Allternit Cloud catalog alias to /v1/chat/completions under the credits gate (direct BYOK refs such as xai/grok-4 stay 403), and the plan chat store accepts allternit/<alias> threads when the alias resolves in the catalog, hidden aliases included."
         }
       ],
       "evidence": [

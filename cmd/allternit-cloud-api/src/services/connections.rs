@@ -257,6 +257,9 @@ pub enum CloudComputer {
 pub struct Facts {
     /// `Free`, `Plus`, `Max` or `Ultra`.
     pub plan: &'static str,
+    /// The `user_credits` balance, `None` with no row. Allternit Cloud models
+    /// need it above 0 (CONTRACT-cloud-credits-2026-11-15).
+    pub credits: Option<f64>,
     pub keys: Vec<SavedKey>,
     pub voice: Vec<String>,
     pub cloud_computer: CloudComputer,
@@ -370,7 +373,11 @@ pub fn build_rows(facts: &Facts, aliases_for: &dyn Fn(&str) -> Vec<String>) -> V
     let online = facts.computer_online();
 
     // Brains.
-    let found = if facts.plan == "Free" { "Free · $2 a month free".to_string() } else { facts.plan.to_string() };
+    let found = match (facts.plan, facts.credits) {
+        ("Free", Some(balance)) if balance > 0.0 => format!("Free · ${balance:.2} credits"),
+        ("Free", _) => "Free · needs credits".to_string(),
+        (plan, _) => plan.to_string(),
+    };
     rows.push(Row::new("allternit", "brains", "server").on(found));
 
     // Rows the computer owns (ChatGPT, the local brain, coding tools): with a
@@ -662,8 +669,11 @@ pub async fn load_facts(
         None
     };
 
+    let credits = crate::services::credit_balance_row(db, user_id).await?;
+
     Ok(Facts {
         plan: plan_label(plan_id.as_deref().unwrap_or("")),
+        credits,
         keys,
         voice,
         cloud_computer,
@@ -700,6 +710,7 @@ mod tests {
     fn facts() -> Facts {
         Facts {
             plan: "Free",
+            credits: None,
             keys: Vec::new(),
             voice: Vec::new(),
             cloud_computer: CloudComputer::None,
@@ -728,7 +739,11 @@ mod tests {
     #[test]
     fn free_account_without_a_computer_gets_honest_unavailable_rows() {
         let rows = build_rows(&facts(), &no_models);
-        assert_eq!(row(&rows, "allternit").found.as_deref(), Some("Free · $2 a month free"));
+        assert_eq!(row(&rows, "allternit").found.as_deref(), Some("Free · needs credits"));
+        let funded = Facts { credits: Some(4.38), ..facts() };
+        assert_eq!(row(&build_rows(&funded, &no_models), "allternit").found.as_deref(), Some("Free · $4.38 credits"));
+        let spent = Facts { credits: Some(0.0), ..facts() };
+        assert_eq!(row(&build_rows(&spent, &no_models), "allternit").found.as_deref(), Some("Free · needs credits"));
         let chatgpt = row(&rows, "chatgpt");
         assert!(!chatgpt.available);
         assert_eq!(chatgpt.fallbacks, vec!["this-mac", "openai-key"]);

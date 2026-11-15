@@ -2,9 +2,10 @@
 //!
 //! One authenticated endpoint (`GET /api/v1/billing/credits`) reporting the
 //! user's remaining balance, month-to-date hosted usage, and their most
-//! recent credit ledger entries (grants and usage debits). Free-path users
-//! (no credits row, or a non-positive balance) additionally get their
-//! monthly free inference allowance consumption (`free_inference`). The
+//! recent credit ledger entries (grants and usage debits), plus
+//! `cloud_models`: whether Allternit Cloud models may run for this account
+//! (`inference_settlement::cloud_models_entitlement`, the same rule as the
+//! chat gate; CONTRACT-cloud-credits-2026-11-15). The
 //! caller is verified per request — Clerk session or `allternit_*` API token
 //! (`auth::resolve_user_id`).
 
@@ -22,17 +23,8 @@ pub struct CreditBalanceResponse {
     balance_usd: f64,
     month_to_date_usage_usd: f64,
     recent_transactions: Vec<CreditTransactionResponse>,
-    /// Present only for free-path users (no credits row, or a non-positive
-    /// balance): their monthly free inference allowance consumption.
-    free_inference: Option<FreeInferenceResponse>,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub struct FreeInferenceResponse {
-    monthly_allowance_usd: f64,
-    used_usd: f64,
-    remaining_usd: f64,
+    /// Allternit Cloud models entitlement (contract D4).
+    cloud_models: services::CloudModelsEntitlement,
 }
 
 #[derive(Debug, Serialize, FromRow)]
@@ -68,29 +60,7 @@ async fn get_credit_balance(
             .fetch_optional(&state.db)
             .await?;
     let balance_usd = balance_row.unwrap_or(0.0);
-    let free_inference = if balance_row.is_none() || balance_usd <= 0.0 {
-        let allowance: f64 = std::env::var("FREE_INFERENCE_MONTHLY_USD")
-            .ok()
-            .and_then(|value| value.parse().ok())
-            .unwrap_or(2.0);
-        let used: f64 = sqlx::query_scalar(
-            r#"
-            SELECT COALESCE(SUM(cost_usd), 0)
-            FROM inference_usage
-            WHERE user_id = $1 AND created_at >= date_trunc('month', NOW())
-            "#,
-        )
-        .bind(&user_id)
-        .fetch_one(&state.db)
-        .await?;
-        Some(FreeInferenceResponse {
-            monthly_allowance_usd: allowance,
-            used_usd: used,
-            remaining_usd: (allowance - used).max(0.0),
-        })
-    } else {
-        None
-    };
+    let cloud_models = services::cloud_models_entitlement(&state.db, &user_id, balance_row).await;
     let usage = services::hosted_usage_summary(&state.db, &user_id).await?;
     let recent = sqlx::query_as::<_, CreditTransactionRow>(
         r#"
@@ -116,6 +86,6 @@ async fn get_credit_balance(
                 created_at: row.created_at,
             })
             .collect(),
-        free_inference,
+        cloud_models,
     }))
 }

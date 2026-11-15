@@ -6,9 +6,10 @@ Runs on the control plane (mail). Exercises the real HTTP surface a user hits:
   2. GET /api/v1/billing/credits reflects the seeded balance
   3. POST /v1/chat/completions (cheap Groq alias) -> 200, usage recorded,
      credits deducted by the retail amount
-  4. free user (no credits row): free_inference present, one call burns
-     allowance, NO ledger deduction
-  5. exhausted-balance user: 403 before upstream spend
+  4. free user (no credits row): cloud_models not allowed, the call is a
+     402 credits_required before upstream spend (no free allowance since
+     CONTRACT-cloud-credits-2026-11-15)
+  5. exhausted-balance user: 402 credits_exhausted before upstream spend
   6. BYOK management endpoints respond (empty list; invalid key rejected)
   7. cleanup (DELETE users CASCADE smoke rows)
 
@@ -100,7 +101,7 @@ def main():
     rc, credits = api("GET", "/api/v1/billing/credits", paid_token)
     check("billing/credits readback", rc == 0 and abs(credits.get("balance_usd", -1) - 5.00) < 1e-9,
           f"balance={credits.get('balance_usd')}")
-    check("paid user has no free_inference", credits.get("free_inference") is None)
+    check("paid user may run Cloud models", (credits.get("cloud_models") or {}).get("allowed") is True)
 
     # 3: paid inference end-to-end. Priced model: the gpt-oss Groq aliases are
     # free upstream and would deduct ~$0, defeating the deduction check.
@@ -128,23 +129,22 @@ def main():
     )
     check("inference_usage row recorded", row == "1")
 
-    # 4: free user — allowance, no deduction (priced model so allowance math
-    # is observable; the ~trivial wholesale cost is the point of the soak)
+    # 4: free user (no credits row) — refused before upstream spend
     free_token = seed_user(free_uid, balance=None)
     rc, credits = api("GET", "/api/v1/billing/credits", free_token)
-    fi = credits.get("free_inference") or {}
-    check("free_inference present for no-row user", rc == 0 and fi.get("monthly_allowance_usd", 0) > 0,
-          f"allowance={fi.get('monthly_allowance_usd')}")
+    cm = credits.get("cloud_models") or {}
+    check("no-row user is not entitled", rc == 0 and cm.get("allowed") is False and cm.get("reason") == "credits_required",
+          json.dumps(cm)[:120])
     rc, body = api("POST", "/v1/chat/completions", free_token, {
         "model": PRICED_MODEL,
         "messages": [{"role": "user", "content": "Say hi"}],
         "max_tokens": 8,
     })
-    check("free inference allowed", rc == 0 and body.get("usage", {}).get("total_tokens", 0) > 0)
-    rc, credits = api("GET", "/api/v1/billing/credits", free_token)
-    used = (credits.get("free_inference") or {}).get("used_usd", 0)
-    check("allowance consumed, no balance created", used > 0 and balance_of(free_uid) == -1,
-          f"used=${used:.4f}")
+    err = body.get("error") if isinstance(body.get("error"), dict) else {}
+    check("no-row user -> 402 credits_required with 4 packs",
+          err.get("code") == "credits_required" and len(err.get("packs") or []) == 4, json.dumps(body)[:120])
+    check("no usage, no balance created", balance_of(free_uid) == -1 and psql(
+        f"SELECT COUNT(*) FROM inference_usage WHERE user_id = '{free_uid}'") == "0")
 
     # 5: exhausted balance blocked pre-dispatch
     dead_token = seed_user(dead_uid, balance=0.00)
@@ -152,8 +152,8 @@ def main():
         "model": PRICED_MODEL,
         "messages": [{"role": "user", "content": "Say hi"}],
     })
-    check("zero balance -> 403", body.get("error", "") == "Forbidden" or "credits" in json.dumps(body).lower(),
-          json.dumps(body)[:120])
+    err = body.get("error") if isinstance(body.get("error"), dict) else {}
+    check("zero balance -> 402 credits_exhausted", err.get("code") == "credits_exhausted", json.dumps(body)[:120])
 
     # 6: BYOK management endpoints
     rc, keys = api("GET", "/api/v1/inference/keys", paid_token)

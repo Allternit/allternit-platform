@@ -575,15 +575,8 @@ pub(crate) async fn billed_completion(
         ))));
     }
     let balance = inference_settlement::credit_balance_row(&state.db, &viewer).await?;
-    inference_settlement::check_inference_allowed(&state.db, &viewer, balance).await?;
-    if balance.is_none() {
-        if let Err(info) = state.free_inference_rate_limiter.check(&viewer).await {
-            return Err(ArtifactError::Api(ApiError::TooManyRequests(format!(
-                "Free AI limit reached. Try again in {}s or add credits.",
-                info.reset_after.as_secs()
-            ))));
-        }
-    }
+    // Billed to the viewer: the same Cloud credits gate as chat (402).
+    inference_settlement::check_inference_allowed(balance)?;
     let prompt_chars: usize = messages.iter().map(|(_, t)| t.chars().count()).sum();
     let prices = state.model_router.retail_prices(&alias).await.map_err(ApiError::from)?;
     let pool = match state.model_router.provider_for_alias(&alias) {

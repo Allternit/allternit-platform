@@ -223,8 +223,7 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn free_inference_limiter_blocks_over_limit_per_user() {
-        // The free inference path config: FREE_INFERENCE_RATE_LIMIT_RPM default 30.
+    async fn limiter_blocks_over_limit_per_key() {
         let limiter = RateLimiter::new(RateLimitConfig {
             requests_per_minute: 30,
             window: Duration::from_secs(60),
@@ -237,10 +236,7 @@ mod tests {
         assert_eq!(info.limit, 30);
         assert_eq!(info.remaining, 0);
 
-        // The limiter is keyed per user: another free user is unaffected, and
-        // paying users never reach this limiter at all (see
-        // routes::model_router::chat_completions — it only checks when the
-        // credit balance row is absent).
+        // The limiter is keyed per caller: another caller is unaffected.
         assert!(limiter.check("user_other").await.is_ok());
 
         // The 429 response carries the rate limit headers.
