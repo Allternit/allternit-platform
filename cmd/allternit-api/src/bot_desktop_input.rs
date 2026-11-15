@@ -723,6 +723,11 @@ pub(crate) async fn download_desktop_file_core(
     bot_id: Option<&str>,
     file_query: FilePathQuery,
 ) -> axum::response::Response {
+    // Every caller (computer routes, bot desktop routes) gets this: the path
+    // is on the guest, so it's checked by its text (files_scope).
+    if let Err(denied) = crate::files_scope::check_guest_path(&file_query.path) {
+        return crate::files_scope::denied_response(denied);
+    }
     let driver = match &state.vm_driver {
         Some(d) => d.clone(),
         None => {
@@ -832,6 +837,9 @@ pub(crate) async fn upload_desktop_file_core(
     file_query: FilePathQuery,
     body: Bytes,
 ) -> axum::response::Response {
+    if let Err(denied) = crate::files_scope::check_guest_path(&file_query.path) {
+        return crate::files_scope::denied_response(denied);
+    }
     if body.is_empty() {
         return (
             StatusCode::BAD_REQUEST,
@@ -1364,6 +1372,32 @@ mod tests {
         assert!(calls
             .iter()
             .any(|c| c == "push_file:sandbox-abc:/tmp/upload.txt"));
+    }
+}
+
+#[cfg(test)]
+mod file_path_scope_tests {
+    use super::*;
+
+    /// Every caller of the file cores (computer routes, bot desktop routes)
+    /// gets the guest-path check, not only the routes that remember it.
+    #[tokio::test]
+    async fn file_cores_refuse_secret_guest_paths() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = crate::test_helpers::app_state(dir.path()).await;
+        let down = download_desktop_file_core(&state, "sb", "linux", "incus", None, FilePathQuery { path: "/root/.ssh/id_rsa".into() }).await;
+        assert_eq!(down.status(), StatusCode::FORBIDDEN);
+        let up = upload_desktop_file_core(
+            &state,
+            "sb",
+            "linux",
+            "incus",
+            None,
+            FilePathQuery { path: "/home/u/.ssh/authorized_keys".into() },
+            Bytes::from_static(b"ssh-ed25519 AAAA"),
+        )
+        .await;
+        assert_eq!(up.status(), StatusCode::FORBIDDEN);
     }
 }
 
