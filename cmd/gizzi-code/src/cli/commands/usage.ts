@@ -16,6 +16,7 @@ import { cmd } from "@/cli/commands/cmd"
 import { UI } from "@/cli/ui"
 import { EOL } from "os"
 import { cloudInferenceToken, cloudOrigin } from "@/runtime/providers/discovery/allternit-cloud"
+import { fetchLimits, freeweightsKey, storageLine } from "@/runtime/services/freeweightsUpload"
 import { Installation } from "@/shared/installation"
 
 type UsageRow = {
@@ -117,12 +118,16 @@ export const UsageCommand = cmd({
     const body = (await res.json().catch(() => ({}))) as { rows?: UsageRow[] }
     const rows = body.rows ?? []
 
+    // Storage line only (no perks): Freeweights upload storage, from the public limits route.
+    const storage = args.json ? undefined : storageLine(await fetchLimits(freeweightsKey()))
+
     if (args.json) {
       UI.println(JSON.stringify(rows, null, 2))
       return
     }
     if (rows.length === 0) {
       UI.println(`No usage in the last ${days} day${days === 1 ? "" : "s"}.`)
+      if (storage) UI.println(storage)
       return
     }
 
@@ -144,5 +149,6 @@ export const UsageCommand = cmd({
     ])
     out.push(["Total", fmtInt(total.requests), fmtInt(total.prompt), fmtInt(total.completion), fmtCost(total.cost)])
     UI.println(table(out, [String(args["group-by"] ?? "day"), "requests", "prompt tokens", "completion tokens", "cost (USD)"]))
+    if (storage) UI.println(EOL + storage)
   },
 })

@@ -136,7 +136,7 @@ Allternit Tune picks the hardware from what the computer reports. Every row belo
 | Windows with an Intel GPU (`xpu-windows`) | all four | PyTorch (XPU) | bitsandbytes 0.50 or newer | Yes |
 | CPU only (`cpu`) | `lora` only, slowly. The job shows a warning before it starts. | PyTorch (CPU) | Not available | Yes |
 
-Intel Macs are not supported: PyTorch has no build for them that the trainer can use. AMD GPUs on Windows train on the CPU. Studio shows the reason from the computer's check before you start. Rented GPUs and publishing a result to Freeweights are not available yet.
+Intel Macs are not supported: PyTorch has no build for them that the trainer can use. AMD GPUs on Windows train on the CPU. Studio shows the reason from the computer's check before you start. Rented GPUs and a Publish button in Studio are not available yet. To share a result today, publish the output folder with `gizzi models publish` (see [Uploads](/tools/freeweights#uploads)).
 
 On a Mac you can set the backend to `torch` instead of `auto`. `mlx` is refused for `dpo`, for `full`, and on any computer that is not an Apple Silicon Mac.
 
