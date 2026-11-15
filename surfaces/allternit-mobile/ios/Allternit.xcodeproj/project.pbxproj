@@ -88,6 +88,7 @@
 		1A45E8500FE1A95D51866010 /* IntentGate.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD27499F59E5CDE9AC9911A1 /* IntentGate.swift */; };
 		1A50A4EF874CED28EA26C293 /* MessageDraftCardTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD8B49B37F98609F680978B5 /* MessageDraftCardTests.swift */; };
 		1A9000E7143437004E78866A /* WorkspaceClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1511FD767F14CCACE52B80D /* WorkspaceClient.swift */; };
+		1B66B097EE44274A8E5862B9 /* FreeweightsClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEADA7EBA22D82037EC5AE5F /* FreeweightsClient.swift */; };
 		1BD970D51AA8C0B6C399D5EB /* ImpactMapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6354FE83459A7C8C1555749 /* ImpactMapView.swift */; };
 		1BF1620CCC4DE0512F97DF5D /* IntentServicing.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCD4C07BB308A5214B5D0190 /* IntentServicing.swift */; };
 		1CA10FA52947ECFA94C78B73 /* MiniAppCatalogStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E9B467D4B256ECC303C911D /* MiniAppCatalogStore.swift */; };
@@ -622,6 +623,7 @@
 		D47A155869D164B09E98752D /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = ABBB4775FDD12CEECFBA773E /* Assets.xcassets */; };
 		D4FEDC20AB6135E84B005FE8 /* ChannelConnectFlows.swift in Sources */ = {isa = PBXBuildFile; fileRef = 769A45F0D8CAFD27DA0864DA /* ChannelConnectFlows.swift */; };
 		D50AD8ED55A115423F584718 /* LiveScreenPacket.swift in Sources */ = {isa = PBXBuildFile; fileRef = C34F590B9CDCC3ED66535CD9 /* LiveScreenPacket.swift */; };
+		D56A02E237B34A8277D1AD67 /* FreeweightsBrowseView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FAD3451741429A76C898889B /* FreeweightsBrowseView.swift */; };
 		D642946A4F9D75A64269D90C /* ContextUsageMeter.swift in Sources */ = {isa = PBXBuildFile; fileRef = D69F5A35B9CCBC47EE3A7F17 /* ContextUsageMeter.swift */; };
 		D71588443F0CE7D3B0997286 /* StatusIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 17AA47FC9C8EFA2D7A77BEF6 /* StatusIntents.swift */; };
 		D731DA00E2ABCAC5EA9A1FF6 /* ACIComputersPane.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B32E0565DA7953C599388DC /* ACIComputersPane.swift */; };
@@ -1468,6 +1470,7 @@
 		FA9B60709ECB866C3F332F96 /* BotDesktop.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotDesktop.swift; sourceTree = "<group>"; };
 		FAAAE8EF948075A8D59CD534 /* AppearanceAndNotifications.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppearanceAndNotifications.swift; sourceTree = "<group>"; };
 		FAB32C871938973FAA140F19 /* AsciiScenes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AsciiScenes.swift; sourceTree = "<group>"; };
+		FAD3451741429A76C898889B /* FreeweightsBrowseView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FreeweightsBrowseView.swift; sourceTree = "<group>"; };
 		FB180A8B2DE32B3733CB9CC4 /* RuntimeOperationsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeOperationsStore.swift; sourceTree = "<group>"; };
 		FCE122EEEA1CE1A608D15BDB /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		FD0874392F600D5C0B9BEA87 /* BotFormData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotFormData.swift; sourceTree = "<group>"; };
@@ -1476,6 +1479,7 @@
 		FD8B49B37F98609F680978B5 /* MessageDraftCardTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageDraftCardTests.swift; sourceTree = "<group>"; };
 		FDF43F217F3C7F9A823A21EF /* PetOfferCenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PetOfferCenter.swift; sourceTree = "<group>"; };
 		FE407E416B21B84BDA01D6B2 /* AutomationScheduleCalendarViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutomationScheduleCalendarViews.swift; sourceTree = "<group>"; };
+		FEADA7EBA22D82037EC5AE5F /* FreeweightsClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FreeweightsClient.swift; sourceTree = "<group>"; };
 		FEBFF3044FDC074368D1997C /* ProviderManagementClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderManagementClient.swift; sourceTree = "<group>"; };
 		FEEC6838A5C637D76EED594C /* AgentActivityDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentActivityDetailView.swift; sourceTree = "<group>"; };
 		FF328AFBA2C29F32527949E4 /* LoopStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoopStore.swift; sourceTree = "<group>"; };
@@ -1787,6 +1791,7 @@
 				3DB0FED148D7FDF145A81C0D /* BenchmarkModels.swift */,
 				AC990EE54DE23BD6A0EAB08A /* BenchmarkRunner.swift */,
 				50EA6B31E1867A996AFBD6C4 /* BenchmarkView.swift */,
+				FAD3451741429A76C898889B /* FreeweightsBrowseView.swift */,
 				6965002D7B6A6BF6D13EA533 /* ModelsTabView.swift */,
 			);
 			path = Models;
@@ -1938,6 +1943,7 @@
 				CCD882DECA9CE6A95ABBA9CF /* FabricTransportClient.swift */,
 				A3B762E812CA8460287DD6E2 /* FileClient.swift */,
 				4F77A924890E644DD3DA1E21 /* FocusFilterClient.swift */,
+				FEADA7EBA22D82037EC5AE5F /* FreeweightsClient.swift */,
 				11DDE1CD60ED8E7F4561104F /* HermesClient.swift */,
 				781D0BC4A1B73C4F3B6E657C /* InappCallsClient.swift */,
 				B3724E997AB3FF9E2B2E1917 /* InboxClient.swift */,
@@ -3720,6 +3726,8 @@
 				52F3CD56C8A3C1D254CE71B9 /* FocusFilterClient.swift in Sources */,
 				22587EBF84FC873F64DD20B8 /* FormSchema.swift in Sources */,
 				49E8007E1EC443E080CBC787 /* FormSurfacesView.swift in Sources */,
+				D56A02E237B34A8277D1AD67 /* FreeweightsBrowseView.swift in Sources */,
+				1B66B097EE44274A8E5862B9 /* FreeweightsClient.swift in Sources */,
 				0207BA6E66D455D5B58FBF1F /* FriendlyStateView.swift in Sources */,
 				21CBF60759C7C51441514BBC /* GroupChatViews.swift in Sources */,
 				872AF2B49557734CB68B452F /* HermesClient.swift in Sources */,
