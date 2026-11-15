@@ -281,7 +281,9 @@ Each tool belongs to one class:
   that takes a model-written payload.
 
 Agent mode uses only the Kali container. A paused step you do not approve in
-time is skipped and logged as declined. Guard never changes your repository,
+time is skipped and logged as declined. **Stop** ends the run at once. If the
+driver is carrying out an action, the run ends after that step; press Stop again
+to end it at once. Guard never changes your repository,
 pushes, or opens a pull request. Agent runs need the computer that holds Guard
 and its container runtime, so phones do not run them.
 
