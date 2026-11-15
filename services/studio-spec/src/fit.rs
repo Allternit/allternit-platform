@@ -194,6 +194,18 @@ pub fn fit(engine: &EngineInfo, host: &HostHardware) -> Fit {
         Some(why) => format!("{r} {why}"),
         None => r,
     };
+    let uses_torch = engine.backends.iter().any(|b| b.id == "torch");
+    if let (true, Some(r)) = (uses_torch, &host.torch_unavailable) {
+        return Fit {
+            ok: false,
+            hardware: hw,
+            backend: None,
+            reason: r.clone(),
+            warning: None,
+            methods_unavailable: BTreeMap::new(),
+            outputs_unavailable: BTreeMap::new(),
+        };
+    }
     if let Some(r) = engine_refusal(engine, hw) {
         return Fit {
             ok: false,
