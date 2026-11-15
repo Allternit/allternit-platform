@@ -265,9 +265,10 @@ pub async fn auth_middleware(
     }
 
     // A person's signed-in Clerk session on the chat route: web and iOS send
-    // their plan chats (`plan/…`, `copilot/…`) here with the session token,
-    // not an API key. Only person-only models accept it; chat_completions
-    // refuses every other model for this token id (CLERK_SESSION_TOKEN_ID).
+    // their plan chats (`plan/…`, `copilot/…`) and no-computer Allternit Cloud
+    // chats (catalog aliases, under the credits gate) here with the session
+    // token, not an API key. chat_completions refuses every other model for
+    // this token id (CLERK_SESSION_TOKEN_ID).
     if let Some(jwt) = token.as_deref().filter(|t| t.split('.').count() == 3 && !t.starts_with("alt_") && !t.starts_with("allternit_")) {
         if is_device_inference_path(request.uri().path()) {
             if let Ok(user) = crate::auth::clerk::user_from_token(jwt).await {

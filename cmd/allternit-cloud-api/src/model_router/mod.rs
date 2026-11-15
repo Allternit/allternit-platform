@@ -400,6 +400,15 @@ impl ModelRouter {
                     ),
                 );
             }
+            // The same retail price per 1M tokens, as an object clients can
+            // show in the Cloud credits disclosure (CONTRACT-cloud-credits D11).
+            info.extra.insert(
+                "pricing".to_string(),
+                serde_json::json!({
+                    "input_per_1m_usd": retail.prompt_per_1m,
+                    "output_per_1m_usd": retail.completion_per_1m,
+                }),
+            );
             // Set last so upstream extras can never override these flags.
             info.extra.insert(
                 "default".to_string(),

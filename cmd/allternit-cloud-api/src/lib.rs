@@ -80,8 +80,6 @@ pub struct ApiState {
     pub rate_limiter: Arc<RateLimiter>,
     /// Public-route rate limiter for pairing and relay endpoints
     pub public_rate_limiter: Arc<RateLimiter>,
-    /// Tight per-user limiter for the free inference path (no credits row)
-    pub free_inference_rate_limiter: Arc<RateLimiter>,
     /// Cost service for tracking run costs
     pub cost_service: Arc<dyn services::CostService>,
     /// Quota service for free-tier guardrails
