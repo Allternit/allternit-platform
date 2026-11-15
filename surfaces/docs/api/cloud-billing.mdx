@@ -132,4 +132,49 @@ Migration `106_billing_disputes.sql`:
 | POST | `/api/v1/billing/subscribe` | Subscription Checkout; reuses the person's Stripe customer. |
 | POST | `/api/v1/billing/portal` | Stripe billing portal for invoices, cards and cancellation. |
 
+## Freeweights entitlement
+
+[Freeweights](/tools/freeweights) signs people in with their Allternit account and never stores a plan, perk or price. Its Worker asks this route for a short signed claim instead. The contract is `spec/accounts-v1.md` section 3 in the freeweights repo.
+
+| Method | Path | Notes |
+| --- | --- | --- |
+| GET | `/api/v1/freeweights/entitlement` | Clerk session or `alt_` key (any scope; a revoked or expired key is refused). Answers `200` with `Content-Type: application/jose` and a compact JWS. |
+
+The JWS header is `{"alg":"EdDSA","typ":"JWT","kid":"entitlement-v1"}` (Ed25519). The payload:
+
+| Field | Value |
+| --- | --- |
+| `iss`, `aud` | `https://api.allternit.com`, `freeweights` |
+| `sub` | Clerk user id; for a key, the key owner |
+| `plan` | The plan id as cloud-api names it: `free`, `plus`, `super` (Max) or `ultra`. Same answer as `GET /api/v1/billing/subscription`. |
+| `orgs[]` | One entry per Clerk org: `clerk_org_id`, `slug`, `role` (`admin` for `org:admin`, else `member`), `plan`, `perks`, `addon_bytes`, and `seats` only for a team plan. Org plans are `free` until team billing ships. |
+| `perks` | Perk name to number, boolean or string. Empty unless perks are turned on. `api_requests_5m` (a number) is the signed-in request limit per 5 minutes; while it is absent the Worker applies no limit of its own. |
+| `addon_bytes` | `{"public": 0, "private": 0}` until storage add-ons are sold. |
+| `scopes` | A session gets `freeweights.read` and `freeweights.write`. A key gets its own `freeweights.*` scopes (a full-access legacy `*` token counts as read and write). |
+| `cred` | `session` or `key` |
+| `iat`, `exp` | `exp` is `iat` + 600 seconds |
+
+Errors: no credential is `401`. A missing or unreadable signing key is `503` with `{"error":"accounts_not_configured"}`, which the Worker reads as accounts not being set up yet. A failed plan read or a failed Clerk org read is `503` with `{"error":"entitlement_unavailable"}` and `Retry-After: 60`. The rest of the API keeps working without the key.
+
+Browsers on `https://freeweights.allternit.com` and `https://fw-preview.allternit.com` may call this route and `GET /api/v1/billing/plans`. Those origins get no CORS access to any other route.
+
+### Configuration
+
+| Env var | Meaning |
+| --- | --- |
+| `FREEWEIGHTS_ENTITLEMENT_SIGNING_KEY` | The Ed25519 private key: a PKCS#8 PEM (OpenSSL 3: `openssl genpkey -algorithm ed25519 -out entitlement-v1.key`; the LibreSSL `openssl` that ships with macOS cannot make Ed25519 keys; `\n` escapes are accepted) or the raw 32-byte seed as base64 or hex. Its public half (`openssl pkey -in entitlement-v1.key -pubout`) is `spec/keys/entitlement-v1.pub` in the freeweights repo. |
+| `FREEWEIGHTS_PERKS_ENABLED` | `1` or `true` turns perks on. Off by default. |
+| `FREEWEIGHTS_PLAN_PERKS` | JSON object of plan id to perks, shaped like `{"plus": {"api_requests_5m": 0, "private_collections": true}}` (values are placeholders until the perk table is signed off). Read only while perks are on. No perk value is built into the code. |
+| `CLERK_SECRET_KEY` | Reads the org list from Clerk. Without it, `orgs` is empty. |
+
+### Freeweights key scopes
+
+`POST /api/v1/api-keys` accepts three Freeweights scopes and refuses any other name that starts with `freeweights.` with `400`:
+
+| Scope | Allows |
+| --- | --- |
+| `freeweights.read` | Reading the private repos the key owner can see |
+| `freeweights.write` | Every write the key owner can make; implies read |
+| `freeweights.repo:rp_…` | Reads and writes to one repo, by its stable `rp_` id. The id keeps its case. |
+
 The user guide is [Credits and auto top-up](/guides/credits-and-auto-top-up).

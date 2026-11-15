@@ -4716,6 +4716,32 @@
         "allternit/services/studio-spec/openapi/studio-api.yaml",
         "allternit/cmd/allternit-api/src/studio/mod.rs"
       ]
+    },
+    {
+      "id": "feature:freeweights-entitlement",
+      "label": "Freeweights entitlement claim (signed plan, orgs, perks, key scopes)",
+      "product": "product:cloud-api",
+      "status": "building",
+      "description": "cloud-api issues the claim the Freeweights Worker trusts for accounts (freeweights spec/accounts-v1.md section 3). GET /api/v1/freeweights/entitlement takes a Clerk session or alt_ key and answers a compact EdDSA JWS (kid entitlement-v1, application/jose): sub, plan (from billing_subscriptions current_plan_id, same as /billing/subscription), orgs from Clerk memberships, perks, addon_bytes, scopes, iss, aud, cred, iat, exp = iat+600. Signing key FREEWEIGHTS_ENTITLEMENT_SIGNING_KEY (unset = 503 accounts_not_configured, server still boots; plan or Clerk failure = 503 entitlement_unavailable + Retry-After). Perks behind FREEWEIGHTS_PERKS_ENABLED (default off) with values only from FREEWEIGHTS_PLAN_PERKS. API keys accept freeweights.read, freeweights.write, freeweights.repo:rp_<id> (validated, id case kept). CORS lets freeweights.allternit.com and fw-preview.allternit.com reach only this namespace and /api/v1/billing/plans.",
+      "touches": [
+        "allternit/cmd/allternit-cloud-api/src/routes/freeweights.rs",
+        "allternit/cmd/allternit-cloud-api/src/routes/billing_subscriptions.rs",
+        "allternit/cmd/allternit-cloud-api/src/services/api_keys.rs",
+        "allternit/cmd/allternit-cloud-api/src/lib.rs",
+        "allternit/surfaces/docs/api/cloud-billing.mdx",
+        "allternit/surfaces/docs/tools/freeweights.mdx",
+        "allternit/surfaces/docs/api/authentication.mdx"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-15",
+          "note": "HF parity plan step 0.5: the claim names plans as cloud-api does (free, plus, super = Max, ultra). Perk numbers wait for Eoj's sign-off, so none are in code. Org plans are free and seats are omitted until team billing ships; addon_bytes stay zero until add-on Stripe products exist. A Clerk org read failure answers 503 rather than signing an empty org list. The production public key spec/keys/entitlement-v1.pub and the signing-key secret are Eoj's gate."
+        }
+      ],
+      "evidence": [
+        "allternit/cmd/allternit-cloud-api/src/routes/freeweights.rs",
+        "allternit/surfaces/docs/api/cloud-billing.mdx"
+      ]
     }
   ],
   "journeys": [
