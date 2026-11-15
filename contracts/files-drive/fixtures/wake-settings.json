@@ -1,0 +1,9 @@
+{
+  "type": "WakeSettings",
+  "valid": true,
+  "case": "Per-computer wake setting (default ask).",
+  "message": {
+    "computer_id": "cmp_cloud_4gb",
+    "wake": "ask"
+  }
+}

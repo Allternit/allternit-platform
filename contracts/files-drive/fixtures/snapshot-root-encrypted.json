@@ -1,0 +1,15 @@
+{
+  "type": "SnapshotRootFile",
+  "valid": true,
+  "case": "Option B of the open decision: encrypted names.",
+  "message": {
+    "schema": "files-snapshot-root/1",
+    "root_id": "rt_home",
+    "cursor": "c1.rt_home.000412",
+    "written_at": "2026-11-15T03:12:00Z",
+    "encryption": "files_key_v1",
+    "ciphertext": "bm90LXJlYWwtY2lwaGVydGV4dA",
+    "nonce": "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3",
+    "key_id": "fk_1"
+  }
+}

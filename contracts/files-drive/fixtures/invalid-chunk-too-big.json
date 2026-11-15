@@ -1,0 +1,10 @@
+{
+  "type": "ChunkRef",
+  "valid": false,
+  "case": "Rejected: a 4 MiB chunk would exceed the relay cap.",
+  "message": {
+    "hash": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+    "offset": 0,
+    "size": 4194304
+  }
+}

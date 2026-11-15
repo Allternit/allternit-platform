@@ -1,0 +1,19 @@
+{
+  "type": "ReplicaRestoreReport",
+  "valid": true,
+  "case": "Restore found a tampered chunk.",
+  "message": {
+    "replica_id": "rp_1",
+    "files_restored": 411,
+    "bytes": 8637931,
+    "chunks_verified": 979,
+    "chunks_failed": 1,
+    "failures": [
+      {
+        "item_id": "it_doc000001",
+        "reason": "integrity_failed"
+      }
+    ],
+    "verified": false
+  }
+}

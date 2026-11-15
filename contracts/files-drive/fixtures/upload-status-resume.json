@@ -1,0 +1,16 @@
+{
+  "type": "UploadStatus",
+  "valid": true,
+  "case": "Resume after the app was killed mid-transfer: only chunk 3 is left.",
+  "message": {
+    "session_id": "up_5512",
+    "state": "open",
+    "need": [
+      "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3"
+    ],
+    "received_bytes": 3407872,
+    "total_bytes": 4252872,
+    "expires_at": "2026-11-16T14:05:00Z",
+    "max_request_bytes": 3670016
+  }
+}

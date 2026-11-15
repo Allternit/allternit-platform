@@ -1,0 +1,10 @@
+{
+  "type": "ErrorBody",
+  "valid": true,
+  "case": "Guest asked for an item outside the shared folder.",
+  "message": {
+    "error": "scope_violation",
+    "code": "scope_violation",
+    "message": "That item is not in the shared folder."
+  }
+}

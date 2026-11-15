@@ -1,0 +1,135 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://allternit.com/contracts/files-drive/v1/snapshot.json",
+  "title": "Files drive: asleep snapshot",
+  "description": "File-name metadata the runtime writes to the user's own R2 bucket so browsing works while a computer sleeps.",
+  "$defs": {
+    "SnapshotEncryption": {
+      "type": "string",
+      "enum": [
+        "none",
+        "files_key_v1"
+      ],
+      "description": "OPEN DECISION (Eoj): none = plain names in the user's own bucket (default); files_key_v1 = encrypted with the snapshot key."
+    },
+    "SnapshotItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name",
+        "kind",
+        "size",
+        "rev",
+        "modified_at"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "common.json#/$defs/ItemId"
+        },
+        "parent_id": {
+          "$ref": "common.json#/$defs/ItemId"
+        },
+        "name": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "common.json#/$defs/ItemKind"
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "rev": {
+          "$ref": "common.json#/$defs/Rev"
+        },
+        "modified_at": {
+          "$ref": "common.json#/$defs/Timestamp"
+        },
+        "root_link": {
+          "$ref": "common.json#/$defs/RootId"
+        }
+      }
+    },
+    "SnapshotManifest": {
+      "type": "object",
+      "description": "R2 key: files-snapshots/<computer_id>/v1/manifest.json",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "computer_id",
+        "written_at",
+        "encryption",
+        "roots"
+      ],
+      "properties": {
+        "schema": {
+          "type": "string",
+          "const": "files-snapshot/1"
+        },
+        "computer_id": {
+          "$ref": "common.json#/$defs/ComputerId"
+        },
+        "written_at": {
+          "$ref": "common.json#/$defs/Timestamp"
+        },
+        "encryption": {
+          "$ref": "#/$defs/SnapshotEncryption"
+        },
+        "roots": {
+          "type": "array",
+          "items": {
+            "$ref": "roots.json#/$defs/Root"
+          }
+        }
+      }
+    },
+    "SnapshotRootFile": {
+      "type": "object",
+      "description": "R2 key: files-snapshots/<computer_id>/v1/roots/<root_id>.json",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "root_id",
+        "cursor",
+        "written_at",
+        "encryption"
+      ],
+      "properties": {
+        "schema": {
+          "type": "string",
+          "const": "files-snapshot-root/1"
+        },
+        "root_id": {
+          "$ref": "common.json#/$defs/RootId"
+        },
+        "cursor": {
+          "$ref": "common.json#/$defs/Cursor"
+        },
+        "written_at": {
+          "$ref": "common.json#/$defs/Timestamp"
+        },
+        "encryption": {
+          "$ref": "#/$defs/SnapshotEncryption"
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SnapshotItem"
+          },
+          "description": "encryption none."
+        },
+        "ciphertext": {
+          "type": "string",
+          "description": "encryption files_key_v1: base64url XChaCha20-Poly1305 of the items JSON."
+        },
+        "nonce": {
+          "type": "string"
+        },
+        "key_id": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "type": "GuestCapabilityClaims",
+  "valid": false,
+  "case": "Rejected: unknown role \"owner\".",
+  "message": {
+    "v": 1,
+    "typ": "files_guest",
+    "share_id": "sh_owner",
+    "guest_id": "gst_7f3k",
+    "owner_user_id": "user_2abc",
+    "computer_id": "cmp_mac_studio",
+    "root_id": "rt_shared",
+    "item_id": "it_shr000001",
+    "role": "owner",
+    "guest_wake": false,
+    "passcode_ok": true,
+    "iat": 1794751500,
+    "exp": 1794755100,
+    "kid": "files-2026-11"
+  }
+}

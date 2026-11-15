@@ -1,0 +1,63 @@
+{
+  "type": "RootsResponse",
+  "valid": true,
+  "case": "Asleep: cloud computer stopped; roots come from the R2 snapshot, no wake.",
+  "message": {
+    "computer_id": "cmp_cloud_4gb",
+    "roots": [
+      {
+        "id": "rt_home",
+        "kind": "allternit_home",
+        "name": "Allternit",
+        "path_hint": "~/Allternit",
+        "policy": {
+          "read": true,
+          "write": true,
+          "shareable": true,
+          "agent_process": false,
+          "protected": false,
+          "offline": true,
+          "replica": true,
+          "versions": {
+            "keep_count": 20,
+            "keep_days": 30
+          },
+          "trash_days": 30
+        },
+        "root_item_id": "it_home0000",
+        "cursor": "c1.rt_home.000412",
+        "usage_bytes": 9120044,
+        "provider_ready": true
+      },
+      {
+        "id": "rt_inbox",
+        "kind": "inbox",
+        "name": "Inbox",
+        "path_hint": "~/Allternit/Inbox",
+        "policy": {
+          "read": true,
+          "write": true,
+          "shareable": true,
+          "agent_process": true,
+          "protected": false,
+          "offline": true,
+          "replica": true,
+          "versions": {
+            "keep_count": 20,
+            "keep_days": 30
+          },
+          "trash_days": 30
+        },
+        "root_item_id": "it_inbox000",
+        "parent_root_id": "rt_home",
+        "cursor": "c1.rt_inbox.000019",
+        "provider_ready": true
+      }
+    ],
+    "freshness": {
+      "served_by": "snapshot",
+      "computer_state": "asleep",
+      "snapshot_at": "2026-11-15T03:12:00Z"
+    }
+  }
+}

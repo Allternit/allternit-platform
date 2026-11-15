@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://allternit.com/contracts/files-drive/v1/transport.json",
+  "title": "Files drive: transport adapter",
+  "description": "One protocol over loopback, mesh, relay or gateway.",
+  "$defs": {
+    "TransportKind": {
+      "type": "string",
+      "enum": [
+        "loopback",
+        "mesh",
+        "relay",
+        "gateway"
+      ]
+    },
+    "TransportCandidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "base_url",
+        "priority",
+        "max_request_bytes"
+      ],
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/TransportKind"
+        },
+        "base_url": {
+          "type": "string"
+        },
+        "priority": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Lower tries first."
+        },
+        "max_request_bytes": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "EndpointsResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "computer_id",
+        "computer_state",
+        "wake",
+        "candidates"
+      ],
+      "properties": {
+        "computer_id": {
+          "$ref": "common.json#/$defs/ComputerId"
+        },
+        "computer_state": {
+          "$ref": "common.json#/$defs/ComputerState"
+        },
+        "wake": {
+          "$ref": "wake.json#/$defs/WakeSetting"
+        },
+        "candidates": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TransportCandidate"
+          }
+        },
+        "mesh_hostname": {
+          "type": "string"
+        }
+      }
+    },
+    "PingResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "computer_id",
+        "protocol",
+        "runtime_version",
+        "computer_state"
+      ],
+      "properties": {
+        "computer_id": {
+          "$ref": "common.json#/$defs/ComputerId"
+        },
+        "protocol": {
+          "type": "string",
+          "const": "files/2"
+        },
+        "runtime_version": {
+          "type": "string"
+        },
+        "computer_state": {
+          "$ref": "common.json#/$defs/ComputerState"
+        }
+      }
+    }
+  }
+}

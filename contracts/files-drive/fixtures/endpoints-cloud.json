@@ -1,0 +1,18 @@
+{
+  "type": "EndpointsResponse",
+  "valid": true,
+  "case": "Cloud computer: relay only, asleep.",
+  "message": {
+    "computer_id": "cmp_cloud_4gb",
+    "computer_state": "asleep",
+    "wake": "ask",
+    "candidates": [
+      {
+        "kind": "relay",
+        "base_url": "https://cloud.allternit.com/api/v1/runtimes/cmp_cloud_4gb/relay/api/v1/files/v2",
+        "priority": 10,
+        "max_request_bytes": 3670016
+      }
+    ]
+  }
+}

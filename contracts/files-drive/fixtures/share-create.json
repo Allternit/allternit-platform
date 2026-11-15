@@ -1,0 +1,16 @@
+{
+  "type": "CreateShareRequest",
+  "valid": true,
+  "case": "Owner shares a folder view-only for 7 days with a passcode.",
+  "message": {
+    "root_id": "rt_shared",
+    "item_id": "it_shr000001",
+    "role": "view_download",
+    "expires_at": "2026-11-22T14:00:00Z",
+    "passcode": "4417",
+    "guest_wake": false,
+    "invite_emails": [
+      "dana@example.com"
+    ]
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "type": "CopyResponse",
+  "valid": true,
+  "case": "Cross-computer copy accepted as a job.",
+  "message": {
+    "job": {
+      "job_id": "job_88",
+      "kind": "copy",
+      "state": "running",
+      "done_bytes": 1048576,
+      "total_bytes": 482113000
+    }
+  }
+}

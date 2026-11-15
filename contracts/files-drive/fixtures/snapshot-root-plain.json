@@ -1,0 +1,33 @@
+{
+  "type": "SnapshotRootFile",
+  "valid": true,
+  "case": "R2 snapshot of one root, plain names.",
+  "message": {
+    "schema": "files-snapshot-root/1",
+    "root_id": "rt_home",
+    "cursor": "c1.rt_home.000412",
+    "written_at": "2026-11-15T03:12:00Z",
+    "encryption": "none",
+    "items": [
+      {
+        "id": "it_inbox000",
+        "parent_id": "it_home0000",
+        "name": "Inbox",
+        "kind": "folder",
+        "size": 0,
+        "rev": "3-dir",
+        "modified_at": "2026-11-15T14:00:00Z",
+        "root_link": "rt_inbox"
+      },
+      {
+        "id": "it_doc000001",
+        "parent_id": "it_home0000",
+        "name": "Lease.pdf",
+        "kind": "file",
+        "size": 482113,
+        "rev": "7-a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "modified_at": "2026-11-15T14:05:00Z"
+      }
+    ]
+  }
+}

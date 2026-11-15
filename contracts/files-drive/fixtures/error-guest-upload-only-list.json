@@ -1,0 +1,10 @@
+{
+  "type": "ErrorBody",
+  "valid": true,
+  "case": "Upload-only guest tried to list.",
+  "message": {
+    "error": "forbidden",
+    "code": "forbidden",
+    "message": "This link only allows uploads."
+  }
+}

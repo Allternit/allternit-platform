@@ -1,0 +1,25 @@
+{
+  "type": "EndpointsResponse",
+  "valid": true,
+  "case": "Own Mac: mesh first, relay fallback.",
+  "message": {
+    "computer_id": "cmp_mac_studio",
+    "computer_state": "awake",
+    "wake": "ask",
+    "mesh_hostname": "mac-studio.mesh.allternit.internal",
+    "candidates": [
+      {
+        "kind": "mesh",
+        "base_url": "http://mac-studio.mesh.allternit.internal:8013/api/v1/files/v2",
+        "priority": 1,
+        "max_request_bytes": 67108864
+      },
+      {
+        "kind": "relay",
+        "base_url": "https://cloud.allternit.com/api/v1/runtimes/cmp_mac_studio/relay/api/v1/files/v2",
+        "priority": 10,
+        "max_request_bytes": 3670016
+      }
+    ]
+  }
+}

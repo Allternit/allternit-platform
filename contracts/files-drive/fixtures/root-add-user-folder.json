@@ -1,0 +1,23 @@
+{
+  "type": "AddRootRequest",
+  "valid": true,
+  "case": "Owner adds a user folder as a root.",
+  "message": {
+    "name": "Photos 2026",
+    "local_path": "/Users/eoj/Pictures/2026",
+    "policy": {
+      "read": true,
+      "write": true,
+      "shareable": true,
+      "agent_process": false,
+      "protected": false,
+      "offline": true,
+      "replica": true,
+      "versions": {
+        "keep_count": 20,
+        "keep_days": 30
+      },
+      "trash_days": 30
+    }
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "type": "ShareAccess",
+  "valid": true,
+  "case": "Audit row for a denied access.",
+  "message": {
+    "share_id": "sh_view_download",
+    "guest_id": "gst_7f3k",
+    "action": "download",
+    "item_id": "it_doc999999",
+    "result": "denied",
+    "error": "scope_violation",
+    "at": "2026-11-15T14:05:00Z"
+  }
+}
