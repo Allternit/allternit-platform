@@ -63,7 +63,7 @@ https://api.allternit.com/api/local-studio
 | Tab | Purpose |
 |---|---|
 | **Engine** | Health, status, cached models, active runtimes, and one-click model operations. On the web and the PWA it says there is no model engine on the device: the engine runs in Desktop or on a connected computer. |
-| **Catalog** | Search the Freeweights catalog and read guides. The grid shows 48 entries at a time. After a pull, the row shows the verification result. |
+| **Catalog** | Search the Freeweights catalog and read guides. Entries use the same cards as freeweights.allternit.com, in a Grid (the default), List or Deck view, 48 at a time. Each card shows whether the model fits this device. After a pull, the card shows the verification result. |
 | **Train** | Fine-tune a model on a computer you own and follow the job. See [Training](#training). |
 | **Studio** | Native Local Studio controller integration for recipes and serving. |
 | **Cloud** | Save and test cloud endpoint credentials for deployed models. |
@@ -80,6 +80,28 @@ https://api.allternit.com/api/local-studio
 | Gizzi Code | `gizzi studio`. See [Fine-tune with gizzi studio](/cli/studio). |
 
 Studio opens on the Catalog tab, on the Freeweights catalog. Search runs as you type. Models show the publisher's logo.
+
+### Fit on this device
+
+Fit is measured against the device you are using. On Desktop, the Local Engine reports the memory it can use for models. In a browser, the measure is what one tab can hold with WebGPU. Each card shows one of these labels: "Fits", "Tight fit", "May be slow", "Won't fit", "No build for this device" (in a browser: "No browser build") or "Size not checked". The size on the card is the file you download for the build that fits, not the whole repo. "Size not checked" means Freeweights has no file sizes for that model yet, so it has no download button. "Recommended for this device" lists the models that fit best. The chips "Fits this device" and the engine chips (GGUF, MLX, ONNX) filter the grid.
+
+### The model page
+
+Opening a card shows the model's page. Its top part is the same as the model page on freeweights.allternit.com: the From, Subject, Date, Commit and Signed lines, the card face with Facts, and the `fw get` and `fw verify` commands.
+
+The buttons follow the site:
+
+| Button | When it shows | What it does |
+|---|---|---|
+| Download | Desktop, and a build fits | Downloads the build picked in the table |
+| Run with Allternit Cloud | The model is served on Allternit Cloud | Opens the console to create an API key |
+| Chat with it | The model is served on Allternit Cloud, or it is downloaded on Desktop | Starts a chat with that model |
+| Fine-tune in Studio | A text-generation base that Studio can train | Opens Train with the model |
+| Run at home | A build needs 96 GB or less | Opens Allternit Compute |
+| Get help | Always | Opens Allternit Services |
+| Open on Freeweights | Always | Opens the model on freeweights.allternit.com |
+
+Below the buttons, the table lists every build with its format, engine, file size, the memory it needs and its fit here. The build marked "best for this device" is picked first. When no build fits, the smallest build is marked "smallest build" instead. On the web, the phone layout and the PWA, downloads go to a connected computer. A notice at the top of the catalog says so and has the Sign in or Connect a computer button.
 
 ### Open a model by link
 
