@@ -1,0 +1,126 @@
+openapi: 3.0.3
+info:
+  title: Freeweights Studio engine API v1
+  version: 1.0.0
+  description: |
+    Spoken by every training engine process. Loopback only; the host picks a
+    free port and a per-launch token, and sends "Authorization: Bearer <token>"
+    on every request (401 error unauthorized otherwise). One job at a time.
+    Schemas for JobSpec, Job, JobEvent and EngineInfo are the ones in
+    studio-api.yaml. Errors are {error, message}.
+servers:
+  - url: http://127.0.0.1:{port}
+    variables:
+      port: { default: '0' }
+security:
+  - launchToken: []
+paths:
+  /v1/engine:
+    get:
+      summary: Engine identity and capabilities
+      operationId: engineInfo
+      responses:
+        '200':
+          description: EngineInfo (install_state is installed)
+          content:
+            application/json:
+              schema: { $ref: 'studio-api.yaml#/components/schemas/EngineInfo' }
+        '401': { $ref: '#/components/responses/Error' }
+  /v1/jobs:
+    post:
+      summary: Start a job from a job spec v1
+      operationId: startJob
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: 'studio-api.yaml#/components/schemas/JobSpec' }
+      responses:
+        '201':
+          description: Job accepted (state queued)
+          content:
+            application/json:
+              schema: { $ref: 'studio-api.yaml#/components/schemas/Job' }
+        '401': { $ref: '#/components/responses/Error' }
+        '409':
+          description: A job is already running (error job_running)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+        '422':
+          description: Spec refused (error code per studio-api.yaml createJob)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+  /v1/jobs/{id}:
+    get:
+      summary: One job
+      operationId: engineGetJob
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses:
+        '200':
+          description: Job
+          content:
+            application/json:
+              schema: { $ref: 'studio-api.yaml#/components/schemas/Job' }
+        '401': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+  /v1/jobs/{id}/events:
+    get:
+      summary: Events after a sequence number
+      operationId: engineJobEvents
+      parameters:
+        - { $ref: '#/components/parameters/Id' }
+        - name: after
+          in: query
+          schema: { type: integer, minimum: 0, default: 0 }
+      responses:
+        '200':
+          description: Events with seq greater than after, plus current state
+          content:
+            application/json:
+              schema: { $ref: 'studio-api.yaml#/components/schemas/EventsPage' }
+        '401': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+  /v1/jobs/{id}/cancel:
+    post:
+      summary: Cancel a job that has not finished
+      operationId: engineCancelJob
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses:
+        '200':
+          description: Job now cancelled
+          content:
+            application/json:
+              schema: { $ref: 'studio-api.yaml#/components/schemas/Job' }
+        '401': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409':
+          description: Already finished (error already_finished)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+components:
+  securitySchemes:
+    launchToken:
+      type: http
+      scheme: bearer
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      schema: { type: string }
+  responses:
+    Error:
+      description: Error
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ApiError' }
+  schemas:
+    ApiError:
+      type: object
+      required: [error, message]
+      properties:
+        error: { type: string }
+        message: { type: string }

@@ -1,0 +1,302 @@
+openapi: 3.0.3
+info:
+  title: Freeweights Studio host API
+  version: 1.0.0
+  description: |
+    Served by each computer's allternit-api under /api/v1/studio. One job runs
+    per computer at a time. Job spec v1 is described in the allternit-studio-spec
+    crate (src/spec.rs). Errors are always {error, message}.
+servers:
+  - url: /api/v1/studio
+paths:
+  /engines:
+    get:
+      summary: List engines and their install state
+      operationId: listEngines
+      responses:
+        '200':
+          description: Engines
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [engines]
+                properties:
+                  engines:
+                    type: array
+                    items: { $ref: '#/components/schemas/EngineInfo' }
+  /engines/{id}/install:
+    post:
+      summary: Install an engine (venv process), idempotent
+      operationId: installEngine
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses:
+        '202':
+          description: Install started or already installed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EngineInfo' }
+        '404': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /jobs:
+    post:
+      summary: Create a job from a job spec v1
+      operationId: createJob
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/JobSpec' }
+      responses:
+        '201':
+          description: Job created (state queued)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Job' }
+        '409':
+          description: A job is already running on this computer (error job_running)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+        '422':
+          description: |
+            Spec refused. error is one of rented_not_available,
+            publish_not_available, unknown_engine, unknown_method,
+            unsupported_spec_version, invalid_dataset, invalid_spec.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+    get:
+      summary: List jobs, newest first
+      operationId: listJobs
+      responses:
+        '200':
+          description: Jobs
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [jobs]
+                properties:
+                  jobs:
+                    type: array
+                    items: { $ref: '#/components/schemas/Job' }
+  /jobs/{id}:
+    get:
+      summary: One job
+      operationId: getJob
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses:
+        '200':
+          description: Job
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Job' }
+        '404': { $ref: '#/components/responses/Error' }
+  /jobs/{id}/events:
+    get:
+      summary: Events after a sequence number (polled)
+      operationId: listJobEvents
+      parameters:
+        - { $ref: '#/components/parameters/Id' }
+        - name: after
+          in: query
+          description: Return events with seq greater than this. Default 0.
+          schema: { type: integer, minimum: 0, default: 0 }
+      responses:
+        '200':
+          description: Events in seq order, plus the current state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventsPage' }
+        '404': { $ref: '#/components/responses/Error' }
+  /jobs/{id}/cancel:
+    post:
+      summary: Cancel a job that has not finished
+      operationId: cancelJob
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses:
+        '200':
+          description: Job now cancelled
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Job' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+  /jobs/{id}/outputs:
+    get:
+      summary: Files the job produced
+      operationId: listJobOutputs
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses:
+        '200':
+          description: Outputs
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [outputs]
+                properties:
+                  outputs:
+                    type: array
+                    items: { $ref: '#/components/schemas/JobOutput' }
+        '404': { $ref: '#/components/responses/Error' }
+  /jobs/{id}/outputs/register:
+    post:
+      summary: Register one output as a local model (local-engine studio_output source)
+      operationId: registerJobOutput
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [kind]
+              properties:
+                kind: { type: string, enum: [adapter, merged, gguf, mlx] }
+                name: { type: string }
+      responses:
+        '200':
+          description: Registered
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  model_id: { type: string }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+components:
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      schema: { type: string }
+  responses:
+    Error:
+      description: Error
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ApiError' }
+  schemas:
+    ApiError:
+      type: object
+      required: [error, message]
+      properties:
+        error: { type: string }
+        message: { type: string }
+    EngineInfo:
+      type: object
+      required: [id, name, license, version, methods, hardware, install_state]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        license: { type: string }
+        version: { type: string }
+        methods: { type: array, items: { type: string, enum: [lora, qlora, full, dpo] } }
+        hardware: { type: array, items: { type: string, enum: [apple-silicon, cuda-linux] } }
+        install_state: { type: string, enum: [not_installed, installing, installed, failed] }
+        limits: { type: object, additionalProperties: true }
+        published: { type: boolean }
+        process: { type: string, enum: [embedded, separate_process] }
+        default: { type: boolean }
+        backends:
+          type: array
+          items:
+            type: object
+            required: [id, status]
+            properties:
+              id: { type: string }
+              status: { type: string, enum: [planned, available, pending_decision] }
+    JobSpec:
+      type: object
+      additionalProperties: false
+      required: [spec_version, engine, base, dataset, method, resources]
+      properties:
+        spec_version: { type: integer, enum: [1] }
+        engine: { type: string }
+        engine_version: { type: string }
+        base:
+          type: object
+          required: [repo]
+          properties:
+            repo: { type: string }
+            revision: { type: string }
+            manifest_sha256: { type: string }
+        dataset:
+          type: object
+          required: [format]
+          description: Exactly one of repo or path.
+          properties:
+            repo: { type: string }
+            path: { type: string }
+            revision: { type: string }
+            format: { type: string }
+        method: { type: string, enum: [lora, qlora, full, dpo] }
+        params: { type: object, additionalProperties: true }
+        resources:
+          type: object
+          required: [place]
+          properties:
+            place: { type: string, enum: [local, paired, compute, rented], description: 'rented is refused (rented_not_available)' }
+            gpu: { type: string }
+            max_hours: { type: number }
+            max_usd: { type: number }
+        outputs:
+          type: object
+          properties:
+            adapter: { type: boolean }
+            merged: { type: boolean }
+            gguf: { type: array, items: { type: string } }
+            mlx: { type: boolean }
+        eval:
+          type: object
+          properties:
+            sets: { type: array, items: { type: string } }
+            baseline: { type: string }
+        publish:
+          type: object
+          description: Any publish block is refused (publish_not_available).
+    JobState:
+      type: string
+      enum: [queued, preparing, running, exporting, succeeded, failed, cancelled]
+    JobOutput:
+      type: object
+      required: [kind, path]
+      properties:
+        kind: { type: string, enum: [adapter, merged, gguf, mlx] }
+        path: { type: string }
+        bytes: { type: integer }
+    Job:
+      type: object
+      required: [id, state, spec, created_at]
+      properties:
+        id: { type: string }
+        state: { $ref: '#/components/schemas/JobState' }
+        spec: { $ref: '#/components/schemas/JobSpec' }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time, nullable: true }
+        error: { type: string, nullable: true }
+        last_seq: { type: integer }
+        outputs:
+          type: array
+          items: { $ref: '#/components/schemas/JobOutput' }
+    JobEvent:
+      type: object
+      required: [seq, at, kind, message]
+      properties:
+        seq: { type: integer, minimum: 1, description: Strictly increasing per job }
+        at: { type: string, format: date-time }
+        kind: { type: string, enum: [state, log, progress, output, error] }
+        message: { type: string }
+        progress: { type: number, minimum: 0, maximum: 1 }
+    EventsPage:
+      type: object
+      required: [state, events]
+      properties:
+        state: { $ref: '#/components/schemas/JobState' }
+        events:
+          type: array
+          items: { $ref: '#/components/schemas/JobEvent' }

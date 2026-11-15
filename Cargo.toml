@@ -58,6 +58,7 @@ members = [
     "domains/governance/evidence-management/receipts-schema",
     "services/local-engine",
     "services/model-source",
+    "services/studio-spec",
     "services/memory",
     "services/memory/data/memory-fabric",
     # Referenced by workspace.dependencies but previously outside the workspace

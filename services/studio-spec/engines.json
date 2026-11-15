@@ -1,0 +1,75 @@
+[
+  {
+    "id": "allternit-tune",
+    "name": "Allternit Tune",
+    "license": "Apache-2.0",
+    "version": "0.1.0",
+    "methods": ["lora", "qlora", "full", "dpo"],
+    "hardware": ["apple-silicon", "cuda-linux"],
+    "install_state": "not_installed",
+    "limits": { "max_seq_len": 8192, "mlx_unsupported_methods": ["dpo", "full"] },
+    "published": true,
+    "process": "embedded",
+    "default": true,
+    "backends": [
+      { "id": "torch", "status": "planned" },
+      { "id": "mlx", "status": "pending_decision" }
+    ]
+  },
+  {
+    "id": "unsloth-upstream",
+    "name": "Unsloth (upstream, unmodified)",
+    "license": "AGPL-3.0",
+    "version": "pinned",
+    "methods": ["lora", "qlora", "dpo"],
+    "hardware": ["cuda-linux"],
+    "install_state": "not_installed",
+    "limits": {},
+    "published": false,
+    "process": "separate_process",
+    "default": false,
+    "backends": []
+  },
+  {
+    "id": "axolotl",
+    "name": "Axolotl",
+    "license": "Apache-2.0",
+    "version": "pinned",
+    "methods": ["lora", "qlora", "full", "dpo"],
+    "hardware": ["cuda-linux"],
+    "install_state": "not_installed",
+    "limits": {},
+    "published": true,
+    "process": "separate_process",
+    "default": false,
+    "backends": []
+  },
+  {
+    "id": "llama-factory",
+    "name": "LLaMA-Factory",
+    "license": "Apache-2.0",
+    "version": "pinned",
+    "methods": ["lora", "qlora", "full", "dpo"],
+    "hardware": ["cuda-linux"],
+    "install_state": "not_installed",
+    "limits": {},
+    "published": true,
+    "process": "separate_process",
+    "default": false,
+    "backends": []
+  },
+  {
+    "id": "torchtune",
+    "name": "torchtune",
+    "license": "BSD-3-Clause",
+    "version": "pinned",
+    "methods": ["lora", "qlora", "full", "dpo"],
+    "hardware": ["cuda-linux"],
+    "install_state": "not_installed",
+    "limits": {},
+    "published": true,
+    "process": "separate_process",
+    "default": false,
+    "backends": []
+  }
+]
