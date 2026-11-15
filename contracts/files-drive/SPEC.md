@@ -90,7 +90,7 @@ Body limits on the runtime: axum's default body limit is 2 MB, so the chunk and 
 | `GET /api/v1/computer-files/:computer_id/shares` | | `SharesResponse` |
 | `DELETE /api/v1/computer-files/shares/:share_id` | | 204 (revoke; applies on the guest's next request) |
 | `GET /api/v1/computer-files/shares/:share_id/access` | | `ShareAccess[]` (audit) |
-| `GET /api/v1/computer-files/token-keys` | | Ed25519 public keys by `kid` (for runtimes to verify tokens offline) |
+| `GET /api/v1/computer-files/token-keys` | | `{keys: [{kid, alg: "Ed25519", public_key (base64url, 32 bytes)}]}`, so runtimes verify tokens offline |
 | `GET /api/v1/files-keys` | | `FilesKeyInfo` |
 | `POST /api/v1/files-keys/requests` | `KeyShareRequest` | 202 |
 | `POST /api/v1/files-keys/grants` | `KeyShareGrant` | 204 |
@@ -99,7 +99,7 @@ Body limits on the runtime: axum's default body limit is 2 MB, so the chunk and 
 | `POST /api/v1/files-gateway/redeem` | `GuestRedeemRequest` | `GuestSessionResponse` |
 | `/api/v1/files-gateway/v2/*` | same shapes as the runtime routes, guest subset | same |
 
-Relay: the client posts a `RelayRequest` (`{method, path, headers, body, body_encoding}`) to `POST /api/v1/runtime-devices/:computer_id/proxy` with `path` set to `/api/v1/files/v2/...`. Live change-feed sockets use the existing socket-ticket flow (`/runtime-devices/:id/socket-ticket`, then `/socket`).
+Relay: the client posts the existing cloud-api `RelayRequest` (`runtime_relay.rs`: `{method, path, headers: map, body: string, body_encoding}`; this contract does not redefine it) to `POST /api/v1/runtime-devices/:computer_id/proxy` with `path` set to `/api/v1/files/v2/...`. Live change-feed sockets use the existing socket-ticket flow (`/runtime-devices/:id/socket-ticket`, then `/socket`).
 
 ## 3. Roots
 
@@ -128,7 +128,9 @@ Default roots, created on first use of the drive:
 - **Identity.** `ItemId` (`it_…`) comes from the index DB on the owning computer. It survives rename and move on that computer, including moves between roots. It is opaque: never parse it, never derive it from a path.
 - **Revision.** `Rev` = `"<meta_version>-<blake3 content hash>"`, or `"<meta_version>-dir"` for folders. It is the HTTP `ETag`. `meta_version` rises on every content or metadata change.
 - **Writes carry `base_rev`.** Small write (when replacing), upload commit (when replacing), move, delete and version restore all carry the rev the client last saw. A stale `base_rev`:
-  - `on_conflict: keep_both` (default for sync clients): the write lands as a conflict copy beside the original. The response carries `ConflictInfo` and a `files.conflict` event fires. Name: `<stem> (conflict <device name> <YYYY-MM-DD HHmm>).<ext>`.
+  - `on_conflict: keep_both` (default for sync clients): the write lands as a conflict copy beside the original. The response carries `ConflictInfo` and a `files.conflict` event fires. Name: `<stem> (conflict <device name> <YYYY-MM-DD HHmm>).<ext>`, e.g. `Lease (conflict iPhone 2026-11-15 1042).pdf`; if that name is taken too, ` 2`, ` 3`… is added before `)`.
+  - A create (no `base_rev`) whose name already exists in the parent is not a conflict: with `keep_both` it lands as `<stem> (2).<ext>` (then `(3)`…) with no `ConflictInfo`; with `fail` it returns `already_exists`.
+  - `move`, `delete`, `trash` and version `restore` with a stale `base_rev` always return `rev_mismatch` (409) whatever `on_conflict` says; there is no keep-both form of them.
   - `on_conflict: fail`: `rev_mismatch` with the `current` item.
   - `on_conflict: replace`: refused while `base_rev` is stale (`rev_mismatch`). `replace` only settles name clashes.
 - **Versions and trash.** Each root keeps versions per `VersionPolicy` (count and age) and trash for `trash_days`. Delete moves to trash unless `permanent`. Restoring into a taken name follows `on_conflict`.
@@ -139,14 +141,14 @@ Default roots, created on first use of the drive:
 - **Why 4 MiB.** The relay caps a request body at 5 MiB (`MAX_RELAY_BODY_BYTES`, `runtime_relay.rs:97`). It measures a base64 body as `len * 3 / 4`, which is the decoded size, so a 4 MiB chunk is measured as about 4 MiB and leaves about 1 MiB for the envelope and headers. The base64 JSON envelope the browser sends to cloud-api is about 5.4 MiB, under cloud-api's 10 MiB global body limit (`lib.rs`, `MAX_BODY_SIZE_BYTES`). Relay `max_request_bytes` is advertised as 5242880.
 - **Manifest.** Each file revision has a `Manifest`: ordered `ChunkRef`s (hash, offset, size) plus the whole-file `content_hash`. Big manifests page with `next_page_token`.
 - **Dedup.** Before uploading, the client sends hashes to `have-need`; it uploads only the `need` list. The same mechanism checks replicas.
-- **Upload session.** `POST /uploads` names the target (new file under `parent_id`, or replace `item_id` at `base_rev`), the size, the hash and the first chunks. The client `PUT`s each needed chunk, appends more chunk refs for very large files, and commits. The runtime verifies every chunk hash and the whole-file hash at commit (`chunk_hash_mismatch`, `chunk_missing`, `manifest_invalid`). A session survives a dropped connection until `expires_at`; `GET /uploads/:id` returns what is still needed. Chunks are stored once per computer and shared between revisions.
+- **Upload session.** `POST /uploads` names the target (new file under `parent_id`, or replace `item_id` at `base_rev`), the size, the hash and the first chunks. The client `PUT`s each needed chunk, appends more chunk refs for very large files, and commits. The runtime verifies every chunk hash and the whole-file hash at commit (`chunk_hash_mismatch` for a chunk whose bytes don't match its hash, at PUT or commit; `chunk_missing` for a needed chunk never sent; `manifest_invalid` for a bad manifest or a whole-file hash that doesn't match the assembled chunks). A session survives a dropped connection until `expires_at`; `GET /uploads/:id` returns what is still needed. Chunks are stored once per computer and shared between revisions.
 
 ## 6. Change feed
 
 - Each root has a monotonic change cursor (`c1.<opaque>`). Clients compare cursors only by asking the server.
 - **Poll:** `GET /roots/:root_id/changes?cursor=&limit=&wait_s=` returns the changes after `cursor` and a new cursor. `wait_s` (at most 25) holds the request open until something changes (long poll).
 - **Subscribe:** a WebSocket. The client sends `SubscribeMessage` with a cursor per root; the server sends `FeedMessage` frames: `changes`, `reset`, `state` (computer went asleep or woke), `heartbeat`.
-- **Reset.** If the cursor is too old, the index was rebuilt or the root was removed, the server answers `reset_required` (poll) or a `reset` frame. The client then lists from scratch.
+- **Reset.** If the cursor is too old, the index was rebuilt or the root was removed, the server answers 200 with `reset_required: true` (poll) or a `reset` frame (subscribe). The client then lists from scratch. `410 cursor_expired` is only for a cursor the server cannot parse or that names another root; clients treat it like a reset.
 - **No keep-awake.** A held socket or long poll never counts as activity and never keeps a computer awake. When the computer goes to sleep the server sends `state: asleep` and closes; clients then read from the snapshot.
 
 ## 7. Principals and permissions
@@ -174,7 +176,7 @@ prefix: awt1 (wake ticket) or fgt1 (guest token); the schemas pin these.
 ```
 
 - Signed by cloud-api with the key named by `kid`. Runtimes fetch public keys from `GET /api/v1/computer-files/token-keys` and verify offline.
-- `iat` and `exp` are Unix seconds. Wake tickets live 120 s and are single use per `jti`. Guest tokens live at most until the share expires and at most 1 hour per session; the gateway re-mints them.
+- `iat` and `exp` are Unix seconds. Wake tickets live 120 s. A ticket wakes its computer at most once (cloud-api records the `jti`; a repeat consent with the same `jti` does not start a second wake), but it may be sent on any number of requests to that one computer until `exp`, so a multi-request transfer reuses it. Guest tokens live at most until the share expires and at most 1 hour per session; the gateway re-mints them.
 - Two checks for guests: the gateway checks the token and the share's revocation state, then the runtime re-checks scope (`computer_id`, `root_id`, `item_id`, `role`) on every request. A revoked share or guest fails on the next request.
 - Roles: `view_download`, `upload_only` (cannot list: `forbidden`), `edit`, `comment`. Every guest access writes a `ShareAccess` audit row and a `files.share.accessed` event.
 - A passcode, when set, is checked at redeem (`passcode_required`, `passcode_invalid`); the token records `passcode_ok`.
