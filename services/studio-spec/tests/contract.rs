@@ -67,8 +67,9 @@ fn catalog_matches_decisions() {
     assert_eq!(mlx.status, "pending_decision");
     assert_eq!(get("unsloth-upstream").license, "AGPL-3.0");
     assert!(!get("unsloth-upstream").published);
+    // No adapter ships for these yet; they stay hidden until their engine kit is published.
     for id in ["axolotl", "llama-factory", "torchtune"] {
-        assert!(get(id).published);
+        assert!(!get(id).published);
     }
 }
 

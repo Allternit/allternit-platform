@@ -39,7 +39,7 @@
     "hardware": ["cuda-linux"],
     "install_state": "not_installed",
     "limits": {},
-    "published": true,
+    "published": false,
     "process": "separate_process",
     "default": false,
     "backends": []
@@ -53,7 +53,7 @@
     "hardware": ["cuda-linux"],
     "install_state": "not_installed",
     "limits": {},
-    "published": true,
+    "published": false,
     "process": "separate_process",
     "default": false,
     "backends": []
@@ -67,7 +67,7 @@
     "hardware": ["cuda-linux"],
     "install_state": "not_installed",
     "limits": {},
-    "published": true,
+    "published": false,
     "process": "separate_process",
     "default": false,
     "backends": []
