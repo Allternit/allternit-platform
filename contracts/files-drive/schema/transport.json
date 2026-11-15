@@ -11,7 +11,8 @@
         "mesh",
         "relay",
         "gateway"
-      ]
+      ],
+      "description": "loopback = same machine (Desktop app to its own runtime). mesh = Headscale/tsnet, only between the user's own devices. relay = cloud-api POST /api/v1/runtime-devices/:id/proxy (RelayRequest envelope; the Files path goes in `path`); the baseline that always exists. gateway = cloud-api Files gateway for guests holding a share capability token."
     },
     "TransportCandidate": {
       "type": "object",
@@ -27,7 +28,8 @@
           "$ref": "#/$defs/TransportKind"
         },
         "base_url": {
-          "type": "string"
+          "type": "string",
+          "description": "loopback/mesh: URL prefix ending in /api/v1/files/v2. relay: the proxy URL; the client sends {method, path: \"/api/v1/files/v2/...\", headers, body, body_encoding} to it. gateway: https://api.allternit.com/api/v1/files-gateway."
         },
         "priority": {
           "type": "integer",
@@ -36,7 +38,8 @@
         },
         "max_request_bytes": {
           "type": "integer",
-          "minimum": 0
+          "minimum": 0,
+          "description": "Largest request body this transport takes, in decoded bytes. relay = 5242880 (runtime_relay.rs MAX_RELAY_BODY_BYTES; base64 bodies are measured as len*3/4). Chunks are at most 4194304, so one chunk always fits."
         }
       }
     },
@@ -47,7 +50,8 @@
         "computer_id",
         "computer_state",
         "wake",
-        "candidates"
+        "candidates",
+        "host"
       ],
       "properties": {
         "computer_id": {
@@ -66,9 +70,19 @@
           }
         },
         "mesh_hostname": {
-          "type": "string"
+          "type": "string",
+          "description": "Only for own_device hosts on the mesh."
+        },
+        "host": {
+          "type": "string",
+          "enum": [
+            "own_device",
+            "cloud_computer"
+          ],
+          "description": "cloud_computer = provisioned by cloud-api (Incus/Contabo/Orgo). These computers do not join the mesh, so the server never lists a mesh candidate for them: relay only."
         }
-      }
+      },
+      "description": "GET /api/v1/computer-files/:computer_id/endpoints on cloud-api. Candidates sorted by priority; the client tries them in order (see SPEC.md 'Replica and transport resolution')."
     },
     "PingResponse": {
       "type": "object",

@@ -7,6 +7,7 @@
     "computer_id": "cmp_cloud_4gb",
     "written_at": "2026-11-15T03:12:00Z",
     "encryption": "none",
+    "names_encrypted": false,
     "roots": [
       {
         "id": "rt_home",

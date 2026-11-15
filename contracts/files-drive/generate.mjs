@@ -8,8 +8,8 @@
 //   node contracts/files-drive/generate.mjs --harness DIR   # write TS + Swift fixture checks into DIR (scratch)
 //
 // Outputs (never edit them by hand):
-//   platform/types/allternit-files-contract/src/generated.rs
-//   platform/types/allternit-files-contract/tests/fixtures.rs
+//   platform/types/allternit-files-core/src/generated.rs
+//   platform/types/allternit-files-core/tests/fixtures.rs
 //   contracts/files-drive/gen/files-drive.gen.ts
 //   contracts/files-drive/gen/FilesDriveContract.gen.swift
 //   contracts/files-drive/gen/FilesDriveContract.gen.kt
@@ -269,7 +269,7 @@ function rust() {
 function rustTests() {
   const o = HEADER.map((l) => `// ${l}`);
   o.push('//! Every valid fixture must deserialize into its generated type and serialize back to the same JSON.', '',
-    'use allternit_files_contract::*;', '',
+    'use allternit_files_core::*;', '',
     'fn round_trip<T: serde::de::DeserializeOwned + serde::Serialize>(name: &str, raw: &str) {',
     '    let fx: serde_json::Value = serde_json::from_str(raw).expect(name);',
     '    let msg = fx["message"].clone();',
@@ -468,8 +468,8 @@ if (args.has('--harness')) {
 // ---------------------------------------------------------------- write / check
 
 const outputs = [
-  ['platform/types/allternit-files-contract/src/generated.rs', rust()],
-  ['platform/types/allternit-files-contract/tests/fixtures.rs', rustTests()],
+  ['platform/types/allternit-files-core/src/generated.rs', rust()],
+  ['platform/types/allternit-files-core/tests/fixtures.rs', rustTests()],
   ['contracts/files-drive/gen/files-drive.gen.ts', ts()],
   ['contracts/files-drive/gen/FilesDriveContract.gen.swift', swift()],
   ['contracts/files-drive/gen/FilesDriveContract.gen.kt', kotlin()],

@@ -12,7 +12,7 @@
       "hash": "blake3",
       "min_bytes": 262144,
       "avg_bytes": 1048576,
-      "max_bytes": 3145728
+      "max_bytes": 4194304
     },
     "chunks": [
       {

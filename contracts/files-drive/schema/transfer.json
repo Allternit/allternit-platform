@@ -6,7 +6,7 @@
   "$defs": {
     "ChunkerParams": {
       "type": "object",
-      "description": "v1 values: min 262144, avg 1048576, max 3145728. Max stays under the 5 MiB relay body cap after base64.",
+      "description": "v1 values: min 262144, avg 1048576, max 4194304 (4 MiB). The relay (runtime_relay.rs MAX_RELAY_BODY_BYTES = 5 MiB) measures a base64 body as len*3/4, i.e. the decoded size, so a 4 MiB chunk plus its headers leaves about 1 MiB of headroom.",
       "additionalProperties": false,
       "required": [
         "algo",
@@ -35,7 +35,7 @@
         "max_bytes": {
           "type": "integer",
           "minimum": 0,
-          "maximum": 3145728
+          "maximum": 4194304
         }
       }
     },
@@ -58,7 +58,7 @@
         "size": {
           "type": "integer",
           "minimum": 1,
-          "maximum": 3145728
+          "maximum": 4194304
         }
       }
     },

@@ -11,6 +11,6 @@
     "received_bytes": 3407872,
     "total_bytes": 4252872,
     "expires_at": "2026-11-16T14:05:00Z",
-    "max_request_bytes": 3670016
+    "max_request_bytes": 5242880
   }
 }

@@ -1,13 +1,14 @@
 {
   "type": "SnapshotRootFile",
   "valid": true,
-  "case": "R2 snapshot of one root, plain names.",
+  "case": "v2 default: R2 snapshot of one root, plain names (names_encrypted false).",
   "message": {
     "schema": "files-snapshot-root/1",
     "root_id": "rt_home",
     "cursor": "c1.rt_home.000412",
     "written_at": "2026-11-15T03:12:00Z",
     "encryption": "none",
+    "names_encrypted": false,
     "items": [
       {
         "id": "it_inbox000",

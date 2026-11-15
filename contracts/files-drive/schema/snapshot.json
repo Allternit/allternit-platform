@@ -10,7 +10,7 @@
         "none",
         "files_key_v1"
       ],
-      "description": "OPEN DECISION (Eoj): none = plain names in the user's own bucket (default); files_key_v1 = encrypted with the snapshot key."
+      "description": "Decided (Eoj 2026-11-15): v2 writes none, i.e. plain file names in the user's own R2 bucket, the same trust class as files they upload. files_key_v1 is reserved, not used in v2: XChaCha20-Poly1305 with the snapshot subkey of the user's Files root key (keys.json)."
     },
     "SnapshotItem": {
       "type": "object",
@@ -60,7 +60,7 @@
         "computer_id",
         "written_at",
         "encryption",
-        "roots"
+        "names_encrypted"
       ],
       "properties": {
         "schema": {
@@ -76,11 +76,28 @@
         "encryption": {
           "$ref": "#/$defs/SnapshotEncryption"
         },
+        "names_encrypted": {
+          "type": "boolean",
+          "description": "v2 writers always write false (Eoj 2026-11-15: plain names). true is reserved, not used in v2: names would live only in ciphertext, with encryption files_key_v1 and key_id set. A v2 reader that meets true shows the folder as \"names unavailable\" instead of failing."
+        },
         "roots": {
           "type": "array",
           "items": {
             "$ref": "roots.json#/$defs/Root"
-          }
+          },
+          "description": "names_encrypted false only."
+        },
+        "ciphertext": {
+          "type": "string",
+          "description": "Reserved, not used in v2. names_encrypted true: base64url XChaCha20-Poly1305 of the roots JSON array."
+        },
+        "nonce": {
+          "type": "string",
+          "description": "Reserved, not used in v2. base64url 24-byte nonce."
+        },
+        "key_id": {
+          "type": "string",
+          "description": "Reserved, not used in v2. Key reference: the FilesKeyInfo.key_id whose snapshot subkey (HKDF info \"files-snapshot/1\") sealed this file."
         }
       }
     },
@@ -93,7 +110,8 @@
         "root_id",
         "cursor",
         "written_at",
-        "encryption"
+        "encryption",
+        "names_encrypted"
       ],
       "properties": {
         "schema": {
@@ -112,22 +130,28 @@
         "encryption": {
           "$ref": "#/$defs/SnapshotEncryption"
         },
+        "names_encrypted": {
+          "type": "boolean",
+          "description": "v2 writers always write false (Eoj 2026-11-15: plain names). true is reserved, not used in v2: names would live only in ciphertext, with encryption files_key_v1 and key_id set. A v2 reader that meets true shows the folder as \"names unavailable\" instead of failing."
+        },
         "items": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/SnapshotItem"
           },
-          "description": "encryption none."
+          "description": "names_encrypted false only."
         },
         "ciphertext": {
           "type": "string",
-          "description": "encryption files_key_v1: base64url XChaCha20-Poly1305 of the items JSON."
+          "description": "Reserved, not used in v2. names_encrypted true: base64url XChaCha20-Poly1305 of the items JSON array."
         },
         "nonce": {
-          "type": "string"
+          "type": "string",
+          "description": "Reserved, not used in v2. base64url 24-byte nonce."
         },
         "key_id": {
-          "type": "string"
+          "type": "string",
+          "description": "Reserved, not used in v2. Key reference: the FilesKeyInfo.key_id whose snapshot subkey (HKDF info \"files-snapshot/1\") sealed this file."
         }
       }
     }

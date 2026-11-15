@@ -9,10 +9,11 @@
     "candidates": [
       {
         "kind": "relay",
-        "base_url": "https://cloud.allternit.com/api/v1/runtimes/cmp_cloud_4gb/relay/api/v1/files/v2",
+        "base_url": "https://api.allternit.com/api/v1/runtime-devices/cmp_cloud_4gb/proxy",
         "priority": 10,
-        "max_request_bytes": 3670016
+        "max_request_bytes": 5242880
       }
-    ]
+    ],
+    "host": "cloud_computer"
   }
 }
