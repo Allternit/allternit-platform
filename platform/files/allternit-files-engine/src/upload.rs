@@ -110,14 +110,11 @@ impl Ctx<'_> {
 
 impl Drive {
     /// `POST /uploads`. Validates the target and the first page of chunk refs.
-    /// `device_utc_offset_minutes` is the uploading device's UTC offset, used for a
-    /// conflict copy's local `HHmm` at commit.
-    pub fn create_upload(
-        &self,
-        req: UploadCreateRequest,
-        by: &PrincipalRef,
-        device_utc_offset_minutes: Option<i32>,
-    ) -> Result<UploadStatus> {
+    /// `req.utc_offset_minutes` (the uploading device's UTC offset) and
+    /// `req.device_name` name a conflict copy at commit, so its `HHmm` is the
+    /// device's local time (SPEC section 4).
+    pub fn create_upload(&self, req: UploadCreateRequest, by: &PrincipalRef) -> Result<UploadStatus> {
+        let device_utc_offset_minutes = utc_offset(req.utc_offset_minutes)?;
         chunker::check_params(&req.chunker)?;
         if !chunker::is_hash(&req.content_hash) {
             return Err(FilesError::InvalidRequest("content_hash is not a blake3 hex hash".into()));
@@ -268,5 +265,14 @@ impl Drive {
             ctx.c.execute("DELETE FROM uploads WHERE session_id = ?1", params![session_id])?;
             Ok(())
         })
+    }
+}
+
+/// A device's UTC offset in minutes, within the schema's -840..=840 (±14 h).
+pub fn utc_offset(minutes: Option<i64>) -> Result<Option<i32>> {
+    match minutes {
+        None => Ok(None),
+        Some(m) if (-840..=840).contains(&m) => Ok(Some(m as i32)),
+        Some(m) => Err(FilesError::InvalidRequest(format!("utc_offset_minutes {m} is out of range (-840..=840)"))),
     }
 }

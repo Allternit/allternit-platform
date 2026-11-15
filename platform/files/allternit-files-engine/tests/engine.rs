@@ -146,9 +146,9 @@ fn identical_content_is_stored_once_and_freed_when_unreferenced() {
                 on_conflict: OnConflict::Fail,
                 modified_at: None,
                 device_name: None,
+                utc_offset_minutes: None,
             },
             &owner(),
-            None,
         )
         .unwrap();
     assert!(s.need.is_empty());
@@ -392,9 +392,9 @@ fn upload_rejects_bad_chunks_and_reports_missing_ones() {
                 on_conflict: OnConflict::Fail,
                 modified_at: None,
                 device_name: None,
+                utc_offset_minutes: None,
             },
             &owner(),
-            None,
         )
         .unwrap();
     let first = &c.chunks[0];
