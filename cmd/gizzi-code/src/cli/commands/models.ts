@@ -20,6 +20,7 @@ import {
 } from "@/runtime/services/localEngine"
 import { describeVerification } from "@/runtime/services/modelVerification"
 import { pullModel, verifyModel } from "@/cli/commands/models-pull"
+import { fitModel, runModel, psModels, stopModel } from "@/cli/commands/models-run"
 import { fetchFreeweightsCatalog } from "@/runtime/services/freeweightsCatalog"
 import { Sidecar } from "@/runtime/sidecar"
 
@@ -51,7 +52,7 @@ export const ModelsCommand = cmd({
         default: "all",
       })
       .positional("provider", {
-        describe: "provider ID to filter models by, or: pull | verify | search",
+        describe: "provider ID to filter models by, or: pull | verify | search | fit | run | ps | stop",
         type: "string",
         array: false,
       })
@@ -118,6 +119,10 @@ export const ModelsCommand = cmd({
         describe: "quantization tag (e.g. Q4_K_M)",
         type: "string",
       })
+      .option("prompt", {
+        describe: "run: send one prompt, print the reply and exit (default: open a chat)",
+        type: "string",
+      })
   },
   handler: async (args) => {
     if (args.provider === "pull" || args.provider === "verify") {
@@ -129,6 +134,21 @@ export const ModelsCommand = cmd({
       try {
         if (args.provider === "verify") process.exit(await verifyModel(repo, args.quant, args.revision))
         process.exit(await pullModel(repo, args.quant, Boolean(args["allow-unverified"]), args.revision))
+      } catch (err) {
+        UI.error(err instanceof Error ? err.message : `Failed to ${args.provider}`)
+        process.exit(1)
+      }
+      return
+    }
+
+    if (args.provider === "fit" || args.provider === "run" || args.provider === "ps" || args.provider === "stop") {
+      try {
+        const code =
+          args.provider === "fit" ? await fitModel(args.repo, Boolean(args.json))
+          : args.provider === "run" ? await runModel(args.repo, { quant: args.quant, prompt: args.prompt, allowUnverified: Boolean(args["allow-unverified"]) })
+          : args.provider === "ps" ? await psModels(Boolean(args.json))
+          : await stopModel(args.repo)
+        process.exit(code)
       } catch (err) {
         UI.error(err instanceof Error ? err.message : `Failed to ${args.provider}`)
         process.exit(1)
