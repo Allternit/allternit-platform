@@ -77,7 +77,7 @@ struct ModelManagementListContent: View {
                     style: .offline,
                     icon: "wifi.slash",
                     title: "Couldn't load default model",
-                    message: FriendlyErrorMessage.from(error),
+                    message: FriendlyErrorMessage.from(error, doing: "load the default model"),
                     actionTitle: "Retry",
                     action: { modelStore.fetchModelsIfNeeded(force: true) }
                 )
@@ -123,7 +123,7 @@ struct ModelManagementListContent: View {
                     style: .offline,
                     icon: "wifi.slash",
                     title: "Couldn't load engines",
-                    message: FriendlyErrorMessage.from(error),
+                    message: FriendlyErrorMessage.from(error, doing: "load engines"),
                     actionTitle: "Retry",
                     action: { Task { await store.load() } }
                 )

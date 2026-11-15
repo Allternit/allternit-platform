@@ -188,7 +188,30 @@ enum FriendlyErrorMessage {
         if lowered.contains("not found") || lowered.contains("404") {
             return "That resource couldn't be found."
         }
-        return error
+        return plain(error)
+    }
+
+    /// Like `from(_:)` but names what failed, so a raw code or abbreviation
+    /// ("nf", "HTTP 500") never reaches the screen: `doing` = "load engines".
+    static func from(_ error: String, doing: String) -> String {
+        let message = from(error)
+        return message == fallback ? "Couldn't \(doing). Check your connection and try again." : message
+    }
+
+    static let fallback = "Something went wrong. Check your connection and try again."
+
+    /// Keeps a message only if it already reads as a sentence; raw codes,
+    /// status numbers and bare abbreviations become the generic sentence.
+    private static func plain(_ error: String) -> String {
+        let trimmed = error.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lowered = trimmed.lowercased()
+        let words = trimmed.split(separator: " ").count
+        let rawMarkers = ["http", "status code", "nsurl", "error domain", "decoding", "json", "sqlx", "errno", "code=", "decode", "couldn't be read", "correct format", "server response", "header", "bearer", "token", "authorization", "unauthorized"]
+        if words < 4 || rawMarkers.contains(where: { lowered.contains($0) })
+            || trimmed.contains(where: \.isNumber) && words < 6 {
+            return fallback
+        }
+        return trimmed
     }
 }
 

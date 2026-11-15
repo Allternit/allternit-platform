@@ -14,11 +14,13 @@ final class StudioJobsStore: ObservableObject {
     }
 
     @Published private(set) var phase: Phase = .loading
+    @Published private(set) var engineNames: [String: String] = [:]
     private let client = StudioJobsClient.shared
 
     func refresh() async {
         do {
             phase = .loaded(try await client.listJobs())
+            if engineNames.isEmpty, let names = try? await client.engineNames() { engineNames = names }
         } catch RuntimeRelayError.noComputer {
             phase = .noComputer
         } catch RuntimeRelayError.unreachable {
@@ -44,6 +46,16 @@ enum StudioJobsFormat {
     static func message(for error: Error) -> String {
         if let relay = error as? RuntimeRelayError { return relay.localizedDescription }
         return "Training jobs couldn't be loaded. Try again in a moment."
+    }
+
+    static func methodLabel(_ method: String) -> String {
+        switch method {
+        case "lora": return "LoRA"
+        case "qlora": return "QLoRA"
+        case "dpo": return "DPO"
+        case "full": return "Full fine-tune"
+        default: return method
+        }
     }
 
     static func stateLabel(_ state: String) -> String {
@@ -77,19 +89,19 @@ struct StudioJobsSection: View {
 
     var body: some View {
         Section {
-            content
+            VStack(alignment: .leading, spacing: 14) { content }
+                .sheet(item: $selected) { job in
+                    StudioJobDetailView(job: job, engineName: store.engineNames[job.spec.engine] ?? job.spec.engine) { Task { await store.refresh() } }
+                }
+                .sheet(isPresented: $isConnectSheetPresented, onDismiss: {
+                    Task { await relay.refresh(); await store.refresh() }
+                }) {
+                    ConnectComputerSheet()
+                }
         } header: {
             Text("Training jobs")
         }
         .task { await store.poll() }
-        .sheet(item: $selected) { job in
-            StudioJobDetailView(job: job) { Task { await store.refresh() } }
-        }
-        .sheet(isPresented: $isConnectSheetPresented, onDismiss: {
-            Task { await relay.refresh(); await store.refresh() }
-        }) {
-            ConnectComputerSheet()
-        }
     }
 
     @ViewBuilder
@@ -134,7 +146,7 @@ struct StudioJobsSection: View {
                 )
             } else {
                 ForEach(jobs) { job in
-                    Button { selected = job } label: { StudioJobRow(job: job) }
+                    Button { selected = job } label: { StudioJobRow(job: job, engineName: store.engineNames[job.spec.engine] ?? job.spec.engine) }
                         .buttonStyle(.plain)
                 }
             }
@@ -144,6 +156,7 @@ struct StudioJobsSection: View {
 
 private struct StudioJobRow: View {
     let job: StudioJob
+    let engineName: String
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -157,7 +170,7 @@ private struct StudioJobRow: View {
                     .font(.caption.weight(.semibold))
                     .foregroundColor(StudioJobsFormat.tint(job.state))
             }
-            Text("\(job.spec.engine) · \(job.spec.method.uppercased())")
+            Text("\(engineName) · \(StudioJobsFormat.methodLabel(job.spec.method))")
                 .font(.caption)
                 .foregroundColor(Color("TextSecondary"))
         }
@@ -168,6 +181,7 @@ private struct StudioJobRow: View {
 
 struct StudioJobDetailView: View {
     let job: StudioJob
+    let engineName: String
     var onChange: () -> Void = {}
 
     @Environment(\.dismiss) private var dismiss
@@ -177,8 +191,9 @@ struct StudioJobDetailView: View {
     @State private var isCancelling = false
     @State private var error: String?
 
-    init(job: StudioJob, onChange: @escaping () -> Void = {}) {
+    init(job: StudioJob, engineName: String, onChange: @escaping () -> Void = {}) {
         self.job = job
+        self.engineName = engineName
         self.onChange = onChange
         _current = State(initialValue: job)
     }
@@ -191,8 +206,8 @@ struct StudioJobDetailView: View {
             List {
                 Section {
                     row("Base model", current.spec.base.repo)
-                    row("Engine", current.spec.engine)
-                    row("Method", current.spec.method.uppercased())
+                    row("Engine", engineName)
+                    row("Method", StudioJobsFormat.methodLabel(current.spec.method))
                     row("State", StudioJobsFormat.stateLabel(state))
                     if let progress = tail.progress, !finished {
                         ProgressView(value: progress) {

@@ -32,3 +32,18 @@ final class StudioJobsClientTests: XCTestCase {
         XCTAssertFalse(job.isFinished)
     }
 }
+
+final class StudioJobsFormatTests: XCTestCase {
+    func testMethodLabels() {
+        XCTAssertEqual(StudioJobsFormat.methodLabel("lora"), "LoRA")
+        XCTAssertEqual(StudioJobsFormat.methodLabel("qlora"), "QLoRA")
+        XCTAssertEqual(StudioJobsFormat.methodLabel("dpo"), "DPO")
+        XCTAssertEqual(StudioJobsFormat.methodLabel("full"), "Full fine-tune")
+    }
+
+    func testRawErrorsBecomePlainSentences() {
+        XCTAssertEqual(FriendlyErrorMessage.from("nf", doing: "load engines"), "Couldn't load engines. Check your connection and try again.")
+        XCTAssertEqual(FriendlyErrorMessage.from("Freeweights answered 500", doing: "load engines"), "Couldn't load engines. Check your connection and try again.")
+        XCTAssertEqual(FriendlyErrorMessage.from("Connect a computer or start Allternit Cloud to use this.", doing: "x"), "Connect a computer or start Allternit Cloud to use this.")
+    }
+}

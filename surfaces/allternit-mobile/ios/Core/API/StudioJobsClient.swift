@@ -102,6 +102,14 @@ final class StudioJobsClient: @unchecked Sendable {
         }
     }
 
+    /// `GET /engines` → engine id to display name.
+    func engineNames() async throws -> [String: String] {
+        struct Engine: Decodable { let id: String; let name: String }
+        struct Envelope: Decodable { let engines: [Engine] }
+        let envelope: Envelope = try await request("engines")
+        return Dictionary(envelope.engines.map { ($0.id, $0.name) }, uniquingKeysWith: { first, _ in first })
+    }
+
     func listJobs() async throws -> [StudioJob] {
         struct Envelope: Decodable { let jobs: [StudioJob] }
         let envelope: Envelope = try await request("jobs")
