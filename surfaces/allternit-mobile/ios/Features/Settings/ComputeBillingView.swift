@@ -13,6 +13,7 @@ struct ComputeBillingView: View {
     @ObservedObject private var storefront = StorefrontGate.shared
     var title: String = "Billing"
     @State private var plans: [CatalogPlan] = []
+    @State private var freeweightsPerks: FreeweightsPerks?
 
     /// `GET /api/v1/billing/plans` (Plus, Max, Ultra; Max keeps id `super`).
     struct CatalogPlan: Decodable, Identifiable {
@@ -28,7 +29,35 @@ struct ComputeBillingView: View {
             case rolloverCapUsd = "rollover_cap_usd"
         }
     }
-    private struct PlansWire: Decodable { let plans: [CatalogPlan] }
+    /// One Freeweights perk line from `/billing/plans` `.freeweights.plans`.
+    struct FreeweightsPerk: Decodable, Equatable {
+        let key: String
+        let label: String
+        let value: Double?
+        let unit: String?
+    }
+    /// The `freeweights` block: perks are listed per plan id, and shown only
+    /// while `status` is `offered`.
+    struct FreeweightsPerks: Decodable, Equatable {
+        let status: String
+        let plans: [String: [FreeweightsPerk]]?
+
+        var isOffered: Bool { status == "offered" }
+
+        /// Lines for a plan, empty while the perks are not offered.
+        func lines(for planId: String) -> [String] {
+            guard isOffered else { return [] }
+            return (plans?[planId] ?? []).map { perk in
+                guard let value = perk.value else { return perk.label }
+                let number = value == value.rounded() ? String(Int(value)) : String(value)
+                return perk.unit.map { "\(perk.label): \(number) \($0)" } ?? "\(perk.label): \(number)"
+            }
+        }
+    }
+    private struct PlansWire: Decodable {
+        let plans: [CatalogPlan]
+        let freeweights: FreeweightsPerks?
+    }
 
     private var memberName: String {
         let first = AuthManager.shared.currentSession?.user?.firstName?.trimmingCharacters(in: .whitespaces) ?? ""
@@ -108,7 +137,7 @@ struct ComputeBillingView: View {
                             lines: [
                                 String(format: "$%.0f in Allternit Cloud credits each month", p.monthlyCreditsUsd),
                                 String(format: "Unused credits roll over, up to $%.0f", p.rolloverCapUsd),
-                            ],
+                            ] + (freeweightsPerks?.lines(for: p.id) ?? []),
                             current: current,
                             actionTitle: plan.subscription?.isPaid == true ? "Switch on the web" : "Choose",
                             action: { UIApplication.shared.open(plan.upgradeURL) }
@@ -135,7 +164,10 @@ struct ComputeBillingView: View {
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
         .task {
-            if let wire: PlansWire = try? await APIClient.shared.get(path: "billing/plans") { plans = wire.plans }
+            if let wire: PlansWire = try? await APIClient.shared.get(path: "billing/plans") {
+                plans = wire.plans
+                freeweightsPerks = wire.freeweights
+            }
             UsageStore.shared.fetchUsageIfNeeded(force: true)
             AccountPlanStore.shared.load(force: true)
             StorefrontGate.shared.refresh()
