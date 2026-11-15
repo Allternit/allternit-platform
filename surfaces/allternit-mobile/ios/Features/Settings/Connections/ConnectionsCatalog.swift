@@ -203,7 +203,7 @@ enum ConnectionsCatalog {
         switch code {
         case "login_expired": return "Sign-in expired"
         case "key_rejected": return "The key was rejected"
-        case "vendor_limited": return "\(name) limited this plan"
+        case "vendor_limited": return "\(name) plan not active or limit used up"
         case "no_computer": return "Needs your own computer for now"
         case "not_available_yet": return "Not available yet"
         case "computer_offline": return "Your computer is offline"

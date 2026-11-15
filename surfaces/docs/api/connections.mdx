@@ -208,7 +208,7 @@ Set the header `X-Allternit-Turn: person` only on a message the person sent from
 | `429` | `plan_rate` | More than 20 turns in 5 minutes for the account. |
 | `503` | `runner_busy` | The box budget is full after a 10 second wait. "Busy. Try again" |
 
-Plan turns are not metered against Allternit credits. A `developer` message is sent as `system`. After the turn, save the chat with the [plan chat store](#plan-chat-store) so it syncs to the person's other devices with no computer. Errors after a streamed turn starts arrive as one `data: {"error":{…}}` line, then `data: [DONE]`; without streaming they are `409 login_expired`, `409 vendor_limited` or `502 could_not_start`.
+Plan turns are not metered against Allternit credits. A `developer` message is sent as `system`. After the turn, save the chat with the [plan chat store](#plan-chat-store) so it syncs to the person's other devices with no computer. Errors after a streamed turn starts arrive as one `data: {"error":{…}}` line, then `data: [DONE]`; without streaming they are `409 login_expired`, `409 vendor_limited`, `504 no_reply`, `502 vendor_failed` or `502 could_not_start`. Each carries a message to show as it is: `vendor_limited` when the vendor refused the plan (no active subscription, or its limit is used up), `no_reply` when the vendor's program sent nothing for 60 seconds, and `vendor_failed` for any other vendor error. `could_not_start` means the box itself failed.
 
 ### ChatGPT sign-in on the person's device
 
@@ -251,7 +251,7 @@ Chat uses `POST /v1/chat/completions` with a `copilot/<model>` id and `X-Alltern
 | --- | --- |
 | `login_expired` | Sign-in expired |
 | `key_rejected` | The key was rejected |
-| `vendor_limited` | The vendor limited this plan |
+| `vendor_limited` | Plan not active or limit used up |
 | `no_computer` | Needs your own computer for now |
 | `not_available_yet` | Not available yet |
 | `computer_offline` | Your computer is offline |

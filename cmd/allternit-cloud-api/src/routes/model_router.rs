@@ -629,7 +629,9 @@ fn message_text(content: &serde_json::Value) -> String {
 fn turn_error(code: &str, message: &str) -> Response {
     match code {
         "login_expired" => plan_refusal(StatusCode::CONFLICT, code, "Sign-in expired"),
-        "vendor_limited" => plan_refusal(StatusCode::CONFLICT, code, if message.is_empty() { "The vendor limited this plan" } else { message }),
+        "vendor_limited" => plan_refusal(StatusCode::CONFLICT, code, if message.is_empty() { "This plan isn't active or its limit is used up. Check the subscription, or pick another brain." } else { message }),
+        brain_runners::NO_REPLY => plan_refusal(StatusCode::GATEWAY_TIMEOUT, code, message),
+        brain_runners::VENDOR_FAILED => plan_refusal(StatusCode::BAD_GATEWAY, code, message),
         brain_runners::RUNNER_BUSY => plan_refusal(StatusCode::SERVICE_UNAVAILABLE, code, "Busy. Try again"),
         _ => plan_refusal(StatusCode::BAD_GATEWAY, brain_runners::COULD_NOT_START, "Could not start. Try again"),
     }

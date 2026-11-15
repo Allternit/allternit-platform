@@ -25,7 +25,7 @@ struct PersonChatRefusal: Error, Equatable, Sendable {
         case "runner_busy": return "Busy. Try again"
         case "could_not_start": return "Could not start. Try again"
         case "login_expired": return "Your \(vendor) sign-in expired. Sign in again in Settings › Connections."
-        case "vendor_limited": return "\(vendor) limited this plan."
+        case "vendor_limited": return "\(vendor) didn't accept this message: your \(vendor) plan isn't active or its limit is used up. Check your \(vendor) subscription, or pick another brain."
         case "usage_limit": return "ChatGPT limit reached. It resets on OpenAI's schedule. Try again later, or pick another model."
         case "text_only": return "Your \(vendor) plan takes text only. Remove the attachment and send again."
         case "signed_out_allternit": return "Sign in to Allternit on this phone to use your \(vendor) plan."
