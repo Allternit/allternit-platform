@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: Apache-2.0
+# allternit-tune on the CPU: LoRA only, slow. Not on Intel Macs: PyTorch's last
+# Intel Mac build is 2.2.2 and transformers 5 needs 2.6, so the engine refuses there.
+# The host installs this file into the engine's venv
+# for ALLTERNIT_STUDIO_HARDWARE=cpu; see README "Requirements per hardware".
+# License of each package in the comment.
+# Linux and Windows: CPU-only wheels. Apple Silicon is never cpu (it is apple-silicon).
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.15.0+cpu; sys_platform != "darwin"   # BSD-3-Clause
+transformers>=5.7,<6           # Apache-2.0 (mlx-lm 0.32.2 needs 5.7+; torch 2.6+ needed by transformers 5)
+peft>=0.17,<1                 # Apache-2.0
+trl>=0.24,<2                  # Apache-2.0
+accelerate>=1.0,<2            # Apache-2.0
+datasets>=3.0,<6              # Apache-2.0
+safetensors>=0.4,<1           # Apache-2.0
+huggingface_hub>=0.30,<3      # Apache-2.0
+# No bitsandbytes: QLoRA is refused on the CPU.

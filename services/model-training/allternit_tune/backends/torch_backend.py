@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Allternit LLC
-"""torch backend: TRL + PEFT on CUDA or Apple Silicon (MPS).
+"""torch backend: TRL + PEFT on NVIDIA (CUDA), AMD (ROCm, which torch reports
+as cuda), Intel (XPU), Apple Silicon (MPS) or the CPU (LoRA only, slow).
 
 - lora: PEFT LoRA adapters, TRL SFTTrainer.
 - qlora: base loaded 4-bit through bitsandbytes, then LoRA.
@@ -18,7 +19,7 @@ from typing import TYPE_CHECKING, Any, Dict
 
 from .. import export
 from ..data import DataError, data_cache_dir, load, shape
-from ..hardware import probe
+from ..hardware import CPU_WARNING, TORCH_DEVICE, torch_device_gap
 from . import Backend
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -46,18 +47,36 @@ def _free_memory() -> None:
     import torch
 
     gc.collect()
+    xpu = getattr(torch, "xpu", None)
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
+    elif xpu is not None and xpu.is_available():
+        xpu.empty_cache()
     elif torch.backends.mps.is_available():
         torch.mps.empty_cache()
+
+
+def _dtype(device: str):
+    """Training dtype: bf16 (else fp16) on CUDA/ROCm, bf16 on XPU when the
+    GPU has it, fp32 on MPS (its mixed precision is unreliable) and CPU."""
+    import torch
+
+    if device == "cuda":
+        return torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+    if device == "xpu":
+        bf16 = getattr(torch.xpu, "is_bf16_supported", None)
+        return torch.bfloat16 if bf16 is None or bf16() else torch.float32
+    return torch.float32
+
+
+def _device_map(device: str) -> Dict[str, Any]:
+    """Where bitsandbytes puts a 4-bit base: the first GPU of that kind."""
+    return {"": 0 if device == "cuda" else f"{device}:0" if device == "xpu" else device}
 
 
 class TorchBackend(Backend):
     id = "torch"
     status = "available"
-
-    def unavailable_methods(self, device: str) -> Dict[str, str]:
-        return dict(probe()["unavailable"])
 
     def _load(self, plan: "TrainPlan", device: str, emit: "Emitter"):
         import torch
@@ -68,11 +87,7 @@ class TorchBackend(Backend):
             tokenizer.pad_token = tokenizer.eos_token
 
         kwargs: Dict[str, Any] = {"local_files_only": True}
-        if device == "cuda":
-            dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
-        else:
-            # MPS mixed precision training is unreliable; small models fit in fp32.
-            dtype = torch.float32
+        dtype = _dtype(device)
         kwargs["dtype"] = dtype
         if plan.load_in_4bit:
             from transformers import BitsAndBytesConfig
@@ -83,7 +98,7 @@ class TorchBackend(Backend):
                 bnb_4bit_use_double_quant=True,
                 bnb_4bit_compute_dtype=dtype,
             )
-            kwargs["device_map"] = {"": 0 if device == "cuda" else device}
+            kwargs["device_map"] = _device_map(device)
         emit.log(f"loading base model from {plan.base_path} ({str(dtype).replace('torch.', '')}"
                  f"{', 4-bit' if plan.load_in_4bit else ''}) on {device}")
         model = AutoModelForCausalLM.from_pretrained(plan.base_path, **kwargs)
@@ -105,11 +120,15 @@ class TorchBackend(Backend):
         import torch
         from peft import LoraConfig
 
-        device = probe()["device"]
-        if device == "none":
-            raise RuntimeError("no NVIDIA GPU (CUDA) or Apple Silicon GPU (MPS) found")
-        emit.log(f"torch {torch.__version__} on {device}; method {plan.method}")
+        gap = torch_device_gap(plan.backend, plan.hardware)
+        if gap:
+            raise RuntimeError(gap)
+        device = TORCH_DEVICE[plan.backend]
+        emit.log(f"torch {torch.__version__} on {device} ({plan.backend}); method {plan.method}")
+        if device == "cpu":
+            emit.log(CPU_WARNING)
         job_dir = Path(plan.job_dir)
+        out_dir = Path(plan.output_dir or plan.job_dir)
 
         model, tokenizer, dtype = self._load(plan, device, emit)
 
@@ -135,7 +154,7 @@ class TorchBackend(Backend):
             save_strategy="no",
             report_to="none",
             disable_tqdm=True,
-            bf16=device == "cuda" and dtype == torch.bfloat16,
+            bf16=device in ("cuda", "xpu") and dtype == torch.bfloat16,
             fp16=device == "cuda" and dtype == torch.float16,
             use_cpu=device == "cpu",
         )
@@ -167,26 +186,36 @@ class TorchBackend(Backend):
 
         emit.state("exporting")
         if plan.method == "full":
-            merged_dir = export.save_full(trainer.model, tokenizer, plan.base_path, job_dir / "merged", emit)
+            merged_dir = export.save_full(trainer.model, tokenizer, plan.base_path, out_dir / "merged", emit)
             del trainer, model
             _free_memory()
         else:
-            adapter_dir = export.save_adapter(trainer.model, tokenizer, job_dir / "adapter", emit)
+            adapter_dir = export.save_adapter(trainer.model, tokenizer, out_dir / "adapter", emit)
             del trainer, model
             _free_memory()
             merged_dir = None
             if plan.want_merged:
-                merged_dir = export.merge_adapter(plan.base_path, adapter_dir, job_dir / "merged", emit)
+                merged_dir = export.merge_adapter(plan.base_path, adapter_dir, out_dir / "merged", emit)
+        if plan.want_mlx:
+            # MLX files from a PyTorch run (full or DPO on a Mac, or backend
+            # torch): convert the merged model with mlx-lm.
+            source, temp = merged_dir, None
+            if source is None:
+                temp = job_dir / ".merged-for-mlx"
+                source = export.merge_adapter(plan.base_path, adapter_dir, temp, _Quiet(emit))
+            export.export_mlx(source, out_dir / "mlx", emit)
+            if temp is not None:
+                shutil.rmtree(temp, ignore_errors=True)
         if plan.gguf:
             temp = None
             if merged_dir is None:
                 tools = export.find_llama_cpp()
                 if tools["convert"] is None:
-                    export.export_gguf(job_dir, plan.gguf, job_dir / "gguf", emit)  # logs and skips
+                    export.export_gguf(out_dir, plan.gguf, out_dir / "gguf", emit)  # logs and skips
                     return
                 temp = job_dir / ".merged-for-gguf"
                 merged_dir = export.merge_adapter(plan.base_path, adapter_dir, temp, _Quiet(emit))
-            export.export_gguf(merged_dir, plan.gguf, job_dir / "gguf", emit)
+            export.export_gguf(merged_dir, plan.gguf, out_dir / "gguf", emit)
             if temp is not None:
                 shutil.rmtree(temp, ignore_errors=True)
 

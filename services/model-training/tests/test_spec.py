@@ -7,17 +7,20 @@ import copy
 
 import pytest
 
+from allternit_tune.hardware import Host
 from allternit_tune.spec import SpecError, TrainPlan, build_plan
 
+GPU = Host("cuda-linux")
 
-def refused(spec: dict, **kw) -> SpecError:
+
+def refused(spec: dict, host: Host = GPU) -> SpecError:
     with pytest.raises(SpecError) as info:
-        build_plan(spec, **kw)
+        build_plan(spec, host)
     return info.value
 
 
 def test_lora_spec_maps_to_training_args(spec, base_dir, dataset_file):
-    plan = build_plan(spec)
+    plan = build_plan(spec, GPU)
     assert plan.method == "lora"
     assert plan.base_path == str(base_dir.resolve())
     assert plan.dataset_path == str(dataset_file.resolve())
@@ -35,26 +38,26 @@ def test_lora_spec_maps_to_training_args(spec, base_dir, dataset_file):
 def test_defaults_per_method(spec):
     spec["params"] = {}
     spec["method"] = "full"
-    full = build_plan(spec)
+    full = build_plan(spec, GPU)
     assert full.lora is None
     assert full.training_args["learning_rate"] == 2e-5
     # A full fine-tune has no adapter; its model is the merged output.
     assert (full.want_adapter, full.want_merged) == (False, True)
 
     spec["method"] = "qlora"
-    qlora = build_plan(spec)
+    qlora = build_plan(spec, GPU)
     assert qlora.load_in_4bit and qlora.lora.r == 16 and qlora.lora.lora_alpha == 32
 
     dpo = copy.deepcopy(spec)
     dpo["method"] = "dpo"
     dpo["dataset"]["format"] = "dpo"
     dpo["params"] = {"beta": 0.2, "max_steps": 20}
-    plan = build_plan(dpo)
+    plan = build_plan(dpo, GPU)
     assert plan.training_args["beta"] == 0.2 and plan.training_args["max_steps"] == 20
 
 
 def test_plan_round_trips_through_json(spec):
-    plan = build_plan(spec)
+    plan = build_plan(spec, GPU)
     assert TrainPlan.from_dict(plan.to_dict()) == plan
 
 
@@ -85,7 +88,9 @@ def test_refuses_missing_base_folder(spec, tmp_path):
         (lambda s: s["params"].update(rank="16"), "invalid_spec"),
         (lambda s: s["params"].update(max_seq_len=100000), "invalid_spec"),
         (lambda s: s["params"].update(beta=0.1), "invalid_spec"),
-        (lambda s: s["outputs"].update(mlx=True), "invalid_spec"),
+        (lambda s: s["outputs"].update(mlx=True), "output_not_supported"),
+        (lambda s: s["resources"].update(backend="mlx"), "backend_not_supported"),
+        (lambda s: s["resources"].update(backend="jax"), "invalid_spec"),
         (lambda s: s["outputs"].update(gguf=["q9_x"]), "invalid_spec"),
     ],
 )
@@ -96,13 +101,12 @@ def test_refusal_codes(spec, mutate, code):
 
 def test_dataset_repo_and_missing_file(spec, tmp_path):
     spec["dataset"] = {"repo": "tatsu-lab/alpaca", "format": "alpaca"}
-    assert build_plan(spec).dataset_repo == "tatsu-lab/alpaca"
+    assert build_plan(spec, GPU).dataset_repo == "tatsu-lab/alpaca"
     spec["dataset"] = {"path": str(tmp_path / "missing.jsonl"), "format": "alpaca"}
     assert refused(spec).code == "invalid_dataset"
 
 
-def test_method_unavailable_on_this_computer(spec):
-    spec["method"] = "qlora"
-    err = refused(spec, unavailable_methods={"qlora": "bitsandbytes is not installed"})
-    assert err.code == "unknown_method"
-    assert "bitsandbytes is not installed" in err.message
+def test_cpu_plan_carries_the_slow_warning(spec):
+    plan = build_plan(spec, Host("cpu"))
+    assert plan.backend == "torch-cpu"
+    assert any("slow" in note for note in plan.notes)
