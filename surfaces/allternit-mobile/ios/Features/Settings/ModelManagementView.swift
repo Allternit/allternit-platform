@@ -42,6 +42,7 @@ struct ModelManagementListContent: View {
             selectedModelSection
             enginesSection
             FreeweightsSection(store: freeweights)
+            StudioJobsSection()
             Section {
                 NavigationLink("Benchmark") {
                     BenchmarkView()
