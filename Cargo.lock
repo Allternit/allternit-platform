@@ -219,6 +219,7 @@ dependencies = [
  "allternit-gc-agents",
  "allternit-model-source",
  "allternit-session-manager",
+ "allternit-studio-spec",
  "allternitos-cloud-contracts",
  "anyhow",
  "async-stream",

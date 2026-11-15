@@ -65,6 +65,8 @@ allternit-driver-interface = { path = "../../platform/contracts/driver-interface
 allternit-session-manager = { path = "../../services/session-manager" }
 # Freeweights catalog + signed manifests (contracts/model-source)
 allternit-model-source = { path = "../../services/model-source" }
+# Freeweights Studio contract: job spec v1, states, engine catalog.
+allternit-studio-spec = { path = "../../services/studio-spec", default-features = false }
 allternit-computer-cloud = { path = "../../cmd/allternit-computer-cloud" }
 allternitos-cloud-contracts = { workspace = true }
 
@@ -165,6 +167,8 @@ windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Securit
 
 [dev-dependencies]
 axum-test = "14"
+# The fake engine API v1 server for the Studio host tests.
+allternit-studio-spec = { path = "../../services/studio-spec", features = ["fake-engine"] }
 tempfile = "3"
 # `ServiceExt::oneshot` for in-process route tests (workspace tower is 0.5;
 # the util feature is additive and matches axum 0.7's service traits).

@@ -4685,6 +4685,30 @@
         "allternit/surfaces/docs/tools/freeweights.mdx",
         "allternit/contracts/model-source/README.md"
       ]
+    },
+    {
+      "id": "feature:freeweights-studio-training",
+      "label": "Freeweights Studio training jobs (engines, job spec v1, host API)",
+      "product": "product:allternit-api",
+      "status": "building",
+      "description": "Fine-tune jobs run on the person's own computer through engines. The contract crate services/studio-spec holds job spec v1, job states, the engine catalog and the host and engine OpenAPI. allternit-api serves /api/v1/studio (engines with install state and hardware fit, install, jobs, events?after=seq, cancel, outputs, outputs/register), stores jobs as JSON files under <data dir>/studio/jobs, runs one job per computer (409 job_running), fetches the base model with model-source fetch_verified, starts the engine as a venv process speaking engine API v1 over loopback with a per-launch token, and on restart reattaches to a live engine or marks the job failed. A finished output is registered in local-engine as source studio_output. The old /api/v1/model-training proxy (port 9020) is deleted.",
+      "touches": [
+        "allternit/cmd/allternit-api/src/studio",
+        "allternit/services/studio-spec",
+        "allternit/services/local-engine/src/routes/models.rs",
+        "allternit/services/local-engine/src/cache/model.rs",
+        "allternit/services/model-training"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-15",
+          "note": "Studio Phase 3 step 3: host in Rust inside allternit-api (Decision 1), engines as venv processes (4), host fetches base models with fetch_verified and passes a local path (5), jobs as JSON files (6), model_training_routes.rs and its mounts deleted (7). Hardware: Apple Silicon (torch/MPS for allternit-tune) and CUDA Linux; everything else refused with the reason."
+        }
+      ],
+      "evidence": [
+        "allternit/services/studio-spec/openapi/studio-api.yaml",
+        "allternit/cmd/allternit-api/src/studio/mod.rs"
+      ]
     }
   ],
   "journeys": [

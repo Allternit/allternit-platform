@@ -12,7 +12,7 @@
     "process": "embedded",
     "default": true,
     "backends": [
-      { "id": "torch", "status": "planned" },
+      { "id": "torch", "status": "available" },
       { "id": "mlx", "status": "pending_decision" }
     ]
   },

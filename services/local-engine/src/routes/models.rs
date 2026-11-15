@@ -51,6 +51,7 @@ pub enum ImportSource {
     #[default]
     LocalPath,
     UnslothOutput,
+    StudioOutput,
 }
 
 impl From<ImportSource> for ModelSource {
@@ -58,8 +59,21 @@ impl From<ImportSource> for ModelSource {
         match value {
             ImportSource::LocalPath => ModelSource::LocalPath,
             ImportSource::UnslothOutput => ModelSource::UnslothOutput,
+            ImportSource::StudioOutput => ModelSource::StudioOutput,
         }
     }
+}
+
+/// Request body for `POST /models/studio-output` (sent by allternit-api's
+/// `/api/v1/studio/jobs/{id}/outputs/register`).
+#[derive(Debug, Deserialize)]
+pub struct StudioOutputRequest {
+    /// Adapter/model folder, or a single file (a GGUF).
+    pub path: String,
+    pub name: String,
+    pub job_id: String,
+    /// `adapter`, `merged`, `gguf`, `mlx`.
+    pub kind: String,
 }
 
 /// Request body for `POST /models/verify`.
@@ -168,6 +182,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/models/download", post(download_model))
         .route("/models/import", post(import_model))
         .route("/models/verify", post(verify_model))
+        .route("/models/studio-output", post(register_studio_output))
         .with_state(state)
 }
 
@@ -264,6 +279,49 @@ async fn import_model(
     Ok(Json(CachedModelResponse::from(&imported)))
 }
 
+/// List a finished Studio job's output in the local cache (source
+/// `studio_output`, status `ready`). Registering the same job output again
+/// returns the existing record.
+pub async fn studio_output(
+    store: &ModelStore,
+    req: StudioOutputRequest,
+) -> Result<CachedModel, (StatusCode, String)> {
+    let safe = |s: &str| -> bool {
+        !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.')
+    };
+    if !safe(&req.job_id) || !safe(&req.kind) {
+        return Err((StatusCode::BAD_REQUEST, "job_id and kind must be plain ids".into()));
+    }
+    let path = std::path::PathBuf::from(&req.path);
+    if !path.is_absolute() {
+        return Err((StatusCode::BAD_REQUEST, "path must be absolute".into()));
+    }
+    if let Err(err) = tokio::fs::metadata(&path).await {
+        return Err((StatusCode::BAD_REQUEST, format!("cannot access output path: {err}")));
+    }
+    let id = format!("studio--{}--{}", req.job_id, req.kind);
+    if let Some(existing) = store.get(&id).await {
+        return Ok(existing);
+    }
+    let name = if req.name.trim().is_empty() { id.clone() } else { req.name.trim().to_string() };
+    let mut model = CachedModel::new_local(id.clone(), name, path, ModelSource::StudioOutput);
+    model.revision = req.job_id;
+    model.set_ready();
+    store.insert(model.clone()).await;
+    info!(%id, "studio output registered");
+    Ok(model)
+}
+
+async fn register_studio_output(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<StudioOutputRequest>,
+) -> Result<Json<CachedModelResponse>, (StatusCode, Json<ErrorResponse>)> {
+    studio_output(&state.store, payload)
+        .await
+        .map(|m| Json(CachedModelResponse::from(&m)))
+        .map_err(|(code, error)| (code, Json(ErrorResponse { error })))
+}
+
 async fn download_model(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<DownloadRequest>,
@@ -317,4 +375,40 @@ async fn download_model(
 
     info!(%model_id, "download task spawned");
     Ok(Json(response))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn studio_output_is_listed_ready_and_idempotent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let adapter = tmp.path().join("adapter");
+        std::fs::create_dir_all(&adapter).unwrap();
+        let store = ModelStore::new(tmp.path().join("models"));
+        let req = |path: &std::path::Path| StudioOutputRequest {
+            path: path.to_string_lossy().into_owned(),
+            name: "qwen-lora".into(),
+            job_id: "job_1".into(),
+            kind: "adapter".into(),
+        };
+
+        let model = studio_output(&store, req(&adapter)).await.unwrap();
+        assert_eq!(model.id, "studio--job_1--adapter");
+        let listed = CachedModelResponse::from(&store.get(&model.id).await.unwrap());
+        assert_eq!(listed.source, "studio_output");
+        assert_eq!(listed.status, "ready");
+        assert_eq!(listed.name, "qwen-lora");
+
+        let again = studio_output(&store, req(&adapter)).await.unwrap();
+        assert_eq!(again.created_at, model.created_at);
+        assert_eq!(store.list().await.len(), 1);
+
+        let missing = studio_output(&store, req(&tmp.path().join("nope"))).await;
+        assert_eq!(missing.unwrap_err().0, StatusCode::BAD_REQUEST);
+        let mut traversal = req(&adapter);
+        traversal.job_id = "../x".into();
+        assert!(studio_output(&store, traversal).await.is_err());
+    }
 }
