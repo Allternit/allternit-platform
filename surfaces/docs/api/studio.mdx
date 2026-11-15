@@ -23,7 +23,19 @@ From the terminal, use [`gizzi studio`](/cli/studio). For the user flow, see [Fr
 
 ## Engines
 
-`GET /engines` returns `{ "engines": [...] }`. Each engine has `id`, `name`, `license`, `version`, `methods` (`lora`, `qlora`, `full`, `dpo`), `hardware` (`apple-silicon`, `cuda-linux`), `install_state` (`not_installed`, `installing`, `installed`, `failed`) and `backends`. The default engine is `allternit-tune` (Apache-2.0). Its `torch` backend is available. Its `mlx` backend has status `pending_decision`, which means not available yet.
+`GET /engines` returns `{ "engines": [...] }`. Each engine has `id`, `name`, `license`, `version`, `methods` (`lora`, `qlora`, `full`, `dpo`), `hardware` (any of `apple-silicon`, `cuda-linux`, `cuda-windows`, `rocm-linux`, `xpu-linux`, `xpu-windows`, `cpu`), `install_state` (`not_installed`, `installing`, `installed`, `failed`), `backends` and `fit`. The default engine is `allternit-tune` (Apache-2.0). Its `torch` and `mlx` backends are both available.
+
+`fit` says whether the engine runs on this computer:
+
+| Field | Meaning |
+|---|---|
+| `ok` | The engine can train here |
+| `hardware` | The hardware id the host detected |
+| `backend` | Backend used for the first method that runs with `resources.backend` set to `auto`: `mlx`, `torch-mps`, `torch-cuda`, `torch-rocm`, `torch-xpu` or `torch-cpu`. On a Mac, `lora` and `qlora` use `mlx` and `full` and `dpo` use `torch-mps`. |
+| `reason` | Plain words, shown as is, when the engine is refused or the host fell back to `cpu` |
+| `warning` | Shown before start when the job runs but slowly (`cpu`) |
+| `methods_unavailable` | Method to reason, for methods this computer cannot run |
+| `outputs_unavailable` | Output kind to reason, for example `mlx` off a Mac |
 
 `POST /engines/:id/install` answers `202`. A build that cannot install the engine answers `501 not_available`.
 
@@ -52,12 +64,13 @@ The job starts in state `queued` (`201`). The spec fields are:
 | `spec_version` | Must be `1`. |
 | `engine`, `engine_version` | Engine id. The version is optional. |
 | `base.repo`, `base.revision` | A hosted Freeweights model. |
+| `base.path` | Instead of `repo`: an absolute path (or `~/...`) to a model folder on the computer that runs the job. Give exactly one of `repo` or `path`. |
 | `base.manifest_sha256` | Optional. The sha256 of the signed Freeweights manifest for the base model. The host refuses the job if the model is not fetched with exactly that manifest. |
 | `dataset` | Exactly one of `repo` or `path`, plus `format` and an optional `revision`. |
 | `method` | `lora`, `qlora`, `full` or `dpo`. |
 | `params` | Engine parameters. |
-| `resources` | `place` is `local`, `paired` or `compute`. Optional `gpu`, `max_hours`, `max_usd`. |
-| `outputs` | `adapter`, `merged`, `gguf` (list of quantizations), `mlx`. |
+| `resources` | `place` is `local`, `paired` or `compute`. `backend` is `auto` (default), `torch` or `mlx`. Optional `gpu`, `max_hours`, `max_usd`. |
+| `outputs` | `adapter`, `merged`, `gguf` (list of quantizations), `mlx` (Apple Silicon only). |
 | `eval` | Optional `sets` and `baseline`. |
 
 ## Job states
@@ -81,7 +94,7 @@ Poll `GET /jobs/:id/events?after=<seq>`. It returns the events with `seq` greate
 
 ## Outputs
 
-`GET /jobs/:id/outputs` lists `{ kind, path, bytes }` for each output. `kind` is `adapter`, `merged`, `gguf` or `mlx`. Outputs stay on the computer after the job ends.
+`GET /jobs/:id/outputs` lists `{ kind, path, bytes }` for each output. `kind` is `adapter`, `merged`, `gguf` or `mlx`. `path` is always an absolute path on the computer that ran the job, inside the output folder the host gave the engine. Outputs stay on the computer after the job ends.
 
 `POST /jobs/:id/outputs/register` with `{ "kind": "adapter", "name": "optional" }` registers an output with the Local Engine and returns `{ "model_id": "..." }`.
 
@@ -96,7 +109,12 @@ Poll `GET /jobs/:id/events?after=<seq>`. It returns the events with `seq` greate
 | 409 | `job_running` | Another job runs on this computer |
 | 409 | `already_finished` | Cancel on a finished job |
 | 409 | `job_not_succeeded` | Register before the job succeeded |
-| 422 | `hardware_not_supported` | This computer cannot train with the engine. Windows, AMD, Intel and CPU-only computers are refused. |
+| 422 | `hardware_not_supported` | The engine does not run on this computer's hardware at all, for example an Intel Mac. The message is the reason from `fit`. |
+| 422 | `method_not_supported` | The method is in `fit.methods_unavailable`, for example `qlora` on `cpu`. The environment can cause it too, for example bitsandbytes missing or too old. |
+| 422 | `backend_not_supported` | `resources.backend` cannot be used here, for example `mlx` off a Mac or for `full` and `dpo`. Also returned when mlx-lm is missing. |
+| 422 | `output_not_supported` | An output is in `fit.outputs_unavailable`, for example `outputs.mlx` off a Mac |
+| 422 | `invalid_base` | `base` is not exactly one of `repo` or `path`, or the path is not a model folder on this computer |
+| 503 | `hardware_unavailable` | The training device cannot be used right now, for example the GPU driver did not load or the device was lost. The message says what the host saw. |
 | 422 | `engine_not_installed` | Install the engine first |
 | 422 | `manifest_mismatch` | `base.manifest_sha256` is not the hash of the signed manifest, the repo has no signed manifest at that revision, or it could not be checked |
 | 422 | `rented_not_available` | `resources.place` is `rented` |
@@ -106,6 +124,12 @@ Poll `GET /jobs/:id/events?after=<seq>`. It returns the events with `seq` greate
 | 502 | `local_engine_unreachable`, `register_failed` | The Local Engine did not take the output |
 
 A manifest that changes after the job is accepted fails the job while it is preparing, before any file downloads.
+
+## Where the engines come from
+
+- **Allternit Tune** is Apache-2.0 and ships with Allternit.
+- **Axolotl, LLaMA-Factory and torchtune** are published in [Allternit/studio-engines](https://github.com/Allternit/studio-engines) at a pinned commit (`e520474`), Apache-2.0. They run the upstream engines unmodified at pinned versions (Axolotl 0.21.1, LLaMA-Factory 0.9.5, torchtune 0.6.1, which is BSD-3-Clause and no longer maintained upstream).
+- **Unsloth** runs unmodified from PyPI (version 2026.11.4) under AGPL-3.0, installed on the computer as a separate process. Allternit code never imports it.
 
 ## Engine API v1
 

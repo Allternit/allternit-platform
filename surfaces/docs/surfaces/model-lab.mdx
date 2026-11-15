@@ -100,7 +100,29 @@ Training runs on a computer you own, not on the device you are holding. Engines 
 
 The web and the PWA need a connected computer. Desktop uses its own computer. On a connected computer, Desktop bundles Allternit Tune and installs it on first use.
 
-Hardware: Apple Silicon, or NVIDIA on Linux. Windows, AMD, Intel and CPU-only computers are refused with the reason (`hardware_not_supported`). Allternit Tune uses the TRL and PEFT torch backend on both. The MLX backend is not available yet. Rented GPUs and publishing a result to Freeweights are not available yet.
+### Hardware
+
+Allternit Tune picks the hardware from what the computer reports. Every row below is **Not yet tested by Allternit on this hardware**, so treat a first run as a trial and check the output.
+
+| Computer | Runs | Backend | QLoRA | Not yet tested by Allternit on this hardware |
+|---|---|---|---|---|
+| Mac with Apple Silicon (`apple-silicon`) | `lora`, `qlora`, `dpo`, `full` | MLX for `lora` and `qlora`. PyTorch on Metal for `dpo` and `full`. | MLX 4-bit | Yes |
+| NVIDIA on Linux (`cuda-linux`) | all four | PyTorch (CUDA) | bitsandbytes | Yes |
+| NVIDIA on Windows (`cuda-windows`) | all four | PyTorch (CUDA) | bitsandbytes | Yes |
+| AMD on Linux (`rocm-linux`) | all four | PyTorch (ROCm) | bitsandbytes 0.50 or newer | Yes |
+| Intel GPU on Linux (`xpu-linux`) | all four | PyTorch (XPU) | bitsandbytes 0.50 or newer | Yes |
+| Intel GPU on Windows (`xpu-windows`) | all four | PyTorch (XPU) | bitsandbytes 0.50 or newer | Yes |
+| CPU only (`cpu`) | `lora` only, slowly. The job shows a warning before it starts. | PyTorch (CPU) | Not available | Yes |
+
+Intel Macs are not supported: PyTorch has no build for them that the trainer can use. AMD GPUs on Windows train on the CPU. Studio shows the reason from the computer's check before you start. Rented GPUs and publishing a result to Freeweights are not available yet.
+
+On a Mac you can set the backend to `torch` instead of `auto`. `mlx` is refused for `dpo`, for `full`, and on any computer that is not an Apple Silicon Mac.
+
+**MLX output.** Turn on **MLX** under **Also make** on an Apple Silicon Mac to get MLX files. The MLX adapter is in mlx-lm's own format (`adapters.safetensors` and `adapter_config.json`), not a PEFT adapter, so tools that load PEFT adapters cannot read it. After QLoRA the MLX model stays 4-bit, while the merged model is written dequantized. A `full` or `dpo` run on a Mac trains on PyTorch, then converts the merged model to MLX.
+
+**Python.** Desktop uses its bundled Python 3.12. On any other computer the trainer needs Python 3.10 or newer on the computer.
+
+**Licences.** See [Where the engines come from](/api/studio#where-the-engines-come-from).
 
 If you pin the base model with its manifest hash and the signed Freeweights manifest differs, the job is refused with `manifest_mismatch`. Job outputs are kept on the computer after the job ends.
 
@@ -133,6 +155,7 @@ A job is one fine-tune run on one computer. Merging and quantizing are outputs o
 |---|---|
 | `adapter` | Always, for `lora`, `qlora` and `dpo` |
 | `merged` | Always for `full`; for the LoRA methods when **Also make → Merged model** is on (`outputs.merged` in the job spec) |
+| `mlx` | When **Also make → MLX** is on (`outputs.mlx`). Apple Silicon only |
 | `gguf` | One file per quant picked under **Also make** (`outputs.gguf`, for example `["q4_k_m"]`). Needs llama.cpp on the computer |
 
 Evaluation is not available yet. The job spec has an `eval` field, and Allternit Tune ignores it.
