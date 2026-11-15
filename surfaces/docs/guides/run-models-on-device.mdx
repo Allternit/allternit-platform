@@ -1,0 +1,139 @@
+---
+title: Run models on your device
+description: "Find an open-weights model that fits this computer, phone or browser, download it, and chat with it offline in Freeweights Studio."
+---
+
+Freeweights Studio can run open-weights models on the device you are holding: a Mac, a Windows or Linux computer, an iPhone, an Android phone, or a browser tab. The model stays on that device. Chats with it do not leave the device and do not use your Allternit Cloud allowance.
+
+<Note>
+On-device models ship in stages, and this page describes the full feature. Where a surface is still being built the page says so. Some models are small and slow. Nothing here promises a speed: it depends on your hardware, the model and what else the device is doing.
+</Note>
+
+## Browse the catalog
+
+Open **Freeweights Studio**, then the **Catalog** tab. The catalog is the [Freeweights](/tools/freeweights) catalog.
+
+You can view it three ways:
+
+| View | What it is for |
+|---|---|
+| **Grid** | The default. Cards with the publisher's logo, size and fit badge. |
+| **List** | Dense rows to scan many models and compare sizes. |
+| **Deck** | One large card at a time, for browsing on a phone. |
+
+Every model shows a fit badge for the device you are on. Open a model to see which build was picked (for example Q4_K_M, a 4-bit build) and why.
+
+## What the fit badges mean
+
+The badge compares the model's memory need with what this device can give to models. The same rule runs in Desktop, the web app, the phones and Gizzi Code. See the [fit spec](/api/on-device-models#fit-spec) for the numbers.
+
+| Badge | Meaning |
+|---|---|
+| **Fits** | It should load with room to spare. |
+| **May be slow** | It should load, but part of it runs on the processor (a computer with a graphics card) or the whole model runs on the processor. Expect slower replies. |
+| **Tight fit** | It fits in the memory set aside for models, with little to spare (Macs, phones, computers that share memory). Close other apps first. |
+| **Won't fit** | It needs more memory than this device can give. Pick a smaller model or a smaller build. |
+| **No WebGPU** | This browser has no WebGPU, so it cannot run models. Use Desktop or the phone app. |
+| **No browser build** | The model has no version that runs in a browser. Run it in Desktop or the phone app. |
+| **No build for this device** | The model has no version for this kind of device. Pick another model or device. |
+| **Size not checked** | Freeweights has no device data for this model yet. It has no Run button. |
+
+A badge is an estimate from file sizes and your device's memory. It is not a speed test.
+
+## This device tab
+
+The **This device** tab shows what Studio found on the device you are using:
+
+- the computer or phone, its memory, and its graphics processor
+- the memory set aside for models
+- the engines that can run models here, and whether each is ready, installed, in fallback, missing or off
+- the models downloaded to this device, with the engine, the build and a verification mark
+- the model that is running now, with its memory use, speed in tokens per second and context used
+
+A model that has not been used for 5 minutes unloads to free memory. It loads again on your next message.
+
+If the engine on a computer is old and cannot report hardware, the tab falls back to the basic status it can read, and some details are missing.
+
+## Download a model
+
+Press **Download** on a model with a fit badge other than **Won't fit**. Each file is checked against the hash in the Freeweights signed manifest. A file that does not match is deleted, not kept. See [Freeweights](/tools/freeweights) for the verification labels.
+
+- Computers: downloads run in the engine and continue when you close the window, as long as Desktop is running.
+- Phones: any network works, including mobile data, and downloads continue in the background. Check the size before you download on mobile data: a 2 GB model is 2 GB.
+- Browser: the model is stored in the browser's own storage. Clearing site data removes it.
+
+## Run offline
+
+After a model is downloaded, chatting with it needs no network on Desktop, iPhone, Android and the browser. Details by surface:
+
+- The first run of each surface needs a connection, to sign in and to download.
+- In a browser, the page must have loaded online once so it can start from its saved copy.
+- Your chat history is stored on the device until you are back online. Features that need the internet, such as web search, do not work offline.
+
+## By surface
+
+### Desktop
+
+Allternit Desktop installs and updates the engines for you. It does not use anything you install yourself, and an engine update comes with a Desktop update.
+
+| Computer | What runs models |
+|---|---|
+| macOS (Apple silicon) | MLX and llama.cpp on Metal |
+| Windows | llama.cpp: NVIDIA, AMD, Intel and Arm. The processor is the fallback. |
+| Linux | llama.cpp: NVIDIA, AMD and the processor |
+
+On a Mac, the budget is 65 percent of memory, because the graphics processor shares it with everything else.
+
+### Web and phone browsers
+
+ai.allternit.com and m.allternit.com run small models in the browser with WebGPU. The browser needs WebGPU: current Chrome and Edge on computers and recent Android phones have it. Safari support varies by version.
+
+| Browser | Most it will use |
+|---|---|
+| Computer | 2 GB |
+| Phone | 0.45 GB |
+
+Expect models of about 1 billion parameters or less. For anything larger, use Desktop or the phone app, or send the model to a computer you own.
+
+### iPhone
+
+The **Models** tab has two parts: **Catalog** and **On this iPhone**. Three engines run models: MLX, llama.cpp and Apple Foundation Models (Apple's own model, if your iPhone and iOS version have it).
+
+Memory is the limit. The app reads the memory iOS gives it each time it starts, and uses three quarters of that for models. On an iPhone 15 (6 GB class) we measured about 2.2 GB without Apple's increased memory limit, and about 3.0 GB with it. A 4-billion-parameter model at 4-bit is about 2.7 GB, so it does not fit without that limit and has almost no room for context with it. Models of 1.5 to 2 billion parameters work best. Models unload when the app goes to the background or iOS warns about memory.
+
+### Android
+
+The Allternit app on Android runs models with a native engine in the app and shows them in the chat model picker. Small models also run in Chrome with WebGPU if you use m.allternit.com without the app. Notifications show downloads and the running model.
+
+The first run needs a connection. The memory budget is the smaller of the memory Android reports as free, minus its threshold, and 45 percent of the phone's total memory.
+
+### Gizzi Code
+
+<Info>
+New with this release.
+</Info>
+
+```bash
+gizzi models fit <id>      # will it run on this computer
+gizzi models run <id>      # download if needed, start, and chat
+gizzi models ps            # models running now
+gizzi models stop <id>     # unload one
+```
+
+See [Models and providers](/cli/models#run-a-model-on-this-computer) for the options.
+
+## Limits, plainly
+
+- Small on-device models are less capable than Allternit Cloud models. Use them for private, offline or quick work.
+- Speed is not guaranteed. A model that **Fits** can still be slow on an old computer.
+- Phones get warm and use battery quickly while a model generates.
+- Browsers are the most limited. Phone browsers are the smallest.
+- A model with **Size not checked** is not offered to run until Freeweights has device data for it.
+
+## Related
+
+- [Freeweights Studio](/surfaces/model-lab)
+- [Freeweights catalog and verification](/tools/freeweights)
+- [Local Engine](/tools/local-engine)
+- [Allternit for iPhone](/guides/iphone-app) and [Allternit for Android](/guides/android-app)
+- [On-device models: developer contract](/api/on-device-models)

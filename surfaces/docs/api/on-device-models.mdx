@@ -1,0 +1,141 @@
+---
+title: On-device models contract
+description: "The device data, fit rule, runtime shape, Android bridge and engine pack format that every Allternit surface shares for running models on the device."
+---
+
+This is the contract behind [Run models on your device](/guides/run-models-on-device). One catalog source, one fit rule and one runtime shape serve Desktop, the web app, the PWA, iPhone, Android and Gizzi Code. Each surface builds its own client against it.
+
+## device.json entry
+
+Freeweights keeps device data in `catalog/overlay/device.json`, one entry per model id:
+
+```json
+"<id>": {
+  "quants": [{
+    "name": "Q4_K_M",
+    "format": "gguf",
+    "engine": "llama.cpp",
+    "files": ["model-Q4_K_M.gguf"],
+    "size": 2700000000,
+    "ram_est": 3640000000,
+    "best_for": ["phone", "laptop"],
+    "repo": "<other freeweights id, optional>"
+  }],
+  "device_formats": ["gguf", "mlx"]
+}
+```
+
+| Field | Notes |
+|---|---|
+| `format` | `gguf`, `mlx` or `onnx` |
+| `engine` | `llama.cpp`, `mlx` or `webgpu` |
+| `size` | Bytes on disk for this build. It is not the repository's `total_size`. |
+| `ram_est` | Optional. When absent, clients use `size x 1.2 + 0.4 GB`. |
+| `best_for` | `phone`, `laptop`, `workstation`, `browser` |
+| `repo` | Optional. MLX and ONNX builds often live in a sibling Freeweights repo. |
+
+A model with no entry has no device data. Clients show **Size not checked** and no Run button.
+
+## Freeweights routes
+
+| Method | Path | Returns |
+|---|---|---|
+| `GET` | `/api/models/:org/:name/device` | `{id, quants, device_formats, manifest: {url, sig_url, signed}, generated_at}`, or `404` with `no_device_data` |
+| `GET` | `/api/device/index` | `{generated_at, models: {"<id>": [[engine, name, size, ram_est, best_for_mask]]}, recommended}` with an `ETag`. Served from the R2 key `device/index.json`. |
+
+The index is one file so a client can badge a whole catalog page without a request per model. Both routes belong to the Freeweights Worker, see [Freeweights](/tools/freeweights).
+
+## Hardware
+
+`GET /api/local-engine/hardware` returns the device profile and the `budget` the fit rule reads. See [Local Engine: Hardware](/api/local-engine#hardware). An engine without the route answers `404`, and clients fall back to `/status`.
+
+## Fit spec
+
+The rule is written once in [`spec/on-device/fit.md`](https://github.com/Allternit/allternit-platform/blob/main/spec/on-device/fit.md). It defines the function, the inputs, the pick, the verdict for each kind of device, the exact label and `why` strings, and integer arithmetic for the boundaries.
+
+```ts
+fit(budget: DeviceBudget, quants: Quant[] | null, opts?: {ctx?: number}) -> FitResult
+FitResult = {k: 'ok' | 'slow' | 'no' | 'na' | 'unknown', label, why, quant}
+DeviceBudget = {kind: 'discrete' | 'unified' | 'cpu', fast_bytes, spill_bytes, apple?, browser?, webgpu?}
+```
+
+The vectors in [`spec/on-device/fit-vectors.json`](https://github.com/Allternit/allternit-platform/blob/main/spec/on-device/fit-vectors.json) (59 cases) are the test. Three ports must pass them unchanged:
+
+| Port | Where |
+|---|---|
+| TypeScript | allternit-ai `src/lib/on-device/fit.ts`, run with `npx vitest run src/lib/on-device` |
+| Swift | iPhone app, `Core/OnDevice/`, as an XCTest |
+| Rust | Gizzi Code and the Local Engine |
+
+When the rule changes, change the spec and the vectors first, then the three ports in the same release.
+
+Labels: `Fits`, `May be slow`, `Tight fit`, `Won't fit`, `No WebGPU`, `No browser build`, `No build for this device`, `Size not checked`.
+
+How `fast_bytes` is made, by detector:
+
+| Device | `kind` | `fast_bytes` |
+|---|---|---|
+| Discrete GPU | `discrete` | VRAM, with system RAM as `spill_bytes` |
+| Apple silicon Mac | `unified` | 0.65 x RAM |
+| Other shared memory | `unified` | 0.60 x RAM |
+| No GPU | `cpu` | 0.6 x RAM |
+| iPhone | `unified`, `apple` | 0.75 x `os_proc_available_memory()` at cold start |
+| Android | `unified` | the smaller of free memory minus threshold and 0.45 x total memory |
+| Browser | `unified`, `browser` | the smaller of the WebGPU buffer limits and 2 GB; 0.45 GB on phone browsers |
+
+iPhone numbers come from the [iOS memory spike](https://github.com/Allternit/allternit-platform/blob/main/spec/on-device/ios-memory-spike.md): measure at cold start, never assume the entitlement is present.
+
+## DeviceRuntime
+
+Every surface describes a place that can run models with one shape. The TypeScript type extends `src/lib/local-models/types.ts` in allternit-ai. The Swift type mirrors it in `Core/OnDevice/`, and Gizzi uses `runtime/services/localEngine.ts`.
+
+```ts
+{
+  id: 'desktop-engine' | 'browser-webgpu' | 'android-app' | 'ios-mlx' | 'ios-llama' | 'apple-fm',
+  place: 'this-device' | 'other-device' | 'cloud',
+  deviceName, engine, backend?, version?,
+  state: 'ready' | 'missing' | 'off' | 'unsupported',
+  budget: DeviceBudget,
+  offline: boolean,
+  models: InstalledLocalModel[],   // plus quant, engine, verified
+  running?: {modelId, quant, memBytes, tokPerSec, ctxUsed, ctxMax, idleUnloadSec: 300}
+}
+```
+
+| Runtime id | Surface |
+|---|---|
+| `desktop-engine` | Local Engine on Desktop, Windows, Linux, or a linked computer |
+| `browser-webgpu` | Transformers.js with WebGPU, in a tab |
+| `android-app` | The native engine in the Android app, reached over the bridge below |
+| `ios-mlx`, `ios-llama` | MLX and llama.cpp inside the iPhone app |
+| `apple-fm` | Apple Foundation Models |
+
+The chat model picker groups them as On this device, My other devices and Cloud.
+
+## Android bridge
+
+Chrome inside the Android app (a Trusted Web Activity) cannot call native code directly and the app must work with no network. The spike [verdict](https://github.com/Allternit/allternit-platform/blob/main/spec/on-device/android-bridge-spike.md) chose the Custom Tabs postMessage channel: the page asks for a message port and the native engine streams tokens to it. On a Moto g play in airplane mode it delivered 500 of 500 messages in order across 22 runs, about 3,000 to 4,000 messages a second, with a round trip near 3 ms and no permission prompt.
+
+What the channel needs:
+
+- A `hello` and `welcome` handshake that the page retries, because messages sent right after the port arrives are often dropped.
+- Origin `android-app://` plus the package, checked by the native side.
+- The session held app-wide, not by a launcher activity that finishes.
+- Tokens buffered while the app is in the background and batched (about every 30 ms) to cut calls.
+- `use_as_origin` in the site's `assetlinks.json`, or the page gets no port.
+- A first run online, so Chrome can save its link verification.
+
+The localhost HTTP route also worked and is the fallback only: the PWA's CSP blocks it and it opens a port.
+
+## Engine packs
+
+An engine pack is the signed download that carries one inference engine for one platform and backend. Desktop installs the pack that matches `/hardware`. Packs use the runtime package format from `runtime.allternit.com`.
+
+- Layout: `pack.json`, licence files, and the executable (for example `bin/llama-server`). Metal packs embed their shaders so they are one file.
+- `pack.json` is a superset of the runtime manifest. The shared fields are `version`, `build`, `platform`, `shellApi` and `files` (a sha256 and size for each). Extra fields name the pack: `pack_id`, `engine`, `backend`, `os`, `arch`, `min_os`, `entrypoint`, `source_commit`.
+- Signing: macOS binaries are signed with Developer ID, hardened runtime and no entitlements, and the zip is notarized. The feed pointer and each manifest carry an Ed25519 signature, checked against the public key in Desktop.
+- Verification: Desktop checks the manifest signature, then every file's sha256, before it runs anything. Files already on disk are not downloaded again.
+- Install path: `<runtime>/engines/<pack_id>/<entrypoint>`, resolved before any engine found on the PATH.
+- The Mac MLX engine is a Swift executable, `allternit-mlx-server`, built from the same package as the iPhone engine, with `mlx-swift_Cmlx.bundle` beside it for the Metal library.
+
+Details and build scripts: [engine pack spike](https://github.com/Allternit/allternit-platform/blob/main/spec/on-device/engine-pack-spike.md) and `scripts/engine-packs/`.

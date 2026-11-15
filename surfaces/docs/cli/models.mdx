@@ -109,6 +109,23 @@ A model under **Your subscriptions** runs in your own signed-in CLI, through the
 
 This also works when the TUI is attached to Desktop's server with `gizzi attach`.
 
+## Run a model on this computer
+
+<Info>
+New with this release.
+</Info>
+
+`gizzi models fit`, `run`, `ps` and `stop` run open-weights models on this computer, through the Local Engine. They use the same fit rule as the apps ([contract](/api/on-device-models#fit-spec)) and the Freeweights device data, and are described for people in [Run models on your device](/guides/run-models-on-device).
+
+| Command | What it does |
+|---|---|
+| `gizzi models fit <id>` | Prints whether the model fits this computer: the badge (Fits, May be slow, Tight fit, Won't fit, No build for this device, Size not checked), the build it would use and the reason. `--json` prints the result as JSON. |
+| `gizzi models run <id>` | Downloads the model if needed (verified like `gizzi models pull`), starts it on the engine and opens a chat. Refuses a model that Won't fit or has no device data. |
+| `gizzi models ps` | Lists the models running now, with memory use and speed. |
+| `gizzi models stop <id>` | Unloads a running model. A model idle for 5 minutes unloads by itself. |
+
+The models appear under the Local section of `/model` while they run. Speed depends on your hardware and is not guaranteed.
+
 ## When a turn fails
 
 Each failure names the real cause and one or two commands to run. Examples:

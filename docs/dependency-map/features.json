@@ -4716,6 +4716,37 @@
         "allternit/services/studio-spec/openapi/studio-api.yaml",
         "allternit/cmd/allternit-api/src/studio/mod.rs"
       ]
+    },
+    {
+      "id": "feature:on-device-models",
+      "label": "On-device models",
+      "product": "product:allternit-api",
+      "status": "building",
+      "description": "Run open-weights models on the device the person is using, with one fit rule everywhere. Freeweights serves per-model device data (GET /api/models/:org/:name/device and /api/device/index, from catalog/overlay/device.json). The Local Engine reports GET /hardware (device profile and the model budget). One fit function (spec/on-device/fit.md, 59 vectors) has three ports that must pass the same vectors: TypeScript (allternit-ai src/lib/on-device), Swift (iOS Core/OnDevice) and Rust (Gizzi, local-engine); labels Fits, May be slow, Tight fit, Won't fit, No WebGPU, No browser build, No build for this device, Size not checked. Runtimes share the DeviceRuntime shape: desktop-engine (Local Engine with signed engine packs), browser-webgpu (small models, 2 GB desktop and 0.45 GB phone caps), android-app (native engine in the app, streamed to the PWA over the Custom Tabs postMessage bridge), ios-mlx, ios-llama and apple-fm (iPhone Models tab, Catalog and On this iPhone), and gizzi models fit, run, ps and stop. Freeweights Studio gets a Grid, List and Deck catalog with fit badges and a This device tab. Paths not listed until they merge: allternit-ai src/lib/local-models/runtimes and the browser budget, iOS Core/OnDevice and Packages/OnDeviceLLM, Android ondevice, Gizzi models-run.ts, the Freeweights device route (freeweights worker/src/routes/device.ts), engine packs (scripts/engine-packs).",
+      "touches": [
+        "allternit-ai/src/lib/on-device",
+        "allternit-ai/src/views/model-lab",
+        "allternit-ai/src/lib/local-models",
+        "allternit/services/local-engine",
+        "allternit/cmd/allternit-api/src/local_engine_routes.rs",
+        "allternit/surfaces/allternit-mobile/ios/Features/Models",
+        "allternit/surfaces/allternit-mobile/android/app",
+        "allternit/cmd/gizzi-code/src/cli/commands/models.ts"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-15",
+          "note": "Eoj approved the plan (PLAN-on-device-models-2026-11-15.md). One fit spec with three ports and shared vectors; the Android app streams to the PWA over the Custom Tabs postMessage channel (spike passed on a Moto in airplane mode, 500 of 500 messages); the iPhone budget is 0.75 x os_proc_available_memory() measured at cold start (3,063 MB without and 4,088 MB with increased-memory-limit on an iPhone 15), and the build must work without the entitlement; engine packs are Developer-ID signed and notarized, with a Swift MLX server on Mac. Docs: guides/run-models-on-device.mdx, api/on-device-models.mdx, cli/models.mdx."
+        }
+      ],
+      "evidence": [
+        "allternit/spec/on-device/fit.md",
+        "allternit/spec/on-device/fit-vectors.json",
+        "allternit/surfaces/docs/guides/run-models-on-device.mdx",
+        "allternit/surfaces/docs/api/on-device-models.mdx",
+        "allternit/services/local-engine/src/routes/hardware.rs",
+        "allternit-ai/src/lib/on-device/fit.ts"
+      ]
     }
   ],
   "journeys": [
@@ -5260,6 +5291,41 @@
       "evidence": [
         "allternit/surfaces/docs/tools/freeweights.mdx",
         "allternit/contracts/model-source/README.md"
+      ]
+    },
+    {
+      "id": "journey:on-device-find-download-chat-offline",
+      "label": "Find a model that fits this device, download it, chat offline",
+      "description": "From the catalog's fit badge to a reply with the network off.",
+      "steps": [
+        {
+          "at": "allternit-ai/src/views/model-lab",
+          "says": "Freeweights Studio lists the catalog in Grid, List or Deck. Each model carries a fit badge for this device; This device shows the memory budget, engines and downloaded models."
+        },
+        {
+          "at": "allternit-ai/src/lib/on-device",
+          "says": "The one fit function compares the model's device build with the device budget and returns the badge, the chosen build and the reason. A model with no device data is Size not checked and has no Run button."
+        },
+        {
+          "at": "allternit/services/local-engine/src/routes/hardware.rs",
+          "says": "On a computer the Local Engine reports its hardware and budget from GET /hardware; clients fall back to /status when the engine is older."
+        },
+        {
+          "at": "allternit/services/local-engine",
+          "says": "Download and run go through the engine: files are checked against the Freeweights manifest, the model loads on the matching backend and unloads after 5 idle minutes."
+        },
+        {
+          "at": "allternit/surfaces/allternit-mobile/ios/Features/Models",
+          "says": "On iPhone the Models tab has Catalog and On this iPhone; the model runs in the app with the memory iOS gives it at start."
+        },
+        {
+          "at": "allternit-ai/src/lib/local-models",
+          "says": "The chat picker lists models under On this device. Replies stream from the running engine, and work with the network off once the model is downloaded."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/run-models-on-device.mdx",
+        "allternit/spec/on-device/fit.md"
       ]
     }
   ]
