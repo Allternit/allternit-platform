@@ -164,7 +164,7 @@ def make_handler(manager: JobManager, token: str, card: Callable[[], Dict[str, A
                 return self._error(422, exc.code, exc.message)
             except JobRunning as exc:
                 return self._error(409, "job_running", str(exc))
-            self._send(201, job.to_json())
+            self._send(201, getattr(job, "created_json", None) or job.to_json())
 
     return Handler
 

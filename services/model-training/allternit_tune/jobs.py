@@ -158,6 +158,8 @@ class JobManager:
             job = Job(job_id, spec, plan, job_dir)
             job.add_event("state", "queued")
             self.jobs[job_id] = job
+            # The create response is the job as created (queued), taken before the worker can move it on.
+            job.created_json = job.to_json()
         threading.Thread(target=self._run, args=(job,), name=f"job-{job_id}", daemon=True).start()
         return job
 
