@@ -116,13 +116,13 @@ Entered in App Store Connect on 2026-11-09 (version 1.0.1, not submitted yet).
 - **Contact:** support@allternit.com (forwards to allternitpbc@gmail.com through Cloudflare Email Routing; checked live 2026-11-04).
 - **Sign-in:** demo account `appreview@allternit.com`; the password is in `~/.appstoreconnect/demo-account.txt` and in App Store Connect. Never write it here.
 - **Demo computer:** a computer paired to the demo account that stays online during review (Eoj: cloud computer on standby). Without it, Code and Automation show "Connect a computer", which is the correct state but hides those features from review.
-- **Demo brain and credit (2026-11-09):** Allternit Cloud only, default `allternit/glm-5.3`; Codex is off (it was a personal ChatGPT Plus login with its own quota). $5 Cloud credit. The four bot routines are paused during review so they don't spend it; resume them after approval.
+- **Demo brain and credit (2026-11-09; credits required from 2026-11-15):** Allternit Cloud models now need a positive credit balance (no free allowance), so the demo account must stay funded before every submission. Allternit Cloud only, default `allternit/glm-5.3`; Codex is off (it was a personal ChatGPT Plus login with its own quota). $5 Cloud credit. The four bot routines are paused during review so they don't spend it; resume them after approval.
 - **Review video:** `reports/app-review-build27.mp4` in the workspace, attached in App Review Information. Recorded over USB on iPhone (4) with build 27 and the demo account.
 - **Notes for the reviewer:**
 
 > Allternit is a workspace for AI agents ("bots"). Sign in with the demo account above. Home is a chat. The drawer (☰, top left) has Inbox, Projects, Artifacts, Automation, Decisions and Settings; the dial next to it switches between Home, Bots, Code and ACI. The demo account has a cloud computer attached, so Code and Automation work.
 >
-> First chat: a new chat asks you to pick a brain before the first message. Choose **GLM 5.3 (Allternit Cloud)**; it is paid for on the demo account. The five demo bots already use GLM 5.3. The attached video walks through sign-in, chat, a bot, MCP Apps, Billing, account deletion and screen sharing.
+> First chat: a new chat asks you to pick a brain before the first message. Choose **GLM 5.3 (Allternit Cloud)**. Allternit Cloud models use credits, and the demo account has credits on it, so they answer. On an account with no credits the Cloud models show a lock and "Needs credits"; on the US storefront the sheet links to our website to buy credits, and elsewhere it shows no price and no link. The five demo bots already use GLM 5.3. The attached video walks through sign-in, chat, a bot, MCP Apps, Billing, account deletion and screen sharing.
 >
 > Account deletion: Settings → Account → Delete account (type DELETE to confirm).
 >
@@ -173,4 +173,5 @@ No tracking. No third-party advertising.
 - [ ] Server decision on what deletion does (today: account closed, data kept until privacy@ request; paid plans not cancelled) — the delete screen says this plainly.
 - [x] Screenshots: 6 uploaded at 6.7" in App Store Connect.
 - [ ] Demo account signs in and its computer is online (fresh accounts get PRECONDITION_REQUIRED without one).
+- [ ] Demo account has a Cloud credit balance above $5 (`GET /api/v1/billing/credits` shows `cloud_models.allowed: true`); at $0 the Cloud demo stops answering.
 - [ ] Apple Developer: if the App Store team is not the personal team MQ85968PQP, delete the identifier `com.allternit.mobile.screen` registered on MQ85968PQP during a device test (identifiers are unique across Apple), then register the app IDs on the paid team.

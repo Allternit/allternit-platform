@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 
 /// `GET /api/v1/hosted-runtimes/entitlement` (cloud-api hosted_runtimes.rs,
 /// camelCase on the wire): the plan name and the cloud computer hours.
@@ -12,28 +13,60 @@ struct HostedEntitlement: Decodable, Equatable, Sendable {
     let billingPortalUrl: String?
 }
 
-/// `GET /api/v1/billing/credits` (cloud-api billing_credits.rs, snake_case).
-struct BillingCredits: Decodable, Equatable, Sendable {
-    struct FreeInference: Decodable, Equatable, Sendable {
-        let monthlyAllowanceUsd: Double
-        let usedUsd: Double
-        let remainingUsd: Double
+/// `cloud_models` on `GET /api/v1/billing/credits` and `/me/usage`
+/// (CONTRACT-cloud-credits-2026-11-15): may this account run Allternit Cloud
+/// models. Every field but `allowed` is optional on the wire.
+struct CloudModelsEntitlement: Decodable, Equatable, Sendable {
+    let allowed: Bool
+    /// nil when allowed, else `credits_required` or `credits_exhausted`.
+    let reason: String?
+    let balanceUsd: Double?
+    /// Catalog provider ids the account has its own key for: rows served by
+    /// them are never locked (D5).
+    let byokProviders: [String]
 
-        enum CodingKeys: String, CodingKey {
-            case monthlyAllowanceUsd = "monthly_allowance_usd"
-            case usedUsd = "used_usd"
-            case remainingUsd = "remaining_usd"
-        }
+    init(allowed: Bool, reason: String? = nil, balanceUsd: Double? = nil, byokProviders: [String] = []) {
+        self.allowed = allowed
+        self.reason = reason
+        self.balanceUsd = balanceUsd
+        self.byokProviders = byokProviders
     }
 
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        allowed = try c.decodeIfPresent(Bool.self, forKey: .allowed) ?? true
+        reason = try c.decodeIfPresent(String.self, forKey: .reason)
+        balanceUsd = try c.decodeIfPresent(Double.self, forKey: .balanceUsd)
+        byokProviders = try c.decodeIfPresent([String].self, forKey: .byokProviders) ?? []
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case allowed, reason
+        case balanceUsd = "balance_usd"
+        case byokProviders = "byok_providers"
+    }
+
+    /// Whether a Cloud row served by `provider` is locked. An absent
+    /// entitlement (older backend) means not locked (D10). A row whose
+    /// provider is not known yet stays locked while the account is not allowed.
+    static func isLocked(_ entitlement: CloudModelsEntitlement?, provider: String?) -> Bool {
+        guard let entitlement, !entitlement.allowed else { return false }
+        if let provider, entitlement.byokProviders.contains(provider) { return false }
+        return true
+    }
+}
+
+/// `GET /api/v1/billing/credits` (cloud-api billing_credits.rs, snake_case).
+struct BillingCredits: Decodable, Equatable, Sendable {
     let balanceUsd: Double
     let monthToDateUsageUsd: Double
-    let freeInference: FreeInference?
+    /// Absent on a backend from before credits were required (D10).
+    var cloudModels: CloudModelsEntitlement? = nil
 
     enum CodingKeys: String, CodingKey {
         case balanceUsd = "balance_usd"
         case monthToDateUsageUsd = "month_to_date_usage_usd"
-        case freeInference = "free_inference"
+        case cloudModels = "cloud_models"
     }
 }
 
@@ -77,8 +110,24 @@ final class AccountPlanStore: ObservableObject {
     @Published private(set) var lastError: String? = nil
 
     private var loadTask: Task<Void, Never>? = nil
+    private var foregroundObserver: NSObjectProtocol? = nil
 
-    private init() {}
+    private init() {
+        // Credits bought on the web land while the app is in the background:
+        // re-read them on return so a locked Cloud model unlocks.
+        foregroundObserver = NotificationCenter.default.addObserver(
+            forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main
+        ) { _ in
+            Task { @MainActor in
+                let store = AccountPlanStore.shared
+                guard store.entitlement != nil || store.credits != nil || store.subscription != nil else { return }
+                store.load(force: true)
+            }
+        }
+    }
+
+    /// Allternit Cloud entitlement; nil when unknown (not locked, D10).
+    var cloudModels: CloudModelsEntitlement? { credits?.cloudModels }
 
     /// Plan display name: the subscription's label, else the entitlement's.
     var planName: String? {
@@ -116,7 +165,19 @@ final class AccountPlanStore: ObservableObject {
         return formatter.string(from: next)
     }
 
+    #if DEBUG
+    private var isFixture = false
+    /// Debug gallery fixtures; network loads stop replacing them.
+    func setFixture(credits: BillingCredits) {
+        isFixture = true
+        self.credits = credits
+    }
+    #endif
+
     func load(force: Bool = false) {
+        #if DEBUG
+        if isFixture { return }
+        #endif
         guard loadTask == nil else { return }
         if !force, entitlement != nil || credits != nil || subscription != nil { return }
         isLoading = true
@@ -134,6 +195,7 @@ final class AccountPlanStore: ObservableObject {
                 : nil
             self.isLoading = false
             self.loadTask = nil
+            CloudCreditsGate.entitlementChanged(credits?.cloudModels)
         }
     }
 
