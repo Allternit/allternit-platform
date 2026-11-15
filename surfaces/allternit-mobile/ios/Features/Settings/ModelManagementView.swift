@@ -35,11 +35,13 @@ struct ModelManagementView: View {
 struct ModelManagementListContent: View {
     @ObservedObject var modelStore: ModelStore
     @ObservedObject var store: ProviderManagementStore
+    @StateObject private var freeweights = FreeweightsBrowseStore()
 
     var body: some View {
         List {
             selectedModelSection
             enginesSection
+            FreeweightsSection(store: freeweights)
             Section {
                 NavigationLink("Benchmark") {
                     BenchmarkView()
@@ -49,13 +51,16 @@ struct ModelManagementListContent: View {
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
         .background(Color("BgPrimary"))
+        .freeweightsDetailSheet(freeweights)
         .task {
             modelStore.fetchModelsIfNeeded()
             await store.load()
         }
         .refreshable {
             modelStore.fetchModelsIfNeeded(force: true)
-            await store.load()
+            async let engines: Void = store.load()
+            async let catalog: Void = freeweights.reload()
+            _ = await (engines, catalog)
         }
     }
 
