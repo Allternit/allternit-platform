@@ -12,15 +12,22 @@
 //! Two callers, two policies:
 //!
 //! - **Remote** (the request was replayed by a relay, carries a forwarding
-//!   header, or came from a non-loopback peer): only the registered roots
-//!   (`~/Allternit` and everything under it), the read-only plugin folders,
-//!   and the exact MCP and HEARTBEAT.md files the iOS app manages.
+//!   header, or came from a non-loopback peer). The relay is still the
+//!   authenticated owner, so this keeps every feature the web, PWA and iOS
+//!   use today and nothing more: `~/Allternit`, agent workspaces
+//!   (`~/agents`), the skill/command/webhook/connector/cli-tool folders,
+//!   plugin folders (read, manifest writes, whole-plugin delete), the MCP
+//!   folders and config files, and a shallow listing of the home folder.
 //! - **Local** (the Desktop app on this machine): the home folder, minus a
 //!   deny-list of secret stores (SSH and GPG keys, Keychains, cloud CLI
 //!   credentials, agent CLI auth files, the Allternit data folders).
 //!
 //! Both policies refuse anything outside the home folder, and both refuse a
-//! write or delete of the home folder itself.
+//! write or delete of the home folder itself. Names are compared in Unicode
+//! NFC (APFS treats NFC and NFD spellings as one name). Reads and writes open
+//! the file with `O_NOFOLLOW` and then check where the open file really is
+//! (`F_GETPATH` on macOS, `/proc/self/fd` on Linux), so a path swapped for a
+//! symlink between the check and the open is refused.
 
 use axum::{
     http::{HeaderMap, StatusCode},
@@ -31,6 +38,7 @@ use serde_json::json;
 use std::ffi::OsString;
 use std::net::SocketAddr;
 use std::path::{Component, Path, PathBuf};
+use unicode_normalization::UnicodeNormalization;
 
 /// Who is asking. Decided from the request, never from the path.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -69,7 +77,7 @@ impl Denied {
             "outside_home" => "That path is outside the home folder.",
             "protected" => "That path holds credentials or app data and can't be opened through the files API.",
             "outside_roots" => "That path is not in a shared Allternit folder.",
-            "read_only" => "That folder is read-only from another device.",
+            "read_only" => "That path is read-only from another device.",
             "home_itself" => "The home folder itself can't be changed.",
             "unresolvable" => "That path points at something that doesn't exist.",
             _ => "That path is not allowed.",
@@ -145,10 +153,38 @@ const HOME_SECRETS: &[&[&str]] = &[
     &[".allternit", "system-one"],
 ];
 
-/// Folders another device may read but not change: where plugins are
-/// discovered (`PLUGIN_DIR_CANDIDATES` in allternit-ai `src/plugins/fileSystem.ts`
-/// and `pluginRoots` in iOS `CapabilitiesClient.swift`).
-const REMOTE_READ_ONLY_DIRS: &[&[&str]] = &[
+/// Folders another device may read and write under (not the folder itself):
+/// what allternit-ai `src/plugins/fileSystem.ts` scans and Customize writes
+/// (`SKILL_DIR_CANDIDATES`, `COMMAND_DIR_CANDIDATES`,
+/// `COMMAND_MARKDOWN_DIR_CANDIDATES`, `WEBHOOK_DIR_CANDIDATES`,
+/// `CONNECTOR_DIR_CANDIDATES`, `CLI_TOOL_DIR_CANDIDATES`) and iOS
+/// `CapabilitiesClient.skillRoots`.
+const REMOTE_RW_DIRS: &[&[&str]] = &[
+    &[".allternit", "skills"],
+    &[".agents", "skills"],
+    &[".codex", "skills"],
+    &[".allternit", "commands"],
+    &[".agents", "commands"],
+    &[".codex", "commands"],
+    &[".config", "gizzi-code", "command"],
+    &[".config", "gizzi-code", "commands"],
+    &[".claude", "commands"],
+    &[".allternit", "webhooks"],
+    &[".agents", "webhooks"],
+    &[".codex", "webhooks"],
+    &[".allternit", "connectors"],
+    &[".agents", "connectors"],
+    &[".codex", "connectors"],
+    &[".allternit", "cli-tools"],
+    &[".agents", "cli-tools"],
+    &[".codex", "cli-tools"],
+];
+
+/// Plugin folders (`PLUGIN_DIR_CANDIDATES`, iOS `pluginRoots`). Another
+/// device may read anything, write a plugin's manifest (iOS `setEnabled`)
+/// and delete a whole plugin folder (iOS `remove`). Any other write is
+/// refused: plugins carry code.
+const REMOTE_PLUGIN_DIRS: &[&[&str]] = &[
     &[".allternit", "plugins"],
     &[".agents", "plugins"],
     &[".codex", "plugins"],
@@ -163,10 +199,16 @@ const REMOTE_MCP_DIRS: &[&[&str]] = &[
     &[".codex", "mcps"],
 ];
 
-/// MCP config files iOS reads (`McpServersClient.configFiles`). Exact files,
-/// read-only: iOS never writes them (servers found there are not editable),
-/// and they can carry hooks and tokens.
+/// A plugin's manifest, relative to the plugin folder: the candidates iOS
+/// `scanPlugins` reads and `setEnabled` writes back.
+const PLUGIN_MANIFESTS: &[&[&str]] = &[&["config.json"], &["plugin.json"], &[".claude-plugin", "plugin.json"]];
+
+/// MCP config files the web and iOS read (`MCP_CONFIG_FILE_CANDIDATES`,
+/// `McpServersClient.configFiles`). Exact files, read-only: neither writes
+/// them over the files API, and they can carry hooks and tokens.
 const REMOTE_MCP_CONFIG_FILES: &[&[&str]] = &[
+    &[".config", "gizzi-code", "gizzi.json"],
+    &[".config", "gizzi", "gizzi.json"],
     &[".config", "allternit-shell", "allternit.json"],
     &[".config", "gizzi", "allternit.json"],
     &[".config", "gizzi-code", "allternit.json"],
@@ -175,8 +217,19 @@ const REMOTE_MCP_CONFIG_FILES: &[&[&str]] = &[
     &[".gemini", "mcp.json"],
 ];
 
-/// The registered root another device may read and write under.
-const REMOTE_ROOT: &str = "Allternit";
+/// Top-level folders another device may read and write under: the
+/// registered root and the agent workspaces (`WORKSPACE_ROOT = 'agents'` in
+/// allternit-ai `agent-workspace.service.ts`, HEARTBEAT.md on iOS).
+const REMOTE_RW_TOP: &[&str] = &["Allternit", "agents"];
+
+/// Why `open_verified` failed.
+#[derive(Debug)]
+pub enum OpenError {
+    /// The opened file is not where the scope allows (it moved under us).
+    Denied(Denied),
+    /// The open itself failed (missing, a symlink at the leaf, permissions).
+    Io(std::io::Error),
+}
 
 /// Resolves and checks file paths for one home folder.
 #[derive(Clone, Debug)]
@@ -220,6 +273,16 @@ impl FilesScope {
 
     /// Turn a caller's path into the canonical path to operate on, or refuse it.
     pub fn authorize(&self, raw: &str, caller: Caller, access: Access) -> Result<PathBuf, Denied> {
+        let (canonical, rel) = self.check(raw, access)?;
+        if caller == Caller::Remote {
+            remote_allows(&rel, access)?;
+        }
+        Ok(canonical)
+    }
+
+    /// Resolution plus the checks both callers share. Returns the canonical
+    /// path and its home-relative parts in NFC.
+    fn check(&self, raw: &str, access: Access) -> Result<(PathBuf, Vec<String>), Denied> {
         let home = self.home.as_deref().ok_or(Denied("no_home"))?;
         if raw.contains('\0') {
             return Err(Denied("invalid_path"));
@@ -228,20 +291,60 @@ impl FilesScope {
         let lexical = normalize(&expanded)?;
         let canonical = resolve(&lexical, access != Access::Delete)?;
         let rel = canonical.strip_prefix(home).map_err(|_| Denied("outside_home"))?;
-        let rel: Vec<String> = rel
-            .components()
-            .map(|c| c.as_os_str().to_string_lossy().into_owned())
-            .collect();
+        let rel = nfc_parts(rel);
         if rel.is_empty() && access != Access::Read {
             return Err(Denied("home_itself"));
         }
         if is_secret(&rel) || self.protected.iter().any(|p| starts_with_ci(&canonical, p)) {
             return Err(Denied("protected"));
         }
+        Ok((canonical, rel))
+    }
+
+    /// `authorize` for `/files/list`. A remote caller may also list the home
+    /// folder itself, but only one level deep (the web's `readDir('.')`
+    /// probe); `listable` hides the secret entries in it.
+    pub fn authorize_list(&self, raw: &str, caller: Caller, recursive: bool) -> Result<PathBuf, Denied> {
+        let (canonical, rel) = self.check(raw, Access::Read)?;
         if caller == Caller::Remote {
-            remote_allows(&rel, access)?;
+            if rel.is_empty() {
+                if recursive {
+                    return Err(Denied("outside_roots"));
+                }
+            } else {
+                remote_allows(&rel, Access::Read)?;
+            }
         }
         Ok(canonical)
+    }
+
+    /// Open an authorized path (`Read`, or `Write` = create without
+    /// truncating) and check where the open file really is. The open uses
+    /// `O_NOFOLLOW`, so a leaf swapped for a symlink fails; the check after
+    /// the open re-runs the scope on the opened file's real path, so a parent
+    /// folder swapped for a symlink is refused. On platforms with no way to
+    /// read an open file's path (Windows) only the pre-open check applies.
+    pub fn open_verified(&self, canonical: &Path, caller: Caller, access: Access) -> Result<std::fs::File, OpenError> {
+        let mut options = std::fs::OpenOptions::new();
+        if access == Access::Read {
+            options.read(true);
+        } else {
+            options.write(true).create(true);
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.custom_flags(libc::O_NOFOLLOW);
+        }
+        let file = options.open(canonical).map_err(OpenError::Io)?;
+        match fd_path(&file) {
+            Ok(Some(real)) => {
+                self.authorize(&real.to_string_lossy(), caller, access).map_err(OpenError::Denied)?;
+            }
+            Ok(None) => {}
+            Err(()) => return Err(OpenError::Denied(Denied("unresolvable"))),
+        }
+        Ok(file)
     }
 
     /// True when an entry found while listing an already-authorized folder may
@@ -251,14 +354,12 @@ impl FilesScope {
     pub fn listable(&self, entry: &Path, caller: Caller) -> bool {
         let Some(home) = self.home.as_deref() else { return false };
         let Ok(rel) = entry.strip_prefix(home) else { return false };
-        let rel: Vec<String> = rel
-            .components()
-            .map(|c| c.as_os_str().to_string_lossy().into_owned())
-            .collect();
+        let rel = nfc_parts(rel);
         if is_secret(&rel) || self.protected.iter().any(|p| starts_with_ci(entry, p)) {
             return false;
         }
-        caller == Caller::Local || remote_allows(&rel, Access::Read).is_ok()
+        // rel.len() == 1: an entry of the shallow home listing.
+        caller == Caller::Local || rel.len() == 1 || remote_allows(&rel, Access::Read).is_ok()
     }
 }
 
@@ -359,8 +460,49 @@ fn resolve(path: &Path, follow_leaf: bool) -> Result<PathBuf, Denied> {
     Ok(out)
 }
 
+/// Home-relative parts of a path, each in Unicode NFC.
+fn nfc_parts(rel: &Path) -> Vec<String> {
+    rel.components()
+        .map(|c| c.as_os_str().to_string_lossy().nfc().collect::<String>())
+        .collect()
+}
+
+/// NFC, then lower case: how APFS (and NTFS, mostly) compare names.
+fn fold(s: &str) -> String {
+    s.nfc().collect::<String>().to_lowercase()
+}
+
 fn eq_ci(a: &str, b: &str) -> bool {
-    a.to_lowercase() == b.to_lowercase()
+    fold(a) == fold(b)
+}
+
+/// The real path of an open file. `Ok(None)` where the platform has no way
+/// to ask; `Err` when it should have answered and didn't (fail closed).
+#[cfg(target_os = "macos")]
+fn fd_path(file: &std::fs::File) -> Result<Option<PathBuf>, ()> {
+    use std::os::unix::ffi::OsStrExt;
+    use std::os::unix::io::AsRawFd;
+    let mut buf = vec![0u8; libc::PATH_MAX as usize];
+    // SAFETY: F_GETPATH writes at most PATH_MAX bytes into `buf`.
+    let rc = unsafe { libc::fcntl(file.as_raw_fd(), libc::F_GETPATH, buf.as_mut_ptr()) };
+    if rc == -1 {
+        return Err(());
+    }
+    let len = buf.iter().position(|&b| b == 0).ok_or(())?;
+    Ok(Some(PathBuf::from(std::ffi::OsStr::from_bytes(&buf[..len]))))
+}
+
+#[cfg(target_os = "linux")]
+fn fd_path(file: &std::fs::File) -> Result<Option<PathBuf>, ()> {
+    use std::os::unix::io::AsRawFd;
+    std::fs::read_link(format!("/proc/self/fd/{}", file.as_raw_fd()))
+        .map(Some)
+        .map_err(|_| ())
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn fd_path(_file: &std::fs::File) -> Result<Option<PathBuf>, ()> {
+    Ok(None)
 }
 
 /// `path` is `prefix` or inside it, compared component by component and
@@ -392,21 +534,39 @@ fn is_secret(rel: &[String]) -> bool {
     rel.len() >= 2 && eq_ci(&rel[0], ".allternit") && rel[1].to_lowercase().contains(".env")
 }
 
-/// The remote policy, on the canonical home-relative components. Exact
+/// The remote policy, on the canonical home-relative parts (NFC). Exact
 /// (case-sensitive) matching: the path is already canonical, so on a
 /// case-insensitive disk it carries the on-disk case of every existing part.
 fn remote_allows(rel: &[String], access: Access) -> Result<(), Denied> {
-    // ~/Allternit: the folder itself is readable, everything under it is
-    // readable and writable.
-    if rel_starts_with(rel, &[REMOTE_ROOT]) {
-        return if rel.len() > 1 || access == Access::Read {
+    // A folder the caller may work inside: the folder itself is read-only
+    // (it can be listed, not deleted), everything under it is read/write.
+    let inside = |len: usize| {
+        if rel.len() > len || access == Access::Read {
             Ok(())
         } else {
             Err(Denied("read_only"))
-        };
+        }
+    };
+    if let Some(top) = rel.first() {
+        if REMOTE_RW_TOP.contains(&top.as_str()) {
+            return inside(1);
+        }
     }
-    if REMOTE_READ_ONLY_DIRS.iter().any(|dir| rel_starts_with(rel, dir)) {
-        return if access == Access::Read { Ok(()) } else { Err(Denied("read_only")) };
+    if let Some(dir) = REMOTE_RW_DIRS.iter().find(|dir| rel_starts_with(rel, dir)) {
+        return inside(dir.len());
+    }
+    if let Some(dir) = REMOTE_PLUGIN_DIRS.iter().find(|dir| rel_starts_with(rel, dir)) {
+        let tail = &rel[dir.len()..];
+        let manifest = tail.len() >= 2
+            && PLUGIN_MANIFESTS
+                .iter()
+                .any(|m| tail[1..].len() == m.len() && tail[1..].iter().zip(m.iter()).all(|(a, b)| a == b));
+        return match access {
+            Access::Read => Ok(()),
+            Access::Delete if tail.len() == 1 => Ok(()),
+            Access::Write if manifest => Ok(()),
+            _ => Err(Denied("read_only")),
+        };
     }
     for dir in REMOTE_MCP_DIRS {
         if !rel_starts_with(rel, dir) {
@@ -422,22 +582,44 @@ fn remote_allows(rel: &[String], access: Access) -> Result<(), Denied> {
     if REMOTE_MCP_CONFIG_FILES.iter().any(|file| rel.len() == file.len() && rel_starts_with(rel, file)) {
         return if access == Access::Read { Ok(()) } else { Err(Denied("read_only")) };
     }
-    // An agent's HEARTBEAT.md, the exact file iOS and the web's
-    // HeartbeatScheduler read and write: agents/<id>/.allternit/governance/HEARTBEAT.md.
-    if rel.len() == 5
-        && rel[0] == "agents"
-        && rel[2] == ".allternit"
-        && rel[3] == "governance"
-        && rel[4] == "HEARTBEAT.md"
-    {
-        return Ok(());
-    }
     Err(Denied("outside_roots"))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Check-then-use: a folder swapped for a symlink after `authorize`
+    /// must be caught when the file is opened.
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[test]
+    fn a_path_swapped_after_the_check_is_refused_on_open() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(tmp.path()).unwrap();
+        let home = root.join("home");
+        std::fs::create_dir_all(home.join("Allternit/Inbox")).unwrap();
+        std::fs::write(home.join("Allternit/Inbox/note.txt"), "hi").unwrap();
+        std::fs::create_dir_all(root.join("outside/Inbox")).unwrap();
+        std::fs::write(root.join("outside/Inbox/note.txt"), "SECRET").unwrap();
+        std::fs::write(root.join("outside/secret.txt"), "SECRET").unwrap();
+        let scope = FilesScope::new(Some(home.clone()), vec![]);
+
+        let checked = scope.authorize("~/Allternit/Inbox/note.txt", Caller::Remote, Access::Read).unwrap();
+        std::fs::rename(home.join("Allternit/Inbox"), home.join("Allternit/Inbox.old")).unwrap();
+        std::os::unix::fs::symlink(root.join("outside/Inbox"), home.join("Allternit/Inbox")).unwrap();
+        assert!(
+            matches!(scope.open_verified(&checked, Caller::Remote, Access::Read), Err(OpenError::Denied(_))),
+            "a folder swapped for a symlink was opened"
+        );
+
+        std::fs::remove_file(home.join("Allternit/Inbox")).unwrap();
+        std::fs::rename(home.join("Allternit/Inbox.old"), home.join("Allternit/Inbox")).unwrap();
+        let checked = scope.authorize("~/Allternit/Inbox/note.txt", Caller::Remote, Access::Write).unwrap();
+        std::fs::remove_file(&checked).unwrap();
+        std::os::unix::fs::symlink(root.join("outside/secret.txt"), &checked).unwrap();
+        assert!(scope.open_verified(&checked, Caller::Remote, Access::Write).is_err(), "a leaf swapped for a symlink was opened");
+        assert_eq!(std::fs::read_to_string(root.join("outside/secret.txt")).unwrap(), "SECRET");
+    }
 
     #[test]
     fn guest_paths_refuse_secrets_and_parent_dirs() {

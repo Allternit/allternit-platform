@@ -63,18 +63,23 @@ Both kinds of request are refused for anything outside the home folder, for chan
 
 ### Relayed requests
 
-A relayed request can reach only these paths:
+The relay carries the signed-in owner, so a relayed request keeps the features the web app, the PWA and the iOS app use, and nothing more:
 
 | Path | Access |
 |------|--------|
+| The home folder | List one level deep only (secret entries are hidden). Recursive listing is refused. |
 | `~/Allternit` | Read (list) |
-| Everything inside `~/Allternit`, including `Inbox`, `Shared`, `Agent Output`, `Downloads`, `Meetings` and `Scans` | Read and write |
-| `~/.allternit/plugins`, `~/.agents/plugins`, `~/.codex/plugins` and everything inside them | Read only |
+| Everything inside `~/Allternit`, including `Inbox`, `Shared`, `Agent Output`, `Downloads`, `Meetings` and `Scans` | Read, write and delete |
+| `~/agents` (agent workspaces) | Read (list) |
+| Everything inside `~/agents`, such as `~/agents/AGENT_ID/.allternit/manifest.json` and `HEARTBEAT.md` | Read, write and delete |
+| Skill folders `~/.allternit/skills`, `~/.agents/skills`, `~/.codex/skills` | Read (list); read, write and delete inside |
+| Command folders `~/.allternit/commands`, `~/.agents/commands`, `~/.codex/commands`, `~/.config/gizzi-code/command`, `~/.config/gizzi-code/commands`, `~/.claude/commands` | Read (list); read, write and delete inside |
+| Webhook, connector and CLI tool folders: `webhooks`, `connectors` and `cli-tools` under `~/.allternit`, `~/.agents` and `~/.codex` | Read (list); read, write and delete inside |
+| Plugin folders `~/.allternit/plugins`, `~/.agents/plugins`, `~/.codex/plugins` | Read everything. Write only a plugin's manifest (`config.json`, `plugin.json` or `.claude-plugin/plugin.json` in the plugin's own folder). Delete a whole plugin folder. Any other write is refused, because plugins carry code. |
 | `~/.allternit/mcps`, `~/.agents/mcps`, `~/.codex/mcps` | List, read the files directly inside, write or delete the `.json` files directly inside |
-| `~/.config/allternit-shell/allternit.json`, `~/.config/gizzi/allternit.json`, `~/.config/gizzi-code/allternit.json`, `~/.claude/settings.json`, `~/.codex/config.toml`, `~/.gemini/mcp.json` | Read only (these exact files) |
-| `~/agents/AGENT_ID/.allternit/governance/HEARTBEAT.md` | Read and write (this exact file for each agent) |
+| `~/.config/gizzi-code/gizzi.json`, `~/.config/gizzi/gizzi.json`, `~/.config/allternit-shell/allternit.json`, `~/.config/gizzi/allternit.json`, `~/.config/gizzi-code/allternit.json`, `~/.claude/settings.json`, `~/.codex/config.toml`, `~/.gemini/mcp.json` | Read only (these exact files) |
 
-Anything else answers `403`. The runtime does not create the `~/Allternit` folders; a write inside them creates the parent folders it needs.
+Anything else answers `403`, for example a code project folder such as `~/Desktop/my-app`. The runtime does not create the `~/Allternit` folders; a write inside them creates the parent folders it needs.
 
 ### Local requests
 
@@ -93,9 +98,14 @@ These are refused for every caller, matched without regard to letter case (so `~
 
 Recursive listings skip entries in secret locations, and for relayed requests they skip entries outside the allowed paths.
 
+### Names and races
+
+- Names are compared in Unicode NFC and without regard to letter case, the way APFS compares them, so an NFD spelling of a protected name is refused too.
+- Reads and writes open the file without following a symbolic link at the end of the path. They then check where the open file really is (on macOS and Linux) and refuse the request if that is outside the scope. A folder swapped for a link between the check and the open is caught this way. A write opens the file before emptying it, so a refused write never cuts a file short. Listing, `exists`, `mkdir` and `delete` check the path but don't re-check after the action. On Windows only the check before the open applies.
+
 ### Computer file transfer
 
-The computer routes that move files to and from a cloud computer or VM (`/computers/COMPUTER_ID/files/upload` and `/computers/COMPUTER_ID/files/download`) check the path on that computer by its text: it must be absolute, must not contain `..`, and must not point into any of the secret locations above (for example `/home/user/.ssh/authorized_keys` or `/root/.aws/credentials`), and `/etc/shadow`, `/etc/gshadow` and `/etc/sudoers` are refused. Both routes go through the same confirmation policy as other computer control actions (`computer.file_read` and `computer.file_write`). Transfer uploads (`/computers/COMPUTER_ID/transfer/file`) always land in a folder the runtime chooses, and are refused if that folder resolves into a secret location.
+The computer routes that move files to and from a cloud computer or VM (`/computers/COMPUTER_ID/files/upload` and `/computers/COMPUTER_ID/files/download`) check the path on that computer by its text: it must be absolute, must not contain `..`, and must not point into any of the secret locations above (for example `/home/user/.ssh/authorized_keys` or `/root/.aws/credentials`), and `/etc/shadow`, `/etc/gshadow` and `/etc/sudoers` are refused. Both routes go through the same confirmation policy as other computer control actions (`computer.file_read` and `computer.file_write`). The same check runs for the bot desktop file routes, because it lives in the shared upload and download code. Transfer uploads (`/computers/COMPUTER_ID/transfer/file`) always land in a folder the runtime chooses, and answer `403` if that folder resolves into a secret location.
 
 ## List files
 

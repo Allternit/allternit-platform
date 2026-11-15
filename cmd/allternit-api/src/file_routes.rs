@@ -11,7 +11,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::files_scope::{denied_response, Access, Caller, FilesScope};
+use crate::files_scope::{denied_response, Access, Caller, FilesScope, OpenError};
 use crate::AppState;
 
 pub fn file_router() -> Router<Arc<AppState>> {
@@ -53,6 +53,24 @@ fn scoped(
         .authorize(raw, caller, access)
         .map(|path| (path, caller))
         .map_err(denied_response)
+}
+
+/// Open `path` (already authorized) and read it whole, checking after the
+/// open that the file really is inside the scope (it can't have been swapped
+/// for a symlink between the check and the open).
+async fn read_scoped(scope: Arc<FilesScope>, path: PathBuf, caller: Caller) -> Result<Vec<u8>, Response> {
+    let result = tokio::task::spawn_blocking(move || {
+        let mut file = scope.open_verified(&path, caller, Access::Read)?;
+        let mut bytes = Vec::new();
+        std::io::Read::read_to_end(&mut file, &mut bytes).map_err(OpenError::Io)?;
+        Ok::<_, OpenError>(bytes)
+    })
+    .await;
+    match result {
+        Ok(Ok(bytes)) => Ok(bytes),
+        Ok(Err(OpenError::Denied(denied))) => Err(denied_response(denied)),
+        _ => Err((StatusCode::NOT_FOUND, Json(json!({"error": "Not found"}))).into_response()),
+    }
 }
 
 #[derive(Deserialize)]
@@ -115,11 +133,12 @@ async fn list_files(
     headers: HeaderMap,
     Query(params): Query<ListQuery>,
 ) -> Response {
-    let (resolved, caller) = match scoped(&scope, &headers, &peer, &params.path, Access::Read) {
-        Ok(v) => v,
-        Err(denied) => return denied,
-    };
     let recursive = params.recursive.as_deref() == Some("true");
+    let caller = crate::files_scope::caller(&headers, peer.as_ref().map(|c| c.0));
+    let resolved = match scope.authorize_list(&params.path, caller, recursive) {
+        Ok(path) => path,
+        Err(denied) => return denied_response(denied),
+    };
     let _meta = match tokio::fs::metadata(&resolved).await {
         Ok(m) if m.is_dir() => m,
         _ => {
@@ -174,13 +193,14 @@ async fn read_file(
     headers: HeaderMap,
     Query(params): Query<PathQuery>,
 ) -> Response {
-    let resolved = match scoped(&scope, &headers, &peer, &params.path, Access::Read) {
-        Ok((path, _)) => path,
+    let (resolved, caller) = match scoped(&scope, &headers, &peer, &params.path, Access::Read) {
+        Ok(v) => v,
         Err(denied) => return denied,
     };
-    match tokio::fs::read_to_string(&resolved).await {
-        Ok(content) => (StatusCode::OK, Json(json!({"content": content}))).into_response(),
-        Err(_) => (
+    match read_scoped(scope, resolved, caller).await.map(String::from_utf8) {
+        Ok(Ok(content)) => (StatusCode::OK, Json(json!({"content": content}))).into_response(),
+        Err(denied) if denied.status() == StatusCode::FORBIDDEN => denied,
+        _ => (
             StatusCode::NOT_FOUND,
             Json(json!({"error": "Cannot read file"})),
         )
@@ -194,23 +214,14 @@ async fn raw_file(
     headers: HeaderMap,
     Query(params): Query<PathQuery>,
 ) -> Response {
-    let resolved = match scoped(&scope, &headers, &peer, &params.path, Access::Read) {
-        Ok((path, _)) => path,
+    let (resolved, caller) = match scoped(&scope, &headers, &peer, &params.path, Access::Read) {
+        Ok(v) => v,
         Err(denied) => return denied,
     };
-    let is_file = tokio::fs::metadata(&resolved)
-        .await
-        .map(|m| m.is_file())
-        .unwrap_or(false);
-    if !is_file {
-        return (StatusCode::NOT_FOUND, Json(json!({"error": "Not found"}))).into_response();
-    }
-    match tokio::fs::read(&resolved).await {
-        Ok(bytes) => {
-            let mime = mime_for(&resolved);
-            (StatusCode::OK, [(CONTENT_TYPE, mime)], bytes).into_response()
-        }
-        Err(_) => (StatusCode::NOT_FOUND, Json(json!({"error": "Not found"}))).into_response(),
+    let mime = mime_for(&resolved);
+    match read_scoped(scope, resolved, caller).await {
+        Ok(bytes) => (StatusCode::OK, [(CONTENT_TYPE, mime)], bytes).into_response(),
+        Err(response) => response,
     }
 }
 
@@ -325,18 +336,26 @@ async fn write_file(
                 .into_response()
         }
     };
-    let resolved = match scoped(&scope, &headers, &peer, &target, Access::Write) {
-        Ok((path, _)) => path,
+    let (resolved, caller) = match scoped(&scope, &headers, &peer, &target, Access::Write) {
+        Ok(v) => v,
         Err(denied) => return denied,
     };
 
-    if let Some(parent) = resolved.parent() {
-        let _ = tokio::fs::create_dir_all(parent).await;
-    }
-
     let bytes_written = body.content.len();
-    match tokio::fs::write(&resolved, body.content).await {
-        Ok(_) => (
+    let path = resolved.clone();
+    let written = tokio::task::spawn_blocking(move || {
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        // Opened without truncating, checked, and only then emptied, so a
+        // file swapped in under us is never cut short.
+        let mut file = scope.open_verified(&path, caller, Access::Write)?;
+        file.set_len(0).map_err(OpenError::Io)?;
+        std::io::Write::write_all(&mut file, body.content.as_bytes()).map_err(OpenError::Io)
+    })
+    .await;
+    match written {
+        Ok(Ok(())) => (
             StatusCode::OK,
             Json(json!({
                 "ok": true,
@@ -346,7 +365,8 @@ async fn write_file(
             })),
         )
             .into_response(),
-        Err(_) => (
+        Ok(Err(OpenError::Denied(denied))) => denied_response(denied),
+        _ => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"error": "Cannot write file"})),
         )
@@ -405,6 +425,9 @@ mod tests {
         write(".agents/plugins/demo/plugin.json", "{}");
         write(".ssh/id_rsa", "SECRET");
         write(".claude/skills/s1/SKILL.md", "skill");
+        write(".agents/skills/s2/SKILL.md", "skill");
+        write(".agents/plugins/demo2/plugin.json", "{}");
+        write(".config/gizzi/gizzi.json", "{}");
         write("AllternitX/secret.txt", "SECRET");
         std::fs::create_dir_all(root.join("outside")).unwrap();
         std::fs::write(root.join("outside/secret.txt"), "SECRET").unwrap();
@@ -474,11 +497,11 @@ mod tests {
             "POST",
             "/files/write",
             true,
-            Some(json!({"path": "~/.AGENTS/plugins/demo/plugin.json", "content": "pwned"})),
+            Some(json!({"path": "~/.AGENTS/plugins/demo/evil.sh", "content": "pwned"})),
         )
         .await;
         assert_eq!(status, StatusCode::FORBIDDEN);
-        assert_eq!(std::fs::read_to_string(f.home.join(".agents/plugins/demo/plugin.json")).unwrap(), "{}");
+        assert!(!f.home.join(".agents/plugins/demo/evil.sh").exists());
         let (status, _) = read(&f.app, "~/.SSH/id_rsa", true).await;
         assert_eq!(status, StatusCode::FORBIDDEN);
     }
@@ -500,8 +523,66 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
         let (status, body) = read(&f.app, heartbeat, true).await;
         assert_eq!((status, body.contains("# beat")), (StatusCode::OK, true));
-        let (status, _) = read(&f.app, "agents/a1/.allternit/manifest.json", true).await;
-        assert_eq!(status, StatusCode::FORBIDDEN, "only HEARTBEAT.md is shared from an agent workspace");
+    }
+
+    /// The relay is the authenticated owner: relayed callers keep the
+    /// features the web, PWA and iOS use today (agent workspaces, skills,
+    /// plugin enable/remove, the home probe), minus the secrets.
+    #[tokio::test]
+    async fn relayed_callers_keep_workspace_skill_and_plugin_features() {
+        let f = fixture();
+        let post = |path: &str| json!({"path": path, "content": "x"});
+        let (status, _) = send(&f.app, "POST", "/files/write", true, Some(post("agents/a1/.allternit/manifest.json"))).await;
+        assert_eq!(status, StatusCode::OK, "agent workspace write");
+        let (status, body) = send(&f.app, "GET", &format!("/files/list?path={}&recursive=true", q("agents/a1")), true, None).await;
+        assert_eq!((status, body.contains("manifest.json")), (StatusCode::OK, true), "agent workspace list: {body}");
+        let (status, body) = send(&f.app, "GET", &format!("/files/list?path={}", q("~/.agents/skills")), true, None).await;
+        assert_eq!((status, body.contains("\"s2\"")), (StatusCode::OK, true), "skills list: {body}");
+        let (status, _) = send(&f.app, "POST", "/files/write", true, Some(post("~/.allternit/skills/new-skill/SKILL.md"))).await;
+        assert_eq!(status, StatusCode::OK, "createSkill");
+        let (status, _) = send(&f.app, "DELETE", &format!("/files/delete?path={}", q("~/.allternit/skills/new-skill")), true, None).await;
+        assert_eq!(status, StatusCode::OK, "remove skill");
+        let (status, _) = send(&f.app, "POST", "/files/write", true, Some(post("~/.agents/plugins/demo/config.json"))).await;
+        assert_eq!(status, StatusCode::OK, "plugin setEnabled writes config.json");
+        let (status, _) = send(&f.app, "DELETE", &format!("/files/delete?path={}", q("~/.agents/plugins/demo2")), true, None).await;
+        assert_eq!(status, StatusCode::OK, "plugin remove deletes the plugin folder");
+        assert!(!f.home.join(".agents/plugins/demo2").exists());
+        let (status, _) = read(&f.app, "~/.config/gizzi/gizzi.json", true).await;
+        assert_eq!(status, StatusCode::OK, "gizzi.json is readable");
+        let (status, body) = send(&f.app, "GET", &format!("/files/list?path={}", q("~")), true, None).await;
+        assert_eq!(status, StatusCode::OK, "home probe: {body}");
+        assert!(body.contains("\"Allternit\""), "{body}");
+        assert!(!body.contains(".ssh"), "home probe showed .ssh: {body}");
+    }
+
+    #[tokio::test]
+    async fn relayed_callers_still_cannot_reach_the_rest() {
+        let f = fixture();
+        for (method, uri, body) in [
+            ("POST", "/files/write".to_string(), Some(json!({"path": "~/.agents/plugins/demo/evil.sh", "content": "x"}))),
+            ("POST", "/files/write".to_string(), Some(json!({"path": "~/.config/gizzi/gizzi.json", "content": "x"}))),
+            ("DELETE", format!("/files/delete?path={}", q("~/.agents/plugins")), None),
+            ("GET", format!("/files/list?path={}&recursive=true", q("~")), None),
+            ("GET", format!("/files/list?path={}", q("~/.ssh")), None),
+            ("GET", format!("/files/read?path={}", q("/etc/passwd")), None),
+        ] {
+            let (status, text) = send(&f.app, method, &uri, true, body).await;
+            assert_eq!(status, StatusCode::FORBIDDEN, "{method} {uri}: {text}");
+        }
+    }
+
+    /// APFS treats NFC and NFD spellings as the same name: a denied folder
+    /// written in the other form must still be denied.
+    #[tokio::test]
+    async fn unicode_normalization_does_not_bypass_the_deny_list() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = std::fs::canonicalize(tmp.path()).unwrap();
+        let scope = Arc::new(FilesScope::new(Some(home.clone()), vec![home.join("Caf\u{e9}")]));
+        let app: Router = file_routes(scope);
+        for path in ["~/Caf\u{e9}/x.txt", "~/Cafe\u{301}/x.txt"] {
+            let (status, body) = send(&app, "POST", "/files/write", false, Some(json!({"path": path, "content": "x"}))).await;
+            assert_eq!(status, StatusCode::FORBIDDEN, "{path:?}: {body}");
+        }
     }
 
     #[tokio::test]

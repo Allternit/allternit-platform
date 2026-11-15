@@ -45,6 +45,7 @@ reqwest = { workspace = true, features = ['json', 'stream'] }
 async-stream = { workspace = true }
 axum-extra = { version = "0.9", features = ["typed-header"] }
 urlencoding = { workspace = true }
+unicode-normalization = "0.1"
 tokio-util = { workspace = true }
 http-body-util = { workspace = true }
 bytes = { workspace = true }

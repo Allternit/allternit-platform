@@ -369,18 +369,18 @@ async fn upload(
         body
     };
     let size = body.len();
-    let result: Result<String, String> = async {
+    let result: Result<String, (StatusCode, String)> = async {
         match target {
             Target::ThisDevice => {
                 let dir = std::env::var_os("HOME")
                     .or_else(|| std::env::var_os("USERPROFILE"))
                     .map(std::path::PathBuf::from)
-                    .ok_or("Downloads is unavailable")?
+                    .ok_or((StatusCode::SERVICE_UNAVAILABLE, "Downloads is unavailable".to_string()))?
                     .join("Downloads")
                     .join("Allternit");
                 tokio::fs::create_dir_all(&dir)
                     .await
-                    .map_err(|e| e.to_string())?;
+                    .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, e.to_string()))?;
                 // The runtime picks this folder, not the caller, but it may be
                 // a symlink: refuse if it resolves into a secret location.
                 let path = crate::files_scope::FilesScope::from_env()
@@ -389,10 +389,10 @@ async fn upload(
                         crate::files_scope::Caller::Local,
                         crate::files_scope::Access::Write,
                     )
-                    .map_err(|denied| denied.message().to_string())?;
+                    .map_err(|denied| (StatusCode::FORBIDDEN, denied.message().to_string()))?;
                 tokio::fs::write(&path, &body)
                     .await
-                    .map_err(|e| e.to_string())?;
+                    .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, e.to_string()))?;
                 Ok(path.display().to_string())
             }
             Target::Guest {
@@ -406,17 +406,17 @@ async fn upload(
                 driver
                     .push_file(&handle, &path, body.to_vec())
                     .await
-                    .map_err(|e| e.to_string())?;
+                    .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, e.to_string()))?;
                 Ok(path)
             }
-            Target::Browser { .. } => Err("File transfer needs a desktop computer.".into()),
+            Target::Browser { .. } => Err((StatusCode::BAD_REQUEST, "File transfer needs a desktop computer.".into())),
         }
     }
     .await;
     match result {
         Ok(path) => Json(json!({"success":true,"complete":true,"next_offset":size,"path":path}))
             .into_response(),
-        Err(e) => failure(StatusCode::SERVICE_UNAVAILABLE, e),
+        Err((status, e)) => failure(status, e),
     }
 }
 pub fn router() -> Router<Arc<AppState>> {

@@ -2063,11 +2063,7 @@ async fn computer_upload_file(
     Query(file_query): Query<FilePathQuery>,
     body: Bytes,
 ) -> Response {
-    // The path is on the computer, not here: refuse `..` and secret
-    // locations (e.g. ~/.ssh/authorized_keys) by its text.
-    if let Err(denied) = crate::files_scope::check_guest_path(&file_query.path) {
-        return crate::files_scope::denied_response(denied);
-    }
+    // The guest-path check runs inside upload_desktop_file_core.
     if let Err(denial) = enforce_control_confirmation(
         &state,
         &user.user_id,
@@ -2130,9 +2126,7 @@ async fn computer_download_file(
     Query(approval): Query<ApprovalQuery>,
     Query(file_query): Query<FilePathQuery>,
 ) -> Response {
-    if let Err(denied) = crate::files_scope::check_guest_path(&file_query.path) {
-        return crate::files_scope::denied_response(denied);
-    }
+    // The guest-path check runs inside download_desktop_file_core.
     // Same confirmation policy as the control dispatcher's FileRead, so a
     // user who requires approval for file reads gets it on this route too.
     if let Err(denial) = enforce_control_confirmation(
