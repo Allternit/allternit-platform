@@ -395,9 +395,18 @@ async fn studio_refusals_and_engine_list() {
         .unwrap();
     assert_eq!(unsloth["fit"]["ok"], false);
 
-    let (status, err) = call(&mac, "POST", "/studio/engines/axolotl/install", None).await;
-    assert_eq!(status, StatusCode::NOT_IMPLEMENTED);
-    assert!(err["message"].as_str().unwrap().contains("not available"));
+    // Every catalog engine is available in this build now; one that does not
+    // fit the computer is refused before anything installs.
+    assert!(engines.iter().all(|e| e["available"] == true), "{list}");
+    for id in ["axolotl", "unsloth-upstream", "llama-factory"] {
+        let (status, err) = call(&mac, "POST", &format!("/studio/engines/{id}/install"), None).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{id}");
+        assert_eq!(err["error"], "hardware_not_supported", "{id}");
+        assert!(!err["message"].as_str().unwrap().is_empty());
+        assert!(!env.dir.join("engines").join(id).exists(), "{id}");
+    }
+    let (status, _) = call(&mac, "POST", "/studio/engines/nope/install", None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]

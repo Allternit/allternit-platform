@@ -67,19 +67,9 @@ impl EngineLauncher for ProcessLauncher {
                 (program, parts.collect())
             }
             None => {
-                let module = engines::engine_module(&req.engine_id)
+                let args = engines::launch_args(&req.engine_id, req.port, &req.job_dir, &req.output_dir)
                     .ok_or_else(|| format!("{} is not available in this build.", req.engine_id))?;
-                (
-                    req.python.to_string_lossy().into_owned(),
-                    vec![
-                        "-m".into(),
-                        module.into(),
-                        "--port".into(),
-                        req.port.to_string(),
-                        "--data-dir".into(),
-                        req.job_dir.join("engine").to_string_lossy().into_owned(),
-                    ],
-                )
+                (req.python.to_string_lossy().into_owned(), args)
             }
         };
         let log = std::fs::OpenOptions::new()
@@ -94,6 +84,8 @@ impl EngineLauncher for ProcessLauncher {
         if let Some(src) = engines::tune_source().filter(|_| req.engine_id == "allternit-tune") {
             cmd.env("PYTHONPATH", src);
         }
+        // Kit engines: the token under the kit's name, the upstream CLI in the venv.
+        cmd.envs(engines::kit_launch_env(&req.engine_id, &req.python, &req.token));
         // Only when the host has it: an engine never sees an empty value.
         match engines::studio_python() {
             Some(py) => cmd.env("ALLTERNIT_STUDIO_PYTHON", py),

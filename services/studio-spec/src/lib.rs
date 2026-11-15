@@ -12,7 +12,7 @@ pub mod hardware;
 pub mod job;
 pub mod spec;
 
-pub use engines::{catalog, EngineInfo, InstallState};
+pub use engines::{catalog, EngineInfo, EngineSource, InstallState};
 pub use job::{Job, JobEvent, JobOutput, JobState, TransitionError};
 pub use fit::{check_job, fit, Fit, Selected};
 pub use hardware::{classify, GpuVendor, Hardware, HostHardware, INTEL_MAC_NO_TORCH};
