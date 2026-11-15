@@ -1,49 +1,38 @@
-// swift-tools-version: 5.12
+// swift-tools-version: 6.0
 // allternit-mlx-server: the macOS MLX engine pack (mlx-metal-macos-arm64).
 //
-// Two targets, split so iOS can adopt the engine without the HTTP server
-// (spec/on-device/engine-pack-spike.md, "MLX sidecar shape"):
-//   OnDeviceLLM           engine core (load a local MLX model dir, stream a chat
-//                         reply with token stats). No networking. W7 moves this
-//                         target into surfaces/allternit-mobile/ios/Packages/OnDeviceLLM.
-//   allternit-mlx-server  Mac-only OpenAI-compatible loopback server (Hummingbird 2)
-//                         that local-engine spawns like llama-server.
+// A Mac-only OpenAI-compatible loopback server (Hummingbird 2) that
+// local-engine spawns like llama-server. The engine itself is NOT here: it is
+// the one shared Swift core, the iPhone app's package
+// surfaces/allternit-mobile/ios/Packages/OnDeviceLLM (MLXEngine), taken by
+// path so the Mac and iOS always run the same code and the same MLX pin
+// (spec/on-device/engine-pack-spike.md, "MLX sidecar shape"; Eoj, 2026-11-15).
+// The mlx-swift / mlx-swift-lm versions are set in that package, never here.
 //
-// Versions: mlx-swift 0.31.3 + mlx-swift-lm 2.31.3 (Eoj's pin, 2026-11-15), the
-// pair iOS uses too. The canonical OnDeviceLLM core is W7's iOS package
-// (surfaces/allternit-mobile/ios/Packages/OnDeviceLLM); this copy follows it and
-// is replaced by a dependency on it before the MLX pack ships.
-// Build with xcodebuild, not `swift build`:
-// only xcodebuild compiles the Metal shaders into mlx-swift_Cmlx.bundle.
+// Build with xcodebuild, not `swift build`: only xcodebuild compiles the Metal
+// shaders into mlx-swift_Cmlx.bundle (build-mlx-server-macos.sh).
 import PackageDescription
 
 let package = Package(
     name: "allternit-mlx-server",
-    platforms: [.macOS(.v14), .iOS(.v17)],
+    platforms: [.macOS(.v14)],
     products: [
-        .library(name: "OnDeviceLLM", targets: ["OnDeviceLLM"]),
         .executable(name: "allternit-mlx-server", targets: ["allternit-mlx-server"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/ml-explore/mlx-swift", exact: "0.31.3"),
-        .package(url: "https://github.com/ml-explore/mlx-swift-lm", exact: "2.31.3"),
+        .package(path: "../../../surfaces/allternit-mobile/ios/Packages/OnDeviceLLM"),
         .package(url: "https://github.com/hummingbird-project/hummingbird", from: "2.28.0"),
     ],
     targets: [
-        .target(
-            name: "OnDeviceLLM",
-            dependencies: [
-                .product(name: "MLX", package: "mlx-swift"),
-                .product(name: "MLXLLM", package: "mlx-swift-lm"),
-                .product(name: "MLXLMCommon", package: "mlx-swift-lm"),
-            ]
-        ),
         .executableTarget(
             name: "allternit-mlx-server",
             dependencies: [
-                "OnDeviceLLM",
+                .product(name: "OnDeviceLLM", package: "OnDeviceLLM"),
                 .product(name: "Hummingbird", package: "hummingbird"),
-            ]
+            ],
+            // Top-level server globals are read from request handlers; Swift 5
+            // mode keeps them as plain globals instead of strict-concurrency errors.
+            swiftSettings: [.swiftLanguageMode(.v5)]
         ),
     ]
 )

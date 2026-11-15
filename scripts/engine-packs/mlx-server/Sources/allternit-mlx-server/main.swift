@@ -1,4 +1,5 @@
-// allternit-mlx-server: OpenAI-compatible loopback server over OnDeviceLLM.
+// allternit-mlx-server: OpenAI-compatible loopback server over OnDeviceLLM's
+// MLXEngine (the shared Swift core in surfaces/allternit-mobile/ios/Packages/OnDeviceLLM).
 //
 // Spawned by local-engine (services/local-engine, MLX recipe) exactly like
 // llama-server, and answers the same way so the engine's proxy and stats code
@@ -50,20 +51,43 @@ struct Args {
 
 /// The loaded engine, or the load error. Filled once, read by every request.
 actor EngineSlot {
-    private(set) var engine: OnDeviceLLMEngine?
+    private(set) var engine: MLXEngine?
     private(set) var error: String?
-    func set(_ e: OnDeviceLLMEngine) { engine = e }
+    func set(_ e: MLXEngine) { engine = e }
     func fail(_ message: String) { error = message }
 }
 
+/// One generation at a time: MLX evaluates on one GPU stream, and a second
+/// concurrent request would only slow both down. MLXEngine itself does not
+/// serialize, so the server does.
+actor SerialGate {
+    private var busy = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+    func acquire() async {
+        if !busy { busy = true; return }
+        await withCheckedContinuation { waiters.append($0) }
+    }
+    func release() {
+        if waiters.isEmpty { busy = false } else { waiters.removeFirst().resume() }
+    }
+}
+
+/// Reply length when the request names none (OpenAI leaves it to the server).
+let defaultMaxTokens = 2048
+/// MLX GPU buffer cache kept between requests. The phone keeps 64 MB; a Mac
+/// can hold more, which saves re-allocating KV buffers per request.
+let macCacheLimitBytes = 256 << 20
+
 let args = Args.parse(CommandLine.arguments)
 let slot = EngineSlot()
+let gate = SerialGate()
 
 Task {
     do {
-        let engine = try await OnDeviceLLMEngine.load(directory: URL(fileURLWithPath: args.model), modelId: args.modelId)
+        let engine = MLXEngine(cacheLimitBytes: macCacheLimitBytes)
+        try await engine.load(from: URL(fileURLWithPath: args.model))
         await slot.set(engine)
-        print("model loaded: \(args.modelId) (\(OnDeviceLLMEngine.memoryBytes) bytes)")
+        print("model loaded: \(args.modelId) (\(MLXEngine.activeMemoryBytes) bytes)")
     } catch {
         await slot.fail("\(error)")
         FileHandle.standardError.write("model load failed: \(error)\n".data(using: .utf8)!)
@@ -95,14 +119,15 @@ func text(of content: Any?) -> String {
 }
 
 func usage(_ s: GenerationStats) -> [String: Any] {
-    ["prompt_tokens": s.promptTokens, "completion_tokens": s.completionTokens, "total_tokens": s.promptTokens + s.completionTokens]
+    ["prompt_tokens": s.promptTokens, "completion_tokens": s.generatedTokens, "total_tokens": s.promptTokens + s.generatedTokens]
 }
 
 /// Same field names as llama-server's `timings`, so local-engine maps both one way.
 func timings(_ s: GenerationStats) -> [String: Any] {
     [
-        "prompt_n": s.promptTokens, "prompt_ms": s.promptSeconds * 1000, "prompt_per_second": s.promptTokensPerSecond,
-        "predicted_n": s.completionTokens, "predicted_ms": s.generateSeconds * 1000, "predicted_per_second": s.tokensPerSecond,
+        "prompt_n": s.promptTokens, "prompt_ms": s.promptSeconds * 1000,
+        "prompt_per_second": s.promptSeconds > 0 ? Double(s.promptTokens) / s.promptSeconds : 0,
+        "predicted_n": s.generatedTokens, "predicted_ms": s.generateSeconds * 1000, "predicted_per_second": s.tokensPerSecond,
     ]
 }
 
@@ -110,7 +135,7 @@ let router = Router()
 
 router.get("health") { _, _ -> Response in
     if await slot.engine != nil {
-        return json(["status": "ok", "model": args.modelId, "mem_bytes": OnDeviceLLMEngine.memoryBytes])
+        return json(["status": "ok", "model": args.modelId, "mem_bytes": MLXEngine.activeMemoryBytes])
     }
     if let error = await slot.error {
         return json(["status": "error", "error": error], status: .internalServerError)
@@ -133,13 +158,13 @@ router.post("v1/chat/completions") { request, _ -> Response in
         return json(["error": ["message": "body must be a chat completion request", "type": "invalid_request_error"]], status: .badRequest)
     }
     let turns = messages.map { m in
-        ChatTurn(role: ChatTurn.Role(rawValue: m["role"] as? String ?? "user") ?? .user, content: text(of: m["content"]))
+        ChatTurn(ChatTurn.Role(rawValue: m["role"] as? String ?? "user") ?? .user, text(of: m["content"]))
     }
     let options = GenerationOptions(
-        maxTokens: (body["max_completion_tokens"] as? Int) ?? (body["max_tokens"] as? Int),
+        maxTokens: (body["max_completion_tokens"] as? Int) ?? (body["max_tokens"] as? Int) ?? defaultMaxTokens,
         temperature: Float((body["temperature"] as? Double) ?? 0.7),
         topP: Float((body["top_p"] as? Double) ?? 1.0),
-        maxContextTokens: args.ctx
+        contextLength: args.ctx ?? 4096
     )
     let id = "chatcmpl-\(UUID().uuidString.lowercased())"
     let created = Int(Date().timeIntervalSince1970)
@@ -148,12 +173,19 @@ router.post("v1/chat/completions") { request, _ -> Response in
     if body["stream"] as? Bool != true {
         var content = ""
         var stats: GenerationStats?
-        for try await event in engine.stream(turns, options: options) {
-            switch event {
-            case .text(let t): content += t
-            case .done(let s): stats = s
+        await gate.acquire()
+        do {
+            for try await event in engine.generate(turns, options: options) {
+                switch event {
+                case .text(let t): content += t
+                case .done(let s): stats = s
+                }
             }
+        } catch {
+            await gate.release()
+            return json(["error": ["message": "\(error)", "type": "server_error"]], status: .internalServerError)
         }
+        await gate.release()
         var reply: [String: Any] = [
             "id": id, "object": "chat.completion", "created": created, "model": model,
             "choices": [["index": 0, "message": ["role": "assistant", "content": content], "finish_reason": stats?.finishReason ?? "stop"]],
@@ -166,31 +198,45 @@ router.post("v1/chat/completions") { request, _ -> Response in
     }
 
     let includeUsage = ((body["stream_options"] as? [String: Any])?["include_usage"] as? Bool) == true
-    let events = engine.stream(turns, options: options)
     let responseBody = ResponseBody { writer in
         func chunk(_ delta: [String: Any], finish: String? = nil) -> [String: Any] {
             ["id": id, "object": "chat.completion.chunk", "created": created, "model": model,
              "choices": [["index": 0, "delta": delta, "finish_reason": finish as Any? ?? NSNull()]]]
         }
-        try await writer.write(sse(chunk(["role": "assistant", "content": ""])))
-        var stats: GenerationStats?
+        await gate.acquire()
+        // A failed write (the client went away) lands in `writeError`; the gate
+        // is released on every path, then the error ends the stream, which
+        // cancels the generation.
+        var writeError: Error?
         do {
-            for try await event in events {
-                switch event {
-                case .text(let t): try await writer.write(sse(chunk(["content": t])))
-                case .done(let s): stats = s
+            try await writer.write(sse(chunk(["role": "assistant", "content": ""])))
+            var stats: GenerationStats?
+            var failure: EngineError?
+            do {
+                for try await event in engine.generate(turns, options: options) {
+                    switch event {
+                    case .text(let t): try await writer.write(sse(chunk(["content": t])))
+                    case .done(let s): stats = s
+                    }
                 }
+            } catch let e as EngineError {
+                failure = e
+            }
+            if let failure {
+                try await writer.write(sse(["error": ["message": "\(failure)", "type": "server_error"]]))
+            }
+            try await writer.write(sse(chunk([:], finish: stats?.finishReason ?? "stop")))
+            if includeUsage, let s = stats {
+                try await writer.write(sse([
+                    "id": id, "object": "chat.completion.chunk", "created": created, "model": model,
+                    "choices": [], "usage": usage(s), "timings": timings(s),
+                ]))
             }
         } catch {
-            try await writer.write(sse(["error": ["message": "\(error)", "type": "server_error"]]))
+            writeError = error
         }
-        try await writer.write(sse(chunk([:], finish: stats?.finishReason ?? "stop")))
-        if includeUsage, let s = stats {
-            try await writer.write(sse([
-                "id": id, "object": "chat.completion.chunk", "created": created, "model": model,
-                "choices": [], "usage": usage(s), "timings": timings(s),
-            ]))
-        }
+        await gate.release()
+        if let writeError { throw writeError }
         try await writer.write(ByteBuffer(string: "data: [DONE]\n\n"))
         try await writer.finish(nil)
     }
