@@ -381,7 +381,15 @@ async fn upload(
                 tokio::fs::create_dir_all(&dir)
                     .await
                     .map_err(|e| e.to_string())?;
-                let path = dir.join(name);
+                // The runtime picks this folder, not the caller, but it may be
+                // a symlink: refuse if it resolves into a secret location.
+                let path = crate::files_scope::FilesScope::from_env()
+                    .authorize(
+                        &dir.join(name).to_string_lossy(),
+                        crate::files_scope::Caller::Local,
+                        crate::files_scope::Access::Write,
+                    )
+                    .map_err(|denied| denied.message().to_string())?;
                 tokio::fs::write(&path, &body)
                     .await
                     .map_err(|e| e.to_string())?;
