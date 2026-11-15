@@ -7,7 +7,10 @@
 //! `_ULTRA`), since they differ per Stripe account and mode; a missing price id answers 503
 //! `billing_not_configured` exactly like a missing `STRIPE_SECRET_KEY`.
 //!
-//! - `GET /api/v1/billing/plans` (public): the catalog WITHOUT Stripe price ids.
+//! - `GET /api/v1/billing/plans` (public): the catalog WITHOUT Stripe price ids, plus a
+//!   top-level `freeweights` block listing the Freeweights plan perks
+//!   (`routes::freeweights::PerkConfig::listing`; `status` is `not_offered` unless
+//!   `FREEWEIGHTS_PERKS_ENABLED` is on).
 //! - `GET /api/v1/billing/subscription` (Clerk session or API token): the caller's
 //!   current Free / Plus / Max / Ultra plan (active Stripe row, else Free).
 //! - `POST /api/v1/billing/subscribe` (Clerk session or API token): Checkout Session `mode=subscription` whose
@@ -81,6 +84,9 @@ pub struct SubscriptionPlanResponse {
 #[derive(Debug, Serialize)]
 pub struct PlansResponse {
     plans: Vec<SubscriptionPlanResponse>,
+    /// Freeweights perks per plan (free, plus, super, ultra), listed whether or not they are
+    /// offered yet. Additive: older clients ignore it.
+    freeweights: crate::routes::freeweights::PerkListing,
 }
 
 #[derive(Debug, Deserialize)]
@@ -205,6 +211,7 @@ async fn list_plans() -> Json<PlansResponse> {
                 plan_tier: plan.plan_tier,
             })
             .collect(),
+        freeweights: crate::routes::freeweights::PerkConfig::from_env().listing(),
     })
 }
 
@@ -845,6 +852,15 @@ mod tests {
         assert_eq!(first["plan_tier"], serde_json::json!("pro"));
         assert!(first.get("price_id").is_none(), "Stripe price ids stay server-side");
         assert!(first.get("price_env").is_none(), "env var names stay server-side");
+        // Freeweights perks are listed, not offered (no test sets FREEWEIGHTS_PERKS_ENABLED).
+        assert_eq!(value["freeweights"]["status"], serde_json::json!("not_offered"));
+        for plan in ["free", "plus", "super", "ultra"] {
+            assert!(!value["freeweights"]["plans"][plan].as_array().unwrap().is_empty(), "{plan}");
+        }
+        assert_eq!(
+            value["freeweights"]["plans"]["free"][0],
+            serde_json::json!({"key": "public_storage_bytes", "label": "Public upload storage", "value": 10_000_000_000u64, "unit": "bytes"})
+        );
     }
 
     #[tokio::test]
