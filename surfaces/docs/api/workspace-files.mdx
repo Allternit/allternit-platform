@@ -35,6 +35,7 @@ Requests are authorized through the platform auth middleware. The route also acc
 | `POST` | `/files/mkdir` | Create a directory. |
 | `DELETE` | `/files/delete` | Delete a file or directory. |
 | `POST` | `/files/write` | Write a text file. |
+| `POST` | `/files/bot-writes` | Record a file an agent wrote (local callers only). |
 
 ## Path resolution
 
@@ -79,7 +80,19 @@ The relay carries the signed-in owner, so a relayed request keeps the features t
 | `~/.allternit/mcps`, `~/.agents/mcps`, `~/.codex/mcps` | List, read the files directly inside, write or delete the `.json` files directly inside |
 | `~/.config/gizzi-code/gizzi.json`, `~/.config/gizzi/gizzi.json`, `~/.config/allternit-shell/allternit.json`, `~/.config/gizzi/allternit.json`, `~/.config/gizzi-code/allternit.json`, `~/.claude/settings.json`, `~/.codex/config.toml`, `~/.gemini/mcp.json` | Read only (these exact files) |
 
-Anything else answers `403`, for example a code project folder such as `~/Desktop/my-app`. The runtime does not create the `~/Allternit` folders; a write inside them creates the parent folders it needs.
+| `FOLDER/.allternit/shared-context.md`, anywhere in the home folder (a code project's shared notes) | Read and write this exact file. Nothing else in that `.allternit` folder or in the project opens. |
+| A file an agent wrote on this computer (see [Agent-written files](#agent-written-files)) | Read only |
+
+Anything else answers `403`, for example other files in a code project folder such as `~/Desktop/my-app/package.json`.
+
+### Agent-written files
+
+When an agent's tool (`write`, `edit`, `apply_patch`, `notebook`, `workspace-edit` in Gizzi Code) writes a file, Gizzi Code reports the path to the runtime on the same computer with `POST /files/bot-writes` and a JSON body of `{"path": "...", "session_id": "..."}`. The runtime keeps the canonical path in a ledger in its data folder (at most 5,000 paths, each kept 30 days). A relayed request may then read that exact file, so a bot thread's file cards open on the web and phone. It can never write or delete it.
+
+- Only a local request can add a path. A relayed request to `/files/bot-writes` answers `403` with reason `local_only`.
+- Secret locations are never recorded and stay refused.
+- The record is the path, so a file changed after the agent wrote it is still readable. A path no agent wrote is not.
+- Gizzi Code sends reports only when its API base is this computer (`127.0.0.1`, `localhost` or `::1`). A missing report keeps the file closed to other devices. The runtime does not create the `~/Allternit` folders; a write inside them creates the parent folders it needs.
 
 ### Local requests
 
@@ -278,7 +291,7 @@ The `/files/raw` endpoint detects the following common types from the file exten
 |-------------|------|---------|
 | 400 | `{"error": "Missing path"}` | Missing `path` on write. |
 | 401 | — | Missing or invalid bearer token. |
-| 403 | `{"error": "path_not_allowed", "reason": "...", "message": "..."}` | The path is outside the caller's scope. `reason` is one of `parent_dir`, `outside_home`, `protected`, `outside_roots`, `read_only`, `home_itself`, `unresolvable`, `invalid_path`, `no_home`. |
+| 403 | `{"error": "path_not_allowed", "reason": "...", "message": "..."}` | The path is outside the caller's scope. `reason` is one of `parent_dir`, `outside_home`, `protected`, `outside_roots`, `read_only`, `home_itself`, `unresolvable`, `invalid_path`, `no_home`, `local_only`. |
 | 404 | `{"error": "Not found"}` | File or directory does not exist. |
 | 500 | `{"error": "Cannot read file" \| "Cannot create directory" \| "Cannot delete" \| "Cannot write file"}` | Filesystem failure. |
 

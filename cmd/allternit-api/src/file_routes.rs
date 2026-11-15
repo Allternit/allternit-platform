@@ -30,6 +30,7 @@ pub fn file_routes<S: Clone + Send + Sync + 'static>(scope: Arc<FilesScope>) -> 
         .route("/files/mkdir", post(mkdir))
         .route("/files/delete", delete(delete_file))
         .route("/files/write", post(write_file))
+        .route("/files/bot-writes", post(record_bot_write))
         .layer(Extension(scope))
 }
 
@@ -374,6 +375,27 @@ async fn write_file(
     }
 }
 
+#[derive(Deserialize)]
+struct BotWriteBody {
+    path: String,
+}
+
+/// gizzi on this computer reports a file one of its tools just wrote
+/// (`File.Event.Edited`). Local callers only: a relayed client can never
+/// add a path. See `files_scope::BotWriteLedger`.
+async fn record_bot_write(
+    Extension(scope): Scope,
+    peer: Peer,
+    headers: HeaderMap,
+    Json(body): Json<BotWriteBody>,
+) -> Response {
+    let caller = crate::files_scope::caller(&headers, peer.as_ref().map(|c| c.0));
+    match scope.record_bot_write(&body.path, caller) {
+        Ok(()) => Json(json!({"ok": true})).into_response(),
+        Err(denied) => denied_response(denied),
+    }
+}
+
 fn mime_for(path: &std::path::Path) -> &'static str {
     match path
         .extension()
@@ -568,6 +590,63 @@ mod tests {
         ] {
             let (status, text) = send(&f.app, method, &uri, true, body).await;
             assert_eq!(status, StatusCode::FORBIDDEN, "{method} {uri}: {text}");
+        }
+    }
+
+    #[tokio::test]
+    async fn relayed_callers_open_shared_context_notes_and_nothing_else_there() {
+        let f = fixture();
+        let put = |rel: &str, body: &str| {
+            let path = f.home.join(rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, body).unwrap();
+        };
+        put("Desktop/my-app/.allternit/shared-context.md", "notes");
+        put("Desktop/my-app/.allternit/other.md", "SECRET");
+        put("Desktop/my-app/package.json", "SECRET");
+        put(".ssh/.allternit/shared-context.md", "SECRET");
+        std::fs::create_dir_all(f.home.join("Desktop/linked/.allternit")).unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(f.root.join("outside/secret.txt"), f.home.join("Desktop/linked/.allternit/shared-context.md")).unwrap();
+
+        let (status, body) = read(&f.app, "~/Desktop/my-app/.allternit/shared-context.md", true).await;
+        assert_eq!((status, body.contains("notes")), (StatusCode::OK, true), "{body}");
+        let (status, _) = send(&f.app, "POST", "/files/write", true, Some(json!({"path": "~/Desktop/my-app/.allternit/shared-context.md", "content": "edited"}))).await;
+        assert_eq!(status, StatusCode::OK);
+        for path in ["~/Desktop/my-app/.allternit/other.md", "~/.ssh/.allternit/shared-context.md", "~/Desktop/linked/.allternit/shared-context.md", "~/Desktop/my-app/package.json"] {
+            let (status, body) = read(&f.app, path, true).await;
+            assert_eq!(status, StatusCode::FORBIDDEN, "{path}: {body}");
+            assert!(!body.contains("SECRET"));
+        }
+    }
+
+    #[tokio::test]
+    async fn relayed_callers_read_only_the_files_a_bot_wrote() {
+        let f = fixture();
+        std::fs::create_dir_all(f.home.join("Desktop")).unwrap();
+        std::fs::write(f.home.join("Desktop/report.md"), "report").unwrap();
+        std::fs::write(f.home.join("Desktop/other.md"), "SECRET").unwrap();
+        let record = |path: &str| json!({"path": path, "session_id": "ses_1"});
+
+        let (status, _) = send(&f.app, "POST", "/files/bot-writes", true, Some(record("~/Desktop/other.md"))).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "a relayed client can't claim a path");
+        let (status, _) = send(&f.app, "POST", "/files/bot-writes", false, Some(record("~/Desktop/report.md"))).await;
+        assert_eq!(status, StatusCode::OK);
+        let (status, _) = send(&f.app, "POST", "/files/bot-writes", false, Some(record("~/.ssh/x"))).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "a secret location is never recorded");
+
+        std::fs::write(f.home.join("Desktop/report.md"), "changed later").unwrap();
+        let (status, body) = read(&f.app, "~/Desktop/report.md", true).await;
+        assert_eq!((status, body.contains("changed later")), (StatusCode::OK, true), "{body}");
+        let (status, _) = send(&f.app, "GET", &format!("/files/raw?path={}", q("~/Desktop/report.md")), true, None).await;
+        assert_eq!(status, StatusCode::OK);
+        let (status, _) = send(&f.app, "POST", "/files/write", true, Some(json!({"path": "~/Desktop/report.md", "content": "x"}))).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "bot-written files are read-only");
+        let (status, _) = send(&f.app, "DELETE", &format!("/files/delete?path={}", q("~/Desktop/report.md")), true, None).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        for path in ["~/Desktop/other.md", "~/.ssh/x"] {
+            let (status, _) = read(&f.app, path, true).await;
+            assert_eq!(status, StatusCode::FORBIDDEN, "{path}");
         }
     }
 

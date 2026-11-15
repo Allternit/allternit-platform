@@ -38,6 +38,7 @@ use serde_json::json;
 use std::ffi::OsString;
 use std::net::SocketAddr;
 use std::path::{Component, Path, PathBuf};
+use std::sync::Arc;
 use unicode_normalization::UnicodeNormalization;
 
 /// Who is asking. Decided from the request, never from the path.
@@ -80,6 +81,7 @@ impl Denied {
             "read_only" => "That path is read-only from another device.",
             "home_itself" => "The home folder itself can't be changed.",
             "unresolvable" => "That path points at something that doesn't exist.",
+            "local_only" => "Only a process on this computer can record bot-written files.",
             _ => "That path is not allowed.",
         }
     }
@@ -231,6 +233,77 @@ pub enum OpenError {
     Io(std::io::Error),
 }
 
+/// How many bot-written paths the ledger keeps, and for how long.
+const LEDGER_MAX: usize = 5_000;
+const LEDGER_MAX_AGE_SECS: i64 = 30 * 24 * 60 * 60;
+
+/// Files an agent's tools (gizzi `write`, `edit`, `apply_patch`, `notebook`,
+/// `workspace-edit`) wrote on this computer. gizzi reports each
+/// `File.Event.Edited` to `POST /files/bot-writes` over loopback; a relayed
+/// caller may then READ that exact file (never write or delete it), so a bot
+/// thread's file cards open on the web and phone. Bounded by count and age,
+/// keyed by canonical path, and kept in the protected data folder so the
+/// files API itself can't edit it.
+#[derive(Debug, Default)]
+pub struct BotWriteLedger {
+    entries: std::sync::Mutex<std::collections::VecDeque<(String, i64)>>,
+    file: Option<PathBuf>,
+}
+
+impl BotWriteLedger {
+    /// A ledger kept in `file` (JSON), loaded now and saved on every record.
+    pub fn persisted(file: PathBuf) -> Self {
+        let entries = std::fs::read(&file)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<Vec<(String, i64)>>(&bytes).ok())
+            .unwrap_or_default();
+        let ledger = Self { entries: std::sync::Mutex::new(entries.into()), file: Some(file) };
+        ledger.prune(&mut ledger.entries.lock().unwrap_or_else(|p| p.into_inner()));
+        ledger
+    }
+
+    fn key(path: &Path) -> String {
+        path.to_string_lossy().nfc().collect()
+    }
+
+    fn prune(&self, entries: &mut std::collections::VecDeque<(String, i64)>) {
+        let cutoff = chrono::Utc::now().timestamp() - LEDGER_MAX_AGE_SECS;
+        entries.retain(|(_, at)| *at >= cutoff);
+        while entries.len() > LEDGER_MAX {
+            entries.pop_front();
+        }
+    }
+
+    fn record(&self, canonical: &Path) {
+        let key = Self::key(canonical);
+        let mut entries = self.entries.lock().unwrap_or_else(|p| p.into_inner());
+        entries.retain(|(path, _)| *path != key);
+        entries.push_back((key, chrono::Utc::now().timestamp()));
+        self.prune(&mut entries);
+        if let Some(file) = &self.file {
+            if let Ok(bytes) = serde_json::to_vec(&entries.iter().collect::<Vec<_>>()) {
+                if let Some(parent) = file.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                let tmp = file.with_extension("json.tmp");
+                if std::fs::write(&tmp, bytes).is_ok() {
+                    let _ = std::fs::rename(&tmp, file);
+                }
+            }
+        }
+    }
+
+    fn contains(&self, canonical: &Path) -> bool {
+        let key = Self::key(canonical);
+        let cutoff = chrono::Utc::now().timestamp() - LEDGER_MAX_AGE_SECS;
+        self.entries
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .iter()
+            .any(|(path, at)| *path == key && *at >= cutoff)
+    }
+}
+
 /// Resolves and checks file paths for one home folder.
 #[derive(Clone, Debug)]
 pub struct FilesScope {
@@ -240,6 +313,8 @@ pub struct FilesScope {
     /// Canonical absolute folders that are always refused (the Allternit
     /// data folders).
     protected: Vec<PathBuf>,
+    /// Files agents wrote here; relayed callers may read exactly these.
+    bot_writes: Arc<BotWriteLedger>,
 }
 
 impl FilesScope {
@@ -255,7 +330,15 @@ impl FilesScope {
             protected.push(data.join("allternit"));
             protected.push(data.join("@allternit"));
         }
-        Self::new(dirs::home_dir(), protected)
+        let data_dir = std::env::var_os("ALLTERNIT_DATA_DIR")
+            .filter(|v| !v.is_empty())
+            .map(PathBuf::from)
+            .or_else(|| dirs::data_dir().map(|d| d.join("allternit")));
+        let mut scope = Self::new(dirs::home_dir(), protected);
+        if let Some(dir) = data_dir {
+            scope.bot_writes = Arc::new(BotWriteLedger::persisted(dir.join("files-bot-writes.json")));
+        }
+        scope
     }
 
     /// A scope for an explicit home folder and protected folders.
@@ -268,14 +351,33 @@ impl FilesScope {
             .filter(|p| p.is_absolute())
             .filter_map(|p| resolve(&normalize(&p).ok()?, true).ok())
             .collect();
-        Self { home, protected }
+        Self { home, protected, bot_writes: Arc::new(BotWriteLedger::default()) }
+    }
+
+    /// Record that an agent's tool wrote `raw`. Only a local caller (gizzi on
+    /// this computer) may record, and never a secret location.
+    pub fn record_bot_write(&self, raw: &str, caller: Caller) -> Result<(), Denied> {
+        if caller != Caller::Local {
+            return Err(Denied("local_only"));
+        }
+        let (canonical, rel) = self.check(raw, Access::Read)?;
+        if rel.is_empty() {
+            return Err(Denied("home_itself"));
+        }
+        self.bot_writes.record(&canonical);
+        Ok(())
     }
 
     /// Turn a caller's path into the canonical path to operate on, or refuse it.
     pub fn authorize(&self, raw: &str, caller: Caller, access: Access) -> Result<PathBuf, Denied> {
         let (canonical, rel) = self.check(raw, access)?;
         if caller == Caller::Remote {
-            remote_allows(&rel, access)?;
+            if let Err(denied) = remote_allows(&rel, access) {
+                // A file an agent wrote here: readable, never writable.
+                if !(access == Access::Read && self.bot_writes.contains(&canonical)) {
+                    return Err(denied);
+                }
+            }
         }
         Ok(canonical)
     }
@@ -581,6 +683,14 @@ fn remote_allows(rel: &[String], access: Access) -> Result<(), Denied> {
     }
     if REMOTE_MCP_CONFIG_FILES.iter().any(|file| rel.len() == file.len() && rel_starts_with(rel, file)) {
         return if access == Access::Read { Ok(()) } else { Err(Denied("read_only")) };
+    }
+    // A code project's shared notes (allternit-ai `CodeCanvasTileNotes`):
+    // exactly `<any folder>/.allternit/shared-context.md`, read and write.
+    if rel.len() >= 3 && rel[rel.len() - 2] == ".allternit" && rel[rel.len() - 1] == "shared-context.md" {
+        return match access {
+            Access::Read | Access::Write => Ok(()),
+            Access::Delete => Err(Denied("read_only")),
+        };
     }
     Err(Denied("outside_roots"))
 }
