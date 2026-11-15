@@ -4782,7 +4782,10 @@
         "allternit/contracts/files-drive",
         "allternit/platform/types/allternit-files-core",
         "allternit/cmd/allternit-api/src/file_routes.rs",
-        "allternit/cmd/allternit-cloud-api/src/routes/runtime_relay.rs"
+        "allternit/cmd/allternit-cloud-api/src/routes/runtime_relay.rs",
+        "allternit/surfaces/docs/guides/files-drive.mdx",
+        "allternit/surfaces/docs/guides/files-sharing.mdx",
+        "allternit/surfaces/docs/api/files-drive.mdx"
       ],
       "decisions": [
         {

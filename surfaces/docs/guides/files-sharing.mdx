@@ -1,0 +1,60 @@
+---
+title: 'Share files'
+description: 'Share a folder or file from an Allternit computer with a link, set what guests can do, and take access back.'
+---
+
+You can share a folder or a file from one of your computers with someone who does not have an Allternit account. They get a link. What they can do depends on the role you pick.
+
+Sharing is part of the Files drive and rolls out behind the same account setting. See [Files drive](/guides/files-drive).
+
+## Make a link
+
+1. Open the folder or file in the Files tab.
+2. Choose Share.
+3. Pick a role, an expiry, and whether to ask for a passcode.
+4. Copy the link and send it yourself. Allternit does not send it for you.
+
+You can only share a folder that has sharing turned on. The Shared folder has it on by default. Folders added from another device start with it off.
+
+## Roles
+
+| Role | What a guest can do |
+| --- | --- |
+| View and download | See the files in the shared folder and download them. |
+| Upload only | Drop files in. They cannot see what is in the folder. |
+| Edit | View, download, upload, rename and delete in the shared folder. |
+| Comment | View and download, and add comments. |
+
+A guest sees only the one folder or file you shared. They cannot reach the rest of the computer.
+
+## Passcode and expiry
+
+A passcode is optional. When you set one, the guest enters it on the link page before anything opens. A wrong passcode is refused, and repeated tries are rate limited.
+
+A link expires at the time you choose. An expired link shows a page that says so. A guest session lasts at most one hour and renews while the link is valid.
+
+## Computers that are asleep
+
+A guest does not wake your computer, unless you allowed it on that share. Waking a cloud computer bills you, so it is off by default.
+
+- Guests can open the saved list of names while the computer sleeps.
+- An upload-only guest can still drop files. They are held in your own storage bucket and move to Inbox the next time the computer wakes.
+- If you turned on guest wake, a guest who opens a file wakes the computer, and you pay the awake rate.
+
+## Revoke access
+
+You can revoke a whole share, or one guest, or one device from the sharing page. Revoking takes effect on the guest's next request. A page that was already open stops working the next time it asks for a file, and no new files are served.
+
+The link page then says the share was revoked.
+
+## See who opened what
+
+Each share keeps an access list: who opened it, which file, when, and whether it was allowed or denied. You can see it from the share. It records denied tries as well.
+
+## What sharing does not do
+
+- A shared folder is not open to bots. Sharing and bot access are separate settings. A file a guest uploads is treated as untrusted and waits in Inbox for your approval.
+- A link grants access to whoever holds it, unless you set a passcode. Send it only to people you mean to give access.
+- Sharing does not change the Memory Drive.
+
+For the developer reference, see the [Files drive API](/api/files-drive).

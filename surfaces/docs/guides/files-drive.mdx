@@ -1,0 +1,116 @@
+---
+title: 'Files drive'
+description: 'Browse, open and save files on your Allternit computers from the Files tab, your phone and the Files apps on your devices.'
+---
+
+The Files drive shows the files on each of your Allternit computers in one place. You can browse them in the Files tab, drop files into a folder your bots can use, and send a photo or document from your phone to a computer.
+
+The Files drive is rolling out behind a per-account setting. If you do not see a Files tab on a computer, it is not turned on for your account yet.
+
+## Where your files live
+
+Files stay on the computer that owns them. Allternit does not keep a second copy on company storage. Each computer has a short list of folders, called roots. Only files inside a root are visible to the Files drive.
+
+| Folder | What it holds |
+| --- | --- |
+| Inbox | Files you drop for a bot. They wait for your OK before a bot acts on them. |
+| Shared | The default folder to share with other people. |
+| Agent Output | Results that bots write. Each one is marked as made by an agent. |
+| Downloads | Files that a bot downloaded from the web and files you transferred. |
+| Meetings | Recordings and transcripts. |
+| Scans | Document scans from your phone. |
+| Memory Drive | Your bot's memory. It is protected: you may need Face ID or a fingerprint to open it. |
+| Code | Your code folders. |
+| Models | Model files on the computer. |
+
+You can add your own folder in the Files tab. A folder you add must be inside your home folder, and Allternit refuses folders that hold secrets, such as your `.ssh` folder. A folder added from another device starts with sharing and bot access turned off until you change them.
+
+## The Files tab
+
+Open a computer in Allternit and choose Files. The first time, a short setup shows three steps. Each step is a button. You can come back to it from Setup.
+
+You can:
+
+- open a folder and search by name;
+- upload a file, or drop files onto the page;
+- open or download a file;
+- see which files are kept on this device and which were made by an agent;
+- see whether the computer is awake, asleep or offline.
+
+Files made by an agent show a note: "Made by an agent. Check it before you rely on it."
+
+## Asleep computers and wake consent
+
+Browsing never wakes a computer and never bills you.
+
+When a computer is asleep, the Files tab shows a saved list of file names, sizes and the time it last synced. The computer writes this list to your own storage bucket just before it sleeps. It holds names, not contents. You can open folders and search by name from the saved list.
+
+Opening a file, uploading, or searching inside files needs the computer awake. When you try one of these, Allternit asks first:
+
+- **Wake and save**, or the matching wake button, wakes the computer for that action. A cloud computer bills at your plan's awake rate from then on. See [Credits and computers](/guides/credits-computer).
+- **Wake automatically from now on** stops the question for this computer. You can change this in Files setup.
+- If waking is turned off for the computer, the Files tab says "Waking is turned off" and nothing wakes it.
+
+A computer that is offline, such as a laptop that is closed and off the network, cannot be woken. The Files tab shows the saved list and says so.
+
+Waking takes about a minute. The Files tab says "Waiting for the computer to wake" while it does.
+
+## Phone and the m.allternit.com app
+
+The phone layout and the installed web app have the same Files tab, sized for a phone. You open a computer, then drill into a folder one screen at a time, and go back with the back button. Preview and download use the same wake question as on the desktop.
+
+### Share to Inbox from your phone
+
+When you install the web app on your phone, it appears in the share sheet of other apps. Share a photo, a PDF or other files to Allternit and a screen opens with two choices:
+
+- **Save to a computer** puts the files in that computer's Inbox. If it is asleep, you are asked before it wakes.
+- **Send to a bot** sends the files and an optional note to a bot's chat.
+
+Files saved to Inbox are treated as untrusted. A bot does not read or run them until you approve the task. See [Inbox and bots](#inbox-and-bots).
+
+## Conflicts keep both
+
+If two devices change the same file before they sync, Allternit keeps both. The second change is saved beside the original with a name like:
+
+`Lease (conflict iPhone 2026-11-15 1042).pdf`
+
+The name shows the device that made the change and the time on that device. Nothing is overwritten. Open both files, keep the one you want, and delete the other. The older version of a file is also kept in its version history, within the limits set for the folder, and deleted files go to a trash that you can restore from.
+
+If you upload a file whose name already exists and it is not a conflict, the new file is saved as `Name (2).ext`.
+
+## Inbox and bots
+
+Drop a file in Inbox and a task appears in "needs approval". The bot waits for you. Files in Inbox and in shared folders can contain text that tries to give a bot orders, so a bot never acts on them on its own.
+
+You can pre-approve a folder rule with a fixed list of tools. Anything outside that list still waits for you.
+
+## Set up on each system
+
+Which of these you can use depends on your account and the builds you have installed. The Files tab in the browser works everywhere.
+
+| System | Where your computers appear |
+| --- | --- |
+| Web, phone layout, m.allternit.com | The Files tab on each computer. |
+| iPhone and iPad | A location in the Files app, plus Files screens inside the Allternit app. |
+| Android | A location in the system file picker, and a share target. |
+| Mac | A location in the Finder sidebar. |
+| Windows | A folder in File Explorer with sync status icons. |
+| Linux | A mounted folder, set up with `gizzi files mount`. |
+| Gizzi Code | `gizzi files` in the terminal and `/files` in the terminal UI. |
+
+For the native apps, turn the Allternit location on the first time:
+
+1. Sign in to the Allternit app on the device.
+2. On iPhone and iPad, open the Files app, choose Browse, then Edit, and turn on Allternit. On Mac, turn on the Allternit location in Finder so it shows in the sidebar.
+3. On Android, open the system file picker and choose Allternit from its list of locations.
+4. Pick a computer. Files you pin to keep offline are stored on the device, encrypted.
+
+On a Mac, if the location is enabled but looks empty, quit and reopen the Allternit app once.
+
+## Limits to know
+
+- A computer must be awake to open or save file contents. Browsing names does not need it.
+- Files that you keep offline are encrypted on the device with a key that only your own devices share.
+- Searching inside files runs on the computer, only while it is awake.
+
+For sharing files with other people, see [Share files](/guides/files-sharing). For developers, see the [Files drive API](/api/files-drive).
