@@ -169,7 +169,8 @@ Default roots, created on first use of the drive:
 Wake tickets (`WakeTicketClaims`, `typ: "wake"`) and guest tokens (`GuestCapabilityClaims`, `typ: "files_guest"`) share one format:
 
 ```
-fd1.<base64url(claims JSON)>.<base64url(Ed25519 signature over "fd1." + payload part)>
+<prefix>.<base64url(claims JSON)>.<base64url(Ed25519 signature over "<prefix>." + payload part)>
+prefix: awt1 (wake ticket) or fgt1 (guest token); the schemas pin these.
 ```
 
 - Signed by cloud-api with the key named by `kid`. Runtimes fetch public keys from `GET /api/v1/computer-files/token-keys` and verify offline.
@@ -300,6 +301,10 @@ Every error body is `ErrorBody`: the same flat `{error, message, code}` as cloud
 | Gizzi Code | TS types; `gizzi files …` CLI and the TUI `/files` command (section 18) |
 | Backend | Rust types in allternit-api (`files_v2`) and cloud-api (relay no-wake, consent, gateway, snapshot) |
 | Docs | `surfaces/docs/api/files-drive.mdx` is written from this file in step 29 |
+
+## Stub server
+
+`tools/files-stub/` runs this contract as an in-memory server (Node 20, no dependencies) so UI lanes can build without compiling allternit-api: `node tools/files-stub/server.mjs`, then point a client at `http://127.0.0.1:47820`. It serves the runtime routes, the cloud-api routes, wake consent, the snapshot, the gateway and a change feed, with scenario switches (awake, asleep, waking, conflict, slow, guest, error). Every response is validated against `schema/*.json`; `node tools/files-stub/server.mjs --self-test` checks that. See `tools/files-stub/README.md`.
 
 ## 18. Decisions (were open; Eoj answered 2026-11-15)
 
