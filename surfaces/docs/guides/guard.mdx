@@ -18,6 +18,14 @@ Connections, Runs and audit, Learn and Settings.
 The header has a `Cmd/Ctrl+K` search box and a run pill that shows how many
 runs are active.
 
+Guard follows the appearance setting of your computer. When macOS is in Dark
+mode, every Guard view and pane is dark (graphite); otherwise it is light. The
+map stage, the terminal and the device screens stay dark in both.
+
+When the Guard service restarts, for example after an update, the window signs
+in again by itself. It returns to the section, the open pane and the
+conversation you had open. A page reload does the same.
+
 Each conversation, case and artifact row has a **⋯** menu:
 
 - **Rename** changes the title.
@@ -245,7 +253,9 @@ happens automatically: you opt in for each start.
 Tor is off until you save a written rule for one environment: a reason in your
 own words, a confirmation (attest) box and a duration from 1 to 168 hours. The
 rule expires. Only Tails and Whonix can use it. The Whonix Workstation reaches
-the network only through the Whonix Gateway.
+the network only through the Whonix Gateway. While a rule is on, the
+environment shows the reason, the expiry and the time left. **Turn off**
+removes the rule at once. Restart the environment for a change to apply.
 
 On macOS the host cannot filter QEMU user-mode traffic without root. Tor-only
 enforcement there relies on Tails and the Whonix Gateway filtering inside the
@@ -272,7 +282,8 @@ tools, the budget and the Kali container. **Approve envelope and start** starts
 the run. While it runs, a strip above the composer shows each step. A step that
 needs your review grows out of that strip with **Approve**, **Decline** and
 **Stop**. When the run ends, a run card with the report lands in the
-conversation and stays with it.
+conversation and stays with it. The card sits where the run started, between
+the messages sent before and after it.
 
 Guard does not call a model itself. A driver posts one step at a time:
 
