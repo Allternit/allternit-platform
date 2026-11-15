@@ -199,6 +199,8 @@ for (const mdxPath of collectMdxFiles(DOCS_DIR)) {
       if (mdxPath.endsWith('guides/bot-avatars.mdx')) continue;
       // Customize's import paths name the tools agents and instructions come from (Claude Code, Codex, CLAUDE.md, AGENTS.md).
       if (mdxPath.endsWith('guides/customize.mdx')) continue;
+      // Workspace files lists the exact folders the runtime's path scope allows or refuses, including other agent CLIs' dot-folders.
+      if (mdxPath.endsWith('api/workspace-files.mdx')) continue;
       // Porting an MCP App from another host has to name that host and its globals.
       if (mdxPath.endsWith('plugins/guides/porting.mdx')) continue;
       // Connecting AI apps (approvals, MCP Events subscriptions) has to name the apps people connect.
