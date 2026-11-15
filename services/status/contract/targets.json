@@ -551,12 +551,12 @@
     {
       "id": "freeweights-catalog",
       "component_id": "freeweights",
-      "name": "Freeweights catalog",
-      "url": "https://freeweights.allternit.com/api/catalog",
+      "name": "Freeweights API",
+      "url": "https://freeweights.allternit.com/api/models?limit=1",
       "method": "GET",
       "expect_status": 200,
       "follow_redirects": false,
-      "body_marker": "\"models\":[",
+      "body_marker": "\"modelId\":",
       "critical": false,
       "role": "live",
       "vantages": [
