@@ -52,4 +52,31 @@ class BudgetAndManifestTest {
             }
         }
     }
+
+    private fun res(n: String) = javaClass.getResourceAsStream("/freeweights/$n")!!.readBytes()
+
+    private fun failCode(block: () -> Unit): String =
+        try { block(); "none" } catch (e: Protocol.Failure) { e.code }
+
+    @Test fun realSignedManifestVerifiesAndPicks() {
+        val ref = FreeweightsManifest.pickSigned(res("manifest.json"), String(res("manifest.json.minisig")),
+            "bartowski/Qwen_Qwen3-0.6B-GGUF", "Qwen_Qwen3-0.6B-Q4_K_M.gguf")
+        assertEquals(484220320L, ref.size)
+        assertTrue(ref.url.startsWith("https://huggingface.co/bartowski/Qwen_Qwen3-0.6B-GGUF/resolve/"))
+        assertEquals("freeweights manifest bartowski/Qwen_Qwen3-0.6B-GGUF 60b85c0e3d8f",
+            Minisign.verifyFreeweights(res("manifest.json"), String(res("manifest.json.minisig"))))
+    }
+
+    @Test fun tamperedManifestIsRefused() {
+        val tampered = String(res("manifest.json")).replace("484220320", "484220321").toByteArray()
+        assertEquals("bad_signature", failCode { FreeweightsManifest.pickSigned(tampered, String(res("manifest.json.minisig")), "o/n", "Qwen_Qwen3-0.6B-Q4_K_M.gguf") })
+    }
+
+    @Test fun tamperedTrustedCommentAndForeignKeyAreRefused() {
+        val sig = String(res("manifest.json.minisig"))
+        assertEquals("bad_signature", failCode { Minisign.verifyFreeweights(res("manifest.json"), sig.replace("60b85c0e3d8f", "000000000000")) })
+        assertEquals("bad_signature", failCode { Minisign.verifyFreeweights(res("manifest.json"), "not a signature") })
+        // a different key id
+        assertEquals("bad_signature", failCode { Minisign.verifyFreeweights(res("manifest.json"), sig.replace("RUQ7KGqy", "RUQ8KGqy")) })
+    }
 }

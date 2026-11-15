@@ -86,6 +86,9 @@ dependencies {
     // postMessage with a target origin (requestPostMessageChannel(source, target,
     // extras)) needs androidx.browser 1.6+; androidbrowserhelper 2.5.0 brings 1.4.0.
     implementation("androidx.browser:browser:1.8.0")
+    // Ed25519 + BLAKE2b for the Freeweights minisign check (lightweight API only, no provider
+    // registration, so it does not clash with Android's built-in "BC"). java.security Ed25519 needs API 33.
+    implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")
 }

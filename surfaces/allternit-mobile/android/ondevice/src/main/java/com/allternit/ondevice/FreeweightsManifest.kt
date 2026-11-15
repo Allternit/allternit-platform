@@ -10,8 +10,9 @@ import java.net.URLEncoder
  * (spec manifest-v0: files[] {path,size,sha256}, sources[] {type,url,priority}). The engine
  * fetches it itself; the page only names the model, quant, repo and file.
  *
- * Not done here: the manifest's minisign signature. It is fetched over HTTPS from the
- * Freeweights origin; checking the Ed25519 signature on minSdk 26 needs a vendored verifier.
+ * The manifest bytes are checked against their minisign signature ([Minisign], key
+ * freeweights-v0) before anything in them is trusted; an unsigned or badly signed manifest is
+ * refused. Same check as iOS (FreeweightsVerify/Minisign.swift).
  */
 object FreeweightsManifest {
     const val ORIGIN = "https://freeweights.allternit.com"
@@ -22,15 +23,31 @@ object FreeweightsManifest {
 
     fun fetch(repo: String, path: String): FileRef {
         require(REPO.matches(repo)) { "bad repo id" }
-        val conn = URL(manifestUrl(repo)).openConnection() as HttpURLConnection
+        val body = get(manifestUrl(repo), repo, "no_manifest")
+        val sig = try {
+            String(get("${manifestUrl(repo)}.minisig", repo, "unsigned_manifest"), Charsets.UTF_8)
+        } catch (f: Protocol.Failure) {
+            if (f.code == "unsigned_manifest") throw Protocol.Failure("unsigned_manifest", "The Freeweights manifest for $repo is not signed, so the download was refused.")
+            throw f
+        }
+        return pickSigned(body, sig, repo, path)
+    }
+
+    /** Verifies [body] against [sig] (minisign), then picks [path]. Pure, JVM-tested. */
+    fun pickSigned(body: ByteArray, sig: String, repo: String, path: String): FileRef {
+        Minisign.verifyFreeweights(body, sig)
+        return pick(JSONObject(String(body, Charsets.UTF_8)), repo, path)
+    }
+
+    private fun get(url: String, repo: String, missingCode: String): ByteArray {
+        val conn = URL(url).openConnection() as HttpURLConnection
         conn.connectTimeout = 15_000
         conn.readTimeout = 30_000
         try {
             val code = conn.responseCode
-            if (code == 404) throw Protocol.Failure("no_manifest", "Freeweights has no manifest for $repo.")
+            if (code == 404) throw Protocol.Failure(missingCode, "Freeweights has no ${if (missingCode == "no_manifest") "manifest" else "signature"} for $repo.")
             if (code != 200) throw Protocol.Failure("manifest_http", "Freeweights answered $code for $repo.")
-            val body = conn.inputStream.bufferedReader().use { it.readText() }
-            return pick(JSONObject(body), repo, path)
+            return conn.inputStream.use { it.readBytes() }
         } finally {
             conn.disconnect()
         }
