@@ -124,9 +124,11 @@ pub fn detect() -> HardwareProfile {
     let (gpu_name, gpu_memory_total_bytes, gpu_memory_used_bytes, apple_chip, unified_memory) =
         detect_gpu_info(&sys);
 
-    let mut backends = BackendCapabilities::default();
-    backends.metal = cfg!(target_os = "macos") && apple_chip.is_some();
-    backends.cuda = cfg!(any(target_os = "linux", target_os = "windows")) && has_nvidia_gpu();
+    let backends = BackendCapabilities {
+        metal: cfg!(target_os = "macos") && apple_chip.is_some(),
+        cuda: cfg!(any(target_os = "linux", target_os = "windows")) && has_nvidia_gpu(),
+        ..Default::default()
+    };
 
     let hardware_id = stable_hardware_id(
         &cpu_model,

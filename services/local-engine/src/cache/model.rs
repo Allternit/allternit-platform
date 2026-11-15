@@ -1,5 +1,6 @@
 //! Cached model state.
 
+use allternit_model_source::Verification;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -51,6 +52,15 @@ impl std::fmt::Display for ModelSource {
     }
 }
 
+/// One downloaded file and how it was checked.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FileVerification {
+    pub path: String,
+    pub size: u64,
+    pub sha256: String,
+    pub verification: Verification,
+}
+
 /// Metadata for a model stored locally.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CachedModel {
@@ -74,6 +84,14 @@ pub struct CachedModel {
     pub path: PathBuf,
     /// Error message when status is `Failed`.
     pub error_message: Option<String>,
+    /// How the downloaded weights were checked (contract `verification`).
+    /// The weakest state across the weight files; `None` until a download
+    /// or `/models/verify` finishes.
+    #[serde(default)]
+    pub verification: Option<Verification>,
+    /// Per-file result of the last download or verify.
+    #[serde(default)]
+    pub files: Vec<FileVerification>,
     /// When the record was created.
     pub created_at: DateTime<Utc>,
     /// When the record was last updated.
@@ -101,6 +119,8 @@ impl CachedModel {
             downloaded_bytes: 0,
             path,
             error_message: None,
+            verification: None,
+            files: Vec::new(),
             created_at: now,
             updated_at: now,
         }
@@ -125,6 +145,8 @@ impl CachedModel {
             downloaded_bytes: 0,
             path,
             error_message: None,
+            verification: None,
+            files: Vec::new(),
             created_at: now,
             updated_at: now,
         }
@@ -163,6 +185,13 @@ impl CachedModel {
         self.status = ModelStatus::Ready;
         self.downloaded_bytes = self.total_bytes;
         self.error_message = None;
+        self.touch();
+    }
+
+    /// Record how the files were checked.
+    pub fn set_verification(&mut self, verification: Verification, files: Vec<FileVerification>) {
+        self.verification = Some(verification);
+        self.files = files;
         self.touch();
     }
 

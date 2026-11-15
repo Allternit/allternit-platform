@@ -1,7 +1,9 @@
 //! Dynamic Hugging Face model catalog.
 //!
 //! Merges a small in-repo seed list of newest models with models polled from
-//! Hugging Face's public API. Results are cached on disk with a TTL so the
+//! Hugging Face's public API. Every row says whether the Freeweights catalog
+//! (`{ALLTERNIT_FREEWEIGHTS_URL}/api/catalog`) lists the repo, and
+//! `source=freeweights` returns the Freeweights rows themselves. Results are cached on disk with a TTL so the
 //! service stays responsive even when HF is slow or rate-limited.
 
 use chrono::{DateTime, Utc};
@@ -34,6 +36,10 @@ pub struct CatalogEntry {
     /// Measured footprint and memory paths; `/recommend` gates on them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub requirements: Option<HardwareRequirements>,
+    /// The Freeweights catalog lists this repo, so downloads are checked
+    /// against its signed manifest.
+    #[serde(default)]
+    pub freeweights_listed: bool,
 }
 
 impl CatalogEntry {
@@ -48,8 +54,31 @@ impl CatalogEntry {
             source: "seed".to_string(),
             model_class: seed.model_class.clone(),
             requirements: seed.requirements.clone(),
+            freeweights_listed: false,
         }
     }
+
+    fn from_freeweights(fw: &allternit_model_source::CatalogEntry) -> Self {
+        Self {
+            repo_id: fw.id.clone(),
+            downloads: 0,
+            likes: 0,
+            tags: fw.kind.iter().cloned().collect(),
+            pipeline_tag: None,
+            last_modified: None,
+            source: "freeweights".to_string(),
+            model_class: None,
+            requirements: None,
+            freeweights_listed: true,
+        }
+    }
+}
+
+/// Last good Freeweights catalog (in memory only; refreshed with the HF poll).
+#[derive(Debug, Clone, Default)]
+pub struct FreeweightsCache {
+    pub fetched_at: Option<DateTime<Utc>>,
+    pub entries: Vec<allternit_model_source::CatalogEntry>,
 }
 
 /// In-repo seed entry.
@@ -96,6 +125,7 @@ pub struct CatalogService {
     client: Client,
     seeds: Vec<SeedEntry>,
     cache: Arc<RwLock<PolledCache>>,
+    freeweights: Arc<RwLock<FreeweightsCache>>,
     /// Set while a stale-while-revalidate refresh is running, so concurrent
     /// `/catalog` requests do not stack duplicate polls.
     refreshing: Arc<AtomicBool>,
@@ -123,6 +153,7 @@ impl CatalogService {
                 .unwrap_or_default(),
             seeds,
             cache: Arc::new(RwLock::new(cache)),
+            freeweights: Arc::new(RwLock::new(FreeweightsCache::default())),
             refreshing: Arc::new(AtomicBool::new(false)),
         }
     }
@@ -158,7 +189,21 @@ impl CatalogService {
             }
             CatalogSource::Polled => polled,
             CatalogSource::Seed => self.seeds.iter().map(CatalogEntry::from_seed).collect(),
+            CatalogSource::Freeweights => {
+                let fw = self.freeweights.read().await;
+                fw.entries
+                    .iter()
+                    .filter(|e| e.kind.as_deref().is_none_or(|k| k == "model"))
+                    .map(CatalogEntry::from_freeweights)
+                    .collect()
+            }
         };
+        {
+            let fw = self.freeweights.read().await;
+            for entry in merged.iter_mut() {
+                entry.freeweights_listed = fw.entries.iter().any(|e| e.id == entry.repo_id);
+            }
+        }
 
         merged.sort_by(|a, b| b.downloads.cmp(&a.downloads));
         merged.truncate(limit);
@@ -230,7 +275,28 @@ impl CatalogService {
         true
     }
 
+    /// Refresh the Freeweights list. Failures keep the last good list.
+    pub async fn refresh_freeweights(&self) -> Result<usize, String> {
+        let client = allternit_model_source::Client::new().map_err(|e| e.to_string())?;
+        let entries = client.catalog().await.map_err(|e| e.to_string())?;
+        let count = entries.len();
+        *self.freeweights.write().await = FreeweightsCache {
+            fetched_at: Some(Utc::now()),
+            entries,
+        };
+        Ok(count)
+    }
+
+    /// Whether Freeweights lists `repo_id` (last good catalog).
+    pub async fn freeweights_lists(&self, repo_id: &str) -> bool {
+        self.freeweights.read().await.entries.iter().any(|e| e.id == repo_id)
+    }
+
     async fn refresh_locked(&self) -> Result<usize, CatalogError> {
+        match self.refresh_freeweights().await {
+            Ok(count) => info!(count, "Freeweights catalog refreshed"),
+            Err(err) => warn!(error = %err, "Freeweights catalog refresh failed; keeping last list"),
+        }
         let entries = self.poll_huggingface().await?;
         let count = entries.len();
         let cache = PolledCache {
@@ -305,6 +371,7 @@ impl CatalogService {
                     source: "polled".to_string(),
                     model_class: None,
                     requirements: None,
+                    freeweights_listed: false,
                 });
             }
         }
@@ -333,13 +400,16 @@ pub enum CatalogSource {
     All,
     Polled,
     Seed,
+    /// Rows from the Freeweights catalog (models only).
+    Freeweights,
 }
 
 impl CatalogSource {
-    pub fn from_str(s: &str) -> Self {
+    pub fn parse(s: &str) -> Self {
         match s.to_lowercase().as_str() {
             "polled" => CatalogSource::Polled,
             "seed" => CatalogSource::Seed,
+            "freeweights" => CatalogSource::Freeweights,
             _ => CatalogSource::All,
         }
     }
@@ -448,6 +518,7 @@ mod tests {
                 source: "polled".into(),
                 model_class: None,
                 requirements: None,
+                freeweights_listed: false,
             }];
         }
         let all = service.catalog(CatalogSource::All, 100).await;
@@ -462,10 +533,10 @@ mod tests {
     #[test]
     fn catalog_source_parsing() {
         assert!(matches!(
-            CatalogSource::from_str("polled"),
+            CatalogSource::parse("polled"),
             CatalogSource::Polled
         ));
-        assert!(matches!(CatalogSource::from_str("all"), CatalogSource::All));
+        assert!(matches!(CatalogSource::parse("all"), CatalogSource::All));
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

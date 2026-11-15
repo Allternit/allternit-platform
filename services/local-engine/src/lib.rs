@@ -1,12 +1,14 @@
 //! # Allternit Local Engine
 //!
-//! Downloads models from Hugging Face and manages local inference runtimes.
+//! Downloads models (verified against the Freeweights manifest or the
+//! publisher's hashes, via `allternit-model-source`) and manages local
+//! inference runtimes.
 //!
 //! ## Modules
 //!
 //! - `cache`: metadata storage for downloaded models.
-//! - `download`: Hugging Face verification, file filtering, and background
-//!   download tasks.
+//! - `download`: file selection, verified background downloads and
+//!   `/models/verify` re-hashing.
 //! - `runtime`: process manager that launches backends such as llama.cpp and
 //!   polls their health endpoints.
 //! - `routes`: axum HTTP handlers for `/models/download` and `/status`.
@@ -27,7 +29,7 @@ use std::path::PathBuf;
 pub use assess::{AssessRequest, AssessResponse, Assessor};
 pub use cache::{CachedModel, ModelSource, ModelStatus, ModelStore};
 pub use catalog::{CatalogEntry, CatalogService, CatalogSource};
-pub use download::{build_cached_model, spawn_download_task, HuggingFaceError, TreeEntry};
+pub use download::{build_cached_model, spawn_download_task, HuggingFaceError, VerifyReport};
 pub use hardware::HardwareProfile;
 pub use recommend::{RecommendRequest, RecommendResponse, Recommender};
 pub use runtime::{ProcessManager, RuntimeInfo, RuntimeManagerError, RuntimeRecipe, RuntimeStatus};
