@@ -1,0 +1,130 @@
+{
+  "type": "RootsResponse",
+  "valid": true,
+  "case": "Normal: owner lists roots on an awake computer.",
+  "message": {
+    "computer_id": "cmp_mac_studio",
+    "roots": [
+      {
+        "id": "rt_home",
+        "kind": "allternit_home",
+        "name": "Allternit",
+        "path_hint": "~/Allternit",
+        "policy": {
+          "read": true,
+          "write": true,
+          "shareable": true,
+          "agent_process": false,
+          "protected": false,
+          "offline": true,
+          "replica": true,
+          "versions": {
+            "keep_count": 20,
+            "keep_days": 30
+          },
+          "trash_days": 30
+        },
+        "root_item_id": "it_home0000",
+        "cursor": "c1.rt_home.000412",
+        "usage_bytes": 9120044,
+        "provider_ready": true
+      },
+      {
+        "id": "rt_inbox",
+        "kind": "inbox",
+        "name": "Inbox",
+        "path_hint": "~/Allternit/Inbox",
+        "policy": {
+          "read": true,
+          "write": true,
+          "shareable": true,
+          "agent_process": true,
+          "protected": false,
+          "offline": true,
+          "replica": true,
+          "versions": {
+            "keep_count": 20,
+            "keep_days": 30
+          },
+          "trash_days": 30
+        },
+        "root_item_id": "it_inbox000",
+        "parent_root_id": "rt_home",
+        "cursor": "c1.rt_inbox.000019",
+        "provider_ready": true
+      },
+      {
+        "id": "rt_meetings",
+        "kind": "meetings",
+        "name": "Meetings",
+        "path_hint": "~/Allternit/Meetings",
+        "policy": {
+          "read": true,
+          "write": true,
+          "shareable": false,
+          "agent_process": false,
+          "protected": false,
+          "offline": true,
+          "replica": true,
+          "versions": {
+            "keep_count": 20,
+            "keep_days": 30
+          },
+          "trash_days": 30
+        },
+        "root_item_id": "it_meet0000",
+        "parent_root_id": "rt_home",
+        "cursor": "c1.rt_meetings.000000",
+        "provider_ready": false
+      },
+      {
+        "id": "rt_memory",
+        "kind": "memory_drive",
+        "name": "Memory Drive",
+        "policy": {
+          "read": true,
+          "write": true,
+          "shareable": false,
+          "agent_process": false,
+          "protected": true,
+          "offline": true,
+          "replica": true,
+          "versions": {
+            "keep_count": 20,
+            "keep_days": 30
+          },
+          "trash_days": 30
+        },
+        "root_item_id": "it_mem00000",
+        "cursor": "c1.rt_memory.000088",
+        "provider_ready": true
+      },
+      {
+        "id": "rt_models",
+        "kind": "models",
+        "name": "Models",
+        "policy": {
+          "read": true,
+          "write": true,
+          "shareable": false,
+          "agent_process": false,
+          "protected": false,
+          "offline": true,
+          "replica": true,
+          "versions": {
+            "keep_count": 1,
+            "keep_days": 0
+          },
+          "trash_days": 30
+        },
+        "root_item_id": "it_models00",
+        "cursor": "c1.rt_models.000004",
+        "provider_ready": true
+      }
+    ],
+    "freshness": {
+      "served_by": "live",
+      "computer_state": "awake"
+    }
+  }
+}

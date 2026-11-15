@@ -1,0 +1,11 @@
+{
+  "type": "ErrorBody",
+  "valid": true,
+  "case": "Wrong passcode.",
+  "message": {
+    "error": "passcode_invalid",
+    "code": "passcode_invalid",
+    "message": "Wrong passcode.",
+    "retry_after_s": 30
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "type": "Freshness",
+  "valid": false,
+  "case": "Rejected: unknown field.",
+  "message": {
+    "served_by": "live",
+    "computer_state": "awake",
+    "woke": true
+  }
+}

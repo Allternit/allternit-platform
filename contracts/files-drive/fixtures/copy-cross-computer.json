@@ -1,0 +1,11 @@
+{
+  "type": "CopyRequest",
+  "valid": true,
+  "case": "Cross-computer copy returns a job.",
+  "message": {
+    "item_id": "it_doc000001",
+    "dest_parent_id": "it_home9999",
+    "dest_computer_id": "cmp_cloud_4gb",
+    "on_conflict": "keep_both"
+  }
+}

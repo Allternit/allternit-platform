@@ -1,0 +1,10 @@
+{
+  "type": "MkdirRequest",
+  "valid": true,
+  "case": "Normal: create a folder.",
+  "message": {
+    "parent_id": "it_home0000",
+    "name": "Taxes",
+    "on_conflict": "fail"
+  }
+}

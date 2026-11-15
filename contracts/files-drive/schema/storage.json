@@ -1,0 +1,109 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://allternit.com/contracts/files-drive/v1/storage.json",
+  "title": "Files drive: storage discovery",
+  "description": "What disks a computer has, from runtime heartbeats.",
+  "$defs": {
+    "Volume": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "volume_id",
+        "label",
+        "kind",
+        "total_bytes",
+        "free_bytes",
+        "removable"
+      ],
+      "properties": {
+        "volume_id": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "internal",
+            "external",
+            "network",
+            "cloud_disk"
+          ]
+        },
+        "total_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "free_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "removable": {
+          "type": "boolean"
+        },
+        "encrypted": {
+          "type": "boolean"
+        }
+      }
+    },
+    "ReplicaHostInfo": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled",
+        "capacity_bytes",
+        "used_bytes"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "capacity_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "used_bytes": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "StorageDiscovery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "computer_id",
+        "reported_at",
+        "volumes",
+        "root_usage",
+        "replica_host"
+      ],
+      "properties": {
+        "computer_id": {
+          "$ref": "common.json#/$defs/ComputerId"
+        },
+        "reported_at": {
+          "$ref": "common.json#/$defs/Timestamp"
+        },
+        "volumes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Volume"
+          }
+        },
+        "root_usage": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "description": "Bytes per root ID."
+        },
+        "replica_host": {
+          "$ref": "#/$defs/ReplicaHostInfo"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,116 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://allternit.com/contracts/files-drive/v1/keys.json",
+  "title": "Files drive: Files key",
+  "description": "One Files root key per user, held only by the user's own devices.",
+  "$defs": {
+    "KeyEnvelope": {
+      "type": "object",
+      "description": "The Files root key wrapped to one device. cloud-api stores envelopes; it cannot open them.",
+      "additionalProperties": false,
+      "required": [
+        "key_id",
+        "device_id",
+        "wrap_alg",
+        "ephemeral_pub",
+        "nonce",
+        "wrapped_key",
+        "created_at"
+      ],
+      "properties": {
+        "key_id": {
+          "type": "string"
+        },
+        "device_id": {
+          "$ref": "common.json#/$defs/DeviceId"
+        },
+        "wrap_alg": {
+          "type": "string",
+          "const": "x25519-hkdf-sha256-xchacha20poly1305"
+        },
+        "ephemeral_pub": {
+          "type": "string",
+          "description": "base64url X25519 public key."
+        },
+        "nonce": {
+          "type": "string"
+        },
+        "wrapped_key": {
+          "type": "string"
+        },
+        "created_at": {
+          "$ref": "common.json#/$defs/Timestamp"
+        }
+      }
+    },
+    "KeyShareRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "device_id",
+        "device_pub",
+        "device_name",
+        "confirm_code"
+      ],
+      "properties": {
+        "device_id": {
+          "$ref": "common.json#/$defs/DeviceId"
+        },
+        "device_pub": {
+          "type": "string",
+          "description": "base64url X25519."
+        },
+        "device_name": {
+          "type": "string"
+        },
+        "confirm_code": {
+          "type": "string",
+          "description": "Shown on both devices; the user compares them.",
+          "pattern": "^[0-9]{6}$"
+        }
+      }
+    },
+    "KeyShareGrant": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "envelope",
+        "approved_by_device_id"
+      ],
+      "properties": {
+        "envelope": {
+          "$ref": "#/$defs/KeyEnvelope"
+        },
+        "approved_by_device_id": {
+          "$ref": "common.json#/$defs/DeviceId"
+        }
+      }
+    },
+    "FilesKeyInfo": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "key_id",
+        "created_at",
+        "device_ids"
+      ],
+      "properties": {
+        "key_id": {
+          "type": "string"
+        },
+        "created_at": {
+          "$ref": "common.json#/$defs/Timestamp"
+        },
+        "device_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "common.json#/$defs/DeviceId"
+          }
+        },
+        "rotated_from": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

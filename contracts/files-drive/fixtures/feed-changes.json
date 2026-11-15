@@ -1,0 +1,23 @@
+{
+  "type": "FeedChanges",
+  "valid": true,
+  "case": "Server frame with changes.",
+  "message": {
+    "type": "changes",
+    "root_id": "rt_home",
+    "changes": [
+      {
+        "seq": 413,
+        "op": "trashed",
+        "item_id": "it_doc000001",
+        "at": "2026-11-15T14:05:00Z",
+        "by": {
+          "kind": "own_device",
+          "id": "dev_iphone16",
+          "display_name": "iPhone"
+        }
+      }
+    ],
+    "cursor": "c1.rt_home.000413"
+  }
+}

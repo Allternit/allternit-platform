@@ -1,0 +1,10 @@
+{
+  "type": "FeedState",
+  "valid": true,
+  "case": "Computer went to sleep; socket stays on the snapshot.",
+  "message": {
+    "type": "state",
+    "computer_state": "asleep",
+    "snapshot_at": "2026-11-15T14:30:00Z"
+  }
+}

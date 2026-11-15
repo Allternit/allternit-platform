@@ -1,0 +1,10 @@
+{
+  "type": "ErrorBody",
+  "valid": true,
+  "case": "Protected root needs Face ID first.",
+  "message": {
+    "error": "protected_root_locked",
+    "code": "protected_root_locked",
+    "message": "Unlock with Face ID to open Memory Drive."
+  }
+}

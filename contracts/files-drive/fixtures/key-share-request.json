@@ -1,0 +1,11 @@
+{
+  "type": "KeyShareRequest",
+  "valid": true,
+  "case": "New own device asks for the Files key.",
+  "message": {
+    "device_id": "dev_pixel900",
+    "device_pub": "cHViLWtleS1ieXRlcw",
+    "device_name": "Pixel",
+    "confirm_code": "481920"
+  }
+}

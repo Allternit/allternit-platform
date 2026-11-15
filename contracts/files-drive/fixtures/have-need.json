@@ -1,0 +1,14 @@
+{
+  "type": "HaveNeedResponse",
+  "valid": true,
+  "case": "Replica negotiation: which chunks the peer is missing.",
+  "message": {
+    "have": [
+      "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+      "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2"
+    ],
+    "need": [
+      "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3"
+    ]
+  }
+}

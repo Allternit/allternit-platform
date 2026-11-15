@@ -1092,6 +1092,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "allternit-files-core"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "allternit-firecracker-driver"
 version = "0.1.0"
 dependencies = [

@@ -1,0 +1,235 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://allternit.com/contracts/files-drive/v1/replicas.json",
+  "title": "Files drive: replicas",
+  "description": "Encrypted copies on a device the user picks. Replication never wakes a computer.",
+  "$defs": {
+    "ReplicaState": {
+      "type": "string",
+      "enum": [
+        "syncing",
+        "current",
+        "behind",
+        "paused",
+        "error"
+      ]
+    },
+    "Replica": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "replica_id",
+        "source_computer_id",
+        "root_id",
+        "host_device_id",
+        "mode",
+        "state",
+        "stored_bytes",
+        "key_id"
+      ],
+      "properties": {
+        "replica_id": {
+          "type": "string"
+        },
+        "source_computer_id": {
+          "$ref": "common.json#/$defs/ComputerId"
+        },
+        "root_id": {
+          "$ref": "common.json#/$defs/RootId"
+        },
+        "host_device_id": {
+          "$ref": "common.json#/$defs/DeviceId"
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "full",
+            "pinned_only"
+          ]
+        },
+        "state": {
+          "$ref": "#/$defs/ReplicaState"
+        },
+        "last_cursor": {
+          "$ref": "common.json#/$defs/Cursor"
+        },
+        "last_synced_at": {
+          "$ref": "common.json#/$defs/Timestamp"
+        },
+        "stored_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "key_id": {
+          "type": "string"
+        }
+      }
+    },
+    "CreateReplicaRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_computer_id",
+        "root_id",
+        "host_device_id",
+        "mode"
+      ],
+      "properties": {
+        "source_computer_id": {
+          "$ref": "common.json#/$defs/ComputerId"
+        },
+        "root_id": {
+          "$ref": "common.json#/$defs/RootId"
+        },
+        "host_device_id": {
+          "$ref": "common.json#/$defs/DeviceId"
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "full",
+            "pinned_only"
+          ]
+        }
+      }
+    },
+    "ReplicasResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "replicas"
+      ],
+      "properties": {
+        "replicas": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Replica"
+          }
+        }
+      }
+    },
+    "EncryptedChunkHeader": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "v",
+        "cipher",
+        "key_id",
+        "nonce",
+        "locator",
+        "plaintext_size"
+      ],
+      "properties": {
+        "v": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1
+        },
+        "cipher": {
+          "type": "string",
+          "const": "xchacha20poly1305"
+        },
+        "key_id": {
+          "type": "string"
+        },
+        "nonce": {
+          "type": "string",
+          "description": "base64url, 24 bytes."
+        },
+        "locator": {
+          "$ref": "common.json#/$defs/Blake3",
+          "description": "keyed blake3(replica key, plaintext hash). The host never sees plaintext hashes."
+        },
+        "plaintext_size": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "ReplicaRestoreRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "replica_id",
+        "target_computer_id"
+      ],
+      "properties": {
+        "replica_id": {
+          "type": "string"
+        },
+        "target_computer_id": {
+          "$ref": "common.json#/$defs/ComputerId"
+        },
+        "target_root_id": {
+          "$ref": "common.json#/$defs/RootId"
+        },
+        "item_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "common.json#/$defs/ItemId"
+          }
+        }
+      }
+    },
+    "RestoreFailure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "item_id",
+        "reason"
+      ],
+      "properties": {
+        "item_id": {
+          "$ref": "common.json#/$defs/ItemId"
+        },
+        "reason": {
+          "$ref": "common.json#/$defs/ErrorCode"
+        }
+      }
+    },
+    "ReplicaRestoreReport": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "replica_id",
+        "files_restored",
+        "bytes",
+        "chunks_verified",
+        "chunks_failed",
+        "failures",
+        "verified"
+      ],
+      "properties": {
+        "replica_id": {
+          "type": "string"
+        },
+        "files_restored": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "chunks_verified": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "chunks_failed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "failures": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/RestoreFailure"
+          }
+        },
+        "verified": {
+          "type": "boolean",
+          "description": "True only when every chunk and whole-file hash matched."
+        }
+      }
+    }
+  }
+}

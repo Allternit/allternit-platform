@@ -1,0 +1,18 @@
+{
+  "type": "TaskResult",
+  "valid": true,
+  "case": "Approved task finished; result saved beside the file.",
+  "message": {
+    "type": "files.task.result",
+    "event_id": "ev_2",
+    "at": "2026-11-15T14:05:00Z",
+    "computer_id": "cmp_mac_studio",
+    "task_id": "tsk_77",
+    "input_item_id": "it_drp000031",
+    "status": "succeeded",
+    "result_item_ids": [
+      "it_sum000002"
+    ],
+    "agent_id": "agt_inbox"
+  }
+}

@@ -1,0 +1,55 @@
+{
+  "type": "TrashListResponse",
+  "valid": true,
+  "case": "Trash listing.",
+  "message": {
+    "root_id": "rt_home",
+    "entries": [
+      {
+        "trash_id": "tr_19",
+        "item": {
+          "id": "it_doc000001",
+          "root_id": "rt_home",
+          "parent_id": "it_home0000",
+          "name": "Lease.pdf",
+          "kind": "file",
+          "size": 482113,
+          "rev": "7-a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+          "meta_version": 7,
+          "content_hash": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+          "mime": "application/pdf",
+          "created_at": "2026-11-15T14:00:00Z",
+          "modified_at": "2026-11-15T14:05:00Z",
+          "modified_by": {
+            "kind": "owner",
+            "id": "user_2abc",
+            "display_name": "Eoj"
+          },
+          "permissions": {
+            "list": true,
+            "read": true,
+            "write": true,
+            "delete": true,
+            "share": true,
+            "comment": true,
+            "agent_process": false,
+            "transfer": true,
+            "execute": false
+          }
+        },
+        "original_parent_id": "it_home0000",
+        "trashed_at": "2026-11-15T14:05:00Z",
+        "trashed_by": {
+          "kind": "own_device",
+          "id": "dev_iphone16",
+          "display_name": "iPhone"
+        },
+        "purge_at": "2026-12-15T14:05:00Z"
+      }
+    ],
+    "freshness": {
+      "served_by": "live",
+      "computer_state": "awake"
+    }
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "type": "ReplicaRestoreReport",
+  "valid": true,
+  "case": "Restore verified every hash.",
+  "message": {
+    "replica_id": "rp_1",
+    "files_restored": 412,
+    "bytes": 9120044,
+    "chunks_verified": 980,
+    "chunks_failed": 0,
+    "failures": [],
+    "verified": true
+  }
+}

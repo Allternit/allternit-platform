@@ -1,0 +1,10 @@
+{
+  "type": "ErrorBody",
+  "valid": true,
+  "case": "Model has transfer permission only.",
+  "message": {
+    "error": "execute_denied",
+    "code": "execute_denied",
+    "message": "This model can be copied but not run here."
+  }
+}

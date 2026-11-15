@@ -1,0 +1,34 @@
+{
+  "type": "WhoAmIResponse",
+  "valid": true,
+  "case": "Agent principal scoped to the Inbox only.",
+  "message": {
+    "principal": {
+      "kind": "agent",
+      "id": "agt_inbox",
+      "display_name": "Inbox agent"
+    },
+    "computer_id": "cmp_mac_studio",
+    "grants": [
+      {
+        "root_id": "rt_inbox",
+        "item_scope": "it_drp000031",
+        "permissions": {
+          "list": true,
+          "read": true,
+          "write": false,
+          "delete": false,
+          "share": false,
+          "comment": false,
+          "agent_process": true,
+          "transfer": false,
+          "execute": false
+        }
+      }
+    ],
+    "freshness": {
+      "served_by": "live",
+      "computer_state": "awake"
+    }
+  }
+}
