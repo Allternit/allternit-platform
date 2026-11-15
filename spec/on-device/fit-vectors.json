@@ -784,7 +784,7 @@
   }
  },
  {
-  "name": "browser 1.7B ONNX is tight at 1.84 GB",
+  "name": "browser 1.5 GB ONNX is tight at 1.8 GB need",
   "budget": {
    "kind": "unified",
    "fast_bytes": 2000000000,
@@ -809,7 +809,7 @@
     "name": "q4f16",
     "format": "onnx",
     "engine": "webgpu",
-    "size": 1200000000
+    "size": 1500000000
    }
   ],
   "expect": {
@@ -954,6 +954,147 @@
   "expect": {
    "k": "ok",
    "label": "Fits",
+   "quant": "q4f16"
+  }
+ },
+ {
+  "name": "phone browser 255 MB webgpu fits (need 0.306 GB, no native overhead)",
+  "budget": {
+   "kind": "unified",
+   "fast_bytes": 450000000,
+   "spill_bytes": 0,
+   "browser": true,
+   "webgpu": true
+  },
+  "quants": [
+   {
+    "name": "q4f16",
+    "format": "onnx",
+    "engine": "webgpu",
+    "size": 255000000
+   }
+  ],
+  "expect": {
+   "k": "ok",
+   "label": "Fits",
+   "quant": "q4f16"
+  }
+ },
+ {
+  "name": "phone browser 0.32 GB webgpu is tight (need 0.384 GB)",
+  "budget": {
+   "kind": "unified",
+   "fast_bytes": 450000000,
+   "spill_bytes": 0,
+   "browser": true,
+   "webgpu": true
+  },
+  "quants": [
+   {
+    "name": "q4f16",
+    "format": "onnx",
+    "engine": "webgpu",
+    "size": 320000000
+   }
+  ],
+  "expect": {
+   "k": "slow",
+   "label": "Tight fit",
+   "quant": "q4f16"
+  }
+ },
+ {
+  "name": "phone browser 0.4 GB webgpu wont fit (need 0.48 GB)",
+  "budget": {
+   "kind": "unified",
+   "fast_bytes": 450000000,
+   "spill_bytes": 0,
+   "browser": true,
+   "webgpu": true
+  },
+  "quants": [
+   {
+    "name": "q4f16",
+    "format": "onnx",
+    "engine": "webgpu",
+    "size": 400000000
+   }
+  ],
+  "expect": {
+   "k": "no",
+   "label": "Won't fit",
+   "quant": "q4f16"
+  }
+ },
+ {
+  "name": "phone browser boundary: ram_est exactly 0.8 x cap is ok",
+  "budget": {
+   "kind": "unified",
+   "fast_bytes": 450000000,
+   "spill_bytes": 0,
+   "browser": true,
+   "webgpu": true
+  },
+  "quants": [
+   {
+    "name": "q4f16",
+    "format": "onnx",
+    "engine": "webgpu",
+    "size": 300000000,
+    "ram_est": 360000000
+   }
+  ],
+  "expect": {
+   "k": "ok",
+   "label": "Fits",
+   "quant": "q4f16"
+  }
+ },
+ {
+  "name": "phone browser boundary: ram_est 0.8 x cap + 1 byte is tight",
+  "budget": {
+   "kind": "unified",
+   "fast_bytes": 450000000,
+   "spill_bytes": 0,
+   "browser": true,
+   "webgpu": true
+  },
+  "quants": [
+   {
+    "name": "q4f16",
+    "format": "onnx",
+    "engine": "webgpu",
+    "size": 300000000,
+    "ram_est": 360000001
+   }
+  ],
+  "expect": {
+   "k": "slow",
+   "label": "Tight fit",
+   "quant": "q4f16"
+  }
+ },
+ {
+  "name": "browser webgpu ram_est is used as given",
+  "budget": {
+   "kind": "unified",
+   "fast_bytes": 2000000000,
+   "spill_bytes": 0,
+   "browser": true,
+   "webgpu": true
+  },
+  "quants": [
+   {
+    "name": "q4f16",
+    "format": "onnx",
+    "engine": "webgpu",
+    "size": 450000000,
+    "ram_est": 2100000000
+   }
+  ],
+  "expect": {
+   "k": "no",
+   "label": "Won't fit",
    "quant": "q4f16"
   }
  },
