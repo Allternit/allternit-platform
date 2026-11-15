@@ -393,6 +393,7 @@ components:
         updated_at: { type: string, format: date-time, nullable: true }
         error: { type: string, nullable: true }
         last_seq: { type: integer }
+        backend: { type: string, description: 'Backend the host picked for this job (from check_job), e.g. mlx, torch-mps, torch-cuda. Absent on jobs made by older hosts.' }
         outputs:
           type: array
           items: { $ref: '#/components/schemas/JobOutput' }

@@ -160,7 +160,7 @@ export const StudioCommand = cmd({
           const jobs = await c.jobs()
           if (asJson) return json(jobs)
           if (!jobs.length) return void out("No jobs yet.")
-          table([["ID", "STATE", "ENGINE", "METHOD", "CREATED"], ...jobs.map((j) => [j.id, j.state, String(j.spec?.engine ?? ""), String(j.spec?.method ?? ""), j.created_at])])
+          table([["ID", "STATE", "ENGINE", "METHOD", "BACKEND", "CREATED"], ...jobs.map((j) => [j.id, j.state, String(j.spec?.engine ?? ""), String(j.spec?.method ?? ""), j.backend ?? "", j.created_at])])
           return
         }
         case "logs": {

@@ -341,7 +341,7 @@ impl StudioHost {
         let info = catalog::find(&spec.engine).expect("validated engine is in the catalog");
         // Engine, method, backend and outputs against this computer; the
         // message is the host's reason, shown as is.
-        allternit_studio_spec::check_job(&spec, &self.0.cfg.hardware).map_err(|errs| {
+        let selected = allternit_studio_spec::check_job(&spec, &self.0.cfg.hardware).map_err(|errs| {
             let message = errs
                 .iter()
                 .map(|e| e.message.clone())
@@ -392,6 +392,7 @@ impl StudioHost {
                 error: None,
                 last_seq: 0,
                 outputs: vec![],
+                backend: Some(selected.backend.clone()),
             };
             jobs.insert(
                 id,

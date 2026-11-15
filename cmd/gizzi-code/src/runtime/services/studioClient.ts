@@ -39,6 +39,8 @@ export interface Job {
   error?: string | null
   last_seq?: number
   outputs?: JobOutput[]
+  /** Backend the host picked for this job (absent on older hosts). */
+  backend?: string | null
 }
 export interface JobEvent { seq: number; at: string; kind: "state" | "log" | "progress" | "output" | "error"; message: string; progress?: number }
 export interface EventsPage { state: JobState; events: JobEvent[] }

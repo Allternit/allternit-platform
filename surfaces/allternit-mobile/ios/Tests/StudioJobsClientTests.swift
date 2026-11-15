@@ -31,6 +31,16 @@ final class StudioJobsClientTests: XCTestCase {
         XCTAssertEqual(job.spec.engine, "mlx")
         XCTAssertFalse(job.isFinished)
     }
+
+    /// A job on a local folder has no repo; it must still decode, show the folder's name and the backend the host picked.
+    func testLocalBaseJobWithBackendDecodes() throws {
+        let json = #"{"id":"j2","state":"queued","spec":{"engine":"allternit-tune","base":{"path":"/Users/x/models/qwen-small"},"method":"lora"},"created_at":"t","backend":"mlx"}"#
+        let job = try JSONDecoder().decode(StudioJob.self, from: Data(json.utf8))
+        XCTAssertNil(job.spec.base.repo)
+        XCTAssertEqual(job.spec.base.name, "qwen-small")
+        XCTAssertEqual(job.backend, "mlx")
+        XCTAssertEqual(StudioJobsFormat.backendLine(nil, jobBackend: job.backend), "Runs with MLX")
+    }
 }
 
 final class StudioEngineCardTests: XCTestCase {

@@ -93,4 +93,7 @@ pub struct Job {
     pub last_seq: u64,
     #[serde(default)]
     pub outputs: Vec<JobOutput>,
+    /// Backend the host picked for this job (`mlx`, `torch-mps`, `torch-cuda`, ...), from `check_job`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backend: Option<String>,
 }
