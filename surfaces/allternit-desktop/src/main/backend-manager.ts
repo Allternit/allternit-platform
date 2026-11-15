@@ -346,7 +346,8 @@ export class BackendManager {
     if (!binaryPath) {
       const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
       if (isDev) {
-        const candidate = path.resolve(__dirname, '../../../cmd/allternit-api');
+        // __dirname is surfaces/allternit-desktop/dist/main: four levels up is the repo root.
+        const candidate = path.resolve(__dirname, '../../../../cmd/allternit-api');
         if (!fs.existsSync(path.join(candidate, 'Cargo.toml'))) {
           throw new Error(`allternit-api is unavailable: no binary and no development Cargo project at ${candidate}`);
         }
