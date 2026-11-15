@@ -252,7 +252,7 @@ Optional, at the repo root. Unset keys keep their defaults. A file that does not
 | `[reaper] dev_server_patterns` | `vite`, `next dev`, `wrangler dev`, `wrangler pages dev`, `wrangler pages deployment tail`, `webpack serve`, `pnpm dev`, `pnpm run dev`, `npm run dev`, `storybook dev`, `astro dev` | Matched against the program and its first three arguments (basenames), not the whole command line. A shell whose script mentions `vite` is not a dev server, and `vitest` is not `vite` |
 | `[reaper] min_free_gb` | `50` | `new` refuses below this much free disk; `list` warns |
 
-The platform repo's file adds `.shared-target`, `.gw-target` and `surfaces/allternit-desktop/release` to `exclude`, and sets `[base] build` to `cargo check --workspace --all-targets` and `cargo build -p allternit-api -p allternit-factory`.
+The platform repo's file adds `.shared-target`, `.gw-target` and `surfaces/allternit-desktop/release` to `exclude`, and sets `[base] build` to `cargo check --workspace --all-targets`, `cargo build -p allternit-api` and `cargo build -p allternit-factory`. Build each package with its own command, the same way agents build it: building two packages in one command unifies their features differently, so shared crates get other artifact names and every new tree rebuilds them.
 
 ## Machine warnings
 
