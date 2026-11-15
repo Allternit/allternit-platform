@@ -14,6 +14,7 @@ import os from "os"
 import { Log } from "@/shared/util/log"
 import { GlobalPaths } from "@/runtime/context/global/paths"
 import { Filesystem } from "@/shared/util/filesystem"
+import { freeweightsIds } from "@/runtime/services/freeweightsCatalog"
 import { killProcessTree, ProcessRegistry } from "@/runtime/process-registry"
 
 const log = Log.create({ service: "sidecar" })
@@ -348,6 +349,8 @@ export namespace Sidecar {
     lastModified?: string
     /** Sum of `.gguf` sibling file sizes from the HF detail API, when fetched in time. */
     sizeBytes?: number
+    /** True when the Freeweights catalog lists this repo (signed manifest available). */
+    freeweights?: boolean
   }
 
   /** Max detail fetches per search when resolving real GGUF sizes. */
@@ -427,7 +430,8 @@ export namespace Sidecar {
           lastModified: m.lastModified,
         }))
         .filter((m) => m.repoId.length > 0)
-      await attachGgufSizes(models)
+      const [, fwIds] = await Promise.all([attachGgufSizes(models), freeweightsIds()])
+      for (const m of models) m.freeweights = fwIds.has(m.repoId.toLowerCase())
       return models
     } catch (err) {
       log.warn("huggingface search error", { error: err })
