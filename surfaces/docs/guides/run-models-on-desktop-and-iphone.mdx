@@ -1,0 +1,37 @@
+---
+title: Desktop engines and iPhone models
+description: "How Allternit Desktop gets its model engines as signed packs, and how the Models tab works on iPhone."
+---
+
+<Note>
+This page is written from the build plan, and the code for these parts is still being finished. Items marked in the source are checked against the built code before this page is final. Do not rely on the details yet.
+</Note>
+
+## Desktop engines
+
+Allternit Desktop does not ship the model engines in its installer. It downloads the engine pack that matches your computer, as a signed download.
+
+- Desktop reads your hardware and picks the pack: Metal on a Mac, and the matching pack for NVIDIA, AMD, Intel, Arm or the processor on Windows and Linux. {/* TODO(W6/W7): verify against built code: which OS and GPU packs actually ship in the first release */}
+- Each pack has a signed manifest. Desktop checks the signature and every file's hash before it runs anything, and keeps the previous pack if an update fails. {/* TODO(W6/W7): verify against built code: rollback on a failed install */}
+- A model that has not been used for 5 minutes unloads. {/* TODO(W6/W7): verify against built code: idle unload on Desktop */}
+- On a Mac, models can run on MLX. MLX runs as a separate Swift program that Desktop starts, built from the same code as the iPhone engine. llama.cpp on Metal is the other option. {/* TODO(W6/W7): verify against built code: how Desktop picks MLX or llama.cpp */}
+
+You do not install anything yourself, and an engine update does not need a new Desktop version. {/* TODO(W6/W7): verify against built code: packs update independently of the installer */}
+
+## iPhone
+
+The **Models** tab has two parts: **Catalog** and **On this iPhone**. There is no new tab in the bar. {/* TODO(W6/W7): verify against built code: segment names and layout after W8 */}
+
+Three engines run models: MLX, llama.cpp and Apple Foundation Models. {/* TODO(W6/W7): verify against built code: which engine runs which model, and the MLX version that runs Qwen3.5 */}
+
+- **Catalog** lists Freeweights models with a fit badge for this iPhone, and a download button.
+- **On this iPhone** lists the models you have downloaded and the one that is running.
+- Memory is the limit. The app reads the memory iOS gives it at each start and uses three quarters of it. On an iPhone 15 we measured about 2.2 GB without Apple's increased memory limit and about 3.0 GB with it. The app works without that limit. {/* TODO(W6/W7): verify against built code: the app measures at cold start and does not assume the entitlement */}
+- Models unload when the app goes to the background or iOS warns about memory. {/* TODO(W6/W7): verify against built code */}
+
+Speed on iPhone: not measured yet. {/* TODO(W6/W7): add "measured on iPhone 15" tokens per second when W7 reports it */}
+
+## Related
+
+- [Run models on your device](/guides/run-models-on-device)
+- [Engine packs, developer notes](/api/on-device-models#engine-packs)

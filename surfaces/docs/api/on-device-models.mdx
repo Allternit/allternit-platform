@@ -112,6 +112,17 @@ Every surface describes a place that can run models with one shape. The TypeScri
 
 The chat model picker groups them as On this device, My other devices and Cloud.
 
+## Browser engine
+
+`browser-webgpu` runs models with transformers.js (4.3.2) in a worker. Source in allternit-ai: `src/lib/local-models/runtimes/transformers-webgpu.ts` and `.worker.ts`, with the UI-side state in `src/lib/on-device/browser-models.ts` and the budget in `browser-budget.ts`. The engine is a dynamic import, so none of it is in the main bundle until a model is downloaded or used.
+
+- **Budget.** `probeBrowserGpu()` asks for a WebGPU adapter once per page. No adapter, or a fallback (software) adapter, gives `webgpu: false` and the fit label No WebGPU. Otherwise `fast_bytes` is the smaller of the cap (2 GB on a computer, 0.45 GB on a phone browser) and the adapter's `maxBufferSize` and `maxStorageBufferBindingSize`. The budget kind is `unified`.
+- **Plan.** The install reads the model's device entry, takes the `webgpu` quants that map to a transformers.js dtype, and picks one with the shared `fit()` unless a quant is named (`org/name:q4f16`). Every file needs a sha256 from the signed Freeweights manifest. A file without one is never fetched. The worker keeps a file only when size and sha256 match. Errors: `no_webgpu`, `no_browser_build`, and `quota` (shown as "Not enough storage on this device").
+- **Storage.** Verified files live in Cache Storage under `allternit-webgpu-models-v1`. The ONNX Runtime wasm (26.9 MB) is over the Cloudflare Pages 25 MiB file limit, so it is not in the build. It is fetched once from jsDelivr, checked against pinned hashes, and kept with the model files. Bumping transformers.js means updating the version and hashes.
+- **Registry.** When at least one model is stored, the browser registers a `browser-webgpu` DeviceRuntime, so the chat picker lists it and `streamDeviceTurn` (`src/lib/on-device/device-chat.ts`) can answer from it. With none stored, it unregisters and does not load the engine. Idle unload is 300 seconds.
+- **Offline.** After a download, `makeAvailableOffline()` (`src/lib/offline-screens.ts`) saves the chat, Model Lab and engine chunks for the service worker. The app CSP allows `huggingface.co`, `*.hf.co` (download redirects) and `blob:` scripts.
+- **Checked.** Chrome headless, Qwen3-0.6B `q4f16`: downloaded from the real Freeweights URLs, sha256 verified, 50.8 tokens per second, replying offline on a production build. Safari: not checked.
+
 ## Android bridge
 
 Chrome inside the Android app (a Trusted Web Activity) cannot call native code directly and the app must work with no network. The spike [verdict](https://github.com/Allternit/allternit-platform/blob/main/spec/on-device/android-bridge-spike.md) chose the Custom Tabs postMessage channel: the page asks for a message port and the native engine streams tokens to it. On a Moto g play in airplane mode it delivered 500 of 500 messages in order across 22 runs, about 3,000 to 4,000 messages a second, with a round trip near 3 ms and no permission prompt.
@@ -127,6 +138,31 @@ What the channel needs:
 
 The localhost HTTP route also worked and is the fallback only: the PWA's CSP blocks it and it opens a port.
 
+### Android engine
+
+The native side is the `ondevice` module of the Android app (`surfaces/allternit-mobile/android/ondevice/`), with llama.cpp b12414 through JNI. The page side is `src/lib/local-models/providers/android-app.ts` in allternit-ai, which sends `hello` until the app answers `welcome`, checks the port's origin is exactly `android-app://<this host>`, then registers the `android-app` DeviceRuntime (place `this-device`, offline true).
+
+- **Budget.** `min(availMem + held - threshold, 0.45 x totalMem)` from `ActivityManager.MemoryInfo`, reported as a `unified` DeviceBudget. `held` is the size of the model already loaded. The page runs the shared TypeScript fit on it. A GGUF needs `size x 1.2 + 0.4 GB`.
+- **GPU policy.** OpenCL is allowed only when the SoC manufacturer is QTI and the model matches an Adreno 7xx or newer part (`GpuPolicy.kt`, an allow-list). On a Moto g play 2024 (Adreno 610) ggml-opencl fails inside the driver and `ggml_abort()` kills the process, so older and unknown SoCs get the CPU.
+- **Downloads.** The system DownloadManager, any network type, with a free-space check of twice the size plus headroom (`disk_full` otherwise).
+- **Manifest check.** The Freeweights manifest signature is verified with minisign (Ed25519, with BouncyCastle, about 3 MB added to the APK because Java Ed25519 needs API 33), then each file's sha256.
+- **Lifecycle.** One loaded model. A foreground service of type `specialUse` shows "is running on this phone" with Stop. Unload on 5 minutes idle, Stop, the page's `unload`, or a memory trim.
+- **Checked.** Moto g play 2024, CPU only, airplane mode: signature and sha256 verified on the device, chat at 13.3 tokens per second, `hello`/`welcome` through the test harness. The JVM tests pass (ondevice 10, app 5). The real PWA through the Trusted Web Activity, and OpenCL on an Adreno 7xx phone: not checked.
+
+## Device sharing
+
+A device can serve the models it runs to its owner's other devices. The host keeps one WebSocket to cloud-api's model-host relay (platform `cmd/allternit-cloud-api/src/routes/model_hosts.rs`, PR 1960). The relay forwards OpenAI-style chat requests to the host as frames and streams the reply back. The model runs on the host. {/* TODO(W12): link /api/model-host-relay once PR 1960 merges */}
+
+On the app side (allternit-ai `src/lib/model-host/`):
+
+- `store.ts` keeps the shared set (`runtimeId|modelName`, in localStorage under `allternit.modelHost.shared`) and holds a host connection while at least one shared model is running. It closes the connection when the last one stops and resumes when a shared model runs again.
+- `host-client.ts` and `protocol.ts` carry the frames. `remote.ts` is the client for a model on another device.
+- `ShareWithDevices.tsx` is the per-model switch in This device.
+- The picker lists runtimes with `place: 'other-device'` under My other devices, and shows a note when signed out or when the list cannot be refreshed.
+- Scope: only the owner's own hosts. A host id that is not yours answers like an offline one. Up to 8 hosts online per user.
+
+Checked with the relay mocked: 96 app tests. The cloud-api relay and a real two-device run: not checked. Merging the relay is a cloud-api production deploy.
+
 ## Engine packs
 
 An engine pack is the signed download that carries one inference engine for one platform and backend. Desktop installs the pack that matches `/hardware`. Packs use the runtime package format from `runtime.allternit.com`.
@@ -139,3 +175,11 @@ An engine pack is the signed download that carries one inference engine for one 
 - The Mac MLX engine is a Swift executable, `allternit-mlx-server`, built from the same package as the iPhone engine, with `mlx-swift_Cmlx.bundle` beside it for the Metal library.
 
 Details and build scripts: [engine pack spike](https://github.com/Allternit/allternit-platform/blob/main/spec/on-device/engine-pack-spike.md) and `scripts/engine-packs/`.
+
+## Desktop and iPhone build notes
+
+{/* TODO(W6/W7): verify against built code: this section follows the plan, not merged code */}
+
+- Desktop: the Local Engine picks a pack from `/hardware`, installs it under `<runtime>/engines/<pack_id>/`, and falls back to the previous one if verification fails. The usage numbers (tokens, speed) come back on the chat proxy. {/* TODO(W6/W7): verify against built code */}
+- Mac MLX: the Swift server depends on the same `OnDeviceLLM` package as the iPhone, pinned to one mlx-swift version shared with KokoroKit. {/* TODO(W6/W7): verify against built code: pinned versions */}
+- iPhone: `Core/OnDevice` holds the Swift port of the fit rule, which must pass the same vectors. The budget is `0.75 x os_proc_available_memory()` measured at cold start. {/* TODO(W6/W7): verify against built code: vector count and the Qwen3.5 result */}

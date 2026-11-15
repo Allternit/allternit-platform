@@ -1,0 +1,51 @@
+---
+title: Run models on Android
+description: "The Allternit app on Android runs open-weights models with a native engine on the phone, and the chat shows them in the model picker, offline."
+---
+
+The Allternit app for Android includes a model engine built on llama.cpp. It runs models on the phone, and the Allternit chat (the same page you see on m.allternit.com) shows them in the model picker. The model stays on the phone.
+
+<Note>
+This is checked on one phone, a Moto g play 2024, on its processor. Phones with a supported graphics chip: not checked. Nothing here promises a speed.
+</Note>
+
+## How it works
+
+Chat runs in the web page inside the app. The page cannot call native code directly, so the app and the page talk over a private channel that opens when the page loads. The page sends a prompt, and the engine in the app streams the reply back. The channel works with no network.
+
+The page checks that the other end is the Allternit app. If the page is open in a plain browser without the app, it falls back to [browser models](/guides/run-models-in-your-browser).
+
+## Download a model
+
+- Downloads use the system download manager and show its notification with progress. They continue when the app is closed. Any network works, Wi-Fi or mobile data, so check the size on mobile data.
+- The app checks free space first. If there is not enough, it says so and does not start: it needs about twice the model size plus some headroom.
+- Each model's manifest has a signature. The app checks the signature (minisign) and then each file's hash before it keeps the model. A file that fails is deleted.
+
+The first run needs a connection, to sign in and to download.
+
+## Memory budget
+
+The app reads the memory Android reports each time. The budget is the smaller of:
+
+- the free memory, minus Android's low-memory threshold, and
+- 45 percent of the phone's total memory.
+
+A model already loaded counts as free, so the number does not shrink while one runs. A model needs about its file size times 1.2, plus 0.4 GB. The badges are the same as everywhere: [fit badges](/guides/run-models-on-device#what-the-fit-badges-mean).
+
+## Processor and graphics
+
+The engine runs on the processor on every phone. It uses the graphics chip through OpenCL only on Qualcomm phones with Adreno 7xx graphics or newer (Snapdragon 8 Gen 1 and up, and 7+ Gen 3). On older phones the OpenCL kernels crash the engine, and a crash cannot be retried on the processor, so those phones always get the processor. A phone the app does not recognise also gets the processor.
+
+Measured on a Moto g play 2024 (processor only), in airplane mode: 13.3 tokens per second.
+
+## While a model runs
+
+- A notification reads "<model> <build> is running on this phone", with **Stop**. It keeps the model loaded when you switch apps.
+- The model unloads after 5 minutes idle, when you press **Stop**, or when Android asks apps to free memory.
+- Phones get warm and use battery quickly while a model generates.
+
+## Related
+
+- [Allternit for Android](/guides/android-app)
+- [Run models on your device](/guides/run-models-on-device)
+- [Android bridge, developer notes](/api/on-device-models#android-bridge)

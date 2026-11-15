@@ -1,0 +1,50 @@
+---
+title: Use models on your other devices
+description: "Let one of your devices serve the model it is running to your other signed-in devices. The model runs on the device that hosts it."
+---
+
+You can run a model on one device and use it from another. For example, a model running on your Mac can answer in the chat on your phone, or the reverse. The model runs on the **host** device. Allternit only passes the request and the streamed reply between your devices.
+
+<Note>
+The app side of this is built and tested against a stand-in relay. A real run on two devices: not checked. The relay is in review and is not live until it ships.
+</Note>
+
+## Share a model
+
+1. On the device that runs the model, open **Freeweights Studio**, then **This device**.
+2. Start the model. The sharing switch sits next to each running model.
+3. Turn on **Let my other devices use this model**.
+
+A line under the switch says what is happening:
+
+| Line | Meaning |
+|---|---|
+| Off. Only this device can use this model. | Nothing is shared. |
+| On. Shares as soon as this model is running. | The switch is on, and the model is not running yet. |
+| Connecting to Allternit Cloud. | The device is opening its connection. |
+| On. Your other devices signed in to your account can use it. | Ready. In a browser tab it adds "while this tab is open". |
+| Answering a request from another device. | A reply is being written. |
+| Allternit Cloud can't be reached. Trying again. | The connection dropped. |
+
+The switch is per model and is remembered on that device. When the last shared model stops, the connection closes. The switch stays on, so sharing resumes the next time the model runs.
+
+## Use it from another device
+
+Open the chat model picker on your other device. A **My other devices** group lists the shared models, with the device's name. Pick one and chat. If you are signed out, the picker says **Sign in to use your other devices.** If the list cannot be refreshed, it says **Couldn't reach your other devices. Showing the last list.**
+
+If the host goes offline during a reply, the reply ends with an error. Start it again when the host is back.
+
+## Who can use it
+
+Only you. A shared model is listed and callable only with your own account, your own API keys or your own paired runtimes. Another person's account cannot see your host. Allternit does not store the prompts or the answers.
+
+## Limits
+
+- The host must be on, signed in to the same account, and running the model. A browser tab hosts only while it is open and in front.
+- The host does the work, so its battery, memory and speed decide how fast the reply is.
+- A user can have up to 8 hosts online at once.
+
+## Related
+
+- [Run models on your device](/guides/run-models-on-device)
+- [On-device models: developer contract](/api/on-device-models#device-sharing)
