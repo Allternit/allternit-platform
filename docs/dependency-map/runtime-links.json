@@ -661,6 +661,12 @@
       "label": "model-source (verified model downloads)",
       "kind": "crate",
       "path": "allternit/services/model-source"
+    },
+    {
+      "id": "allternit/services/model-training",
+      "label": "allternit-tune engine (services/model-training)",
+      "kind": "module",
+      "path": "allternit/services/model-training"
     }
   ],
   "edges": [
@@ -1533,10 +1539,11 @@
     {
       "source": "allternit/cmd/allternit-api",
       "target": "allternit/services/model-source",
-      "kind": "in-process call: Ollama pull and sidecar install verification",
+      "kind": "in-process call: Ollama pull and sidecar install verification; Studio base model and dataset fetch (fetch_verified)",
       "evidence": [
         "allternit/cmd/allternit-api/src/provider_routes.rs",
-        "allternit/services/model-source/src/lib.rs"
+        "allternit/services/model-source/src/lib.rs",
+        "allternit/cmd/allternit-api/src/studio/runner.rs"
       ]
     },
     {
@@ -1596,6 +1603,33 @@
       "evidence": [
         "allternit/surfaces/allternit-mobile/ios/Features/Models/ModelsTabView.swift",
         "allternit/cmd/allternit-api/src/local_engine_routes.rs"
+      ]
+    },
+    {
+      "source": "allternit/cmd/allternit-api",
+      "target": "allternit/services/studio-spec",
+      "kind": "in-process call: Studio job spec v1 validation, job states and engine catalog for /api/v1/studio",
+      "evidence": [
+        "allternit/cmd/allternit-api/src/studio/mod.rs",
+        "allternit/services/studio-spec/openapi/studio-api.yaml"
+      ]
+    },
+    {
+      "source": "allternit/cmd/allternit-api",
+      "target": "allternit/services/model-training",
+      "kind": "child process + loopback HTTP: engine API v1 with a per-launch bearer token (venv python -m allternit_tune.server)",
+      "evidence": [
+        "allternit/cmd/allternit-api/src/studio/runner.rs",
+        "allternit/services/studio-spec/openapi/engine-api.yaml"
+      ]
+    },
+    {
+      "source": "allternit/cmd/allternit-api",
+      "target": "allternit/services/local-engine",
+      "kind": "loopback HTTP: POST /models/studio-output registers a finished Studio job output (source studio_output)",
+      "evidence": [
+        "allternit/cmd/allternit-api/src/studio/mod.rs",
+        "allternit/services/local-engine/src/routes/models.rs"
       ]
     }
   ]

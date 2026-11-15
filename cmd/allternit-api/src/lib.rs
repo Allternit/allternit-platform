@@ -330,8 +330,9 @@ pub mod setup_routes;
 pub mod selfhost;
 pub mod mailflare_client;
 pub mod media;
-pub mod model_training_routes;
 pub mod photon_routes;
+/// Freeweights Studio host: `/api/v1/studio` (training jobs on this computer).
+pub mod studio;
 pub mod memory_notes_routes;
 pub mod memory_reconstruction_routes;
 pub mod memory_routes;

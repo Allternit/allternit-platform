@@ -38,8 +38,12 @@ pub enum ModelSource {
     HuggingFace,
     /// Imported from a local filesystem path.
     LocalPath,
-    /// Produced by an Unsloth training/export job.
+    /// Produced by an Unsloth training/export job (old Model Lab records).
     UnslothOutput,
+    /// An adapter or model a Freeweights Studio job produced
+    /// (`POST /models/studio-output`, called by allternit-api's
+    /// `/api/v1/studio/jobs/{id}/outputs/register`).
+    StudioOutput,
 }
 
 impl std::fmt::Display for ModelSource {
@@ -48,6 +52,7 @@ impl std::fmt::Display for ModelSource {
             ModelSource::HuggingFace => write!(f, "hugging_face"),
             ModelSource::LocalPath => write!(f, "local_path"),
             ModelSource::UnslothOutput => write!(f, "unsloth_output"),
+            ModelSource::StudioOutput => write!(f, "studio_output"),
         }
     }
 }

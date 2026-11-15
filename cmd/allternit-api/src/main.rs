@@ -71,7 +71,6 @@ use allternit_api::file_routes::file_router;
 use allternit_api::h5i_routes::h5i_router;
 use allternit_api::har_api_routes::har_api_router;
 use allternit_api::bot_event_routes::bot_event_router;
-use allternit_api::model_training_routes::model_training_router;
 use allternit_api::photon_routes::photon_router;
 use allternit_api::health::health_router;
 use allternit_api::inference_router_routes::inference_router_router;
@@ -1024,6 +1023,16 @@ async fn main() {
         });
     }
 
+    // Freeweights Studio: training jobs on this computer (`/api/v1/studio`).
+    // Jobs left running by an earlier process are reattached or marked failed.
+    let studio_host = allternit_api::studio::StudioHost::new(
+        allternit_api::studio::StudioConfig::from_data_dir(&data_dir),
+    );
+    {
+        let studio_host = studio_host.clone();
+        tokio::spawn(async move { studio_host.recover().await });
+    }
+
     // ── Build V1 API routes (all merged, then nested under /api/v1) ───────────
     let v1_routes = provider_router()
         .merge(allternit_api::connections_routes::connections_router())
@@ -1153,7 +1162,7 @@ async fn main() {
         .merge(allternit_api::morning_brief::brief_router())
         .merge(allternit_api::main_bot_reach_out::reach_out_router())
         .merge(allternit_api::slack_webhook_routes::slack_binding_router())
-        .merge(model_training_router())
+        .merge(allternit_api::studio::router(studio_host.clone()))
         .merge(photon_router())
         .merge(allternit_api::enterprise_auth::router())
         .merge(allternit_api::eval_routes::router())
