@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="ondevice_channel_name">Models on this phone</string>
+    <string name="ondevice_channel_desc">Shown while a model is loaded for chat on this phone</string>
+    <!-- %1$s model name, %2$s quant -->
+    <string name="ondevice_running_title">%1$s %2$s is running on this phone</string>
+    <!-- %1$s backend: GPU or CPU -->
+    <string name="ondevice_running_text">Chat works offline. Runs on the %1$s. Stops after 5 minutes idle.</string>
+    <string name="ondevice_stop">Stop</string>
+    <string name="ondevice_gpu">GPU</string>
+    <string name="ondevice_cpu">CPU</string>
+</resources>
