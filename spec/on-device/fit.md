@@ -82,7 +82,7 @@ Labels are exact (ASCII apostrophe in "Won't fit"):
 | na, browser without WebGPU | `No WebGPU` |
 | na, browser, no webgpu build | `No browser build` |
 | na, other | `No build for this device` |
-| unknown | `Not checked` |
+| unknown | `Size not checked` |
 
 `why` (exact text). `N` = need in GB with one decimal, always shown (`3.6`, `10.0`), rounded half away from zero. `B` = `fast_bytes` in GB, one decimal, trailing `.0` dropped (`12`, `4.5`).
 
