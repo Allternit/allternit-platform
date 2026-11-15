@@ -107,11 +107,11 @@ Allternit Tune picks the hardware from what the computer reports. Every row belo
 | Computer | Runs | Backend | QLoRA | Not yet tested by Allternit on this hardware |
 |---|---|---|---|---|
 | Mac with Apple Silicon (`apple-silicon`) | `lora`, `qlora`, `dpo`, `full` | MLX for `lora` and `qlora`. PyTorch on Metal for `dpo` and `full`. | MLX 4-bit | Yes |
-| NVIDIA on Linux (`cuda-linux`) | all four | PyTorch (CUDA) | bitsandbytes | Yes |
-| NVIDIA on Windows (`cuda-windows`) | all four | PyTorch (CUDA) | bitsandbytes | Yes |
-| AMD on Linux (`rocm-linux`) | all four | PyTorch (ROCm) | bitsandbytes 0.50 or newer | Yes |
-| Intel GPU on Linux (`xpu-linux`) | all four | PyTorch (XPU) | bitsandbytes 0.50 or newer | Yes |
-| Intel GPU on Windows (`xpu-windows`) | all four | PyTorch (XPU) | bitsandbytes 0.50 or newer | Yes |
+| Linux with an NVIDIA GPU (`cuda-linux`) | all four | PyTorch (CUDA) | bitsandbytes | Yes |
+| Windows with an NVIDIA GPU (`cuda-windows`) | all four | PyTorch (CUDA) | bitsandbytes | Yes |
+| Linux with an AMD GPU (`rocm-linux`) | all four | PyTorch (ROCm) | bitsandbytes 0.50 or newer | Yes |
+| Linux with an Intel GPU (`xpu-linux`) | all four | PyTorch (XPU) | bitsandbytes 0.50 or newer | Yes |
+| Windows with an Intel GPU (`xpu-windows`) | all four | PyTorch (XPU) | bitsandbytes 0.50 or newer | Yes |
 | CPU only (`cpu`) | `lora` only, slowly. The job shows a warning before it starts. | PyTorch (CPU) | Not available | Yes |
 
 Intel Macs are not supported: PyTorch has no build for them that the trainer can use. AMD GPUs on Windows train on the CPU. Studio shows the reason from the computer's check before you start. Rented GPUs and publishing a result to Freeweights are not available yet.
