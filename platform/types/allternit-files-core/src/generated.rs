@@ -100,7 +100,7 @@ pub struct ChangesResponse {
     pub freshness: Freshness,
 }
 
-/// v1 values: min 262144, avg 1048576, max 4194304 (4 MiB). The relay (runtime_relay.rs MAX_RELAY_BODY_BYTES = 5 MiB) measures a base64 body as len*3/4, i.e. the decoded size, so a 4 MiB chunk plus its headers leaves about 1 MiB of headroom.
+/// v1 values, pinned so every chunker cuts the same boundaries: fastcdc crate 3.2.1 `v2020`, normalization level 1, gear seed 0, min 262144 / avg 1048576 / max 4194304 (4 MiB), mask_s 0x0000d91767537000, mask_l 0x0000d91707537000 (mask_s_ls/mask_l_ls = the same shifted left one bit), chunk hash blake3-256 lower-case hex. Test vectors: contracts/files-drive/vectors/chunker-v1.json. The relay (runtime_relay.rs MAX_RELAY_BODY_BYTES = 5 MiB) measures a base64 body as len*3/4, i.e. the decoded size, so a 4 MiB chunk plus its headers leaves about 1 MiB of headroom.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ChunkerParams {
     pub algo: String,
@@ -139,7 +139,7 @@ pub struct CommentCreateRequest {
     pub body: String,
 }
 
-/// The computer (runtime) ID cloud-api already uses.
+/// cloud-api's id for a computer: the runtime_devices id the relay is keyed by, or the pc_... id of a mesh-only paired machine. computer-files routes also accept a cloud computer's pc_... id and resolve it; EndpointsResponse.computer_id returns the resolved id. See SPEC section 2, Computer ids.
 pub type ComputerId = String;
 
 /// awake = runtime answering; asleep = cloud computer stopped (served from snapshot); waking = consented wake in progress; offline = own device not reachable.
@@ -184,7 +184,7 @@ pub struct ConflictInfo {
     pub base_rev: Rev,
     pub current_rev: Rev,
     pub conflict_item: Item,
-    /// "<stem> (conflict <device name> <YYYY-MM-DD>)<.ext>", then " 2", " 3" if taken.
+    /// "<stem> (conflict <device name> <YYYY-MM-DD HHmm>)<.ext>" in the editing device's local time (utc_offset_minutes on the write), then " 2", " 3" before ")" if taken. Example: "Lease (conflict iPhone 2026-11-15 1042).pdf".
     pub conflict_name: String,
 }
 
@@ -272,6 +272,7 @@ pub struct DeleteResponse {
 /// One of the user's own devices (phone, Mac, PC, browser profile).
 pub type DeviceId = String;
 
+/// Sealed with XChaCha20-Poly1305. AAD is the UTF-8 string "afc1|<v>|<cipher>|<key_id>|<locator>|<plaintext_size>" (decimal integers), so changing any header field fails to open.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EncryptedChunkHeader {
     pub v: u64,
@@ -279,7 +280,7 @@ pub struct EncryptedChunkHeader {
     pub key_id: String,
     /// base64url, 24 bytes.
     pub nonce: String,
-    /// keyed blake3(replica key, plaintext hash). The host never sees plaintext hashes.
+    /// keyed blake3(subkey, the 32 raw bytes of the plaintext hash, not its hex), lower-case hex. The host never sees plaintext hashes.
     pub locator: Blake3,
     pub plaintext_size: u64,
 }
@@ -899,7 +900,7 @@ pub struct MutationResponse {
     pub cursor: Cursor,
 }
 
-/// What to do when the name exists or base_rev is stale. replace is refused when base_rev is stale.
+/// What to do when the name exists or base_rev is stale. replace is refused when base_rev is stale. If base_rev names a file that is now gone: keep_both creates it, fail and replace return not_found.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum OnConflict {
     #[serde(rename = "fail")]
@@ -1285,6 +1286,7 @@ pub struct RootPolicy {
     /// May be replicated to an own device.
     pub replica: bool,
     pub versions: VersionPolicy,
+    /// Days a trashed item is kept. 0 deletes at once (no trash).
     pub trash_days: u64,
 }
 
@@ -1539,6 +1541,25 @@ pub struct ShareSummary {
     pub computer_state: ComputerState,
 }
 
+/// Query string of PUT /roots/:root_id/content (small write, body at most 4 MiB). device_name may also come from the X-Allternit-Device-Name header.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SmallWriteQuery {
+    pub parent_id: ItemId,
+    pub name: String,
+    /// Required when replacing an existing file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_rev: Option<Rev>,
+    /// Default keep_both.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub on_conflict: Option<OnConflict>,
+    /// Used to name a conflict copy.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device_name: Option<String>,
+    /// As in UploadCreateRequest.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub utc_offset_minutes: Option<i64>,
+}
+
 /// Decided (Eoj 2026-11-15): v2 writes none, i.e. plain file names in the user's own R2 bucket, the same trust class as files they upload. files_key_v1 is reserved, not used in v2: XChaCha20-Poly1305 with the snapshot subkey of the user's Files root key (keys.json).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum SnapshotEncryption {
@@ -1791,6 +1812,9 @@ pub struct UploadCreateRequest {
     /// Used to name a conflict copy.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub device_name: Option<String>,
+    /// The editing device's UTC offset in minutes (e.g. -360 for CST). Sets the HHmm in a conflict copy's name. Omitted: the runtime uses UTC.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub utc_offset_minutes: Option<i64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -1847,7 +1871,9 @@ pub struct Version {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct VersionPolicy {
+    /// How many replaced versions to keep. 0 keeps none.
     pub keep_count: u64,
+    /// Days a version is kept, counted from when it was replaced (not created). 0 means no age limit.
     pub keep_days: u64,
 }
 

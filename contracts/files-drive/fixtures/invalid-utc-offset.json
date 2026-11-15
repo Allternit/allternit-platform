@@ -1,0 +1,10 @@
+{
+  "type": "SmallWriteQuery",
+  "valid": false,
+  "case": "utc_offset_minutes beyond UTC+14 is rejected.",
+  "message": {
+    "parent_id": "it_home0000",
+    "name": "Lease.pdf",
+    "utc_offset_minutes": 900
+  }
+}
