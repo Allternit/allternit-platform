@@ -14,6 +14,7 @@ export interface EngineInfo {
   version: string
   methods: string[]
   hardware: string[]
+  fit?: { ok: boolean; reason?: string; hardware?: string; backend?: string }
   install_state: "not_installed" | "installing" | "installed" | "failed"
 }
 export interface JobOutput { kind: string; path: string; bytes?: number }

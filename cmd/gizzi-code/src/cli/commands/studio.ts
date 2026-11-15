@@ -10,6 +10,7 @@ import {
   hardwareFit,
   specFromFlags,
   StudioError,
+  type EngineInfo,
   type JobEvent,
   type StudioClient,
 } from "@/runtime/services/studioClient"
@@ -20,6 +21,12 @@ const json = (v: unknown) => out(JSON.stringify(v, null, 2))
 function table(rows: string[][]) {
   const w = rows[0].map((_, i) => Math.max(...rows.map((r) => (r[i] ?? "").length)))
   for (const r of rows) out(r.map((c, i) => c.padEnd(w[i])).join("  ").trimEnd())
+}
+
+/** Prefer the host's own fit verdict; fall back to a local check for older hosts. */
+function hostFit(e: EngineInfo & { fit?: { ok?: boolean; reason?: string } }): { fits: boolean; reason?: string } {
+  if (e.fit && typeof e.fit.ok === "boolean") return { fits: e.fit.ok, reason: e.fit.reason }
+  return hardwareFit(e)
 }
 
 function fmtEvent(ev: JobEvent): string {
@@ -78,8 +85,7 @@ export const StudioCommand = cmd({
       .option("base", { describe: "run: base model repo, e.g. freeweights/qwen2.5-0.5b-instruct", type: "string" })
       .option("dataset", { describe: "run: dataset file path (starts with / ~ or .) or Hugging Face repo", type: "string" })
       .option("method", { describe: "run: lora | qlora | full | dpo (default lora)", type: "string" })
-      .option("no-follow", { describe: "run: print the job id and return at once", type: "boolean", default: false })
-      .option("follow", { describe: "logs: keep following until the job ends", type: "boolean", default: false })
+      .option("follow", { describe: "logs: keep following until the job ends. run: follows by default, --no-follow prints the job id and returns at once", type: "boolean" })
       .option("after", { describe: "logs: only events after this sequence number", type: "number", default: 0 })
       .option("register", { describe: "outputs: register each output as a local model", type: "boolean", default: false }),
   handler: async (args) => {
@@ -97,7 +103,7 @@ export const StudioCommand = cmd({
       switch (action) {
         case "engines": {
           const engines = await c.engines()
-          const rows = engines.map((e) => ({ ...e, fit: hardwareFit(e) }))
+          const rows = engines.map((e) => ({ ...e, fit: hostFit(e) }))
           if (asJson) return json(rows)
           table([
             ["ID", "LICENSE", "METHODS", "INSTALL", "HARDWARE"],
@@ -126,9 +132,9 @@ export const StudioCommand = cmd({
             spec = specFromFlags({ engine: args.engine as string, base: args.base as string, dataset: args.dataset as string, method: args.method as string | undefined })
           }
           const job = await c.createJob(spec)
-          if (asJson && args["no-follow"]) { json(job); return 0 }
+          if (asJson && args.follow === false) { json(job); return 0 }
           out(asJson ? JSON.stringify({ id: job.id, state: job.state }) : `Job ${job.id} ${job.state}`)
-          if (args["no-follow"]) return 0
+          if (args.follow === false) return 0
           return follow(c, job.id, asJson)
         }
         case "jobs": {
@@ -140,7 +146,7 @@ export const StudioCommand = cmd({
         }
         case "logs": {
           const id = needId()
-          if (args.follow) return follow(c, id, asJson, args.after as number)
+          if (args.follow === true) return follow(c, id, asJson, args.after as number)
           const page = await c.events(id, args.after as number)
           if (asJson) return json(page)
           for (const ev of page.events) out(fmtEvent(ev))
