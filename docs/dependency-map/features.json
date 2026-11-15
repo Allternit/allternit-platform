@@ -4718,11 +4718,20 @@
         "allternit/services/local-engine/src/routes/models.rs",
         "allternit/services/local-engine/src/cache/model.rs",
         "allternit/services/model-training",
+        "allternit/cmd/gizzi-code/src/cli/commands/studio.ts",
+        "allternit/cmd/gizzi-code/src/cli/commands/hardware.ts",
+        "allternit/cmd/gizzi-code/src/runtime/services/studioClient.ts",
+        "allternit/surfaces/allternit-mobile/ios/Core/API/StudioJobsClient.swift",
+        "allternit/surfaces/allternit-mobile/ios/Features/Models/StudioJobsSection.swift",
         "allternit-ai/src/views/model-lab/TrainPanel.tsx",
         "allternit-ai/src/views/model-lab/JobsMonitor.tsx",
         "allternit-ai/src/lib/model-lab/studio-jobs.ts"
       ],
       "decisions": [
+        {
+          "on": "2026-11-15",
+          "note": "Phase 4 hardware merged: studio-spec hardware ids (7, fit and error codes) in allternit-platform #2412; host hardware detection in allternit-api studio/hardware.rs #2418; allternit-tune MLX backend and requirements-<hardware>.txt in services/model-training #2413; gizzi studio, hardware and studioClient #2414; iOS StudioJobsClient and StudioJobsSection #2420; docs #2415; Train panel allternit-ai #1078. Engines are published at Allternit/studio-engines e520474 (Apache-2.0); see the Brain G3 record."
+        },
         {
           "on": "2026-11-15",
           "note": "Train tab on Desktop, web, phone layout and PWA (allternit-ai #1068). Eoj chose to replace the Engine tab's Quantize, Merge LoRA and Evaluate cards (they called /api/model-lab/jobs, never served) with Also make outputs on the Train form: merged model (LoRA methods) and GGUF q4_k_m/q8_0/f16, sent as outputs.merged and outputs.gguf. Evaluation waits until allternit-tune runs evals."
