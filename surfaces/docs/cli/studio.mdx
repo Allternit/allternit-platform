@@ -1,0 +1,38 @@
+---
+title: Fine-tune with gizzi studio
+description: Run Freeweights Studio training jobs on this computer from the terminal
+---
+
+`gizzi studio` talks to the Studio host on this computer's Allternit API (`/api/v1/studio`). It lists the training engines, starts a fine-tune, follows its progress, and registers the results as local models. One job runs at a time per computer.
+
+By default it reaches the API the same way other Gizzi commands do: `ALLTERNIT_API_URL` for the address and `ALLTERNIT_API_TOKEN` for sign-in. Add `--json` to any subcommand for machine-readable output.
+
+## Commands
+
+| Command | What it does |
+|---|---|
+| `gizzi studio engines` | Table of engines: id, license, methods, install state, and whether this computer's hardware fits. A refused row says why. |
+| `gizzi studio install <engine>` | Installs an engine. Safe to run again. |
+| `gizzi studio run --spec <file.json>` | Starts a job from a job spec v1 file, prints the job id, then follows it to the end. |
+| `gizzi studio run --engine <id> --base <repo> --dataset <path or repo> [--method lora]` | Same, with the spec built from flags. A dataset that starts with `/`, `~` or `.` is a file; anything else is a Hugging Face repo. |
+| `gizzi studio jobs` | Lists jobs, newest first. |
+| `gizzi studio logs <id> [--follow] [--after <seq>]` | Prints a job's events. `--follow` keeps going until the job ends. |
+| `gizzi studio cancel <id>` | Cancels a job that has not finished. |
+| `gizzi studio outputs <id> [--register]` | Lists the files a job made. `--register` adds each one as a local model. |
+
+## Following a job
+
+`run` prints `Job <id> queued`, then each event as `[seq] kind: message`. Press Ctrl-C to detach: the job keeps running, and you can come back with `gizzi studio logs <id> --follow`. Use `--no-follow` to print the id and return at once.
+
+## Exit codes
+
+| Code | Meaning |
+|---|---|
+| 0 | The job succeeded (or the command finished) |
+| 1 | The job failed or was cancelled, or an error such as an unreachable host |
+| 2 | The host refused the spec. The host's error code and message are shown, for example `rented_not_available` or `invalid_dataset` |
+| 130 | You detached with Ctrl-C |
+
+## For developers
+
+Client and follower: `cmd/gizzi-code/src/runtime/services/studioClient.ts`. Command: `cmd/gizzi-code/src/cli/commands/studio.ts`. Test: `test/studio-client.test.ts`, which runs against a stub that follows `services/studio-spec/openapi/studio-api.yaml`.
