@@ -1059,6 +1059,7 @@ async fn rotate_credential(
             previous_credential_expires_at = $1,
             credential_hash = $2,
             credential_expires_at = $3,
+            status = 'online',
             last_seen_at = CURRENT_TIMESTAMP
         WHERE id = $4
         "#,
