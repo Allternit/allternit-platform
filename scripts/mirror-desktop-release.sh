@@ -3,8 +3,10 @@
 #   allternit-runtime/desktop/v<version>/<assets>   (served at runtime.allternit.com)
 #   allternit-runtime/desktop/latest.json           {version, assets:{...}: url}
 # and delete every other desktop/v* (keeps only the current version).
-# Installers only (dmg/exe/AppImage/deb, ~1.9 GB a version): auto-update zips and
-# blockmaps stay on GitHub, so the mirror fits the 10 GB R2 allowance.
+# Linux only: the .deb (and an AppImage if a release has one). The only R2 consumers are
+# cloud computers' updater (reads linux_deb_x64) and install.allternit.com/install.sh (HEAD-checks
+# the mirror, falls back to GitHub). Mac/Windows installers, zips and blockmaps are NOT mirrored:
+# the website download buttons and the Homebrew cask use GitHub releases. Keeps the bucket small.
 #
 #   scripts/mirror-desktop-release.sh 1.1.3            # dry-run plan (default)
 #   R2_ENDPOINT=https://<acct>.r2.cloudflarestorage.com R2_ACCESS_KEY=... R2_SECRET=... \
@@ -35,7 +37,7 @@ r2() { # r2 <curl args...> ; signs the request
 
 echo "== download $REPO $tag assets"
 gh release download "$tag" -R "$REPO" -D "$work" \
-  -p '*.dmg' -p '*.exe' -p '*.AppImage' -p '*.deb'
+  -p '*.AppImage' -p '*.deb'
 shopt -s nullglob
 files=("$work"/*)
 if [[ ${#files[@]} -eq 0 ]]; then echo "no assets found for $tag" >&2; exit 1; fi
@@ -50,7 +52,7 @@ for f in "${files[@]}"; do
   fi
 done
 
-# latest.json: a key per platform, value is the public URL of the installer.
+# latest.json: Linux slots only (linux_deb_x64 today), value is the public URL.
 python3 - "$work" "$version" "$PUBLIC" >"$work/latest.json.out" <<'PY'
 import json, os, sys
 d, version, public = sys.argv[1:4]
@@ -58,11 +60,7 @@ slots = {}
 for n in sorted(os.listdir(d)):
     url = f"{public}/desktop/v{version}/{n}"
     low = n.lower()
-    if low.endswith(".dmg"):
-        slots["mac_x64" if "x64" in low else "mac_arm64"] = url
-    elif low.endswith(".exe"):
-        slots["win_arm64" if "arm64" in low else "win_x64"] = url
-    elif low.endswith(".appimage"):
+    if low.endswith(".appimage"):
         slots["linux_arm64" if ("arm64" in low or "aarch64" in low) else "linux_x64"] = url
     elif low.endswith(".deb"):
         slots["linux_deb_arm64" if ("arm64" in low or "aarch64" in low) else "linux_deb_x64"] = url
