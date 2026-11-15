@@ -174,6 +174,11 @@ you send.
 The Environments page detects what is installed when you open it (and on
 `GET /api/environments`, cached for 15 seconds). Detection is read-only.
 
+Each environment is a card with its state, host fit (Native, Emulated (slow) or
+Needs other host, with the native hosts named), network and actions. Switch
+between **List**, **Grid** and **Deck** like everywhere else in Guard; Deck
+cards also list the runtime, path, binaries, image and limits.
+
 | Environment | What Guard shows |
 | --- | --- |
 | This computer | Always ready. |
@@ -258,6 +263,28 @@ text-only: each turn it returns one JSON step, and it never writes payloads,
 probes, commands or scripts that Guard then runs. You approve one envelope per
 run: the goal, exact in-scope targets, the allowed tools, the budget and the
 expiry. Nothing outside the envelope runs.
+
+### Where you use it
+
+Agent is a mode of the composer, next to **Ask** and **Plan**. What you type is
+the goal. The chips under it are the envelope: targets from your scope, the
+tools, the budget and the Kali container. **Approve envelope and start** starts
+the run. While it runs, a strip above the composer shows each step. A step that
+needs your review grows out of that strip with **Approve**, **Decline** and
+**Stop**. When the run ends, a run card with the report lands in the
+conversation and stays with it.
+
+Guard does not call a model itself. A driver posts one step at a time:
+
+```bash
+allternit-guard agent start --goal "Check headers" --target lab.example.com \
+  --tool dns_lookup --tool header_analysis --session CONVERSATION_ID
+allternit-guard agent step RUN_ID --json-file step.json
+```
+
+Until a driver posts a step, the strip says the run waits for one. In the
+terminal UI, `ctrl+g` switches the composer between Ask and Agent, `ctrl+o`
+edits the tools and budget, and `y`, `d` and `x` approve, decline and stop.
 
 | Hard limit | Value |
 | --- | --- |
