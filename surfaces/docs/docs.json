@@ -490,6 +490,7 @@
               "tools/gateway",
               "tools/etrid",
               "tools/local-engine",
+              "tools/freeweights",
               "tools/voice",
               "tools/voice-calls",
               "tools/phone-number-sync",

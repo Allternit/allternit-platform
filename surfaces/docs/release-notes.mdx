@@ -5,6 +5,16 @@ description: 'Changelog for the Allternit platform, SDKs, and Gizzi Code CLI'
 
 # Release Notes
 
+## 2026-11-14 — Freeweights in the apps: models are checked before they run
+
+- **New:** Allternit apps read the [Freeweights](/tools/freeweights) catalog. Every model pulled to a computer is checked by its hash. The result shows as "Verified by Freeweights", "Matches the publisher's hash", "Pinned by Allternit" or "Not verified".
+- **Desktop, web, phone and PWA:** Model Lab is now [Freeweights Studio](/surfaces/model-lab) (same view id). Settings, then Models, has the catalog on the phone layout.
+- **iPhone:** the Models screen has a Freeweights section. **Send to computer** pulls the model on your paired computer.
+- **Gizzi Code:** `gizzi models pull`, `gizzi models verify` and `gizzi models search --catalog-source freeweights`. See [Models and providers](/cli/models#pull-and-verify-local-models).
+- **Local Engine and API:** `POST /models/verify`, a `verification` field on every model, and an `allow_unverified` option on downloads. Data with no hash is refused unless you allow it. See [Local Engine API](/api/local-engine).
+- **If Freeweights is down:** pulls fall back to the publisher and are checked against its hash. A catalog that answers but fails its signature check is an error.
+- **Where:** engine, API and Gizzi in the next runtime and Gizzi Code release. The Desktop, web, phone and PWA UI and the iOS build ship with their own releases.
+
 ## 2026-11-13 — Desktop on Mac: Keychain prompt no longer freezes the app
 
 - **Fixed:** on Mac, Allternit Desktop reads its Keychain key off the main thread. If macOS asks for your password, the app keeps working. The startup window says "macOS is asking for permission. Click Always Allow."

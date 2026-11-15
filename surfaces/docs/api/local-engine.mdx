@@ -170,6 +170,11 @@ Returns every model currently tracked in the local cache.
 | `downloaded_bytes` | integer | Bytes already downloaded. |
 | `total_bytes` | integer | Total expected bytes. |
 | `created_at` | string | ISO 8601 timestamp. |
+| `verification` | object | What the files were checked against: `state` (`freeweights_signed`, `publisher_hash`, `pinned` or `unverified`), `source_used`, `source_url`, `manifest_commit`, `checked_at`. See [Freeweights](/tools/freeweights#verification-states). Absent on engine builds that predate it. |
+| `source_used` | string | Which source served the bytes. |
+| `files` | array | The files of the model. |
+| `error` | string | Why a download failed, when it did. |
+| `freeweights_listed` | boolean | Whether Freeweights lists the repo. |
 
 ## Import a model
 
@@ -229,7 +234,8 @@ Queues a download from a Hugging Face repository. The returned state reflects th
 |-------|------|----------|-------------|
 | `repo_id` | string | Yes | Hugging Face repository id, e.g. `bartowski/Llama-3.2-3B-Instruct-GGUF`. |
 | `revision` | string | No | Git revision. Defaults to `main`. |
-| `quantization` | string | No | Quantization tag, e.g. `Q4_K_M`. |
+| `quantization` | string | No | Quantization tag, e.g. `Q4_K_M`. The filter runs on the Freeweights manifest file list, so only the matching quant downloads. |
+| `allow_unverified` | boolean | No | Default `false`. Set `true` to accept files that have no hash at Freeweights, the publisher or from you. The model then ends as `unverified`. |
 
 ### Example request
 
@@ -255,6 +261,26 @@ curl -X POST https://api.allternit.com/api/local-engine/models/download \
   "message": "download queued"
 }
 ```
+
+Every file is fetched through the [model source contract](/tools/freeweights#source-order-and-fallback). Data with no hash fails unless `allow_unverified` is `true`. A failed download can be retried with the same request.
+
+## Verify a model
+
+```http
+POST /api/local-engine/models/verify
+```
+
+Re-hashes the local files of a downloaded model against the source it was checked against. On a mismatch the response has `ok: false` and the model is marked `failed`.
+
+### Request body
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `repo` or `repo_id` | string | Yes | Repository id, e.g. `Qwen/Qwen3-Embedding-0.6B`. |
+| `revision` | string | No | Git revision. |
+| `quantization` | string | No | Quantization tag. |
+
+Older engine builds return 404 for this route. Clients show "Not checked by this version".
 
 ## List runtimes
 

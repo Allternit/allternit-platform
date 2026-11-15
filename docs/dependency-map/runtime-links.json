@@ -648,6 +648,19 @@
       "label": "run_code",
       "kind": "module",
       "path": "allternit/cmd/gizzi-code/src/runtime/tools/builtins/run_code.ts"
+    },
+    {
+      "id": "external:freeweights",
+      "label": "Freeweights (open-weights catalog)",
+      "kind": "external",
+      "url": "https://freeweights.allternit.com",
+      "path": "https://freeweights.allternit.com"
+    },
+    {
+      "id": "allternit/services/model-source",
+      "label": "model-source (verified model downloads)",
+      "kind": "crate",
+      "path": "allternit/services/model-source"
     }
   ],
   "edges": [
@@ -1489,6 +1502,100 @@
         "allternit/cmd/gizzi-code/src/runtime/integrations/cli-bridge/results.ts",
         "allternit/cmd/gizzi-code/src/runtime/session/processor.ts",
         "allternit/cmd/gizzi-code/test/cli-bridge/cli-bridge-run-code.test.ts"
+      ]
+    },
+    {
+      "source": "allternit/services/model-source",
+      "target": "external:freeweights",
+      "kind": "HTTPS: catalog, signed manifests and resolve, then the publisher on fallback",
+      "evidence": [
+        "allternit/services/model-source/src/lib.rs",
+        "allternit/contracts/model-source/README.md"
+      ]
+    },
+    {
+      "source": "allternit/services/local-engine",
+      "target": "allternit/services/model-source",
+      "kind": "in-process call: resolve and fetch_verified for every model download",
+      "evidence": [
+        "allternit/services/local-engine/src/download",
+        "allternit/services/model-source/src/lib.rs"
+      ]
+    },
+    {
+      "source": "allternit/services/voice",
+      "target": "allternit/services/model-source",
+      "kind": "in-process call: voice pack downloads (state pinned)",
+      "evidence": [
+        "allternit/services/model-source/src/lib.rs"
+      ]
+    },
+    {
+      "source": "allternit/cmd/allternit-api",
+      "target": "allternit/services/model-source",
+      "kind": "in-process call: Ollama pull and sidecar install verification",
+      "evidence": [
+        "allternit/cmd/allternit-api/src/provider_routes.rs",
+        "allternit/services/model-source/src/lib.rs"
+      ]
+    },
+    {
+      "source": "allternit/services/local-engine",
+      "target": "external:freeweights",
+      "kind": "HTTPS: Freeweights catalog and Worker, then the publisher (ALLTERNIT_FREEWEIGHTS_URL overrides the base)",
+      "evidence": [
+        "allternit/services/local-engine/src/download",
+        "allternit/contracts/model-source/README.md"
+      ]
+    },
+    {
+      "source": "allternit/cmd/allternit-api",
+      "target": "external:freeweights",
+      "kind": "HTTPS: Freeweights annotations on Hugging Face search, cached 5 minutes",
+      "evidence": [
+        "allternit/cmd/allternit-api/src/provider_routes.rs"
+      ]
+    },
+    {
+      "source": "allternit/cmd/gizzi-code/src/runtime/sidecar",
+      "target": "external:freeweights",
+      "kind": "HTTPS: Freeweights catalog badge on sidecar search and pull verification",
+      "evidence": [
+        "allternit/cmd/gizzi-code/src/cli/commands/models.ts",
+        "allternit/cmd/gizzi-code/src/runtime/sidecar"
+      ]
+    },
+    {
+      "source": "allternit/services/status",
+      "target": "external:freeweights",
+      "kind": "HTTPS probes: Freeweights component (4 probes)",
+      "evidence": [
+        "allternit/services/status/contract/targets.json"
+      ]
+    },
+    {
+      "source": "allternit-ai/src/views/model-lab",
+      "target": "external:freeweights",
+      "kind": "HTTPS: Freeweights catalog search and model details (Freeweights Studio)",
+      "evidence": [
+        "allternit-ai/src/views/model-lab"
+      ]
+    },
+    {
+      "source": "allternit/surfaces/allternit-mobile/ios",
+      "target": "external:freeweights",
+      "kind": "HTTPS: Freeweights catalog and model details on the Models screen",
+      "evidence": [
+        "allternit/surfaces/allternit-mobile/ios/Features/Models/ModelsTabView.swift"
+      ]
+    },
+    {
+      "source": "allternit/surfaces/allternit-mobile/ios",
+      "target": "allternit/cmd/allternit-api",
+      "kind": "authenticated HTTP via cloud relay: POST /api/local-engine/models/download and GET /models (Send to computer, then poll)",
+      "evidence": [
+        "allternit/surfaces/allternit-mobile/ios/Features/Models/ModelsTabView.swift",
+        "allternit/cmd/allternit-api/src/local_engine_routes.rs"
       ]
     }
   ]
