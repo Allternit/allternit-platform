@@ -217,6 +217,12 @@ async fn chat_completions_attributed(
     if is_person_only_model(&request.model) {
         return plan_turn(state, &auth.user.user_id, request, &attribution).await;
     }
+    // A Clerk session (web/iOS composer) may only run the person's own plans.
+    if auth.user.token_id == crate::auth::middleware::CLERK_SESSION_TOKEN_ID {
+        return Err(ApiError::Forbidden(
+            "Use an Allternit API key for this model; a signed-in session can only chat with your own plans.".to_string(),
+        ));
+    }
 
     if !state.model_router.is_enabled() {
         return Err(ApiError::ServiceUnavailable(
