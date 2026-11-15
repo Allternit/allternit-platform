@@ -679,13 +679,16 @@ struct ChatLaunchGreeting: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @MainActor private static var cachedTitle: String?
+    /// The day + time-of-day bucket the cached title was made in; a new one rebuilds it.
+    @MainActor private static var cachedBucket: String?
     @MainActor private static var didAnimate = false
 
     @MainActor
     private static func sessionTitle() -> String {
-        if let cachedTitle { return cachedTitle }
-        let name = AuthManager.shared.firstName
         let now = Date()
+        let bucket = titleBucket(now)
+        if let cachedTitle, cachedBucket == bucket { return cachedTitle }
+        let name = AuthManager.shared.firstName
         let weekday = now.formatted(.dateTime.weekday(.wide))
         let hour = Calendar.current.component(.hour, from: now)
         let timeOfDay = hour < 5 ? "Up late" : hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening"
@@ -701,7 +704,16 @@ struct ChatLaunchGreeting: View {
         ]
         let picked = pool.randomElement() ?? "How can I help you today?"
         cachedTitle = picked
+        cachedBucket = bucket
         return picked
+    }
+
+    /// Date + time-of-day bucket (night / morning / afternoon / evening).
+    static func titleBucket(_ date: Date, calendar: Calendar = .current) -> String {
+        let hour = calendar.component(.hour, from: date)
+        let part = hour < 5 ? "night" : hour < 12 ? "morning" : hour < 18 ? "afternoon" : "evening"
+        let day = calendar.dateComponents([.year, .month, .day], from: date)
+        return "\(day.year ?? 0)-\(day.month ?? 0)-\(day.day ?? 0)-\(part)"
     }
 
     var body: some View {
