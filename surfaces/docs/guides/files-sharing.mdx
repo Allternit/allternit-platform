@@ -9,12 +9,17 @@ Sharing is part of the Files drive and rolls out behind the same account setting
 
 ## Make a link
 
-1. Open the folder or file in the Files tab.
-2. Choose Share.
-3. Pick a role, an expiry, and whether to ask for a passcode.
-4. Copy the link and send it yourself. Allternit does not send it for you.
+1. Open the folder or file in the Files tab and choose Share. One form opens.
+2. Optional: type a guest email, or several. Allternit then sends the invite. With no email, you get a link to send yourself.
+3. Pick what they can do (the role), when access ends (24 hours, 7 days, 30 days or until revoked), and whether to require a passcode. A passcode is 4 to 64 characters. You tell it to the guest yourself. It is not in the link or the invite.
+4. Choose whether the guest may wake your computer. It is off by default.
+5. Choose Create link, or Send invite when you typed an email, then Copy link.
 
-You can only share a folder that has sharing turned on. The Shared folder has it on by default. Folders added from another device start with it off.
+A box under the form, What this means, says in plain words what the link allows before you create it. A single file has no Upload only role, because there is nothing to upload into.
+
+**Let an agent process files in this folder** sits in the same form but is not part of the link. It changes the folder's setting for everyone, not just this link. Files a guest uploads are untrusted: each one waits for your approval unless you set a rule.
+
+You can only share a folder that has sharing turned on. If it is off, the form shows Allow sharing. A protected folder cannot be shared. The Shared folder has sharing on by default. Folders added from another device start with it off.
 
 ## Roles
 
@@ -27,29 +32,48 @@ You can only share a folder that has sharing turned on. The Shared folder has it
 
 A guest sees only the one folder or file you shared. They cannot reach the rest of the computer.
 
-## Passcode and expiry
+## What the guest sees
 
-A passcode is optional. When you set one, the guest enters it on the link page before anything opens. A wrong passcode is refused, and repeated tries are rate limited.
+A guest opens the link at `ai.allternit.com/s/` followed by the link token. They do not need an account.
 
-A link expires at the time you choose. An expired link shows a page that says so. A guest session lasts at most one hour and renews while the link is valid.
+- **Passcode.** If you set one, the page asks for it before anything opens. A wrong passcode shows "That passcode isn't right", and too many tries show "Too many tries. Wait a minute, then try again."
+- **Expired or revoked.** An expired link shows "This link has expired". A revoked link shows "This link was turned off". A link that was copied wrong shows "This link doesn't work".
+- **Sleeping computer.** The page says the computer is asleep and shows the last saved list. Downloads work when it is awake. If you allowed guest wake, a Wake it button appears. If not, the guest is told to try again later.
+- **Upload only.** The guest sees a drop area and no file list. Each file shows Sending, then Sent. If the computer sleeps, it shows "Sent, waiting for the computer". The file is safe in your storage and moves to Inbox when the computer wakes.
+- **Long visits.** A guest session lasts one hour. The page renews it a minute before it ends, so a long visit or a big download keeps working without asking for the passcode again.
 
-## Computers that are asleep
+## Your links: Files tab and dashboard
 
-A guest does not wake your computer, unless you allowed it on that share. Waking a cloud computer bills you, so it is off by default.
+In the Files tab, the Versions, Trash and Sharing tabs sit next to Files. Sharing lists your links with their role, end date and guest count.
 
-- Guests can open the saved list of names while the computer sleeps.
-- An upload-only guest can still drop files. They are held in your own storage bucket and move to Inbox the next time the computer wakes.
-- If you turned on guest wake, a guest who opens a file wakes the computer, and you pay the awake rate.
+Each link has Copy link and Revoke. Revoke takes two clicks: the first shows Keep and Revoke link, and the second turns the link off. Revoked and expired links move under Show ended links.
+
+The sharing dashboard has three tabs.
+
+- **Sharing.** Every link on this computer.
+- **Devices.** Whether the computer is awake, asleep or offline, when it may be woken (Ask first, Automatically or Never), storage by disk and folder, and replicas.
+- **Audit.** Every time a guest opened a link, listed, downloaded or uploaded, including what was refused.
+
+## Versions and trash
+
+Select a file in Files and choose Versions to see its earlier versions. Restore puts one back as the current file, and the version it replaced is kept too. The folder's setting decides how many versions are kept and for how long.
+
+Trash lists deleted files with who deleted them and how many days are left. Restore brings a file back. If another file now has its name, both are kept and the restored one gets a new name. The page tells you the name.
+
+If the computer is asleep, Versions and Trash show a Wake card instead of the list, because they need the computer awake.
+
+Two limits for now:
+
+- You cannot download an old version. You can only restore it.
+- You cannot empty the trash. Files leave it when their days run out.
 
 ## Revoke access
 
-You can revoke a whole share, or one guest, or one device from the sharing page. Revoking takes effect on the guest's next request. A page that was already open stops working the next time it asks for a file, and no new files are served.
-
-The link page then says the share was revoked.
+Revoking takes effect on the guest's next request. A page that was already open stops working the next time it asks for a file, and no new files are served. The link page then says the link was turned off. Revoke from the share dialog, the Sharing tab or the dashboard.
 
 ## See who opened what
 
-Each share keeps an access list: who opened it, which file, when, and whether it was allowed or denied. You can see it from the share. It records denied tries as well.
+The dashboard Audit tab lists guest activity: who opened the link, which file, when, and whether it was allowed or denied. Denied tries are recorded too.
 
 ## What sharing does not do
 

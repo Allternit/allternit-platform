@@ -4785,7 +4785,16 @@
         "allternit/cmd/allternit-cloud-api/src/routes/runtime_relay.rs",
         "allternit/surfaces/docs/guides/files-drive.mdx",
         "allternit/surfaces/docs/guides/files-sharing.mdx",
-        "allternit/surfaces/docs/api/files-drive.mdx"
+        "allternit/surfaces/docs/api/files-drive.mdx",
+        "allternit-ai/src/components/computers/files/FilesShareDialog.tsx",
+        "allternit-ai/src/components/computers/files/FilesShareRow.tsx",
+        "allternit-ai/src/components/computers/files/FilesHistory.tsx",
+        "allternit-ai/src/components/computers/files/FilesDashboard.tsx",
+        "allternit-ai/src/components/computers/files/FilesGuestView.tsx",
+        "allternit-ai/src/components/computers/files/useFilesShares.ts",
+        "allternit-ai/src/lib/files-drive/guest.ts",
+        "allternit-ai/src/lib/files-drive/sharing.ts",
+        "allternit-ai/src/pages/FilesGuestPage.tsx"
       ],
       "decisions": [
         {

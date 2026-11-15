@@ -190,6 +190,8 @@ The computer ID is the cloud-api `computer_id`.
 
 Guests send `Authorization: Files-Guest` followed by a capability token. See the [sharing guide](/guides/files-sharing).
 
+The guest page at `ai.allternit.com/s/` followed by the link token calls summary first, then redeem with the passcode when `passcode_required` comes back. It sends `Authorization: Files-Guest` on the v2 routes and redeems again about a minute before the token lapses (tokens last one hour), so a long visit does not ask for the passcode twice. Error codes it handles: `passcode_required`, `passcode_invalid`, `rate_limited`, `share_expired`, `share_revoked`, `not_found`, `guest_wake_not_allowed`. The owner's share dialog creates a share with `role`, optional `expires_at`, `passcode`, `invite_emails` and `guest_wake`. The "let an agent process files" switch is not part of the share. It updates the root policy field `agent_process`.
+
 ### Capability tokens
 
 Wake tickets and guest tokens share one format: a prefix, the claims as base64url JSON, and an Ed25519 signature, joined by dots. The prefix is `awt1` for a wake ticket and `fgt1` for a guest token. cloud-api signs them. Runtimes fetch public keys from `GET /api/v1/computer-files/token-keys` and verify offline.
@@ -220,6 +222,8 @@ Two checks apply to a guest. The gateway checks the token and whether the share 
 ## Versions and trash
 
 Each root keeps versions by count and age. `keep_days` counts from the time a version was replaced, and 0 means no limit. Delete moves to trash unless `permanent` is set. `trash_days: 0` deletes at once. A write whose `base_rev` names a file that is now gone creates it with `keep_both`, and returns `not_found` with `fail` or `replace`.
+
+The web Files tab lists versions per file and trash per root, and restores either. A restore into a taken name returns the item under a new name. There is no route yet to download an old version or to empty the trash.
 
 ## Errors
 
