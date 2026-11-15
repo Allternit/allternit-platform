@@ -154,6 +154,11 @@ The result is a `guard-report` artifact in your account. Sending the same
 artifact again adds a new version. It is private until you share it from
 Allternit. See [`guard-report` in the Artifacts API](/api/artifacts-v2#guard-report-kind).
 
+In Allternit, code blocks in a report keep their file path and language, and
+fix-draft diffs show added and removed lines in color. On the web, the phone
+layout and the iOS app, the report opens in the same viewer. Copying a report
+to Docs keeps code as fenced code blocks (`diff` for fix drafts).
+
 ```sh
 allternit-guard artifacts share ARTIFACT_ID
 allternit-guard artifacts share ARTIFACT_ID --yes
