@@ -45,7 +45,7 @@ https://api.allternit.com/api/local-studio
     Browse and search the [Freeweights](/tools/freeweights) catalog, with badges for source, license, redistribution and size, plus hardware-fit estimates. Entries marked "From the publisher" link out and have no pull button. Repos Freeweights does not list are labeled "Not in Freeweights". Unsloth guides are here too.
   </Card>
   <Card title="Train" icon="/icons/chip.svg">
-    Fine-tune, export, merge, and evaluate open-weights models using job templates and a live job monitor.
+    Fine-tune a hosted Freeweights model on your computer and follow the job log.
   </Card>
   <Card title="Studio" icon="/icons/chip.svg">
     Connect to a Local Studio controller, view GPUs and usage, and manage serving recipes.
@@ -62,12 +62,46 @@ https://api.allternit.com/api/local-studio
 
 | Tab | Purpose |
 |---|---|
-| **Engine** | Health, status, cached models, active runtimes, and one-click model operations. |
+| **Engine** | Health, status, cached models, active runtimes, and one-click model operations. On the web and the PWA it says there is no model engine on the device: the engine runs in Desktop or on a connected computer. |
 | **Catalog** | Search the Freeweights catalog and read guides. The grid shows 48 entries at a time. After a pull, the row shows the verification result. |
-| **Train** | Create training/export/merge/evaluation jobs and track their progress. |
+| **Train** | Fine-tune a model on a computer you own and follow the job. See [Training](#training). |
 | **Studio** | Native Local Studio controller integration for recipes and serving. |
 | **Cloud** | Save and test cloud endpoint credentials for deployed models. |
 | **Playground** | Send messages to a running runtime and inspect token throughput. |
+
+## Where to find it
+
+| Surface | Location |
+|---|---|
+| Desktop | Rail, More, Freeweights Studio |
+| ai.allternit.com | More, Freeweights Studio |
+| Phone layout and m.allternit.com PWA | Drawer, More, Freeweights Studio. The phone model picker also has a Freeweights chip. |
+| iPhone | Models screen. It lists training jobs with status, log tail and cancel. You create jobs on Desktop or the web. |
+| Gizzi Code | `gizzi studio`. See [Fine-tune with gizzi studio](/cli/studio). |
+
+Studio opens on the Catalog tab, on the Freeweights catalog. Search runs as you type. Models show the publisher's logo.
+
+## Training
+
+<Warning>
+The Train tab on Desktop, the web and the PWA is arriving with the next web update. The API, `gizzi studio` and the iOS job list below work now.
+</Warning>
+
+Training runs on a computer you own, not on the device you are holding. Engines are listed with their install state.
+
+1. Pick an engine. The default is **Allternit Tune** (Apache-2.0).
+2. Pick a base model from the hosted Freeweights catalog.
+3. Pick a dataset: a dataset repo, or a path on the computer.
+4. Pick a method: `lora`, `qlora`, `dpo` or `full`.
+5. Start the job. One job runs per computer at a time.
+6. Follow the log. Cancel the job if you need to stop it.
+7. When the job succeeds, register an output (adapter, merged model or GGUF) into the local model cache. The Local Engine then lists it as a model.
+
+The web and the PWA need a connected computer. Desktop uses its own computer. On a connected computer, Desktop bundles Allternit Tune and installs it on first use.
+
+Hardware: Apple Silicon, or NVIDIA on Linux. Windows, AMD, Intel and CPU-only computers are refused with the reason (`hardware_not_supported`). Allternit Tune uses the TRL and PEFT torch backend on both. The MLX backend is not available yet. Rented GPUs and publishing a result to Freeweights are not available yet.
+
+If you pin the base model with its manifest hash and the signed Freeweights manifest differs, the job is refused with `manifest_mismatch`. Job outputs are kept on the computer after the job ends.
 
 ## Key concepts
 
@@ -115,13 +149,9 @@ The Cloud tab stores endpoint credentials locally in the browser and runs a ligh
 
 ## Endpoints / commands
 
-### Freeweights Studio jobs
+### Freeweights Studio training
 
-| Method | Path | Description |
-|---|---|---|
-| `GET` | `/api/model-lab/jobs` | List all jobs |
-| `POST` | `/api/model-lab/jobs` | Create a new job |
-| `GET` | `/api/model-lab/jobs/:id` | Fetch a single job |
+Training jobs are served by the Studio host on each computer, under `/api/v1/studio`. See [Studio API](/api/studio). The old `/api/model-lab/jobs` and `/api/v1/model-training` routes do not exist.
 
 ### Local Engine
 
@@ -150,38 +180,9 @@ The Cloud tab stores endpoint credentials locally in the browser and runs a ligh
 
 ## JSON request / response examples
 
-### Create a training job
+### Start a training job
 
-```bash
-curl -X POST https://api.allternit.com/api/model-lab/jobs \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model_id": "unsloth/Meta-Llama-3.1-8B-Instruct",
-    "type": "training",
-    "metadata": {
-      "dataset": "my-dataset.jsonl",
-      "lora_rank": 16,
-      "epochs": 3,
-      "learning_rate": 0.0002,
-      "quantization": "q4_k_m",
-      "max_seq_length": 2048,
-      "description": "SFT fine-tune via Unsloth"
-    }
-  }'
-```
-
-Response:
-
-```json
-{
-  "id": "job_0192a3b4",
-  "model_id": "unsloth/Meta-Llama-3.1-8B-Instruct",
-  "type": "training",
-  "status": "pending",
-  "created_at": "2026-08-17T18:00:00Z"
-}
-```
+The request body is job spec v1. A full example, the job states and the error codes are on [Studio API](/api/studio).
 
 ### Launch a local runtime
 
@@ -253,6 +254,8 @@ data: [DONE]
 
 ## Related links
 
+- [Studio API](/api/studio)
+- [Fine-tune with gizzi studio](/cli/studio)
 - [Local Engine API](/api/local-engine)
 - [Platform](/surfaces/platform)
 - [Agent Studio](/surfaces/agent-studio)

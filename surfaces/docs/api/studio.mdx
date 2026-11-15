@@ -1,0 +1,145 @@
+---
+title: Studio API
+description: Run Freeweights Studio fine-tune jobs on a computer through its Allternit API
+---
+
+The Studio host runs inside each computer's Allternit API under `/api/v1/studio`. It lists training engines, runs fine-tune jobs, reports progress, and registers the results as local models. One job runs per computer at a time. Calls need a signed-in caller. Errors are always `{ "error": "<code>", "message": "<text>" }`.
+
+From the terminal, use [`gizzi studio`](/cli/studio). For the user flow, see [Freeweights Studio](/surfaces/model-lab#training). The contract lives in `services/studio-spec` in the platform repository: `openapi/studio-api.yaml` and `openapi/engine-api.yaml`.
+
+## Routes
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/engines` | List engines and their install state |
+| `POST` | `/engines/:id/install` | Install an engine. Safe to call again. |
+| `POST` | `/jobs` | Create a job from a job spec v1 |
+| `GET` | `/jobs` | List jobs, newest first |
+| `GET` | `/jobs/:id` | One job |
+| `GET` | `/jobs/:id/events?after=seq` | Events after a sequence number |
+| `POST` | `/jobs/:id/cancel` | Cancel a job that has not finished |
+| `GET` | `/jobs/:id/outputs` | Files the job produced |
+| `POST` | `/jobs/:id/outputs/register` | Register one output as a local model |
+
+## Engines
+
+`GET /engines` returns `{ "engines": [...] }`. Each engine has `id`, `name`, `license`, `version`, `methods` (`lora`, `qlora`, `full`, `dpo`), `hardware` (`apple-silicon`, `cuda-linux`), `install_state` (`not_installed`, `installing`, `installed`, `failed`) and `backends`. The default engine is `allternit-tune` (Apache-2.0). Its `torch` backend is available. Its `mlx` backend has status `pending_decision`, which means not available yet.
+
+`POST /engines/:id/install` answers `202`. A build that cannot install the engine answers `501 not_available`.
+
+## Create a job
+
+```bash
+curl -X POST "$ALLTERNIT_API_URL/api/v1/studio/jobs" \
+  -H "Authorization: Bearer $ALLTERNIT_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "spec_version": 1,
+    "engine": "allternit-tune",
+    "base": { "repo": "org/base-model", "manifest_sha256": "<64 hex characters>" },
+    "dataset": { "path": "/Users/me/data/train.jsonl", "format": "jsonl" },
+    "method": "lora",
+    "params": {},
+    "resources": { "place": "local" },
+    "outputs": { "adapter": true }
+  }'
+```
+
+The job starts in state `queued` (`201`). The spec fields are:
+
+| Field | Notes |
+|---|---|
+| `spec_version` | Must be `1`. |
+| `engine`, `engine_version` | Engine id. The version is optional. |
+| `base.repo`, `base.revision` | A hosted Freeweights model. |
+| `base.manifest_sha256` | Optional. The sha256 of the signed Freeweights manifest for the base model. The host refuses the job if the model is not fetched with exactly that manifest. |
+| `dataset` | Exactly one of `repo` or `path`, plus `format` and an optional `revision`. |
+| `method` | `lora`, `qlora`, `full` or `dpo`. |
+| `params` | Engine parameters. |
+| `resources` | `place` is `local`, `paired` or `compute`. Optional `gpu`, `max_hours`, `max_usd`. |
+| `outputs` | `adapter`, `merged`, `gguf` (list of quantizations), `mlx`. |
+| `eval` | Optional `sets` and `baseline`. |
+
+## Job states
+
+`queued`, `preparing`, `running`, `exporting`, `succeeded`, `failed`, `cancelled`. States only move forward. A job also has `created_at`, `updated_at`, `error`, `last_seq` and `outputs`.
+
+## Events
+
+Poll `GET /jobs/:id/events?after=<seq>`. It returns the events with `seq` greater than `after` (default `0`) and the current state:
+
+```json
+{
+  "state": "running",
+  "events": [
+    { "seq": 7, "at": "2026-11-15T18:00:00Z", "kind": "progress", "message": "step 40 of 200", "progress": 0.2 }
+  ]
+}
+```
+
+`kind` is `state`, `log`, `progress`, `output` or `error`. `seq` starts at 1 and increases by 1 per job. Keep the highest `seq` you saw and pass it as `after` on the next poll. Stop when `state` is `succeeded`, `failed` or `cancelled`.
+
+## Outputs
+
+`GET /jobs/:id/outputs` lists `{ kind, path, bytes }` for each output. `kind` is `adapter`, `merged`, `gguf` or `mlx`. Outputs stay on the computer after the job ends.
+
+`POST /jobs/:id/outputs/register` with `{ "kind": "adapter", "name": "optional" }` registers an output with the Local Engine and returns `{ "model_id": "..." }`.
+
+## Error codes
+
+| HTTP | Code | Meaning |
+|---|---|---|
+| 401 | `unauthorized` | No signed-in caller |
+| 404 | `not_found` | No such job |
+| 404 | `unknown_engine` | No such engine |
+| 404 | `no_output` | The job has no output of that kind |
+| 409 | `job_running` | Another job runs on this computer |
+| 409 | `already_finished` | Cancel on a finished job |
+| 409 | `job_not_succeeded` | Register before the job succeeded |
+| 422 | `hardware_not_supported` | This computer cannot train with the engine. Windows, AMD, Intel and CPU-only computers are refused. |
+| 422 | `engine_not_installed` | Install the engine first |
+| 422 | `manifest_mismatch` | `base.manifest_sha256` is not the hash of the signed manifest, the repo has no signed manifest at that revision, or it could not be checked |
+| 422 | `rented_not_available` | `resources.place` is `rented` |
+| 422 | `publish_not_available` | The spec has a `publish` block |
+| 422 | `unknown_method`, `unsupported_spec_version`, `invalid_dataset`, `invalid_spec` | The spec failed its checks |
+| 501 | `not_available` | This build cannot install that engine |
+| 502 | `local_engine_unreachable`, `register_failed` | The Local Engine did not take the output |
+
+A manifest that changes after the job is accepted fails the job while it is preparing, before any file downloads.
+
+## Engine API v1
+
+The host talks to each engine process over loopback. The host picks a free port and a per-launch token, and sends `Authorization: Bearer <token>` on every request. A wrong token returns `401 unauthorized`. The engine runs one job at a time.
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/v1/engine` | Engine identity and capabilities |
+| `POST` | `/v1/jobs` | Start a job from a job spec v1 |
+| `GET` | `/v1/jobs/:id` | One job |
+| `GET` | `/v1/jobs/:id/events?after=seq` | Events after a sequence number |
+| `POST` | `/v1/jobs/:id/cancel` | Cancel a job that has not finished |
+
+The schemas are the same as above.
+
+## Run the fake engine
+
+For client development, `allternit-studio-spec` has a fake engine. It walks a job through `queued`, `preparing`, `running`, `exporting` and `succeeded`, and records events. From the platform repository:
+
+```bash
+cargo run -p allternit-studio-spec --example fake_engine -- 8765 mytoken
+curl -H 'Authorization: Bearer mytoken' http://127.0.0.1:8765/v1/engine
+curl -H 'Authorization: Bearer mytoken' \
+  -d @services/studio-spec/fixtures/lora-valid.json \
+  http://127.0.0.1:8765/v1/jobs
+curl -H 'Authorization: Bearer mytoken' \
+  'http://127.0.0.1:8765/v1/jobs/job_0001/events?after=0'
+```
+
+A second job while one runs returns `409 job_running`. In Rust tests, `allternit_studio_spec::fake_engine::FakeEngine::start(token, step_delay)` binds a free loopback port.
+
+## Related links
+
+- [Freeweights Studio](/surfaces/model-lab)
+- [Fine-tune with gizzi studio](/cli/studio)
+- [Freeweights](/tools/freeweights)
+- [Local Engine API](/api/local-engine)

@@ -700,6 +700,7 @@
                 "pages": [
                   "api/overview",
                   "api/cloud-api",
+                  "api/studio",
                   "api/phone-numbers",
                   "api/phone-invites",
                   "api/people",
