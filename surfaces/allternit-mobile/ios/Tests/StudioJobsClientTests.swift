@@ -33,6 +33,35 @@ final class StudioJobsClientTests: XCTestCase {
     }
 }
 
+final class StudioEngineCardTests: XCTestCase {
+    func testCardWithUnknownHardwareAndFitDecodes() throws {
+        let json = #"{"engines":[{"id":"allternit-tune","name":"Allternit Tune","fit":{"ok":true,"hardware":"quantum-x9","backend":"torch-warp","reason":"r","warning":null,"methods_unavailable":{"dpo":"no"},"outputs_unavailable":{"holo":"no"}},"extra":1},{"id":"old","name":"Old"},{"id":"bad","name":"Bad","fit":{"ok":"maybe","backend":7}}]}"#
+        struct Env: Decodable { let engines: [StudioEngineCard] }
+        let env = try JSONDecoder().decode(Env.self, from: Data(json.utf8))
+        XCTAssertEqual(env.engines[0].fit?.hardware, "quantum-x9")
+        XCTAssertEqual(env.engines[0].fit?.outputsUnavailable?["holo"], "no")
+        XCTAssertNil(env.engines[1].fit)
+        XCTAssertNil(env.engines[2].fit?.backend)
+        XCTAssertEqual(StudioJobsFormat.backendLine(env.engines[0].fit), "Runs with torch-warp")
+        let mac = StudioFit(ok: true, hardware: "apple-silicon", backend: "mlx")
+        XCTAssertEqual(StudioJobsFormat.backendLine(mac), "Runs with MLX on Mac with Apple Silicon")
+        XCTAssertTrue(StudioJobsFormat.isUntested(mac))
+    }
+
+    func testMlxOutputAndUnknownKindDecode() throws {
+        let job = #"{"id":"j","state":"succeeded","spec":{"engine":"e","base":{"repo":"o/m"},"method":"lora","outputs":{"mlx":true}},"created_at":"t"}"#
+        XCTAssertEqual(try JSONDecoder().decode(StudioJob.self, from: Data(job.utf8)).spec.outputs?.mlx, true)
+        let out = try JSONDecoder().decode(StudioJobOutput.self, from: Data(#"{"kind":"mlx","path":"/p"}"#.utf8))
+        XCTAssertEqual(StudioJobsFormat.outputLabel(out.kind), "MLX model")
+        XCTAssertEqual(StudioJobsFormat.outputLabel("zzz"), "zzz")
+    }
+
+    func testRefusalSentencesUseHostReason() {
+        XCTAssertEqual(StudioJobsFormat.sentence(code: "method_not_supported", reason: "QLoRA needs a GPU."), "QLoRA needs a GPU.")
+        XCTAssertEqual(StudioJobsFormat.sentence(code: "backend_not_supported", reason: "backend_not_supported"), "That backend can't be used on your computer. Leave the backend on automatic.")
+    }
+}
+
 final class StudioJobsFormatTests: XCTestCase {
     func testMethodLabels() {
         XCTAssertEqual(StudioJobsFormat.methodLabel("lora"), "LoRA")
