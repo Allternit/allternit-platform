@@ -149,10 +149,10 @@ async function printTurnNumbers(u: { tokPerSec?: number; firstTokenMs?: number; 
   if (bits.length) UI.println(`${style.dim}${bits.join(" · ")}${style.off}`)
 }
 
-async function turn(id: string, history: Array<{ role: "user" | "assistant"; content: string }>): Promise<void> {
+async function turn(id: string, history: Array<{ role: "user" | "assistant"; content: string }>, thinking = true): Promise<void> {
   let reply = ""
   let usage: Parameters<typeof printTurnNumbers>[0] | undefined
-  for await (const ev of streamChat(id, history)) {
+  for await (const ev of streamChat(id, history, undefined, { thinking })) {
     if ("token" in ev) {
       reply += ev.token
       process.stdout.write(ev.token)
@@ -256,7 +256,7 @@ export async function runModel(id: string | undefined, opts: { quant?: string; p
   try {
     if (opts.prompt) {
       history.push({ role: "user", content: opts.prompt })
-      await turn(id, history)
+      await turn(id, history, false) // one-shot: no thinking, so the token count is the reply
       UI.println(`${style.dim}${stopHint}${style.off}`)
       return 0
     }

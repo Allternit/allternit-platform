@@ -363,12 +363,20 @@ export async function* streamChat(
   model: string,
   messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
   signal?: AbortSignal,
+  opts?: { thinking?: boolean },
 ): AsyncGenerator<ChatEvent> {
   const res = await fetch(`${LOCAL_ENGINE_URL}/v1/chat/completions`, {
     method: 'POST',
     signal,
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model, messages, stream: true, stream_options: { include_usage: true } }),
+    // enable_thinking:false is the llama.cpp / MLX chat-template switch (Qwen3 etc.); models without it ignore it.
+    body: JSON.stringify({
+      model,
+      messages,
+      stream: true,
+      stream_options: { include_usage: true },
+      ...(opts?.thinking === false ? { chat_template_kwargs: { enable_thinking: false } } : {}),
+    }),
   })
   if (!res.ok || !res.body) {
     throw new LocalEngineError(`Local Engine ${res.status}: ${await res.text().catch(() => 'chat failed')}`, res.status)
