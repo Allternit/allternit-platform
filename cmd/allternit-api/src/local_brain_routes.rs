@@ -440,6 +440,7 @@ async fn stream_ollama_pull(ollama_url: String, model_tag: String) -> Response {
 
         let mut line_buffer = String::new();
         let mut byte_stream = pull_response.bytes_stream();
+        let mut pull_error: Option<String> = None;
 
         while let Some(next_chunk) = byte_stream.next().await {
             let chunk = match next_chunk {
@@ -463,9 +464,9 @@ async fn stream_ollama_pull(ollama_url: String, model_tag: String) -> Response {
                     continue;
                 }
 
-                match serde_json::from_str::<serde_json::Value>(&line) {
-                    Ok(value) => yield send(value),
-                    Err(_) => {}
+                if let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) {
+                    pull_error = pull_error.or_else(|| ollama_error(&value));
+                    yield send(value);
                 }
             }
         }
@@ -473,11 +474,20 @@ async fn stream_ollama_pull(ollama_url: String, model_tag: String) -> Response {
         let trailing = line_buffer.trim();
         if !trailing.is_empty() {
             if let Ok(value) = serde_json::from_str::<serde_json::Value>(trailing) {
+                pull_error = pull_error.or_else(|| ollama_error(&value));
                 yield send(value);
             }
         }
 
+        // Ollama reports a failed pull as an `{"error": …}` line on a 200 stream.
+        if let Some(error) = pull_error {
+            yield send(json!({ "status": "error", "error": error }));
+            return;
+        }
         yield send(json!({ "status": "success" }));
+        // Final event: how the pulled GGUF was checked. Always sent after a
+        // successful pull, never skipped.
+        yield send(pull_verification_event(&ollama_url, &model_tag).await);
     };
 
     Response::builder()
@@ -673,7 +683,32 @@ async fn install_sidecar_model(
     };
 
     let status = StatusCode::from_u16(upstream.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
-    let stream = upstream.bytes_stream();
+    let fallback_tag = match body.quant_tag.as_deref().map(str::trim).filter(|q| !q.is_empty()) {
+        Some(q) => format!("hf.co/{}:{q}", body.repo_id),
+        None => format!("hf.co/{}", body.repo_id),
+    };
+    let mut upstream_stream = upstream.bytes_stream();
+    // Relay Gizzi's SSE unchanged, then append the same final `verification`
+    // event the Ollama pull stream sends, checked against the sidecar's Ollama.
+    let stream = async_stream::stream! {
+        let mut scan = SseScan::default();
+        while let Some(chunk) = upstream_stream.next().await {
+            match chunk {
+                Ok(bytes) => {
+                    scan.feed(&bytes);
+                    yield Ok::<Bytes, std::io::Error>(bytes);
+                }
+                Err(err) => {
+                    yield Err(std::io::Error::other(err));
+                    return;
+                }
+            }
+        }
+        if let (Some(tag), false) = (scan.success_tag(&fallback_tag), scan.saw_verification) {
+            let event = pull_verification_event(&sidecar_ollama_url(), &tag).await;
+            yield Ok(Bytes::from(format!("data: {}\n\n", event)));
+        }
+    };
     Response::builder()
         .status(status)
         .header("Content-Type", "text/event-stream")
@@ -682,6 +717,217 @@ async fn install_sidecar_model(
         .header("X-Accel-Buffering", "no")
         .body(Body::from_stream(stream))
         .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+}
+
+/// The Gizzi sidecar's own Ollama (cmd/gizzi-code/src/runtime/sidecar:
+/// `ALLTERNIT_SIDECAR_URL`, else 127.0.0.1:11435).
+fn sidecar_ollama_url() -> String {
+    std::env::var("ALLTERNIT_SIDECAR_URL")
+        .ok()
+        .map(|s| s.trim().trim_end_matches('/').to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "http://127.0.0.1:11435".to_string())
+}
+
+/// Watches relayed SSE `data:` lines for the install's success and for a
+/// verification event already sent upstream.
+#[derive(Default)]
+struct SseScan {
+    buffer: String,
+    success: Option<Option<String>>,
+    saw_verification: bool,
+}
+
+impl SseScan {
+    fn feed(&mut self, bytes: &[u8]) {
+        self.buffer.push_str(&String::from_utf8_lossy(bytes));
+        while let Some(i) = self.buffer.find('\n') {
+            let line = self.buffer[..i].trim().to_string();
+            self.buffer.drain(..=i);
+            let Some(data) = line.strip_prefix("data:") else { continue };
+            let Ok(v) = serde_json::from_str::<serde_json::Value>(data.trim()) else { continue };
+            match v.get("status").and_then(|s| s.as_str()) {
+                Some("success") => {
+                    self.success = Some(v.get("tag").and_then(|t| t.as_str()).map(str::to_string))
+                }
+                Some("verification") => self.saw_verification = true,
+                _ => {}
+            }
+        }
+    }
+
+    /// The installed tag when the install succeeded.
+    fn success_tag(&self, fallback: &str) -> Option<String> {
+        self.success
+            .as_ref()
+            .map(|t| t.clone().filter(|t| !t.is_empty()).unwrap_or_else(|| fallback.to_string()))
+    }
+}
+
+// ─── Pull verification (Freeweights manifest vs the Ollama layer digest) ─────
+//
+// Ollama stores each GGUF as a blob named by its sha256, so the model layer
+// digest of an `hf.co/<repo>[:quant]` pull IS the file's sha256. It is
+// compared with the signed Freeweights manifest (contracts/model-source).
+
+fn ollama_error(value: &serde_json::Value) -> Option<String> {
+    value.get("error").and_then(|e| e.as_str()).map(str::to_string)
+}
+
+/// `hf.co/org/repo:Q4_K_M` → `org/repo`. `None` for Ollama library tags.
+fn hf_repo_of_tag(tag: &str) -> Option<String> {
+    let rest = tag
+        .strip_prefix("hf.co/")
+        .or_else(|| tag.strip_prefix("huggingface.co/"))?;
+    let repo = rest.split(':').next().unwrap_or(rest);
+    (repo.split('/').count() == 2 && !repo.contains("..")).then(|| repo.to_string())
+}
+
+/// sha256 of the model layer from `/api/show`'s modelfile `FROM …/sha256-<hex>`.
+fn model_digest_from_modelfile(modelfile: &str) -> Option<String> {
+    modelfile.lines().find_map(|line| {
+        let path = line.trim().strip_prefix("FROM ")?.trim();
+        let hex = path.rsplit("sha256-").next()?;
+        (hex.len() == 64 && hex.bytes().all(|b| b.is_ascii_hexdigit()))
+            .then(|| hex.to_ascii_lowercase())
+    })
+}
+
+/// The manifest GGUF file whose sha256 equals the layer digest.
+fn manifest_file_for_digest<'a>(
+    manifest: &'a allternit_model_source::Manifest,
+    digest: &str,
+) -> Option<&'a allternit_model_source::ManifestFile> {
+    manifest
+        .files
+        .iter()
+        .find(|f| f.sha256.eq_ignore_ascii_case(digest))
+}
+
+async fn ollama_model_digest(ollama_url: &str, tag: &str) -> Result<String, String> {
+    let res = crate::net_client::client()
+        .post(format!("{}/api/show", ollama_url.trim_end_matches('/')))
+        .json(&json!({ "model": tag }))
+        .timeout(std::time::Duration::from_secs(10))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !res.status().is_success() {
+        return Err(format!("Ollama /api/show: HTTP {}", res.status()));
+    }
+    let v: serde_json::Value = res.json().await.map_err(|e| e.to_string())?;
+    v.get("modelfile")
+        .and_then(|m| m.as_str())
+        .and_then(model_digest_from_modelfile)
+        .ok_or_else(|| "no model layer digest in Ollama's modelfile".to_string())
+}
+
+fn now_utc() -> String {
+    chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
+}
+
+/// Build the event from the pieces (no I/O; unit-tested).
+fn verification_event(
+    tag: &str,
+    repo: Option<&str>,
+    digest: Result<&str, &str>,
+    manifest: Option<Result<&allternit_model_source::Manifest, &str>>,
+    fw_base: &str,
+) -> serde_json::Value {
+    use allternit_model_source::{SourceKind, VerificationState};
+    let unverified = |reason: String, source_url: String| {
+        json!({
+            "status": "verification",
+            "tag": tag,
+            "repo": repo,
+            "state": VerificationState::Unverified,
+            "reason": reason,
+            "sha256": digest.ok(),
+            "verification": {
+                "state": VerificationState::Unverified,
+                "source_used": SourceKind::Publisher,
+                "source_url": source_url,
+                "checked_at": now_utc(),
+            },
+        })
+    };
+    let Some(repo) = repo else {
+        return unverified(
+            "pulled from the Ollama library; Freeweights covers Hugging Face repos only".into(),
+            "https://registry.ollama.ai/".into(),
+        );
+    };
+    let hf_url = format!("https://huggingface.co/{repo}/resolve/main/");
+    let digest = match digest {
+        Ok(d) => d,
+        Err(e) => return unverified(format!("could not read the pulled layer digest: {e}"), hf_url),
+    };
+    match manifest {
+        None => unverified(format!("{repo} is not listed in the Freeweights catalog"), hf_url),
+        Some(Err(reason)) => unverified(reason.to_string(), hf_url),
+        Some(Ok(m)) => match manifest_file_for_digest(m, digest) {
+            Some(file) => json!({
+                "status": "verification",
+                "tag": tag,
+                "repo": repo,
+                "state": VerificationState::FreeweightsSigned,
+                "file": file.path,
+                "sha256": digest,
+                "verification": {
+                    "state": VerificationState::FreeweightsSigned,
+                    "source_used": SourceKind::Publisher,
+                    "source_url": hf_url,
+                    "manifest_commit": m.upstream.commit,
+                    "checked_at": now_utc(),
+                },
+                "detail_url": format!("{fw_base}/{}/{repo}/", m.section),
+            }),
+            None => {
+                let mut ev = unverified(
+                    format!(
+                        "the pulled file (sha256 {digest}) is not in the signed Freeweights manifest at commit {}; the repo may have changed since it was pinned",
+                        m.upstream.commit
+                    ),
+                    hf_url,
+                );
+                ev["mismatch"] = json!(true);
+                ev
+            }
+        },
+    }
+}
+
+/// Final `verification` event for an Ollama pull of `tag`.
+async fn pull_verification_event(ollama_url: &str, tag: &str) -> serde_json::Value {
+    let repo = hf_repo_of_tag(tag);
+    let fw_base = crate::provider_routes::freeweights::base_url();
+    let Some(repo_ref) = repo.as_deref() else {
+        return verification_event(tag, None, Err("library model"), None, &fw_base);
+    };
+    let digest = ollama_model_digest(ollama_url, tag).await;
+    let fetched = match allternit_model_source::Client::new() {
+        Ok(c) => c.fetch_manifest(repo_ref).await,
+        Err(e) => Err(e),
+    };
+    // Ok(Ok) = signed manifest; Ok(Err) = unreachable / not listed; Err = bad manifest.
+    let (manifest, reason) = match fetched {
+        Ok(Ok(m)) => (Some(m), None),
+        Ok(Err(reason)) => (None, Some(reason)),
+        Err(e) => (None, Some(format!("the Freeweights manifest failed verification: {e}"))),
+    };
+    let manifest_arg = match (&manifest, &reason) {
+        (Some(m), _) => Some(Ok(m)),
+        (None, Some(r)) if r.contains("not in the Freeweights catalog") => None,
+        (None, Some(r)) => Some(Err(r.as_str())),
+        (None, None) => None,
+    };
+    verification_event(
+        tag,
+        Some(repo_ref),
+        digest.as_deref().map_err(String::as_str),
+        manifest_arg,
+        &fw_base,
+    )
 }
 
 async fn remove_sidecar_model(
@@ -713,5 +959,65 @@ async fn remove_sidecar_model(
             )
                 .into_response()
         }
+    }
+}
+
+#[cfg(test)]
+mod pull_verification_tests {
+    use super::*;
+
+    const DIGEST: &str = "59f9ae8b4372107ae79044278a4406bdfe8f8861fe599aa5848515f0d072be38";
+
+    fn manifest() -> allternit_model_source::Manifest {
+        serde_json::from_value(json!({
+            "schema_version": 1,
+            "id": "org/model-GGUF",
+            "section": "alt.freeweights.qwen",
+            "upstream": {"host": "huggingface.co", "repo": "org/model-GGUF", "commit": "d4af3be5701549435e0770d625f79dd2def1358f", "url": "https://huggingface.co/org/model-GGUF/tree/d4af3be5701549435e0770d625f79dd2def1358f"},
+            "license": {"id": "MIT", "name": "MIT", "file_path": null, "file_sha256": null, "redistribution": "yes"},
+            "files": [
+                {"path": "model-Q4_K_M.gguf", "size": 10, "sha256": DIGEST.to_ascii_uppercase(), "lfs": true},
+                {"path": "model-Q8_0.gguf", "size": 10, "sha256": "0".repeat(64), "lfs": true}
+            ],
+            "sources": [],
+            "created_at": "2026-11-14T00:00:00Z",
+            "generator": "test"
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn layer_digest_comes_from_the_modelfile() {
+        let mf = "# Modelfile\nFROM /Users/x/.ollama/models/blobs/sha256-59F9AE8B4372107AE79044278A4406BDFE8F8861FE599AA5848515F0D072BE38\nTEMPLATE x";
+        assert_eq!(model_digest_from_modelfile(mf).as_deref(), Some(DIGEST));
+        assert_eq!(model_digest_from_modelfile("FROM llama3.2"), None);
+        assert_eq!(hf_repo_of_tag("hf.co/org/model-GGUF:Q4_K_M").as_deref(), Some("org/model-GGUF"));
+        assert_eq!(hf_repo_of_tag("llama3.2:3b"), None);
+    }
+
+    #[test]
+    fn digest_matching_a_manifest_file_is_freeweights_signed() {
+        let m = manifest();
+        let ev = verification_event("hf.co/org/model-GGUF:Q4_K_M", Some("org/model-GGUF"), Ok(DIGEST), Some(Ok(&m)), "https://fw");
+        assert_eq!(ev["status"], "verification");
+        assert_eq!(ev["state"], "freeweights_signed");
+        assert_eq!(ev["file"], "model-Q4_K_M.gguf");
+        assert_eq!(ev["verification"]["manifest_commit"], "d4af3be5701549435e0770d625f79dd2def1358f");
+        assert_eq!(ev["detail_url"], "https://fw/alt.freeweights.qwen/org/model-GGUF/");
+    }
+
+    #[test]
+    fn other_outcomes_are_unverified_with_a_reason() {
+        let m = manifest();
+        let other = "1".repeat(64);
+        let changed = verification_event("t", Some("org/model-GGUF"), Ok(&other), Some(Ok(&m)), "https://fw");
+        assert_eq!(changed["state"], "unverified");
+        assert_eq!(changed["mismatch"], true);
+        let unlisted = verification_event("t", Some("org/x"), Ok(DIGEST), None, "https://fw");
+        assert_eq!(unlisted["state"], "unverified");
+        assert!(unlisted["reason"].as_str().unwrap().contains("not listed"));
+        let no_digest = verification_event("t", Some("org/model-GGUF"), Err("show failed"), Some(Ok(&m)), "https://fw");
+        assert_eq!(no_digest["state"], "unverified");
+        assert_eq!(no_digest["verification"]["state"], "unverified");
     }
 }

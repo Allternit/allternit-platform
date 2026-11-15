@@ -31,6 +31,7 @@ pub fn spawn_download_task(
     repo_id: String,
     revision: String,
     quantization: Option<String>,
+    allow_unverified: bool,
     models_dir: PathBuf,
 ) {
     tokio::spawn(async move {
@@ -40,6 +41,7 @@ pub fn spawn_download_task(
             &repo_id,
             &revision,
             quantization.as_deref(),
+            allow_unverified,
             &models_dir,
         )
         .await
@@ -95,6 +97,7 @@ async fn run_download(
     repo_id: &str,
     revision: &str,
     quantization: Option<&str>,
+    allow_unverified: bool,
     models_dir: &Path,
 ) -> Result<(), DownloadError> {
     info!(%model_id, %repo_id, %revision, "starting verified model download");
@@ -109,8 +112,12 @@ async fn run_download(
     let total_bytes: u64 = files.iter().filter_map(|(_, e)| e.size).sum();
     store.update_progress(model_id, 0, total_bytes).await;
 
-    // No pins and no `allow_unverified`: a file without a hash fails the download.
-    let opts = FetchOptions::default();
+    // No pins. Unless the caller set `allow_unverified`, a file with no hash
+    // anywhere fails the download.
+    let opts = FetchOptions {
+        allow_unverified,
+        ..Default::default()
+    };
     let mut done_bytes = 0u64;
     let mut checked = Vec::with_capacity(files.len());
     for (path, expected) in &files {

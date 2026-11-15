@@ -217,6 +217,7 @@ dependencies = [
  "allternit-factory-engine",
  "allternit-firecracker-driver",
  "allternit-gc-agents",
+ "allternit-model-source",
  "allternit-session-manager",
  "allternitos-cloud-contracts",
  "anyhow",
@@ -15377,6 +15378,7 @@ checksum = "051eb1abcf10076295e815102942cc58f9d5e3b4560e46e53c21e8ff6f3af7b1"
 name = "voice-service"
 version = "0.1.0"
 dependencies = [
+ "allternit-model-source",
  "anyhow",
  "axum",
  "bzip2 0.4.4",

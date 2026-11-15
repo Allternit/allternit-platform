@@ -63,6 +63,8 @@ allternit-gc-agents = { workspace = true }
 # Internal crates - Execution
 allternit-driver-interface = { path = "../../platform/contracts/driver-interface" }
 allternit-session-manager = { path = "../../services/session-manager" }
+# Freeweights catalog + signed manifests (contracts/model-source)
+allternit-model-source = { path = "../../services/model-source" }
 allternit-computer-cloud = { path = "../../cmd/allternit-computer-cloud" }
 allternitos-cloud-contracts = { workspace = true }
 

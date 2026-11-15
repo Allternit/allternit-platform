@@ -25,6 +25,11 @@ pub struct DownloadRequest {
     #[serde(default = "default_revision")]
     pub revision: String,
     pub quantization: Option<String>,
+    /// Let files with no hash anywhere (no manifest entry, no publisher
+    /// hash) download with state `unverified`. Off by default: such a file
+    /// fails the download.
+    #[serde(default)]
+    pub allow_unverified: bool,
 }
 
 fn default_revision() -> String {
@@ -60,7 +65,14 @@ impl From<ImportSource> for ModelSource {
 /// Request body for `POST /models/verify`.
 #[derive(Debug, Deserialize)]
 pub struct VerifyRequest {
+    /// `repo` or `repo_id` (same field).
+    #[serde(alias = "repo_id")]
     pub repo: String,
+    /// Accepted for symmetry with `/models/download`; every local file of the
+    /// repo is checked regardless.
+    #[serde(default)]
+    #[allow(dead_code)]
+    pub quantization: Option<String>,
     /// Defaults to the tracked download's revision, else the catalog's pin / `main`.
     pub revision: Option<String>,
 }
@@ -299,6 +311,7 @@ async fn download_model(
         repo_id,
         payload.revision,
         quantization,
+        payload.allow_unverified,
         state.models_dir.clone(),
     );
 
