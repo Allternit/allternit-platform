@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 2.13.0 (2026-11-14)
+
+- **Custom tools on CLI workers.** `gizzi worker --tools-file <path>` (or `ALLTERNIT_WORKER_TOOLS_FILE`) runs a self-hosted agent's custom tools as commands: `{"tools":{"<name>":{"command":[...],"timeout_ms":30000}}}`. Before, the CLI worker answered custom tools with an error.
+- **Custom tools reach subagents and `batch`.** A subagent's tool calls go to the root session, so its custom tools run on the same workers.
+- **Clashing tool names are refused before the message is stored.** A custom tool named like a built-in or MCP tool gets `409 custom_tool_conflict` with the tool and what it clashes with.
+- **`gizzi runtime status`** shows how many server replicas are live. Workers release a session's worker when it goes idle; `--help` explains `reclaim_older_than_ms`.
+- **`gizzi models pull` / `verify`** print the Freeweights verification line.
+
 ## 2.12.0 (2026-11-14)
 
 - **Plans with no computer.** `gizzi connect` shows plan rows that run on Allternit ("no computer needed"), shows the risk notice in the terminal and asks `[y/N]` before connecting. Connected plans appear as `plan/<vendor>/<model>` and `copilot-plan/<model>`.
