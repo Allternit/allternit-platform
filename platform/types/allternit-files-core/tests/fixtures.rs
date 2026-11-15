@@ -81,6 +81,7 @@ fn fixtures_round_trip() {
     round_trip::<ShareAccess>("share-access-denied.json", include_str!("../../../../contracts/files-drive/fixtures/share-access-denied.json"));
     round_trip::<CreateShareRequest>("share-create.json", include_str!("../../../../contracts/files-drive/fixtures/share-create.json"));
     round_trip::<SharesResponse>("shares-list.json", include_str!("../../../../contracts/files-drive/fixtures/shares-list.json"));
+    round_trip::<SmallWriteQuery>("small-write-query.json", include_str!("../../../../contracts/files-drive/fixtures/small-write-query.json"));
     round_trip::<SnapshotManifest>("snapshot-manifest-encrypted.json", include_str!("../../../../contracts/files-drive/fixtures/snapshot-manifest-encrypted.json"));
     round_trip::<SnapshotManifest>("snapshot-manifest.json", include_str!("../../../../contracts/files-drive/fixtures/snapshot-manifest.json"));
     round_trip::<SnapshotRootFile>("snapshot-root-encrypted.json", include_str!("../../../../contracts/files-drive/fixtures/snapshot-root-encrypted.json"));
