@@ -6,6 +6,7 @@
  *   node scripts/runtime-package.cjs stamp     write resources/runtime.json (build number + bundled file list)
  *   node scripts/runtime-package.cjs pack      write the feed for resources/{bin,platform,meeting-bot} + model-training → release/runtime/feed/
  *   node scripts/runtime-package.cjs publish   show what would upload; add --confirm to upload to R2
+ *   node scripts/runtime-package.cjs prune     plan old-version cleanup (--keep N, default 3); --confirm deletes
  *
  * Feed layout (bucket allternit-runtime, served at runtime.allternit.com):
  *   objects/<sha256>.gz                          each file once, gzip, shared by every version and platform
@@ -301,11 +302,21 @@ function put(url, method, headers, body) {
   });
 }
 
+// Prune makes thousands of small requests; the account allows ~1200 / 5 min, so it paces itself.
+const pace = { on: false, next: 0, gapMs: 300 };
+async function gate() {
+  if (!pace.on) return;
+  const at = Math.max(Date.now(), pace.next);
+  pace.next = at + pace.gapMs;
+  if (at > Date.now()) await new Promise((r) => setTimeout(r, at - Date.now()));
+}
+
 async function r2(method, key, body, contentType, cacheControl) {
   const url = `https://api.cloudflare.com/client/v4/accounts/${ACCOUNT}/r2/buckets/${BUCKET}/objects/${key}`;
   for (let attempt = 1, refreshed = false; ; attempt++) {
     const token = auth.token;
     let res;
+    await gate();
     try {
       res = await put(url, method, { Authorization: `Bearer ${token}`, ...(contentType ? { 'Content-Type': contentType } : {}), ...(cacheControl ? { 'Cache-Control': cacheControl } : {}) }, body);
     } catch (e) {
@@ -428,10 +439,129 @@ async function publish(confirm) {
       rel.endsWith('.json') ? 'application/json' : 'text/plain', immutable ? 'public, max-age=31536000, immutable' : 'no-store');
   }
   console.log(`✓ published ${latest.version} → https://runtime.allternit.com/stable/${PLATFORM}/latest.json`);
+  console.log('Run `node surfaces/allternit-desktop/scripts/runtime-package.cjs prune --confirm` to delete old versions (keeps 3).');
 }
 
-const [cmd, ...rest] = process.argv.slice(2);
-if (cmd === 'stamp') stamp();
-else if (cmd === 'pack') pack();
-else if (cmd === 'publish') publish(rest.includes('--confirm')).catch((e) => die(e.message));
-else die('usage: runtime-package.cjs stamp | pack | publish [--confirm]');
+/** Order of a manifest for "newest": its build number, else the rNNNNNNNN.NNNN timestamp in its version. */
+function manifestOrder(m, key) {
+  if (Number.isFinite(Number(m?.build)) && m?.build !== undefined && m?.build !== null) return [1, Number(m.build), ''];
+  const v = String(m?.version ?? key.split('/').pop().replace(/\.json$/, ''));
+  const t = v.match(/r(\d{8})\.(\d+)/);
+  return t ? [0, Number(t[1]) * 1e6 + Number(t[2]), ''] : [0, 0, v];
+}
+const cmpOrder = (a, b) => a[0] - b[0] || a[1] - b[1] || a[2].localeCompare(b[2]);
+
+/**
+ * Pure keep/delete decision. Objects are content-addressed and shared by every version and platform,
+ * so an object goes only when NO kept manifest on ANY platform references it.
+ * @param {{platforms: Record<string, {latest: string, manifests: Record<string, object>}>, objects: Set<string>|string[], keep: number}} input
+ *   manifests keyed by manifest file name (e.g. "r2026.json"), latest = the name latest.json points at.
+ * @returns {{keepManifests: string[], dropManifests: string[], keepObjects: Set<string>, dropObjects: string[], missing: string[]}}
+ */
+function planPrune({ platforms, objects, keep }) {
+  const have = new Set(objects);
+  const keepManifests = new Set();
+  const dropManifests = [];
+  for (const [plat, { latest, manifests }] of Object.entries(platforms)) {
+    const names = Object.keys(manifests).sort((a, b) => cmpOrder(manifestOrder(manifests[a], a), manifestOrder(manifests[b], b)));
+    const kept = new Set(names.slice(-Math.max(1, keep)));
+    if (latest) kept.add(latest);
+    for (const n of names) {
+      const key = `stable/${plat}/manifests/${n}`;
+      if (kept.has(n)) keepManifests.add(key); else dropManifests.push(key);
+    }
+  }
+  const keepObjects = new Set();
+  for (const [plat, { manifests }] of Object.entries(platforms)) {
+    for (const [n, m] of Object.entries(manifests)) {
+      if (!keepManifests.has(`stable/${plat}/manifests/${n}`)) continue;
+      for (const f of Object.values(m.files ?? {})) keepObjects.add(`objects/${f.sha256}.gz`);
+    }
+  }
+  return {
+    keepManifests: [...keepManifests].sort(),
+    dropManifests,
+    keepObjects,
+    dropObjects: [...have].filter((k) => !keepObjects.has(k)),
+    missing: [...keepObjects].filter((k) => !have.has(k)),
+  };
+}
+
+async function listAll(prefix) {
+  const out = [];
+  let cursor = '';
+  for (;;) {
+    const url = `https://api.cloudflare.com/client/v4/accounts/${ACCOUNT}/r2/buckets/${BUCKET}/objects?prefix=${encodeURIComponent(prefix)}&per_page=1000${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`;
+    let body;
+    for (let attempt = 1; ; attempt++) {
+      await gate();
+      const res = await put(url, 'GET', { Authorization: `Bearer ${auth.token}` });
+      if (res.ok) { body = JSON.parse(await res.text()); break; }
+      if (res.status === 401 && attempt === 1 && !process.env.CLOUDFLARE_API_TOKEN) { refreshToken(auth.token); continue; }
+      if ((res.status === 429 || res.status >= 500) && attempt < 8) { await new Promise((r) => setTimeout(r, attempt * 10_000)); continue; }
+      throw new Error(`list ${prefix}: ${res.status} ${await res.text()}`);
+    }
+    for (const o of body.result ?? []) out.push({ key: o.key, size: Number(o.size ?? 0) });
+    cursor = body.result_info?.cursor ?? '';
+    if (!body.result_info?.is_truncated || !cursor) return out;
+  }
+}
+
+async function prune(confirm, keep) {
+  auth.token = cloudflareToken();
+  pace.on = true;
+  const stable = await listAll('stable/');
+  const objs = await listAll('objects/');
+  const sizes = new Map(objs.map((o) => [o.key, o.size]));
+  const stableKeys = new Set(stable.map((o) => o.key));
+  const plats = [...new Set(stable.map((o) => o.key.split('/')[1]))].sort();
+  const platforms = {};
+  for (const plat of plats) {
+    const latestKey = `stable/${plat}/latest.json`;
+    if (!stableKeys.has(latestKey)) { console.log(`skip ${plat}: no latest.json`); continue; }
+    const latest = JSON.parse(await (await r2('GET', latestKey)).text());
+    const manifests = {};
+    for (const o of stable) {
+      const m = o.key.match(new RegExp(`^stable/${plat}/manifests/([^/]+\\.json)$`));
+      if (m) manifests[m[1]] = JSON.parse(await (await r2('GET', o.key)).text());
+    }
+    platforms[plat] = { latest: String(latest.manifest).replace(/^manifests\//, ''), manifests };
+  }
+  const plan = planPrune({ platforms, objects: sizes.keys(), keep });
+  const dropManifestFiles = plan.dropManifests.flatMap((k) => [k, `${k}.sig`].filter((x) => stableKeys.has(x)));
+  const gb = (n) => `${(n / 1e9).toFixed(2)} GB`;
+  for (const [plat, { latest, manifests }] of Object.entries(platforms)) {
+    const kept = plan.keepManifests.filter((k) => k.startsWith(`stable/${plat}/`)).map((k) => k.split('/').pop());
+    console.log(`${plat}: ${Object.keys(manifests).length} manifests, latest -> ${latest}, keep ${kept.length}: ${kept.join(', ')}`);
+  }
+  const dropBytes = plan.dropObjects.reduce((n, k) => n + sizes.get(k), 0);
+  console.log(`objects: ${sizes.size} (${gb([...sizes.values()].reduce((a, b) => a + b, 0))}); referenced by kept manifests: ${plan.keepObjects.size}; missing: ${plan.missing.length}`);
+  console.log(`delete: ${plan.dropObjects.length} objects (${gb(dropBytes)}) + ${dropManifestFiles.length} old manifest files`);
+  if (plan.missing.length) die(`refusing: kept manifests reference ${plan.missing.length} missing object(s), e.g. ${plan.missing[0]}; nothing deleted`);
+  if (!confirm) { console.log('Dry run. Re-run with --confirm to delete.'); return; }
+  const queue = [...plan.dropObjects, ...dropManifestFiles];
+  let done = 0;
+  const worker = async () => {
+    for (let k = queue.shift(); k; k = queue.shift()) {
+      await r2('DELETE', k);
+      if (++done % 1000 === 0) console.log(`  deleted ${done}`);
+    }
+  };
+  await Promise.all(Array.from({ length: 6 }, worker));
+  console.log(`✓ deleted ${done} files`);
+}
+
+module.exports = { planPrune, manifestOrder };
+
+if (require.main === module) {
+  const [cmd, ...rest] = process.argv.slice(2);
+  if (cmd === 'stamp') stamp();
+  else if (cmd === 'pack') pack();
+  else if (cmd === 'publish') publish(rest.includes('--confirm')).catch((e) => die(e.message));
+  else if (cmd === 'prune') {
+    const i = rest.indexOf('--keep');
+    const keep = i >= 0 ? Number(rest[i + 1]) : 3;
+    if (!Number.isInteger(keep) || keep < 1) die('--keep needs a whole number >= 1');
+    prune(rest.includes('--confirm'), keep).catch((e) => die(e.message));
+  } else die('usage: runtime-package.cjs stamp | pack | publish [--confirm] | prune [--keep N] [--confirm]');
+}
