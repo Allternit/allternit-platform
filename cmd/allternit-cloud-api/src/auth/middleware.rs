@@ -199,6 +199,10 @@ where
 
 /// Simple auth middleware function for use with axum::middleware::from_fn
 /// Routes a runtime device credential may call: Cloud chat completions only.
+/// `AuthenticatedUser::token_id` for a request authenticated by a Clerk
+/// session on the chat route (person-only models only).
+pub const CLERK_SESSION_TOKEN_ID: &str = "clerk_session";
+
 pub(crate) fn is_device_inference_path(path: &str) -> bool {
     path == "/v1/chat/completions"
 }
@@ -257,6 +261,27 @@ pub async fn auth_middleware(
                 }
                 Err(_) => unauthorized_response("Invalid or expired token"),
             };
+        }
+    }
+
+    // A person's signed-in Clerk session on the chat route: web and iOS send
+    // their plan chats (`plan/…`, `copilot/…`) here with the session token,
+    // not an API key. Only person-only models accept it; chat_completions
+    // refuses every other model for this token id (CLERK_SESSION_TOKEN_ID).
+    if let Some(jwt) = token.as_deref().filter(|t| t.split('.').count() == 3 && !t.starts_with("alt_") && !t.starts_with("allternit_")) {
+        if is_device_inference_path(request.uri().path()) {
+            if let Ok(user) = crate::auth::clerk::user_from_token(jwt).await {
+                let mut request = request;
+                request.extensions_mut().insert(AuthContext {
+                    user: AuthenticatedUser {
+                        user_id: user.id,
+                        token_id: CLERK_SESSION_TOKEN_ID.to_string(),
+                        permissions: vec!["inference".to_string()],
+                    },
+                    is_development: false,
+                });
+                return next.run(request).await;
+            }
         }
     }
 
