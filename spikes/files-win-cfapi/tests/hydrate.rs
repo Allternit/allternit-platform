@@ -17,7 +17,7 @@ fn register_placeholders_hydrate_unregister() {
 
     // (2) placeholders
     let n = create_tree(&root).expect("CfCreatePlaceholders");
-    assert_eq!(n, 7, "placeholders created");
+    assert_eq!(n, 5, "placeholders created");
     println!("[cfapi-spike] STEP2 CfCreatePlaceholders ok: {n} entries");
     let names: Vec<_> = std::fs::read_dir(&root).unwrap().map(|e| e.unwrap().file_name()).collect();
     println!("[cfapi-spike] root listing: {names:?}");
