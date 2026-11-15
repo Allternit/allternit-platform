@@ -647,7 +647,7 @@ The request body is forwarded as sent, so all standard chat-completions optionsâ
 
 ### Token numbers
 
-Every reply carries real numbers in an `allternit` object: `tok_per_sec`, `first_token_ms`, `ctx_used`, `ctx_max` and `mem_bytes`. On a non-streaming reply it sits next to `usage`. On a stream, set `stream_options.include_usage: true` to get a final chunk with `choices: []`, the OpenAI `usage` (`prompt_tokens`, `completion_tokens`) and the `allternit` object. Without it the engine still reads the numbers (they show in `running`), but sends no usage chunk. llama.cpp replies also keep their `timings` object (`predicted_per_second`, `prompt_ms`); the MLX engine sends the same fields.
+Every reply carries real numbers in an `allternit` object: `tok_per_sec`, `first_token_ms`, `ctx_used`, `ctx_max` and `mem_bytes`. On a non-streaming reply it sits next to `usage`. On a stream, set `stream_options.include_usage: true` to get a final chunk with `choices: []`, the standard `usage` (`prompt_tokens`, `completion_tokens`) and the `allternit` object. Without it the engine still reads the numbers (they show in `running`), but sends no usage chunk. llama.cpp replies also keep their `timings` object (`predicted_per_second`, `prompt_ms`); the MLX engine sends the same fields.
 
 ### Request body
 
