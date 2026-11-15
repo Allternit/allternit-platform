@@ -75,6 +75,10 @@ gizzi models verify Qwen/Qwen3-Embedding-0.6B
 
 `pull` accepts `--quant` and `--allow-unverified`, and exits with code 2 when the result is `unverified`. See [Models and providers](/cli/models#pull-and-verify-local-models).
 
+## Accounts
+
+Freeweights accounts are Allternit accounts. Every public read and download stays anonymous. To write or read private repos, the site, apps and the `fw` CLI send a Clerk session or an Allternit `alt_` key with a `freeweights.*` scope. The Freeweights Worker reads the plan, orgs and perks from a signed claim that the Cloud API issues. See [Freeweights entitlement](/api/cloud-billing#freeweights-entitlement).
+
 ## When the catalog is down
 
 - Pulls fall back to the publisher and end as `publisher_hash`. Nothing is skipped.
