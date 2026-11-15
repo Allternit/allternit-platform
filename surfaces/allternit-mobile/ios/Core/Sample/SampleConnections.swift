@@ -26,7 +26,7 @@ final class SampleConnections: @unchecked Sendable {
         }
         let c = "cloud", r = "runtime:\(SampleWorkspace.runtimeId)"
         for item in [
-            row("allternit", "brains", "on", found: "Free · $2 a month free", source: c),
+            row("allternit", "brains", "on", found: "Free · $5.00 credits", source: c),
             row("openai-key", "brains", "on", found: "Key works · GPT models · ends in 4f2a", source: c),
             row("anthropic-key", "brains", "needs", reason: "The key was rejected", code: "key_rejected", source: c),
             row("claude", "brains", "off", code: "not_available_yet", runsOn: "runner", available: false,

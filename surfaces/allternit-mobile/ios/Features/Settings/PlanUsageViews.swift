@@ -77,14 +77,6 @@ struct PlanUsageRows: View {
                 footnote: "Resets \(AccountPlanStore.monthlyResetLabel)"
             )
         }
-        if let free = plan.credits?.freeInference, free.monthlyAllowanceUsd > 0 {
-            PlanUsageBar(
-                label: "Free AI allowance",
-                detail: String(format: "$%.2f of $%.2f", free.usedUsd, free.monthlyAllowanceUsd),
-                fraction: free.usedUsd / free.monthlyAllowanceUsd,
-                footnote: "Resets \(AccountPlanStore.monthlyResetLabel)"
-            )
-        }
         if let credits = plan.credits {
             HStack {
                 Text("Credits")

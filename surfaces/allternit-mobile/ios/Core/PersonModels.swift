@@ -23,6 +23,7 @@ enum PersonModels {
 
     /// The vendor name for messages ("Claude", "GitHub Copilot", "ChatGPT").
     static func vendorName(for id: String) -> String {
+        if id.hasPrefix(ModelStore.cloudPrefix) { return "Allternit Cloud" }
         if id.hasPrefix("copilot/") { return "GitHub Copilot" }
         if id.hasPrefix("chatgpt/") { return "ChatGPT" }
         let parts = id.split(separator: "/")

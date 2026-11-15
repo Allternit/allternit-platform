@@ -24,7 +24,7 @@ enum ComputeGateCopy {
     static let explainerTitle = "What works without a computer"
     static let explainerAnyTitle = "Works on any device"
     static let explainerAny = [
-        "Allternit Cloud models. Included with Free, about $2 a month of usage.",
+        "Allternit Cloud models. They use credits; Free accounts don't include Cloud usage.",
         "Any API key you add.",
         "Plans you already pay for, where the vendor allows it. GitHub Copilot works now. Claude and others are coming.",
     ]
