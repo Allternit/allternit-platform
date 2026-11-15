@@ -75,7 +75,15 @@ export namespace InstanceRegistration {
     return undefined
   }
 
-  async function putRegistration(token: string, name: string, url: string): Promise<boolean> {
+  // "rejected" = the registry answered 401: the credential is revoked or
+  // invalid, so retrying with it can never succeed. "failed" = anything else
+  // (network, 5xx, other 4xx): transient, the refresh loop keeps going.
+  type PutResult = "ok" | "rejected" | "failed"
+
+  const REPAIR_HINT =
+    "the registry rejected the credential (revoked or invalid); stopping registration refresh. Run `gizzi pair` to re-pair this machine."
+
+  async function putRegistration(token: string, name: string, url: string): Promise<PutResult> {
     const platform = Flag.GIZZI_PLATFORM_API_URL.replace(/\/+$/, "")
     try {
       const response = await fetch(`${platform}/api/v1/gizzi-instances/self`, {
@@ -90,16 +98,13 @@ export namespace InstanceRegistration {
       if (!response.ok) {
         const body = await response.text().catch(() => "")
         log.warn("instance registration failed", { status: response.status, body })
-        if (response.status === 401) {
-          log.warn("the registry rejected the credential; if this machine was paired, run `gizzi pair` to re-pair")
-        }
-        return false
+        return response.status === 401 ? "rejected" : "failed"
       }
       log.info(`gizzi instance registered as ${name} (${url})`)
-      return true
+      return "ok"
     } catch (err) {
       log.warn("instance registration failed", { error: err instanceof Error ? err.message : String(err) })
-      return false
+      return "failed"
     }
   }
 
@@ -124,7 +129,12 @@ export namespace InstanceRegistration {
     }
 
     const name = credential.name ?? opts.name ?? os.hostname()
-    await putRegistration(credential.token, name, opts.url)
+    const first = await putRegistration(credential.token, name, opts.url)
+    if (first === "rejected") {
+      stop()
+      log.warn(REPAIR_HINT)
+      return
+    }
 
     // Only the durable device token gets a refresh loop; Clerk JWTs and env
     // tokens are short-lived and stay one-shot.
@@ -140,7 +150,11 @@ export namespace InstanceRegistration {
           stop()
           return
         }
-        await putRegistration(current.token, current.name ?? name, opts.url)
+        const result = await putRegistration(current.token, current.name ?? name, opts.url)
+        if (result === "rejected") {
+          log.warn(REPAIR_HINT)
+          stop()
+        }
       }, registerIntervalMs())
       refreshTimer.unref()
     }
