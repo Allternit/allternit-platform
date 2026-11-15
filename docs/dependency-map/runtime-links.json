@@ -1631,6 +1631,17 @@
         "allternit/cmd/allternit-api/src/studio/mod.rs",
         "allternit/services/local-engine/src/routes/models.rs"
       ]
+    },
+    {
+      "source": "allternit/surfaces/allternit-desktop",
+      "target": "allternit/services/model-training",
+      "kind": "bundles source (no venv): extraResources model-training + runtime packages; passed to allternit-api as ALLTERNIT_TUNE_SOURCE for the Studio engine install",
+      "evidence": [
+        "allternit/surfaces/allternit-desktop/package.json",
+        "allternit/surfaces/allternit-desktop/scripts/runtime-package.cjs",
+        "allternit/surfaces/allternit-desktop/src/main/backend-manager.ts",
+        "allternit/cmd/allternit-api/src/studio/engines.rs"
+      ]
     }
   ]
 }

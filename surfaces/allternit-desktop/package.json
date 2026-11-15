@@ -194,6 +194,22 @@
         "to": "connector-sidecar/migrations"
       },
       {
+        "from": "../../services/model-training",
+        "to": "model-training",
+        "filter": [
+          "**/*",
+          "!tests/**",
+          "!tools/**",
+          "!**/__pycache__/**",
+          "!.venv/**",
+          "!.scratch/**",
+          "!.pytest_cache/**",
+          "!**/*.egg-info/**",
+          "!.gitignore",
+          "!requirements-dev.txt"
+        ]
+      },
+      {
         "from": "resources/connector-sidecar/dist",
         "to": "connector-sidecar/dist"
       },

@@ -211,6 +211,27 @@ function resolveMeetingBotDir(): string {
   return candidates.find((dir) => fs.existsSync(path.join(dir, 'dist', 'runner.js'))) ?? '';
 }
 
+/**
+ * Allternit Tune's source folder (services/model-training, staged by the
+ * electron-builder extraResources entry `model-training`, source only): the
+ * active runtime package's copy when it has one, else the app's bundled copy.
+ * Dev runs fall back to the repo folder. allternit-api's Studio host installs
+ * the engine's venv from it (cmd/allternit-api/src/studio/engines.rs); empty
+ * leaves allternit-api to look next to its own binary.
+ */
+function resolveTuneSourceDir(): string {
+  if (process.env.ALLTERNIT_TUNE_SOURCE) return process.env.ALLTERNIT_TUNE_SOURCE;
+  const repoRoot = path.resolve(__dirname, '..', '..', '..', '..');
+  const candidates = app.isPackaged
+    ? [runtimeResource('model-training')]
+    : [runtimeResource('model-training'), path.join(repoRoot, 'services', 'model-training')];
+  return (
+    candidates.find(
+      (dir) => fs.existsSync(path.join(dir, 'allternit_tune')) && fs.existsSync(path.join(dir, 'requirements.txt')),
+    ) ?? ''
+  );
+}
+
 // Port ownership: the packaged app owns the production gateway port (8013)
 // and reclaims it on launch. A dev desktop (worktree Electron, npm run dev)
 // binds the dev port instead, so a dev build can run side by side with the
@@ -415,6 +436,8 @@ export class BackendManager {
       // Meetings: the bot runs on this computer (the runtime's
       // /webhooks/meeting-bot/* routes spawn `<node> <dir>/dist/runner.js`).
       ALLTERNIT_MEETING_BOT_DIR: resolveMeetingBotDir(),
+      // Studio: the Allternit Tune engine source the host installs and runs.
+      ALLTERNIT_TUNE_SOURCE: resolveTuneSourceDir(),
       ...meetingNodeEnv(),
       ...(config.extraEnv ?? {}),
     };

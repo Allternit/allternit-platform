@@ -114,6 +114,10 @@ pub struct Resolution {
     /// `FreeweightsSigned` with a verified manifest, otherwise `PublisherHash`.
     pub basis: VerificationState,
     pub manifest: Option<Manifest>,
+    /// sha256 (hex) of the signed manifest bytes as served, when `manifest` is
+    /// set. Job specs pin a base model to it (`base.manifest_sha256`).
+    #[serde(default)]
+    pub manifest_sha256: Option<String>,
     /// Ordered: try the first, fall through on any failure or mismatch.
     pub sources: Vec<Source>,
     pub files: BTreeMap<String, ExpectedFile>,
@@ -268,6 +272,15 @@ impl Client {
         &self,
         repo: &str,
     ) -> Result<std::result::Result<Manifest, String>> {
+        Ok(self.fetch_manifest_sha(repo).await?.map(|(m, _)| m))
+    }
+
+    /// [`Client::fetch_manifest`] plus the sha256 (hex) of the signed
+    /// manifest bytes, the value a job spec's `base.manifest_sha256` pins.
+    pub async fn fetch_manifest_sha(
+        &self,
+        repo: &str,
+    ) -> Result<std::result::Result<(Manifest, String), String>> {
         check_repo(repo)?;
         let url = format!("{}/manifests/{}.json", self.base, encode_path(repo));
         let resp = match self.http.get(&url).timeout(NETWORK_TIMEOUT).send().await {
@@ -303,17 +316,17 @@ impl Client {
                 found: m.id,
             });
         }
-        Ok(Ok(m))
+        Ok(Ok((m, hex::encode(Sha256::digest(&bytes)))))
     }
 
     /// Ordered sources for `repo` at `rev` (`None` = the catalog's pinned commit,
     /// or `main` at the publisher). See the module docs for the order.
     pub async fn resolve(&self, repo: &str, rev: Option<&str>) -> Result<Resolution> {
-        let reason = match self.fetch_manifest(repo).await? {
-            Ok(m) => {
+        let reason = match self.fetch_manifest_sha(repo).await? {
+            Ok((m, sha)) => {
                 let commit = m.upstream.commit.clone();
                 if rev.is_none_or(|r| r == "main" || r == commit) {
-                    return Ok(self.signed_resolution(m));
+                    return Ok(self.signed_resolution(m, sha));
                 }
                 format!(
                     "revision {} is not the catalog's pinned commit {commit}",
@@ -336,6 +349,7 @@ impl Client {
             revision: rev.into(),
             basis: VerificationState::PublisherHash,
             manifest: None,
+            manifest_sha256: None,
             sources: vec![Source {
                 kind: SourceKind::Publisher,
                 base_url: format!(
@@ -350,7 +364,7 @@ impl Client {
         })
     }
 
-    fn signed_resolution(&self, m: Manifest) -> Resolution {
+    fn signed_resolution(&self, m: Manifest, manifest_sha256: String) -> Resolution {
         let commit = m.upstream.commit.clone();
         let mut sources = vec![Source {
             kind: SourceKind::FreeweightsWorker,
@@ -393,6 +407,7 @@ impl Client {
             revision: commit,
             basis: VerificationState::FreeweightsSigned,
             manifest: Some(m),
+            manifest_sha256: Some(manifest_sha256),
             sources,
             files,
             fallback_reason: None,

@@ -4,7 +4,7 @@
  * without a new Desktop app build (see src/main/runtime-package.ts).
  *
  *   node scripts/runtime-package.cjs stamp     write resources/runtime.json (build number + bundled file list)
- *   node scripts/runtime-package.cjs pack      write the feed for resources/{bin,platform,meeting-bot} → release/runtime/feed/
+ *   node scripts/runtime-package.cjs pack      write the feed for resources/{bin,platform,meeting-bot} + model-training → release/runtime/feed/
  *   node scripts/runtime-package.cjs publish   show what would upload; add --confirm to upload to R2
  *
  * Feed layout (bucket allternit-runtime, served at runtime.allternit.com):
@@ -97,8 +97,27 @@ function meetingBotSources() {
   return out;
 }
 
+// Allternit Tune (services/model-training), source only: the Studio host in
+// allternit-api installs the engine's venv from it. Same files as the
+// electron-builder extraResources `model-training` entry, so the bundled list
+// matches what the app carries. Read from the checkout the staged resources
+// belong to (ALLTERNIT_RUNTIME_RESOURCES = <worktree>/surfaces/allternit-desktop/resources).
+const TUNE_DIR = [
+  path.resolve(RESOURCES, '..', '..', '..', 'services', 'model-training'),
+  path.join(REPO_ROOT, 'services', 'model-training'),
+].find((dir) => fs.existsSync(path.join(dir, 'requirements.txt')));
+const TUNE_REQUIREMENTS = 'model-training/requirements.txt';
+const TUNE_SKIP = /^(tests|tools|\.venv|\.scratch|\.pytest_cache)\/|(^|\/)__pycache__\/|\.egg-info\/|^\.gitignore$|^requirements-dev\.txt$/;
+
+/** Manifest path -> source file for Allternit Tune; empty when the checkout has none. */
+function tuneSources() {
+  if (!TUNE_DIR) return new Map();
+  return new Map(walk(TUNE_DIR).filter((rel) => !TUNE_SKIP.test(rel)).map((rel) => [`model-training/${rel}`, path.join(TUNE_DIR, rel)]));
+}
+
 /** Where a manifest path's bytes come from. */
 function sourceOf(rel) {
+  if (rel.startsWith('model-training/')) return tuneSources().get(rel) ?? path.join(RESOURCES, rel);
   return rel.startsWith('meeting-bot/') ? meetingBotSources()?.get(rel) ?? path.join(RESOURCES, rel) : path.join(RESOURCES, rel);
 }
 
@@ -110,6 +129,7 @@ function runtimeFiles() {
     ...BINARIES.map((b) => [`bin/${b}`, path.join(RESOURCES, 'bin', b)]),
     ...walk(path.join(RESOURCES, 'platform')).map((r) => [`platform/${r}`, path.join(RESOURCES, 'platform', r)]),
     ...(meetingBotSources() ?? []),
+    ...tuneSources(),
   ]);
   const files = {};
   for (const rel of [...sources.keys()].sort()) {
@@ -215,6 +235,8 @@ function pack() {
   if (!files) die(`resources/bin/{${BINARIES.join(',')}} or resources/platform missing — build them first`);
   // Cloud computers and Desktop run the Meetings bot from the runtime package; never publish one without it.
   if (!files[BOT_RUNNER]) die(`${BOT_RUNNER} or meeting-bot-native/${PLATFORM} missing — run node scripts/prepare-meeting-bot.cjs (ALLTERNIT_RUNTIME_PLATFORM / ALLTERNIT_RUNTIME_RESOURCES pick the target)`);
+  // Studio installs Allternit Tune from the runtime's model-training/ (allternit-api engines.rs).
+  if (!files[TUNE_REQUIREMENTS]) die(`${TUNE_REQUIREMENTS} missing — services/model-training is not in this checkout`);
   const key = signingKey();
   const objectsDir = path.join(FEED, 'objects');
   const platformDir = path.join(FEED, 'stable', PLATFORM);

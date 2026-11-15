@@ -477,6 +477,7 @@ mod tests {
             revision: "a".repeat(40),
             basis: VerificationState::FreeweightsSigned,
             manifest: None,
+            manifest_sha256: None,
             sources: vec![Source {
                 kind: SourceKind::FreeweightsWorker,
                 base_url: "https://freeweights.allternit.com/org/model-GGUF/resolve/x/".into(),

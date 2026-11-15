@@ -100,6 +100,11 @@ async fn good_signature_resolves_signed_sources_in_order() {
     let res = client.resolve(QWEN, None).await.unwrap();
     assert_eq!(res.basis, VerificationState::FreeweightsSigned);
     assert_eq!(res.revision, QWEN_COMMIT);
+    // The sha256 of the signed bytes as served (what base.manifest_sha256 pins).
+    let manifest_sha = hex::encode(Sha256::digest(testdata(&format!("{}.json", FIXTURES[0]))));
+    assert_eq!(res.manifest_sha256.as_deref(), Some(manifest_sha.as_str()));
+    let (_, sha) = client.fetch_manifest_sha(QWEN).await.unwrap().unwrap();
+    assert_eq!(sha, manifest_sha);
     let kinds: Vec<_> = res.sources.iter().map(|s| s.kind).collect();
     assert_eq!(
         kinds,

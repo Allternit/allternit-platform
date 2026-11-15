@@ -6,6 +6,18 @@ info:
     Served by each computer's allternit-api under /api/v1/studio. One job runs
     per computer at a time. Job spec v1 is described in the allternit-studio-spec
     crate (src/spec.rs). Errors are always {error, message}.
+
+    Host error codes (the `error` field), by status:
+    - 401 unauthorized: no signed-in caller.
+    - 404 not_found (no such job), unknown_engine (no such engine),
+      no_output (the job has no output of that kind).
+    - 409 job_running (another job runs on this computer), already_finished
+      (cancel on a finished job), job_not_succeeded (register before success).
+    - 422 the spec codes listed on POST /jobs, plus hardware_not_supported,
+      engine_not_installed and manifest_mismatch.
+    - 501 not_available: this build cannot install that engine.
+    - 502 local_engine_unreachable, register_failed: the local-engine service
+      did not take the output.
 servers:
   - url: /api/v1/studio
 paths:
@@ -36,8 +48,21 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/EngineInfo' }
-        '404': { $ref: '#/components/responses/Error' }
-        '422': { $ref: '#/components/responses/Error' }
+        '404':
+          description: No such engine (error unknown_engine)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+        '422':
+          description: This computer cannot run the engine (error hardware_not_supported)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+        '501':
+          description: This build cannot install the engine (error not_available)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
   /jobs:
     post:
       summary: Create a job from a job spec v1
@@ -62,7 +87,14 @@ paths:
           description: |
             Spec refused. error is one of rented_not_available,
             publish_not_available, unknown_engine, unknown_method,
-            unsupported_spec_version, invalid_dataset, invalid_spec.
+            unsupported_spec_version, invalid_dataset, invalid_spec (spec
+            checks), or from the host: hardware_not_supported (this computer
+            cannot train with the engine), engine_not_installed (install it
+            first), manifest_mismatch (base.manifest_sha256 is not the sha256
+            of the signed Freeweights manifest the base model is fetched with,
+            the repo has no signed manifest at that revision, or it could not
+            be checked). A manifest that changes after the job is accepted
+            fails the job while preparing, before any file downloads.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ApiError' }
@@ -165,8 +197,21 @@ paths:
                 type: object
                 properties:
                   model_id: { type: string }
-        '404': { $ref: '#/components/responses/Error' }
-        '409': { $ref: '#/components/responses/Error' }
+        '404':
+          description: No such job, or no output of that kind (error not_found, no_output)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+        '409':
+          description: The job has not succeeded (error job_not_succeeded)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+        '502':
+          description: local-engine did not take the output (error local_engine_unreachable, register_failed)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
 components:
   parameters:
     Id:
@@ -224,7 +269,13 @@ components:
           properties:
             repo: { type: string }
             revision: { type: string }
-            manifest_sha256: { type: string }
+            manifest_sha256:
+              type: string
+              pattern: '^[0-9a-fA-F]{64}$'
+              description: |
+                Optional pin: sha256 of the signed Freeweights manifest bytes
+                for base.repo. The host refuses a job whose base model is not
+                fetched with exactly that manifest (error manifest_mismatch).
         dataset:
           type: object
           required: [format]

@@ -27,6 +27,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tokio::fs::create_dir_all(data_dir.join("logs").join("runtimes")).await?;
 
     let store = ModelStore::new(&models_dir);
+    // Registered Studio outputs (POST /models/studio-output) from earlier runs.
+    let studio_outputs = store.load_studio_outputs().await;
+    if studio_outputs > 0 {
+        info!(count = studio_outputs, "studio outputs restored");
+    }
     let manager = ProcessManager::new(&data_dir);
     let hardware_profile = hardware::detect_and_persist(&data_dir);
     let catalog = CatalogService::new(&data_dir);
