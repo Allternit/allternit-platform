@@ -7,11 +7,14 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import com.google.android.play.core.review.ReviewManagerFactory
-import com.google.androidbrowserhelper.trusted.LauncherActivity
+import com.allternit.ondevice.BridgedLauncherActivity
 
 /**
  * The Google Play build's launcher: androidbrowserhelper's LauncherActivity
  * (m.allternit.com as a Trusted Web Activity) plus the Play in-app review sheet.
+ * Since W9 it extends [BridgedLauncherActivity] (module :ondevice), which is
+ * LauncherActivity launching the TWA on an app-wide session so the on-device
+ * engine can talk to the page; everything below is unchanged.
  * The web content cannot call Play In-App Review, so the ask happens here,
  * natively, before the TWA opens. The phonelink build keeps the stock launcher.
  *
@@ -28,7 +31,7 @@ import com.google.androidbrowserhelper.trusted.LauncherActivity
  *    its saved state says the browser was launched. The old instance's
  *    callbacks and timeout are dropped once it is destroyed.
  */
-class ReviewLauncherActivity : LauncherActivity() {
+class ReviewLauncherActivity : BridgedLauncherActivity() {
 
     private val handler = Handler(Looper.getMainLooper())
     private var twaLaunchRequested = false
