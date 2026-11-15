@@ -1,0 +1,502 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://allternit.com/contracts/files-drive/v1/common.json",
+  "title": "Files drive: shared types",
+  "description": "IDs, revisions, items, permissions, errors and freshness used by every other schema.",
+  "$defs": {
+    "ComputerId": {
+      "type": "string",
+      "description": "The computer (runtime) ID cloud-api already uses.",
+      "pattern": "^[A-Za-z0-9_.:-]{1,128}$"
+    },
+    "DeviceId": {
+      "type": "string",
+      "description": "One of the user's own devices (phone, Mac, PC, browser profile).",
+      "pattern": "^dev_[A-Za-z0-9_-]{4,64}$"
+    },
+    "RootId": {
+      "type": "string",
+      "description": "Opaque root ID, stable for the life of the root on that computer.",
+      "pattern": "^rt_[A-Za-z0-9_-]{2,64}$"
+    },
+    "ItemId": {
+      "type": "string",
+      "description": "Opaque item ID from the index DB on the owning computer. Survives rename and move inside the computer.",
+      "pattern": "^it_[A-Za-z0-9_-]{8,64}$"
+    },
+    "Rev": {
+      "type": "string",
+      "description": "ETag: \"<meta_version>-<blake3 content hash>\", or \"<meta_version>-dir\" for folders.",
+      "pattern": "^[0-9]+-([0-9a-f]{64}|dir)$"
+    },
+    "Blake3": {
+      "type": "string",
+      "description": "blake3-256 hash, lower-case hex.",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "Cursor": {
+      "type": "string",
+      "description": "Opaque per-root change cursor. Monotonic; compare only by asking the server.",
+      "pattern": "^c1\\.[A-Za-z0-9._-]{1,200}$"
+    },
+    "PageToken": {
+      "type": "string",
+      "description": "Opaque page token.",
+      "pattern": "^p1\\.[A-Za-z0-9_-]{1,400}$"
+    },
+    "Timestamp": {
+      "type": "string",
+      "description": "UTC time, RFC 3339 with Z.",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,6})?Z$"
+    },
+    "ComputerState": {
+      "type": "string",
+      "enum": [
+        "awake",
+        "asleep",
+        "waking",
+        "offline"
+      ],
+      "description": "awake = runtime answering; asleep = cloud computer stopped (served from snapshot); waking = consented wake in progress; offline = own device not reachable."
+    },
+    "ServedBy": {
+      "type": "string",
+      "enum": [
+        "live",
+        "snapshot",
+        "replica",
+        "cache"
+      ],
+      "description": "Where the answer came from."
+    },
+    "Freshness": {
+      "type": "object",
+      "description": "Every read response says where it came from and the computer state. Clients show \"asleep\" from this, never guess.",
+      "additionalProperties": false,
+      "required": [
+        "served_by",
+        "computer_state"
+      ],
+      "properties": {
+        "served_by": {
+          "$ref": "#/$defs/ServedBy"
+        },
+        "computer_state": {
+          "$ref": "#/$defs/ComputerState"
+        },
+        "snapshot_at": {
+          "$ref": "#/$defs/Timestamp",
+          "description": "When the asleep snapshot or replica was written. Present unless served_by is live."
+        }
+      }
+    },
+    "PrincipalKind": {
+      "type": "string",
+      "enum": [
+        "owner",
+        "own_device",
+        "guest",
+        "agent"
+      ]
+    },
+    "PrincipalRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "id"
+      ],
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/PrincipalKind"
+        },
+        "id": {
+          "type": "string",
+          "description": "User ID, device ID, guest ID or agent ID."
+        },
+        "display_name": {
+          "type": "string"
+        }
+      }
+    },
+    "ItemKind": {
+      "type": "string",
+      "enum": [
+        "file",
+        "folder"
+      ]
+    },
+    "Permissions": {
+      "type": "object",
+      "description": "What the calling principal may do. Computed by the runtime per request.",
+      "additionalProperties": false,
+      "required": [
+        "list",
+        "read",
+        "write",
+        "delete",
+        "share",
+        "comment",
+        "agent_process",
+        "transfer",
+        "execute"
+      ],
+      "properties": {
+        "list": {
+          "type": "boolean"
+        },
+        "read": {
+          "type": "boolean"
+        },
+        "write": {
+          "type": "boolean"
+        },
+        "delete": {
+          "type": "boolean"
+        },
+        "share": {
+          "type": "boolean"
+        },
+        "comment": {
+          "type": "boolean"
+        },
+        "agent_process": {
+          "type": "boolean",
+          "description": "An agent may process the item as a task input. Separate from share roles."
+        },
+        "transfer": {
+          "type": "boolean",
+          "description": "Bytes may be copied to another device or computer."
+        },
+        "execute": {
+          "type": "boolean",
+          "description": "May be run or loaded (model, script, binary). Never implied by transfer."
+        }
+      }
+    },
+    "Provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "ai_generated"
+      ],
+      "properties": {
+        "source": {
+          "type": "string",
+          "enum": [
+            "user",
+            "agent",
+            "guest",
+            "import",
+            "meeting",
+            "scan",
+            "replica_restore"
+          ]
+        },
+        "ai_generated": {
+          "type": "boolean",
+          "description": "Shown as an \"AI-generated\" label."
+        },
+        "agent_id": {
+          "type": "string"
+        },
+        "task_id": {
+          "type": "string"
+        },
+        "input_item_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ItemId"
+          }
+        }
+      }
+    },
+    "Item": {
+      "type": "object",
+      "description": "One file or folder.",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "root_id",
+        "name",
+        "kind",
+        "size",
+        "rev",
+        "meta_version",
+        "created_at",
+        "modified_at",
+        "permissions"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/ItemId"
+        },
+        "root_id": {
+          "$ref": "#/$defs/RootId"
+        },
+        "parent_id": {
+          "$ref": "#/$defs/ItemId",
+          "description": "Absent only for the root folder item."
+        },
+        "name": {
+          "type": "string",
+          "description": "Display name. NFC, no \"/\" or NUL, at most 255 UTF-8 bytes.",
+          "minLength": 1,
+          "maxLength": 255
+        },
+        "kind": {
+          "$ref": "#/$defs/ItemKind"
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Bytes. 0 for folders."
+        },
+        "rev": {
+          "$ref": "#/$defs/Rev"
+        },
+        "meta_version": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Bumped on any metadata change (rename, move, tags, pin)."
+        },
+        "content_hash": {
+          "$ref": "#/$defs/Blake3",
+          "description": "Files only. blake3 of the whole content."
+        },
+        "mime": {
+          "type": "string"
+        },
+        "created_at": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "modified_at": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "modified_by": {
+          "$ref": "#/$defs/PrincipalRef"
+        },
+        "root_link": {
+          "$ref": "#/$defs/RootId",
+          "description": "Set when this folder entry opens another root (Inbox, Shared, etc. inside ~/Allternit)."
+        },
+        "pinned_on": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DeviceId"
+          },
+          "description": "Own devices that keep this item offline."
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "provenance": {
+          "$ref": "#/$defs/Provenance"
+        },
+        "has_thumbnail": {
+          "type": "boolean"
+        },
+        "permissions": {
+          "$ref": "#/$defs/Permissions"
+        }
+      }
+    },
+    "OnConflict": {
+      "type": "string",
+      "enum": [
+        "fail",
+        "keep_both",
+        "replace"
+      ],
+      "description": "What to do when the name exists or base_rev is stale. replace is refused when base_rev is stale."
+    },
+    "ConflictInfo": {
+      "type": "object",
+      "description": "Returned when a write landed as a conflict copy instead of over the newer version.",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "original_item_id",
+        "base_rev",
+        "current_rev",
+        "conflict_item",
+        "conflict_name"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "keep_both"
+        },
+        "original_item_id": {
+          "$ref": "#/$defs/ItemId"
+        },
+        "base_rev": {
+          "$ref": "#/$defs/Rev"
+        },
+        "current_rev": {
+          "$ref": "#/$defs/Rev"
+        },
+        "conflict_item": {
+          "$ref": "#/$defs/Item"
+        },
+        "conflict_name": {
+          "type": "string",
+          "description": "\"<stem> (conflict <device name> <YYYY-MM-DD>)<.ext>\", then \" 2\", \" 3\" if taken."
+        }
+      }
+    },
+    "JobRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "job_id",
+        "kind",
+        "state",
+        "done_bytes",
+        "total_bytes"
+      ],
+      "properties": {
+        "job_id": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "copy",
+            "move",
+            "replica_sync",
+            "replica_restore",
+            "model_transfer"
+          ]
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "queued",
+            "running",
+            "done",
+            "failed",
+            "cancelled"
+          ]
+        },
+        "done_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "total_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "error": {
+          "$ref": "#/$defs/ErrorCode"
+        }
+      }
+    },
+    "ErrorCode": {
+      "type": "string",
+      "enum": [
+        "unauthorized",
+        "forbidden",
+        "feature_disabled",
+        "not_found",
+        "root_not_found",
+        "already_exists",
+        "invalid_name",
+        "invalid_request",
+        "rev_mismatch",
+        "payload_too_large",
+        "quota_exceeded",
+        "rate_limited",
+        "asleep",
+        "wake_consent_required",
+        "wake_denied",
+        "waking",
+        "offline",
+        "scope_violation",
+        "protected_root_locked",
+        "agent_process_denied",
+        "execute_denied",
+        "share_expired",
+        "share_revoked",
+        "passcode_required",
+        "passcode_invalid",
+        "guest_wake_not_allowed",
+        "upload_session_not_found",
+        "upload_session_expired",
+        "chunk_missing",
+        "chunk_hash_mismatch",
+        "manifest_invalid",
+        "cursor_expired",
+        "replica_unavailable",
+        "integrity_failed",
+        "key_unavailable",
+        "unsupported",
+        "internal"
+      ]
+    },
+    "WakeHint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "setting",
+        "consent_path"
+      ],
+      "properties": {
+        "setting": {
+          "$ref": "wake.json#/$defs/WakeSetting"
+        },
+        "consent_path": {
+          "type": "string",
+          "description": "cloud-api path to POST for a wake ticket, e.g. /api/v1/computer-files/<id>/wake-consent."
+        }
+      }
+    },
+    "ErrorBody": {
+      "type": "object",
+      "description": "Same flat shape as cloud-api ErrorResponse ({error, message, code}) plus Files fields.",
+      "additionalProperties": false,
+      "required": [
+        "error",
+        "code",
+        "message"
+      ],
+      "properties": {
+        "error": {
+          "$ref": "#/$defs/ErrorCode"
+        },
+        "code": {
+          "$ref": "#/$defs/ErrorCode"
+        },
+        "message": {
+          "type": "string",
+          "description": "Plain sentence for logs and fallback UI."
+        },
+        "retry_after_s": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "computer_state": {
+          "$ref": "#/$defs/ComputerState"
+        },
+        "wake": {
+          "$ref": "#/$defs/WakeHint"
+        },
+        "current": {
+          "$ref": "#/$defs/Item",
+          "description": "rev_mismatch: the item as it is now."
+        },
+        "missing_chunks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Blake3"
+          },
+          "description": "chunk_missing: hashes still needed."
+        }
+      }
+    }
+  }
+}

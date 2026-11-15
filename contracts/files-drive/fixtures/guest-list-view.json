@@ -1,0 +1,68 @@
+{
+  "type": "ListResponse",
+  "valid": true,
+  "case": "Guest view role: list inside the shared folder only; no path hints.",
+  "message": {
+    "root_id": "rt_shared",
+    "parent": {
+      "id": "it_shr000001",
+      "root_id": "rt_shared",
+      "parent_id": "it_home0000",
+      "name": "Closing docs",
+      "kind": "folder",
+      "size": 0,
+      "rev": "3-dir",
+      "meta_version": 3,
+      "created_at": "2026-11-15T14:00:00Z",
+      "modified_at": "2026-11-15T14:00:00Z",
+      "permissions": {
+        "list": true,
+        "read": true,
+        "write": false,
+        "delete": false,
+        "share": false,
+        "comment": false,
+        "agent_process": false,
+        "transfer": true,
+        "execute": false
+      }
+    },
+    "items": [
+      {
+        "id": "it_doc000002",
+        "root_id": "rt_shared",
+        "parent_id": "it_shr000001",
+        "name": "Deed.pdf",
+        "kind": "file",
+        "size": 482113,
+        "rev": "7-a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "meta_version": 7,
+        "content_hash": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "mime": "application/pdf",
+        "created_at": "2026-11-15T14:00:00Z",
+        "modified_at": "2026-11-15T14:05:00Z",
+        "modified_by": {
+          "kind": "owner",
+          "id": "user_2abc",
+          "display_name": "Eoj"
+        },
+        "permissions": {
+          "list": true,
+          "read": true,
+          "write": false,
+          "delete": false,
+          "share": false,
+          "comment": false,
+          "agent_process": false,
+          "transfer": true,
+          "execute": false
+        }
+      }
+    ],
+    "cursor": "c1.rt_shared.000003",
+    "freshness": {
+      "served_by": "live",
+      "computer_state": "awake"
+    }
+  }
+}

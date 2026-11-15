@@ -1,0 +1,69 @@
+{
+  "type": "ChangesResponse",
+  "valid": true,
+  "case": "Poll the change feed.",
+  "message": {
+    "root_id": "rt_home",
+    "changes": [
+      {
+        "seq": 413,
+        "op": "trashed",
+        "item_id": "it_doc000001",
+        "at": "2026-11-15T14:05:00Z",
+        "by": {
+          "kind": "own_device",
+          "id": "dev_iphone16",
+          "display_name": "iPhone"
+        }
+      },
+      {
+        "seq": 414,
+        "op": "created",
+        "item_id": "it_doc000777",
+        "item": {
+          "id": "it_doc000777",
+          "root_id": "rt_home",
+          "parent_id": "it_home0000",
+          "name": "Lease (conflict iPhone 2026-11-15).pdf",
+          "kind": "file",
+          "size": 482113,
+          "rev": "1-c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3",
+          "meta_version": 1,
+          "content_hash": "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3",
+          "mime": "application/pdf",
+          "created_at": "2026-11-15T14:00:00Z",
+          "modified_at": "2026-11-15T14:05:00Z",
+          "modified_by": {
+            "kind": "own_device",
+            "id": "dev_iphone16",
+            "display_name": "iPhone"
+          },
+          "permissions": {
+            "list": true,
+            "read": true,
+            "write": true,
+            "delete": true,
+            "share": true,
+            "comment": true,
+            "agent_process": false,
+            "transfer": true,
+            "execute": false
+          }
+        },
+        "at": "2026-11-15T14:05:00Z",
+        "by": {
+          "kind": "own_device",
+          "id": "dev_iphone16",
+          "display_name": "iPhone"
+        }
+      }
+    ],
+    "cursor": "c1.rt_home.000414",
+    "has_more": false,
+    "reset_required": false,
+    "freshness": {
+      "served_by": "live",
+      "computer_state": "awake"
+    }
+  }
+}

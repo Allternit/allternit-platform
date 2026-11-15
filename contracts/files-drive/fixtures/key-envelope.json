@@ -1,0 +1,17 @@
+{
+  "type": "KeyShareGrant",
+  "valid": true,
+  "case": "Existing device approves and wraps the key.",
+  "message": {
+    "approved_by_device_id": "dev_iphone16",
+    "envelope": {
+      "key_id": "fk_1",
+      "device_id": "dev_pixel900",
+      "wrap_alg": "x25519-hkdf-sha256-xchacha20poly1305",
+      "ephemeral_pub": "ZXBoLXB1Yg",
+      "nonce": "bm9uY2U",
+      "wrapped_key": "d3JhcHBlZA",
+      "created_at": "2026-11-15T14:05:00Z"
+    }
+  }
+}

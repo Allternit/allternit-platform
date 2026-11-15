@@ -2063,6 +2063,7 @@ async fn computer_upload_file(
     Query(file_query): Query<FilePathQuery>,
     body: Bytes,
 ) -> Response {
+    // The guest-path check runs inside upload_desktop_file_core.
     if let Err(denial) = enforce_control_confirmation(
         &state,
         &user.user_id,
@@ -2122,8 +2123,22 @@ async fn computer_download_file(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
     Path(id): Path<String>,
+    Query(approval): Query<ApprovalQuery>,
     Query(file_query): Query<FilePathQuery>,
 ) -> Response {
+    // The guest-path check runs inside download_desktop_file_core.
+    // Same confirmation policy as the control dispatcher's FileRead, so a
+    // user who requires approval for file reads gets it on this route too.
+    if let Err(denial) = enforce_control_confirmation(
+        &state,
+        &user.user_id,
+        &ComputerControlAction::FileRead {
+            path: file_query.path.clone(),
+        },
+        approval.approval_id.as_deref(),
+    ) {
+        return (denial.status, Json(denial.body)).into_response();
+    }
     let computer = match fetch_computer(&state, &user, &id).await {
         Ok(Some(c)) => c,
         Ok(None) => return error_response(StatusCode::NOT_FOUND, "computer not found"),

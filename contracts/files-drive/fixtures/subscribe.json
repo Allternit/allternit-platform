@@ -1,0 +1,18 @@
+{
+  "type": "SubscribeMessage",
+  "valid": true,
+  "case": "Open the subscribe socket.",
+  "message": {
+    "type": "subscribe",
+    "roots": [
+      {
+        "root_id": "rt_home",
+        "cursor": "c1.rt_home.000412"
+      },
+      {
+        "root_id": "rt_inbox",
+        "cursor": "c1.rt_inbox.000019"
+      }
+    ]
+  }
+}

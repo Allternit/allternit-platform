@@ -1,0 +1,161 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://allternit.com/contracts/files-drive/v1/wake.json",
+  "title": "Files drive: wake consent",
+  "description": "Files paths never wake a computer without a ticket.",
+  "$defs": {
+    "WakeSetting": {
+      "type": "string",
+      "enum": [
+        "ask",
+        "auto",
+        "never"
+      ],
+      "description": "Per computer. Default ask."
+    },
+    "WakeReason": {
+      "type": "string",
+      "enum": [
+        "open_file",
+        "upload",
+        "search_content",
+        "sync",
+        "replica_restore",
+        "share_access"
+      ]
+    },
+    "WakeConsentRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reason",
+        "device_id"
+      ],
+      "properties": {
+        "reason": {
+          "$ref": "#/$defs/WakeReason"
+        },
+        "item_id": {
+          "$ref": "common.json#/$defs/ItemId"
+        },
+        "device_id": {
+          "$ref": "common.json#/$defs/DeviceId"
+        }
+      }
+    },
+    "WakeConsentResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ticket",
+        "expires_at",
+        "computer_state"
+      ],
+      "properties": {
+        "ticket": {
+          "type": "string",
+          "description": "Send as X-Allternit-Wake-Ticket.",
+          "pattern": "^awt1\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$"
+        },
+        "expires_at": {
+          "$ref": "common.json#/$defs/Timestamp"
+        },
+        "computer_state": {
+          "type": "string",
+          "enum": [
+            "waking",
+            "awake"
+          ]
+        },
+        "estimated_wake_s": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "WakeTicketClaims": {
+      "type": "object",
+      "description": "Decoded body of a wake ticket. Ed25519-signed by cloud-api. Single use per jti.",
+      "additionalProperties": false,
+      "required": [
+        "v",
+        "typ",
+        "sub",
+        "computer_id",
+        "reason",
+        "device_id",
+        "iat",
+        "exp",
+        "jti",
+        "kid"
+      ],
+      "properties": {
+        "v": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1
+        },
+        "typ": {
+          "type": "string",
+          "const": "wake"
+        },
+        "sub": {
+          "type": "string",
+          "description": "User ID."
+        },
+        "computer_id": {
+          "$ref": "common.json#/$defs/ComputerId"
+        },
+        "reason": {
+          "$ref": "#/$defs/WakeReason"
+        },
+        "device_id": {
+          "$ref": "common.json#/$defs/DeviceId"
+        },
+        "iat": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "exp": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "At most iat + 300."
+        },
+        "jti": {
+          "type": "string"
+        },
+        "kid": {
+          "type": "string"
+        }
+      }
+    },
+    "WakeSettings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "computer_id",
+        "wake"
+      ],
+      "properties": {
+        "computer_id": {
+          "$ref": "common.json#/$defs/ComputerId"
+        },
+        "wake": {
+          "$ref": "#/$defs/WakeSetting"
+        }
+      }
+    },
+    "UpdateWakeSettingsRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "wake"
+      ],
+      "properties": {
+        "wake": {
+          "$ref": "#/$defs/WakeSetting"
+        }
+      }
+    }
+  }
+}

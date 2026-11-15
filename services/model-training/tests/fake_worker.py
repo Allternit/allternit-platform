@@ -29,7 +29,7 @@ def main() -> int:
         emit.error("RuntimeError: out of memory")
         return 1
     emit.state("exporting")
-    adapter = Path(plan["job_dir"]) / "adapter"
+    adapter = Path(plan.get("output_dir") or plan["job_dir"]) / "adapter"
     adapter.mkdir()
     (adapter / "adapter_model.safetensors").write_bytes(b"x" * 10)
     emit.output("adapter", adapter)

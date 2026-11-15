@@ -41,7 +41,7 @@ async function deviceToken(): Promise<string | undefined> {
 }
 
 /** Credentials in order of preference: an explicit env token, then the `gizzi login` device token. */
-async function platformTokens(): Promise<string[]> {
+export async function platformTokens(): Promise<string[]> {
   const env = process.env.ALLTERNIT_API_TOKEN?.trim()
   const device = await deviceToken()
   return [...new Set([env, device].filter((t): t is string => !!t))]

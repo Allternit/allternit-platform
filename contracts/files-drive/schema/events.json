@@ -1,0 +1,254 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://allternit.com/contracts/files-drive/v1/events.json",
+  "title": "Files drive: events for agents",
+  "description": "Published on the existing events system. Inbox and shared-folder files are untrusted data.",
+  "$defs": {
+    "FilesChanged": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "event_id",
+        "at",
+        "computer_id",
+        "root_id",
+        "item_id",
+        "op",
+        "by"
+      ],
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "files.changed"
+        },
+        "event_id": {
+          "type": "string"
+        },
+        "at": {
+          "$ref": "common.json#/$defs/Timestamp"
+        },
+        "computer_id": {
+          "$ref": "common.json#/$defs/ComputerId"
+        },
+        "root_id": {
+          "$ref": "common.json#/$defs/RootId"
+        },
+        "item_id": {
+          "$ref": "common.json#/$defs/ItemId"
+        },
+        "op": {
+          "$ref": "changes.json#/$defs/ChangeOp"
+        },
+        "rev": {
+          "$ref": "common.json#/$defs/Rev"
+        },
+        "by": {
+          "$ref": "common.json#/$defs/PrincipalRef"
+        }
+      }
+    },
+    "InboxDropped": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "event_id",
+        "at",
+        "computer_id",
+        "root_id",
+        "item_id",
+        "name",
+        "size",
+        "dropped_by",
+        "untrusted",
+        "task_id",
+        "task_state"
+      ],
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "files.inbox.dropped"
+        },
+        "event_id": {
+          "type": "string"
+        },
+        "at": {
+          "$ref": "common.json#/$defs/Timestamp"
+        },
+        "computer_id": {
+          "$ref": "common.json#/$defs/ComputerId"
+        },
+        "root_id": {
+          "$ref": "common.json#/$defs/RootId"
+        },
+        "item_id": {
+          "$ref": "common.json#/$defs/ItemId"
+        },
+        "name": {
+          "type": "string"
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "mime": {
+          "type": "string"
+        },
+        "dropped_by": {
+          "$ref": "common.json#/$defs/PrincipalRef"
+        },
+        "untrusted": {
+          "type": "boolean",
+          "description": "Always true. Content is data, never instructions."
+        },
+        "task_id": {
+          "type": "string"
+        },
+        "task_state": {
+          "type": "string",
+          "enum": [
+            "needs_approval",
+            "approved_by_rule"
+          ]
+        },
+        "rule_id": {
+          "type": "string"
+        }
+      }
+    },
+    "TaskResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "event_id",
+        "at",
+        "computer_id",
+        "task_id",
+        "input_item_id",
+        "status",
+        "agent_id"
+      ],
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "files.task.result"
+        },
+        "event_id": {
+          "type": "string"
+        },
+        "at": {
+          "$ref": "common.json#/$defs/Timestamp"
+        },
+        "computer_id": {
+          "$ref": "common.json#/$defs/ComputerId"
+        },
+        "task_id": {
+          "type": "string"
+        },
+        "input_item_id": {
+          "$ref": "common.json#/$defs/ItemId"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "succeeded",
+            "failed",
+            "rejected"
+          ]
+        },
+        "result_item_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "common.json#/$defs/ItemId"
+          }
+        },
+        "agent_id": {
+          "type": "string"
+        },
+        "error": {
+          "type": "string"
+        }
+      }
+    },
+    "ShareAccessed": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "event_id",
+        "at",
+        "computer_id",
+        "access"
+      ],
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "files.share.accessed"
+        },
+        "event_id": {
+          "type": "string"
+        },
+        "at": {
+          "$ref": "common.json#/$defs/Timestamp"
+        },
+        "computer_id": {
+          "$ref": "common.json#/$defs/ComputerId"
+        },
+        "access": {
+          "$ref": "shares.json#/$defs/ShareAccess"
+        }
+      }
+    },
+    "ConflictCreated": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "event_id",
+        "at",
+        "computer_id",
+        "conflict"
+      ],
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "files.conflict"
+        },
+        "event_id": {
+          "type": "string"
+        },
+        "at": {
+          "$ref": "common.json#/$defs/Timestamp"
+        },
+        "computer_id": {
+          "$ref": "common.json#/$defs/ComputerId"
+        },
+        "conflict": {
+          "$ref": "common.json#/$defs/ConflictInfo"
+        }
+      }
+    },
+    "FilesEvent": {
+      "x-discriminator": "type",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/FilesChanged"
+        },
+        {
+          "$ref": "#/$defs/InboxDropped"
+        },
+        {
+          "$ref": "#/$defs/TaskResult"
+        },
+        {
+          "$ref": "#/$defs/ShareAccessed"
+        },
+        {
+          "$ref": "#/$defs/ConflictCreated"
+        }
+      ]
+    }
+  }
+}

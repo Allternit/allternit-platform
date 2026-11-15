@@ -8,6 +8,9 @@ struct StudioJob: Decodable, Identifiable, Equatable, Sendable {
         let engine: String
         let base: Base
         let method: String
+        /// `outputs.mlx` asks for an MLX model next to the adapter.
+        struct Outputs: Decodable, Equatable, Sendable { let mlx: Bool? }
+        let outputs: Outputs?
     }
 
     let id: String
@@ -24,6 +27,64 @@ struct StudioJob: Decodable, Identifiable, Equatable, Sendable {
     }
 
     var isFinished: Bool { ["succeeded", "failed", "cancelled"].contains(state) }
+}
+
+/// One file a job produced. `kind` stays a string so a kind this app does not
+/// know (adapter, merged, gguf, mlx today) never fails decoding.
+struct StudioJobOutput: Decodable, Equatable, Sendable {
+    let kind: String
+    let path: String?
+    let bytes: Int?
+}
+
+/// `fit` on an engine card: what the engine can do on the paired computer.
+/// Every field is optional and every id a plain string, so a hardware id,
+/// backend or output kind added later never fails decoding.
+struct StudioFit: Decodable, Equatable, Sendable {
+    let ok: Bool?
+    let hardware: String?
+    let backend: String?
+    let reason: String?
+    let warning: String?
+    let methodsUnavailable: [String: String]?
+    let outputsUnavailable: [String: String]?
+
+    enum CodingKeys: String, CodingKey {
+        case ok, hardware, backend, reason, warning
+        case methodsUnavailable = "methods_unavailable"
+        case outputsUnavailable = "outputs_unavailable"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        ok = try? c.decode(Bool.self, forKey: .ok)
+        hardware = try? c.decode(String.self, forKey: .hardware)
+        backend = try? c.decode(String.self, forKey: .backend)
+        reason = try? c.decode(String.self, forKey: .reason)
+        warning = try? c.decode(String.self, forKey: .warning)
+        methodsUnavailable = try? c.decode([String: String].self, forKey: .methodsUnavailable)
+        outputsUnavailable = try? c.decode([String: String].self, forKey: .outputsUnavailable)
+    }
+
+    init(ok: Bool? = nil, hardware: String? = nil, backend: String? = nil, reason: String? = nil, warning: String? = nil) {
+        self.ok = ok; self.hardware = hardware; self.backend = backend; self.reason = reason; self.warning = warning
+        methodsUnavailable = nil; outputsUnavailable = nil
+    }
+}
+
+struct StudioEngineCard: Decodable, Equatable, Sendable {
+    let id: String
+    let name: String
+    let fit: StudioFit?
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        fit = try? c.decode(StudioFit.self, forKey: .fit)
+    }
+
+    enum CodingKeys: String, CodingKey { case id, name, fit }
 }
 
 struct StudioJobEvent: Decodable, Equatable, Identifiable, Sendable {
@@ -102,12 +163,17 @@ final class StudioJobsClient: @unchecked Sendable {
         }
     }
 
-    /// `GET /engines` → engine id to display name.
-    func engineNames() async throws -> [String: String] {
-        struct Engine: Decodable { let id: String; let name: String }
-        struct Envelope: Decodable { let engines: [Engine] }
+    /// `GET /engines` → engine cards keyed by id (name and hardware fit).
+    func engines() async throws -> [String: StudioEngineCard] {
+        struct Envelope: Decodable { let engines: [StudioEngineCard] }
         let envelope: Envelope = try await request("engines")
-        return Dictionary(envelope.engines.map { ($0.id, $0.name) }, uniquingKeysWith: { first, _ in first })
+        return Dictionary(envelope.engines.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+    }
+
+    func outputs(id: String) async throws -> [StudioJobOutput] {
+        struct Envelope: Decodable { let outputs: [StudioJobOutput] }
+        let envelope: Envelope = try await request("jobs/\(id)/outputs")
+        return envelope.outputs
     }
 
     func listJobs() async throws -> [StudioJob] {

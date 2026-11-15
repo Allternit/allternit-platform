@@ -157,6 +157,9 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
     @Published var draftToRestore: String? = nil
     /// Set when a send came back `no_brain`: ChatView opens the model picker.
     @Published var needsBrainPick: Bool = false
+    /// Set when a send hits a locked Allternit Cloud model (before sending,
+    /// D9) or the server refuses it for credits (402): ChatView shows the sheet.
+    @Published var cloudCreditsRequest: CloudCreditsRequest? = nil
 
     private let chatClient: AgentChatClient
 
@@ -551,7 +554,7 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
               let index = messages.firstIndex(where: { $0.id == messageId }) else { return }
         // A chat with the person's own plan lives on this phone only: cut the
         // feed back to that message and send the new text.
-        if currentSessionId == nil, PersonModels.isPersonOnly(runtimeModelId) {
+        if currentSessionId == nil, PersonModels.isPersonOnly(runtimeModelId) || ModelStore.shared.routesDirect(runtimeModelId) {
             messages.removeSubrange(index...)
             sendMessage(ToolOptionsStore.shared.enrichedText(newText), attachments: attachments, runtimeModelId: runtimeModelId, effort: effort, enrich: false)
             return
@@ -618,7 +621,17 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
     /// `stagedAttachments` are uploaded first; `preparedRefs` skips the
     /// upload step (retry of an already-uploaded send).
     private func startStream(text trimmed: String, runtimeModelId: String?, effort: String? = nil, stagedAttachments: [StagedAttachment] = [], preparedRefs: [AttachmentRef]? = nil, userMessageId: String? = nil) {
-        if let modelId = runtimeModelId, PersonModels.isPersonOnly(modelId) {
+        // A locked Allternit Cloud model (D9): nothing is sent; the text goes
+        // back to the composer and the credits sheet opens. The 402 is the backstop.
+        if let modelId = runtimeModelId, ModelStore.shared.isCloudLocked(modelId) {
+            if let userMessageId {
+                messages.removeAll { $0.id == userMessageId }
+                draftToRestore = ToolOptionsStore.shared.strippedText(trimmed)
+            }
+            cloudCreditsRequest = CloudCreditsGate.request(modelId: modelId, reason: nil)
+            return
+        }
+        if let modelId = runtimeModelId, PersonModels.isPersonOnly(modelId) || routesCloudDirect(modelId) {
             startPersonStream(text: trimmed, modelId: modelId,
                               hasAttachments: !stagedAttachments.isEmpty || !(preparedRefs ?? []).isEmpty)
             return
@@ -719,6 +732,10 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
                         // No brain chosen: keep the draft and open the picker.
                         self.transientError = AgentChatClientError.noBrainMessage
                         self.needsBrainPick = true
+                    } else if ModelStore.cloudAlias(runtimeModelId) != nil,
+                              let reason = CloudCreditsGate.reason(inRelayedError: error.localizedDescription) {
+                        // The computer relayed cloud-api's 402: the credits sheet, not a banner.
+                        self.cloudCreditsRequest = CloudCreditsGate.request(modelId: runtimeModelId, reason: reason)
                     } else {
                         self.transientError = "Couldn't send the message: \(FriendlyErrorMessage.from(error.localizedDescription))"
                         self.reportPetOffer(error.localizedDescription)
@@ -758,6 +775,15 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
     /// with `X-Allternit-Turn: person`; chatgpt/… go from the phone to OpenAI.
     /// No session on a computer, no tools, no attachments. A refusal lands
     /// inline under the reply in plain words.
+    /// An Allternit Cloud turn with no computer goes straight to cloud-api
+    /// (like a plan turn) and is stored as a plan thread `allternit/<alias>`
+    /// (D7). A chat that lives on a computer keeps the computer path (D8).
+    private func routesCloudDirect(_ modelId: String) -> Bool {
+        guard ModelStore.shared.routesDirect(modelId) else { return false }
+        guard let sessionId = currentSessionId else { return true }
+        return PlanThreadClient.isThreadId(sessionId)
+    }
+
     private func startPersonStream(text: String, modelId: String, hasAttachments: Bool) {
         transientError = nil
         draftToRestore = nil
@@ -799,6 +825,9 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
                 self.flushPendingDeltas()
             } catch let refusal as PersonChatRefusal {
                 self.flushPendingDeltas()
+                if refusal.isCreditsRefusal {
+                    self.cloudCreditsRequest = CloudCreditsGate.request(modelId: modelId, reason: refusal.code)
+                }
                 self.updateMessage(assistantId) { $0.error = refusal.card }
                 self.finishStreaming(messageId: assistantId)
                 UINotificationFeedbackGenerator().notificationOccurred(.error)
@@ -843,6 +872,14 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
                 self.planStoreOff = true
             }
         }
+    }
+
+    /// A Cloud turn on the computer path failed with cloud-api's credits
+    /// refusal, which arrives as prose (contract pre-check e): open the sheet.
+    private func presentCreditsSheetIfRelayed(_ text: String) {
+        guard let modelId = lastSent?.runtimeModelId, ModelStore.cloudAlias(modelId) != nil,
+              let reason = CloudCreditsGate.reason(inRelayedError: text) else { return }
+        cloudCreditsRequest = CloudCreditsGate.request(modelId: modelId, reason: reason)
     }
 
     /// Opens a stored plan chat; the thread keeps taking new turns.
@@ -925,6 +962,7 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
             guard payload.status == "error" else { break }
             flushPendingDeltas()
             let raw = payload.metadata?.error ?? "The generation failed."
+            presentCreditsSheetIfRelayed(raw)
             let card = ChatError(
                 name: payload.metadata?.errorDetails?.name,
                 message: payload.metadata?.errorDetails?.message,
@@ -938,6 +976,7 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
 
         case .streamError(let reason):
             flushPendingDeltas()
+            presentCreditsSheetIfRelayed(reason)
             // The API's streamed no_brain error carries its fixed message.
             let name: String? = reason == AgentChatClientError.noBrainMessage ? "no_brain" : nil
             updateMessage(messageId) { message in

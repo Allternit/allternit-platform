@@ -306,6 +306,9 @@ struct ChatContentView: View {
             viewModel.needsBrainPick = false
             isModelPickerPresented = true
         }
+        .sheet(item: $viewModel.cloudCreditsRequest) { request in
+            CloudCreditsSheet(request: request)
+        }
         .onChange(of: viewModel.draftToRestore) { _, draft in
             // A send that never landed hands its text back so the user can
             // retry without retyping.
@@ -506,7 +509,8 @@ struct ChatContentView: View {
             sessionId: viewModel.currentSessionId,
             // Hard usage wall: at/above 100% the composer locks until the
             // window resets or the user adds credits / upgrades.
-            isUsageLocked: usageStore.isAtLimit,
+            // The person's own plans and Copilot don't use the Cloud allowance.
+            isUsageLocked: usageStore.isAtLimit && !PersonModels.isPersonOnly(modelStore.selectedModelId),
             isVoiceModeEnabled: !viewModel.isStreaming && !usageStore.isAtLimit,
             deck: deck,
             // A plain chat with no model picked opens the picker instead of

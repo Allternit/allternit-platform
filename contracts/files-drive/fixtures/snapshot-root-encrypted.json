@@ -1,0 +1,16 @@
+{
+  "type": "SnapshotRootFile",
+  "valid": true,
+  "case": "Reserved format, not used in v2: encrypted names, key_id points at the Files key. Kept so the field shapes stay valid.",
+  "message": {
+    "schema": "files-snapshot-root/1",
+    "root_id": "rt_home",
+    "cursor": "c1.rt_home.000412",
+    "written_at": "2026-11-15T03:12:00Z",
+    "encryption": "files_key_v1",
+    "names_encrypted": true,
+    "ciphertext": "bm90LXJlYWwtY2lwaGVydGV4dA",
+    "nonce": "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3",
+    "key_id": "fk_1"
+  }
+}

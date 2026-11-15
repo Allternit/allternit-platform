@@ -1,0 +1,21 @@
+{
+  "type": "ReplicasResponse",
+  "valid": true,
+  "case": "Replica on a MacBook.",
+  "message": {
+    "replicas": [
+      {
+        "replica_id": "rp_1",
+        "source_computer_id": "cmp_cloud_4gb",
+        "root_id": "rt_home",
+        "host_device_id": "dev_macbook1",
+        "mode": "full",
+        "state": "current",
+        "last_cursor": "c1.rt_home.000412",
+        "last_synced_at": "2026-11-15T14:05:00Z",
+        "stored_bytes": 9120044,
+        "key_id": "fk_1"
+      }
+    ]
+  }
+}

@@ -1,0 +1,68 @@
+{
+  "type": "ListResponse",
+  "valid": true,
+  "case": "Asleep: listing from snapshot; permissions still computed by cloud-api from the snapshot policy.",
+  "message": {
+    "root_id": "rt_home",
+    "parent": {
+      "id": "it_home0000",
+      "root_id": "rt_home",
+      "name": "Allternit",
+      "kind": "folder",
+      "size": 0,
+      "rev": "3-dir",
+      "meta_version": 3,
+      "created_at": "2026-11-15T14:00:00Z",
+      "modified_at": "2026-11-15T14:00:00Z",
+      "permissions": {
+        "list": true,
+        "read": true,
+        "write": true,
+        "delete": true,
+        "share": true,
+        "comment": true,
+        "agent_process": false,
+        "transfer": true,
+        "execute": false
+      }
+    },
+    "cursor": "c1.rt_home.000412",
+    "freshness": {
+      "served_by": "snapshot",
+      "computer_state": "asleep",
+      "snapshot_at": "2026-11-15T03:12:00Z"
+    },
+    "items": [
+      {
+        "id": "it_doc000001",
+        "root_id": "rt_home",
+        "parent_id": "it_home0000",
+        "name": "Lease.pdf",
+        "kind": "file",
+        "size": 482113,
+        "rev": "7-a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "meta_version": 7,
+        "content_hash": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "mime": "application/pdf",
+        "created_at": "2026-11-15T14:00:00Z",
+        "modified_at": "2026-11-15T14:05:00Z",
+        "modified_by": {
+          "kind": "owner",
+          "id": "user_2abc",
+          "display_name": "Eoj"
+        },
+        "permissions": {
+          "list": true,
+          "read": true,
+          "write": true,
+          "delete": true,
+          "share": true,
+          "comment": true,
+          "agent_process": false,
+          "transfer": true,
+          "execute": false
+        }
+      }
+    ]
+  }
+}

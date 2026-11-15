@@ -1,0 +1,10 @@
+{
+  "type": "ErrorBody",
+  "valid": true,
+  "case": "Expired link.",
+  "message": {
+    "error": "share_expired",
+    "code": "share_expired",
+    "message": "This link has expired."
+  }
+}

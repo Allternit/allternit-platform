@@ -1,0 +1,10 @@
+{
+  "type": "DeleteRequest",
+  "valid": true,
+  "case": "Normal: delete goes to trash.",
+  "message": {
+    "item_id": "it_doc000001",
+    "base_rev": "7-a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+    "permanent": false
+  }
+}

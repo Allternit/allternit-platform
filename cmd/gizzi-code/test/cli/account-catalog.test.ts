@@ -1,13 +1,15 @@
-import { describe, expect, test } from "bun:test"
+import { afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test"
 import { mkdtemp, readFile, writeFile } from "fs/promises"
 import { tmpdir } from "os"
 import { join } from "path"
 import {
   accountLines,
+  cloudEntitlement,
   creditsChip,
   getAllternitAccount,
   resetAllternitAccountCache,
 } from "../../src/cli/ui/ink-app/services/allternitAccount"
+import { Pairing } from "../../src/runtime/services/pairing/pairing"
 import { mcpEntry, SECTIONS, writeGizziMcp } from "../../src/cli/ui/ink-app/commands/customize/catalog"
 import { appViewFor, prepareAppView } from "../../src/cli/ui/ink-app/services/mcp/appView"
 import { ModelThinking } from "../../src/runtime/providers/discovery/model-thinking"
@@ -17,6 +19,19 @@ import { getDisplayedThinkingLabel, resolveAppliedEffort } from "../../src/cli/u
 function usageFetch(body: unknown, status = 200): typeof fetch {
   return (async () => new Response(JSON.stringify(body), { status })) as unknown as typeof fetch
 }
+
+// A real `gizzi login` on the test machine must not leak into these reads.
+const prevHome = process.env.GIZZI_TEST_HOME
+let pairing: ReturnType<typeof spyOn> | undefined
+beforeAll(async () => {
+  process.env.GIZZI_TEST_HOME = await mkdtemp(join(tmpdir(), "gz-acct-"))
+  pairing = spyOn(Pairing, "load").mockResolvedValue(undefined)
+})
+afterAll(() => {
+  pairing?.mockRestore()
+  if (prevHome === undefined) delete process.env.GIZZI_TEST_HOME
+  else process.env.GIZZI_TEST_HOME = prevHome
+})
 
 describe("Allternit account (/usage, footer chip)", () => {
   test("Max plan (id super) shows as Max with credits and the monthly meter", async () => {
@@ -32,6 +47,23 @@ describe("Allternit account (/usage, footer chip)", () => {
     expect(lines).toContain("Plan:      Max")
     expect(lines).toContain("$41.20 Cloud balance")
     expect(lines).toContain("$55.00 of $110.00 · resets in 3d")
+  })
+
+  test("a Free account with no credits: cloud_models locks Cloud and /usage says so", async () => {
+    process.env.ALLTERNIT_API_TOKEN = "t"
+    resetAllternitAccountCache()
+    const body = {
+      plan: "free",
+      credits: 0,
+      weeklyLimit: 0,
+      weeklyUsed: 0,
+      cloud_models: { allowed: false, reason: "credits_required", balance_usd: 0, byok_providers: [] },
+    }
+    const fetchImpl = usageFetch(body)
+    expect(await cloudEntitlement({ fetchImpl })).toEqual({ allowed: false, reason: "credits_required", balanceUsd: 0, byokProviders: [] })
+    const lines = accountLines(await getAllternitAccount({ fetchImpl }), () => "##", () => undefined).join("\n")
+    expect(lines).toContain("Cloud models: Allternit Cloud models need credits. Packs: $10, $25, $50, $100.")
+    expect(lines).not.toContain("Free monthly")
   })
 
   test("a rejected sign-in is signed-out, never a plan", async () => {

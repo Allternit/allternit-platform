@@ -384,6 +384,7 @@
 		812E56684939937BA283C336 /* StatusSnapshotWriter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 402E00436036ADCE4A388143 /* StatusSnapshotWriter.swift */; };
 		8146D4C88A0E01D132A3FFBE /* ShareOutboxDrainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C82B102712C353C6D94CCC8 /* ShareOutboxDrainer.swift */; };
 		819AC1D939BC82773FF58BE4 /* libiconv.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = 155758E1014D4AE63687BCED /* libiconv.tbd */; };
+		81E63CDCE547316DEA0DFD05 /* CloudCreditsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200400EF6B620633834145F4 /* CloudCreditsTests.swift */; };
 		824899C9360AB2B6AE33CE2B /* NotificationActionsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E286E4C3C02329A40CC05A34 /* NotificationActionsTests.swift */; };
 		825015DB4BD850AD5C79B299 /* SherpaOnnxC.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 6073B8B9BAD568B603F34A49 /* SherpaOnnxC.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		8265AD49AB53C7116E57FCF3 /* MeetingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 801817DBD19D95B873EC56BA /* MeetingsView.swift */; };
@@ -452,6 +453,7 @@
 		9B9B6B7FEB6A399693D7624F /* ConnectAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C4E0B35B15807646EB38EB6 /* ConnectAPI.swift */; };
 		9C4288DFD9EB4A344B787C74 /* ChatGPTSignInStep.swift in Sources */ = {isa = PBXBuildFile; fileRef = A13514EE0C5A7A329CE698D9 /* ChatGPTSignInStep.swift */; };
 		9D82B550B9424BBF40459135 /* PDFTemplateClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6E7FBB49427D3DBB2B68F253 /* PDFTemplateClient.swift */; };
+		9DA54E358D3EC32393342125 /* CloudCreditsSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC1278B175922C3190124C76 /* CloudCreditsSheet.swift */; };
 		9E1E174BD9837CB017C3F0A2 /* TreeSitterSwiftRunestone in Frameworks */ = {isa = PBXBuildFile; productRef = B7E1C1CFB727D46A6801CA9E /* TreeSitterSwiftRunestone */; };
 		9E3DCD4E3845A6C0420A3EC0 /* IntentGate.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD27499F59E5CDE9AC9911A1 /* IntentGate.swift */; };
 		9E5B4610C820CE11F367EA94 /* PtyClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F872E12909F37FC3EB5C89A /* PtyClient.swift */; };
@@ -939,6 +941,7 @@
 		1DFBD7CD63FE6864C79565CA /* PersonPlanTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonPlanTests.swift; sourceTree = "<group>"; };
 		1E08EFDE05133F76965F508F /* VoiceSummaryCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceSummaryCardView.swift; sourceTree = "<group>"; };
 		1F9086A857ADB6FDFADF8567 /* BotWorkspaceFilesSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotWorkspaceFilesSheet.swift; sourceTree = "<group>"; };
+		200400EF6B620633834145F4 /* CloudCreditsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudCreditsTests.swift; sourceTree = "<group>"; };
 		202DAEFD590DACDF8429BB4A /* WebhookTrigger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebhookTrigger.swift; sourceTree = "<group>"; };
 		2231C7B42835BA8F8AC58F6D /* PlanThreadClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlanThreadClientTests.swift; sourceTree = "<group>"; };
 		227D078094066BC9426B6B6D /* BotPhoneViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotPhoneViews.swift; sourceTree = "<group>"; };
@@ -1291,6 +1294,7 @@
 		AB32679EDE01EA7A9CE2BACA /* DevServerPortsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DevServerPortsView.swift; sourceTree = "<group>"; };
 		ABBB4775FDD12CEECFBA773E /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		ABC21CF93092F6F12C6D3F1D /* SampleURLProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SampleURLProtocol.swift; sourceTree = "<group>"; };
+		AC1278B175922C3190124C76 /* CloudCreditsSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudCreditsSheet.swift; sourceTree = "<group>"; };
 		AC42714771756864D08FB907 /* CanvasClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanvasClient.swift; sourceTree = "<group>"; };
 		AC759A283B3A7CA4AE285758 /* NotificationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationService.swift; sourceTree = "<group>"; };
 		AC93B5FE19CEF060633CAC6B /* MiniAppRuntimeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MiniAppRuntimeView.swift; sourceTree = "<group>"; };
@@ -2225,6 +2229,7 @@
 		60650EE2A089756331A8E36C /* Tests */ = {
 			isa = PBXGroup;
 			children = (
+				200400EF6B620633834145F4 /* CloudCreditsTests.swift */,
 				03F7D2D2E6E654FB036596F2 /* ConnectionsMergeTests.swift */,
 				BE44ED582CA4DA23E6DADFBB /* DecideDelegateIntentRulesTests.swift */,
 				6D1CF76A3B4AF38B5A019D23 /* DeepLinkTests.swift */,
@@ -3015,6 +3020,7 @@
 		E2BF9C779B009F5AE04D3BF5 /* Shared */ = {
 			isa = PBXGroup;
 			children = (
+				AC1278B175922C3190124C76 /* CloudCreditsSheet.swift */,
 				77AECD9F187CE85C55C5BED2 /* ComputeGateView.swift */,
 				324344A5DC94AD9D1F524C6F /* ConnectComputerView.swift */,
 				49C7586613A1AF683C0AF1C1 /* DesktopArtwork.swift */,
@@ -3470,6 +3476,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				81E63CDCE547316DEA0DFD05 /* CloudCreditsTests.swift in Sources */,
 				E57F469D9F0EF53B3D433EE1 /* ConnectionsMergeTests.swift in Sources */,
 				5C2093288994F432DB8B4804 /* DecideDelegateIntentRulesTests.swift in Sources */,
 				7A8A041B3D2EB92063AC4836 /* DeepLinkTests.swift in Sources */,
@@ -3672,6 +3679,7 @@
 				B7B14D04A0FDE61A3A07DAD8 /* ChatView.swift in Sources */,
 				5C96F9899ADE3A7595CD8405 /* ChatViewModel.swift in Sources */,
 				D2BB004CFCD9B0F3E9DD4B04 /* CloudComputerBackupsView.swift in Sources */,
+				9DA54E358D3EC32393342125 /* CloudCreditsSheet.swift in Sources */,
 				457D6E3CE854619B035B793F /* CloudDeployClient.swift in Sources */,
 				2995CA94BCC63006B8001F40 /* CloudDeployManagerView.swift in Sources */,
 				E282D36E4CFAF46225132FA2 /* CloudDeployModels.swift in Sources */,

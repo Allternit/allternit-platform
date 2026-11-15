@@ -1,0 +1,19 @@
+{
+  "type": "ShareAccessed",
+  "valid": true,
+  "case": "Share access event.",
+  "message": {
+    "type": "files.share.accessed",
+    "event_id": "ev_4",
+    "at": "2026-11-15T14:05:00Z",
+    "computer_id": "cmp_mac_studio",
+    "access": {
+      "share_id": "sh_view_download",
+      "guest_id": "gst_7f3k",
+      "action": "download",
+      "item_id": "it_doc000002",
+      "result": "allowed",
+      "at": "2026-11-15T14:05:00Z"
+    }
+  }
+}

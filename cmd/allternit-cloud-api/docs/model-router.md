@@ -2,9 +2,9 @@
 
 Allternit Cloud is a **model broker**, not a thin wrapper around a single upstream provider. The router owns the decision of where every request runs and abstracts that decision behind one OpenAI-compatible API for users.
 
-## Current BETA operating model
+## Current operating model
 
-During BETA, Allternit Cloud does **not** sell bundled model credits or resell inference. Subscription tiers and credit balances shown in the console are UI-only unless explicitly marked live. Model access is provided through upstream adapters (currently OpenRouter) on an operator-paid or bring-your-own-key basis.
+Allternit Cloud models are paid from the account's prepaid credit balance (`user_credits`; packs, plan credits and grants all count). There is no free monthly allowance: `check_inference_allowed` (`src/services/inference_settlement.rs`) answers `402 credits_required` when the account has no credits row and `402 credits_exhausted` when the balance is at or below 0, with the error body described in the docs site (`surfaces/docs/api/chat-completions.mdx`, "Credits (Cloud API)"). The same check covers the artifact-runtime model call. Requests routed through the person's own provider key, `plan/…` and `copilot/…` person models, and platform project runtimes skip it. `GET /api/v1/billing/credits` and `GET /api/v1/me/usage` report the same rule as `cloud_models`. A Clerk session may call catalog aliases (bare wire id) under the same check; other non-plan models stay `403` for a session. Model access is provided through upstream adapters (currently OpenRouter), or the person's own key when they added one for that provider.
 
 A platform disclosure identifying upstream providers is required. See `docs/model-provider-disclosures.md` for the exact language and attribution table.
 

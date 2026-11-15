@@ -13,6 +13,8 @@ struct ModelPickerSheet: View {
     /// `modelStore.personModels`; observed so new rows show at once.
     @ObservedObject private var connections = ConnectionsStore.shared
     @ObservedObject private var chatgpt = ChatGPTDeviceStore.shared
+    /// Allternit Cloud entitlement (`cloud_models`): locked rows follow it.
+    @ObservedObject private var plan = AccountPlanStore.shared
     @Environment(\.dismiss) private var dismiss
 
     private enum Scope: Hashable { case all, favorites, provider(String) }
@@ -21,6 +23,7 @@ struct ModelPickerSheet: View {
     @State private var scope: Scope = .all
     @State private var favorites: [String] = ModelFavorites.load()
     @State private var isConnectPresented = false
+    @State private var creditsRequest: CloudCreditsRequest? = nil
 
     var body: some View {
         VStack(spacing: 0) {
@@ -49,6 +52,8 @@ struct ModelPickerSheet: View {
         .onAppear {
             modelStore.fetchModelsIfNeeded()
             usage.fetchUsageIfNeeded()
+            // Re-read the Cloud entitlement on every open (credits bought on the web).
+            plan.load(force: true)
             quotas.load(providerIds)
             // Plans connect on cloud-api, so they show with no computer at all.
             Task {
@@ -57,6 +62,9 @@ struct ModelPickerSheet: View {
             }
         }
         .onChange(of: modelStore.models) { _, _ in quotas.load(providerIds) }
+        .sheet(item: $creditsRequest) { request in
+            CloudCreditsSheet(request: request)
+        }
         .sheet(isPresented: $isConnectPresented) {
             NavigationStack {
                 ModelManagementView()
@@ -298,6 +306,7 @@ struct ModelPickerSheet: View {
     private func modelRow(_ model: RuntimeModel) -> some View {
         let selected = modelStore.selectedModelId == model.id
         let favorite = favorites.contains(model.id)
+        let locked = modelStore.isCloudLocked(model.id)
         return HStack(spacing: 10) {
             ModelProviderMark(providerId: model.provider, size: 24)
             VStack(alignment: .leading, spacing: 2) {
@@ -320,6 +329,13 @@ struct ModelPickerSheet: View {
                         .lineLimit(1)
                     if let thinking = model.thinking { ThinkingChip(thinking: thinking) }
                 }
+                if locked {
+                    HStack(spacing: 4) {
+                        Image(systemName: "lock.fill").font(.system(size: 9.5, weight: .semibold))
+                        Text("Needs credits").font(.system(size: 11, weight: .medium))
+                    }
+                    .foregroundColor(Color("TextSecondary"))
+                }
             }
             Spacer(minLength: 4)
             if selected {
@@ -340,12 +356,17 @@ struct ModelPickerSheet: View {
         .contentShape(Rectangle())
         .onTapGesture { choose(model) }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(model.isDefault ? "\(model.name), default" : model.name)
+        .accessibilityLabel([model.name, model.isDefault ? "default" : nil, locked ? "needs credits" : nil].compactMap { $0 }.joined(separator: ", "))
         .accessibilityAddTraits(selected ? [.isButton, .isSelected] : [.isButton])
     }
 
     private func choose(_ model: RuntimeModel) {
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        // A locked Cloud row opens the credits sheet and keeps the old selection.
+        if modelStore.isCloudLocked(model.id) {
+            creditsRequest = CloudCreditsGate.request(modelId: model.id, reason: plan.cloudModels?.reason)
+            return
+        }
         modelStore.userSelectedModel(model.id)
         // Stay open on a pick from the full list so the level can be set too.
         scope = .all
@@ -364,8 +385,16 @@ struct ModelPickerSheet: View {
                 : "Your own plan · only messages you send in chat"
         }
         if pid == "allternit" {
-            let left = usage.percentUsed.map { "\(max(0, 100 - Int($0.rounded())))% of allowance left" }
-            let parts = ["Allternit Cloud", usage.planLabel, left].compactMap { $0 }
+            // Balance or "Needs credits": there is no free allowance (D1).
+            let funds: String?
+            if let cloud = plan.cloudModels, !cloud.allowed {
+                funds = "Needs credits"
+            } else if let balance = plan.credits?.balanceUsd {
+                funds = "\(CloudCreditsCopy.money(balance)) credits"
+            } else {
+                funds = nil
+            }
+            let parts = ["Allternit Cloud", usage.planLabel, funds].compactMap { $0 }
             return parts.joined(separator: " · ")
         }
         if ModelProviderNames.rank(pid) == 2 { return "Runs on this computer · no limits" }

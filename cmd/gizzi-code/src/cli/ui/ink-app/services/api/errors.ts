@@ -4,6 +4,7 @@ import {
   APIError,
 } from '@allternit/gizzi-sdk/providers/allternit'
 import { describeProviderError, formatProviderErrorHelp, subscriptionAlternative } from './providerErrors.js'
+import { cloudCreditsRefusal } from '@/shared/util/provider-error'
 import type {
   BetaMessage,
   BetaStopReason,
@@ -154,8 +155,10 @@ export const CREDIT_BALANCE_TOO_LOW_ERROR_MESSAGE = 'Credit balance is too low'
  * a sign-in problem (see providerErrors.ts), or undefined for anything else.
  */
 export function cloudRefusalHelp(status: number | undefined, message: string, now?: Date): string | undefined {
-  if (status !== 402 && status !== 403 && status !== 429) return undefined
-  if (status !== 402 && !/allowance|credits exhausted|plan|monthly limit|verified email/i.test(message)) return undefined
+  // A credits refusal is known by its code (credits_required / credits_exhausted), whatever the status.
+  const credits = cloudCreditsRefusal(message) !== undefined
+  if (!credits && status !== 402 && status !== 403 && status !== 429) return undefined
+  if (!credits && status !== 402 && !/plan|monthly limit|verified email/i.test(message)) return undefined
   const help = describeProviderError({
     provider: 'allternit',
     status,
@@ -825,14 +828,17 @@ export async function getAssistantMessageFromError(
     }
   }
 
-  // Allternit Cloud refusals that are not sign-in problems: the free
-  // allowance, credits, the plan's monthly limit, an unverified email. The
-  // 401/403 handlers below would call these "Not logged in".
+  // Allternit Cloud refusals that are not sign-in problems: no credits or
+  // credits used up (402, by `error.code`), the plan's monthly limit, an
+  // unverified email. The 401/403 handlers below would call these "Not logged in".
   if (error instanceof APIError) {
-    const cloudHelp = cloudRefusalHelp(error.status, error.message)
+    // The SDK keeps the parsed body on `error.error`; the message may not carry it.
+    const body = error.error && typeof error.error === 'object' ? ` ${JSON.stringify(error.error)}` : ''
+    const text = `${error.message}${body}`
+    const cloudHelp = cloudRefusalHelp(error.status, text)
     if (cloudHelp) {
       return createAssistantAPIErrorMessage({
-        error: error.status === 402 || /allowance|credits|limit/i.test(error.message) ? 'billing_error' : 'authentication_failed',
+        error: error.status === 402 || cloudCreditsRefusal(text) || /credits|limit/i.test(error.message) ? 'billing_error' : 'authentication_failed',
         content: cloudHelp,
       })
     }

@@ -4,10 +4,11 @@
 //! The fake engine serves in process; a `sleep` child stands in for the
 //! engine's process so pid checks, kill and reattach run for real.
 
-use super::engines::{EngineDirs, Hardware};
+use super::engines::EngineDirs;
+use allternit_studio_spec::{Hardware, HostHardware};
 use super::runner::{pid_alive, EngineLauncher, LaunchRequest, Launched};
 use super::*;
-use allternit_studio_spec::fake_engine::FakeEngine;
+use allternit_studio_spec::fake_engine::{FakeConfig, FakeEngine};
 use axum::body::Body;
 use axum::http::Request;
 use serde_json::{json, Value};
@@ -28,7 +29,8 @@ impl EngineLauncher for FakeLauncher {
     }
 
     async fn launch(&self, req: LaunchRequest) -> Result<Launched, String> {
-        let engine = FakeEngine::start(&req.token, self.delay)
+        let cfg = FakeConfig { output_dir: Some(req.output_dir.clone()), ..FakeConfig::default() };
+        let engine = FakeEngine::start_with(&req.token, self.delay, cfg)
             .await
             .map_err(|e| e.to_string())?;
         let port = engine.addr.port();
@@ -91,15 +93,8 @@ fn env(step_delay: Duration) -> Env {
 
 fn host(env: &Env, hardware: Hardware) -> StudioHost {
     StudioHost::new(StudioConfig {
-        dir: env.dir.clone(),
-        hardware,
-        launcher: env.launcher.clone(),
-        local_engine_url: "http://127.0.0.1:9".into(),
-        poll_interval: Duration::from_millis(20),
-        start_timeout: Duration::from_secs(5),
-        kill_grace: Duration::from_secs(2),
-        // Nothing listens here: a test that reaches Freeweights fails fast.
-        freeweights_url: Some("http://127.0.0.1:9".into()),
+        hardware: HostHardware::plain(hardware),
+        ..host_cfg(env)
     })
 }
 
@@ -258,12 +253,15 @@ async fn studio_fixture_lora_job_succeeds_through_routes() {
 fn host_cfg(env: &Env) -> StudioConfig {
     StudioConfig {
         dir: env.dir.clone(),
-        hardware: Hardware::AppleSilicon,
+        hardware: HostHardware::plain(Hardware::AppleSilicon),
+        // The device always answers, unless a test says otherwise.
+        device_check: Arc::new(|_| Ok(())),
         launcher: env.launcher.clone(),
         local_engine_url: "http://127.0.0.1:9".into(),
         poll_interval: Duration::from_millis(20),
         start_timeout: Duration::from_secs(5),
         kill_grace: Duration::from_secs(2),
+        // Nothing listens here: a test that reaches Freeweights fails fast.
         freeweights_url: Some("http://127.0.0.1:9".into()),
     }
 }
@@ -367,11 +365,6 @@ async fn studio_restart_marks_job_failed_when_engine_died() {
 #[tokio::test]
 async fn studio_refusals_and_engine_list() {
     let env = env(Duration::from_millis(30));
-    let pc = host(&env, Hardware::Unsupported);
-    let (status, err) = call(&pc, "POST", "/studio/jobs", Some(fixture(&env))).await;
-    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
-    assert_eq!(err["error"], "hardware_not_supported");
-
     let mac = host(&env, Hardware::AppleSilicon);
     let mut rented = fixture(&env);
     rented["resources"]["place"] = json!("rented");
@@ -461,7 +454,7 @@ async fn studio_register_output_calls_local_engine() {
         &host,
         "POST",
         &format!("/studio/jobs/{id}/outputs/register"),
-        Some(json!({"kind": "gguf"})),
+        Some(json!({"kind": "merged"})), // the fixture asks for no merged model
     )
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
@@ -557,4 +550,102 @@ async fn studio_manifest_pin_match_and_mismatch() {
     let (status, job) = call(&host, "POST", "/studio/jobs", Some(ok)).await;
     assert_eq!(status, StatusCode::CREATED, "{job}");
     wait_state(&host, job["id"].as_str().unwrap(), "succeeded").await;
+}
+
+/// POST /studio/jobs against the spec's fit: each refusal carries its code
+/// and the host's reason, and nothing is queued.
+#[tokio::test]
+async fn studio_create_refuses_by_method_backend_output_and_device() {
+    let env = env(Duration::from_millis(30));
+    let refused = |host: StudioHost, spec: Value| async move {
+        let (status, err) = call(&host, "POST", "/studio/jobs", Some(spec)).await;
+        assert!(host.jobs().is_empty(), "a refused job was queued: {err}");
+        (status, err)
+    };
+
+    let mac = host(&env, Hardware::AppleSilicon);
+    let mut unsloth = fixture(&env);
+    unsloth["engine"] = json!("unsloth-upstream");
+    let (status, err) = refused(mac, unsloth).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(err["error"], "hardware_not_supported");
+    assert!(err["message"].as_str().unwrap().contains("Apple Silicon"), "{err}");
+
+    let mut qlora = fixture(&env);
+    qlora["method"] = json!("qlora");
+    let (status, err) = refused(host(&env, Hardware::Cpu), qlora).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(err["error"], "method_not_supported");
+    assert_eq!(err["message"], "QLoRA needs a GPU. Only LoRA runs on the CPU.");
+
+    let mut mlx_out = fixture(&env);
+    mlx_out["outputs"]["mlx"] = json!(true);
+    let (_, err) = refused(host(&env, Hardware::CudaLinux), mlx_out).await;
+    assert_eq!(err["error"], "output_not_supported");
+    assert_eq!(err["message"], "MLX files are made only on a Mac with Apple Silicon.");
+
+    let mut mlx_backend = fixture(&env);
+    mlx_backend["resources"]["backend"] = json!("mlx");
+    let (_, err) = refused(host(&env, Hardware::RocmLinux), mlx_backend).await;
+    assert_eq!(err["error"], "backend_not_supported");
+    assert!(!err["message"].as_str().unwrap().is_empty());
+
+    let gone = StudioHost::new(StudioConfig {
+        hardware: HostHardware::plain(Hardware::CudaLinux),
+        device_check: Arc::new(|_| Err("nvidia-smi no longer lists a GPU".into())),
+        ..host_cfg(&env)
+    });
+    let (status, err) = refused(gone, fixture(&env)).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(err["error"], "hardware_unavailable");
+    assert_eq!(err["message"], "nvidia-smi no longer lists a GPU");
+
+    // CPU is a real device: a LoRA job is accepted.
+    let cpu = host(&env, Hardware::Cpu);
+    let (status, job) = call(&cpu, "POST", "/studio/jobs", Some(fixture(&env))).await;
+    assert_eq!(status, StatusCode::CREATED, "{job}");
+    wait_state(&cpu, job["id"].as_str().unwrap(), "succeeded").await;
+    let (_, list) = call(&cpu, "GET", "/studio/engines", None).await;
+    let tune = list["engines"].as_array().unwrap().iter().find(|e| e["id"] == "allternit-tune").unwrap();
+    assert_eq!(tune["fit"]["hardware"], "cpu");
+    assert!(tune["fit"]["warning"].as_str().is_some(), "{tune}");
+    assert!(tune["fit"]["methods_unavailable"]["qlora"].is_string(), "{tune}");
+}
+
+/// base.path: the host never fetches (Freeweights is unreachable here) and the
+/// engine gets the absolute folder; a missing folder is refused up front.
+#[tokio::test]
+async fn studio_local_base_path_job_runs_without_fetch() {
+    let env = env(Duration::from_millis(30));
+    let host = host(&env, Hardware::AppleSilicon);
+    let base = env.dir.parent().unwrap().join("my-base");
+    std::fs::create_dir_all(&base).unwrap();
+    std::fs::write(base.join("config.json"), "{}").unwrap();
+    let local = |path: &str| {
+        let mut spec = fixture(&env);
+        spec["base"] = json!({ "path": path });
+        spec
+    };
+
+    let (status, err) = call(&host, "POST", "/studio/jobs", Some(local("/nonexistent/base"))).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(err["error"], "invalid_base");
+    assert!(err["message"].as_str().unwrap().contains("was not found"), "{err}");
+
+    let (status, job) = call(&host, "POST", "/studio/jobs", Some(local(&base.to_string_lossy()))).await;
+    assert_eq!(status, StatusCode::CREATED, "{job}");
+    let id = job["id"].as_str().unwrap();
+    let done = wait_state(&host, id, "succeeded").await;
+    let (_, events) = call(&host, "GET", &format!("/studio/jobs/{id}/events?after=0"), None).await;
+    let text = events.to_string();
+    assert!(text.contains("Using local base model"), "{text}");
+    assert!(!text.contains("Getting base model"), "{text}");
+    // Outputs are absolute paths inside this job's outputs folder.
+    let out_dir = std::path::absolute(env.dir.join("jobs").join(id).join("outputs")).unwrap();
+    let outputs = done["outputs"].as_array().unwrap();
+    assert!(!outputs.is_empty(), "{done}");
+    for o in outputs {
+        let p = Path::new(o["path"].as_str().unwrap());
+        assert!(p.is_absolute() && p.starts_with(&out_dir), "{o}");
+    }
 }

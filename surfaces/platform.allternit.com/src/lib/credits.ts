@@ -1,11 +1,5 @@
 import { AllternitApiError, api } from "@/lib/api-client";
 
-export interface FreeInferenceUsage {
-  monthly_allowance_usd: number;
-  used_usd: number;
-  remaining_usd: number;
-}
-
 export interface CreditsTransaction {
   amount_usd: number;
   source: string;
@@ -16,7 +10,6 @@ export interface CreditsBalance {
   balance_usd: number;
   month_to_date_usage_usd: number;
   recent_transactions?: CreditsTransaction[];
-  free_inference?: FreeInferenceUsage;
 }
 
 function billingApiBaseUrl(): string {

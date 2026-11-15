@@ -17,6 +17,8 @@ struct PersonChatRefusal: Error, Equatable, Sendable {
     /// Contract §9.3 / §9.2 codes, plus the on-device ChatGPT ones.
     var plainText: String {
         switch code {
+        case "credits_required": return "Allternit Cloud models need credits."
+        case "credits_exhausted": return "Your Allternit Cloud credits are used up."
         case "plan_person_only": return "Your \(vendor) plan only answers messages you send yourself in chat."
         case "plan_rate": return "You've sent a lot of messages to your \(vendor) plan in the last few minutes. Wait a little and send again."
         case "plan_turn_in_flight": return "Your \(vendor) plan is still answering another message. Wait for it to finish."
@@ -35,6 +37,10 @@ struct PersonChatRefusal: Error, Equatable, Sendable {
             return "\(vendor) didn't answer. Try again."
         }
     }
+
+    /// The server refused an Allternit Cloud turn for credits (HTTP 402, D3):
+    /// the chat opens the credits sheet.
+    var isCreditsRefusal: Bool { code == "credits_required" || code == "credits_exhausted" }
 
     var card: ChatError {
         var error = ChatError(name: code, message: plainText, raw: message.map { "\(code): \($0)" } ?? code)
@@ -72,7 +78,13 @@ enum PersonChatClient {
         }
     }
 
-    // MARK: - cloud-api (plan/*, copilot/*)
+    // MARK: - cloud-api (plan/*, copilot/*, allternit/* with no computer)
+
+    /// The id cloud-api takes: Allternit Cloud aliases go bare
+    /// ("allternit/glm-5.3" → "glm-5.3"); plan and Copilot ids as they are.
+    static func wireModel(_ model: String) -> String {
+        ModelStore.cloudAlias(model) ?? model
+    }
 
     static func cloudBody(model: String, messages: [PersonChatMessage]) throws -> Data {
         struct Body: Encodable {
@@ -80,7 +92,7 @@ enum PersonChatClient {
             let messages: [PersonChatMessage]
             let stream: Bool
         }
-        return try JSONEncoder().encode(Body(model: model, messages: messages, stream: true))
+        return try JSONEncoder().encode(Body(model: wireModel(model), messages: messages, stream: true))
     }
 
     /// One `data:` payload of the OpenAI-style chunk stream: the text delta,
@@ -106,13 +118,17 @@ enum PersonChatClient {
     static func refusal(status: Int, body: Data, vendor: String) -> PersonChatRefusal {
         let object = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any]
         let error = object?["error"] as? [String: Any]
-        let code = (error?["code"] as? String) ?? (object?["error"] as? String) ?? Self.code(forStatus: status)
+        var code = (error?["code"] as? String) ?? (object?["error"] as? String) ?? Self.code(forStatus: status)
+        // Any 402 is a credits refusal, even from a server that sends a flat body.
+        if status == 402, code != "credits_exhausted" { code = "credits_required" }
         return PersonChatRefusal(code: code, message: error?["message"] as? String, vendor: vendor)
     }
 
-    private static func code(forStatus status: Int) -> String {
+    static func code(forStatus status: Int) -> String {
         switch status {
         case 401: return "signed_out_allternit"
+        // A 402 is always a credits refusal (D3); its body names which one.
+        case 402: return "credits_required"
         case 403: return "plan_person_only"
         case 429: return "plan_rate"
         case 503: return "runner_busy"

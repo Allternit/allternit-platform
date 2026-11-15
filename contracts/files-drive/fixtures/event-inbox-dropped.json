@@ -1,0 +1,24 @@
+{
+  "type": "InboxDropped",
+  "valid": true,
+  "case": "A guest drop creates a task that needs approval.",
+  "message": {
+    "type": "files.inbox.dropped",
+    "event_id": "ev_1",
+    "at": "2026-11-15T14:05:00Z",
+    "computer_id": "cmp_mac_studio",
+    "root_id": "rt_inbox",
+    "item_id": "it_drp000031",
+    "name": "W-9.pdf",
+    "size": 88211,
+    "mime": "application/pdf",
+    "dropped_by": {
+      "kind": "guest",
+      "id": "gst_7f3k",
+      "display_name": "Dana"
+    },
+    "untrusted": true,
+    "task_id": "tsk_77",
+    "task_state": "needs_approval"
+  }
+}

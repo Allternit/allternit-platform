@@ -58,7 +58,8 @@ class Emitter:
         self._send({"kind": "progress", "progress": max(0.0, min(1.0, fraction)), "message": message})
 
     def output(self, kind: str, path: Path, message: str = "") -> None:
-        path = Path(path)
+        # The contract: JobOutput.path is an absolute path on this computer.
+        path = Path(path).expanduser().resolve()
         self._send({
             "kind": "output",
             "output": {"kind": kind, "path": str(path), "bytes": dir_bytes(path)},

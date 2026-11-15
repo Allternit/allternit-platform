@@ -14,13 +14,14 @@ final class StudioJobsStore: ObservableObject {
     }
 
     @Published private(set) var phase: Phase = .loading
-    @Published private(set) var engineNames: [String: String] = [:]
+    @Published private(set) var engines: [String: StudioEngineCard] = [:]
+    var engineNames: [String: String] { engines.mapValues(\.name) }
     private let client = StudioJobsClient.shared
 
     func refresh() async {
         do {
             phase = .loaded(try await client.listJobs())
-            if engineNames.isEmpty, let names = try? await client.engineNames() { engineNames = names }
+            if engines.isEmpty, let cards = try? await client.engines() { engines = cards }
         } catch RuntimeRelayError.noComputer {
             phase = .noComputer
         } catch RuntimeRelayError.unreachable {
@@ -45,7 +46,75 @@ final class StudioJobsStore: ObservableObject {
 enum StudioJobsFormat {
     static func message(for error: Error) -> String {
         if let relay = error as? RuntimeRelayError { return relay.localizedDescription }
+        if case APIError.httpError(_, let text?) = error, !text.isEmpty {
+            // The host's own sentence (a code on its own, or its reason) for refusals.
+            return sentence(code: text, reason: text) ?? "Training jobs couldn't be loaded. Try again in a moment."
+        }
         return "Training jobs couldn't be loaded. Try again in a moment."
+    }
+
+    static let hardwareLabels: [String: String] = [
+        "apple-silicon": "Mac with Apple Silicon",
+        "cuda-linux": "Linux with an NVIDIA GPU",
+        "cuda-windows": "Windows with an NVIDIA GPU",
+        "rocm-linux": "Linux with an AMD GPU",
+        "xpu-linux": "Linux with an Intel GPU",
+        "xpu-windows": "Windows with an Intel GPU",
+        "cpu": "CPU only",
+    ]
+
+    static let backendLabels: [String: String] = [
+        "mlx": "MLX",
+        "torch-mps": "PyTorch (Metal)",
+        "torch-cuda": "PyTorch (CUDA)",
+        "torch-rocm": "PyTorch (ROCm)",
+        "torch-xpu": "PyTorch (Intel XPU)",
+        "torch-cpu": "PyTorch (CPU)",
+    ]
+
+    /// Hardware Allternit has run real jobs on. Empty until a run is recorded
+    /// (phase 4 decision 6), so every backend carries the untested line.
+    static let testedHardware: Set<String> = []
+
+    static let untestedLine = "Not yet tested by Allternit on this hardware"
+
+    static func outputLabel(_ kind: String) -> String {
+        switch kind {
+        case "adapter": return "Adapter"
+        case "merged": return "Merged model"
+        case "gguf": return "GGUF model"
+        case "mlx": return "MLX model"
+        default: return kind
+        }
+    }
+
+    /// "Runs with MLX on Mac with Apple Silicon", or nil when the card says
+    /// nothing usable (older host, engine refused here).
+    static func backendLine(_ fit: StudioFit?) -> String? {
+        guard let fit, fit.ok != false, let backend = fit.backend, !backend.isEmpty else { return nil }
+        let name = backendLabels[backend] ?? backend
+        if let hw = fit.hardware, let label = hardwareLabels[hw] { return "Runs with \(name) on \(label)" }
+        return "Runs with \(name)"
+    }
+
+    static func isUntested(_ fit: StudioFit?) -> Bool {
+        guard let fit, fit.ok != false, fit.backend != nil else { return false }
+        return !testedHardware.contains(fit.hardware ?? "")
+    }
+
+    /// Same wording as the web (studio-jobs.ts): the host's reason when it
+    /// sent one. Nil for a string that is not one of these refusal codes.
+    static func sentence(code: String, reason: String?) -> String? {
+        let host = reason.flatMap { $0 == code ? nil : ($0.isEmpty ? nil : $0) }
+        switch code {
+        case "hardware_not_supported": return host ?? "Your computer can't run this engine. Pick another engine."
+        case "method_not_supported": return host ?? "Your computer can't train with that method. Pick another method."
+        case "backend_not_supported": return host ?? "That backend can't be used on your computer. Leave the backend on automatic."
+        case "output_not_supported": return host ?? "Your computer can't make one of the files you picked. Untick it, then start again."
+        case "hardware_unavailable": return host ?? "The training device on your computer can't be used right now. Restart the computer, then try again."
+        case "invalid_base": return "That base model can't be used. Pick a model from the Freeweights list."
+        default: return reason
+        }
     }
 
     static func methodLabel(_ method: String) -> String {
@@ -91,7 +160,7 @@ struct StudioJobsSection: View {
         Section {
             VStack(alignment: .leading, spacing: 14) { content }
                 .sheet(item: $selected) { job in
-                    StudioJobDetailView(job: job, engineName: store.engineNames[job.spec.engine] ?? job.spec.engine) { Task { await store.refresh() } }
+                    StudioJobDetailView(job: job, engineName: store.engineNames[job.spec.engine] ?? job.spec.engine, fit: store.engines[job.spec.engine]?.fit) { Task { await store.refresh() } }
                 }
                 .sheet(isPresented: $isConnectSheetPresented, onDismiss: {
                     Task { await relay.refresh(); await store.refresh() }
@@ -146,7 +215,7 @@ struct StudioJobsSection: View {
                 )
             } else {
                 ForEach(jobs) { job in
-                    Button { selected = job } label: { StudioJobRow(job: job, engineName: store.engineNames[job.spec.engine] ?? job.spec.engine) }
+                    Button { selected = job } label: { StudioJobRow(job: job, engineName: store.engineNames[job.spec.engine] ?? job.spec.engine, fit: store.engines[job.spec.engine]?.fit) }
                         .buttonStyle(.plain)
                 }
             }
@@ -157,6 +226,7 @@ struct StudioJobsSection: View {
 private struct StudioJobRow: View {
     let job: StudioJob
     let engineName: String
+    var fit: StudioFit?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -173,6 +243,11 @@ private struct StudioJobRow: View {
             Text("\(engineName) · \(StudioJobsFormat.methodLabel(job.spec.method))")
                 .font(.caption)
                 .foregroundColor(Color("TextSecondary"))
+            if job.spec.outputs?.mlx == true {
+                Text("Also makes an MLX model")
+                    .font(.caption)
+                    .foregroundColor(Color("TextSecondary"))
+            }
         }
         .padding(.vertical, 2)
         .accessibilityElement(children: .combine)
@@ -182,6 +257,7 @@ private struct StudioJobRow: View {
 struct StudioJobDetailView: View {
     let job: StudioJob
     let engineName: String
+    var fit: StudioFit?
     var onChange: () -> Void = {}
 
     @Environment(\.dismiss) private var dismiss
@@ -190,10 +266,12 @@ struct StudioJobDetailView: View {
     @State private var confirmCancel = false
     @State private var isCancelling = false
     @State private var error: String?
+    @State private var outputs: [StudioJobOutput] = []
 
-    init(job: StudioJob, engineName: String, onChange: @escaping () -> Void = {}) {
+    init(job: StudioJob, engineName: String, fit: StudioFit? = nil, onChange: @escaping () -> Void = {}) {
         self.job = job
         self.engineName = engineName
+        self.fit = fit
         self.onChange = onChange
         _current = State(initialValue: job)
     }
@@ -207,6 +285,15 @@ struct StudioJobDetailView: View {
                 Section {
                     row("Base model", current.spec.base.repo)
                     row("Engine", engineName)
+                    if let line = StudioJobsFormat.backendLine(fit) {
+                        Text(line).font(.caption).foregroundColor(Color("TextSecondary"))
+                        if StudioJobsFormat.isUntested(fit) {
+                            Text(StudioJobsFormat.untestedLine).font(.caption).foregroundColor(Color("TextSecondary"))
+                        }
+                    }
+                    if let warning = fit?.warning, !warning.isEmpty {
+                        Text(warning).font(.caption).foregroundColor(Theme.statusError)
+                    }
                     row("Method", StudioJobsFormat.methodLabel(current.spec.method))
                     row("State", StudioJobsFormat.stateLabel(state))
                     if let progress = tail.progress, !finished {
@@ -216,6 +303,13 @@ struct StudioJobDetailView: View {
                     }
                     if let message = current.error, state == "failed" {
                         Text(message).font(.caption).foregroundColor(Theme.statusError)
+                    }
+                }
+                if !outputs.isEmpty {
+                    Section("Files made") {
+                        ForEach(Array(outputs.enumerated()), id: \.offset) { _, out in
+                            Text(StudioJobsFormat.outputLabel(out.kind)).font(.subheadline)
+                        }
                     }
                 }
                 Section("Log") {
@@ -277,7 +371,10 @@ struct StudioJobDetailView: View {
                 tail.apply(page)
                 if let fresh = try? await StudioJobsClient.shared.job(id: job.id) { current = fresh }
                 error = nil
-                if finished { onChange(); return }
+                if finished {
+                    if state == "succeeded", let files = try? await StudioJobsClient.shared.outputs(id: job.id) { outputs = files }
+                    onChange(); return
+                }
             } catch {
                 self.error = "Lost touch with your computer. The job keeps going there."
             }

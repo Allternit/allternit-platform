@@ -18,6 +18,14 @@ Connections, Runs and audit, Learn and Settings.
 The header has a `Cmd/Ctrl+K` search box and a run pill that shows how many
 runs are active.
 
+Guard follows the appearance setting of your computer. When macOS is in Dark
+mode, every Guard view and pane is dark (graphite); otherwise it is light. The
+map stage, the terminal and the device screens stay dark in both.
+
+When the Guard service restarts, for example after an update, the window signs
+in again by itself. It returns to the section, the open pane and the
+conversation you had open. A page reload does the same.
+
 Each conversation, case and artifact row has a **⋯** menu:
 
 - **Rename** changes the title.
@@ -25,6 +33,42 @@ Each conversation, case and artifact row has a **⋯** menu:
 - **Move to case** attaches a conversation or artifact to another case.
 - **Hold to delete** needs a press of about one second. The item is soft
   deleted, so a toast offers **Undo**. Archived items are kept, not erased.
+
+## Hosts
+
+Guard runs on your own computer and listens on `127.0.0.1` only (port 8766).
+It runs on macOS with Apple silicon, on Linux (x86-64 and arm64), and on
+Windows through WSL2. Native Windows Python is not supported. Guard runs inside
+WSL2 and opens in your Windows browser.
+
+| Host | Install | Tool sandbox |
+| --- | --- | --- |
+| macOS arm64 | `sh install.sh` builds `Allternit Guard.app` in `~/Applications` | `sandbox-exec` (built in) |
+| Linux x86-64 and arm64 | `bash packaging/install-linux.sh --apply` | bubblewrap (`bwrap`) |
+| Windows (WSL2) | `packaging\windows\guard-wsl.ps1 -Apply` | bubblewrap inside WSL2 |
+
+Guard never runs tools unsandboxed. If the sandbox is missing, Guard stops and
+tells you what to install. There is no setting to turn this off.
+
+Every installer is a dry run until you add the apply flag, and none of them
+uses sudo. When a step needs it, the script prints the command for you to run.
+
+- **macOS:** run `sh install.sh`. Open the app with `open -a 'Allternit Guard'`
+  or `allternit-guard open`.
+- **Linux:** the installer needs python3 3.9 or newer, systemd user services and
+  bubblewrap. If bubblewrap is missing it prints the install command for your
+  distribution. With `--apply` it copies Guard to `~/.local/share/allternit-guard`
+  and starts the user service `allternit-guard.service`. Control it with
+  `allternit-guard start|stop|restart|status`. To keep it running after you log
+  out, run `sudo loginctl enable-linger $USER` yourself.
+- **Windows:** install WSL2 and a distribution yourself (`wsl --install` in an
+  elevated PowerShell), enable systemd in `/etc/wsl.conf`, then run
+  `guard-wsl.ps1`. It runs the Linux installer inside WSL and adds a Start-menu
+  shortcut.
+
+State stays in `~/.allternit-guard` on every host. Only one machine has been
+checked so far: an Apple M1 Pro Mac. Linux x86-64, Linux arm64 and Windows
+(WSL2) installs are written but not checked on those hosts.
 
 ## Tabs and split view
 
@@ -37,7 +81,7 @@ browser the split is not shown; one view fills the screen.
 
 The **Terminal** mode has two tabs.
 
-- **Shell** runs commands on this Mac. Each command is a block with its exit
+- **Shell** runs commands on this computer. Each command is a block with its exit
   code and duration. A block has **Copy**, **Save to case** and **Ask**.
   Save to case stores the command, output and exit code as a command receipt
   in the case. It is a manual record: Guard does not check the command.
@@ -118,6 +162,11 @@ The result is a `guard-report` artifact in your account. Sending the same
 artifact again adds a new version. It is private until you share it from
 Allternit. See [`guard-report` in the Artifacts API](/api/artifacts-v2#guard-report-kind).
 
+In Allternit, code blocks in a report keep their file path and language, and
+fix-draft diffs show added and removed lines in color. On the web, the phone
+layout and the iOS app, the report opens in the same viewer. Copying a report
+to Docs keeps code as fenced code blocks (`diff` for fix drafts).
+
 ```sh
 allternit-guard artifacts share ARTIFACT_ID
 allternit-guard artifacts share ARTIFACT_ID --yes
@@ -133,14 +182,20 @@ you send.
 The Environments page detects what is installed when you open it (and on
 `GET /api/environments`, cached for 15 seconds). Detection is read-only.
 
+Each environment is a card with its state, host fit (Native, Emulated (slow) or
+Needs other host, with the native hosts named), network and actions. Switch
+between **List**, **Grid** and **Deck** like everywhere else in Guard; Deck
+cards also list the runtime, path, binaries, image and limits.
+
 | Environment | What Guard shows |
 | --- | --- |
-| This Mac | Always ready. |
-| Apple container | Whether the `container` runtime and its service are present and running. |
+| This computer | Always ready. |
+| Apple container | macOS only. Whether the `container` runtime and its service are present and running. |
 | Kali container | Not installed, ready to start, image needed, running or error. |
-| Kali virtual machine | Detects `tart` or `qemu-system-aarch64` and VMs with "kali" in the name. Detection only. |
-| Docker | Not installed, daemon not reachable, ready or error. Docker is not installed on every Mac, and Guard shows that. |
-| Tails | Unsupported on Apple silicon. Needs external x86-64 hardware. |
+| Kali virtual machine | Whether the QEMU binary for this host is present, and whether a Kali ISO or disk is registered. |
+| Docker | Not installed, daemon not reachable, ready or error. Guard uses an existing engine first, then Colima on macOS. |
+| Tails | Native, emulated (slow) or handoff, depending on the host. See the table below. |
+| Whonix | A Gateway and Workstation pair. Native, emulated (slow) or handoff, depending on the host. |
 
 Only the **Kali container** has provision, start and stop. Guard does not
 pull images. Provision needs a local Kali base image that matches a pinned
@@ -165,9 +220,146 @@ allternit-guard env start kali-container
 allternit-guard env stop kali-container
 ```
 
-The Kali virtual machine, Docker and Tails entries cannot be provisioned,
-started or stopped from Guard. Running tools in them is not available. The
-read-only MCP tool `guard_environments` returns the same detection.
+The read-only MCP tool `guard_environments` returns the same detection.
+The sections below describe the virtual machine, Docker, Tails and Whonix
+environments and how they differ by host.
+
+## Environments by host
+
+"Native" means the host runs the environment at full speed. "Emulated (slow)"
+means QEMU software emulation, which can take many minutes to boot, and Guard
+labels it. "Handoff" means Guard also writes a record of what to verify and what
+to run on a supported machine. Guard writes no USB. An emulated start never
+happens automatically: you opt in for each start.
+
+| Environment | macOS arm64 | Linux x86-64 | Linux arm64 | Windows (WSL2) |
+| --- | --- | --- | --- | --- |
+| Kali container | Native | Native | Native | Native |
+| Docker | Native | Native | Native | Native |
+| Kali VM | Native | Native | Native | Native with KVM, else emulated |
+| Tails | Emulated (slow), handoff | Native | Emulated (slow), handoff | Native with KVM, else emulated; handoff |
+| Whonix | Emulated (slow), handoff | Native | Emulated (slow), handoff | Native with KVM, else emulated; handoff |
+
+- **Kali VM on Apple silicon** boots the signed arm64 installer ISO under QEMU
+  with HVF acceleration. Guard verifies the ISO against the publisher's
+  signature before it boots.
+- **Docker** uses an engine that is already there (Docker Desktop, OrbStack,
+  Rancher Desktop or any context that answers `docker info`). If none is found
+  on macOS, Guard uses Colima. Guard never stops an engine it did not start.
+- **Tails and Whonix** boot with no network by default.
+
+### Tor-only access
+
+Tor is off until you save a written rule for one environment: a reason in your
+own words, a confirmation (attest) box and a duration from 1 to 168 hours. The
+rule expires. Only Tails and Whonix can use it. The Whonix Workstation reaches
+the network only through the Whonix Gateway. While a rule is on, the
+environment shows the reason, the expiry and the time left. **Turn off**
+removes the rule at once. Restart the environment for a change to apply.
+
+On macOS the host cannot filter QEMU user-mode traffic without root. Tor-only
+enforcement there relies on Tails and the Whonix Gateway filtering inside the
+guest. Guard makes no host-side Tor-only guarantee on macOS. Linux and WSL2 add
+a LAN block, and if the host cannot create the network namespace, Tor mode is
+refused.
+
+Guard does not claim anonymity. Tor, Tails and Whonix reduce some risks and
+leave others.
+
+## Agent mode
+
+Agent mode is opt-in and off by default. Guard runs the loop. The model stays
+text-only: each turn it returns one JSON step, and it never writes payloads,
+probes, commands or scripts that Guard then runs. You approve one envelope per
+run: the goal, exact in-scope targets, the allowed tools, the budget and the
+expiry. Nothing outside the envelope runs.
+
+### Where you use it
+
+Agent is a mode of the composer, next to **Ask** and **Plan**. What you type is
+the goal. The chips under it are the envelope: targets from your scope, the
+tools, the budget and the Kali container. **Approve envelope and start** starts
+the run. While it runs, a strip above the composer shows each step. A step that
+needs your review grows out of that strip with **Approve**, **Decline** and
+**Stop**. When the run ends, a run card with the report lands in the
+conversation and stays with it. The card sits where the run started, between
+the messages sent before and after it.
+
+Guard does not call a model itself. A driver posts one step at a time:
+
+```bash
+allternit-guard agent start --goal "Check headers" --target lab.example.com \
+  --tool dns_lookup --tool header_analysis --session CONVERSATION_ID
+allternit-guard agent step RUN_ID --json-file step.json
+```
+
+Until a driver posts a step, the strip says the run waits for one. In the
+terminal UI, `ctrl+g` switches the composer between Ask and Agent, `ctrl+o`
+edits the tools and budget, and `y`, `d` and `x` approve, decline and stop.
+
+| Hard limit | Value |
+| --- | --- |
+| Steps per run | 30 |
+| Wall-clock time | 60 minutes |
+| Tokens (input plus output) | 400,000 |
+| Concurrent runs | One |
+
+An envelope can set lower limits, never higher. Every action goes through the
+normal Guard tool path, so scope recheck, bounded output and redaction apply.
+
+Each tool belongs to one class:
+
+- **Auto** tools use local or public sources and do not contact a target.
+- **Scoped** tools contact an exact in-scope target. Every scoped step pauses
+  for your review before it runs.
+- **Always review** tools pause on every call, for example detonation and fix
+  checks that run project tests.
+- **Never** tools are refused: credential attacks, hardware and radio tools,
+  browser automation, live cloud audits, any VM or Tor environment, and any tool
+  that takes a model-written payload.
+
+Agent mode uses only the Kali container. A paused step you do not approve in
+time is skipped and logged as declined. **Stop** ends the run at once. If the
+driver is carrying out an action, the run ends after that step; press Stop again
+to end it at once. Guard never changes your repository,
+pushes, or opens a pull request. Agent runs need the computer that holds Guard
+and its container runtime, so phones do not run them.
+
+Vendor cyber access comes through each CLI's own sign-in. Guard stores no vendor
+API key and never asks for one. Access tiers are shown for information only and
+do not change what the agent may do.
+
+## Findings pipeline
+
+The pipeline covers defense work on assets you own and have attested in scope.
+
+1. **Threat model.** Assets, entry points, trust boundaries, data flows and
+   ranked threats, each tied to the evidence that supports it.
+2. **Validation.** Guard checks whether a finding is real against an in-scope
+   target using a fixed probe catalog. The model picks a probe id and never
+   supplies request content. Probes use GET, HEAD or OPTIONS, one request each,
+   with no credentials or bodies. A pass moves a finding to validated. Only a
+   newer retest of the same asset marks it remediated.
+3. **Fix draft.** For a code finding, Guard applies a proposed change to a
+   private copy, runs the project's checks there, and exports a `.patch` file
+   with the check results. You apply it yourself.
+4. **Rule drafts.** Sigma rule drafts are checked with `sigma check` and
+   exported as YAML. Drafts are marked
+   unverified until you test them on your own logs.
+5. **Re-scan.** Guard offers a re-scan of the copy with the tool that produced
+   the finding and records the result as evidence.
+
+## Eval harness
+
+The eval harness scores models on fixed tasks so they can be compared fairly.
+It runs each task through the same agent loop and envelope. Tasks use benign
+fixtures in the repository (sample files, sample logs and a small fixture app);
+there is no real malware and no third-party target. The run binds scope to the
+fixture app only.
+
+A spend cap is required. The harness refuses to start without one, checks the
+price of a request first, and stops when the cap is reached. Each run saves an
+eval report with the model, CLI version, task results, steps, tokens and cost.
 
 ## Record evidence and remediation
 
@@ -224,8 +416,8 @@ test does not establish deployment to Desktop, web, PWA, iOS or Android.
 
 Allternit clients require a host-side connector on the machine holding Guard's
 data. A phone or cloud client's `localhost` points to that device or runtime,
-not the operator's Mac. Native client integration and remote transport remain
-unverified. The installed Guard Mac app also needs separate packaging before
+not the operator's computer. Native client integration and remote transport remain
+unverified. An installed Guard app also needs separate packaging before
 it contains the latest source changes.
 
 ## Investigation workspace

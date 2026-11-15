@@ -80,10 +80,95 @@ fn generate_id() -> String {
     format!("ak_{}", hex::encode(rand::random::<[u8; 16]>())).to_lowercase()
 }
 
+/// Freeweights scope: read the private repos the key owner can see.
+pub const FREEWEIGHTS_READ_SCOPE: &str = "freeweights.read";
+/// Freeweights scope: every write the key owner can make (implies read).
+pub const FREEWEIGHTS_WRITE_SCOPE: &str = "freeweights.write";
+/// Freeweights scope prefix for one repo: `freeweights.repo:<rp_ id>`.
+pub const FREEWEIGHTS_REPO_SCOPE_PREFIX: &str = "freeweights.repo:";
+const FREEWEIGHTS_SCOPE_NAMESPACE: &str = "freeweights.";
+/// Longest repo id accepted after `rp_` (ids are `rp_<ulid>` today; opaque, so some slack).
+const FREEWEIGHTS_REPO_ID_MAX: usize = 64;
+
+/// A parsed Freeweights key scope (contract: freeweights `spec/accounts-v1.md` section 2.2).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FreeweightsScope {
+    Read,
+    Write,
+    /// One repo by its stable `rp_...` id. The id is opaque and kept exactly as given.
+    Repo(String),
+}
+
+impl FreeweightsScope {
+    pub fn as_scope_string(&self) -> String {
+        match self {
+            Self::Read => FREEWEIGHTS_READ_SCOPE.to_string(),
+            Self::Write => FREEWEIGHTS_WRITE_SCOPE.to_string(),
+            Self::Repo(id) => format!("{FREEWEIGHTS_REPO_SCOPE_PREFIX}{id}"),
+        }
+    }
+}
+
+/// Parse one scope string. `None` = not a Freeweights scope at all (e.g. `compute`);
+/// `Some(Err(_))` = in the `freeweights.` namespace but malformed or unknown.
+pub fn parse_freeweights_scope(scope: &str) -> Option<Result<FreeweightsScope, String>> {
+    let lower = scope.to_ascii_lowercase();
+    if !lower.starts_with(FREEWEIGHTS_SCOPE_NAMESPACE) {
+        return None;
+    }
+    if lower == FREEWEIGHTS_READ_SCOPE {
+        return Some(Ok(FreeweightsScope::Read));
+    }
+    if lower == FREEWEIGHTS_WRITE_SCOPE {
+        return Some(Ok(FreeweightsScope::Write));
+    }
+    if lower.starts_with(FREEWEIGHTS_REPO_SCOPE_PREFIX) {
+        let id = &scope[FREEWEIGHTS_REPO_SCOPE_PREFIX.len()..];
+        let rest = id.strip_prefix("rp_").unwrap_or("");
+        let valid = !rest.is_empty()
+            && rest.len() <= FREEWEIGHTS_REPO_ID_MAX
+            && rest.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
+        return Some(if valid {
+            Ok(FreeweightsScope::Repo(id.to_string()))
+        } else {
+            Err(format!(
+                "Invalid scope '{scope}': expected {FREEWEIGHTS_REPO_SCOPE_PREFIX}rp_<repo id>"
+            ))
+        });
+    }
+    Some(Err(format!(
+        "Unknown scope '{scope}'. Freeweights scopes are {FREEWEIGHTS_READ_SCOPE}, \
+         {FREEWEIGHTS_WRITE_SCOPE} and {FREEWEIGHTS_REPO_SCOPE_PREFIX}rp_<repo id>"
+    )))
+}
+
+/// Refuse a key whose `freeweights.*` scopes are malformed, so a typo never mints a key
+/// that silently grants nothing on Freeweights. Other scopes are not checked here.
+pub fn validate_freeweights_scopes(scopes: &[String]) -> Result<(), ApiError> {
+    for scope in scopes {
+        if let Some(Err(message)) = parse_freeweights_scope(scope) {
+            return Err(ApiError::BadRequest(message));
+        }
+    }
+    Ok(())
+}
+
+/// Lower-case a scope, except the opaque repo id of `freeweights.repo:<id>` (ULIDs are
+/// upper-case; lower-casing would point the key at a repo that does not exist).
+fn normalize_scope(scope: &str) -> String {
+    let scope = scope.trim();
+    let lower = scope.to_lowercase();
+    if lower.starts_with(FREEWEIGHTS_REPO_SCOPE_PREFIX) && scope.is_char_boundary(FREEWEIGHTS_REPO_SCOPE_PREFIX.len()) {
+        format!("{FREEWEIGHTS_REPO_SCOPE_PREFIX}{}", &scope[FREEWEIGHTS_REPO_SCOPE_PREFIX.len()..])
+    } else {
+        lower
+    }
+}
+
 pub(crate) fn normalize_scopes(scopes: Vec<String>) -> Vec<String> {
     let scopes: Vec<String> = scopes
-        .into_iter()
-        .map(|s| s.trim().to_lowercase())
+        .iter()
+        .map(|s| normalize_scope(s))
         .filter(|s| !s.is_empty())
         .collect();
     // An empty list fails every scope check, so minting without scopes used
@@ -123,6 +208,7 @@ pub async fn create_api_key(
     let prefix = token.chars().take(12).collect::<String>();
     let id = generate_id();
     let scopes = normalize_scopes(input.scopes);
+    validate_freeweights_scopes(&scopes)?;
 
     if input.name.trim().is_empty() {
         return Err(ApiError::BadRequest("API key name is required".to_string()));
@@ -854,6 +940,50 @@ mod tests {
         );
         assert!(normalize_allowed_cidrs(vec!["10.0.0.0/40".into()]).is_err());
         assert!(normalize_allowed_cidrs(vec!["office".into()]).is_err());
+    }
+
+    #[test]
+    fn freeweights_scopes_parse_and_keep_the_repo_id_case() {
+        let scopes = normalize_scopes(vec![
+            " Freeweights.Read ".to_string(),
+            "FREEWEIGHTS.WRITE".to_string(),
+            "freeweights.REPO:rp_01JD5Z8K3QW2X".to_string(),
+            "compute".to_string(),
+        ]);
+        assert_eq!(
+            scopes,
+            vec!["freeweights.read", "freeweights.write", "freeweights.repo:rp_01JD5Z8K3QW2X", "compute"]
+        );
+        assert!(validate_freeweights_scopes(&scopes).is_ok());
+        assert_eq!(parse_freeweights_scope("freeweights.read"), Some(Ok(FreeweightsScope::Read)));
+        assert_eq!(parse_freeweights_scope("freeweights.write"), Some(Ok(FreeweightsScope::Write)));
+        assert_eq!(
+            parse_freeweights_scope("freeweights.repo:rp_01JD5Z8K3QW2X"),
+            Some(Ok(FreeweightsScope::Repo("rp_01JD5Z8K3QW2X".to_string())))
+        );
+        assert_eq!(parse_freeweights_scope("compute"), None);
+        assert_eq!(parse_freeweights_scope("inference"), None);
+    }
+
+    #[test]
+    fn malformed_freeweights_scopes_are_refused() {
+        for bad in [
+            "freeweights.admin",
+            "freeweights.repo:",
+            "freeweights.repo:rp_",
+            "freeweights.repo:org/name",
+            "freeweights.repo:01JD5Z8K3QW2X",
+            "freeweights.repo:rp_has space",
+            "freeweights.repo:rp_a/b",
+        ] {
+            let scopes = normalize_scopes(vec![bad.to_string()]);
+            assert!(
+                matches!(validate_freeweights_scopes(&scopes), Err(ApiError::BadRequest(_))),
+                "{bad} must be refused"
+            );
+        }
+        let long = format!("freeweights.repo:rp_{}", "A".repeat(65));
+        assert!(validate_freeweights_scopes(&[long]).is_err());
     }
 
     #[test]

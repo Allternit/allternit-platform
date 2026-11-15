@@ -55,12 +55,49 @@ describe("choosing the Cloud model", () => {
     expect(CloudContinue.pickModel(hiddenDefault, "gpt-5.5")?.modelID).toBe("deepseek-v4.1-flash")
   })
 
-  test("funds: balance, then plan grant, then free allowance, else none", () => {
+  test("funds: balance, then plan grant, else none; Free includes no Cloud usage", () => {
     expect(CloudContinue.fundsFrom({ balance_usd: 4.2 }, { plan: "plus", weeklyLimit: 20, weeklyUsed: 5 })).toEqual({ kind: "balance", usd: 4.2 })
     expect(CloudContinue.fundsFrom({ balance_usd: 0 }, { plan: "plus", weeklyLimit: 20, weeklyUsed: 5 })).toEqual({ kind: "plan", usd: 15 })
-    expect(CloudContinue.fundsFrom({ balance_usd: 0, free_inference: { remaining_usd: 1.5 } }, { plan: "free" })).toEqual({ kind: "free", usd: 1.5 })
-    expect(CloudContinue.fundsFrom({ balance_usd: 0, free_inference: { remaining_usd: 0 } }, { plan: "free", weeklyLimit: 2, weeklyUsed: 2 })).toEqual({ kind: "none" })
-    expect(CloudContinue.fundsLabel({ kind: "free", usd: 1.5 })).toBe("$1.50 free left this month")
+    // 2026-11-15: the $2 free allowance is gone; an old server's free_inference no longer counts.
+    expect(CloudContinue.fundsFrom({ balance_usd: 0, free_inference: { remaining_usd: 1.5 } }, { plan: "free", weeklyLimit: 2, weeklyUsed: 0 })).toEqual({ kind: "none" })
+    expect(CloudContinue.fundsLabel({ kind: "none" })).toBe("No Cloud credits")
+  })
+
+  test("cloud_models says not allowed: nothing to spend, with the server's reason", () => {
+    const credits = { balance_usd: 0, cloud_models: { allowed: false, reason: "credits_exhausted", balance_usd: 0, byok_providers: [] } }
+    expect(CloudContinue.fundsFrom(credits, { plan: "plus", weeklyLimit: 20, weeklyUsed: 5 })).toEqual({ kind: "none", reason: "credits_exhausted" })
+    expect(CloudContinue.fundsLabel({ kind: "none", reason: "credits_exhausted" })).toBe("Cloud credits used up")
+  })
+})
+
+describe("Cloud entitlement (cloud_models)", () => {
+  const locked = { cloud_models: { allowed: false, reason: "credits_required", balance_usd: 0, byok_providers: ["openrouter"] } }
+
+  test("absent means not locked; a malformed field is ignored", () => {
+    expect(CloudContinue.entitlementFrom({ balance_usd: 0 })).toBeUndefined()
+    expect(CloudContinue.entitlementFrom({ cloud_models: { reason: "credits_required" } })).toBeUndefined()
+    expect(CloudContinue.isLocked(undefined)).toBe(false)
+    expect(CloudContinue.entitlementFrom(locked)).toEqual({ allowed: false, reason: "credits_required", balanceUsd: 0, byokProviders: ["openrouter"] })
+  })
+
+  test("a row served by a provider the account has its own key for is not locked", async () => {
+    const ent = CloudContinue.entitlementFrom(locked)!
+    expect(CloudContinue.isLocked(ent, { provider: "openrouter" })).toBe(false)
+    expect(CloudContinue.isLocked(ent, { provider: "fireworks" })).toBe(true)
+    expect(CloudContinue.isLocked(ent)).toBe(true)
+    const catalog = async () => Response.json({ data: [{ id: "kimi-k3", provider: "openrouter" }, { id: "glm-5.3", provider: "fireworks" }] })
+    const check = await CloudContinue.lockCheck(ent, catalog)
+    expect([check("kimi-k3"), check("glm-5.3"), check("unknown")]).toEqual([false, true, true])
+  })
+
+  test("no keys: every row locked without reading the catalog; allowed: none locked", async () => {
+    const none = CloudContinue.entitlementFrom({ cloud_models: { allowed: false, reason: "credits_required", byok_providers: [] } })
+    const noFetch = async () => {
+      throw new Error("catalog must not be read")
+    }
+    expect((await CloudContinue.lockCheck(none, noFetch))("kimi-k3")).toBe(true)
+    const ok = CloudContinue.entitlementFrom({ cloud_models: { allowed: true, reason: null, balance_usd: 3, byok_providers: [] } })
+    expect((await CloudContinue.lockCheck(ok, noFetch))("kimi-k3")).toBe(false)
   })
 })
 
@@ -118,7 +155,7 @@ describe("keep going on Allternit Cloud", () => {
         await turn(s.id, "assistant", "You've hit your usage limit. Try again in 2 hours.")
         SessionPause.pause(s.id, { until: Date.now() + 7_200_000, limit: "Codex 5-hour limit", reason: "limit_hit", providerID: "codex-cli" })
 
-        const broke = await SessionPause.continueOnCloud(s.id, { fetch: fakeCloud({ balance_usd: 0, free_inference: { remaining_usd: 0 } }) })
+        const broke = await SessionPause.continueOnCloud(s.id, { fetch: fakeCloud({ balance_usd: 0 }) })
         expect(broke).toMatchObject({ resumed: false, reason: "no_funds", cloud: { modelID: "deepseek-v4.1-flash", funds: { kind: "none" } } })
         expect((await Session.get(s.id)).paused?.cloud?.funds.kind).toBe("none")
 

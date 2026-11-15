@@ -15,6 +15,7 @@ By default it reaches the API the same way other Gizzi commands do: `ALLTERNIT_A
 | `gizzi studio install <engine>` | Installs an engine. Safe to run again. |
 | `gizzi studio run --spec <file.json>` | Starts a job from a job spec v1 file, prints the job id, then follows it to the end. |
 | `gizzi studio run --engine <id> --base <repo> --dataset <path or repo> [--method lora]` | Same, with the spec built from flags. A dataset that starts with `/`, `~` or `.` is a file; anything else is a Hugging Face repo. |
+| `gizzi studio run … [--backend auto, torch or mlx] [--mlx]` | `--backend` sets `resources.backend` (default `auto`). `--mlx` also writes an MLX model, Apple Silicon only. A refusal shows its code, for example `backend_not_supported` or `output_not_supported`. |
 | `gizzi studio jobs` | Lists jobs, newest first. |
 | `gizzi studio logs <id> [--follow] [--after <seq>]` | Prints a job's events. `--follow` keeps going until the job ends. |
 | `gizzi studio cancel <id>` | Cancels a job that has not finished. |

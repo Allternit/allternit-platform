@@ -1,0 +1,27 @@
+{
+  "type": "AgentGrant",
+  "valid": true,
+  "case": "Owner approved a task with a fixed tool set.",
+  "message": {
+    "agent_id": "agt_inbox",
+    "task_id": "tsk_77",
+    "root_ids": [
+      "rt_inbox",
+      "rt_aout"
+    ],
+    "item_ids": [
+      "it_drp000031"
+    ],
+    "tools": [
+      "files.read",
+      "files.write_agent_output",
+      "summarize"
+    ],
+    "approved_by": {
+      "kind": "owner",
+      "id": "user_2abc",
+      "display_name": "Eoj"
+    },
+    "expires_at": "2026-11-15T15:05:00Z"
+  }
+}

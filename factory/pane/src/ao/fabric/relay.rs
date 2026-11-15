@@ -340,6 +340,39 @@ async fn handle_cloud_message(
     }
 }
 
+/// The headers a request from the cloud is replayed with: the caller's own
+/// headers, then the runtime's bearer when the caller sent none.
+fn replay_headers(headers: &HashMap<String, String>, token: &str) -> reqwest::header::HeaderMap {
+    let mut header_map = reqwest::header::HeaderMap::new();
+    for (name, value) in headers {
+        if let (Ok(name), Ok(value)) = (
+            reqwest::header::HeaderName::from_bytes(name.as_bytes()),
+            reqwest::header::HeaderValue::from_str(value),
+        ) {
+            header_map.insert(name, value);
+        }
+    }
+    // Prefer the caller's own Clerk JWT when the envelope carries one;
+    // otherwise authenticate as the runtime itself (index.ts:298-308).
+    if !header_map.contains_key(reqwest::header::AUTHORIZATION) {
+        header_map.insert(
+            reqwest::header::AUTHORIZATION,
+            reqwest::header::HeaderValue::from_str(&format!("Bearer {token}")).unwrap(),
+        );
+    }
+    // Another device's request replayed over loopback (index.ts:318-322):
+    // the marker keeps allternit-api from treating it as a same-machine call
+    // (relayed file scope, trusted-device checks).
+    header_map.insert(
+        reqwest::header::HeaderName::from_static(RELAYED_HEADER),
+        reqwest::header::HeaderValue::from_static("1"),
+    );
+    header_map
+}
+
+/// allternit-api `cowork_devices_routes::RELAYED_HEADER`.
+const RELAYED_HEADER: &str = "x-allternit-relayed";
+
 /// index.ts:282-357 — validate, forward to the loopback shim, stream the
 /// response back as response_start / response_chunk(base64) / response_end.
 async fn handle_relay_request(
@@ -368,23 +401,7 @@ async fn handle_relay_request(
         return;
     };
     let mut request = state.http.request(method.clone(), &url);
-    let mut header_map = reqwest::header::HeaderMap::new();
-    for (name, value) in &headers {
-        if let (Ok(name), Ok(value)) = (
-            reqwest::header::HeaderName::from_bytes(name.as_bytes()),
-            reqwest::header::HeaderValue::from_str(value),
-        ) {
-            header_map.insert(name, value);
-        }
-    }
-    // Prefer the caller's own Clerk JWT when the envelope carries one;
-    // otherwise authenticate as the runtime itself (index.ts:298-308).
-    if !header_map.contains_key(reqwest::header::AUTHORIZATION) {
-        header_map.insert(
-            reqwest::header::AUTHORIZATION,
-            reqwest::header::HeaderValue::from_str(&format!("Bearer {token}")).unwrap(),
-        );
-    }
+    let mut header_map = replay_headers(&headers, token);
     RelayState::inject_identity_headers(&identity, &mut header_map);
     request = request.headers(header_map);
 
@@ -489,6 +506,8 @@ async fn handle_relay_socket_open(
         "X-Allternit-Desktop-Access-Token",
         HeaderValue::from_str(token).expect("token header"),
     );
+    // Same marker as the HTTP replay (index.ts:395).
+    let _ = headers.insert(RELAYED_HEADER, HeaderValue::from_static("1"));
     if let (Ok(user_id), Ok(email)) = (identity.user_id(), identity.user_email()) {
         let _ = headers.append(
             "X-Allternit-User-Id",
@@ -597,6 +616,19 @@ mod tests {
         assert!(!allowed_path("https://evil.example/"));
         assert!(!allowed_path("relative/path"));
         assert!(!allowed_path("/"));
+    }
+
+    /// Without the marker a replayed request reaches allternit-api over
+    /// loopback looking local, and gets the Desktop's whole-home file scope
+    /// instead of the relayed one (and passes as "this computer" for
+    /// trusted-device checks).
+    #[test]
+    fn replayed_requests_carry_the_relayed_marker() {
+        let mut caller = HashMap::new();
+        caller.insert("accept".to_string(), "application/json".to_string());
+        let headers = replay_headers(&caller, "device-token");
+        assert_eq!(headers.get("x-allternit-relayed").and_then(|v| v.to_str().ok()), Some("1"));
+        assert_eq!(headers.get("authorization").and_then(|v| v.to_str().ok()), Some("Bearer device-token"));
     }
 
     #[test]

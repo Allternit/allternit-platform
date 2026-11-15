@@ -1,0 +1,13 @@
+{
+  "type": "EncryptedChunkHeader",
+  "valid": true,
+  "case": "Encrypted replica chunk header.",
+  "message": {
+    "v": 1,
+    "cipher": "xchacha20poly1305",
+    "key_id": "fk_1",
+    "nonce": "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3",
+    "locator": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+    "plaintext_size": 1310720
+  }
+}

@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from .events import decode
+from .hardware import Host
 from .spec import TrainPlan, build_plan
 
 TERMINAL = {"succeeded", "failed", "cancelled"}
@@ -124,12 +125,16 @@ class JobManager:
     def __init__(
         self,
         data_dir: Path,
-        unavailable_methods: Optional[Dict[str, str]] = None,
+        host: Optional[Host] = None,
+        output_dir: Optional[Path] = None,
         worker_command: WorkerCommand = default_worker_command,
         cancel_grace_s: float = 10.0,
     ) -> None:
-        self.data_dir = Path(data_dir)
-        self.unavailable_methods = unavailable_methods or {}
+        # Absolute, so every output path an event reports is absolute.
+        self.data_dir = Path(data_dir).expanduser().resolve()
+        self.host = host if host is not None else Host.detect()
+        # ALLTERNIT_STUDIO_OUTPUT_DIR from the host: every output goes under it.
+        self.output_dir = Path(output_dir).expanduser().resolve() if output_dir else None
         self.worker_command = worker_command
         self.cancel_grace_s = cancel_grace_s
         self.jobs: Dict[str, Job] = {}
@@ -141,7 +146,7 @@ class JobManager:
     def submit(self, spec: Dict[str, Any]) -> Job:
         """Check the spec, create the job (queued) and start it. Raises
         SpecError (422) or JobRunning (409)."""
-        plan = build_plan(spec, self.unavailable_methods)
+        plan = build_plan(spec, self.host)
         with self._lock:
             if any(j.state not in TERMINAL for j in self.jobs.values()):
                 raise JobRunning("a job is already running on this engine")
@@ -149,9 +154,12 @@ class JobManager:
             job_dir = self.data_dir / "jobs" / job_id
             job_dir.mkdir(parents=True, exist_ok=True)
             plan.job_dir = str(job_dir)
+            plan.output_dir = str(self.output_dir or job_dir)
             job = Job(job_id, spec, plan, job_dir)
             job.add_event("state", "queued")
             self.jobs[job_id] = job
+            # The create response is the job as created (queued), taken before the worker can move it on.
+            job.created_json = job.to_json()
         threading.Thread(target=self._run, args=(job,), name=f"job-{job_id}", daemon=True).start()
         return job
 

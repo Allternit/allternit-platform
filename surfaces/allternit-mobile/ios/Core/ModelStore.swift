@@ -77,8 +77,74 @@ final class ModelStore: ObservableObject {
     }
 
     /// What the chat composer's picker offers: the person's own plans first,
-    /// then the catalog.
-    var chatModels: [RuntimeModel] { personModels + models }
+    /// then the computer's catalog, or with no computer the Allternit Cloud
+    /// catalog as `allternit/<alias>` (sent straight to cloud-api, D7/D8).
+    var chatModels: [RuntimeModel] { personModels + (models.isEmpty ? cloudModels : models) }
+
+    // MARK: - Allternit Cloud with no computer (CONTRACT-cloud-credits-2026-11-15)
+
+    nonisolated static let cloudPrefix = "allternit/"
+
+    /// The public Allternit Cloud catalog (`{cloud}/v1/models`): the
+    /// no-computer rows, and each Cloud row's provider (for the lock) and price.
+    @Published private(set) var cloudCatalog: [SetupModelRow] = []
+    private var cloudFetchTask: Task<Void, Never>? = nil
+
+    /// "allternit/glm-5.3" → "glm-5.3"; nil for any other model.
+    nonisolated static func cloudAlias(_ id: String?) -> String? {
+        guard let id, id.hasPrefix(cloudPrefix) else { return nil }
+        let alias = String(id.dropFirst(cloudPrefix.count))
+        return alias.isEmpty ? nil : alias
+    }
+
+    /// The rows offered with no computer: listed, standard-lane models. The
+    /// open lane has no terms screen here, so the server would refuse it (D14).
+    nonisolated static func cloudChatModels(_ catalog: [SetupModelRow]) -> [RuntimeModel] {
+        catalog.filter { !$0.isHidden && $0.lane != "open" }.map { row in
+            RuntimeModel(id: cloudPrefix + row.id, name: row.name, provider: "allternit",
+                         description: "Allternit Cloud · no computer needed", isDefault: row.isDefault)
+        }
+    }
+
+    var cloudModels: [RuntimeModel] { Self.cloudChatModels(cloudCatalog) }
+
+    func cloudRow(for id: String?) -> SetupModelRow? {
+        guard let alias = Self.cloudAlias(id) else { return nil }
+        return cloudCatalog.first { $0.id == alias }
+    }
+
+    /// An `allternit/…` model with no computer catalog listing it: the turn
+    /// goes straight to cloud-api. With a computer, Cloud models keep the
+    /// computer path (D8).
+    func routesDirect(_ id: String?) -> Bool {
+        guard let id, Self.cloudAlias(id) != nil else { return false }
+        return !models.contains { $0.id == id }
+    }
+
+    /// A Cloud row the account can't run yet: not allowed and not served by
+    /// one of the person's own keys (D5). Unknown entitlement = unlocked (D10).
+    func isCloudLocked(_ id: String?) -> Bool {
+        guard Self.cloudAlias(id) != nil else { return false }
+        return CloudModelsEntitlement.isLocked(AccountPlanStore.shared.cloudModels, provider: cloudRow(for: id)?.provider)
+    }
+
+    func fetchCloudCatalogIfNeeded(force: Bool = false) {
+        guard force || cloudCatalog.isEmpty, cloudFetchTask == nil else { return }
+        cloudFetchTask = Task { [weak self] in
+            let rows = await SetupAPI.cloudModelCatalog()
+            guard let self else { return }
+            if !rows.isEmpty { self.cloudCatalog = rows }
+            self.cloudFetchTask = nil
+        }
+    }
+
+    #if DEBUG
+    /// Fixtures for the debug gallery (`-cloud-credits-gallery`).
+    func setFixtures(models: [RuntimeModel], cloudCatalog: [SetupModelRow]) {
+        self.models = models
+        self.cloudCatalog = cloudCatalog
+    }
+    #endif
 
     /// What a bot, routine or schedule may use: the catalog without any
     /// person-only model (contract §9.1 `person_only`).
@@ -153,6 +219,7 @@ final class ModelStore: ObservableObject {
     /// fetch). A fetch failure is a plain error — the picker shows its
     /// error/retry state; there is no client-side substitute catalog.
     func fetchModelsIfNeeded(force: Bool = false) {
+        fetchCloudCatalogIfNeeded()
         guard force || models.isEmpty, fetchTask == nil else { return }
         isLoading = true
         loadError = nil

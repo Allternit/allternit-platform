@@ -133,14 +133,30 @@ async fn get_current_subscription(
     let user_id = crate::auth::resolve_user_scoped(&state.db, &headers, "billing")
         .await?
         .id;
-    if crate::auth::is_admin_user(&user_id) {
-        return Ok(Json(CurrentSubscriptionResponse {
+    Ok(Json(current_subscription_for(&state.db, &user_id).await?))
+}
+
+/// The plan id an account is on now (`free`, `plus`, `super` (Max) or `ultra`): the same answer
+/// `GET /api/v1/billing/subscription` gives, for other routes that sign or gate on the plan
+/// (`routes::freeweights` entitlement claim). Caller authentication is the caller's job.
+pub(crate) async fn current_plan_id(db: &PgPool, user_id: &str) -> Result<String, ApiError> {
+    Ok(current_subscription_for(db, user_id).await?.plan_id)
+}
+
+/// Source of truth for "which plan is this account on": admins read as Ultra, else the newest
+/// open Stripe subscription row (active/trialing first), else Free.
+async fn current_subscription_for(
+    db: &PgPool,
+    user_id: &str,
+) -> Result<CurrentSubscriptionResponse, ApiError> {
+    if crate::auth::is_admin_user(user_id) {
+        return Ok(CurrentSubscriptionResponse {
             plan_id: "ultra".to_string(),
             label: "Ultra".to_string(),
             plan_tier: "team".to_string(),
             status: "active".to_string(),
             renews_at: None,
-        }));
+        });
     }
     let row: Option<BillingSubscription> = sqlx::query_as(
         r#"
@@ -152,10 +168,10 @@ async fn get_current_subscription(
         LIMIT 1
         "#,
     )
-    .bind(&user_id)
-    .fetch_optional(&state.db)
+    .bind(user_id)
+    .fetch_optional(db)
     .await?;
-    Ok(Json(match row {
+    Ok(match row {
         Some(sub) => CurrentSubscriptionResponse {
             label: product_label(&sub.plan_id).to_string(),
             plan_id: sub.plan_id,
@@ -173,7 +189,7 @@ async fn get_current_subscription(
             status: "none".to_string(),
             renews_at: None,
         },
-    }))
+    })
 }
 
 async fn list_plans() -> Json<PlansResponse> {

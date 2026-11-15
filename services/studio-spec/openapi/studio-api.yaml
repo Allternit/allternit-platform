@@ -13,8 +13,14 @@ info:
       no_output (the job has no output of that kind).
     - 409 job_running (another job runs on this computer), already_finished
       (cancel on a finished job), job_not_succeeded (register before success).
-    - 422 the spec codes listed on POST /jobs, plus hardware_not_supported,
-      engine_not_installed and manifest_mismatch.
+    - 422 the spec codes listed on POST /jobs, plus the hardware codes
+      (hardware_not_supported, method_not_supported, backend_not_supported,
+      output_not_supported), engine_not_installed and manifest_mismatch.
+      The message of a hardware code is the host's reason, shown as is
+      (never replaced by fixed client copy).
+    - 503 hardware_unavailable: the computer's training device cannot be
+      used right now (driver not loaded, device lost); the message says what
+      the host saw.
     - 501 not_available: this build cannot install that engine.
     - 502 local_engine_unreachable, register_failed: the local-engine service
       did not take the output.
@@ -54,7 +60,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/ApiError' }
         '422':
-          description: This computer cannot run the engine (error hardware_not_supported)
+          description: This computer cannot run the engine (error hardware_not_supported; message is fit.reason)
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ApiError' }
@@ -83,14 +89,27 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ApiError' }
+        '503':
+          description: |
+            The training device cannot be used right now (error
+            hardware_unavailable), e.g. the GPU driver did not load. The
+            message says what the host saw.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
         '422':
           description: |
             Spec refused. error is one of rented_not_available,
             publish_not_available, unknown_engine, unknown_method,
-            unsupported_spec_version, invalid_dataset, invalid_spec (spec
-            checks), or from the host: hardware_not_supported (this computer
-            cannot train with the engine), engine_not_installed (install it
-            first), manifest_mismatch (base.manifest_sha256 is not the sha256
+            unsupported_spec_version, invalid_base, invalid_dataset,
+            invalid_spec (spec checks); hardware checks with the reasons in
+            the engine's fit: hardware_not_supported (this computer cannot
+            train with the engine at all), method_not_supported (the method is
+            in fit.methods_unavailable), backend_not_supported
+            (resources.backend cannot be used here, e.g. mlx off a Mac),
+            output_not_supported (an output in fit.outputs_unavailable, e.g.
+            outputs.mlx off a Mac); or from the host: engine_not_installed
+            (install it first), manifest_mismatch (base.manifest_sha256 is not the sha256
             of the signed Freeweights manifest the base model is fetched with,
             the repo has no signed manifest at that revision, or it could not
             be checked). A manifest that changes after the job is accepted
@@ -241,7 +260,7 @@ components:
         license: { type: string }
         version: { type: string }
         methods: { type: array, items: { type: string, enum: [lora, qlora, full, dpo] } }
-        hardware: { type: array, items: { type: string, enum: [apple-silicon, cuda-linux] } }
+        hardware: { type: array, items: { $ref: '#/components/schemas/Hardware' } }
         install_state: { type: string, enum: [not_installed, installing, installed, failed] }
         limits: { type: object, additionalProperties: true }
         published: { type: boolean }
@@ -255,6 +274,36 @@ components:
             properties:
               id: { type: string }
               status: { type: string, enum: [planned, available, pending_decision] }
+        notes: { type: string, description: Plain words shown on the card }
+        fit:
+          $ref: '#/components/schemas/Fit'
+          description: Host only (GET /engines, install). What this computer can do with the engine.
+    Hardware:
+      type: string
+      enum: [apple-silicon, cuda-linux, cuda-windows, rocm-linux, xpu-linux, xpu-windows, cpu]
+      description: |
+        Every computer maps to one id; the host detects it. AMD GPUs on
+        Windows and Intel Macs map to cpu, with the reason in fit.reason.
+    Fit:
+      type: object
+      required: [ok, hardware, reason, methods_unavailable, outputs_unavailable]
+      properties:
+        ok: { type: boolean, description: 'false = the engine does not run here at all (hardware_not_supported)' }
+        hardware: { $ref: '#/components/schemas/Hardware' }
+        backend:
+          type: string
+          enum: [mlx, torch-mps, torch-cuda, torch-rocm, torch-xpu, torch-cpu]
+          description: Backend of the first method that runs here (resources.backend auto). On a Mac LoRA/QLoRA use mlx, full/DPO torch-mps.
+        reason: { type: string, description: Plain words, shown as is }
+        warning: { type: string, description: 'Shown before start when the job runs but slowly (cpu)' }
+        methods_unavailable:
+          type: object
+          additionalProperties: { type: string }
+          description: method -> reason (method_not_supported). On cpu only lora runs.
+        outputs_unavailable:
+          type: object
+          additionalProperties: { type: string }
+          description: output kind -> reason (output_not_supported). mlx is Apple Silicon only.
     JobSpec:
       type: object
       additionalProperties: false
@@ -265,9 +314,10 @@ components:
         engine_version: { type: string }
         base:
           type: object
-          required: [repo]
+          description: Exactly one of repo or path (invalid_base otherwise).
           properties:
             repo: { type: string }
+            path: { type: string, description: 'Absolute path (or ~/...) to a model folder on the computer that runs the job' }
             revision: { type: string }
             manifest_sha256:
               type: string
@@ -295,13 +345,18 @@ components:
             gpu: { type: string }
             max_hours: { type: number }
             max_usd: { type: number }
+            backend:
+              type: string
+              enum: [auto, torch, mlx]
+              default: auto
+              description: 'auto: on a Mac MLX for lora/qlora and PyTorch (MPS) for full/dpo; PyTorch elsewhere. mlx off a Mac, or for full/dpo, is refused (backend_not_supported).' 
         outputs:
           type: object
           properties:
             adapter: { type: boolean }
             merged: { type: boolean }
             gguf: { type: array, items: { type: string } }
-            mlx: { type: boolean }
+            mlx: { type: boolean, description: 'Apple Silicon only (output_not_supported elsewhere)' }
         eval:
           type: object
           properties:
@@ -318,7 +373,7 @@ components:
       required: [kind, path]
       properties:
         kind: { type: string, enum: [adapter, merged, gguf, mlx] }
-        path: { type: string }
+        path: { type: string, description: Absolute path on the computer that ran the job }
         bytes: { type: integer }
     Job:
       type: object

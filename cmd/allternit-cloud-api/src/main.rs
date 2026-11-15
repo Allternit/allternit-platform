@@ -125,22 +125,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     let public_rate_limiter = allternit_cloud_api::create_rate_limiter(public_rate_limit_config);
 
-    // Tight per-user limiter for the free inference path (users without a
-    // credits row). Paying users never touch it.
-    let free_inference_rate_limit_config = allternit_cloud_api::RateLimitConfig {
-        requests_per_minute: std::env::var("FREE_INFERENCE_RATE_LIMIT_RPM")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(30),
-        window: std::time::Duration::from_secs(60),
-    };
-    tracing::info!(
-        "Free inference rate limiter initialized: {} req/min",
-        free_inference_rate_limit_config.requests_per_minute
-    );
-    let free_inference_rate_limiter =
-        allternit_cloud_api::create_rate_limiter(free_inference_rate_limit_config);
-
     // Create quota service for free-tier guardrails.
     let quota_service = Arc::new(services::QuotaService::new(db.clone()));
     tracing::info!("Quota service initialized");
@@ -255,7 +239,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         session_manager,
         rate_limiter,
         public_rate_limiter,
-        free_inference_rate_limiter,
         cost_service,
         quota_service,
         contabo_runtime_service,

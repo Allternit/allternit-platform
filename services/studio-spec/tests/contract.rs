@@ -1,4 +1,4 @@
-use allternit_studio_spec::fake_engine::FakeEngine;
+use allternit_studio_spec::fake_engine::{FakeConfig, FakeEngine};
 use allternit_studio_spec::*;
 use std::time::Duration;
 
@@ -16,6 +16,21 @@ fn valid_fixture_round_trips() {
     let back: JobSpec = serde_json::from_str(&serde_json::to_string(&spec).unwrap()).unwrap();
     assert_eq!(spec, back);
     assert_eq!(spec.method, "lora");
+}
+
+#[test]
+fn local_fixture_takes_absolute_paths_and_base_needs_one_source() {
+    let spec = JobSpec::parse(&fixture("lora-valid-local")).unwrap();
+    assert!(spec.base.repo.is_empty());
+    assert!(std::path::Path::new(spec.base.path.as_deref().unwrap()).is_absolute());
+    assert!(std::path::Path::new(spec.dataset.path.as_deref().unwrap()).is_absolute());
+    assert_eq!(spec.resources.backend, Some(BackendChoice::Auto));
+
+    let mut v: serde_json::Value = serde_json::from_str(&fixture("lora-valid-local")).unwrap();
+    v["base"]["repo"] = "freeweights/qwen2.5-0.5b-instruct".into();
+    assert_eq!(JobSpec::parse(&v.to_string()).unwrap_err()[0].code, "invalid_base");
+    v["base"] = serde_json::json!({});
+    assert_eq!(JobSpec::parse(&v.to_string()).unwrap_err()[0].code, "invalid_base");
 }
 
 #[test]
@@ -64,8 +79,17 @@ fn catalog_matches_decisions() {
     assert_eq!(get("allternit-tune").license, "Apache-2.0");
     assert!(get("allternit-tune").default);
     let mlx = get("allternit-tune").backends.iter().find(|b| b.id == "mlx").unwrap();
-    assert_eq!(mlx.status, "pending_decision");
+    assert_eq!(mlx.status, "available");
     assert_eq!(get("unsloth-upstream").license, "AGPL-3.0");
+    // `unsloth train` has no DPO.
+    assert!(!get("unsloth-upstream").methods.iter().any(|m| m == "dpo"));
+    // allternit-tune covers every hardware id; every id in the catalog is a real one.
+    assert_eq!(get("allternit-tune").hardware.len(), Hardware::ALL.len());
+    for e in &c {
+        for h in &e.hardware {
+            assert!(Hardware::from_id(h).is_some(), "{}: unknown hardware {h}", e.id);
+        }
+    }
     assert!(!get("unsloth-upstream").published);
     // No adapter ships for these yet; they stay hidden until their engine kit is published.
     for id in ["axolotl", "llama-factory", "torchtune"] {
@@ -177,4 +201,157 @@ async fn fake_engine_cancel_stops_the_job() {
     assert_eq!(events.last().unwrap().message, "cancelled");
     // a new job may start once the old one is terminal
     assert_eq!(c.post("/v1/jobs", fixture("lora-valid")).await.status(), 201);
+}
+
+fn fit_table() -> serde_json::Value {
+    serde_json::from_str(&fixture("fit-table")).unwrap()
+}
+
+/// engines.json + the fit logic must give exactly what fixtures/fit-table.json says.
+#[test]
+fn fit_matches_the_fit_table() {
+    let t = fit_table();
+    let ids: Vec<&str> = Hardware::ALL.iter().map(|h| h.id()).collect();
+    assert_eq!(t["hardware"], serde_json::json!(ids));
+    let table = t["engines"].as_object().unwrap();
+    let cat = catalog();
+    assert_eq!(table.len(), cat.len(), "fit table covers every engine");
+    for engine in &cat {
+        let row = &table[&engine.id];
+        for hw in Hardware::ALL {
+            let cell = &row[hw.id()];
+            let f = fit(engine, &HostHardware::plain(hw));
+            let at = format!("{} on {}", engine.id, hw.id());
+            if let Some(reason) = cell.as_str() {
+                assert!(!f.ok, "{at}: table refuses the engine");
+                assert_eq!(f.reason, reason, "{at}");
+                continue;
+            }
+            assert!(f.ok, "{at}: table allows the engine, fit said {}", f.reason);
+            let methods = cell["methods"].as_object().unwrap();
+            let mut listed: Vec<&String> = methods.keys().collect();
+            listed.sort();
+            let mut want: Vec<&String> = engine.methods.iter().collect();
+            want.sort();
+            assert_eq!(listed, want, "{at}: table lists the engine's methods");
+            for (m, v) in methods {
+                match v.as_str().unwrap() {
+                    "ok" => {
+                        assert!(!f.methods_unavailable.contains_key(m), "{at}: {m} should run");
+                        let b = allternit_studio_spec::fit::backend_for(engine, hw, m, BackendChoice::Auto).unwrap();
+                        assert_eq!(cell["backend"][m], b.as_str(), "{at}: backend for {m}");
+                    }
+                    reason => assert_eq!(f.methods_unavailable.get(m).map(String::as_str), Some(reason), "{at}: {m}"),
+                }
+            }
+            match cell["outputs"]["mlx"].as_str().unwrap() {
+                "ok" => assert!(!f.outputs_unavailable.contains_key("mlx"), "{at}: mlx output"),
+                reason => assert_eq!(f.outputs_unavailable.get("mlx").map(String::as_str), Some(reason), "{at}: mlx output"),
+            }
+            assert_eq!(cell["warning"].as_str(), f.warning.as_deref(), "{at}: warning");
+        }
+    }
+}
+
+#[test]
+fn classify_matches_the_fit_table() {
+    for case in fit_table()["classify"].as_array().unwrap() {
+        let gpus: Vec<GpuVendor> = serde_json::from_value(case["gpus"].clone()).unwrap();
+        let got = classify(case["os"].as_str().unwrap(), case["arch"].as_str().unwrap(), &gpus);
+        assert_eq!(got.hardware.id(), case["hardware"], "{case}");
+        assert_eq!(got.reason.is_some(), case["cpu_reason"].as_bool().unwrap(), "{case}");
+        // Intel Macs: no PyTorch 2.6+, so every torch-based engine is refused
+        // with exactly this reason (the Python tests read the same case).
+        let want = case["torch_unavailable"].as_str();
+        assert_eq!(got.torch_unavailable.as_deref(), want, "{case}");
+        if let Some(want) = want {
+            for engine in allternit_studio_spec::catalog() {
+                let card = allternit_studio_spec::fit(&engine, &got);
+                assert!(!card.ok, "{} on {case}", engine.id);
+                assert_eq!(card.reason, want, "{}", engine.id);
+                assert!(allternit_studio_spec::check_job(&spec_with(|_| {}), &got).is_err());
+            }
+        }
+    }
+}
+
+fn spec_with(f: impl FnOnce(&mut serde_json::Value)) -> JobSpec {
+    let mut v: serde_json::Value = serde_json::from_str(&fixture("lora-valid")).unwrap();
+    f(&mut v);
+    JobSpec::parse(&v.to_string()).unwrap()
+}
+
+fn job_codes(spec: &JobSpec, hw: Hardware) -> Vec<String> {
+    check_job(spec, &HostHardware::plain(hw)).unwrap_err().into_iter().map(|e| e.code).collect()
+}
+
+#[test]
+fn check_job_picks_the_backend_and_refuses_with_codes() {
+    let mac = HostHardware::plain(Hardware::AppleSilicon);
+    assert_eq!(check_job(&spec_with(|_| {}), &mac).unwrap().backend, "mlx");
+    let full = spec_with(|v| v["method"] = "full".into());
+    assert_eq!(check_job(&full, &mac).unwrap().backend, "torch-mps");
+    let torch = spec_with(|v| v["resources"]["backend"] = "torch".into());
+    assert_eq!(check_job(&torch, &mac).unwrap().backend, "torch-mps");
+
+    let qlora = spec_with(|v| v["method"] = "qlora".into());
+    assert_eq!(job_codes(&qlora, Hardware::Cpu), ["method_not_supported"]);
+    assert_eq!(check_job(&qlora, &HostHardware::plain(Hardware::XpuWindows)).unwrap().backend, "torch-xpu");
+
+    let mlx_out = spec_with(|v| v["outputs"]["mlx"] = true.into());
+    assert!(check_job(&mlx_out, &mac).is_ok());
+    assert_eq!(job_codes(&mlx_out, Hardware::CudaLinux), ["output_not_supported"]);
+
+    let mlx_backend = spec_with(|v| v["resources"]["backend"] = "mlx".into());
+    assert_eq!(job_codes(&mlx_backend, Hardware::RocmLinux), ["backend_not_supported"]);
+    let mlx_full = spec_with(|v| {
+        v["resources"]["backend"] = "mlx".into();
+        v["method"] = "dpo".into();
+    });
+    assert_eq!(job_codes(&mlx_full, Hardware::AppleSilicon), ["backend_not_supported"]);
+
+    let axolotl = spec_with(|v| v["engine"] = "axolotl".into());
+    assert_eq!(job_codes(&axolotl, Hardware::AppleSilicon), ["hardware_not_supported"]);
+
+    // An AMD GPU on Windows falls back to the CPU, and the reason says why.
+    let amd_win = classify("windows", "x86_64", &[GpuVendor::Amd]);
+    let errs = check_job(&qlora, &amd_win).unwrap_err();
+    assert_eq!(errs[0].code, "method_not_supported");
+    let card = fit(&allternit_studio_spec::engines::find("allternit-tune").unwrap(), &amd_win);
+    assert!(card.ok && card.warning.is_some());
+    assert!(card.reason.contains("AMD"), "{}", card.reason);
+}
+
+#[tokio::test]
+async fn fake_engine_honours_per_method_fit() {
+    let out = std::env::temp_dir().join("studio-spec-fit-test");
+    let cfg = FakeConfig { hardware: HostHardware::plain(Hardware::Cpu), output_dir: Some(out.clone()) };
+    let e = FakeEngine::start_with("tok", Duration::from_millis(5), cfg).await.unwrap();
+    let c = Client { http: reqwest::Client::new(), base: e.base_url(), token: "tok".into() };
+
+    let card: serde_json::Value = c.get("/v1/engine").await.json().await.unwrap();
+    assert_eq!(card["fit"]["hardware"], "cpu");
+    assert_eq!(card["fit"]["backend"], "torch-cpu");
+    assert!(card["fit"]["warning"].is_string());
+    let want = &fit_table()["engines"]["allternit-tune"]["cpu"]["methods"]["qlora"];
+    assert_eq!(&card["fit"]["methods_unavailable"]["qlora"], want);
+
+    let mut v: serde_json::Value = serde_json::from_str(&fixture("lora-valid")).unwrap();
+    v["method"] = "qlora".into();
+    let r = c.post("/v1/jobs", v.to_string()).await;
+    assert_eq!(r.status(), 422);
+    let body = r.json::<ApiError>().await.unwrap();
+    assert_eq!(body.error, "method_not_supported");
+    assert_eq!(serde_json::Value::from(body.message), *want);
+
+    let job: Job = c.post("/v1/jobs", fixture("lora-valid")).await.json().await.unwrap();
+    wait_terminal(&c, &job.id).await;
+    let done: Job = c.get(&format!("/v1/jobs/{}", job.id)).await.json().await.unwrap();
+    assert_eq!(done.state, JobState::Succeeded);
+    let kinds: Vec<&str> = done.outputs.iter().map(|o| o.kind.as_str()).collect();
+    assert_eq!(kinds, ["adapter", "gguf"]);
+    for o in &done.outputs {
+        let p = std::path::Path::new(&o.path);
+        assert!(p.is_absolute() && p.starts_with(&out), "{}", o.path);
+    }
 }

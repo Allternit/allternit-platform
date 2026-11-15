@@ -28,7 +28,13 @@ pub struct JobSpec {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Base {
+    /// Hub repo (exclusive with `path`). Empty when `path` is set.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub repo: String,
+    /// Absolute path (or `~/...`) to a model folder on the computer that runs
+    /// the job (exclusive with `repo`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
     #[serde(default)]
     pub revision: Option<String>,
     #[serde(default)]
@@ -67,6 +73,20 @@ pub struct Resources {
     pub max_hours: Option<f64>,
     #[serde(default)]
     pub max_usd: Option<f64>,
+    /// `auto` (default), `torch` or `mlx`. On a Mac, auto trains LoRA and
+    /// QLoRA with MLX and full/DPO with PyTorch (MPS). `mlx` anywhere else is
+    /// refused (`backend_not_supported`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backend: Option<BackendChoice>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BackendChoice {
+    #[default]
+    Auto,
+    Torch,
+    Mlx,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -78,6 +98,7 @@ pub struct Outputs {
     /// Quant names, e.g. `q4_k_m`.
     #[serde(default)]
     pub gguf: Vec<String>,
+    /// MLX files: a Mac with Apple Silicon only (`output_not_supported` elsewhere).
     #[serde(default)]
     pub mlx: bool,
 }
@@ -104,7 +125,9 @@ pub struct Publish {
 pub struct ValidationError {
     /// Stable machine code: `rented_not_available`, `publish_not_available`,
     /// `unknown_engine`, `unknown_method`, `unsupported_spec_version`,
-    /// `invalid_dataset`, `invalid_spec`.
+    /// `invalid_base`, `invalid_dataset`, `invalid_spec`. Hardware checks
+    /// (`crate::fit::check_job`) add `hardware_not_supported`,
+    /// `method_not_supported`, `backend_not_supported`, `output_not_supported`.
     pub code: String,
     pub message: String,
 }
@@ -146,6 +169,12 @@ impl JobSpec {
                     ));
                 }
             }
+        }
+        if self.base.repo.is_empty() == self.base.path.is_none() {
+            errs.push(ValidationError::new(
+                "invalid_base",
+                "base needs exactly one of repo or path",
+            ));
         }
         if self.dataset.repo.is_some() == self.dataset.path.is_some() {
             errs.push(ValidationError::new(

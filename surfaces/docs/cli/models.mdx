@@ -29,6 +29,7 @@ Each row is `provider/model`. Tags after a row:
 | `default` | That provider's own default model |
 | `current` | The model Gizzi will use now |
 | `not signed in` | The CLI is installed but you are not signed in to it |
+| `needs credits` | An `allternit/` row the account can't run yet: it has no Cloud credits and no key of its own for that model's provider. Free accounts don't include Cloud usage. |
 
 The last line shows the current default and why: `default: provider/model (reason)`.
 
@@ -77,6 +78,12 @@ Swarm and mission workers use your default CLI brain unless you pass `--brain`.
 
 `/model` shows the same sections and order as `gizzi models`. Type to filter. Rows carry the `default` and `current` tags, and a CLI that is not signed in has a "not signed in" note. Where a model has thinking levels, you set one per model. Picking a model makes it your pick and adds it to your recent models.
 
+Picking a `needs credits` row keeps your current model and prints:
+
+```text
+Allternit Cloud models need credits. Packs: $10, $25, $50, $100. Buy: https://ai.allternit.com/settings/billing · or choose a plan.
+```
+
 ### Effort on `gizzi run` and `gizzi exec`
 
 `--effort` accepts the levels the picked model has. An unsupported level is an error that lists the valid ones. A failed run exits with a non-zero code.
@@ -100,7 +107,7 @@ Plan models (`chatgpt/…`, `plan/…`, `copilot-plan/…`) answer only what you
 
 ## CLI brains in the TUI
 
-A model under **Your subscriptions** runs in your own signed-in CLI, through the same driver `gizzi run` and Desktop use. It does not use your Allternit Cloud allowance.
+A model under **Your subscriptions** runs in your own signed-in CLI, through the same driver `gizzi run` and Desktop use. It does not use your Allternit Cloud credits.
 
 - The CLI runs its own tools. Its text, thinking and tool calls (Read, Update, Bash…) show in the TUI as they happen.
 - Permissions still apply. The CLI starts in the TUI's permission mode (default, accept edits, plan or bypass), and each tool it asks to run shows the TUI's normal approval prompt, with the diff for an edit and the command for Bash.
@@ -132,10 +139,9 @@ Each failure names the real cause and one or two commands to run. Examples:
 
 | You see | Cause | Run |
 |---|---|---|
-| Allternit Cloud free allowance ($2.00/month) is used up · resets Dec 1 | The free monthly allowance is spent | `/model claude-cli/claude-sonnet-5-5` (your Claude plan) or `/usage` |
+| Allternit Cloud models need credits. Buy credits or choose a plan. | The account has no Cloud credits (`credits_required`). Free accounts don't include Cloud usage. | `/model claude-cli/claude-sonnet-5-5` (your Claude plan), or buy credits at ai.allternit.com/settings/billing |
 | Allternit Cloud plan limit reached for this month | Your plan's monthly limit | `/model …` or `/usage` |
-| Allternit Cloud credits are used up | Prepaid credits ran out | `/usage` to add credits |
-| Allternit Cloud free models need a verified email address | The account's email is not verified | Verify it, then `/login` |
+| Your Allternit Cloud credits are used up. Add credits to keep going. | The balance reached $0 (`credits_exhausted`) | `/usage`, or add credits at ai.allternit.com/settings/billing |
 | OpenRouter rejected the API key (401) | The key in `gizzi.json` or the environment expired or was revoked | `gizzi connect login` to save a new key |
 | Claude Code isn't signed in on this computer | The CLI brain has no sign-in | `claude`, then `/login` in it |
 | Codex isn't installed on this computer | The CLI is missing | Install it, then `gizzi agents harness register` |

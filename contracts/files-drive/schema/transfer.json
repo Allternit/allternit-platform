@@ -1,0 +1,323 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://allternit.com/contracts/files-drive/v1/transfer.json",
+  "title": "Files drive: chunks, manifests, uploads",
+  "description": "FastCDC + blake3 chunking, have/need negotiation, resumable upload sessions.",
+  "$defs": {
+    "ChunkerParams": {
+      "type": "object",
+      "description": "v1 values: min 262144, avg 1048576, max 4194304 (4 MiB). The relay (runtime_relay.rs MAX_RELAY_BODY_BYTES = 5 MiB) measures a base64 body as len*3/4, i.e. the decoded size, so a 4 MiB chunk plus its headers leaves about 1 MiB of headroom.",
+      "additionalProperties": false,
+      "required": [
+        "algo",
+        "hash",
+        "min_bytes",
+        "avg_bytes",
+        "max_bytes"
+      ],
+      "properties": {
+        "algo": {
+          "type": "string",
+          "const": "fastcdc-2020"
+        },
+        "hash": {
+          "type": "string",
+          "const": "blake3"
+        },
+        "min_bytes": {
+          "type": "integer",
+          "minimum": 65536
+        },
+        "avg_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4194304
+        }
+      }
+    },
+    "ChunkRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "hash",
+        "offset",
+        "size"
+      ],
+      "properties": {
+        "hash": {
+          "$ref": "common.json#/$defs/Blake3"
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4194304
+        }
+      }
+    },
+    "Manifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "item_id",
+        "rev",
+        "size",
+        "content_hash",
+        "chunker",
+        "chunks"
+      ],
+      "properties": {
+        "item_id": {
+          "$ref": "common.json#/$defs/ItemId"
+        },
+        "rev": {
+          "$ref": "common.json#/$defs/Rev"
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "content_hash": {
+          "$ref": "common.json#/$defs/Blake3"
+        },
+        "chunker": {
+          "$ref": "#/$defs/ChunkerParams"
+        },
+        "chunks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ChunkRef"
+          },
+          "description": "At most 10000 per page.",
+          "maxItems": 10000
+        },
+        "next_page_token": {
+          "$ref": "common.json#/$defs/PageToken"
+        }
+      }
+    },
+    "HaveNeedRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "hashes"
+      ],
+      "properties": {
+        "hashes": {
+          "type": "array",
+          "items": {
+            "$ref": "common.json#/$defs/Blake3"
+          },
+          "maxItems": 10000
+        }
+      }
+    },
+    "HaveNeedResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "have",
+        "need"
+      ],
+      "properties": {
+        "have": {
+          "type": "array",
+          "items": {
+            "$ref": "common.json#/$defs/Blake3"
+          }
+        },
+        "need": {
+          "type": "array",
+          "items": {
+            "$ref": "common.json#/$defs/Blake3"
+          }
+        }
+      }
+    },
+    "UploadCreateRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "root_id",
+        "parent_id",
+        "name",
+        "size",
+        "content_hash",
+        "chunker",
+        "chunks",
+        "total_chunks",
+        "on_conflict"
+      ],
+      "properties": {
+        "root_id": {
+          "$ref": "common.json#/$defs/RootId"
+        },
+        "parent_id": {
+          "$ref": "common.json#/$defs/ItemId"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255
+        },
+        "item_id": {
+          "$ref": "common.json#/$defs/ItemId",
+          "description": "Overwrite this item. Requires base_rev."
+        },
+        "base_rev": {
+          "$ref": "common.json#/$defs/Rev"
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "content_hash": {
+          "$ref": "common.json#/$defs/Blake3"
+        },
+        "chunker": {
+          "$ref": "#/$defs/ChunkerParams"
+        },
+        "chunks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ChunkRef"
+          },
+          "description": "First page of the chunk list (at most 10000). Send more with UploadChunksAppend.",
+          "maxItems": 10000
+        },
+        "total_chunks": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "on_conflict": {
+          "$ref": "common.json#/$defs/OnConflict"
+        },
+        "modified_at": {
+          "$ref": "common.json#/$defs/Timestamp"
+        },
+        "device_name": {
+          "type": "string",
+          "description": "Used to name a conflict copy."
+        }
+      }
+    },
+    "UploadChunksAppend": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "chunks"
+      ],
+      "properties": {
+        "chunks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ChunkRef"
+          },
+          "minItems": 1,
+          "maxItems": 10000
+        }
+      }
+    },
+    "UploadState": {
+      "type": "string",
+      "enum": [
+        "open",
+        "committing",
+        "committed",
+        "expired",
+        "failed"
+      ]
+    },
+    "UploadStatus": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "session_id",
+        "state",
+        "need",
+        "received_bytes",
+        "total_bytes",
+        "expires_at",
+        "max_request_bytes"
+      ],
+      "properties": {
+        "session_id": {
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/$defs/UploadState"
+        },
+        "need": {
+          "type": "array",
+          "items": {
+            "$ref": "common.json#/$defs/Blake3"
+          },
+          "description": "Chunks the computer still needs. Resume = upload these."
+        },
+        "received_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "total_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "expires_at": {
+          "$ref": "common.json#/$defs/Timestamp"
+        },
+        "max_request_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Largest single request the chosen transport accepts."
+        }
+      }
+    },
+    "ChunkPutResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "hash",
+        "stored",
+        "remaining"
+      ],
+      "properties": {
+        "hash": {
+          "$ref": "common.json#/$defs/Blake3"
+        },
+        "stored": {
+          "type": "boolean"
+        },
+        "remaining": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "UploadCommitResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "item",
+        "cursor"
+      ],
+      "properties": {
+        "item": {
+          "$ref": "common.json#/$defs/Item"
+        },
+        "conflict": {
+          "$ref": "common.json#/$defs/ConflictInfo"
+        },
+        "cursor": {
+          "$ref": "common.json#/$defs/Cursor"
+        }
+      }
+    }
+  }
+}

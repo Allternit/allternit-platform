@@ -262,9 +262,6 @@ export function DashboardPage(): React.ReactNode {
           {cloud && (
             <p className="m-0">
               {formatUsd(cloud.month_to_date_usage_usd)} used this month
-              {cloud.free_inference
-                ? ` · ${formatUsd(cloud.free_inference.remaining_usd)} free left`
-                : ""}
             </p>
           )}
           {cloud && deviceUsd !== null && (

@@ -21,8 +21,11 @@ pub struct LaunchRequest {
     pub token: String,
     pub python: PathBuf,
     pub job_dir: PathBuf,
+    /// Absolute.
     pub output_dir: PathBuf,
     pub log_path: PathBuf,
+    /// The hardware id the host detected (`ALLTERNIT_STUDIO_HARDWARE`).
+    pub hardware: allternit_studio_spec::Hardware,
 }
 
 pub struct Launched {
@@ -91,12 +94,18 @@ impl EngineLauncher for ProcessLauncher {
         if let Some(src) = engines::tune_source().filter(|_| req.engine_id == "allternit-tune") {
             cmd.env("PYTHONPATH", src);
         }
+        // Only when the host has it: an engine never sees an empty value.
+        match engines::studio_python() {
+            Some(py) => cmd.env("ALLTERNIT_STUDIO_PYTHON", py),
+            None => cmd.env_remove("ALLTERNIT_STUDIO_PYTHON"),
+        };
         cmd.args(&args)
             .env("ALLTERNIT_TUNE_TOKEN", &req.token)
             .env("ALLTERNIT_ENGINE_TOKEN", &req.token)
             .env("ALLTERNIT_ENGINE_PORT", req.port.to_string())
             .env("ALLTERNIT_STUDIO_JOB_DIR", &req.job_dir)
             .env("ALLTERNIT_STUDIO_OUTPUT_DIR", &req.output_dir)
+            .env("ALLTERNIT_STUDIO_HARDWARE", req.hardware.id())
             .current_dir(&req.job_dir)
             .stdin(std::process::Stdio::null())
             .stdout(log)
@@ -283,28 +292,43 @@ async fn prepare_and_start(host: &StudioHost, id: &str) -> Result<(), String> {
     let mut spec = job.spec.clone();
     let studio = host.0.cfg.dir.clone();
 
-    host.push_event(
-        id,
-        "log",
-        &format!("Getting base model {}", spec.base.repo),
-        None,
-    );
-    let base_dir = fetch_repo(
-        &host.model_source()?,
-        &studio.join("models"),
-        &spec.base.repo,
-        spec.base.revision.as_deref(),
-        true,
-        spec.base.manifest_sha256.as_deref(),
-    )
-    .await?;
-    host.push_event(
-        id,
-        "log",
-        &format!("Base model ready at {}", base_dir.display()),
-        None,
-    );
-    spec.base.repo = base_dir.to_string_lossy().into_owned();
+    match spec.base.path.clone() {
+        // A local base: never fetched, handed to the engine as an absolute folder.
+        Some(p) => {
+            let base_dir = local_base(&p)?;
+            host.push_event(
+                id,
+                "log",
+                &format!("Using local base model {}", base_dir.display()),
+                None,
+            );
+            spec.base.path = Some(base_dir.to_string_lossy().into_owned());
+        }
+        None => {
+            host.push_event(
+                id,
+                "log",
+                &format!("Getting base model {}", spec.base.repo),
+                None,
+            );
+            let base_dir = fetch_repo(
+                &host.model_source()?,
+                &studio.join("models"),
+                &spec.base.repo,
+                spec.base.revision.as_deref(),
+                true,
+                spec.base.manifest_sha256.as_deref(),
+            )
+            .await?;
+            host.push_event(
+                id,
+                "log",
+                &format!("Base model ready at {}", base_dir.display()),
+                None,
+            );
+            spec.base.repo = base_dir.to_string_lossy().into_owned();
+        }
+    }
 
     let dataset = match (&spec.dataset.path, &spec.dataset.repo) {
         (Some(p), _) => local_dataset(p)?,
@@ -333,6 +357,9 @@ async fn prepare_and_start(host: &StudioHost, id: &str) -> Result<(), String> {
     let output_dir = host.0.store.output_dir(id);
     std::fs::create_dir_all(&output_dir)
         .map_err(|e| format!("Could not create {}: {e}", output_dir.display()))?;
+    // Engines report absolute output paths inside this folder, so it is absolute too.
+    let output_dir = std::path::absolute(&output_dir)
+        .map_err(|e| format!("Could not resolve {}: {e}", output_dir.display()))?;
     let token = new_token();
     let launched = host
         .0
@@ -346,6 +373,7 @@ async fn prepare_and_start(host: &StudioHost, id: &str) -> Result<(), String> {
             job_dir: job_dir.clone(),
             output_dir,
             log_path: job_dir.join("engine.log"),
+            hardware: host.0.cfg.hardware.hardware,
         })
         .await?;
     let proc_ = EngineProc {
@@ -663,6 +691,24 @@ fn expand_home(p: &str) -> PathBuf {
         }
     }
     PathBuf::from(p)
+}
+
+/// A local base model folder (`base.path`): absolute (or `~/`), and a folder
+/// that exists. Checked when the job is created and again when it starts.
+pub(crate) fn local_base(p: &str) -> Result<PathBuf, String> {
+    let path = expand_home(p);
+    if !path.is_absolute() {
+        return Err(format!(
+            "The base model path {p} must be a full path (or start with ~/)."
+        ));
+    }
+    if !path.is_dir() {
+        return Err(format!(
+            "The base model folder {} was not found on this computer.",
+            path.display()
+        ));
+    }
+    Ok(path)
 }
 
 fn local_dataset(p: &str) -> Result<PathBuf, String> {

@@ -46,7 +46,12 @@ How `fast_bytes` is built (done by the detector, not by `fit`):
 
 ## Need
 
-`need = ram_est`, or `size x 1.2 + 0.4 GB` when `ram_est` is absent (float64 arithmetic).
+`need = ram_est` when present. Otherwise, by the quant's `engine` (float64 arithmetic):
+
+- `llama.cpp` and `mlx`: `size x 1.2 + 0.4 GB`.
+- `webgpu`: `size x 1.2`, with no 0.4 GB.
+
+Why: the 0.4 GB is native process and runtime overhead. A browser budget is a GPU buffer cap, so that overhead is not counted against it. With the overhead, nothing could ever fit the 0.45 GB phone-browser cap ("Fits" needs at most 0.36 GB), yet LFM2.5-350M (255 MB) ran on iPhone Safari WebGPU at 40+ tok/s in an earlier spike.
 
 ## Pick
 
@@ -111,7 +116,7 @@ Labels are exact (ASCII apostrophe in "Won't fit"):
 
 The plan table wins where they differ.
 
-- The mockup always derives need from `size x 1.2 + 0.4`; the spec uses `ram_est` first.
+- The mockup always derives need from `size x 1.2 + 0.4`; the spec uses `ram_est` first, and drops the 0.4 GB for webgpu quants.
 - The mockup picks the first matching build; the spec picks the largest `ok` quant, else the smallest.
 - The mockup has no `unknown`, and one na text; the spec has four na/unknown labels.
 - The mockup treats iPhone, Android and browser as separate kinds; here they are `unified` with a flag.

@@ -1,0 +1,11 @@
+{
+  "type": "WakeConsentResponse",
+  "valid": true,
+  "case": "Waking: ticket minted.",
+  "message": {
+    "ticket": "awt1.eyJ2IjoxfQ.c2ln",
+    "expires_at": "2026-11-15T14:07:00Z",
+    "computer_state": "waking",
+    "estimated_wake_s": 25
+  }
+}

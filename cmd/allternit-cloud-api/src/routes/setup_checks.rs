@@ -147,9 +147,10 @@ pub(crate) struct BrainFacts {
     pub byok: Vec<(String, Result<bool, ()>)>,
     /// `(upstream, answered)` for each hosted-model provider.
     pub upstreams: Vec<(String, bool)>,
-    /// `Some(balance)` when the user has a credits row.
+    /// `Some(balance)` when the user has a credits row. Allternit Cloud
+    /// models answer only with a balance above 0, plan or not
+    /// (CONTRACT-cloud-credits-2026-11-15).
     pub credits: Option<f64>,
-    pub paid: bool,
 }
 
 pub(crate) fn brain_verdict(facts: &BrainFacts) -> Row {
@@ -161,11 +162,11 @@ pub(crate) fn brain_verdict(facts: &BrainFacts) -> Row {
     }
     let hosted_ok = facts.upstreams.iter().any(|(_, ok)| *ok);
     if hosted_ok {
-        let broke = !facts.paid && matches!(facts.credits, Some(balance) if balance <= 0.0);
-        return if broke {
-            row(ID, TITLE, true, Status::NeedsSetup, "Allternit models answered, but your credits are used up. Top up or add your own key.", Some(("Open billing", "billing")))
-        } else {
-            row(ID, TITLE, true, Status::Ready, "Allternit models answered a live request.", None)
+        let billing = Some(("Open billing", "billing"));
+        return match facts.credits {
+            Some(balance) if balance > 0.0 => row(ID, TITLE, true, Status::Ready, "Allternit models answered a live request.", None),
+            Some(_) => row(ID, TITLE, true, Status::NeedsSetup, "Allternit models answered, but your credits are used up. Top up or add your own key.", billing),
+            None => row(ID, TITLE, true, Status::NeedsSetup, "Allternit Cloud models need credits. Buy credits, choose a plan, or add your own key.", billing),
         };
     }
     if facts.byok.iter().any(|(_, v)| matches!(v, Ok(false))) && facts.byok.iter().all(|(_, v)| !matches!(v, Err(_))) {
@@ -185,24 +186,9 @@ async fn brain_row(state: &ApiState, user_id: &str) -> Row {
         }
     };
     let upstreams = state.model_router.check_upstreams(UPSTREAM_TIMEOUT);
-    let sub = async {
-        sqlx::query_scalar::<_, String>(
-            "SELECT plan_id FROM billing_subscriptions WHERE user_id = $1 AND status IN ('active', 'trialing') LIMIT 1",
-        )
-        .bind(user_id)
-        .fetch_optional(&state.db)
-        .await
-        .ok()
-        .flatten()
-    };
     let credits = async { services::credit_balance_row(&state.db, user_id).await.ok().flatten() };
-    let (byok, upstreams, sub, credits) = tokio::join!(byok, upstreams, sub, credits);
-    let facts = BrainFacts {
-        byok,
-        upstreams,
-        credits,
-        paid: sub.is_some() || crate::auth::is_admin_user(user_id),
-    };
+    let (byok, upstreams, credits) = tokio::join!(byok, upstreams, credits);
+    let facts = BrainFacts { byok, upstreams, credits };
     brain_verdict(&facts)
 }
 
@@ -284,7 +270,7 @@ mod tests {
 
     #[test]
     fn brain_ready_needs_a_real_answer() {
-        let facts = BrainFacts { upstreams: up(true), paid: true, ..Default::default() };
+        let facts = BrainFacts { upstreams: up(true), credits: Some(5.0), ..Default::default() };
         assert_eq!(brain_verdict(&facts).status, Status::Ready);
         let silent = BrainFacts { upstreams: up(false), ..Default::default() };
         assert_eq!(brain_verdict(&silent).status, Status::NotChecked);
@@ -296,6 +282,9 @@ mod tests {
         assert_eq!(brain_verdict(&rejected).status, Status::NeedsSetup);
         let broke = BrainFacts { upstreams: up(true), credits: Some(0.0), ..Default::default() };
         assert_eq!(brain_verdict(&broke).status, Status::NeedsSetup);
+        // A Free account with no credits row has no working Cloud brain.
+        let no_row = BrainFacts { upstreams: up(true), ..Default::default() };
+        assert_eq!(brain_verdict(&no_row).status, Status::NeedsSetup);
         assert_eq!(brain_verdict(&BrainFacts::default()).status, Status::NeedsSetup);
     }
 

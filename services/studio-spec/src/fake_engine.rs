@@ -3,8 +3,12 @@
 //! events, so other lanes can build a host, a UI or a CLI against it.
 //!
 //! Bearer token on every route. One job at a time (409 `job_running`).
+//! It pretends to run on one hardware id ([`FakeConfig::hardware`]) and
+//! refuses jobs that id cannot run, with the same codes and reasons as the
+//! host (`crate::fit::check_job`). Outputs are absolute paths under
+//! [`FakeConfig::output_dir`]; no files are written.
 
-use crate::{engines, ApiError, Job, JobEvent, JobOutput, JobSpec, JobState};
+use crate::{engines, fit, ApiError, Hardware, HostHardware, Job, JobEvent, JobOutput, JobSpec, JobState};
 use axum::{
     extract::{Path, Query, Request, State},
     http::{header, StatusCode},
@@ -18,6 +22,7 @@ use serde::Deserialize;
 use std::{
     collections::HashMap,
     net::SocketAddr,
+    path::PathBuf,
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -27,10 +32,28 @@ struct Rec {
     events: Vec<JobEvent>,
 }
 
+/// What the fake engine pretends to be.
+#[derive(Debug, Clone)]
+pub struct FakeConfig {
+    /// Default `apple-silicon`, where every method and MLX output is allowed.
+    pub hardware: HostHardware,
+    /// Where output paths point (the host's `ALLTERNIT_STUDIO_OUTPUT_DIR`).
+    /// Default: `<temp dir>/allternit-fake-engine`.
+    pub output_dir: Option<PathBuf>,
+}
+
+impl Default for FakeConfig {
+    fn default() -> Self {
+        FakeConfig { hardware: HostHardware::plain(Hardware::AppleSilicon), output_dir: None }
+    }
+}
+
 #[derive(Clone)]
 struct App {
     token: Arc<String>,
     delay: Duration,
+    hardware: Arc<HostHardware>,
+    output_dir: Arc<PathBuf>,
     jobs: Arc<Mutex<HashMap<String, Rec>>>,
     next: Arc<Mutex<u64>>,
 }
@@ -92,8 +115,16 @@ async fn walk(app: App, id: String) {
         let mut jobs = app.jobs.lock().unwrap();
         if let Some(rec) = jobs.get_mut(&id) {
             if rec.job.state != JobState::Exporting { return; }
-            rec.job.outputs.push(JobOutput { kind: "adapter".into(), path: format!("outputs/{id}/adapter"), bytes: Some(1024) });
-            push(rec, "output", "adapter written", None);
+            let dir = app.output_dir.join(&id);
+            let o = rec.job.spec.outputs.clone();
+            let mut made = vec![("adapter".to_string(), dir.join("adapter"))];
+            if o.merged { made.push(("merged".into(), dir.join("merged"))); }
+            for q in &o.gguf { made.push(("gguf".into(), dir.join(format!("model-{q}.gguf")))); }
+            if o.mlx { made.push(("mlx".into(), dir.join("mlx"))); }
+            for (kind, path) in made {
+                rec.job.outputs.push(JobOutput { kind: kind.clone(), path: path.to_string_lossy().into_owned(), bytes: Some(1024) });
+                push(rec, "output", &format!("{kind} written"), None);
+            }
         }
     }
     advance(&app, &id, JobState::Succeeded, Some(1.0));
@@ -109,12 +140,22 @@ async fn auth(State(app): State<App>, req: Request, next: Next) -> Response {
     if ok { next.run(req).await } else { err(StatusCode::UNAUTHORIZED, "unauthorized", "missing or wrong bearer token") }
 }
 
-async fn engine_info() -> Response {
+/// The allternit-tune card, installed, plus its `fit` on the fake hardware.
+async fn engine_info(State(app): State<App>) -> Response {
     let mut e = engines::find("allternit-tune").expect("catalog has allternit-tune");
+    let fit = fit::fit(&e, &app.hardware);
     e.id = "fake-engine".into();
     e.name = "Fake engine".into();
     e.install_state = crate::InstallState::Installed;
-    Json(e).into_response()
+    let mut card = serde_json::to_value(e).expect("card serializes");
+    card["fit"] = serde_json::to_value(fit).expect("fit serializes");
+    Json(card).into_response()
+}
+
+fn refuse(errs: Vec<crate::ValidationError>) -> Response {
+    let first = &errs[0];
+    let message = errs.iter().map(|e| e.message.as_str()).collect::<Vec<_>>().join(" ");
+    err(StatusCode::UNPROCESSABLE_ENTITY, &first.code, message)
 }
 
 async fn create(State(app): State<App>, body: String) -> Response {
@@ -126,6 +167,12 @@ async fn create(State(app): State<App>, body: String) -> Response {
             return err(StatusCode::UNPROCESSABLE_ENTITY, &first.code, message);
         }
     };
+    // The catalog card stands in for this engine, so check fit as allternit-tune.
+    let mut as_tune = spec.clone();
+    as_tune.engine = "allternit-tune".into();
+    if let Err(errs) = fit::check_job(&as_tune, &app.hardware) {
+        return refuse(errs);
+    }
     let mut jobs = app.jobs.lock().unwrap();
     if jobs.values().any(|r| !r.job.state.is_terminal()) {
         return err(StatusCode::CONFLICT, "job_running", "a job is already running on this engine");
@@ -187,11 +234,21 @@ async fn cancel(State(app): State<App>, Path(id): Path<String>) -> Response {
     }
 }
 
-/// Router for engine API v1. `step_delay` is the pause between steps.
+/// Router for engine API v1 on the default [`FakeConfig`]. `step_delay` is the
+/// pause between steps.
 pub fn router(token: &str, step_delay: Duration) -> Router {
+    router_with(token, step_delay, FakeConfig::default())
+}
+
+pub fn router_with(token: &str, step_delay: Duration, cfg: FakeConfig) -> Router {
+    let output_dir = cfg
+        .output_dir
+        .unwrap_or_else(|| std::env::temp_dir().join("allternit-fake-engine"));
     let app = App {
         token: Arc::new(token.to_string()),
         delay: step_delay,
+        hardware: Arc::new(cfg.hardware),
+        output_dir: Arc::new(output_dir),
         jobs: Arc::default(),
         next: Arc::default(),
     };
@@ -214,9 +271,13 @@ pub struct FakeEngine {
 
 impl FakeEngine {
     pub async fn start(token: &str, step_delay: Duration) -> std::io::Result<FakeEngine> {
+        FakeEngine::start_with(token, step_delay, FakeConfig::default()).await
+    }
+
+    pub async fn start_with(token: &str, step_delay: Duration, cfg: FakeConfig) -> std::io::Result<FakeEngine> {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
         let addr = listener.local_addr()?;
-        let app = router(token, step_delay);
+        let app = router_with(token, step_delay, cfg);
         let task = tokio::spawn(async move {
             let _ = axum::serve(listener, app).await;
         });

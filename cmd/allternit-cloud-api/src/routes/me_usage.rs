@@ -3,8 +3,9 @@
 //! Desktop forwards the paired runtime device token through local
 //! `allternit-api` to this route. Clerk sessions and `allternit_*` API tokens
 //! also work. The payload is the compute meter the shell should show: plan
-//! (Free / Plus / Max / Ultra) and remaining credits or free-inference
-//! allowance. Local Ollama is not this signal.
+//! (Free / Plus / Max / Ultra), the remaining credits and `cloud_models`
+//! (whether Allternit Cloud models may run; there is no free allowance,
+//! CONTRACT-cloud-credits-2026-11-15). Local Ollama is not this signal.
 //!
 //! Console usage (Wave 3), same callers, outside `console_gate`:
 //! - `GET /api/v1/me/usage/report` — totals grouped by day, model, project,
@@ -55,6 +56,10 @@ pub struct UsageResponse {
     pub credits: Option<f64>,
     pub month_to_date_usage_usd: f64,
     pub recent_transactions: Vec<UsageTransaction>,
+    /// Same object as on `GET /api/v1/billing/credits` (contract D4); the
+    /// key is snake_case on both endpoints.
+    #[serde(rename = "cloud_models")]
+    pub cloud_models: services::CloudModelsEntitlement,
 }
 
 #[derive(Debug, Serialize, PartialEq)]
@@ -699,24 +704,15 @@ fn plan_label(plan_id: &str) -> &'static str {
     }
 }
 
-fn free_inference_monthly_usd() -> f64 {
-    std::env::var("FREE_INFERENCE_MONTHLY_USD")
-        .ok()
-        .and_then(|value| value.trim().parse::<f64>().ok())
-        .filter(|value| *value >= 0.0)
-        .unwrap_or(2.0)
-}
-
 pub(crate) fn compose_usage(
     plan_id: &str,
     plan_status: &str,
     plan_tier: &str,
     credit_balance: Option<f64>,
     month_to_date_usage_usd: f64,
-    free_used_usd: f64,
-    free_allowance_usd: f64,
     resets_at: DateTime<Utc>,
     recent_transactions: Vec<UsageTransaction>,
+    cloud_models: services::CloudModelsEntitlement,
 ) -> UsageResponse {
     let paid = matches!(plan_id, "plus" | "super" | "ultra")
         && matches!(plan_status, "active" | "trialing");
@@ -735,8 +731,8 @@ pub(crate) fn compose_usage(
             month_to_date_usage_usd,
         )
     } else {
-        let remaining = (free_allowance_usd - free_used_usd).max(0.0);
-        (Some(remaining), free_allowance_usd, free_used_usd)
+        // No plan and no credits row: nothing to spend on Cloud models.
+        (Some(0.0), 0.0, 0.0)
     };
     UsageResponse {
         plan: if paid { plan_id.to_string() } else { "free".to_string() },
@@ -761,6 +757,7 @@ pub(crate) fn compose_usage(
         credits,
         month_to_date_usage_usd,
         recent_transactions,
+        cloud_models,
     }
 }
 
@@ -811,17 +808,7 @@ async fn get_my_usage(
             estimated_cost_usd: 0.0,
         });
 
-    let free_used: f64 = sqlx::query_scalar(
-        r#"
-        SELECT COALESCE(SUM(cost_usd), 0)
-        FROM inference_usage
-        WHERE user_id = $1 AND created_at >= date_trunc('month', NOW())
-        "#,
-    )
-    .bind(&user_id)
-    .fetch_one(&state.db)
-    .await
-    .unwrap_or(0.0);
+    let cloud_models = services::cloud_models_entitlement(&state.db, &user_id, credit_balance).await;
 
     let recent = sqlx::query_as::<_, CreditTxnRow>(
         r#"
@@ -843,8 +830,6 @@ async fn get_my_usage(
         &plan_tier,
         credit_balance,
         hosted.estimated_cost_usd,
-        free_used,
-        free_inference_monthly_usd(),
         next_month_start(Utc::now()),
         recent
             .into_iter()
@@ -854,6 +839,7 @@ async fn get_my_usage(
                 created_at: row.created_at.to_rfc3339(),
             })
             .collect(),
+        cloud_models,
     )))
 }
 
@@ -865,24 +851,36 @@ mod report_tests;
 mod tests {
     use super::*;
 
+    fn entitlement(balance: Option<f64>) -> services::CloudModelsEntitlement {
+        let reason = services::inference_settlement::credits_reason(balance);
+        services::CloudModelsEntitlement {
+            allowed: reason.is_none(),
+            reason,
+            balance_usd: balance.unwrap_or(0.0).max(0.0),
+            byok_providers: Vec::new(),
+        }
+    }
+
     #[test]
-    fn free_plan_reports_remaining_inference_allowance() {
+    fn free_plan_without_credits_has_nothing_to_spend() {
         let usage = compose_usage(
             "free",
             "none",
             "free",
             None,
-            0.0,
             0.40,
-            2.0,
             Utc.with_ymd_and_hms(2026, 10, 1, 0, 0, 0).unwrap(),
             vec![],
+            entitlement(None),
         );
         assert_eq!(usage.plan, "free");
         assert_eq!(usage.label, "Free");
-        assert_eq!(usage.credits, Some(1.6));
-        assert_eq!(usage.weekly_limit, 2.0);
-        assert_eq!(usage.weekly_used, 0.40);
+        assert_eq!(usage.credits, Some(0.0));
+        assert_eq!(usage.weekly_limit, 0.0);
+        assert_eq!(usage.weekly_used, 0.0);
+        let json = serde_json::to_value(&usage).unwrap();
+        assert_eq!(json["cloud_models"]["allowed"], false);
+        assert_eq!(json["cloud_models"]["reason"], "credits_required");
     }
 
     #[test]
@@ -893,10 +891,9 @@ mod tests {
             "pro",
             Some(10.5),
             1.25,
-            0.0,
-            2.0,
             Utc.with_ymd_and_hms(2026, 10, 1, 0, 0, 0).unwrap(),
             vec![],
+            entitlement(Some(10.5)),
         );
         assert_eq!(usage.plan, "plus");
         assert_eq!(usage.label, "Plus");
@@ -905,6 +902,9 @@ mod tests {
         assert_eq!(usage.weekly_used, 1.25);
         assert_eq!(usage.plan_tier, "pro");
         assert_eq!(usage.status, "active");
+        let json = serde_json::to_value(&usage).unwrap();
+        assert_eq!(json["cloud_models"]["allowed"], true);
+        assert!(json["cloud_models"]["reason"].is_null());
     }
 
     #[test]
@@ -915,13 +915,12 @@ mod tests {
             "pro",
             None,
             0.0,
-            2.0,
-            2.0,
             Utc.with_ymd_and_hms(2026, 10, 1, 0, 0, 0).unwrap(),
             vec![],
+            entitlement(None),
         );
         assert_eq!(usage.plan, "free");
         assert_eq!(usage.credits, Some(0.0));
-        assert_eq!(usage.weekly_limit, 2.0);
+        assert_eq!(usage.weekly_limit, 0.0);
     }
 }

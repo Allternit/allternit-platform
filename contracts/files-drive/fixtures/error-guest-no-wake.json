@@ -1,0 +1,11 @@
+{
+  "type": "ErrorBody",
+  "valid": true,
+  "case": "Guest download on an asleep computer, share does not allow waking.",
+  "message": {
+    "error": "guest_wake_not_allowed",
+    "code": "guest_wake_not_allowed",
+    "message": "The owner's computer is asleep. Try again later.",
+    "computer_state": "asleep"
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "type": "PinRequest",
+  "valid": true,
+  "case": "Keep offline on the phone.",
+  "message": {
+    "item_id": "it_doc000001",
+    "device_id": "dev_iphone16",
+    "pinned": true
+  }
+}
