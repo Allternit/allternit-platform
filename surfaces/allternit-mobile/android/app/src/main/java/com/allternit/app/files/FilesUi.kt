@@ -3,9 +3,11 @@ package com.allternit.app.files
 import android.app.Activity
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.os.Build
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowInsets
 import android.widget.LinearLayout
 import android.widget.TextView
 import com.allternit.app.R
@@ -85,6 +87,26 @@ internal object FilesUi {
             attrs.recycle()
             setOnClickListener { onClick() }
         }
+    }
+
+    /**
+     * Sets a full-screen Files screen. Apps targeting SDK 35+ draw edge to edge on
+     * Android 15+, so the status and navigation bar heights are added to the root's own
+     * padding (API 30+ inset types; older releases still fit the system windows).
+     */
+    fun setContent(a: Activity, root: View) {
+        val l = root.paddingLeft
+        val t = root.paddingTop
+        val r = root.paddingRight
+        val b = root.paddingBottom
+        if (Build.VERSION.SDK_INT >= 30) {
+            root.setOnApplyWindowInsetsListener { v, insets ->
+                val bars = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
+                v.setPadding(l + bars.left, t + bars.top, r + bars.right, b + bars.bottom)
+                insets
+            }
+        }
+        a.setContentView(root)
     }
 
     fun gap(a: Activity, h: Int): View = View(a).apply { layoutParams = LinearLayout.LayoutParams(1, dp(a, h)) }

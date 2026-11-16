@@ -60,7 +60,7 @@ class ShareToComputerActivity : Activity() {
         save = FilesUi.button(this, "Save here", true) { saveHere() }
         bar.addView(FilesUi.matchWidth(save))
         col.addView(bar)
-        setContentView(col)
+        FilesUi.setContent(this, col)
 
         if (!drive.auth.signedIn()) {
             showSignIn()
@@ -139,6 +139,12 @@ class ShareToComputerActivity : Activity() {
                         layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 1)
                     })
                 }
+                if (l.cid == null) {
+                    // A click path (not a menu) to the Files settings: which computers show, sign out.
+                    list.addView(FilesUi.row(this, "Allternit Files settings", "Choose which computers show in Files") {
+                        startActivity(Intent(this, FilesSignInActivity::class.java))
+                    })
+                }
             }
         }
     }
@@ -153,7 +159,14 @@ class ShareToComputerActivity : Activity() {
             }
             val out = ArrayList<Triple<String, String?, Level?>>()
             lastTarget()?.let { out.add(Triple("Last used: ${it.title}", drive.computerName(it.cid!!), it)) }
-            list.forEach { out.add(Triple(it.name, if (it.status == "online") "Awake" else "Saves when it wakes", Level(it.id, null, null, it.name))) }
+            list.forEach {
+                val sub = when {
+                    it.status == "online" -> "Awake"
+                    it.wakeable -> "Asleep · asks before waking it to save"
+                    else -> "Offline · saves when it is back"
+                }
+                out.add(Triple(it.name, sub, Level(it.id, null, null, it.name)))
+            }
             return out
         }
         val cid = l.cid

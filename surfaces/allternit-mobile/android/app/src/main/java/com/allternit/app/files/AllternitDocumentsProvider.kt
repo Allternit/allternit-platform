@@ -24,6 +24,7 @@ import android.provider.DocumentsContract.Root
 import android.provider.DocumentsProvider
 import android.text.format.DateUtils
 import android.webkit.MimeTypeMap
+import com.allternit.app.R
 import com.allternit.files.contract.ComputerState
 import com.allternit.files.contract.DeleteRequest
 import com.allternit.files.contract.Freshness
@@ -32,6 +33,7 @@ import com.allternit.files.contract.ItemKind
 import com.allternit.files.contract.MkdirRequest
 import com.allternit.files.contract.MoveRequest
 import com.allternit.files.contract.OnConflict
+import com.allternit.files.contract.ProvenanceSource
 import com.allternit.files.contract.ServedBy
 import com.allternit.files.contract.WakeReason
 import java.io.File
@@ -82,11 +84,15 @@ class AllternitDocumentsProvider : DocumentsProvider() {
             return c
         }
         drive.refreshComputersAsync()
-        val list = drive.computers
+        val list = drive.computersInFiles()
         if (list.isEmpty()) {
+            val summary = when {
+                drive.computers.isNotEmpty() -> "All computers are hidden. Choose them in Allternit Files."
+                else -> drive.computersError ?: "No computers yet"
+            }
             c.newRow().add(Root.COLUMN_ROOT_ID, "none").add(Root.COLUMN_DOCUMENT_ID, DocIds.SIGNIN)
                 .add(Root.COLUMN_TITLE, "Allternit")
-                .add(Root.COLUMN_SUMMARY, drive.computersError ?: "No computers yet")
+                .add(Root.COLUMN_SUMMARY, summary)
                 .add(Root.COLUMN_FLAGS, 0).add(Root.COLUMN_ICON, icon).add(Root.COLUMN_MIME_TYPES, "*/*")
             return c
         }
@@ -116,8 +122,8 @@ class AllternitDocumentsProvider : DocumentsProvider() {
     override fun queryDocument(documentId: String, projection: Array<out String>?): Cursor = fnf {
         val c = MatrixCursor(projection ?: DOC_COLS)
         when (val p = DocIds.parse(documentId)) {
-            DocIds.Parsed.SignIn -> addDir(c, documentId, "Allternit", 0, null)
-            is DocIds.Parsed.Computer -> addDir(c, documentId, drive.computerName(p.computerId), 0, null)
+            DocIds.Parsed.SignIn -> addDir(c, documentId, "Allternit", Document.FLAG_SUPPORTS_SETTINGS, null)
+            is DocIds.Parsed.Computer -> addDir(c, documentId, drive.computerName(p.computerId), Document.FLAG_SUPPORTS_SETTINGS, null)
             is DocIds.Parsed.Item -> {
                 val rootRow = drive.rootsCached(p.computerId)?.roots?.firstOrNull { it.rootItemId == p.itemId && it.id == p.rootId }
                 val item = drive.item(p.computerId, p.itemId)
@@ -147,7 +153,12 @@ class AllternitDocumentsProvider : DocumentsProvider() {
         if (!drive.auth.signedIn()) throw signInRequired()
         when (p) {
             DocIds.Parsed.SignIn -> {
-                extras.putString(DocumentsContract.EXTRA_INFO, "Add a computer at ai.allternit.com, then it shows up here.")
+                val info = if (drive.computers.isNotEmpty()) {
+                    "Your computers are hidden from Files. Open Allternit Files to choose which ones show here."
+                } else {
+                    "Add a computer at ai.allternit.com, then it shows up here."
+                }
+                extras.putString(DocumentsContract.EXTRA_INFO, info)
             }
             is DocIds.Parsed.Computer -> {
                 val cid = p.computerId
@@ -169,7 +180,10 @@ class AllternitDocumentsProvider : DocumentsProvider() {
                             !r.providerReady -> "Not set up yet"
                             else -> null
                         }
-                        addDir(c, DocIds.item(cid, r.id, r.rootItemId), r.name, if (r.policy.write && !locked) Document.FLAG_DIR_SUPPORTS_CREATE else 0, summary)
+                        // FLAG_SUPPORTS_SETTINGS: long-press a folder > Settings opens Allternit Files
+                        // (which computers show, sign out).
+                        val create = if (r.policy.write && !locked) Document.FLAG_DIR_SUPPORTS_CREATE else 0
+                        addDir(c, DocIds.item(cid, r.id, r.rootItemId), r.name, create or Document.FLAG_SUPPORTS_SETTINGS, summary)
                     }
                     info(cid, roots.freshness)?.let { extras.putString(DocumentsContract.EXTRA_INFO, it) }
                 }
@@ -249,11 +263,27 @@ class AllternitDocumentsProvider : DocumentsProvider() {
         }
         if (!dir && (mime.startsWith("image/") || mime.startsWith("video/"))) flags = flags or Document.FLAG_SUPPORTS_THUMBNAIL
         val cached = !dir && drive.cache.cachedRev(cid, item.id) == item.rev
+        // Colour badges (design 5C). DocumentsUI has no overlay API, so a badge replaces
+        // the type icon, and only for the states worth a glance: a conflict copy and a
+        // file an agent made. Thumbnails still draw over it in the grid.
+        val conflict = !dir && CONFLICT_NAME.containsMatchIn(item.name)
+        val agent = item.provenance?.source == ProvenanceSource.AGENT
+        val badge = when {
+            conflict -> R.drawable.ic_files_badge_conflict
+            agent -> R.drawable.ic_files_badge_agent
+            else -> null
+        }
+        val summary = listOfNotNull(
+            if (conflict) "Conflict copy · both kept" else null,
+            if (agent) "Made by an agent" else null,
+            if (cached) "On this phone" else null,
+        ).joinToString(" · ").ifEmpty { null }
         c.newRow().add(Document.COLUMN_DOCUMENT_ID, id).add(Document.COLUMN_DISPLAY_NAME, item.name)
             .add(Document.COLUMN_MIME_TYPE, mime).add(Document.COLUMN_FLAGS, flags)
             .add(Document.COLUMN_SIZE, if (dir) null else item.size)
             .add(Document.COLUMN_LAST_MODIFIED, millis(item.modifiedAt))
-            .add(Document.COLUMN_SUMMARY, if (cached) "On this phone" else null)
+            .add(Document.COLUMN_SUMMARY, summary)
+            .add(Document.COLUMN_ICON, badge)
     }
 
     private fun addPending(c: MatrixCursor, rec: UploadRecord) {
@@ -264,11 +294,17 @@ class AllternitDocumentsProvider : DocumentsProvider() {
             "failed" -> "Couldn't upload: ${rec.error ?: "error"}"
             else -> null
         }
+        val badge = when (rec.state) {
+            "waiting_wake" -> R.drawable.ic_files_badge_asleep
+            "failed" -> R.drawable.ic_files_badge_error
+            else -> R.drawable.ic_files_badge_upload
+        }
         c.newRow().add(Document.COLUMN_DOCUMENT_ID, DocIds.pending(rec.id)).add(Document.COLUMN_DISPLAY_NAME, rec.name)
             .add(Document.COLUMN_MIME_TYPE, rec.mime)
             .add(Document.COLUMN_FLAGS, Document.FLAG_SUPPORTS_WRITE or Document.FLAG_SUPPORTS_DELETE or Document.FLAG_SUPPORTS_RENAME)
             .add(Document.COLUMN_SIZE, rec.file.length()).add(Document.COLUMN_LAST_MODIFIED, rec.updatedAt)
             .add(Document.COLUMN_SUMMARY, summary)
+            .add(Document.COLUMN_ICON, badge)
     }
 
     // ------------------------------------------------------------------ open
@@ -465,7 +501,7 @@ class AllternitDocumentsProvider : DocumentsProvider() {
     }
 
     override fun deleteDocument(documentId: String) {
-        fnf {
+        fnf<Unit> {
             when (val p = DocIds.parse(documentId)) {
                 is DocIds.Parsed.Pending -> {
                     val rec = drive.cache.record(p.recordId) ?: return@fnf
@@ -596,7 +632,11 @@ class AllternitDocumentsProvider : DocumentsProvider() {
         private val DOC_COLS = arrayOf(
             Document.COLUMN_DOCUMENT_ID, Document.COLUMN_DISPLAY_NAME, Document.COLUMN_MIME_TYPE,
             Document.COLUMN_SIZE, Document.COLUMN_LAST_MODIFIED, Document.COLUMN_FLAGS, Document.COLUMN_SUMMARY,
+            Document.COLUMN_ICON,
         )
+
+        /** SPEC section 4 conflict copy: `<stem> (conflict <device> <YYYY-MM-DD HHmm>[ n]).<ext>`. */
+        private val CONFLICT_NAME = Regex(""" \(conflict .+ \d{4}-\d{2}-\d{2} \d{4}( \d+)?\)""")
 
         fun mimeOf(name: String): String =
             MimeTypeMap.getSingleton().getMimeTypeFromExtension(name.substringAfterLast('.', "").lowercase()) ?: "application/octet-stream"

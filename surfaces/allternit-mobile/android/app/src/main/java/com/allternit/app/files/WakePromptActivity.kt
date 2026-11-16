@@ -30,6 +30,11 @@ class WakePromptActivity : Activity() {
         val name = drive.computerName(cid)
 
         val col = FilesUi.column(this)
+        // A rounded sheet on the dialog's transparent window (Material 3 dialog radius).
+        col.background = android.graphics.drawable.GradientDrawable().apply {
+            cornerRadius = FilesUi.dp(this@WakePromptActivity, 28).toFloat()
+            setColor(this@WakePromptActivity.getColor(R.color.files_bg))
+        }
         col.addView(FilesUi.title(this, "Wake $name?"))
         val what = when (reason) {
             WakeReason.UPLOAD -> if (file != null) "Saving $file" else "Saving files"

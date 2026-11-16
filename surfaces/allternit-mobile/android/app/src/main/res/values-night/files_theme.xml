@@ -1,13 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Graphite dark mode for the Allternit Files screens. -->
 <resources>
-    <color name="files_bg">#1C1C1B</color>
+    <color name="files_bg">#1F1F1E</color>
     <color name="files_text">#ECECEB</color>
     <color name="files_text_secondary">#A3A29F</color>
     <color name="files_fill">#2C2C2B</color>
     <color name="files_divider">#353534</color>
     <color name="files_primary">#ECECEB</color>
-    <color name="files_on_primary">#1C1C1B</color>
+    <color name="files_on_primary">#1F1F1E</color>
+
+    <!-- Status badges, dark status-* tokens. -->
+    <color name="files_status_info">#60A5FA</color>
+    <color name="files_status_agent">#60A5FA</color>
+    <color name="files_status_warning">#FBBF24</color>
+    <color name="files_status_error">#F87171</color>
+    <color name="files_status_muted">#6E6E6E</color>
+    <color name="files_badge_glyph">#1F1F1E</color>
 
     <style name="Theme.AllternitFiles" parent="android:Theme.Material.NoActionBar">
         <item name="android:windowBackground">@color/files_bg</item>

@@ -12,5 +12,8 @@
     <string name="shortcut_call_long">Call main bot</string>
     <!-- Share target for Android's share sheet (text and links only). title and text map to
          the /share-target query parameters; a shared link arrives in text. -->
+    <!-- Files drive (java/com/allternit/app/files). -->
+    <string name="files_label">Allternit Files</string>
+    <string name="files_share_label">Save to computer</string>
     <string name="share_target" translatable="false">{"action": "/share-target", "method": "GET", "params": {"title": "title", "text": "text"}}</string>
 </resources>

@@ -74,6 +74,25 @@ internal class FilesDrive private constructor(val context: Context) {
 
     fun api(): CloudApi = CloudApi(auth.token() ?: throw FilesException(401, ErrorCode.UNAUTHORIZED, null, "Sign in to Allternit Files."))
 
+    private val prefs = context.getSharedPreferences("files_drive", Context.MODE_PRIVATE)
+
+    /**
+     * Computers the user turned off for the system picker (first-run design 3A, Android
+     * step 2: "Choose which computers show in Files"). Off by id, so a new computer shows
+     * up on its own.
+     */
+    fun hiddenComputers(): Set<String> = prefs.getStringSet("hidden_computers", emptySet()) ?: emptySet()
+
+    fun setShownInFiles(cid: String, shown: Boolean) {
+        val next = HashSet(hiddenComputers())
+        if (shown) next.remove(cid) else next.add(cid)
+        prefs.edit().putStringSet("hidden_computers", next).apply()
+        notifyRoots()
+    }
+
+    /** The computers that get a root in the picker (design 7B: one root per computer). */
+    fun computersInFiles(): List<Computer> = hiddenComputers().let { off -> computers.filter { it.id !in off } }
+
     fun computer(cid: String): Computer? = computers.firstOrNull { it.id == cid }
     fun computerName(cid: String) = computer(cid)?.name ?: "Your computer"
 
@@ -485,6 +504,11 @@ internal class FilesDrive private constructor(val context: Context) {
         rec.error = null
         cache.save(rec)
         kickUploads(delayMs)
+        // The share screen finishes right away and the process may be killed before the
+        // upload lands: the job (network-constrained, survives the process) picks the queue
+        // up again. runUploads is synchronized and skips records already done, so the
+        // executor and the job take turns instead of racing.
+        scheduleUploadJob()
     }
 
     fun kickUploads(delayMs: Long = 0) {
@@ -667,6 +691,7 @@ internal class FilesDrive private constructor(val context: Context) {
         rootsMem.clear()
         items.clear()
         watched.clear()
+        prefs.edit().remove("hidden_computers").apply()
         cache.clearAll()
         computers = emptyList()
         notifyRoots()

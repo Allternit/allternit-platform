@@ -107,8 +107,14 @@ internal class CloudApi(private val token: String) {
 
     /**
      * A relayed request (SPEC section 2 "Relay"): the cloud-api `RelayRequest`
-     * `{method, path, headers, body, body_encoding}` posted to the relay candidate's
-     * `base_url` (`/api/v1/runtime-devices/:id/proxy`). The body is streamed: binary
+     * `{method, path, headers, body, bodyEncoding}` posted to the relay candidate's
+     * `base_url` (`/api/v1/runtime-devices/:id/proxy`).
+     *
+     * The encoding key is `bodyEncoding` and only that: cloud-api's `BrowserProxyRequest`
+     * is camelCase, so `body_encoding` alone is dropped today and a base64 upload would
+     * land as base64 text. The contract fix (SPEC gap 7) adds `body_encoding` as a serde
+     * alias, and serde refuses a request that carries both spellings, so sending one key
+     * is the only form that works before and after it. The body is streamed: binary
      * bodies are base64-encoded straight from the file into the request, never held whole.
      * The response is the runtime's raw response (real status, raw bytes), so the
      * caller reads [HttpURLConnection.getInputStream] and must disconnect.
@@ -134,9 +140,9 @@ internal class CloudApi(private val token: String) {
                 head.append(",\"path\":").append(JSONObject.quote(path))
                 head.append(",\"headers\":").append(JSONObject(headers as Map<*, *>).toString())
                 when (body) {
-                    null -> head.append(",\"body\":\"\",\"body_encoding\":\"utf8\"}")
-                    is RelayBody.Text -> head.append(",\"body\":").append(JSONObject.quote(body.text)).append(",\"body_encoding\":\"utf8\"}")
-                    is RelayBody.FileRange -> head.append(",\"body_encoding\":\"base64\",\"body\":\"")
+                    null -> head.append(",\"body\":\"\",\"bodyEncoding\":\"utf8\"}")
+                    is RelayBody.Text -> head.append(",\"body\":").append(JSONObject.quote(body.text)).append(",\"bodyEncoding\":\"utf8\"}")
+                    is RelayBody.FileRange -> head.append(",\"bodyEncoding\":\"base64\",\"body\":\"")
                 }
                 out.write(head.toString().toByteArray(Charsets.UTF_8))
                 if (body is RelayBody.FileRange) {

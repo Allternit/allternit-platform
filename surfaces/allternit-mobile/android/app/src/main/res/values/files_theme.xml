@@ -11,6 +11,14 @@
     <color name="files_primary">#1C1C1B</color>
     <color name="files_on_primary">#FFFFFF</color>
 
+    <!-- Status badges (design 5C), the workspace status-* tokens (allternit-ai theme.css). -->
+    <color name="files_status_info">#3B82F6</color>
+    <color name="files_status_agent">#3B82F6</color>
+    <color name="files_status_warning">#F59E0B</color>
+    <color name="files_status_error">#EF4444</color>
+    <color name="files_status_muted">#9A9894</color>
+    <color name="files_badge_glyph">#FFFFFF</color>
+
     <style name="Theme.AllternitFiles" parent="android:Theme.Material.Light.NoActionBar">
         <item name="android:windowBackground">@color/files_bg</item>
         <item name="android:colorBackground">@color/files_bg</item>

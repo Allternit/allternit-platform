@@ -26,6 +26,14 @@ internal object FilesConfig {
     const val CONNECT_PATH = "/files/connect-android"
     /** The https App Link the page returns to (autoVerify filter on FilesSignInActivity). */
     const val CALLBACK_PATH = "/files/android-callback"
+    /**
+     * The same hand-off for a build whose App Link is not verified (a debug build, or a
+     * signing key m.allternit.com's assetlinks.json does not list). The page links to
+     * `allternit-files://signin?state&sealed` as an `intent://` URL with `package=<app>`.
+     * Safe as a custom scheme: `sealed` opens only with this phone's Keystore key.
+     */
+    const val CALLBACK_SCHEME = "allternit-files"
+    const val CALLBACK_SCHEME_HOST = "signin"
     const val V2 = "/api/v1/files/v2"
 
     fun authority(context: Context) = context.packageName + ".files"
@@ -106,12 +114,18 @@ internal class FilesAuth(private val context: Context) {
             .appendQueryParameter("alg", "RSA-OAEP-SHA1")
             .appendQueryParameter("device", deviceName)
             .appendQueryParameter("device_id", deviceId)
+            // The package to return to for the custom-scheme fallback (debug installs as
+            // com.allternit.app.ondevice).
+            .appendQueryParameter("app", context.packageName)
             .build()
     }
 
-    /** True when `uri` is our App Link callback. */
-    fun isCallback(uri: Uri?): Boolean =
-        uri != null && uri.scheme == "https" && uri.host == Uri.parse(FilesConfig.WEB).host && uri.path == FilesConfig.CALLBACK_PATH
+    /** True when `uri` is our App Link callback (or its custom-scheme fallback). */
+    fun isCallback(uri: Uri?): Boolean {
+        if (uri == null) return false
+        if (uri.scheme == FilesConfig.CALLBACK_SCHEME) return uri.host == FilesConfig.CALLBACK_SCHEME_HOST
+        return uri.scheme == "https" && uri.host == Uri.parse(FilesConfig.WEB).host && uri.path == FilesConfig.CALLBACK_PATH
+    }
 
     /** Step 3 + 4. Throws with a user-readable message when the hand-off is not ours or is stale. */
     fun completeSignIn(uri: Uri) {

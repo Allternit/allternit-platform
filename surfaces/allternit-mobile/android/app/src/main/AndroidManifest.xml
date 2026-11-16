@@ -11,6 +11,11 @@
     <!-- Android 13+: Web Push shows under Allternit (notification delegation), so
          the app needs the runtime notification permission. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Files drive: the upload retry job waits for a network (JobScheduler), and
+         protected roots (Memory Drive) ask for a fresh fingerprint/face/screen-lock
+         unlock (BiometricPrompt, framework API, no androidx dependency). -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.USE_BIOMETRIC" />
 
     <application
         android:allowBackup="false"
@@ -63,13 +68,113 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="text/plain" />
             </intent-filter>
-            <intent-filter android:autoVerify="true">
+            <!-- priority -1: the one m.allternit.com path this app handles natively
+                 (/files/android-callback, FilesSignInActivity below, priority 0) wins
+                 without a chooser between two of our own activities. Every other
+                 m.allternit.com link still only matches this filter. -->
+            <intent-filter android:autoVerify="true" android:priority="-1">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="https" android:host="m.allternit.com" />
             </intent-filter>
         </activity>
+
+        <!-- ============ Files drive (SPEC contracts/files-drive, both flavors) ============
+             Every Allternit computer as a location in the system file picker and Files app
+             (design 7B: one root per computer), "Save to computer" in the share sheet
+             (design 7C), the wake prompt, the protected-root unlock and the sign-in hand-off.
+             Sources: java/com/allternit/app/files/. Own task affinity, so these screens
+             never stack on top of the TWA's task. -->
+        <provider
+            android:name="com.allternit.app.files.AllternitDocumentsProvider"
+            android:authorities="${applicationId}.files"
+            android:exported="true"
+            android:grantUriPermissions="true"
+            android:permission="android.permission.MANAGE_DOCUMENTS">
+            <intent-filter>
+                <action android:name="android.content.action.DOCUMENTS_PROVIDER" />
+            </intent-filter>
+        </provider>
+
+        <!-- Sign-in: Custom Tab to m.allternit.com/files/connect-android, back here through
+             the verified App Link /files/android-callback with a token sealed to this
+             phone's Keystore key. allternit-files://signin is the same hand-off for a build
+             whose App Link is not verified (debug builds, signing key not in assetlinks):
+             the sealed token opens only with this phone's key either way. -->
+        <activity
+            android:name="com.allternit.app.files.FilesSignInActivity"
+            android:exported="true"
+            android:label="@string/files_label"
+            android:launchMode="singleTask"
+            android:taskAffinity="${applicationId}.files"
+            android:theme="@style/Theme.AllternitFiles">
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="https"
+                    android:host="m.allternit.com"
+                    android:path="/files/android-callback" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="allternit-files" android:host="signin" />
+            </intent-filter>
+            <!-- "Settings" on an Allternit computer in the Files app: which computers
+                 show, sign out. The intent carries the document's content URI and type. -->
+            <intent-filter>
+                <action android:name="android.provider.action.DOCUMENT_SETTINGS" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data
+                    android:scheme="content"
+                    android:host="${applicationId}.files"
+                    android:mimeType="*/*" />
+            </intent-filter>
+        </activity>
+
+        <!-- Share sheet: "Save to computer" for any file, several files, or text. -->
+        <activity
+            android:name="com.allternit.app.files.ShareToComputerActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:label="@string/files_share_label"
+            android:taskAffinity="${applicationId}.files"
+            android:theme="@style/Theme.AllternitFiles">
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="*/*" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="*/*" />
+            </intent-filter>
+        </activity>
+
+        <!-- Opened only from our own notification / provider PendingIntents. -->
+        <activity
+            android:name="com.allternit.app.files.WakePromptActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:taskAffinity="${applicationId}.files"
+            android:theme="@style/Theme.AllternitFiles.Dialog" />
+        <activity
+            android:name="com.allternit.app.files.UnlockActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:taskAffinity="${applicationId}.files"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
+        <!-- Retries queued uploads when the network is back. -->
+        <service
+            android:name="com.allternit.app.files.FilesUploadJobService"
+            android:exported="false"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
 
         <!-- Notification delegation: Chrome hands Web Push to this service, so
              notifications (and their action buttons) appear under Allternit. -->
