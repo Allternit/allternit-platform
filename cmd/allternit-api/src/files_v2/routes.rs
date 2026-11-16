@@ -65,6 +65,10 @@ pub fn routes<S: Clone + Send + Sync + 'static>(files: Arc<FilesV2>) -> Router<S
         .route("/pin", post(pin))
         .route("/subscribe", get(feed::subscribe))
         .route("/jobs/:job_id", get(job))
+        .route("/models/handoff/:item_id", get(super::models::handoff))
+        .route("/models/grant", post(super::models::grant))
+        .route("/models/transfer", post(super::models::transfer))
+        .route("/route", post(super::models::route_file))
         .route("/storage", get(super::storage::storage))
         .merge(super::replicas::routes())
         .merge(super::inbox::routes())
@@ -741,7 +745,14 @@ async fn add_comment(Extension(files): Files, req: Req, body: Result<Json<Commen
     .await
 }
 
-/// Cross-computer copies and moves, replica syncs (`sync.rs`).
+/// Jobs: model transfers and routed files run in memory (`models.rs`; a
+/// restart forgets them, and the pull is idempotent, so start it again);
+/// cross-computer copies, moves and replica syncs are stored (`sync.rs`).
+/// Copies inside this computer run synchronously and have no job.
 async fn job(Extension(files): Files, _req: Req, Path(job_id): Path<String>) -> Res<JobRef> {
+    if let Some(j) = super::models::job(&job_id) {
+        files.inner().await?;
+        return Ok(Json(j));
+    }
     super::sync::job(&files, job_id).await
 }

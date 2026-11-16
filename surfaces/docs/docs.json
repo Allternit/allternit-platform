@@ -800,6 +800,7 @@
                   "api/files-drive",
                   "api/files-drive-runtime",
                   "api/files-drive-cloud",
+                  "api/files-drive-models",
                   "api/workspace-files",
                   "api/webhooks",
                   "api/webhook-subscriptions",

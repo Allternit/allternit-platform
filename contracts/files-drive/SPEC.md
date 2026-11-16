@@ -69,6 +69,10 @@ All under `/api/v1/files/v2`. The relay maps any path containing `/files` to cap
 | `GET /roots/:root_id/changes` | `ChangesQuery` | `ChangesResponse` |
 | `GET /subscribe` (WebSocket) | first frame `SubscribeMessage` | `FeedMessage` frames |
 | `GET /jobs/:job_id` | | `JobRef` |
+| `GET /models/handoff/:item_id` | `execute` (bool, default false), `kind` (`model`, `dataset`, `checkpoint`) | `PackageManifest` (section 19) |
+| `POST /models/transfer` | `{source: SourceRef, dest_parent_id?, allow_execute?}` | `JobRef` (`kind: model_transfer`), on the receiving computer |
+| `POST /models/grant` | `{item_id, execute}` | `PackageManifest` (the landed permission file); local callers only |
+| `POST /route` | `{source: SourceRef, dest_root_id?}` | `JobRef` (`kind: copy`): one file into this computer's Inbox (or another root) |
 | `GET /storage` | | `StorageDiscovery` |
 | `GET /items/:item_id/comments`, `POST /comments` | `CommentCreateRequest` | `Comment[]`, `Comment` |
 | `GET /replicas`, `POST /replicas` | `CreateReplicaRequest` | `ReplicasResponse` (on the replica host) |
@@ -198,7 +202,7 @@ Default roots, created on first use of the drive:
 `Permissions` (list, read, write, delete, share, comment, agent_process, transfer, execute) are computed by the runtime per request and returned on each item. Clients use them to show or hide actions; the server enforces them.
 
 - `agent_process` is separate from share roles: sharing a folder never lets an agent act on it.
-- `transfer` (copy a model or dataset) is separate from `execute` (run it). A package with transfer only cannot run (`execute_denied`).
+- `transfer` (copy a model or dataset) is separate from `execute` (run it). A package with transfer only cannot run (`execute_denied`). Section 19 has the package format and where `execute` is checked.
 - Inbox and shared-folder files are untrusted. A drop creates a task in `needs_approval` (`files.inbox.dropped`), unless the owner pre-approved a folder rule with a fixed tool set (`approved_by_rule`). No tool call happens before approval, and none reaches outside the root after.
 
 ## 8. Capability tokens
@@ -366,3 +370,52 @@ Every error body is `ErrorBody`: the same flat `{error, message, code}` as cloud
 2. **Asleep snapshot names.** Plain file names in the user's own R2 bucket (same trust class as uploaded files). `names_encrypted` stays in the format, default `false`, reserved and not used in v2 (section 11).
 
 No questions are open in this contract.
+
+## 19. Model packages and workspace moves (plan step 18)
+
+### Package manifest (`allternit.model-package/1`)
+
+One JSON shape does three jobs: the hand-off a phone or another computer reads before it pulls a model, dataset or checkpoint; the permission file a package carries once it lands (`.allternit-package.json` inside the package folder); and the seam to the on-device model lane. Rust source of truth: `cmd/allternit-api/src/files_v2/models.rs` (`PackageManifest`).
+
+| Field | Meaning |
+|---|---|
+| `format` | `"allternit.model-package/1"` |
+| `package_id` | `pkg_` + the first 24 hex of blake3 over the sorted `path\tcontent_hash\n` lines. The same bytes give the same id on every device |
+| `name` | a plain folder name (no `/`, `\`, `.`, `..`) |
+| `kind` | `model`, `dataset` or `checkpoint` |
+| `weights_format` | `gguf`, `mlx`, `safetensors`, `onnx` or `other`, from the file names |
+| `total_bytes` | the sum of `files[].size` |
+| `files[]` | `{path, size, content_hash (blake3), sha256, item_id?, rev?}`. `path` is relative, `/`-separated, never `..`, never the permission file. `item_id`/`rev` are set in a hand-off (fetch with `GET /items/:item_id/manifest` + `GET /chunks/:hash`, or `GET /items/:item_id/content`) and left out in a landed permission file |
+| `grant` | `{transfer, execute}`. `execute` is never implied by `transfer` |
+| `source` | `{computer_id, item_id, rev}` of the package on the computer it came from |
+| `created_at` | RFC 3339 |
+
+Rules a receiver checks before it writes anything (`PackageManifest::validate`, `manifest_invalid` otherwise): the format, a plain name, 1 to 10,000 files, safe unique paths (case-insensitive), a blake3 and a sha256 per file, `total_bytes` adds up, `package_id` matches the files. Every chunk is checked against its blake3 and every file against its whole-file hash as it lands.
+
+### Transfer is not execute
+
+- A hand-off carries `execute: true` only when the caller asked (`?execute=true`), the caller is the owner or one of the owner's devices, and the package can run where it is (it sits in the Models root, or its own permission file allows it).
+- A transfer lands with `execute` = the hand-off's `execute` AND the receiver's `allow_execute` (default false). A copy never runs where the source could not.
+- Where models are imported or launched on a runtime (`POST /api/local-engine/models/import`, `POST /api/local-engine/runtimes/launch`, by `recipe.model_path` or by the imported model's path), allternit-api looks for a permission file in the folder and up to four folders above it, and in each package one level down. `execute: false`, or a permission file it can't read, is `execute_denied` (403). A folder with no permission file (the engine's own downloads) is not restricted. Local processes that call local-engine on `127.0.0.1:3015` directly are trusted, as with every other local file.
+- `POST /models/grant` turns `execute` on or off for a landed package. It is refused over the relay and for guests and agents: run permission is given on the computer the model is on.
+- `Permissions.execute` on an item is true in the Models root only; the item list does not read permission files.
+
+### Pull on the destination
+
+`POST /models/transfer` and `POST /route` run on the computer that receives. `SourceRef` is `{computer_id, item_id, transport?}`. With no `transport`, the source is this computer when `computer_id` is its own and the cloud relay (`POST <cloud-api>/api/v1/runtime-devices/:computer_id/proxy`) otherwise. A `loopback` or `mesh` transport must point at a loopback or tailnet host (`100.64.0.0/10`, `fd7a:115c:a1e0::/48`, `*.ts.net`) and a path ending in `/api/v1/files/v2`; a relayed caller may not name a loopback transport, and its pulls carry `x-allternit-relayed` to the source. The receiver reads the source's manifests, asks its own chunk store what it already has, downloads only the missing chunks and commits each file through an upload session. Progress is `GET /jobs/:job_id`. Jobs live in memory: a restart forgets them, and starting the pull again reuses every chunk already stored. Transfers land in `~/Allternit/Downloads/Models/<name>` unless `dest_parent_id` names a folder; routed files land in the Inbox unless `dest_root_id` names a root. The Memory Drive never takes copied files.
+
+### Hand-off to the on-device import path (seam with the on-device models lane)
+
+Phones have no runtime. A phone reads `GET /models/handoff/:item_id?execute=true` over its normal transport (relay on iOS: the File Provider extension is relay-only), pulls each file's chunks itself, checks blake3 per chunk and sha256 per file, and gives the finished folder to the on-device importer. **As of 2026-11-15 the on-device lane has no import entry point on main** (its iPhone storage, `OnDeviceStorage` in `surfaces/allternit-mobile/ios/Core/OnDevice/`, is in platform PR #2437). The seam the on-device lane implements:
+
+- **iOS** (`OnDeviceStorage`, PR #2437): write the files into `OnDeviceStorage.partialFolder(modelId:quant:)`, then `OnDeviceStorage.commit(OnDeviceInstall)` with `modelId = "files/" + package_id`, `quant = name`, `engine = .llamaCpp` for `gguf` and `.mlx` for `mlx` (other formats are not installable on iPhone), `manifestId = package_id`, `files = files[].path`, `sizeBytes = total_bytes`, `verified = true` (every sha256 matched the hand-off from the owner's own computer), `installedAt = now`. The package then appears under **Models > On this iPhone** like a catalog download. Install only when `grant.execute` is true; a transfer-only package stays a file in the Files app and is never offered to the engine. Keep the hand-off JSON next to `install.json` as `.allternit-package.json`.
+- **Android** (W9 ondevice engine): the same steps into the engine's models folder, sha256 checked (the engine already checks sha256).
+- **Desktop / another computer**: `POST /models/transfer` on that computer, then the usual `POST /api/local-engine/models/import {path}` (checked against the permission file as above).
+
+### Route a file to a computer
+
+`POST /route` on the receiving computer copies one file from any of the owner's computers into its Inbox (or `dest_root_id`). A folder is refused: send it as a package. Inbox files are untrusted (section 7), so a routed file goes through the same approval as any other drop.
+
+### Portable workspaces (teleport bundle)
+
+A workspace move (`gizzi teleport --to cloud`, `cmd/gizzi-code/src/runtime/teleport/`) sends the session file, a patch of tracked changes since a commit the remote has, and a tar of untracked, not-ignored files. Files that look like secrets never travel, tracked or not: a path that contains a deny-listed location, a file name that matches a deny-listed pattern, or text that holds a private key or a well-known token format. The deny-list is one file, `cmd/allternit-api/assets/secrets-deny.json`, shared with the runtime's path scoping (section 12), and it only ever grows (`files_scope.rs` test `secrets_deny_list_only_grows`). `gizzi teleport <session> --to cloud --dry-run` prints what would travel and what is left out, and every move prints what it left out.

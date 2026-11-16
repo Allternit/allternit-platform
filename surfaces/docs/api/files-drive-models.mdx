@@ -1,0 +1,123 @@
+---
+title: 'Files Drive: Models and Routing'
+description: 'Copy models, datasets and checkpoints between your computers and phones with separate copy and run permissions, and send one file to another computer.'
+---
+
+## Overview
+
+These Files drive routes move models, datasets and checkpoints between the owner's computers and phones, and send single files to another computer's Inbox. They are part of the Files drive protocol (`files/2`) on the runtime, under the same base URL and with the same sign-in as the [Files Drive API](/api/files-drive). The full contract is section 19 of `contracts/files-drive/SPEC.md` in the platform repo.
+
+<Note>
+Like the rest of the Files drive, these routes are off unless the runtime runs with `ALLTERNIT_FILES_DRIVE=1`.
+</Note>
+
+## Copying is not running
+
+A model package has two separate permissions:
+
+- **transfer**: the files may be copied to another device.
+- **execute**: a model engine may load and run them.
+
+Copying never gives run permission. A copy can run on the new computer only if it could run where it came from, the sender asked for it (`execute=true` on the hand-off), and the receiver allowed it (`allow_execute: true` on the transfer). Otherwise the copy lands with `execute: false`.
+
+Each copied package carries a permission file, `.allternit-package.json`, in its folder. When a model is imported or launched through `POST /api/local-engine/models/import` or `POST /api/local-engine/runtimes/launch`, the runtime reads that file. A package with `execute: false`, or with a permission file that can't be read, is refused:
+
+```json
+{
+  "error": "execute_denied",
+  "code": "execute_denied",
+  "message": "This model was copied here without permission to run. Allow it to run from this computer first."
+}
+```
+
+Models the local engine downloaded itself have no permission file and are not restricted.
+
+## Get a hand-off
+
+```text
+GET /api/v1/files/v2/models/handoff/:item_id?execute=true&kind=model
+```
+
+`item_id` is a package folder or a single file (such as one `.gguf`). The response is the package manifest: every file with its size, blake3 `content_hash`, `sha256` and `item_id`, plus the `grant` and the `source`.
+
+```json
+{
+  "format": "allternit.model-package/1",
+  "package_id": "pkg_3f1c0a9e5b7d2c4e6a8b0d1f",
+  "name": "qwen3-0.6b",
+  "kind": "model",
+  "weights_format": "gguf",
+  "total_bytes": 484220320,
+  "files": [
+    { "path": "Qwen3-0.6B-Q4_K_M.gguf", "size": 484220320, "content_hash": "…", "sha256": "…", "item_id": "it_…", "rev": "…" }
+  ],
+  "grant": { "transfer": true, "execute": true },
+  "source": { "computer_id": "rd_…", "item_id": "it_…", "rev": "…" },
+  "created_at": "2026-11-15T16:42:00.000Z"
+}
+```
+
+`execute` comes back `true` only when you asked for it, you are the owner or one of your own devices, and the package can run on the source. A phone reads the hand-off, pulls each file's chunks (`GET /items/:item_id/manifest`, `GET /chunks/:hash`), checks every hash, and hands the folder to its on-device model importer.
+
+## Copy a package to this computer
+
+Call this on the computer that should receive the package:
+
+```text
+POST /api/v1/files/v2/models/transfer
+```
+
+```json
+{
+  "source": { "computer_id": "rd_mac", "item_id": "it_…" },
+  "dest_parent_id": "it_…",
+  "allow_execute": false
+}
+```
+
+- `source.transport` is optional. Leave it out to copy from this computer (when `computer_id` is its own) or through the cloud relay. A `loopback` or `mesh` transport must point at a loopback or tailnet address ending in `/api/v1/files/v2`.
+- `dest_parent_id` defaults to `~/Allternit/Downloads/Models`.
+- Only the chunks this computer does not already have are downloaded, and every chunk and file is checked as it lands.
+
+The response is a job. Follow it with `GET /api/v1/files/v2/jobs/:job_id` until `state` is `done` or `failed`:
+
+```json
+{ "job_id": "job_…", "kind": "model_transfer", "state": "running", "done_bytes": 104857600, "total_bytes": 484220320 }
+```
+
+Jobs are kept in memory. After a restart, start the copy again: chunks already stored are not downloaded twice.
+
+## Allow a copied model to run
+
+```text
+POST /api/v1/files/v2/models/grant
+```
+
+```json
+{ "item_id": "it_package_folder", "execute": true }
+```
+
+This works only from the computer the package is on. It is refused over the relay and for guests and agents.
+
+## Send a file to a computer
+
+```text
+POST /api/v1/files/v2/route
+```
+
+```json
+{ "source": { "computer_id": "rd_mac", "item_id": "it_…" }, "dest_root_id": "rt_…" }
+```
+
+Copies one file from any of your computers into this computer's Inbox, or into `dest_root_id`. Folders are refused; send a folder as a package instead. Files in the Inbox are treated as untrusted, so an agent acts on them only after approval. The response is a `copy` job.
+
+## Errors
+
+| Code | When |
+|---|---|
+| `execute_denied` (403) | importing or launching a package without run permission |
+| `manifest_invalid` (400) | a hand-off that breaks the package rules (bad path, missing hash, wrong total, wrong `package_id`) |
+| `forbidden` (403) | the item can't be copied, or a grant was tried over the relay |
+| `rev_mismatch` (409) | a file changed on the source during the copy; start again |
+| `integrity_failed` (422) | a chunk arrived damaged |
+| `offline` (503) | the source computer could not be reached |

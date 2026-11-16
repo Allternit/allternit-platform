@@ -42,6 +42,7 @@ mod inbox;
 mod inbox_tests;
 mod memory;
 mod meta;
+pub mod models;
 #[cfg(test)]
 mod replica_tests;
 mod replicas;
@@ -381,7 +382,10 @@ impl Fail {
 }
 
 /// Permissions for an owner or own device (section 7), from the root policy.
-/// Files never runs anything, so `execute` is always false here.
+/// `execute` is true only in the Models root (the local engine's own cache).
+/// A copied package elsewhere runs only if its permission file allows it,
+/// which `models::check_execute_path` checks where models are imported or
+/// launched; the item list does not read that file, so it shows `false`.
 pub(crate) fn permissions(root: &RootRecord, item: &ItemRecord) -> Permissions {
     let p = &root.policy;
     let readable = p.read && !item.link_escapes;
@@ -395,7 +399,7 @@ pub(crate) fn permissions(root: &RootRecord, item: &ItemRecord) -> Permissions {
         comment: p.read,
         agent_process: p.agent_process,
         transfer: readable,
-        execute: false,
+        execute: readable && root.kind == RootKind::Models,
     }
 }
 
