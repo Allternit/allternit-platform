@@ -386,6 +386,8 @@ final class AuthManager: ObservableObject {
         // Revoke the iOS runtime device credential before signing out of Clerk.
         // The revoke call needs the current device token, so it must run first.
         await RuntimePairing.shared.revoke()
+        // Revoke the Files drive key (also needs the session).
+        await FilesDriveBridge.shared.willSignOut()
         try await Clerk.shared.auth.signOut()
         clearSystemSurfaces()
         refreshAuthState()
@@ -394,6 +396,7 @@ final class AuthManager: ObservableObject {
     /// Nothing of the account stays on the Home Screen or in Spotlight.
     func clearSystemSurfaces() {
         StatusSnapshotWriter.clear()
+        FilesDriveBridge.shared.clearLocal()
         SpotlightIndexer.removeAll()
         AllternitShortcuts.updateAppShortcutParameters()
     }

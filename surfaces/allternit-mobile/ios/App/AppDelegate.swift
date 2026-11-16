@@ -42,6 +42,8 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
                 await ShareOutboxDrainer.shared.drain()
                 // The iOS 26 widget push token the widget extension left.
                 await ActivityTokenRegistry.shared.syncWidgetToken()
+                // Files drive: one Files location per computer (File Provider).
+                await FilesDriveBridge.shared.sync()
             }
         }
         // Live Activities: intent registry, adopt running activities, token uploads.
