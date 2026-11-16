@@ -215,6 +215,8 @@ dependencies = [
  "allternit-cowork-scheduler",
  "allternit-driver-interface",
  "allternit-factory-engine",
+ "allternit-files-core",
+ "allternit-files-engine",
  "allternit-firecracker-driver",
  "allternit-gc-agents",
  "allternit-model-source",

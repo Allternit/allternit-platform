@@ -46,6 +46,9 @@ async-stream = { workspace = true }
 axum-extra = { version = "0.9", features = ["typed-header"] }
 urlencoding = { workspace = true }
 unicode-normalization = "0.1"
+# Files drive v2 (`src/files_v2`): wire types and the engine (contracts/files-drive).
+allternit-files-core = { workspace = true }
+allternit-files-engine = { workspace = true }
 tokio-util = { workspace = true }
 http-body-util = { workspace = true }
 bytes = { workspace = true }
