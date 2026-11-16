@@ -51,6 +51,11 @@ pub const RETAIN: &[(&str, &str)] = &[
 /// `(table, condition)`, run in this order with the user id as `$1`. A table
 /// that another table references without a cascade comes after that table.
 pub const ERASE: &[(&str, &str)] = &[
+    // Files keys (migration 146): envelopes and requests before the devices and keys they name.
+    ("files_key_envelopes", USER),
+    ("files_key_requests", USER),
+    ("files_key_devices", USER),
+    ("files_keys", USER),
     // Meetings (migration 130), children first; sessions cascade from meetings.
     ("meeting_tool_approvals", USER),
     ("meeting_participants", "user_id = $1 OR session_id IN (SELECT id FROM meeting_sessions WHERE user_id = $1)"),
@@ -230,6 +235,9 @@ pub const ERASE: &[(&str, &str)] = &[
 /// Clears the user from rows that stay: kept records, and work that belongs to
 /// someone else. Runs after [`ERASE`], in the same transaction.
 const SCRUB: &[&str] = &[
+    // Approvals on another account's Files key keep working; only who approved goes.
+    "UPDATE files_key_devices SET approved_by = 'deleted' WHERE approved_by = $1",
+    "UPDATE files_key_requests SET granted_by = 'deleted' WHERE granted_by = $1",
     "UPDATE artifact_versions SET author_id = 'deleted' WHERE author_id = $1",
     "UPDATE artifact_shares SET invited_by = 'deleted' WHERE invited_by = $1",
     "UPDATE phone_invites SET joined_user_id = NULL WHERE joined_user_id = $1",

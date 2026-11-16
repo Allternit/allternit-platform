@@ -70,7 +70,7 @@ fn a_rotation_must_reach_every_device_exactly_once() {
 
 async fn setup() -> Arc<ApiState> {
     let state = test_state(Arc::new(MockGateway::new(None, vec![]))).await;
-    let sql = include_str!("../../migrations_pg/145_files_keys.sql").replace("public.", "");
+    let sql = include_str!("../../migrations_pg/146_files_keys.sql").replace("public.", "");
     sqlx::raw_sql(&sql).execute(&state.db).await.expect("migration 145");
     sqlx::raw_sql(
         "CREATE TABLE IF NOT EXISTS audit_log (id TEXT PRIMARY KEY, action TEXT, resource_type TEXT, resource_id TEXT, \
