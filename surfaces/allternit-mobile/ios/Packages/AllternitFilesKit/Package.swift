@@ -2,8 +2,13 @@
 //
 // AllternitFilesKit: the Files drive client (protocol `files/2`) shared by the
 // iOS app, the AllternitFileProvider extension and, later, the macOS File
-// Provider (plan step 23). Foundation and Security only, so the File Provider
-// extension stays far under iOS's ~20 MB extension memory limit (spike 5).
+// Provider (plan step 23). Foundation, Security and FileProvider only (no
+// UIKit, no mesh), so the File Provider extension stays far under iOS's
+// ~20 MB extension memory limit (spike 5) and the same code builds for macOS.
+// Platform differences stay in the targets that link it.
+//
+// Tests: `swift test --package-path surfaces/allternit-mobile/ios/Packages/AllternitFilesKit`
+// (macOS host). ChunkerVectorTests reads contracts/files-drive/vectors/chunker-v1.json.
 //
 // The message types are the generated contract
 // (contracts/files-drive/gen/FilesDriveContract.gen.swift). Sources/.../Contract

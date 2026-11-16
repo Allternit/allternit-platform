@@ -39,11 +39,12 @@ final class ChunkerVectorTests: XCTestCase {
         let cases: [Case]
     }
 
-    /// Repo root from this file: Tests/AllternitFilesKitTests → package →
-    /// Packages → ios → allternit-mobile → surfaces → repo.
+    /// Repo root from this file: drop the file name, then
+    /// AllternitFilesKitTests, Tests, AllternitFilesKit, Packages, ios,
+    /// allternit-mobile and surfaces (8 components).
     private static var vectorsURL: URL {
         var url = URL(fileURLWithPath: #filePath)
-        for _ in 0..<7 { url.deleteLastPathComponent() }
+        for _ in 0..<8 { url.deleteLastPathComponent() }
         return url.appendingPathComponent("contracts/files-drive/vectors/chunker-v1.json")
     }
 

@@ -41,6 +41,12 @@ packages:
   # Packages/KokoroKit (see its Package.swift); models download on first use.
   KokoroKit:
     path: Packages/KokoroKit
+  # Files drive client (`files/2`): relay transport, chunked uploads, ranged
+  # downloads, the pinned chunker and the File Provider domain helpers.
+  # Shared by the app, AllternitFileProvider and the macOS File Provider
+  # (plan step 23). Foundation, Security and FileProvider only.
+  AllternitFilesKit:
+    path: Packages/AllternitFilesKit
   # SVG pack avatars (clawd-crew, duet-carry, gizzi-youtube): UIImage can't
   # decode SVG, so BotAvatarView draws them with SwiftDraw (MIT, pure Swift).
   SwiftDraw:
@@ -179,6 +185,7 @@ targets:
         product: SwiftTerm
       - package: SwiftDraw
         product: SwiftDraw
+      - package: AllternitFilesKit
       - target: AllternitWidgets
         embed: true
       - target: AllternitScreen
@@ -188,6 +195,8 @@ targets:
       - target: AllternitShare
         embed: true
       - target: AllternitMessages
+        embed: true
+      - target: AllternitFileProvider
         embed: true
     postBuildScripts:
       # The sherpa-onnx xcframework ships no dSYM, so an App Store upload warns
@@ -337,6 +346,37 @@ targets:
         # The iMessage icon (4:3 slots + App Store image) lives in its own
         # catalog; actool writes MSMessagesExtensionStoreIconName from it.
         ASSETCATALOG_COMPILER_APPICON_NAME: "iMessage App Icon"
+        DEVELOPMENT_TEAM: MQ85968PQP
+        CODE_SIGN_STYLE: Automatic
+        SKIP_INSTALL: true
+  # Files drive (plan step 19): each computer as a location in Files, a
+  # replicated File Provider with one domain per computer. RELAY ONLY: iOS
+  # kills a File Provider extension at 20,481 KB and tsnet alone takes
+  # ~11 MB (spike 5), so it links no Mesh.xcframework and nothing but
+  # AllternitFilesKit and system frameworks. Keep it that way.
+  AllternitFileProvider:
+    type: app-extension
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: AllternitFileProvider
+    dependencies:
+      - package: AllternitFilesKit
+      - sdk: FileProvider.framework
+      - sdk: UniformTypeIdentifiers.framework
+    settings:
+      base:
+        INFOPLIST_FILE: AllternitFileProvider/Info.plist
+        CODE_SIGN_ENTITLEMENTS: AllternitFileProvider/AllternitFileProvider.entitlements
+        PRODUCT_BUNDLE_IDENTIFIER: com.allternit.mobile.files
+        PRODUCT_NAME: AllternitFileProvider
+        # Completion-handler File Provider APIs; same mode as the package.
+        SWIFT_VERSION: "5.0"
+        IPHONEOS_DEPLOYMENT_TARGET: "17.0"
+        TARGETED_DEVICE_FAMILY: "1"
+        MARKETING_VERSION: "1.0.3"
+        CURRENT_PROJECT_VERSION: "39"
+        APPLICATION_EXTENSION_API_ONLY: YES
         DEVELOPMENT_TEAM: MQ85968PQP
         CODE_SIGN_STYLE: Automatic
         SKIP_INSTALL: true

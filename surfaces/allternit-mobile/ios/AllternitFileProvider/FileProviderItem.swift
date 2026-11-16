@@ -24,7 +24,8 @@ final class FileProviderItem: NSObject, NSFileProviderItem {
     let documentSize: NSNumber?
     let creationDate: Date?
     let contentModificationDate: Date?
-    let contentPolicy: NSFileProviderContentPolicy
+    /// Kept offline on this device ("Keep offline", `FilesSharedStore.pins`).
+    let pinned: Bool
     /// The contract item behind this one (nil for the computer itself).
     let item: Item?
     let rootId: RootId?
@@ -35,19 +36,29 @@ final class FileProviderItem: NSObject, NSFileProviderItem {
         itemIdentifier = identifier
         parentItemIdentifier = parent
         filename = name
-        contentType = isFolder ? .folder : (UTType(filenameExtension: (name as NSString).pathExtension) ?? .data)
+        let byExtension = UTType(filenameExtension: (name as NSString).pathExtension)
+        if isFolder {
+            // A package (a `.pages` or `.key` document saved as a folder) is
+            // a folder on the computer but one document in Files.
+            contentType = byExtension.flatMap { $0.conforms(to: .package) ? $0 : nil } ?? .folder
+        } else {
+            contentType = byExtension ?? .data
+        }
         itemVersion = NSFileProviderItemVersion(contentVersion: Data(contentVersion.utf8), metadataVersion: Data(rev.utf8))
         self.capabilities = capabilities
         documentSize = isFolder ? nil : NSNumber(value: item?.size ?? 0)
         creationDate = item.flatMap { ProviderDates.parse($0.createdAt) }
         contentModificationDate = item.flatMap { ProviderDates.parse($0.modifiedAt) }
-        // iOS has no "keep downloaded" policy; pinned items keep the
-        // inherited policy and the app re-reads them to keep them local
-        // (FilesDomainCoordinator.materializePinned).
-        contentPolicy = pinned ? .inherited : .inherited
+        self.pinned = pinned
         self.item = item
         self.rootId = rootId
     }
+
+    #if os(macOS)
+    /// macOS keeps pinned files downloaded by policy (plan step 23). iOS has
+    /// no such policy; the app re-reads pinned files (`FilesPinKeeper`).
+    var contentPolicy: NSFileProviderContentPolicy { pinned ? .downloadEagerlyAndKeepDownloaded : .inherited }
+    #endif
 
     /// The rev a write must send as `base_rev`, from a version the system kept.
     static func baseRev(_ version: NSFileProviderItemVersion) -> Rev? {
