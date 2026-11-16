@@ -182,6 +182,7 @@ async fn studio_fixture_lora_job_succeeds_through_routes() {
     let (status, job) = call(&host, "POST", "/studio/jobs", Some(fixture(&env))).await;
     assert_eq!(status, StatusCode::CREATED, "{job}");
     assert_eq!(job["state"], "queued");
+    assert_eq!(job["backend"], "mlx", "LoRA on Apple Silicon picks MLX: {job}");
     let id = job["id"].as_str().unwrap().to_string();
 
     let done = wait_state(&host, &id, "succeeded").await;
@@ -395,9 +396,18 @@ async fn studio_refusals_and_engine_list() {
         .unwrap();
     assert_eq!(unsloth["fit"]["ok"], false);
 
-    let (status, err) = call(&mac, "POST", "/studio/engines/axolotl/install", None).await;
-    assert_eq!(status, StatusCode::NOT_IMPLEMENTED);
-    assert!(err["message"].as_str().unwrap().contains("not available"));
+    // Every catalog engine is available in this build now; one that does not
+    // fit the computer is refused before anything installs.
+    assert!(engines.iter().all(|e| e["available"] == true), "{list}");
+    for id in ["axolotl", "unsloth-upstream", "llama-factory"] {
+        let (status, err) = call(&mac, "POST", &format!("/studio/engines/{id}/install"), None).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{id}");
+        assert_eq!(err["error"], "hardware_not_supported", "{id}");
+        assert!(!err["message"].as_str().unwrap().is_empty());
+        assert!(!env.dir.join("engines").join(id).exists(), "{id}");
+    }
+    let (status, _) = call(&mac, "POST", "/studio/engines/nope/install", None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]
@@ -604,6 +614,7 @@ async fn studio_create_refuses_by_method_backend_output_and_device() {
     let cpu = host(&env, Hardware::Cpu);
     let (status, job) = call(&cpu, "POST", "/studio/jobs", Some(fixture(&env))).await;
     assert_eq!(status, StatusCode::CREATED, "{job}");
+    assert!(job["backend"].as_str().is_some_and(|b| b.starts_with("torch")), "CPU runs on PyTorch: {job}");
     wait_state(&cpu, job["id"].as_str().unwrap(), "succeeded").await;
     let (_, list) = call(&cpu, "GET", "/studio/engines", None).await;
     let tune = list["engines"].as_array().unwrap().iter().find(|e| e["id"] == "allternit-tune").unwrap();

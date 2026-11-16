@@ -1,0 +1,172 @@
+---
+title: 'Files drive runtime API'
+description: 'The allternit-api side of Files drive protocol v2: browse, read, write and sync the files on a computer by ID, with revisions, conflict copies, resumable uploads and a change feed.'
+---
+
+## Overview
+
+The Files drive serves the files on one computer to the owner's other devices. Every request names roots and items by opaque ID, never by path. Writes carry the revision the client last saw, so a stale write becomes a conflict copy instead of an overwrite. Big files move as content-defined chunks that resume after a dropped connection.
+
+The full contract lives in the platform repo at `contracts/files-drive/SPEC.md`, with JSON schemas in `contracts/files-drive/schema/` and generated Rust, TypeScript, Swift and Kotlin types. The protocol itself is described in the [Files drive API](/api/files-drive). This page covers the **runtime** side: the routes `allternit-api` answers on the computer that owns the files. The cloud-api routes (wake consent, endpoints, shares and the guest gateway) are documented with their own release.
+
+<Note>
+The Files drive ships dark. On the runtime it is off unless the process runs with `ALLTERNIT_FILES_DRIVE=1`. While it is off, every route answers `403 feature_disabled` and nothing is created on disk. The per-user `files_drive` flag is held by cloud-api.
+</Note>
+
+## Base URL
+
+```text
+http://127.0.0.1:8013/api/v1/files/v2
+```
+
+Other devices reach the same routes through the cloud relay: `POST /api/v1/runtime-devices/{computer_id}/proxy` with `path` set to `/api/v1/files/v2/...`.
+
+## Authentication and callers
+
+Requests go through the platform auth middleware like every other runtime route. The runtime then decides the **principal**:
+
+| Principal | When | Reaches |
+|---|---|---|
+| `owner` | the signed-in user, no device header | every root |
+| `own_device` | the owner's token plus `X-Allternit-Device-Id` | every root; pins are per device |
+
+A request replayed by the relay (it carries `x-allternit-relayed`), forwarded by a proxy, or sent from a non-loopback peer is a **relayed caller**. Relayed callers reach registered roots only, which is all v2 exposes, and a folder they add starts with sharing and agent access turned off.
+
+Two more headers matter:
+
+- `X-Allternit-Device-Name` names the device in conflict-copy names when the request does not say.
+- `X-Allternit-Unlock` is the proof of a fresh device unlock (Face ID, Windows Hello). Protected roots answer `403 protected_root_locked` without it. Today any non-empty value is accepted; a signed unlock assertion replaces it before the drive leaves the flag.
+
+Files traffic never counts as activity: no v2 request, long poll or socket resets the computer's idle timer or keeps it awake.
+
+## Roots
+
+The first request creates the default roots:
+
+| Kind | Name | Folder | Notes |
+|---|---|---|---|
+| `allternit_home` | Allternit | `~/Allternit` | parent of the six folders below |
+| `inbox` | Inbox | `~/Allternit/Inbox` | shareable; agents may take items as task inputs |
+| `shared` | Shared | `~/Allternit/Shared` | shareable |
+| `agent_output` | Agent Output | `~/Allternit/Agent Output` | agent results |
+| `downloads` | Downloads | `~/Allternit/Downloads` | `provider_ready: false` until downloads land here |
+| `meetings` | Meetings | `~/Allternit/Meetings` | `provider_ready: false` until recordings land here |
+| `scans` | Scans | `~/Allternit/Scans` | `provider_ready: false` until phone scans land here |
+| `memory_drive` | Memory Drive | your Memory Drive | protected; writes become Memory Drive commits |
+| `code` | Code | `ALLTERNIT_FILES_CODE_DIR` | `provider_ready: false` while unset; add your code folder with `POST /roots` instead |
+| `models` | Models | the local engine's model cache | read-only here; no versions or trash |
+| `user_added` | your choice | a folder you pick | see [Adding a folder](#adding-a-folder) |
+
+`path_hint` (for example `~/Allternit/Inbox`) is sent to the owner and own devices only, never for a provider's internal folder.
+
+### Memory Drive
+
+Memory Drive is a git repository, not a folder. The runtime shows its current files as a read view and turns every Files write or delete there into one commit through the Memory Drive write path, so its history and checks stay in force. Only Markdown files can be written. Writes there fail closed: an existing name without `base_rev`, or a stale `base_rev`, is an error, never a conflict copy. Making folders, moving, copying in, uploading and restoring versions are refused with `forbidden`.
+
+### Adding a folder
+
+`POST /roots` takes an `AddRootRequest` with `local_path`. The runtime resolves `~`, refuses `..`, follows symlinks, and requires the real folder to exist inside the home folder. It refuses, with `403 scope_violation`, the home folder itself, the secrets deny-list (`~/.ssh`, `~/.gnupg`, cloud CLI credentials, keychains, agent CLI tokens, `~/.allternit` private state), any folder that contains one of those, and the Allternit data folders. These are the same rules as the [Workspace Files](/api/workspace-files) routes.
+
+A relayed caller may not turn sharing or agent access on, or protection off, with `PATCH /roots/{root_id}`; those changes are made from the computer itself.
+
+## Endpoints
+
+| Method | Path | Request | Response |
+|---|---|---|---|
+| `GET` | `/ping` | | `PingResponse` |
+| `GET` | `/whoami` | | `WhoAmIResponse` |
+| `GET` | `/roots` | | `RootsResponse` |
+| `POST` | `/roots` | `AddRootRequest` | `RootResponse` |
+| `PATCH` | `/roots/{root_id}` | `UpdateRootRequest` | `RootResponse` |
+| `DELETE` | `/roots/{root_id}` | | 204, user-added roots only; files stay on disk |
+| `GET` | `/roots/{root_id}/list` | `parent_id`, `page_token`, `limit`, `sort` | `ListResponse` |
+| `GET` | `/items/{item_id}` | | `StatResponse` |
+| `GET` | `/items/{item_id}/content` | `Range`, `If-None-Match` | bytes, `ETag`, 206 or 304 |
+| `GET` | `/items/{item_id}/manifest` | `page_token` | `Manifest` |
+| `GET` | `/chunks/{hash}` | | one chunk, at most 4 MiB |
+| `PUT` | `/roots/{root_id}/content` | `SmallWriteQuery`, body at most 4 MiB | `MutationResponse` |
+| `POST` | `/chunks/have-need` | `HaveNeedRequest` | `HaveNeedResponse` |
+| `POST` | `/uploads` | `UploadCreateRequest` | `UploadStatus` |
+| `POST` | `/uploads/{session_id}/chunks` | `UploadChunksAppend` | `UploadStatus` |
+| `PUT` | `/uploads/{session_id}/chunks/{hash}` | chunk bytes | `ChunkPutResponse` |
+| `GET` | `/uploads/{session_id}` | | `UploadStatus` |
+| `POST` | `/uploads/{session_id}/commit` | | `UploadCommitResponse` |
+| `DELETE` | `/uploads/{session_id}` | | 204 |
+| `POST` | `/mkdir` | `MkdirRequest` | `MutationResponse` |
+| `POST` | `/move` | `MoveRequest` | `MutationResponse` |
+| `POST` | `/copy` | `CopyRequest` | `CopyResponse` |
+| `POST` | `/delete` | `DeleteRequest` | `DeleteResponse` |
+| `GET` | `/roots/{root_id}/trash` | | `TrashListResponse` |
+| `POST` | `/restore` | `RestoreRequest` | `MutationResponse` |
+| `GET` | `/items/{item_id}/versions` | | `VersionsResponse` |
+| `POST` | `/items/{item_id}/versions/restore` | `RestoreVersionRequest` | `MutationResponse` |
+| `POST` | `/search` | `SearchRequest` | `SearchResponse` |
+| `POST` | `/pin` | `PinRequest` | `PinResponse` |
+| `GET` | `/roots/{root_id}/changes` | `cursor`, `limit`, `wait_s` | `ChangesResponse` |
+| `GET` | `/subscribe` | WebSocket, first frame `SubscribeMessage` | `FeedMessage` frames |
+| `GET` | `/jobs/{job_id}` | | `JobRef` |
+| `GET` | `/storage` | | `StorageDiscovery` |
+| `GET` | `/items/{item_id}/comments` | | `Comment` list |
+| `POST` | `/comments` | `CommentCreateRequest` | `Comment` |
+| `GET`, `POST` | `/replicas` | | `501 unsupported` on this release |
+| `POST` | `/replicas/restore` | | `501 unsupported` on this release |
+
+What this release does not do yet, each with a clear error:
+
+- `POST /search` supports `mode: "name"` only. `full_text` and `semantic` return `501 unsupported`.
+- `POST /copy` to another computer (`dest_computer_id` set to a different computer) returns `501 unsupported`. Copies on one computer finish in the request, so `GET /jobs/{job_id}` always returns `404 not_found`.
+- Replicas return `501 unsupported`.
+
+## Writing files
+
+A file of 4 MiB or less may use the small write:
+
+```bash
+curl -X PUT "http://127.0.0.1:8013/api/v1/files/v2/roots/$ROOT/content?parent_id=$PARENT&name=Lease.pdf&base_rev=$REV&on_conflict=keep_both&device_name=iPhone&utc_offset_minutes=-360" \
+  --data-binary @Lease.pdf
+```
+
+Anything bigger, or anything that must resume, uses an upload session: `POST /uploads` with the chunk list, `POST /chunks/have-need` or the session's `need` list to skip chunks the computer already has, one `PUT` per needed chunk, then `POST /uploads/{session_id}/commit`. The runtime checks every chunk hash and the whole-file hash at commit (`chunk_hash_mismatch`, `chunk_missing`, `manifest_invalid`).
+
+Body limits: the small write and the chunk `PUT` take at most 4 MiB + 64 KiB; every other v2 route takes 1 MiB. A bigger body returns `413 payload_too_large`.
+
+### Conflicts
+
+With a stale `base_rev` and `on_conflict: keep_both` (the default), the write lands beside the original as `Lease (conflict iPhone 2026-11-15 1042).pdf` and the response carries `ConflictInfo`. The date and time are the writing device's local time, from `utc_offset_minutes` (-840 to 840); without it the runtime uses UTC. The device name comes from `device_name`, then `X-Allternit-Device-Name`, then the principal's name. `on_conflict: fail` returns `409 rev_mismatch` with the item as it is now in `current`.
+
+## Reading files
+
+`GET /items/{item_id}/content` returns the bytes with `ETag: "<rev>"` and `Accept-Ranges: bytes`. Send `If-None-Match: "<rev>"` to get `304` when nothing changed, or `Range: bytes=0-1023` for a `206` partial response. A range past the end returns `416`.
+
+A symlink inside a root that resolves outside it is listed with `read: false`; reading it returns `403 scope_violation`.
+
+## Change feed
+
+Each root has a change cursor. `GET /roots/{root_id}/changes?cursor=<cursor>&wait_s=25` returns the changes after the cursor and a new one; `wait_s` (at most 25) holds the request until something changes. When the cursor is too old the response has `reset_required: true` and the client lists the root again.
+
+`GET /subscribe` opens a WebSocket. The client's first frame is a `SubscribeMessage`:
+
+```json
+{"type": "subscribe", "roots": [{"root_id": "rt_…", "cursor": "c1.…"}]}
+```
+
+The server sends `changes` frames as files change, `reset` frames when a cursor expires or a root is removed, and a `heartbeat` every 25 seconds. A protected root without the unlock header closes the socket with reason `protected_root_locked`.
+
+## Errors
+
+Every error is an `ErrorBody`: `{error, code, message}` plus Files fields (`current`, `missing_chunks`, `retry_after_s`, `computer_state`, `wake`). `error` and `code` hold the same code.
+
+| HTTP | Codes |
+|---|---|
+| 400 | `invalid_request`, `invalid_name`, `manifest_invalid`, `chunk_hash_mismatch` |
+| 401 | `unauthorized` |
+| 403 | `forbidden`, `feature_disabled`, `scope_violation`, `protected_root_locked` |
+| 404 | `not_found`, `root_not_found`, `upload_session_not_found` |
+| 409 | `already_exists`, `rev_mismatch`, `chunk_missing` |
+| 410 | `upload_session_expired`, `cursor_expired` |
+| 413 | `payload_too_large` |
+| 422 | `integrity_failed` |
+| 501 | `unsupported` |
+| 500 | `internal` |
+
+The full table, including the cloud-api and guest codes, is in section 16 of `contracts/files-drive/SPEC.md`.

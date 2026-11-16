@@ -62,6 +62,10 @@ pub struct StatusResponse {
     pub ram: RamInfo,
     pub disk: DiskInfo,
     pub gpu: Option<Vec<GpuInfo>>,
+    /// Loaded models with live numbers (mem, tok/s, context).
+    pub running: Vec<crate::runtime::RunningInfo>,
+    /// Engine pack installs (progress while downloading, then the result).
+    pub engine_packs: Vec<crate::engine_packs::InstallJob>,
 }
 
 /// Create the status router.
@@ -101,7 +105,11 @@ async fn get_status(State(state): State<Arc<AppState>>) -> Json<StatusResponse> 
 
     Json(StatusResponse {
         status: "healthy".into(),
-        active_runtimes: runtimes.len(),
+        // Stopped runtimes (idle unload, manual stop) stay listed; count live ones.
+        active_runtimes: runtimes
+            .iter()
+            .filter(|r| matches!(r.status, crate::runtime::RuntimeStatus::Running | crate::runtime::RuntimeStatus::Starting))
+            .count(),
         cached_models,
         platform,
         cpu,
@@ -109,6 +117,8 @@ async fn get_status(State(state): State<Arc<AppState>>) -> Json<StatusResponse> 
         ram,
         disk,
         gpu,
+        running: runtimes.iter().filter_map(|r| r.running.clone()).collect(),
+        engine_packs: state.packs.jobs().await,
     })
 }
 

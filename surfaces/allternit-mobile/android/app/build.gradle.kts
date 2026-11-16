@@ -44,6 +44,11 @@ android {
         release {
             isMinifyEnabled = false
         }
+        // Debug installs as com.allternit.app.ondevice, next to the Play-installed
+        // com.allternit.app on a test phone instead of replacing it. Release keeps the real ID.
+        getByName("debug") {
+            applicationIdSuffix = ".ondevice"
+        }
     }
 
     compileOptions {
@@ -60,9 +65,13 @@ android {
 
     // The mesh library is ~21 MB per ABI uncompressed. Compressing it in the APK
     // (extracted once at install) keeps the download near 15 MB instead of ~43 MB.
+    // The play build's on-device engine needs the extraction too: llama.cpp loads its
+    // backends (libggml-cpu-*.so, libggml-opencl.so) by path from nativeLibraryDir.
     packaging {
         jniLibs {
             useLegacyPackaging = true
+            // Link-time stub from :ondevice; phones use their own /vendor libOpenCL.so.
+            excludes += "**/libOpenCL.so"
         }
     }
 
@@ -87,6 +96,10 @@ dependencies {
     // Play In-App Review (the "rate this app" sheet), Google Play build only.
     // The web content cannot call it, so ReviewLauncherActivity asks natively.
     "playImplementation"("com.google.android.play:review:2.0.2")
+    // On-device models (llama.cpp engine, downloads, TWA postMessage bridge), Google Play
+    // build only. See ondevice/README.md. ReviewLauncherActivity extends its
+    // BridgedLauncherActivity.
+    "playImplementation"(project(":ondevice"))
     testImplementation("junit:junit:4.13.2")
     // Real org.json for JVM tests (android.jar only ships stubs). Public domain
     // since 20231013.

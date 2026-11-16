@@ -138,13 +138,14 @@
         },
         "locator": {
           "$ref": "common.json#/$defs/Blake3",
-          "description": "keyed blake3(replica key, plaintext hash). The host never sees plaintext hashes."
+          "description": "keyed blake3(subkey, the 32 raw bytes of the plaintext hash, not its hex), lower-case hex. The host never sees plaintext hashes."
         },
         "plaintext_size": {
           "type": "integer",
           "minimum": 0
         }
-      }
+      },
+      "description": "Sealed with XChaCha20-Poly1305. AAD is the UTF-8 string \"afc1|<v>|<cipher>|<key_id>|<locator>|<plaintext_size>\" (decimal integers), so changing any header field fails to open."
     },
     "ReplicaRestoreRequest": {
       "type": "object",

@@ -14,7 +14,7 @@ Default port `47820` (env `FILES_STUB_PORT`, flag `--port`). Env: `FILES_STUB_SC
 
 - **Runtime routes:** base URL `http://127.0.0.1:47820/api/v1/files/v2` (the `loopback` transport). Guests use `/api/v1/files-gateway/v2` with `Authorization: Files-Guest <token>`.
 - **cloud-api routes:** `http://127.0.0.1:47820/api/v1/...` (`computer-files/:id/endpoints`, `wake-consent`, `wake-settings`, `shares`, `token-keys`, `files-keys`, `files-gateway/summary|redeem`). `endpoints` lists the stub as a `loopback` candidate and as a `relay` candidate.
-- **Relay:** `POST /api/v1/runtime-devices/:id/proxy` takes `{method, path, headers, body, body_encoding}` and answers `{status, headers, body, body_encoding}`. The relay envelope has no schema yet, so this shape is the stub's assumption.
+- **Relay:** `POST /api/v1/runtime-devices/:id/proxy` takes `{method, path, headers, body, body_encoding}` (`bodyEncoding` is accepted too, as cloud-api does) and streams the runtime's response back as-is: real status, the allowed headers, raw bytes. Same as cloud-api (SPEC section 2, Relay).
 - CORS is open (`*`), so a browser dev server can call it directly.
 - Auth is not checked for owner calls. Send `X-Allternit-Device-Id: dev_...` (and `X-Allternit-Device-Name`) to act as an own device. `X-Allternit-Unlock: 1` opens the protected Memory Drive root.
 

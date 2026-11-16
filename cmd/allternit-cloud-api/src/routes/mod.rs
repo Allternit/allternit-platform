@@ -103,6 +103,7 @@ pub mod phone_live;
 pub mod registered_phones;
 pub mod app_phones;
 pub mod mirror;
+pub mod model_hosts;
 pub mod model_router;
 pub mod mirror_ws;
 pub mod office;

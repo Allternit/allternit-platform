@@ -90,7 +90,13 @@ enum StudioJobsFormat {
 
     /// "Runs with MLX on Mac with Apple Silicon", or nil when the card says
     /// nothing usable (older host, engine refused here).
-    static func backendLine(_ fit: StudioFit?) -> String? {
+    static func backendLine(_ fit: StudioFit?, jobBackend: String? = nil) -> String? {
+        // A job carries the backend the host actually picked; prefer it to the engine card's first choice.
+        if let jobBackend, !jobBackend.isEmpty {
+            let name = backendLabels[jobBackend] ?? jobBackend
+            if let hw = fit?.hardware, let label = hardwareLabels[hw] { return "Runs with \(name) on \(label)" }
+            return "Runs with \(name)"
+        }
         guard let fit, fit.ok != false, let backend = fit.backend, !backend.isEmpty else { return nil }
         let name = backendLabels[backend] ?? backend
         if let hw = fit.hardware, let label = hardwareLabels[hw] { return "Runs with \(name) on \(label)" }
@@ -231,7 +237,7 @@ private struct StudioJobRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
-                Text(job.spec.base.repo)
+                Text(job.spec.base.name)
                     .font(.system(size: 15, weight: .medium))
                     .foregroundColor(Color("TextPrimary"))
                     .lineLimit(1)
@@ -283,9 +289,9 @@ struct StudioJobDetailView: View {
         NavigationStack {
             List {
                 Section {
-                    row("Base model", current.spec.base.repo)
+                    row("Base model", current.spec.base.name)
                     row("Engine", engineName)
-                    if let line = StudioJobsFormat.backendLine(fit) {
+                    if let line = StudioJobsFormat.backendLine(fit, jobBackend: current.backend) {
                         Text(line).font(.caption).foregroundColor(Color("TextSecondary"))
                         if StudioJobsFormat.isUntested(fit) {
                             Text(StudioJobsFormat.untestedLine).font(.caption).foregroundColor(Color("TextSecondary"))

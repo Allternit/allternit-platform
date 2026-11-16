@@ -35,6 +35,7 @@
     "total_chunks": 3,
     "on_conflict": "keep_both",
     "modified_at": "2026-11-15T14:05:00Z",
-    "device_name": "iPhone"
+    "device_name": "iPhone",
+    "utc_offset_minutes": -360
   }
 }

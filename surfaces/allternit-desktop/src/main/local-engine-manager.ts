@@ -32,6 +32,31 @@ export interface LocalEngineStatus {
   version?: string;
 }
 
+/** One engine pack install, as `GET /engines/packs` and `GET /status` report it. */
+export interface EnginePackJob {
+  pack_id: string;
+  state: 'queued' | 'downloading' | 'verifying' | 'installed' | 'failed';
+  version: string | null;
+  bytes_done: number;
+  bytes_total: number;
+  error: string | null;
+}
+
+export interface EnginePacksState {
+  platform: string;
+  dev_feed: boolean;
+  installed: Array<{ pack_id: string; engine: string; backend: string; version: string }>;
+  jobs: EnginePackJob[];
+  started?: string[];
+}
+
+const ACTIVE_PACK_STATES = new Set(['queued', 'downloading', 'verifying']);
+
+/** True while any pack is still downloading or being verified. */
+export function enginePacksBusy(state: Pick<EnginePacksState, 'jobs'>): boolean {
+  return state.jobs.some((j) => ACTIVE_PACK_STATES.has(j.state));
+}
+
 /**
  * PIDs listening on `port` from `netstat -ano -p TCP` output (Windows).
  * Rows look like `  TCP    127.0.0.1:3015    0.0.0.0:0    LISTENING    1234`.
@@ -93,12 +118,14 @@ export class LocalEngineManager {
     const existing = await this.probeExistingEngine();
     if (existing === 'ready') {
       log.info(`[LocalEngine] Reusing existing local-engine at ${this.getUrl()}`);
+      this.prepareEnginesInBackground();
       return this.getUrl();
     }
     if (existing === 'unknown') {
       try {
         await this.waitForUrl(`${this.getUrl()}/health`, 'existing local-engine');
         log.info(`[LocalEngine] Reusing existing local-engine at ${this.getUrl()}`);
+        this.prepareEnginesInBackground();
         return this.getUrl();
       } catch {
         // No healthy engine on the target port; check whether something else
@@ -192,7 +219,101 @@ export class LocalEngineManager {
     await this.waitForUrl(`${this.getUrl()}/health`, 'local-engine', spawned);
 
     log.info(`[LocalEngine] Ready at ${this.getUrl()}`);
+    this.prepareEnginesInBackground();
     return this.getUrl();
+  }
+
+  /**
+   * Inference engines (llama-server builds, the MLX sidecar on Apple silicon)
+   * are signed engine packs the local engine downloads and verifies itself;
+   * the installer does not bundle them. Ask it to install the packs this
+   * machine needs. Resolves as soon as the installs are queued; progress is
+   * in `GET /status` (`engine_packs`) and `GET /engines/packs`.
+   */
+  async ensureEnginePacks(options: { update?: boolean; engines?: string[] } = {}): Promise<EnginePacksState> {
+    const res = await fetch(`${this.getUrl()}/engines/packs/ensure`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(options),
+      signal: AbortSignal.timeout(15_000),
+    });
+    const body = (await res.json().catch(() => null)) as (EnginePacksState & { error?: string }) | null;
+    if (!res.ok || !body) {
+      throw new Error(`engine pack ensure failed (${res.status}): ${body?.error ?? 'no body'}`);
+    }
+    return body;
+  }
+
+  async getEnginePacks(): Promise<EnginePacksState | null> {
+    try {
+      const res = await fetch(`${this.getUrl()}/engines/packs`, { signal: AbortSignal.timeout(5_000) });
+      return res.ok ? ((await res.json()) as EnginePacksState) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Wait until no pack is downloading or verifying (logs progress). */
+  async waitForEnginePacks(timeoutMs = 10 * 60_000): Promise<EnginePacksState | null> {
+    const deadline = Date.now() + timeoutMs;
+    let lastLog = 0;
+    for (;;) {
+      const state = await this.getEnginePacks();
+      if (!state || !enginePacksBusy(state)) return state;
+      if (Date.now() - lastLog > 5_000) {
+        lastLog = Date.now();
+        for (const j of state.jobs.filter((x) => ACTIVE_PACK_STATES.has(x.state))) {
+          const pct = j.bytes_total ? Math.round((j.bytes_done / j.bytes_total) * 100) : 0;
+          log.info(`[LocalEngine] engine pack ${j.pack_id} ${j.version ?? ''}: ${j.state} ${pct}%`);
+        }
+      }
+      if (Date.now() > deadline) return state;
+      await new Promise((r) => setTimeout(r, 1_000));
+    }
+  }
+
+  /**
+   * Once per app run, in the background: when this machine already runs
+   * local models (a pack is installed or a model is downloaded), make sure
+   * the right packs are present and current, so "Run here" does not wait on
+   * a download. A machine that never used local models downloads nothing
+   * until the UI asks (`POST /engines/packs/ensure`). Never throws.
+   */
+  private enginePrepStarted = false;
+
+  private prepareEnginesInBackground(): void {
+    if (this.enginePrepStarted) return;
+    this.enginePrepStarted = true;
+    void (async () => {
+      try {
+        const packs = await this.getEnginePacks();
+        if (!packs) {
+          log.info('[LocalEngine] engine packs: this engine has no /engines/packs (older build); skipping');
+          return;
+        }
+        const models = await fetch(`${this.getUrl()}/models`, { signal: AbortSignal.timeout(5_000) })
+          .then((r) => (r.ok ? r.json() : null))
+          .catch(() => null) as { models?: unknown[] } | unknown[] | null;
+        const modelCount = Array.isArray(models) ? models.length : Array.isArray(models?.models) ? models.models.length : 0;
+        if (packs.installed.length === 0 && modelCount === 0) {
+          log.info('[LocalEngine] engine packs: no local models yet; packs install on first Run');
+          return;
+        }
+        const state = await this.ensureEnginePacks({ update: true });
+        if (state.started?.length) {
+          log.info(`[LocalEngine] engine packs: installing ${state.started.join(', ')}`);
+          const done = await this.waitForEnginePacks();
+          for (const j of done?.jobs ?? []) {
+            if (j.state === 'failed') log.warn(`[LocalEngine] engine pack ${j.pack_id} failed: ${j.error}`);
+            else log.info(`[LocalEngine] engine pack ${j.pack_id} ${j.version ?? ''}: ${j.state}`);
+          }
+        } else {
+          log.info(`[LocalEngine] engine packs ready: ${packs.installed.map((p) => `${p.pack_id}@${p.version}`).join(', ') || 'none for this machine'}`);
+        }
+      } catch (err) {
+        log.warn('[LocalEngine] engine pack check failed:', err);
+      }
+    })();
   }
 
   async stop(): Promise<void> {

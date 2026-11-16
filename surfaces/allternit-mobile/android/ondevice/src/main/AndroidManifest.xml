@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- On-device models engine. Merged into the "play" flavor only (the app depends on this
+     module with playImplementation). -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- The running-model foreground service. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+
+    <application>
+        <!-- The phone's OpenCL driver (Adreno). Optional: phones without it run on the CPU.
+             Apps targeting API 31+ must name vendor libraries they load. -->
+        <uses-native-library
+            android:name="libOpenCL.so"
+            android:required="false" />
+
+        <!-- TWA postMessage: Chrome binds to it to deliver page -> app messages and the
+             channel-ready signal (androidx.browser 1.6+). -->
+        <service
+            android:name="androidx.browser.customtabs.PostMessageService"
+            android:exported="true" />
+
+        <service
+            android:name="com.allternit.ondevice.EngineService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Keeps an AI model the user loaded in memory so chat on this phone keeps working, including offline, while the user switches apps. Shown with a Stop action; unloads after 5 minutes idle." />
+        </service>
+
+        <!-- DownloadManager sends ACTION_DOWNLOAD_COMPLETE to this package explicitly. -->
+        <receiver
+            android:name="com.allternit.ondevice.DownloadCompleteReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.DOWNLOAD_COMPLETE" />
+            </intent-filter>
+        </receiver>
+    </application>
+</manifest>

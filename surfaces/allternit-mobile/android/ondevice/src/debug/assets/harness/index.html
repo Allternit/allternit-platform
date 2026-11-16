@@ -1,0 +1,49 @@
+<!doctype html>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>On-device test</title>
+<style>
+body{font:14px system-ui;margin:12px;background:#fff;color:#111}
+button{font:inherit;padding:10px 14px;margin:4px 4px 4px 0;border:1px solid #bbb;border-radius:8px;background:#f4f4f4}
+pre{white-space:pre-wrap;word-break:break-word;background:#f4f4f4;padding:8px;border-radius:8px;max-height:46vh;overflow:auto}
+#reply{font-size:16px;min-height:3em}
+</style>
+<h3>Allternit on-device engine (debug harness)</h3>
+<div id="st">waiting for the app channel...</div>
+<div>
+<button id="b1">Hardware</button>
+<button id="b2">Download Qwen3-0.6B Q4_K_M</button>
+<button id="b3">Load</button>
+<button id="b4">Chat</button>
+<button id="b5">List</button>
+</div>
+<div id="reply"></div>
+<pre id="log"></pre>
+<script>
+// Debug-only test page: speaks the same protocol as allternit-ai android-app.ts.
+const V = 1, MODEL = "Qwen/Qwen3-0.6B", REPO = "bartowski/Qwen_Qwen3-0.6B-GGUF",
+  FILE = "Qwen_Qwen3-0.6B-Q4_K_M.gguf", QUANT = "Q4_K_M";
+const $ = (i) => document.getElementById(i);
+let port = null, welcomed = false, seq = 0, key = null; const pend = {}, toks = {};
+const log = (s) => { $("log").textContent = s + "\n" + $("log").textContent; };
+const send = (o) => port && port.postMessage(JSON.stringify({ v: V, ...o }));
+const req = (op, args = {}) => new Promise((res, rej) => { const id = "r" + (++seq); pend[id] = { res, rej }; send({ t: "req", id, op, args }); });
+function hello() { if (!welcomed) { send({ t: "hello", client: "harness", href: location.href, online: navigator.onLine }); setTimeout(hello, 250); } }
+window.addEventListener("message", (ev) => {
+  if (!ev.ports[0] || ev.origin !== "android-app://" + location.hostname) { log("ignored message from " + ev.origin); return; }
+  port = ev.ports[0]; $("st").textContent = "port from " + ev.origin; hello();
+  port.onmessage = (m) => {
+    const f = JSON.parse(m.data);
+    if (f.t === "welcome") { welcomed = true; $("st").textContent = "connected: " + JSON.stringify(f.app) + " " + JSON.stringify(f.engine); log("welcome " + m.data); }
+    else if (f.t === "res") { const p = pend[f.id]; delete pend[f.id]; if (p) f.ok ? p.res(f.data) : p.rej(f.error); }
+    else if (f.t === "evt") { if (f.ev === "download") { const d = f.data; $("st").textContent = "download " + JSON.stringify(d).slice(0, 200); if (d.state === "done" || d.status === "done" || d.key) key = d.key || key; } log("evt " + m.data.slice(0, 300)); }
+    else if (f.t === "tok") { $("reply").textContent += f.text; }
+    else if (f.t === "end") { log("end " + JSON.stringify(f)); $("st").textContent = "reply finished (" + f.finish + ") airplane=" + !navigator.onLine; }
+  };
+});
+const run = (fn) => async () => { try { const d = await fn(); log(JSON.stringify(d).slice(0, 600)); } catch (e) { log("ERR " + JSON.stringify(e)); } };
+$("b1").onclick = run(() => req("hardware"));
+$("b2").onclick = run(async () => { const d = await req("download", { model: MODEL, quant: QUANT, repo: REPO, file: FILE }); key = d.key; return d; });
+$("b3").onclick = run(async () => { const l = await req("list"); const m = (l.models || [])[0]; if (m) key = m.key; return key ? await req("load", { key }) : l; });
+$("b4").onclick = run(async () => { $("reply").textContent = ""; return await req("chat", { key, messages: [{ role: "user", content: "In one sentence, what is the capital of France? /no_think" }], max_tokens: 64, temperature: 0.2, seed: 1 }); });
+$("b5").onclick = run(() => req("list"));
+</script>

@@ -146,7 +146,7 @@ public struct ChangesResponse: Codable, Hashable, Sendable {
     }
 }
 
-/// v1 values: min 262144, avg 1048576, max 4194304 (4 MiB). The relay (runtime_relay.rs MAX_RELAY_BODY_BYTES = 5 MiB) measures a base64 body as len*3/4, i.e. the decoded size, so a 4 MiB chunk plus its headers leaves about 1 MiB of headroom.
+/// v1 values, pinned so every chunker cuts the same boundaries: fastcdc crate 3.2.1 `v2020`, normalization level 1, gear seed 0, min 262144 / avg 1048576 / max 4194304 (4 MiB), mask_s 0x0000d91767537000, mask_l 0x0000d91707537000 (mask_s_ls/mask_l_ls = the same shifted left one bit), chunk hash blake3-256 lower-case hex. Test vectors: contracts/files-drive/vectors/chunker-v1.json. The relay (runtime_relay.rs MAX_RELAY_BODY_BYTES = 5 MiB) measures a base64 body as len*3/4, i.e. the decoded size, so a 4 MiB chunk plus its headers leaves about 1 MiB of headroom.
 public struct ChunkerParams: Codable, Hashable, Sendable {
     public var algo: String
     public var hash: String
@@ -246,7 +246,7 @@ public struct CommentCreateRequest: Codable, Hashable, Sendable {
     }
 }
 
-/// The computer (runtime) ID cloud-api already uses.
+/// cloud-api's id for a computer: the runtime_devices id the relay is keyed by, or the pc_... id of a mesh-only paired machine. computer-files routes also accept a cloud computer's pc_... id and resolve it; EndpointsResponse.computer_id returns the resolved id. See SPEC section 2, Computer ids.
 public typealias ComputerId = String
 
 /// awake = runtime answering; asleep = cloud computer stopped (served from snapshot); waking = consented wake in progress; offline = own device not reachable.
@@ -286,7 +286,7 @@ public struct ConflictInfo: Codable, Hashable, Sendable {
     public var baseRev: Rev
     public var currentRev: Rev
     public var conflictItem: Item
-    /// "<stem> (conflict <device name> <YYYY-MM-DD>)<.ext>", then " 2", " 3" if taken.
+    /// "<stem> (conflict <device name> <YYYY-MM-DD HHmm>)<.ext>" in the editing device's local time (utc_offset_minutes on the write), then " 2", " 3" before ")" if taken. Example: "Lease (conflict iPhone 2026-11-15 1042).pdf".
     public var conflictName: String
 
     public init(kind: String, originalItemId: ItemId, baseRev: Rev, currentRev: Rev, conflictItem: Item, conflictName: String) {
@@ -447,13 +447,14 @@ public struct DeleteResponse: Codable, Hashable, Sendable {
 /// One of the user's own devices (phone, Mac, PC, browser profile).
 public typealias DeviceId = String
 
+/// Sealed with XChaCha20-Poly1305. AAD is the UTF-8 string "afc1|<v>|<cipher>|<key_id>|<locator>|<plaintext_size>" (decimal integers), so changing any header field fails to open.
 public struct EncryptedChunkHeader: Codable, Hashable, Sendable {
     public var v: UInt64
     public var cipher: String
     public var keyId: String
     /// base64url, 24 bytes.
     public var nonce: String
-    /// keyed blake3(replica key, plaintext hash). The host never sees plaintext hashes.
+    /// keyed blake3(subkey, the 32 raw bytes of the plaintext hash, not its hex), lower-case hex. The host never sees plaintext hashes.
     public var locator: Blake3
     public var plaintextSize: UInt64
 
@@ -1316,7 +1317,7 @@ public struct MutationResponse: Codable, Hashable, Sendable {
     }
 }
 
-/// What to do when the name exists or base_rev is stale. replace is refused when base_rev is stale.
+/// What to do when the name exists or base_rev is stale. replace is refused when base_rev is stale. If base_rev names a file that is now gone: keep_both creates it, fail and replace return not_found.
 public enum OnConflict: String, Codable, Hashable, Sendable, CaseIterable {
     case fail = "fail"
     case keepBoth = "keep_both"
@@ -1799,6 +1800,7 @@ public struct RootPolicy: Codable, Hashable, Sendable {
     /// May be replicated to an own device.
     public var replica: Bool
     public var versions: VersionPolicy
+    /// Days a trashed item is kept. 0 deletes at once (no trash).
     public var trashDays: UInt64
 
     public init(read: Bool, write: Bool, shareable: Bool, agentProcess: Bool, protected: Bool, offline: Bool, replica: Bool, versions: VersionPolicy, trashDays: UInt64) {
@@ -2119,6 +2121,38 @@ public struct ShareSummary: Codable, Hashable, Sendable {
         case expiresAt = "expires_at"
         case canWake = "can_wake"
         case computerState = "computer_state"
+    }
+}
+
+/// Query string of PUT /roots/:root_id/content (small write, body at most 4 MiB). device_name may also come from the X-Allternit-Device-Name header.
+public struct SmallWriteQuery: Codable, Hashable, Sendable {
+    public var parentId: ItemId
+    public var name: String
+    /// Required when replacing an existing file.
+    public var baseRev: Rev?
+    /// Default keep_both.
+    public var onConflict: OnConflict?
+    /// Used to name a conflict copy.
+    public var deviceName: String?
+    /// As in UploadCreateRequest.
+    public var utcOffsetMinutes: Int64?
+
+    public init(parentId: ItemId, name: String, baseRev: Rev? = nil, onConflict: OnConflict? = nil, deviceName: String? = nil, utcOffsetMinutes: Int64? = nil) {
+        self.parentId = parentId
+        self.name = name
+        self.baseRev = baseRev
+        self.onConflict = onConflict
+        self.deviceName = deviceName
+        self.utcOffsetMinutes = utcOffsetMinutes
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case parentId = "parent_id"
+        case name
+        case baseRev = "base_rev"
+        case onConflict = "on_conflict"
+        case deviceName = "device_name"
+        case utcOffsetMinutes = "utc_offset_minutes"
     }
 }
 
@@ -2519,8 +2553,10 @@ public struct UploadCreateRequest: Codable, Hashable, Sendable {
     public var modifiedAt: Timestamp?
     /// Used to name a conflict copy.
     public var deviceName: String?
+    /// The editing device's UTC offset in minutes (e.g. -360 for CST). Sets the HHmm in a conflict copy's name. Omitted: the runtime uses UTC.
+    public var utcOffsetMinutes: Int64?
 
-    public init(rootId: RootId, parentId: ItemId, name: String, itemId: ItemId? = nil, baseRev: Rev? = nil, size: UInt64, contentHash: Blake3, chunker: ChunkerParams, chunks: [ChunkRef], totalChunks: UInt64, onConflict: OnConflict, modifiedAt: Timestamp? = nil, deviceName: String? = nil) {
+    public init(rootId: RootId, parentId: ItemId, name: String, itemId: ItemId? = nil, baseRev: Rev? = nil, size: UInt64, contentHash: Blake3, chunker: ChunkerParams, chunks: [ChunkRef], totalChunks: UInt64, onConflict: OnConflict, modifiedAt: Timestamp? = nil, deviceName: String? = nil, utcOffsetMinutes: Int64? = nil) {
         self.rootId = rootId
         self.parentId = parentId
         self.name = name
@@ -2534,6 +2570,7 @@ public struct UploadCreateRequest: Codable, Hashable, Sendable {
         self.onConflict = onConflict
         self.modifiedAt = modifiedAt
         self.deviceName = deviceName
+        self.utcOffsetMinutes = utcOffsetMinutes
     }
 
     enum CodingKeys: String, CodingKey {
@@ -2550,6 +2587,7 @@ public struct UploadCreateRequest: Codable, Hashable, Sendable {
         case onConflict = "on_conflict"
         case modifiedAt = "modified_at"
         case deviceName = "device_name"
+        case utcOffsetMinutes = "utc_offset_minutes"
     }
 }
 
@@ -2624,7 +2662,9 @@ public struct Version: Codable, Hashable, Sendable {
 }
 
 public struct VersionPolicy: Codable, Hashable, Sendable {
+    /// How many replaced versions to keep. 0 keeps none.
     public var keepCount: UInt64
+    /// Days a version is kept, counted from when it was replaced (not created). 0 means no age limit.
     public var keepDays: UInt64
 
     public init(keepCount: UInt64, keepDays: UInt64) {

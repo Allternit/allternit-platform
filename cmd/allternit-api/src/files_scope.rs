@@ -420,6 +420,33 @@ impl FilesScope {
         Ok(canonical)
     }
 
+    /// A folder a caller wants to add as a Files drive root
+    /// (`POST /api/v1/files/v2/roots`, SPEC section 12). Same resolution and
+    /// deny-list as `authorize`, for any caller; and because a root exposes
+    /// everything under it, the folder may not be the home folder itself nor
+    /// hold a secret store, a protected folder or one of `extra_protected`
+    /// (the Files drive's own data folder).
+    pub fn authorize_root(&self, raw: &str, extra_protected: &[PathBuf]) -> Result<PathBuf, Denied> {
+        let (canonical, _rel) = self.check(raw, Access::Write)?;
+        let home = self.home.as_deref().ok_or(Denied("no_home"))?;
+        let holds_secret = HOME_SECRETS
+            .iter()
+            .map(|parts| parts.iter().fold(home.to_path_buf(), |p, c| p.join(c)))
+            .chain(std::iter::once(home.join(".allternit")))
+            .any(|secret| starts_with_ci(&secret, &canonical));
+        let extra: Vec<PathBuf> = extra_protected
+            .iter()
+            .filter(|p| p.is_absolute())
+            .filter_map(|p| resolve(&normalize(p).ok()?, true).ok())
+            .collect();
+        let holds_protected = self.protected.iter().chain(extra.iter()).any(|p| starts_with_ci(p, &canonical))
+            || extra.iter().any(|p| starts_with_ci(&canonical, p));
+        if holds_secret || holds_protected {
+            return Err(Denied("protected"));
+        }
+        Ok(canonical)
+    }
+
     /// Open an authorized path (`Read`, or `Write` = create without
     /// truncating) and check where the open file really is. The open uses
     /// `O_NOFOLLOW`, so a leaf swapped for a symlink fails; the check after

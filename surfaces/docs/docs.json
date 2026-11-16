@@ -128,6 +128,7 @@
               "guides/subscriptions",
               "guides/connect-vendor-from-chat",
               "guides/open-models",
+              "guides/run-a-model-on-your-phone",
               "guides/lane-status",
               "guides/system-status",
               "guides/always-on-bots",
@@ -732,6 +733,7 @@
                 "pages": [
                   "api/providers",
                   "api/open-lane",
+                  "api/model-host-relay",
                   "api/data-retention",
                   "api/embeddings",
                   "api/images",
@@ -788,6 +790,7 @@
                 "pages": [
                   "api/files",
                   "api/files-drive",
+                  "api/files-drive-runtime",
                   "api/workspace-files",
                   "api/webhooks",
                   "api/webhook-subscriptions",

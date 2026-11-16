@@ -14,3 +14,6 @@ dependencyResolutionManagement {
 }
 rootProject.name = "allternit-phone-link"
 include(":app")
+// On-device models engine (llama.cpp via JNI + the TWA bridge). Shipped in the
+// "play" flavor only: app/build.gradle.kts adds it as playImplementation.
+include(":ondevice")
