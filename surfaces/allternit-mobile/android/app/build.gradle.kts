@@ -43,11 +43,14 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = false
+            // The static "Inbox tasks" shortcut targets this app's own package.
+            resValue("string", "files_app_id", "com.allternit.app")
         }
         // Debug installs as com.allternit.app.ondevice, next to the Play-installed
         // com.allternit.app on a test phone instead of replacing it. Release keeps the real ID.
         getByName("debug") {
             applicationIdSuffix = ".ondevice"
+            resValue("string", "files_app_id", "com.allternit.app.ondevice")
         }
     }
 
@@ -58,6 +61,12 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
+
+    // Files drive (both flavors): the contract types are generated into
+    // contracts/files-drive/gen by `node contracts/files-drive/generate.mjs` and compiled
+    // straight from there, so the app can never drift from the schema. Only the .kt file
+    // in that folder is Kotlin; the .ts and .swift outputs beside it are ignored here.
+    sourceSets.getByName("main").kotlin.srcDir("../../../../contracts/files-drive/gen")
 
     testOptions {
         unitTests.isReturnDefaultValues = true
@@ -91,7 +100,8 @@ dependencies {
     //   copied to app/libs/, gitignored; ARM only (arm64-v8a, armeabi-v7a), stripped, ~15 MB)
     "phonelinkImplementation"(files("libs/Mesh.aar"))
     // The Allternit app as a Trusted Web Activity around m.allternit.com
-    // (LauncherActivity, Custom Tab fallback). Apache-2.0, Google.
+    // (LauncherActivity, Custom Tab fallback). Apache-2.0, Google. Its androidx.browser
+    // (compile scope) also gives the Files sign-in its Custom Tab (files/FilesSignInActivity).
     implementation("com.google.androidbrowserhelper:androidbrowserhelper:2.5.0")
     // Play In-App Review (the "rate this app" sheet), Google Play build only.
     // The web content cannot call it, so ReviewLauncherActivity asks natively.
