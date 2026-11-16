@@ -40,16 +40,16 @@ Not checked:
 
 ## iPhone
 
-The **Models** tab has two parts: **Catalog** and **On this iPhone**. There is no new tab in the bar. {/* TODO(W6/W7): verify against built code: segment names and layout after W8 */}
+The **Models** tab has two parts: **Catalog** and **On this iPhone**. There is no new tab in the bar. The Catalog shows Grid, List or Deck, like freeweights.allternit.com.
 
-Three engines run models: MLX, llama.cpp and Apple Foundation Models. {/* TODO(W6/W7): verify against built code: which engine runs which model, and the MLX version that runs Qwen3.5 */}
+Three engines run models: MLX, llama.cpp and Apple Foundation Models. MLX runs MLX builds (it is the faster engine on iPhone, and it runs Qwen3.5), llama.cpp runs GGUF builds, and Apple Foundation Models is the model built into iPhones with Apple Intelligence; it needs no download.
 
 - **Catalog** lists Freeweights models with a fit badge for this iPhone, and a download button.
-- **On this iPhone** lists the models you have downloaded and the one that is running.
-- Memory is the limit. The app reads the memory iOS gives it at each start and uses three quarters of it. On an iPhone 15 we measured about 2.2 GB without Apple's increased memory limit and about 3.0 GB with it. The app works without that limit. {/* TODO(W6/W7): verify against built code: the app measures at cold start and does not assume the entitlement */}
-- Models unload when the app goes to the background or iOS warns about memory. {/* TODO(W6/W7): verify against built code */}
+- **On this iPhone** lists the models you have downloaded and the one that is running. Tap **Run** to chat with a model; it also appears in the chat model picker.
+- Memory is the limit. The app reads the memory iOS gives it at each start and uses three quarters of it. On an iPhone 15 we measured about 2.2 GB without Apple's increased memory limit and about 3.0 GB with it. The app works without that limit, and it does not ask for it.
+- Models unload when the app goes to the background, when iOS warns about memory, and after 5 minutes without use.
 
-Speed on iPhone: not measured yet. {/* TODO(W6/W7): add "measured on iPhone 15" tokens per second when W7 reports it */}
+Speed measured on an iPhone 15: Qwen3.5-0.8B (4-bit, MLX) at about 58 tokens per second. Qwen3.5-2B does not fit on an iPhone 15.
 
 ## Related
 

@@ -5,6 +5,9 @@ use std::path::Path;
 /// Configuration for launching a llama.cpp server.
 #[derive(Debug, Clone)]
 pub struct LlamaCppConfig<'a> {
+    /// Program to run: the verified engine pack entrypoint, or `llama-server`
+    /// found on PATH (development fallback).
+    pub program: &'a Path,
     /// Path to the model file (GGUF, safetensors, etc.).
     pub model_path: &'a Path,
     /// TCP port the server should bind to.
@@ -20,9 +23,11 @@ pub struct LlamaCppConfig<'a> {
 /// Build the argument vector for `llama-server`.
 pub fn build_argv(config: LlamaCppConfig<'_>) -> Vec<String> {
     let mut argv = vec![
-        "llama-server".to_string(),
+        config.program.to_string_lossy().into_owned(),
         "-m".to_string(),
         config.model_path.to_string_lossy().into_owned(),
+        "--host".to_string(),
+        "127.0.0.1".to_string(),
         "--port".to_string(),
         config.port.to_string(),
         "-ngl".to_string(),

@@ -4781,13 +4781,20 @@
       "touches": [
         "allternit/contracts/files-drive",
         "allternit/platform/types/allternit-files-core",
+        "allternit/platform/files/allternit-files-engine",
         "allternit/cmd/allternit-api/src/file_routes.rs",
-        "allternit/cmd/allternit-cloud-api/src/routes/runtime_relay.rs"
+        "allternit/cmd/allternit-api/src/files_v2",
+        "allternit/cmd/allternit-cloud-api/src/routes/runtime_relay.rs",
+        "allternit/tools/files-stub"
       ],
       "decisions": [
         {
           "on": "2026-11-15",
           "note": "Full scope (all 17 uses + sharing, intelligence, replicas, dedup, portable workspaces); asleep cloud computer = ask before waking; the drive owns gizzi TUI /files (old files-in-context list folds into /context); asleep snapshot keeps plain names, names_encrypted reserved; no-wake covers v2 only until legacy /files/* callers move to v2."
+        },
+        {
+          "on": "2026-11-15",
+          "note": "Contract gaps closed: chunker pinned (fastcdc 3.2.1 v2020, level 1, gear seed 0, masks; vectors/chunker-v1.json); conflict HHmm = editing device local time via utc_offset_minutes; gone base_rev: keep_both re-creates, fail/replace not_found; keep_days counts from replacement, 0 = no limit, trash_days 0 = no trash; replica locator over raw hash bytes, AAD afc1|v|cipher|key_id|locator|plaintext_size; relay accepts bodyEncoding and body_encoding, streams raw, passes wake-ticket/range/if-match/unlock; computer_id = runtime_devices.id (pc_ ids resolved by cloud-api)."
         }
       ],
       "evidence": [
@@ -4828,6 +4835,38 @@
         "allternit/surfaces/docs/guides/run-models-on-android.mdx",
         "allternit/surfaces/docs/guides/use-models-on-your-other-devices.mdx",
         "allternit/surfaces/docs/guides/run-models-on-desktop-and-iphone.mdx"
+      ]
+    },
+    {
+      "id": "feature:phone-model-host",
+      "label": "Run a model on your phone (model host relay)",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "A browser tab with WebGPU (phase 1: m.allternit.com / ai.allternit.com on a phone) runs LiquidAI LFM2.5-350M (q4f16, ~255 MB) with transformers.js and serves it to its owner's agents. The tab mints a single-use 60 s ticket and holds a WebSocket to cloud-api (routes/model_hosts.rs, in-memory hub keyed by user + host id); gizzi's allternit-devices discovery ('Your devices') calls the OpenAI-compatible /api/v1/model-hosts/v1 routes with the user's credential or runtime device token, and requests are forwarded as frames. Settings > Models > 'Serve a model from this device' on Desktop, phone layout and PWA; models show in the picker under Your devices.",
+      "touches": [
+        "allternit/cmd/allternit-cloud-api",
+        "allternit/cmd/gizzi-code/src/runtime/providers",
+        "allternit-ai/src/lib/model-host",
+        "allternit-ai/src/views/settings",
+        "allternit-ai/src/lib/providers",
+        "surface:pwa",
+        "surface:ai",
+        "surface:desktop"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-28",
+          "note": "Eoj chose 'Phone serves Gizzi': the on-phone model is served to gizzi through the cloud relay so chats keep tools, memory and handoff. Phase 1 is the browser (LFM2.5-350M only; models of 760 MB or more crash Safari tabs on iPhone 15); phase 2 is the Phone Link iOS helper with llama.cpp over the same relay."
+        },
+        {
+          "on": "2026-11-15",
+          "note": "Un-held for on-device models lane W12 ('Let my other devices use this model'): the host device runs the model and cloud-api only relays, only between the owner's own devices. The in-browser WebGPU worker moved to lane W5; the toggle lives in This device (desktop + phone), iOS after W7."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/run-a-model-on-your-phone.mdx",
+        "allternit/surfaces/docs/api/model-host-relay.mdx",
+        "allternit/cmd/allternit-cloud-api/src/routes/model_hosts.rs"
       ]
     }
   ],

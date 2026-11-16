@@ -151,7 +151,7 @@ The native side is the `ondevice` module of the Android app (`surfaces/allternit
 
 ## Device sharing
 
-A device can serve the models it runs to its owner's other devices. The host keeps one WebSocket to cloud-api's model-host relay (platform `cmd/allternit-cloud-api/src/routes/model_hosts.rs`, PR 1960). The relay forwards OpenAI-style chat requests to the host as frames and streams the reply back. The model runs on the host. {/* TODO(W12): link /api/model-host-relay once PR 1960 merges */}
+A device can serve the models it runs to its owner's other devices. The host keeps one WebSocket to cloud-api's model-host relay (platform `cmd/allternit-cloud-api/src/routes/model_hosts.rs`, PR 1960). The relay forwards OpenAI-style chat requests to the host as frames and streams the reply back. The model runs on the host. Protocol and routes: [Model host relay](/api/model-host-relay).
 
 On the app side (allternit-ai `src/lib/model-host/`):
 
@@ -161,7 +161,7 @@ On the app side (allternit-ai `src/lib/model-host/`):
 - The picker lists runtimes with `place: 'other-device'` under My other devices, and shows a note when signed out or when the list cannot be refreshed.
 - Scope: only the owner's own hosts. A host id that is not yours answers like an offline one. Up to 8 hosts online per user.
 
-Checked with the relay mocked: 96 app tests. The cloud-api relay and a real two-device run: not checked. Merging the relay is a cloud-api production deploy.
+Checked with the relay mocked: 96 app tests. The cloud-api relay is live (PR 1960). A real two-device run: not checked.
 
 ## Engine packs
 
@@ -178,8 +178,6 @@ Details and build scripts: [engine pack spike](https://github.com/Allternit/allt
 
 ## Desktop and iPhone build notes
 
-{/* TODO(W7): iPhone and Mac MLX items below follow the plan, not built code */}
-
 - Desktop: `services/local-engine/src/engine_packs/` downloads signed packs (Ed25519 on the feed and manifest, sha256 per file), installs with rollback, and takes only https feeds and the production key in release builds (a dev feed and key exist in debug builds). `pick.rs` chooses the backend from `/hardware`. Routes: `GET /engines/packs` and `POST /engines/packs/ensure` (202), proxied by allternit-api at `/api/local-engine/engines/packs[/ensure]`; progress also appears in `/status` under `engine_packs`. Job states: `queued`, `downloading`, `verifying`, `installed`, `failed`. The runtime launches from the verified entrypoint, waits through `/health` 503 while loading, and unloads after 5 minutes idle (`stop_reason: "idle"`). `running` (mem_bytes, tok_per_sec, ctx_used, ctx_max, idle_sec, idle_unload_sec) is on `/runtimes` and `/status`. Every reply has an `allternit` object (`tok_per_sec`, `first_token_ms`, `ctx_used`, `ctx_max`, `mem_bytes`); a stream gets it on the usage chunk when `stream_options.include_usage` is set. A MLX launch without the pack answers 501. Source: platform PR 2428. Checked on an M1 Pro: 47 unit tests, allternit-api smoke boot, Metal pack installed through a dev feed, chat on :3016 at 45.9 tokens per second (Qwen3-0.6B Q4_K_M), idle unload at 5 minutes. Not checked: MLX pack and chat, Windows and Linux packs, notarization, packaged Desktop.
-- Mac MLX: the Swift server depends on the same `OnDeviceLLM` package as the iPhone, pinned to one mlx-swift version shared with KokoroKit. {/* TODO(W7): verify pinned versions */}
-- iPhone: `Core/OnDevice` holds the Swift port of the fit rule, which must pass the same vectors. The budget is `0.75 x os_proc_available_memory()` measured at cold start. {/* TODO(W7): verify vector count and the Qwen3.5 result */}
+- Mac MLX: the Swift server depends on the same `OnDeviceLLM` package as the iPhone. `Packages/OnDeviceLLM/Package.swift` pins mlx-swift `exact: 0.31.3` and mlx-swift-lm `exact: 2.31.3` (the first mlx-swift-lm release that runs Qwen3.5); KokoroKit pins the same mlx-swift. The MLX pack build and MLX chat on the Mac: not checked.
+- iPhone: `Core/OnDevice` holds the Swift port of the fit rule (`Fit.swift`), which passes the same 65 vectors (simulator). The budget is `0.75 x os_proc_available_memory()` measured at cold start (`OnDeviceBudget.swift`); the app does not use the increased-memory entitlement. `OnDeviceRuntime.swift` runs MLX (mlx-swift 0.31.3, mlx-swift-lm 2.31.3), llama.cpp (b12414, `LlamaEngine.swift`) and Apple Foundation Models, and unloads on background, a memory warning and after 300 s idle. On an iPhone 15: Qwen3.5-0.8B 4-bit on MLX at 58.0 tokens per second; Qwen3.5-2B is Won't fit without the entitlement. Source: platform PR 2437 (W7 + W8). Not checked: a llama.cpp reply on the phone, and the W8 app build on the device.

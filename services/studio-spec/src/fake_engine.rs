@@ -186,7 +186,7 @@ async fn create(State(app): State<App>, body: String) -> Response {
         job: Job {
             id: id.clone(), state: JobState::Queued, spec,
             created_at: Utc::now(), updated_at: None, error: None,
-            last_seq: 0, outputs: vec![],
+            last_seq: 0, outputs: vec![], backend: None,
         },
         events: vec![],
     };

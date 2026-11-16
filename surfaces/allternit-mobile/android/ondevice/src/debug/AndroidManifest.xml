@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- DEBUG BUILDS ONLY (the module's "debug" source set; merged into playDebug, never into a
+     release build). The device-test harness for the on-device engine: see ondevice/README.md
+     "Device test". It serves a test page from APK assets on http://localhost:8765 and opens it
+     through the real launcher (ReviewLauncherActivity -> BridgedLauncherActivity -> TwaBridge). -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <activity
+            android:name="com.allternit.ondevice.harness.HarnessActivity"
+            android:exported="true"
+            android:label="On-device test"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+        <service
+            android:name="com.allternit.ondevice.harness.HarnessService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Debug-only: local test page server for the on-device engine" />
+        </service>
+    </application>
+</manifest>

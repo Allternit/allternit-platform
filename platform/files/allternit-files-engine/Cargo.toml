@@ -1,0 +1,28 @@
+[package]
+name = "allternit-files-engine"
+version = "0.1.0"
+edition = "2021"
+description = "Files drive engine (files/2): FastCDC chunker, chunk store, index DB, revisions, trash, upload sessions, change feed, watcher, cache encryption. No transport."
+
+[dependencies]
+allternit-files-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+blake3 = { workspace = true }
+chrono = { workspace = true }
+thiserror = { workspace = true }
+rand = { workspace = true }
+base64 = { workspace = true }
+hex = { workspace = true }
+sha2 = { workspace = true }
+# Same rusqlite as allternit-api (links the same bundled libsqlite3-sys 0.28).
+rusqlite = { version = "0.31", features = ["bundled"] }
+hkdf = "0.12"
+# Shares chacha20 0.9 / poly1305 0.8 / aead 0.5 already in the lock.
+chacha20poly1305 = "0.10"
+fastcdc = "3.1"
+notify = "8"
+unicode-normalization = "0.1"
+
+[dev-dependencies]
+tempfile = { workspace = true }

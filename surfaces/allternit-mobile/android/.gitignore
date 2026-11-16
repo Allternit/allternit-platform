@@ -8,3 +8,6 @@ captures/
 .externalNativeBuild/
 .cxx/
 app/libs/
+# On-device engine: CMake FetchContent sources (llama.cpp, OpenCL headers/loader)
+ondevice/.deps/
+ondevice/build/

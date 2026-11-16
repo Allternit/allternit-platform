@@ -1039,6 +1039,9 @@ async fn main() {
         .merge(allternit_api::bots_pause::router())
         .merge(allternit_api::messages_mac::router())
         .merge(file_router())
+        // Files drive v2 (`/api/v1/files/v2`, contracts/files-drive). Off unless
+        // ALLTERNIT_FILES_DRIVE=1; nothing is created on disk until first use.
+        .merge(allternit_api::files_v2::router(&state.data_dir, state.db.clone()))
         .merge(memory_router())
         .merge(me_router())
         .merge(setup_router())

@@ -39,6 +39,8 @@ pub fn local_engine_router() -> Router<Arc<AppState>> {
         .route("/local-engine/health", get(proxy_health))
         .route("/local-engine/status", get(proxy_status))
         .route("/local-engine/hardware", get(proxy_hardware))
+        .route("/local-engine/engines/packs", get(proxy_engine_packs))
+        .route("/local-engine/engines/packs/ensure", post(proxy_engine_packs_ensure))
         .route("/local-engine/catalog", get(proxy_catalog))
         .route("/local-engine/catalog/refresh", post(proxy_catalog_refresh))
         .route("/local-engine/assess", post(proxy_assess))
@@ -80,6 +82,23 @@ async fn proxy_hardware(headers: HeaderMap) -> Response {
         return unauthorized();
     }
     proxy_get("/hardware").await
+}
+
+/// Installed engine packs and install progress.
+async fn proxy_engine_packs(headers: HeaderMap) -> Response {
+    if get_user(&headers).is_none() {
+        return unauthorized();
+    }
+    proxy_get("/engines/packs").await
+}
+
+/// Install the engine pack(s) this machine needs ("Run here" calls it first).
+async fn proxy_engine_packs_ensure(headers: HeaderMap, body: Bytes) -> Response {
+    if get_user(&headers).is_none() {
+        return unauthorized();
+    }
+    // The engine probes GPUs before answering (2 s per probe at most).
+    proxy_post_with_timeout("/engines/packs/ensure", body, std::time::Duration::from_secs(20)).await
 }
 
 async fn proxy_catalog(
@@ -205,7 +224,43 @@ async fn proxy_chat_completions(
     if get_user(&headers).is_none() {
         return unauthorized();
     }
-    proxy_post("/v1/chat/completions", body).await
+    proxy_chat_stream(body).await
+}
+
+/// Chat completions: the body streams through as the engine sends it (SSE
+/// tokens arrive live, not all at once at the end) and has no overall
+/// timeout, only connect and per-read limits, so long replies finish.
+async fn proxy_chat_stream(body: Bytes) -> Response {
+    let client = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .read_timeout(std::time::Duration::from_secs(300))
+        .build()
+        .unwrap_or_default();
+    let url = format!("{}/v1/chat/completions", local_engine_url());
+    let res = match client
+        .post(&url)
+        .header("Content-Type", "application/json")
+        .body(body)
+        .send()
+        .await
+    {
+        Ok(res) => res,
+        Err(err) => {
+            warn!(error = %err, url = %url, "Local Engine chat proxy failed");
+            return engine_unavailable(err);
+        }
+    };
+    let status = StatusCode::from_u16(res.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
+    let mut builder = Response::builder().status(status);
+    for (name, value) in res.headers().iter() {
+        if is_hop_by_hop_header(name.as_str()) || name.as_str().eq_ignore_ascii_case("content-length") {
+            continue;
+        }
+        builder = builder.header(name.as_str(), value.as_bytes());
+    }
+    builder
+        .body(Body::from_stream(res.bytes_stream()))
+        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
 }
 
 // ─── Generic proxy helpers ────────────────────────────────────────────────────

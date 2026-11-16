@@ -90,11 +90,23 @@ fn catalog_matches_decisions() {
             assert!(Hardware::from_id(h).is_some(), "{}: unknown hardware {h}", e.id);
         }
     }
-    assert!(!get("unsloth-upstream").published);
-    // No adapter ships for these yet; they stay hidden until their engine kit is published.
-    for id in ["axolotl", "llama-factory", "torchtune"] {
-        assert!(!get(id).published);
+    // The four third-party engines are published through the studio-engines
+    // adapters (dry-run conformance passed at the pinned commit); each names
+    // that source by full sha and carries the untested label.
+    for id in ["unsloth-upstream", "axolotl", "llama-factory", "torchtune"] {
+        let e = get(id);
+        assert!(e.published, "{id}");
+        assert_eq!(e.process.as_deref(), Some("separate_process"), "{id}");
+        let src = e.source.as_ref().unwrap_or_else(|| panic!("{id}: no source"));
+        assert_eq!(src.repo, "https://github.com/Allternit/studio-engines");
+        assert_eq!(src.sha.len(), 40, "{id}: full sha");
+        assert!(src.sha.chars().all(|c| c.is_ascii_hexdigit()), "{id}");
+        assert!(e.notes.as_deref().unwrap_or("").contains("Not yet tested by Allternit"), "{id}");
     }
+    let unsloth = get("unsloth-upstream");
+    let notes = unsloth.notes.as_deref().unwrap();
+    assert!(notes.contains("AGPL-3.0") && notes.contains("separate process"), "{notes}");
+    assert!(get("allternit-tune").source.is_none());
 }
 
 #[test]

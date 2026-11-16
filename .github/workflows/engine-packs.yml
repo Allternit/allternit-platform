@@ -1,0 +1,202 @@
+# Engine packs: per-OS llama-server builds and the macOS MLX sidecar that
+# local-engine downloads (services/local-engine/src/engine_packs). Format and
+# rationale: spec/on-device/engine-pack-spike.md.
+#
+# Builds packs and a signed feed as workflow artifacts. It never uploads to
+# runtime.allternit.com: publishing is a separate, human-approved release step.
+#
+# Status (2026-11-15): the macOS arm64 llama.cpp Metal pack is verified locally
+# on an M1 Pro (signed, installed from a dev feed, chat on the local engine).
+# The MLX pack (mlx-metal) builds from W7's OnDeviceLLM package and is NOT
+# built yet; it needs surfaces/allternit-mobile/ios/Packages/OnDeviceLLM on the
+# branch. Windows and Linux jobs are written to the S3 plan and NOT checked yet.
+name: Engine packs
+
+on:
+  workflow_dispatch:
+    inputs:
+      llamacpp_tag:
+        description: llama.cpp tag to build
+        default: b12414
+  push:
+    tags:
+      - 'engine-packs-*'
+
+permissions:
+  contents: read
+
+env:
+  LLAMACPP_TAG: ${{ inputs.llamacpp_tag || 'b12414' }}
+
+jobs:
+  linux:
+    name: linux ${{ matrix.backend }} ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    container: ${{ matrix.container }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # glibc 2.31 baseline (Ubuntu 20.04) so old distros and cloud computers run it.
+          - { backend: cpu, arch: x64, runner: ubuntu-24.04, container: 'ubuntu:20.04' }
+          - { backend: cpu, arch: arm64, runner: ubuntu-24.04-arm, container: 'ubuntu:20.04' }
+          - { backend: cuda, arch: x64, runner: ubuntu-24.04, container: 'nvidia/cuda:12.4.1-devel-ubuntu20.04' }
+          # glslc and a recent ROCm need 22.04 (glibc 2.35 baseline for these two).
+          - { backend: vulkan, arch: x64, runner: ubuntu-24.04, container: 'ubuntu:22.04' }
+          - { backend: rocm, arch: x64, runner: ubuntu-24.04, container: 'rocm/dev-ubuntu-22.04:6.2' }
+    steps:
+      - name: Tools
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends git ca-certificates build-essential python3 software-properties-common wget gpg
+          # cmake >= 3.21 for llama.cpp
+          wget -qO- https://apt.kitware.com/keys/kitware-archive-latest.asc | gpg --dearmor > /usr/share/keyrings/kitware.gpg
+          echo "deb [signed-by=/usr/share/keyrings/kitware.gpg] https://apt.kitware.com/ubuntu/ $(. /etc/os-release; echo $VERSION_CODENAME) main" > /etc/apt/sources.list.d/kitware.list
+          apt-get update && apt-get install -y cmake
+          if [ "${{ matrix.backend }}" = vulkan ]; then apt-get install -y libvulkan-dev glslc; fi
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: scripts/engine-packs
+      - name: Build
+        run: scripts/engine-packs/build-llamacpp.sh --backend ${{ matrix.backend }} --os linux --arch ${{ matrix.arch }} --out "$PWD/out"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pack-llamacpp-${{ matrix.backend }}-linux-${{ matrix.arch }}
+          path: out/
+          retention-days: 14
+
+  windows:
+    name: windows ${{ matrix.backend }} ${{ matrix.arch }}
+    runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { backend: cpu, arch: x64 }
+          - { backend: vulkan, arch: x64 }
+          - { backend: cuda, arch: x64 }
+          # Snapdragon X: cross-compiled with MSVC -A ARM64.
+          - { backend: cpu, arch: arm64 }
+          - { backend: vulkan, arch: arm64 }
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: scripts/engine-packs
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: ${{ matrix.arch == 'arm64' && 'amd64_arm64' || 'amd64' }}
+      - if: matrix.backend == 'vulkan'
+        uses: humbletim/install-vulkan-sdk@v1.2
+        with:
+          version: 1.4.309.0
+          cache: true
+      - if: matrix.backend == 'cuda'
+        uses: Jimver/cuda-toolkit@v0.2.24
+        with:
+          cuda: '12.4.1'
+          method: network
+          sub-packages: '["nvcc", "cudart", "cublas", "cublas_dev", "thrust", "visual_studio_integration"]'
+      - name: Build
+        run: scripts/engine-packs/build-llamacpp.sh --backend ${{ matrix.backend }} --os windows --arch ${{ matrix.arch }} --out "$PWD/out"
+      - if: matrix.backend == 'cuda'
+        name: Add CUDA runtime DLLs (redistributable)
+        run: |
+          PACK="out/llamacpp-cuda-windows-x64"
+          for d in cudart64_12 cublas64_12 cublasLt64_12; do cp "$CUDA_PATH/bin/$d.dll" "$PACK/bin/"; done
+          python3 scripts/engine-packs/make-manifest.py "$PACK" --engine llamacpp --backend cuda --version "$LLAMACPP_TAG" \
+            --os windows --arch x64 --min-os "" --entrypoint bin/llama-server.exe
+      # Authenticode signing goes here once a certificate exists (none today; see the S3 doc).
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pack-llamacpp-${{ matrix.backend }}-windows-${{ matrix.arch }}
+          path: out/
+          retention-days: 14
+
+  macos:
+    name: macos ${{ matrix.pack }}
+    runs-on: macos-15
+    strategy:
+      fail-fast: false
+      matrix:
+        pack: [llamacpp-metal, mlx-metal]
+    env:
+      HAVE_CERT: ${{ secrets.MACOS_CERT_P12 != '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Import Developer ID certificate
+        if: env.HAVE_CERT == 'true'
+        env:
+          P12: ${{ secrets.MACOS_CERT_P12 }}
+          P12_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+        run: |
+          KC="$RUNNER_TEMP/sign.keychain-db"
+          security create-keychain -p ci "$KC"
+          security set-keychain-settings -lut 3600 "$KC"
+          security unlock-keychain -p ci "$KC"
+          echo "$P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KC" -P "$P12_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -k ci "$KC"
+          security list-keychains -d user -s "$KC" $(security list-keychains -d user | tr -d '"')
+      - name: Metal toolchain
+        if: matrix.pack == 'mlx-metal'
+        run: xcodebuild -downloadComponent MetalToolchain
+      - name: Build llama.cpp Metal
+        if: matrix.pack == 'llamacpp-metal'
+        env:
+          ENGINE_PACK_WORK: ${{ runner.temp }}/work
+        run: |
+          scripts/engine-packs/build-llamacpp-macos.sh
+          RAW="$ENGINE_PACK_WORK/out/llamacpp-macos-arm64"
+          PACK="$PWD/out/pack/llamacpp-metal-macos-arm64"
+          mkdir -p "$PACK/bin" && cp "$RAW/llama-server" "$PACK/bin/" && cp "$RAW/LICENSE-llama.cpp" "$PACK/"
+          if [ "$HAVE_CERT" = true ]; then scripts/engine-packs/sign-notarize.sh "$PACK"; fi
+          SHA=$(python3 -c "import json;print(json.load(open('$RAW/BUILD-INFO.json'))['commit'])")
+          python3 scripts/engine-packs/make-manifest.py "$PACK" --engine llamacpp --backend metal --version "$LLAMACPP_TAG" \
+            --os macos --arch arm64 --min-os 13.0 --source-commit "$SHA" --entrypoint bin/llama-server
+      - name: Build MLX sidecar
+        if: matrix.pack == 'mlx-metal'
+        env:
+          ENGINE_PACK_WORK: ${{ runner.temp }}/work
+        run: scripts/engine-packs/build-mlx-server-macos.sh "$PWD/out"
+      # Notarization needs an App Store Connect API key secret; add with the certificate.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pack-${{ matrix.pack }}-macos-arm64
+          path: out/pack/
+          retention-days: 14
+
+  feed:
+    name: signed feed (artifact only)
+    needs: [linux, windows, macos]
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    env:
+      HAVE_KEY: ${{ secrets.ENGINE_PACK_SIGNING_KEY != '' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: scripts/engine-packs
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: pack-*
+          path: packs
+          merge-multiple: true
+      - name: Sign feed
+        if: env.HAVE_KEY == 'true'
+        env:
+          KEY: ${{ secrets.ENGINE_PACK_SIGNING_KEY }}
+        run: |
+          umask 077 && printf '%s\n' "$KEY" > "$RUNNER_TEMP/key.pem"
+          node scripts/engine-packs/make-feed.mjs --feed feed --key "$RUNNER_TEMP/key.pem" $(ls -d packs/*/)
+          rm -f "$RUNNER_TEMP/key.pem"
+      - if: env.HAVE_KEY == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: engine-pack-feed
+          path: feed/
+          retention-days: 14

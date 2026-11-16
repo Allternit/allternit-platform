@@ -31,12 +31,14 @@
         "keep_count": {
           "type": "integer",
           "minimum": 0,
-          "maximum": 1000
+          "maximum": 1000,
+          "description": "How many replaced versions to keep. 0 keeps none."
         },
         "keep_days": {
           "type": "integer",
           "minimum": 0,
-          "maximum": 3650
+          "maximum": 3650,
+          "description": "Days a version is kept, counted from when it was replaced (not created). 0 means no age limit."
         }
       }
     },
@@ -87,7 +89,8 @@
         "trash_days": {
           "type": "integer",
           "minimum": 0,
-          "maximum": 365
+          "maximum": 365,
+          "description": "Days a trashed item is kept. 0 deletes at once (no trash)."
         }
       }
     },

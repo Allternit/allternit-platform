@@ -6,7 +6,7 @@
   "$defs": {
     "ChunkerParams": {
       "type": "object",
-      "description": "v1 values: min 262144, avg 1048576, max 4194304 (4 MiB). The relay (runtime_relay.rs MAX_RELAY_BODY_BYTES = 5 MiB) measures a base64 body as len*3/4, i.e. the decoded size, so a 4 MiB chunk plus its headers leaves about 1 MiB of headroom.",
+      "description": "v1 values, pinned so every chunker cuts the same boundaries: fastcdc crate 3.2.1 `v2020`, normalization level 1, gear seed 0, min 262144 / avg 1048576 / max 4194304 (4 MiB), mask_s 0x0000d91767537000, mask_l 0x0000d91707537000 (mask_s_ls/mask_l_ls = the same shifted left one bit), chunk hash blake3-256 lower-case hex. Test vectors: contracts/files-drive/vectors/chunker-v1.json. The relay (runtime_relay.rs MAX_RELAY_BODY_BYTES = 5 MiB) measures a base64 body as len*3/4, i.e. the decoded size, so a 4 MiB chunk plus its headers leaves about 1 MiB of headroom.",
       "additionalProperties": false,
       "required": [
         "algo",
@@ -205,6 +205,12 @@
         "device_name": {
           "type": "string",
           "description": "Used to name a conflict copy."
+        },
+        "utc_offset_minutes": {
+          "type": "integer",
+          "minimum": -840,
+          "maximum": 840,
+          "description": "The editing device's UTC offset in minutes (e.g. -360 for CST). Sets the HHmm in a conflict copy's name. Omitted: the runtime uses UTC."
         }
       }
     },
@@ -316,6 +322,43 @@
         },
         "cursor": {
           "$ref": "common.json#/$defs/Cursor"
+        }
+      }
+    },
+    "SmallWriteQuery": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Query string of PUT /roots/:root_id/content (small write, body at most 4 MiB). device_name may also come from the X-Allternit-Device-Name header.",
+      "required": [
+        "parent_id",
+        "name"
+      ],
+      "properties": {
+        "parent_id": {
+          "$ref": "common.json#/$defs/ItemId"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255
+        },
+        "base_rev": {
+          "$ref": "common.json#/$defs/Rev",
+          "description": "Required when replacing an existing file."
+        },
+        "on_conflict": {
+          "$ref": "common.json#/$defs/OnConflict",
+          "description": "Default keep_both."
+        },
+        "device_name": {
+          "type": "string",
+          "description": "Used to name a conflict copy."
+        },
+        "utc_offset_minutes": {
+          "type": "integer",
+          "minimum": -840,
+          "maximum": 840,
+          "description": "As in UploadCreateRequest."
         }
       }
     }

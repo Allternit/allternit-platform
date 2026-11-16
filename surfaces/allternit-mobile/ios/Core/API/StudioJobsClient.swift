@@ -4,7 +4,13 @@ import Foundation
 
 struct StudioJob: Decodable, Identifiable, Equatable, Sendable {
     struct Spec: Decodable, Equatable, Sendable {
-        struct Base: Decodable, Equatable, Sendable { let repo: String }
+        /// A hub repo, or a folder on the computer (`base.path`); one of the two is set.
+        struct Base: Decodable, Equatable, Sendable {
+            let repo: String?
+            let path: String?
+            /// What to show: the repo id, else the folder's name.
+            var name: String { repo ?? path.map { ($0 as NSString).lastPathComponent } ?? "" }
+        }
         let engine: String
         let base: Base
         let method: String
@@ -19,9 +25,11 @@ struct StudioJob: Decodable, Identifiable, Equatable, Sendable {
     let createdAt: String
     let error: String?
     let lastSeq: Int?
+    /// Backend the host picked for this job (absent on older hosts).
+    let backend: String?
 
     enum CodingKeys: String, CodingKey {
-        case id, state, spec, error
+        case id, state, spec, error, backend
         case createdAt = "created_at"
         case lastSeq = "last_seq"
     }
