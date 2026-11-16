@@ -77,6 +77,12 @@ pub enum Kind {
     PhoneApprovalRequested,
     /// A phone hold was approved, denied, expired or changed (`phone_guard`).
     PhoneApprovalResolved,
+    /// A file landed in Inbox and its task was created (`files_v2::inbox`).
+    FilesInboxDropped,
+    /// An Inbox or folder-rule task succeeded, failed or was rejected.
+    FilesTaskResult,
+    /// A Files write landed as a conflict copy.
+    FilesConflict,
 }
 
 impl Kind {
@@ -113,6 +119,9 @@ impl Kind {
             Kind::PhoneRunCompleted => Some("phone.run.completed"),
             Kind::PhoneApprovalRequested => Some("phone.approval.requested"),
             Kind::PhoneApprovalResolved => Some("phone.approval.resolved"),
+            Kind::FilesInboxDropped => Some("files.inbox.dropped"),
+            Kind::FilesTaskResult => Some("files.task.result"),
+            Kind::FilesConflict => Some("files.conflict"),
         }
     }
 }
@@ -152,6 +161,9 @@ pub fn classify(event_type: &str, payload: &Value) -> Option<Kind> {
         "phone.run.completed" => Some(Kind::PhoneRunCompleted),
         "phone.approval.requested" => Some(Kind::PhoneApprovalRequested),
         "phone.approval.resolved" => Some(Kind::PhoneApprovalResolved),
+        "files.inbox.dropped" => Some(Kind::FilesInboxDropped),
+        "files.task.result" => Some(Kind::FilesTaskResult),
+        "files.conflict" => Some(Kind::FilesConflict),
         _ => None,
     }
 }

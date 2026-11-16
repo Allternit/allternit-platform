@@ -73,6 +73,9 @@ All under `/api/v1/files/v2`. The relay maps any path containing `/files` to cap
 | `GET /items/:item_id/comments`, `POST /comments` | `CommentCreateRequest` | `Comment[]`, `Comment` |
 | `GET /replicas`, `POST /replicas` | `CreateReplicaRequest` | `ReplicasResponse` (on the replica host) |
 | `POST /replicas/restore` | `ReplicaRestoreRequest` | `ReplicaRestoreReport` |
+| `GET /inbox/tasks`, `GET /inbox/tasks/:task_id` | query `state`, `limit` | `{tasks: Task[]}`, `Task` (owner and own devices only; shapes in `surfaces/docs/api/files-drive-inbox.mdx`) |
+| `POST /inbox/tasks/:task_id/approve`, `POST /inbox/tasks/:task_id/reject` | `{tools?, output?: "beside" \| "agent_output"}` / none | `Task` (section 7; the grant is an `AgentGrant`) |
+| `GET /rules`, `POST /rules`, `PATCH /rules/:rule_id`, `DELETE /rules/:rule_id` | `{root_id, name, instruction?, tools, output?}` / `{active}` | `{rules: FolderRule[]}`, `FolderRule`, 204 (folder rules, kept in Automation Tasks; add and re-enable on the computer only) |
 
 Writing a file: a client with a file of 4 MiB or less may use the small write; anything bigger, or anything that must resume, uses an upload session (section 5).
 
@@ -297,6 +300,8 @@ Published on the existing events system, all with `event_id`, `at`, `computer_id
 | `files.task.result` | `TaskResult` | an approved Inbox or folder-rule task finished, failed or was rejected |
 | `files.share.accessed` | `ShareAccessed` | every guest access, allowed or denied. Also stored by cloud-api on the cloud events system (agents audience, push off by default), `data` = `{ computer_id, access }`. |
 | `files.conflict` | `ConflictCreated` | a write landed as a conflict copy |
+
+`files.inbox.dropped`, `files.task.result` and `files.conflict` are rows in the runtime's owner ledger, which the runtime forwards to the cloud event backbone. `files.changed` is the change feed itself (section 6: the per-root change log and `/subscribe`); it is not copied into the ledger, because a sync makes thousands of changes.
 
 ## 15. Storage discovery
 

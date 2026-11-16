@@ -67,6 +67,7 @@ pub fn routes<S: Clone + Send + Sync + 'static>(files: Arc<FilesV2>) -> Router<S
         .route("/jobs/:job_id", get(job))
         .route("/storage", get(super::storage::storage))
         .merge(super::replicas::routes())
+        .merge(super::inbox::routes())
         // Guests (`Files-Guest`) pass the token, computer, route and role
         // checks here before any handler runs. Inside the Extension layer,
         // which it reads.
@@ -102,22 +103,24 @@ fn bytes(b: Result<Bytes, BytesRejection>) -> Result<Bytes, ApiError> {
 
 pub(crate) fn mutation(v: &Inner, m: &Mutation) -> Result<MutationResponse, Fail> {
     let root = v.drive.root(&m.item.root_id)?;
-    Ok(MutationResponse {
-        item: v.item(&root, &m.item),
-        conflict: m.conflict.as_ref().map(|c| c.to_info(permissions(&root, &c.conflict_item))),
-        cursor: m.cursor.clone(),
-    })
+    let conflict = m.conflict.as_ref().map(|c| c.to_info(permissions(&root, &c.conflict_item)));
+    if let Some(info) = &conflict {
+        super::events::conflict(v, info);
+    }
+    Ok(MutationResponse { item: v.item(&root, &m.item), conflict, cursor: m.cursor.clone() })
 }
 
 /// [`mutation`] for this caller (a guest gets its role's permissions).
 pub(crate) fn mutation_as(v: &Inner, req: &Req, m: &Mutation) -> Result<MutationResponse, Fail> {
     let Some(g) = &req.guest else { return mutation(v, m) };
     let root = v.drive.root(&m.item.root_id)?;
-    Ok(MutationResponse {
-        item: v.item_as(req, &root, &m.item),
-        conflict: m.conflict.as_ref().map(|c| c.to_info(shares::permissions(g.claims.role, &root, &c.conflict_item))),
-        cursor: m.cursor.clone(),
-    })
+    // The event goes to the owner, so it carries the owner's permissions; the
+    // response carries the guest's.
+    if let Some(c) = &m.conflict {
+        super::events::conflict(v, &c.to_info(permissions(&root, &c.conflict_item)));
+    }
+    let conflict = m.conflict.as_ref().map(|c| c.to_info(shares::permissions(g.claims.role, &root, &c.conflict_item)));
+    Ok(MutationResponse { item: v.item_as(req, &root, &m.item), conflict, cursor: m.cursor.clone() })
 }
 
 fn now(v: &Inner) -> String {

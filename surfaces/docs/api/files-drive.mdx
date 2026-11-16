@@ -47,6 +47,8 @@ The computer that owns the files serves these under `/api/v1/files/v2`.
 | `GET /storage` | Volumes, free space and bytes per root. |
 | `GET /items/:item_id/comments`, `POST /comments` | Comments. |
 | `GET /replicas`, `POST /replicas`, `POST /replicas/restore` | Replicas, on the replica host. |
+| `GET /inbox/tasks`, `GET /inbox/tasks/:task_id`, `POST /inbox/tasks/:task_id/approve`, `POST /inbox/tasks/:task_id/reject` | Inbox tasks waiting for approval. See [Inbox, rules and events](/api/files-drive-inbox). |
+| `GET /rules`, `POST /rules`, `PATCH /rules/:rule_id`, `DELETE /rules/:rule_id` | Folder rules. |
 
 The relay maps any path containing `/files` to the `runtime:files` capability, so no new capability is needed.
 
