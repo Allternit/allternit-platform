@@ -35,6 +35,7 @@ pub fn runtime_settings_router() -> Router<Arc<AppState>> {
         )
         .route("/appearance/:key", get(get_appearance).put(put_appearance))
         .route("/deck-pins", get(get_deck_pins).put(put_deck_pins))
+        .route("/project-pad/:scope", get(get_project_pad).put(put_project_pad))
         .route("/runtime/settings/reset", post(reset_settings))
         .route("/runtime/drivers", get(list_drivers))
         .route("/runtime/drivers/:type/status", get(driver_status))
@@ -69,7 +70,34 @@ fn validate_appearance(a: &Value) -> bool {
     if let Some(image) = obj.get("image") {
         if !image.as_str().is_some_and(|s| s.len() <= 128000 && s.starts_with("data:image/png;base64,iVBORw0KGgo") && s[22..].bytes().all(|b| b.is_ascii_alphanumeric() || b == b'+' || b == b'/' || b == b'=')) { return false; }
     }
+    if let Some(cover) = obj.get("cover") {
+        if !validate_cover(cover) { return false; }
+    }
     a["overlay"] != "image" || obj.contains_key("image")
+}
+
+// Optional folder-cover fields (project folders plan). Strict: unknown keys are rejected.
+fn validate_cover(c: &Value) -> bool {
+    let Some(o) = c.as_object() else { return false; };
+    const KEYS: &[&str] = &["v", "preset", "art", "font", "place", "pattern", "frame", "edge", "sheets", "tabColor", "tabLabel", "showMode"];
+    if !o.keys().all(|k| KEYS.contains(&k.as_str())) { return false; }
+    let one_of = |k: &str, set: &[&str]| c[k].as_str().is_some_and(|s| set.contains(&s));
+    if c["v"] != 2 { return false; }
+    if let Some(p) = o.get("preset") {
+        if !p.as_str().is_some_and(|s| s.chars().count() <= 24) { return false; }
+    }
+    if let Some(t) = o.get("tabColor") {
+        if !t.as_str().is_some_and(|s| s.len() == 7 && s.starts_with('#') && s[1..].bytes().all(|b| b.is_ascii_hexdigit())) { return false; }
+    }
+    one_of("art", &["title", "symbol", "text", "image", "none"])
+        && one_of("font", &["mono", "serif", "sans", "typewriter"])
+        && one_of("place", &["top", "center", "bottom"])
+        && one_of("pattern", &["plain", "grain", "linen", "grid", "dots", "stripes", "blueprint", "circuit"])
+        && one_of("frame", &["none", "dotted", "double"])
+        && one_of("edge", &["ink", "soft", "shadow"])
+        && c["sheets"].as_u64().is_some_and(|n| n <= 3)
+        && c["tabLabel"].as_str().is_some_and(|s| s.chars().count() <= 8)
+        && c["showMode"].is_boolean()
 }
 
 async fn get_appearance(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Path(key): Path<String>) -> impl IntoResponse {
@@ -142,6 +170,94 @@ async fn put_deck_pins(State(state): State<Arc<AppState>>, Extension(user): Exte
     }).await {
         Ok(Ok(())) => (StatusCode::OK, Json(json!({ "pins": pins }))),
         _ => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": "could not save deck pins" }))),
+    }
+}
+
+// ─── Project pad ──────────────────────────────────────────────────────────────
+// One pad record per project scope (`project:<mode>:<id>`). Same table, key
+// `project_pad:<scope>`, never touched by runtime reset. `null` deletes.
+const PROJECT_PAD_MAX_BYTES: usize = 64 * 1024;
+const PAD_LAYOUTS: &[&str] = &["pulse", "bento", "mission", "score", "cover", "runway", "board", "crew", "orbit", "gallery", "custom", "pad"];
+const PAD_TILES: &[&str] = &["decision", "countdown", "progress", "team", "chart", "schedule", "files", "activity", "actions", "links", "notes", "checklist", "threads"];
+
+fn valid_pad_scope(scope: &str) -> bool {
+    let Some(rest) = scope.strip_prefix("project:") else { return false; };
+    let Some((mode, id)) = rest.split_once(':') else { return false; };
+    (2..=16).contains(&mode.len())
+        && mode.bytes().all(|b| b.is_ascii_lowercase())
+        && (1..=128).contains(&id.len())
+        && id.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.' | b':' | b'-'))
+}
+
+fn http_url(v: &Value, max: usize) -> bool {
+    v.as_str().is_some_and(|s| s.chars().count() <= max && (s.starts_with("http://") || s.starts_with("https://")) && !s.chars().any(|c| c.is_control() || c.is_whitespace()))
+}
+
+fn validate_project_pad(p: &Value) -> bool {
+    if p.is_null() { return true; }
+    let Some(o) = p.as_object() else { return false; };
+    const KEYS: &[&str] = &["v", "view", "layout", "colors", "hidden", "template", "tiles", "data", "updatedAt"];
+    if !o.keys().all(|k| KEYS.contains(&k.as_str())) || p.to_string().len() > PROJECT_PAD_MAX_BYTES { return false; }
+    let text = |v: &Value, max: usize| v.as_str().is_some_and(|s| s.chars().count() <= max);
+    let nonempty = |v: &Value, max: usize| v.as_str().is_some_and(|s| !s.is_empty() && s.chars().count() <= max);
+    if p["v"] != 1 || !p["view"].as_str().is_some_and(|s| s == "pad" || s == "list") { return false; }
+    if !p["layout"].as_str().is_some_and(|s| PAD_LAYOUTS.contains(&s)) || !text(&p["colors"], 16) { return false; }
+    if !p["hidden"].as_array().is_some_and(|a| a.len() <= PAD_TILES.len() && a.iter().all(|t| t.as_str().is_some_and(|s| PAD_TILES.contains(&s)))) { return false; }
+    if !(p["template"].is_null() || text(&p["template"], 40)) { return false; }
+    if !p["tiles"].as_array().is_some_and(|a| a.len() <= 24 && a.iter().all(|t| {
+        t.as_object().is_some_and(|m| m.len() == 2)
+            && t["id"].as_str().is_some_and(|s| PAD_TILES.contains(&s))
+            && t["size"].as_str().is_some_and(|s| ["S", "M", "L", "W"].contains(&s))
+    })) { return false; }
+    if !p["updatedAt"].is_number() { return false; }
+    let Some(d) = p["data"].as_object() else { return false; };
+    if !d.keys().all(|k| ["notes", "links", "checklist", "actions"].contains(&k.as_str())) { return false; }
+    if !text(&p["data"]["notes"], 4000) { return false; }
+    let list = |k: &str, max: usize, f: &dyn Fn(&Value) -> bool| p["data"][k].as_array().is_some_and(|a| a.len() <= max && a.iter().all(f));
+    list("links", 20, &|l| l.is_object() && nonempty(&l["title"], 80) && http_url(&l["url"], 2048))
+        && list("checklist", 50, &|c| c.is_object() && nonempty(&c["id"], 40) && text(&c["text"], 200) && c["done"].is_boolean())
+        && list("actions", 12, &|a| {
+            a.is_object() && nonempty(&a["id"], 40) && nonempty(&a["label"], 40)
+                && match a["kind"].as_str() {
+                    Some("thread") => nonempty(&a["value"], 2048),
+                    Some("link") => http_url(&a["value"], 2048),
+                    _ => false,
+                }
+        })
+}
+
+async fn get_project_pad(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Path(scope): Path<String>) -> impl IntoResponse {
+    if !valid_pad_scope(&scope) { return (StatusCode::BAD_REQUEST, Json(json!({ "error": "invalid project scope" }))); }
+    let db = state.db.clone();
+    match tokio::task::spawn_blocking(move || -> rusqlite::Result<Option<String>> {
+        db.connect()?.query_row("SELECT value FROM runtime_settings WHERE user_id = ?1 AND key = ?2", params![user.user_id, format!("project_pad:{scope}")], |r| r.get(0)).optional()
+    }).await {
+        Ok(Ok(value)) => {
+            let pad = value.and_then(|s| serde_json::from_str::<Value>(&s).ok()).filter(validate_project_pad).unwrap_or(Value::Null);
+            (StatusCode::OK, Json(json!({ "pad": pad })))
+        }
+        _ => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": "could not load project pad" }))),
+    }
+}
+
+async fn put_project_pad(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Path(scope): Path<String>, Json(body): Json<Value>) -> impl IntoResponse {
+    let Some(pad) = body.get("pad") else { return (StatusCode::BAD_REQUEST, Json(json!({ "error": "pad is required" }))); };
+    if !valid_pad_scope(&scope) || !validate_project_pad(pad) { return (StatusCode::BAD_REQUEST, Json(json!({ "error": "invalid project pad" }))); }
+    let pad = pad.clone();
+    let result = pad.clone();
+    let db = state.db.clone();
+    match tokio::task::spawn_blocking(move || -> rusqlite::Result<()> {
+        let conn = db.connect()?;
+        let storage_key = format!("project_pad:{scope}");
+        if pad.is_null() {
+            conn.execute("DELETE FROM runtime_settings WHERE user_id = ?1 AND key = ?2", params![user.user_id, storage_key])?;
+        } else {
+            conn.execute("INSERT INTO runtime_settings (user_id, key, value, updated_at) VALUES (?1, ?2, ?3, CURRENT_TIMESTAMP) ON CONFLICT(user_id, key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP", params![user.user_id, storage_key, pad.to_string()])?;
+        }
+        Ok(())
+    }).await {
+        Ok(Ok(())) => (StatusCode::OK, Json(json!({ "pad": result }))),
+        _ => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": "could not save project pad" }))),
     }
 }
 
@@ -696,6 +812,61 @@ mod tests {
         assert!(!super::validate_deck_pins(&serde_json::json!([{ "id": "", "kind": "doc", "title": "x" }])));
         let nine: Vec<_> = (0..9).map(|i| serde_json::json!({ "id": format!("a{i}"), "kind": "doc", "title": "t" })).collect();
         assert!(!super::validate_deck_pins(&serde_json::Value::Array(nine)));
+    }
+
+    #[test]
+    fn appearance_accepts_cover() {
+        let mut a = appearance_recipe();
+        assert!(validate_appearance(&a));
+        a["cover"] = json!({ "v": 2, "preset": "classic", "art": "title", "font": "mono", "place": "center", "pattern": "grain", "frame": "dotted", "edge": "ink", "sheets": 2, "tabColor": "#a1b2c3", "tabLabel": "Build", "showMode": true });
+        assert!(validate_appearance(&a));
+        a["cover"] = json!({ "v": 2, "art": "none", "font": "sans", "place": "top", "pattern": "circuit", "frame": "none", "edge": "shadow", "sheets": 0, "tabLabel": "", "showMode": false });
+        assert!(validate_appearance(&a));
+    }
+
+    #[test]
+    fn appearance_rejects_bad_cover() {
+        let good = json!({ "v": 2, "art": "title", "font": "mono", "place": "center", "pattern": "grain", "frame": "dotted", "edge": "ink", "sheets": 2, "tabLabel": "Build", "showMode": true });
+        for patch in [json!({"art": "neon"}), json!({"sheets": 4}), json!({"tabLabel": "123456789"}), json!({"extra": 1}), json!({"v": 1}), json!({"tabColor": "red"}), json!({"showMode": "yes"})] {
+            let mut c = good.clone();
+            for (k, v) in patch.as_object().unwrap() { c[k] = v.clone(); }
+            let mut a = appearance_recipe();
+            a["cover"] = c;
+            assert!(!validate_appearance(&a), "accepted {patch}");
+        }
+        let mut a = appearance_recipe();
+        a["cover"] = json!("x");
+        assert!(!validate_appearance(&a));
+    }
+
+    fn pad() -> Value {
+        json!({ "v": 1, "view": "pad", "layout": "pad", "colors": "default", "hidden": ["chart"], "template": null,
+            "tiles": [{ "id": "notes", "size": "M" }, { "id": "progress", "size": "S" }],
+            "data": { "notes": "hi", "links": [{ "title": "Docs", "url": "https://example.com" }],
+                "checklist": [{ "id": "c1", "text": "ship", "done": false }],
+                "actions": [{ "id": "a1", "kind": "link", "label": "Open", "value": "https://example.com" }, { "id": "a2", "kind": "thread", "label": "Ask", "value": "thread-1" }] },
+            "updatedAt": 1 })
+    }
+
+    #[test]
+    fn project_pad_validation() {
+        assert!(validate_project_pad(&pad()));
+        assert!(validate_project_pad(&Value::Null));
+        assert!(valid_pad_scope("project:code:abc"));
+        assert!(valid_pad_scope("project:task:abc"));
+        assert!(valid_pad_scope("project:bot:a.b_c:d-1"));
+        for bad in ["project:Code:abc", "project:c:abc", "project:code:", "project:code:a b", "folder:code:x", "project:code"] {
+            assert!(!valid_pad_scope(bad), "accepted {bad}");
+        }
+        let patched = |f: &dyn Fn(&mut Value)| { let mut p = pad(); f(&mut p); p };
+        assert!(!validate_project_pad(&patched(&|p| p["tiles"][0]["id"] = json!("nope"))));
+        assert!(!validate_project_pad(&patched(&|p| p["data"]["links"][0]["url"] = json!("javascript:alert(1)"))));
+        assert!(!validate_project_pad(&patched(&|p| p["data"]["actions"][0]["value"] = json!("javascript:alert(1)"))));
+        assert!(!validate_project_pad(&patched(&|p| p["data"]["notes"] = json!("x".repeat(4001)))));
+        assert!(!validate_project_pad(&patched(&|p| p["extra"] = json!(1))));
+        assert!(!validate_project_pad(&patched(&|p| p["layout"] = json!("grid"))));
+        assert!(!validate_project_pad(&patched(&|p| p["tiles"][0]["size"] = json!("XL"))));
+        assert!(!validate_project_pad(&patched(&|p| p["v"] = json!(2))));
     }
 
     use super::*;
