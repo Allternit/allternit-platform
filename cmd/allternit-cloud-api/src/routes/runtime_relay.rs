@@ -201,7 +201,8 @@ struct BrowserProxyRequest {
     headers: HashMap<String, String>,
     #[serde(default)]
     body: String,
-    #[serde(default)]
+    /// The web client sends both spellings; the Files SPEC uses `body_encoding`.
+    #[serde(default, alias = "body_encoding")]
     body_encoding: String,
 }
 
@@ -513,6 +514,153 @@ fn socket_tickets() -> &'static Mutex<HashMap<String, SocketTicket>> {
     TICKETS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+pub(crate) const FILES_V2_PREFIX: &str = "/api/v1/files/v2";
+
+/// `/api/v1/files/v2` or anything under it (query and fragment ignored).
+pub(crate) fn is_files_v2_path(path: &str) -> bool {
+    let bare = path.split(['?', '#']).next().unwrap_or_default();
+    bare == FILES_V2_PREFIX || bare.starts_with("/api/v1/files/v2/")
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FilesWakeGate {
+    /// Not a v2 Files path: today's behaviour (touch activity, wake on demand).
+    Legacy,
+    /// v2 Files, no ticket: answer only from an already-connected runtime,
+    /// else from the asleep snapshot.
+    NoWake,
+    /// v2 Files with a valid wake ticket: wait for the consented wake, but
+    /// never start one and never touch activity.
+    TicketWait,
+}
+
+async fn files_wake_gate(
+    db: &sqlx::PgPool,
+    request: &RelayRequest,
+    user_id: &str,
+    runtime_id: &str,
+) -> Result<FilesWakeGate, Response> {
+    use crate::routes::computer_files as cf;
+    use allternit_files_core::ErrorCode;
+    if !is_files_v2_path(&request.path) {
+        return Ok(FilesWakeGate::Legacy);
+    }
+    let Some(ticket) = request
+        .headers
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case(cf::WAKE_TICKET_HEADER))
+        .map(|(_, value)| value.as_str())
+    else {
+        return Ok(FilesWakeGate::NoWake);
+    };
+    let Some(key) = cf::wake_key() else {
+        return Err(cf::files_error(StatusCode::SERVICE_UNAVAILABLE, ErrorCode::KeyUnavailable, "Files token key is not configured", None, None, None));
+    };
+    let now = chrono::Utc::now().timestamp().max(0) as u64;
+    match cf::verify_wake_ticket(key, ticket, user_id, runtime_id, now) {
+        Ok(_) => Ok(FilesWakeGate::TicketWait),
+        Err(cf::TicketError::Expired) => Err(cf::files_error(
+            StatusCode::CONFLICT,
+            ErrorCode::WakeConsentRequired,
+            "The wake ticket expired; ask for consent again",
+            Some(allternit_files_core::ComputerState::Asleep),
+            Some(cf::wake_hint(db, runtime_id).await),
+            None,
+        )),
+        Err(_) => Err(cf::files_error(StatusCode::FORBIDDEN, ErrorCode::Forbidden, "The wake ticket is not valid for this computer", None, None, None)),
+    }
+}
+
+/// A v2 Files request to a computer with no relay connection (SPEC section
+/// 9). Never wakes, never touches activity. `roots`, `list`, `stat`,
+/// `changes` and name `search` come from the asleep snapshot in the user's R2
+/// space (owner's `files_drive` flag on); other metadata answers `asleep`;
+/// content needs consent (`wake_consent_required`).
+async fn files_asleep_response(db: &sqlx::PgPool, user_id: &str, runtime_id: &str, request: &RelayRequest) -> Response {
+    use crate::routes::{computer_files as cf, computer_files_snapshot as snap};
+    use allternit_files_core::{ComputerState, ErrorCode};
+    let hint = cf::wake_hint(db, runtime_id).await;
+    let body = decode_relay_body(&request.body, &request.body_encoding);
+    match snap::classify(&request.method, &request.path, &body) {
+        snap::AsleepRequest::Content => cf::files_error(
+            StatusCode::CONFLICT,
+            ErrorCode::WakeConsentRequired,
+            "Opening this needs the computer awake; ask for consent",
+            Some(ComputerState::Asleep),
+            Some(hint),
+            None,
+        ),
+        snap::AsleepRequest::Metadata => snap::miss_response(snap::SnapshotMiss::Unavailable, hint),
+        snap::AsleepRequest::Snapshot(query) => {
+            let store = if cf::files_drive_on(user_id) { snap::snapshot_store() } else { None };
+            let Some(store) = store else {
+                return snap::miss_response(snap::SnapshotMiss::Unavailable, hint);
+            };
+            match snap::answer(store.as_ref(), runtime_id, &query).await {
+                Ok(response) => response,
+                Err(miss) => snap::miss_response(miss, hint),
+            }
+        }
+    }
+}
+
+/// Look up (and, with `wait`, poll for) a relay connection without ever
+/// starting a wake.
+async fn connect_without_wake(
+    runtime_id: &str,
+    required: &str,
+    path: &str,
+    wait: Duration,
+) -> Option<Arc<RuntimeConnection>> {
+    let deadline = Instant::now() + wait;
+    loop {
+        if let Some(connection) = relay_hub()
+            .read()
+            .await
+            .get(runtime_id)
+            .and_then(|entries| select_connection(entries, required, path))
+        {
+            return Some(connection);
+        }
+        if Instant::now() >= deadline {
+            return None;
+        }
+        tokio::time::sleep(WAKE_POLL_INTERVAL).await;
+    }
+}
+
+pub(crate) async fn runtime_is_connected(runtime_id: &str) -> bool {
+    relay_hub()
+        .read()
+        .await
+        .get(runtime_id)
+        .map(|entries| !entries.is_empty())
+        .unwrap_or(false)
+}
+
+/// Start a wake without waiting for it (Files wake consent). `Some(true)` =
+/// already awake, `Some(false)` = waking, `None` = cannot be woken.
+pub(crate) async fn start_wake(state: &ApiState, runtime_id: &str) -> Result<Option<bool>, ApiError> {
+    use crate::services::{HostedWakeOutcome, ProvisionedWakeOutcome};
+    let outcome = crate::services::wake_hosted_runtime_for_device(
+        &state.db,
+        &state.contabo_runtime_service,
+        &state.quota_service,
+        runtime_id,
+    )
+    .await?;
+    Ok(match outcome {
+        HostedWakeOutcome::NotWakeable => None,
+        HostedWakeOutcome::Waking => Some(false),
+        HostedWakeOutcome::AlreadyActive => Some(true),
+        HostedWakeOutcome::NotHosted => match state.provisioning_service.wake_for_device(runtime_id).await? {
+            ProvisionedWakeOutcome::NotProvisioned | ProvisionedWakeOutcome::NotWakeable => None,
+            ProvisionedWakeOutcome::AlreadyActive => Some(true),
+            ProvisionedWakeOutcome::Waking => Some(false),
+        },
+    })
+}
+
 pub fn routes() -> Router<Arc<ApiState>> {
     Router::new()
         .route("/api/v1/runtime-relay/connect/:id", get(connect_runtime))
@@ -572,17 +720,32 @@ pub(crate) async fn issue_socket_ticket(
             "Runtime pairing does not grant {required}"
         )));
     }
-    match connect_or_wake_runtime(
-        &state.db,
-        &state.contabo_runtime_service,
-        &state.quota_service,
-        &state.provisioning_service,
-        runtime_id,
-        &required,
-        &validation.path,
-    )
-    .await?
-    {
+    // Files drive change feed (`/api/v1/files/v2/subscribe`): never wakes and
+    // never touches activity (SPEC section 9). A sleeping computer has no
+    // live feed; clients poll `changes`, which the asleep snapshot answers.
+    let files_v2 = is_files_v2_path(&validation.path);
+    let connect = if files_v2 {
+        match connect_without_wake(runtime_id, &required, &validation.path, Duration::ZERO).await {
+            Some(connection) => RelayConnect::Connected(connection),
+            None => {
+                return Err(ApiError::ServiceUnavailable(
+                    "The computer is asleep; poll changes instead".to_string(),
+                ))
+            }
+        }
+    } else {
+        connect_or_wake_runtime(
+            &state.db,
+            &state.contabo_runtime_service,
+            &state.quota_service,
+            &state.provisioning_service,
+            runtime_id,
+            &required,
+            &validation.path,
+        )
+        .await?
+    };
+    match connect {
         RelayConnect::Connected(_) => {}
         RelayConnect::Warming => {
             return Err(ApiError::ServiceUnavailable(
@@ -595,7 +758,9 @@ pub(crate) async fn issue_socket_ticket(
             ));
         }
     }
-    services_touch_runtime(&state.db, runtime_id).await;
+    if !files_v2 {
+        services_touch_runtime(&state.db, runtime_id).await;
+    }
 
     let ticket = Uuid::new_v4().to_string();
     let expires_at = Instant::now() + Duration::from_secs(30);
@@ -816,7 +981,11 @@ async fn browser_socket(
         let _ = quota_service.close_relay_socket(&relay_socket_id, 0).await;
         return;
     };
-    let _ = crate::services::touch_runtime_activity(&db, &runtime_id).await;
+    // Files drive feed sockets never reset the idle clock (SPEC section 9).
+    let touches_activity = !is_files_v2_path(&path);
+    if touches_activity {
+        let _ = crate::services::touch_runtime_activity(&db, &runtime_id).await;
+    }
     let mut last_activity_write = Instant::now();
     let socket_id = Uuid::new_v4().to_string();
     let (runtime_sender, mut runtime_events) = mpsc::unbounded_channel();
@@ -847,7 +1016,7 @@ async fn browser_socket(
                 match browser {
                     Some(Ok(message)) => match message {
                         Message::Text(_) | Message::Binary(_) => {
-                            if last_activity_write.elapsed() >= Duration::from_secs(60) {
+                            if touches_activity && last_activity_write.elapsed() >= Duration::from_secs(60) {
                                 let _ = crate::services::touch_runtime_activity(&db, &runtime_id).await;
                                 last_activity_write = Instant::now();
                             }
@@ -870,7 +1039,7 @@ async fn browser_socket(
                     break;
                 };
                 if let RuntimeSocketFrame::Data(body, _) = &frame {
-                    if last_activity_write.elapsed() >= Duration::from_secs(60) {
+                    if touches_activity && last_activity_write.elapsed() >= Duration::from_secs(60) {
                         let _ = crate::services::touch_runtime_activity(&db, &runtime_id).await;
                         last_activity_write = Instant::now();
                     }
@@ -1202,19 +1371,50 @@ pub(crate) async fn relay_request_to_runtime_with(
             "Runtime pairing does not grant {required_capability}"
         )));
     }
-    services_touch_runtime(db, runtime_id).await;
-
-    let connection = match connect_or_wake_runtime(
-        db,
-        contabo_runtime_service,
-        quota_service,
-        provisioning,
-        runtime_id,
-        required_capability,
-        &request.path,
-    )
-    .await?
-    {
+    // Files drive (SPEC section 9): /api/v1/files/v2/* never wakes a computer
+    // and never touches its idle timer. Only POST /computer-files/:id/
+    // wake-consent wakes; a request carrying its ticket may wait for that wake.
+    let gate = match files_wake_gate(db, &request, user_id, runtime_id).await {
+        Ok(gate) => gate,
+        Err(response) => return Ok(response),
+    };
+    let connect = match gate {
+        FilesWakeGate::Legacy => {
+            services_touch_runtime(db, runtime_id).await;
+            connect_or_wake_runtime(
+                db,
+                contabo_runtime_service,
+                quota_service,
+                provisioning,
+                runtime_id,
+                required_capability,
+                &request.path,
+            )
+            .await?
+        }
+        FilesWakeGate::NoWake => {
+            match connect_without_wake(runtime_id, required_capability, &request.path, Duration::ZERO).await {
+                Some(connection) => RelayConnect::Connected(connection),
+                None => return Ok(files_asleep_response(db, user_id, runtime_id, &request).await),
+            }
+        }
+        FilesWakeGate::TicketWait => {
+            match connect_without_wake(runtime_id, required_capability, &request.path, WAKE_WAIT_TIMEOUT).await {
+                Some(connection) => RelayConnect::Connected(connection),
+                None => {
+                    return Ok(crate::routes::computer_files::files_error(
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        allternit_files_core::ErrorCode::Waking,
+                        "The computer is waking; retry shortly",
+                        Some(allternit_files_core::ComputerState::Waking),
+                        None,
+                        Some(WAKE_WAIT_TIMEOUT.as_secs()),
+                    ))
+                }
+            }
+        }
+    };
+    let connection = match connect {
         RelayConnect::Connected(connection) => connection,
         RelayConnect::Warming => {
             return Ok((
@@ -1445,6 +1645,11 @@ fn filtered_response_headers(headers: HashMap<String, String>) -> HashMap<String
                     | "etag"
                     | "last-modified"
                     | "x-request-id"
+                    // Files drive ranged reads answer 206 with these.
+                    | "content-range"
+                    | "accept-ranges"
+                    // `waking` retries over the relay.
+                    | "retry-after"
             )
         })
         .collect()
@@ -1593,6 +1798,13 @@ fn filtered_headers(headers: HashMap<String, String>) -> HashMap<String, String>
                     // Subscriptions: the one-use human action minted for a
                     // task send, checked by the runtime (D16).
                     | "x-allternit-human-action"
+                    // Files drive (contracts/files-drive SPEC sections 2, 9):
+                    // wake ticket, ranged reads, conditional writes and the
+                    // protected-root unlock proof.
+                    | "x-allternit-wake-ticket"
+                    | "range"
+                    | "if-match"
+                    | "x-allternit-unlock"
             )
         })
         .collect()
@@ -1614,6 +1826,10 @@ pub(crate) fn relay_headers_from_http(headers: &HeaderMap) -> HashMap<String, St
         })
         .collect()
 }
+
+#[cfg(test)]
+#[path = "files_wake_tests.rs"]
+mod files_wake_tests;
 
 #[cfg(test)]
 mod tests {

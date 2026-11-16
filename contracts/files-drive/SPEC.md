@@ -262,6 +262,8 @@ files-snapshots/<computer_id>/v1/roots/<root_id>.json   SnapshotRootFile (items 
 
 Snapshots exclude roots whose policy is `protected` (Memory Drive), and never include `path_hint` or local paths.
 
+**How it gets to R2.** The runtime never holds R2 credentials. It sends the files through cloud-api, signed like the presence heartbeat (`runtime_events` signature headers): `PUT /api/v1/computer-files/snapshot/manifest` (`SnapshotManifest`, at most 1 MiB), then `PUT /api/v1/computer-files/snapshot/roots/:root_id` (`SnapshotRootFile`, at most 8 MiB) for each root. cloud-api stores them under the keys above in the user-files bucket, refuses a manifest for another computer, drops `protected` roots and `path_hint`, and refuses a root file for a root the stored manifest does not list. While the computer has no relay connection, the relay answers `roots`, `list`, `stat`, `changes` (empty at the snapshot's cursor, `reset_required` for any other cursor) and name `search` from these files (section 9 item 2). The live change-feed socket is not offered for a sleeping computer; clients poll `changes`.
+
 ## 12. Scoping (same rules as the legacy routes)
 
 The legacy `/api/v1/files/*` routes are being scoped by step 3 (`files_scope.rs`). v2 applies the same rules:
@@ -300,7 +302,7 @@ Published on the existing events system, all with `event_id`, `at`, `computer_id
 
 ## 15. Storage discovery
 
-The runtime reports `StorageDiscovery` (volumes with kind, total and free bytes, removable, encrypted; bytes per root; replica-host capacity) in its heartbeat. cloud-api keeps the last report and serves it while the computer sleeps. Smart placement and the replica picker read it. Heartbeats do not count as activity.
+The runtime reports `StorageDiscovery` (volumes with kind, total and free bytes, removable, encrypted; bytes per root; replica-host capacity) in its presence heartbeat (`POST /api/v1/runtime-presence/heartbeat`, key `filesStorage`; cloud-api stores it under the signing runtime's id, whatever `computer_id` says). cloud-api keeps the last report and serves it while the computer sleeps. Smart placement and the replica picker read it. Heartbeats do not count as activity.
 
 ## 16. Errors
 

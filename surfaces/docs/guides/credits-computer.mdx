@@ -32,4 +32,10 @@ These are the current prices; the app shows the live ones. Billing is per minute
 
 You get an in-app notice at about 24 hours and about 2 hours of runway left. [Auto top-up](/guides/credits-and-auto-top-up) can refill the balance.
 
+## Browsing files does not wake it
+
+Browsing a sleeping computer's files does not wake it and does not bill running time. Listing folders, checking a file's details, searching by name and following changes never start the computer and never reset its idle timer. While it sleeps, those answers come from the list of file names, sizes and versions the computer saved in your own file storage before it went to sleep (never file contents, and never Memory Drive). Opening, downloading or uploading a file asks first, unless you set the computer to **Auto**. Set **Ask**, **Auto** or **Never** for each computer. With **Never**, Files never wakes it.
+
+The API calls behind this are in [Files drive: cloud API](/api/files-drive-cloud).
+
 Hosted computers run on Allternit servers. They sleep when idle.
