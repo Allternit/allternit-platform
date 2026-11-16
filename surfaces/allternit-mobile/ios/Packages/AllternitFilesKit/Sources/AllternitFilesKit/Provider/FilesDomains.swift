@@ -59,9 +59,21 @@ public enum FilesDomains {
     }
 
     /// Asks the system to pull changes for `computerId` (it calls the
-    /// working-set enumerator, which asks the computer what changed).
+    /// working-set enumerator, which asks the computer what changed), and to
+    /// retry now any upload it is holding back.
+    ///
+    /// Queued offline writes (plan step 15): an edit saved while the computer
+    /// is asleep (no wake consent) or unreachable fails with
+    /// `.serverUnreachable` (`FileProviderErrors.map`), which the system keeps
+    /// as a pending upload and retries with backoff; the edit stays on this
+    /// device meanwhile. Saying the error is resolved makes it retry at once.
+    /// If the computer still sleeps it fails the same way and stays pending.
+    /// The retry carries the edit's base version, so a file that changed on
+    /// the computer meanwhile is kept twice (keep-both conflict copy).
     public static func signalChanges(_ computerId: ComputerId) async {
         guard let manager = await manager(for: computerId) else { return }
+        try? await manager.signalErrorResolved(NSFileProviderError(.serverUnreachable))
+        try? await manager.signalErrorResolved(NSFileProviderError(.notAuthenticated))
         try? await manager.signalEnumerator(for: .workingSet)
     }
 
