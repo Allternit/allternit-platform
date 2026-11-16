@@ -740,6 +740,31 @@ data class QueuedDrop(
     @Wire("state") val state: QueuedDropState
 )
 
+/**
+ * POST /api/v1/computer-files/drops/:drop_id/ack (runtime-signed). delivered: the file is in Inbox as item_id; rejected: it failed its size or content_hash check, or its name could not be used. Either way cloud-api deletes the R2 copy.
+ */
+data class QueuedDropAck(
+    @Wire("state") val state: QueuedDropAckState,
+    @Wire("item_id") val itemId: ItemId? = null,
+    @Wire("reason") val reason: String? = null
+)
+
+enum class QueuedDropAckState(val wire: String) {
+    DELIVERED("delivered"),
+    REJECTED("rejected");
+
+    companion object {
+        fun fromWire(wire: String): QueuedDropAckState? = values().firstOrNull { it.wire == wire }
+    }
+}
+
+/**
+ * GET /api/v1/computer-files/drops, signed by the computer itself (like its presence heartbeat): the drops cloud-api kept while it slept, oldest first, at most 100. The runtime pulls each one into its Inbox root as an untrusted file from that guest, then acks it.
+ */
+data class QueuedDropsResponse(
+    @Wire("drops") val drops: List<QueuedDrop>
+)
+
 enum class QueuedDropState(val wire: String) {
     QUEUED("queued"),
     DELIVERED("delivered"),

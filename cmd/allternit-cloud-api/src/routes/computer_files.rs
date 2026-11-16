@@ -18,9 +18,10 @@
 //!   it in the user's R2 space ([`super::computer_files_snapshot`]).
 //!
 //! - `GET /api/v1/computer-files/:id/placement`, the no-wake peer relay
-//!   `/api/v1/computer-files/peer/:host_id/replicas/...` and the queued-drop
-//!   routes `/api/v1/computer-files/drops...` live in
-//!   [`super::computer_files_replicas`].
+//!   `/api/v1/computer-files/peer/:host_id/replicas/...` live in
+//!   [`super::computer_files_replicas`]; the queued guest drops a computer
+//!   pulls on wake (`/api/v1/computer-files/drops...`) in
+//!   [`super::computer_files_drops`].
 //!
 //! `GET /api/v1/computer-files/token-keys` belongs to the sharing gateway
 //! (`files_gateway`, step 14): one key ([`crate::services::files_tokens`])
@@ -386,8 +387,10 @@ pub fn routes() -> Router<Arc<ApiState>> {
         .route("/api/v1/computer-files/:id/wake-settings", get(get_wake_settings).put(put_wake_settings))
         .route("/api/v1/computer-files/:id/endpoints", get(endpoints))
         .route("/api/v1/computer-files/:id/storage", get(storage))
-        // Step 15: replica placement and the no-wake peer relay; step 17: queued drops.
+        // Step 15: replica placement and the no-wake peer relay.
         .merge(super::computer_files_replicas::routes())
+        // Step 17: guest drops kept while the computer slept, pulled on wake.
+        .merge(super::computer_files_drops::routes())
         .route(
             SNAPSHOT_MANIFEST_PATH,
             put(put_snapshot_manifest).layer(DefaultBodyLimit::max(SNAPSHOT_MANIFEST_MAX_BYTES)),

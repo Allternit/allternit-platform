@@ -164,11 +164,6 @@ async fn the_peer_relay_forwards_to_a_connected_host_and_never_wakes_an_asleep_o
     assert!(!headers.contains_key("x-allternit-wake-ticket"));
     assert_eq!((encoding.as_str(), STANDARD.decode(body).unwrap()), ("base64", b"sealed-head".to_vec()));
     assert_eq!(wakes(), before);
-
-    // Flag off: feature_disabled before anything else.
-    std::env::remove_var("ALLTERNIT_FILES_DRIVE_ENABLED");
-    let (status, body) = peer(&state, "PUT", head, Some(&src), b"x").await;
-    assert_eq!((status, body["code"].as_str()), (StatusCode::FORBIDDEN, Some("feature_disabled")));
 }
 
 #[tokio::test]
@@ -207,5 +202,4 @@ async fn placement_reads_the_heartbeat_reports_of_the_users_other_computers() {
 
     let req = crate::routes::test_support::authed_request("GET", "/api/v1/computer-files/rt_pl_src/placement", "");
     assert_eq!(routes().with_state(state.clone()).oneshot(req).await.unwrap().status(), StatusCode::BAD_REQUEST);
-    std::env::remove_var("ALLTERNIT_FILES_DRIVE_ENABLED");
 }

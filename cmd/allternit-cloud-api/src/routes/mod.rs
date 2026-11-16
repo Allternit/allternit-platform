@@ -113,6 +113,7 @@ pub mod regions;
 pub mod runs;
 pub mod runtime_pairing;
 pub mod computer_files;
+pub mod computer_files_drops;
 pub mod computer_files_replicas;
 pub mod computer_files_snapshot;
 pub mod runtime_relay;

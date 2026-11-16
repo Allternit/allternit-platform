@@ -1146,8 +1146,9 @@ async fn guest_wake(state: &ApiState, share: &ShareRow, claims: &GuestCapability
 }
 
 /// SPEC section 9.6: an `upload_only` small write to a sleeping computer is
-/// kept in the owner's R2 space as a `QueuedDrop`, pulled into the shared
-/// folder on the next wake.
+/// kept in the owner's R2 space as a `QueuedDrop`. The computer pulls it into
+/// its Inbox (untrusted, needs approval) on the next wake
+/// (`computer_files_drops`).
 async fn queue_drop(
     state: &ApiState,
     share: &ShareRow,

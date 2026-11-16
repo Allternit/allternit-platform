@@ -1592,6 +1592,43 @@ public struct QueuedDrop: Codable, Hashable, Sendable {
     }
 }
 
+/// POST /api/v1/computer-files/drops/:drop_id/ack (runtime-signed). delivered: the file is in Inbox as item_id; rejected: it failed its size or content_hash check, or its name could not be used. Either way cloud-api deletes the R2 copy.
+public struct QueuedDropAck: Codable, Hashable, Sendable {
+    public var state: QueuedDropAckState
+    public var itemId: ItemId?
+    public var reason: String?
+
+    public init(state: QueuedDropAckState, itemId: ItemId? = nil, reason: String? = nil) {
+        self.state = state
+        self.itemId = itemId
+        self.reason = reason
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case state
+        case itemId = "item_id"
+        case reason
+    }
+}
+
+public enum QueuedDropAckState: String, Codable, Hashable, Sendable, CaseIterable {
+    case delivered = "delivered"
+    case rejected = "rejected"
+}
+
+/// GET /api/v1/computer-files/drops, signed by the computer itself (like its presence heartbeat): the drops cloud-api kept while it slept, oldest first, at most 100. The runtime pulls each one into its Inbox root as an untrusted file from that guest, then acks it.
+public struct QueuedDropsResponse: Codable, Hashable, Sendable {
+    public var drops: [QueuedDrop]
+
+    public init(drops: [QueuedDrop]) {
+        self.drops = drops
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case drops
+    }
+}
+
 public enum QueuedDropState: String, Codable, Hashable, Sendable, CaseIterable {
     case queued = "queued"
     case delivered = "delivered"

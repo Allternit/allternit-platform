@@ -31,6 +31,9 @@
 //!   restore with a hash check, cross-computer copy and move as jobs.
 
 mod cloud;
+mod drops;
+#[cfg(test)]
+mod drops_tests;
 mod errors;
 mod events;
 mod feed;
@@ -138,6 +141,8 @@ pub fn router<S: Clone + Send + Sync + 'static>(app_data_dir: &Path, db: DbHandl
     sync::spawn_replicator(files.clone());
     // Step 13: the asleep snapshot, written while awake (SPEC section 11).
     snapshot::spawn(files.clone());
+    // Step 17: guest drops queued while this computer slept go to Inbox.
+    drops::spawn(files.clone());
     routes::routes(files)
 }
 
