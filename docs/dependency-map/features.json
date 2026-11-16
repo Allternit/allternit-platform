@@ -4785,7 +4785,11 @@
         "allternit/cmd/allternit-api/src/file_routes.rs",
         "allternit/cmd/allternit-api/src/files_v2",
         "allternit/cmd/allternit-cloud-api/src/routes/runtime_relay.rs",
-        "allternit/tools/files-stub"
+        "allternit/tools/files-stub",
+        "allternit/surfaces/allternit-desktop/native/files-win",
+        "allternit/surfaces/allternit-desktop/build/installer.nsh",
+        "allternit/.github/workflows/files-win-helper.yml",
+        "allternit/surfaces/docs/guides/files-drive.mdx"
       ],
       "decisions": [
         {
