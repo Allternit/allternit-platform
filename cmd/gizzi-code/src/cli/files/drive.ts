@@ -22,7 +22,9 @@
  * Types mirror contracts/files-drive/schema/*.json (field names are the wire
  * names). Only the fields this client reads are typed.
  */
+import fs from "node:fs"
 import os from "node:os"
+import path from "node:path"
 import { ALLTERNIT_GATEWAY_BASE } from "@/shared/constants/allternitGateway"
 import { cloudBase, listRuntimes, pick, type Runtime } from "@/cli/work/api"
 
@@ -31,6 +33,54 @@ export const FILES_V2 = "/api/v1/files/v2"
 export const SMALL_WRITE_MAX = 4 * 1024 * 1024
 /** Read piece: the largest chunk, so one relay request each. */
 export const READ_PIECE = 4 * 1024 * 1024
+
+// ── the mount helper ──────────────────────────────────────────────────────
+
+export const MOUNT_BIN = process.platform === "win32" ? "allternit-files-mount.exe" : "allternit-files-mount"
+
+function isExecutable(p: string): boolean {
+  try {
+    const st = fs.statSync(p)
+    if (!st.isFile()) return false
+    if (process.platform !== "win32") fs.accessSync(p, fs.constants.X_OK)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * `allternit-files-mount` (platform/files/allternit-files-mount), used by
+ * `gizzi files mount` and uploads over 4 MiB. Where installs put it:
+ *
+ * 1. ALLTERNIT_FILES_MOUNT_BIN (explicit; nothing else is tried when it is set but wrong).
+ * 2. Next to the gizzi binary: the npm platform package, the release tarball,
+ *    brew's libexec, and Desktop's resources/bin (Desktop runs gizzi-code from there).
+ * 3. Allternit Desktop on Linux (.deb: /opt/Allternit Desktop/resources/bin;
+ *    AppImage: $APPDIR/resources/bin while it runs).
+ * 4. ~/.allternit/bin, then PATH.
+ */
+export function mountBinary(env: NodeJS.ProcessEnv = process.env, execPath: string = process.execPath): string | undefined {
+  const explicit = env.ALLTERNIT_FILES_MOUNT_BIN?.trim()
+  if (explicit) return isExecutable(explicit) ? explicit : undefined
+  let execDir = path.dirname(execPath)
+  try {
+    execDir = path.dirname(fs.realpathSync(execPath)) // brew's bin/ symlink -> libexec/
+  } catch {}
+  const candidates = [
+    path.join(execDir, MOUNT_BIN),
+    ...(process.platform === "linux"
+      ? [
+          path.join("/opt", "Allternit Desktop", "resources", "bin", MOUNT_BIN),
+          ...(env.APPDIR ? [path.join(env.APPDIR, "resources", "bin", MOUNT_BIN)] : []),
+        ]
+      : []),
+    ...(process.platform === "darwin" ? [path.join("/Applications", "Allternit Desktop.app", "Contents", "Resources", "bin", MOUNT_BIN)] : []),
+    path.join(os.homedir(), ".allternit", "bin", MOUNT_BIN),
+    ...(env.PATH ?? "").split(path.delimiter).filter(Boolean).map((d) => path.join(d, MOUNT_BIN)),
+  ]
+  return candidates.find(isExecutable)
+}
 
 // ── contract types (subset) ───────────────────────────────────────────────
 

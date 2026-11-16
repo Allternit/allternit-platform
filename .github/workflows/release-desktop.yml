@@ -322,6 +322,21 @@ jobs:
           chmod +x surfaces/allternit-desktop/resources/bin/allternit-factory
           lipo -info surfaces/allternit-desktop/resources/bin/allternit-factory
 
+      - name: Build Files drive mount helper
+        # allternit-files-mount: gizzi files mount (WebDAV on macOS) and Files
+        # uploads over 4 MiB. gizzi finds it next to itself in resources/bin;
+        # prepare-files-mount.cjs then finds it already staged. Universal lipo.
+        run: |
+          cargo build --release -p allternit-files-mount --target x86_64-apple-darwin
+          cargo build --release -p allternit-files-mount --target aarch64-apple-darwin
+          mkdir -p surfaces/allternit-desktop/resources/bin
+          lipo -create \
+            target/x86_64-apple-darwin/release/allternit-files-mount \
+            target/aarch64-apple-darwin/release/allternit-files-mount \
+            -output surfaces/allternit-desktop/resources/bin/allternit-files-mount
+          chmod +x surfaces/allternit-desktop/resources/bin/allternit-files-mount
+          lipo -info surfaces/allternit-desktop/resources/bin/allternit-files-mount
+
       - name: Record Rust binaries for reuse
         if: steps.prebuilt.outputs.hit != 'true'
         shell: bash
@@ -870,6 +885,18 @@ jobs:
           ls -lh surfaces/allternit-desktop/resources/bin/allternit-voice-service surfaces/allternit-desktop/resources/bin/allternit-tts
           # No espeak-ng (GPL-3.0) in the voice service: it lives in allternit-tts.
           bash scripts/check-voice-no-gpl.sh surfaces/allternit-desktop/resources/bin/allternit-voice-service
+
+      - name: Build Files drive mount helper (Linux)
+        # allternit-files-mount: the Linux FUSE mount (gizzi files mount, via
+        # fusermount3; pure-Rust fuser, no libfuse link) and Files uploads over
+        # 4 MiB. Lands in resources/bin next to gizzi-code.
+        run: |
+          cargo build --release -p allternit-files-mount --target x86_64-unknown-linux-gnu
+          mkdir -p surfaces/allternit-desktop/resources/bin
+          cp target/x86_64-unknown-linux-gnu/release/allternit-files-mount \
+             surfaces/allternit-desktop/resources/bin/allternit-files-mount
+          chmod +x surfaces/allternit-desktop/resources/bin/allternit-files-mount
+          ls -lh surfaces/allternit-desktop/resources/bin/allternit-files-mount
 
       - name: Setup Go
         # Needed to build the mesh-node sidecar from source (the vendor tree

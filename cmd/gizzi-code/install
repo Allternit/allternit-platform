@@ -437,6 +437,14 @@ download_and_install() {
     mv "$tmp_dir/gizzi-code" "$INSTALL_DIR/gizzi-code"
     chmod 755 "${INSTALL_DIR}/gizzi-code"
     ln -sf "gizzi-code" "${INSTALL_DIR}/gizzi"
+    # Helpers gizzi finds next to itself: the Factory engine (gizzi agents …)
+    # and the Files drive mount helper (gizzi files mount, big uploads).
+    for helper in allternit-factory allternit-files-mount; do
+        if [ -f "$tmp_dir/$helper" ]; then
+            mv "$tmp_dir/$helper" "$INSTALL_DIR/$helper"
+            chmod 755 "${INSTALL_DIR}/$helper"
+        fi
+    done
     rm -rf "$tmp_dir"
 }
 

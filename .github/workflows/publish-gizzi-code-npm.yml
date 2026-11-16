@@ -237,6 +237,25 @@ jobs:
           cp "target/$TRIPLE/release/allternit-factory" "cmd/gizzi-code/dist/allternit-factory-${{ matrix.target }}"
           chmod +x "cmd/gizzi-code/dist/allternit-factory-${{ matrix.target }}"
 
+      - name: Build the Files drive mount helper
+        # `gizzi files mount` (FUSE on Linux, WebDAV on macOS) and uploads over
+        # 4 MiB run allternit-files-mount, found next to the gizzi binary
+        # (src/cli/files/drive.ts mountBinary). Ships beside allternit-factory.
+        # Pure-Rust FUSE (fuser, no libfuse link); Unix only.
+        if: matrix.node_os != 'win32'
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "${{ matrix.target }}" in
+            darwin-arm64) TRIPLE=aarch64-apple-darwin ;;
+            darwin-x64)   TRIPLE=x86_64-apple-darwin ;;
+            linux-x64)    TRIPLE=x86_64-unknown-linux-gnu ;;
+            linux-arm64)  TRIPLE=aarch64-unknown-linux-gnu ;;
+          esac
+          cargo build --release -p allternit-files-mount --target "$TRIPLE"
+          cp "target/$TRIPLE/release/allternit-files-mount" "cmd/gizzi-code/dist/allternit-files-mount-${{ matrix.target }}"
+          chmod +x "cmd/gizzi-code/dist/allternit-files-mount-${{ matrix.target }}"
+
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
         with:
@@ -244,6 +263,7 @@ jobs:
           path: |
             cmd/gizzi-code/dist/gizzi-code-${{ matrix.target }}*
             cmd/gizzi-code/dist/allternit-factory-${{ matrix.target }}
+            cmd/gizzi-code/dist/allternit-files-mount-${{ matrix.target }}
           if-no-files-found: error
 
       - name: Setup Node for NPM
@@ -285,7 +305,10 @@ jobs:
             test -f "dist/allternit-factory-${TARGET}"
             cp "dist/allternit-factory-${TARGET}" "$PKG_DIR/allternit-factory"
             chmod +x "$PKG_DIR/allternit-factory"
-            ENGINE_FILES="allternit-factory"
+            test -f "dist/allternit-files-mount-${TARGET}"
+            cp "dist/allternit-files-mount-${TARGET}" "$PKG_DIR/allternit-files-mount"
+            chmod +x "$PKG_DIR/allternit-files-mount"
+            ENGINE_FILES="allternit-factory,allternit-files-mount"
           fi
           export ENGINE_FILES
           node -e '
@@ -297,7 +320,7 @@ jobs:
               license: "MIT",
               os: [process.env.NODE_OS],
               cpu: [process.env.NODE_CPU],
-              files: [process.env.BIN_BASENAME, "vendor", ...(process.env.ENGINE_FILES ? [process.env.ENGINE_FILES] : [])],
+              files: [process.env.BIN_BASENAME, "vendor", ...(process.env.ENGINE_FILES ? process.env.ENGINE_FILES.split(",") : [])],
               repository: {
                 type: "git",
                 url: "https://github.com/Allternit/allternit-platform.git",
@@ -504,7 +527,16 @@ jobs:
             fi
             cp "$engine" "${stage}/allternit-factory"
             chmod +x "${stage}/allternit-factory"
-            tar -C "$stage" -czf "release-assets/gizzi-code-v${VERSION}-${target}.tar.gz" gizzi-code allternit-factory
+            # The Files drive mount helper (gizzi files mount, uploads over 4 MiB).
+            local mount="artifacts/allternit-files-mount-${target}"
+            if [ ! -f "$mount" ]; then
+              echo "::error::missing Files mount helper $mount"
+              missing=1
+              return
+            fi
+            cp "$mount" "${stage}/allternit-files-mount"
+            chmod +x "${stage}/allternit-files-mount"
+            tar -C "$stage" -czf "release-assets/gizzi-code-v${VERSION}-${target}.tar.gz" gizzi-code allternit-factory allternit-files-mount
             rm -rf "$stage"
           }
           pack_unix darwin-arm64

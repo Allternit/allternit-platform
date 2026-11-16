@@ -6,7 +6,14 @@ description: "gizzi files lists, copies, shares and mounts the files on your com
 `gizzi files` works with the Files drive: the folders on each of your Allternit computers (Inbox, Shared, Agent Output, Downloads, Meetings, Scans, Memory Drive, Code, Models and folders you added). It uses the same Files protocol as the web app, the phone apps and Finder or Explorer, so a change made here shows everywhere.
 
 <Note>
-The Files drive is turned on per account while it is in preview. Without it, every command answers `feature_disabled`.
+The Files drive is in preview and is off by default. It is turned on per account with the `files_drive` flag. Until Gizzi reads that flag from your account, turn it on in the terminal with `ALLTERNIT_FILES_DRIVE=1` (the same switch the computer's runtime uses).
+
+While it is off:
+
+- every `gizzi files` command prints `Files drive is not on for this account yet` and exits with code 2. With `--json` it prints `{"error":{"code":"flag_off","message":"Files drive is not on for this account yet","flag":"files_drive"}}`.
+- the TUI `/files` command is hidden. `/context files` still works.
+
+A computer whose runtime has the drive off answers `feature_disabled`.
 </Note>
 
 ## Paths
@@ -72,7 +79,20 @@ Every change carries the version gizzi last saw. When the file changed somewhere
 
 ### Big files
 
-Files up to 4 MB go in one request. Bigger files are cut into pieces of up to 4 MB with the same chunker every Allternit client uses, so a piece the computer already has is not sent again. Big uploads use the `allternit-files-mount` helper (it ships with Allternit Desktop and the gizzi package; `ALLTERNIT_FILES_MOUNT_BIN` points to another copy).
+Files up to 4 MB go in one request. Bigger files are cut into pieces of up to 4 MB with the same chunker every Allternit client uses, so a piece the computer already has is not sent again. Big uploads use the `allternit-files-mount` helper (see below).
+
+### The mount helper
+
+`gizzi files mount` and uploads over 4 MB run `allternit-files-mount`, which is installed next to gizzi on macOS and Linux:
+
+| Install | Where it is |
+|---|---|
+| npm (`@allternit/gizzi-code`) | next to the gizzi binary in the platform package |
+| Homebrew | beside gizzi in its `libexec` folder |
+| The install script or release tarball | next to `gizzi-code` in the install folder (`~/.local/bin` by default) |
+| Allternit Desktop | the app's `resources/bin` folder, next to its gizzi |
+
+gizzi also looks in `/opt/Allternit Desktop/resources/bin` (the Linux .deb), `~/.allternit/bin` and your PATH. `ALLTERNIT_FILES_MOUNT_BIN` points it at another copy. Windows has no mount helper: Explorer shows the drive through Allternit Desktop.
 
 ### Share roles
 

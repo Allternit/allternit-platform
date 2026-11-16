@@ -16,6 +16,9 @@
  * ("Wake it? [y/N/always]"); `--wake` says yes, and "always" sets the
  * computer's wake setting to auto. `--json` never prompts: it prints the
  * `wake_consent_required` error for scripts to handle.
+ *
+ * Off unless the files_drive flag is on (ALLTERNIT_FILES_DRIVE=1): every verb
+ * then prints "Files drive is not on for this account yet" and exits 2.
  */
 import type { Argv } from "yargs"
 import fs from "node:fs"
@@ -27,6 +30,7 @@ import { spawn } from "node:child_process"
 import { cmd } from "@/cli/commands/cmd"
 import { UI } from "@/cli/ui"
 import { cloudBase } from "@/cli/work/api"
+import { FILES_DRIVE_OFF, filesDriveEnabled } from "@/cli/files/flag"
 import {
   Drive,
   FilesError,
@@ -34,6 +38,7 @@ import {
   SMALL_WRITE_MAX,
   formatBytes,
   formatItems,
+  mountBinary,
   formatTime,
   freshnessLine,
   looksRemote,
@@ -65,6 +70,13 @@ function out(args: Common, json: unknown, text: string) {
 
 /** Run one verb: plain error lines (or the ErrorBody as JSON) and exit 1 on failure. */
 async function run(args: Common, fn: () => Promise<void>): Promise<void> {
+  // Dark behind the files_drive flag (PLAN D10): one line, exit 2.
+  if (!filesDriveEnabled()) {
+    if (args.json) process.stdout.write(JSON.stringify({ error: { code: "flag_off", message: FILES_DRIVE_OFF, flag: "files_drive" } }) + "\n")
+    else process.stderr.write(FILES_DRIVE_OFF + "\n")
+    process.exitCode = 2
+    return
+  }
   try {
     await fn()
   } catch (e) {
@@ -240,19 +252,8 @@ const GetCommand = cmd({
 
 // ── put ───────────────────────────────────────────────────────────────────
 
-/** The binary `gizzi files mount` and big uploads use (platform/files/allternit-files-mount). */
-function mountBinary(): string | undefined {
-  const candidates = [
-    process.env.ALLTERNIT_FILES_MOUNT_BIN,
-    Bun.which("allternit-files-mount") ?? undefined,
-    path.join(path.dirname(process.execPath), "allternit-files-mount"),
-    path.join(os.homedir(), ".allternit", "bin", "allternit-files-mount"),
-  ]
-  return candidates.find((c) => c && fs.existsSync(c))
-}
-
 const NO_BINARY =
-  "allternit-files-mount is not installed. It ships with Allternit Desktop and the gizzi package; or set ALLTERNIT_FILES_MOUNT_BIN to its path."
+  "allternit-files-mount is missing. It ships with gizzi (npm, brew, release tarball) and with Allternit Desktop on macOS and Linux; reinstall one, or set ALLTERNIT_FILES_MOUNT_BIN to its path."
 
 /** The `ALLTERNIT_FILES_*` connection for the mount binary (tokens by environment, never argv). */
 async function mountEnv(drive: Drive, allowWake: boolean): Promise<Record<string, string>> {

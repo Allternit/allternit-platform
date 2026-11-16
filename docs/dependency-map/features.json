@@ -4788,7 +4788,8 @@
         "allternit/tools/files-stub",
         "allternit/platform/files/allternit-files-mount",
         "allternit/cmd/gizzi-code/src/cli/commands/files.ts",
-        "allternit/cmd/gizzi-code/src/cli/files/drive.ts",
+        "allternit/cmd/gizzi-code/src/cli/files",
+        "allternit/surfaces/allternit-desktop/scripts/prepare-files-mount.cjs",
         "allternit/cmd/gizzi-code/src/cli/ui/ink-app/commands/files",
         "allternit/cmd/gizzi-code/src/cli/ui/ink-app/commands/context/files-in-context.ts",
         "allternit/surfaces/docs/cli/files.mdx"
