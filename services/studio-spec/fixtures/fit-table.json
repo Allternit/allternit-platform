@@ -135,67 +135,6 @@
         "warning": "Training on the CPU is slow. Use a small base model; even a small LoRA run can take hours."
       }
     },
-    "unsloth-upstream": {
-      "apple-silicon": "Unsloth (upstream, unmodified) runs only on Linux with an NVIDIA GPU, Windows with an NVIDIA GPU, Linux with an Intel GPU or Windows with an Intel GPU, not on a Mac with Apple Silicon.",
-      "cuda-linux": {
-        "methods": {
-          "lora": "ok",
-          "qlora": "ok"
-        },
-        "backend": {
-          "lora": "torch-cuda",
-          "qlora": "torch-cuda"
-        },
-        "outputs": {
-          "mlx": "MLX files are made only on a Mac with Apple Silicon."
-        },
-        "warning": null
-      },
-      "cuda-windows": {
-        "methods": {
-          "lora": "ok",
-          "qlora": "ok"
-        },
-        "backend": {
-          "lora": "torch-cuda",
-          "qlora": "torch-cuda"
-        },
-        "outputs": {
-          "mlx": "MLX files are made only on a Mac with Apple Silicon."
-        },
-        "warning": null
-      },
-      "rocm-linux": "Unsloth (upstream, unmodified) runs only on Linux with an NVIDIA GPU, Windows with an NVIDIA GPU, Linux with an Intel GPU or Windows with an Intel GPU, not on Linux with an AMD GPU.",
-      "xpu-linux": {
-        "methods": {
-          "lora": "ok",
-          "qlora": "ok"
-        },
-        "backend": {
-          "lora": "torch-xpu",
-          "qlora": "torch-xpu"
-        },
-        "outputs": {
-          "mlx": "MLX files are made only on a Mac with Apple Silicon."
-        },
-        "warning": null
-      },
-      "xpu-windows": {
-        "methods": {
-          "lora": "ok",
-          "qlora": "ok"
-        },
-        "backend": {
-          "lora": "torch-xpu",
-          "qlora": "torch-xpu"
-        },
-        "outputs": {
-          "mlx": "MLX files are made only on a Mac with Apple Silicon."
-        },
-        "warning": null
-      },
-      "cpu": "Unsloth (upstream, unmodified) runs only on Linux with an NVIDIA GPU, Windows with an NVIDIA GPU, Linux with an Intel GPU or Windows with an Intel GPU, not on the CPU alone."
-    },
     "axolotl": {
       "apple-silicon": "Axolotl runs only on Linux with an NVIDIA GPU, not on a Mac with Apple Silicon.",
       "cuda-linux": {

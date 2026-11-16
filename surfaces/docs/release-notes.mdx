@@ -13,7 +13,8 @@ Arrives with the next Desktop runtime, the next `gizzi` release and the next web
 - **MLX on Mac:** `lora` and `qlora` train with MLX, and **Also make → MLX** writes MLX files. The MLX adapter is mlx-lm's own format, not PEFT.
 - **Studio API:** `fit` on each engine, `resources.backend`, `outputs.mlx`, `base.path`, absolute output paths, and the new error codes `method_not_supported`, `backend_not_supported`, `output_not_supported`, `hardware_unavailable` and `invalid_base`. See [Studio API](/api/studio).
 - **Gizzi Code:** `gizzi studio run` takes `--backend` and `--mlx`.
-- **Engines:** Unsloth, Axolotl, LLaMA-Factory and torchtune install on your computer from the studio-engines kit at a pinned commit, with each upstream engine unmodified at a pinned version; Unsloth (AGPL-3.0) runs as a separate process. See [Where the engines come from](/api/studio#where-the-engines-come-from).
+- **Engines:** Axolotl, LLaMA-Factory and torchtune install on your computer from the studio-engines kit at a pinned commit, with each upstream engine unmodified at a pinned version and run as a separate process. See [Where the engines come from](/api/studio#where-the-engines-come-from).
+- **Unsloth removed as an engine:** its CLI is AGPL-3.0, and nothing Allternit ships may sit under AGPL or LGPL, even as a separate process. Studio now has three external engines plus Allternit Tune, which covers LoRA, QLoRA and GGUF export.
 
 ## 2026-11-15 — Freeweights Studio: training on your own computer
 
