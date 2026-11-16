@@ -20,11 +20,16 @@
 //!   chunk PUT, which take 4 MiB + 64 KiB (section 2).
 
 mod errors;
+mod events;
 mod feed;
+mod inbox;
+#[cfg(test)]
+mod inbox_tests;
 mod memory;
 mod meta;
 mod roots;
 mod routes;
+mod rules;
 mod storage;
 #[cfg(test)]
 mod tests;
@@ -45,6 +50,7 @@ use tokio::sync::{broadcast, OnceCell};
 use crate::db::DbHandle;
 use crate::files_scope::FilesScope;
 pub use errors::{status_for, ApiError};
+pub use rules::{is_folder_rule, RULE_TRIGGER};
 
 /// Env switch for the whole drive (off by default).
 pub const FLAG_ENV: &str = "ALLTERNIT_FILES_DRIVE";
@@ -147,6 +153,9 @@ pub(crate) struct Inner {
     pub watcher: Option<DriveWatcher>,
     /// Memory Drive revision last copied into its view folder.
     pub memory_rev: Mutex<Option<String>>,
+    /// The model Inbox tasks call; `None` is the computer's default model
+    /// (`inbox::GizziModel`). Tests put a recorder here.
+    pub task_model: std::sync::RwLock<Option<Arc<dyn inbox::TaskModel>>>,
 }
 
 impl Inner {
@@ -191,7 +200,9 @@ impl Inner {
             feed,
             watcher: None,
             memory_rev: Mutex::new(None),
+            task_model: std::sync::RwLock::new(None),
         };
+        inbox::ensure_schema(&inner.meta.lock().expect("meta lock")).map_err(|e| fail(e.into()))?;
         roots::ensure_defaults(&inner).map_err(|e| e.into_api(&inner))?;
         if cfg.watch {
             match DriveWatcher::start(inner.drive.clone(), |e| tracing::warn!(error = %e, "files v2: watcher reconcile failed")) {
@@ -199,7 +210,10 @@ impl Inner {
                 Err(e) => tracing::warn!(error = %e, "files v2: watcher did not start; changes made outside the drive show up on the next scan"),
             }
         }
-        Ok(Arc::new(inner))
+        let inner = Arc::new(inner);
+        // Change events, Inbox drops and folder rules (SPEC sections 7 and 14).
+        events::attach(&inner);
+        Ok(inner)
     }
 
     /// The root for `root_id` after the caller's checks (section 12).

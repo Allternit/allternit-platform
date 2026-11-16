@@ -89,6 +89,14 @@ const PHONE_KEYS: &[&str] = &[
     "approval_id", "effect", "state", "held_ms", "holds",
 ];
 
+/// Extra keys a Files event (`files.inbox.dropped`, `files.task.result`,
+/// `files.conflict`) carries: the contract's `FilesEvent` fields
+/// (`contracts/files-drive/schema/events.json`). Never file content.
+const FILES_KEYS: &[&str] = &[
+    "event_id", "at", "computer_id", "root_id", "item_id", "name", "size", "mime", "dropped_by", "untrusted",
+    "task_id", "task_state", "rule_id", "input_item_id", "status", "result_item_ids", "agent_id", "error", "conflict",
+];
+
 // ---------------------------------------------------------------- owner ledger
 
 /// Append an owner-level event (no bot). Idempotent per `(user_id, key)`.
@@ -141,6 +149,13 @@ pub fn envelope(source: &str, row: &LedgerRow) -> Option<Value> {
     }
     if matches!(kind, Kind::PhoneStep | Kind::PhoneRunCompleted | Kind::PhoneApprovalRequested | Kind::PhoneApprovalResolved) {
         for k in PHONE_KEYS {
+            if let Some(v) = p.get(*k).filter(|v| !v.is_null()) {
+                data.insert((*k).to_string(), v.clone());
+            }
+        }
+    }
+    if matches!(kind, Kind::FilesInboxDropped | Kind::FilesTaskResult | Kind::FilesConflict) {
+        for k in FILES_KEYS {
             if let Some(v) = p.get(*k).filter(|v| !v.is_null()) {
                 data.insert((*k).to_string(), v.clone());
             }
@@ -589,13 +604,17 @@ mod tests {
             ("phone.run.completed", json!({ "run_id": "task-1" }), Some("phone.run.completed")),
             ("phone.approval.requested", json!({ "approval_id": "a1" }), Some("phone.approval.requested")),
             ("phone.approval.resolved", json!({ "approval_id": "a1", "state": "approved" }), Some("phone.approval.resolved")),
+            ("files.changed", json!({ "item_id": "it_1", "op": "created" }), None),
+            ("files.inbox.dropped", json!({ "task_id": "tsk_1", "untrusted": true }), Some("files.inbox.dropped")),
+            ("files.task.result", json!({ "task_id": "tsk_1", "status": "succeeded" }), Some("files.task.result")),
+            ("files.conflict", json!({ "conflict": {} }), Some("files.conflict")),
         ];
         for (ty, payload, want) in table {
             let got = classify(ty, payload).and_then(Kind::registry);
             assert_eq!(got, *want, "{ty} {payload}");
         }
         // The registry names this runtime emits are all in the agreed list.
-        let registry = ["approval.requested", "approval.resolved", "agent.run.completed", "thread.needs_user", "message.received", "call.ended", "inbox.item.created", "vendor.ticket.created", "subscription.login_needed", "subscription.signed_in", "usage.threshold", "attention.opened", "attention.resolved", "phone.step", "phone.run.completed", "phone.approval.requested", "phone.approval.resolved"];
+        let registry = ["approval.requested", "approval.resolved", "agent.run.completed", "thread.needs_user", "message.received", "call.ended", "inbox.item.created", "vendor.ticket.created", "subscription.login_needed", "subscription.signed_in", "usage.threshold", "attention.opened", "attention.resolved", "phone.step", "phone.run.completed", "phone.approval.requested", "phone.approval.resolved", "files.inbox.dropped", "files.task.result", "files.conflict"];
         for (_, _, want) in table {
             if let Some(w) = want {
                 assert!(registry.contains(w), "{w}");

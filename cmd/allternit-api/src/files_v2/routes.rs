@@ -68,6 +68,7 @@ pub fn routes<S: Clone + Send + Sync + 'static>(files: Arc<FilesV2>) -> Router<S
         .route("/storage", get(super::storage::storage))
         .route("/replicas", get(replicas).post(replicas))
         .route("/replicas/restore", post(replicas))
+        .merge(super::inbox::routes())
         .layer(DefaultBodyLimit::max(BODY_LIMIT))
         .layer(Extension(files));
     Router::new().nest("/files/v2", v2)
@@ -99,11 +100,11 @@ fn bytes(b: Result<Bytes, BytesRejection>) -> Result<Bytes, ApiError> {
 
 pub(crate) fn mutation(v: &Inner, m: &Mutation) -> Result<MutationResponse, Fail> {
     let root = v.drive.root(&m.item.root_id)?;
-    Ok(MutationResponse {
-        item: v.item(&root, &m.item),
-        conflict: m.conflict.as_ref().map(|c| c.to_info(permissions(&root, &c.conflict_item))),
-        cursor: m.cursor.clone(),
-    })
+    let conflict = m.conflict.as_ref().map(|c| c.to_info(permissions(&root, &c.conflict_item)));
+    if let Some(info) = &conflict {
+        super::events::conflict(v, info);
+    }
+    Ok(MutationResponse { item: v.item(&root, &m.item), conflict, cursor: m.cursor.clone() })
 }
 
 fn now(v: &Inner) -> String {
