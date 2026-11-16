@@ -151,7 +151,7 @@ The native side is the `ondevice` module of the Android app (`surfaces/allternit
 
 ## Device sharing
 
-A device can serve the models it runs to its owner's other devices. The host keeps one WebSocket to cloud-api's model-host relay (platform `cmd/allternit-cloud-api/src/routes/model_hosts.rs`, PR 1960). The relay forwards OpenAI-style chat requests to the host as frames and streams the reply back. The model runs on the host. Protocol and routes: [Model host relay](/api/model-host-relay).
+A device can serve the models it runs to its owner's other devices. The host keeps one WebSocket to cloud-api's model-host relay (platform `cmd/allternit-cloud-api/src/routes/model_hosts.rs`, PR 1960). The relay forwards chat completion requests to the host as frames and streams the reply back. The model runs on the host. Protocol and routes: [Model host relay](/api/model-host-relay).
 
 On the app side (allternit-ai `src/lib/model-host/`):
 
