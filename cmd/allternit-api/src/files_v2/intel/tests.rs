@@ -346,3 +346,42 @@ fn summaries_pick_sentences_from_the_file() {
     assert!(s.contains("supplier"), "{s}");
     assert!(!s.contains("Lunch"), "{s}");
 }
+
+/// A one-page PDF built byte by byte (no committed blob).
+fn tiny_pdf(text: &str) -> Vec<u8> {
+    let content = format!("BT /F1 12 Tf 72 720 Td ({text}) Tj ET");
+    let objs = [
+        "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>".to_string(),
+        format!("<< /Length {} >>\nstream\n{content}\nendstream", content.len()),
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_string(),
+    ];
+    let mut out = b"%PDF-1.4\n".to_vec();
+    let mut offsets = Vec::new();
+    for (i, o) in objs.iter().enumerate() {
+        offsets.push(out.len());
+        out.extend(format!("{} 0 obj\n{o}\nendobj\n", i + 1).bytes());
+    }
+    let xref = out.len();
+    out.extend(format!("xref\n0 {}\n0000000000 65535 f \n", objs.len() + 1).bytes());
+    for off in offsets {
+        out.extend(format!("{off:010} 00000 n \n").bytes());
+    }
+    out.extend(format!("trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n", objs.len() + 1).bytes());
+    out
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_phrase_search_finds_a_pdf_by_its_text() {
+    let e = env().await;
+    let inbox = e.root(RootKind::Inbox);
+    std::fs::write(inbox.local_path.join("contract.pdf"), tiny_pdf("The indemnity clause survives termination")).unwrap();
+    std::fs::write(inbox.local_path.join("broken.pdf"), b"%PDF-1.4 not really a pdf").unwrap();
+    e.inner.drive.scan_root(&inbox.root_id).unwrap();
+    let id = e.inner.drive.list(&inbox.root_item_id).unwrap().into_iter().find(|i| i.name == "contract.pdf").unwrap().id;
+    e.index_all(); // the broken file is skipped, not fatal
+    let ids = ids(&scoped_roots(&e.inner, &e.owner(), None).ok().expect("roots"));
+    let hits = e.inner.intel.search_full_text(&match_expr("\"indemnity clause\"").unwrap(), &ids, None, 10, 0).unwrap();
+    assert_eq!(hits.iter().map(|h| h.item_id.clone()).collect::<Vec<_>>(), vec![id]);
+}

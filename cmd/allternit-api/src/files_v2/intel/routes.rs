@@ -15,7 +15,7 @@ use axum::response::{IntoResponse, Response};
 use axum::{Extension, Json};
 use serde::{Deserialize, Serialize};
 
-use super::{dedup, now_string, read_text, summarize};
+use super::{dedup, now_string, read_document, summarize};
 use crate::files_v2::routes::run;
 use crate::files_v2::{ApiError, Fail, FilesV2, Inner, Need, Req};
 
@@ -441,7 +441,7 @@ pub(crate) async fn action(Extension(files): Files, req: Req, body: Result<Json<
             }
         }
         let path = v.drive.local_path(&body.item_id)?;
-        let text = read_text(&path, super::budget::MAX_TEXT_BYTES).ok_or_else(|| ApiError::unsupported("Only text files can be summarized so far."))?;
+        let text = read_document(&path, &rec.name).ok_or_else(|| ApiError::unsupported("Only text, PDF and Word files can be summarized so far."))?;
         let summary = summarize(&text, 3);
         v.intel.store_summary(&body.item_id, &hash, &summary, &now_string(v))?;
         Ok(Json(ActionResponse { item_id: body.item_id.clone(), action: body.action.clone(), summary, method: "extractive".into(), ai_generated: true }))

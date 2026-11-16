@@ -18,8 +18,7 @@
 //!   folder rule the owner created. Transcription has no local model on this
 //!   runtime, so it answers `unsupported`.
 //! - **Text only.** Plain text and code are indexed (a file that is UTF-8 with
-//!   no NUL bytes in its first 8 KiB). PDF, Office files and audio are not
-//!   read yet. Images get a thumbnail only.
+
 
 pub mod budget;
 pub mod embed;
@@ -382,7 +381,7 @@ impl Intel {
 
     /// Reads and indexes one file. Returns its text when it has any.
     pub fn index_one(&self, cand: &Candidate, path: &Path, now: &str) -> rusqlite::Result<Option<String>> {
-        let text = read_text(path, MAX_TEXT_BYTES);
+        let text = read_document(path, &cand.name);
         let thumb = if is_image_name(&cand.name) { thumbnail(path) } else { None };
         // Embed before taking the DB lock: it can wait on the network.
         let vector = text.as_ref().and_then(|t| {
@@ -572,6 +571,88 @@ pub(crate) fn read_text(path: &Path, cap: u64) -> Option<String> {
         Err(e) if e.error_len().is_none() => Some(String::from_utf8_lossy(&buf[..e.valid_up_to()]).into_owned()),
         Err(_) => None,
     }
+}
+
+const MAX_PDF_BYTES: u64 = 20 * 1024 * 1024;
+const MAX_PDF_PAGES: usize = 50;
+const MAX_PDF_SECONDS: u64 = 5;
+const MAX_DOCX_XML_BYTES: u64 = 10 * 1024 * 1024;
+
+/// Text of a file by type: PDF and docx are extracted, anything else is read
+/// as plain text. None on any error, over a cap or for binary content.
+pub(crate) fn read_document(path: &Path, name: &str) -> Option<String> {
+    let ext = name.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
+    let text = match ext.as_str() {
+        "pdf" => pdf_text(path),
+        "docx" => docx_text(path),
+        _ => return read_text(path, MAX_TEXT_BYTES),
+    }?;
+    let text = text.trim().to_string();
+    (!text.is_empty()).then_some(text)
+}
+
+/// Text of the first `MAX_PDF_PAGES` pages, at most 5 s of extraction and
+/// `MAX_TEXT_BYTES` of text. A broken or encrypted PDF (or a parser panic)
+/// gives None.
+fn pdf_text(path: &Path) -> Option<String> {
+    if std::fs::metadata(path).ok()?.len() > MAX_PDF_BYTES {
+        return None;
+    }
+    let bytes = std::fs::read(path).ok()?;
+    std::panic::catch_unwind(|| {
+        let doc = lopdf::Document::load_mem(&bytes).ok()?;
+        if doc.is_encrypted() {
+            return None;
+        }
+        let started = Instant::now();
+        let mut out = String::new();
+        for page in doc.get_pages().keys().take(MAX_PDF_PAGES) {
+            if started.elapsed() > Duration::from_secs(MAX_PDF_SECONDS) || out.len() as u64 >= MAX_TEXT_BYTES {
+                break;
+            }
+            if let Ok(t) = doc.extract_text(&[*page]) {
+                out.push_str(&t);
+                out.push('\n');
+            }
+        }
+        out.truncate(floor_boundary(&out, MAX_TEXT_BYTES as usize));
+        Some(out)
+    })
+    .ok()
+    .flatten()
+}
+
+fn floor_boundary(s: &str, max: usize) -> usize {
+    let mut i = max.min(s.len());
+    while !s.is_char_boundary(i) {
+        i -= 1;
+    }
+    i
+}
+
+/// Paragraph text of a Word document (`word/document.xml` in the zip).
+fn docx_text(path: &Path) -> Option<String> {
+    use std::io::Read;
+    if std::fs::metadata(path).ok()?.len() > MAX_PDF_BYTES {
+        return None;
+    }
+    let mut zip = zip::ZipArchive::new(std::fs::File::open(path).ok()?).ok()?;
+    let mut xml = String::new();
+    zip.by_name("word/document.xml").ok()?.take(MAX_DOCX_XML_BYTES).read_to_string(&mut xml).ok()?;
+    let mut out = String::new();
+    let mut rest = xml.as_str();
+    while let Some(lt) = rest.find('<') {
+        out.push_str(&rest[..lt]);
+        let Some(gt) = rest[lt..].find('>') else { break };
+        let tag = &rest[lt + 1..lt + gt];
+        if tag.starts_with("/w:p") && !tag.starts_with("/w:pPr") || tag.starts_with("w:br") || tag.starts_with("w:tab") {
+            out.push('\n');
+        }
+        rest = &rest[lt + gt + 1..];
+    }
+    let out = out.replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").replace("&apos;", "'").replace("&amp;", "&");
+    out.truncate(floor_boundary(&out, MAX_TEXT_BYTES as usize));
+    Some(out)
 }
 
 fn is_image_name(name: &str) -> bool {
