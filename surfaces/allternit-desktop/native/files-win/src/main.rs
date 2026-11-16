@@ -9,7 +9,8 @@
 //! allternit-files-win version
 //! ```
 //!
-//! `serve` reads the bearer token from `ALLTERNIT_FILES_TOKEN`, then JSON lines on
+//! `serve --token-stdin` reads the bearer token from the first stdin line (Allternit
+//! Desktop; without the flag, from `ALLTERNIT_FILES_TOKEN`), then JSON lines on
 //! stdin: `{"type":"token","token":"..."}` (refresh) and `{"type":"stop"}`. It
 //! writes JSON event lines on stdout.
 
@@ -84,7 +85,16 @@ mod win {
         sync_root::register(&spec, &r.state_dir).map_err(|e| e.to_string())
     }
 
-    fn serve(r: Resolved) -> Result<(), String> {
+    /// `--token-stdin`: Desktop sends `{"type":"token"}` as the first stdin line,
+    /// so the token is never on a command line, in the environment or in a file.
+    fn first_token_line() -> Option<String> {
+        let mut line = String::new();
+        std::io::stdin().lock().read_line(&mut line).ok()?;
+        let msg: serde_json::Value = serde_json::from_str(line.trim()).ok()?;
+        (msg.get("type")?.as_str()? == "token").then(|| msg.get("token")?.as_str().map(str::to_string))?
+    }
+
+    fn serve(r: Resolved, token_stdin: bool) -> Result<(), String> {
         let registration = match sync_root::recorded(&r.state_dir).into_iter().find(|x| x.path == r.root) {
             Some(x) if sync_root::is_registered(&r.root) => x.registration,
             _ => register(&r)?,
@@ -92,7 +102,8 @@ mod win {
         emit(&json!({"type": "registered", "path": r.root.display().to_string(), "registration": registration}));
         let transport = Transport::from_config(&r.cfg.transport.kind, &r.cfg.transport.base_url).map_err(|e| e.to_string())?;
         let client = Arc::new(FilesClient::new(transport, &r.cfg.cloud_api_base, &r.cfg.computer_id, &r.cfg.device_id, &r.cfg.device_name));
-        client.set_token(std::env::var("ALLTERNIT_FILES_TOKEN").ok());
+        let token = if token_stdin { first_token_line() } else { std::env::var("ALLTERNIT_FILES_TOKEN").ok() };
+        client.set_token(token);
         let wake = Arc::new(WakeGate::new(&r.cfg.computer_name, Box::new(MessageBoxPrompt)));
         let state_file = r.state_dir.join(format!("{}.index.json", paths::safe_component(&r.cfg.computer_id)));
         let provider = Provider::new(
@@ -130,7 +141,10 @@ mod win {
     pub fn run(args: Vec<String>) -> i32 {
         let cmd = args.first().map(String::as_str).unwrap_or("");
         let result: Result<(), String> = match cmd {
-            "serve" => load(&args).map(resolve).and_then(serve),
+            "serve" => {
+                let token_stdin = args.iter().any(|a| a == "--token-stdin");
+                load(&args).map(resolve).and_then(|r| serve(r, token_stdin))
+            }
             "register" => load(&args).map(resolve).and_then(|r| {
                 let reg = register(&r)?;
                 emit(&json!({"type": "registered", "path": r.root.display().to_string(), "registration": reg}));

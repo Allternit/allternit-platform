@@ -54,6 +54,7 @@ Uninstalling Allternit Desktop removes every Allternit location from Explorer. F
 
 ### Notes for admins
 
+- Allternit Desktop starts the helper once per computer when you are signed in and the Files drive is on for your account. It skips this PC itself (its files are already local). Signing out stops the helper and removes every Allternit location from Explorer; signing back in adds them again. The first time, a notification says where to find them.
 - The helper is `resources\files-win\allternit-files-win.exe` in the install folder. It runs as the signed-in user and needs no administrator rights or driver.
 - Its state is in `%LOCALAPPDATA%\Allternit\files-win`.
 - On Windows builds that refuse the full registration for an unpackaged app, the location still works and still shows Explorer's status icons, but without the colour badges.
