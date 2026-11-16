@@ -680,16 +680,16 @@ export class AppPhoneBackend implements UsbPhoneBackend {
         };
       }
       return {
-      serial: r.serial,
-      platform,
-      via: 'allternit-app',
-      route: APP_PHONE_ROUTE,
-      name,
-      canTap: false,
-      screen: r.online,
-      note: r.online
-        ? `Screen only: phone.screenshot and phone.web.* work; ${APP_TAPS_MESSAGE.toLowerCase()}.`
-        : `${APP_SHARE_SCREEN_MESSAGE} phone.web.* work while the Allternit app is open.`,
+        serial: r.serial,
+        platform,
+        via: 'allternit-app',
+        route: APP_PHONE_ROUTE,
+        name,
+        canTap: false,
+        screen: r.online,
+        note: r.online
+          ? `Screen only: phone.screenshot and phone.web.* work; ${APP_TAPS_MESSAGE.toLowerCase()}.`
+          : `${APP_SHARE_SCREEN_MESSAGE} phone.web.* work while the Allternit app is open.`,
       };
     });
   }
