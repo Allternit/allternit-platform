@@ -788,6 +788,7 @@
                 "pages": [
                   "api/files",
                   "api/files-drive",
+                  "api/files-drive-cloud",
                   "api/workspace-files",
                   "api/webhooks",
                   "api/webhook-subscriptions",

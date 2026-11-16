@@ -379,6 +379,11 @@ pub enum ProvisionedWakeOutcome {
     NotWakeable,
 }
 
+/// Every call of [`ProvisioningService::wake_for_device`], in tests: the
+/// Files drive tests prove browsing a sleeping computer never calls it.
+#[cfg(test)]
+pub(crate) static WAKE_FOR_DEVICE_CALLS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
 /// User-driven relay traffic for a provisioned computer's device: moves the
 /// idle clock and the owner-use clock. Called from
 /// `services::touch_runtime_activity` next to the hosted-runtime stamp.
@@ -819,6 +824,8 @@ impl ProvisioningService {
         self: &Arc<Self>,
         device_id: &str,
     ) -> Result<ProvisionedWakeOutcome, ApiError> {
+        #[cfg(test)]
+        WAKE_FOR_DEVICE_CALLS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let row = sqlx::query_as::<_, InstanceRow>(&format!(
             "SELECT {INSTANCE_COLUMNS} FROM provisioned_instances \
              WHERE device_id = $1 AND status <> 'deleted' ORDER BY created_at DESC LIMIT 1"

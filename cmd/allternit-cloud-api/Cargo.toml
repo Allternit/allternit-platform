@@ -85,6 +85,9 @@ hex = { workspace = true }
 # Meet bot profile sealing (services::bot_profiles; ChaCha20-Poly1305).
 ring = { workspace = true }
 ed25519-dalek = { workspace = true }
+allternit-files-core = { workspace = true }
+# Files drive queued drops: content_hash (contracts/files-drive, blake3).
+blake3 = { workspace = true }
 jsonwebtoken = { version = "10", features = ["aws_lc_rs"] }
 aws-lc-rs = "1"
 reqwest = { workspace = true, default-features = false, features = ["json", "rustls-tls", "http2"] }

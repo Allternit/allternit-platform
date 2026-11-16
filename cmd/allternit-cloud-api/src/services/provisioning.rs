@@ -84,6 +84,8 @@ pub use credit::{
     credit_computers_enabled, start_credit_computer_task, CreditDefaults, CreditStart, CreditTick,
     CREDIT_LEDGER_SOURCE, CREDIT_SIZE_ID,
 };
+#[cfg(test)]
+pub(crate) use free::WAKE_FOR_DEVICE_CALLS;
 pub use free::{
     is_capacity_message, mentions_capacity, note_runtime_attached, start_free_computer_task, touch_provisioned_activity,
     FreeDefaults, HostedDriverDefaults, ProvisionedWakeOutcome, WakeReason, WakeResult,

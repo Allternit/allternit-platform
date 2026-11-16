@@ -355,6 +355,9 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         // like an OAuth device authorization endpoint.
         .merge(routes::runtime_pairing::routes())
         .merge(routes::runtime_relay::routes())
+        // Files drive: wake consent, wake settings, endpoints, token keys
+        // (each handler resolves the user itself).
+        .merge(routes::computer_files::routes())
         // Brain runner boxes dial in here with their own token (no session,
         // no compute gate; CONTRACT-connections-2026-11 section 9.7).
         .merge(routes::brain_runners::routes(services::brain_runners::shared(&state.db)))
