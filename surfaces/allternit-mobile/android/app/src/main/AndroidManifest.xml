@@ -156,6 +156,14 @@
             </intent-filter>
         </activity>
 
+        <!-- Agent tasks waiting in a computer's Inbox: Approve / Reject. Opened from the share screen. -->
+        <activity
+            android:name="com.allternit.app.files.InboxActivity"
+            android:exported="false"
+            android:label="Inbox tasks"
+            android:taskAffinity="${applicationId}.files"
+            android:theme="@style/Theme.AllternitFiles" />
+
         <!-- Opened only from our own notification / provider PendingIntents. -->
         <activity
             android:name="com.allternit.app.files.WakePromptActivity"

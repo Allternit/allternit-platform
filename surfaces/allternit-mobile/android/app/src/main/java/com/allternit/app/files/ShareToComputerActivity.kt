@@ -6,12 +6,14 @@ import android.net.Uri
 import android.os.Bundle
 import android.provider.OpenableColumns
 import android.view.View
+import android.widget.CheckBox
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import com.allternit.app.R
 import com.allternit.files.contract.ItemKind
+import com.allternit.files.contract.RootKind
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -36,6 +38,7 @@ class ShareToComputerActivity : Activity() {
     private lateinit var where: TextView
     private lateinit var list: LinearLayout
     private lateinit var save: TextView
+    private lateinit var askAgent: CheckBox
     private var shared: List<Uri> = emptyList()
     private var sharedText: String? = null
 
@@ -53,6 +56,15 @@ class ShareToComputerActivity : Activity() {
         where = FilesUi.body(this, if (count == 1) "1 item" else "$count items")
         head.addView(heading)
         head.addView(where)
+        // A drop in Inbox makes a task that waits for the owner's approval (step 17). Nothing reads
+        // the file before the owner approves it in Inbox tasks.
+        askAgent = CheckBox(this).apply {
+            text = "Ask my agent to read it"
+            setTextColor(getColor(R.color.files_text))
+            setOnCheckedChangeListener { _, _ -> if (stack.isNotEmpty()) render() }
+        }
+        head.addView(askAgent)
+        head.addView(FilesUi.body(this, "It goes to Inbox and waits for your approval. Your agent reads nothing until you approve it."))
         col.addView(head)
         list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         col.addView(ScrollView(this).apply { addView(list) }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
@@ -140,6 +152,9 @@ class ShareToComputerActivity : Activity() {
                     })
                 }
                 if (l.cid == null) {
+                    list.addView(FilesUi.row(this, "Inbox tasks", "Approve or reject what your agent may read") {
+                        startActivity(Intent(this, InboxActivity::class.java))
+                    })
                     // A click path (not a menu) to the Files settings: which computers show, sign out.
                     list.addView(FilesUi.row(this, "Allternit Files settings", "Choose which computers show in Files") {
                         startActivity(Intent(this, FilesSignInActivity::class.java))
@@ -158,7 +173,7 @@ class ShareToComputerActivity : Activity() {
                 drive.computers.ifEmpty { throw e }
             }
             val out = ArrayList<Triple<String, String?, Level?>>()
-            lastTarget()?.let { out.add(Triple("Last used: ${it.title}", drive.computerName(it.cid!!), it)) }
+            if (!askAgent.isChecked) lastTarget()?.let { out.add(Triple("Last used: ${it.title}", drive.computerName(it.cid!!), it)) }
             list.forEach {
                 val sub = when {
                     it.status == "online" -> "Awake"
@@ -177,8 +192,10 @@ class ShareToComputerActivity : Activity() {
                 drive.rootsCached(cid) ?: throw e
             }
             val ids = roots.roots.map { it.id }.toSet()
+            val ask = askAgent.isChecked
             return roots.roots
                 .filter { (it.parentRootId == null || it.parentRootId !in ids) && it.policy.write && !it.policy.protected }
+                .filter { !ask || (it.kind == RootKind.INBOX && it.policy.agentProcess) }
                 .map { Triple(it.name, null, Level(cid, it.id, it.rootItemId, it.name)) }
         }
         val listing = try {
@@ -205,6 +222,14 @@ class ShareToComputerActivity : Activity() {
         val cid = l.cid ?: return
         val rid = l.rid ?: return
         val iid = l.iid ?: return
+        val ask = askAgent.isChecked
+        if (ask) {
+            val root = drive.root(cid, rid)
+            if (root == null || root.kind != RootKind.INBOX || iid != root.rootItemId) {
+                Toast.makeText(this, "To ask your agent, save into the computer's Inbox itself.", Toast.LENGTH_LONG).show()
+                return
+            }
+        }
         prefs.edit().putString("share_cid", cid).putString("share_rid", rid).putString("share_iid", iid).putString("share_title", l.title).apply()
         save.isEnabled = false
         save.text = "Copying…"
@@ -234,7 +259,9 @@ class ShareToComputerActivity : Activity() {
             }
             runOnUiThread {
                 val dest = "${drive.computerName(cid)} · ${l.title}"
-                val msg = if (failed != null) "Couldn't copy everything: $failed" else if (n == 1) "Saving to $dest" else "Saving $n files to $dest"
+                val msg = if (failed != null) "Couldn't copy everything: $failed"
+                else if (ask) "Saving to $dest. Approve it in Inbox tasks before your agent reads it."
+                else if (n == 1) "Saving to $dest" else "Saving $n files to $dest"
                 Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
                 finish()
             }

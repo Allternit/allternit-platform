@@ -336,6 +336,12 @@ internal class FilesClient(
         text("PUT", "/uploads/${seg(sessionId)}/chunks/${seg(ref.hash)}", CloudApi.RelayBody.FileRange(file, ref.offset, ref.size), readTimeoutMs = 120_000).wire()
     fun uploadCommit(sessionId: String): UploadCommitResponse = text("POST", "/uploads/${seg(sessionId)}/commit", readTimeoutMs = 120_000).wire()
 
+    // Inbox approval tasks (docs/api/files-drive-inbox.mdx). The Task shape is runtime-only, so the
+    // caller reads the JSON itself.
+    fun inboxTasksText(): String = text("GET", "/inbox/tasks" + q("limit" to 100))
+    fun inboxApproveText(taskId: String): String = text("POST", "/inbox/tasks/${seg(taskId)}/approve", CloudApi.RelayBody.Text("{}"))
+    fun inboxRejectText(taskId: String): String = text("POST", "/inbox/tasks/${seg(taskId)}/reject")
+
     fun mkdir(req: MkdirRequest): MutationResponse = text("POST", "/mkdir", json(req)).wire()
     fun move(req: MoveRequest): MutationResponse = text("POST", "/move", json(req)).wire()
     fun delete(req: DeleteRequest): DeleteResponse = text("POST", "/delete", json(req)).wire()
