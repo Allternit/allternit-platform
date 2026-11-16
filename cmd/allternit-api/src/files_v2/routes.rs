@@ -24,7 +24,7 @@ use serde::de::DeserializeOwned;
 use serde::Deserialize;
 
 use super::{
-    feed, live, memory, meta, permissions, roots, ApiError, Fail, FilesV2, Inner, Need, Req, BIG_BODY_LIMIT,
+    feed, intel, live, memory, meta, permissions, roots, ApiError, Fail, FilesV2, Inner, Need, Req, BIG_BODY_LIMIT,
     BODY_LIMIT,
 };
 
@@ -63,6 +63,21 @@ pub fn routes<S: Clone + Send + Sync + 'static>(files: Arc<FilesV2>) -> Router<S
         .route("/restore", post(restore))
         .route("/search", post(search))
         .route("/pin", post(pin))
+        .route("/items/:item_id/preview", get(intel::routes::preview))
+        .route("/intel/status", get(intel::routes::status))
+        .route("/intel/roots/:root_id", put(intel::routes::set_root))
+        .route("/intel/tags", get(intel::routes::tag_counts).post(intel::routes::change_tags))
+        .route("/intel/tags/:tag/items", get(intel::routes::tagged))
+        .route("/intel/provenance", post(intel::routes::set_provenance))
+        .route("/intel/dedup", get(intel::routes::dedup_report))
+        .route("/intel/collections", get(intel::routes::collections).post(intel::routes::create_collection))
+        .route(
+            "/intel/collections/:id",
+            get(intel::routes::collection).post(intel::routes::change_collection).delete(intel::routes::delete_collection),
+        )
+        .route("/intel/actions", post(intel::routes::action))
+        .route("/intel/rules", get(intel::routes::rules).post(intel::routes::create_rule))
+        .route("/intel/rules/:id", axum::routing::delete(intel::routes::delete_rule))
         .route("/subscribe", get(feed::subscribe))
         .route("/jobs/:job_id", get(job))
         .route("/storage", get(super::storage::storage))
@@ -592,9 +607,6 @@ async fn restore_version(
 
 async fn search(Extension(files): Files, req: Req, body: Result<Json<SearchRequest>, JsonRejection>) -> Res<SearchResponse> {
     let body = json(body)?;
-    if body.mode != SearchMode::Name {
-        return Err(ApiError::unsupported("Only name search is available on this runtime yet."));
-    }
     let query = body.query.trim().to_string();
     if query.is_empty() || query.len() > 512 {
         return Err(ApiError::invalid("Search for 1 to 512 bytes of text."));
@@ -602,14 +614,12 @@ async fn search(Extension(files): Files, req: Req, body: Result<Json<SearchReque
     let limit = body.limit.unwrap_or(50).clamp(1, 200) as usize;
     let start = page_start(body.page_token.as_deref(), "s1.")?;
     run(&files, move |v| {
-        // Only roots this caller may read now (protected ones need the unlock).
-        let roots: Vec<RootRecord> = v
-            .drive
-            .roots()?
-            .into_iter()
-            .filter(|r| body.root_ids.as_ref().map_or(true, |ids| ids.contains(&r.root_id)))
-            .filter(|r| v.guard(&req, &r.root_id, Need::Read).is_ok())
-            .collect();
+        // Only roots this caller may read now: its kind (agents need agent_process,
+        // guests get nothing here) and the unlock for protected ones.
+        let roots: Vec<RootRecord> = intel::scoped_roots(v, &req, body.root_ids.as_deref())?;
+        if body.mode != SearchMode::Name {
+            return Ok(Json(intel::search_content(v, &req, &roots, &body, &query, limit, start)?));
+        }
         let ids: Vec<String> = roots.iter().map(|r| r.root_id.clone()).collect();
         let found = meta::search_names(
             &v.cfg.data_dir.join("engine"),

@@ -21,6 +21,7 @@
 
 mod errors;
 mod feed;
+pub mod intel;
 mod memory;
 mod meta;
 mod roots;
@@ -145,6 +146,8 @@ pub(crate) struct Inner {
     /// Root IDs with new changes, for feed sockets.
     pub feed: broadcast::Sender<String>,
     pub watcher: Option<DriveWatcher>,
+    /// Content index, tags, collections, previews (plan step 16).
+    pub intel: intel::Intel,
     /// Memory Drive revision last copied into its view folder.
     pub memory_rev: Mutex<Option<String>>,
 }
@@ -175,6 +178,8 @@ impl Inner {
             protected.push(data.join("allternit"));
             protected.push(data.join("@allternit"));
         }
+        let intel = intel::Intel::open(&cfg.data_dir.join("intel.sqlite"), intel::Intel::default_embedder(), intel::budget::Budget::from_env())
+            .map_err(|e| fail(e.into()))?;
         let scope = FilesScope::new(Some(home.clone()), protected);
         let (feed, _) = broadcast::channel(256);
         let tx = feed.clone();
@@ -190,6 +195,7 @@ impl Inner {
             scope,
             feed,
             watcher: None,
+            intel,
             memory_rev: Mutex::new(None),
         };
         roots::ensure_defaults(&inner).map_err(|e| e.into_api(&inner))?;
@@ -199,7 +205,12 @@ impl Inner {
                 Err(e) => tracing::warn!(error = %e, "files v2: watcher did not start; changes made outside the drive show up on the next scan"),
             }
         }
-        Ok(Arc::new(inner))
+        let inner = Arc::new(inner);
+        // Same switch as the watcher: tests drive passes by hand.
+        if cfg.watch && intel::worker_enabled() {
+            intel::spawn_worker(&inner);
+        }
+        Ok(inner)
     }
 
     /// The root for `root_id` after the caller's checks (section 12).
@@ -229,6 +240,7 @@ impl Inner {
     /// The wire item, with this caller's permissions and the pins.
     pub fn item(&self, root: &RootRecord, rec: &ItemRecord) -> Item {
         let mut item = rec.to_item(permissions(root, rec));
+        self.intel.decorate(&mut item);
         let pins = meta::pins(&self.meta.lock().expect("meta lock"), &rec.id).unwrap_or_default();
         if !pins.is_empty() {
             item.pinned_on = Some(pins);

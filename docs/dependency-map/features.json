@@ -4784,6 +4784,7 @@
         "allternit/platform/files/allternit-files-engine",
         "allternit/cmd/allternit-api/src/file_routes.rs",
         "allternit/cmd/allternit-api/src/files_v2",
+        "allternit/cmd/allternit-api/src/files_v2/intel",
         "allternit/cmd/allternit-cloud-api/src/routes/runtime_relay.rs",
         "allternit/tools/files-stub"
       ],
