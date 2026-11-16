@@ -761,4 +761,34 @@ mod tests {
             assert!(check_guest_path(ok).is_ok(), "{ok:?} should be allowed");
         }
     }
+
+    /// The deny-list moved from a const into `assets/secrets-deny.json` (Files
+    /// drive step 18) so Gizzi's workspace bundle filters with the same list.
+    /// It may only grow: every entry the const had is still refused.
+    #[test]
+    fn secrets_deny_list_only_grows() {
+        let before: &[&[&str]] = &[
+            &[".ssh"], &[".gnupg"], &[".aws"], &[".azure"], &[".kube"], &[".netrc"], &[".password-store"],
+            &[".npmrc"], &[".pypirc"], &[".git-credentials"], &[".docker", "config.json"], &[".config", "gcloud"],
+            &[".config", "gh"], &[".config", "stripe"], &["Library", "Keychains"], &[".claude", ".credentials.json"],
+            &[".codex", "auth.json"], &[".gizzi", "credentials.json"], &[".local", "share", "gizzi-code", "auth.json"],
+            &[".local", "share", "gizzi-code", "fabric-lease.key"], &[".local", "share", "tailscale"],
+            &[".allternit", "phone-gateway.json"], &[".allternit", "subscriptions"], &[".allternit", "incus-client"],
+            &[".allternit", "factory", "fabric"], &[".allternit", "factory", "registry.json"],
+            &[".allternit", "session-caretaker"], &[".allternit", "system-one"],
+        ];
+        for entry in before {
+            let rel: Vec<String> = entry.iter().map(|s| s.to_string()).collect();
+            assert!(is_secret(&rel), "{entry:?} left the secrets deny-list");
+            let mut inside = rel.clone();
+            inside.push("x".into());
+            assert!(is_secret(&inside), "{entry:?}/x is no longer refused");
+        }
+        let v: serde_json::Value = serde_json::from_str(SECRETS_DENY_JSON).unwrap();
+        let patterns: Vec<&str> = v["file_patterns"].as_array().unwrap().iter().filter_map(|p| p.as_str()).collect();
+        for p in [".env", ".env.*", "*.pem", "*.key", "id_rsa*", "id_ed25519*", "*.token", "token.json", "credentials.json"] {
+            assert!(patterns.contains(&p), "file pattern {p:?} left the deny-list");
+        }
+        assert!(!is_secret(&[".sshx".to_string()]), "prefix confusion");
+    }
 }

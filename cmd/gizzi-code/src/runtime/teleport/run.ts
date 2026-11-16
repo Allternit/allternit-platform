@@ -5,7 +5,9 @@
 import { Session } from "@/runtime/session"
 import { VendorSession } from "@/runtime/session/vendor-session"
 import { platformRequest } from "@/runtime/bots/platform-api"
+import { workspaceListing, type WorkspaceListing } from "@/runtime/teleport/bundle"
 import {
+  reachableBase,
   teleportToCloud,
   teleportToLocal,
   type TeleportDirection,
@@ -64,4 +66,16 @@ export async function runTeleport(args: RunTeleportArgs): Promise<TeleportResult
     targetId: await pickTarget(args.targetId),
   }
   return args.to === "cloud" ? teleportToCloud(input) : teleportToLocal({ ...input, gitBase: args.base })
+}
+
+/**
+ * The approval listing for a move to the cloud, without sending anything:
+ * which changed and untracked files would travel and which are left out as secrets.
+ */
+export async function listTeleport(args: Pick<RunTeleportArgs, "session" | "cwd">): Promise<WorkspaceListing & { cwd: string; base: string }> {
+  const known = await Session.get(args.session).catch(() => undefined)
+  const cwd = known?.directory ?? args.cwd ?? process.cwd()
+  const base = reachableBase(cwd)
+  if (!base) throw new Error("This workspace has no reachable git remote with your current branch on it, so nothing would be sent.")
+  return { ...workspaceListing(cwd, base), cwd, base }
 }

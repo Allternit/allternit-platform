@@ -613,6 +613,11 @@ impl Source {
             None if src.computer_id == v.cfg.computer_id => Target::Local,
             None => Target::Relay(relay_url),
             Some(t) => match t.kind {
+                // A relayed caller names this computer by leaving the transport
+                // out; a loopback URL from it would come back here as a local caller.
+                TransportKind::Loopback if req.relayed => {
+                    return Err(ApiError::forbidden("Leave the transport out to copy from this computer."));
+                }
                 TransportKind::Loopback | TransportKind::Mesh => {
                     let url = url::Url::parse(t.base_url.trim()).map_err(|_| ApiError::invalid("That transport URL is not valid."))?;
                     if !mesh_host_ok(&url) || !url.path().trim_end_matches('/').ends_with("/api/v1/files/v2") {
@@ -660,6 +665,13 @@ impl Source {
         }
         if let Some(d) = &self.device_id {
             rb = rb.header(crate::cowork_devices_routes::DEVICE_ID_HEADER, d);
+        }
+        // The source must treat a pull for a relayed caller as relayed too:
+        // the marker only ever narrows what the source allows.
+        if self.req.relayed {
+            if let Target::Direct(_) = self.target {
+                rb = rb.header(crate::cowork_devices_routes::RELAYED_HEADER, "1");
+            }
         }
         let res = rb
             .send()
@@ -1207,5 +1219,79 @@ mod tests {
         assert_eq!(marker.grant, Grant { transfer: true, execute: false });
         assert!(marker.files.iter().all(|f| f.item_id.is_none()));
         assert_eq!(check_execute_path(&pkg).unwrap_err().body.code, ErrorCode::ExecuteDenied);
+    }
+
+    async fn wait_job(env: &Env, job_id: &str) -> serde_json::Value {
+        for _ in 0..200 {
+            let (_, j) = env.call("GET", &format!("/jobs/{job_id}"), None).await;
+            if j["state"] == "done" || j["state"] == "failed" {
+                return j;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+        panic!("job {job_id} never finished");
+    }
+
+    /// Route a file to a computer: one file lands in this computer's Inbox
+    /// with the same bytes, and a folder is refused (it goes as a package).
+    #[tokio::test]
+    async fn routed_file_lands_in_the_inbox() {
+        let env = env();
+        let pkg = env.package_item().await;
+        let inner = env.files.inner().await.unwrap();
+        let config = inner.drive.list(&pkg).unwrap().into_iter().find(|i| i.name == "config.json").unwrap().id;
+
+        let (status, job) = env.call("POST", "/route", Some(json!({"source": {"computer_id": "rd_test", "item_id": config}}))).await;
+        assert_eq!(status, StatusCode::OK, "{job}");
+        assert_eq!(job["kind"], "copy");
+        let done = wait_job(&env, job["job_id"].as_str().unwrap()).await;
+        assert_eq!(done["state"], "done", "{done}");
+        assert_eq!(std::fs::read(env.home.join("Allternit/Inbox/config.json")).unwrap(), br#"{"arch":"qwen3"}"#);
+
+        let (_, job) = env.call("POST", "/route", Some(json!({"source": {"computer_id": "rd_test", "item_id": pkg}}))).await;
+        let failed = wait_job(&env, job["job_id"].as_str().unwrap()).await;
+        assert_eq!(failed["state"], "failed");
+        assert_eq!(failed["error"], "invalid_request");
+    }
+
+    /// A relayed caller must not get this runtime to call itself over
+    /// loopback, where the call would count as a local one.
+    #[tokio::test]
+    async fn relayed_caller_cannot_pull_over_loopback() {
+        let env = env();
+        let id = env.package_item().await;
+        let body = json!({"source": {"computer_id": "rd_other", "item_id": id,
+            "transport": {"kind": "loopback", "base_url": "http://127.0.0.1:3010/api/v1/files/v2"}}});
+        let req = Request::builder()
+            .method("POST")
+            .uri("/files/v2/models/transfer")
+            .header("content-type", "application/json")
+            .header(crate::cowork_devices_routes::RELAYED_HEADER, "1")
+            .body(Body::from(body.to_string()))
+            .unwrap();
+        let res = env.app.clone().oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::FORBIDDEN);
+        // Not a mesh or loopback host at all: refused for everyone.
+        let (status, _) = env
+            .call("POST", "/models/transfer", Some(json!({"source": {"computer_id": "rd_other", "item_id": id,
+                "transport": {"kind": "mesh", "base_url": "http://169.254.169.254/api/v1/files/v2"}}})))
+            .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    /// The grant can't be flipped over the relay: run permission is given on
+    /// the computer the model is on.
+    #[tokio::test]
+    async fn run_permission_is_not_granted_over_the_relay() {
+        let env = env();
+        let req = Request::builder()
+            .method("POST")
+            .uri("/files/v2/models/grant")
+            .header("content-type", "application/json")
+            .header(crate::cowork_devices_routes::RELAYED_HEADER, "1")
+            .body(Body::from(json!({"item_id": "it_x", "execute": true}).to_string()))
+            .unwrap();
+        let res = env.app.clone().oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::FORBIDDEN);
     }
 }

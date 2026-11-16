@@ -65,6 +65,10 @@ pub fn routes<S: Clone + Send + Sync + 'static>(files: Arc<FilesV2>) -> Router<S
         .route("/pin", post(pin))
         .route("/subscribe", get(feed::subscribe))
         .route("/jobs/:job_id", get(job))
+        .route("/models/handoff/:item_id", get(super::models::handoff))
+        .route("/models/grant", post(super::models::grant))
+        .route("/models/transfer", post(super::models::transfer))
+        .route("/route", post(super::models::route_file))
         .route("/storage", get(super::storage::storage))
         .route("/replicas", get(replicas).post(replicas))
         .route("/replicas/restore", post(replicas))
@@ -683,10 +687,12 @@ async fn add_comment(Extension(files): Files, req: Req, body: Result<Json<Commen
     .await
 }
 
-/// Copies run synchronously on this runtime, so no job is ever open here.
-async fn job(Extension(files): Files, _req: Req, Path(_job_id): Path<String>) -> Res<JobRef> {
+/// Model transfers and routed files run as jobs (`models.rs`); copies inside
+/// this computer run synchronously and have none. Jobs live in memory, so a
+/// restart forgets them (the pull is idempotent: start it again).
+async fn job(Extension(files): Files, _req: Req, Path(job_id): Path<String>) -> Res<JobRef> {
     files.inner().await?;
-    Err(ApiError::new(ErrorCode::NotFound, "No such job on this computer."))
+    super::models::job(&job_id).map(Json).ok_or_else(|| ApiError::new(ErrorCode::NotFound, "No such job on this computer."))
 }
 
 /// Replicas are step 15 of the Files drive plan; these routes belong to it.
