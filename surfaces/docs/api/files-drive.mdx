@@ -10,7 +10,7 @@ The Files drive serves the files on one computer to the owner's other devices. E
 The full contract lives in the platform repo at `contracts/files-drive/SPEC.md`, with JSON schemas in `contracts/files-drive/schema/` and generated Rust, TypeScript, Swift and Kotlin types. This page covers the **runtime** side: the routes `allternit-api` answers on the computer that owns the files, plus the cloud-api sharing routes and guest gateway in [Sharing and the guest gateway](#sharing-and-the-guest-gateway). The other cloud-api routes (wake consent, endpoints) are documented with their own release.
 
 <Note>
-The Files drive ships dark. On the runtime it is off unless the process runs with `ALLTERNIT_FILES_DRIVE=1`. While it is off, every route answers `403 feature_disabled` and nothing is created on disk. The per-user `files_drive` flag is held by cloud-api and read by clients as `flags.files_drive` in `GET /api/v1/me/flags` (read-only; a PUT naming it is a `400`).
+The Files drive ships dark. On the runtime it is off unless the process runs with `ALLTERNIT_FILES_DRIVE=1`. While it is off, every route answers `403 feature_disabled` and nothing is created on disk. The per-user `files_drive` flag is held by cloud-api and read by clients as `flags.files_drive` in `GET /api/v1/me/flags` (read-only; a PUT naming it is a `400`). A gizzi that is only paired reads it with its runtime device credential, which `GET /me/flags` accepts read-only ([Account flags](/api/me#account-flags)).
 </Note>
 
 ## Base URL
