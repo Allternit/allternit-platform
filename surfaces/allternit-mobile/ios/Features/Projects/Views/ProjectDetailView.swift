@@ -247,10 +247,13 @@ struct ProjectDetailView: View {
     private func sheetContent(_ which: DetailSheet) -> some View {
         switch which {
         case .customize:
-            ProjectCustomizeSheet(store: looks, data: boardData, title: liveProject.title, scope: scope,
-                                  backdropColors: StageBackdrops.sampleColors) {
+            FolderLookSheet(
+                title: liveProject.title, mode: "chat",
+                key: AppearanceClient.projectKey(mode: "cowork", id: project.id),
+                initial: folderAppearance,
+                onSaved: { folderAppearance = $0 }
+            ) {
                 Button("Project settings") { sheet = .settings }.frame(minHeight: 44)
-            } manage: {
                 Button("Edit details") { sheet = .edit }.frame(minHeight: 44)
                 if let libraryRow {
                     Button(libraryRow.isArchived ? "Unarchive" : "Archive") { library.toggleArchive(libraryRow) }.frame(minHeight: 44)

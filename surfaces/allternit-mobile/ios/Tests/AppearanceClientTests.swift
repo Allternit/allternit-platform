@@ -85,4 +85,21 @@ final class AppearanceClientTests: XCTestCase {
         let data = try JSONEncoder().encode(["appearance": a])
         XCTAssertEqual(try AppearanceClient.decode(data), a)
     }
+
+    func testSavedLookRoundTripsAndStaysInSync() throws {
+        var a = Appearance()
+        a.image = "data:image/png;base64,iVBORw0KGgo="
+        a = FolderLookEdit.applyPreset(a, FolderCoverPreset.all.first { $0.id == "badge" }!)
+        a = FolderLookEdit.patchCover(a) { $0.art = .image; $0.sheets = 0; $0.tabLabel = "Quarterly plan" }
+        XCTAssertEqual(a.cover?.tabLabel, "Quarterly")
+        XCTAssertNil(a.cover?.preset)
+        XCTAssertEqual(a.overlay, "image")
+        XCTAssertFalse(a.documents)
+        XCTAssertEqual(a.color, "#9B6BD6")
+        let data = try JSONEncoder().encode(["appearance": a.withCoverSync()])
+        let back = try XCTUnwrap(AppearanceClient.decode(data))
+        XCTAssertEqual(back, a)
+        XCTAssertEqual(back.cover?.pattern, .dots)
+        XCTAssertEqual(back.cover?.edge, .shadow)
+    }
 }
