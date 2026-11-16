@@ -5,6 +5,7 @@ import {
   AppPhoneViewerSession,
   ANDROID_APP_ROUTE,
   appWaitMessage,
+  httpAppPhoneNode,
   type AppPhoneNode,
   type AppRpcResult,
   type AppViewerSocket,
@@ -171,5 +172,36 @@ describe('iPhones with the Allternit app', () => {
     canTap = false;
     expect(android.sendControl([]).message).toContain('Accessibility');
     expect(sent).toEqual([]);
+  });
+  it('Android taps start refused, then swap to a full-control socket after Allow taps', async () => {
+    const readOnly = fakeSocket();
+    const control = fakeSocket();
+    const sent: string[] = [];
+    const ctlSock = { ...control.socket, send: (d: string) => void sent.push(d) };
+    const android = new AppPhoneViewerSession({ open: async () => readOnly.socket, openControl: async () => ctlSock, deviceName: 'Pixel', platform: 'android', canTap: () => true });
+    const started = android.start();
+    readOnly.packet(IOS_PACKET_CONFIG, { width: 1080, height: 2400, rotation: 0 });
+    await started;
+    expect(android.sendControl([]).message).toContain('Allow taps');
+    expect(await android.requestControl()).toEqual({ ok: true });
+    expect(android.sendControl([{ type: 'text', text: 'a' } as never]).ok).toBe(true);
+    expect(sent).toHaveLength(1);
+  });
+
+  it('openViewer approves the confirmation grant for a full-control token, once', async () => {
+    const calls: string[] = [];
+    const fetchImpl = (async (url: string, init?: RequestInit) => {
+      calls.push(`${init?.method ?? 'GET'} ${url.replace('http://n', '')}`);
+      if (url.includes('/approve')) return new Response('{}', { status: 200 });
+      if (url.includes('approval_id=')) return new Response(JSON.stringify({ token: 't2' }), { status: 200 });
+      return new Response(JSON.stringify({ error: 'confirmation_required', approval_id: 'ap1' }), { status: 403 });
+    }) as unknown as typeof fetch;
+    const urls: string[] = [];
+    const node = httpAppPhoneNode({ apiUrl: () => 'http://n', headers: () => ({}), fetchImpl, createSocket: (u) => { urls.push(u); return fakeSocket().socket; } });
+    await node.openViewer('app:a1', { readOnly: false, approve: true });
+    expect(calls.some((c) => c.includes('/api/aci/handoff/ap1/approve'))).toBe(true);
+    expect(urls[0]).toContain('token=t2');
+    // Without the owner's click there is no approval: the refusal surfaces.
+    await expect(httpAppPhoneNode({ apiUrl: () => 'http://n', headers: () => ({}), fetchImpl }).openViewer('app:a1', { readOnly: false })).rejects.toThrow();
   });
 });

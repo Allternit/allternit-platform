@@ -960,9 +960,12 @@ class PhoneService {
   private createAppViewerSession(serial: string): AppPhoneViewerSession {
     const backend = this.ensureAppBackend();
     const platform = appPlatformOf(backend.row(serial));
+    const node = () => httpAppPhoneNode({ apiUrl: () => phoneLinkApiUrl(backendManager.getUrl()), headers: () => this.nodeHeaders() });
     return new AppPhoneViewerSession({
-      // Android phones take the owner's taps, so their viewer is full-control; iPhones stay read-only.
-      open: () => httpAppPhoneNode({ apiUrl: () => phoneLinkApiUrl(backendManager.getUrl()), headers: () => this.nodeHeaders() }).openViewer(serial, { readOnly: platform !== 'android' }),
+      // Every viewer starts read-only. An Android phone takes the owner's taps only after the
+      // "Allow taps" click, which approves the runtime's confirmation grant and swaps in a full-control socket.
+      open: () => node().openViewer(serial, { readOnly: true }),
+      ...(platform === 'android' ? { openControl: () => node().openViewer(serial, { readOnly: false, approve: true }) } : {}),
       deviceName: backend.row(serial)?.name || (platform === 'android' ? 'Android phone' : 'iPhone'),
       platform,
       canTap: () => backend.row(serial)?.canTap === true,
@@ -1057,6 +1060,11 @@ class PhoneService {
     if (!Array.isArray(events) || events.length === 0) return { ok: false, message: 'No input events.' };
     // encodeControlMessage validates every event; invalid ones fail as { ok: false }.
     return this.streams?.sendInput(serial, events as PhoneInputEvent[]) ?? { ok: false, message: 'The stream is not live.' };
+  }
+
+  /** phone:stream-request-control: the owner clicked "Allow taps" on an Android app phone's viewer. */
+  async requestStreamControl(serial: string): Promise<{ ok: boolean; message?: string }> {
+    return (await this.streams?.requestControl(serial)) ?? { ok: false, message: 'The stream is not live.' };
   }
 
   setStreamDisplayPower(serial: string, on: boolean): { ok: boolean; message?: string } {

@@ -112,8 +112,12 @@ export interface AppPhoneNode {
   listPhones(): Promise<AppPhoneRow[]>;
   /** `POST /api/v1/phones/app/:id/rpc` with `{method, params}`. */
   rpc(phoneId: string, method: string, params: Record<string, unknown>, timeoutMs: number): Promise<AppRpcResult>;
-  /** Mints a read-only ws-token and opens `/ws/phones/:serial/stream`. */
-  openViewer(serial: string, opts?: { readOnly?: boolean }): Promise<AppViewerSocket>;
+  /**
+   * Mints a ws-token and opens `/ws/phones/:serial/stream`. Read-only by
+   * default. `readOnly:false` is gated by the ACI confirmation grant: pass
+   * `approve` (the owner's "Allow taps" click) to approve and present it.
+   */
+  openViewer(serial: string, opts?: { readOnly?: boolean; approve?: boolean }): Promise<AppViewerSocket>;
   /** `POST /api/v1/phones/app/pair/:phoneId/decision` with `{approve}`. */
   decidePair(phoneId: string, approve: boolean): Promise<{ ok: boolean; message?: string }>;
 }
@@ -130,7 +134,10 @@ interface ViewerEvents {
 }
 
 export interface AppViewerDeps {
+  /** Opens the read-only viewer socket. */
   open: () => Promise<AppViewerSocket>;
+  /** Android: opens a full-control socket after the owner's "Allow taps" click (the approval). */
+  openControl?: () => Promise<AppViewerSocket>;
   deviceName: string;
   /** `android` phones take the owner's taps while `canTap()` is true; iPhones never do. */
   platform?: AppPlatform;
@@ -187,16 +194,50 @@ export class AppPhoneViewerSession implements StreamSessionHandle {
         socket.close();
         throw new Error('closed');
       }
-      this.socket = socket;
-      socket.onMessage((data, isBinary) => this.onMessage(data, isBinary));
-      socket.onClose((_code, reason) => this.finish(reason || 'the iPhone stopped sharing its screen'));
-      socket.onError((error) => this.deps.log?.(`[app-screen ${this.deps.deviceName}] socket error: ${error.message}`));
+      this.attach(socket);
       await live;
     })().catch((error) => {
       this.finish(error instanceof Error ? error.message : String(error));
       throw error;
     });
     return this.startPromise;
+  }
+
+  private attach(socket: AppViewerSocket): void {
+    this.socket = socket;
+    // A replaced socket's close must not end the session.
+    socket.onMessage((data, isBinary) => { if (this.socket === socket) this.onMessage(data, isBinary); });
+    socket.onClose((_code, reason) => { if (this.socket === socket) this.finish(reason || 'the iPhone stopped sharing its screen'); });
+    socket.onError((error) => this.deps.log?.(`[app-screen ${this.deps.deviceName}] socket error: ${error.message}`));
+  }
+
+  /** True once the socket is full-control (requestControl succeeded). */
+  private controlOn = false;
+
+  /**
+   * Android: the owner clicked "Allow taps". Swap the read-only socket for a
+   * full-control one (the click is the approval the runtime's confirmation
+   * grant needs). The old socket closes only after the new one is open.
+   */
+  async requestControl(): Promise<{ ok: boolean; message?: string }> {
+    if (this.deps.platform !== 'android') return { ok: false, message: `${APP_TAPS_MESSAGE}. This iPhone shares its screen only.` };
+    if (this.controlOn) return { ok: true };
+    if (!this.socket || this.ended) return { ok: false, message: 'The stream is not live.' };
+    if (!this.deps.openControl) return { ok: false, message: 'Taps are not available here.' };
+    try {
+      const next = await this.deps.openControl();
+      if (this.ended) {
+        next.close();
+        return { ok: false, message: 'The stream is not live.' };
+      }
+      const old = this.socket;
+      this.attach(next);
+      try { old?.close(); } catch { /* already closed */ }
+      this.controlOn = true;
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, message: error instanceof Error ? error.message : 'Couldn’t turn on taps.' };
+    }
   }
 
   private onMessage(data: Buffer | string, isBinary: boolean): void {
@@ -279,6 +320,7 @@ export class AppPhoneViewerSession implements StreamSessionHandle {
     if (this.deps.platform === 'android') {
       if (!this.deps.canTap?.()) return { ok: false, message: `Turn on Allternit Accessibility on ${this.deps.deviceName || 'your phone'} to allow taps.` };
       if (!this.socket || this.ended) return { ok: false, message: 'The stream is not live.' };
+      if (!this.controlOn) return { ok: false, message: 'Tap Allow taps to tap and type on the phone.' };
       // The node seals this as input.events for the Android app (full-control viewers only).
       this.socket.send(JSON.stringify({ type: 'input', events }));
       return { ok: true };
@@ -899,7 +941,19 @@ export function httpAppPhoneNode(deps: HttpAppPhoneNodeDeps): AppPhoneNode {
       return { ok: true, result };
     },
     async openViewer(serial, opts) {
-      const res = await post(`/api/v1/phones/${encodeURIComponent(serial)}/ws-token`, { readOnly: opts?.readOnly !== false });
+      const readOnly = opts?.readOnly !== false;
+      const tokenPath = `/api/v1/phones/${encodeURIComponent(serial)}/ws-token`;
+      let res = await post(tokenPath, { readOnly });
+      if (res.status === 403 && !readOnly && opts?.approve) {
+        // Full control is gated by the ACI confirmation grant; the owner's "Allow taps" click approves it (single use).
+        const body = (await res.json().catch(() => ({}))) as { error?: unknown; approval_id?: unknown };
+        if (body.error === 'confirmation_required' && typeof body.approval_id === 'string') {
+          const id = encodeURIComponent(body.approval_id);
+          const ok = await post(`/api/aci/handoff/${id}/approve`, {});
+          if (!ok.ok) throw new Error(`Taps couldn’t be approved (${ok.status}).`);
+          res = await post(`${tokenPath}?approval_id=${id}`, { readOnly });
+        }
+      }
       if (!res.ok) {
         const { message } = await errorOf(res);
         throw new Error(res.status === 404 || res.status === 409 ? APP_SHARE_SCREEN_MESSAGE : message || `The phone stream token was refused (${res.status}).`);
