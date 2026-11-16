@@ -76,6 +76,16 @@ The app keeps its counters on your phone only. Nothing about them is sent to All
 
 Allternit Desktop updates the app when it sets up or relinks the phone. To update it yourself, open [allternit.com/android](https://allternit.com/android) again and install over the old version. Your sign-in stays.
 
+## Signing in to your computers' files
+
+The first time you use the Files features (your computers in the Files app, **Save to computer**, **Inbox tasks**), the app opens a sign-in page in your browser at m.allternit.com/files/connect-android.
+
+1. Sign in if you are not signed in. The page asks "Show your computers on" your phone, with your account name. Tap **Connect**, or **Cancel** to go back without signing in.
+2. The page makes an access key for this phone and seals it so only this phone can open it. The key is sealed to a key kept in the phone's Android Keystore, which never leaves the phone. It shows up in your API keys as "Android Files" with your phone's name, and you can revoke it there.
+3. Tap **Return to Allternit**. The app opens signed in and shows your computers.
+
+Sometimes Chrome keeps the return link in the browser instead of opening the app. If you see a page with an **Open Allternit** button, tap it: that is one extra tap, and it finishes the sign-in. The same link is on the sign-in page as "App didn't open?". If the sign-in link is incomplete or came from somewhere else, the page says so and gives no key. The sign-in only returns to the Allternit app (`com.allternit.app`), never to another app.
+
 ## Moving from the old Phone Link app
 
 Phone Link before version 0.4.0 was a separate app called **Allternit Phone Link**. When Allternit Desktop next sets up the phone, it removes the old app, installs this one and links the phone again. If you installed this app yourself first, uninstall **Allternit Phone Link** in **Settings → Apps**.
