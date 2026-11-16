@@ -73,6 +73,13 @@
           "type": "string",
           "description": "Only for own_device hosts on the mesh."
         },
+        "replicas": {
+          "type": "array",
+          "items": {
+            "$ref": "replicas.json#/$defs/Replica"
+          },
+          "description": "Replicas of this computer's roots on the user's other devices, from their last heartbeats. A client uses one (state current) when the computer is asleep or offline: it asks the host device's endpoints and reads the sealed copy (served_by replica, SPEC section 10)."
+        },
         "host": {
           "type": "string",
           "enum": [

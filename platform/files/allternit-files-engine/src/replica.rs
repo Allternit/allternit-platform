@@ -495,8 +495,24 @@ pub fn restore(
         }
     };
 
+    // Folders that hold a selected file come back too, so it has somewhere to go.
+    let mut ancestors: HashSet<&str> = HashSet::new();
+    for e in catalog.items.iter().filter(|e| e.kind == ItemKind::File && selected(&e.item_id)) {
+        let mut cur = e.parent_id.as_deref();
+        while let Some(c) = cur {
+            if !ancestors.insert(c) {
+                break;
+            }
+            cur = parents.get(c).copied().flatten();
+        }
+    }
+
     // Folders first, parents before children (the catalog is written that way).
-    for e in catalog.items.iter().filter(|e| e.kind == ItemKind::Folder && e.parent_id.is_some() && selected(&e.item_id)) {
+    for e in catalog
+        .items
+        .iter()
+        .filter(|e| e.kind == ItemKind::Folder && e.parent_id.is_some() && (selected(&e.item_id) || ancestors.contains(e.item_id.as_str())))
+    {
         if let Err(err) = sink.folder(e) {
             fail(&mut report, &e.item_id, err.code());
         }

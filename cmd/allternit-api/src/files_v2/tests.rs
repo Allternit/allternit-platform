@@ -171,6 +171,8 @@ fn files_v2_never_touches_activity() {
         ("meta.rs", include_str!("meta.rs")),
         ("storage.rs", include_str!("storage.rs")),
         ("errors.rs", include_str!("errors.rs")),
+        ("replicas.rs", include_str!("replicas.rs")),
+        ("sync.rs", include_str!("sync.rs")),
     ];
     const FORBIDDEN: &[&str] =
         &["touch_computer_activity", "touch_runtime_activity", "touch_activity", "touch_provisioned_activity", "last_activity_at", "mark_active"];
@@ -391,7 +393,7 @@ async fn contract_fixtures_round_trip_through_the_handlers() {
     let r = e.get(&format!("/roots/{}/list?parent_id={}", memory.id, memory.root_item_id), &[UNLOCK]).await;
     assert_eq!(r.status, 200);
     assert_eq!(e.get("/items/it_nope", &[]).await.error().code, ErrorCode::NotFound);
-    assert_eq!(e.get("/replicas", &[]).await.error().code, ErrorCode::Unsupported);
+    let _: ReplicasResponse = e.get("/replicas", &[]).await.typed();
     let off = env_with(|c| c.enabled = false);
     assert_eq!(off.get("/ping", &[]).await.error().code, ErrorCode::FeatureDisabled);
     assert!(!off.home.join("Allternit").exists(), "nothing is created while the flag is off");

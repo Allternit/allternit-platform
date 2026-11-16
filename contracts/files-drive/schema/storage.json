@@ -104,6 +104,77 @@
           "$ref": "#/$defs/ReplicaHostInfo"
         }
       }
+    },
+    "PlacementOption": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "device_id",
+        "label",
+        "score",
+        "eligible",
+        "reason",
+        "free_bytes",
+        "computer_state"
+      ],
+      "properties": {
+        "device_id": {
+          "$ref": "common.json#/$defs/DeviceId"
+        },
+        "label": {
+          "type": "string"
+        },
+        "score": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Higher is better. 0 when not eligible."
+        },
+        "eligible": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": "string",
+          "description": "One plain sentence the picker shows next to the device."
+        },
+        "free_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "computer_state": {
+          "$ref": "common.json#/$defs/ComputerState"
+        }
+      },
+      "description": "One candidate replica host, ranked by rules over capacity, sensitivity and availability (plan D16). The user confirms the pick."
+    },
+    "PlacementResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "computer_id",
+        "root_id",
+        "needed_bytes",
+        "options"
+      ],
+      "properties": {
+        "computer_id": {
+          "$ref": "common.json#/$defs/ComputerId"
+        },
+        "root_id": {
+          "$ref": "common.json#/$defs/RootId"
+        },
+        "needed_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "options": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PlacementOption"
+          },
+          "description": "Best first. The first eligible option is the suggestion."
+        }
+      },
+      "description": "GET /api/v1/computer-files/:computer_id/placement?root_id=...: where to put a replica of one root."
     }
   }
 }

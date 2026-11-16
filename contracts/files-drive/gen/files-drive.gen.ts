@@ -132,6 +132,10 @@ export interface CopyRequest {
   dest_parent_id: ItemId;
   /** Set for a cross-computer copy; returns a job. */
   dest_computer_id?: ComputerId;
+  /** With dest_computer_id: the destination's loopback or mesh URL prefix ending in /api/v1/files/v2. The source runtime pushes the copy there (have/need, upload session) with its runtime device token. */
+  dest_base_url?: string;
+  /** With dest_computer_id: a cross-computer move. The source item goes to the trash only after the destination committed it with the same content hash. The job kind is move. */
+  delete_source?: boolean;
   new_name?: string;
   on_conflict: OnConflict;
 }
@@ -147,6 +151,8 @@ export interface CreateReplicaRequest {
   root_id: RootId;
   host_device_id: DeviceId;
   mode: CreateReplicaRequestMode;
+  /** Send only to the source computer: the host's loopback or mesh URL prefix ending in /api/v1/files/v2 (from the host's endpoints). The source pushes sealed chunks there with its runtime device token. Never a relay URL. */
+  host_base_url?: string;
 }
 
 export type CreateReplicaRequestMode = "full" | "pinned_only";
@@ -208,6 +214,8 @@ export interface EndpointsResponse {
   candidates: TransportCandidate[];
   /** Only for own_device hosts on the mesh. */
   mesh_hostname?: string;
+  /** Replicas of this computer's roots on the user's other devices, from their last heartbeats. A client uses one (state current) when the computer is asleep or offline: it asks the host device's endpoints and reads the sealed copy (served_by replica, SPEC section 10). */
+  replicas?: Replica[];
   /** cloud_computer = provisioned by cloud-api (Incus/Contabo/Orgo). These computers do not join the mesh, so the server never lists a mesh candidate for them: relay only. */
   host: EndpointsResponseHost;
 }
@@ -547,6 +555,32 @@ export interface PinRequest {
 export interface PinResponse {
   item_id: ItemId;
   pinned_on: DeviceId[];
+}
+
+/**
+ * One candidate replica host, ranked by rules over capacity, sensitivity and availability (plan D16). The user confirms the pick.
+ */
+export interface PlacementOption {
+  device_id: DeviceId;
+  label: string;
+  /** Higher is better. 0 when not eligible. */
+  score: number;
+  eligible: boolean;
+  /** One plain sentence the picker shows next to the device. */
+  reason: string;
+  free_bytes: number;
+  computer_state: ComputerState;
+}
+
+/**
+ * GET /api/v1/computer-files/:computer_id/placement?root_id=...: where to put a replica of one root.
+ */
+export interface PlacementResponse {
+  computer_id: ComputerId;
+  root_id: RootId;
+  needed_bytes: number;
+  /** Best first. The first eligible option is the suggestion. */
+  options: PlacementOption[];
 }
 
 export type PrincipalKind = "owner" | "own_device" | "guest" | "agent";
