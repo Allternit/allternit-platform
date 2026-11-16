@@ -31,6 +31,16 @@ public enum FilesPinKeeper {
         }
     }
 
+    /// Downloads one item now ("Keep offline" in the File Provider UI sheet,
+    /// which runs in its own process). False when the system would not give
+    /// a URL for it; the app then fetches it on its next foreground.
+    public static func materialize(computerId: ComputerId, itemId: ItemId) async -> Bool {
+        guard let manager = await FilesDomains.manager(for: computerId),
+              let url = try? await manager.getUserVisibleURL(for: NSFileProviderItemIdentifier(itemId)) else { return false }
+        await coordinatedRead(url)
+        return true
+    }
+
     private static func coordinatedRead(_ url: URL) async {
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             DispatchQueue.global(qos: .utility).async {

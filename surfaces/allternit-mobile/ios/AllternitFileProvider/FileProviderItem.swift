@@ -14,7 +14,7 @@ import AllternitFilesKit
 /// Versions: `contentVersion` = the BLAKE3 content hash (or the rev for
 /// folders), `metadataVersion` = the rev. The rev is what writes send as
 /// `base_rev`, read back from `metadataVersion` in modify and delete.
-final class FileProviderItem: NSObject, NSFileProviderItem {
+final class FileProviderItem: NSObject, NSFileProviderItem, NSFileProviderItemDecorating {
     let itemIdentifier: NSFileProviderItemIdentifier
     let parentItemIdentifier: NSFileProviderItemIdentifier
     let filename: String
@@ -29,10 +29,21 @@ final class FileProviderItem: NSObject, NSFileProviderItem {
     /// The contract item behind this one (nil for the computer itself).
     let item: Item?
     let rootId: RootId?
+    /// Design 5C colour badges (`FilesBadge`, Info.plist
+    /// `NSFileProviderDecorations`). Files draws only the first badge.
+    let decorations: [NSFileProviderItemDecorationIdentifier]?
+    /// What the File Provider UI actions test in their activation rules
+    /// (UI extension Info.plist): `kind`, `pinned`, `canPin`, `canShare`,
+    /// `canSummarize`, `canSendToAgent`.
+    let userInfo: [AnyHashable: Any]?
+    /// Has a live share link (Files shows it as shared).
+    let isShared: Bool
+    var isSharedByCurrentUser: Bool { isShared }
 
     init(identifier: NSFileProviderItemIdentifier, parent: NSFileProviderItemIdentifier, name: String,
          isFolder: Bool, item: Item?, rootId: RootId?, rev: Rev, contentVersion: String,
-         capabilities: NSFileProviderItemCapabilities, pinned: Bool) {
+         capabilities: NSFileProviderItemCapabilities, pinned: Bool,
+         badges: [FilesBadge] = [], actions: [String: Any] = [:], shared: Bool = false) {
         itemIdentifier = identifier
         parentItemIdentifier = parent
         filename = name
@@ -52,6 +63,9 @@ final class FileProviderItem: NSObject, NSFileProviderItem {
         self.pinned = pinned
         self.item = item
         self.rootId = rootId
+        decorations = badges.isEmpty ? nil : badges.map(\.identifier)
+        userInfo = actions.isEmpty ? nil : actions
+        isShared = shared
     }
 
     #if os(macOS)
@@ -73,6 +87,7 @@ struct ItemMapper {
     let roots: [Root]
     let freshness: Freshness?
     let pinnedIds: Set<ItemId>
+    let sharedIds: Set<ItemId>
 
     private var rootsById: [RootId: Root] { Dictionary(roots.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a }) }
 
@@ -103,9 +118,16 @@ struct ItemMapper {
         }
         var caps: NSFileProviderItemCapabilities = [.allowsReading, .allowsContentEnumerating]
         if isLive && root.policy.write { caps.insert(.allowsAddingSubItems) }
+        let shared = sharedIds.contains(root.rootItemId)
+        var badges: [FilesBadge] = []
+        if root.policy.protected { badges.append(.locked) }
+        if shared { badges.append(.shared) }
         return FileProviderItem(identifier: NSFileProviderItemIdentifier(root.rootItemId), parent: parent, name: root.name,
                                 isFolder: true, item: nil, rootId: root.id, rev: "root-\(root.cursor)",
-                                contentVersion: "root", capabilities: caps, pinned: false)
+                                contentVersion: "root", capabilities: caps, pinned: false, badges: badges,
+                                actions: ["kind": "root", "canShare": root.policy.shareable, "canPin": false,
+                                          "canSummarize": false, "canSendToAgent": false, "pinned": false],
+                                shared: shared)
     }
 
     /// `item` as the File Provider sees it (a link entry becomes its root).
@@ -118,10 +140,29 @@ struct ItemMapper {
         }
         let parent = item.parentId.map { NSFileProviderItemIdentifier($0) } ?? .rootContainer
         let isFolder = item.kind == .folder
+        let pinned = pinnedIds.contains(item.id)
+        let shared = sharedIds.contains(item.id)
         return FileProviderItem(identifier: NSFileProviderItemIdentifier(item.id), parent: parent, name: item.name,
                                 isFolder: isFolder, item: item, rootId: item.rootId, rev: item.rev,
                                 contentVersion: item.contentHash ?? item.rev,
-                                capabilities: capabilities(item), pinned: pinnedIds.contains(item.id))
+                                capabilities: capabilities(item), pinned: pinned,
+                                badges: FilesBadge.badges(for: item, pinned: pinned, shared: shared),
+                                actions: actions(item, pinned: pinned), shared: shared)
+    }
+
+    /// The facts the File Provider UI actions are switched on by.
+    private func actions(_ item: Item, pinned: Bool) -> [String: Any] {
+        let isFile = item.kind == .file
+        let root = rootsById[item.rootId]
+        let inbox = roots.first { $0.kind == .inbox && $0.policy.agentProcess && $0.policy.write }
+        return [
+            "kind": isFile ? "file" : "folder",
+            "pinned": pinned,
+            "canPin": isFile && item.permissions.read,
+            "canShare": item.permissions.share && (root?.policy.shareable ?? false),
+            "canSummarize": isFile && item.permissions.read && FilesBadge.isReadableDocument(item.name),
+            "canSendToAgent": isFile && item.permissions.read && inbox != nil,
+        ]
     }
 
     private func capabilities(_ item: Item) -> NSFileProviderItemCapabilities {
@@ -152,5 +193,44 @@ enum ProviderDates {
         let fractional = ISO8601DateFormatter()
         fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return fractional.date(from: value) ?? ISO8601DateFormatter().date(from: value)
+    }
+}
+
+/// The colour badge set (design 5C). Each case is one entry in Info.plist
+/// `NSFileProviderDecorations`; the custom ones are exported UTTypes whose
+/// icons live in `Badges.xcassets`. Files shows only the first badge of an
+/// item, so the order here is the priority: a conflict copy first, then a
+/// file an agent made, then kept offline, then shared.
+enum FilesBadge: String, CaseIterable {
+    case conflict
+    case agent
+    case offline
+    case shared
+    /// Protected root (Memory Drive): the system lock, embossed on the folder.
+    case locked
+
+    var identifier: NSFileProviderItemDecorationIdentifier {
+        NSFileProviderItemDecorationIdentifier((Bundle.main.bundleIdentifier ?? "com.allternit.mobile.files") + ".badge." + rawValue)
+    }
+
+    static func badges(for item: Item, pinned: Bool, shared: Bool) -> [FilesBadge] {
+        var badges: [FilesBadge] = []
+        if item.kind == .file && isConflictCopy(item.name) { badges.append(.conflict) }
+        if item.provenance?.source == .agent || item.provenance?.aiGenerated == true { badges.append(.agent) }
+        if pinned { badges.append(.offline) }
+        if shared { badges.append(.shared) }
+        return badges
+    }
+
+    /// `<stem> (conflict <device> <YYYY-MM-DD HHmm>[ n]).<ext>` (SPEC section 4).
+    static func isConflictCopy(_ name: String) -> Bool {
+        name.range(of: #"\(conflict .+ \d{4}-\d{2}-\d{2} \d{4}( \d+)?\)"#, options: .regularExpression) != nil
+    }
+
+    /// What the computer can summarize today: text, PDF and Word files.
+    static func isReadableDocument(_ name: String) -> Bool {
+        let ext = (name as NSString).pathExtension.lowercased()
+        if ["pdf", "docx", "txt", "md", "markdown", "csv", "json", "log", "rtf", "html", "xml", "yaml", "yml"].contains(ext) { return true }
+        return UTType(filenameExtension: ext)?.conforms(to: .text) ?? false
     }
 }
