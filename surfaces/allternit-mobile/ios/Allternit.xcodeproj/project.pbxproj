@@ -343,6 +343,7 @@
 		6F9A18CD0BDB41CFDED30153 /* ACIBrowserBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = C343A72EAB0FEDC0099032C4 /* ACIBrowserBridge.swift */; };
 		6FABE8767B5DDB768BE24B43 /* BrainCaptureSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 22A98A22F0D4B4A2007A2BFE /* BrainCaptureSheet.swift */; };
 		6FE735B63FDD7E165C44AA1B /* StatusIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 17AA47FC9C8EFA2D7A77BEF6 /* StatusIntents.swift */; };
+		7030C605737E1E80662DC497 /* FolderLookSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 06DA8120797ED6A538464EA3 /* FolderLookSheet.swift */; };
 		707E959BCE63F79BD6D67C06 /* DecideIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 171BCC12EDA4F66CEB80E43C /* DecideIntents.swift */; };
 		70F1E2341226D404BDD43864 /* ChatGPTDeviceStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C299424F04134E3087B6427 /* ChatGPTDeviceStore.swift */; };
 		7106BF7CBFACF4834B97F4C3 /* ControlIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2EDB46F04BBA1DCA3AFA758 /* ControlIntents.swift */; };
@@ -873,6 +874,7 @@
 		065746AA1AAB611D27D806F6 /* ACIComputersClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ACIComputersClient.swift; sourceTree = "<group>"; };
 		065BE9F8581DD0504FBA0107 /* CloudInstancesStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudInstancesStore.swift; sourceTree = "<group>"; };
 		06B360969E6E7F337595712A /* AllternitMessages.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = AllternitMessages.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		06DA8120797ED6A538464EA3 /* FolderLookSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FolderLookSheet.swift; sourceTree = "<group>"; };
 		071C1D1CB11C431C8761C4B7 /* FeaturePlugins.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeaturePlugins.swift; sourceTree = "<group>"; };
 		0757A1255EC2B7A9AA1D2308 /* ArtifactBodyDecoder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArtifactBodyDecoder.swift; sourceTree = "<group>"; };
 		085224ED867F904E2D827ED7 /* BrainGit.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrainGit.swift; sourceTree = "<group>"; };
@@ -1826,6 +1828,7 @@
 				D6187BEB41C068AFE53A4B05 /* CodeProjectDetailView.swift */,
 				236F64053DDFA9AB97A4A78B /* DesignProjectCanvasView.swift */,
 				039095942631C18574A64429 /* FolderCoverView.swift */,
+				06DA8120797ED6A538464EA3 /* FolderLookSheet.swift */,
 				95E7B3B373CACF55CD3AD9DF /* LibrarySectionChrome.swift */,
 				6BF08861508C7252E3641B3A /* NewProjectSheet.swift */,
 				D63FE7A9FEDE8E97F54E685E /* PadEditSheet.swift */,
@@ -3819,6 +3822,7 @@
 				680ADDF3984085B5D60F6ABB /* FocusFilter.swift in Sources */,
 				52F3CD56C8A3C1D254CE71B9 /* FocusFilterClient.swift in Sources */,
 				FE7356939A272A93F60036F4 /* FolderCoverView.swift in Sources */,
+				7030C605737E1E80662DC497 /* FolderLookSheet.swift in Sources */,
 				22587EBF84FC873F64DD20B8 /* FormSchema.swift in Sources */,
 				49E8007E1EC443E080CBC787 /* FormSurfacesView.swift in Sources */,
 				D56A02E237B34A8277D1AD67 /* FreeweightsBrowseView.swift in Sources */,

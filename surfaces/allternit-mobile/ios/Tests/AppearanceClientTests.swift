@@ -6,7 +6,7 @@ final class AppearanceClientTests: XCTestCase {
         try AppearanceClient.decode(Data(json.utf8))
     }
 
-    private let legacy = #"{"version":1,"color":"#1F4FA8","paperColor":"#ffffff","documents":true,"overlay":"text","symbol":"sparkle","text":"AB","overlayColor":"#ffffff","x":0,"y":0,"scale":1,"rotation":0"#
+    private let legacy = ##"{"version":1,"color":"#1F4FA8","paperColor":"#ffffff","documents":true,"overlay":"text","symbol":"sparkle","text":"AB","overlayColor":"#ffffff","x":0,"y":0,"scale":1,"rotation":0"##
 
     func testRecordWithoutCoverDecodesAndResolvesToClassicWithLegacyArt() throws {
         let a = try XCTUnwrap(try decode(#"{"appearance":"# + legacy + "}}"))
@@ -18,7 +18,7 @@ final class AppearanceClientTests: XCTestCase {
     }
 
     func testRecordWithCoverDecodesEveryField() throws {
-        let cover = #","cover":{"v":2,"preset":"badge","art":"symbol","font":"sans","place":"top","pattern":"dots","frame":"none","edge":"shadow","sheets":3,"tabColor":"#9B6BD6","tabLabel":"LAUNCH","showMode":false}"#
+        let cover = ##","cover":{"v":2,"preset":"badge","art":"symbol","font":"sans","place":"top","pattern":"dots","frame":"none","edge":"shadow","sheets":3,"tabColor":"#9B6BD6","tabLabel":"LAUNCH","showMode":false}"##
         let a = try XCTUnwrap(try decode(#"{"appearance":"# + legacy + cover + "}}"))
         let c = try XCTUnwrap(a.cover)
         XCTAssertEqual(c.preset, "badge")
@@ -84,5 +84,22 @@ final class AppearanceClientTests: XCTestCase {
         a.cover = Cover.classic
         let data = try JSONEncoder().encode(["appearance": a])
         XCTAssertEqual(try AppearanceClient.decode(data), a)
+    }
+
+    func testSavedLookRoundTripsAndStaysInSync() throws {
+        var a = Appearance()
+        a.image = "data:image/png;base64,iVBORw0KGgo="
+        a = FolderLookEdit.applyPreset(a, FolderCoverPreset.all.first { $0.id == "badge" }!)
+        a = FolderLookEdit.patchCover(a) { $0.art = .image; $0.sheets = 0; $0.tabLabel = "Quarterly plan" }
+        XCTAssertEqual(a.cover?.tabLabel, "Quarterly")
+        XCTAssertNil(a.cover?.preset)
+        XCTAssertEqual(a.overlay, "image")
+        XCTAssertFalse(a.documents)
+        XCTAssertEqual(a.color, "#9B6BD6")
+        let data = try JSONEncoder().encode(["appearance": a.withCoverSync()])
+        let back = try XCTUnwrap(AppearanceClient.decode(data))
+        XCTAssertEqual(back, a)
+        XCTAssertEqual(back.cover?.pattern, .dots)
+        XCTAssertEqual(back.cover?.edge, .shadow)
     }
 }
