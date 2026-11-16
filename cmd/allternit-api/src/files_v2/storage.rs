@@ -1,27 +1,29 @@
 //! `GET /storage`: `StorageDiscovery` (SPEC section 15) from the volumes that
-//! hold this computer's roots, plus bytes per root from the index.
+//! hold this computer's roots, bytes per root from the index, and what this
+//! computer offers as a replica host.
 
 use std::sync::Arc;
 
-use allternit_files_core::{ReplicaHostInfo, StorageDiscovery, Volume};
+use allternit_files_core::{StorageDiscovery, Volume};
 use axum::{Extension, Json};
 
 use super::routes::run;
-use super::{meta, ApiError, FilesV2, Req};
+use super::{meta, ApiError, Fail, FilesV2, Inner, Req};
 
 pub async fn storage(Extension(files): Extension<Arc<FilesV2>>, _req: Req) -> Result<Json<StorageDiscovery>, ApiError> {
-    run(&files, move |v| {
-        let paths: Vec<std::path::PathBuf> = v.drive.roots()?.into_iter().map(|r| r.local_path).collect();
-        Ok(Json(StorageDiscovery {
-            computer_id: v.cfg.computer_id.clone(),
-            reported_at: v.drive.now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
-            volumes: volumes(&paths),
-            root_usage: meta::root_usage(&v.cfg.data_dir.join("engine"))?,
-            // Replica hosting is step 15.
-            replica_host: ReplicaHostInfo { enabled: false, capacity_bytes: 0, used_bytes: 0 },
-        }))
+    run(&files, move |v| Ok(Json(discovery(v)?))).await
+}
+
+/// The report `GET /storage` answers and the heartbeat carries (SPEC section 15).
+pub(crate) fn discovery(v: &Inner) -> Result<StorageDiscovery, Fail> {
+    let paths: Vec<std::path::PathBuf> = v.drive.roots()?.into_iter().map(|r| r.local_path).collect();
+    Ok(StorageDiscovery {
+        computer_id: v.cfg.computer_id.clone(),
+        reported_at: v.drive.now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+        volumes: volumes(&paths),
+        root_usage: meta::root_usage(&v.cfg.data_dir.join("engine"))?,
+        replica_host: super::replicas::host_info(&v.cfg.data_dir),
     })
-    .await
 }
 
 #[cfg(unix)]

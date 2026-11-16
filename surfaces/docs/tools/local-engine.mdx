@@ -30,7 +30,7 @@ The host and port can be changed with environment variables:
 
 1. **Model cache** — tracks downloaded and imported models with their byte-level progress, status, and local paths.
 2. **Verified downloads** — every file is fetched through the [model source contract](/tools/freeweights): Freeweights first, then the publisher (Hugging Face), checked by sha256 or the git blob id. Partial downloads resume. Each model in `GET /models` carries a `verification` state, and `POST /models/verify` re-hashes the files on disk. Data with no hash is refused unless the request sets `allow_unverified`. Set `ALLTERNIT_FREEWEIGHTS_URL` to point at a different Freeweights base. See [Freeweights](/tools/freeweights).
-3. **Local imports** — registers models already on disk, including exports produced by Unsloth training jobs.
+3. **Local imports** — registers models already on disk, including exports produced by Studio training jobs.
 4. **Runtime manager** — spawns inference backends on a free port, polls their health endpoint, and captures logs.
 5. **Chat proxy** — forwards `/v1/chat/completions` requests to the correct healthy runtime using the `model` field.
 6. **Host diagnostics** — reports CPU, RAM, disk, and GPU information so clients can pick compatible models.
@@ -161,7 +161,7 @@ The download runs in the background. Poll `/models` to watch `downloaded_bytes` 
 
 ## Import a local model
 
-Use this for weights already on disk or for Unsloth exports.
+Use this for weights already on disk or for Studio training exports.
 
 ```bash
 curl -X POST http://127.0.0.1:3015/models/import \

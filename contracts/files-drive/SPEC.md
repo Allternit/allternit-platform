@@ -69,10 +69,17 @@ All under `/api/v1/files/v2`. The relay maps any path containing `/files` to cap
 | `GET /roots/:root_id/changes` | `ChangesQuery` | `ChangesResponse` |
 | `GET /subscribe` (WebSocket) | first frame `SubscribeMessage` | `FeedMessage` frames |
 | `GET /jobs/:job_id` | | `JobRef` |
+| `GET /models/handoff/:item_id` | `execute` (bool, default false), `kind` (`model`, `dataset`, `checkpoint`) | `PackageManifest` (section 19) |
+| `POST /models/transfer` | `{source: SourceRef, dest_parent_id?, allow_execute?}` | `JobRef` (`kind: model_transfer`), on the receiving computer |
+| `POST /models/grant` | `{item_id, execute}` | `PackageManifest` (the landed permission file); local callers only |
+| `POST /route` | `{source: SourceRef, dest_root_id?}` | `JobRef` (`kind: copy`): one file into this computer's Inbox (or another root) |
 | `GET /storage` | | `StorageDiscovery` |
 | `GET /items/:item_id/comments`, `POST /comments` | `CommentCreateRequest` | `Comment[]`, `Comment` |
 | `GET /replicas`, `POST /replicas` | `CreateReplicaRequest` | `ReplicasResponse` (on the replica host) |
 | `POST /replicas/restore` | `ReplicaRestoreRequest` | `ReplicaRestoreReport` |
+| `GET /inbox/tasks`, `GET /inbox/tasks/:task_id` | query `state`, `limit` | `{tasks: Task[]}`, `Task` (owner and own devices only; shapes in `surfaces/docs/api/files-drive-inbox.mdx`) |
+| `POST /inbox/tasks/:task_id/approve`, `POST /inbox/tasks/:task_id/reject` | `{tools?, output?: "beside" \| "agent_output"}` / none | `Task` (section 7; the grant is an `AgentGrant`) |
+| `GET /rules`, `POST /rules`, `PATCH /rules/:rule_id`, `DELETE /rules/:rule_id` | `{root_id, name, instruction?, tools, output?}` / `{active}` | `{rules: FolderRule[]}`, `FolderRule`, 204 (folder rules, kept in Automation Tasks; add and re-enable on the computer only) |
 
 Writing a file: a client with a file of 4 MiB or less may use the small write; anything bigger, or anything that must resume, uses an upload session (section 5).
 
@@ -86,9 +93,15 @@ Body limits on the runtime: axum's default body limit is 2 MB, so the chunk and 
 | `POST /api/v1/computer-files/:computer_id/wake-consent` | `WakeConsentRequest` | `WakeConsentResponse` |
 | `GET` / `PUT /api/v1/computer-files/:computer_id/wake-settings` | `UpdateWakeSettingsRequest` | `WakeSettings` |
 | `GET /api/v1/computer-files/:computer_id/storage` | | `StorageDiscovery` (last heartbeat report) |
+| `GET /api/v1/computer-files/:computer_id/placement?root_id=` | | `PlacementResponse` (where to keep a replica of that root, section 10) |
+| `GET` / `PUT /api/v1/computer-files/peer/:host_device_id/replicas/:replica_id/head`, `POST …/have-need`, `GET` / `PUT …/blobs/:locator` | the replica host routes' bodies | the host's answer, raw (runtime-to-runtime relay, runtime device token, section 10) |
+| `GET /api/v1/computer-files/drops` | | `QueuedDropsResponse` (signed by the computer, like its heartbeat) |
+| `GET /api/v1/computer-files/drops/:drop_id/content` | | the drop's bytes (signed by the computer) |
+| `POST /api/v1/computer-files/drops/:drop_id/ack` | `QueuedDropAck` | 204 (signed by the computer; deletes the R2 copy) |
 | `POST /api/v1/computer-files/:computer_id/shares` | `CreateShareRequest` | `ShareResponse` |
 | `GET /api/v1/computer-files/:computer_id/shares` | | `SharesResponse` |
 | `DELETE /api/v1/computer-files/shares/:share_id` | | 204 (revoke; applies on the guest's next request) |
+| `DELETE /api/v1/computer-files/shares/:share_id/guests/:guest_id` | | 204 (revoke one guest; applies on that guest's next request) |
 | `GET /api/v1/computer-files/shares/:share_id/access` | | `ShareAccess[]` (audit) |
 | `GET /api/v1/computer-files/token-keys` | | `{keys: [{kid, alg: "Ed25519", public_key (base64url, 32 bytes)}]}`, so runtimes verify tokens offline |
 | `GET /api/v1/files-keys` | | `FilesKeyInfo` |
@@ -189,7 +202,7 @@ Default roots, created on first use of the drive:
 `Permissions` (list, read, write, delete, share, comment, agent_process, transfer, execute) are computed by the runtime per request and returned on each item. Clients use them to show or hide actions; the server enforces them.
 
 - `agent_process` is separate from share roles: sharing a folder never lets an agent act on it.
-- `transfer` (copy a model or dataset) is separate from `execute` (run it). A package with transfer only cannot run (`execute_denied`).
+- `transfer` (copy a model or dataset) is separate from `execute` (run it). A package with transfer only cannot run (`execute_denied`). Section 19 has the package format and where `execute` is checked.
 - Inbox and shared-folder files are untrusted. A drop creates a task in `needs_approval` (`files.inbox.dropped`), unless the owner pre-approved a folder rule with a fixed tool set (`approved_by_rule`). No tool call happens before approval, and none reaches outside the root after.
 
 ## 8. Capability tokens
@@ -220,7 +233,7 @@ Today `connect_or_wake_runtime` (`runtime_relay.rs`) wakes a stopped computer on
    - `never`: `wake_denied`.
    It returns `{ticket, expires_at, computer_state: waking|awake, estimated_wake_s}`. Requests carrying the ticket wait for the runtime (up to the relay's 30 s wake wait) instead of failing.
 5. **The idle timer.** The consent call is a user action, not Files traffic. It records exactly one activity touch at wake time. This is needed because the free-tier sleep sweep uses `COALESCE(last_activity_at, last_started_at, created_at)` (`provisioning_free.rs`): an old `last_activity_at` would otherwise put the computer back to sleep right after the wake. A transfer that outlasts the idle window asks for a new ticket (silently under `auto`), which records one more touch. Nothing else in Files resets idle.
-6. **Guests** never wake the owner's computer unless the share has `guest_wake: true` (`guest_wake_not_allowed`). An `upload_only` drop to a sleeping computer is stored in the owner's own R2 bucket as a `QueuedDrop` and pulled into Inbox on the next wake.
+6. **Guests** never wake the owner's computer unless the share has `guest_wake: true` (`guest_wake_not_allowed`). An `upload_only` drop to a sleeping computer is stored in the owner's own R2 bucket as a `QueuedDrop` and pulled into Inbox on the next wake. About 20 s after the runtime starts, and every 5 minutes after that, the computer lists its drops (`GET /computer-files/drops`, signed like its heartbeat). It checks each one's size and blake3 `content_hash`; a mismatch is acked `rejected` and never written. Each good drop is written into the **Inbox root** by the guest (`PrincipalKind::guest`, keep-both on a name clash). Leading dots are removed from the name, and a name ending in `.provenance.json` gets `.dropped` added. The drop then becomes an untrusted `needs_approval` task like any other Inbox drop (section 7). After that the runtime acks the drop `delivered` with the item id, and cloud-api deletes the R2 copy. The runtime keeps delivered drop ids, so a lost ack is sent again without writing a second copy.
 
 Errors: `asleep` (no snapshot yet), `waking` (with `retry_after_s`), `offline` (an own device that is not reachable; it cannot be woken).
 
@@ -248,9 +261,19 @@ Clients pick the source of an answer in this order:
 
 Only step 3 with a wake ticket ever wakes a computer. Replication itself never wakes one: a replica catches up the next time the primary is awake for another reason.
 
+**Replica hosts reachable only through the relay.** A cloud computer is relay only, so it can't be pushed to over the mesh. Register it as a replica host on the source computer without `host_base_url`. The source then pushes through cloud-api's peer relay, `/api/v1/computer-files/peer/:host_device_id/replicas/:replica_id/{have-need,head,blobs/:locator}`, with its runtime device token, the same token it sends a host over the mesh. cloud-api checks that the host belongs to the same user and forwards only the replica host routes, only while the host is already connected. It never wakes the host or the source, and it doesn't touch either idle clock, because the relayed path is under `/api/v1/files/v2/`. An asleep host answers `503 asleep`, and the replica stays `behind` until both computers are on.
+
+**Placement.** `GET /computer-files/:computer_id/placement?root_id=` ranks the user's other computers that sent a storage report (section 15). The rules (plan D16) are explainable and free; no model picks the device, and the user confirms the pick:
+- **Capacity.** The freest volume, capped by the host's replica capacity, must fit the root's bytes plus 10%.
+- **Sensitivity.** A `protected` root never goes to a cloud computer. A root whose policy has `replica: false` is refused (`forbidden`).
+- **Availability.** Online now ranks above asleep (a cloud computer catches up when it is next on), which ranks above offline. A report older than 7 days isn't eligible.
+- **Other rules.** A computer with hosting turned off isn't eligible. A computer whose only disk is removable ranks lower.
+
+Every option carries one plain `reason`. Ineligible options come last with `score: 0`.
+
 ## 11. Asleep snapshot
 
-The runtime writes file names, sizes and revisions (never contents) to the **user's own R2 bucket**, the same place and trust class as files the user uploads. It writes only while it is awake: on sleep notice, and at most every 5 minutes while changes are pending.
+The runtime writes file names, sizes and revisions (never contents) to the **user's own R2 bucket**, the same place and trust class as files the user uploads. It writes only while it is awake: on sleep notice, and at most every 5 minutes while changes are pending. In allternit-api the sleep notice is SIGTERM, which is what a cloud computer being stopped or Desktop quitting sends. The write gets a 5 s budget. The interval is `ALLTERNIT_FILES_SNAPSHOT_EVERY_S` (default 300). A pass sends the manifest only when a root or a cursor changed, then only the root files whose cursor moved, so an unchanged drive sends nothing.
 
 ```
 files-snapshots/<computer_id>/v1/manifest.json          SnapshotManifest (root list)
@@ -260,6 +283,8 @@ files-snapshots/<computer_id>/v1/roots/<root_id>.json   SnapshotRootFile (items 
 **Decided (Eoj 2026-11-15): plain names.** v2 writers always write `encryption: "none"` and `names_encrypted: false`. The format keeps `names_encrypted`, `ciphertext`, `nonce` and `key_id` (a reference to the Files key in section 13, snapshot subkey) as **reserved, not used in v2**, so encrypted names can be added later without a format break. A v2 reader that meets `names_encrypted: true` shows the folder as "names unavailable" instead of failing.
 
 Snapshots exclude roots whose policy is `protected` (Memory Drive), and never include `path_hint` or local paths.
+
+**How it gets to R2.** The runtime never holds R2 credentials. It sends the files through cloud-api, signed like the presence heartbeat (`runtime_events` signature headers): `PUT /api/v1/computer-files/snapshot/manifest` (`SnapshotManifest`, at most 1 MiB), then `PUT /api/v1/computer-files/snapshot/roots/:root_id` (`SnapshotRootFile`, at most 8 MiB) for each root. cloud-api stores them under the keys above in the user-files bucket, refuses a manifest for another computer, drops `protected` roots and `path_hint`, and refuses a root file for a root the stored manifest does not list. While the computer has no relay connection, the relay answers `roots`, `list`, `stat`, `changes` (empty at the snapshot's cursor, `reset_required` for any other cursor) and name `search` from these files (section 9 item 2). The live change-feed socket is not offered for a sleeping computer; clients poll `changes`.
 
 ## 12. Scoping (same rules as the legacy routes)
 
@@ -294,12 +319,14 @@ Published on the existing events system, all with `event_id`, `at`, `computer_id
 | `files.changed` | `FilesChanged` | any create, modify, move, rename, delete, trash, restore |
 | `files.inbox.dropped` | `InboxDropped` | a file lands in Inbox; carries `untrusted` and the task state |
 | `files.task.result` | `TaskResult` | an approved Inbox or folder-rule task finished, failed or was rejected |
-| `files.share.accessed` | `ShareAccessed` | every guest access, allowed or denied |
+| `files.share.accessed` | `ShareAccessed` | every guest access, allowed or denied. Also stored by cloud-api on the cloud events system (agents audience, push off by default), `data` = `{ computer_id, access }`. |
 | `files.conflict` | `ConflictCreated` | a write landed as a conflict copy |
+
+`files.inbox.dropped`, `files.task.result` and `files.conflict` are rows in the runtime's owner ledger, which the runtime forwards to the cloud event backbone. `files.changed` is the change feed itself (section 6: the per-root change log and `/subscribe`); it is not copied into the ledger, because a sync makes thousands of changes.
 
 ## 15. Storage discovery
 
-The runtime reports `StorageDiscovery` (volumes with kind, total and free bytes, removable, encrypted; bytes per root; replica-host capacity) in its heartbeat. cloud-api keeps the last report and serves it while the computer sleeps. Smart placement and the replica picker read it. Heartbeats do not count as activity.
+The runtime reports `StorageDiscovery` (volumes with kind, total and free bytes, removable, encrypted; bytes per root; replica-host capacity) in its presence heartbeat (`POST /api/v1/runtime-presence/heartbeat`, key `filesStorage`; cloud-api stores it under the signing runtime's id, whatever `computer_id` says). cloud-api keeps the last report and serves it while the computer sleeps. Smart placement and the replica picker read it. Heartbeats do not count as activity.
 
 ## 16. Errors
 
@@ -343,3 +370,52 @@ Every error body is `ErrorBody`: the same flat `{error, message, code}` as cloud
 2. **Asleep snapshot names.** Plain file names in the user's own R2 bucket (same trust class as uploaded files). `names_encrypted` stays in the format, default `false`, reserved and not used in v2 (section 11).
 
 No questions are open in this contract.
+
+## 19. Model packages and workspace moves (plan step 18)
+
+### Package manifest (`allternit.model-package/1`)
+
+One JSON shape does three jobs: the hand-off a phone or another computer reads before it pulls a model, dataset or checkpoint; the permission file a package carries once it lands (`.allternit-package.json` inside the package folder); and the seam to the on-device model lane. Rust source of truth: `cmd/allternit-api/src/files_v2/models.rs` (`PackageManifest`).
+
+| Field | Meaning |
+|---|---|
+| `format` | `"allternit.model-package/1"` |
+| `package_id` | `pkg_` + the first 24 hex of blake3 over the sorted `path\tcontent_hash\n` lines. The same bytes give the same id on every device |
+| `name` | a plain folder name (no `/`, `\`, `.`, `..`) |
+| `kind` | `model`, `dataset` or `checkpoint` |
+| `weights_format` | `gguf`, `mlx`, `safetensors`, `onnx` or `other`, from the file names |
+| `total_bytes` | the sum of `files[].size` |
+| `files[]` | `{path, size, content_hash (blake3), sha256, item_id?, rev?}`. `path` is relative, `/`-separated, never `..`, never the permission file. `item_id`/`rev` are set in a hand-off (fetch with `GET /items/:item_id/manifest` + `GET /chunks/:hash`, or `GET /items/:item_id/content`) and left out in a landed permission file |
+| `grant` | `{transfer, execute}`. `execute` is never implied by `transfer` |
+| `source` | `{computer_id, item_id, rev}` of the package on the computer it came from |
+| `created_at` | RFC 3339 |
+
+Rules a receiver checks before it writes anything (`PackageManifest::validate`, `manifest_invalid` otherwise): the format, a plain name, 1 to 10,000 files, safe unique paths (case-insensitive), a blake3 and a sha256 per file, `total_bytes` adds up, `package_id` matches the files. Every chunk is checked against its blake3 and every file against its whole-file hash as it lands.
+
+### Transfer is not execute
+
+- A hand-off carries `execute: true` only when the caller asked (`?execute=true`), the caller is the owner or one of the owner's devices, and the package can run where it is (it sits in the Models root, or its own permission file allows it).
+- A transfer lands with `execute` = the hand-off's `execute` AND the receiver's `allow_execute` (default false). A copy never runs where the source could not.
+- Where models are imported or launched on a runtime (`POST /api/local-engine/models/import`, `POST /api/local-engine/runtimes/launch`, by `recipe.model_path` or by the imported model's path), allternit-api looks for a permission file in the folder and up to four folders above it, and in each package one level down. `execute: false`, or a permission file it can't read, is `execute_denied` (403). A folder with no permission file (the engine's own downloads) is not restricted. Local processes that call local-engine on `127.0.0.1:3015` directly are trusted, as with every other local file.
+- `POST /models/grant` turns `execute` on or off for a landed package. It is refused over the relay and for guests and agents: run permission is given on the computer the model is on.
+- `Permissions.execute` on an item is true in the Models root only; the item list does not read permission files.
+
+### Pull on the destination
+
+`POST /models/transfer` and `POST /route` run on the computer that receives. `SourceRef` is `{computer_id, item_id, transport?}`. With no `transport`, the source is this computer when `computer_id` is its own and the cloud relay (`POST <cloud-api>/api/v1/runtime-devices/:computer_id/proxy`) otherwise. A `loopback` or `mesh` transport must point at a loopback or tailnet host (`100.64.0.0/10`, `fd7a:115c:a1e0::/48`, `*.ts.net`) and a path ending in `/api/v1/files/v2`; a relayed caller may not name a loopback transport, and its pulls carry `x-allternit-relayed` to the source. The receiver reads the source's manifests, asks its own chunk store what it already has, downloads only the missing chunks and commits each file through an upload session. Progress is `GET /jobs/:job_id`. Jobs live in memory: a restart forgets them, and starting the pull again reuses every chunk already stored. Transfers land in `~/Allternit/Downloads/Models/<name>` unless `dest_parent_id` names a folder; routed files land in the Inbox unless `dest_root_id` names a root. The Memory Drive never takes copied files.
+
+### Hand-off to the on-device import path (seam with the on-device models lane)
+
+Phones have no runtime. A phone reads `GET /models/handoff/:item_id?execute=true` over its normal transport (relay on iOS: the File Provider extension is relay-only), pulls each file's chunks itself, checks blake3 per chunk and sha256 per file, and gives the finished folder to the on-device importer. **As of 2026-11-15 the on-device lane has no import entry point on main** (its iPhone storage, `OnDeviceStorage` in `surfaces/allternit-mobile/ios/Core/OnDevice/`, is in platform PR #2437). The seam the on-device lane implements:
+
+- **iOS** (`OnDeviceStorage`, PR #2437): write the files into `OnDeviceStorage.partialFolder(modelId:quant:)`, then `OnDeviceStorage.commit(OnDeviceInstall)` with `modelId = "files/" + package_id`, `quant = name`, `engine = .llamaCpp` for `gguf` and `.mlx` for `mlx` (other formats are not installable on iPhone), `manifestId = package_id`, `files = files[].path`, `sizeBytes = total_bytes`, `verified = true` (every sha256 matched the hand-off from the owner's own computer), `installedAt = now`. The package then appears under **Models > On this iPhone** like a catalog download. Install only when `grant.execute` is true; a transfer-only package stays a file in the Files app and is never offered to the engine. Keep the hand-off JSON next to `install.json` as `.allternit-package.json`.
+- **Android** (W9 ondevice engine): the same steps into the engine's models folder, sha256 checked (the engine already checks sha256).
+- **Desktop / another computer**: `POST /models/transfer` on that computer, then the usual `POST /api/local-engine/models/import {path}` (checked against the permission file as above).
+
+### Route a file to a computer
+
+`POST /route` on the receiving computer copies one file from any of the owner's computers into its Inbox (or `dest_root_id`). A folder is refused: send it as a package. Inbox files are untrusted (section 7), so a routed file goes through the same approval as any other drop.
+
+### Portable workspaces (teleport bundle)
+
+A workspace move (`gizzi teleport --to cloud`, `cmd/gizzi-code/src/runtime/teleport/`) sends the session file, a patch of tracked changes since a commit the remote has, and a tar of untracked, not-ignored files. Files that look like secrets never travel, tracked or not: a path that contains a deny-listed location, a file name that matches a deny-listed pattern, or text that holds a private key or a well-known token format. The deny-list is one file, `cmd/allternit-api/assets/secrets-deny.json`, shared with the runtime's path scoping (section 12), and it only ever grows (`files_scope.rs` test `secrets_deny_list_only_grows`). `gizzi teleport <session> --to cloud --dry-run` prints what would travel and what is left out, and every move prints what it left out.

@@ -41,6 +41,10 @@ scripts/provision.sh            the adb setup sequence below
 scripts/conformance.sh          live run of ictrl_rpc.py against a phone
 ```
 
+## Files drive (both flavors)
+
+`app/src/main/java/com/allternit/app/files/` puts every Allternit computer in Android's file picker and Files app (a `DocumentsProvider`, one root per computer), adds **Save to computer** to the share sheet, and holds the wake prompt, the biometric unlock for protected roots and the sign-in hand-off. It speaks Files drive protocol v2 (`contracts/files-drive/SPEC.md`) over the cloud relay. The contract types compile straight from `contracts/files-drive/gen/FilesDriveContract.gen.kt` (a Gradle source dir in `app/build.gradle.kts`), so regenerate them with `node contracts/files-drive/generate.mjs`, never by hand. JVM tests: `ChunkerVectorsTest` (the pinned FastCDC + BLAKE3 against `contracts/files-drive/vectors/chunker-v1.json`) and `WireJsonFixturesTest` (every valid contract fixture round-trips). User and developer notes: `surfaces/docs/guides/android-app.mdx`.
+
 ## Build and test
 
 You need JDK 17 and Android SDK 35 (platform `android-35`, build-tools 35.x). The wrapper jar is not committed. Generate it once with any Gradle 8.x: `gradle wrapper --gradle-version 8.10.2`.

@@ -14,6 +14,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "
 import { basename, dirname, join } from "node:path"
 import { encodeClaudeCwd, getNativeSession, harnessHome, type HarnessId } from "@allternit/native-sessions"
 import { resumeNative } from "@/runtime/teleport/resume"
+import { literalPathspecs, workspaceListing, type LeftOut } from "@/runtime/teleport/bundle"
 import { platformApiBase, platformToken, PlatformApiError, PlatformSignedOutError } from "@/runtime/bots/platform-api"
 
 export type TeleportHarness = "claude" | "codex"
@@ -40,6 +41,8 @@ export interface TeleportResult {
   patched?: boolean
   /** Uncommitted work that did not fit the cloud copy (kept as the cloud had it). */
   conflicts?: { patch: number; untracked: number }
+  /** Files that look like secrets and were not sent. */
+  leftOut?: LeftOut[]
 }
 
 export interface Manifest {
@@ -95,18 +98,30 @@ export interface ProjectFiles {
   patch?: Uint8Array
   /** tar of untracked files that git does not ignore. */
   untracked?: Uint8Array
+  /** Files the secrets filter kept back (`bundle.ts`). */
+  leftOut?: LeftOut[]
 }
 
 const MAX_UNTRACKED_BYTES = 64 * 1024 * 1024
 
-/** What the Mac has beyond the base commit, so the cloud copy matches the working tree. */
+/**
+ * What the Mac has beyond the base commit, so the cloud copy matches the working tree.
+ * Files that look like secrets (`.env`, keys, token files, text holding an API token)
+ * never travel, tracked or not; they are returned in `leftOut`.
+ */
 export function collectProject(cwd: string, base: string): ProjectFiles {
   const out: ProjectFiles = {}
-  const diff = spawnSync("git", ["-C", cwd, "diff", "--binary", base], { maxBuffer: 256 * 1024 * 1024 })
-  if (diff.status === 0 && diff.stdout.byteLength > 0) out.patch = new Uint8Array(diff.stdout)
-  const names = spawnSync("git", ["-C", cwd, "ls-files", "--others", "--exclude-standard", "-z"], { maxBuffer: 64 * 1024 * 1024 })
-  if (names.status === 0 && names.stdout.byteLength > 0) {
-    const tar = spawnSync("tar", ["-cf", "-", "--null", "-T", "-"], { cwd, input: names.stdout, maxBuffer: 256 * 1024 * 1024 })
+  const listing = workspaceListing(cwd, base)
+  if (listing.leftOut.length > 0) out.leftOut = listing.leftOut
+  if (listing.changed.length > 0) {
+    const diff = spawnSync("git", ["-C", cwd, "diff", "--no-renames", "--binary", base, "--", ...literalPathspecs(listing.changed)], {
+      maxBuffer: 256 * 1024 * 1024,
+    })
+    if (diff.status === 0 && diff.stdout.byteLength > 0) out.patch = new Uint8Array(diff.stdout)
+  }
+  if (listing.untracked.length > 0) {
+    const names = Buffer.from(listing.untracked.map((n) => `${n}\0`).join(""))
+    const tar = spawnSync("tar", ["-cf", "-", "--null", "-T", "-"], { cwd, input: names, maxBuffer: 256 * 1024 * 1024 })
     if (tar.status !== 0) throw new Error("Could not pack the untracked files.")
     if (tar.stdout.byteLength > MAX_UNTRACKED_BYTES) throw new Error("Untracked files are over 64 MB. Commit them or add them to .gitignore, then retry.")
     out.untracked = new Uint8Array(tar.stdout)
@@ -246,6 +261,7 @@ export async function teleportToCloud(input: TeleportInput): Promise<TeleportRes
     resume: resumeHint(input.harness, input.nativeId),
     workspace: staged.workspace,
     conflicts: pc || uc ? { patch: pc, untracked: uc } : undefined,
+    leftOut: project.leftOut,
   }
 }
 

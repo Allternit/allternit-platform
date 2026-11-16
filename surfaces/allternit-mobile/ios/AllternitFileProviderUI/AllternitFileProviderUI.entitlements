@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Computers, pins and pending wake/unlock prompts shared with the app
+	     and the File Provider extension (FilesSharedStore). -->
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>group.com.allternit.mobile</string>
+	</array>
+	<!-- Only the shared group: the Files token, wake tickets and the Face ID
+	     unlock record. Never Clerk's items. -->
+	<key>keychain-access-groups</key>
+	<array>
+		<string>$(AppIdentifierPrefix)com.allternit.mobile.shared</string>
+	</array>
+</dict>
+</plist>

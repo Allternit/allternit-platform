@@ -1662,7 +1662,7 @@
     {
       "source": "allternit/cmd/allternit-api",
       "target": "allternit/services/model-training",
-      "kind": "engine source pin: the Studio engines (Axolotl, LLaMA-Factory, torchtune) are published at Allternit/studio-engines pinned commit e520474 (Apache-2.0), documented in surfaces/docs/api/studio.mdx; the host code does not pin that sha yet, so the pin is a docs claim until engines.rs carries it",
+      "kind": "engine source pin: the three third-party Studio engines (Axolotl, LLaMA-Factory, torchtune) install from Allternit/studio-engines at commit e520474 (Apache-2.0), pinned by STUDIO_ENGINES_SHA in engines.rs and documented in surfaces/docs/api/studio.mdx; no AGPL/LGPL engine (Unsloth removed 2026-11-15)",
       "evidence": [
         "allternit/surfaces/docs/api/studio.mdx",
         "allternit/cmd/allternit-api/src/studio/engines.rs"
@@ -1684,6 +1684,15 @@
       "evidence": [
         "allternit-ai/src/lib/model-host/host-client.ts",
         "allternit/surfaces/docs/api/model-host-relay.mdx"
+      ]
+    },
+    {
+      "source": "allternit/cmd/gizzi-code/src/runtime/services",
+      "target": "external:freeweights",
+      "kind": "HTTPS: gizzi models publish uploads (preupload, LFS batch, commit) and GET /api/fw/v1/limits for gizzi usage; community repo check on pull",
+      "evidence": [
+        "allternit/cmd/gizzi-code/src/runtime/services/freeweightsUpload.ts",
+        "allternit/cmd/gizzi-code/src/cli/commands/models.ts"
       ]
     }
   ]

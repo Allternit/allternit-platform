@@ -85,6 +85,9 @@ async fn heartbeat(State(state): State<Arc<ApiState>>, headers: HeaderMap, body:
         if let Err(e) = super::team::store_sessions(&state.db, &_user, &runtime_id, &parsed).await {
             tracing::warn!("team roster: storing sessions failed: {e}");
         }
+        // Files drive storage discovery (SPEC section 15): best effort, and
+        // a heartbeat is never activity.
+        super::computer_files::store_storage_report(&state.db, &_user, &runtime_id, &parsed).await;
         take_finished_failovers(&state.db, &runtime_id).await
     }
     .await;

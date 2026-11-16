@@ -21,9 +21,12 @@ struct FreeweightsModelSummary: Codable, Sendable, Identifiable, Equatable {
     /// Absolute URL of the publisher's logo, or null. Newer worker deploys
     /// only; absent on older ones.
     let publisherLogo: String?
+    /// "community" for a repo a signed-in user uploaded; "catalog" or absent
+    /// for the curated catalog. Absent on workers that predate uploads.
+    var source: String?
 
     enum CodingKeys: String, CodingKey {
-        case id, sha, tags, downloads, lastModified, section, license, badges
+        case id, sha, tags, downloads, lastModified, section, license, badges, source
         case pipelineTag = "pipeline_tag"
         case libraryName = "library_name"
         case publisherLogo = "publisher_logo"
@@ -37,6 +40,7 @@ struct FreeweightsModelSummary: Codable, Sendable, Identifiable, Equatable {
 
     var org: String { String(id.split(separator: "/").first ?? "") }
     var name: String { String(id.split(separator: "/").last ?? Substring(id)) }
+    var isCommunity: Bool { source == "community" }
 }
 
 /// A row of `GET /api/catalog` — the curated catalog record behind each
@@ -59,9 +63,15 @@ struct FreeweightsCatalogRow: Codable, Sendable, Equatable {
     let formats: [String]?
     let tasks: [String]?
     let note: String?
+    /// Model family ("qwen"): the identity face's two dot letters.
+    var family: String? = nil
+    var addedAt: String? = nil
+    var whatChanged: String? = nil
 
     enum CodingKeys: String, CodingKey {
-        case id, kind, section, redistribution, params, formats, tasks, note
+        case id, kind, section, redistribution, params, formats, tasks, note, family
+        case addedAt = "added_at"
+        case whatChanged = "what_changed"
         case displayName = "display_name"
         case licenseId = "license_id"
         case licenseClass = "license_class"
@@ -115,23 +125,228 @@ struct FreeweightsModelDetail: Codable, Sendable, Equatable {
     let manifestUrl: String?
     let upstreamUrl: String?
     let catalog: FreeweightsCatalogRow?
+    var source: String?
+    /// Community repos only: draft | scanning | live | held (spec 11.6).
+    /// It describes what is waiting; `sha` + `siblings` are the last clean
+    /// head being served.
+    var status: String?
 
     enum CodingKeys: String, CodingKey {
-        case id, sha, section, license, badges, siblings, sources, catalog
+        case id, sha, section, license, badges, siblings, sources, catalog, source, status
         case pipelineTag = "pipeline_tag"
         case libraryName = "library_name"
         case manifestUrl = "manifest_url"
         case upstreamUrl = "upstream_url"
     }
 
-    var isLinkOnly: Bool { catalog?.isLinkOnly ?? (manifestUrl ?? "").isEmpty }
+    var isCommunity: Bool { source == "community" }
+    /// Community repos have no catalog record, but they are served by
+    /// Freeweights itself, so they are never link-only.
+    var isLinkOnly: Bool { isCommunity ? false : (catalog?.isLinkOnly ?? (manifestUrl ?? "").isEmpty) }
     var filesCount: Int { siblings?.count ?? 0 }
+    /// A community repo can be downloaded once a clean commit is served.
+    var isDownloadable: Bool { isCommunity ? sha != nil : true }
+    /// One line for a community repo whose newest commit is not served yet.
+    var communityStatusNote: String? {
+        guard isCommunity else { return nil }
+        if sha == nil { return "Files are being scanned. Downloads open when every file passes." }
+        switch status {
+        case "scanning": return "An update is being scanned. The last clean version is served."
+        case "held": return "An update did not pass its scan. The last clean version is served."
+        default: return nil
+        }
+    }
+}
+
+// MARK: - On-device data (C2: catalog/overlay/device.json)
+
+/// `GET /api/device/index`: every model with device data, as compact rows
+/// `[engine, quant name, size, ram_est|null, best_for mask]`, plus the
+/// recommended lists per device class. No file lists: the per-model route
+/// has those (`FreeweightsDeviceData`).
+struct FreeweightsDeviceIndex: Sendable, Equatable {
+    let generatedAt: String?
+    let models: [String: [Quant]]
+    /// "phone", "laptop", "workstation", "browser", … → model ids.
+    let recommended: [String: [String]]
+
+    /// Decodes the compact row form. Unknown engines and malformed rows are dropped.
+    static func decode(_ data: Data) throws -> FreeweightsDeviceIndex {
+        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let rows = root["models"] as? [String: Any] else {
+            throw DecodingError.dataCorrupted(.init(codingPath: [], debugDescription: "No models table"))
+        }
+        var models: [String: [Quant]] = [:]
+        for (id, value) in rows {
+            guard let list = value as? [[Any]] else { continue }
+            let quants: [Quant] = list.compactMap { row in
+                guard row.count >= 3, let e = row[0] as? String, let engine = QuantEngine(rawValue: e),
+                      let name = row[1] as? String, let size = (row[2] as? NSNumber)?.doubleValue else { return nil }
+                let ram = row.count > 3 ? (row[3] as? NSNumber)?.doubleValue : nil
+                let format = engine == .mlx ? "mlx" : engine == .webgpu ? "onnx" : "gguf"
+                return Quant(name: name, format: format, engine: engine, size: size, ramEst: ram)
+            }
+            if !quants.isEmpty { models[id] = quants }
+        }
+        var recommended: [String: [String]] = [:]
+        for (k, v) in (root["recommended"] as? [String: Any]) ?? [:] {
+            if let ids = v as? [String] { recommended[k] = ids }
+        }
+        return FreeweightsDeviceIndex(generatedAt: root["generated_at"] as? String, models: models, recommended: recommended)
+    }
+}
+
+/// `GET /api/models/{org}/{repo}/device`: the model's builds with their
+/// files and the repo that holds each (the signed manifest a download
+/// checks against).
+struct FreeweightsDeviceData: Codable, Sendable, Equatable {
+    struct Manifest: Codable, Sendable, Equatable {
+        let url: String?
+        let sigUrl: String?
+        let signed: Bool?
+        enum CodingKeys: String, CodingKey {
+            case url, signed
+            case sigUrl = "sig_url"
+        }
+    }
+    let id: String
+    let quants: [Quant]
+    let deviceFormats: [String]?
+    let manifest: Manifest?
+    let generatedAt: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id, quants, manifest
+        case deviceFormats = "device_formats"
+        case generatedAt = "generated_at"
+    }
 }
 
 /// One page of search results plus the next cursor from the `Link` header.
 struct FreeweightsPage: Codable, Sendable, Equatable {
     let models: [FreeweightsModelSummary]
     let nextCursor: String?
+}
+
+// MARK: - My uploads (signed in)
+
+/// One row of `GET /api/fw/v1/repos` (spec/parts/write-api.yaml `MyRepo`):
+/// the caller's own community repos in every state, with scan counts for
+/// the head commit.
+struct FreeweightsMyRepo: Codable, Sendable, Identifiable, Equatable {
+    struct Scans: Codable, Sendable, Equatable {
+        let queued: Int
+        let scanning: Int
+        let clean: Int
+        let held: Int
+        let error: Int
+        let heldCodes: [String]?
+
+        enum CodingKeys: String, CodingKey {
+            case queued, scanning, clean, held, error
+            case heldCodes = "held_codes"
+        }
+    }
+
+    let id: String
+    let type: String
+    let name: String
+    let status: String
+    let removedReason: String?
+    let bytes: Int64
+    let scans: Scans
+
+    enum CodingKeys: String, CodingKey {
+        case id, type, name, status, bytes, scans
+        case removedReason = "removed_reason"
+    }
+
+    /// What the row says. A held file wins over everything else, then
+    /// scanning; a `live` repo with a stray queued scan still reads live.
+    enum ScanState: Equatable { case scanning, live, held, removed, draft }
+
+    var scanState: ScanState {
+        switch status {
+        case "live": return .live
+        case "held": return .held
+        case "removed": return .removed
+        case "scanning": return .scanning
+        default: return scans.queued + scans.scanning > 0 ? .scanning : .draft
+        }
+    }
+
+    var scanLabel: String {
+        switch scanState {
+        case .scanning: return "Scanning"
+        case .live: return "Live"
+        case .held: return "Held"
+        case .removed: return "Removed"
+        case .draft: return "Draft"
+        }
+    }
+
+    var detailText: String {
+        switch scanState {
+        case .scanning:
+            return "Files are scanned before anyone can download them."
+        case .live:
+            return "Every file passed its scan."
+        case .held:
+            return "A file did not pass its scan, so nothing from this commit is served."
+        case .removed:
+            return "This repo was removed."
+        case .draft:
+            return "No files committed yet."
+        }
+    }
+}
+
+private struct FreeweightsMyReposResponse: Codable {
+    let repos: [FreeweightsMyRepo]
+}
+
+/// The reasons the report sheet offers (the `reason_class` enum of
+/// `POST /api/fw/v1/reports`; legal notices go to the takedown mailbox).
+enum FreeweightsReportReason: String, CaseIterable, Identifiable, Sendable {
+    case copyright
+    case licenseViolation = "license_violation"
+    case malwareOrSecrets = "malware_or_secrets"
+    case realPersonLikeness = "real_person_likeness"
+    case spam
+    case abuse
+    case other
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .copyright: return "Copyright"
+        case .licenseViolation: return "License violation"
+        case .malwareOrSecrets: return "Malware or leaked secrets"
+        case .realPersonLikeness: return "Real person's likeness"
+        case .spam: return "Spam"
+        case .abuse: return "Abuse"
+        case .other: return "Something else"
+        }
+    }
+}
+
+/// Why `myRepos()` or `report()` could not finish; each case carries
+/// plain-words copy for the screen.
+enum FreeweightsAccountError: Error, Equatable, LocalizedError {
+    case signedOut
+    case rateLimited
+    case failed(Int)
+    case network
+
+    var errorDescription: String? {
+        switch self {
+        case .signedOut: return "Sign in to do this."
+        case .rateLimited: return "Too many reports just now. Try again later."
+        case .failed(let status): return "Freeweights answered \(status)."
+        case .network: return "Couldn't reach Freeweights. Check your connection."
+        }
+    }
 }
 
 // MARK: - Results
@@ -238,8 +453,114 @@ final class FreeweightsClient: @unchecked Sendable {
     /// for list rows (`/api/models` rows carry none of these).
     func catalogRows() async -> FreeweightsLoad<[String: FreeweightsCatalogRow]> {
         await load(baseURL.appendingPathComponent("api/catalog")) { data, _ in
-            let rows = try JSONDecoder().decode(FreeweightsCatalogResponse.self, from: data).models
+            let rows = try Self.fastCatalogRows(data)
             return Dictionary(rows.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        }
+    }
+
+    // MARK: Signed-in calls (My uploads, reports)
+
+    /// `GET /api/fw/v1/repos` with the account's token. A 404 means no
+    /// Freeweights profile yet, which is an empty list, not an error.
+    func myRepos(kind: String? = nil, client auth: APIClient = .shared) async throws -> [FreeweightsMyRepo] {
+        var components = URLComponents(url: baseURL.appendingPathComponent("api/fw/v1/repos"), resolvingAgainstBaseURL: false)!
+        if let kind { components.queryItems = [URLQueryItem(name: "kind", value: kind)] }
+        let request = try await auth.authorizedRequest(url: components.url!)
+        let (data, status) = try await send(request, using: auth)
+        switch status {
+        case 200...299:
+            do {
+                return try JSONDecoder().decode(FreeweightsMyReposResponse.self, from: data).repos
+            } catch {
+                throw APIError.decoding(error)
+            }
+        case 401: throw FreeweightsAccountError.signedOut
+        case 404: return []
+        default: throw FreeweightsAccountError.failed(status)
+        }
+    }
+
+    private struct ReportBody: Encodable {
+        struct Target: Encodable { let type: String; let id: String }
+        let target: Target
+        let reason_class: String
+        let body: String?
+    }
+
+    /// `POST /api/fw/v1/reports` for a repo (`namespace/name`).
+    func report(repo id: String, reason: FreeweightsReportReason, note: String,
+                client auth: APIClient = .shared) async throws {
+        var request = try await auth.authorizedRequest(url: baseURL.appendingPathComponent("api/fw/v1/reports"), method: "POST")
+        let trimmed = note.trimmingCharacters(in: .whitespacesAndNewlines)
+        request.httpBody = try JSONEncoder().encode(ReportBody(
+            target: .init(type: "repo", id: id),
+            reason_class: reason.rawValue,
+            body: trimmed.isEmpty ? nil : String(trimmed.prefix(5000))))
+        let (_, status) = try await send(request, using: auth)
+        switch status {
+        case 200...299: return
+        case 401: throw FreeweightsAccountError.signedOut
+        case 429: throw FreeweightsAccountError.rateLimited
+        default: throw FreeweightsAccountError.failed(status)
+        }
+    }
+
+    private func send(_ request: URLRequest, using auth: APIClient) async throws -> (Data, Int) {
+        do {
+            let (data, response) = try await session.data(for: request)
+            return (data, (response as? HTTPURLResponse)?.statusCode ?? 0)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            throw FreeweightsAccountError.network
+        }
+    }
+
+    /// `GET /api/device/index`: fit data for every model, cached on disk like
+    /// the catalog so fit labels still show offline.
+    func deviceIndex() async -> FreeweightsLoad<FreeweightsDeviceIndex> {
+        await load(baseURL.appendingPathComponent("api/device/index")) { data, _ in
+            try FreeweightsDeviceIndex.decode(data)
+        }
+    }
+
+    /// `GET /api/models/{org}/{repo}/device`. `.catalogDown("Not in the
+    /// catalog")` when the model has no device data (404 `no_device_data`).
+    func deviceData(id: String) async -> FreeweightsLoad<FreeweightsDeviceData> {
+        var url = baseURL.appendingPathComponent("api/models")
+        for part in id.split(separator: "/") { url.appendPathComponent(String(part)) }
+        url.appendPathComponent("device")
+        return await load(url) { data, _ in
+            try JSONDecoder().decode(FreeweightsDeviceData.self, from: data)
+        }
+    }
+
+    /// `GET /api/catalog` in the catalog's own order (same request and
+    /// cache as `catalogRows`).
+    func catalogRowList() async -> FreeweightsLoad<[FreeweightsCatalogRow]> {
+        await load(baseURL.appendingPathComponent("api/catalog")) { data, _ in
+            try Self.fastCatalogRows(data)
+        }
+    }
+
+    /// The catalog is ~8 MB and ~9,000 rows: JSONSerialization plus a hand
+    /// mapping is several times faster than Codable for it.
+    static func fastCatalogRows(_ data: Data) throws -> [FreeweightsCatalogRow] {
+        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let rows = root["models"] as? [[String: Any]] else {
+            throw DecodingError.dataCorrupted(.init(codingPath: [], debugDescription: "No models array"))
+        }
+        func str(_ d: [String: Any], _ k: String) -> String? { d[k] as? String }
+        func int(_ d: [String: Any], _ k: String) -> Int64? { (d[k] as? NSNumber)?.int64Value }
+        return rows.compactMap { d in
+            guard let id = d["id"] as? String else { return nil }
+            return FreeweightsCatalogRow(
+                id: id, displayName: str(d, "display_name"), kind: str(d, "kind"), section: str(d, "section"),
+                licenseId: str(d, "license_id"), licenseClass: str(d, "license_class"), licenseUrl: str(d, "license_url"),
+                redistribution: str(d, "redistribution"), requiresTerms: d["requires_terms"] as? Bool,
+                manifestUrl: str(d, "manifest_url"), upstreamUrl: str(d, "upstream_url"), totalSize: int(d, "total_size"),
+                params: int(d, "params"), formats: d["formats"] as? [String], tasks: d["tasks"] as? [String],
+                note: str(d, "note"), family: str(d, "family"), addedAt: str(d, "added_at"), whatChanged: str(d, "what_changed"))
         }
     }
 

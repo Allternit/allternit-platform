@@ -6,18 +6,26 @@ import UniformTypeIdentifiers
 /// the person pick a bot and add a note, asks for one-time consent per bot,
 /// and writes the result to `OutboxStore`. It never sends: the app drains the
 /// outbox (`Core/ShareOutboxDrainer.swift`).
+///
+/// With the Files drive set up it can also save the items to a computer's
+/// Inbox (`FilesShareFlow.swift`, Files drive step 21). That part uploads
+/// itself over the relay, and asks before waking a sleeping computer.
 final class ShareViewController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
+        let providers = (extensionContext?.inputItems as? [NSExtensionItem] ?? []).flatMap { $0.attachments ?? [] }
         let model = ShareModel(
-            providers: (extensionContext?.inputItems as? [NSExtensionItem] ?? []).flatMap { $0.attachments ?? [] },
+            providers: providers,
             finish: { [weak self] in self?.extensionContext?.completeRequest(returningItems: [], completionHandler: nil) },
             cancel: { [weak self] in
                 self?.extensionContext?.cancelRequest(withError: NSError(domain: NSCocoaErrorDomain, code: NSUserCancelledError))
             },
             openApp: { [weak self] in self?.openAllternit() }
         )
-        let host = UIHostingController(rootView: ShareView(model: model))
+        let files = FilesShareModel(providers: providers)
+        let host = UIHostingController(rootView: ShareView(model: model, files: files, finish: { [weak self] in
+            self?.extensionContext?.completeRequest(returningItems: [], completionHandler: nil)
+        }))
         addChild(host)
         host.view.frame = view.bounds
         host.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
@@ -241,11 +249,39 @@ final class ShareModel: ObservableObject {
 // MARK: - View
 
 struct ShareView: View {
+    enum Destination: Hashable { case computer, bot }
+
     @ObservedObject var model: ShareModel
+    @ObservedObject var files: FilesShareModel
+    let finish: () -> Void
+    @State private var destination: Destination
+
+    init(model: ShareModel, files: FilesShareModel, finish: @escaping () -> Void) {
+        self.model = model
+        self.files = files
+        self.finish = finish
+        // A computer's Inbox first when Files is set up on this phone.
+        _destination = State(initialValue: files.isAvailable ? .computer : .bot)
+    }
 
     var body: some View {
         NavigationStack {
-            content
+            VStack(spacing: 0) {
+                if files.isAvailable && files.phase == .picking && model.phase != .saving {
+                    Picker("Send to", selection: $destination) {
+                        Text("A computer").tag(Destination.computer)
+                        Text("A bot").tag(Destination.bot)
+                    }
+                    .pickerStyle(.segmented)
+                    .padding(.horizontal)
+                    .padding(.top, 8)
+                }
+                if files.isAvailable && destination == .computer {
+                    FilesShareView(model: files, finish: finish)
+                } else {
+                    content
+                }
+            }
                 .navigationTitle("Share to Allternit")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {

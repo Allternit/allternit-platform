@@ -1,0 +1,72 @@
+---
+title: Run models in your browser
+description: "Download a small open-weights model into your browser with WebGPU and chat with it on ai.allternit.com or m.allternit.com, offline once it is saved."
+---
+
+ai.allternit.com, its phone layout and the m.allternit.com app can run small models inside the browser tab. The model files are stored in the browser. Chats with the model stay on your device and do not use your Allternit Cloud allowance.
+
+<Note>
+Browser models are the smallest and most limited way to run a model on Allternit. For larger models use [Desktop or the phone apps](/guides/run-models-on-device). We checked this in Chrome. Safari: not checked.
+</Note>
+
+## What you need
+
+- A browser with WebGPU. Current Chrome and Edge on computers and recent Android phones have it. Safari support depends on the version, and we have not checked it.
+- Free storage in the browser for the model.
+- A connection for the first download. After that the model works with no network.
+
+If the browser has no real WebGPU graphics adapter, every model shows **No WebGPU**. A software fallback adapter does not count, because models would run on the processor at a crawl.
+
+## How much memory a tab gets
+
+Allternit sets a ceiling for models in a browser tab. It is the lower of what the browser's WebGPU limits allow and:
+
+| Browser | Ceiling |
+|---|---|
+| Computer | 2 GB |
+| Phone | 0.45 GB |
+
+A model shows **Fits** only when it needs less than that. It uses the same [fit badges](/guides/run-models-on-device#what-the-fit-badges-mean) as every other device. A model with no browser version shows **No browser build**. A model Freeweights has no device data for shows **Size not checked** and has no Download or Run button.
+
+## Download, run, remove
+
+1. Open **Freeweights Studio**, then the **Catalog** tab.
+2. On a model with a browser build that fits, press **Download**. On the model's own page the button reads **Download to this browser**, with the size.
+3. The card shows **Starting**, then **Downloading** with a percentage, then **Checking**. **Cancel** stops it.
+4. When it is saved, the card shows **Run** and **Remove**. **Run** opens the Playground on that model.
+
+Every file is checked against the hash in the signed Freeweights manifest. A file that does not match is not kept. The engine itself (the ONNX Runtime web assembly file) is fetched once from jsDelivr, checked against a pinned hash, and saved with your model.
+
+A model we have downloaded and run this way: Qwen3-0.6B (the `q4f16` build). Other models appear in the catalog with a browser build when Freeweights lists one.
+
+### If a download fails
+
+- **Not enough storage on this device**: the browser refused to save more. Remove a model, or free space, then press **Try again**.
+- Any other failure shows a short reason and **Try again**. A partly finished download is not used.
+
+**Remove** deletes the model files from the browser. Clearing the site's data in the browser removes them too.
+
+## Chat with it
+
+- **Playground**: pick the model and type. The header says **On this device** and **works offline**, or **offline** when the network is down. With no model downloaded, the box reads **Download a model to chat**.
+- **Chat**: once a browser model is saved, the model picker lists it under **On this device**.
+
+The model loads into graphics memory on your first message and unloads after 5 minutes without use.
+
+## Work offline
+
+Pressing **Download** also saves the chat screen, Freeweights Studio and the engine files in the browser, so the page opens and answers with no network. For the saved copy to be used, the app must have loaded online at least once.
+
+Measured on Chrome headless (a computer, not a phone): Qwen3-0.6B at 50.8 tokens per second, answering offline. Speed on your device will differ.
+
+## Limits
+
+- Models of about 1 billion parameters or less. Phone browsers are smaller still.
+- Features that need the internet, such as web search, do not work offline.
+- Signing in needs a connection. The app remembers the last account it confirmed online, only its name and ids and no token, and opens that workspace offline for up to 30 days. In that mode nothing that needs a cloud login works. If the app has never confirmed you online, it shows the sign-in screen.
+
+## Related
+
+- [Run models on your device](/guides/run-models-on-device)
+- [Run models on Android](/guides/run-models-on-android)
+- [On-device models: developer contract](/api/on-device-models#browser-engine)

@@ -61,7 +61,7 @@ function AuthFlow() {
             background: 'none',
             border: 'none',
             padding: 0,
-            color: '#9A7658',
+            color: '#1F1E1D',
             cursor: 'pointer',
             fontSize: 'inherit',
             fontFamily: 'inherit',
@@ -248,7 +248,7 @@ const clerkAppearance = {
       color: '#0D0C0A',
     },
     formResendCodeLink: {
-      color: '#9A7658',
+      color: '#1F1E1D',
     },
     otpCodeFieldInput: {
       background: '#FFFFFF',
@@ -437,7 +437,7 @@ export default function AuthApp() {
             width: '28px',
             height: '28px',
             border: '2px solid #e1e5eb',
-            borderTopColor: '#B08D6E',
+            borderTopColor: '#1F1E1D',
             borderRadius: '50%',
             animation: 'spin 0.8s linear infinite',
           }}

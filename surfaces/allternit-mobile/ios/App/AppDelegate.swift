@@ -42,6 +42,8 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
                 await ShareOutboxDrainer.shared.drain()
                 // The iOS 26 widget push token the widget extension left.
                 await ActivityTokenRegistry.shared.syncWidgetToken()
+                // Files drive: one Files location per computer (File Provider).
+                await FilesDriveBridge.shared.sync()
             }
         }
         // Live Activities: intent registry, adopt running activities, token uploads.
@@ -71,6 +73,18 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
                 domain: "APNs", code: 0, userInfo: [NSLocalizedDescriptionKey: message]
             ))
         }
+    }
+
+    /// On-device model downloads run in a background URLSession: when one
+    /// finishes while the app is suspended or gone, iOS relaunches it here so
+    /// the files are moved into place (OnDeviceDownloader). A later Download
+    /// tap finds them on disk, checks them and installs without refetching.
+    func application(
+        _ application: UIApplication,
+        handleEventsForBackgroundURLSession identifier: String,
+        completionHandler: @escaping () -> Void
+    ) {
+        OnDeviceDownloader.handleBackgroundEvents(identifier: identifier, completion: completionHandler)
     }
 
     /// Background pushes. `notification.revoke` removes the delivered

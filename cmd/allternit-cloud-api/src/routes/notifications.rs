@@ -145,6 +145,13 @@ pub const DEFAULTS: &[(&str, bool)] = &[
     ("subscription.login_needed", true),
     ("subscription.signed_in", false),
     ("usage.threshold", true),
+    // Every guest access is an event for agents; it is never a push unless the owner turns it on.
+    ("files.share.accessed", false),
+    // A file dropped in a computer's Inbox waits for the owner's OK; a task result is quieter.
+    ("files.inbox.dropped", true),
+    ("files.task.result", false),
+    // Nothing was lost (both versions are kept), so a conflict copy is not a push unless turned on.
+    ("files.conflict", false),
     // A failed or missed routine, a bot with no one to run it: the server pushes it and sends it again until it is fixed.
     ("attention.opened", true),
     ("attention.resolved", false),
@@ -966,6 +973,43 @@ pub fn message_for(event: &str, data: &Value) -> Option<PushMessage> {
             };
             msg.tag = format!("usage-{meter}-{period}");
             msg.url = "/".into();
+        }
+        "files.share.accessed" => {
+            let access = &data["access"];
+            let action = s(access, &["action"]).unwrap_or("opened");
+            msg.title = "Shared folder activity".into();
+            msg.body = match s(access, &["result"]) {
+                Some("denied") => format!("A guest was turned away ({action})."),
+                _ => format!("A guest used a shared folder ({action})."),
+            };
+            msg.tag = format!("files-share-{}", clip(s(access, &["share_id"]).unwrap_or("share"), 40));
+        }
+        "files.inbox.dropped" => {
+            // The file is untrusted: only its name is shown, never its content.
+            let name = clip(s(data, &["name"]).unwrap_or("A file"), 80);
+            msg.title = "File in Inbox".into();
+            msg.body = match s(data, &["task_state"]) {
+                Some("approved_by_rule") => format!("{name} was picked up by a folder rule."),
+                _ => format!("{name} is waiting for your OK."),
+            };
+            msg.tag = format!("files-inbox-{}", clip(s(data, &["task_id"]).unwrap_or("task"), 40));
+        }
+        "files.conflict" => {
+            let conflict = &data["conflict"];
+            let name = clip(s(conflict, &["conflict_name"]).unwrap_or("a conflict copy"), 80);
+            msg.title = "File conflict".into();
+            msg.body = format!("A newer version existed, so both were kept. Your copy is {name}");
+            msg.tag = format!("files-conflict-{}", clip(s(conflict, &["original_item_id"]).unwrap_or("item"), 40));
+        }
+        "files.task.result" => {
+            let (title, body) = match s(data, &["status"]) {
+                Some("failed") => ("Inbox task failed", "A task on a file in your Inbox failed."),
+                Some("rejected") => ("Inbox task rejected", "You rejected a task on a file in your Inbox."),
+                _ => ("Inbox task finished", "The result is saved next to the file."),
+            };
+            msg.title = title.into();
+            msg.body = body.into();
+            msg.tag = format!("files-task-{}", clip(s(data, &["task_id"]).unwrap_or("task"), 40));
         }
         _ => return None,
     }

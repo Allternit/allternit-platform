@@ -152,6 +152,14 @@
           "$ref": "common.json#/$defs/ComputerId",
           "description": "Set for a cross-computer copy; returns a job."
         },
+        "dest_base_url": {
+          "type": "string",
+          "description": "With dest_computer_id: the destination's loopback or mesh URL prefix ending in /api/v1/files/v2. The source runtime pushes the copy there (have/need, upload session) with its runtime device token."
+        },
+        "delete_source": {
+          "type": "boolean",
+          "description": "With dest_computer_id: a cross-computer move. The source item goes to the trash only after the destination committed it with the same content hash. The job kind is move."
+        },
         "new_name": {
           "type": "string"
         },

@@ -355,6 +355,9 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         // like an OAuth device authorization endpoint.
         .merge(routes::runtime_pairing::routes())
         .merge(routes::runtime_relay::routes())
+        // Files drive: wake consent, wake settings, endpoints, token keys
+        // (each handler resolves the user itself).
+        .merge(routes::computer_files::routes())
         // Brain runner boxes dial in here with their own token (no session,
         // no compute gate; CONTRACT-connections-2026-11 section 9.7).
         .merge(routes::brain_runners::routes(services::brain_runners::shared(&state.db)))
@@ -431,6 +434,9 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         // User file uploads to R2 with per-plan caps (presigned PUT/GET); 503 when ALLTERNIT_R2_* is unset.
         .merge(routes::files::routes())
         .merge(routes::runtime_files::routes())
+        // Files drive sharing (contracts/files-drive): owner share routes check the Clerk session per request;
+        // token-keys, files-gateway summary/redeem and the guest gateway are public (Files-Guest tokens).
+        .merge(routes::files_gateway::routes())
         // Artifacts v2 (docs/design/artifacts-v2.md): every handler resolves
         // the caller itself (Clerk session or scoped token); the public link
         // route /api/v2/public/artifacts/:id takes no auth.
@@ -496,6 +502,9 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         // Compute gate (which computer the account has, chat-only choice);
         // Clerk session or `account` API token per-request.
         .merge(routes::account_compute::routes())
+        // Account preferences (project pad templates + per-mode default);
+        // Clerk session or `account` API token per-request, never gated on compute.
+        .merge(routes::account_prefs::routes())
         .merge(routes::web_search::routes())
         // Setup checklist: live checks for account, brain, computers, channels.
         .merge(routes::setup_checks::routes())

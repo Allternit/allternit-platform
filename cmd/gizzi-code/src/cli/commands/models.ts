@@ -22,6 +22,7 @@ import { describeVerification } from "@/runtime/services/modelVerification"
 import { pullModel, verifyModel } from "@/cli/commands/models-pull"
 import { fitModel, runModel, psModels, stopModel } from "@/cli/commands/models-run"
 import { fetchFreeweightsCatalog } from "@/runtime/services/freeweightsCatalog"
+import { freeweightsKey, publishModel } from "@/runtime/services/freeweightsUpload"
 import { Sidecar } from "@/runtime/sidecar"
 
 const SOURCE_BADGE: Record<string, string> = {
@@ -52,7 +53,7 @@ export const ModelsCommand = cmd({
         default: "all",
       })
       .positional("provider", {
-        describe: "provider ID to filter models by, or: pull | verify | search | fit | run | ps | stop",
+        describe: "provider ID to filter models by, or: pull | verify | search | fit | run | ps | stop | publish",
         type: "string",
         array: false,
       })
@@ -111,6 +112,10 @@ export const ModelsCommand = cmd({
         describe: "download and run a model by Hugging Face repo id",
         type: "string",
       })
+      .option("as", {
+        describe: "publish: target repo id (handle/name); the third word also works",
+        type: "string",
+      })
       .option("revision", {
         describe: "pull/verify: branch, tag or commit (default main)",
         type: "string",
@@ -125,6 +130,32 @@ export const ModelsCommand = cmd({
       })
   },
   handler: async (args) => {
+    // gizzi models publish <path> <handle/name>: upload a local folder to Freeweights.
+    if (args.provider === "publish") {
+      const src = args.repo
+      const repoId = args.as ?? (args._ as unknown[]).map(String).find((w) => w.includes("/") && w !== src)
+      if (!src || !repoId) {
+        UI.error("Usage: gizzi models publish <path> <handle/name>   (needs an Allternit key: ALLTERNIT_API_KEY or FREEWEIGHTS_TOKEN)")
+        process.exit(1)
+      }
+      const key = freeweightsKey()
+      if (!key) {
+        UI.error("No Allternit key found. Create one with the Freeweights upload scope at platform.allternit.com/api-keys?create=freeweights, then set FREEWEIGHTS_TOKEN.")
+        process.exit(1)
+      }
+      try {
+        const r = await publishModel(src, String(repoId), { key, log: (l) => process.stderr.write(l + "\n") })
+        UI.println(UI.Style.TEXT_SUCCESS_BOLD + `Uploaded ${r.files} file${r.files === 1 ? "" : "s"}.` + UI.Style.TEXT_NORMAL)
+        UI.println("Files are scanned before they are served. The repo shows as scanning until then.")
+        UI.println(r.repoUrl)
+        process.exit(0)
+      } catch (err) {
+        UI.error(err instanceof Error ? err.message : "Publish failed")
+        process.exit(1)
+      }
+      return
+    }
+
     if (args.provider === "pull" || args.provider === "verify") {
       const repo = args.repo
       if (!repo || !repo.includes("/")) {

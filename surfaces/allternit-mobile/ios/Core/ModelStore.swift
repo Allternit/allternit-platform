@@ -66,6 +66,7 @@ final class ModelStore: ObservableObject {
     var pillLabel: String {
         guard let selectedModelId, !selectedModelId.isEmpty else { return "Pick a brain" }
         if let person = personModels.first(where: { $0.id == selectedModelId }) { return person.name }
+        if let local = OnDeviceModelId.displayName(selectedModelId) ?? OtherDeviceModelId.displayName(selectedModelId) { return local }
         let short = selectedModelId.split(separator: "/", maxSplits: 1).last.map(String.init) ?? selectedModelId
         guard let thinking = models.first(where: { $0.id == selectedModelId })?.effectiveThinking else { return short }
         return "\(short) \(thinking.label(thinking.level(selectedEffort)))"

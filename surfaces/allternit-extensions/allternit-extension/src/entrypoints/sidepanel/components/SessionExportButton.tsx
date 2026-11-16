@@ -48,7 +48,7 @@ export function SessionExportButton({ sessionId, taskTitle }: SessionExportButto
       <button
         onClick={() => setIsOpen(!isOpen)}
         disabled={exporting}
-        className="inline-flex items-center gap-1 rounded-md border border-[var(--accent-primary,#B08D6E)]/30 px-2 py-1 text-xs text-[var(--text-primary,#2A1F16)] transition-colors hover:bg-[var(--bg-secondary,#F5EDE3)] disabled:opacity-50"
+        className="inline-flex items-center gap-1 rounded-md border border-[var(--accent-primary,#1F1E1D)]/30 px-2 py-1 text-xs text-[var(--text-primary,#2A1F16)] transition-colors hover:bg-[var(--bg-secondary,#F5EDE3)] disabled:opacity-50"
       >
         <svg className="size-3" viewBox="0 0 16 16" fill="currentColor">
           <path d="M8 1a.5.5 0 0 1 .5.5v7.793l2.146-2.147a.5.5 0 0 1 .708.708l-3 3a.5.5 0 0 1-.708 0l-3-3a.5.5 0 1 1 .708-.708L7.5 9.293V1.5A.5.5 0 0 1 8 1zM2 13.5a.5.5 0 0 1 .5-.5h11a.5.5 0 0 1 0 1h-11a.5.5 0 0 1-.5-.5z" />
@@ -57,7 +57,7 @@ export function SessionExportButton({ sessionId, taskTitle }: SessionExportButto
       </button>
 
       {isOpen && (
-        <div className="absolute right-0 top-full z-50 mt-1 w-40 overflow-hidden rounded-md border border-[var(--accent-primary,#B08D6E)]/20 bg-[var(--bg-primary,#FDF8F3)] shadow-lg">
+        <div className="absolute right-0 top-full z-50 mt-1 w-40 overflow-hidden rounded-md border border-[var(--accent-primary,#1F1E1D)]/20 bg-[var(--bg-primary,#FDF8F3)] shadow-lg">
           {FORMAT_OPTIONS.map((opt) => (
             <button
               key={opt.value}
@@ -72,7 +72,7 @@ export function SessionExportButton({ sessionId, taskTitle }: SessionExportButto
       )}
 
       {feedback && (
-        <span className="absolute left-0 top-full mt-1 text-[10px] text-[var(--accent-primary,#B08D6E)]">
+        <span className="absolute left-0 top-full mt-1 text-[10px] text-[var(--accent-primary,#1F1E1D)]">
           {feedback}
         </span>
       )}

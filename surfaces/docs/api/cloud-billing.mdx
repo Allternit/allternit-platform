@@ -158,10 +158,41 @@ Migration `106_billing_disputes.sql`:
 
 | Method | Path | Notes |
 | --- | --- | --- |
-| GET | `/api/v1/billing/plans` | Plus, Max (id `super`), Ultra. |
+| GET | `/api/v1/billing/plans` | Public. `plans`: Plus, Max (id `super`), Ultra. `freeweights`: the Freeweights perk listing (below). |
 | GET | `/api/v1/billing/subscription` | The person's current subscription, if any: `plan_id`, `label`, `plan_tier`, `status`, and `renews_at` (RFC 3339) once a Stripe event has reported the period end. |
 | POST | `/api/v1/billing/subscribe` | Subscription Checkout; reuses the person's Stripe customer. |
 | POST | `/api/v1/billing/portal` | Stripe billing portal for invoices, cards and cancellation. |
+
+### Freeweights perk listing
+
+`GET /api/v1/billing/plans` also returns a top-level `freeweights` block. It lists the [Freeweights](/tools/freeweights) perks for each plan, so a plan page can show them before they are sold:
+
+```json
+"freeweights": {
+  "status": "not_offered",
+  "plans": {
+    "free":  [{"key": "public_storage_bytes", "label": "Public upload storage", "value": 10000000000, "unit": "bytes"}, ...],
+    "plus":  [...],
+    "super": [...],
+    "ultra": [...]
+  }
+}
+```
+
+`status` is `offered` only while `FREEWEIGHTS_PERKS_ENABLED` is on. Otherwise it is `not_offered`: the perks are listed, but no account gets them and the entitlement claim's `perks` stays empty. Purchase surfaces show nothing while the status is `not_offered`. Each line has a `key`, a `label`, a `value` and a `unit` (`bytes`, `count` or `bool`). Bytes are decimal (1 GB = 1,000,000,000 bytes).
+
+The current values are a draft that still needs sign-off:
+
+| `key` | Free | Plus | Max (`super`) | Ultra |
+| --- | --- | --- | --- | --- |
+| `public_storage_bytes` | 10 GB | 250 GB | 1 TB | 2 TB |
+| `private_storage_bytes` | 0 | 100 GB | 500 GB | 1 TB |
+| `api_requests_5m` | 1,000 | 2,500 | 5,000 | 10,000 |
+| `webhooks` | 2 | 10 | 50 | 100 |
+| `private_collections` | no | yes | yes | yes |
+| `private_dataset_viewer` | no | yes | yes | yes |
+
+The same table feeds the entitlement claim once perks are on. `FREEWEIGHTS_PLAN_PERKS` replaces it (see Configuration below).
 
 ## Freeweights entitlement
 
@@ -179,7 +210,7 @@ The JWS header is `{"alg":"EdDSA","typ":"JWT","kid":"entitlement-v1"}` (Ed25519)
 | `sub` | Clerk user id; for a key, the key owner |
 | `plan` | The plan id as cloud-api names it: `free`, `plus`, `super` (Max) or `ultra`. Same answer as `GET /api/v1/billing/subscription`. |
 | `orgs[]` | One entry per Clerk org: `clerk_org_id`, `slug`, `role` (`admin` for `org:admin`, else `member`), `plan`, `perks`, `addon_bytes`, and `seats` only for a team plan. Org plans are `free` until team billing ships. |
-| `perks` | Perk name to number, boolean or string. Empty unless perks are turned on. `api_requests_5m` (a number) is the signed-in request limit per 5 minutes; while it is absent the Worker applies no limit of its own. |
+| `perks` | Perk name to number, boolean or string, from the [perk table](#freeweights-perk-listing). Empty unless perks are turned on. `api_requests_5m` (a number) is the signed-in request limit per 5 minutes; while it is absent the Worker applies no limit of its own. |
 | `addon_bytes` | `{"public": 0, "private": 0}` until storage add-ons are sold. |
 | `scopes` | A session gets `freeweights.read` and `freeweights.write`. A key gets its own `freeweights.*` scopes (a full-access legacy `*` token counts as read and write). |
 | `cred` | `session` or `key` |
@@ -194,8 +225,8 @@ Browsers on `https://freeweights.allternit.com` and `https://fw-preview.allterni
 | Env var | Meaning |
 | --- | --- |
 | `FREEWEIGHTS_ENTITLEMENT_SIGNING_KEY` | The Ed25519 private key: a PKCS#8 PEM (OpenSSL 3: `openssl genpkey -algorithm ed25519 -out entitlement-v1.key`; the LibreSSL `openssl` that ships with macOS cannot make Ed25519 keys; `\n` escapes are accepted) or the raw 32-byte seed as base64 or hex. Its public half (`openssl pkey -in entitlement-v1.key -pubout`) is `spec/keys/entitlement-v1.pub` in the freeweights repo. |
-| `FREEWEIGHTS_PERKS_ENABLED` | `1` or `true` turns perks on. Off by default. |
-| `FREEWEIGHTS_PLAN_PERKS` | JSON object of plan id to perks, shaped like `{"plus": {"api_requests_5m": 0, "private_collections": true}}` (values are placeholders until the perk table is signed off). Read only while perks are on. No perk value is built into the code. |
+| `FREEWEIGHTS_PERKS_ENABLED` | `1` or `true` turns perks on: the claim carries them and the listing's `status` reads `offered`. Off by default. |
+| `FREEWEIGHTS_PLAN_PERKS` | JSON object of plan id to perks, shaped like `{"plus": {"api_requests_5m": 2500, "private_collections": true}}`. A valid object replaces the built-in draft table for both the listing and the claim, even while perks are off (a plan it leaves out has no perks). Unset, blank or invalid keeps the draft table. |
 | `CLERK_SECRET_KEY` | Reads the org list from Clerk. Without it, `orgs` is empty. |
 
 ### Freeweights key scopes

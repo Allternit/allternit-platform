@@ -1,7 +1,15 @@
 import * as React from 'react'
 import { Text } from '../../ink'
 import type { LocalJSXCommandCall } from '../../types/command.js'
-import { listProjects, PROJECT_STATE_LABELS, type Project, type ProjectState } from '@/cli/work/api'
+import {
+  getProjectPad,
+  listProjects,
+  projectPadScope,
+  PROJECT_STATE_LABELS,
+  type Project,
+  type ProjectPadResult,
+  type ProjectState,
+} from '@/cli/work/api'
 import { useLoaded, WorkPane } from './WorkPane'
 
 /**
@@ -23,6 +31,50 @@ function chip(p: Project): { text: string; color?: string } {
   return { text: PROJECT_STATE_LABELS[p.state], color: CHIP_COLOR[p.state] }
 }
 
+function hostOf(url?: string): string {
+  try {
+    return new URL(url ?? '').host
+  } catch {
+    return url ?? ''
+  }
+}
+
+/** The pad as plain text lines: Notes (first 6 lines), Checklist, Links. */
+export function padLines(r: ProjectPadResult): string[] {
+  if (r.unsupported) return ['Update your computer to sync pads']
+  if (!r.pad) return ['No pad yet']
+  const d = r.pad.data ?? {}
+  const out: string[] = []
+  const notes = (d.notes ?? '').split('\n').map(l => l.trimEnd()).filter(l => l.trim())
+  if (notes.length) out.push('Notes', ...notes.slice(0, 6).map(l => `  ${l}`), ...(notes.length > 6 ? ['  …'] : []))
+  const items = d.checklist ?? []
+  if (items.length) out.push('Checklist', ...items.map(i => `  [${i.done ? 'x' : ' '}] ${i.text ?? ''}`))
+  const links = d.links ?? []
+  if (links.length) out.push('Links', ...links.map(l => `  ${l.title || hostOf(l.url)} — ${hostOf(l.url)}`))
+  return out.length ? out : ['No pad yet']
+}
+
+/** Pad text for the selected project. Latest threads are not in the data this view loads, so they are not shown. */
+export function PadText({ result }: { result: ProjectPadResult }): React.ReactNode {
+  return (
+    <>
+      {padLines(result).map((l, i) => (
+        <Text key={i} dimColor={l.startsWith('  ') || l.startsWith('No pad') || l.startsWith('Update')} bold={/^[A-Z][a-z]+$/.test(l)}>
+          {l}
+        </Text>
+      ))}
+    </>
+  )
+}
+
+function ProjectPadDetail({ project }: { project: Project }): React.ReactNode {
+  // The list carries no project mode, so the scope uses "chat".
+  const { data, error } = useLoaded(() => getProjectPad(projectPadScope(project.id)))
+  if (error) return <Text dimColor>Couldn't load pad: {error}</Text>
+  if (!data) return <Text dimColor>Loading pad…</Text>
+  return <PadText result={data} />
+}
+
 async function load(): Promise<Project[]> {
   const list = await listProjects()
   return list.sort(
@@ -38,8 +90,15 @@ export const call: LocalJSXCommandCall = async (onDone, context) => {
     onDone(
       list instanceof Error
         ? `Couldn't load projects: ${list.message}`
-        : list.map(p => `[${chip(p).text}] ${p.title}${p.nextAction ? ` — next: ${p.nextAction}` : ''}`).join('\n') ||
-            'No projects yet.',
+        : (
+            await Promise.all(
+              list.map(async p => {
+                const pad = await getProjectPad(projectPadScope(p.id)).catch(() => undefined)
+                const head = `[${chip(p).text}] ${p.title}${p.nextAction ? ` — next: ${p.nextAction}` : ''}`
+                return pad ? [head, ...padLines(pad).map(l => `  ${l}`)].join('\n') : head
+              }),
+            )
+          ).join('\n') || 'No projects yet.',
       { display: 'system' },
     )
     return null
@@ -64,7 +123,12 @@ export const call: LocalJSXCommandCall = async (onDone, context) => {
             </Text>
           )
         }}
-        detail={p => (p.nextAction ? <Text dimColor>Next: {p.nextAction}</Text> : null)}
+        detail={p => (
+          <>
+            {p.nextAction ? <Text dimColor>Next: {p.nextAction}</Text> : null}
+            <ProjectPadDetail key={p.id} project={p} />
+          </>
+        )}
       />
     )
   }

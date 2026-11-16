@@ -251,6 +251,7 @@ dependencies = [
  "jsonschema",
  "jsonwebtoken",
  "libc",
+ "lopdf",
  "mcp-client",
  "mcp-protocol",
  "md5",
@@ -448,12 +449,14 @@ dependencies = [
  "allternit-cloud-hetzner",
  "allternit-cloud-ssh",
  "allternit-cloud-wizard",
+ "allternit-files-core",
  "anyhow",
  "assert_matches",
  "async-trait",
  "aws-lc-rs",
  "axum",
  "base64 0.22.1",
+ "blake3",
  "bytes 1.12.0",
  "chrono",
  "chrono-tz",
@@ -1123,6 +1126,29 @@ dependencies = [
  "tempfile",
  "thiserror 1.0.69",
  "unicode-normalization",
+]
+
+[[package]]
+name = "allternit-files-mount"
+version = "0.1.0"
+dependencies = [
+ "allternit-files-core",
+ "allternit-files-engine",
+ "axum",
+ "base64 0.22.1",
+ "chrono",
+ "fuser",
+ "futures 0.3.32",
+ "libc",
+ "rand 0.8.6",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "urlencoding",
 ]
 
 [[package]]
@@ -6476,6 +6502,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3dcaa9ae7725d12cdb85b3ad99a434db70b468c09ded17e012d86b5c1010f7a7"
 
 [[package]]
+name = "fuser"
+version = "0.16.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0bb29a3ae32279fe3e79a958fe01899f5fb23eadccee919cf88e145b54ed9367"
+dependencies = [
+ "libc",
+ "log",
+ "memchr",
+ "nix 0.29.0",
+ "page_size",
+ "smallvec 1.15.2",
+ "zerocopy",
+]
+
+[[package]]
 name = "futf"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10138,6 +10179,16 @@ dependencies = [
  "primefield",
  "primeorder 0.14.0-rc.7",
  "sha2 0.11.0",
+]
+
+[[package]]
+name = "page_size"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "30d5b2194ed13191c1999ae0704b7839fb18384fa22e49b57eeaa97d79ce40da"
+dependencies = [
+ "libc",
+ "winapi 0.3.9",
 ]
 
 [[package]]

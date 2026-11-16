@@ -41,7 +41,7 @@ const HOST_ACCENTS = {
   word: '#2B579A',
   excel: '#217346',
   powerpoint: '#D74726',
-  unknown: '#9A7658',
+  unknown: '#1F1E1D',
 } as const
 
 type HostKey = keyof typeof HOST_ACCENTS

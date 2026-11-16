@@ -3,7 +3,7 @@ import SwiftUI
 import WidgetKit
 
 // Faces for the flipping widget. Colours come from the asset catalog
-// (BgPanel, TextPrimary, TextSecondary, FillNeutral, BrandAccent); no tan
+// (BgPanel, TextPrimary, TextSecondary, FillNeutral, BrandAccent = ink); no tan
 // surfaces. Amber marks "needs you", the same as the Live Activity mockups.
 
 private enum Palette {

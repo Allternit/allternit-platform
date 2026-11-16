@@ -117,43 +117,27 @@ pub fn caller(headers: &HeaderMap, peer: Option<SocketAddr>) -> Caller {
     }
 }
 
-/// Home-relative locations that hold secrets. Matched case-insensitively,
-/// component by component, so `~/.SSH/id_rsa` is refused on a
-/// case-insensitive disk and `~/.sshx` is not confused with `~/.ssh`.
-const HOME_SECRETS: &[&[&str]] = &[
-    &[".ssh"],
-    &[".gnupg"],
-    &[".aws"],
-    &[".azure"],
-    &[".kube"],
-    &[".netrc"],
-    &[".password-store"],
-    &[".npmrc"],
-    &[".pypirc"],
-    &[".git-credentials"],
-    &[".docker", "config.json"],
-    &[".config", "gcloud"],
-    &[".config", "gh"],
-    &[".config", "stripe"],
-    &["Library", "Keychains"],
-    // Agent CLI credentials.
-    &[".claude", ".credentials.json"],
-    &[".codex", "auth.json"],
-    &[".gizzi", "credentials.json"],
-    &[".local", "share", "gizzi-code", "auth.json"],
-    &[".local", "share", "gizzi-code", "fabric-lease.key"],
-    &[".local", "share", "tailscale"],
-    // Allternit's own tokens, keys and private state under ~/.allternit.
-    // The rest of ~/.allternit (skills, plugins, mcps, commands, agents)
-    // stays reachable for the Desktop app.
-    &[".allternit", "phone-gateway.json"],
-    &[".allternit", "subscriptions"],
-    &[".allternit", "incus-client"],
-    &[".allternit", "factory", "fabric"],
-    &[".allternit", "factory", "registry.json"],
-    &[".allternit", "session-caretaker"],
-    &[".allternit", "system-one"],
-];
+/// The shared secrets deny-list (`assets/secrets-deny.json`). Gizzi's portable
+/// workspace bundle reads the same file, so there is one list to edit.
+pub const SECRETS_DENY_JSON: &str = include_str!("../assets/secrets-deny.json");
+
+/// Home-relative locations that hold secrets (`home_paths` in
+/// [`SECRETS_DENY_JSON`]). Matched case-insensitively, component by
+/// component, so `~/.SSH/id_rsa` is refused on a case-insensitive disk and
+/// `~/.sshx` is not confused with `~/.ssh`.
+fn home_secrets() -> &'static [Vec<String>] {
+    static LIST: std::sync::OnceLock<Vec<Vec<String>>> = std::sync::OnceLock::new();
+    LIST.get_or_init(|| {
+        #[derive(serde::Deserialize)]
+        struct DenyList {
+            home_paths: Vec<Vec<String>>,
+        }
+        // Compiled in, so a broken file fails every test, not a user.
+        let list: DenyList = serde_json::from_str(SECRETS_DENY_JSON).expect("assets/secrets-deny.json is valid");
+        assert!(list.home_paths.iter().all(|p| !p.is_empty()), "assets/secrets-deny.json has an empty home path");
+        list.home_paths
+    })
+}
 
 /// Folders another device may read and write under (not the folder itself):
 /// what allternit-ai `src/plugins/fileSystem.ts` scans and Customize writes
@@ -429,7 +413,7 @@ impl FilesScope {
     pub fn authorize_root(&self, raw: &str, extra_protected: &[PathBuf]) -> Result<PathBuf, Denied> {
         let (canonical, _rel) = self.check(raw, Access::Write)?;
         let home = self.home.as_deref().ok_or(Denied("no_home"))?;
-        let holds_secret = HOME_SECRETS
+        let holds_secret = home_secrets()
             .iter()
             .map(|parts| parts.iter().fold(home.to_path_buf(), |p, c| p.join(c)))
             .chain(std::iter::once(home.join(".allternit")))
@@ -647,8 +631,8 @@ fn starts_with_ci(path: &Path, prefix: &Path) -> bool {
     true
 }
 
-fn rel_starts_with_ci(rel: &[String], prefix: &[&str]) -> bool {
-    rel.len() >= prefix.len() && rel.iter().zip(prefix).all(|(a, b)| eq_ci(a, b))
+fn rel_starts_with_ci<S: AsRef<str>>(rel: &[String], prefix: &[S]) -> bool {
+    rel.len() >= prefix.len() && rel.iter().zip(prefix).all(|(a, b)| eq_ci(a, b.as_ref()))
 }
 
 fn rel_starts_with(rel: &[String], prefix: &[&str]) -> bool {
@@ -656,7 +640,7 @@ fn rel_starts_with(rel: &[String], prefix: &[&str]) -> bool {
 }
 
 fn is_secret(rel: &[String]) -> bool {
-    if HOME_SECRETS.iter().any(|secret| rel_starts_with_ci(rel, secret)) {
+    if home_secrets().iter().any(|secret| rel_starts_with_ci(rel, secret)) {
         return true;
     }
     // ~/.allternit/<anything>.env… (incus-host.env, tart-host.env.disabled…)
@@ -776,5 +760,35 @@ mod tests {
         for ok in ["/tmp/report.pdf", "/home/user/Downloads/a.txt", "C:/Users/Public/Downloads/a.txt", "~/Desktop/a.png"] {
             assert!(check_guest_path(ok).is_ok(), "{ok:?} should be allowed");
         }
+    }
+
+    /// The deny-list moved from a const into `assets/secrets-deny.json` (Files
+    /// drive step 18) so Gizzi's workspace bundle filters with the same list.
+    /// It may only grow: every entry the const had is still refused.
+    #[test]
+    fn secrets_deny_list_only_grows() {
+        let before: &[&[&str]] = &[
+            &[".ssh"], &[".gnupg"], &[".aws"], &[".azure"], &[".kube"], &[".netrc"], &[".password-store"],
+            &[".npmrc"], &[".pypirc"], &[".git-credentials"], &[".docker", "config.json"], &[".config", "gcloud"],
+            &[".config", "gh"], &[".config", "stripe"], &["Library", "Keychains"], &[".claude", ".credentials.json"],
+            &[".codex", "auth.json"], &[".gizzi", "credentials.json"], &[".local", "share", "gizzi-code", "auth.json"],
+            &[".local", "share", "gizzi-code", "fabric-lease.key"], &[".local", "share", "tailscale"],
+            &[".allternit", "phone-gateway.json"], &[".allternit", "subscriptions"], &[".allternit", "incus-client"],
+            &[".allternit", "factory", "fabric"], &[".allternit", "factory", "registry.json"],
+            &[".allternit", "session-caretaker"], &[".allternit", "system-one"],
+        ];
+        for entry in before {
+            let rel: Vec<String> = entry.iter().map(|s| s.to_string()).collect();
+            assert!(is_secret(&rel), "{entry:?} left the secrets deny-list");
+            let mut inside = rel.clone();
+            inside.push("x".into());
+            assert!(is_secret(&inside), "{entry:?}/x is no longer refused");
+        }
+        let v: serde_json::Value = serde_json::from_str(SECRETS_DENY_JSON).unwrap();
+        let patterns: Vec<&str> = v["file_patterns"].as_array().unwrap().iter().filter_map(|p| p.as_str()).collect();
+        for p in [".env", ".env.*", "*.pem", "*.key", "id_rsa*", "id_ed25519*", "*.token", "token.json", "credentials.json"] {
+            assert!(patterns.contains(&p), "file pattern {p:?} left the deny-list");
+        }
+        assert!(!is_secret(&[".sshx".to_string()]), "prefix confusion");
     }
 }

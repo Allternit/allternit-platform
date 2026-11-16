@@ -17,15 +17,46 @@
 //!   `touch_runtime_activity` or any other idle reset.
 //!   `tests::files_v2_never_touches_activity` guards it.
 //! - **Body limits.** 1 MiB on every v2 route, except the small write and the
-//!   chunk PUT, which take 4 MiB + 64 KiB (section 2).
+//!   chunk PUT, which take 4 MiB + 64 KiB (section 2), and the replica blob PUT.
+//! - **Replicas** (`replicas.rs`, `sync.rs`): the host role, registrations,
+//!   this computer's Files key, replication passes that never wake anything,
+//!   restore with a hash check, cross-computer copy and move as jobs.
+//! - **Guests.** `Authorization: Files-Guest <fgt1 token>` from the cloud-api
+//!   gateway. [`shares::gate`] verifies the token offline and the role per
+//!   route; [`Inner::guard`] and [`Inner::guard_item`] then hold the guest to
+//!   its shared item on every request (SPEC section 8, the second check).
+//! - **Asleep snapshot** (`snapshot.rs`): names, sizes and revisions of every
+//!   non-protected root go to cloud-api while awake, so a sleeping computer
+//!   still lists. **Queued drops** (`drops.rs`): guest drops cloud-api kept
+//!   while this computer slept land in Inbox as untrusted tasks on wake.
 
+mod cloud;
+mod drops;
+#[cfg(test)]
+mod drops_tests;
 mod errors;
+mod events;
 mod feed;
+mod inbox;
+#[cfg(test)]
+mod inbox_tests;
+pub mod intel;
 mod memory;
 mod meta;
+pub mod models;
+#[cfg(test)]
+mod replica_tests;
+mod replicas;
 mod roots;
 mod routes;
+pub mod routing;
+mod rules;
+pub(crate) mod shares;
+mod snapshot;
+#[cfg(test)]
+mod snapshot_tests;
 mod storage;
+mod sync;
 #[cfg(test)]
 mod tests;
 
@@ -33,7 +64,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use allternit_files_core::{
-    ComputerState, ErrorCode, Freshness, Item, ItemKind, Permissions, PrincipalKind, PrincipalRef, RootKind, ServedBy,
+    ComputerState, ErrorCode, FilesEvent, Freshness, Item, ItemKind, Permissions, PrincipalKind, PrincipalRef, RootKind,
+    ServedBy,
 };
 use allternit_files_engine::{ChangeListener, Clock, Drive, DriveOptions, DriveWatcher, FilesError, ItemRecord, RootRecord};
 use axum::extract::{ConnectInfo, FromRequestParts};
@@ -45,6 +77,8 @@ use tokio::sync::{broadcast, OnceCell};
 use crate::db::DbHandle;
 use crate::files_scope::FilesScope;
 pub use errors::{status_for, ApiError};
+pub use rules::{is_folder_rule, RULE_TRIGGER};
+pub use shares::GuestAuth;
 
 /// Env switch for the whole drive (off by default).
 pub const FLAG_ENV: &str = "ALLTERNIT_FILES_DRIVE";
@@ -102,20 +136,50 @@ impl Config {
 /// The `/files/v2` routes for this process, nested by the caller under
 /// `/api/v1`.
 pub fn router<S: Clone + Send + Sync + 'static>(app_data_dir: &Path, db: DbHandle) -> Router<S> {
-    routes::routes(Arc::new(FilesV2::new(Config::from_env(app_data_dir, Some(db)))))
+    let files = Arc::new(FilesV2::new(Config::from_env(app_data_dir, Some(db))));
+    // Replicas (step 15): the heartbeat reads this instance; the loop pushes
+    // replica passes only while this runtime runs anyway.
+    sync::register_process(&files);
+    sync::spawn_replicator(files.clone());
+    // Step 13: the asleep snapshot, written while awake (SPEC section 11).
+    snapshot::spawn(files.clone());
+    // Step 17: guest drops queued while this computer slept go to Inbox.
+    drops::spawn(files.clone());
+    routes::routes(files)
 }
 
 pub use routes::routes;
+pub use sync::heartbeat_report;
+
+/// The presence heartbeat's key for [`heartbeat_report`] (SPEC section 15).
+pub const HEARTBEAT_KEY: &str = "filesStorage";
+
+/// The sleep notice (SIGTERM): write the asleep snapshot before the process
+/// goes, within a few seconds (SPEC section 11).
+pub async fn before_sleep() {
+    snapshot::before_sleep().await;
+}
 
 /// Shared state for every v2 route. The drive opens on first use.
 pub struct FilesV2 {
     pub(crate) cfg: Config,
     inner: OnceCell<Arc<Inner>>,
+    /// cloud-api's guest-token keys and the guests' upload sessions.
+    pub(crate) guests: GuestAuth,
+    /// Files events raised on this runtime (`files.share.accessed`, SPEC
+    /// section 14). Each is also written to the log under its event name.
+    pub(crate) events: broadcast::Sender<FilesEvent>,
 }
 
 impl FilesV2 {
     pub fn new(cfg: Config) -> Self {
-        Self { cfg, inner: OnceCell::new() }
+        Self::with_guests(cfg, GuestAuth::from_env())
+    }
+
+    /// Same, with the guest-token keys given (tests pin them).
+    pub fn with_guests(cfg: Config, guests: GuestAuth) -> Self {
+        let (events, _) = broadcast::channel(256);
+        Self { cfg, inner: OnceCell::new(), guests, events }
     }
 
     /// Opens the drive and creates the default roots (section 3), once.
@@ -145,8 +209,13 @@ pub(crate) struct Inner {
     /// Root IDs with new changes, for feed sockets.
     pub feed: broadcast::Sender<String>,
     pub watcher: Option<DriveWatcher>,
+    /// Content index, tags, collections, previews (plan step 16).
+    pub intel: intel::Intel,
     /// Memory Drive revision last copied into its view folder.
     pub memory_rev: Mutex<Option<String>>,
+    /// The model Inbox tasks call; `None` is the computer's default model
+    /// (`inbox::GizziModel`). Tests put a recorder here.
+    pub task_model: std::sync::RwLock<Option<Arc<dyn inbox::TaskModel>>>,
 }
 
 impl Inner {
@@ -175,6 +244,8 @@ impl Inner {
             protected.push(data.join("allternit"));
             protected.push(data.join("@allternit"));
         }
+        let intel = intel::Intel::open(&cfg.data_dir.join("intel.sqlite"), intel::Intel::default_embedder(), intel::budget::Budget::from_env())
+            .map_err(|e| fail(e.into()))?;
         let scope = FilesScope::new(Some(home.clone()), protected);
         let (feed, _) = broadcast::channel(256);
         let tx = feed.clone();
@@ -190,8 +261,11 @@ impl Inner {
             scope,
             feed,
             watcher: None,
+            intel,
             memory_rev: Mutex::new(None),
+            task_model: std::sync::RwLock::new(None),
         };
+        inbox::ensure_schema(&inner.meta.lock().expect("meta lock")).map_err(|e| fail(e.into()))?;
         roots::ensure_defaults(&inner).map_err(|e| e.into_api(&inner))?;
         if cfg.watch {
             match DriveWatcher::start(inner.drive.clone(), |e| tracing::warn!(error = %e, "files v2: watcher reconcile failed")) {
@@ -199,12 +273,24 @@ impl Inner {
                 Err(e) => tracing::warn!(error = %e, "files v2: watcher did not start; changes made outside the drive show up on the next scan"),
             }
         }
-        Ok(Arc::new(inner))
+        let inner = Arc::new(inner);
+        // Change events, Inbox drops and folder rules (SPEC sections 7 and 14).
+        events::attach(&inner);
+        // Same switch as the watcher: tests drive passes by hand.
+        if cfg.watch && intel::worker_enabled() {
+            intel::spawn_worker(&inner);
+        }
+        Ok(inner)
     }
 
-    /// The root for `root_id` after the caller's checks (section 12).
+    /// The root for `root_id` after the caller's checks (section 12). A guest
+    /// must also be in its shared root, and the root must be shareable and
+    /// not protected (section 8).
     pub fn guard(&self, req: &Req, root_id: &str, need: Need) -> Result<RootRecord, Fail> {
         let root = self.drive.root(root_id)?;
+        if let Some(g) = &req.guest {
+            shares::check_root(g, &root, need)?;
+        }
         if root.policy.protected && !req.unlocked {
             return Err(ApiError::new(
                 ErrorCode::ProtectedRootLocked,
@@ -219,16 +305,30 @@ impl Inner {
         }
     }
 
-    /// An item and its root after the checks.
+    /// An item and its root after the checks. A guest must stay inside its
+    /// shared item.
     pub fn guard_item(&self, req: &Req, item_id: &str, need: Need) -> Result<(RootRecord, ItemRecord), Fail> {
         let item = self.drive.stat(item_id)?;
         let root = self.guard(req, &item.root_id, need)?;
+        if let Some(g) = &req.guest {
+            shares::check_subtree(self, g, &item)?;
+        }
         Ok((root, item))
+    }
+
+    /// [`Inner::item`] for this caller: a guest gets its role's permissions
+    /// and never sees which devices pinned the item.
+    pub fn item_as(&self, req: &Req, root: &RootRecord, rec: &ItemRecord) -> Item {
+        match &req.guest {
+            Some(g) => rec.to_item(shares::permissions(g.claims.role, root, rec)),
+            None => self.item(root, rec),
+        }
     }
 
     /// The wire item, with this caller's permissions and the pins.
     pub fn item(&self, root: &RootRecord, rec: &ItemRecord) -> Item {
         let mut item = rec.to_item(permissions(root, rec));
+        self.intel.decorate(&mut item);
         let pins = meta::pins(&self.meta.lock().expect("meta lock"), &rec.id).unwrap_or_default();
         if !pins.is_empty() {
             item.pinned_on = Some(pins);
@@ -258,6 +358,7 @@ pub(crate) enum Need {
 
 /// Error inside a blocking handler body: the engine's (mapped with the drive
 /// at hand, so `rev_mismatch` carries `current`) or an already-built one.
+#[derive(Debug)]
 pub(crate) enum Fail {
     Files(FilesError),
     Api(ApiError),
@@ -293,7 +394,10 @@ impl Fail {
 }
 
 /// Permissions for an owner or own device (section 7), from the root policy.
-/// Files never runs anything, so `execute` is always false here.
+/// `execute` is true only in the Models root (the local engine's own cache).
+/// A copied package elsewhere runs only if its permission file allows it,
+/// which `models::check_execute_path` checks where models are imported or
+/// launched; the item list does not read that file, so it shows `false`.
 pub(crate) fn permissions(root: &RootRecord, item: &ItemRecord) -> Permissions {
     let p = &root.policy;
     let readable = p.read && !item.link_escapes;
@@ -307,7 +411,7 @@ pub(crate) fn permissions(root: &RootRecord, item: &ItemRecord) -> Permissions {
         comment: p.read,
         agent_process: p.agent_process,
         transfer: readable,
-        execute: false,
+        execute: readable && root.kind == RootKind::Models,
     }
 }
 
@@ -333,12 +437,15 @@ pub(crate) fn live() -> Freshness {
 #[derive(Clone, Debug)]
 pub(crate) struct Req {
     pub principal: PrincipalRef,
+    /// The owner's user id (for a guest, the share owner's).
     pub user_id: String,
     /// Replayed by a relay, forwarded, or a non-loopback peer (`files_scope::caller`).
     pub relayed: bool,
     /// Sent `x-allternit-unlock` (section 12).
     pub unlocked: bool,
     pub device_name: Option<String>,
+    /// Set by [`shares::gate`] for a verified `Files-Guest` request.
+    pub guest: Option<Arc<shares::Guest>>,
 }
 
 fn header(headers: &HeaderMap, name: &str) -> Option<String> {
@@ -347,6 +454,21 @@ fn header(headers: &HeaderMap, name: &str) -> Option<String> {
 
 impl Req {
     pub fn extract(parts: &Parts) -> Result<Self, ApiError> {
+        // A guest is a guest even when the relay replay also signed the
+        // request in as the owner.
+        if let Some(g) = parts.extensions.get::<Arc<shares::Guest>>() {
+            return Ok(Self {
+                principal: g.principal(),
+                user_id: g.claims.owner_user_id.clone(),
+                relayed: true,
+                unlocked: false,
+                device_name: None,
+                guest: Some(g.clone()),
+            });
+        }
+        if shares::has_guest_scheme(&parts.headers) {
+            return Err(ApiError::new(ErrorCode::Unauthorized, "This share link session is not valid. Open the link again."));
+        }
         let user = parts
             .extensions
             .get::<crate::auth::AuthUser>()
@@ -367,7 +489,7 @@ impl Req {
         // unlock flow lands, any non-empty value counts as the fresh unlock.
         // TODO(files-drive): verify a signed, short-lived unlock assertion here.
         let unlocked = header(headers, UNLOCK_HEADER).is_some();
-        Ok(Self { principal, user_id: user.user_id.clone(), relayed, unlocked, device_name })
+        Ok(Self { principal, user_id: user.user_id.clone(), relayed, unlocked, device_name, guest: None })
     }
 
     /// Conflict-copy device name: request field, else the header, else the

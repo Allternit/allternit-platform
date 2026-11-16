@@ -43,38 +43,6 @@
     "notes": "PyTorch on every computer; MLX on a Mac for LoRA and QLoRA. QLoRA uses bitsandbytes 4-bit off the Mac. On the CPU only LoRA runs, and slowly."
   },
   {
-    "id": "unsloth-upstream",
-    "name": "Unsloth (upstream, unmodified)",
-    "license": "AGPL-3.0",
-    "version": "2026.11.4",
-    "methods": [
-      "lora",
-      "qlora"
-    ],
-    "hardware": [
-      "cuda-linux",
-      "cuda-windows",
-      "xpu-linux",
-      "xpu-windows"
-    ],
-    "install_state": "not_installed",
-    "limits": {},
-    "published": true,
-    "source": {
-      "repo": "https://github.com/Allternit/studio-engines",
-      "sha": "e520474f67ec93888fcd07716f313ad5dbda3db9"
-    },
-    "process": "separate_process",
-    "default": false,
-    "backends": [
-      {
-        "id": "torch",
-        "status": "available"
-      }
-    ],
-    "notes": "Upstream Unsloth, unmodified, installed on this computer under AGPL-3.0 in its own environment and run as a separate process; no Allternit code imports it. `unsloth train` has no DPO. Not yet tested by Allternit on this hardware: configs are checked in dry-run only."
-  },
-  {
     "id": "axolotl",
     "name": "Axolotl",
     "license": "Apache-2.0",

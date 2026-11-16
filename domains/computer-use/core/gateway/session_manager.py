@@ -8,9 +8,101 @@ Provides persistent sessions across multiple actions.
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
+import re
 import time
+from pathlib import Path
 from typing import Dict, Optional, Tuple, Any
+
+logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------- Files drive
+#
+# While the Files drive is on (`ALLTERNIT_FILES_DRIVE=1`, the switch
+# allternit-api reads), every download in an agent browser session is saved
+# into the drive's Downloads root, `~/Allternit/Downloads`, where the drive's
+# watcher indexes it (contracts/files-drive SPEC section 3).
+# `ALLTERNIT_FILES_DOWNLOADS_DIR` picks another folder. Off, downloads stay in
+# Playwright's temporary folder as before. Downloaded files are untrusted:
+# the Downloads root has no agent access, so a download never starts a task.
+
+_UNSAFE_NAME_CHARS = re.compile(r'[\x00-\x1f\x7f/\\:*?"<>|]')
+_MAX_NAME_CHARS = 120
+
+
+def files_downloads_dir() -> Optional[Path]:
+    """The folder agent-browser downloads are saved to, or None when off."""
+    custom = os.environ.get("ALLTERNIT_FILES_DOWNLOADS_DIR", "").strip()
+    if custom:
+        return Path(custom).expanduser()
+    if os.environ.get("ALLTERNIT_FILES_DRIVE", "").strip().lower() in ("1", "true"):
+        return Path.home() / "Allternit" / "Downloads"
+    return None
+
+
+def safe_download_name(raw: Optional[str]) -> str:
+    """A file name from a site's suggested name (untrusted): no path
+    separators or control characters, no leading dot, at most 120
+    characters with the extension kept."""
+    name = _UNSAFE_NAME_CHARS.sub(" ", raw or "")
+    name = " ".join(name.split()).lstrip(". ").strip()
+    if len(name) > _MAX_NAME_CHARS:
+        stem, dot, ext = name.rpartition(".")
+        if dot and stem and 0 < len(ext) <= 16:
+            name = stem[: _MAX_NAME_CHARS - len(ext) - 1].rstrip() + "." + ext
+        else:
+            name = name[:_MAX_NAME_CHARS].rstrip()
+    return name or "download"
+
+
+def reserve_download_path(directory: Path, name: str) -> Path:
+    """Creates and returns a new empty file for `name` in `directory`:
+    `name`, else `stem 2.ext`, `stem 3.ext`... Never reuses or follows an
+    existing entry (O_EXCL), so a download never replaces a file."""
+    stem, dot, ext = name.rpartition(".")
+    if not dot or not stem:
+        stem, ext = name, ""
+    for n in range(1, 10_000):
+        candidate = name if n == 1 else (f"{stem} {n}.{ext}" if ext else f"{stem} {n}")
+        path = directory / candidate
+        try:
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except FileExistsError:
+            continue
+        os.close(fd)
+        return path
+    raise FileExistsError(f"no free name for {name!r} in {directory}")
+
+
+async def save_download(download: Any, directory: Path) -> Optional[Path]:
+    """Saves one Playwright download into `directory`. Best effort: a failed
+    save is logged and the browser session carries on."""
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        target = reserve_download_path(directory, safe_download_name(getattr(download, "suggested_filename", None)))
+        await download.save_as(str(target))
+        return target
+    except Exception as exc:  # noqa: BLE001 - never break the agent's session over a download
+        logger.warning("files drive: download not saved to %s: %s", directory, exc)
+        return None
+
+
+def _route_downloads(context: Any) -> None:
+    """Saves every page's downloads in `context` into the Downloads root."""
+    directory = files_downloads_dir()
+    if directory is None:
+        return
+
+    def on_download(download: Any) -> None:
+        asyncio.ensure_future(save_download(download, directory))
+
+    def on_page(page: Any) -> None:
+        page.on("download", on_download)
+
+    # `page` fires for every page the context opens, popups included.
+    context.on("page", on_page)
 
 
 class SessionInfo:
@@ -152,6 +244,7 @@ class SessionManager:
                 user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
                 accept_downloads=True,
             )
+            _route_downloads(context)
             
             page = await context.new_page()
             

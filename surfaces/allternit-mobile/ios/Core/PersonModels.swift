@@ -9,9 +9,13 @@ import Foundation
 /// - `chatgpt/<model>`: ChatGPT signed in on this iPhone, sent from the
 ///   phone straight to OpenAI.
 ///
+/// - `ondevice/<id>#<quant>`, `ondevice/apple-fm`: a model running on this
+///   iPhone (OnDeviceChat). `device/<host>/<model>`: a model on the owner's
+///   other device, through cloud-api's model-host relay.
+///
 /// None of them may be picked for a bot, routine, schedule, mission or agent.
 enum PersonModels {
-    static let prefixes = ["plan/", "copilot/", "chatgpt/"]
+    static let prefixes = ["plan/", "copilot/", "chatgpt/", OnDeviceModelId.prefix, OtherDeviceModelId.prefix]
 
     static func isPersonOnly(_ id: String?) -> Bool {
         guard let id else { return false }
@@ -26,6 +30,8 @@ enum PersonModels {
         if id.hasPrefix(ModelStore.cloudPrefix) { return "Allternit Cloud" }
         if id.hasPrefix("copilot/") { return "GitHub Copilot" }
         if id.hasPrefix("chatgpt/") { return "ChatGPT" }
+        if OnDeviceModelId.isOnDevice(id) { return "This iPhone" }
+        if OtherDeviceModelId.isOtherDevice(id) { return "Your other device" }
         let parts = id.split(separator: "/")
         guard parts.count >= 2 else { return "your plan" }
         switch parts[1] {

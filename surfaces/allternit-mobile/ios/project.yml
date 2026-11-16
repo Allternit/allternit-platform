@@ -41,6 +41,19 @@ packages:
   # Packages/KokoroKit (see its Package.swift); models download on first use.
   KokoroKit:
     path: Packages/KokoroKit
+  # Files drive client (`files/2`): relay transport, chunked uploads, ranged
+  # downloads, the pinned chunker and the File Provider domain helpers.
+  # Shared by the app, AllternitFileProvider and the macOS File Provider
+  # (plan step 23). Foundation, Security and FileProvider only.
+  AllternitFilesKit:
+    path: Packages/AllternitFilesKit
+  # On-device language models (MLX + Apple Foundation Models engines,
+  # minisign/sha256 checks), shared with the Mac MLX sidecar. Same exact
+  # mlx-swift 0.31.3 as KokoroKit: the app links one MLX. llama.cpp (GGUF)
+  # is the xcframework below, fetched by
+  # Packages/OnDeviceLLM/Frameworks/fetch-llama.sh.
+  OnDeviceLLM:
+    path: Packages/OnDeviceLLM
   # SVG pack avatars (clawd-crew, duet-carry, gizzi-youtube): UIImage can't
   # decode SVG, so BotAvatarView draws them with SwiftDraw (MIT, pure Swift).
   SwiftDraw:
@@ -54,6 +67,9 @@ targets:
     sources:
       - path: App
       - path: Core
+        excludes:
+          # Debug-only harness app (target OnDeviceLab below).
+          - OnDevice/Lab
       - path: Features
       - path: Assets.xcassets
       - path: Config
@@ -175,10 +191,19 @@ targets:
       - package: VoiceRingKit
       - package: KokoroKit
         product: KokoroSwift
+      # On-device models (Core/OnDevice).
+      - package: OnDeviceLLM
+        product: OnDeviceLLM
+      # llama.cpp b12414 (GGUF engine, Core/OnDevice/LlamaEngine.swift):
+      # dynamic framework, embedded + signed. Official device slice; the
+      # simulator slice is built from the same tag by the fetch script.
+      - framework: Packages/OnDeviceLLM/Frameworks/llama.xcframework
+        embed: true
       - package: SwiftTerm
         product: SwiftTerm
       - package: SwiftDraw
         product: SwiftDraw
+      - package: AllternitFilesKit
       - target: AllternitWidgets
         embed: true
       - target: AllternitScreen
@@ -188,6 +213,10 @@ targets:
       - target: AllternitShare
         embed: true
       - target: AllternitMessages
+        embed: true
+      - target: AllternitFileProvider
+        embed: true
+      - target: AllternitFileProviderUI
         embed: true
     postBuildScripts:
       # The sherpa-onnx xcframework ships no dSYM, so an App Store upload warns
@@ -252,8 +281,9 @@ targets:
         DEVELOPMENT_TEAM: MQ85968PQP
         CODE_SIGN_STYLE: Automatic
         SKIP_INSTALL: true
-  # Share extension: text, links, images and files to a bot. A placeholder
-  # that closes at once until plan step I7.
+  # Share extension: text, links, images and files to a bot (OutboxStore),
+  # or to a computer's Inbox (Files drive step 21: uploads itself over the
+  # relay with AllternitFilesKit, relay only like the File Provider).
   AllternitShare:
     type: app-extension
     platform: iOS
@@ -261,6 +291,10 @@ targets:
     sources:
       - path: AllternitShare
       - path: SystemSurfaces
+      # Inbox upload + "Ask my agent to read it", shared with the app.
+      - path: Core/Files/Shared
+    dependencies:
+      - package: AllternitFilesKit
     settings:
       base:
         INFOPLIST_FILE: AllternitShare/Info.plist
@@ -340,6 +374,72 @@ targets:
         DEVELOPMENT_TEAM: MQ85968PQP
         CODE_SIGN_STYLE: Automatic
         SKIP_INSTALL: true
+  # Files drive (plan step 19): each computer as a location in Files, a
+  # replicated File Provider with one domain per computer. RELAY ONLY: iOS
+  # kills a File Provider extension at 20,481 KB and tsnet alone takes
+  # ~11 MB (spike 5), so it links no Mesh.xcframework and nothing but
+  # AllternitFilesKit and system frameworks. Keep it that way.
+  AllternitFileProvider:
+    type: app-extension
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: AllternitFileProvider
+      # Thumbnails for files not on the phone yet (plan step 20): a
+      # replicated File Provider serves them itself (NSFileProviderThumbnailing).
+      - path: AllternitThumbnails
+    dependencies:
+      - package: AllternitFilesKit
+      - sdk: FileProvider.framework
+      - sdk: UniformTypeIdentifiers.framework
+    settings:
+      base:
+        INFOPLIST_FILE: AllternitFileProvider/Info.plist
+        CODE_SIGN_ENTITLEMENTS: AllternitFileProvider/AllternitFileProvider.entitlements
+        PRODUCT_BUNDLE_IDENTIFIER: com.allternit.mobile.files
+        PRODUCT_NAME: AllternitFileProvider
+        # Completion-handler File Provider APIs; same mode as the package.
+        SWIFT_VERSION: "5.0"
+        IPHONEOS_DEPLOYMENT_TARGET: "17.0"
+        TARGETED_DEVICE_FAMILY: "1"
+        MARKETING_VERSION: "1.0.3"
+        CURRENT_PROJECT_VERSION: "39"
+        APPLICATION_EXTENSION_API_ONLY: YES
+        DEVELOPMENT_TEAM: MQ85968PQP
+        CODE_SIGN_STYLE: Automatic
+        SKIP_INSTALL: true
+  # Files drive (plan step 20): the File Provider UI sheets over each
+  # computer's location in Files (design 5B): wake consent, Face ID unlock
+  # of protected roots, sign in, and the actions Send to agent, Share with…,
+  # Summarize and Keep offline. Same rule as AllternitFileProvider: relay
+  # only, AllternitFilesKit and system frameworks, no mesh.
+  AllternitFileProviderUI:
+    type: app-extension
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: AllternitFileProviderUI
+    dependencies:
+      - package: AllternitFilesKit
+      - sdk: FileProvider.framework
+      - sdk: FileProviderUI.framework
+      - sdk: LocalAuthentication.framework
+    settings:
+      base:
+        INFOPLIST_FILE: AllternitFileProviderUI/Info.plist
+        CODE_SIGN_ENTITLEMENTS: AllternitFileProviderUI/AllternitFileProviderUI.entitlements
+        PRODUCT_BUNDLE_IDENTIFIER: com.allternit.mobile.files.ui
+        PRODUCT_NAME: AllternitFileProviderUI
+        # Same mode as AllternitFileProvider and the package.
+        SWIFT_VERSION: "5.0"
+        IPHONEOS_DEPLOYMENT_TARGET: "17.0"
+        TARGETED_DEVICE_FAMILY: "1"
+        MARKETING_VERSION: "1.0.3"
+        CURRENT_PROJECT_VERSION: "39"
+        APPLICATION_EXTENSION_API_ONLY: YES
+        DEVELOPMENT_TEAM: MQ85968PQP
+        CODE_SIGN_STYLE: Automatic
+        SKIP_INSTALL: true
   # Unit tests for the iOS app. Hosts the app so tests can `@testable import Allternit`.
   AllternitTests:
     type: bundle.unit-test
@@ -349,6 +449,10 @@ targets:
       - path: Tests
       # Shared QR handoff test vector (generated by docs/voice-handoff-vectors.gen.mjs).
       - path: ../../../docs/voice-handoff-vectors.json
+        buildPhase: resources
+      # On-device fit golden vectors: the canonical spec file itself, so the
+      # bundle copy is byte-identical (Tests/OnDevice/FitVectorTests.swift).
+      - path: ../../../spec/on-device/fit-vectors.json
         buildPhase: resources
     dependencies:
       - target: Allternit
@@ -364,3 +468,35 @@ targets:
         DEVELOPMENT_TEAM: MQ85968PQP
         CODE_SIGN_STYLE: Automatic
         GENERATE_INFOPLIST_FILE: YES
+  # Debug-only harness: runs the real Core/OnDevice runtime (download,
+  # verify, MLX / llama.cpp / Apple FM, lifecycle) and a Kokoro smoke on a
+  # phone WITHOUT replacing the installed Allternit app. Own bundle id, no
+  # entitlements, never archived. See Core/OnDevice/Lab/OnDeviceLabApp.swift.
+  OnDeviceLab:
+    type: application
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: Core/OnDevice
+    dependencies:
+      - package: OnDeviceLLM
+        product: OnDeviceLLM
+      - package: KokoroKit
+        product: KokoroSwift
+      - framework: Packages/OnDeviceLLM/Frameworks/llama.xcframework
+        embed: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.allternit.dev.ondevicelab
+        PRODUCT_NAME: OnDeviceLab
+        SWIFT_VERSION: "6.0"
+        IPHONEOS_DEPLOYMENT_TARGET: "17.0"
+        TARGETED_DEVICE_FAMILY: "1"
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_CFBundleDisplayName: OnDevice Lab
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        DEVELOPMENT_TEAM: MQ85968PQP
+        CODE_SIGN_STYLE: Automatic
+        SKIP_INSTALL: true

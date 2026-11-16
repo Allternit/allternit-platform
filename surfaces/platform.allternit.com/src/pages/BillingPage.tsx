@@ -21,7 +21,7 @@ import { EmptyState } from "@/components/settings/EmptyState";
 import { SkeletonRow } from "@/components/settings/SkeletonRow";
 import { QUIET_BUTTON_CLASS } from "@/components/settings/buttonStyles";
 import { formatApiError } from "@/lib/api-client";
-import { PlanPicker, type LiveBillingPlan, type PlanId } from "@/components/PlanPicker";
+import { PlanPicker, type FreeweightsPerks, type LiveBillingPlan, type PlanId } from "@/components/PlanPicker";
 import { ComputerOnCreditsCard } from "@/components/billing/ComputerOnCreditsCard";
 import { TransferToOrgPanel } from "@/components/billing/TransferToOrgPanel";
 
@@ -141,6 +141,7 @@ export function BillingPage() {
   const [buyingPackId, setBuyingPackId] = useState<string | null>(null);
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
   const [plans, setPlans] = useState<LiveBillingPlan[]>([]);
+  const [freeweightsPerks, setFreeweightsPerks] = useState<FreeweightsPerks | null>(null);
   const [subscribingPlanId, setSubscribingPlanId] = useState<PlanId | null>(null);
   const [subscribeError, setSubscribeError] = useState<string | null>(null);
   const [currentSubscription, setCurrentSubscription] = useState<{
@@ -273,8 +274,10 @@ export function BillingPage() {
         } else if (plansResponse.ok) {
           const plansPayload = (await plansResponse.json().catch(() => ({}))) as {
             plans?: LiveBillingPlan[];
+            freeweights?: FreeweightsPerks;
           };
           setPlans(Array.isArray(plansPayload.plans) ? plansPayload.plans : []);
+          setFreeweightsPerks(plansPayload.freeweights ?? null);
         }
       } catch {
         setPlans([]);
@@ -723,6 +726,7 @@ export function BillingPage() {
         onSelect={billingAvailable ? (planId) => void handleSubscribePlan(planId) : undefined}
         onSwitch={() => void handleOpenPortal()}
         livePlans={billingAvailable && plans.length > 0 ? plans : undefined}
+        freeweights={freeweightsPerks}
         busyPlanId={subscribingPlanId}
         memberName={user?.firstName || (email !== "—" ? email.split("@")[0] : null)}
         renewsAt={currentSubscription?.renews_at}

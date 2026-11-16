@@ -4751,7 +4751,7 @@
       "label": "Freeweights entitlement claim (signed plan, orgs, perks, key scopes)",
       "product": "product:cloud-api",
       "status": "building",
-      "description": "cloud-api issues the claim the Freeweights Worker trusts for accounts (freeweights spec/accounts-v1.md section 3). GET /api/v1/freeweights/entitlement takes a Clerk session or alt_ key and answers a compact EdDSA JWS (kid entitlement-v1, application/jose): sub, plan (from billing_subscriptions current_plan_id, same as /billing/subscription), orgs from Clerk memberships, perks, addon_bytes, scopes, iss, aud, cred, iat, exp = iat+600. Signing key FREEWEIGHTS_ENTITLEMENT_SIGNING_KEY (unset = 503 accounts_not_configured, server still boots; plan or Clerk failure = 503 entitlement_unavailable + Retry-After). Perks behind FREEWEIGHTS_PERKS_ENABLED (default off) with values only from FREEWEIGHTS_PLAN_PERKS. API keys accept freeweights.read, freeweights.write, freeweights.repo:rp_<id> (validated, id case kept). CORS lets freeweights.allternit.com and fw-preview.allternit.com reach only this namespace and /api/v1/billing/plans.",
+      "description": "cloud-api issues the claim the Freeweights Worker trusts for accounts (freeweights spec/accounts-v1.md section 3). GET /api/v1/freeweights/entitlement takes a Clerk session or alt_ key and answers a compact EdDSA JWS (kid entitlement-v1, application/jose): sub, plan (from billing_subscriptions current_plan_id, same as /billing/subscription), orgs from Clerk memberships, perks, addon_bytes, scopes, iss, aud, cred, iat, exp = iat+600. Signing key FREEWEIGHTS_ENTITLEMENT_SIGNING_KEY (unset = 503 accounts_not_configured, server still boots; plan or Clerk failure = 503 entitlement_unavailable + Retry-After). Perks behind FREEWEIGHTS_PERKS_ENABLED (default off; claim perks stay {} while off). One draft perk table in freeweights.rs (DRAFT_PLAN_PERKS; FREEWEIGHTS_PLAN_PERKS replaces it) feeds both the claim and the freeweights block of GET /api/v1/billing/plans: status not_offered unless perks are on, and per plan (free, plus, super, ultra) lines of {key, label, value, unit} with unit bytes, count or bool. API keys accept freeweights.read, freeweights.write, freeweights.repo:rp_<id> (validated, id case kept). CORS lets freeweights.allternit.com and fw-preview.allternit.com reach only this namespace and /api/v1/billing/plans.",
       "touches": [
         "allternit/cmd/allternit-cloud-api/src/routes/freeweights.rs",
         "allternit/cmd/allternit-cloud-api/src/routes/billing_subscriptions.rs",
@@ -4765,6 +4765,10 @@
         {
           "on": "2026-11-15",
           "note": "HF parity plan step 0.5: the claim names plans as cloud-api does (free, plus, super = Max, ultra). Perk numbers wait for Eoj's sign-off, so none are in code. Org plans are free and seats are omitted until team billing ships; addon_bytes stay zero until add-on Stripe products exist. A Clerk org read failure answers 503 rather than signing an empty org list. The production public key spec/keys/entitlement-v1.pub and the signing-key secret are Eoj's gate."
+        },
+        {
+          "on": "2026-11-15",
+          "note": "Uploads plan step 3 (U13): perks are listed, not offered. The draft table (Free 10 GB public / 0 private / 1,000 req / 2 webhooks; Plus 250 GB / 100 GB / 2,500 / 10; Max 1 TB / 500 GB / 5,000 / 50; Ultra 2 TB / 1 TB / 10,000 / 100; decimal bytes) now lives in code as the default and is shown on /billing/plans with status not_offered. It reaches the claim only when FREEWEIGHTS_PERKS_ENABLED=1, which stays off in production until Eoj signs the rows."
         }
       ],
       "evidence": [
@@ -4784,8 +4788,37 @@
         "allternit/platform/files/allternit-files-engine",
         "allternit/cmd/allternit-api/src/file_routes.rs",
         "allternit/cmd/allternit-api/src/files_v2",
+        "allternit/cmd/allternit-api/src/files_v2/intel",
         "allternit/cmd/allternit-cloud-api/src/routes/runtime_relay.rs",
-        "allternit/tools/files-stub"
+        "allternit/tools/files-stub",
+        "allternit/surfaces/docs/guides/files-drive.mdx",
+        "allternit/surfaces/docs/guides/files-sharing.mdx",
+        "allternit/surfaces/docs/api/files-drive.mdx",
+        "allternit/surfaces/docs/api/files-drive-runtime.mdx",
+        "allternit-ai/src/components/computers/files/FilesShareDialog.tsx",
+        "allternit-ai/src/components/computers/files/FilesShareRow.tsx",
+        "allternit-ai/src/components/computers/files/FilesHistory.tsx",
+        "allternit-ai/src/components/computers/files/FilesDashboard.tsx",
+        "allternit-ai/src/components/computers/files/FilesGuestView.tsx",
+        "allternit-ai/src/components/computers/files/useFilesShares.ts",
+        "allternit-ai/src/lib/files-drive/guest.ts",
+        "allternit-ai/src/lib/files-drive/sharing.ts",
+        "allternit-ai/src/pages/FilesGuestPage.tsx",
+        "allternit/cmd/allternit-cloud-api/src/routes/files_gateway.rs",
+        "allternit/cmd/allternit-cloud-api/src/services/files_tokens.rs",
+        "allternit/cmd/allternit-cloud-api/migrations_pg/144_files_shares.sql",
+        "allternit/platform/files/allternit-files-mount",
+        "allternit/cmd/gizzi-code/src/cli/commands/files.ts",
+        "allternit/cmd/gizzi-code/src/cli/files",
+        "allternit/surfaces/allternit-desktop/scripts/prepare-files-mount.cjs",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/commands/files",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/commands/context/files-in-context.ts",
+        "allternit/surfaces/docs/cli/files.mdx",
+        "allternit/surfaces/allternit-desktop/native/files-win",
+        "allternit/surfaces/allternit-desktop/src/main/files-drive-win-manager.ts",
+        "allternit/surfaces/allternit-desktop/build/installer.nsh",
+        "allternit/.github/workflows/files-win-helper.yml",
+        "allternit/surfaces/docs/guides/files-windows.mdx"
       ],
       "decisions": [
         {
@@ -4800,6 +4833,41 @@
       "evidence": [
         "allternit/contracts/files-drive/SPEC.md",
         "allternit/contracts/files-drive/generate.mjs"
+      ]
+    },
+    {
+      "id": "feature:on-device-models",
+      "label": "On-device models",
+      "product": "product:allternit-api",
+      "status": "building",
+      "description": "Run open-weights models on the device the person is using, with one fit rule everywhere. Freeweights serves per-model device data (GET /api/models/:org/:name/device and /api/device/index, from catalog/overlay/device.json). The Local Engine reports GET /hardware (device profile and the model budget). One fit function (spec/on-device/fit.md, 65 vectors) has three ports that must pass the same vectors: TypeScript (allternit-ai src/lib/on-device), Swift (iOS Core/OnDevice) and Rust (Gizzi, local-engine); labels Fits, May be slow, Tight fit, Won't fit, No WebGPU, No browser build, No build for this device, Size not checked. Runtimes share the DeviceRuntime shape: desktop-engine (Local Engine with signed engine packs), browser-webgpu (small models, 2 GB desktop and 0.45 GB phone caps), android-app (native engine in the app, streamed to the PWA over the Custom Tabs postMessage bridge), ios-mlx, ios-llama and apple-fm (iPhone Models tab, Catalog and On this iPhone), and gizzi models fit, run, ps and stop. Freeweights Studio gets a Grid, List and Deck catalog with fit badges and a This device tab. Devices can share a running model with the owner's other devices through the cloud-api model-host relay (model runs on the host; picker group My other devices). Paths not listed until they merge: allternit-ai src/lib/model-host, allternit-ai src/lib/local-models/runtimes and the browser budget, iOS Core/OnDevice and Packages/OnDeviceLLM, Android ondevice, Gizzi models-run.ts, the Freeweights device route (freeweights worker/src/routes/device.ts), engine packs (scripts/engine-packs).",
+      "touches": [
+        "allternit-ai/src/lib/on-device",
+        "allternit-ai/src/views/model-lab",
+        "allternit-ai/src/lib/local-models",
+        "allternit/services/local-engine",
+        "allternit/cmd/allternit-api/src/local_engine_routes.rs",
+        "allternit/surfaces/allternit-mobile/ios/Features/Models",
+        "allternit/surfaces/allternit-mobile/android/app",
+        "allternit/cmd/gizzi-code/src/cli/commands/models.ts"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-15",
+          "note": "Eoj approved the plan (PLAN-on-device-models-2026-11-15.md). One fit spec with three ports and shared vectors; the Android app streams to the PWA over the Custom Tabs postMessage channel (spike passed on a Moto in airplane mode, 500 of 500 messages); the iPhone budget is 0.75 x os_proc_available_memory() measured at cold start (3,063 MB without and 4,088 MB with increased-memory-limit on an iPhone 15), and the build must work without the entitlement; engine packs are Developer-ID signed and notarized, with a Swift MLX server on Mac. Docs: guides/run-models-on-device.mdx, api/on-device-models.mdx, cli/models.mdx."
+        }
+      ],
+      "evidence": [
+        "allternit/spec/on-device/fit.md",
+        "allternit/spec/on-device/fit-vectors.json",
+        "allternit/surfaces/docs/guides/run-models-on-device.mdx",
+        "allternit/surfaces/docs/api/on-device-models.mdx",
+        "allternit/services/local-engine/src/routes/hardware.rs",
+        "allternit-ai/src/lib/on-device/fit.ts",
+        "allternit/surfaces/docs/guides/run-models-in-your-browser.mdx",
+        "allternit/surfaces/docs/guides/run-models-on-android.mdx",
+        "allternit/surfaces/docs/guides/use-models-on-your-other-devices.mdx",
+        "allternit/surfaces/docs/guides/run-models-on-desktop-and-iphone.mdx"
       ]
     },
     {
@@ -4832,6 +4900,35 @@
         "allternit/surfaces/docs/guides/run-a-model-on-your-phone.mdx",
         "allternit/surfaces/docs/api/model-host-relay.mdx",
         "allternit/cmd/allternit-cloud-api/src/routes/model_hosts.rs"
+      ]
+    },
+    {
+      "id": "feature:freeweights-accounts",
+      "label": "Freeweights accounts: community uploads, keys, plan perks (console, gizzi CLI, docs)",
+      "product": "product:cloud-api",
+      "status": "building",
+      "description": "People publish models to Freeweights with an Allternit key. cloud-api signs the entitlement claim and lists plan perks in GET /api/v1/billing/plans under a freeweights block whose status stays not_offered until FREEWEIGHTS_PERKS_ENABLED=1. The console API keys page creates keys with freeweights.read, freeweights.write or freeweights.repo:<rp_id> scopes (/api-keys?create=freeweights[&repo=rp_...]); the console plan picker renders the perk lines only when status reads offered. `gizzi models publish <path> <handle/name>` uploads through the Freeweights Hugging Face compatible API (preupload, LFS batch, PUT or multipart, verify, commit); `gizzi models pull` checks community repos first; `gizzi usage` prints one Freeweights storage line from GET /api/fw/v1/limits. Caps live only in the Freeweights limits table.",
+      "touches": [
+        "allternit/cmd/allternit-cloud-api/src/routes/freeweights.rs",
+        "allternit/cmd/allternit-cloud-api/src/routes/billing_subscriptions.rs",
+        "allternit/surfaces/platform.allternit.com/src/pages/ApiKeysPage.tsx",
+        "allternit/surfaces/platform.allternit.com/src/components/PlanPicker.tsx",
+        "allternit/surfaces/platform.allternit.com/src/pages/BillingPage.tsx",
+        "allternit/cmd/gizzi-code/src/runtime/services/freeweightsUpload.ts",
+        "allternit/cmd/gizzi-code/src/cli/commands/models.ts",
+        "allternit/cmd/gizzi-code/src/cli/commands/models-pull.ts",
+        "allternit/cmd/gizzi-code/src/cli/commands/usage.ts",
+        "allternit/surfaces/docs/tools/freeweights.mdx"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-15",
+          "note": "Uploads plan U14: purchase surfaces (console PlanPicker, AI billing, iOS plan tickets) get the perk rendering now, driven by the status field, and show nothing while it reads not_offered. gizzi usage gets a storage line only. Numbers are never fixed in code or docs; they are read from the limits route."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/platform.allternit.com/src/pages/ApiKeysPage.tsx",
+        "allternit/cmd/gizzi-code/src/runtime/services/freeweightsUpload.ts"
       ]
     }
   ],

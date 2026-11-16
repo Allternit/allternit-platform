@@ -64,7 +64,11 @@ enum PersonChatClient {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
-                    if PersonModels.isOnDevice(model) {
+                    if OnDeviceModelId.isOnDevice(model) {
+                        try await OnDeviceChat.stream(model: model, messages: messages, continuation)
+                    } else if OtherDeviceModelId.isOtherDevice(model) {
+                        try await OtherDevicesStore.stream(model: model, messages: messages, continuation)
+                    } else if PersonModels.isOnDevice(model) {
                         try await streamChatGPT(model: model, messages: messages, continuation)
                     } else {
                         try await streamCloud(model: model, messages: messages, continuation)

@@ -1,0 +1,56 @@
+---
+title: 'Files drive on Windows'
+description: 'Each Allternit computer as a location in File Explorer: browse for free, open on demand, edits sync back, and a sleeping computer is never woken without asking.'
+---
+
+Allternit Desktop for Windows adds one location per computer to File Explorer, under **Allternit Files** in your user folder (for example `C:\Users\you\Allternit Files\Mac Studio`). The location also appears in the navigation pane as **Allternit · Mac Studio**.
+
+It uses the Windows Cloud Files system, the same one OneDrive uses, so Explorer shows its own status icons:
+
+| Explorer shows | Meaning |
+|---|---|
+| Cloud icon | Only on the computer. Opening it downloads it. |
+| Green tick in a circle | Downloaded and up to date on this PC. |
+| Solid green tick | Kept on this PC ("Always keep on this device"). |
+| Sync arrows | Uploading your changes. |
+
+Allternit adds colour badges in a status column: **Agent output** (violet), **Shared** (blue) and **Conflict** (red).
+
+## What you can do
+
+- **Open a file** to download it. The app opens it once the download finishes.
+- **Free up space.** Right-click a file and choose **Free up space**. The file stays listed and downloads again when you open it.
+- **Always keep on this device** downloads the whole file now and keeps it.
+- **Edit and save** in any app. When the file has been quiet for a couple of seconds, the change uploads to the computer.
+- **Create, rename, move and delete** files and folders inside a root. A delete moves the item to that computer's trash, where you can restore it from the Files tab. You cannot delete or rename a root folder itself (the top-level folders under the computer's name).
+- **Move a file out** of the location to another folder on your PC: the copy on the computer goes to its trash.
+
+## When the computer is asleep
+
+Folders still open, from the saved list. Opening a file shows **Wake** with the cost:
+
+> Waking takes about 40 seconds and bills credits at your plan's awake rate while it is awake. Browsing the saved list is free.
+
+Choose **Yes** to wake it and open the file, or **No** to cancel. After **No**, Allternit does not ask again for a minute, so a program that opens many files does not stack prompts. Search indexing, antivirus scans and preview panes never wake a computer.
+
+## Removing it
+
+Uninstalling Allternit Desktop removes every Allternit location from Explorer. Files you had opened stay on your PC as normal files in `Allternit Files`; files that were only in the cloud disappear from this PC and stay on the computer. Updating the app keeps the locations.
+
+## Notes for admins
+
+- Allternit Desktop starts the helper once per computer when you are signed in and the Files drive is on for your account. It skips this PC itself (its files are already local). Signing out stops the helper and removes every Allternit location from Explorer; signing back in adds them again. The first time, a notification says where to find them.
+- The helper is `resources\files-win\allternit-files-win.exe` in the install folder. It runs as the signed-in user and needs no administrator rights or driver.
+- Its state is in `%LOCALAPPDATA%\Allternit\files-win`.
+- On Windows builds that refuse the full registration for an unpackaged app, the location still works and still shows Explorer's status icons, but without the colour badges.
+- `allternit-files-win.exe unregister-all` removes every Allternit location for the current user.
+
+## Developer notes
+
+The Windows helper lives in the platform repo at `surfaces/allternit-desktop/native/files-win/` (its own Cargo workspace). It is a `files/2` client: listing comes from `GET /roots/:root_id/list`, opening a file reads `GET /items/:item_id/content` in 4096-aligned ranges of at most 4 MiB, saves go through upload sessions with `base_rev` and `on_conflict: keep_both`, and the change feed (`GET /roots/:root_id/changes`) keeps open folders current. A `wake_consent_required` answer leads to the prompt, then `POST /computer-files/:id/wake-consent` and a retry with `X-Allternit-Wake-Ticket`.
+
+Its sync-root test registers a real sync root on a Windows runner against an in-process runtime:
+
+```bash
+cargo test --manifest-path surfaces/allternit-desktop/native/files-win/Cargo.toml -- --nocapture --test-threads=1
+```

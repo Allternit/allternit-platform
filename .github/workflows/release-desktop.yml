@@ -322,6 +322,21 @@ jobs:
           chmod +x surfaces/allternit-desktop/resources/bin/allternit-factory
           lipo -info surfaces/allternit-desktop/resources/bin/allternit-factory
 
+      - name: Build Files drive mount helper
+        # allternit-files-mount: gizzi files mount (WebDAV on macOS) and Files
+        # uploads over 4 MiB. gizzi finds it next to itself in resources/bin;
+        # prepare-files-mount.cjs then finds it already staged. Universal lipo.
+        run: |
+          cargo build --release -p allternit-files-mount --target x86_64-apple-darwin
+          cargo build --release -p allternit-files-mount --target aarch64-apple-darwin
+          mkdir -p surfaces/allternit-desktop/resources/bin
+          lipo -create \
+            target/x86_64-apple-darwin/release/allternit-files-mount \
+            target/aarch64-apple-darwin/release/allternit-files-mount \
+            -output surfaces/allternit-desktop/resources/bin/allternit-files-mount
+          chmod +x surfaces/allternit-desktop/resources/bin/allternit-files-mount
+          lipo -info surfaces/allternit-desktop/resources/bin/allternit-files-mount
+
       - name: Record Rust binaries for reuse
         if: steps.prebuilt.outputs.hit != 'true'
         shell: bash
@@ -652,6 +667,27 @@ jobs:
              surfaces/allternit-desktop/resources/bin/allternit-factory.exe
           ls -lh surfaces/allternit-desktop/resources/bin/allternit-factory.exe
 
+      # ── Files drive helper (plan step 24): cfapi sync roots in Explorer ────
+      # Its own cargo workspace (native/files-win/Cargo.toml). The sync-root test
+      # registers a real sync root on this runner (unpackaged), so it runs here,
+      # before packaging, as the step's done check. Gate G-W (code signing) is
+      # separate: the exe ships unsigned until Eoj provides the certificate.
+      - name: Test Files drive helper (Windows sync root)
+        shell: bash
+        run: cargo test --manifest-path surfaces/allternit-desktop/native/files-win/Cargo.toml -- --nocapture --test-threads=1
+
+      - name: Build Files drive helper (Windows)
+        shell: bash
+        env:
+          CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS: -C target-feature=+crt-static
+        run: |
+          cargo build --release --target x86_64-pc-windows-msvc --manifest-path surfaces/allternit-desktop/native/files-win/Cargo.toml
+          mkdir -p surfaces/allternit-desktop/resources/files-win/icons
+          cp surfaces/allternit-desktop/native/files-win/target/x86_64-pc-windows-msvc/release/allternit-files-win.exe \
+             surfaces/allternit-desktop/resources/files-win/allternit-files-win.exe
+          cp surfaces/allternit-desktop/native/files-win/icons/*.ico surfaces/allternit-desktop/resources/files-win/icons/
+          ls -lh surfaces/allternit-desktop/resources/files-win surfaces/allternit-desktop/resources/files-win/icons
+
       - name: Record Rust binaries for reuse
         if: steps.prebuilt.outputs.hit != 'true'
         shell: bash
@@ -727,6 +763,18 @@ jobs:
             [ -z "$others" ] || { echo "::error::$res carries other bindings: $others"; exit 1; }
             echo "ok: $res has rtc-ffi-bindings-$triple"
           done
+
+      - name: Check Files drive helper in the package
+        shell: bash
+        working-directory: surfaces/allternit-desktop
+        run: |
+          set -euo pipefail
+          for f in release/win-unpacked/resources/files-win/allternit-files-win.exe \
+                   release/win-unpacked/resources/files-win/icons/allternit.ico \
+                   release/win-unpacked/resources/files-win/icons/badge-conflict.ico; do
+            [ -f "$f" ] || { echo "::error::missing $f"; exit 1; }
+          done
+          release/win-unpacked/resources/files-win/allternit-files-win.exe version
 
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
@@ -870,6 +918,18 @@ jobs:
           ls -lh surfaces/allternit-desktop/resources/bin/allternit-voice-service surfaces/allternit-desktop/resources/bin/allternit-tts
           # No espeak-ng (GPL-3.0) in the voice service: it lives in allternit-tts.
           bash scripts/check-voice-no-gpl.sh surfaces/allternit-desktop/resources/bin/allternit-voice-service
+
+      - name: Build Files drive mount helper (Linux)
+        # allternit-files-mount: the Linux FUSE mount (gizzi files mount, via
+        # fusermount3; pure-Rust fuser, no libfuse link) and Files uploads over
+        # 4 MiB. Lands in resources/bin next to gizzi-code.
+        run: |
+          cargo build --release -p allternit-files-mount --target x86_64-unknown-linux-gnu
+          mkdir -p surfaces/allternit-desktop/resources/bin
+          cp target/x86_64-unknown-linux-gnu/release/allternit-files-mount \
+             surfaces/allternit-desktop/resources/bin/allternit-files-mount
+          chmod +x surfaces/allternit-desktop/resources/bin/allternit-files-mount
+          ls -lh surfaces/allternit-desktop/resources/bin/allternit-files-mount
 
       - name: Setup Go
         # Needed to build the mesh-node sidecar from source (the vendor tree

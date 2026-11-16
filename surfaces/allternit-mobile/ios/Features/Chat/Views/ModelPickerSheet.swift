@@ -15,6 +15,10 @@ struct ModelPickerSheet: View {
     @ObservedObject private var chatgpt = ChatGPTDeviceStore.shared
     /// Allternit Cloud entitlement (`cloud_models`): locked rows follow it.
     @ObservedObject private var plan = AccountPlanStore.shared
+    /// Models on this iPhone (W7 runtime) and on the owner's other devices
+    /// (model-host relay). The relay section hides itself on any failure.
+    @ObservedObject private var onDevice = OnDeviceRuntime.shared
+    @ObservedObject private var otherDevices = OtherDevicesStore.shared
     @Environment(\.dismiss) private var dismiss
 
     private enum Scope: Hashable { case all, favorites, provider(String) }
@@ -39,6 +43,7 @@ struct ModelPickerSheet: View {
                         currentModel(current)
                             .padding(.bottom, 6)
                     }
+                    if scope == .all { deviceSections }
                     modelList
                 }
                 .padding(.horizontal, 10)
@@ -60,6 +65,8 @@ struct ModelPickerSheet: View {
                 if !connections.loaded { await connections.load() }
                 await chatgpt.loadModels()
             }
+            onDevice.refreshInstalls()
+            Task { await otherDevices.refresh() }
         }
         .onChange(of: modelStore.models) { _, _ in quotas.load(providerIds) }
         .sheet(item: $creditsRequest) { request in
@@ -199,6 +206,105 @@ struct ModelPickerSheet: View {
         .background(Color("FillNeutral").opacity(0.5), in: RoundedRectangle(cornerRadius: 18))
         .overlay(RoundedRectangle(cornerRadius: 18).stroke(Color("BorderSubtle"), lineWidth: 1))
         .padding(.top, 10)
+    }
+
+    // MARK: - On this iPhone + My other devices
+
+    private struct DeviceRow: Identifiable {
+        let id: String
+        let name: String
+        let detail: String
+        let offline: Bool
+        var available = true
+    }
+
+    private var localRows: [DeviceRow] {
+        var rows = onDevice.installs.map { i in
+            DeviceRow(id: OnDeviceModelId.make(i), name: i.modelId.split(separator: "/").last.map(String.init) ?? i.modelId,
+                      detail: "On this iPhone · \(i.quant) · \(i.engine == .mlx ? "MLX" : "llama.cpp")", offline: true)
+        }
+        if onDevice.runtimes.contains(where: { $0.id == .appleFM && $0.state == .ready }) {
+            rows.append(DeviceRow(id: OnDeviceModelId.appleFM, name: "Apple Intelligence", detail: "On this iPhone · built in", offline: true))
+        }
+        return rows.filter(matchesQuery)
+    }
+
+    private var remoteRows: [DeviceRow] {
+        guard otherDevices.status == .ok else { return [] }
+        let live = otherDevices.online.flatMap { h in h.models.map {
+            DeviceRow(id: OtherDeviceModelId.make(hostId: h.hostId, modelId: $0.id), name: $0.name, detail: h.name, offline: false)
+        } }
+        let gone = otherDevices.offline.flatMap { h in h.models.map {
+            DeviceRow(id: OtherDeviceModelId.make(hostId: h.hostId, modelId: $0.id), name: $0.name, detail: "\(h.name) · offline", offline: false, available: false)
+        } }
+        return (live + gone).filter(matchesQuery)
+    }
+
+    private func matchesQuery(_ row: DeviceRow) -> Bool {
+        let q = query.trimmingCharacters(in: .whitespaces).lowercased()
+        return q.isEmpty || "\(row.name) \(row.detail)".lowercased().contains(q)
+    }
+
+    @ViewBuilder
+    private var deviceSections: some View {
+        if !localRows.isEmpty { deviceGroup("On this iPhone", icon: "iphone", rows: localRows) }
+        if !remoteRows.isEmpty { deviceGroup("My other devices", icon: "laptopcomputer.and.iphone", rows: remoteRows) }
+    }
+
+    private func deviceGroup(_ title: String, icon: String, rows: [DeviceRow]) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 6) {
+                Image(systemName: icon).font(.system(size: 12)).foregroundColor(Color("TextSecondary")).frame(width: 15)
+                Text(title.uppercased()).font(.system(size: 11, weight: .semibold)).tracking(0.8).foregroundColor(Color("TextSecondary"))
+                Spacer()
+                Text("\(rows.count)").font(.system(size: 11)).foregroundColor(Color("TextTertiary"))
+            }
+            .padding(.horizontal, 6).padding(.top, 14).padding(.bottom, 4)
+            VStack(spacing: 0) {
+                ForEach(rows) { row in
+                    deviceRow(row)
+                    if row.id != rows.last?.id { Rectangle().fill(Color("BorderSubtle")).frame(height: 1).padding(.leading, 44) }
+                }
+            }
+            .background(Color("FillNeutral").opacity(0.5), in: RoundedRectangle(cornerRadius: 14))
+        }
+    }
+
+    private func deviceRow(_ row: DeviceRow) -> some View {
+        let selected = modelStore.selectedModelId == row.id
+        return HStack(spacing: 10) {
+            Image(systemName: row.offline ? "iphone" : "laptopcomputer")
+                .font(.system(size: 12)).foregroundColor(Color("TextPrimary"))
+                .frame(width: 24, height: 24)
+                .background(Color("FillNeutral"), in: RoundedRectangle(cornerRadius: 7))
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(row.name).font(.system(size: 14)).foregroundColor(Color("TextPrimary").opacity(row.available ? 1 : 0.5)).lineLimit(1)
+                    if row.offline {
+                        HStack(spacing: 3) {
+                            Circle().fill(Theme.statusSuccess).frame(width: 5, height: 5)
+                            Text("works offline").font(.system(size: 10.5)).foregroundColor(Color("TextTertiary"))
+                        }
+                    }
+                }
+                Text(row.detail).font(.system(size: 11)).foregroundColor(Color("TextTertiary")).lineLimit(1)
+            }
+            Spacer(minLength: 4)
+            if selected {
+                Image(systemName: "checkmark").font(.system(size: 13, weight: .semibold)).foregroundColor(Color("AccentPrimary"))
+            }
+        }
+        .padding(.horizontal, 10).padding(.vertical, 9)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            guard row.available else { return }
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            modelStore.userSelectedModel(row.id)
+            dismiss()
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel([row.name, row.detail, row.available ? nil : "not connected"].compactMap { $0 }.joined(separator: ", "))
+        .accessibilityAddTraits(selected ? [.isButton, .isSelected] : [.isButton])
     }
 
     // MARK: - Every model, grouped by provider

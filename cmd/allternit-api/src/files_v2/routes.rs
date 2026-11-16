@@ -24,7 +24,7 @@ use serde::de::DeserializeOwned;
 use serde::Deserialize;
 
 use super::{
-    feed, live, memory, meta, permissions, roots, ApiError, Fail, FilesV2, Inner, Need, Req, BIG_BODY_LIMIT,
+    feed, intel, live, memory, meta, permissions, roots, shares, ApiError, Fail, FilesV2, Inner, Need, Req, BIG_BODY_LIMIT,
     BODY_LIMIT,
 };
 
@@ -63,11 +63,34 @@ pub fn routes<S: Clone + Send + Sync + 'static>(files: Arc<FilesV2>) -> Router<S
         .route("/restore", post(restore))
         .route("/search", post(search))
         .route("/pin", post(pin))
+        .route("/items/:item_id/preview", get(intel::routes::preview))
+        .route("/intel/status", get(intel::routes::status))
+        .route("/intel/roots/:root_id", put(intel::routes::set_root))
+        .route("/intel/tags", get(intel::routes::tag_counts).post(intel::routes::change_tags))
+        .route("/intel/tags/:tag/items", get(intel::routes::tagged))
+        .route("/intel/provenance", post(intel::routes::set_provenance))
+        .route("/intel/dedup", get(intel::routes::dedup_report))
+        .route("/intel/collections", get(intel::routes::collections).post(intel::routes::create_collection))
+        .route(
+            "/intel/collections/:id",
+            get(intel::routes::collection).post(intel::routes::change_collection).delete(intel::routes::delete_collection),
+        )
+        .route("/intel/actions", post(intel::routes::action))
+        .route("/intel/rules", get(intel::routes::rules).post(intel::routes::create_rule))
+        .route("/intel/rules/:id", axum::routing::delete(intel::routes::delete_rule))
         .route("/subscribe", get(feed::subscribe))
         .route("/jobs/:job_id", get(job))
+        .route("/models/handoff/:item_id", get(super::models::handoff))
+        .route("/models/grant", post(super::models::grant))
+        .route("/models/transfer", post(super::models::transfer))
+        .route("/route", post(super::models::route_file))
         .route("/storage", get(super::storage::storage))
-        .route("/replicas", get(replicas).post(replicas))
-        .route("/replicas/restore", post(replicas))
+        .merge(super::replicas::routes())
+        .merge(super::inbox::routes())
+        // Guests (`Files-Guest`) pass the token, computer, route and role
+        // checks here before any handler runs. Inside the Extension layer,
+        // which it reads. Every route merged above is covered.
+        .layer(axum::middleware::from_fn(shares::gate))
         .layer(DefaultBodyLimit::max(BODY_LIMIT))
         .layer(Extension(files));
     Router::new().nest("/files/v2", v2)
@@ -99,11 +122,25 @@ fn bytes(b: Result<Bytes, BytesRejection>) -> Result<Bytes, ApiError> {
 
 pub(crate) fn mutation(v: &Inner, m: &Mutation) -> Result<MutationResponse, Fail> {
     let root = v.drive.root(&m.item.root_id)?;
-    Ok(MutationResponse {
-        item: v.item(&root, &m.item),
-        conflict: m.conflict.as_ref().map(|c| c.to_info(permissions(&root, &c.conflict_item))),
-        cursor: m.cursor.clone(),
-    })
+    let conflict = m.conflict.as_ref().map(|c| c.to_info(permissions(&root, &c.conflict_item)));
+    if let Some(info) = &conflict {
+        super::events::conflict(v, info);
+    }
+    Ok(MutationResponse { item: v.item(&root, &m.item), conflict, cursor: m.cursor.clone() })
+}
+
+/// [`mutation`] for this caller (a guest gets its role's permissions).
+pub(crate) fn mutation_as(v: &Inner, req: &Req, m: &Mutation) -> Result<MutationResponse, Fail> {
+    let Some(g) = &req.guest else { return mutation(v, m) };
+    let root = v.drive.root(&m.item.root_id)?;
+    // The event goes to the owner, so it carries the owner's permissions; the
+    // response carries the guest's. A guest's conflict copy is still a
+    // conflict on the owner's drive.
+    if let Some(c) = &m.conflict {
+        super::events::conflict(v, &c.to_info(permissions(&root, &c.conflict_item)));
+    }
+    let conflict = m.conflict.as_ref().map(|c| c.to_info(shares::permissions(g.claims.role, &root, &c.conflict_item)));
+    Ok(MutationResponse { item: v.item_as(req, &root, &m.item), conflict, cursor: m.cursor.clone() })
 }
 
 fn now(v: &Inner) -> String {
@@ -124,6 +161,9 @@ async fn ping(Extension(files): Files) -> Res<PingResponse> {
 
 async fn whoami(Extension(files): Files, req: Req) -> Res<WhoAmIResponse> {
     run(&files, move |v| {
+        if let Some(g) = req.guest.clone() {
+            return Ok(Json(shares::whoami(v, &req, &g)?));
+        }
         let grants = v
             .drive
             .roots()?
@@ -220,6 +260,9 @@ async fn list(
             memory::sync_view(v, &req.user_id)?;
         }
         let parent = v.drive.stat(&q.parent_id)?;
+        if let Some(g) = &req.guest {
+            shares::check_subtree(v, g, &parent)?;
+        }
         if parent.root_id != root_id {
             return Err(ApiError::new(ErrorCode::NotFound, "That folder is not in this root.").into());
         }
@@ -232,10 +275,10 @@ async fn list(
         let limit = q.limit.unwrap_or(500).clamp(1, 1000) as usize;
         let start = page_start(q.page_token.as_deref(), "l1.")?;
         let next = (start + limit < items.len()).then(|| format!("l1.{}", start + limit));
-        let page = items.iter().skip(start).take(limit).map(|i| v.item(&root, i)).collect();
+        let page = items.iter().skip(start).take(limit).map(|i| v.item_as(&req, &root, i)).collect();
         Ok(Json(ListResponse {
             root_id: root_id.clone(),
-            parent: v.item(&root, &parent),
+            parent: v.item_as(&req, &root, &parent),
             items: page,
             next_page_token: next,
             cursor: v.drive.current_cursor(&root_id)?,
@@ -255,7 +298,7 @@ fn page_start(token: Option<&str>, prefix: &str) -> Result<usize, ApiError> {
 async fn stat(Extension(files): Files, req: Req, Path(item_id): Path<String>) -> Res<StatResponse> {
     run(&files, move |v| {
         let (root, item) = v.guard_item(&req, &item_id, Need::Read)?;
-        Ok(Json(StatResponse { item: v.item(&root, &item), freshness: live() }))
+        Ok(Json(StatResponse { item: v.item_as(&req, &root, &item), freshness: live() }))
     })
     .await
 }
@@ -386,6 +429,15 @@ async fn small_write(
     let body = bytes(body)?;
     run(&files, move |v| {
         let root = v.guard(&req, &root_id, Need::Write)?;
+        let mut on_conflict = q.on_conflict.unwrap_or(OnConflict::KeepBoth);
+        if let Some(g) = &req.guest {
+            shares::check_subtree(v, g, &v.drive.stat(&q.parent_id)?)?;
+            shares::check_new_only(g, q.base_rev.is_some(), false)?;
+            if g.upload_only() {
+                // A drop never replaces anything: a name clash keeps both.
+                on_conflict = OnConflict::KeepBoth;
+            }
+        }
         let offset = utc_offset(q.utc_offset_minutes)?;
         if memory::is_memory(&root) {
             let (item, cursor) = memory::write(v, &req.user_id, &q.parent_id, &q.name, &body, q.base_rev.as_deref())?;
@@ -398,26 +450,39 @@ async fn small_write(
             &q.name,
             &body,
             q.base_rev.as_deref(),
-            q.on_conflict.unwrap_or(OnConflict::KeepBoth),
+            on_conflict,
             &req.principal,
             &device,
         )?;
-        Ok(Json(mutation(v, &m)?))
+        Ok(Json(mutation_as(v, &req, &m)?))
     })
     .await
 }
 
 async fn upload_create(Extension(files): Files, req: Req, body: Result<Json<UploadCreateRequest>, JsonRejection>) -> Res<UploadStatus> {
     let mut body = json(body)?;
-    run(&files, move |v| {
+    let guest = req.guest.clone();
+    let status = run(&files, move |v| {
         let root = v.guard(&req, &body.root_id, Need::Write)?;
         if memory::is_memory(&root) {
             return Err(memory::refuse("take uploads"));
         }
+        if let Some(g) = &req.guest {
+            shares::check_subtree(v, g, &v.drive.stat(&body.parent_id)?)?;
+            shares::check_new_only(g, body.base_rev.is_some(), body.item_id.is_some())?;
+            if g.upload_only() {
+                body.on_conflict = OnConflict::KeepBoth;
+            }
+        }
         body.device_name = req.device_name_or(body.device_name.take());
-        Ok(Json(v.drive.create_upload(body, &req.principal)?))
+        Ok(v.drive.create_upload(body, &req.principal)?)
     })
-    .await
+    .await?;
+    // Only the guest that opened a session may use it (`shares::gate`).
+    if let Some(g) = guest {
+        files.guests.remember_session(&status.session_id, &g.claims.guest_id);
+    }
+    Ok(Json(status))
 }
 
 async fn upload_append(
@@ -444,21 +509,33 @@ async fn upload_status(Extension(files): Files, _req: Req, Path(session_id): Pat
     run(&files, move |v| Ok(Json(v.drive.upload_status(&session_id)?))).await
 }
 
-async fn upload_commit(Extension(files): Files, _req: Req, Path(session_id): Path<String>) -> Res<UploadCommitResponse> {
-    run(&files, move |v| {
+async fn upload_commit(Extension(files): Files, req: Req, Path(session_id): Path<String>) -> Res<UploadCommitResponse> {
+    let guest = req.guest.is_some();
+    let id = session_id.clone();
+    let out = run(&files, move |v| {
         let m = v.drive.commit_upload(&session_id)?;
-        let r = mutation(v, &m)?;
+        let r = mutation_as(v, &req, &m)?;
         Ok(Json(UploadCommitResponse { item: r.item, conflict: r.conflict, cursor: r.cursor }))
     })
-    .await
+    .await?;
+    if guest {
+        files.guests.forget_session(&id);
+    }
+    Ok(out)
 }
 
-async fn upload_abort(Extension(files): Files, _req: Req, Path(session_id): Path<String>) -> Result<StatusCode, ApiError> {
+async fn upload_abort(Extension(files): Files, req: Req, Path(session_id): Path<String>) -> Result<StatusCode, ApiError> {
+    let guest = req.guest.is_some();
+    let id = session_id.clone();
     run(&files, move |v| {
         v.drive.abort_upload(&session_id)?;
         Ok(StatusCode::NO_CONTENT)
     })
-    .await
+    .await?;
+    if guest {
+        files.guests.forget_session(&id);
+    }
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn mkdir(Extension(files): Files, req: Req, body: Result<Json<MkdirRequest>, JsonRejection>) -> Res<MutationResponse> {
@@ -469,7 +546,7 @@ async fn mkdir(Extension(files): Files, req: Req, body: Result<Json<MkdirRequest
             return Err(memory::refuse("make folders"));
         }
         let m = v.drive.mkdir(&body.parent_id, &body.name, body.on_conflict, &req.principal)?;
-        Ok(Json(mutation(v, &m)?))
+        Ok(Json(mutation_as(v, &req, &m)?))
     })
     .await
 }
@@ -500,10 +577,10 @@ async fn move_item(Extension(files): Files, req: Req, body: Result<Json<MoveRequ
 
 async fn copy(Extension(files): Files, req: Req, body: Result<Json<CopyRequest>, JsonRejection>) -> Res<CopyResponse> {
     let body = json(body)?;
+    if body.dest_computer_id.as_deref().is_some_and(|c| c != files.cfg.computer_id) {
+        return super::sync::copy_to_computer(files.clone(), req, body).await.map(Json);
+    }
     run(&files, move |v| {
-        if body.dest_computer_id.as_deref().is_some_and(|c| c != v.cfg.computer_id) {
-            return Err(ApiError::unsupported("Copies to another computer are not available on this runtime yet.").into());
-        }
         v.guard_item(&req, &body.item_id, Need::Read)?;
         let (dest, _) = v.guard_item(&req, &body.dest_parent_id, Need::Write)?;
         if memory::is_memory(&dest) {
@@ -592,9 +669,6 @@ async fn restore_version(
 
 async fn search(Extension(files): Files, req: Req, body: Result<Json<SearchRequest>, JsonRejection>) -> Res<SearchResponse> {
     let body = json(body)?;
-    if body.mode != SearchMode::Name {
-        return Err(ApiError::unsupported("Only name search is available on this runtime yet."));
-    }
     let query = body.query.trim().to_string();
     if query.is_empty() || query.len() > 512 {
         return Err(ApiError::invalid("Search for 1 to 512 bytes of text."));
@@ -602,14 +676,12 @@ async fn search(Extension(files): Files, req: Req, body: Result<Json<SearchReque
     let limit = body.limit.unwrap_or(50).clamp(1, 200) as usize;
     let start = page_start(body.page_token.as_deref(), "s1.")?;
     run(&files, move |v| {
-        // Only roots this caller may read now (protected ones need the unlock).
-        let roots: Vec<RootRecord> = v
-            .drive
-            .roots()?
-            .into_iter()
-            .filter(|r| body.root_ids.as_ref().map_or(true, |ids| ids.contains(&r.root_id)))
-            .filter(|r| v.guard(&req, &r.root_id, Need::Read).is_ok())
-            .collect();
+        // Only roots this caller may read now: its kind (agents need agent_process,
+        // guests get nothing here) and the unlock for protected ones.
+        let roots: Vec<RootRecord> = intel::scoped_roots(v, &req, body.root_ids.as_deref())?;
+        if body.mode != SearchMode::Name {
+            return Ok(Json(intel::search_content(v, &req, &roots, &body, &query, limit, start)?));
+        }
         let ids: Vec<String> = roots.iter().map(|r| r.root_id.clone()).collect();
         let found = meta::search_names(
             &v.cfg.data_dir.join("engine"),
@@ -683,14 +755,14 @@ async fn add_comment(Extension(files): Files, req: Req, body: Result<Json<Commen
     .await
 }
 
-/// Copies run synchronously on this runtime, so no job is ever open here.
-async fn job(Extension(files): Files, _req: Req, Path(_job_id): Path<String>) -> Res<JobRef> {
-    files.inner().await?;
-    Err(ApiError::new(ErrorCode::NotFound, "No such job on this computer."))
-}
-
-/// Replicas are step 15 of the Files drive plan; these routes belong to it.
-async fn replicas(Extension(files): Files, _req: Req) -> Result<Response, ApiError> {
-    files.inner().await?;
-    Err(ApiError::unsupported("Replicas are not available on this runtime yet."))
+/// Jobs: model transfers and routed files run in memory (`models.rs`; a
+/// restart forgets them, and the pull is idempotent, so start it again);
+/// cross-computer copies, moves and replica syncs are stored (`sync.rs`).
+/// Copies inside this computer run synchronously and have no job.
+async fn job(Extension(files): Files, _req: Req, Path(job_id): Path<String>) -> Res<JobRef> {
+    if let Some(j) = super::models::job(&job_id) {
+        files.inner().await?;
+        return Ok(Json(j));
+    }
+    super::sync::job(&files, job_id).await
 }

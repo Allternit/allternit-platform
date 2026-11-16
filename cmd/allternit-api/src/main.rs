@@ -1810,6 +1810,10 @@ async fn main() {
         // Meetings bot runners live in their own process groups; stop them
         // (and the PulseAudio the host started) before the process exits.
         allternit_api::meeting_bot_host::shutdown().await;
+        // Files drive: SIGTERM is the sleep notice (a cloud computer being
+        // stopped, Desktop quitting). Leave the asleep snapshot current so the
+        // computer still lists while it sleeps. Bounded to a few seconds.
+        allternit_api::files_v2::before_sleep().await;
         tokio::time::sleep(DRAIN_TIMEOUT).await;
         let _ = server_shutdown_tx.send(());
         // Graceful shutdown waits for every open connection, and the UI's

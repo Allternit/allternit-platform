@@ -1,5 +1,7 @@
 import { UI } from "@/cli/ui"
 import { downloadRepo, listModels, verifyRepo, type VerifyFile, type VerifyResult } from "@/runtime/services/localEngine"
+import { communityRepoState } from "@/runtime/services/freeweightsUpload"
+import { fetchFreeweightsCatalog } from "@/runtime/services/freeweightsCatalog"
 import { describeVerification, pullExitCode, type ModelVerification } from "@/runtime/services/modelVerification"
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
@@ -12,6 +14,18 @@ export function printVerification(v: ModelVerification | undefined | null) {
 
 /** gizzi models pull <repo>: queue the download, stream progress, print the verification line. */
 export async function pullModel(repo: string, quant: string | undefined, allowUnverified: boolean, revision?: string): Promise<number> {
+  // Repos that are not in the signed catalog may be community uploads on Freeweights.
+  const inCatalog = (await fetchFreeweightsCatalog()).some((e) => e.id.toLowerCase() === repo.toLowerCase())
+  if (!inCatalog) {
+    const c = await communityRepoState(repo)
+    if (c.found && !c.live) {
+      UI.error(c.message ?? "This community repo is not available yet.")
+      return 1
+    }
+    if (c.found) {
+      UI.println(UI.Style.TEXT_WARNING_BOLD + "Community upload: scanned for malware, not reviewed or signed by Allternit." + UI.Style.TEXT_NORMAL)
+    }
+  }
   const queued = await downloadRepo(repo, quant, { allowUnverified, revision })
   let verification = queued.verification
   let last = ""

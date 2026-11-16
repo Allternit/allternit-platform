@@ -152,6 +152,8 @@ data class CopyRequest(
     @Wire("item_id") val itemId: ItemId,
     @Wire("dest_parent_id") val destParentId: ItemId,
     @Wire("dest_computer_id") val destComputerId: ComputerId? = null,
+    @Wire("dest_base_url") val destBaseUrl: String? = null,
+    @Wire("delete_source") val deleteSource: Boolean? = null,
     @Wire("new_name") val newName: String? = null,
     @Wire("on_conflict") val onConflict: OnConflict
 )
@@ -166,7 +168,8 @@ data class CreateReplicaRequest(
     @Wire("source_computer_id") val sourceComputerId: ComputerId,
     @Wire("root_id") val rootId: RootId,
     @Wire("host_device_id") val hostDeviceId: DeviceId,
-    @Wire("mode") val mode: CreateReplicaRequestMode
+    @Wire("mode") val mode: CreateReplicaRequestMode,
+    @Wire("host_base_url") val hostBaseUrl: String? = null
 )
 
 enum class CreateReplicaRequestMode(val wire: String) {
@@ -230,6 +233,7 @@ data class EndpointsResponse(
     @Wire("wake") val wake: WakeSetting,
     @Wire("candidates") val candidates: List<TransportCandidate>,
     @Wire("mesh_hostname") val meshHostname: String? = null,
+    @Wire("replicas") val replicas: List<Replica>? = null,
     @Wire("host") val host: EndpointsResponseHost
 )
 
@@ -659,6 +663,29 @@ data class PinResponse(
     @Wire("pinned_on") val pinnedOn: List<DeviceId>
 )
 
+/**
+ * One candidate replica host, ranked by rules over capacity, sensitivity and availability (plan D16). The user confirms the pick.
+ */
+data class PlacementOption(
+    @Wire("device_id") val deviceId: DeviceId,
+    @Wire("label") val label: String,
+    @Wire("score") val score: Long,
+    @Wire("eligible") val eligible: Boolean,
+    @Wire("reason") val reason: String,
+    @Wire("free_bytes") val freeBytes: Long,
+    @Wire("computer_state") val computerState: ComputerState
+)
+
+/**
+ * GET /api/v1/computer-files/:computer_id/placement?root_id=...: where to put a replica of one root.
+ */
+data class PlacementResponse(
+    @Wire("computer_id") val computerId: ComputerId,
+    @Wire("root_id") val rootId: RootId,
+    @Wire("needed_bytes") val neededBytes: Long,
+    @Wire("options") val options: List<PlacementOption>
+)
+
 enum class PrincipalKind(val wire: String) {
     OWNER("owner"),
     OWN_DEVICE("own_device"),
@@ -711,6 +738,31 @@ data class QueuedDrop(
     @Wire("r2_key") val r2Key: String,
     @Wire("received_at") val receivedAt: Timestamp,
     @Wire("state") val state: QueuedDropState
+)
+
+/**
+ * POST /api/v1/computer-files/drops/:drop_id/ack (runtime-signed). delivered: the file is in Inbox as item_id; rejected: it failed its size or content_hash check, or its name could not be used. Either way cloud-api deletes the R2 copy.
+ */
+data class QueuedDropAck(
+    @Wire("state") val state: QueuedDropAckState,
+    @Wire("item_id") val itemId: ItemId? = null,
+    @Wire("reason") val reason: String? = null
+)
+
+enum class QueuedDropAckState(val wire: String) {
+    DELIVERED("delivered"),
+    REJECTED("rejected");
+
+    companion object {
+        fun fromWire(wire: String): QueuedDropAckState? = values().firstOrNull { it.wire == wire }
+    }
+}
+
+/**
+ * GET /api/v1/computer-files/drops, signed by the computer itself (like its presence heartbeat): the drops cloud-api kept while it slept, oldest first, at most 100. The runtime pulls each one into its Inbox root as an untrusted file from that guest, then acks it.
+ */
+data class QueuedDropsResponse(
+    @Wire("drops") val drops: List<QueuedDrop>
 )
 
 enum class QueuedDropState(val wire: String) {

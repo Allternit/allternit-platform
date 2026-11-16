@@ -1,0 +1,169 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Read by FilesSharedStore.fromMainBundle(): config in the App Group,
+	     the Files token in the shared keychain group (never Clerk's). -->
+	<key>AllternitAppGroup</key>
+	<string>group.com.allternit.mobile</string>
+	<key>AllternitSharedKeychainGroup</key>
+	<string>$(AppIdentifierPrefix)com.allternit.mobile.shared</string>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>$(DEVELOPMENT_LANGUAGE)</string>
+	<key>CFBundleDisplayName</key>
+	<string>Allternit</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>$(PRODUCT_NAME)</string>
+	<key>CFBundlePackageType</key>
+	<string>XPC!</string>
+	<key>CFBundleShortVersionString</key>
+	<string>$(MARKETING_VERSION)</string>
+	<key>CFBundleVersion</key>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<!-- Badge images for NSFileProviderDecorations (design 5C colour chips). -->
+	<key>UTExportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>com.allternit.files.badge.conflict</string>
+			<key>UTTypeDescription</key>
+			<string>Allternit conflict badge</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>com.apple.icon-decoration.badge</string>
+				<string>com.apple.icon-decoration-position.trailing-bottom</string>
+			</array>
+			<key>UTTypeIcons</key>
+			<dict>
+				<key>UTTypeIconName</key>
+				<string>BadgeConflict</string>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>com.allternit.files.badge.agent</string>
+			<key>UTTypeDescription</key>
+			<string>Allternit agent badge</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>com.apple.icon-decoration.badge</string>
+				<string>com.apple.icon-decoration-position.trailing-bottom</string>
+			</array>
+			<key>UTTypeIcons</key>
+			<dict>
+				<key>UTTypeIconName</key>
+				<string>BadgeAgent</string>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>com.allternit.files.badge.offline</string>
+			<key>UTTypeDescription</key>
+			<string>Allternit kept offline badge</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>com.apple.icon-decoration.badge</string>
+				<string>com.apple.icon-decoration-position.trailing-bottom</string>
+			</array>
+			<key>UTTypeIcons</key>
+			<dict>
+				<key>UTTypeIconName</key>
+				<string>BadgeOffline</string>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>com.allternit.files.badge.shared</string>
+			<key>UTTypeDescription</key>
+			<string>Allternit shared badge</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>com.apple.icon-decoration.badge</string>
+				<string>com.apple.icon-decoration-position.trailing-bottom</string>
+			</array>
+			<key>UTTypeIcons</key>
+			<dict>
+				<key>UTTypeIconName</key>
+				<string>BadgeShared</string>
+			</dict>
+		</dict>
+	</array>
+	<key>NSExtension</key>
+	<dict>
+		<!-- Replicated File Provider (NSFileProviderReplicatedExtension):
+		     one domain per computer, added by the app (FilesDomains.sync). -->
+		<key>NSExtensionPointIdentifier</key>
+		<string>com.apple.fileprovider-nonui</string>
+		<key>NSExtensionPrincipalClass</key>
+		<string>$(PRODUCT_MODULE_NAME).FileProviderExtension</string>
+		<key>NSExtensionFileProviderSupportsEnumeration</key>
+		<true/>
+		<key>NSExtensionFileProviderDocumentGroup</key>
+		<string>group.com.allternit.mobile</string>
+		<!-- Colour badges (design 5C, plan step 20). FileProviderItem
+		     returns these ids in `decorations`, in priority order; Files
+		     draws the first. The custom images are the exported types below
+		     (icons in Badges.xcassets); the protected-root lock is the
+		     system's own folder badge. -->
+		<key>NSFileProviderDecorations</key>
+		<array>
+			<dict>
+				<key>Identifier</key>
+				<string>$(PRODUCT_BUNDLE_IDENTIFIER).badge.conflict</string>
+				<key>BadgeImageType</key>
+				<string>com.allternit.files.badge.conflict</string>
+				<key>Category</key>
+				<string>Badge</string>
+				<key>Label</key>
+				<string>Conflict copy, both kept</string>
+			</dict>
+			<dict>
+				<key>Identifier</key>
+				<string>$(PRODUCT_BUNDLE_IDENTIFIER).badge.agent</string>
+				<key>BadgeImageType</key>
+				<string>com.allternit.files.badge.agent</string>
+				<key>Category</key>
+				<string>Badge</string>
+				<key>Label</key>
+				<string>Made by an agent</string>
+			</dict>
+			<dict>
+				<key>Identifier</key>
+				<string>$(PRODUCT_BUNDLE_IDENTIFIER).badge.offline</string>
+				<key>BadgeImageType</key>
+				<string>com.allternit.files.badge.offline</string>
+				<key>Category</key>
+				<string>Badge</string>
+				<key>Label</key>
+				<string>Kept offline on this iPhone</string>
+			</dict>
+			<dict>
+				<key>Identifier</key>
+				<string>$(PRODUCT_BUNDLE_IDENTIFIER).badge.shared</string>
+				<key>BadgeImageType</key>
+				<string>com.allternit.files.badge.shared</string>
+				<key>Category</key>
+				<string>Badge</string>
+				<key>Label</key>
+				<string>Shared</string>
+			</dict>
+			<dict>
+				<key>Identifier</key>
+				<string>$(PRODUCT_BUNDLE_IDENTIFIER).badge.locked</string>
+				<key>BadgeImageType</key>
+				<string>com.apple.icon-decoration.badge.locked</string>
+				<key>Category</key>
+				<string>FolderBadge</string>
+				<key>Label</key>
+				<string>Protected, unlock with Face ID</string>
+			</dict>
+		</array>
+	</dict>
+</dict>
+</plist>

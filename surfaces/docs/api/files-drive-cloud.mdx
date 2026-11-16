@@ -1,0 +1,160 @@
+---
+title: 'Files Drive: Cloud API'
+description: 'cloud-api routes for the Files drive: wake consent and wake tickets, per-computer wake settings, transport endpoints, storage discovery, replica placement and the no-wake peer relay, guest drops kept while a computer sleeps, and the asleep snapshot that answers browsing while a computer sleeps.'
+---
+
+## Overview
+
+The [Files Drive API](/api/files-drive) runs on the computer that owns the files. This page covers the part that runs in cloud-api at `https://api.allternit.com`. It decides when a computer may be woken, lists how to reach a computer, keeps the last storage report, and answers browsing from a saved snapshot while the computer sleeps.
+
+The rule behind all of it: **browsing never wakes a computer and never resets its idle timer.** Only an explicit wake consent call wakes one.
+
+<Note>
+These routes ship dark. Each one answers `403 feature_disabled` unless the account's `files_drive` flag is on (`ALLTERNIT_FILES_DRIVE_ENABLED`, or the user in `ALLTERNIT_FILES_DRIVE_USER_IDS`, or an admin) and migration 143 is applied. The no-wake rule for relayed Files requests is always on, flag or not.
+</Note>
+
+## Computer ids
+
+Every route takes `{id}`, which is one of these:
+
+| Id | Resolves to |
+|---|---|
+| A runtime device id | That device. The relay is keyed by it. |
+| A paired cloud computer, `pc_…` | Its runtime device, through `paired_computers.provisioned_instance_id` and `provisioned_instances.device_id`. |
+| A machine paired by pairing code, `pc_…` | No runtime device. It stays mesh-only under its `pc_…` id. |
+
+An id the caller does not own answers `404 not_found`. After the first call, use `computer_id` from the endpoints response.
+
+## Endpoints
+
+| Method + path | Body | Answer |
+|---|---|---|
+| `GET /api/v1/computer-files/{id}/endpoints` | | `EndpointsResponse` |
+| `POST /api/v1/computer-files/{id}/wake-consent` | `WakeConsentRequest` | `WakeConsentResponse` |
+| `GET /api/v1/computer-files/{id}/wake-settings` | | `WakeSettings` |
+| `PUT /api/v1/computer-files/{id}/wake-settings` | `UpdateWakeSettingsRequest` | `WakeSettings` |
+| `GET /api/v1/computer-files/{id}/storage` | | `StorageDiscovery`, or `404 not_found` before the first report |
+| `GET /api/v1/computer-files/{id}/placement?root_id=` | | `PlacementResponse` (see [Replicas](#replicas)) |
+
+All of them need a signed-in session, or an API key with the `compute` scope, for the owner. The iPhone's Files extension has no session, so it uses the `compute` key the app creates for it ("Files on (device)"). The same ownership checks apply either way. A key without `compute` gets `403`, and another user's computer gets `404`.
+
+### Transports
+
+`endpoints` lists how to reach the computer, lowest `priority` first:
+
+- A **cloud computer** (`host: cloud_computer`) lists one `relay` candidate, the proxy at `/api/v1/runtime-devices/{computer_id}/proxy`. Cloud computers never join the mesh.
+- A **runtime device on your own machine** (`host: own_device`) lists the relay too.
+- A **machine paired by pairing code** lists one `mesh` candidate at `http://{mesh_ip}:8013/api/v1/files/v2` and no relay.
+
+`computer_state` is `awake` when the computer has a relay connection, `waking` while a cloud computer starts, `asleep` for a stopped cloud computer, and `offline` for your own machine when it is not connected.
+
+## Wake consent
+
+Content requests (`content`, `manifest`, `chunks`, uploads, writes and content search) to a sleeping computer answer `409 wake_consent_required` with a `wake` hint:
+
+```json
+{
+  "error": "wake_consent_required",
+  "code": "wake_consent_required",
+  "message": "Opening this needs the computer awake; ask for consent",
+  "computer_state": "asleep",
+  "wake": { "setting": "ask", "consent_path": "/api/v1/computer-files/rd_123/wake-consent" }
+}
+```
+
+The client asks the user (or skips the prompt when the setting is `auto`) and calls the consent path:
+
+```bash
+curl -X POST https://api.allternit.com/api/v1/computer-files/rd_123/wake-consent \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"reason":"open_file","device_id":"dev_web"}'
+```
+
+The answer holds a wake ticket that lasts 120 seconds. Send it on every request of that transfer in the `X-Allternit-Wake-Ticket` header. A request with a valid ticket waits up to 30 seconds for the computer to come up, then answers `503 waking` with a `Retry-After` header.
+
+- One ticket wakes the computer at most once. Calling consent again with the same ticket in `X-Allternit-Wake-Ticket` returns the same ticket and wakes nothing.
+- The consent call records exactly one activity touch, so the idle sweep does not put the computer back to sleep at once. Files traffic records none.
+- A ticket works only for its own user and computer. An expired ticket answers `409 wake_consent_required`; another user's or another computer's ticket answers `403 forbidden`.
+- Setting `never` answers `403 wake_denied`. A machine that cloud-api cannot wake answers `503 offline`. A spend cap or hours limit answers with that reason.
+
+## Browsing a sleeping computer
+
+While a computer has no relay connection, the relay answers these from its asleep snapshot, with `freshness.served_by: "snapshot"` and `freshness.computer_state: "asleep"`:
+
+| Request | From the snapshot |
+|---|---|
+| `GET /roots` | the roots, without protected roots or local paths |
+| `GET /roots/{root_id}/list` | the folder's children, sorted and paged like a live list |
+| `GET /items/{item_id}` | the item |
+| `GET /roots/{root_id}/changes` | no changes at the snapshot's cursor; any other cursor gets `reset_required: true`, so the client lists again |
+| `POST /search` with `mode: "name"` | name matches, `index_state: "names_only"` |
+
+With no snapshot yet, these answer `503 asleep`. Other metadata (trash, versions, comments) answers `503 asleep` too. The live change-feed socket is not offered for a sleeping computer: the socket ticket answers 503, and clients poll `changes` instead.
+
+Permissions on snapshot items come from the root's policy. `execute` is always false. The runtime checks everything again once the computer is awake.
+
+### How the snapshot gets there
+
+The runtime writes its snapshot through cloud-api while it is awake, signed like the presence heartbeat (`x-allternit-runtime-id`, `x-allternit-runtime-ts`, `x-allternit-runtime-sig`):
+
+| Method + path | Body | Answer |
+|---|---|---|
+| `PUT /api/v1/computer-files/snapshot/manifest` | `SnapshotManifest` (at most 1 MiB) | 204 |
+| `PUT /api/v1/computer-files/snapshot/roots/{root_id}` | `SnapshotRootFile` (at most 8 MiB) | 204 |
+
+cloud-api stores them in the user's own file storage under `files-snapshots/{computer_id}/v1/`. It drops protected roots and `path_hint` from the manifest, and refuses a root file for a root the stored manifest does not list, so Memory Drive names never reach storage. A manifest for another computer is refused. Write the manifest first, then each root.
+
+allternit-api writes the snapshot by itself:
+
+- **When.** On the sleep notice and at most every 5 minutes while changes are pending. The sleep notice is SIGTERM, which a cloud computer being stopped or Desktop quitting sends, and the write gets a 5 s budget. `ALLTERNIT_FILES_SNAPSHOT_EVERY_S` sets the interval (default 300, at least 60).
+- **What.** Plain names, sizes and revisions of every root that isn't protected. Never contents, local paths or `path_hint`.
+- **Only changes.** The manifest goes out only when a root or a cursor changed. After it, only the root files whose cursor moved go out. An unchanged drive sends nothing. A root that cloud-api didn't store is sent again on the next pass.
+
+## Storage discovery
+
+The runtime adds a `filesStorage` block (a `StorageDiscovery`) to its presence heartbeat, `POST /api/v1/runtime-presence/heartbeat`. cloud-api keeps the last one per computer and serves it at `GET /api/v1/computer-files/{id}/storage`, also while the computer sleeps. The report is always stored under the signing runtime's own id. A heartbeat never counts as activity.
+
+## Replicas
+
+### Placement
+
+`GET /api/v1/computer-files/{id}/placement?root_id=` suggests where to keep a replica of one root. It ranks the owner's other computers that sent a storage report. The rules are fixed and explainable, no model picks the device, and the user confirms the pick:
+
+| Rule | Effect |
+|---|---|
+| Capacity | The freest volume, capped by the host's replica capacity, must fit the root's size plus 10% |
+| Sensitivity | A protected root never goes to a cloud computer. A root whose policy has `replica: false` answers `403 forbidden` |
+| Availability | Online now ranks above asleep, and asleep ranks above offline. A report older than 7 days is not eligible |
+| Hosting | A computer with replica hosting off is not eligible. A computer whose only disk is removable ranks lower |
+
+Options come best first, and each has a one-sentence `reason` the picker shows. Ineligible options come last with `score: 0`. The source computer and other users' computers are never options.
+
+### Peer relay
+
+A cloud computer is reachable only through the relay, so it can't be pushed to over the mesh. To make one a replica host, register the replica on the source computer without `host_base_url`. The source then pushes through cloud-api:
+
+| Method + path | Body | Answer |
+|---|---|---|
+| `POST /api/v1/computer-files/peer/{host_id}/replicas/{replica_id}/have-need` | `HaveNeedRequest` | the host's answer |
+| `GET` or `PUT /api/v1/computer-files/peer/{host_id}/replicas/{replica_id}/head` | sealed head | the host's answer |
+| `GET` or `PUT /api/v1/computer-files/peer/{host_id}/replicas/{replica_id}/blobs/{locator}` | sealed blob (at most 5 MiB) | the host's answer |
+
+The caller is a runtime, authenticated with its own device token. The host must belong to the same user. No other path goes through: anything but these replica host routes answers `403`. cloud-api forwards only while the host is already connected. **It never wakes either computer and never touches either idle timer.** An asleep host answers `503 asleep` (a computer that isn't a cloud computer answers `503 offline`), and the replica stays `behind` until both computers are on.
+
+## Guest drops while a computer sleeps
+
+When a guest drops a file into an upload-only link while the computer sleeps, the [sharing gateway](/guides/files-sharing) keeps it in the owner's own storage. The computer collects these drops itself once it is awake, about 20 s after its runtime starts and then every 5 minutes (`ALLTERNIT_FILES_DROPS_EVERY_S`). Each call is signed like its heartbeat, so a computer reads only its own drops:
+
+| Method + path | Body | Answer |
+|---|---|---|
+| `GET /api/v1/computer-files/drops` | | `QueuedDropsResponse`, oldest first, at most 100 |
+| `GET /api/v1/computer-files/drops/{drop_id}/content` | | the bytes |
+| `POST /api/v1/computer-files/drops/{drop_id}/ack` | `QueuedDropAck` (`delivered` with `item_id`, or `rejected` with `reason`) | 204, and the stored copy is deleted |
+
+The computer checks each drop's size and blake3 hash first. A drop that doesn't match is rejected and never written. A good drop goes into the **Inbox** as a file from that guest, and becomes an untrusted task that waits for the owner's approval. Leading dots are removed from the file name. An ack is safe to repeat. The computer remembers which drops it delivered, so a lost ack never makes a second copy. These routes answer `403 feature_disabled` until migration 144 is applied and the owner's flag is on.
+
+## Relay details for Files
+
+The relay proxy, `POST /api/v1/runtime-devices/{computer_id}/proxy`, accepts `body_encoding` as well as `bodyEncoding` (`utf8` or `base64`). It passes the request headers `x-allternit-wake-ticket`, `range`, `if-match`, `x-allternit-unlock` and `x-allternit-device-id`, and the response headers `content-range`, `accept-ranges` and `retry-after`. It streams the runtime's response as-is: real status, raw body bytes.
+
+Legacy `/api/v1/files/*` routes still wake a sleeping computer on demand until every client moves to `/api/v1/files/v2`.

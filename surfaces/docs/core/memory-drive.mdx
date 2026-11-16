@@ -193,6 +193,10 @@ Gizzi and other agents mount them next to the personal drive (`GET /memory/drive
   imported (text that looks like a credential) stay as untouched archive rows. Unscoped rows
   (user-level entries, cowork turn summaries, bots that exist only on one device) stay rows.
 
+## In the Files drive
+
+The Memory Drive appears as a protected root in the [Files drive](/guides/files-drive), next to Inbox, Code and Models. Writes from the Files drive go through the Memory Drive write path, so the git history stays. The root needs a fresh device unlock (Face ID or a fingerprint) before it opens, and its file names are left out of the asleep snapshot. See the [Files drive API](/api/files-drive).
+
 ## Other memory stores
 
 | Store | Role now |

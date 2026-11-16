@@ -390,16 +390,16 @@ async fn studio_refusals_and_engine_list() {
         .unwrap();
     assert_eq!(tune["install_state"], "installed");
     assert_eq!(tune["fit"]["ok"], true);
-    let unsloth = engines
+    let axolotl = engines
         .iter()
-        .find(|e| e["id"] == "unsloth-upstream")
+        .find(|e| e["id"] == "axolotl")
         .unwrap();
-    assert_eq!(unsloth["fit"]["ok"], false);
+    assert_eq!(axolotl["fit"]["ok"], false);
 
     // Every catalog engine is available in this build now; one that does not
     // fit the computer is refused before anything installs.
     assert!(engines.iter().all(|e| e["available"] == true), "{list}");
-    for id in ["axolotl", "unsloth-upstream", "llama-factory"] {
+    for id in ["axolotl", "llama-factory"] {
         let (status, err) = call(&mac, "POST", &format!("/studio/engines/{id}/install"), None).await;
         assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{id}");
         assert_eq!(err["error"], "hardware_not_supported", "{id}");
@@ -574,9 +574,9 @@ async fn studio_create_refuses_by_method_backend_output_and_device() {
     };
 
     let mac = host(&env, Hardware::AppleSilicon);
-    let mut unsloth = fixture(&env);
-    unsloth["engine"] = json!("unsloth-upstream");
-    let (status, err) = refused(mac, unsloth).await;
+    let mut axolotl = fixture(&env);
+    axolotl["engine"] = json!("axolotl");
+    let (status, err) = refused(mac, axolotl).await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(err["error"], "hardware_not_supported");
     assert!(err["message"].as_str().unwrap().contains("Apple Silicon"), "{err}");

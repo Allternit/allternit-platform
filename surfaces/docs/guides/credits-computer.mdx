@@ -27,9 +27,15 @@ These are the current prices; the app shows the live ones. Billing is per minute
 
 - Starting: about a minute.
 - Running.
-- Asleep: after 30 idle minutes. It wakes when an agent needs it.
+- Asleep: after 30 idle minutes. It wakes when an agent needs it. Browsing its files in the [Files drive](/guides/files-drive) does not wake it and does not count as activity. Opening or saving a file asks you first, and a wake you approve bills at the running price.
 - Out of credits: the computer stops and the disk is kept 14 days, with an email when it stops, after 7 days and the day before deletion. Add credits to start it again.
 
 You get an in-app notice at about 24 hours and about 2 hours of runway left. [Auto top-up](/guides/credits-and-auto-top-up) can refill the balance.
+
+## Browsing files does not wake it
+
+Browsing a sleeping computer's files does not wake it and does not bill running time. Listing folders, checking a file's details, searching by name and following changes never start the computer and never reset its idle timer. While it sleeps, those answers come from the list of file names, sizes and versions the computer saved in your own file storage before it went to sleep (never file contents, and never Memory Drive). Opening, downloading or uploading a file asks first, unless you set the computer to **Auto**. Set **Ask**, **Auto** or **Never** for each computer. With **Never**, Files never wakes it.
+
+The API calls behind this are in [Files drive: cloud API](/api/files-drive-cloud).
 
 Hosted computers run on Allternit servers. They sleep when idle.

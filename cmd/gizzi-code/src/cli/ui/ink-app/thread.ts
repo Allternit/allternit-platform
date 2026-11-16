@@ -168,6 +168,10 @@ export const TuiThreadCommand = cmd({
         return
       }
 
+      // Files drive flag (cloud-api /me/flags) into its cache, so the sync
+      // isEnabled of /files sees this account's answer. Never blocks start.
+      void import("@/cli/files/flag").then((m) => m.refreshFilesDriveFlag()).catch(() => {})
+
       // Resolve relative paths against PWD to preserve behavior when using --cwd flag
       const baseCwd = process.env.PWD ?? process.cwd()
       const cwd = args.project ? path.resolve(baseCwd, args.project) : process.cwd()

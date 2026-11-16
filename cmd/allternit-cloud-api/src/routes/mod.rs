@@ -62,6 +62,8 @@ pub mod org_meeting_settings;
 pub mod zoom;
 /// Compute gate: GET /api/v1/account/compute-status (+ acknowledge) and the relay's 409.
 pub mod account_compute;
+/// Account preferences that follow the person: GET/PUT /api/v1/account/pad-templates.
+pub mod account_prefs;
 pub mod web_search;
 pub mod me_usage;
 pub mod setup_checks;
@@ -112,6 +114,10 @@ pub mod provisioned_instances;
 pub mod regions;
 pub mod runs;
 pub mod runtime_pairing;
+pub mod computer_files;
+pub mod computer_files_drops;
+pub mod computer_files_replicas;
+pub mod computer_files_snapshot;
 pub mod runtime_relay;
 pub mod runtime_viewer;
 pub mod schedules;
@@ -121,6 +127,7 @@ pub mod team;
 #[cfg(test)]
 pub mod test_support;
 pub mod files;
+pub mod files_gateway;
 pub mod voice_consent;
 pub mod voice_recordings;
 pub mod voice_tickets;

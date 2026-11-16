@@ -152,10 +152,14 @@
               "guides/code-linked-prs",
               "guides/motion",
               "guides/computers-and-apps",
+              "guides/files-drive",
+              "guides/files-sharing",
+              "guides/files-windows",
               "guides/phone-for-your-bot",
               "guides/phone-skills",
               "guides/phone-approvals",
               "guides/usb-agent",
+              "guides/files-inbox",
               "guides/get-the-app",
               "guides/iphone-app",
               "guides/imessage-app",
@@ -191,6 +195,7 @@
               "guides/live-session-delivery",
               "guides/team-roster",
               "guides/a2a-public-edge",
+              "guides/files-organize",
               "guides/calls-and-texts",
               "guides/voice",
               "guides/meetings",
@@ -450,6 +455,7 @@
               "cli/native-sessions",
               "cli/continue-anywhere",
               "cli/work",
+              "cli/files",
               "cli/tasks",
               "cli/doctor",
               "cli/status",
@@ -494,6 +500,11 @@
               "tools/etrid",
               "tools/local-engine",
               "tools/freeweights",
+              "guides/run-models-on-device",
+              "guides/run-models-in-your-browser",
+              "guides/run-models-on-android",
+              "guides/run-models-on-desktop-and-iphone",
+              "guides/use-models-on-your-other-devices",
               "tools/voice",
               "tools/voice-calls",
               "tools/phone-number-sync",
@@ -659,6 +670,7 @@
               "guides/custom-voices",
               "guides/attachments",
               "guides/analyze-files",
+              "guides/files-sharing",
               "guides/chat-composer",
               "guides/chat-sessions",
               "guides/share-a-thread",
@@ -742,7 +754,8 @@
                   "api/estimates",
                   "api/proxy",
                   "api/translate",
-                  "api/local-engine"
+                  "api/local-engine",
+                  "api/on-device-models"
                 ]
               },
               {
@@ -788,13 +801,17 @@
                 "pages": [
                   "api/files",
                   "api/files-drive",
+                  "api/files-drive-runtime",
+                  "api/files-drive-cloud",
+                  "api/files-drive-models",
                   "api/workspace-files",
                   "api/webhooks",
                   "api/webhook-subscriptions",
                   "api/slack-webhooks",
                   "api/sandbox",
                   "api/sandbox-templates",
-                  "api/uploads"
+                  "api/uploads",
+                  "api/files-drive-inbox"
                 ]
               },
               {

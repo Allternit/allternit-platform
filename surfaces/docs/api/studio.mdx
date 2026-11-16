@@ -128,15 +128,15 @@ A manifest that changes after the job is accepted fails the job while it is prep
 ## Where the engines come from
 
 - **Allternit Tune** is Apache-2.0 and ships with Allternit.
-- **Unsloth, Axolotl, LLaMA-Factory and torchtune** install through the engine kit and adapters in [Allternit/studio-engines](https://github.com/Allternit/studio-engines) (Apache-2.0), pinned to commit `e520474`. Each upstream engine is installed unmodified at a pinned version: Unsloth 2026.11.4, Axolotl 0.21.1, LLaMA-Factory 0.9.5 and torchtune 0.6.1 (BSD-3-Clause, no longer maintained upstream).
-- **Unsloth** is AGPL-3.0. It runs as a separate process in its own environment, and Allternit code never imports it.
+- **Axolotl, LLaMA-Factory and torchtune** install through the engine kit and adapters in [Allternit/studio-engines](https://github.com/Allternit/studio-engines) (Apache-2.0), pinned to commit `e520474`. Each upstream engine is installed unmodified at a pinned version: Axolotl 0.21.1 (Apache-2.0), LLaMA-Factory 0.9.5 (Apache-2.0) and torchtune 0.6.1 (BSD-3-Clause, no longer maintained upstream). Each runs as a separate process in its own environment.
+- **No AGPL or LGPL engines.** Unsloth is not a Studio engine: its CLI is AGPL-3.0. Allternit Tune covers LoRA, QLoRA and GGUF export.
 - Every engine is labelled "Not yet tested by Allternit on this hardware".
 
 ### How the computer installs an engine
 
 Each engine gets its own Python environment under the Studio folder. The host:
 
-1. Creates the environment. Desktop uses its bundled Python 3.12. On other computers the host uses the first Python on `PATH` that the engine accepts: 3.10 for Unsloth and torchtune, 3.11 for LLaMA-Factory, 3.12 for Axolotl and 3.10 for Allternit Tune. A Python build without `ensurepip` still works: the host creates the environment without pip and then installs pip into it.
+1. Creates the environment. Desktop uses its bundled Python 3.12. On other computers the host uses the first Python on `PATH` that the engine accepts: 3.10 for torchtune, 3.11 for LLaMA-Factory, 3.12 for Axolotl and 3.10 for Allternit Tune. A Python build without `ensurepip` still works: the host creates the environment without pip and then installs pip into it.
 2. Installs the studio-engines kit from the pinned commit's archive (no `git` needed on the computer).
 3. Installs the upstream engine's wheel at its pinned version, checked against the wheel's SHA-256. The engine's own dependencies install by version, from the PyTorch index for this computer's hardware.
 4. Records what it installed (kit commit, engine version, wheel hash, hardware). A change to any of them reinstalls the engine.

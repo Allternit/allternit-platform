@@ -1,172 +1,308 @@
 ---
-title: 'Files Drive API'
-description: 'Files drive protocol v2 (files/2): browse, read, write and sync the files on a computer by ID, with revisions, conflict copies, resumable uploads and a change feed.'
+title: 'Files drive API'
+description: 'Protocol v2 reference for the Files drive: roots, items, chunked upload, the change feed, wake consent, errors and relay headers.'
 ---
 
-## Overview
+The Files drive protocol (`files/2`) is one set of requests that every client uses: the web app, the phone layout, the PWA, Desktop, iOS, Android and Gizzi Code. The contract is in `contracts/files-drive/` in the platform repo: `SPEC.md` says how it behaves, `schema/*.json` holds the message shapes, and `fixtures/` holds examples. The older [Files API](/api/files) covers cloud file storage and attachments and is a different system.
 
-The Files drive serves the files on one computer to the owner's other devices. Every request names roots and items by opaque ID, never by path. Writes carry the revision the client last saw, so a stale write becomes a conflict copy instead of an overwrite. Big files move as content-defined chunks that resume after a dropped connection.
+The protocol ships dark behind the per-account flag `files_drive`. A caller without it gets `feature_disabled`.
 
-The full contract lives in the platform repo at `contracts/files-drive/SPEC.md`, with JSON schemas in `contracts/files-drive/schema/` and generated Rust, TypeScript, Swift and Kotlin types. This page covers the **runtime** side: the routes `allternit-api` answers on the computer that owns the files. The cloud-api routes (wake consent, endpoints, shares and the guest gateway) are documented with their own release.
+The routes the runtime (`allternit-api`) answers today, with what this release does not do yet, are listed in the [Files drive runtime API](/api/files-drive-runtime).
 
-<Note>
-The Files drive ships dark. On the runtime it is off unless the process runs with `ALLTERNIT_FILES_DRIVE=1`. While it is off, every route answers `403 feature_disabled` and nothing is created on disk. The per-user `files_drive` flag is held by cloud-api.
-</Note>
+## Principles
 
-## Base URL
+- Routes take IDs, not paths. The one exception is adding a user folder as a root.
+- Browsing never wakes or bills a computer. Only the wake-consent call wakes one.
+- A write carries `base_rev`. A stale write becomes a conflict copy, never an overwrite.
+- Every read says where it came from, in a `Freshness` object.
+- Files in Inbox and shared folders are untrusted data.
 
-```text
-http://127.0.0.1:8013/api/v1/files/v2
-```
+## Runtime routes
 
-Other devices reach the same routes through the cloud relay: `POST /api/v1/runtime-devices/{computer_id}/proxy` with `path` set to `/api/v1/files/v2/...`.
+The computer that owns the files serves these under `/api/v1/files/v2`.
 
-## Authentication and callers
+| Method and path | Purpose |
+| --- | --- |
+| `GET /ping` | Returns `protocol: "files/2"`. |
+| `GET /whoami` | Who the caller is and which permissions apply. |
+| `GET /roots` | List roots. |
+| `POST /roots` | Add a user folder as a root. |
+| `PATCH /roots/:root_id` | Change a root's policy. |
+| `DELETE /roots/:root_id` | Remove a user-added root. Files stay on disk. |
+| `GET /roots/:root_id/list` | List a folder. |
+| `GET /items/:item_id` | Stat an item. |
+| `GET /items/:item_id/content` | Read bytes. Supports `Range` and `If-None-Match`. |
+| `GET /items/:item_id/manifest` | Chunk manifest for a revision. |
+| `GET /chunks/:hash` | One chunk's bytes. |
+| `PUT /roots/:root_id/content` | Small write, 4 MiB or less. |
+| `POST /mkdir`, `/move`, `/copy`, `/delete`, `/restore` | Change the tree. |
+| `GET /roots/:root_id/trash` | List trash. |
+| `GET /items/:item_id/versions` | List versions. |
+| `POST /items/:item_id/versions/restore` | Restore a version. |
+| `POST /search` | Search by name, or by content when the computer is awake. |
+| `POST /pin` | Pin an item to keep it offline on a device. |
+| `GET /roots/:root_id/changes` | Change feed, poll. |
+| `GET /subscribe` | Change feed, WebSocket. |
+| `GET /jobs/:job_id` | State of a large or cross-computer copy. |
+| `GET /storage` | Volumes, free space and bytes per root. |
+| `GET /items/:item_id/comments`, `POST /comments` | Comments. |
+| `GET /replicas`, `POST /replicas`, `POST /replicas/restore` | Replicas, on the replica host. |
+| `GET /inbox/tasks`, `GET /inbox/tasks/:task_id`, `POST /inbox/tasks/:task_id/approve`, `POST /inbox/tasks/:task_id/reject` | Inbox tasks waiting for approval. See [Inbox, rules and events](/api/files-drive-inbox). |
+| `GET /rules`, `POST /rules`, `PATCH /rules/:rule_id`, `DELETE /rules/:rule_id` | Folder rules. |
 
-Requests go through the platform auth middleware like every other runtime route. The runtime then decides the **principal**:
+From a terminal, `gizzi files` and the TUI `/files` command speak this API, and `gizzi files mount` shows a computer's drive as a FUSE or WebDAV folder on Linux. See [Files drive in the terminal](/cli/files).
 
-| Principal | When | Reaches |
-|---|---|---|
-| `owner` | the signed-in user, no device header | every root |
-| `own_device` | the owner's token plus `X-Allternit-Device-Id` | every root; pins are per device |
+The relay maps any path containing `/files` to the `runtime:files` capability, so no new capability is needed.
 
-A request replayed by the relay (it carries `x-allternit-relayed`), forwarded by a proxy, or sent from a non-loopback peer is a **relayed caller**. Relayed callers reach registered roots only, which is all v2 exposes, and a folder they add starts with sharing and agent access turned off.
+### Roots
 
-Two more headers matter:
+A root is a named folder with a policy: read, write, shareable, agent_process, protected, offline, replica, versions and `trash_days`. The default roots are `allternit_home` (`~/Allternit`), `inbox`, `shared`, `agent_output`, `downloads`, `meetings`, `scans`, `memory_drive`, `code` and `models`, plus any `user_added` root. `path_hint` is shown to the owner only and is never sent to guests.
 
-- `X-Allternit-Device-Name` names the device in conflict-copy names when the request does not say.
-- `X-Allternit-Unlock` is the proof of a fresh device unlock (Face ID, Windows Hello). Protected roots answer `403 protected_root_locked` without it. Today any non-empty value is accepted; a signed unlock assertion replaces it before the drive leaves the flag.
+`POST /roots` takes `local_path`. The runtime resolves symlinks, requires the folder to be inside the home folder, and refuses the secrets deny-list with `scope_violation`. A root added over the relay starts with `shareable: false` and `agent_process: false`.
 
-Files traffic never counts as activity: no v2 request, long poll or socket resets the computer's idle timer or keeps it awake.
+A symlink that leads outside its root is not followed. A `protected` root answers `protected_root_locked` until the client sends a device unlock proof in `x-allternit-unlock`.
 
-## Roots
+### Items and revisions
 
-The first request creates the default roots:
+An item ID (`it_` plus an opaque string) comes from the index on the owning computer and survives rename and move. Never parse it.
 
-| Kind | Name | Folder | Notes |
-|---|---|---|---|
-| `allternit_home` | Allternit | `~/Allternit` | parent of the six folders below |
-| `inbox` | Inbox | `~/Allternit/Inbox` | shareable; agents may take items as task inputs |
-| `shared` | Shared | `~/Allternit/Shared` | shareable |
-| `agent_output` | Agent Output | `~/Allternit/Agent Output` | agent results |
-| `downloads` | Downloads | `~/Allternit/Downloads` | `provider_ready: false` until downloads land here |
-| `meetings` | Meetings | `~/Allternit/Meetings` | `provider_ready: false` until recordings land here |
-| `scans` | Scans | `~/Allternit/Scans` | `provider_ready: false` until phone scans land here |
-| `memory_drive` | Memory Drive | your Memory Drive | protected; writes become Memory Drive commits |
-| `code` | Code | `ALLTERNIT_FILES_CODE_DIR` | `provider_ready: false` while unset; add your code folder with `POST /roots` instead |
-| `models` | Models | the local engine's model cache | read-only here; no versions or trash |
-| `user_added` | your choice | a folder you pick | see [Adding a folder](#adding-a-folder) |
-
-`path_hint` (for example `~/Allternit/Inbox`) is sent to the owner and own devices only, never for a provider's internal folder.
-
-### Memory Drive
-
-Memory Drive is a git repository, not a folder. The runtime shows its current files as a read view and turns every Files write or delete there into one commit through the Memory Drive write path, so its history and checks stay in force. Only Markdown files can be written. Writes there fail closed: an existing name without `base_rev`, or a stale `base_rev`, is an error, never a conflict copy. Making folders, moving, copying in, uploading and restoring versions are refused with `forbidden`.
-
-### Adding a folder
-
-`POST /roots` takes an `AddRootRequest` with `local_path`. The runtime resolves `~`, refuses `..`, follows symlinks, and requires the real folder to exist inside the home folder. It refuses, with `403 scope_violation`, the home folder itself, the secrets deny-list (`~/.ssh`, `~/.gnupg`, cloud CLI credentials, keychains, agent CLI tokens, `~/.allternit` private state), any folder that contains one of those, and the Allternit data folders. These are the same rules as the [Workspace Files](/api/workspace-files) routes.
-
-A relayed caller may not turn sharing or agent access on, or protection off, with `PATCH /roots/{root_id}`; those changes are made from the computer itself.
-
-## Endpoints
-
-| Method | Path | Request | Response |
-|---|---|---|---|
-| `GET` | `/ping` | | `PingResponse` |
-| `GET` | `/whoami` | | `WhoAmIResponse` |
-| `GET` | `/roots` | | `RootsResponse` |
-| `POST` | `/roots` | `AddRootRequest` | `RootResponse` |
-| `PATCH` | `/roots/{root_id}` | `UpdateRootRequest` | `RootResponse` |
-| `DELETE` | `/roots/{root_id}` | | 204, user-added roots only; files stay on disk |
-| `GET` | `/roots/{root_id}/list` | `parent_id`, `page_token`, `limit`, `sort` | `ListResponse` |
-| `GET` | `/items/{item_id}` | | `StatResponse` |
-| `GET` | `/items/{item_id}/content` | `Range`, `If-None-Match` | bytes, `ETag`, 206 or 304 |
-| `GET` | `/items/{item_id}/manifest` | `page_token` | `Manifest` |
-| `GET` | `/chunks/{hash}` | | one chunk, at most 4 MiB |
-| `PUT` | `/roots/{root_id}/content` | `SmallWriteQuery`, body at most 4 MiB | `MutationResponse` |
-| `POST` | `/chunks/have-need` | `HaveNeedRequest` | `HaveNeedResponse` |
-| `POST` | `/uploads` | `UploadCreateRequest` | `UploadStatus` |
-| `POST` | `/uploads/{session_id}/chunks` | `UploadChunksAppend` | `UploadStatus` |
-| `PUT` | `/uploads/{session_id}/chunks/{hash}` | chunk bytes | `ChunkPutResponse` |
-| `GET` | `/uploads/{session_id}` | | `UploadStatus` |
-| `POST` | `/uploads/{session_id}/commit` | | `UploadCommitResponse` |
-| `DELETE` | `/uploads/{session_id}` | | 204 |
-| `POST` | `/mkdir` | `MkdirRequest` | `MutationResponse` |
-| `POST` | `/move` | `MoveRequest` | `MutationResponse` |
-| `POST` | `/copy` | `CopyRequest` | `CopyResponse` |
-| `POST` | `/delete` | `DeleteRequest` | `DeleteResponse` |
-| `GET` | `/roots/{root_id}/trash` | | `TrashListResponse` |
-| `POST` | `/restore` | `RestoreRequest` | `MutationResponse` |
-| `GET` | `/items/{item_id}/versions` | | `VersionsResponse` |
-| `POST` | `/items/{item_id}/versions/restore` | `RestoreVersionRequest` | `MutationResponse` |
-| `POST` | `/search` | `SearchRequest` | `SearchResponse` |
-| `POST` | `/pin` | `PinRequest` | `PinResponse` |
-| `GET` | `/roots/{root_id}/changes` | `cursor`, `limit`, `wait_s` | `ChangesResponse` |
-| `GET` | `/subscribe` | WebSocket, first frame `SubscribeMessage` | `FeedMessage` frames |
-| `GET` | `/jobs/{job_id}` | | `JobRef` |
-| `GET` | `/storage` | | `StorageDiscovery` |
-| `GET` | `/items/{item_id}/comments` | | `Comment` list |
-| `POST` | `/comments` | `CommentCreateRequest` | `Comment` |
-| `GET`, `POST` | `/replicas` | | `501 unsupported` on this release |
-| `POST` | `/replicas/restore` | | `501 unsupported` on this release |
-
-What this release does not do yet, each with a clear error:
-
-- `POST /search` supports `mode: "name"` only. `full_text` and `semantic` return `501 unsupported`.
-- `POST /copy` to another computer (`dest_computer_id` set to a different computer) returns `501 unsupported`. Copies on one computer finish in the request, so `GET /jobs/{job_id}` always returns `404 not_found`.
-- Replicas return `501 unsupported`.
-
-## Writing files
-
-A file of 4 MiB or less may use the small write:
-
-```bash
-curl -X PUT "http://127.0.0.1:8013/api/v1/files/v2/roots/$ROOT/content?parent_id=$PARENT&name=Lease.pdf&base_rev=$REV&on_conflict=keep_both&device_name=iPhone&utc_offset_minutes=-360" \
-  --data-binary @Lease.pdf
-```
-
-Anything bigger, or anything that must resume, uses an upload session: `POST /uploads` with the chunk list, `POST /chunks/have-need` or the session's `need` list to skip chunks the computer already has, one `PUT` per needed chunk, then `POST /uploads/{session_id}/commit`. The runtime checks every chunk hash and the whole-file hash at commit (`chunk_hash_mismatch`, `chunk_missing`, `manifest_invalid`).
-
-Body limits: the small write and the chunk `PUT` take at most 4 MiB + 64 KiB; every other v2 route takes 1 MiB. A bigger body returns `413 payload_too_large`.
+A revision is `"<meta_version>-<blake3 content hash>"`, or `"<meta_version>-dir"` for a folder. It is the HTTP `ETag`.
 
 ### Conflicts
 
-With a stale `base_rev` and `on_conflict: keep_both` (the default), the write lands beside the original as `Lease (conflict iPhone 2026-11-15 1042).pdf` and the response carries `ConflictInfo`. The date and time are the writing device's local time, from `utc_offset_minutes` (-840 to 840); without it the runtime uses UTC. The device name comes from `device_name`, then `X-Allternit-Device-Name`, then the principal's name. `on_conflict: fail` returns `409 rev_mismatch` with the item as it is now in `current`.
+Small writes, upload commits, moves, deletes and version restores carry `base_rev`. When it is stale:
 
-## Reading files
+| `on_conflict` | Result |
+| --- | --- |
+| `keep_both` | The write lands as a conflict copy and the response carries `ConflictInfo`. Default for sync clients. |
+| `fail` | `rev_mismatch` (409) with the `current` item. |
+| `replace` | Refused while `base_rev` is stale. It only settles name clashes. |
 
-`GET /items/{item_id}/content` returns the bytes with `ETag: "<rev>"` and `Accept-Ranges: bytes`. Send `If-None-Match: "<rev>"` to get `304` when nothing changed, or `Range: bytes=0-1023` for a `206` partial response. A range past the end returns `416`.
+The conflict copy is named `<stem> (conflict <device name> <YYYY-MM-DD HHmm>).<ext>`, for example `Lease (conflict iPhone 2026-11-15 1042).pdf`. If that name exists, ` 2`, ` 3` and so on is added before the closing parenthesis. A create with no `base_rev` whose name exists lands as `<stem> (2).<ext>` with `keep_both`, or returns `already_exists` with `fail`. Move, delete, trash and version restore with a stale `base_rev` always return `rev_mismatch`.
 
-A symlink inside a root that resolves outside it is listed with `read: false`; reading it returns `403 scope_violation`.
+### Writes queued on the device
+
+A client never wakes a computer to save a file unless the user agreed (or the wake setting is `auto`). A write made while the computer is asleep or unreachable waits on the device and is sent the next time the computer answers. It keeps the `base_rev` it was made against, so the rules above apply when it lands: if the file changed meanwhile it becomes a conflict copy, and if the file is gone `keep_both` creates it again. The codes that mean "wait" are `wake_consent_required`, `wake_denied`, `asleep`, `waking` and `offline` (including a network failure).
+
+| Client | Where the write waits | When it is sent |
+|---|---|---|
+| Web, phone layout, PWA (`src/lib/files-drive/outbox.ts` in allternit-ai) | IndexedDB on the device, "Waiting to send" in the upload list; memory only when storage is blocked | when the Files tab for that computer is open and the computer is awake (checked every minute and when the device comes back online, without waking it) |
+| iOS (`AllternitFileProvider`) | the system's pending upload (the extension answers `serverUnreachable`) | the system's retry, and at once on each app foreground (`signalErrorResolved`) |
+| Android (`FilesDrive` upload queue) | the upload record, state `waiting_wake`, "Waiting to send" in Files | when cloud-api's endpoints say the computer is awake (upload job with backoff, and the change poll) |
+
+Rename, move and delete are not queued: a stale `base_rev` has no keep-both form for them.
+
+## Chunked upload
+
+A file of 4 MiB or less can use the small write. Larger files, and any file that must resume, use an upload session.
+
+### Chunker
+
+| Parameter | Value |
+| --- | --- |
+| Algorithm | FastCDC, `v2020` |
+| Minimum chunk | 262144 bytes (256 KiB) |
+| Average chunk | 1048576 bytes (1 MiB) |
+| Maximum chunk | 4194304 bytes (4 MiB) |
+| Hash | blake3-256, lower-case hex |
+
+Clients must pass the shared vectors in `contracts/files-drive/vectors/chunker-v1.json`. The schema rejects a chunk bigger than 4 MiB. The relay caps a request body at 5 MiB, and a 4 MiB chunk leaves room for the envelope.
+
+### Flow
+
+1. Chunk the file and compute each chunk hash and the whole-file hash.
+2. `POST /chunks/have-need` with the hashes. The response lists what the computer still needs.
+3. `POST /uploads` with the target (a new file under `parent_id`, or `item_id` at `base_rev`), the size, the hash and the first chunk refs.
+4. `PUT /uploads/:session_id/chunks/:hash` for each needed chunk. For very large files, `POST /uploads/:session_id/chunks` appends more refs.
+5. `POST /uploads/:session_id/commit`. The runtime checks every chunk hash and the whole-file hash.
+
+A session survives a dropped connection until `expires_at`. `GET /uploads/:session_id` returns what is still needed, so a client resumes by sending only that. `DELETE /uploads/:session_id` cancels. Chunks are stored once per computer and shared between revisions.
+
+Commit and put errors: `chunk_hash_mismatch` (bytes do not match their hash), `chunk_missing` (a needed chunk was never sent), `manifest_invalid` (a bad manifest, or a whole-file hash that does not match).
+
+Write and upload-create requests can send `utc_offset_minutes` so the conflict name uses the editing device's local time.
 
 ## Change feed
 
-Each root has a change cursor. `GET /roots/{root_id}/changes?cursor=<cursor>&wait_s=25` returns the changes after the cursor and a new one; `wait_s` (at most 25) holds the request until something changes. When the cursor is too old the response has `reset_required: true` and the client lists the root again.
+Each root has a monotonic change cursor, formatted `c1.` plus an opaque string. Compare cursors only by asking the server.
 
-`GET /subscribe` opens a WebSocket. The client's first frame is a `SubscribeMessage`:
+- Poll: `GET /roots/:root_id/changes?cursor=&limit=&wait_s=`. `wait_s` is at most 25 and holds the request open until something changes.
+- Subscribe: open the WebSocket and send a `SubscribeMessage` with a cursor per root. The server sends `changes`, `reset`, `state` and `heartbeat` frames.
+- If the cursor is too old, the index was rebuilt or the root was removed, the answer is `reset_required: true` (poll) or a `reset` frame. List from scratch. `410 cursor_expired` is for a cursor that cannot be parsed or that names another root; treat it like a reset.
 
-```json
-{"type": "subscribe", "roots": [{"root_id": "rt_…", "cursor": "c1.…"}]}
+A held socket or long poll never counts as activity and never keeps a computer awake. When the computer sleeps the server sends `state: asleep` and closes.
+
+## Wake consent
+
+For `/api/v1/files/v2/*`, cloud-api does not call `wake_for_device` and does not touch the activity timer. Legacy `/api/v1/files/*` keeps its current wake behaviour until its callers move to v2.
+
+While a computer sleeps:
+
+- `roots`, `list`, `stat`, `changes` and name search are answered from the asleep snapshot, with `served_by: snapshot` and `computer_state: asleep`.
+- `content`, `manifest`, `chunks`, uploads, writes and content search return `wake_consent_required` (409) with a `WakeHint` (`setting`, `consent_path`), unless the request carries a valid wake ticket.
+
+### The consent call
+
+```http
+POST /api/v1/computer-files/:computer_id/wake-consent
 ```
 
-The server sends `changes` frames as files change, `reset` frames when a cursor expires or a root is removed, and a `heartbeat` every 25 seconds. A protected root without the unlock header closes the socket with reason `protected_root_locked`.
+The body is a `WakeConsentRequest` with a `WakeReason`. The computer's wake setting decides the result:
+
+| Setting | Result |
+| --- | --- |
+| `ask` (default) | The client has already asked the user. The call wakes the computer and returns a ticket. |
+| `auto` | Same, with no prompt. |
+| `never` | `wake_denied`. |
+
+The response is `{ticket, expires_at, computer_state: waking|awake, estimated_wake_s}`. Send the ticket in `x-allternit-wake-ticket` on later requests. A ticket lives 120 seconds, wakes its computer at most once, and can be sent on any number of requests to that one computer until it expires. The consent call records one activity touch, so the idle sweep does not put the computer back to sleep right after the wake. A transfer that outlasts the idle window asks for a new ticket.
+
+Get and set the setting with `GET` and `PUT /api/v1/computer-files/:computer_id/wake-settings`.
+
+### The snapshot
+
+The runtime writes file names, sizes and revisions, never contents, to the user's own R2 bucket. It writes only while awake: on a sleep notice, and at most every 5 minutes while changes are pending. Names are plain text in v2 (`names_encrypted: false`). Protected roots are left out, and `path_hint` and local paths are never included.
+
+## Transports and where a read comes from
+
+`GET /api/v1/computer-files/:computer_id/endpoints` returns transport candidates sorted by `priority`, lowest first.
+
+| Transport | Used for |
+| --- | --- |
+| `loopback` | The Desktop app talking to its own runtime. |
+| `mesh` | Between the owner's own devices. |
+| `relay` | Always available. The baseline. |
+| `gateway` | Guests. |
+
+Cloud computers are relay only. A client picks the first source that works: loopback, mesh, relay (awake only), a current replica on another device, the snapshot (metadata only), then the device's own cache.
+
+## Relay
+
+A client posts a `RelayRequest` to `POST /api/v1/runtime-devices/:computer_id/proxy` with `path` set to `/api/v1/files/v2/...`. The request body is `{method, path, headers, body, body_encoding}`. cloud-api accepts `body_encoding` and the older `bodyEncoding`. The relay streams the runtime's raw response back.
+
+The relay passes these request headers through to the runtime:
+
+| Header | Purpose |
+| --- | --- |
+| `x-allternit-wake-ticket` | The wake ticket from the consent call. |
+| `range` | Partial reads of `content`. |
+| `if-match` | Revision precondition. |
+| `x-allternit-unlock` | Unlock proof for a protected root. |
+| `x-allternit-device-id` | Which of the owner's devices is calling. |
+
+The relay caps a request body at 5 MiB, measured as the decoded size. Live change-feed sockets use the existing socket-ticket flow.
+
+The computer ID is the cloud-api `computer_id`.
+
+## Sharing routes
+
+| Method and path | Purpose |
+| --- | --- |
+| `POST /api/v1/computer-files/:computer_id/shares` | Create a share. |
+| `GET /api/v1/computer-files/:computer_id/shares` | List shares. |
+| `DELETE /api/v1/computer-files/shares/:share_id` | Revoke. Applies on the guest's next request. |
+| `GET /api/v1/computer-files/shares/:share_id/access` | Audit rows. |
+| `GET /api/v1/files-gateway/summary` | Public summary for a link. |
+| `POST /api/v1/files-gateway/redeem` | Exchange a link and passcode for a guest session. |
+| `/api/v1/files-gateway/v2/*` | The guest subset of the runtime routes. |
+
+Guests send `Authorization: Files-Guest` followed by a capability token. See the [sharing guide](/guides/files-sharing).
+
+The guest page at `ai.allternit.com/s/` followed by the link token calls summary first, then redeem with the passcode when `passcode_required` comes back. It sends `Authorization: Files-Guest` on the v2 routes and redeems again about a minute before the token lapses (tokens last one hour), so a long visit does not ask for the passcode twice. Error codes it handles: `passcode_required`, `passcode_invalid`, `rate_limited`, `share_expired`, `share_revoked`, `not_found`, `guest_wake_not_allowed`. The owner's share dialog creates a share with `role`, optional `expires_at`, `passcode`, `invite_emails` and `guest_wake`. The "let an agent process files" switch is not part of the share. It updates the root policy field `agent_process`.
+
+### Capability tokens
+
+Wake tickets and guest tokens share one format: a prefix, the claims as base64url JSON, and an Ed25519 signature, joined by dots. The prefix is `awt1` for a wake ticket and `fgt1` for a guest token. cloud-api signs them. Runtimes fetch public keys from `GET /api/v1/computer-files/token-keys` and verify offline.
+
+Two checks apply to a guest. The gateway checks the token and whether the share is revoked. The runtime then checks scope (computer, root, item, role) on every request. Roles are `view_download`, `upload_only`, `edit` and `comment`. An `upload_only` guest cannot list. A passcode is checked at redeem (`passcode_required`, `passcode_invalid`). A guest never wakes the owner's computer unless the share has `guest_wake: true`.
+
+## Principals
+
+| Principal | Authenticates with | Reaches |
+| --- | --- | --- |
+| `owner` | The user's session or API token | All roots on their computers. |
+| `own_device` | The owner token plus `x-allternit-device-id`, or mesh identity | Same as owner. Pins and caches are per device. |
+| `guest` | A capability token | One folder or file, one role. |
+| `agent` | The runtime session with an `AgentGrant` | Only the roots and tools in the grant. |
+
+`agent_process` is separate from share roles, and `transfer` is separate from `execute`.
+
+## Events
+
+| Event | When |
+| --- | --- |
+| `files.changed` | A create, modify, move, rename, delete, trash or restore. |
+| `files.inbox.dropped` | A file landed in Inbox. Carries `untrusted` and the task state. |
+| `files.task.result` | An Inbox or folder-rule task finished, failed or was rejected. |
+| `files.share.accessed` | Every guest access, allowed or denied. |
+| `files.conflict` | A write landed as a conflict copy. |
+
+## Versions and trash
+
+Each root keeps versions by count and age. `keep_days` counts from the time a version was replaced, and 0 means no limit. Delete moves to trash unless `permanent` is set. `trash_days: 0` deletes at once. A write whose `base_rev` names a file that is now gone creates it with `keep_both`, and returns `not_found` with `fail` or `replace`.
+
+The web Files tab lists versions per file and trash per root, and restores either. A restore into a taken name returns the item under a new name. There is no route yet to download an old version or to empty the trash.
+
+## Search and intelligence
+
+The runtime indexes the text of files on the computer that owns them. The index lives in `intel.sqlite` beside the engine database and never leaves the computer.
+
+### Search modes
+
+`POST /search` takes `mode`:
+
+- `name`: the file name contains the query. Always available.
+- `full_text`: words inside files and names, ranked by relevance (SQLite FTS5, bm25). Words match any-of, best match first. Put the query in double quotes to match a phrase. Each hit carries a `snippet` of the matching text.
+- `semantic`: files closest in meaning to the query, using the local embedding endpoint (`ALLTERNIT_EMBED_URL`, by default the loopback model on port 7719). With no model reachable the route answers `501 unsupported`, and no vectors are made. The hash fallback the memory index uses is not used here, because it carries no meaning.
+
+`index_state` is `building` until the background worker has caught up with the files, then `ready`. Searches only return files in roots the caller may read. A caller that is an agent sees only roots whose policy allows `agent_process`. A guest gets no hits from these routes; guests search inside their share through the sharing gateway. Snippets are file content and are never returned to a guest. A protected root needs the unlock header, as everywhere else.
+
+### What is indexed, and when
+
+- **What is read.** Text files (UTF-8, no NUL bytes in the first 8 KiB, up to 2 MiB), PDFs (up to 20 MiB, the first 50 pages, 5 seconds of extraction) and the text of Word `.docx` files. Text is capped at 2 MiB per file. A PDF that is encrypted, broken or over a cap is skipped. Spreadsheets, slides and audio are not read yet. Images get a thumbnail and no text.
+- **Only while the computer is awake (D12).** Indexing, embeddings and previews run on one background thread inside the runtime process. They never wake a computer, never reset its idle timer, and use no company compute. The embedding call goes to the endpoint on the computer.
+- **CPU budget.** One thread at low priority (niced on Linux), held to a duty cycle of **25% of one core** by default: after each file it rests three times as long as the file took. At most 8 files per pass. When a pass finds nothing the wait before the next doubles from 30 seconds up to 5 minutes. Set `ALLTERNIT_FILES_INTEL_CPU_PERCENT` (1 to 100), `ALLTERNIT_FILES_INTEL_BATCH` (1 to 200) or `ALLTERNIT_FILES_INTEL=off` to change it. This keeps a 2 CPU, 4 GB cloud computer usable for the user's own work.
+- **Protected roots are skipped.** The Memory Drive and any root with `protected: true` are not indexed. The owner can opt a root in with `PUT /intel/roots/{root_id}` and `{"index": true}`, which needs the device unlock and does not work over a relay. Opting out removes what was indexed.
+
+### Routes
+
+| Method | Path | Notes |
+|---|---|---|
+| `GET` | `/intel/status` | Index progress, models in use, the CPU budget |
+| `PUT` | `/intel/roots/{root_id}` | `{"index": bool}`: opt a protected root in or out (owner only) |
+| `GET`, `POST` | `/intel/tags` | Tag counts. `POST {item_id, add, remove}` changes an item's tags (needs write access) |
+| `GET` | `/intel/tags/{tag}/items` | Items with a tag, readable ones only |
+| `POST` | `/intel/provenance` | `{item_id, provenance}`. A change from an agent is always `ai_generated: true` |
+| `GET` | `/intel/dedup?root_id=` | Groups of files with the same content hash, with the bytes saved by keeping one |
+| `GET`, `POST` | `/intel/collections` | List, or create `{name}` (owner only) |
+| `GET`, `POST`, `DELETE` | `/intel/collections/{id}` | Items in it, `POST {item_id, remove?}` to add or remove, delete |
+| `GET` | `/items/{item_id}/preview?kind=` | `thumbnail` (PNG, 256 px) or `text` (first 2000 characters). `404` until indexed, never the preview of an older version |
+| `POST` | `/intel/actions` | `{item_id, action}`: `summarize` is extractive (sentences picked from the file, no model); `transcribe` returns `501 unsupported` |
+| `GET`, `POST` | `/intel/rules` | Folder rules (owner only): `{folder_id, action: "summarize"}` summarizes new and changed files under that folder |
+| `DELETE` | `/intel/rules/{id}` | Remove a rule |
+
+Items returned anywhere carry `tags`, `provenance` (shown by clients as an AI-generated label when `ai_generated` is true) and `has_thumbnail` when they exist. Summaries and transcripts are never made on their own: only an explicit action or a folder rule the owner created runs them.
 
 ## Errors
 
-Every error is an `ErrorBody`: `{error, code, message}` plus Files fields (`current`, `missing_chunks`, `retry_after_s`, `computer_state`, `wake`). `error` and `code` hold the same code.
+Every error body is `ErrorBody`: `{error, message, code}` plus optional `retry_after_s`, `computer_state`, `wake`, `current` and `missing_chunks`. `error` and `code` both hold the error code.
 
 | HTTP | Codes |
-|---|---|
+| --- | --- |
 | 400 | `invalid_request`, `invalid_name`, `manifest_invalid`, `chunk_hash_mismatch` |
-| 401 | `unauthorized` |
-| 403 | `forbidden`, `feature_disabled`, `scope_violation`, `protected_root_locked` |
+| 401 | `unauthorized`, `passcode_required`, `passcode_invalid` |
+| 403 | `forbidden`, `feature_disabled`, `scope_violation`, `protected_root_locked`, `agent_process_denied`, `execute_denied`, `guest_wake_not_allowed`, `wake_denied` |
 | 404 | `not_found`, `root_not_found`, `upload_session_not_found` |
-| 409 | `already_exists`, `rev_mismatch`, `chunk_missing` |
-| 410 | `upload_session_expired`, `cursor_expired` |
+| 409 | `already_exists`, `rev_mismatch`, `wake_consent_required`, `chunk_missing` |
+| 410 | `share_expired`, `share_revoked`, `upload_session_expired`, `cursor_expired` |
 | 413 | `payload_too_large` |
 | 422 | `integrity_failed` |
-| 501 | `unsupported` |
+| 429 | `rate_limited` |
 | 500 | `internal` |
+| 501 | `unsupported` |
+| 503 | `asleep`, `waking`, `offline`, `replica_unavailable`, `key_unavailable` |
+| 507 | `quota_exceeded` |
 
-The full table, including the cloud-api and guest codes, is in section 16 of `contracts/files-drive/SPEC.md`.
+## Try it without a runtime
+
+`node tools/files-stub/server.mjs` in the platform repo serves this contract from memory on `http://127.0.0.1:47820`, with switches for asleep, waking, conflict, slow, guest and error cases.

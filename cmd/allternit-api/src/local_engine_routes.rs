@@ -170,6 +170,11 @@ async fn proxy_import_model(
     if get_user(&headers).is_none() {
         return unauthorized();
     }
+    // A model package copied over the Files drive without run permission
+    // (`.allternit-package.json` with `execute: false`) is refused here.
+    if let Some(refused) = crate::files_v2::models::import_gate(&body) {
+        return refused;
+    }
     proxy_post("/models/import", body).await
 }
 
@@ -205,6 +210,10 @@ async fn proxy_launch_runtime(
 ) -> Response {
     if get_user(&headers).is_none() {
         return unauthorized();
+    }
+    // Same run-permission check for a launch by path or by imported model id.
+    if let Some(refused) = crate::files_v2::models::launch_gate(&body, &local_engine_url()).await {
+        return refused;
     }
     proxy_post("/runtimes/launch", body).await
 }
