@@ -387,6 +387,7 @@
 		7E4808C750D597329F68A758 /* AutomationScheduleGraphView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41E758C5D594CCBDB28AC87F /* AutomationScheduleGraphView.swift */; };
 		7E6763331A19FCCF56B3B5CD /* ControlIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2EDB46F04BBA1DCA3AFA758 /* ControlIntents.swift */; };
 		7F2FA20199B56C9B95025210 /* BrainGit.swift in Sources */ = {isa = PBXBuildFile; fileRef = 085224ED867F904E2D827ED7 /* BrainGit.swift */; };
+		7F4C6D7DC1C5C0622A3D9F2C /* ProjectPadCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 718653666538E625C6D0189D /* ProjectPadCard.swift */; };
 		812E56684939937BA283C336 /* StatusSnapshotWriter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 402E00436036ADCE4A388143 /* StatusSnapshotWriter.swift */; };
 		8146D4C88A0E01D132A3FFBE /* ShareOutboxDrainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C82B102712C353C6D94CCC8 /* ShareOutboxDrainer.swift */; };
 		819AC1D939BC82773FF58BE4 /* libiconv.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = 155758E1014D4AE63687BCED /* libiconv.tbd */; };
@@ -1168,6 +1169,7 @@
 		708964A04AD9EA1B5D2AEFE0 /* ArtifactStudioView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArtifactStudioView.swift; sourceTree = "<group>"; };
 		7094251BB7EE86DAAB76508E /* BotModeClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotModeClient.swift; sourceTree = "<group>"; };
 		710AE85468E0813848153C35 /* PadTemplatesClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PadTemplatesClientTests.swift; sourceTree = "<group>"; };
+		718653666538E625C6D0189D /* ProjectPadCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectPadCard.swift; sourceTree = "<group>"; };
 		71DCBD7B3A0D4FD2336DBBDF /* SelfHostedSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SelfHostedSettingsView.swift; sourceTree = "<group>"; };
 		7355CA3620D382F4B41E9531 /* VPSServersManagerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VPSServersManagerView.swift; sourceTree = "<group>"; };
 		74AAFC624B283761154C5E82 /* ChangesetReviewSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChangesetReviewSheet.swift; sourceTree = "<group>"; };
@@ -1833,6 +1835,7 @@
 				6BF08861508C7252E3641B3A /* NewProjectSheet.swift */,
 				D63FE7A9FEDE8E97F54E685E /* PadEditSheet.swift */,
 				14C7FAC880FC030ADA98B110 /* ProjectDetailView.swift */,
+				718653666538E625C6D0189D /* ProjectPadCard.swift */,
 				FBCF58B80B9DDFD0F36F5ACD /* ProjectPadView.swift */,
 				AD4A6EAC43075AE58679AEF3 /* ProjectsListView.swift */,
 			);
@@ -3971,6 +3974,7 @@
 				7736F9534238046DA13B14B9 /* ProductsSettingsView.swift in Sources */,
 				85E30D388DC19F88041D1530 /* ProjectDashboard.swift in Sources */,
 				37461B42AB20995C665DD296 /* ProjectDetailView.swift in Sources */,
+				7F4C6D7DC1C5C0622A3D9F2C /* ProjectPadCard.swift in Sources */,
 				CBF201806A3809BF9A604205 /* ProjectPadStore.swift in Sources */,
 				0B87381BF0B06D619102BC8E /* ProjectPadView.swift in Sources */,
 				A462907889B0CB124DE22969 /* ProjectStore.swift in Sources */,

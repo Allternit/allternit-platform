@@ -55,7 +55,6 @@ struct ProjectDetailView: View {
     @StateObject private var padStore: ProjectPadStore
     @ObservedObject private var padTemplates = PadTemplatesStore.shared
     @State private var folderAppearance: Appearance? = nil
-    @State private var viewOverride: PadView? = nil
 
     // The project's coordinator (project-workspaces): registered on first use.
     @State private var coordinatorId: String? = nil
@@ -407,42 +406,21 @@ struct ProjectDetailView: View {
         return fromChats + fromBot
     }
 
-    /// The tab card (folder tab, mode, Needs-you bar, Pad | List, Edit) and
-    /// what it holds: the pad, the list, or today's dashboard for a project
-    /// that still has an old Style.
+    /// The tab card (folder tab, mode, Needs-you bar, Pad | List, Edit).
     private var projectPadCard: some View {
         let data = boardData
-        let pad = padStore.pad
-        let canEdit = padStore.status != .signedOut
-        let needsCount = data.needsYou.count + (data.needsYou.isEmpty && data.statusNeedsYou ? 1 : 0)
-        let needsText: String = {
-            if let first = data.needsYou.first { return first.title }
-            return data.nextAction.isEmpty ? (data.blockers.isEmpty ? (data.stateLabel ?? "Check the status page") : data.blockers) : data.nextAction
-        }()
-        let shownView = viewOverride ?? pad.view
-        return ProjectTabCard(
+        return ProjectPadCard(
+            store: padStore,
+            looks: looks,
+            data: data,
+            threads: padThreads,
             title: liveProject.title,
             modeLabel: "Chat project",
             colorHex: folderAppearance?.color ?? Appearance.defaultColor,
-            view: shownView,
-            onViewChange: { newView in
-                viewOverride = newView
-                if canEdit { padStore.save { $0.view = newView } }
-            },
-            onEdit: canEdit ? { sheet = .padEdit } : nil,
-            needsCount: needsCount,
-            needsText: needsText,
+            onEdit: { sheet = .padEdit },
             onNeeds: { (data.needsYou.first?.open ?? { sheet = .status })() },
-            statusLine: padStore.statusMessage ?? padStore.error
-        ) {
-            if shownView == .list {
-                ProjectPadListView(data: data, threads: padThreads) { sheet = .status }
-            } else if pad.layout.style != nil {
-                ProjectDashboardView(layout: looks.look.layout, look: looks.look, data: data, title: liveProject.title) { sheet = .status }
-            } else {
-                ProjectPadView(store: padStore, data: data, threads: padThreads, title: liveProject.title) { sheet = .status }
-            }
-        }
+            onStatus: { sheet = .status }
+        )
     }
 
     private var boardData: ProjectBoardData {
