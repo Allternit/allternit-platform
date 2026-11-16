@@ -66,7 +66,7 @@ export function QuickTaskOverlay({ isOpen, onClose, onSubmit }: QuickTaskOverlay
         if (e.target === e.currentTarget) onClose()
       }}
     >
-      <div className="mt-16 w-full max-w-md rounded-xl border border-[var(--accent-primary,#B08D6E)]/20 bg-[var(--bg-primary,#FDF8F3)] p-4 shadow-2xl">
+      <div className="mt-16 w-full max-w-md rounded-xl border border-[var(--accent-primary,#1F1E1D)]/20 bg-[var(--bg-primary,#FDF8F3)] p-4 shadow-2xl">
         <div className="mb-3 flex items-center justify-between">
           <h2 className="text-sm font-semibold text-[var(--text-primary,#2A1F16)]">
             Quick Task
@@ -87,7 +87,7 @@ export function QuickTaskOverlay({ isOpen, onClose, onSubmit }: QuickTaskOverlay
           onChange={(e) => setTask(e.target.value)}
           placeholder="What would you like Allternit to do?"
           rows={3}
-          className="w-full resize-none rounded-lg border border-[var(--accent-primary,#B08D6E)]/30 bg-white p-3 text-sm text-[var(--text-primary,#2A1F16)] placeholder:text-[var(--text-primary,#2A1F16)]/40 focus:border-[var(--accent-primary,#B08D6E)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary,#B08D6E)]/20"
+          className="w-full resize-none rounded-lg border border-[var(--accent-primary,#1F1E1D)]/30 bg-white p-3 text-sm text-[var(--text-primary,#2A1F16)] placeholder:text-[var(--text-primary,#2A1F16)]/40 focus:border-[var(--accent-primary,#1F1E1D)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary,#1F1E1D)]/20"
         />
 
         <div className="mt-2 flex items-center justify-between">
@@ -97,14 +97,14 @@ export function QuickTaskOverlay({ isOpen, onClose, onSubmit }: QuickTaskOverlay
           <button
             onClick={handleSubmit}
             disabled={!task.trim()}
-            className="rounded-md bg-[var(--accent-primary,#B08D6E)] px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-[var(--accent-primary,#B08D6E)]/90 disabled:cursor-not-allowed disabled:opacity-50"
+            className="rounded-md bg-[var(--accent-primary,#1F1E1D)] px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-[var(--accent-primary,#1F1E1D)]/90 disabled:cursor-not-allowed disabled:opacity-50"
           >
             Run Task
           </button>
         </div>
 
         {recentTasks.length > 0 && (
-          <div className="mt-3 border-t border-[var(--accent-primary,#B08D6E)]/10 pt-2">
+          <div className="mt-3 border-t border-[var(--accent-primary,#1F1E1D)]/10 pt-2">
             <p className="mb-1.5 text-[10px] font-medium uppercase tracking-wider text-[var(--text-primary,#2A1F16)]/50">
               Recent
             </p>
