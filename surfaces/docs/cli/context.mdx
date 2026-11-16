@@ -20,6 +20,7 @@ The command has two forms:
 |------|------|--------|
 | `/context` | Interactive TUI | Colored grid, legends, and category tables |
 | `/context` | Non-interactive (`gizzi exec` / CI) | Plain markdown tables |
+| `/context files` | Both | The files read into this session's context |
 
 ## Basic usage
 
@@ -191,3 +192,11 @@ earlier. Unknown provider TTLs have no countdown. Native requests with a known T
 currently use five-minute ephemeral markers; Gizzi's interactive cache path
 uses its configured five-minute or one-hour TTL. No keepalive requests
 are sent. Miss counts and causes are omitted when not reported.
+
+## Files in context
+
+`/context files` lists the files the agent has read into this session, as paths relative to the working folder. It was the `/files` command until the Files drive took that name; `/files` now browses your computers' files (see [Files drive in the terminal](/cli/files)).
+
+```text
+/context files
+```

@@ -1,4 +1,5 @@
 import { feature } from 'bun:bundle'
+import { filesInContext, wantsFilesInContext } from './files-in-context'
 import { microcompactMessages } from '../../services/compact/microCompact'
 import type { AppState } from '../../state/AppStateStore'
 import type { Tools, ToolUseContext } from '../../Tool'
@@ -70,9 +71,11 @@ export async function collectContextData(
 }
 
 export async function call(
-  _args: string,
+  args: string,
   context: ToolUseContext,
 ): Promise<{ type: 'text'; value: string }> {
+  // `/context files`: the old `/files` list (that name now belongs to the Files drive).
+  if (wantsFilesInContext(args)) return { type: 'text' as const, value: filesInContext(context) }
   const data = await collectContextData(context)
   return {
     type: 'text' as const,

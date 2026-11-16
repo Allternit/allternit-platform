@@ -65,6 +65,9 @@ pub struct HttpConfig {
     pub device_name: String,
     /// The user agreed to wake this computer for content reads and writes.
     pub allow_wake: bool,
+    /// A wake ticket the caller already holds (`gizzi files put` after its own
+    /// consent prompt) and its `expires_at`, so this process doesn't ask again.
+    pub wake_ticket: Option<(String, String)>,
 }
 
 fn env(name: &str) -> Option<String> {
@@ -92,6 +95,7 @@ impl HttpConfig {
             device_id: env("ALLTERNIT_FILES_DEVICE_ID").unwrap_or_else(|| "dev_mount_unknown".to_string()),
             device_name: env("ALLTERNIT_FILES_DEVICE_NAME").unwrap_or_else(|| "Linux mount".to_string()),
             allow_wake: env("ALLTERNIT_FILES_ALLOW_WAKE").is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true")),
+            wake_ticket: env("ALLTERNIT_FILES_WAKE_TICKET").zip(env("ALLTERNIT_FILES_WAKE_TICKET_EXPIRES")),
         })
     }
 }
@@ -161,7 +165,8 @@ impl HttpBackend {
             .timeout(Duration::from_secs(120))
             .build()
             .map_err(|e| format!("http client: {e}"))?;
-        Ok(Self { cfg, client, ticket: Mutex::new(None) })
+        let ticket = cfg.wake_ticket.as_ref().map(|(t, exp)| (t.clone(), Instant::now() + Duration::from_secs(seconds_left(exp))));
+        Ok(Self { cfg, client, ticket: Mutex::new(ticket) })
     }
 
     pub fn config(&self) -> &HttpConfig {
@@ -198,9 +203,7 @@ impl HttpBackend {
             expires_at: String,
         }
         let t: Ticket = serde_json::from_slice(&body).map_err(|e| MountError::new("internal", status, format!("wake consent answer: {e}")))?;
-        let left = chrono::DateTime::parse_from_rfc3339(&t.expires_at)
-            .map(|at| (at.timestamp() - chrono::Utc::now().timestamp()).max(0) as u64)
-            .unwrap_or(60);
+        let left = seconds_left(&t.expires_at);
         tracing::info!(computer = %self.cfg.computer_id, "woke the computer (consent given when mounting)");
         *self.ticket.lock().expect("ticket lock") = Some((t.ticket, Instant::now() + Duration::from_secs(left)));
         Ok(())
@@ -307,7 +310,7 @@ impl HttpBackend {
     }
 
     /// Upload session (SPEC section 5): pinned chunker, have/need, resume missing once.
-    fn upload(&self, root_id: &str, parent_id: &str, name: &str, replace: Option<&Item>, on_conflict: OnConflict, src: &Path) -> Result<Item> {
+    fn upload(&self, root_id: &str, parent_id: &str, name: &str, replace: Option<(&str, &str)>, on_conflict: OnConflict, src: &Path) -> Result<Item> {
         let chunked = chunker::chunk_reader(File::open(src).map_err(MountError::io)?, |_| Ok(()))
             .map_err(|e| MountError::new("internal", 0, format!("chunking: {e}")))?;
         let mut create = json!({
@@ -323,9 +326,9 @@ impl HttpBackend {
             "device_name": self.cfg.device_name,
             "utc_offset_minutes": utc_offset_minutes(),
         });
-        if let Some(item) = replace {
-            create["item_id"] = json!(item.id);
-            create["base_rev"] = json!(item.rev);
+        if let Some((id, rev)) = replace {
+            create["item_id"] = json!(id);
+            create["base_rev"] = json!(rev);
         }
         let mut status: UploadStatus = self.json_call("POST", "/uploads", Body::Json(create))?;
         for page in chunked.chunks.chunks(REFS_PER_PAGE).skip(1) {
@@ -355,6 +358,35 @@ impl HttpBackend {
         }
         Ok(commit.item)
     }
+
+    /// Write the local file `src` as `name` in `parent_id`, replacing the item
+    /// `(id, rev)` when given: a small write up to 4 MiB, an upload session
+    /// above. `gizzi files put` reaches this through the `put` command (`main.rs`).
+    pub fn put_file(&self, root_id: &str, parent_id: &str, name: &str, replace: Option<(&str, &str)>, on_conflict: OnConflict, src: &Path) -> Result<Item> {
+        let size = std::fs::metadata(src).map_err(MountError::io)?.len();
+        if size > SMALL_WRITE_MAX {
+            return self.upload(root_id, parent_id, name, replace, on_conflict, src);
+        }
+        let bytes = std::fs::read(src).map_err(MountError::io)?;
+        let conflict = serde_json::to_value(on_conflict).ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_else(|| "keep_both".into());
+        let mut q = format!(
+            "/roots/{}/content?parent_id={}&name={}&on_conflict={}&device_name={}&utc_offset_minutes={}",
+            enc(root_id),
+            enc(parent_id),
+            enc(name),
+            conflict,
+            enc(&self.cfg.device_name),
+            utc_offset_minutes()
+        );
+        if let Some((_, rev)) = replace {
+            q.push_str(&format!("&base_rev={}", enc(rev)));
+        }
+        let m: MutationResponse = self.call("PUT", &q, &[], Body::Bytes(bytes))?.json()?;
+        if let Some(c) = &m.conflict {
+            tracing::warn!(name = %name, copy = %c.conflict_name, "changed elsewhere: saved as a conflict copy");
+        }
+        Ok(m.item)
+    }
 }
 
 /// The Files stub (`tools/files-stub`) wraps relayed answers in
@@ -383,6 +415,11 @@ fn unwrap_stub_envelope(res: Resp) -> Resp {
         }
         Err(_) => res,
     }
+}
+
+/// Seconds until an RFC 3339 time (60 when it can't be read).
+fn seconds_left(at: &str) -> u64 {
+    chrono::DateTime::parse_from_rfc3339(at).map(|at| (at.timestamp() - chrono::Utc::now().timestamp()).max(0) as u64).unwrap_or(60)
 }
 
 fn enc(s: &str) -> String {
@@ -438,29 +475,7 @@ impl Backend for HttpBackend {
     }
 
     fn write(&self, root_id: &str, parent_id: &str, name: &str, replace: Option<&Item>, on_conflict: OnConflict, src: &Path) -> Result<Item> {
-        let size = std::fs::metadata(src).map_err(MountError::io)?.len();
-        if size > SMALL_WRITE_MAX {
-            return self.upload(root_id, parent_id, name, replace, on_conflict, src);
-        }
-        let bytes = std::fs::read(src).map_err(MountError::io)?;
-        let conflict = serde_json::to_value(on_conflict).ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_else(|| "keep_both".into());
-        let mut q = format!(
-            "/roots/{}/content?parent_id={}&name={}&on_conflict={}&device_name={}&utc_offset_minutes={}",
-            enc(root_id),
-            enc(parent_id),
-            enc(name),
-            conflict,
-            enc(&self.cfg.device_name),
-            utc_offset_minutes()
-        );
-        if let Some(item) = replace {
-            q.push_str(&format!("&base_rev={}", enc(&item.rev)));
-        }
-        let m: MutationResponse = self.call("PUT", &q, &[], Body::Bytes(bytes))?.json()?;
-        if let Some(c) = &m.conflict {
-            tracing::warn!(name = %name, copy = %c.conflict_name, "changed elsewhere: saved as a conflict copy");
-        }
-        Ok(m.item)
+        self.put_file(root_id, parent_id, name, replace.map(|i| (i.id.as_str(), i.rev.as_str())), on_conflict, src)
     }
 
     fn mkdir(&self, parent_id: &str, name: &str) -> Result<Item> {

@@ -21,6 +21,8 @@ http://127.0.0.1:8013/api/v1/files/v2
 
 Other devices reach the same routes through the cloud relay: `POST /api/v1/runtime-devices/{computer_id}/proxy` with `path` set to `/api/v1/files/v2/...`.
 
+From a terminal, `gizzi files` and the TUI `/files` command speak this API, and `gizzi files mount` shows a computer's drive as a FUSE or WebDAV folder on Linux. See [Files drive in the terminal](/cli/files).
+
 ## Authentication and callers
 
 Requests go through the platform auth middleware like every other runtime route. The runtime then decides the **principal**:

@@ -1,10 +1,17 @@
 import type { Command } from '../../commands'
 
+/**
+ * `/files`: the Files drive (contracts/files-drive, SPEC section 18). Browse a
+ * computer's folders, versions, trash and share links without leaving the
+ * session. It only reads, and browsing never wakes a computer; changes and
+ * downloads go through `gizzi files …`, which asks before waking one.
+ * The files-in-context list that used to live here is `/context files`.
+ */
 const files = {
   type: 'local',
   name: 'files',
-  description: 'List all files currently in context',
-  isEnabled: () => process.env.USER_TYPE === 'ant',
+  description: "Browse your computers' files (the Files drive). Files in context: /context files",
+  argumentHint: '[ls] [computer:]Folder/sub | versions <path> | trash [folder] | search <text> | shares',
   supportsNonInteractive: true,
   load: () => import('./files.js'),
 } satisfies Command

@@ -4785,7 +4785,13 @@
         "allternit/cmd/allternit-api/src/file_routes.rs",
         "allternit/cmd/allternit-api/src/files_v2",
         "allternit/cmd/allternit-cloud-api/src/routes/runtime_relay.rs",
-        "allternit/tools/files-stub"
+        "allternit/tools/files-stub",
+        "allternit/platform/files/allternit-files-mount",
+        "allternit/cmd/gizzi-code/src/cli/commands/files.ts",
+        "allternit/cmd/gizzi-code/src/cli/files/drive.ts",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/commands/files",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/commands/context/files-in-context.ts",
+        "allternit/surfaces/docs/cli/files.mdx"
       ],
       "decisions": [
         {

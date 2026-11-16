@@ -1,0 +1,127 @@
+---
+title: "Files drive in the terminal"
+description: "gizzi files lists, copies, shares and mounts the files on your computers, and the TUI /files command browses them. Browsing never wakes a sleeping computer."
+---
+
+`gizzi files` works with the Files drive: the folders on each of your Allternit computers (Inbox, Shared, Agent Output, Downloads, Meetings, Scans, Memory Drive, Code, Models and folders you added). It uses the same Files protocol as the web app, the phone apps and Finder or Explorer, so a change made here shows everywhere.
+
+<Note>
+The Files drive is turned on per account while it is in preview. Without it, every command answers `feature_disabled`.
+</Note>
+
+## Paths
+
+A path is `computer:Folder/sub/file`.
+
+- `"Cloud computer":Inbox/lease.pdf` names a file on the computer called Cloud computer. Quote names with spaces.
+- `Inbox/lease.pdf` (no computer part) means `--computer`, or this machine when its Allternit runtime is running, or your only computer.
+- `:Inbox/` is the same default computer, written so that `cp` can tell it from a local path.
+- The first folder can be any of the computer's folders: `Inbox/x.pdf` and `Allternit/Inbox/x.pdf` are the same file.
+
+`gizzi computers ls` lists the computer names and ids.
+
+## Asleep computers and waking
+
+Cloud computers sleep when idle. Files is built so that looking never costs anything:
+
+- **Browsing never wakes a computer.** `ls`, `search` by name, `versions` and `trash ls` on a sleeping computer answer from the list it saved before it slept, and say so: `asleep · saved list from 2:14 PM · browsing is free`.
+- **Content asks first.** `cat`, `get`, `put` and content search need the computer awake. In a terminal, gizzi asks: `Cloud computer is asleep. Wake it? About 40 seconds, billed at your plan's awake rate. [y/N/always]`. Answer `always` to set the computer's wake setting to auto.
+- `--wake` answers yes without asking. With `--json`, gizzi never asks: it prints the `wake_consent_required` error so a script can decide.
+- `gizzi files wake-setting "Cloud computer" ask|auto|never` changes the setting. `never` refuses every wake from Files.
+- `gizzi files wake "Cloud computer"` wakes it on purpose (it asks; `--yes` skips the question).
+
+Your own devices (a Mac, a PC, a Linux box) can't be woken from here. When one is off, its files show as offline.
+
+## Commands
+
+Every command takes `--json` and `--computer` (`-c`).
+
+| Command | What it does |
+|---|---|
+| `gizzi files ls [path]` | The computer's folders, or one folder. Marks pinned files and conflict copies |
+| `gizzi files cat path` | Prints a file to stdout |
+| `gizzi files get path [dest]` | Downloads a file. `--resume` continues a download that stopped |
+| `gizzi files put src dest` | Uploads a local file into a folder, or replaces the file at `dest` |
+| `gizzi files cp src dest` | `put`, `get`, or a copy inside one computer, chosen by which side is remote |
+| `gizzi files mv src dest` | Renames or moves inside one computer. `--replace` overwrites a file at `dest` |
+| `gizzi files rm path` | Moves to the trash. `--permanent` deletes for good (asks, or `--yes`) |
+| `gizzi files mkdir path` | Makes a folder. `-p` makes missing parents |
+| `gizzi files share path` | Makes a share link. `--role`, `--expires 7d`, `--passcode`, `--guest-wake`, `--invite` |
+| `gizzi files share --list` | Lists the computer's share links. `--revoke share_id` ends one |
+| `gizzi files pin path` / `unpin path` | Keeps a file or folder offline on this device, or stops |
+| `gizzi files versions path` | Lists a file's versions |
+| `gizzi files versions restore path n` | Restores version `n` (or a version id) |
+| `gizzi files trash ls [Folder]` | Lists the trash and the days left before each item is purged |
+| `gizzi files restore name` | Brings an item back from the trash (also `trash restore`) |
+| `gizzi files search text` | Finds files by name. `--mode full_text` or `semantic` needs the computer awake |
+| `gizzi files wake [computer]` | Wakes a sleeping cloud computer |
+| `gizzi files wake-setting [computer] [setting]` | Shows or sets ask, auto or never |
+| `gizzi files mount [mountpoint]` | Shows the drive as a folder (see below). No argument lists mounts |
+| `gizzi files unmount [mountpoint]` | Stops a mount, or all of them |
+
+```bash
+gizzi files ls "Cloud computer":Inbox
+gizzi files put ./report-final.docx "Cloud computer":Inbox/
+gizzi files share Inbox/lease-draft.pdf --role view_download --expires 7d --passcode
+gizzi files versions restore Inbox/lease-draft.pdf 2
+```
+
+### Conflicts
+
+Every change carries the version gizzi last saw. When the file changed somewhere else in between, nothing is overwritten: the upload lands next to it as `name (conflict device YYYY-MM-DD HHmm).ext`, using this machine's local time, and gizzi prints the new name. `--on-conflict fail` refuses instead; `--on-conflict replace` only settles a name clash and never overwrites a newer file.
+
+### Big files
+
+Files up to 4 MB go in one request. Bigger files are cut into pieces of up to 4 MB with the same chunker every Allternit client uses, so a piece the computer already has is not sent again. Big uploads use the `allternit-files-mount` helper (it ships with Allternit Desktop and the gizzi package; `ALLTERNIT_FILES_MOUNT_BIN` points to another copy).
+
+### Share roles
+
+| Role | Guests can |
+|---|---|
+| `view_download` | see and download |
+| `upload_only` | drop files in, without seeing what is there |
+| `edit` | change and add files |
+| `comment` | see and comment |
+
+Guests never wake your computer unless you pass `--guest-wake`, which bills the awake time to you. A file dropped on a sleeping computer waits in your own storage and lands in Inbox the next time it wakes.
+
+## Mount the drive as a folder
+
+```bash
+gizzi files mount ~/Allternit --computer "Cloud computer"
+ls ~/Allternit
+gizzi files unmount ~/Allternit
+```
+
+- **Linux** mounts with FUSE through `fusermount3` (package `fuse3`). No kernel driver is installed; the mount runs as you.
+- **Without FUSE**, or on macOS and Windows, `gizzi files mount --webdav` serves the drive at a local address such as `dav://127.0.0.1:47830/…`. Open it in GNOME Files, KDE Dolphin, `davfs2` or rclone. The address holds a secret and only answers on this machine; don't share it. On macOS and Windows the Finder and Explorer locations from Allternit Desktop are the better fit.
+- When mounting a cloud computer, gizzi asks once whether opening a file may wake it. Browsing the mount never does. Without a yes, opening a file on a sleeping computer fails with "host is down".
+- `--read-only` mounts without write access. Saving a file that changed elsewhere writes a conflict copy, as above.
+- The main folders can't be renamed or removed from a mount. Deleting a file moves it to the trash.
+
+Mount logs go to `~/.allternit/logs/files-mount-<computer>.log`.
+
+## How gizzi reaches a computer
+
+| Computer | Route |
+|---|---|
+| This machine | Its own runtime through the local gateway (`ALLTERNIT_API_URL`, default `http://127.0.0.1:8013`) |
+| Another of your own devices | The mesh, when it answers, else the relay |
+| A cloud computer | The Allternit relay only |
+
+The relay needs an Allternit API key with the compute scope in `ALLTERNIT_API_TOKEN` (Settings, API keys), as `gizzi run --on` does. The protocol is documented in the [Files drive API](/api/files-drive).
+
+## In the TUI: /files
+
+`/files` browses the same drive inside a session, without waking anything:
+
+| Command | Shows |
+|---|---|
+| `/files` | This computer's folders |
+| `/files "Cloud computer":Inbox` | One folder |
+| `/files versions Inbox/lease.pdf` | A file's versions |
+| `/files trash [Folder]` | The trash |
+| `/files search lease` | Files whose name matches |
+| `/files shares` | Share links |
+
+Changes and downloads are `gizzi files` commands; `/files` names the one to run. The list of files read into the session, which `/files` used to show, is now [`/context files`](/cli/context#files-in-context).
