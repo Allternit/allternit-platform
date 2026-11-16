@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Graphite dark mode for the Allternit Files screens. -->
+<resources>
+    <color name="files_bg">#1C1C1B</color>
+    <color name="files_text">#ECECEB</color>
+    <color name="files_text_secondary">#A3A29F</color>
+    <color name="files_fill">#2C2C2B</color>
+    <color name="files_divider">#353534</color>
+    <color name="files_primary">#ECECEB</color>
+    <color name="files_on_primary">#1C1C1B</color>
+
+    <style name="Theme.AllternitFiles" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/files_bg</item>
+        <item name="android:colorBackground">@color/files_bg</item>
+        <item name="android:textColorPrimary">@color/files_text</item>
+        <item name="android:textColorSecondary">@color/files_text_secondary</item>
+        <item name="android:colorAccent">@color/files_primary</item>
+        <item name="android:colorPrimary">@color/files_bg</item>
+        <item name="android:colorPrimaryDark">@color/files_bg</item>
+        <item name="android:statusBarColor">@color/files_bg</item>
+        <item name="android:navigationBarColor">@color/files_bg</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+
+    <style name="Theme.AllternitFiles.Dialog" parent="android:Theme.Material.Dialog.NoActionBar">
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:colorBackground">@color/files_bg</item>
+        <item name="android:textColorPrimary">@color/files_text</item>
+        <item name="android:textColorSecondary">@color/files_text_secondary</item>
+        <item name="android:colorAccent">@color/files_primary</item>
+        <item name="android:windowCloseOnTouchOutside">false</item>
+    </style>
+</resources>

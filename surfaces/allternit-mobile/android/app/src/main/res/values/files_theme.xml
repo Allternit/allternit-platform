@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Allternit Files screens (sign-in, wake prompt, share to a computer). White surfaces
+     and a neutral fill in light mode, graphite in dark mode (values-night). Framework
+     Material themes only: the app has no appcompat dependency. -->
+<resources>
+    <color name="files_bg">#FFFFFF</color>
+    <color name="files_text">#1C1C1B</color>
+    <color name="files_text_secondary">#6B6A67</color>
+    <color name="files_fill">#F2F2F1</color>
+    <color name="files_divider">#E6E6E4</color>
+    <color name="files_primary">#1C1C1B</color>
+    <color name="files_on_primary">#FFFFFF</color>
+
+    <style name="Theme.AllternitFiles" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/files_bg</item>
+        <item name="android:colorBackground">@color/files_bg</item>
+        <item name="android:textColorPrimary">@color/files_text</item>
+        <item name="android:textColorSecondary">@color/files_text_secondary</item>
+        <item name="android:colorAccent">@color/files_primary</item>
+        <item name="android:colorPrimary">@color/files_bg</item>
+        <item name="android:colorPrimaryDark">@color/files_bg</item>
+        <item name="android:statusBarColor">@color/files_bg</item>
+        <item name="android:navigationBarColor">@color/files_bg</item>
+        <item name="android:windowLightStatusBar">true</item>
+    </style>
+
+    <style name="Theme.AllternitFiles.Dialog" parent="android:Theme.Material.Light.Dialog.NoActionBar">
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:colorBackground">@color/files_bg</item>
+        <item name="android:textColorPrimary">@color/files_text</item>
+        <item name="android:textColorSecondary">@color/files_text_secondary</item>
+        <item name="android:colorAccent">@color/files_primary</item>
+        <item name="android:windowCloseOnTouchOutside">false</item>
+    </style>
+</resources>
