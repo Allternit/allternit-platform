@@ -305,7 +305,7 @@ function EmptyState({ onAddCredential }: { onAddCredential: () => void }) {
       <button
         type="button"
         onClick={onAddCredential}
-        className="inline-flex items-center gap-2 px-5 py-3 rounded-xl font-semibold border-none cursor-pointer transition-all bg-[var(--accent-primary)] text-[var(--ui-text-inverse)] shadow-[0_4px_14px_rgba(212,176,140,0.3)] hover:-translate-y-0.5 hover:shadow-[0_6px_20px_rgba(212,176,140,0.4)]"
+        className="inline-flex items-center gap-2 px-5 py-3 rounded-xl font-semibold border-none cursor-pointer transition-all bg-[var(--accent-primary)] text-[var(--ui-text-inverse)] shadow-[0_4px_14px_rgba(0,0,0,0.18)] hover:-translate-y-0.5 hover:shadow-[0_6px_20px_rgba(0,0,0,0.24)]"
       >
         <Plus size={20} weight="bold" />
         Connect Your First Account

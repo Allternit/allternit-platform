@@ -119,7 +119,7 @@ export function exportAppshot(appshot: Appshot): string {
 	:root {
 		--bg-primary: #FDF8F3;
 		--bg-secondary: #F5EDE3;
-		--accent-primary: #B08D6E;
+		--accent-primary: #1F1E1D;
 		--text-primary: #2A1F16;
 		--text-secondary: #6B5B4E;
 		--border: #D9C9B8;

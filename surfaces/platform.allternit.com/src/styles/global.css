@@ -19,7 +19,7 @@
   --border-subtle: rgba(255, 255, 255, 0.08);
   --border-default: rgba(255, 255, 255, 0.12);
 
-  --accent-primary: #9A7658;
+  --accent-primary: #ECECEB; /* ink, dark (Eoj 11-15) */
   --accent-highlight: #f59e0b;
   --accent-highlight-subtle: rgba(245, 158, 11, 0.12);
   --status-success: #22c55e;
@@ -51,7 +51,7 @@ html[data-theme="light"] {
   --border-subtle: rgba(0, 0, 0, 0.08);
   --border-default: rgba(0, 0, 0, 0.12);
 
-  --accent-primary: #9A7658;
+  --accent-primary: #1F1E1D; /* ink, light (Eoj 11-15) */
   --accent-highlight: #d97706;
   --accent-highlight-subtle: rgba(217, 119, 6, 0.12);
   --status-success: #16a34a;

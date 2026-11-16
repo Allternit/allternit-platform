@@ -74,9 +74,9 @@ function injectCaptureButton(): void {
 		display: 'flex',
 		alignItems: 'center',
 		justifyContent: 'center',
-		background: 'linear-gradient(135deg, #B08D6E 0%, #8B6F4E 100%)',
+		background: '#1F1E1D',
 		color: '#FDF8F3',
-		boxShadow: '0 4px 12px rgba(176, 141, 110, 0.4)',
+		boxShadow: '0 4px 12px rgba(0, 0, 0, 0.25)',
 		transition: 'transform 0.2s ease, box-shadow 0.2s ease, opacity 0.3s ease',
 		fontFamily: 'system-ui, -apple-system, sans-serif',
 		fontSize: '20px',
@@ -97,13 +97,13 @@ function injectCaptureButton(): void {
 	// Hover effects
 	fab.addEventListener('mouseenter', () => {
 		fab.style.transform = 'scale(1.1)'
-		fab.style.boxShadow = '0 6px 20px rgba(176, 141, 110, 0.5)'
+		fab.style.boxShadow = '0 6px 20px rgba(0, 0, 0, 0.32)'
 		fab.style.opacity = '1'
 	})
 
 	fab.addEventListener('mouseleave', () => {
 		fab.style.transform = 'scale(1)'
-		fab.style.boxShadow = '0 4px 12px rgba(176, 141, 110, 0.4)'
+		fab.style.boxShadow = '0 4px 12px rgba(0, 0, 0, 0.25)'
 		fab.style.opacity = '0.7'
 	})
 
