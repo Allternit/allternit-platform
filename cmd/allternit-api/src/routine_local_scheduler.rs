@@ -1232,6 +1232,11 @@ pub async fn execute<D: RoutineDriver>(db: &DbHandle, driver: &D, r: &LocalRouti
     // A phone replay may wait on the owner: never cut it off inside that wait.
     let timeout_secs = if phone_replay_of(&r.config).is_some() { timeout_secs.max(crate::phone_guard::WAIT.as_secs() as i64 + 600) } else { timeout_secs };
     let work = async {
+        // A Files folder rule runs only when a file lands, under its fixed
+        // tool grant (`files_v2::rules`): never as a free bot turn.
+        if crate::files_v2::is_folder_rule(&r.config) {
+            return Ok(("folder rules run when a file lands in their folder".to_string(), "skipped"));
+        }
         // A phone skill replays with no model turn and needs no bot thread.
         if let Some((skill, serial, inputs)) = phone_replay_of(&r.config) {
             // After a run stopped at a step that needs the owner, only their

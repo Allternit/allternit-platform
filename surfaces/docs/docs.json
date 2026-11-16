@@ -156,6 +156,7 @@
               "guides/phone-skills",
               "guides/phone-approvals",
               "guides/usb-agent",
+              "guides/files-inbox",
               "guides/get-the-app",
               "guides/iphone-app",
               "guides/imessage-app",
@@ -796,7 +797,8 @@
                   "api/slack-webhooks",
                   "api/sandbox",
                   "api/sandbox-templates",
-                  "api/uploads"
+                  "api/uploads",
+                  "api/files-drive-inbox"
                 ]
               },
               {

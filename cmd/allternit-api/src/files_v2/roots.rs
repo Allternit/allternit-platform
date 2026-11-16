@@ -68,9 +68,10 @@ const HOME_FOLDERS: &[(RootKind, &str)] = &[
     (RootKind::Scans, "Scans"),
 ];
 
-/// Folders inside ~/Allternit that no provider fills yet.
+/// Folders inside ~/Allternit that no provider fills yet. Downloads (the
+/// agent browser) and Meetings (meeting notes) are filled by `routing.rs`.
 fn waiting_for_provider(kind: RootKind) -> bool {
-    matches!(kind, RootKind::Downloads | RootKind::Meetings | RootKind::Scans)
+    matches!(kind, RootKind::Scans)
 }
 
 pub fn memory_view_dir(inner: &Inner) -> PathBuf {
