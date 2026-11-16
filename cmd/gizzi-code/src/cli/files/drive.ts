@@ -337,7 +337,8 @@ export class Drive {
         res = await fetch(`${this.transport.baseUrl}${path}`, {
           method,
           headers,
-          body: opts.bytes ?? (opts.json === undefined ? undefined : JSON.stringify(opts.json)),
+          // Bytes are always backed by an ArrayBuffer here; TS 5.7+ types fetch bodies that way.
+          body: (opts.bytes as Uint8Array<ArrayBuffer> | undefined) ?? (opts.json === undefined ? undefined : JSON.stringify(opts.json)),
           signal,
         })
       }
