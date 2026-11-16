@@ -45,7 +45,9 @@ use super::{memory, permissions, status_for, ApiError, Fail, FilesV2, Inner, Nee
 /// `format` of every package manifest.
 pub const PACKAGE_FORMAT: &str = "allternit.model-package/1";
 /// The permission file inside a package folder.
-pub const MARKER: &str = ".allternit-package.json";
+/// Not `.allternit-…`: that prefix is the engine's temp files, which the
+/// scanner skips and `validate_name` refuses.
+pub const MARKER: &str = ".allternit.package.json";
 /// Where transfers land when no folder is named: `~/Allternit/Downloads/Models`.
 pub const MODELS_FOLDER: &str = "Models";
 const MAX_FILES: usize = 10_000;
