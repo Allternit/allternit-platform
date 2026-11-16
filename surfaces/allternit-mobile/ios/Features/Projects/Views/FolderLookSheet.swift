@@ -75,7 +75,8 @@ enum FolderLookEdit {
 }
 
 private extension Color {
-    init?(hex: String) {
+    /// Failable: a malformed saved colour shows nothing (Color(hex:) in Color+Theme never fails).
+    init?(parsingHex hex: String) {
         var s = hex.trimmingCharacters(in: .whitespaces)
         if s.hasPrefix("#") { s.removeFirst() }
         guard s.count == 6, let v = UInt32(s, radix: 16) else { return nil }
@@ -278,14 +279,14 @@ struct FolderLookSheet<Extras: View>: View {
 
     private func hexBinding(_ path: WritableKeyPath<Appearance, String>, fallback: String) -> Binding<Color> {
         Binding(
-            get: { Color(hex: draft[keyPath: path]) ?? Color(hex: fallback) ?? .blue },
+            get: { Color(parsingHex: draft[keyPath: path]) ?? Color(parsingHex: fallback) ?? .blue },
             set: { if let hex = $0.hexString { draft[keyPath: path] = hex } }
         )
     }
 
     private var tabColorBinding: Binding<Color> {
         Binding(
-            get: { Color(hex: cover.tabColor ?? draft.color) ?? .blue },
+            get: { Color(parsingHex: cover.tabColor ?? draft.color) ?? .blue },
             set: { c in if let hex = c.hexString { edit { $0.tabColor = hex } } }
         )
     }

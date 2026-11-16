@@ -354,7 +354,8 @@ private enum FolderGrain {
 
 /// Decodes the 256px PNG data URL once per distinct image.
 private enum FolderImageCache {
-    private static let cache = NSCache<NSString, UIImage>()
+    // NSCache is thread-safe (Foundation docs) but not marked Sendable.
+    nonisolated(unsafe) private static let cache = NSCache<NSString, UIImage>()
     static func image(for dataURL: String?) -> UIImage? {
         guard let dataURL, dataURL.hasPrefix("data:image/png;base64,") else { return nil }
         let key = "\(dataURL.count):\(dataURL.hashValue)" as NSString
