@@ -27,12 +27,79 @@ final class FreeweightsBrowseStore: ObservableObject {
     @Published private(set) var myRepos: [FreeweightsMyRepo] = []
     @Published private(set) var myReposFailed = false
 
+    // On-device (W8): the device index gives every model's builds, so each
+    // tile shows the one fit function's label for this iPhone.
+    enum Filter: String, CaseIterable, Identifiable {
+        case fits = "Fits this iPhone"
+        case everything = "Everything"
+        case phone = "Phone collection"
+        var id: String { rawValue }
+    }
+    @Published var filter: Filter = .fits {
+        didSet { if filter != oldValue { localLimit = Self.localPage; if filter == .everything, results.isEmpty { Task { await reload() } } } }
+    }
+    @Published private(set) var deviceIndex: FreeweightsDeviceIndex?
+    /// Catalog ids in the catalog's own order (the dictionary loses it).
+    @Published private(set) var catalogOrder: [String] = []
+    @Published var localLimit = FreeweightsBrowseStore.localPage
+    /// Opens chat with an installed model (`ondevice/…` id). Set by the
+    /// Models tab; nil where there is no chat to switch to (Settings).
+    var onRun: ((String) -> Void)?
+
     private let client: FreeweightsClient
     private var searchTask: Task<Void, Never>?
     private static let pageSize = 8
+    static let localPage = 24
 
     init(client: FreeweightsClient = .shared) {
         self.client = client
+    }
+
+    /// Device builds for a model; nil = no device data ("Size not checked").
+    func quants(_ id: String) -> [Quant]? { deviceIndex?.models[id] }
+
+    /// The fit on this iPhone (OnDeviceRuntime drops engines this build can't run).
+    func fit(_ id: String) -> FitResult { OnDeviceRuntime.shared.fit(quants(id)) }
+
+    /// Chat models only: the iPhone runtime answers chat, nothing else.
+    private static func isChat(_ row: FreeweightsCatalogRow) -> Bool {
+        guard row.kind == nil || row.kind == "model" else { return false }
+        let tasks = row.tasks ?? []
+        return tasks.isEmpty || tasks.contains("text-generation") || tasks.contains("image-text-to-text")
+    }
+
+    /// The local lists (Fits this iPhone, Phone collection): built from the
+    /// catalog and the device index, filtered by the search text.
+    var localIds: [String] {
+        guard let index = deviceIndex else { return [] }
+        let picks = index.recommended["phone"] ?? []
+        var ids: [String]
+        switch filter {
+        case .everything: return []
+        case .phone: ids = picks
+        case .fits:
+            let rest = catalogOrder.filter { id in
+                guard index.models[id] != nil, let row = catalog[id], Self.isChat(row), !picks.contains(id) else { return false }
+                let k = fit(id).k
+                return k == .ok || k == .slow
+            }
+            ids = picks.filter { [FitKind.ok, .slow].contains(fit($0).k) } + rest
+        }
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if !q.isEmpty {
+            ids = ids.filter { $0.lowercased().contains(q) || (catalog[$0]?.displayName?.lowercased().contains(q) ?? false) }
+        }
+        return ids
+    }
+
+    /// A summary for a catalog-only row (the local lists have no `/api/models` row).
+    func summary(for id: String) -> FreeweightsModelSummary {
+        if let s = results.first(where: { $0.id == id }) { return s }
+        let row = catalog[id]
+        let org = id.split(separator: "/").first.map(String.init) ?? ""
+        return FreeweightsModelSummary(id: id, sha: nil, pipelineTag: row?.tasks?.first, libraryName: nil, tags: nil,
+                                       downloads: nil, lastModified: row?.addedAt, section: row?.section, license: row?.licenseId,
+                                       badges: nil, publisherLogo: "https://freeweights.allternit.com/assets/orgs/\(org).png")
     }
 
     func loadIfNeeded() async {
@@ -44,12 +111,18 @@ final class FreeweightsBrowseStore: ObservableObject {
         searchTask?.cancel()
         isLoading = true
         defer { isLoading = false; hasLoaded = true }
-        async let pageLoad = client.search(query: query, limit: Self.pageSize)
-        async let catalogLoad = client.catalogRows()
-        async let mineLoad: Void = reloadMine()
-        let (page, rows, _) = await (pageLoad, catalogLoad, mineLoad)
-        if let rows = rows.value { catalog = rows }
-        apply(page, appending: false)
+        // Each answer shows as soon as it lands (the catalog is the big one).
+        let client = self.client, query = self.query
+        let page = Task { self.apply(await client.search(query: query, limit: Self.pageSize), appending: false) }
+        let index = Task { if let v = await client.deviceIndex().value { self.deviceIndex = v } }
+        let rows = Task {
+            if let v = await client.catalogRowList().value {
+                self.catalog = Dictionary(v.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+                self.catalogOrder = v.map(\.id)
+            }
+        }
+        let mine = Task { await self.reloadMine() }
+        _ = await (page.value, index.value, rows.value, mine.value)
     }
 
     /// Reads "My uploads". Signed out is not an error: the section just
@@ -192,7 +265,7 @@ struct FreeweightsSection: View {
             if let age = store.staleAge {
                 Text("Offline copy from \(Self.ageText(age)). Pull to refresh.")
             } else {
-                Text("Open-weights models with checked licenses. Pulls download to your computer, not this phone.")
+                Text("Open-weights models with checked licenses. Download one to this iPhone, or send a pull to your computer.")
             }
         }
         .task {
@@ -254,7 +327,7 @@ private struct FreeweightsDetailSheetModifier: ViewModifier {
 
     func body(content: Content) -> some View {
         content.sheet(item: $store.selected) { model in
-            FreeweightsDetailSheet(summary: model, row: store.catalog[model.id])
+            FreeweightsDetailSheet(summary: model, row: store.catalog[model.id], indexQuants: store.quants(model.id), onRun: store.onRun)
                 .presentationDetents([.large])
         }
     }
@@ -494,15 +567,23 @@ private struct FreeweightsReportSheet: View {
 
 // MARK: - Detail sheet
 
-/// License, size and files for one model, plus Send to computer (or a link
-/// to the site for link-only entries).
+/// One model, laid out like the site's model page head (W2): the record
+/// panel (From / Newsgroups / Subject / Date / Commit / Signed), the
+/// identity face, the facts, the source badges and the `fw get` block. Then
+/// "Run on this iPhone": the builds this iPhone can run with the fit for
+/// each and Download (background, any network). Builds that need a computer
+/// keep Send to computer; link-only entries link to the site.
 struct FreeweightsDetailSheet: View {
     let summary: FreeweightsModelSummary
     let row: FreeweightsCatalogRow?
+    /// Device builds from the index (nil = no device data).
+    var indexQuants: [Quant]? = nil
+    var onRun: ((String) -> Void)? = nil
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
     @State private var detail: FreeweightsModelDetail?
+    @State private var device: FreeweightsDeviceData?
     @State private var staleAge: TimeInterval?
     @State private var downReason: String?
     @State private var isLoading = true
@@ -511,100 +592,63 @@ struct FreeweightsDetailSheet: View {
     private var isCommunity: Bool { detail?.isCommunity ?? summary.isCommunity }
     private var catalogRow: FreeweightsCatalogRow? { detail?.catalog ?? row }
     private var isLinkOnly: Bool { detail?.isLinkOnly ?? row?.isLinkOnly ?? false }
+    /// The per-model route has file lists; the index is the offline fallback.
+    private var quants: [Quant]? { device?.quants ?? indexQuants }
+    private var fit: FitResult { OnDeviceRuntime.shared.fit(quants) }
+    private var org: String { summary.org }
+    private var name: String { catalogRow?.displayName ?? summary.name }
 
     var body: some View {
         NavigationStack {
-            List {
-                Section {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(catalogRow?.displayName ?? summary.name)
-                            .font(.system(.title3, design: .serif))
-                            .fontWeight(.medium)
-                            .foregroundColor(Color("TextPrimary"))
-                        Text(summary.id)
-                            .font(.caption.monospaced())
-                            .foregroundColor(Color("TextSecondary"))
-                            .textSelection(.enabled)
-                    }
-                    .padding(.vertical, 4)
-                }
-
-                if isLoading && detail == nil {
-                    Section { ProgressView().frame(maxWidth: .infinity, alignment: .center) }
-                } else if detail == nil, let downReason {
-                    Section {
+            ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    crumbs
+                    if isLoading && detail == nil && row == nil {
+                        ProgressView().frame(maxWidth: .infinity).padding(.vertical, 24)
+                    } else if detail == nil, row == nil, downReason != nil {
                         FriendlyInlineStateView(
-                            style: .offline,
-                            icon: "wifi.slash",
+                            style: .offline, icon: "wifi.slash",
                             title: "Freeweights is not answering",
                             message: "Couldn't load this model. Check your connection, then try again.",
-                            actionTitle: "Retry",
-                            action: { Task { await load() } }
-                        )
+                            actionTitle: "Retry", action: { Task { await load() } })
+                    }
+                    head
+                    if isCommunity { communitySection }
+                    OnDeviceRunPanel(modelId: summary.id, quants: quants, onRun: onRun.map { run in { id in dismiss(); run(id) } })
+                        .id("run")
+                    if fit.k != .ok && fit.k != .slow { computerSection }
+                    Button { openURL(FreeweightsClient.pageURL(for: summary.id)) } label: {
+                        Label(isLinkOnly ? "Open on Freeweights" : "View on Freeweights", systemImage: "safari")
+                            .font(.system(size: 15, weight: .medium))
+                            .frame(maxWidth: .infinity).padding(.vertical, 11)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundColor(Color("TextPrimary"))
+                    .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color("BorderStrong"), lineWidth: 1))
+                    if let staleAge {
+                        Text("Offline copy from \(FreeweightsSection.ageText(staleAge)).")
+                            .font(.caption).foregroundColor(Color("TextSecondary"))
                     }
                 }
-
-                factsSection
-
-                if isCommunity {
-                    Section {
-                        Text("Uploaded by a Freeweights member, not by Allternit. Every file is scanned before it can be downloaded.")
-                            .font(.subheadline)
-                            .foregroundColor(Color("TextSecondary"))
-                        if let note = detail?.communityStatusNote {
-                            Text(note)
-                                .font(.subheadline)
-                                .foregroundColor(Theme.statusWarning)
-                        }
-                        Button {
-                            isReporting = true
-                        } label: {
-                            Label("Report this repo", systemImage: "flag")
-                        }
-                    } header: {
-                        Text("Community upload")
-                    }
-                }
-
-                if isLinkOnly {
-                    Section {
-                        Text(catalogRow?.note ?? "Freeweights does not host or sign this model. Downloads come from the publisher's own release.")
-                            .font(.subheadline)
-                            .foregroundColor(Color("TextSecondary"))
-                        Button {
-                            openURL(FreeweightsClient.pageURL(for: summary.id))
-                        } label: {
-                            Label("Open on Freeweights", systemImage: "arrow.up.right.square")
-                        }
-                    } header: {
-                        Text("Link only")
-                    }
-                } else if detail != nil || (downReason != nil && row != nil) {
-                    // Wait for the detail so the pull is pinned to the
-                    // manifest commit; with the catalog down, pull `main`.
-                    Section {
-                        ComputerPullPanel(repoId: summary.id, revision: detail?.sha ?? summary.sha)
-                    } header: {
-                        Text("Your computer")
-                    }
-                    Section {
-                        Button {
-                            openURL(FreeweightsClient.pageURL(for: summary.id))
-                        } label: {
-                            Label("View on Freeweights", systemImage: "safari")
-                        }
-                    }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 28)
+            }
+            #if DEBUG
+            // `-fw-detail-scroll run` (DEBUG): open scrolled to the builds, for screenshots.
+            .task(id: device?.id) {
+                if UserDefaults.standard.string(forKey: "fw-detail-scroll") == "run", device != nil {
+                    try? await Task.sleep(for: .milliseconds(400))
+                    proxy.scrollTo("run", anchor: .top)
                 }
             }
-            .listStyle(.insetGrouped)
-            .scrollContentBackground(.hidden)
+            #endif
+            }
             .background(Color("BgPrimary"))
             .navigationTitle("Model")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") { dismiss() }
-                }
+                ToolbarItem(placement: .topBarTrailing) { Button("Done") { dismiss() } }
             }
             .task { await load() }
             .sheet(isPresented: $isReporting) {
@@ -614,60 +658,223 @@ struct FreeweightsDetailSheet: View {
         }
     }
 
-    @ViewBuilder
-    private var factsSection: some View {
-        let lic = catalogRow?.licenseId ?? detail?.license ?? summary.license
-        Section {
-            if let lic {
-                fact("License", "\(lic)\(catalogRow?.licenseClass.map { " (\($0))" } ?? "")")
+    // MARK: Head (site model page)
+
+    private var crumbs: some View {
+        HStack(spacing: 6) {
+            Text(catalogRow?.section ?? summary.section ?? "alt.freeweights")
+                .foregroundColor(Color("TextSecondary"))
+            Text("/").foregroundColor(Color("TextTertiary"))
+            Text(name).foregroundColor(.fwAccent).lineLimit(1)
+        }
+        .font(.system(size: 13, design: .monospaced))
+        .padding(.top, 6)
+    }
+
+    private var head: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            record
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(14)
+                .background(Color("FillNeutral").opacity(0.6))
+            Rectangle().fill(Color("BorderStrong")).frame(height: 1).mask(
+                HStack(spacing: 3) { ForEach(0..<80, id: \.self) { _ in Rectangle().frame(width: 3) } })
+            VStack(alignment: .leading, spacing: 14) {
+                FwIdentityFace(model: FwFaceModel(summary: summary, row: catalogRow, id: summary.id,
+                                                  sizeBytes: fit.quant?.size ?? quants?.map(\.size).min(),
+                                                  formats: fit.quant.map { [$0.format] } ?? catalogRow?.formats))
+                facts
+                badges
+                terminal
             }
-            if let size = catalogRow?.totalSize, size > 0 {
-                fact("Size", FreeweightsFormat.bytes(size))
+            .padding(14)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color("BorderSubtle"), lineWidth: 1))
+    }
+
+    private var record: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            recordLine("From:", "\(org) <huggingface.co/\(org)>")
+            recordLine("Newsgroups:", catalogRow?.section ?? summary.section ?? "alt.freeweights")
+            recordLine("Subject:", "")
+            Text(name)
+                .font(.system(size: 22, weight: .semibold))
+                .foregroundColor(Color("TextPrimary"))
+                .lineLimit(2)
+                .minimumScaleFactor(0.7)
+                .textSelection(.enabled)
+            if let date = (catalogRow?.addedAt ?? summary.lastModified).map({ String($0.prefix(10)) }) {
+                recordLine("Date:", date)
             }
-            if let detail {
-                fact("Files", isLinkOnly ? "Link only" : "\(detail.filesCount), each with a sha256")
-            }
-            if let params = catalogRow?.params, params > 0 {
-                fact("Parameters", FreeweightsFormat.params(params))
-            }
-            if let task = detail?.pipelineTag ?? summary.pipelineTag {
-                fact("Task", task.replacingOccurrences(of: "-", with: " "))
-            }
-            if let section = detail?.section ?? summary.section {
-                fact("Section", FreeweightsFormat.section(section))
-            }
-            if let commit = detail?.sha {
-                fact("Pinned commit", String(commit.prefix(12)), mono: true)
-            }
-        } header: {
-            Text("Facts")
-        } footer: {
-            if let staleAge {
-                Text("Offline copy from \(FreeweightsSection.ageText(staleAge)).")
+            if let sha = detail?.sha ?? summary.sha { recordLine("Commit:", String(sha.prefix(7))) }
+            recordLine("Signed:", isLinkOnly ? "link only, not hosted" : "Freeweights manifest ✓")
+            Text(sentence)
+                .font(.system(size: 14))
+                .foregroundColor(Color("TextSecondary"))
+                .padding(.top, 6)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func recordLine(_ label: String, _ value: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(label).foregroundColor(Color("TextSecondary")).frame(width: 96, alignment: .leading)
+            Text(value).foregroundColor(Color("TextPrimary")).lineLimit(1).truncationMode(.tail)
+        }
+        .font(.system(size: 12, design: .monospaced))
+        .accessibilityElement(children: .combine)
+    }
+
+    /// "Text generation model with 4.2B parameters. GGUF weights, 11.3 GB in all. Published by Qwen under Apache-2.0."
+    private var sentence: String {
+        let task = (detail?.pipelineTag ?? summary.pipelineTag ?? catalogRow?.tasks?.first)?.replacingOccurrences(of: "-", with: " ")
+        var s = (task.map { $0.prefix(1).uppercased() + $0.dropFirst() } ?? "Model")
+        if let p = FwText.params(catalogRow?.params) { s += " model with \(p) parameters." } else { s += " model." }
+        let fmts = (catalogRow?.formats ?? []).map { $0.prefix(1).uppercased() + $0.dropFirst() }.joined(separator: ", ")
+        if !fmts.isEmpty || (catalogRow?.totalSize ?? 0) > 0 {
+            s += " \(fmts.isEmpty ? "The" : fmts) weights"
+            if let t = catalogRow?.totalSize, t > 0 { s += ", \(FwText.bytesText(Double(t))) in all" }
+            s += "."
+        }
+        if let lic = catalogRow?.licenseId ?? summary.license { s += " Published by \(org) under \(lic)." }
+        return s
+    }
+
+    private var facts: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("FACTS").font(.system(size: 11, weight: .medium)).tracking(1).foregroundColor(Color("TextSecondary"))
+            LazyVGrid(columns: [GridItem(.flexible(), alignment: .topLeading), GridItem(.flexible(), alignment: .topLeading)], spacing: 12) {
+                fact("Params", FwText.params(catalogRow?.params) ?? "not stated")
+                fact("Size", fit.quant.map { "from \(FwText.deviceSize($0.size))" } ?? quants.flatMap { $0.map(\.size).min() }.map { "from \(FwText.deviceSize($0))" } ?? "Size not checked")
+                fact("Formats", (catalogRow?.formats ?? []).joined(separator: ", ").nilIfEmpty ?? "see files", mono: true)
+                fact("Task", (detail?.pipelineTag ?? summary.pipelineTag)?.replacingOccurrences(of: "-", with: " ") ?? "not tagged")
+                fact("License", catalogRow?.licenseId ?? summary.license ?? "not stated")
+                if let detail { fact("Files", isLinkOnly ? "link only" : "\(detail.filesCount) with sha256") }
             }
         }
     }
 
     private func fact(_ label: String, _ value: String, mono: Bool = false) -> some View {
-        HStack(alignment: .firstTextBaseline) {
-            Text(label)
+        VStack(alignment: .leading, spacing: 2) {
+            Text(label.uppercased()).font(.system(size: 10.5, weight: .medium)).tracking(0.8).foregroundColor(Color("TextSecondary"))
+            Text(value)
+                .font(mono ? .system(size: 14, design: .monospaced) : .system(size: 15))
+                .foregroundColor(Color("TextPrimary"))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    private var badges: some View {
+        HStack(spacing: 8) {
+            pill(isLinkOnly ? "From the publisher" : "Hosted (signed)", icon: "diamond", tint: nil)
+            if let lc = catalogRow?.licenseClass {
+                pill(FwText.licenseNames[lc] ?? lc, icon: nil, tint: FreeweightsFormat.licenseTint(lc))
+            }
+            if catalogRow?.requiresTerms == true { pill("read terms", icon: nil, tint: Theme.statusWarning) }
+        }
+    }
+
+    private func pill(_ text: String, icon: String?, tint: Color?) -> some View {
+        HStack(spacing: 5) {
+            if let icon { Image(systemName: icon).font(.system(size: 10)) }
+            if let tint { Circle().fill(tint).frame(width: 6, height: 6) }
+            Text(text).font(.system(size: 13))
+        }
+        .foregroundColor(Color("TextPrimary"))
+        .padding(.horizontal, 10).padding(.vertical, 5)
+        .overlay(Capsule().stroke(Color("BorderStrong"), lineWidth: 1))
+    }
+
+    private var terminal: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 6) {
+                ForEach(0..<3, id: \.self) { _ in Circle().fill(Color.white.opacity(0.25)).frame(width: 8, height: 8) }
+                Text("fw").foregroundColor(Color.white.opacity(0.45)).padding(.leading, 6)
+            }
+            .padding(10)
+            Rectangle().fill(Color.white.opacity(0.08)).frame(height: 1)
+            VStack(alignment: .leading, spacing: 3) {
+                if isLinkOnly {
+                    term("$", "fw info \(summary.id)")
+                    term("#", "link only: from the publisher, never hosted here")
+                } else {
+                    term("$", "fw get \(summary.id)")
+                    term("#", "\((catalogRow?.totalSize).map { FwText.bytesText(Double($0)) } ?? "size pending") · \(detail?.filesCount ?? 0) files")
+                    term("$", "fw verify ./\(name) \(summary.id)")
+                }
+            }
+            .padding(12)
+        }
+        .font(.system(size: 12, design: .monospaced))
+        .background(Color(red: 0.12, green: 0.12, blue: 0.12), in: RoundedRectangle(cornerRadius: 12))
+        .environment(\.colorScheme, .dark)
+        .accessibilityElement(children: .combine)
+    }
+
+    private func term(_ mark: String, _ text: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Text(mark).foregroundColor(mark == "$" ? Color(red: 0.910, green: 0.537, blue: 0.424) : Color.white.opacity(0.4))
+            Text(text).foregroundColor(mark == "$" ? Color.white.opacity(0.92) : Color.white.opacity(0.5))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    // MARK: Community upload
+
+    private var communitySection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("COMMUNITY UPLOAD").font(.system(size: 11, weight: .medium)).tracking(1).foregroundColor(Color("TextSecondary"))
+            Text("Uploaded by a Freeweights member, not by Allternit. Every file is scanned before it can be downloaded.")
                 .font(.subheadline)
                 .foregroundColor(Color("TextSecondary"))
-            Spacer(minLength: 12)
-            Text(value)
-                .font(mono ? .subheadline.monospaced() : .subheadline)
-                .foregroundColor(Color("TextPrimary"))
-                .multilineTextAlignment(.trailing)
+                .fixedSize(horizontal: false, vertical: true)
+            if let note = detail?.communityStatusNote {
+                Text(note)
+                    .font(.subheadline)
+                    .foregroundColor(Theme.statusWarning)
+            }
+            Button {
+                isReporting = true
+            } label: {
+                Label("Report this repo", systemImage: "flag")
+                    .font(.system(size: 15, weight: .medium))
+            }
+            .foregroundColor(Color("TextPrimary"))
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color("BorderSubtle"), lineWidth: 1))
+    }
+
+    // MARK: Builds that need a computer
+
+    @ViewBuilder
+    private var computerSection: some View {
+        if !isLinkOnly, detail != nil || (downReason != nil && row != nil) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("YOUR COMPUTER").font(.system(size: 11, weight: .medium)).tracking(1).foregroundColor(Color("TextSecondary"))
+                ComputerPullPanel(repoId: summary.id, revision: detail?.sha ?? summary.sha)
+            }
+            .padding(14)
+            .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color("BorderSubtle"), lineWidth: 1))
+        } else if isLinkOnly {
+            Text(catalogRow?.note ?? "Freeweights does not host or sign this model. Downloads come from the publisher's own release.")
+                .font(.subheadline).foregroundColor(Color("TextSecondary"))
         }
     }
 
     private func load() async {
         isLoading = true
         defer { isLoading = false }
-        let result = await FreeweightsClient.shared.detail(id: summary.id)
+        async let d = FreeweightsClient.shared.detail(id: summary.id)
+        async let dev = FreeweightsClient.shared.deviceData(id: summary.id)
+        let (result, devResult) = await (d, dev)
+        if let v = devResult.value { device = v }
         switch result {
-        case .live(let d), .cached(let d, _):
-            detail = d
+        case .live(let v), .cached(let v, _):
+            detail = v
             staleAge = result.staleAge
             downReason = nil
         case .catalogDown(let reason):
@@ -676,6 +883,188 @@ struct FreeweightsDetailSheet: View {
     }
 }
 
+private extension String {
+    var nilIfEmpty: String? { isEmpty ? nil : self }
+}
+
+// MARK: - Run on this iPhone
+
+/// The builds this iPhone can run, the fit for each, and the local
+/// Download with progress, Cancel and "Not enough storage". An installed
+/// build shows Run (opens chat with it) and Remove.
+struct OnDeviceRunPanel: View {
+    let modelId: String
+    let quants: [Quant]?
+    var onRun: ((String) -> Void)?
+
+    @ObservedObject private var rt = OnDeviceRuntime.shared
+    @ObservedObject private var downloads = OnDeviceDownloads.shared
+    @State private var picked: String?
+    @State private var confirmRemove: OnDeviceInstall?
+
+    /// Builds this iPhone can load (Fits or Tight fit), best first: the fit's
+    /// pick leads, then smaller ones. At most 5.
+    private var builds: [Quant] {
+        guard let quants else { return [] }
+        let usable = quants.filter { q in
+            q.engine == .llamaCpp ? LlamaEngine.isLinked : q.engine == .mlx ? !rt.isSimulator : false
+        }
+        let fitting = Fit.candidates(rt.budget, usable).filter { [.ok, .slow].contains(Fit.fit(rt.budget, [$0]).k) }
+        let ordered = fitting.sorted { Fit.needBytes($0) > Fit.needBytes($1) }
+        let pick = fit.quant.flatMap { p in ordered.firstIndex { $0.name == p.name } } ?? 0
+        return Array(ordered.dropFirst(pick).prefix(5))
+    }
+
+    private var fit: FitResult { rt.fit(quants) }
+    private var selected: Quant? {
+        builds.first { $0.name == picked } ?? fit.quant ?? builds.first
+    }
+    private var installed: [OnDeviceInstall] { rt.installs.filter { $0.modelId == modelId } }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("RUN ON THIS IPHONE").font(.system(size: 11, weight: .medium)).tracking(1).foregroundColor(Color("TextSecondary"))
+                Spacer()
+                FitLabel(fit: fit, showSize: false, font: .system(size: 12, weight: .medium))
+            }
+            Text(fit.why).font(.system(size: 14)).foregroundColor(Color("TextSecondary"))
+                .fixedSize(horizontal: false, vertical: true)
+
+            ForEach(installed) { install in installedRow(install) }
+
+            if fit.k == .ok || fit.k == .slow {
+                VStack(spacing: 0) {
+                    ForEach(Array(builds.enumerated()), id: \.element.name) { i, q in
+                        buildRow(q)
+                        if i < builds.count - 1 { Rectangle().fill(Color("BorderSubtle")).frame(height: 1).padding(.leading, 40) }
+                    }
+                }
+                .background(Color("FillNeutral").opacity(0.5), in: RoundedRectangle(cornerRadius: 12))
+                if let q = selected, !installed.contains(where: { $0.quant == q.name }) { action(q) }
+                Label("Downloads keep going in the background, on any network. Files are checked against the signed Freeweights manifest (sha256) before the model loads.", systemImage: "checkmark.shield")
+                    .font(.system(size: 12)).foregroundColor(Color("TextSecondary"))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(14)
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color("BorderSubtle"), lineWidth: 1))
+        #if DEBUG
+        // `-fw-autodownload` (DEBUG only): press Download once, for the
+        // simulator check of download, manifest verify and install.
+        .task(id: quants?.count) {
+            if launchArgumentEnabled("fw-autodownload"), let q = selected, installed.isEmpty,
+               fit.k == .ok || fit.k == .slow, !downloads.active.contains(OnDeviceDownloads.key(modelId, q.name)) {
+                downloads.start(modelId: modelId, quant: q)
+            }
+        }
+        #endif
+        .confirmationDialog("Remove this model from your iPhone?", isPresented: Binding(get: { confirmRemove != nil }, set: { if !$0 { confirmRemove = nil } }), titleVisibility: .visible, presenting: confirmRemove) { i in
+            Button("Remove \(FwText.deviceSize(Double(i.sizeBytes)))", role: .destructive) { Task { await rt.delete(i) } }
+        } message: { _ in Text("You can download it again from the catalog.") }
+    }
+
+    private func buildRow(_ q: Quant) -> some View {
+        let f = Fit.fit(rt.budget, [q])
+        let on = q.name == selected?.name
+        return Button { picked = q.name } label: {
+            HStack(spacing: 12) {
+                Image(systemName: on ? "largecircle.fill.circle" : "circle")
+                    .font(.system(size: 18)).foregroundColor(on ? Color("TextPrimary") : Color("TextTertiary"))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("\(Text(q.name).fontWeight(.semibold)) with \(q.engine == .mlx ? "MLX" : "llama.cpp")")
+                        .font(.system(size: 14)).foregroundColor(Color("TextPrimary"))
+                    Text("\(q.format.uppercased()) · \(FwText.deviceSize(q.size)) · needs \(FwText.deviceSize(Fit.needBytes(q)))")
+                        .font(.system(size: 11.5, design: .monospaced)).foregroundColor(Color("TextSecondary"))
+                }
+                Spacer(minLength: 4)
+                FitLabel(fit: f, showSize: false)
+            }
+            .padding(.horizontal, 12).padding(.vertical, 10)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(on ? [.isSelected] : [])
+    }
+
+    @ViewBuilder
+    private func action(_ q: Quant) -> some View {
+        let key = OnDeviceDownloads.key(modelId, q.name)
+        let p = rt.progress[key]
+        if downloads.active.contains(key) {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text(phaseText(p)).font(.system(size: 14, weight: .medium)).foregroundColor(Color("TextPrimary"))
+                    Spacer()
+                    if let p, p.totalBytes > 0 {
+                        Text("\(FwText.deviceSize(Double(p.receivedBytes))) of \(FwText.deviceSize(Double(p.totalBytes)))")
+                            .font(.caption.monospacedDigit()).foregroundColor(Color("TextSecondary"))
+                    }
+                }
+                ProgressView(value: p?.fraction ?? 0).tint(Color("TextPrimary"))
+                Button("Cancel download", role: .cancel) { downloads.cancel(modelId: modelId, quant: q.name) }
+                    .font(.system(size: 14, weight: .medium))
+            }
+        } else {
+            let free = rt.freeDiskBytes
+            let tooBig = free > 0 && q.size * 1.05 + 300e6 > Double(free)
+            VStack(alignment: .leading, spacing: 6) {
+                Button { downloads.start(modelId: modelId, quant: q) } label: {
+                    Text("Download to iPhone · \(FwText.deviceSize(q.size))")
+                        .font(.system(size: 15, weight: .semibold))
+                        .frame(maxWidth: .infinity).padding(.vertical, 12)
+                        .foregroundColor(Color("BgPrimary"))
+                        .background(Color("TextPrimary").opacity(tooBig ? 0.35 : 1), in: RoundedRectangle(cornerRadius: 12))
+                }
+                .buttonStyle(.plain)
+                .disabled(tooBig)
+                if tooBig {
+                    Text("Not enough storage. Needs \(FwText.deviceSize(q.size * 1.05 + 300e6)), \(FwText.deviceSize(Double(free))) free.")
+                        .font(.caption).foregroundColor(Theme.statusError)
+                }
+                if let error = downloads.errors[key] {
+                    Text(error).font(.caption).foregroundColor(Theme.statusError).fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+    }
+
+    private func phaseText(_ p: InstallProgress?) -> String {
+        switch p?.phase {
+        case .manifest?, nil: return "Checking the signed manifest…"
+        case .downloading?: return "Downloading · \(Int(((p?.fraction ?? 0) * 100).rounded()))%"
+        case .verifying?: return "Checking files…"
+        case .done?: return "Ready"
+        case .failed?: return "Stopped"
+        }
+    }
+
+    private func installedRow(_ install: OnDeviceInstall) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "checkmark.circle.fill").foregroundColor(Theme.statusSuccess)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("\(install.quant) on this iPhone").font(.system(size: 14, weight: .medium)).foregroundColor(Color("TextPrimary"))
+                Text("\(install.engine == .mlx ? "MLX" : "llama.cpp") · \(FwText.deviceSize(Double(install.sizeBytes)))")
+                    .font(.system(size: 11.5, design: .monospaced)).foregroundColor(Color("TextSecondary"))
+            }
+            Spacer()
+            Button("Remove") { confirmRemove = install }
+                .font(.system(size: 14)).foregroundColor(Theme.statusError).buttonStyle(.plain)
+            Button {
+                let id = OnDeviceModelId.make(install)
+                ModelStore.shared.userSelectedModel(id)
+                onRun?(id)
+            } label: {
+                Text("Run").font(.system(size: 14, weight: .semibold))
+                    .padding(.horizontal, 14).padding(.vertical, 7)
+                    .foregroundColor(Color("BgPrimary"))
+                    .background(Color("TextPrimary"), in: Capsule())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Run \(install.modelId) in chat")
+        }
+    }
+}
 // MARK: - Send to computer
 
 /// Sends the pull to the user's computer and follows it to the end:

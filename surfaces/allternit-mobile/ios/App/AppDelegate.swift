@@ -75,6 +75,18 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         }
     }
 
+    /// On-device model downloads run in a background URLSession: when one
+    /// finishes while the app is suspended or gone, iOS relaunches it here so
+    /// the files are moved into place (OnDeviceDownloader). A later Download
+    /// tap finds them on disk, checks them and installs without refetching.
+    func application(
+        _ application: UIApplication,
+        handleEventsForBackgroundURLSession identifier: String,
+        completionHandler: @escaping () -> Void
+    ) {
+        OnDeviceDownloader.handleBackgroundEvents(identifier: identifier, completion: completionHandler)
+    }
+
     /// Background pushes. `notification.revoke` removes the delivered
     /// notifications for items answered elsewhere.
     func application(
