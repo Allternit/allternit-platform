@@ -34,7 +34,7 @@ describe("chunk", () => {
 describe("storageLine", () => {
   test("renders used and cap, flags paused, hides when unknown", () => {
     expect(storageLine({ user_cap_bytes: 5e8, used_bytes: 1e8 })).toBe("Freeweights storage: 100 MB of 500 MB")
-    expect(storageLine({ user_cap_bytes: 5e8, uploads_open: false })).toContain("paused")
+    expect(storageLine({ user_cap_bytes: 5e8, open: false })).toContain("paused")
     expect(storageLine(undefined)).toBeUndefined()
   })
 })

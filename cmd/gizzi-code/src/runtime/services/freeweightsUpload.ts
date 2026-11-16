@@ -29,29 +29,57 @@ export function parseRepoId(id: string): { namespace: string; name: string } {
   return { namespace: m[1], name: m[2] }
 }
 
+/** Flattened view for the CLI: GET /api/fw/v1/limits (public) plus the caller's usage from GET /api/fw/v1/account. */
 export interface FreeweightsLimits {
-  uploads_open?: boolean
-  site_cap_bytes?: number
-  user_cap_bytes?: number
-  file_max_bytes?: number
-  repos_per_user?: number
-  files_per_commit?: number
+  open?: boolean
+  site_full?: boolean
+  scanning_delayed?: boolean
+  site_cap_bytes?: number | null
+  user_cap_bytes?: number | null
+  file_max_bytes?: number | null
+  repos_per_user?: number | null
+  files_per_commit?: number | null
+  staff?: boolean
   used_bytes?: number
-  [k: string]: unknown
 }
 
-/** GET /api/fw/v1/limits. Accepts either a flat object or { limits: {...}, usage: {...} }. */
+const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : undefined)
+
+/**
+ * GET /api/fw/v1/limits ({ open, limits: {...}, site: {used_bytes, cap_bytes, full}, scanning_delayed }, spec 11.1),
+ * then, with a key, GET /api/fw/v1/account for `usage` and the cap in force. Undefined when the limits read fails.
+ */
 export async function fetchLimits(key?: string, fetcher: typeof fetch = fetch): Promise<FreeweightsLimits | undefined> {
-  try {
-    const resp = await fetcher(`${FREEWEIGHTS_ORIGIN}/api/fw/v1/limits`, {
-      headers: { Accept: "application/json", ...(key ? { Authorization: `Bearer ${key}` } : {}) },
+  const get = async (path: string, auth: boolean) => {
+    const resp = await fetcher(`${FREEWEIGHTS_ORIGIN}${path}`, {
+      headers: { Accept: "application/json", ...(auth && key ? { Authorization: `Bearer ${key}` } : {}) },
       signal: AbortSignal.timeout(8000),
     })
-    if (!resp.ok) return undefined
-    const body = (await resp.json()) as Record<string, any>
-    const limits = (body.limits && typeof body.limits === "object" ? body.limits : body) as FreeweightsLimits
-    const usage = body.usage && typeof body.usage === "object" ? body.usage : {}
-    return { ...limits, used_bytes: Number(usage.used_bytes ?? usage.user_bytes ?? limits.used_bytes) || limits.used_bytes }
+    return resp.ok ? ((await resp.json()) as Record<string, any>) : undefined
+  }
+  try {
+    const body = await get("/api/fw/v1/limits", false)
+    if (!body || typeof body.limits !== "object" || body.limits === null) return undefined
+    const l = body.limits as Record<string, unknown>
+    const out: FreeweightsLimits = {
+      open: body.open === true,
+      site_full: body.site?.full === true,
+      scanning_delayed: body.scanning_delayed === true,
+      site_cap_bytes: num(l.site_cap_bytes) ?? null,
+      user_cap_bytes: num(l.user_cap_bytes) ?? null,
+      file_max_bytes: num(l.file_max_bytes) ?? null,
+      repos_per_user: num(l.repos_per_user) ?? null,
+      files_per_commit: num(l.files_per_commit) ?? null,
+    }
+    if (key) {
+      const acct = await get("/api/fw/v1/account", true).catch(() => undefined)
+      const u = acct?.usage
+      if (u && typeof u === "object") out.used_bytes = (num(u.public_bytes) ?? 0) + (num(u.private_bytes) ?? 0) + (num(u.quarantine_bytes) ?? 0)
+      const cap = num(acct?.storage_cap_bytes)
+      if (cap !== undefined) out.user_cap_bytes = cap
+      if (acct) out.staff = acct.staff === true
+    }
+    return out
   } catch {
     return undefined
   }
@@ -62,7 +90,7 @@ export function storageLine(l: FreeweightsLimits | undefined): string | undefine
   if (!l || typeof l.user_cap_bytes !== "number") return undefined
   const gb = (n: number) => (n >= 1e9 ? `${(n / 1e9).toFixed(2)} GB` : `${(n / 1e6).toFixed(0)} MB`)
   const used = typeof l.used_bytes === "number" ? `${gb(l.used_bytes)} of ` : "limit "
-  const paused = l.uploads_open === false ? " (uploads are paused)" : ""
+  const paused = l.open === false ? " (uploads are paused)" : ""
   return `Freeweights storage: ${used}${gb(l.user_cap_bytes)}${paused}`
 }
 
@@ -155,7 +183,8 @@ export async function publishModel(dir: string, repoId: string, opts: PublishOpt
   if (files.length === 0) throw new FreeweightsError(`${dir} has no files to upload.`)
 
   const limits = await fetchLimits(opts.key, f)
-  if (limits?.uploads_open === false) throw new FreeweightsError(PLAIN.uploads_paused)
+  if (limits && !limits.open && !limits.staff) throw new FreeweightsError(PLAIN.uploads_paused)
+  if (limits?.site_full && !limits.staff) throw new FreeweightsError("Freeweights community storage is full right now. Try again later.")
   if (limits?.file_max_bytes) {
     const big = files.find((x) => x.size > limits.file_max_bytes!)
     if (big) throw new FreeweightsError(`${big.path} is over the per-file limit (${(limits.file_max_bytes / 1e6).toFixed(0)} MB).`)
@@ -306,8 +335,16 @@ export async function communityRepoState(repo: string, f: typeof fetch = fetch):
     if (r.status === 451) return { found: true, live: false, message: "This repo was removed." }
     if (!r.ok) return { found: false, live: false }
     const b = (await r.json()) as any
-    const state = b?.state ?? b?.freeweights?.state
-    return { found: true, live: state === undefined || state === "live", message: state && state !== "live" ? `This repo is ${state}; files are served after the scan finishes.` : undefined }
+    // Community repos carry status (draft | scanning | live | held); sha is the last clean head being served (spec 11.6).
+    if (b?.source !== "community") return { found: true, live: true }
+    const status: string | undefined = b.status
+    const live = b.sha != null
+    const message =
+      status === "held" ? "This repo is held after a scan; only its last clean version is served."
+      : !live ? `This repo is ${status ?? "not ready"}; files are served after the scan finishes.`
+      : status && status !== "live" ? `An update is ${status}; the last clean version is served.`
+      : undefined
+    return { found: true, live, message }
   } catch {
     return { found: false, live: false }
   }
