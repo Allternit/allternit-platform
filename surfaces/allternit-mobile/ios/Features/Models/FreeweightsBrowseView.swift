@@ -22,6 +22,10 @@ final class FreeweightsBrowseStore: ObservableObject {
     /// Models List (`freeweightsDetailSheet`), not the Section: a sheet on
     /// a List Section does not present.
     @Published var selected: FreeweightsModelSummary?
+    /// The signed-in account's own community repos. Empty when signed out,
+    /// when there is no Freeweights profile yet, or when the call failed.
+    @Published private(set) var myRepos: [FreeweightsMyRepo] = []
+    @Published private(set) var myReposFailed = false
 
     private let client: FreeweightsClient
     private var searchTask: Task<Void, Never>?
@@ -42,9 +46,28 @@ final class FreeweightsBrowseStore: ObservableObject {
         defer { isLoading = false; hasLoaded = true }
         async let pageLoad = client.search(query: query, limit: Self.pageSize)
         async let catalogLoad = client.catalogRows()
-        let (page, rows) = await (pageLoad, catalogLoad)
+        async let mineLoad: Void = reloadMine()
+        let (page, rows, _) = await (pageLoad, catalogLoad, mineLoad)
         if let rows = rows.value { catalog = rows }
         apply(page, appending: false)
+    }
+
+    /// Reads "My uploads". Signed out is not an error: the section just
+    /// does not show.
+    func reloadMine() async {
+        guard AuthManager.shared.isSignedIn else {
+            myRepos = []
+            myReposFailed = false
+            return
+        }
+        do {
+            myRepos = try await client.myRepos()
+            myReposFailed = false
+        } catch is CancellationError {
+            return
+        } catch {
+            myReposFailed = true
+        }
     }
 
     func loadMore() async {
@@ -90,7 +113,36 @@ final class FreeweightsBrowseStore: ObservableObject {
 struct FreeweightsSection: View {
     @ObservedObject var store: FreeweightsBrowseStore
 
+    @ObservedObject private var auth = AuthManager.shared
+
     var body: some View {
+        Group {
+            browseSection
+            if auth.isSignedIn, !store.myRepos.isEmpty || store.myReposFailed {
+                myUploadsSection
+            }
+        }
+        .task(id: auth.isSignedIn) { await store.reloadMine() }
+    }
+
+    private var myUploadsSection: some View {
+        Section {
+            if store.myRepos.isEmpty {
+                Text("Couldn't load your uploads. Pull to refresh.")
+                    .font(.subheadline)
+                    .foregroundColor(Color("TextSecondary"))
+            }
+            ForEach(store.myRepos) { repo in
+                FreeweightsMyRepoRow(repo: repo)
+            }
+        } header: {
+            Text("My uploads")
+        } footer: {
+            Text("Upload from the Freeweights site or the fw command on your computer. This list follows each scan.")
+        }
+    }
+
+    private var browseSection: some View {
         Section {
             searchField
 
@@ -231,6 +283,9 @@ private struct FreeweightsRow: View {
                     .foregroundColor(Color("TextSecondary"))
                     .lineLimit(1)
                 HStack(spacing: 6) {
+                    if model.isCommunity {
+                        FreeweightsBadge(text: "Community upload", dot: Theme.statusInfo)
+                    }
                     if let license = model.license ?? row?.licenseId {
                         FreeweightsBadge(text: license, dot: FreeweightsFormat.licenseTint(row?.licenseClass))
                     }
@@ -301,6 +356,142 @@ private struct FreeweightsBadge: View {
     }
 }
 
+// MARK: - My uploads row
+
+/// One of the account's own repos with its scan state.
+private struct FreeweightsMyRepoRow: View {
+    let repo: FreeweightsMyRepo
+
+    private var tint: Color {
+        switch repo.scanState {
+        case .live: return Theme.statusSuccess
+        case .held, .removed: return Theme.statusError
+        case .scanning, .draft: return Theme.statusWarning
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                Text(repo.name)
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundColor(Color("TextPrimary"))
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+                FreeweightsBadge(text: repo.scanLabel, dot: tint)
+            }
+            Text(repo.detailText)
+                .font(.caption)
+                .foregroundColor(Color("TextSecondary"))
+            if repo.scanState == .held, let codes = repo.scans.heldCodes, !codes.isEmpty {
+                Text("Reason: \(codes.joined(separator: ", "))")
+                    .font(.caption)
+                    .foregroundColor(Color("TextSecondary"))
+            }
+            if repo.scanState == .scanning {
+                let total = repo.scans.queued + repo.scans.scanning + repo.scans.clean + repo.scans.held + repo.scans.error
+                if total > 0 {
+                    Text("\(repo.scans.clean) of \(total) files cleared")
+                        .font(.caption.monospacedDigit())
+                        .foregroundColor(Color("TextSecondary"))
+                }
+            }
+            if repo.bytes > 0 {
+                Text(FreeweightsFormat.bytes(repo.bytes))
+                    .font(.caption)
+                    .foregroundColor(Color("TextSecondary"))
+            }
+        }
+        .padding(.vertical, 4)
+        .accessibilityElement(children: .combine)
+    }
+}
+
+// MARK: - Report
+
+/// Report a community repo. Needs an account; says so when signed out.
+private struct FreeweightsReportSheet: View {
+    let repoId: String
+
+    @Environment(\.dismiss) private var dismiss
+    @ObservedObject private var auth = AuthManager.shared
+    @State private var reason: FreeweightsReportReason = .other
+    @State private var note = ""
+    @State private var isSending = false
+    @State private var sent = false
+    @State private var error: String?
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                if !auth.isSignedIn {
+                    Section {
+                        FriendlyInlineStateView(
+                            style: .empty,
+                            icon: "person.crop.circle",
+                            title: "Sign in to report",
+                            message: "Reports need an account.",
+                            actionTitle: "Sign in",
+                            action: { auth.isPresentingAuth = true }
+                        )
+                    }
+                } else if sent {
+                    Section {
+                        Text("Thanks. We got your report and will review it.")
+                            .font(.subheadline)
+                    }
+                } else {
+                    Section {
+                        Picker("Reason", selection: $reason) {
+                            ForEach(FreeweightsReportReason.allCases) { Text($0.label).tag($0) }
+                        }
+                        TextField("Details (optional)", text: $note, axis: .vertical)
+                            .lineLimit(3...6)
+                    } header: {
+                        Text(repoId)
+                    } footer: {
+                        Text("For a legal notice such as a copyright claim, use the takedown address on freeweights.allternit.com.")
+                    }
+                    if let error {
+                        Section { Text(error).font(.caption).foregroundColor(Theme.statusError) }
+                    }
+                    Section {
+                        Button {
+                            Task { await submit() }
+                        } label: {
+                            HStack {
+                                if isSending { ProgressView() }
+                                Text(isSending ? "Sending…" : "Send report")
+                            }
+                            .frame(maxWidth: .infinity)
+                        }
+                        .disabled(isSending)
+                    }
+                }
+            }
+            .navigationTitle("Report")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button(sent ? "Done" : "Cancel") { dismiss() }
+                }
+            }
+        }
+    }
+
+    private func submit() async {
+        isSending = true
+        error = nil
+        defer { isSending = false }
+        do {
+            try await FreeweightsClient.shared.report(repo: repoId, reason: reason, note: note)
+            sent = true
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+}
+
 // MARK: - Detail sheet
 
 /// License, size and files for one model, plus Send to computer (or a link
@@ -315,7 +506,9 @@ struct FreeweightsDetailSheet: View {
     @State private var staleAge: TimeInterval?
     @State private var downReason: String?
     @State private var isLoading = true
+    @State private var isReporting = false
 
+    private var isCommunity: Bool { detail?.isCommunity ?? summary.isCommunity }
     private var catalogRow: FreeweightsCatalogRow? { detail?.catalog ?? row }
     private var isLinkOnly: Bool { detail?.isLinkOnly ?? row?.isLinkOnly ?? false }
 
@@ -352,6 +545,26 @@ struct FreeweightsDetailSheet: View {
                 }
 
                 factsSection
+
+                if isCommunity {
+                    Section {
+                        Text("Uploaded by a Freeweights member, not by Allternit. Every file is scanned before it can be downloaded.")
+                            .font(.subheadline)
+                            .foregroundColor(Color("TextSecondary"))
+                        if let note = detail?.communityStatusNote {
+                            Text(note)
+                                .font(.subheadline)
+                                .foregroundColor(Theme.statusWarning)
+                        }
+                        Button {
+                            isReporting = true
+                        } label: {
+                            Label("Report this repo", systemImage: "flag")
+                        }
+                    } header: {
+                        Text("Community upload")
+                    }
+                }
 
                 if isLinkOnly {
                     Section {
@@ -394,6 +607,10 @@ struct FreeweightsDetailSheet: View {
                 }
             }
             .task { await load() }
+            .sheet(isPresented: $isReporting) {
+                FreeweightsReportSheet(repoId: summary.id)
+                    .presentationDetents([.medium, .large])
+            }
         }
     }
 

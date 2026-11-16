@@ -21,9 +21,12 @@ struct FreeweightsModelSummary: Codable, Sendable, Identifiable, Equatable {
     /// Absolute URL of the publisher's logo, or null. Newer worker deploys
     /// only; absent on older ones.
     let publisherLogo: String?
+    /// "community" for a repo a signed-in user uploaded; "catalog" or absent
+    /// for the curated catalog. Absent on workers that predate uploads.
+    var source: String?
 
     enum CodingKeys: String, CodingKey {
-        case id, sha, tags, downloads, lastModified, section, license, badges
+        case id, sha, tags, downloads, lastModified, section, license, badges, source
         case pipelineTag = "pipeline_tag"
         case libraryName = "library_name"
         case publisherLogo = "publisher_logo"
@@ -37,6 +40,7 @@ struct FreeweightsModelSummary: Codable, Sendable, Identifiable, Equatable {
 
     var org: String { String(id.split(separator: "/").first ?? "") }
     var name: String { String(id.split(separator: "/").last ?? Substring(id)) }
+    var isCommunity: Bool { source == "community" }
 }
 
 /// A row of `GET /api/catalog` — the curated catalog record behind each
@@ -115,23 +119,164 @@ struct FreeweightsModelDetail: Codable, Sendable, Equatable {
     let manifestUrl: String?
     let upstreamUrl: String?
     let catalog: FreeweightsCatalogRow?
+    var source: String?
+    /// Community repos only: draft | scanning | live | held (spec 11.6).
+    /// It describes what is waiting; `sha` + `siblings` are the last clean
+    /// head being served.
+    var status: String?
 
     enum CodingKeys: String, CodingKey {
-        case id, sha, section, license, badges, siblings, sources, catalog
+        case id, sha, section, license, badges, siblings, sources, catalog, source, status
         case pipelineTag = "pipeline_tag"
         case libraryName = "library_name"
         case manifestUrl = "manifest_url"
         case upstreamUrl = "upstream_url"
     }
 
-    var isLinkOnly: Bool { catalog?.isLinkOnly ?? (manifestUrl ?? "").isEmpty }
+    var isCommunity: Bool { source == "community" }
+    /// Community repos have no catalog record, but they are served by
+    /// Freeweights itself, so they are never link-only.
+    var isLinkOnly: Bool { isCommunity ? false : (catalog?.isLinkOnly ?? (manifestUrl ?? "").isEmpty) }
     var filesCount: Int { siblings?.count ?? 0 }
+    /// A community repo can be downloaded once a clean commit is served.
+    var isDownloadable: Bool { isCommunity ? sha != nil : true }
+    /// One line for a community repo whose newest commit is not served yet.
+    var communityStatusNote: String? {
+        guard isCommunity else { return nil }
+        if sha == nil { return "Files are being scanned. Downloads open when every file passes." }
+        switch status {
+        case "scanning": return "An update is being scanned. The last clean version is served."
+        case "held": return "An update did not pass its scan. The last clean version is served."
+        default: return nil
+        }
+    }
 }
 
 /// One page of search results plus the next cursor from the `Link` header.
 struct FreeweightsPage: Codable, Sendable, Equatable {
     let models: [FreeweightsModelSummary]
     let nextCursor: String?
+}
+
+// MARK: - My uploads (signed in)
+
+/// One row of `GET /api/fw/v1/repos` (spec/parts/write-api.yaml `MyRepo`):
+/// the caller's own community repos in every state, with scan counts for
+/// the head commit.
+struct FreeweightsMyRepo: Codable, Sendable, Identifiable, Equatable {
+    struct Scans: Codable, Sendable, Equatable {
+        let queued: Int
+        let scanning: Int
+        let clean: Int
+        let held: Int
+        let error: Int
+        let heldCodes: [String]?
+
+        enum CodingKeys: String, CodingKey {
+            case queued, scanning, clean, held, error
+            case heldCodes = "held_codes"
+        }
+    }
+
+    let id: String
+    let type: String
+    let name: String
+    let status: String
+    let removedReason: String?
+    let bytes: Int64
+    let scans: Scans
+
+    enum CodingKeys: String, CodingKey {
+        case id, type, name, status, bytes, scans
+        case removedReason = "removed_reason"
+    }
+
+    /// What the row says. A held file wins over everything else, then
+    /// scanning; a `live` repo with a stray queued scan still reads live.
+    enum ScanState: Equatable { case scanning, live, held, removed, draft }
+
+    var scanState: ScanState {
+        switch status {
+        case "live": return .live
+        case "held": return .held
+        case "removed": return .removed
+        case "scanning": return .scanning
+        default: return scans.queued + scans.scanning > 0 ? .scanning : .draft
+        }
+    }
+
+    var scanLabel: String {
+        switch scanState {
+        case .scanning: return "Scanning"
+        case .live: return "Live"
+        case .held: return "Held"
+        case .removed: return "Removed"
+        case .draft: return "Draft"
+        }
+    }
+
+    var detailText: String {
+        switch scanState {
+        case .scanning:
+            return "Files are scanned before anyone can download them."
+        case .live:
+            return "Every file passed its scan."
+        case .held:
+            return "A file did not pass its scan, so nothing from this commit is served."
+        case .removed:
+            return "This repo was removed."
+        case .draft:
+            return "No files committed yet."
+        }
+    }
+}
+
+private struct FreeweightsMyReposResponse: Codable {
+    let repos: [FreeweightsMyRepo]
+}
+
+/// The reasons the report sheet offers (the `reason_class` enum of
+/// `POST /api/fw/v1/reports`; legal notices go to the takedown mailbox).
+enum FreeweightsReportReason: String, CaseIterable, Identifiable, Sendable {
+    case copyright
+    case licenseViolation = "license_violation"
+    case malwareOrSecrets = "malware_or_secrets"
+    case realPersonLikeness = "real_person_likeness"
+    case spam
+    case abuse
+    case other
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .copyright: return "Copyright"
+        case .licenseViolation: return "License violation"
+        case .malwareOrSecrets: return "Malware or leaked secrets"
+        case .realPersonLikeness: return "Real person's likeness"
+        case .spam: return "Spam"
+        case .abuse: return "Abuse"
+        case .other: return "Something else"
+        }
+    }
+}
+
+/// Why `myRepos()` or `report()` could not finish; each case carries
+/// plain-words copy for the screen.
+enum FreeweightsAccountError: Error, Equatable, LocalizedError {
+    case signedOut
+    case rateLimited
+    case failed(Int)
+    case network
+
+    var errorDescription: String? {
+        switch self {
+        case .signedOut: return "Sign in to do this."
+        case .rateLimited: return "Too many reports just now. Try again later."
+        case .failed(let status): return "Freeweights answered \(status)."
+        case .network: return "Couldn't reach Freeweights. Check your connection."
+        }
+    }
 }
 
 // MARK: - Results
@@ -240,6 +385,64 @@ final class FreeweightsClient: @unchecked Sendable {
         await load(baseURL.appendingPathComponent("api/catalog")) { data, _ in
             let rows = try JSONDecoder().decode(FreeweightsCatalogResponse.self, from: data).models
             return Dictionary(rows.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        }
+    }
+
+    // MARK: Signed-in calls (My uploads, reports)
+
+    /// `GET /api/fw/v1/repos` with the account's token. A 404 means no
+    /// Freeweights profile yet, which is an empty list, not an error.
+    func myRepos(kind: String? = nil, client auth: APIClient = .shared) async throws -> [FreeweightsMyRepo] {
+        var components = URLComponents(url: baseURL.appendingPathComponent("api/fw/v1/repos"), resolvingAgainstBaseURL: false)!
+        if let kind { components.queryItems = [URLQueryItem(name: "kind", value: kind)] }
+        let request = try await auth.authorizedRequest(url: components.url!)
+        let (data, status) = try await send(request, using: auth)
+        switch status {
+        case 200...299:
+            do {
+                return try JSONDecoder().decode(FreeweightsMyReposResponse.self, from: data).repos
+            } catch {
+                throw APIError.decoding(error)
+            }
+        case 401: throw FreeweightsAccountError.signedOut
+        case 404: return []
+        default: throw FreeweightsAccountError.failed(status)
+        }
+    }
+
+    private struct ReportBody: Encodable {
+        struct Target: Encodable { let type: String; let id: String }
+        let target: Target
+        let reason_class: String
+        let body: String?
+    }
+
+    /// `POST /api/fw/v1/reports` for a repo (`namespace/name`).
+    func report(repo id: String, reason: FreeweightsReportReason, note: String,
+                client auth: APIClient = .shared) async throws {
+        var request = try await auth.authorizedRequest(url: baseURL.appendingPathComponent("api/fw/v1/reports"), method: "POST")
+        let trimmed = note.trimmingCharacters(in: .whitespacesAndNewlines)
+        request.httpBody = try JSONEncoder().encode(ReportBody(
+            target: .init(type: "repo", id: id),
+            reason_class: reason.rawValue,
+            body: trimmed.isEmpty ? nil : String(trimmed.prefix(5000))))
+        let (_, status) = try await send(request, using: auth)
+        switch status {
+        case 200...299: return
+        case 401: throw FreeweightsAccountError.signedOut
+        case 429: throw FreeweightsAccountError.rateLimited
+        default: throw FreeweightsAccountError.failed(status)
+        }
+    }
+
+    private func send(_ request: URLRequest, using auth: APIClient) async throws -> (Data, Int) {
+        do {
+            let (data, response) = try await session.data(for: request)
+            return (data, (response as? HTTPURLResponse)?.statusCode ?? 0)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            throw FreeweightsAccountError.network
         }
     }
 
