@@ -529,6 +529,35 @@ export async function listProjects(): Promise<Project[]> {
   return (body.projects ?? []).map(toProject)
 }
 
+// ── project pad (allternit-api GET /api/v1/project-pad/:scope) ────────────
+
+export type ProjectPad = {
+  data?: {
+    notes?: string
+    links?: Array<{ title?: string; url?: string }>
+    checklist?: Array<{ id?: string; text?: string; done?: boolean }>
+  }
+  updatedAt?: string | number
+}
+
+/** `pad` is null when none is saved; `unsupported` when the runtime is too old (404). */
+export type ProjectPadResult = { pad: ProjectPad | null; unsupported: boolean }
+
+/** Scope as the web builds it. The project list carries no mode, so callers pass "chat". */
+export function projectPadScope(id: string, mode: string = "chat"): string {
+  return `project:${mode}:${id}`
+}
+
+export async function getProjectPad(scope: string): Promise<ProjectPadResult> {
+  try {
+    const body = await gateway<{ pad?: ProjectPad | null }>(`/api/v1/project-pad/${encodeURIComponent(scope)}`)
+    return { pad: body?.pad ?? null, unsupported: false }
+  } catch (e) {
+    if (/ failed: 404\b/.test(String((e as Error)?.message))) return { pad: null, unsupported: true }
+    throw e
+  }
+}
+
 // ── routines ──────────────────────────────────────────────────────────────
 
 export type Routine = {
