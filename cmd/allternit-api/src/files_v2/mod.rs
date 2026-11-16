@@ -17,15 +17,22 @@
 //!   `touch_runtime_activity` or any other idle reset.
 //!   `tests::files_v2_never_touches_activity` guards it.
 //! - **Body limits.** 1 MiB on every v2 route, except the small write and the
-//!   chunk PUT, which take 4 MiB + 64 KiB (section 2).
+//!   chunk PUT, which take 4 MiB + 64 KiB (section 2), and the replica blob PUT.
+//! - **Replicas** (`replicas.rs`, `sync.rs`): the host role, registrations,
+//!   this computer's Files key, replication passes that never wake anything,
+//!   restore with a hash check, cross-computer copy and move as jobs.
 
 mod errors;
 mod feed;
 mod memory;
 mod meta;
+#[cfg(test)]
+mod replica_tests;
+mod replicas;
 mod roots;
 mod routes;
 mod storage;
+mod sync;
 #[cfg(test)]
 mod tests;
 
@@ -102,10 +109,16 @@ impl Config {
 /// The `/files/v2` routes for this process, nested by the caller under
 /// `/api/v1`.
 pub fn router<S: Clone + Send + Sync + 'static>(app_data_dir: &Path, db: DbHandle) -> Router<S> {
-    routes::routes(Arc::new(FilesV2::new(Config::from_env(app_data_dir, Some(db)))))
+    let files = Arc::new(FilesV2::new(Config::from_env(app_data_dir, Some(db))));
+    // Replicas (step 15): the heartbeat reads this instance; the loop pushes
+    // replica passes only while this runtime runs anyway.
+    sync::register_process(&files);
+    sync::spawn_replicator(files.clone());
+    routes::routes(files)
 }
 
 pub use routes::routes;
+pub use sync::heartbeat_report;
 
 /// Shared state for every v2 route. The drive opens on first use.
 pub struct FilesV2 {

@@ -17,6 +17,7 @@ pub mod drive;
 pub mod error;
 pub mod model;
 pub mod naming;
+pub mod replica;
 pub mod store;
 pub mod upload;
 pub mod watcher;
