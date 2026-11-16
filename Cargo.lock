@@ -251,6 +251,7 @@ dependencies = [
  "jsonschema",
  "jsonwebtoken",
  "libc",
+ "lopdf",
  "mcp-client",
  "mcp-protocol",
  "md5",

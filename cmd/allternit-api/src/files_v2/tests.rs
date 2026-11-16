@@ -176,6 +176,10 @@ fn files_v2_never_touches_activity() {
         ("snapshot.rs", include_str!("snapshot.rs")),
         ("cloud.rs", include_str!("cloud.rs")),
         ("drops.rs", include_str!("drops.rs")),
+        ("intel/mod.rs", include_str!("intel/mod.rs")),
+        ("intel/routes.rs", include_str!("intel/routes.rs")),
+        ("intel/budget.rs", include_str!("intel/budget.rs")),
+        ("intel/embed.rs", include_str!("intel/embed.rs")),
     ];
     const FORBIDDEN: &[&str] =
         &["touch_computer_activity", "touch_runtime_activity", "touch_activity", "touch_provisioned_activity", "last_activity_at", "mark_active"];

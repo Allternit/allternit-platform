@@ -229,6 +229,46 @@ Each root keeps versions by count and age. `keep_days` counts from the time a ve
 
 The web Files tab lists versions per file and trash per root, and restores either. A restore into a taken name returns the item under a new name. There is no route yet to download an old version or to empty the trash.
 
+## Search and intelligence
+
+The runtime indexes the text of files on the computer that owns them. The index lives in `intel.sqlite` beside the engine database and never leaves the computer.
+
+### Search modes
+
+`POST /search` takes `mode`:
+
+- `name`: the file name contains the query. Always available.
+- `full_text`: words inside files and names, ranked by relevance (SQLite FTS5, bm25). Words match any-of, best match first. Put the query in double quotes to match a phrase. Each hit carries a `snippet` of the matching text.
+- `semantic`: files closest in meaning to the query, using the local embedding endpoint (`ALLTERNIT_EMBED_URL`, by default the loopback model on port 7719). With no model reachable the route answers `501 unsupported`, and no vectors are made. The hash fallback the memory index uses is not used here, because it carries no meaning.
+
+`index_state` is `building` until the background worker has caught up with the files, then `ready`. Searches only return files in roots the caller may read. A caller that is an agent sees only roots whose policy allows `agent_process`. A guest gets no hits from these routes; guests search inside their share through the sharing gateway. Snippets are file content and are never returned to a guest. A protected root needs the unlock header, as everywhere else.
+
+### What is indexed, and when
+
+- **What is read.** Text files (UTF-8, no NUL bytes in the first 8 KiB, up to 2 MiB), PDFs (up to 20 MiB, the first 50 pages, 5 seconds of extraction) and the text of Word `.docx` files. Text is capped at 2 MiB per file. A PDF that is encrypted, broken or over a cap is skipped. Spreadsheets, slides and audio are not read yet. Images get a thumbnail and no text.
+- **Only while the computer is awake (D12).** Indexing, embeddings and previews run on one background thread inside the runtime process. They never wake a computer, never reset its idle timer, and use no company compute. The embedding call goes to the endpoint on the computer.
+- **CPU budget.** One thread at low priority (niced on Linux), held to a duty cycle of **25% of one core** by default: after each file it rests three times as long as the file took. At most 8 files per pass. When a pass finds nothing the wait before the next doubles from 30 seconds up to 5 minutes. Set `ALLTERNIT_FILES_INTEL_CPU_PERCENT` (1 to 100), `ALLTERNIT_FILES_INTEL_BATCH` (1 to 200) or `ALLTERNIT_FILES_INTEL=off` to change it. This keeps a 2 CPU, 4 GB cloud computer usable for the user's own work.
+- **Protected roots are skipped.** The Memory Drive and any root with `protected: true` are not indexed. The owner can opt a root in with `PUT /intel/roots/{root_id}` and `{"index": true}`, which needs the device unlock and does not work over a relay. Opting out removes what was indexed.
+
+### Routes
+
+| Method | Path | Notes |
+|---|---|---|
+| `GET` | `/intel/status` | Index progress, models in use, the CPU budget |
+| `PUT` | `/intel/roots/{root_id}` | `{"index": bool}`: opt a protected root in or out (owner only) |
+| `GET`, `POST` | `/intel/tags` | Tag counts. `POST {item_id, add, remove}` changes an item's tags (needs write access) |
+| `GET` | `/intel/tags/{tag}/items` | Items with a tag, readable ones only |
+| `POST` | `/intel/provenance` | `{item_id, provenance}`. A change from an agent is always `ai_generated: true` |
+| `GET` | `/intel/dedup?root_id=` | Groups of files with the same content hash, with the bytes saved by keeping one |
+| `GET`, `POST` | `/intel/collections` | List, or create `{name}` (owner only) |
+| `GET`, `POST`, `DELETE` | `/intel/collections/{id}` | Items in it, `POST {item_id, remove?}` to add or remove, delete |
+| `GET` | `/items/{item_id}/preview?kind=` | `thumbnail` (PNG, 256 px) or `text` (first 2000 characters). `404` until indexed, never the preview of an older version |
+| `POST` | `/intel/actions` | `{item_id, action}`: `summarize` is extractive (sentences picked from the file, no model); `transcribe` returns `501 unsupported` |
+| `GET`, `POST` | `/intel/rules` | Folder rules (owner only): `{folder_id, action: "summarize"}` summarizes new and changed files under that folder |
+| `DELETE` | `/intel/rules/{id}` | Remove a rule |
+
+Items returned anywhere carry `tags`, `provenance` (shown by clients as an AI-generated label when `ai_generated` is true) and `has_thumbnail` when they exist. Summaries and transcripts are never made on their own: only an explicit action or a folder rule the owner created runs them.
+
 ## Errors
 
 Every error body is `ErrorBody`: `{error, message, code}` plus optional `retry_after_s`, `computer_state`, `wake`, `current` and `missing_chunks`. `error` and `code` both hold the error code.
