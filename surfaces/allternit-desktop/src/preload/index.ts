@@ -399,6 +399,37 @@ const meshAPI = {
   proxyFor: (instanceUrl: string): Promise<string> => ipcRenderer.invoke('mesh:proxy-for', instanceUrl),
 };
 
+// ─── Files drive (macOS Finder locations) ─────────────────────────────────────
+// Electron main keeps one File Provider location per computer in the Finder
+// sidebar (files-drive-manager.ts). The first-run checklist (design 3A) reads
+// this: status, the File Providers switch in System Settings, Show in Finder.
+
+export type FilesDriveStatus = {
+  availability: 'unsupported' | 'missing' | 'available';
+  signedIn: boolean;
+  flag: boolean | null;
+  computers: Array<{ id: string; name: string; enabled: boolean }>;
+  needsProviderSwitch: boolean;
+  syncing: boolean;
+  lastSyncAt?: string;
+  error?: string;
+};
+
+const filesDriveAPI = {
+  status: (): Promise<FilesDriveStatus> => ipcRenderer.invoke('files-drive:status'),
+  sync: (): Promise<FilesDriveStatus> => ipcRenderer.invoke('files-drive:sync'),
+  /** Checks for the System Settings switch every few seconds for 10 minutes. */
+  watch: (): Promise<FilesDriveStatus> => ipcRenderer.invoke('files-drive:watch'),
+  openProviderSettings: (): Promise<{ opened: boolean }> => ipcRenderer.invoke('files-drive:open-settings'),
+  showInFinder: (computerId: string): Promise<{ opened: boolean; error?: string }> =>
+    ipcRenderer.invoke('files-drive:show-in-finder', computerId),
+  onChange: (callback: (status: FilesDriveStatus) => void): (() => void) => {
+    const listener = (_event: IpcRendererEvent, status: FilesDriveStatus) => callback(status);
+    ipcRenderer.on('files-drive:changed', listener);
+    return () => ipcRenderer.removeListener('files-drive:changed', listener);
+  },
+};
+
 // ─── Shell ────────────────────────────────────────────────────────────────────
 
 interface HudPrefs {
@@ -1301,6 +1332,7 @@ const allternitDesktopAPI = {
   auth: authAPI,
   devicePairing: devicePairingAPI,
   mesh: meshAPI,
+  filesDrive: filesDriveAPI,
   shell: shellAPI,
   office: officeAPI,
   officeAddins: officeAddinsAPI,

@@ -29,6 +29,9 @@ final class FileProviderItem: NSObject, NSFileProviderItem {
     /// The contract item behind this one (nil for the computer itself).
     let item: Item?
     let rootId: RootId?
+    /// Allternit's own states, most important first (`FilesBadge`). Shown as
+    /// Finder decorations on macOS (plan step 23).
+    var badges: [FilesBadge] = []
 
     init(identifier: NSFileProviderItemIdentifier, parent: NSFileProviderItemIdentifier, name: String,
          isFolder: Bool, item: Item?, rootId: RootId?, rev: Rev, contentVersion: String,
@@ -103,9 +106,11 @@ struct ItemMapper {
         }
         var caps: NSFileProviderItemCapabilities = [.allowsReading, .allowsContentEnumerating]
         if isLive && root.policy.write { caps.insert(.allowsAddingSubItems) }
-        return FileProviderItem(identifier: NSFileProviderItemIdentifier(root.rootItemId), parent: parent, name: root.name,
-                                isFolder: true, item: nil, rootId: root.id, rev: "root-\(root.cursor)",
-                                contentVersion: "root", capabilities: caps, pinned: false)
+        let folder = FileProviderItem(identifier: NSFileProviderItemIdentifier(root.rootItemId), parent: parent, name: root.name,
+                                      isFolder: true, item: nil, rootId: root.id, rev: "root-\(root.cursor)",
+                                      contentVersion: "root", capabilities: caps, pinned: false)
+        folder.badges = FilesBadge.badges(for: nil, root: root, pinned: false)
+        return folder
     }
 
     /// `item` as the File Provider sees it (a link entry becomes its root).
@@ -118,10 +123,13 @@ struct ItemMapper {
         }
         let parent = item.parentId.map { NSFileProviderItemIdentifier($0) } ?? .rootContainer
         let isFolder = item.kind == .folder
-        return FileProviderItem(identifier: NSFileProviderItemIdentifier(item.id), parent: parent, name: item.name,
-                                isFolder: isFolder, item: item, rootId: item.rootId, rev: item.rev,
-                                contentVersion: item.contentHash ?? item.rev,
-                                capabilities: capabilities(item), pinned: pinnedIds.contains(item.id))
+        let pinned = pinnedIds.contains(item.id)
+        let mapped = FileProviderItem(identifier: NSFileProviderItemIdentifier(item.id), parent: parent, name: item.name,
+                                      isFolder: isFolder, item: item, rootId: item.rootId, rev: item.rev,
+                                      contentVersion: item.contentHash ?? item.rev,
+                                      capabilities: capabilities(item), pinned: pinned)
+        mapped.badges = FilesBadge.badges(for: item, root: rootsById[item.rootId], pinned: pinned)
+        return mapped
     }
 
     private func capabilities(_ item: Item) -> NSFileProviderItemCapabilities {
@@ -154,3 +162,17 @@ enum ProviderDates {
         return fractional.date(from: value) ?? ISO8601DateFormatter().date(from: value)
     }
 }
+
+#if os(macOS)
+/// Finder badges (design 6A). The identifiers are declared in the macOS
+/// extension's Info.plist (`surfaces/allternit-desktop/native/file-provider/
+/// Extension/Info.plist`, `NSFileProviderDecorations`) as
+/// `<extension bundle id>.badge.<name>`. Step 20 can turn these on for iOS
+/// by dropping the `#if` and declaring the same identifiers there.
+extension FileProviderItem: NSFileProviderItemDecorating {
+    var decorations: [NSFileProviderItemDecorationIdentifier]? {
+        guard !badges.isEmpty, let bundle = Bundle.main.bundleIdentifier else { return nil }
+        return badges.map { NSFileProviderItemDecorationIdentifier(rawValue: bundle + "." + $0.decorationSuffix) }
+    }
+}
+#endif

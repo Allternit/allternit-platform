@@ -90,6 +90,7 @@ import { authManager, FULL_CLERK_REFRESH_WAIT_MS } from './auth-manager.js';
 // left Settings → Devices failing with "No handler registered".
 import './device-pairing-manager.js';
 import { meshManager } from './mesh-manager.js';
+import { filesDriveManager } from './files-drive-manager.js';
 import { startMeshBridgeServer } from './mesh-bridge-server.js';
 import { createStartupWindow } from './startup-window.js';
 import { notebookManager } from './notebook-manager.js';
@@ -1515,6 +1516,9 @@ async function initializeBundledMode(): Promise<void> {
     // it; failures land in system-one:get-status. Started this early so Laya is
     // ready for the first decisions (the API's "auto" S1 backend uses it once healthy).
     void systemOne.startWithApp();
+    // Files drive (macOS): each computer as a Finder location. Never awaited;
+    // it needs only the account, and failures land in files-drive:status.
+    filesDriveManager.start();
     const gizziTask = (async (): Promise<string | null> => {
       try {
         const url = await startGizziRuntime();
@@ -3336,6 +3340,7 @@ async function shutdownAllServices(): Promise<void> {
   officeEngineManager.stop();
   factoryEngineManager.stop();
   meshManager.stop().catch(() => {}); // best-effort mesh sidecar shutdown
+  filesDriveManager.stop();
   notebookManager.stop();
   voiceManager.stop();
   systemOne.stop();
@@ -4750,6 +4755,9 @@ handleGuarded('auth:forget-account', async (_event, userId: string) => {
   await authManager.forgetAccount(userId);
 });
 handleGuarded('auth:sign-out', async () => {
+  // First, while the Clerk session can still revoke the Files key: removes
+  // every Finder location of the account and the files macOS kept for them.
+  await filesDriveManager.signOut();
   await authManager.signOut();
   // The mesh node state is enrolled to the signed-out user's mesh identity.
   // Drop it so the next account enrolls its own node instead of reusing it.

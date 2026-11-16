@@ -1,8 +1,9 @@
 // swift-tools-version:5.9
 //
 // AllternitFilesKit: the Files drive client (protocol `files/2`) shared by the
-// iOS app, the AllternitFileProvider extension and, later, the macOS File
-// Provider (plan step 23). Foundation, Security and FileProvider only (no
+// iOS app, the AllternitFileProvider extension and the macOS File Provider
+// in Allternit Desktop (plan step 23, surfaces/allternit-desktop/native/
+// file-provider/build.sh compiles these same sources). Foundation, Security and FileProvider only (no
 // UIKit, no mesh), so the File Provider extension stays far under iOS's
 // ~20 MB extension memory limit (spike 5) and the same code builds for macOS.
 // Platform differences stay in the targets that link it.

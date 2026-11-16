@@ -108,7 +108,14 @@ public final class FilesClient: @unchecked Sendable {
         guard let pick = allowed.first, let url = URL(string: pick.baseUrl) else {
             throw FilesError.noTransport(available: endpoints.candidates.map(\.kind))
         }
-        return pick.kind == .relay ? .relay(proxyURL: url) : .direct(baseURL: url)
+        if pick.kind == .relay { return .relay(proxyURL: url) }
+        // A mesh address goes through the Desktop app's loopback proxy when
+        // it runs one (macOS); otherwise straight to the address, which works
+        // where the system itself is on the mesh.
+        if pick.kind == .mesh, let proxied = configuration.sharedStore?.meshProxyURL(for: url) {
+            return .direct(baseURL: proxied)
+        }
+        return .direct(baseURL: url)
     }
 
     // MARK: Wake consent (cloud-api)
