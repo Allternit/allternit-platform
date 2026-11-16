@@ -46,11 +46,11 @@ The first request creates the default roots:
 | Kind | Name | Folder | Notes |
 |---|---|---|---|
 | `allternit_home` | Allternit | `~/Allternit` | parent of the six folders below |
-| `inbox` | Inbox | `~/Allternit/Inbox` | shareable; agents may take items as task inputs |
+| `inbox` | Inbox | `~/Allternit/Inbox` | shareable; each drop waits for approval (see [Inbox, rules and events](/api/files-drive-inbox)) |
 | `shared` | Shared | `~/Allternit/Shared` | shareable |
 | `agent_output` | Agent Output | `~/Allternit/Agent Output` | agent results |
-| `downloads` | Downloads | `~/Allternit/Downloads` | `provider_ready: false` until downloads land here |
-| `meetings` | Meetings | `~/Allternit/Meetings` | `provider_ready: false` until recordings land here |
+| `downloads` | Downloads | `~/Allternit/Downloads` | agent-browser downloads land here |
+| `meetings` | Meetings | `~/Allternit/Meetings` | meeting notes (summary and transcript) land here |
 | `scans` | Scans | `~/Allternit/Scans` | `provider_ready: false` until phone scans land here |
 | `memory_drive` | Memory Drive | your Memory Drive | protected; writes become Memory Drive commits |
 | `code` | Code | `ALLTERNIT_FILES_CODE_DIR` | `provider_ready: false` while unset; add your code folder with `POST /roots` instead |
