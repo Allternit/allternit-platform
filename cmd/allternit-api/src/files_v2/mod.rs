@@ -29,6 +29,7 @@ mod memory;
 mod meta;
 mod roots;
 mod routes;
+pub mod routing;
 mod rules;
 mod storage;
 #[cfg(test)]

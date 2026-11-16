@@ -770,7 +770,11 @@ async fn summary_route(State(state): State<Arc<AppState>>, headers: HeaderMap, p
     };
     forget_session(&TurnEngine::production(), &req.session_id).await;
     match summary {
-        Ok(s) => Json(json!({ "session_id": req.session_id, "summary": s.summary, "decisions": s.decisions, "action_items": s.action_items })).into_response(),
+        Ok(s) => {
+            // Files drive on: the note also lands in ~/Allternit/Meetings.
+            crate::files_v2::routing::save_meeting(&req.session_id, &req.meeting, &req.transcript, &s);
+            Json(json!({ "session_id": req.session_id, "summary": s.summary, "decisions": s.decisions, "action_items": s.action_items })).into_response()
+        }
         Err(e) => refuse(StatusCode::BAD_GATEWAY, "summary_failed", &e),
     }
 }
