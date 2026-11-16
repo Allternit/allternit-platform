@@ -1662,7 +1662,7 @@
     {
       "source": "allternit/cmd/allternit-api",
       "target": "allternit/services/model-training",
-      "kind": "engine source pin: the Studio engines (Axolotl, LLaMA-Factory, torchtune) are published at Allternit/studio-engines pinned commit e520474 (Apache-2.0), documented in surfaces/docs/api/studio.mdx; the host code does not pin that sha yet, so the pin is a docs claim until engines.rs carries it",
+      "kind": "engine source pin: the three third-party Studio engines (Axolotl, LLaMA-Factory, torchtune) install from Allternit/studio-engines at commit e520474 (Apache-2.0), pinned by STUDIO_ENGINES_SHA in engines.rs and documented in surfaces/docs/api/studio.mdx; no AGPL/LGPL engine (Unsloth removed 2026-11-15)",
       "evidence": [
         "allternit/surfaces/docs/api/studio.mdx",
         "allternit/cmd/allternit-api/src/studio/engines.rs"

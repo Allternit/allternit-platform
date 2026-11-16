@@ -43,7 +43,7 @@
 //!
 //! # Third-party engines (studio-engines kit, Decision 9)
 //!
-//! Unsloth (upstream), Axolotl, LLaMA-Factory and torchtune run through the
+//! Axolotl, LLaMA-Factory and torchtune run through the
 //! public engine kit at <https://github.com/Allternit/studio-engines>, pinned to
 //! [`STUDIO_ENGINES_SHA`]. Each engine gets its own venv
 //! (`<engines>/<id>/venv`, Python at least [`KitEngine::min_python`]) holding:
@@ -68,8 +68,9 @@
 //!
 //! with the same environment as above plus `STUDIO_ENGINE_TOKEN` (the token)
 //! and `STUDIO_ENGINE_BIN_<ID>` (the upstream CLI in that venv). The kit runs
-//! the upstream CLI as its own process; no Allternit code imports an engine
-//! (Unsloth's CLI is AGPL-3.0: process boundary only).
+//! the upstream CLI as its own process; no Allternit code imports an engine.
+//! No engine may be AGPL or LGPL, even behind the process boundary, which is
+//! why Unsloth is not an engine (allternit-tune covers LoRA, QLoRA and GGUF).
 
 use allternit_studio_spec::{EngineInfo, Fit, Hardware, InstallState};
 use serde::{Deserialize, Serialize};
@@ -103,15 +104,6 @@ pub struct KitEngine {
 }
 
 pub const KIT_ENGINES: &[KitEngine] = &[
-    KitEngine {
-        id: "unsloth-upstream",
-        package: "unsloth",
-        version: "2026.11.4",
-        wheel_sha256: "9eeac117bf8df1544cea667432094826e813c21cc94cb9b0649d58a2a6ac6485",
-        cli: "unsloth",
-        min_python: 10,
-        extra: &[],
-    },
     KitEngine {
         id: "axolotl",
         package: "axolotl",
@@ -616,15 +608,15 @@ mod tests {
     fn fit_refuses_with_reason() {
         use allternit_studio_spec::{fit, HostHardware};
         let tune = allternit_studio_spec::engines::find("allternit-tune").unwrap();
-        let unsloth = allternit_studio_spec::engines::find("unsloth-upstream").unwrap();
+        let axolotl = allternit_studio_spec::engines::find("axolotl").unwrap();
 
         let mac = fit(&tune, &HostHardware::plain(Hardware::AppleSilicon));
         assert!(mac.ok);
         assert!(mac.methods_unavailable.is_empty());
 
-        let mac_unsloth = fit(&unsloth, &HostHardware::plain(Hardware::AppleSilicon));
-        assert!(!mac_unsloth.ok);
-        assert!(!mac_unsloth.reason.is_empty());
+        let mac_axolotl = fit(&axolotl, &HostHardware::plain(Hardware::AppleSilicon));
+        assert!(!mac_axolotl.ok);
+        assert!(!mac_axolotl.reason.is_empty());
 
         // CPU is a real device: allternit-tune runs, LoRA only, with a warning.
         let cpu = fit(&tune, &crate::studio::hardware::classify_probe("linux", "x86_64", &Default::default()));
@@ -672,7 +664,6 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let dirs = EngineDirs::new(tmp.path(), Hardware::CudaLinux);
         let cases = [
-            ("unsloth-upstream", "unsloth==2026.11.4", "9eeac117bf8df1544cea667432094826e813c21cc94cb9b0649d58a2a6ac6485", vec![]),
             ("axolotl", "axolotl==0.21.1", "3c0af0b1e381617c0df7c97a456ebccb4f1746116e5419c6601d9d15507c10d2", vec![]),
             ("llama-factory", "llamafactory==0.9.5", "10776e9b259798bf65f6c5343f6298f0302e92e9cd47472abe29eef69e286c6a", vec![]),
             ("torchtune", "torchtune==0.6.1", "bcbc4ee9774b5c5829a5ff13df851e0b0e32416c018af8db53faa3472ac256e7", vec!["torch", "torchao"]),
@@ -782,7 +773,6 @@ mod tests {
             line(&["-m", "allternit_tune.server", "--port", "4100", "--data-dir", "/data/studio/jobs/j1/engine"])
         );
         for (id, bin_var, cli) in [
-            ("unsloth-upstream", "STUDIO_ENGINE_BIN_UNSLOTH_UPSTREAM", "unsloth"),
             ("axolotl", "STUDIO_ENGINE_BIN_AXOLOTL", "axolotl"),
             ("llama-factory", "STUDIO_ENGINE_BIN_LLAMA_FACTORY", "llamafactory-cli"),
             ("torchtune", "STUDIO_ENGINE_BIN_TORCHTUNE", "tune"),

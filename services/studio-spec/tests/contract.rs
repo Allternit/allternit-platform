@@ -39,7 +39,6 @@ fn refusals_have_stable_codes() {
     assert_eq!(codes("invalid-publish"), ["publish_not_available"]);
     assert_eq!(codes("invalid-engine"), ["unknown_engine"]);
     assert_eq!(codes("invalid-method"), ["unknown_method"]);
-    assert_eq!(codes("invalid-method-engine"), ["unknown_method"]);
     assert_eq!(codes("invalid-dataset"), ["invalid_dataset"]);
 }
 
@@ -80,9 +79,10 @@ fn catalog_matches_decisions() {
     assert!(get("allternit-tune").default);
     let mlx = get("allternit-tune").backends.iter().find(|b| b.id == "mlx").unwrap();
     assert_eq!(mlx.status, "available");
-    assert_eq!(get("unsloth-upstream").license, "AGPL-3.0");
-    // `unsloth train` has no DPO.
-    assert!(!get("unsloth-upstream").methods.iter().any(|m| m == "dpo"));
+    // Nothing in the catalog is AGPL or LGPL (Decision, 2026-11-15).
+    for e in &c {
+        assert!(!e.license.contains("GPL"), "{}: {}", e.id, e.license);
+    }
     // allternit-tune covers every hardware id; every id in the catalog is a real one.
     assert_eq!(get("allternit-tune").hardware.len(), Hardware::ALL.len());
     for e in &c {
@@ -90,10 +90,11 @@ fn catalog_matches_decisions() {
             assert!(Hardware::from_id(h).is_some(), "{}: unknown hardware {h}", e.id);
         }
     }
-    // The four third-party engines are published through the studio-engines
+    // The three third-party engines are published through the studio-engines
     // adapters (dry-run conformance passed at the pinned commit); each names
     // that source by full sha and carries the untested label.
-    for id in ["unsloth-upstream", "axolotl", "llama-factory", "torchtune"] {
+    assert_eq!(c.len(), 4, "allternit-tune plus three third-party engines");
+    for id in ["axolotl", "llama-factory", "torchtune"] {
         let e = get(id);
         assert!(e.published, "{id}");
         assert_eq!(e.process.as_deref(), Some("separate_process"), "{id}");
@@ -103,9 +104,6 @@ fn catalog_matches_decisions() {
         assert!(src.sha.chars().all(|c| c.is_ascii_hexdigit()), "{id}");
         assert!(e.notes.as_deref().unwrap_or("").contains("Not yet tested by Allternit"), "{id}");
     }
-    let unsloth = get("unsloth-upstream");
-    let notes = unsloth.notes.as_deref().unwrap();
-    assert!(notes.contains("AGPL-3.0") && notes.contains("separate process"), "{notes}");
     assert!(get("allternit-tune").source.is_none());
 }
 

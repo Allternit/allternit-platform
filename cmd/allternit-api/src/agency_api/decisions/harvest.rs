@@ -15,7 +15,7 @@
 //!   teacher backend (`oracle`, `open`, `vendor`, `typesafe`) is the label.
 //! - **Shared heads.** `GET /v1/decisions/datasets/:kind` exports labelled
 //!   examples as JSONL in the Jev/SystemOne shape (state, questions,
-//!   answers), ready for an Unsloth decision fine-tune. `scope=mine` gives
+//!   answers), ready for an allternit-tune decision fine-tune. `scope=mine` gives
 //!   your scope's examples (org admin); `scope=all` pools every opted-in
 //!   scope with no scope or owner ids in the rows (decisions admins only).
 
