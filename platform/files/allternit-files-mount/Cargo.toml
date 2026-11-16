@@ -1,0 +1,37 @@
+[package]
+name = "allternit-files-mount"
+version = "0.1.0"
+edition = "2021"
+description = "Files drive (files/2) mount frontends: a Linux FUSE filesystem and a loopback WebDAV server over one computer's /api/v1/files/v2 API (loopback or cloud relay). `gizzi files mount` starts it."
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "allternit-files-mount"
+path = "src/main.rs"
+
+[dependencies]
+allternit-files-core = { workspace = true }
+# Only for the pinned v1 chunker (SPEC section 5), so mount uploads dedup with every other client.
+allternit-files-engine = { workspace = true }
+axum = { workspace = true }
+base64 = { workspace = true }
+chrono = { workspace = true }
+futures = { workspace = true }
+rand = { workspace = true }
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+urlencoding = { workspace = true }
+
+# FUSE is Linux only (D11: macOS uses File Provider, Windows uses cfapi). No libfuse
+# link: fuser's pure-Rust mount runs `fusermount3`/`fusermount`, which every distro
+# with FUSE ships.
+[target.'cfg(target_os = "linux")'.dependencies]
+fuser = { version = "0.16", default-features = false }
+libc = "0.2"
