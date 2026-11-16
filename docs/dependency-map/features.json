@@ -4782,12 +4782,17 @@
         "allternit/contracts/files-drive",
         "allternit/platform/types/allternit-files-core",
         "allternit/cmd/allternit-api/src/file_routes.rs",
-        "allternit/cmd/allternit-cloud-api/src/routes/runtime_relay.rs"
+        "allternit/cmd/allternit-cloud-api/src/routes/runtime_relay.rs",
+        "allternit/tools/files-stub"
       ],
       "decisions": [
         {
           "on": "2026-11-15",
           "note": "Full scope (all 17 uses + sharing, intelligence, replicas, dedup, portable workspaces); asleep cloud computer = ask before waking; the drive owns gizzi TUI /files (old files-in-context list folds into /context); asleep snapshot keeps plain names, names_encrypted reserved; no-wake covers v2 only until legacy /files/* callers move to v2."
+        },
+        {
+          "on": "2026-11-15",
+          "note": "Contract gaps closed: chunker pinned (fastcdc 3.2.1 v2020, level 1, gear seed 0, masks; vectors/chunker-v1.json); conflict HHmm = editing device local time via utc_offset_minutes; gone base_rev: keep_both re-creates, fail/replace not_found; keep_days counts from replacement, 0 = no limit, trash_days 0 = no trash; replica locator over raw hash bytes, AAD afc1|v|cipher|key_id|locator|plaintext_size; relay accepts bodyEncoding and body_encoding, streams raw, passes wake-ticket/range/if-match/unlock; computer_id = runtime_devices.id (pc_ ids resolved by cloud-api)."
         }
       ],
       "evidence": [

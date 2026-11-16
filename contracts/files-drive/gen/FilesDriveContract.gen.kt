@@ -73,7 +73,7 @@ data class ChangesResponse(
 )
 
 /**
- * v1 values: min 262144, avg 1048576, max 4194304 (4 MiB). The relay (runtime_relay.rs MAX_RELAY_BODY_BYTES = 5 MiB) measures a base64 body as len*3/4, i.e. the decoded size, so a 4 MiB chunk plus its headers leaves about 1 MiB of headroom.
+ * v1 values, pinned so every chunker cuts the same boundaries: fastcdc crate 3.2.1 `v2020`, normalization level 1, gear seed 0, min 262144 / avg 1048576 / max 4194304 (4 MiB), mask_s 0x0000d91767537000, mask_l 0x0000d91707537000 (mask_s_ls/mask_l_ls = the same shifted left one bit), chunk hash blake3-256 lower-case hex. Test vectors: contracts/files-drive/vectors/chunker-v1.json. The relay (runtime_relay.rs MAX_RELAY_BODY_BYTES = 5 MiB) measures a base64 body as len*3/4, i.e. the decoded size, so a 4 MiB chunk plus its headers leaves about 1 MiB of headroom.
  */
 data class ChunkerParams(
     @Wire("algo") val algo: String,
@@ -109,7 +109,7 @@ data class CommentCreateRequest(
 )
 
 /**
- * The computer (runtime) ID cloud-api already uses.
+ * cloud-api's id for a computer: the runtime_devices id the relay is keyed by, or the pc_... id of a mesh-only paired machine. computer-files routes also accept a cloud computer's pc_... id and resolve it; EndpointsResponse.computer_id returns the resolved id. See SPEC section 2, Computer ids.
  */
 typealias ComputerId = String
 
@@ -209,6 +209,9 @@ data class DeleteResponse(
  */
 typealias DeviceId = String
 
+/**
+ * Sealed with XChaCha20-Poly1305. AAD is the UTF-8 string "afc1|<v>|<cipher>|<key_id>|<locator>|<plaintext_size>" (decimal integers), so changing any header field fails to open.
+ */
 data class EncryptedChunkHeader(
     @Wire("v") val v: Long,
     @Wire("cipher") val cipher: String,
@@ -606,7 +609,7 @@ data class MutationResponse(
 )
 
 /**
- * What to do when the name exists or base_rev is stale. replace is refused when base_rev is stale.
+ * What to do when the name exists or base_rev is stale. replace is refused when base_rev is stale. If base_rev names a file that is now gone: keep_both creates it, fail and replace return not_found.
  */
 enum class OnConflict(val wire: String) {
     FAIL("fail"),
@@ -1014,6 +1017,18 @@ data class ShareSummary(
 )
 
 /**
+ * Query string of PUT /roots/:root_id/content (small write, body at most 4 MiB). device_name may also come from the X-Allternit-Device-Name header.
+ */
+data class SmallWriteQuery(
+    @Wire("parent_id") val parentId: ItemId,
+    @Wire("name") val name: String,
+    @Wire("base_rev") val baseRev: Rev? = null,
+    @Wire("on_conflict") val onConflict: OnConflict? = null,
+    @Wire("device_name") val deviceName: String? = null,
+    @Wire("utc_offset_minutes") val utcOffsetMinutes: Long? = null
+)
+
+/**
  * Decided (Eoj 2026-11-15): v2 writes none, i.e. plain file names in the user's own R2 bucket, the same trust class as files they upload. files_key_v1 is reserved, not used in v2: XChaCha20-Poly1305 with the snapshot subkey of the user's Files root key (keys.json).
  */
 enum class SnapshotEncryption(val wire: String) {
@@ -1191,7 +1206,8 @@ data class UploadCreateRequest(
     @Wire("total_chunks") val totalChunks: Long,
     @Wire("on_conflict") val onConflict: OnConflict,
     @Wire("modified_at") val modifiedAt: Timestamp? = null,
-    @Wire("device_name") val deviceName: String? = null
+    @Wire("device_name") val deviceName: String? = null,
+    @Wire("utc_offset_minutes") val utcOffsetMinutes: Long? = null
 )
 
 enum class UploadState(val wire: String) {

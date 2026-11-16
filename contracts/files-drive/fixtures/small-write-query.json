@@ -1,0 +1,13 @@
+{
+  "type": "SmallWriteQuery",
+  "valid": true,
+  "case": "Small write replacing a file from a phone in CST: base_rev, keep_both, device name and UTC offset for a conflict copy name.",
+  "message": {
+    "parent_id": "it_home0000",
+    "name": "Lease.pdf",
+    "base_rev": "3-e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5",
+    "on_conflict": "keep_both",
+    "device_name": "iPhone",
+    "utc_offset_minutes": -360
+  }
+}

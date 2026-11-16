@@ -48,7 +48,7 @@ All under `/api/v1/files/v2`. The relay maps any path containing `/files` to cap
 | `GET /items/:item_id/content` | `Range`, `If-None-Match: <rev>` | bytes; `ETag: "<rev>"`, 206 for ranges, 304 when unchanged (read) |
 | `GET /items/:item_id/manifest` | `page_token` | `Manifest` |
 | `GET /chunks/:hash` | | one chunk's bytes (at most 4 MiB) |
-| `PUT /roots/:root_id/content` | query `parent_id`, `name`, `base_rev` (required when replacing), `on_conflict`; body at most 4 MiB | `MutationResponse` (small write) |
+| `PUT /roots/:root_id/content` | `SmallWriteQuery` (query string: `parent_id`, `name`, `base_rev` when replacing, `on_conflict`, `device_name`, `utc_offset_minutes`); body at most 4 MiB | `MutationResponse` (small write) |
 | `POST /chunks/have-need` | `HaveNeedRequest` | `HaveNeedResponse` |
 | `POST /uploads` | `UploadCreateRequest` | `UploadStatus` |
 | `POST /uploads/:session_id/chunks` | `UploadChunksAppend` | `UploadStatus` |
@@ -101,6 +101,25 @@ Body limits on the runtime: axum's default body limit is 2 MB, so the chunk and 
 
 Relay: the client posts the existing cloud-api `RelayRequest` (`runtime_relay.rs`: `{method, path, headers: map, body: string, body_encoding}`; this contract does not redefine it) to `POST /api/v1/runtime-devices/:computer_id/proxy` with `path` set to `/api/v1/files/v2/...`. Live change-feed sockets use the existing socket-ticket flow (`/runtime-devices/:id/socket-ticket`, then `/socket`).
 
+- **Field name.** cloud-api's browser proxy body (`BrowserProxyRequest`) is camelCase and reads `bodyEncoding`. It accepts `body_encoding` too, so clients may send either; Files clients send `body_encoding`. `utf8` (default) or `base64`.
+- **Raw response.** The proxy streams the runtime's response as-is: real status, the allowed response headers, raw body bytes (binary content stays binary). It does not wrap it in a `{status, headers, body}` envelope. Only the runtime-side WebSocket protocol uses envelopes.
+- **Relayed request headers.** Besides today's allow-list (`authorization`, `accept`, `content-type`, `if-none-match`, `if-modified-since`, `last-event-id`, `x-request-id`, `x-allternit-device-id`, `x-allternit-device-name`, `x-allternit-device-platform`, `x-allternit-human-proof`, `x-allternit-human-action`), the relay must pass `x-allternit-wake-ticket`, `range`, `if-match` and `x-allternit-unlock`. Without them wake tickets, ranged reads, conditional writes and protected-root unlocks fail over the relay.
+- **Relayed response headers.** Besides today's list (`content-type`, `cache-control`, `content-disposition`, `etag`, `last-modified`, `x-request-id`), the relay must pass `content-range`, `accept-ranges` and `retry-after`, so 206 ranged reads and `waking` retries work over the relay.
+
+### Computer ids
+
+`computer_id` in every cloud-api route and in the relay path is cloud-api's **runtime device id** (`runtime_devices.id`), the id the relay is keyed by. Clients map their own computer records to it like this:
+
+| Client record | Where the id comes from |
+|---|---|
+| allternit-ai `Computer` (`/api/v1/computers`), `kind: local`, `provider: host` (this device) | `native_id` is this device's runtime device id. Desktop talks to it over loopback. |
+| allternit-ai `Computer`, `provider: fabric` (paired computers and cloud computers) | `native_id` is the paired-computer id (`pc_…`). cloud-api resolves it. A cloud computer resolves through `paired_computers.provisioned_instance_id` → `provisioned_instances.device_id` to its runtime device. A machine paired by pairing code has no runtime device linked in cloud-api (`paired_computers` stores only its mesh address), so it stays mesh-only: `computer_id` is the `pc_…` id, `host: own_device`, and the endpoints list one `mesh` candidate at its `mesh_ip` and no relay. |
+| allternit-ai `Computer`, `kind: cloud_desktop` and bot boxes (`native_id` is a sandbox id) | Not a Files computer. The Files tab is hidden. |
+| allternit-ai `Computer` with no `native_id` | Not a Files computer. Clients never fall back to `Computer.id` (`cmp_…`), which cloud-api does not know. |
+| iOS / Android / Gizzi | They already list runtime devices from cloud-api; they use that id as is. |
+
+So clients call `GET /computer-files/:id/endpoints` with the id from this table, and from then on use `EndpointsResponse.computer_id` (the resolved runtime device id, or the `pc_…` id of a mesh-only machine) and the candidates' `url`. They never build a relay URL from a `pc_…` id. An id cloud-api cannot resolve to a runtime device the caller owns returns `not_found`.
+
 ## 3. Roots
 
 A root is a named folder on one computer with a policy (`RootPolicy`: read, write, shareable, agent_process, protected, offline, replica, versions, trash_days). Only files inside a root exist to v2.
@@ -129,15 +148,22 @@ Default roots, created on first use of the drive:
 - **Revision.** `Rev` = `"<meta_version>-<blake3 content hash>"`, or `"<meta_version>-dir"` for folders. It is the HTTP `ETag`. `meta_version` rises on every content or metadata change.
 - **Writes carry `base_rev`.** Small write (when replacing), upload commit (when replacing), move, delete and version restore all carry the rev the client last saw. A stale `base_rev`:
   - `on_conflict: keep_both` (default for sync clients): the write lands as a conflict copy beside the original. The response carries `ConflictInfo` and a `files.conflict` event fires. Name: `<stem> (conflict <device name> <YYYY-MM-DD HHmm>).<ext>`, e.g. `Lease (conflict iPhone 2026-11-15 1042).pdf`; if that name is taken too, ` 2`, ` 3`… is added before `)`.
+  - **The date and `HHmm` are the editing device's local time**, not the runtime's. The writer sends `utc_offset_minutes` (small write query, `UploadCreateRequest`); the runtime applies it to the time it accepts the write. Without it the runtime uses UTC. `device_name` comes from the request field, else `X-Allternit-Device-Name`, else the principal's display name.
   - A create (no `base_rev`) whose name already exists in the parent is not a conflict: with `keep_both` it lands as `<stem> (2).<ext>` (then `(3)`…) with no `ConflictInfo`; with `fail` it returns `already_exists`.
   - `move`, `delete`, `trash` and version `restore` with a stale `base_rev` always return `rev_mismatch` (409) whatever `on_conflict` says; there is no keep-both form of them.
   - `on_conflict: fail`: `rev_mismatch` with the `current` item.
   - `on_conflict: replace`: refused while `base_rev` is stale (`rev_mismatch`). `replace` only settles name clashes.
+  - **`base_rev` names a file that is now gone** (deleted, trashed or purged since the client saw it): `keep_both` creates the file again under its name in the parent (as a create, so a taken name gets `(2)`), with no `ConflictInfo`. `fail` and `replace` return `not_found`.
 - **Versions and trash.** Each root keeps versions per `VersionPolicy` (count and age) and trash for `trash_days`. Delete moves to trash unless `permanent`. Restoring into a taken name follows `on_conflict`.
+  - `keep_count` is how many replaced versions are kept; 0 keeps none (the Models root uses `keep_count: 0`, since model files are big and re-downloadable).
+  - `keep_days` counts from when a version was **replaced**, not from when it was written. 0 means no age limit (only `keep_count` applies).
+  - `trash_days: 0` means no trash: a delete removes the item at once, as if `permanent`.
+- **Changes made outside the engine.** The watcher keeps IDs for files that other apps rename or move (matched by inode, then by content hash). A file deleted outside the engine goes to trash if its content is still in the chunk store (a version or an earlier upload kept it), so it can be restored; otherwise it is dropped from the index and a `files.changed` delete fires.
 
 ## 5. Chunks, manifests and upload sessions
 
 - **Chunking.** FastCDC (2020) with blake3-256: min 256 KiB, avg 1 MiB, **max 4 MiB (4194304 bytes)**. The schema rejects a bigger chunk.
+- **Pinned chunker (v1).** Dedup only works if every client cuts the same boundaries, so the parameters are fixed: the `fastcdc` crate 3.2.1 `v2020` module, normalization level 1, its default gear table (seed 0), min 262144 / avg 1048576 / max 4194304, `mask_s` `0x0000d91767537000`, `mask_l` `0x0000d91707537000`, and `mask_s_ls` / `mask_l_ls` the same masks shifted left one bit (`0x0001b22ecea6e000`, `0x0001b22e0ea6e000`). Chunk and file hashes are blake3-256, lower-case hex. `contracts/files-drive/vectors/chunker-v1.json` holds the step-by-step cut algorithm, the gear table and test cases with the expected cuts and hashes. The Rust engine, the web chunker and the Swift chunker must all pass it; a chunker that doesn't must not upload (the runtime would still accept its chunks, but dedup and replica checks would miss).
 - **Why 4 MiB.** The relay caps a request body at 5 MiB (`MAX_RELAY_BODY_BYTES`, `runtime_relay.rs:97`). It measures a base64 body as `len * 3 / 4`, which is the decoded size, so a 4 MiB chunk is measured as about 4 MiB and leaves about 1 MiB for the envelope and headers. The base64 JSON envelope the browser sends to cloud-api is about 5.4 MiB, under cloud-api's 10 MiB global body limit (`lib.rs`, `MAX_BODY_SIZE_BYTES`). Relay `max_request_bytes` is advertised as 5242880.
 - **Manifest.** Each file revision has a `Manifest`: ordered `ChunkRef`s (hash, offset, size) plus the whole-file `content_hash`. Big manifests page with `next_page_token`.
 - **Dedup.** Before uploading, the client sends hashes to `have-need`; it uploads only the `need` list. The same mechanism checks replicas.
@@ -251,6 +277,9 @@ The legacy `/api/v1/files/*` routes are being scoped by step 3 (`files_scope.rs`
 - **Device envelopes:** `KeyEnvelope` wraps the FRK to one device's X25519 key (`x25519-hkdf-sha256-xchacha20poly1305`). A new device sends `KeyShareRequest` (with a short `confirm_code`); an existing device shows the code, the user approves, and that device posts a `KeyShareGrant`.
 - **Subkeys** via HKDF-SHA256 from the FRK:
   - `files-replica/1/<replica_id>`: replica chunks (`EncryptedChunkHeader`, XChaCha20-Poly1305). A replica host stores ciphertext it cannot read.
+    - **Locator** (the name a sealed chunk is stored under): `blake3::keyed_hash(subkey, raw)` where `raw` is the 32 **raw bytes** of the plaintext blake3 hash (hex-decoded, not the hex string), written as lower-case hex.
+    - **AAD:** the UTF-8 string `afc1|<v>|<cipher>|<key_id>|<locator>|<plaintext_size>` (decimal integers, no spaces), so a changed header field fails to open.
+    - **Blob layout on the host:** `u32 big-endian header length | header JSON | ciphertext`, file name = locator.
   - `files-cache/1/<device_id>`: the device's offline cache.
   - `files-snapshot/1`: reserved for encrypted snapshot names (section 11).
 - **Rotation:** a new `key_id` with `rotated_from`; old envelopes stay until every replica is re-sealed. Removing a device rotates the key.

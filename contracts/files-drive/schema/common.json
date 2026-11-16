@@ -6,7 +6,7 @@
   "$defs": {
     "ComputerId": {
       "type": "string",
-      "description": "The computer (runtime) ID cloud-api already uses.",
+      "description": "cloud-api's id for a computer: the runtime_devices id the relay is keyed by, or the pc_... id of a mesh-only paired machine. computer-files routes also accept a cloud computer's pc_... id and resolve it; EndpointsResponse.computer_id returns the resolved id. See SPEC section 2, Computer ids.",
       "pattern": "^[A-Za-z0-9_.:-]{1,128}$"
     },
     "DeviceId": {
@@ -312,7 +312,7 @@
         "keep_both",
         "replace"
       ],
-      "description": "What to do when the name exists or base_rev is stale. replace is refused when base_rev is stale."
+      "description": "What to do when the name exists or base_rev is stale. replace is refused when base_rev is stale. If base_rev names a file that is now gone: keep_both creates it, fail and replace return not_found."
     },
     "ConflictInfo": {
       "type": "object",
@@ -345,7 +345,7 @@
         },
         "conflict_name": {
           "type": "string",
-          "description": "\"<stem> (conflict <device name> <YYYY-MM-DD>)<.ext>\", then \" 2\", \" 3\" if taken."
+          "description": "\"<stem> (conflict <device name> <YYYY-MM-DD HHmm>)<.ext>\" in the editing device's local time (utc_offset_minutes on the write), then \" 2\", \" 3\" before \")\" if taken. Example: \"Lease (conflict iPhone 2026-11-15 1042).pdf\"."
         }
       }
     },

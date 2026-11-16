@@ -64,6 +64,18 @@ export async function runSelfTest() {
   const w3 = await call('PUT', `${V}/roots/rt_home/content?parent_id=${home.root_item_id}&name=small.txt&base_rev=${small.rev}&on_conflict=keep_both`, { raw: 'stale edit', type: 'MutationResponse', headers: { 'x-allternit-device-id': 'dev_iphone16', 'x-allternit-device-name': 'iPhone' } });
   check(w3.json.conflict?.kind === 'keep_both' && /^small \(conflict iPhone \d{4}-\d\d-\d\d \d{4}\)\.txt$/.test(w3.json.conflict.conflict_name), `keep-both conflict copy named per SPEC (${w3.json.conflict?.conflict_name})`);
   await err('rev_mismatch', `${V}/roots/rt_home/content?parent_id=${home.root_item_id}&name=small.txt&base_rev=${small.rev}&on_conflict=fail`, { method: 'PUT', raw: 'x' });
+  // conflict HHmm is the editing device's local time (utc_offset_minutes), not the runtime's
+  const w4 = await call('PUT', `${V}/roots/rt_home/content?parent_id=${home.root_item_id}&name=small.txt&base_rev=${small.rev}&on_conflict=keep_both&device_name=Pixel&utc_offset_minutes=330`, { raw: 'offset edit', type: 'MutationResponse' });
+  const hhmm = /(\d\d)(\d\d)\)/.exec(w4.json.conflict?.conflict_name || '');
+  const now = new Date(); const local = (now.getUTCHours() * 60 + now.getUTCMinutes() + 330) % 1440;
+  check(hhmm && /\(conflict Pixel /.test(w4.json.conflict.conflict_name) && Math.min(...[0, 1].map((d) => Math.abs(((Number(hhmm[1]) * 60 + Number(hhmm[2])) - (local - d) + 1440) % 1440))) === 0, `conflict name uses the device's UTC offset (${w4.json.conflict?.conflict_name})`);
+  await err('invalid_request', `${V}/roots/rt_home/content?parent_id=${home.root_item_id}&name=small.txt&utc_offset_minutes=9999`, { method: 'PUT', raw: 'x' });
+  // base_rev names a file that is now gone: keep_both creates it again, fail returns not_found
+  const gone = (await call('PUT', `${V}/roots/rt_home/content?parent_id=${home.root_item_id}&name=gone.txt&on_conflict=fail`, { raw: 'v1', type: 'MutationResponse' })).json.item;
+  await call('POST', `${V}/delete`, { body: { item_id: gone.id, base_rev: gone.rev, permanent: true }, type: 'DeleteResponse' });
+  await err('not_found', `${V}/roots/rt_home/content?parent_id=${home.root_item_id}&name=gone.txt&base_rev=${gone.rev}&on_conflict=fail`, { method: 'PUT', raw: 'v2' });
+  await err('not_found', `${V}/roots/rt_home/content?parent_id=${home.root_item_id}&name=gone.txt&base_rev=${gone.rev}&on_conflict=replace`, { method: 'PUT', raw: 'v2' });
+  await call('PUT', `${V}/roots/rt_home/content?parent_id=${home.root_item_id}&name=gone.txt&base_rev=${gone.rev}&on_conflict=keep_both`, { raw: 'v2', type: 'MutationResponse' }).then((x) => check(x.json.item.name === 'gone.txt' && !x.json.conflict, 'keep_both re-creates a file that is gone'));
   await err('already_exists', `${V}/roots/rt_home/content?parent_id=${home.root_item_id}&name=small.txt&on_conflict=fail`, { method: 'PUT', raw: 'x' });
   await err('payload_too_large', `${V}/roots/rt_home/content?parent_id=${home.root_item_id}&name=big.bin`, { method: 'PUT', raw: Buffer.alloc(4 * 1048576 + 1) });
   await err('invalid_name', `${V}/roots/rt_home/content?parent_id=${home.root_item_id}&name=a%2Fb`, { method: 'PUT', raw: 'x' });
@@ -173,7 +185,9 @@ export async function runSelfTest() {
   await call('POST', `/api/v1/files-keys/requests`, { body: { device_id: 'dev_pixel900', device_pub: 'cHVi', device_name: 'Pixel', confirm_code: '123456' }, status: 202 });
   await call('GET', `/api/v1/files-keys/envelopes/dev_pixel900`, { type: 'KeyEnvelope' });
   const rel = await call('POST', `/api/v1/runtime-devices/cmp_cloud_4gb/proxy`, { body: { method: 'GET', path: `${V}/ping`, headers: {}, body: null, body_encoding: 'utf8' } });
-  check(rel.json.status === 200 && !validateType('PingResponse', JSON.parse(rel.json.body)).length, 'relay proxy wraps a runtime response');
+  check(rel.r.status === 200 && !validateType('PingResponse', rel.json).length, 'relay proxy streams the raw runtime response');
+  const relCamel = await call('POST', `/api/v1/runtime-devices/cmp_cloud_4gb/proxy`, { body: { method: 'GET', path: `${V}/ping`, headers: {}, body: '', bodyEncoding: 'utf8' } });
+  check(relCamel.r.status === 200 && relCamel.json.protocol === 'files/2', 'relay proxy accepts bodyEncoding (camelCase) too');
 
   // ---------------------------------------------------------------- asleep + wake consent
   const A = scn('asleep');

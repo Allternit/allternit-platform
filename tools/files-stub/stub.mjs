@@ -377,8 +377,9 @@ export function createStub(opts = {}) {
     record(rootId, 'created', rec, by);
     return rec;
   }
-  function conflictName(name, device) {
-    const d = new Date(); const p = (n) => String(n).padStart(2, '0');
+  /** SPEC 4: date and HHmm in the editing device's local time (utc_offset_minutes), else UTC. */
+  function conflictName(name, device, utcOffsetMinutes) {
+    const d = new Date(Date.now() + (Number.isInteger(utcOffsetMinutes) ? utcOffsetMinutes : 0) * 60000); const p = (n) => String(n).padStart(2, '0');
     const [stem, ext] = splitExt(name);
     return `${stem} (conflict ${device} ${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())} ${p(d.getUTCHours())}${p(d.getUTCMinutes())})${ext}`;
   }
@@ -392,8 +393,14 @@ export function createStub(opts = {}) {
     if (pol && !pol.write) throw E('forbidden', 'This root is read-only.');
     checkName(o.name);
     let existing = o.item_id ? S.items.get(o.item_id) : byName(o.parent_id, o.name);
-    if (o.item_id && (!existing || !isLive(existing))) throw E('not_found', `No item ${o.item_id}.`);
+    if (o.item_id && (!existing || !isLive(existing))) {
+      // SPEC 4: base_rev names a file that is now gone. keep_both creates it again (as a create); fail and replace: not_found.
+      if (o.on_conflict !== 'keep_both') throw E('not_found', `No item ${o.item_id}.`);
+      const r = newFile(rootId, o.parent_id, uniqueName(o.parent_id, o.name), o.buf, by, o.modified_at, o.chunks);
+      return { item: view(r, ctx), cursor: rootCursor(rootId) };
+    }
     if (o.item_id && existing.item.kind !== 'file') throw E('invalid_request', 'item_id is a folder.');
+    if (!existing && o.base_rev && o.on_conflict !== 'keep_both') throw E('not_found', `"${o.name}" is gone; send on_conflict=keep_both to create it again.`);
     if (!existing) { const r = newFile(rootId, o.parent_id, o.name, o.buf, by, o.modified_at, o.chunks); return { item: view(r, ctx), cursor: rootCursor(rootId) }; }
     const cur = existing.item;
     if (!o.base_rev) {
@@ -407,7 +414,7 @@ export function createStub(opts = {}) {
     if (!stale) return replaceContent(existing, o, by, rootId, ctx);
     if (o.on_conflict === 'keep_both') {
       const device = o.device_name || by.display_name || 'device';
-      const cname = conflictName(cur.name, device);
+      const cname = conflictName(cur.name, device, o.utc_offset_minutes);
       const copy = newFile(rootId, o.parent_id, uniqueName(o.parent_id, cname), o.buf, by, o.modified_at, o.chunks);
       const conflict = { kind: 'keep_both', original_item_id: cur.id, base_rev: o.base_rev, current_rev: cur.rev, conflict_item: view(copy, ctx), conflict_name: copy.item.name };
       emit({ ...evBase('files.conflict'), conflict });
@@ -547,7 +554,9 @@ export function createStub(opts = {}) {
     audit(ctx, 'upload', parent_id, 'allowed');
     const br = ctx.q.get('base_rev') || undefined;
     if (br && validateType('Rev', br).length) throw E('invalid_request', 'Bad base_rev.');
-    const res = writeFile(ctx, { parent_id, name, base_rev: br, on_conflict, buf: body, device_name: ctx.h['x-allternit-device-name'] });
+    const off = ctx.q.get('utc_offset_minutes'); const utc_offset_minutes = off == null ? undefined : Number(off);
+    if (utc_offset_minutes !== undefined && (!Number.isInteger(utc_offset_minutes) || Math.abs(utc_offset_minutes) > 840)) throw E('invalid_request', 'utc_offset_minutes must be an integer from -840 to 840.');
+    const res = writeFile(ctx, { parent_id, name, base_rev: br, on_conflict, buf: body, device_name: ctx.q.get('device_name') || ctx.h['x-allternit-device-name'], utc_offset_minutes });
     return R(res.conflict ? 200 : 200, res, 'MutationResponse');
   }, { body: 4 * MiB + 65536 });
   route('POST', '/chunks/have-need', (ctx, _p, body) => {
@@ -606,7 +615,7 @@ export function createStub(opts = {}) {
     u.state = 'committing';
     try {
       audit(ctx, 'upload', rq.parent_id, 'allowed');
-      const res = writeFile(ctx, { parent_id: rq.parent_id, name: rq.name, item_id: rq.item_id, base_rev: rq.base_rev, on_conflict: rq.on_conflict, buf, chunks: u.refs.map((r) => ({ ...r })), modified_at: rq.modified_at, device_name: rq.device_name });
+      const res = writeFile(ctx, { parent_id: rq.parent_id, name: rq.name, item_id: rq.item_id, base_rev: rq.base_rev, on_conflict: rq.on_conflict, buf, chunks: u.refs.map((r) => ({ ...r })), modified_at: rq.modified_at, device_name: rq.device_name, utc_offset_minutes: rq.utc_offset_minutes });
       u.state = 'committed'; return R(200, res, 'UploadCommitResponse');
     } catch (e) { u.state = 'open'; throw e; }
   });
@@ -933,7 +942,7 @@ export function createStub(opts = {}) {
   async function relay(req, res, body, url) {
     const rq = JSON.parse(body.toString() || '{}');
     if (typeof rq.method !== 'string' || typeof rq.path !== 'string') throw E('invalid_request', 'RelayRequest needs method and path.');
-    const payload = rq.body ? (rq.body_encoding === 'base64' ? Buffer.from(rq.body, 'base64') : Buffer.from(rq.body)) : null;
+    const payload = rq.body ? ((rq.body_encoding ?? rq.bodyEncoding) === 'base64' ? Buffer.from(rq.body, 'base64') : Buffer.from(rq.body)) : null;
     const hdrs = { ...(rq.headers || {}), 'x-allternit-relayed': '1' };
     for (const k of ['x-files-stub-scenario', 'x-files-stub-error']) if (req.headers[k]) hdrs[k] = req.headers[k];
     if (payload) hdrs['content-length'] = payload.length;
@@ -941,9 +950,10 @@ export function createStub(opts = {}) {
       const r2 = http.request({ host: '127.0.0.1', port: server.address().port, path: rq.path, method: rq.method, headers: hdrs }, (rs) => { const ps = []; rs.on('data', (c) => ps.push(c)); rs.on('end', () => resolve({ status: rs.statusCode, headers: rs.headers, buf: Buffer.concat(ps) })); });
       r2.on('error', reject); if (payload) r2.write(payload); r2.end();
     });
-    const isText = /json|text/.test(out.headers['content-type'] || '');
-    res.writeHead(200, { ...cors, 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ status: out.status, headers: Object.fromEntries(Object.entries(out.headers).filter(([k]) => ['content-type', 'etag', 'content-range', 'retry-after'].includes(k))), body: out.buf.toString(isText ? 'utf8' : 'base64'), body_encoding: isText ? 'utf8' : 'base64' }));
+    // SPEC 2 (Relay): cloud-api streams the runtime response as-is (status, allowed headers, raw bytes); no envelope.
+    const pass = ['content-type', 'cache-control', 'content-disposition', 'etag', 'last-modified', 'x-request-id', 'content-range', 'accept-ranges', 'retry-after'];
+    res.writeHead(out.status, { ...cors, ...Object.fromEntries(Object.entries(out.headers).filter(([k]) => pass.includes(k))) });
+    res.end(out.buf);
   }
 
   // ------------------------------------------------------------ WebSocket change feed (minimal RFC 6455)
