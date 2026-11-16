@@ -76,7 +76,9 @@ jobs:
       - name: Test
         env:
           CARGO_BUILD_JOBS: "2"
-        run: cargo test --release --target x86_64-unknown-linux-gnu -p allternit-api --features test-helpers
+        # Two test threads: with four, the 3,000+ test suite starved the hosted
+        # runner and it "lost communication" (2026-11-16 02:18 and 17:00 runs).
+        run: cargo test --release --target x86_64-unknown-linux-gnu -p allternit-api --features test-helpers -- --test-threads=2
 
       - name: Build release binary
         env:
