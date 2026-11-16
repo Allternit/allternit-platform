@@ -912,6 +912,8 @@ const phonesAPI = {
   },
   sendStreamInput: (serial: string, events: PhoneInputEvent[]): Promise<{ ok: boolean; message?: string }> =>
     ipcRenderer.invoke('phone:stream-input', serial, events),
+  requestStreamControl: (serial: string): Promise<{ ok: boolean; message?: string }> =>
+    ipcRenderer.invoke('phone:stream-request-control', serial),
   setStreamDisplayPower: (serial: string, on: boolean): Promise<{ ok: boolean; message?: string }> =>
     ipcRenderer.invoke('phone:stream-display-power', serial, on),
   // User comms (Phones 2.0 Phase 3): texts/calls through the phone's own SIM.

@@ -46,19 +46,28 @@ final class ACIComputersClient: Sendable {
         let callBridge: CallBridge?
         let route: String?
         let screen: Bool?
+        /// Android app phones: `platform` "android", route `android-app`, taps on when Accessibility is on.
+        let platform: String?
+        let canTap: Bool?
+        let consent: String?
 
         var id: String { serial }
 
+        /// The Allternit Android app sharing its screen (live view opens; no cable bridge).
+        var isAndroidApp: Bool {
+            serial.hasPrefix("app:") && (route == "android-app" || platform == "android")
+        }
+
         /// app-phones.ts `appPhoneFromCloud`: the Allternit iPhone app (`app:…`).
         var isAppPhone: Bool {
-            serial.hasPrefix("app:") && (route == nil || route == "iphone-app-store")
+            serial.hasPrefix("app:") && !isAndroidApp && (route == nil || route == "iphone-app-store")
         }
 
         /// The app phone is live while it shares its screen; others while Desktop is attached.
         var isLive: Bool { isAppPhone ? (screen ?? online) && online : online }
 
         /// Desktop relays a linked iPhone with model "iPhone" (no platform field).
-        var isIphone: Bool { model == "iPhone" || serial.hasPrefix("app:") }
+        var isIphone: Bool { !isAndroidApp && (model == "iPhone" || serial.hasPrefix("app:")) }
 
         /// phones-cloud.ts `isStaleWirelessRow`: an offline `ip:port` row never comes back.
         var isStaleWireless: Bool {

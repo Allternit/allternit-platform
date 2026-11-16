@@ -2,11 +2,13 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- Shared by both builds. The Google Play build ("play" flavor) is only
-         this: m.allternit.com as a Trusted Web Activity. Phone Link (its code,
-         the mesh library, the accessibility service, services, receivers and
-         permissions) lives in src/phonelink and ships only in the sideloaded
-         build that Allternit Desktop installs. -->
+    <!-- Shared by both builds: m.allternit.com as a Trusted Web Activity. The
+         screen-share lane (src/phoneshare: share screen, MediaProjection
+         capture, the accessibility service for a viewer's taps) is declared in
+         each flavor's manifest (src/play, src/phonelink). The rest of Phone
+         Link (local server, mesh library, adb shell server, its services,
+         receivers and permissions) lives in src/phonelink and ships only in
+         the sideloaded build that Allternit Desktop installs. -->
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- Android 13+: Web Push shows under Allternit (notification delegation), so
          the app needs the runtime notification permission. -->

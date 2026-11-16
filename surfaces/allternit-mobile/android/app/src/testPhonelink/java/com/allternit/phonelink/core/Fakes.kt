@@ -116,3 +116,68 @@ class ScriptedApprover(var answer: Boolean?) : PairApprover {
     }
     override fun expire(requestId: String) { expired.add(requestId) }
 }
+
+// ── App-phone lane fakes (AppPhoneLinkTest) ─────────────────────────────────
+
+class FakeCredentialStore(var value: AppPhoneCredentials? = null) : CredentialStore {
+    override fun load() = value
+    override fun save(credentials: AppPhoneCredentials) { value = credentials }
+    override fun clear() { value = null }
+}
+
+/** Runs background/serial work immediately; scheduled tasks wait for [runDue]. */
+class FakeLinkRuntime(var now: Long = 1_700_000_000_000L) : LinkRuntime {
+    class Task(val at: Long, val run: () -> Unit) : Cancellable {
+        var cancelled = false
+        override fun cancel() { cancelled = true }
+    }
+    val tasks = ArrayList<Task>()
+    override fun nowMs() = now
+    override fun background(task: () -> Unit) = task()
+    override fun serial(task: () -> Unit) = task()
+    override fun schedule(delayMs: Long, task: () -> Unit): Cancellable = Task(now + delayMs, task).also { tasks.add(it) }
+    /** Advances the clock by [ms] and runs what became due (not cancelled). */
+    fun advance(ms: Long) {
+        now += ms
+        val due = tasks.filter { !it.cancelled && it.at <= now }
+        tasks.removeAll(due)
+        due.forEach { it.run() }
+    }
+}
+
+class FakeHttp : JsonHttp {
+    class Call(val url: String, val headers: Map<String, String>, val body: String)
+    val calls = ArrayList<Call>()
+    /** Reply for the first matching URL suffix. */
+    val replies = LinkedHashMap<String, HttpReply>()
+    override fun postJson(url: String, headers: Map<String, String>, body: String): HttpReply {
+        calls.add(Call(url, headers, body))
+        return replies.entries.firstOrNull { url.endsWith(it.key) }?.value ?: HttpReply(404, "{}")
+    }
+}
+
+class FakeSocket(val url: String, val listener: SocketListener) : SocketLink {
+    val texts = ArrayList<String>()
+    val binaries = ArrayList<ByteArray>()
+    var closed: Pair<Int, String>? = null
+    override fun sendText(text: String): Boolean { texts.add(text); return true }
+    override fun sendBinary(bytes: ByteArray): Boolean { binaries.add(bytes); return true }
+    override fun close(code: Int, reason: String) { closed = code to reason }
+}
+
+class FakeConnector : SocketConnector {
+    val sockets = ArrayList<FakeSocket>()
+    override fun connect(url: String, listener: SocketListener): FakeSocket = FakeSocket(url, listener).also { sockets.add(it) }
+    fun last(endpoint: String) = sockets.last { it.url.contains(endpoint) }
+}
+
+class FakeScreenHost : ScreenHost {
+    var requests = 0
+    var tap = true
+    var consent = Consent.NEEDED
+    var fg = true
+    override fun onScreenRequest() { requests++ }
+    override fun canTap() = tap
+    override fun consent() = consent
+    override fun foreground() = fg
+}
