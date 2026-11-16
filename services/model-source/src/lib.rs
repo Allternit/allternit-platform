@@ -207,6 +207,9 @@ pub enum Error {
     Io(#[from] std::io::Error),
 }
 
+/// Tries for small GETs (catalog, `.minisig`) before giving up.
+const SMALL_GET_TRIES: u32 = 3;
+
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 /// Freeweights + publisher client. Cheap to clone.
@@ -660,22 +663,36 @@ impl Client {
         finish(hasher, written, check, resumed)
     }
 
+    /// GET a small file (catalog, `.minisig`). Retries up to [`SMALL_GET_TRIES`]
+    /// times on a transport error, HTTP 429 or 5xx, so one dropped request does not
+    /// fail a signed download. A 4xx other than 429 fails at once.
     async fn get_small(&self, url: &str) -> Result<Vec<u8>> {
-        let resp = self
-            .http
-            .get(url)
-            .timeout(NETWORK_TIMEOUT)
-            .send()
-            .await
-            .map_err(|e| Error::Http(e.to_string()))?;
-        if !resp.status().is_success() {
-            return Err(Error::Http(format!("{url}: HTTP {}", resp.status())));
+        let mut last = String::new();
+        for attempt in 0..SMALL_GET_TRIES {
+            if attempt > 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(400 * (1 << attempt))).await;
+            }
+            let resp = match self.http.get(url).timeout(NETWORK_TIMEOUT).send().await {
+                Ok(r) => r,
+                Err(e) => {
+                    last = e.to_string();
+                    continue;
+                }
+            };
+            let status = resp.status();
+            if !status.is_success() {
+                last = format!("{url}: HTTP {status}");
+                if status.is_server_error() || status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+                    continue;
+                }
+                return Err(Error::Http(last));
+            }
+            match resp.bytes().await {
+                Ok(b) => return Ok(b.to_vec()),
+                Err(e) => last = e.to_string(),
+            }
         }
-        Ok(resp
-            .bytes()
-            .await
-            .map_err(|e| Error::Http(e.to_string()))?
-            .to_vec())
+        Err(Error::Http(format!("{last} (after {SMALL_GET_TRIES} tries)")))
     }
 }
 
