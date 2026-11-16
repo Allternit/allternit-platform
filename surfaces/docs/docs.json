@@ -494,6 +494,11 @@
               "tools/etrid",
               "tools/local-engine",
               "tools/freeweights",
+              "guides/run-models-on-device",
+              "guides/run-models-in-your-browser",
+              "guides/run-models-on-android",
+              "guides/run-models-on-desktop-and-iphone",
+              "guides/use-models-on-your-other-devices",
               "tools/voice",
               "tools/voice-calls",
               "tools/phone-number-sync",
@@ -742,7 +747,8 @@
                   "api/estimates",
                   "api/proxy",
                   "api/translate",
-                  "api/local-engine"
+                  "api/local-engine",
+                  "api/on-device-models"
                 ]
               },
               {
