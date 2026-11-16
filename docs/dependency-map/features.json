@@ -4813,7 +4813,12 @@
         "allternit/surfaces/allternit-desktop/scripts/prepare-files-mount.cjs",
         "allternit/cmd/gizzi-code/src/cli/ui/ink-app/commands/files",
         "allternit/cmd/gizzi-code/src/cli/ui/ink-app/commands/context/files-in-context.ts",
-        "allternit/surfaces/docs/cli/files.mdx"
+        "allternit/surfaces/docs/cli/files.mdx",
+        "allternit/surfaces/allternit-desktop/native/files-win",
+        "allternit/surfaces/allternit-desktop/src/main/files-drive-win-manager.ts",
+        "allternit/surfaces/allternit-desktop/build/installer.nsh",
+        "allternit/.github/workflows/files-win-helper.yml",
+        "allternit/surfaces/docs/guides/files-windows.mdx"
       ],
       "decisions": [
         {

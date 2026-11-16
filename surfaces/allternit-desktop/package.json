@@ -588,6 +588,10 @@
       "verifyUpdateCodeSignature": false,
       "extraResources": [
         {
+          "from": "resources/files-win/",
+          "to": "files-win/"
+        },
+        {
           "from": "resources/meeting-bot-native/win32-${arch}/",
           "to": "meeting-bot/node_modules/",
           "filter": [

@@ -73,6 +73,7 @@ import { systemOne } from './system-one-manager.js';
 import { gizziManager } from './gizzi-manager.js';
 import { connectorSidecarManager } from './connector-sidecar-manager.js';
 import { subsGatewayManager } from './subs-gateway-manager.js';
+import { filesDriveWinManager } from './files-drive-win-manager.js';
 import { gizziDaemonManager } from './gizzi-daemon-manager.js';
 import { PORTS, URLS, devUiUrl, apiUrl, notebookUrl, staticUiUrl } from './config.js';
 import { acceptsDeviceToken, isPublicCloudCatalogPath, rewriteCloudApiToProtocol, shouldInjectDesktopIdentity } from './api-protocol.js';
@@ -2928,6 +2929,8 @@ app.whenReady().then(async () => {
   console.log('[Main] Initializing auth manager...');
   await authManager.initialize();
   authManagerReady = true;
+  // Files drive Explorer locations (Windows only, behind the files_drive flag).
+  filesDriveWinManager.start();
   const startupBackend = store.get('backend');
   void authManager.updateBackendProfile({
     mode: startupBackend.mode,
@@ -3337,6 +3340,7 @@ async function shutdownAllServices(): Promise<void> {
   await localEngineManager.stop();
   connectorSidecarManager.stop();
   subsGatewayManager.stop();
+  filesDriveWinManager.stop();
   officeEngineManager.stop();
   factoryEngineManager.stop();
   meshManager.stop().catch(() => {}); // best-effort mesh sidecar shutdown
