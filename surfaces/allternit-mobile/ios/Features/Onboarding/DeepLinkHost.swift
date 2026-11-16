@@ -39,6 +39,8 @@ struct DeepLinkHost: ViewModifier {
 
     func body(content: Content) -> some View {
         content
+            // Files shortcuts (Open Files on, Scan to): FilesDrive.launch.
+            .modifier(FilesLaunchHost())
             .onAppear { takePending() }
             .onChange(of: router.pending) { _, _ in takePending() }
             .overlay(alignment: .top) {

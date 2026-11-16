@@ -7,9 +7,12 @@ import UIKit
 /// phones, cloud computer backups, workflows and operator keys.
 struct ACIComputersPane: View {
     @ObservedObject private var relay = RuntimeRelayStore.shared
+    @ObservedObject private var files = FilesDrive.shared
     @State private var isPairOpen = false
     @State private var isScreenPickerOpen = false
     @State private var openComputer: ComputerRecord? = nil
+    /// A computer with the Files drive on opens its detail (design 4A).
+    @State private var detailComputer: RelayRuntimeDevice? = nil
     @State private var toast: ACIToast.Message? = nil
 
     private var loading: Bool { relay.availability == .unknown }
@@ -45,6 +48,9 @@ struct ACIComputersPane: View {
         .sheet(isPresented: $isScreenPickerOpen) { ACIComputerScreenSheet() }
         .fullScreenCover(item: $openComputer) { computer in
             ACIComputerDesktopCover(computer: computer, backTitle: "Computers")
+        }
+        .fullScreenCover(item: $detailComputer) { device in
+            ACIComputerDetailCover(computerId: device.id, name: device.displayName)
         }
     }
 
@@ -90,7 +96,11 @@ struct ACIComputersPane: View {
         let online = device.status != "offline"
         return Button {
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            Task { await openDesktop(device) }
+            if files.hasFiles(device.id) {
+                detailComputer = device
+            } else {
+                Task { await openDesktop(device) }
+            }
         } label: {
             VStack(alignment: .leading, spacing: 6) {
                 Text(device.displayName)
@@ -115,7 +125,7 @@ struct ACIComputersPane: View {
         }
         .buttonStyle(.plain)
         .overlay(alignment: .bottom) { Rectangle().fill(Color("BorderSubtle")).frame(height: 1) }
-        .accessibilityLabel("Open desktop for \(device.displayName)")
+        .accessibilityLabel(files.hasFiles(device.id) ? "Open \(device.displayName)" : "Open desktop for \(device.displayName)")
     }
 
     /// "Last seen Oct 29, 2026, 3:04 PM", or the web's fallback line.
