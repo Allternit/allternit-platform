@@ -253,27 +253,27 @@ public final class FilesSharedStore: @unchecked Sendable {
 
     // MARK: Device unlock (protected roots, SPEC section 12)
 
-    /// How long one Face ID unlock opens protected roots on a computer.
-    public static let unlockWindow: TimeInterval = 300
-
-    /// Records a fresh device unlock (Face ID, Touch ID or the passcode) for
-    /// `computerId`. Requests to that computer then carry
-    /// `X-Allternit-Unlock` for `unlockWindow` seconds.
-    public func markUnlocked(computerId: ComputerId, at date: Date = Date()) {
-        writeSecret(String(Int(date.timeIntervalSince1970)), account: "unlock.\(computerId)")
+    /// Stores the signed `fut1` unlock token cloud-api minted right after a
+    /// fresh Face ID / Touch ID / passcode check, so the app and the File
+    /// Provider extension both send it as `X-Allternit-Unlock` until it lapses.
+    /// Kept in the app-group keychain (this device only), never in defaults.
+    public func storeUnlock(token: String, expiresAt: Date, computerId: ComputerId) {
+        writeSecret("\(Int(expiresAt.timeIntervalSince1970))|\(token)", account: "unlock.\(computerId)")
         clearPendingUnlock(computerId: computerId)
     }
 
-    /// The `X-Allternit-Unlock` value while an unlock is fresh, else nil:
-    /// `bio1.<device id>.<unix seconds of the unlock>`, the same proof the
-    /// Android app sends.
-    public func unlockProof(computerId: ComputerId, now: Date = Date()) -> String? {
-        guard let stored = readSecret("unlock.\(computerId)"), let at = TimeInterval(stored) else { return nil }
-        guard now.timeIntervalSince1970 - at < Self.unlockWindow, now.timeIntervalSince1970 >= at - 60 else {
+    /// The unlock token for `computerId` while it has more than 5 seconds
+    /// left, else nil (an expired one is deleted). Anything that isn't a
+    /// stored `fut1` token (an old `bio1` timestamp) reads as no unlock.
+    public func unlockToken(computerId: ComputerId, now: Date = Date()) -> String? {
+        guard let stored = readSecret("unlock.\(computerId)") else { return nil }
+        let parts = stored.split(separator: "|", maxSplits: 1).map(String.init)
+        guard parts.count == 2, let exp = TimeInterval(parts[0]), parts[1].hasPrefix("fut1."),
+              exp - now.timeIntervalSince1970 > 5 else {
             deleteSecret("unlock.\(computerId)")
             return nil
         }
-        return "bio1.\(deviceId ?? "dev_unknown").\(Int(at))"
+        return parts[1]
     }
 
     public func clearUnlock(computerId: ComputerId) {
