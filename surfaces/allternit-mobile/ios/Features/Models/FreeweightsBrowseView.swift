@@ -28,7 +28,7 @@ final class FreeweightsBrowseStore: ObservableObject {
     enum Filter: String, CaseIterable, Identifiable {
         case fits = "Fits this iPhone"
         case everything = "Everything"
-        case phone = "Phone picks"
+        case phone = "Phone collection"
         var id: String { rawValue }
     }
     @Published var filter: Filter = .fits {
@@ -64,7 +64,7 @@ final class FreeweightsBrowseStore: ObservableObject {
         return tasks.isEmpty || tasks.contains("text-generation") || tasks.contains("image-text-to-text")
     }
 
-    /// The local lists (Fits this iPhone, Phone picks): built from the
+    /// The local lists (Fits this iPhone, Phone collection): built from the
     /// catalog and the device index, filtered by the search text.
     var localIds: [String] {
         guard let index = deviceIndex else { return [] }

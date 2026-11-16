@@ -115,9 +115,9 @@ struct ModelsTabView: View {
 
 // MARK: - Catalog segment
 
-/// Freeweights models as identity faces (grid, the default) or rows, each
+/// Freeweights models as identity faces (grid, the default; deck) or rows, each
 /// with this iPhone's fit label. Chips: Fits this iPhone · Everything ·
-/// Phone picks. Works signed out and offline (last copy on disk).
+/// Phone collection. Works signed out and offline (last copy on disk).
 struct FreeweightsCatalogView: View {
     @ObservedObject var store: FreeweightsBrowseStore
     @ObservedObject private var rt = OnDeviceRuntime.shared
@@ -166,6 +166,7 @@ struct FreeweightsCatalogView: View {
             HStack(spacing: 2) {
                 faceButton("list.bullet", "list", "List")
                 faceButton("square.grid.2x2", "grid", "Grid")
+                faceButton("rectangle.portrait", "deck", "Deck")
             }
             .padding(2)
             .background(Color("FillNeutral"), in: RoundedRectangle(cornerRadius: 10))
@@ -230,7 +231,9 @@ struct FreeweightsCatalogView: View {
         } else {
             budgetLine
             let shown = store.filter == .everything ? ids : Array(ids.prefix(store.localLimit))
-            if face == "list" {
+            if face == "deck" {
+                deck(shown)
+            } else if face == "list" {
                 VStack(spacing: 0) {
                     ForEach(shown, id: \.self) { id in
                         listRow(id)
@@ -256,7 +259,7 @@ struct FreeweightsCatalogView: View {
             .foregroundColor(Color("TextSecondary"))
     }
 
-    private func face(_ id: String, _ fit: FitResult) -> FwFaceModel {
+    private func faceModel(_ id: String, _ fit: FitResult) -> FwFaceModel {
         let row = store.catalog[id]
         return FwFaceModel(summary: store.results.first { $0.id == id } ?? store.summary(for: id), row: row, id: id,
                            sizeBytes: fit.quant?.size ?? store.quants(id)?.map(\.size).min(),
@@ -267,7 +270,7 @@ struct FreeweightsCatalogView: View {
         let fit = store.fit(id)
         return Button { store.selected = store.summary(for: id) } label: {
             VStack(alignment: .leading, spacing: 6) {
-                FwIdentityFace(model: face(id, fit), compact: true)
+                FwIdentityFace(model: faceModel(id, fit), compact: true)
                 FitLabel(fit: fit)
             }
         }
@@ -275,9 +278,31 @@ struct FreeweightsCatalogView: View {
         .accessibilityHint("Opens the model, its builds and Download")
     }
 
+    /// Deck (the site's third face): one large identity face per page,
+    /// swiped sideways, with the fit label under it.
+    private func deck(_ ids: [String]) -> some View {
+        TabView {
+            ForEach(ids, id: \.self) { id in
+                let fit = store.fit(id)
+                Button { store.selected = store.summary(for: id) } label: {
+                    VStack(alignment: .leading, spacing: 10) {
+                        FwIdentityFace(model: faceModel(id, fit))
+                        FitLabel(fit: fit)
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, 2)
+                }
+                .buttonStyle(.plain)
+                .accessibilityHint("Opens the model, its builds and Download")
+            }
+        }
+        .tabViewStyle(.page(indexDisplayMode: .never))
+        .frame(height: 380)
+    }
+
     private func listRow(_ id: String) -> some View {
         let fit = store.fit(id)
-        let m = face(id, fit)
+        let m = faceModel(id, fit)
         return Button { store.selected = store.summary(for: id) } label: {
             HStack(spacing: 12) {
                 FwDotWord(text: m.mono, height: 16)
