@@ -9,6 +9,7 @@ import { analyzeContextUsage } from '../../utils/analyzeContext';
 import { getMessagesAfterCompactBoundary } from '../../utils/messages';
 import { renderToAnsiString } from '../../utils/staticRender';
 import { planQuotaLines } from '../usage/usage';
+import { filesInContext, wantsFilesInContext } from './files-in-context';
 
 /**
  * Apply the same context transforms query.ts does before the API call, so
@@ -18,7 +19,12 @@ import { planQuotaLines } from '../usage/usage';
 function toApiView(messages: Message[]): Message[] {
   return getMessagesAfterCompactBoundary(messages);
 }
-export async function call(onDone: LocalJSXCommandOnDone, context: LocalJSXCommandContext): Promise<React.ReactNode> {
+export async function call(onDone: LocalJSXCommandOnDone, context: LocalJSXCommandContext, args?: string): Promise<React.ReactNode> {
+  // `/context files`: the old `/files` list (that name now belongs to the Files drive).
+  if (wantsFilesInContext(args)) {
+    onDone(filesInContext(context as any));
+    return null;
+  }
   const {
     messages,
     getAppState,

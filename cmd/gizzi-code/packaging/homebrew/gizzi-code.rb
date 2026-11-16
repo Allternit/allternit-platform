@@ -41,6 +41,7 @@ class GizziCode < Formula
     # binary, and only `gizzi` / `gizzi-code` go on PATH.
     libexec.install "gizzi-code"
     libexec.install "allternit-factory" if File.exist?("allternit-factory")
+    libexec.install "allternit-files-mount" if File.exist?("allternit-files-mount")
     bin.install_symlink libexec/"gizzi-code"
     bin.install_symlink libexec/"gizzi-code" => "gizzi"
 

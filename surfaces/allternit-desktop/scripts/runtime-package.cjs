@@ -52,7 +52,14 @@ const ACCOUNT = process.env.CLOUDFLARE_ACCOUNT_ID || '7cd19487307235aedc039d3a64
 const EXE = TARGET_OS === 'win32' ? '.exe' : '';
 // allternit-factory (the Factory engine) rides with gizzi-code so a runtime
 // update moves both together.
-const BINARIES = [`allternit-api${EXE}`, `gizzi-code${EXE}`, `allternit-factory${EXE}`];
+// allternit-files-mount (Files drive mount + big uploads) rides with gizzi-code
+// too; macOS and Linux only (Windows uses the cfapi helper).
+const BINARIES = [
+  `allternit-api${EXE}`,
+  `gizzi-code${EXE}`,
+  `allternit-factory${EXE}`,
+  ...(TARGET_OS === 'win32' ? [] : ['allternit-files-mount']),
+];
 
 const die = (msg) => { console.error(`✗ ${msg}`); process.exit(1); };
 const sha256 = (buf) => crypto.createHash('sha256').update(buf).digest('hex');

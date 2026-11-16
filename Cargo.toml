@@ -57,6 +57,7 @@ members = [
     "platform/types/a2ui-types",
     "platform/types/allternit-files-core",
     "platform/files/allternit-files-engine",
+    "platform/files/allternit-files-mount",
     "domains/governance/evidence-management/receipts-schema",
     "services/local-engine",
     "services/model-source",

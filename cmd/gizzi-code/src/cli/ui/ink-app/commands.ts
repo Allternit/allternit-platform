@@ -745,7 +745,7 @@ export const BRIDGE_SAFE_COMMANDS: Set<Command> = new Set(
     cost, // Show session cost
     summary, // Summarize conversation
     releaseNotes, // Show changelog
-    files, // List tracked files
+    files, // Browse the Files drive (read-only, never wakes a computer)
     remember, // Append a memory note
     timestamps, // Toggle message timestamps
   ].filter((c): c is Command => c !== null),

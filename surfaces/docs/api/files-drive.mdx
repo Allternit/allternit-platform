@@ -50,6 +50,8 @@ The computer that owns the files serves these under `/api/v1/files/v2`.
 | `GET /inbox/tasks`, `GET /inbox/tasks/:task_id`, `POST /inbox/tasks/:task_id/approve`, `POST /inbox/tasks/:task_id/reject` | Inbox tasks waiting for approval. See [Inbox, rules and events](/api/files-drive-inbox). |
 | `GET /rules`, `POST /rules`, `PATCH /rules/:rule_id`, `DELETE /rules/:rule_id` | Folder rules. |
 
+From a terminal, `gizzi files` and the TUI `/files` command speak this API, and `gizzi files mount` shows a computer's drive as a FUSE or WebDAV folder on Linux. See [Files drive in the terminal](/cli/files).
+
 The relay maps any path containing `/files` to the `runtime:files` capability, so no new capability is needed.
 
 ### Roots

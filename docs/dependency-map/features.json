@@ -4806,7 +4806,14 @@
         "allternit-ai/src/pages/FilesGuestPage.tsx",
         "allternit/cmd/allternit-cloud-api/src/routes/files_gateway.rs",
         "allternit/cmd/allternit-cloud-api/src/services/files_tokens.rs",
-        "allternit/cmd/allternit-cloud-api/migrations_pg/144_files_shares.sql"
+        "allternit/cmd/allternit-cloud-api/migrations_pg/144_files_shares.sql",
+        "allternit/platform/files/allternit-files-mount",
+        "allternit/cmd/gizzi-code/src/cli/commands/files.ts",
+        "allternit/cmd/gizzi-code/src/cli/files",
+        "allternit/surfaces/allternit-desktop/scripts/prepare-files-mount.cjs",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/commands/files",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/commands/context/files-in-context.ts",
+        "allternit/surfaces/docs/cli/files.mdx"
       ],
       "decisions": [
         {

@@ -64,6 +64,15 @@ const required = [
     label: 'allternit-factory (the Allternit Factory engine and its pane engine: terminals, agent panes; Desktop runs it, gizzi finds it next to itself)',
     buildStep: 'npm run prepare:factory',
   },
+  ...(process.platform === 'win32'
+    ? []
+    : [
+        {
+          path: path.join(resourcesDir, 'bin', 'allternit-files-mount'),
+          label: 'allternit-files-mount (Files drive: gizzi files mount, FUSE on Linux / WebDAV on macOS, and uploads over 4 MiB; gizzi finds it next to itself)',
+          buildStep: 'npm run prepare:files-mount',
+        },
+      ]),
   {
     path: path.join(resourcesDir, 'bin', process.platform === 'win32' ? 'system-one.exe' : 'system-one'),
     label: 'System One (S1) server binary',
