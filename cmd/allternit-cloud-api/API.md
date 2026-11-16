@@ -16,6 +16,7 @@ Complete REST API documentation for the Cowork Runtime system.
 - [Approvals](#approvals)
 - [Attachments](#attachments)
 - [Code Environments](#code-environments)
+- [Account Preferences](#account-preferences)
 - [Common Types](#common-types)
 - [Error Responses](#error-responses)
 
@@ -953,6 +954,67 @@ the service). Per-plan included minutes and concurrency caps
 The web view is behind `flags.meetings` (read-only) on `GET /api/v1/me/flags`: off unless
 `ALLTERNIT_MEETINGS_ENABLED=1`, the user is in `ALLTERNIT_MEETINGS_USER_IDS`, or
 an admin.
+
+---
+
+## Account Preferences
+
+Per-account settings that follow the person across devices, even with no
+computer. Table: `migrations_pg/145_account_prefs.sql` (one JSON document per
+`(user_id, key)`). Code: `src/routes/account_prefs.rs`.
+
+**Auth:** a Clerk session or an `allternit_*` API token with the `account`
+scope. No credentials answers `401`. Never gated on compute. Responses carry
+`Cache-Control: private, no-store`. Erased with the account.
+
+### Pad Templates
+
+A person's project pad templates and the template each mode opens new
+projects on. Pads themselves live on the runtime (`/project-pad/:scope`).
+Stored under key `pad_templates`.
+
+```http
+GET /api/v1/account/pad-templates
+PUT /api/v1/account/pad-templates
+```
+
+```json
+{
+  "templates": [{
+    "id": "u_6f1c2a4e-9b3d-4c1a-8f2e-1a2b3c4d5e6f",
+    "name": "Weekly launch",
+    "tiles": [{ "id": "progress", "size": "S" }, { "id": "notes", "size": "W" }],
+    "actions": [
+      { "id": "a1", "kind": "thread", "label": "Plan the week", "value": "Plan this week's launch tasks" },
+      { "id": "a2", "kind": "link", "label": "Board", "value": "https://example.com/board" }
+    ],
+    "createdAt": 1763164800000
+  }],
+  "modeDefaults": { "chat": "research", "code": "u_6f1c2a4e-9b3d-4c1a-8f2e-1a2b3c4d5e6f", "design": "client", "bot": "launchpad" }
+}
+```
+
+`GET` returns the saved document. With nothing saved it returns
+`{ "templates": [], "modeDefaults": { "chat": "research", "code": "build", "design": "client", "bot": "launchpad" } }`.
+
+`PUT` replaces the whole document and returns what was saved. Fields not
+listed below are dropped; names are trimmed. Validation (`400 BAD_REQUEST`
+with a plain `message`, nothing saved):
+
+- Body at most 64 KB.
+- `templates`: at most 24. `id` is `u_` + a UUID, unique; `name` 1–40
+  characters; `createdAt` a number (ms since epoch).
+- `tiles`: at most 24 per template. `id` one of `decision`, `countdown`,
+  `progress`, `team`, `chart`, `schedule`, `files`, `activity`, `actions`,
+  `links`, `notes`, `checklist`, `threads`; `size` one of `S` (1x1), `M`
+  (2x1), `L` (2x2), `W` (4x1).
+- `actions` (optional, default `[]`): at most 12 per template. `id` 1–64
+  characters; `kind` `thread` or `link`; `label` at most 40 characters;
+  `value` at most 2048 characters. A `link` value must be an `http` or `https`
+  URL.
+- `modeDefaults`: exactly the keys `chat`, `code`, `design`, `bot`. Each value
+  is a built-in template (`launch`, `client`, `build`, `research`,
+  `launchpad`) or the `id` of a template in the same body.
 
 ---
 

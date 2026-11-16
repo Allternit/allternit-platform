@@ -62,6 +62,8 @@ pub mod org_meeting_settings;
 pub mod zoom;
 /// Compute gate: GET /api/v1/account/compute-status (+ acknowledge) and the relay's 409.
 pub mod account_compute;
+/// Account preferences that follow the person: GET/PUT /api/v1/account/pad-templates.
+pub mod account_prefs;
 pub mod web_search;
 pub mod me_usage;
 pub mod setup_checks;

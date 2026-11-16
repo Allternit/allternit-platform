@@ -70,6 +70,8 @@ pub const ERASE: &[(&str, &str)] = &[
     ("plan_threads", USER),
     // Copilot grants (migration 142). Revoked at GitHub in release_computers first.
     ("copilot_grants", USER),
+    // Account preferences: pad templates and per-mode defaults (migration 145).
+    ("account_prefs", USER),
     // Platform API projects, children first.
     ("platform_webhook_deliveries", "webhook_id IN (SELECT id FROM platform_webhooks WHERE user_id = $1 OR project_id IN (SELECT id FROM platform_projects WHERE owner_user_id = $1)) OR event_id IN (SELECT id FROM platform_events WHERE user_id = $1 OR project_id IN (SELECT id FROM platform_projects WHERE owner_user_id = $1))"),
     ("platform_webhooks", "user_id = $1 OR project_id IN (SELECT id FROM platform_projects WHERE owner_user_id = $1)"),
