@@ -652,7 +652,7 @@ fn docx_text(path: &Path) -> Option<String> {
         }
         rest = &rest[lt + gt + 1..];
     }
-    let out = out.replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").replace("&apos;", "'").replace("&amp;", "&");
+    let mut out = out.replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").replace("&apos;", "'").replace("&amp;", "&");
     out.truncate(floor_boundary(&out, MAX_TEXT_BYTES as usize));
     Some(out)
 }
