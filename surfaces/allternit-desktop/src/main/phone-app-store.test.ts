@@ -180,6 +180,8 @@ describe('iPhones with the Allternit app', () => {
     const ctlSock = { ...control.socket, send: (d: string) => void sent.push(d) };
     const android = new AppPhoneViewerSession({ open: async () => readOnly.socket, openControl: async () => ctlSock, deviceName: 'Pixel', platform: 'android', canTap: () => true });
     const started = android.start();
+    // start() attaches the socket after open() resolves: send the config packet after that.
+    await new Promise((r) => setTimeout(r, 0));
     readOnly.packet(IOS_PACKET_CONFIG, { width: 1080, height: 2400, rotation: 0 });
     await started;
     expect(android.sendControl([]).message).toContain('Allow taps');
