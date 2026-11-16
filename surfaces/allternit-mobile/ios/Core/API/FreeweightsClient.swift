@@ -120,9 +120,13 @@ struct FreeweightsModelDetail: Codable, Sendable, Equatable {
     let upstreamUrl: String?
     let catalog: FreeweightsCatalogRow?
     var source: String?
+    /// Community repos only: draft | scanning | live | held (spec 11.6).
+    /// It describes what is waiting; `sha` + `siblings` are the last clean
+    /// head being served.
+    var status: String?
 
     enum CodingKeys: String, CodingKey {
-        case id, sha, section, license, badges, siblings, sources, catalog, source
+        case id, sha, section, license, badges, siblings, sources, catalog, source, status
         case pipelineTag = "pipeline_tag"
         case libraryName = "library_name"
         case manifestUrl = "manifest_url"
@@ -134,6 +138,18 @@ struct FreeweightsModelDetail: Codable, Sendable, Equatable {
     /// Freeweights itself, so they are never link-only.
     var isLinkOnly: Bool { isCommunity ? false : (catalog?.isLinkOnly ?? (manifestUrl ?? "").isEmpty) }
     var filesCount: Int { siblings?.count ?? 0 }
+    /// A community repo can be downloaded once a clean commit is served.
+    var isDownloadable: Bool { isCommunity ? sha != nil : true }
+    /// One line for a community repo whose newest commit is not served yet.
+    var communityStatusNote: String? {
+        guard isCommunity else { return nil }
+        if sha == nil { return "Files are being scanned. Downloads open when every file passes." }
+        switch status {
+        case "scanning": return "An update is being scanned. The last clean version is served."
+        case "held": return "An update did not pass its scan. The last clean version is served."
+        default: return nil
+        }
+    }
 }
 
 /// One page of search results plus the next cursor from the `Link` header.

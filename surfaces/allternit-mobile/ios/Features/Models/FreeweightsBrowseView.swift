@@ -551,6 +551,11 @@ struct FreeweightsDetailSheet: View {
                         Text("Uploaded by a Freeweights member, not by Allternit. Every file is scanned before it can be downloaded.")
                             .font(.subheadline)
                             .foregroundColor(Color("TextSecondary"))
+                        if let note = detail?.communityStatusNote {
+                            Text(note)
+                                .font(.subheadline)
+                                .foregroundColor(Theme.statusWarning)
+                        }
                         Button {
                             isReporting = true
                         } label: {
