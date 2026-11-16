@@ -4,73 +4,9 @@ import AllternitFilesKit
 // Compiled into the app (Core/) and the share extension (project.yml
 // AllternitShare sources), so both send to a computer's Inbox the same way.
 
-/// One Inbox task on a computer (`GET /api/v1/files/v2/inbox/tasks`,
-/// surfaces/docs/api/files-drive-inbox.mdx). A file that lands in Inbox is
-/// untrusted: its task waits in `needs_approval` until the owner approves or
-/// rejects it, and nothing reads the file before that.
-struct FilesInboxTask: Codable, Sendable, Hashable, Identifiable {
-    var taskId: String
-    var rootId: String
-    var itemId: String
-    var name: String
-    var size: UInt64?
-    var droppedBy: PrincipalRef?
-    var untrusted: Bool?
-    var state: String
-    var output: String?
-    var ruleId: String?
-    var error: String?
-    var resultItemIds: [String]?
-    var createdAt: String
-    var updatedAt: String?
-
-    var id: String { taskId }
-    var needsApproval: Bool { state == "needs_approval" }
-
-    /// "Dana (guest)", "your iPhone", "you".
-    var droppedByLabel: String {
-        guard let by = droppedBy else { return "Someone" }
-        let name = by.displayName?.isEmpty == false ? by.displayName! : nil
-        switch by.kind {
-        case .owner: return "You"
-        case .ownDevice: return name ?? "One of your devices"
-        case .guest: return (name ?? "A guest") + " (guest)"
-        case .agent: return (name ?? "An agent") + " (agent)"
-        }
-    }
-
-    enum CodingKeys: String, CodingKey {
-        case taskId = "task_id", rootId = "root_id", itemId = "item_id", name, size
-        case droppedBy = "dropped_by", untrusted, state, output, ruleId = "rule_id", error
-        case resultItemIds = "result_item_ids", createdAt = "created_at", updatedAt = "updated_at"
-    }
-}
-
-private struct FilesInboxTasksResponse: Decodable {
-    var tasks: [FilesInboxTask]
-}
-
 extension FilesClient {
-    /// `GET /inbox/tasks?state=…`, newest first. Owner and own devices only.
-    func inboxTasks(state: String? = "needs_approval", limit: Int = 100) async throws -> [FilesInboxTask] {
-        var query = [URLQueryItem(name: "limit", value: String(min(max(limit, 1), 500)))]
-        if let state { query.append(URLQueryItem(name: "state", value: state)) }
-        let response: FilesInboxTasksResponse = try await json(FilesRequest(path: "/inbox/tasks", query: query))
-        return response.tasks
-    }
-
-    /// `POST /inbox/tasks/:id/approve` with `{}`: the default tools
-    /// (`files.read`, `summarize`, `files.write_beside`), result beside the file.
-    func approveInboxTask(_ taskId: String) async throws -> FilesInboxTask {
-        try await json(FilesRequest(method: "POST", path: "/inbox/tasks/\(Self.pathSegment(taskId))/approve",
-                                    headers: ["Content-Type": "application/json"], body: .json(Data("{}".utf8))))
-    }
-
-    /// `POST /inbox/tasks/:id/reject`. Nothing reads the file.
-    func rejectInboxTask(_ taskId: String) async throws -> FilesInboxTask {
-        try await json(FilesRequest(method: "POST", path: "/inbox/tasks/\(Self.pathSegment(taskId))/reject",
-                                    headers: ["Content-Type": "application/json"], body: .json(Data("{}".utf8))))
-    }
+    // Inbox task calls (`inboxTasks`, `approveInboxTask`, `rejectInboxTask`)
+    // and `FilesInboxTask` live in AllternitFilesKit (FilesClient+Actions).
 
     static func pathSegment(_ segment: String) -> String {
         var allowed = CharacterSet.alphanumerics

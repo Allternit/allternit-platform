@@ -72,7 +72,7 @@ extension FilesClient {
 
     /// `GET /inbox/tasks` (owner and own devices only).
     public func inboxTasks(state: String? = nil, limit: Int = 100) async throws -> [FilesInboxTask] {
-        var query = [URLQueryItem(name: "limit", value: String(limit))]
+        var query = [URLQueryItem(name: "limit", value: String(min(max(limit, 1), 500)))]
         if let state { query.append(URLQueryItem(name: "state", value: state)) }
         let list: FilesInboxTaskList = try await json(FilesRequest(path: "/inbox/tasks", query: query))
         return list.tasks
@@ -139,28 +139,48 @@ public struct FilesSummary: Decodable, Sendable, Hashable {
     }
 }
 
-/// An Inbox task (runtime-only shape, `surfaces/docs/api/files-drive-inbox.mdx`).
-/// Only the fields the sheets show are decoded.
-public struct FilesInboxTask: Decodable, Sendable, Hashable, Identifiable {
+/// One Inbox task on a computer (`GET /api/v1/files/v2/inbox/tasks`,
+/// `surfaces/docs/api/files-drive-inbox.mdx`). A file that lands in Inbox is
+/// untrusted: its task waits in `needs_approval` until the owner approves or
+/// rejects it, and nothing reads the file before that. Shared by the app, the
+/// share extension and the File Provider UI.
+public struct FilesInboxTask: Codable, Sendable, Hashable, Identifiable {
     public var taskId: String
-    public var rootId: RootId?
+    public var rootId: RootId
     public var itemId: ItemId
-    public var name: String?
+    public var name: String
+    public var size: UInt64?
+    public var droppedBy: PrincipalRef?
+    public var untrusted: Bool?
     /// `needs_approval`, `approved_by_rule`, `approved`, `running`,
     /// `succeeded`, `failed` or `rejected`.
     public var state: String
+    public var output: String?
+    public var ruleId: String?
     public var error: String?
     public var resultItemIds: [ItemId]?
+    public var createdAt: String
+    public var updatedAt: String?
 
     public var id: String { taskId }
     public var needsApproval: Bool { state == "needs_approval" }
 
+    /// "Dana (guest)", "One of your devices", "You".
+    public var droppedByLabel: String {
+        guard let by = droppedBy else { return "Someone" }
+        let name = by.displayName?.isEmpty == false ? by.displayName! : nil
+        switch by.kind {
+        case .owner: return "You"
+        case .ownDevice: return name ?? "One of your devices"
+        case .guest: return (name ?? "A guest") + " (guest)"
+        case .agent: return (name ?? "An agent") + " (agent)"
+        }
+    }
+
     enum CodingKeys: String, CodingKey {
-        case taskId = "task_id"
-        case rootId = "root_id"
-        case itemId = "item_id"
-        case name, state, error
-        case resultItemIds = "result_item_ids"
+        case taskId = "task_id", rootId = "root_id", itemId = "item_id", name, size
+        case droppedBy = "dropped_by", untrusted, state, output, ruleId = "rule_id", error
+        case resultItemIds = "result_item_ids", createdAt = "created_at", updatedAt = "updated_at"
     }
 }
 

@@ -100,9 +100,11 @@ final class SheetContext {
     var openApp: (URL, ((Bool) -> Void)?) -> Void = { _, done in done?(false) }
 
     init(domain: NSFileProviderDomainIdentifier?) {
-        store = FilesSharedStore.fromMainBundle()
+        let store = FilesSharedStore.fromMainBundle()
+        self.store = store
         self.domain = domain
-        computerId = domain.flatMap(FilesDomains.computerId(for:))
+        let computerId = domain.flatMap(FilesDomains.computerId(for:))
+        self.computerId = computerId
         computerName = computerId.flatMap { store.computer($0)?.name } ?? "your computer"
         if let computerId, store.token() != nil {
             client = store.makeClient(computerId: computerId)

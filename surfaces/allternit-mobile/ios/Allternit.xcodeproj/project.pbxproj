@@ -141,6 +141,7 @@
 		2D1337256108FD734CA46EAE /* InfrastructureSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6E79642FCCC464D9E8C120AB /* InfrastructureSettingsView.swift */; };
 		2D620AD53CC5BC6F2AA1CDA9 /* BotCallButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA46B87B5FA47275E67E693C /* BotCallButton.swift */; };
 		2D730B78F2D9F3C134683690 /* ToolOptionsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E10652B6A3C4031AC35E7A7D /* ToolOptionsStore.swift */; };
+		2DD06757BA23BA99B7F31640 /* NSItemProvider+Sendable.swift in Sources */ = {isa = PBXBuildFile; fileRef = 375F39975C2EAC3E0F16B6C6 /* NSItemProvider+Sendable.swift */; };
 		2E46FBCE540795234E4CCC06 /* AppConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D086E0C0BC3296625734880 /* AppConfig.swift */; };
 		2EC6816BE0C60E040DD5B700 /* FabricApprovalsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 04316A242D1BB1BB78C44315 /* FabricApprovalsView.swift */; };
 		2F052263BFBB1DCC5B6BBDD0 /* DeepLinkRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 18789248497BB4F707A0D89F /* DeepLinkRouter.swift */; };
@@ -766,6 +767,7 @@
 		E93B1D499FE846A5A5F2563B /* AllternitWidgetsBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 130D14F5DE715D27DFD14195 /* AllternitWidgetsBundle.swift */; };
 		E949F4453779DBD9E7181285 /* SherpaOnnx.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F1773539996DD0C8EB6E726 /* SherpaOnnx.swift */; };
 		EA32C2163D2CF4E1EC5CC82A /* ArtifactCreateTileArt.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD6A3E6D3C429D37B634CA69 /* ArtifactCreateTileArt.swift */; };
+		EA9301995475DDBFA1E030FD /* NSItemProvider+Sendable.swift in Sources */ = {isa = PBXBuildFile; fileRef = 375F39975C2EAC3E0F16B6C6 /* NSItemProvider+Sendable.swift */; };
 		EB364C73092EBB4B584E3A1A /* OfficeFloorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F6F22A05812B613CE705297C /* OfficeFloorView.swift */; };
 		EB48BBB9F3A19ACBDB9E533D /* EnvironmentStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = EB5FC664C55551D4AFE4F68F /* EnvironmentStore.swift */; };
 		EB5DB6CF2BE555BDCB03CE90 /* VoiceKeyScannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F40C426857530176EBE807C /* VoiceKeyScannerView.swift */; };
@@ -1108,6 +1110,7 @@
 		3641D78ADC3F25308EA039E3 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		369E37E2048E0222D9398C78 /* BotProjectCanvas.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotProjectCanvas.swift; sourceTree = "<group>"; };
 		3702BE920CE05401F27357E4 /* Fit.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Fit.swift; sourceTree = "<group>"; };
+		375F39975C2EAC3E0F16B6C6 /* NSItemProvider+Sendable.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "NSItemProvider+Sendable.swift"; sourceTree = "<group>"; };
 		37B3CA075AC3FDEFF151B299 /* PhonesSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhonesSheet.swift; sourceTree = "<group>"; };
 		3805BD78B0431F98B8FC1399 /* BotStageLive.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotStageLive.swift; sourceTree = "<group>"; };
 		38088029D8E26A5E11A29881 /* SelfHostedClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SelfHostedClientTests.swift; sourceTree = "<group>"; };
@@ -3355,6 +3358,7 @@
 			isa = PBXGroup;
 			children = (
 				D0BF177593C244D2D2C6459A /* FilesInbox.swift */,
+				375F39975C2EAC3E0F16B6C6 /* NSItemProvider+Sendable.swift */,
 			);
 			path = Shared;
 			sourceTree = "<group>";
@@ -3805,6 +3809,7 @@
 				9E3DCD4E3845A6C0420A3EC0 /* IntentGate.swift in Sources */,
 				DEF342FE6FF3273F95A1E03A /* IntentServicing.swift in Sources */,
 				5F6D9D4AAA5BFCC160AF3A49 /* MemoryScheduleIntents.swift in Sources */,
+				2DD06757BA23BA99B7F31640 /* NSItemProvider+Sendable.swift in Sources */,
 				A22177369B3D28D89B41D4C3 /* OutboxStore.swift in Sources */,
 				C10ACDA33B86BAE414BECA3E /* PauseControlIntent.swift in Sources */,
 				DAF0B78E9333A65798E3772C /* PhoneIntents.swift in Sources */,
@@ -4330,6 +4335,7 @@
 				D092859BCC05615686EFDAA7 /* ModelPickerSheet.swift in Sources */,
 				F6D6DDC0D959D5D584E0B0EE /* ModelStore.swift in Sources */,
 				4E5BA5D8F7386934186AB012 /* ModelsTabView.swift in Sources */,
+				EA9301995475DDBFA1E030FD /* NSItemProvider+Sendable.swift in Sources */,
 				ADBC1EDA40C09112F94F2425 /* NativePaneRenderer.swift in Sources */,
 				DA85BE803EDFBD20EE521CBD /* NativeSessionPickerSheet.swift in Sources */,
 				6CC103BAFF1EE2DFE5DCC427 /* NewProjectSheet.swift in Sources */,
