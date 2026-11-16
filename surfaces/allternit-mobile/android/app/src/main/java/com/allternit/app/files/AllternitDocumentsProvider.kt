@@ -424,7 +424,7 @@ class AllternitDocumentsProvider : DocumentsProvider() {
                 src = drive.cache.contentFile(cid, item.id)
             }
             if (src == null || !src.exists()) throw FileNotFoundException("No thumbnail yet")
-            val bmp = if (mime.startsWith("video/")) videoFrame(src) else decodeSampled(src, maxOf(sizeHint.x, sizeHint.y, 96))
+            val bmp = (if (mime.startsWith("video/")) videoFrame(src) else decodeSampled(src, maxOf(sizeHint.x, sizeHint.y, 96)))
                 ?: throw FileNotFoundException("No thumbnail")
             FileOutputStream(thumb).use { bmp.compress(Bitmap.CompressFormat.JPEG, 85, it) }
             bmp.recycle()
