@@ -145,6 +145,8 @@ pub const DEFAULTS: &[(&str, bool)] = &[
     ("subscription.login_needed", true),
     ("subscription.signed_in", false),
     ("usage.threshold", true),
+    // Every guest access is an event for agents; it is never a push unless the owner turns it on.
+    ("files.share.accessed", false),
     // A failed or missed routine, a bot with no one to run it: the server pushes it and sends it again until it is fixed.
     ("attention.opened", true),
     ("attention.resolved", false),
@@ -966,6 +968,16 @@ pub fn message_for(event: &str, data: &Value) -> Option<PushMessage> {
             };
             msg.tag = format!("usage-{meter}-{period}");
             msg.url = "/".into();
+        }
+        "files.share.accessed" => {
+            let access = &data["access"];
+            let action = s(access, &["action"]).unwrap_or("opened");
+            msg.title = "Shared folder activity".into();
+            msg.body = match s(access, &["result"]) {
+                Some("denied") => format!("A guest was turned away ({action})."),
+                _ => format!("A guest used a shared folder ({action})."),
+            };
+            msg.tag = format!("files-share-{}", clip(s(access, &["share_id"]).unwrap_or("share"), 40));
         }
         _ => return None,
     }

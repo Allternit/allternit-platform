@@ -89,6 +89,7 @@ Body limits on the runtime: axum's default body limit is 2 MB, so the chunk and 
 | `POST /api/v1/computer-files/:computer_id/shares` | `CreateShareRequest` | `ShareResponse` |
 | `GET /api/v1/computer-files/:computer_id/shares` | | `SharesResponse` |
 | `DELETE /api/v1/computer-files/shares/:share_id` | | 204 (revoke; applies on the guest's next request) |
+| `DELETE /api/v1/computer-files/shares/:share_id/guests/:guest_id` | | 204 (revoke one guest; applies on that guest's next request) |
 | `GET /api/v1/computer-files/shares/:share_id/access` | | `ShareAccess[]` (audit) |
 | `GET /api/v1/computer-files/token-keys` | | `{keys: [{kid, alg: "Ed25519", public_key (base64url, 32 bytes)}]}`, so runtimes verify tokens offline |
 | `GET /api/v1/files-keys` | | `FilesKeyInfo` |
@@ -294,7 +295,7 @@ Published on the existing events system, all with `event_id`, `at`, `computer_id
 | `files.changed` | `FilesChanged` | any create, modify, move, rename, delete, trash, restore |
 | `files.inbox.dropped` | `InboxDropped` | a file lands in Inbox; carries `untrusted` and the task state |
 | `files.task.result` | `TaskResult` | an approved Inbox or folder-rule task finished, failed or was rejected |
-| `files.share.accessed` | `ShareAccessed` | every guest access, allowed or denied |
+| `files.share.accessed` | `ShareAccessed` | every guest access, allowed or denied. Also stored by cloud-api on the cloud events system (agents audience, push off by default), `data` = `{ computer_id, access }`. |
 | `files.conflict` | `ConflictCreated` | a write landed as a conflict copy |
 
 ## 15. Storage discovery

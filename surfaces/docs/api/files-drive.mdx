@@ -10,7 +10,7 @@ The Files drive serves the files on one computer to the owner's other devices. E
 The full contract lives in the platform repo at `contracts/files-drive/SPEC.md`, with JSON schemas in `contracts/files-drive/schema/` and generated Rust, TypeScript, Swift and Kotlin types. This page covers the **runtime** side: the routes `allternit-api` answers on the computer that owns the files, plus the cloud-api sharing routes and guest gateway in [Sharing and the guest gateway](#sharing-and-the-guest-gateway). The other cloud-api routes (wake consent, endpoints) are documented with their own release.
 
 <Note>
-The Files drive ships dark. On the runtime it is off unless the process runs with `ALLTERNIT_FILES_DRIVE=1`. While it is off, every route answers `403 feature_disabled` and nothing is created on disk. The per-user `files_drive` flag is held by cloud-api.
+The Files drive ships dark. On the runtime it is off unless the process runs with `ALLTERNIT_FILES_DRIVE=1`. While it is off, every route answers `403 feature_disabled` and nothing is created on disk. The per-user `files_drive` flag is held by cloud-api and read by clients as `flags.files_drive` in `GET /api/v1/me/flags` (read-only; a PUT naming it is a `400`).
 </Note>
 
 ## Base URL
@@ -215,7 +215,7 @@ curl -X POST https://api.allternit.com/api/v1/computer-files/$COMPUTER_ID/shares
 - **Gateway.** Send the token as `Authorization: Files-Guest <token>` and use the runtime paths below `/api/v1/files-gateway/v2/`. Open to guests: `GET ping`, `GET whoami`, `GET roots/{root_id}/list`, `GET items/{item_id}`, `GET items/{item_id}/content`, `GET items/{item_id}/comments`, `POST comments`, `PUT roots/{root_id}/content`, `POST mkdir`, and the upload session routes. Everything else answers `403 forbidden`. `upload_only` cannot list, stat or download (`403 forbidden`, "This link only allows uploads.").
 - **Every request** checks the signature, `exp`, whether the share or guest was turned off (`410 share_revoked`), the share's expiry (`410 share_expired`), the computer, and the role.
 - **Sleeping computer.** A guest never wakes it: the answer is `403 guest_wake_not_allowed` with `computer_state: asleep`. With `guest_wake: true` the gateway starts a wake and answers `503 waking` with `retry_after_s`. An `upload_only` small write into the shared folder itself is kept in the owner's R2 space and answers `202` with a `QueuedDrop` (`r2_key` = `files-drops/{computer_id}/{drop_id}`), up to 100 waiting per share.
-- **Audit.** Every guest access, allowed or denied, writes a `ShareAccess` row. The runtime also emits `files.share.accessed`.
+- **Audit.** Every guest access, allowed or denied, writes a `ShareAccess` row. The runtime also emits `files.share.accessed`, and the gateway publishes the same event on the cloud events system (MCP agents server, `data` = `{ computer_id, access }`, filter `computer_id`). It never pushes a notification unless the owner turns it on.
 
 ### On the runtime
 

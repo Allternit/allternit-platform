@@ -18,7 +18,9 @@
 //! everyone with
 //! `ALLTERNIT_MEETINGS_ENABLED=1`, else for the user ids in
 //! `ALLTERNIT_MEETINGS_USER_IDS` (comma-separated) and for admins
-//! (`ALLTERNIT_ADMIN_USER_IDS`).
+//! (`ALLTERNIT_ADMIN_USER_IDS`). `flags.files_drive` gates the Files drive
+//! (Files tab, sharing) and works the same way with
+//! `ALLTERNIT_FILES_DRIVE_ENABLED` / `ALLTERNIT_FILES_DRIVE_USER_IDS`.
 
 use axum::{
     extract::State,
@@ -72,6 +74,8 @@ fn with_features(mut flags: Value, user_id: &str) -> Value {
     );
     if let Some(map) = flags.get_mut("flags").and_then(Value::as_object_mut) {
         map.insert("meetings".to_string(), Value::Bool(meetings));
+        // Same check the sharing gateway makes on the owner.
+        map.insert("files_drive".to_string(), Value::Bool(super::files_gateway::files_drive_on(user_id)));
     }
     flags
 }
@@ -349,6 +353,11 @@ mod tests {
         let flags = with_features(json!({ "flags": { "botsIntroSeenAt": null } }), "nobody-listed");
         assert_eq!(flags["flags"]["botsIntroSeenAt"], Value::Null, "stored flags untouched");
         assert!(flags["flags"]["meetings"].is_boolean());
+        assert!(flags["flags"]["files_drive"].is_boolean());
+        assert!(matches!(
+            validate_updates(&json!({ "files_drive": "2026-11-15T00:00:00Z" })),
+            Err(ApiError::BadRequest(_))
+        ));
         // Read-only: a client can't switch its own feature on.
         assert!(matches!(
             validate_updates(&json!({ "meetings": "2026-11-13T00:00:00Z" })),

@@ -376,6 +376,63 @@ async fn audit(
     .await
     {
         tracing::warn!(share_id, "files share audit row not written: {e}");
+        return;
+    }
+    emit_access_event(db, share_id, guest_id, action, item_id, result, error).await;
+}
+
+/// Publish the audit row as `files.share.accessed` on the cloud events
+/// system, to the share owner's agent subscriptions (contract:
+/// `contracts/files-drive/schema/events.json`, `ShareAccessed`). Best
+/// effort like the row: a failure is logged, never shown to the guest.
+async fn emit_access_event(
+    db: &sqlx::PgPool,
+    share_id: &str,
+    guest_id: &str,
+    action: ShareAccessAction,
+    item_id: Option<&str>,
+    result: ShareAccessResult,
+    error: Option<ErrorCode>,
+) {
+    let owner: Result<Option<(String, String)>, _> =
+        sqlx::query_as("SELECT owner_user_id, computer_id FROM files_shares WHERE share_id = $1")
+            .bind(share_id)
+            .fetch_optional(db)
+            .await;
+    let (owner_user_id, computer_id) = match owner {
+        Ok(Some(row)) => row,
+        Ok(None) => return,
+        Err(e) => {
+            tracing::warn!(share_id, "files share event owner lookup failed: {e}");
+            return;
+        }
+    };
+    let mut access = serde_json::json!({
+        "share_id": share_id,
+        "guest_id": guest_id,
+        "action": action.as_str(),
+        "result": result.as_str(),
+        "at": ts(Utc::now()),
+    });
+    if let Some(item) = item_id {
+        access["item_id"] = serde_json::json!(item);
+    }
+    if let Some(code) = error {
+        access["error"] = serde_json::json!(code.as_str());
+    }
+    let data = serde_json::json!({ "computer_id": computer_id, "access": access });
+    if let Err(e) = crate::routes::allternit_events::emit_user_event(
+        db,
+        &owner_user_id,
+        "files.share.accessed",
+        &data,
+        None,
+        "files:gateway",
+        None,
+    )
+    .await
+    {
+        tracing::warn!(share_id, "files.share.accessed event not stored: {e}");
     }
 }
 
