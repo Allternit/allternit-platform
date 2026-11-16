@@ -342,10 +342,20 @@ fn replication_never_wakes_or_touches_activity() {
         "mark_active",
         "runtime-devices/",
     ];
+    // Lines that name a forbidden thing only to refuse it: a relay URL is
+    // rejected as a replica host, and a host that answers
+    // `wake_consent_required` is treated as unavailable (never woken).
+    const ALLOWED: &[(&str, &str)] = &[
+        ("replicas.rs", r#"u.contains("/runtime-devices/")"#),
+        ("sync.rs", "ErrorCode::WakeConsentRequired)"),
+    ];
     let mut hits = Vec::new();
     for (file, src) in SOURCES {
         for (n, line) in src.lines().enumerate() {
             let code = line.split("//").next().unwrap_or("");
+            if ALLOWED.iter().any(|(f, snippet)| f == file && code.contains(snippet)) {
+                continue;
+            }
             for f in FORBIDDEN {
                 if code.contains(f) {
                     hits.push(format!("{file}:{}: {f}", n + 1));

@@ -161,7 +161,12 @@ pub(crate) fn rank(needed: u64, protected: bool, candidates: Vec<Candidate>) -> 
             }
         })
         .collect();
-    out.sort_by(|a, b| b.eligible.cmp(&a.eligible).then(b.score.cmp(&a.score)).then(a.label.cmp(&b.label)));
+    // Ties go to a computer that is on now: it holds the copy today, an
+    // asleep one only when it next wakes.
+    let awake = |o: &PlacementOption| o.computer_state == ComputerState::Awake;
+    out.sort_by(|a, b| {
+        b.eligible.cmp(&a.eligible).then(b.score.cmp(&a.score)).then(awake(b).cmp(&awake(a))).then(a.label.cmp(&b.label))
+    });
     out
 }
 

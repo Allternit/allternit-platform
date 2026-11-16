@@ -559,6 +559,8 @@ async fn endpoints(State(state): State<Arc<ApiState>>, headers: HeaderMap, Path(
                     .into_iter()
                     .collect(),
                 mesh_hostname: None,
+                // Replica listing from heartbeats is not on cloud-api yet (step 15 follow-up).
+                replicas: None,
                 host: EndpointsResponseHost::OwnDevice,
             }
         }
@@ -598,6 +600,8 @@ async fn endpoints(State(state): State<Arc<ApiState>>, headers: HeaderMap, Path(
                 computer_id: runtime_id,
                 computer_state,
                 mesh_hostname: None,
+                // Replica listing from heartbeats is not on cloud-api yet (step 15 follow-up).
+                replicas: None,
                 host: if cloud { EndpointsResponseHost::CloudComputer } else { EndpointsResponseHost::OwnDevice },
             }
         }

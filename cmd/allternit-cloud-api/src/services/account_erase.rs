@@ -51,6 +51,13 @@ pub const RETAIN: &[(&str, &str)] = &[
 /// `(table, condition)`, run in this order with the user id as `$1`. A table
 /// that another table references without a cascade comes after that table.
 pub const ERASE: &[(&str, &str)] = &[
+    // Files drive (migrations 143, 144). Drops before their share; guests and
+    // the access log cascade from files_shares.
+    ("files_queued_drops", "owner_user_id = $1"),
+    ("files_shares", "owner_user_id = $1"),
+    ("computer_files_wake_tickets", USER),
+    ("computer_files_wake_settings", USER),
+    ("computer_files_storage", USER),
     // Meetings (migration 130), children first; sessions cascade from meetings.
     ("meeting_tool_approvals", USER),
     ("meeting_participants", "user_id = $1 OR session_id IN (SELECT id FROM meeting_sessions WHERE user_id = $1)"),
@@ -232,6 +239,8 @@ pub const ERASE: &[(&str, &str)] = &[
 /// Clears the user from rows that stay: kept records, and work that belongs to
 /// someone else. Runs after [`ERASE`], in the same transaction.
 const SCRUB: &[&str] = &[
+    // A share on someone else's computer keeps working; only who made it goes.
+    "UPDATE files_shares SET created_by = 'deleted' WHERE created_by = $1",
     "UPDATE artifact_versions SET author_id = 'deleted' WHERE author_id = $1",
     "UPDATE artifact_shares SET invited_by = 'deleted' WHERE invited_by = $1",
     "UPDATE phone_invites SET joined_user_id = NULL WHERE joined_user_id = $1",

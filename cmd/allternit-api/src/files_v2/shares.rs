@@ -862,7 +862,7 @@ mod tests {
         let hash = allternit_files_engine::chunker::hash_bytes(&data);
         let create = json!({
             "root_id": t.root.id, "parent_id": t.shared, "name": "big.bin", "size": data.len(),
-            "content_hash": hash, "chunker": {"algo": "fastcdc-v2020", "min": 262144, "avg": 1048576, "max": 4194304},
+            "content_hash": hash, "chunker": allternit_files_engine::chunker::params(),
             "chunks": [{"hash": hash, "offset": 0, "size": data.len()}], "total_chunks": 1, "on_conflict": "keep_both"
         });
         let r = call(&t.app, "POST", "/uploads", Some(&a), Body::from(create.to_string())).await;
