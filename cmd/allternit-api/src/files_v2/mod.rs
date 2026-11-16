@@ -358,6 +358,7 @@ pub(crate) enum Need {
 
 /// Error inside a blocking handler body: the engine's (mapped with the drive
 /// at hand, so `rev_mismatch` carries `current`) or an already-built one.
+#[derive(Debug)]
 pub(crate) enum Fail {
     Files(FilesError),
     Api(ApiError),

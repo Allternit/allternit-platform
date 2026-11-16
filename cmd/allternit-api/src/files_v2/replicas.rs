@@ -37,7 +37,7 @@ use axum::extract::rejection::{BytesRejection, JsonRejection};
 use axum::extract::{DefaultBodyLimit, Path as UrlPath};
 use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{delete, get, post};
+use axum::routing::{delete, post};
 use axum::{Extension, Json, Router};
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
@@ -59,14 +59,14 @@ pub const HOST_BYTES_ENV: &str = "ALLTERNIT_FILES_REPLICA_HOST_BYTES";
 pub(crate) fn routes<S: Clone + Send + Sync + 'static>() -> Router<S> {
     let big = || DefaultBodyLimit::max(BIG_BODY_LIMIT);
     Router::new()
-        .route("/replicas", get(list).post(create))
+        .route("/replicas", axum::routing::get(list).post(create))
         .route("/replicas/restore", post(super::sync::restore_route))
-        .route("/replicas/key", get(key_request).put(install_key))
+        .route("/replicas/key", axum::routing::get(key_request).put(install_key))
         .route("/replicas/:replica_id", delete(remove))
         .route("/replicas/:replica_id/sync", post(super::sync::sync_now))
         .route("/replicas/:replica_id/have-need", post(have_need))
-        .route("/replicas/:replica_id/head", get(get_head).put(put_head))
-        .route("/replicas/:replica_id/blobs/:locator", get(get_blob).put(put_blob).layer(big()))
+        .route("/replicas/:replica_id/head", axum::routing::get(get_head).put(put_head))
+        .route("/replicas/:replica_id/blobs/:locator", axum::routing::get(get_blob).put(put_blob).layer(big()))
 }
 
 // ---- the registry (replicas.sqlite) ----

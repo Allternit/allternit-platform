@@ -798,7 +798,11 @@ mod tests {
         assert_eq!(t.guest_get(&token, &format!("/items/{}", t.shared_file)).await.code(), ErrorCode::Forbidden);
         assert_eq!(t.guest_get(&token, &format!("/items/{}/content", t.shared_file)).await.code(), ErrorCode::Forbidden);
 
-        let put = |q: String| call(&t.app, "PUT", &format!("/roots/{}/content?parent_id={}&{q}", t.root.id, t.shared), Some(&token), Body::from("drop"));
+        let (app, tok) = (&t.app, token.as_str());
+        let put = |q: String| {
+            let uri = format!("/roots/{}/content?parent_id={}&{q}", t.root.id, t.shared);
+            async move { call(app, "PUT", &uri, Some(tok), Body::from("drop")).await }
+        };
         let ok = put("name=W-9.pdf".into()).await;
         assert_eq!(ok.status, 200, "{}", String::from_utf8_lossy(&ok.body));
         assert_eq!(ok.json()["item"]["modified_by"]["kind"], "guest");

@@ -39,7 +39,7 @@ use allternit_files_core::{
 use allternit_files_engine::{ChangeRecord, EditingDevice, ItemRecord, RootRecord};
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, Query};
-use axum::routing::{get, patch, post};
+use axum::routing::{patch, post};
 use axum::{Extension, Json, Router};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
@@ -825,11 +825,11 @@ pub(crate) fn owner_only(req: &Req) -> Result<(), ApiError> {
 
 pub fn routes<S: Clone + Send + Sync + 'static>() -> Router<S> {
     Router::new()
-        .route("/inbox/tasks", get(list_tasks))
-        .route("/inbox/tasks/:task_id", get(get_task))
+        .route("/inbox/tasks", axum::routing::get(list_tasks))
+        .route("/inbox/tasks/:task_id", axum::routing::get(get_task))
         .route("/inbox/tasks/:task_id/approve", post(approve))
         .route("/inbox/tasks/:task_id/reject", post(reject))
-        .route("/rules", get(rules::list_route).post(rules::create_route))
+        .route("/rules", axum::routing::get(rules::list_route).post(rules::create_route))
         .route("/rules/:rule_id", patch(rules::update_route).delete(rules::delete_route))
 }
 

@@ -95,6 +95,7 @@ fn req(kind: PrincipalKind) -> Req {
         relayed: false,
         unlocked: false,
         device_name: None,
+        guest: None,
     }
 }
 
