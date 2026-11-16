@@ -1,14 +1,16 @@
 package com.allternit.app.files
 
 /**
- * BLAKE3-256 (hash mode only), a direct port of the BLAKE3 reference
+ * BLAKE3-256, hash and keyed-hash modes, a direct port of the BLAKE3 reference
  * implementation (github.com/BLAKE3-team/BLAKE3, reference_impl.rs, CC0/Apache-2.0).
- * In-tree because the app takes no runtime dependencies beyond the stdlib (README
- * "Dependencies"). Chunk and file hashes in the Files drive are this, lower-case hex
- * (SPEC section 5). Incremental: [update] any number of times, then [finalizeHex].
+ * Chunk and file hashes in the Files drive are the hash mode, lower-case hex (SPEC
+ * section 5); replica locators are the keyed mode (SPEC section 13). Incremental:
+ * [update] any number of times, then [finalizeHex].
  */
-internal class Blake3 {
-    private var chunk = ChunkState(IV, 0)
+internal class Blake3 private constructor(private val key: IntArray, private val mode: Int) {
+    constructor() : this(IV, 0)
+
+    private var chunk = ChunkState(key, 0, mode)
     private val cvStack = arrayOfNulls<IntArray>(54)
     private var cvStackLen = 0
 
@@ -20,7 +22,7 @@ internal class Blake3 {
                 val cv = chunk.output().chainingValue()
                 val total = chunk.counter + 1
                 addChunkCv(cv, total)
-                chunk = ChunkState(IV, total)
+                chunk = ChunkState(key, total, mode)
             }
             val take = minOf(CHUNK_LEN - chunk.len(), len)
             chunk.update(input, off, take)
@@ -34,7 +36,7 @@ internal class Blake3 {
         var parents = cvStackLen
         while (parents > 0) {
             parents -= 1
-            output = parentOutput(cvStack[parents]!!, output.chainingValue())
+            output = parentOutput(key, mode, cvStack[parents]!!, output.chainingValue())
         }
         return output.rootBytes()
     }
@@ -46,7 +48,7 @@ internal class Blake3 {
         var total = totalChunks
         while ((total and 1L) == 0L) {
             cvStackLen -= 1
-            cv = parentOutput(cvStack[cvStackLen]!!, cv).chainingValue()
+            cv = parentOutput(key, mode, cvStack[cvStackLen]!!, cv).chainingValue()
             total = total shr 1
         }
         cvStack[cvStackLen] = cv
@@ -76,7 +78,7 @@ internal class Blake3 {
         }
     }
 
-    private class ChunkState(key: IntArray, val counter: Long) {
+    private class ChunkState(key: IntArray, val counter: Long, private val mode: Int) {
         var cv: IntArray = key.copyOf()
         val block = ByteArray(BLOCK_LEN)
         var blockLen = 0
@@ -91,7 +93,7 @@ internal class Blake3 {
             var len = length
             while (len > 0) {
                 if (blockLen == BLOCK_LEN) {
-                    cv = compress(cv, words(block), counter, BLOCK_LEN, startFlag()).copyOf(8)
+                    cv = compress(cv, words(block), counter, BLOCK_LEN, mode or startFlag()).copyOf(8)
                     blocksCompressed += 1
                     block.fill(0)
                     blockLen = 0
@@ -104,7 +106,7 @@ internal class Blake3 {
             }
         }
 
-        fun output(): Output = Output(cv, words(block), counter, blockLen, startFlag() or CHUNK_END)
+        fun output(): Output = Output(cv, words(block), counter, blockLen, mode or startFlag() or CHUNK_END)
     }
 
     companion object {
@@ -114,6 +116,7 @@ internal class Blake3 {
         private const val CHUNK_END = 2
         private const val PARENT = 4
         private const val ROOT = 8
+        private const val KEYED_HASH = 16
 
         private val IV = intArrayOf(
             0x6A09E667, 0xBB67AE85.toInt(), 0x3C6EF372, 0xA54FF53A.toInt(),
@@ -122,6 +125,14 @@ internal class Blake3 {
         private val PERM = intArrayOf(2, 6, 3, 10, 7, 0, 4, 13, 1, 11, 12, 5, 9, 14, 15, 8)
 
         fun hashHex(data: ByteArray): String = Blake3().apply { update(data) }.finalizeHex()
+
+        /** Keyed-hash mode; `key` is 32 bytes. */
+        fun keyed(key: ByteArray): Blake3 {
+            require(key.size == 32) { "BLAKE3 keys are 32 bytes" }
+            return Blake3(words(key.copyOf(BLOCK_LEN)).copyOf(8), KEYED_HASH)
+        }
+
+        fun keyedHashHex(key: ByteArray, data: ByteArray): String = keyed(key).apply { update(data) }.finalizeHex()
 
         fun hex(bytes: ByteArray): String {
             val sb = StringBuilder(bytes.size * 2)
@@ -132,11 +143,11 @@ internal class Blake3 {
             return sb.toString()
         }
 
-        private fun parentOutput(left: IntArray, right: IntArray): Output {
+        private fun parentOutput(key: IntArray, mode: Int, left: IntArray, right: IntArray): Output {
             val block = IntArray(16)
             System.arraycopy(left, 0, block, 0, 8)
             System.arraycopy(right, 0, block, 8, 8)
-            return Output(IV, block, 0, BLOCK_LEN, PARENT)
+            return Output(key, block, 0, BLOCK_LEN, PARENT or mode)
         }
 
         private fun words(block: ByteArray): IntArray {

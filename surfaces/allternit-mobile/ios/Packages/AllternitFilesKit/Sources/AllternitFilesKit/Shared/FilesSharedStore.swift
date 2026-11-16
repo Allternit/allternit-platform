@@ -71,11 +71,14 @@ public final class FilesSharedStore: @unchecked Sendable {
         static let pendingWake = "files.pendingWake.v1"
         static let meshProxies = "files.meshProxies.v1"
         static let pendingUnlock = "files.pendingUnlock.v1"
+        static let keyRequest = "files.keyRequest.v1"
     }
 
     private static let keychainService = "com.allternit.mobile.files"
     private static let tokenAccount = "files-token"
     private static let tokenKeyIdAccount = "files-token-key-id"
+    private static let deviceKeyAccount = "files-device-x25519"
+    private static let envelopesAccount = "files-key-envelopes"
 
     /// `keychainGroup` is the full access group with the team prefix
     /// (Info.plist `AllternitSharedKeychainGroup`).
@@ -315,10 +318,53 @@ public final class FilesSharedStore: @unchecked Sendable {
         writeSecret("\(expiresAt.timeIntervalSince1970) \(ticket)", account: "wake.\(computerId)")
     }
 
+    // MARK: Files key (SPEC section 13)
+
+    /// This device's X25519 secret (32 bytes). CryptoKit's Secure Enclave
+    /// keys are P-256 only, so the X25519 key lives in the shared keychain
+    /// group, after first unlock, this device only (never backed up or
+    /// synced), where the File Provider extension can read it to open
+    /// replicas.
+    public func filesDeviceSecret() -> Data? {
+        readSecret(Self.deviceKeyAccount).flatMap { Data(base64Encoded: $0) }.flatMap { $0.count == 32 ? $0 : nil }
+    }
+
+    @discardableResult
+    public func setFilesDeviceSecret(_ secret: Data) -> Bool {
+        writeSecret(secret.base64EncodedString(), account: Self.deviceKeyAccount)
+    }
+
+    /// The Files key envelopes wrapped to this device, newest first. Wrapped
+    /// only: the FRK is opened in memory when a replica is read. Older keys
+    /// stay after a rotation until every replica is re-sealed (SPEC 13).
+    public func filesKeyEnvelopes() -> [KeyEnvelope] {
+        guard let text = readSecret(Self.envelopesAccount) else { return [] }
+        return (try? JSONDecoder().decode([KeyEnvelope].self, from: Data(text.utf8))) ?? []
+    }
+
+    @discardableResult
+    public func setFilesKeyEnvelopes(_ envelopes: [KeyEnvelope]) -> Bool {
+        guard let data = try? JSONEncoder().encode(envelopes) else { return false }
+        return writeSecret(String(decoding: data, as: UTF8.self), account: Self.envelopesAccount)
+    }
+
+    /// The request this device sent and is waiting on (its code is shown
+    /// until another device approves).
+    public var pendingKeyRequest: KeyShareRequest? {
+        get { defaults?.data(forKey: Key.keyRequest).flatMap { try? JSONDecoder().decode(KeyShareRequest.self, from: $0) } }
+        set {
+            if let newValue { defaults?.set(try? JSONEncoder().encode(newValue), forKey: Key.keyRequest) }
+            else { defaults?.removeObject(forKey: Key.keyRequest) }
+        }
+    }
+
     /// Sign-out: drops every account-bound value. Config (the cloud URL, the
     /// device id and name) stays.
     public func clearAccount() {
         clearToken()
+        deleteSecret(Self.envelopesAccount)
+        deleteSecret(Self.deviceKeyAccount)
+        pendingKeyRequest = nil
         for computer in computers {
             deleteSecret("wake.\(computer.id)")
             deleteSecret("unlock.\(computer.id)")
@@ -352,6 +398,11 @@ public final class FilesSharedStore: @unchecked Sendable {
         #endif
     }
 
+    /// Tests only (`@testable`): secrets kept in memory instead of the
+    /// keychain, which a `swift test` host can't reach with an access group.
+    var memorySecrets: [String: String]?
+    private let secretsLock = NSLock()
+
     private func query(_ account: String) -> [CFString: Any] {
         var q: [CFString: Any] = [
             kSecClass: kSecClassGenericPassword,
@@ -363,6 +414,7 @@ public final class FilesSharedStore: @unchecked Sendable {
     }
 
     private func readSecret(_ account: String) -> String? {
+        if memorySecrets != nil { return secretsLock.withLock { memorySecrets?[account] } }
         if let secretFile { return secretFile.read(account) }
         var q = query(account)
         q[kSecReturnData] = true
@@ -375,6 +427,7 @@ public final class FilesSharedStore: @unchecked Sendable {
 
     @discardableResult
     private func writeSecret(_ value: String, account: String) -> Bool {
+        if memorySecrets != nil { secretsLock.withLock { memorySecrets?[account] = value }; return true }
         if let secretFile { return secretFile.write(value, account: account) }
         let data = Data(value.utf8)
         let q = query(account)
@@ -388,6 +441,7 @@ public final class FilesSharedStore: @unchecked Sendable {
     }
 
     private func deleteSecret(_ account: String) {
+        if memorySecrets != nil { secretsLock.withLock { _ = memorySecrets?.removeValue(forKey: account) }; return }
         if let secretFile { return secretFile.delete(account) }
         SecItemDelete(query(account) as CFDictionary)
     }

@@ -1,10 +1,11 @@
 import Foundation
 
-/// BLAKE3-256 (unkeyed hash mode), a port of the BLAKE3 reference
+/// BLAKE3-256, hash and keyed-hash modes, a port of the BLAKE3 reference
 /// implementation (github.com/BLAKE3-team/BLAKE3, `reference_impl`).
 /// Chunk and file hashes in `files/2` are BLAKE3-256 in lower-case hex
-/// (SPEC section 5). Incremental: feed any number of `update` calls, then
-/// `finalizeHex()`. No heap allocation per block.
+/// (SPEC section 5); replica locators are the keyed mode (SPEC section 13,
+/// `blake3::keyed_hash(subkey, raw)`). Incremental: feed any number of
+/// `update` calls, then `finalizeHex()`. No heap allocation per block.
 public struct Blake3Hasher: Sendable {
     private static let iv: SIMD8<UInt32> = [
         0x6A09_E667, 0xBB67_AE85, 0x3C6E_F372, 0xA54F_F53A,
@@ -14,6 +15,7 @@ public struct Blake3Hasher: Sendable {
     private static let chunkEnd: UInt32 = 1 << 1
     private static let parent: UInt32 = 1 << 2
     private static let root: UInt32 = 1 << 3
+    private static let keyedHash: UInt32 = 1 << 4
     private static let blockLen = 64
     private static let chunkLen = 1024
 
@@ -29,6 +31,10 @@ public struct Blake3Hasher: Sendable {
         return rounds
     }()
 
+    /// The IV (hash mode) or the key's words (keyed mode), and the mode flag
+    /// every compression carries.
+    private let keyWords: SIMD8<UInt32>
+    private let modeFlags: UInt32
     // Current chunk.
     private var chunkCV: SIMD8<UInt32>
     private var chunkCounter: UInt64 = 0
@@ -39,8 +45,32 @@ public struct Blake3Hasher: Sendable {
     private var cvStack: [SIMD8<UInt32>] = []
 
     public init() {
+        keyWords = Self.iv
+        modeFlags = 0
         chunkCV = Self.iv
         cvStack.reserveCapacity(54)
+    }
+
+    /// Keyed-hash mode. `key` must be 32 bytes.
+    public init(key: Data) {
+        precondition(key.count == 32, "BLAKE3 keys are 32 bytes")
+        let bytes = [UInt8](key)
+        var words = SIMD8<UInt32>()
+        for i in 0..<8 {
+            words[i] = UInt32(bytes[4 * i]) | UInt32(bytes[4 * i + 1]) << 8
+                | UInt32(bytes[4 * i + 2]) << 16 | UInt32(bytes[4 * i + 3]) << 24
+        }
+        keyWords = words
+        modeFlags = Self.keyedHash
+        chunkCV = words
+        cvStack.reserveCapacity(54)
+    }
+
+    /// `blake3::keyed_hash(key, data)` as lower-case hex.
+    public static func keyedHashHex(key: Data, _ data: Data) -> String {
+        var hasher = Blake3Hasher(key: key)
+        hasher.update(data)
+        return hasher.finalizeHex()
     }
 
     /// Hashes `data` in one call.
@@ -62,7 +92,7 @@ public struct Blake3Hasher: Sendable {
                 let cv = chunkOutput().chainingValue()
                 let totalChunks = chunkCounter + 1
                 addChunkChainingValue(cv, totalChunks: totalChunks)
-                chunkCV = Self.iv
+                chunkCV = keyWords
                 chunkCounter = totalChunks
                 block = SIMD64<UInt8>()
                 blockLength = 0
@@ -75,26 +105,35 @@ public struct Blake3Hasher: Sendable {
         }
     }
 
-    /// The 32-byte digest as lower-case hex. Does not change the hasher.
-    public func finalizeHex() -> String {
+    /// The 32-byte digest. Does not change the hasher.
+    public func finalizeBytes() -> [UInt8] {
         var output = chunkOutput()
         var index = cvStack.count
         while index > 0 {
             index -= 1
-            output = Self.parentOutput(left: cvStack[index], right: output.chainingValue())
+            output = parentOutput(left: cvStack[index], right: output.chainingValue())
         }
         let words = output.rootWords()
-        var hex = ""
-        hex.reserveCapacity(64)
-        let digits = Array("0123456789abcdef")
+        var bytes = [UInt8]()
+        bytes.reserveCapacity(32)
         for i in 0..<8 {
             var word = words[i]
             for _ in 0..<4 {
-                let byte = Int(word & 0xFF)
-                hex.append(digits[byte >> 4])
-                hex.append(digits[byte & 0x0F])
+                bytes.append(UInt8(word & 0xFF))
                 word >>= 8
             }
+        }
+        return bytes
+    }
+
+    /// The 32-byte digest as lower-case hex. Does not change the hasher.
+    public func finalizeHex() -> String {
+        let digits = Array("0123456789abcdef")
+        var hex = ""
+        hex.reserveCapacity(64)
+        for byte in finalizeBytes() {
+            hex.append(digits[Int(byte >> 4)])
+            hex.append(digits[Int(byte & 0x0F)])
         }
         return hex
     }
@@ -112,7 +151,7 @@ public struct Blake3Hasher: Sendable {
             if blockLength == Self.blockLen {
                 let words = Self.words(block)
                 let out = Self.compress(cv: chunkCV, block: words, counter: chunkCounter,
-                                        blockLength: UInt32(Self.blockLen), flags: startFlag)
+                                        blockLength: UInt32(Self.blockLen), flags: modeFlags | startFlag)
                 chunkCV = out.lowHalf
                 blocksCompressed += 1
                 block = SIMD64<UInt8>()
@@ -130,7 +169,7 @@ public struct Blake3Hasher: Sendable {
 
     private func chunkOutput() -> Output {
         Output(inputCV: chunkCV, block: Self.words(block), counter: chunkCounter,
-               blockLength: UInt32(blockLength), flags: startFlag | Self.chunkEnd)
+               blockLength: UInt32(blockLength), flags: modeFlags | startFlag | Self.chunkEnd)
     }
 
     private mutating func addChunkChainingValue(_ cv: SIMD8<UInt32>, totalChunks: UInt64) {
@@ -138,7 +177,7 @@ public struct Blake3Hasher: Sendable {
         var total = totalChunks
         while total & 1 == 0 {
             let left = cvStack.removeLast()
-            newCV = Self.parentOutput(left: left, right: newCV).chainingValue()
+            newCV = parentOutput(left: left, right: newCV).chainingValue()
             total >>= 1
         }
         cvStack.append(newCV)
@@ -165,9 +204,9 @@ public struct Blake3Hasher: Sendable {
         }
     }
 
-    private static func parentOutput(left: SIMD8<UInt32>, right: SIMD8<UInt32>) -> Output {
-        Output(inputCV: iv, block: SIMD16(lowHalf: left, highHalf: right), counter: 0,
-               blockLength: UInt32(blockLen), flags: parent)
+    private func parentOutput(left: SIMD8<UInt32>, right: SIMD8<UInt32>) -> Output {
+        Output(inputCV: keyWords, block: SIMD16(lowHalf: left, highHalf: right), counter: 0,
+               blockLength: UInt32(Self.blockLen), flags: Self.parent | modeFlags)
     }
 
     private static func words(_ bytes: SIMD64<UInt8>) -> SIMD16<UInt32> {

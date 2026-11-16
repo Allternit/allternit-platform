@@ -17,14 +17,60 @@ extension FilesClient {
     /// Needs the computer awake: throws `wakeConsentRequired` unless a ticket
     /// is held, or `wake` is `.whenAutomatic` and the setting is `auto`.
     /// `progress` gets bytes done and total.
+    ///
+    /// With `rootId` and a Files key on this device, a computer that is
+    /// asleep or offline is read from a replica first (SPEC section 10,
+    /// step 4), so opening a file needs no wake when a current replica
+    /// exists; only when no replica answers does the wake path above run.
+    /// A live read that fails because the computer is unavailable also tries
+    /// the replica before giving up. Returns where the bytes came from.
+    @discardableResult
     public func download(itemId: ItemId,
                          rev: Rev,
                          size: UInt64,
                          contentHash: Blake3?,
+                         rootId: RootId? = nil,
                          to destination: URL,
                          wake: FilesWakePolicy = .whenAutomatic,
                          segmentBytes: UInt64 = 32 * 1_048_576,
-                         progress: (@Sendable (UInt64, UInt64) -> Void)? = nil) async throws {
+                         progress: (@Sendable (UInt64, UInt64) -> Void)? = nil) async throws -> ServedBy {
+        let canUseReplica = rootId != nil && !(configuration.sharedStore?.filesKeyEnvelopes().isEmpty ?? true)
+        func fromReplica() async throws {
+            guard let rootId else { return }
+            _ = try await downloadFromReplica(itemId: itemId, rootId: rootId, rev: rev, size: size, contentHash: contentHash,
+                                              to: destination, progress: progress)
+        }
+        var triedReplica = false
+        if canUseReplica, currentWakeTicket() == nil,
+           let state = try? await endpoints().computerState, state == .asleep || state == .offline {
+            triedReplica = true
+            if (try? await fromReplica()) != nil { return .replica }
+        }
+        do {
+            try await downloadLive(itemId: itemId, rev: rev, size: size, contentHash: contentHash, to: destination,
+                                   wake: wake, segmentBytes: segmentBytes, progress: progress)
+            return .live
+        } catch {
+            guard canUseReplica, !triedReplica, Self.replicaMayHelp(error) else { throw error }
+            // The original error stays the answer when no replica has the file.
+            let original = error
+            do { try await fromReplica() } catch { throw original }
+            return .replica
+        }
+    }
+
+    /// Failures where the computer itself is the problem, not the file.
+    static func replicaMayHelp(_ error: Error) -> Bool {
+        if let error = error as? URLError { return error.code != .cancelled }
+        guard let error = error as? FilesError else { return false }
+        if error.isComputerUnavailable { return true }
+        if case .noTransport = error { return true }
+        return error.code == .wakeConsentRequired || error.code == .wakeDenied
+    }
+
+    private func downloadLive(itemId: ItemId, rev: Rev, size: UInt64, contentHash: Blake3?, to destination: URL,
+                              wake: FilesWakePolicy, segmentBytes: UInt64,
+                              progress: (@Sendable (UInt64, UInt64) -> Void)?) async throws {
         let fm = FileManager.default
         let scratch = configuration.scratchDirectory
         try fm.createDirectory(at: scratch, withIntermediateDirectories: true)

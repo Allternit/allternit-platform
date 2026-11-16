@@ -25,12 +25,21 @@ public enum FilesError: Error, Sendable, Equatable {
     /// A downloaded file's BLAKE3 did not match `content_hash`.
     case integrity(expected: Blake3, actual: Blake3)
     case invalidResponse(String)
+    /// This device has no Files key that opens the data (not approved yet,
+    /// or the data was sealed with another key). SPEC `key_unavailable`.
+    case keyUnavailable(String)
+    /// No replica could answer (none, not current, host asleep). SPEC
+    /// `replica_unavailable`.
+    case replicaUnavailable(String)
 
     /// The contract error code, when there is one.
     public var code: ErrorCode? {
         switch self {
         case .api(_, let body): return body.code
         case .wakeConsentRequired: return .wakeConsentRequired
+        case .keyUnavailable: return .keyUnavailable
+        case .replicaUnavailable: return .replicaUnavailable
+        case .integrity: return .integrityFailed
         default: return nil
         }
     }
@@ -76,6 +85,8 @@ extension FilesError: LocalizedError {
         case .revisionChanged: return "The file changed while it was downloading."
         case .integrity: return "The downloaded file didn't match its checksum."
         case .invalidResponse(let what): return "Unexpected answer from the server (\(what))."
+        case .keyUnavailable(let why): return why
+        case .replicaUnavailable(let why): return why
         }
     }
 }
