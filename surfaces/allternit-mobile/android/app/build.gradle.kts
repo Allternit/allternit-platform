@@ -43,11 +43,14 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = false
+            // The static "Inbox tasks" shortcut targets this app's own package.
+            resValue("string", "files_app_id", "com.allternit.app")
         }
         // Debug installs as com.allternit.app.ondevice, next to the Play-installed
         // com.allternit.app on a test phone instead of replacing it. Release keeps the real ID.
         getByName("debug") {
             applicationIdSuffix = ".ondevice"
+            resValue("string", "files_app_id", "com.allternit.app.ondevice")
         }
     }
 

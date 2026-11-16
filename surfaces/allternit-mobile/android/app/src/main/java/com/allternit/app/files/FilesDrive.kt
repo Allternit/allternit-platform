@@ -442,6 +442,7 @@ internal class FilesDrive private constructor(val context: Context) {
                         }
                     }
                     cursors[k] = res.cursor
+                    if (res.changes.isNotEmpty() && root(cid, rid)?.kind == RootKind.INBOX) notifyNewInboxTasks(cid)
                     touched.forEach { notifyChildren(it) }
                     if (res.freshness.computerState != ComputerState.AWAKE) {
                         Thread.sleep(60_000) // a sleeping computer's snapshot changes at most every 5 minutes
@@ -470,6 +471,37 @@ internal class FilesDrive private constructor(val context: Context) {
         } catch (_: InterruptedException) {
         } finally {
             polling.remove(k)
+        }
+    }
+
+    /**
+     * A drop in Inbox makes a task that waits for approval (step 17). Called from the change poll
+     * the provider already runs (no new service): posts one notification per task not announced yet.
+     */
+    private fun notifyNewInboxTasks(cid: String) {
+        try {
+            val arr = org.json.JSONObject(client(cid).inboxTasksText()).optJSONArray("tasks") ?: return
+            val seen = prefs.getStringSet("inbox_notified", emptySet())?.toMutableSet() ?: mutableSetOf()
+            var fresh = 0
+            var firstName = ""
+            for (i in 0 until arr.length()) {
+                val o = arr.getJSONObject(i)
+                if (o.optString("state") != "needs_approval") continue
+                val id = o.optString("task_id")
+                if (id.isEmpty() || !seen.add(id)) continue
+                if (fresh == 0) firstName = o.optString("name")
+                fresh += 1
+            }
+            if (fresh == 0) return
+            prefs.edit().putStringSet("inbox_notified", seen.toList().takeLast(200).toSet()).apply()
+            val open = PendingIntent.getActivity(
+                context, NOTE_INBOX, Intent(context, InboxActivity::class.java),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            )
+            val text = if (fresh == 1) "$firstName is waiting in ${computerName(cid)}. Your agent reads it only after you approve." else "$fresh files are waiting in ${computerName(cid)}. Your agent reads them only after you approve."
+            post(NOTE_INBOX + (cid.hashCode() and 0xffff), "Inbox needs approval", text, open)
+        } catch (_: Exception) {
+            // A failed look must never break the change poll.
         }
     }
 
@@ -769,6 +801,7 @@ internal class FilesDrive private constructor(val context: Context) {
         private const val CHANNEL = "files_drive"
         private const val NOTE_WAKE = 0x2200000
         private const val NOTE_UPLOAD = 0x2300000
+        private const val NOTE_INBOX = 0x2400000
         const val UPLOAD_JOB_ID = 22_022
         private const val UNLOCK_MS = 5 * 60_000L
         private const val LIST_FRESH_MS = 20_000L

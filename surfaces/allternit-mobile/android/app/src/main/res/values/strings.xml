@@ -6,6 +6,8 @@
     <string name="shortcut_ask_long">Ask a bot</string>
     <string name="shortcut_handoff_short">Hand off</string>
     <string name="shortcut_handoff_long">Hand off a task</string>
+    <string name="shortcut_inbox_tasks_short">Inbox tasks</string>
+    <string name="shortcut_inbox_tasks_long">Inbox tasks: approve what your agent may read</string>
     <string name="shortcut_inbox_short">Needs you</string>
     <string name="shortcut_inbox_long">Needs you</string>
     <string name="shortcut_call_short">Call main bot</string>
