@@ -155,7 +155,7 @@ npm run build:electron       # full packaged build (stages platform static, offi
 npm run build:electron:dmg   # same, DMG target
 ```
 
-`build:electron` runs `prepare:*` steps first (platform static, computer-use driver, ACU gateway, Lima, Lume, mux, mesh node, office engine, API binary, connector catalog and sidecar) and `verify:packaged-resources`.
+`build:electron` runs `prepare:*` steps first (platform static, computer-use driver, ACU gateway, Lima, Lume, mux, mesh node, office engine, API binary, connector catalog and sidecar, and on macOS the Files File Provider) and `verify:packaged-resources`.
 
 ### macOS signing
 
@@ -172,6 +172,37 @@ Two rules keep the seal valid:
 
 Check a build with `codesign --verify --deep --strict "Allternit Desktop.app"`. Proper notarization needs a Developer ID certificate and the `APPLE_ID`, `APPLE_ID_PASSWORD` and `APPLE_TEAM_ID` secrets (`scripts/notarize.cjs`).
 
+## Files drive in Finder (File Provider)
+
+Each of the account's other computers shows as its own location in the Finder sidebar, under **Locations**, behind the account flag `files_drive`. Not in a release yet.
+
+**Turning it on.** macOS keeps a new File Provider off until you switch it on: open **System Settings**, then **General**, **Login Items & Extensions**, **File Providers**, and turn on **Allternit**. Desktop notices the switch within a few seconds and fills each location. A location added before the switch stays empty until it is added again (seen on macOS 26), so Desktop re-adds each location once after it first sees the switch on. The first-run checklist (design 3A) shows this step with an **Open System Settings** button.
+
+**What you see.** One location per computer, named as in the Computers list. Inside it are that computer's roots (Allternit with Inbox, Shared and Agent Output, then Code, Models and so on). Files stay online until you open them. Finder shows its own download and upload states. Allternit adds colour badges for **Conflict**, **Protected**, **Made by an agent** and **Kept on this device** (only the first one that applies shows), and **Shared** as the text next to a file in the Shared root. Files kept offline stay downloaded. A file deleted in Finder goes to that computer's trash.
+
+**Asleep computers.** Browsing a sleeping computer lists its saved snapshot and never wakes it. Opening a file wakes it only when the computer's wake setting is **Auto**; otherwise Finder says it is asleep.
+
+**Not shown:** this Mac itself (its files are already here) and phones.
+
+For developers:
+
+- **Bundle.** `Contents/PlugIns/AllternitFileProvider.appex` is the extension, built from the same Swift as the iOS one: `surfaces/allternit-mobile/ios/AllternitFileProvider/*.swift` plus the package `Packages/AllternitFilesKit`. `native/file-provider/` holds only what is macOS-specific: `Extension/Info.plist` and entitlements (templates), the helper `Helper/main.swift` and the badge drawing `Badges/make-badges.swift`. `npm run prepare:file-provider` runs `native/file-provider/build.sh` (universal arm64 and x86_64). The electron-builder `afterPack` hook `scripts/embed-file-provider.cjs` places the extension and the helper `Contents/MacOS/allternit-files-domains` and signs them, inside out, before electron-builder signs the app. electron-builder never signs `Contents/PlugIns`, and `mac.signIgnore` keeps it from re-signing the helper with the app's entitlements.
+- **Signing.** The extension is sandboxed with network access. The extension and the helper share the App Group `TEAMID.com.allternit.desktop.files`, team-prefixed, so no provisioning profile is needed. A Developer ID or Apple Development identity works. An ad-hoc build (identity `-`, CI without certificates) has no team, so it ships **without** the File Provider and the log says so. `ALLTERNIT_SKIP_FILE_PROVIDER=1` skips both steps.
+- **Secrets.** macOS gives a Developer ID app no shared keychain group, so the Files token and wake tickets go in a 0600 file in the App Group container (`FilesSecretFile` in AllternitFilesKit). iOS still uses the shared keychain group.
+- **Main process.** `src/main/files-drive-manager.ts` runs at start, every 10 minutes and on wake from sleep. It reads `files_drive` from `GET /api/v1/me/flags` (`ALLTERNIT_FILES_DRIVE=1` forces it on for development). It mints a `compute` API key "Files on (this Mac)", lists runtime devices and the account's own mesh-only paired machines (`GET /api/v1/computers/paired`), and passes them to the helper, which writes the App Group and makes the File Provider domains match (`computer.` plus the computer id). Mesh-only machines are reached through this app's mesh proxy (`meshManager.loopbackFor`, port 8013). Every other computer goes through the cloud-api relay. Sign-out revokes the key and removes every location, with the files macOS kept for them.
+- **IPC** (`window.allternit.filesDrive`, for the checklist in allternit-ai):
+
+| Channel | Purpose |
+|---|---|
+| `files-drive:status` | `availability` (`unsupported`, `missing` for a build without the extension, `available`), `flag`, `computers` with `enabled`, `needsProviderSwitch` |
+| `files-drive:sync` | Sync now |
+| `files-drive:watch` | Check for the File Providers switch every 4 s for 10 minutes |
+| `files-drive:open-settings` | Open System Settings at Login Items & Extensions (Extensions before macOS 15) |
+| `files-drive:show-in-finder` | Open a computer's location in Finder |
+| `files-drive:changed` | Main to renderer: the status changed |
+
+Typecheck the Swift for macOS in seconds with `native/file-provider/typecheck.sh`. The protocol is the [Files drive API](/api/files-drive).
+
 ## Layout
 
 ```
@@ -179,7 +210,7 @@ allternit-desktop/
 ├── src/main/        unified-main.ts (windows, tray, hotkeys), backend-manager.ts, auth-manager.ts, ...
 ├── src/preload/     context bridge (index.ts, auth.ts, startup.ts)
 ├── src/renderer/    renderer code
-├── native/          dictation-helper (Swift)
+├── native/          dictation-helper, keychain, file-provider (Swift)
 └── resources/       vm/, computer-use/, connector-sidecar/
 ```
 

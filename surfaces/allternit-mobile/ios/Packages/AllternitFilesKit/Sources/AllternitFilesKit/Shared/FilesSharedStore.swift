@@ -38,7 +38,9 @@ public struct FilesPendingWake: Codable, Sendable, Hashable {
 /// UI extension). Config goes in the App Group's defaults; secrets (the
 /// Files token, wake tickets) go in the shared keychain group, readable
 /// after first unlock, this device only — the same split as the widget and
-/// notification extensions use (`SharedAccess`, `AppGroupStore`).
+/// notification extensions use (`SharedAccess`, `AppGroupStore`). On macOS
+/// (Allternit Desktop, no provisioning profile, so no shared keychain group)
+/// the secrets go in a 0600 file in the App Group container instead.
 public final class FilesSharedStore: @unchecked Sendable {
     public let appGroup: String
     public let keychainGroup: String?
@@ -52,6 +54,7 @@ public final class FilesSharedStore: @unchecked Sendable {
         static let tokenRejected = "files.tokenRejected"
         static let pins = "files.pins.v1"
         static let pendingWake = "files.pendingWake.v1"
+        static let meshProxies = "files.meshProxies.v1"
     }
 
     private static let keychainService = "com.allternit.mobile.files"
@@ -109,7 +112,7 @@ public final class FilesSharedStore: @unchecked Sendable {
 
     /// Names conflict copies (`Lease (conflict iPhone 2026-11-15 1042).pdf`).
     public var deviceName: String {
-        get { defaults?.string(forKey: Key.deviceName) ?? "iPhone" }
+        get { defaults?.string(forKey: Key.deviceName) ?? Self.defaultDeviceName }
         set { defaults?.set(newValue, forKey: Key.deviceName) }
     }
 
@@ -124,6 +127,31 @@ public final class FilesSharedStore: @unchecked Sendable {
 
     public func computer(_ id: ComputerId) -> FilesSharedComputer? {
         computers.first { $0.id == id }
+    }
+
+    // MARK: Mesh (macOS)
+
+    /// Loopback ends of the Desktop app's mesh proxies, `"<mesh ip>:<port>"`
+    /// to `"127.0.0.1:<port>"` (`mesh-manager.ts` `proxyFor`). The Mac's File
+    /// Provider extension has no mesh node of its own; it reaches a mesh-only
+    /// computer through the proxy the app keeps running. Empty on iOS.
+    public var meshProxies: [String: String] {
+        get { (defaults?.dictionary(forKey: Key.meshProxies) as? [String: String]) ?? [:] }
+        set { defaults?.set(newValue, forKey: Key.meshProxies) }
+    }
+
+    /// `url` (a mesh candidate's `base_url`) pointed at the app's loopback
+    /// proxy for its host and port, or nil when the app runs none for it.
+    public func meshProxyURL(for url: URL) -> URL? {
+        guard let host = url.host, var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return nil }
+        let key = "\(host):\(url.port ?? (url.scheme == "https" ? 443 : 80))"
+        guard let target = meshProxies[key] else { return nil }
+        let parts = target.split(separator: ":", maxSplits: 1).map(String.init)
+        guard parts.count == 2, let port = Int(parts[1]) else { return nil }
+        components.scheme = "http"
+        components.host = parts[0]
+        components.port = port
+        return components.url
     }
 
     /// Set by the extension when cloud-api refused the token (401); the app
@@ -217,10 +245,30 @@ public final class FilesSharedStore: @unchecked Sendable {
         computers = []
         pins = []
         pendingWakes = []
+        meshProxies = [:]
         tokenRejected = false
     }
 
-    // MARK: Keychain
+    // MARK: Keychain (iOS) or the secrets file (macOS)
+
+    private static var defaultDeviceName: String {
+        #if os(macOS)
+        return "Mac"
+        #else
+        return "iPhone"
+        #endif
+    }
+
+    /// macOS with no shared keychain group: the 0600 secrets file in the App
+    /// Group container (`FilesSecretFile`). iOS always uses the keychain.
+    private var secretFile: FilesSecretFile? {
+        #if os(macOS)
+        guard keychainGroup == nil, let containerURL else { return nil }
+        return FilesSecretFile(directory: containerURL.appendingPathComponent("Files", isDirectory: true))
+        #else
+        return nil
+        #endif
+    }
 
     private func query(_ account: String) -> [CFString: Any] {
         var q: [CFString: Any] = [
@@ -233,6 +281,7 @@ public final class FilesSharedStore: @unchecked Sendable {
     }
 
     private func readSecret(_ account: String) -> String? {
+        if let secretFile { return secretFile.read(account) }
         var q = query(account)
         q[kSecReturnData] = true
         q[kSecMatchLimit] = kSecMatchLimitOne
@@ -244,6 +293,7 @@ public final class FilesSharedStore: @unchecked Sendable {
 
     @discardableResult
     private func writeSecret(_ value: String, account: String) -> Bool {
+        if let secretFile { return secretFile.write(value, account: account) }
         let data = Data(value.utf8)
         let q = query(account)
         let status = SecItemUpdate(q as CFDictionary, [kSecValueData: data] as CFDictionary)
@@ -256,6 +306,7 @@ public final class FilesSharedStore: @unchecked Sendable {
     }
 
     private func deleteSecret(_ account: String) {
+        if let secretFile { return secretFile.delete(account) }
         SecItemDelete(query(account) as CFDictionary)
     }
 }

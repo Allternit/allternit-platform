@@ -730,6 +730,31 @@ export type PhoneInputEvent =
   | { type: 'scroll'; x: number; y: number; hScroll?: number; vScroll?: number }
   | { type: 'back' } | { type: 'home' } | { type: 'app_switch' } | { type: 'power' };
 
+/** Files drive on macOS: one Finder location per computer (files-drive-manager.ts). */
+export interface FilesDriveStatus {
+  /** unsupported = not macOS; missing = no File Provider in this build. */
+  availability: 'unsupported' | 'missing' | 'available';
+  signedIn: boolean;
+  /** The account's files_drive flag; null until it was read once. */
+  flag: boolean | null;
+  computers: Array<{ id: string; name: string; enabled: boolean }>;
+  /** Some location is off: ask for System Settings > General > Login Items & Extensions > File Providers. */
+  needsProviderSwitch: boolean;
+  syncing: boolean;
+  lastSyncAt?: string;
+  error?: string;
+}
+
+export interface FilesDriveAPI {
+  status(): Promise<FilesDriveStatus>;
+  sync(): Promise<FilesDriveStatus>;
+  /** Checks for the File Providers switch every few seconds for 10 minutes. */
+  watch(): Promise<FilesDriveStatus>;
+  openProviderSettings(): Promise<{ opened: boolean }>;
+  showInFinder(computerId: string): Promise<{ opened: boolean; error?: string }>;
+  onChange(callback: (status: FilesDriveStatus) => void): () => void;
+}
+
 export interface AllternitDesktopAPI {
   sdk: { getBackendUrl(): Promise<string> };
   connection: ConnectionAPI;
@@ -744,6 +769,7 @@ export interface AllternitDesktopAPI {
   auth: AuthAPI;
   devicePairing: DevicePairingAPI;
   mesh: MeshAPI;
+  filesDrive: FilesDriveAPI;
   shell: ShellAPI;
   officeAddins: OfficeAddinsAPI;
   theme: ThemeAPI;

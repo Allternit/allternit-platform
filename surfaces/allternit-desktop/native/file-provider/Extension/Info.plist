@@ -1,0 +1,153 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- macOS File Provider extension of Allternit Desktop (plan step 23).
+     A template: scripts/embed-file-provider.cjs fills __BUNDLE_ID__,
+     __APP_GROUP__ (the signing team's prefix + .com.allternit.desktop.files)
+     and __VERSION__, and puts it in
+     Contents/PlugIns/AllternitFileProvider.appex/Contents/Info.plist. -->
+<plist version="1.0">
+<dict>
+	<!-- Read by FilesSharedStore.fromMainBundle() and by the helper. -->
+	<key>AllternitAppGroup</key>
+	<string>__APP_GROUP__</string>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleDisplayName</key>
+	<string>Allternit</string>
+	<key>CFBundleExecutable</key>
+	<string>AllternitFileProvider</string>
+	<key>CFBundleIdentifier</key>
+	<string>__BUNDLE_ID__</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>AllternitFileProvider</string>
+	<key>CFBundlePackageType</key>
+	<string>XPC!</string>
+	<key>CFBundleShortVersionString</key>
+	<string>__VERSION__</string>
+	<key>CFBundleVersion</key>
+	<string>__VERSION__</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>13.0</string>
+	<key>NSHumanReadableCopyright</key>
+	<string>Copyright © 2026 Allternit LLC</string>
+	<key>NSExtension</key>
+	<dict>
+		<!-- Replicated File Provider (NSFileProviderReplicatedExtension),
+		     the same sources as the iOS extension: one domain per computer,
+		     added by the app's helper (allternit-files-domains). -->
+		<key>NSExtensionPointIdentifier</key>
+		<string>com.apple.fileprovider-nonui</string>
+		<key>NSExtensionPrincipalClass</key>
+		<string>AllternitFileProvider.FileProviderExtension</string>
+		<key>NSExtensionFileProviderSupportsEnumeration</key>
+		<true/>
+		<!-- Finder badges (design 6A, FilesBadge). Only the first Badge
+		     shows; Shared is the text next to the icon. -->
+		<key>NSFileProviderDecorations</key>
+		<array>
+			<dict>
+				<key>Identifier</key>
+				<string>__BUNDLE_ID__.badge.conflict</string>
+				<key>Category</key>
+				<string>Badge</string>
+				<key>BadgeImageType</key>
+				<string>com.allternit.files.badge.conflict</string>
+				<key>Label</key>
+				<string>Conflict</string>
+			</dict>
+			<dict>
+				<key>Identifier</key>
+				<string>__BUNDLE_ID__.badge.protected</string>
+				<key>Category</key>
+				<string>Badge</string>
+				<key>BadgeImageType</key>
+				<string>com.allternit.files.badge.protected</string>
+				<key>Label</key>
+				<string>Protected</string>
+			</dict>
+			<dict>
+				<key>Identifier</key>
+				<string>__BUNDLE_ID__.badge.agent</string>
+				<key>Category</key>
+				<string>Badge</string>
+				<key>BadgeImageType</key>
+				<string>com.allternit.files.badge.agent</string>
+				<key>Label</key>
+				<string>Made by an agent</string>
+			</dict>
+			<dict>
+				<key>Identifier</key>
+				<string>__BUNDLE_ID__.badge.pinned</string>
+				<key>Category</key>
+				<string>Badge</string>
+				<key>BadgeImageType</key>
+				<string>com.allternit.files.badge.pinned</string>
+				<key>Label</key>
+				<string>Kept on this device</string>
+			</dict>
+			<dict>
+				<key>Identifier</key>
+				<string>__BUNDLE_ID__.badge.shared</string>
+				<key>Category</key>
+				<string>Sharing</string>
+				<key>Label</key>
+				<string>Shared</string>
+			</dict>
+		</array>
+	</dict>
+	<!-- The colour badge images (Badges/make-badges.swift draws them). -->
+	<key>UTExportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>com.allternit.files.badge.conflict</string>
+			<key>UTTypeDescription</key>
+			<string>Conflict</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>com.apple.icon-decoration.badge</string>
+			</array>
+			<key>UTTypeIconFile</key>
+			<string>badge-conflict.icns</string>
+		</dict>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>com.allternit.files.badge.protected</string>
+			<key>UTTypeDescription</key>
+			<string>Protected</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>com.apple.icon-decoration.badge</string>
+			</array>
+			<key>UTTypeIconFile</key>
+			<string>badge-protected.icns</string>
+		</dict>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>com.allternit.files.badge.agent</string>
+			<key>UTTypeDescription</key>
+			<string>Made by an agent</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>com.apple.icon-decoration.badge</string>
+			</array>
+			<key>UTTypeIconFile</key>
+			<string>badge-agent.icns</string>
+		</dict>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>com.allternit.files.badge.pinned</string>
+			<key>UTTypeDescription</key>
+			<string>Kept on this device</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>com.apple.icon-decoration.badge</string>
+			</array>
+			<key>UTTypeIconFile</key>
+			<string>badge-pinned.icns</string>
+		</dict>
+	</array>
+</dict>
+</plist>
