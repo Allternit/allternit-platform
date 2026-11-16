@@ -286,6 +286,11 @@ public final class FilesClient: @unchecked Sendable {
         request.headers["X-Allternit-Device-Name"] = configuration.deviceName
         request.headers["X-Allternit-Device-Platform"] = configuration.devicePlatform
         if let ticket = currentWakeTicket() { request.headers["X-Allternit-Wake-Ticket"] = ticket }
+        // Protected roots (Memory Drive) open only after a fresh Face ID
+        // unlock on this device (SPEC section 12, the File Provider UI sheet).
+        if let proof = configuration.sharedStore?.unlockProof(computerId: computerId) {
+            request.headers["X-Allternit-Unlock"] = proof
+        }
         let transport = try await transport()
         return try transport.prepare(request, bearer: token, scratch: configuration.scratchDirectory,
                                      timeout: timeout ?? configuration.requestTimeout)
@@ -322,11 +327,11 @@ public final class FilesClient: @unchecked Sendable {
         }
     }
 
-    private func post<B: Encodable>(_ path: String, _ body: B) throws -> FilesRequest {
+    func post<B: Encodable>(_ path: String, _ body: B) throws -> FilesRequest {
         FilesRequest(method: "POST", path: path, headers: ["Content-Type": "application/json"], body: .json(try JSONEncoder().encode(body)))
     }
 
-    private func cloud(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+    func cloud(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         guard let token = try await configuration.tokenProvider(), !token.isEmpty else { throw FilesError.signedOut }
         var request = request
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
@@ -345,7 +350,7 @@ public final class FilesClient: @unchecked Sendable {
 
     /// `path` is already percent-encoded, so it is joined as text
     /// (`appendingPathComponent` would encode the `%` again).
-    private func cloudURL(_ path: String) -> URL {
+    func cloudURL(_ path: String) -> URL {
         var base = configuration.cloudBaseURL.absoluteString
         while base.hasSuffix("/") { base.removeLast() }
         return URL(string: base + "/" + path) ?? configuration.cloudBaseURL

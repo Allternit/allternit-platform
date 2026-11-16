@@ -15,13 +15,37 @@ public struct FilesSyncAnchor: Codable, Sendable, Equatable {
         }
     }
 
+    /// A folder still to be listed again after its root's cursor was reset
+    /// (`FilesResync`): kept in the anchor, so the work survives the
+    /// extension being stopped between passes.
+    public struct Relist: Codable, Sendable, Equatable {
+        public var rootId: RootId
+        public var itemId: ItemId
+
+        public init(rootId: RootId, itemId: ItemId) {
+            self.rootId = rootId
+            self.itemId = itemId
+        }
+    }
+
     public var version: Int
     public var roots: [RootId: RootMark]
+    /// Folders still to re-list (nil or empty: none).
+    public var relist: [Relist]?
+    /// Items kept offline on this device when the anchor was made, sorted.
+    /// A pin added or removed since is reported as an update, so its badge
+    /// and actions change without a server change.
+    public var pinned: [ItemId]?
 
-    public init(roots: [RootId: RootMark] = [:]) {
+    public init(roots: [RootId: RootMark] = [:], relist: [Relist]? = nil, pinned: [ItemId]? = nil) {
         version = 1
         self.roots = roots
+        self.relist = relist
+        self.pinned = pinned
     }
+
+    /// True while folders are left to re-list after a cursor reset.
+    public var hasPendingRelist: Bool { !(relist ?? []).isEmpty }
 
     /// The anchor for the roots as listed now.
     public init(roots: [Root]) {

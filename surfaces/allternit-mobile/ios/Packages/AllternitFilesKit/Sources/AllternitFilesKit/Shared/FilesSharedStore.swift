@@ -34,6 +34,21 @@ public struct FilesPendingWake: Codable, Sendable, Hashable {
     }
 }
 
+/// A protected folder the extension could not open (`protected_root_locked`).
+public struct FilesPendingUnlock: Codable, Sendable, Hashable {
+    public var computerId: ComputerId
+    public var rootId: RootId?
+    public var rootName: String?
+    public var at: Date
+
+    public init(computerId: ComputerId, rootId: RootId?, rootName: String?, at: Date = Date()) {
+        self.computerId = computerId
+        self.rootId = rootId
+        self.rootName = rootName
+        self.at = at
+    }
+}
+
 /// State the app shares with the File Provider extension (and later the
 /// UI extension). Config goes in the App Group's defaults; secrets (the
 /// Files token, wake tickets) go in the shared keychain group, readable
@@ -55,6 +70,7 @@ public final class FilesSharedStore: @unchecked Sendable {
         static let pins = "files.pins.v1"
         static let pendingWake = "files.pendingWake.v1"
         static let meshProxies = "files.meshProxies.v1"
+        static let pendingUnlock = "files.pendingUnlock.v1"
     }
 
     private static let keychainService = "com.allternit.mobile.files"
@@ -199,6 +215,68 @@ public final class FilesSharedStore: @unchecked Sendable {
         pendingWakes = pendingWakes.filter { $0.computerId != computerId }
     }
 
+    // MARK: Pending unlock prompts (protected roots)
+
+    /// Protected folders the extension could not open because they need a
+    /// fresh device unlock. The File Provider UI sheet reads it and asks for
+    /// Face ID.
+    public var pendingUnlocks: [FilesPendingUnlock] {
+        get {
+            guard let data = defaults?.data(forKey: Key.pendingUnlock) else { return [] }
+            return (try? JSONDecoder().decode([FilesPendingUnlock].self, from: data)) ?? []
+        }
+        set { defaults?.set(try? JSONEncoder().encode(newValue), forKey: Key.pendingUnlock) }
+    }
+
+    public func addPendingUnlock(_ unlock: FilesPendingUnlock) {
+        var all = pendingUnlocks.filter { $0.computerId != unlock.computerId && Date().timeIntervalSince($0.at) < 600 }
+        all.append(unlock)
+        pendingUnlocks = all
+    }
+
+    /// The latest unlock prompt for `computerId`, if it is under 10 minutes old.
+    public func pendingUnlock(computerId: ComputerId, now: Date = Date()) -> FilesPendingUnlock? {
+        pendingUnlocks.last { $0.computerId == computerId && now.timeIntervalSince($0.at) < 600 }
+    }
+
+    public func clearPendingUnlock(computerId: ComputerId) {
+        pendingUnlocks = pendingUnlocks.filter { $0.computerId != computerId }
+    }
+
+    /// The latest wake prompt for `computerId`, if it is under 10 minutes old.
+    public func pendingWake(computerId: ComputerId, now: Date = Date()) -> FilesPendingWake? {
+        pendingWakes.last { $0.computerId == computerId && now.timeIntervalSince($0.at) < 600 }
+    }
+
+    // MARK: Device unlock (protected roots, SPEC section 12)
+
+    /// How long one Face ID unlock opens protected roots on a computer.
+    public static let unlockWindow: TimeInterval = 300
+
+    /// Records a fresh device unlock (Face ID, Touch ID or the passcode) for
+    /// `computerId`. Requests to that computer then carry
+    /// `X-Allternit-Unlock` for `unlockWindow` seconds.
+    public func markUnlocked(computerId: ComputerId, at date: Date = Date()) {
+        writeSecret(String(Int(date.timeIntervalSince1970)), account: "unlock.\(computerId)")
+        clearPendingUnlock(computerId: computerId)
+    }
+
+    /// The `X-Allternit-Unlock` value while an unlock is fresh, else nil:
+    /// `bio1.<device id>.<unix seconds of the unlock>`, the same proof the
+    /// Android app sends.
+    public func unlockProof(computerId: ComputerId, now: Date = Date()) -> String? {
+        guard let stored = readSecret("unlock.\(computerId)"), let at = TimeInterval(stored) else { return nil }
+        guard now.timeIntervalSince1970 - at < Self.unlockWindow, now.timeIntervalSince1970 >= at - 60 else {
+            deleteSecret("unlock.\(computerId)")
+            return nil
+        }
+        return "bio1.\(deviceId ?? "dev_unknown").\(Int(at))"
+    }
+
+    public func clearUnlock(computerId: ComputerId) {
+        deleteSecret("unlock.\(computerId)")
+    }
+
     // MARK: Secrets (shared keychain group)
 
     /// The Files token: a cloud-api API key with the `compute` scope that
@@ -241,11 +319,15 @@ public final class FilesSharedStore: @unchecked Sendable {
     /// device id and name) stays.
     public func clearAccount() {
         clearToken()
-        for computer in computers { deleteSecret("wake.\(computer.id)") }
+        for computer in computers {
+            deleteSecret("wake.\(computer.id)")
+            deleteSecret("unlock.\(computer.id)")
+        }
         computers = []
         pins = []
         pendingWakes = []
         meshProxies = [:]
+        pendingUnlocks = []
         tokenRejected = false
     }
 

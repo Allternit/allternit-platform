@@ -31,7 +31,11 @@ final class ProviderContext: @unchecked Sendable {
         )
         client = store.makeClient(computerId: computerId, transferHTTP: transfer)
         catalog = RootCatalog(client: client)
+        shares = ShareCatalog(client: client)
     }
+
+    /// Items with a live share link (the Shared badge).
+    let shares: ShareCatalog
 
     var computerName: String { store.computer(computerId)?.name ?? fallbackName }
 
@@ -42,13 +46,46 @@ final class ProviderContext: @unchecked Sendable {
     }
 
     func mapper(roots: [Root], freshness: Freshness?) -> ItemMapper {
-        ItemMapper(computerName: computerName, roots: roots, freshness: freshness, pinnedIds: pinnedIds)
+        ItemMapper(computerName: computerName, roots: roots, freshness: freshness, pinnedIds: pinnedIds,
+                   sharedIds: shares.cachedIds)
     }
 
     /// A mapper from the cached roots (listing them first if needed).
     func mapper() async throws -> ItemMapper {
         let (roots, freshness) = try await catalog.load()
+        kickShares()
         return mapper(roots: roots, freshness: freshness)
+    }
+
+    /// Refreshes the share list in the background; a listing never waits
+    /// on it (the badge shows on the next listing).
+    func kickShares() {
+        let shares = shares
+        Task.detached(priority: .utility) { await shares.refreshIfStale() }
+    }
+
+    /// The items the system keeps on this device for this computer
+    /// (`enumeratorForMaterializedItems`), at most `limit` of them, so a
+    /// cursor reset can re-list every folder the user has opened.
+    func materializedEntries(limit: Int = 20_000) async -> [FilesMaterializedEntry] {
+        guard let manager else { return [] }
+        let enumerator = manager.enumeratorForMaterializedItems()
+        defer { enumerator.invalidate() }
+        var entries: [FilesMaterializedEntry] = []
+        var page = NSFileProviderPage(Data())
+        for _ in 0..<200 {
+            let collector = MaterializedCollector()
+            let (items, nextPage) = await collector.run(enumerator, page: page)
+            for item in items where item.itemIdentifier != .rootContainer {
+                let isFolder = item.contentType?.conforms(to: .directory) ?? false
+                entries.append(FilesMaterializedEntry(id: item.itemIdentifier.rawValue,
+                                                      parentId: item.parentItemIdentifier.rawValue, isFolder: isFolder))
+                if entries.count >= limit { return entries }
+            }
+            guard let nextPage else { break }
+            page = nextPage
+        }
+        return entries
     }
 
     var anchor: FilesSyncAnchor? {
@@ -56,8 +93,10 @@ final class ProviderContext: @unchecked Sendable {
         set { lock.withLock { lastAnchor = newValue } }
     }
 
-    func error(_ error: Error) -> Error {
-        FileProviderErrors.map(error, computerName: computerName, store: store)
+    /// `root` names the protected folder in the Face ID sheet when a
+    /// listing or open fails with `protected_root_locked`.
+    func error(_ error: Error, root: Root? = nil) -> Error {
+        FileProviderErrors.map(error, computerId: computerId, computerName: computerName, store: store, root: root)
     }
 
     func signalWorkingSet() {
@@ -104,8 +143,28 @@ actor RootCatalog {
     func remember(_ items: [Item]) {
         if rootOfItem.count + items.count > Self.maxRemembered {
             rootOfItem = Dictionary(roots.map { ($0.rootItemId, $0.id) }, uniquingKeysWith: { first, _ in first })
+            noThumbnail.removeAll()
         }
-        for item in items { rootOfItem[item.id] = item.rootId }
+        for item in items {
+            rootOfItem[item.id] = item.rootId
+            // `has_thumbnail: false` = the computer indexed it and made none.
+            // Absent = unknown (older runtime), so the thumbnail is asked for.
+            if item.hasThumbnail == false || item.kind == .folder { noThumbnail.insert(item.id) } else { noThumbnail.remove(item.id) }
+        }
+    }
+
+    /// Items known to have no thumbnail, so Files' grid doesn't ask the
+    /// relay for each of them.
+    private var noThumbnail: Set<ItemId> = []
+
+    func mayHaveThumbnail(_ itemId: ItemId) -> Bool {
+        !noThumbnail.contains(itemId) && !roots.contains { $0.rootItemId == itemId }
+    }
+
+    /// The root `itemId` belongs to, when the catalog already knows it.
+    func knownRoot(of itemId: ItemId) -> Root? {
+        guard let rootId = rootOfItem[itemId] else { return nil }
+        return roots.first { $0.id == rootId }
     }
 
     /// The root `itemId` lives in: from items already seen, else one stat.
@@ -119,11 +178,80 @@ actor RootCatalog {
     }
 }
 
+/// Collects one page of the materialized set.
+private final class MaterializedCollector: NSObject, NSFileProviderEnumerationObserver, @unchecked Sendable {
+    private var items: [NSFileProviderItem] = []
+    private var continuation: CheckedContinuation<([NSFileProviderItem], NSFileProviderPage?), Never>?
+
+    func run(_ enumerator: NSFileProviderEnumerator, page: NSFileProviderPage) async -> ([NSFileProviderItem], NSFileProviderPage?) {
+        await withCheckedContinuation { continuation in
+            self.continuation = continuation
+            enumerator.enumerateItems(for: self, startingAt: page)
+        }
+    }
+
+    func didEnumerate(_ updatedItems: [NSFileProviderItem]) {
+        items += updatedItems
+    }
+
+    func finishEnumerating(upTo nextPage: NSFileProviderPage?) {
+        continuation?.resume(returning: (items, nextPage))
+        continuation = nil
+    }
+
+    func finishEnumeratingWithError(_ error: Error) {
+        continuation?.resume(returning: (items, nil))
+        continuation = nil
+    }
+}
+
+/// Item ids with a live (not revoked, not expired) share link on this
+/// computer, from cloud-api's share list. Refreshed at most every two
+/// minutes; on any failure the last answer stays (no badge is better than
+/// a wrong one, and listing never waits on it).
+final class ShareCatalog: @unchecked Sendable {
+    private let client: FilesClient
+    private let lock = NSLock()
+    private var ids: Set<ItemId> = []
+    private var loadedAt: Date?
+    private var loading = false
+
+    private static let ttl: TimeInterval = 120
+
+    init(client: FilesClient) {
+        self.client = client
+    }
+
+    var cachedIds: Set<ItemId> { lock.withLock { ids } }
+
+    func refreshIfStale() async {
+        let start: Bool = lock.withLock {
+            if loading { return false }
+            if let loadedAt, Date().timeIntervalSince(loadedAt) < Self.ttl { return false }
+            loading = true
+            return true
+        }
+        guard start else { return }
+        let fresh = try? await client.shares().shares
+        let now = Date()
+        lock.withLock {
+            loading = false
+            loadedAt = now
+            if let fresh {
+                ids = Set(fresh.filter { share in
+                    share.revokedAt == nil && (share.expiresAt.flatMap(ProviderDates.parse).map { $0 > now } ?? true)
+                }.map(\.itemId))
+            }
+        }
+    }
+}
+
 /// `files/2` failures as the errors the File Provider framework expects, so
 /// Files shows the right state (asleep, offline, sign in) instead of a
 /// generic failure.
 enum FileProviderErrors {
-    static func map(_ error: Error, computerName: String, store: FilesSharedStore?) -> Error {
+    static func map(_ error: Error, computerId: ComputerId, computerName: String, store: FilesSharedStore?,
+                    root: Root? = nil) -> Error {
         if error is CancellationError { return NSError(domain: NSCocoaErrorDomain, code: NSUserCancelledError) }
         if error is NSFileProviderError { return error }
         if let urlError = error as? URLError {
@@ -132,19 +260,22 @@ enum FileProviderErrors {
         }
         guard let files = error as? FilesError else { return error }
         if files.isAuthFailure {
-            // The app mints a new Files token the next time it opens.
+            // The app mints a new Files token the next time it opens; the
+            // sign-in sheet (File Provider UI) sends the user there.
             if case .signedOut = files {} else { store?.tokenRejected = true }
-            return NSFileProviderError(.notAuthenticated)
+            return prompt(.signIn, "Open Allternit to reconnect \(computerName).")
         }
         switch files {
         case .wakeConsentRequired(let hint, _):
-            // Plan step 20 turns this into the wake-consent sheet (File
-            // Provider UI, `.notAuthenticated` + the pending wake the client
-            // recorded). Until then Files shows this text.
             if hint?.setting == .never {
                 return unreachable("\(computerName) is asleep, and waking it from Files is turned off.")
             }
-            return unreachable("\(computerName) is asleep. Open the Allternit app to wake it.")
+            // The client already left the pending wake (with its hint) in
+            // the shared store; the wake sheet reads it.
+            return prompt(.wake, "\(computerName) is asleep. Tap to wake it.")
+        case .api(_, let body) where body.code == .protectedRootLocked:
+            store?.addPendingUnlock(FilesPendingUnlock(computerId: computerId, rootId: root?.id, rootName: root?.name))
+            return prompt(.unlock, "\(root?.name ?? "This folder") is protected. Unlock it with Face ID.")
         case .unreachable:
             return unreachable("\(computerName) isn't responding.")
         case .warming:
@@ -159,7 +290,7 @@ enum FileProviderErrors {
                 return NSFileProviderError(.filenameCollision)
             case .quotaExceeded:
                 return NSFileProviderError(.insufficientQuota)
-            case .forbidden, .scopeViolation, .protectedRootLocked:
+            case .forbidden, .scopeViolation:
                 return NSError(domain: NSCocoaErrorDomain, code: NSFileWriteNoPermissionError,
                                userInfo: [NSLocalizedDescriptionKey: body.message])
             case .asleep, .waking, .offline:
@@ -174,6 +305,13 @@ enum FileProviderErrors {
         default:
             return cannotSync(files.localizedDescription)
         }
+    }
+
+    /// `.notAuthenticated` is the one error that makes Files offer the
+    /// File Provider UI sheet (`prepare(forError:)`).
+    private static func prompt(_ kind: FilesPromptKind, _ message: String) -> Error {
+        NSFileProviderError(.notAuthenticated, userInfo: [NSLocalizedDescriptionKey: message,
+                                                         FilesPromptKind.userInfoKey: kind.rawValue])
     }
 
     private static func unreachable(_ message: String) -> Error {

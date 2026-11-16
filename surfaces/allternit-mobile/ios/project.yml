@@ -216,6 +216,8 @@ targets:
         embed: true
       - target: AllternitFileProvider
         embed: true
+      - target: AllternitFileProviderUI
+        embed: true
     postBuildScripts:
       # The sherpa-onnx xcframework ships no dSYM, so an App Store upload warns
       # "Upload Symbols Failed" for SherpaOnnxC and its crashes stay
@@ -383,6 +385,9 @@ targets:
     deploymentTarget: "17.0"
     sources:
       - path: AllternitFileProvider
+      # Thumbnails for files not on the phone yet (plan step 20): a
+      # replicated File Provider serves them itself (NSFileProviderThumbnailing).
+      - path: AllternitThumbnails
     dependencies:
       - package: AllternitFilesKit
       - sdk: FileProvider.framework
@@ -394,6 +399,38 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.allternit.mobile.files
         PRODUCT_NAME: AllternitFileProvider
         # Completion-handler File Provider APIs; same mode as the package.
+        SWIFT_VERSION: "5.0"
+        IPHONEOS_DEPLOYMENT_TARGET: "17.0"
+        TARGETED_DEVICE_FAMILY: "1"
+        MARKETING_VERSION: "1.0.3"
+        CURRENT_PROJECT_VERSION: "39"
+        APPLICATION_EXTENSION_API_ONLY: YES
+        DEVELOPMENT_TEAM: MQ85968PQP
+        CODE_SIGN_STYLE: Automatic
+        SKIP_INSTALL: true
+  # Files drive (plan step 20): the File Provider UI sheets over each
+  # computer's location in Files (design 5B): wake consent, Face ID unlock
+  # of protected roots, sign in, and the actions Send to agent, Share with…,
+  # Summarize and Keep offline. Same rule as AllternitFileProvider: relay
+  # only, AllternitFilesKit and system frameworks, no mesh.
+  AllternitFileProviderUI:
+    type: app-extension
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: AllternitFileProviderUI
+    dependencies:
+      - package: AllternitFilesKit
+      - sdk: FileProvider.framework
+      - sdk: FileProviderUI.framework
+      - sdk: LocalAuthentication.framework
+    settings:
+      base:
+        INFOPLIST_FILE: AllternitFileProviderUI/Info.plist
+        CODE_SIGN_ENTITLEMENTS: AllternitFileProviderUI/AllternitFileProviderUI.entitlements
+        PRODUCT_BUNDLE_IDENTIFIER: com.allternit.mobile.files.ui
+        PRODUCT_NAME: AllternitFileProviderUI
+        # Same mode as AllternitFileProvider and the package.
         SWIFT_VERSION: "5.0"
         IPHONEOS_DEPLOYMENT_TARGET: "17.0"
         TARGETED_DEVICE_FAMILY: "1"

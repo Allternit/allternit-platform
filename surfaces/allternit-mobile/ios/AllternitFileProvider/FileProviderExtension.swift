@@ -17,14 +17,20 @@ import AllternitFilesKit
 /// Asleep computers: listing and stat are answered from the asleep snapshot
 /// (no wake, no bill). Opening a file needs the computer awake: with the
 /// computer's wake setting `auto` the client asks for a wake ticket by
-/// itself; with `ask` the open fails with "asleep" and the pending wake is
-/// left in `FilesSharedStore` for the app (and step 20's sheet).
+/// itself; with `ask` the open fails with `.notAuthenticated`, Files offers
+/// the wake sheet (AllternitFileProviderUI, plan step 20), and the ticket it
+/// gets is shared back through `FilesSharedStore`.
+///
+/// Protected roots (Memory Drive) answer `protected_root_locked` until the
+/// user unlocks with Face ID in the same sheet; requests then carry
+/// `X-Allternit-Unlock` for five minutes.
 ///
 /// Conflicts are never resolved by overwriting: every write carries the
 /// `base_rev` the system last saw, and a stale one lands as a conflict copy
 /// (SPEC section 4).
 final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
-    private let context: ProviderContext
+    /// Shared with the thumbnail provider (AllternitThumbnails/).
+    let context: ProviderContext
     private var watcher: Task<Void, Never>?
 
     /// While the process is alive, how often to look for changes made on
@@ -80,7 +86,8 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
                 let (url, item) = try await Self.fetch(itemIdentifier.rawValue, context: context, progress: progress)
                 completionHandler(url, item, nil)
             } catch {
-                completionHandler(nil, nil, context.error(error))
+                let root = await context.catalog.knownRoot(of: itemIdentifier.rawValue)
+                completionHandler(nil, nil, context.error(error, root: root))
             }
         }
         progress.cancellationHandler = { task.cancel() }
@@ -360,7 +367,12 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
                 try? await Task.sleep(nanoseconds: Self.watchInterval * 1_000_000_000)
                 guard !Task.isCancelled, let anchor = context.anchor,
                       let (roots, _) = try? await context.catalog.load(refresh: true) else { continue }
-                if FilesSyncAnchor(roots: roots) != anchor { context.signalWorkingSet() }
+                // A cursor moved on the computer, a re-list is still queued,
+                // or a pin changed on this device.
+                if FilesSyncAnchor(roots: roots).roots != anchor.roots || anchor.hasPendingRelist
+                    || Set(anchor.pinned ?? []) != context.pinnedIds {
+                    context.signalWorkingSet()
+                }
             }
         }
     }

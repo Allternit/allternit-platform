@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Read by FilesSharedStore.fromMainBundle(). -->
+	<key>AllternitAppGroup</key>
+	<string>group.com.allternit.mobile</string>
+	<key>AllternitSharedKeychainGroup</key>
+	<string>$(AppIdentifierPrefix)com.allternit.mobile.shared</string>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>$(DEVELOPMENT_LANGUAGE)</string>
+	<key>CFBundleDisplayName</key>
+	<string>Allternit</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>$(PRODUCT_NAME)</string>
+	<key>CFBundlePackageType</key>
+	<string>XPC!</string>
+	<key>CFBundleShortVersionString</key>
+	<string>$(MARKETING_VERSION)</string>
+	<key>CFBundleVersion</key>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<!-- Protected roots (Memory Drive) unlock with a fresh Face ID check. -->
+	<key>NSFaceIDUsageDescription</key>
+	<string>Face ID unlocks protected folders, like Memory Drive, before they open in Files.</string>
+	<key>NSExtension</key>
+	<dict>
+		<!-- File Provider UI (plan step 20): the sheets Files shows over our
+		     locations. prepare(forError:) = wake consent, Face ID unlock and
+		     sign in (the File Provider answers .notAuthenticated);
+		     prepare(forAction:) = the actions below, switched on by each
+		     item's userInfo (FileProviderItem.swift). -->
+		<key>NSExtensionPointIdentifier</key>
+		<string>com.apple.fileprovider-actionsui</string>
+		<key>NSExtensionPrincipalClass</key>
+		<string>$(PRODUCT_MODULE_NAME).ActionViewController</string>
+		<key>NSExtensionFileProviderActions</key>
+		<array>
+			<dict>
+				<key>NSExtensionFileProviderActionIdentifier</key>
+				<string>com.allternit.mobile.files.action.sendToAgent</string>
+				<key>NSExtensionFileProviderActionName</key>
+				<string>Send to agent</string>
+				<key>NSExtensionFileProviderActionActivationRule</key>
+				<string>fileproviderItems.@count == 1 AND SUBQUERY ( fileproviderItems, $fileproviderItem, $fileproviderItem.userInfo.canSendToAgent == YES ).@count == 1</string>
+			</dict>
+			<dict>
+				<key>NSExtensionFileProviderActionIdentifier</key>
+				<string>com.allternit.mobile.files.action.share</string>
+				<key>NSExtensionFileProviderActionName</key>
+				<string>Share with…</string>
+				<key>NSExtensionFileProviderActionActivationRule</key>
+				<string>fileproviderItems.@count == 1 AND SUBQUERY ( fileproviderItems, $fileproviderItem, $fileproviderItem.userInfo.canShare == YES ).@count == 1</string>
+			</dict>
+			<dict>
+				<key>NSExtensionFileProviderActionIdentifier</key>
+				<string>com.allternit.mobile.files.action.summarize</string>
+				<key>NSExtensionFileProviderActionName</key>
+				<string>Summarize</string>
+				<key>NSExtensionFileProviderActionActivationRule</key>
+				<string>fileproviderItems.@count == 1 AND SUBQUERY ( fileproviderItems, $fileproviderItem, $fileproviderItem.userInfo.canSummarize == YES ).@count == 1</string>
+			</dict>
+			<dict>
+				<key>NSExtensionFileProviderActionIdentifier</key>
+				<string>com.allternit.mobile.files.action.keepOffline</string>
+				<key>NSExtensionFileProviderActionName</key>
+				<string>Keep offline</string>
+				<key>NSExtensionFileProviderActionActivationRule</key>
+				<string>fileproviderItems.@count == 1 AND SUBQUERY ( fileproviderItems, $fileproviderItem, $fileproviderItem.userInfo.canPin == YES ).@count == 1 AND SUBQUERY ( fileproviderItems, $fileproviderItem, $fileproviderItem.userInfo.pinned == NO ).@count == 1</string>
+			</dict>
+			<dict>
+				<key>NSExtensionFileProviderActionIdentifier</key>
+				<string>com.allternit.mobile.files.action.stopOffline</string>
+				<key>NSExtensionFileProviderActionName</key>
+				<string>Don’t keep offline</string>
+				<key>NSExtensionFileProviderActionActivationRule</key>
+				<string>fileproviderItems.@count == 1 AND SUBQUERY ( fileproviderItems, $fileproviderItem, $fileproviderItem.userInfo.pinned == YES ).@count == 1</string>
+			</dict>
+		</array>
+	</dict>
+</dict>
+</plist>

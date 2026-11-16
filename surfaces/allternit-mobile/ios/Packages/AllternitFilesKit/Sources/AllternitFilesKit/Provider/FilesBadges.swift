@@ -33,14 +33,17 @@ public enum FilesBadge: String, CaseIterable, Sendable {
     /// (`<extension bundle id>.<suffix>`).
     public var decorationSuffix: String { "badge.\(rawValue)" }
 
-    /// Badges for `item` in `root`, most important first.
-    public static func badges(for item: Item?, root: Root?, pinned: Bool) -> [FilesBadge] {
+    /// Badges for `item` in `root`, most important first. `shared` is true
+    /// when the item has a live share link (iOS shows it as a badge).
+    public static func badges(for item: Item?, root: Root?, pinned: Bool, shared: Bool = false) -> [FilesBadge] {
         var out: [FilesBadge] = []
-        if let item, isConflictCopy(item.name) { out.append(.conflict) }
+        if let item, item.kind == .file, isConflictCopy(item.name) { out.append(.conflict) }
         if root?.policy.protected == true { out.append(.protected) }
-        if let item, item.provenance?.aiGenerated == true || item.modifiedBy?.kind == .agent { out.append(.agent) }
+        if let item, item.provenance?.aiGenerated == true || item.provenance?.source == .agent || item.modifiedBy?.kind == .agent {
+            out.append(.agent)
+        }
         if pinned { out.append(.pinned) }
-        if root?.kind == .shared { out.append(.shared) }
+        if shared || root?.kind == .shared { out.append(.shared) }
         return out
     }
 
