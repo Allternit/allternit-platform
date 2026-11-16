@@ -130,6 +130,41 @@ struct ProjectLook: Codable, Equatable {
     }
 }
 
+extension ProjectLook {
+    /// Where a project's look is saved on this device: `project.look.for.<scope>`.
+    /// The project pad (ProjectPadStore) reads it once to convert an old look
+    /// and leaves it in place for older builds.
+    static func storageKey(scope: String) -> String { "project.look.for.\(scope)" }
+
+    /// A saved look read leniently, the way the web's `normalizeProjectLook`
+    /// reads one: unknown tiles are dropped, an unknown layout or colors fall
+    /// back to Pulse / Quiet orange, and "Make one" without tiles is Pulse.
+    /// Takes this app's shape (`customTiles`, `customPrompt`) and the web's
+    /// (`custom: { prompt, tiles }`). Nil when the data is not a JSON object.
+    static func decodeSaved(_ data: Data) -> ProjectLook? {
+        guard let raw = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return nil }
+        func tiles(_ value: Any?) -> [ProjectTile]? {
+            (value as? [Any])?.compactMap { ($0 as? String).flatMap(ProjectTile.init(rawValue:)) }
+        }
+        let web = raw["custom"] as? [String: Any]
+        let customTiles = tiles(raw["customTiles"]) ?? tiles(web?["tiles"])
+        var look = ProjectLook()
+        let layout = raw["layout"] as? String
+        if layout == ProjectLayoutKind.custom.rawValue {
+            if customTiles != nil { look.layout = .custom }
+        } else if let kind = layout.flatMap(ProjectLayoutKind.init(rawValue:)) {
+            look.layout = kind
+        }
+        if let colors = raw["colors"] as? String, ProjectColorSet.all.contains(where: { $0.id == colors }) {
+            look.colors = colors
+        }
+        look.hidden = tiles(raw["hidden"]) ?? []
+        look.customTiles = customTiles
+        look.customPrompt = (raw["customPrompt"] as? String) ?? (web?["prompt"] as? String)
+        return look
+    }
+}
+
 /// The tiles "Make one" shows for a description (project-look.ts tilesForPrompt).
 func projectTiles(forPrompt prompt: String) -> [ProjectTile] {
     let s = prompt.lowercased()
@@ -154,7 +189,7 @@ final class ProjectLookStore: ObservableObject {
     private let key: String
 
     init(scope: String) {
-        key = "project.look.for.\(scope)"
+        key = ProjectLook.storageKey(scope: scope)
         if let data = UserDefaults.standard.data(forKey: key),
            let saved = try? JSONDecoder().decode(ProjectLook.self, from: data) {
             look = saved
