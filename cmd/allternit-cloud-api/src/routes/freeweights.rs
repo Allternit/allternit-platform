@@ -21,10 +21,17 @@
 //!   repo (`openssl pkey -in key.pem -pubout`).
 //! - `FREEWEIGHTS_PERKS_ENABLED` — `1`/`true` turns perks on. Default off: every `perks` is
 //!   `{}` and every `addon_bytes` is zero.
-//! - `FREEWEIGHTS_PLAN_PERKS` — JSON object, plan id → `{perk name: number | bool | string}`,
-//!   read only while perks are on. Perk numbers are a pending decision, so none live in code.
-//!   The Worker's signed-in rate limit reads the perk `api_requests_5m` (a number); with
+//! - `FREEWEIGHTS_PLAN_PERKS` — JSON object, plan id → `{perk name: number | bool | string}`.
+//!   When set to a valid object it replaces the built-in draft table ([`DRAFT_PLAN_PERKS`])
+//!   for both the claim and the `/billing/plans` listing; unset or invalid keeps the draft
+//!   table. The Worker's signed-in rate limit reads the perk `api_requests_5m` (a number); with
 //!   perks off it is absent and the Worker applies no limit of its own.
+//!
+//! Perk listing (plan U13): `GET /api/v1/billing/plans` carries a `freeweights` block built by
+//! [`PerkConfig::listing`] from the same table: `status` (`offered` only while perks are on,
+//! else `not_offered`) and, per plan, lines of `{key, label, value, unit}` with `unit` one of
+//! `bytes`, `count` or `bool`. The draft numbers are listed, not offered: while perks are off
+//! the claim's `perks` stays `{}`.
 //! - `CLERK_SECRET_KEY` / `CLERK_API_BASE` — the org list comes from Clerk's
 //!   `GET /v1/users/{id}/organization_memberships` (same config as `services::user_trust`).
 //!   No secret → `orgs: []`.
@@ -239,11 +246,125 @@ pub fn verify_entitlement(token: &str, key: &VerifyingKey, now: i64) -> Result<E
 
 // ── Perks ───────────────────────────────────────────────────────────────────
 
-/// Perk configuration. Off by default; while off every perk map is empty.
-#[derive(Debug, Clone, Default)]
+/// `freeweights.status` in `/billing/plans` while perks are on.
+pub const PERKS_STATUS_OFFERED: &str = "offered";
+/// `freeweights.status` in `/billing/plans` while perks are off (the default).
+pub const PERKS_STATUS_NOT_OFFERED: &str = "not_offered";
+
+const GB: u64 = 1_000_000_000;
+const TB: u64 = 1_000_000_000_000;
+
+/// Known perks in listing order: key, label, unit (`bytes`, `count` or `bool`).
+const PERK_KEYS: &[(&str, &str, &str)] = &[
+    ("public_storage_bytes", "Public upload storage", "bytes"),
+    ("private_storage_bytes", "Private storage", "bytes"),
+    ("api_requests_5m", "Hub API requests per 5 minutes", "count"),
+    ("webhooks", "Webhooks", "count"),
+    ("private_collections", "Private collections", "bool"),
+    ("private_dataset_viewer", "Private dataset viewer", "bool"),
+];
+
+/// One plan's row of the draft perk table.
+struct DraftPerks {
+    plan: &'static str,
+    public_storage_bytes: u64,
+    private_storage_bytes: u64,
+    api_requests_5m: u64,
+    webhooks: u64,
+    /// `private_collections` and `private_dataset_viewer`.
+    private_features: bool,
+}
+
+/// DRAFT perk table (freeweights plan of record, 2026-11-15, section 3; decimal bytes). Every
+/// row still needs Eoj's sign-off. It is listed on `/billing/plans` as `not_offered` and feeds
+/// the claim only once `FREEWEIGHTS_PERKS_ENABLED` is on. `FREEWEIGHTS_PLAN_PERKS` replaces it.
+const DRAFT_PLAN_PERKS: &[DraftPerks] = &[
+    DraftPerks { plan: "free", public_storage_bytes: 10 * GB, private_storage_bytes: 0, api_requests_5m: 1_000, webhooks: 2, private_features: false },
+    DraftPerks { plan: "plus", public_storage_bytes: 250 * GB, private_storage_bytes: 100 * GB, api_requests_5m: 2_500, webhooks: 10, private_features: true },
+    DraftPerks { plan: "super", public_storage_bytes: TB, private_storage_bytes: 500 * GB, api_requests_5m: 5_000, webhooks: 50, private_features: true },
+    DraftPerks { plan: "ultra", public_storage_bytes: 2 * TB, private_storage_bytes: TB, api_requests_5m: 10_000, webhooks: 100, private_features: true },
+];
+
+/// The draft table as plan id → perk map, the same shape `FREEWEIGHTS_PLAN_PERKS` takes.
+pub fn draft_plan_perks() -> Map<String, Value> {
+    DRAFT_PLAN_PERKS
+        .iter()
+        .map(|row| {
+            let perks: Map<String, Value> = [
+                ("public_storage_bytes", Value::from(row.public_storage_bytes)),
+                ("private_storage_bytes", Value::from(row.private_storage_bytes)),
+                ("api_requests_5m", Value::from(row.api_requests_5m)),
+                ("webhooks", Value::from(row.webhooks)),
+                ("private_collections", Value::Bool(row.private_features)),
+                ("private_dataset_viewer", Value::Bool(row.private_features)),
+            ]
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v))
+            .collect();
+            (row.plan.to_string(), Value::Object(perks))
+        })
+        .collect()
+}
+
+/// One listed perk: `{key, label, value, unit}`.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct PerkLine {
+    pub key: String,
+    pub label: String,
+    pub value: Value,
+    /// `bytes`, `count` or `bool`.
+    pub unit: &'static str,
+}
+
+/// The `freeweights` block of `GET /api/v1/billing/plans`.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct PerkListing {
+    /// `offered` or `not_offered`.
+    pub status: &'static str,
+    /// Plan id (`free`, `plus`, `super`, `ultra`) → lines.
+    pub plans: Map<String, Value>,
+}
+
+/// Lines for one plan's perk map: known perks first in [`PERK_KEYS`] order, then any other
+/// number or boolean perk by name (label = key). A value whose type does not fit its unit, or
+/// a string, is left out of the listing.
+fn perk_lines(perks: &Map<String, Value>) -> Vec<PerkLine> {
+    let fits = |unit: &str, v: &Value| match unit {
+        "bool" => v.is_boolean(),
+        _ => v.is_number(),
+    };
+    let mut lines: Vec<PerkLine> = PERK_KEYS
+        .iter()
+        .filter_map(|(key, label, unit)| {
+            let value = perks.get(*key).filter(|v| fits(unit, v))?;
+            Some(PerkLine { key: key.to_string(), label: label.to_string(), value: value.clone(), unit: *unit })
+        })
+        .collect();
+    let mut extra: Vec<PerkLine> = perks
+        .iter()
+        .filter(|(k, _)| !PERK_KEYS.iter().any(|(known, _, _)| known == k))
+        .filter_map(|(k, v)| {
+            let unit = if v.is_boolean() { "bool" } else if v.is_number() { "count" } else { return None };
+            Some(PerkLine { key: k.clone(), label: k.clone(), value: v.clone(), unit })
+        })
+        .collect();
+    extra.sort_by(|a, b| a.key.cmp(&b.key));
+    lines.extend(extra);
+    lines
+}
+
+/// Perk configuration. Off by default; while off every claim perk map is empty, but the table
+/// is still listed on `/billing/plans` with status `not_offered`.
+#[derive(Debug, Clone)]
 pub struct PerkConfig {
     enabled: bool,
     plans: Map<String, Value>,
+}
+
+impl Default for PerkConfig {
+    fn default() -> Self {
+        Self { enabled: false, plans: draft_plan_perks() }
+    }
 }
 
 impl PerkConfig {
@@ -254,16 +375,17 @@ impl PerkConfig {
         )
     }
 
-    /// `enabled` is `FREEWEIGHTS_PERKS_ENABLED`, `plans` is `FREEWEIGHTS_PLAN_PERKS`.
+    /// `enabled` is `FREEWEIGHTS_PERKS_ENABLED`, `plans` is `FREEWEIGHTS_PLAN_PERKS` (a valid
+    /// JSON object replaces the draft table; unset, blank or invalid keeps it).
     pub fn from_vars(enabled: Option<&str>, plans: Option<&str>) -> Self {
         let enabled = matches!(enabled.map(str::trim), Some("1") | Some("true"));
-        let plans = match plans.filter(|_| enabled).map(serde_json::from_str::<Value>) {
+        let plans = match plans.map(str::trim).filter(|raw| !raw.is_empty()).map(serde_json::from_str::<Value>) {
             Some(Ok(Value::Object(map))) => map,
             Some(_) => {
-                tracing::warn!("{PLAN_PERKS_ENV} is not a JSON object; Freeweights perks are empty");
-                Map::new()
+                tracing::warn!("{PLAN_PERKS_ENV} is not a JSON object; using the built-in draft perk table");
+                draft_plan_perks()
             }
-            None => Map::new(),
+            None => draft_plan_perks(),
         };
         Self { enabled, plans }
     }
@@ -288,6 +410,21 @@ impl PerkConfig {
                     .collect()
             })
             .unwrap_or_default()
+    }
+
+    /// The `/billing/plans` block: every plan in the table, listed whether perks are on or off.
+    pub fn listing(&self) -> PerkListing {
+        PerkListing {
+            status: if self.enabled { PERKS_STATUS_OFFERED } else { PERKS_STATUS_NOT_OFFERED },
+            plans: self
+                .plans
+                .iter()
+                .filter_map(|(plan, perks)| {
+                    let lines = perk_lines(perks.as_object()?);
+                    Some((plan.clone(), serde_json::to_value(lines).expect("perk lines serialize")))
+                })
+                .collect(),
+        }
     }
 
     /// Add-on bytes: none are sold yet, so zero whether perks are on or off.
@@ -587,8 +724,108 @@ mod tests {
         assert_eq!(claim.perks["private_collections"], Value::Bool(true));
         assert_eq!(claim.perks["api_requests_5m"], serde_json::json!(1));
         assert_eq!(claim.orgs[0].perks["webhooks"], serde_json::json!(2));
-        assert!(PerkConfig::from_vars(Some("true"), Some("not json")).perks_for("plus").is_empty());
-        assert!(PerkConfig::from_vars(Some("true"), None).perks_for("plus").is_empty());
+        // An override replaces the whole table: a plan it leaves out has no perks.
+        assert!(on.perks_for("ultra").is_empty());
+        // Unset or invalid override: the draft table feeds the claim once perks are on.
+        for raw in [None, Some("not json"), Some("[1]"), Some("  ")] {
+            let perks = PerkConfig::from_vars(Some("true"), raw).perks_for("plus");
+            assert_eq!(perks["public_storage_bytes"], serde_json::json!(250_000_000_000u64), "{raw:?}");
+            assert_eq!(perks["api_requests_5m"], serde_json::json!(2_500), "{raw:?}");
+        }
+    }
+
+    #[test]
+    fn draft_table_is_claimed_only_while_perks_are_on() {
+        // Default deployment: no env at all. The draft table exists but the claim stays empty.
+        let off = PerkConfig::from_vars(None, None);
+        for plan in ["free", "plus", "super", "ultra"] {
+            assert!(off.perks_for(plan).is_empty(), "{plan}");
+        }
+        assert!(claim_for(None, &off).perks.is_empty());
+        let on = PerkConfig::from_vars(Some("1"), None);
+        let claim = claim_for(None, &on);
+        assert_eq!(claim.perks["private_storage_bytes"], serde_json::json!(100_000_000_000u64));
+        assert_eq!(claim.perks["private_collections"], Value::Bool(true));
+        // Org plans are free.
+        assert_eq!(claim.orgs[0].perks["public_storage_bytes"], serde_json::json!(10_000_000_000u64));
+        assert_eq!(claim.orgs[0].perks["private_dataset_viewer"], Value::Bool(false));
+    }
+
+    fn line(listing: &PerkListing, plan: &str, key: &str) -> Value {
+        listing.plans[plan]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|l| l["key"] == key)
+            .cloned()
+            .unwrap_or_else(|| panic!("{plan} has no {key} line"))
+    }
+
+    #[test]
+    fn listing_shows_the_draft_table_as_not_offered_by_default() {
+        let listing = PerkConfig::from_vars(None, None).listing();
+        assert_eq!(listing.status, "not_offered");
+        let mut plans: Vec<&String> = listing.plans.keys().collect();
+        plans.sort();
+        assert_eq!(plans, ["free", "plus", "super", "ultra"]);
+
+        let free: Vec<&str> = listing.plans["free"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|l| l["key"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            free,
+            ["public_storage_bytes", "private_storage_bytes", "api_requests_5m", "webhooks", "private_collections", "private_dataset_viewer"]
+        );
+        assert_eq!(
+            line(&listing, "free", "public_storage_bytes"),
+            serde_json::json!({"key": "public_storage_bytes", "label": "Public upload storage", "value": 10_000_000_000u64, "unit": "bytes"})
+        );
+        assert_eq!(line(&listing, "free", "private_storage_bytes")["value"], serde_json::json!(0));
+        assert_eq!(line(&listing, "free", "api_requests_5m")["unit"], "count");
+        assert_eq!(line(&listing, "free", "webhooks")["value"], serde_json::json!(2));
+        assert_eq!(line(&listing, "free", "private_collections")["value"], Value::Bool(false));
+        assert_eq!(line(&listing, "free", "private_dataset_viewer")["unit"], "bool");
+
+        let expect = [
+            ("plus", 250 * GB, 100 * GB, 2_500, 10),
+            ("super", TB, 500 * GB, 5_000, 50),
+            ("ultra", 2 * TB, TB, 10_000, 100),
+        ];
+        for (plan, public, private, requests, hooks) in expect {
+            assert_eq!(line(&listing, plan, "public_storage_bytes")["value"], serde_json::json!(public), "{plan}");
+            assert_eq!(line(&listing, plan, "private_storage_bytes")["value"], serde_json::json!(private), "{plan}");
+            assert_eq!(line(&listing, plan, "api_requests_5m")["value"], serde_json::json!(requests), "{plan}");
+            assert_eq!(line(&listing, plan, "webhooks")["value"], serde_json::json!(hooks), "{plan}");
+            assert_eq!(line(&listing, plan, "private_collections")["value"], Value::Bool(true), "{plan}");
+            assert_eq!(line(&listing, plan, "private_dataset_viewer")["value"], Value::Bool(true), "{plan}");
+        }
+
+        assert_eq!(PerkConfig::from_vars(Some("1"), None).listing().status, "offered");
+        assert_eq!(PerkConfig::from_vars(Some("0"), None).listing().status, "not_offered");
+    }
+
+    #[test]
+    fn override_feeds_the_listing_even_while_perks_are_off() {
+        let table = r#"{"plus":{"webhooks":3,"private_collections":"yes","zeta":true,"alpha":7,"note":"x"}}"#;
+        let off = PerkConfig::from_vars(None, Some(table));
+        assert!(off.perks_for("plus").is_empty(), "listed, not claimed");
+        let listing = off.listing();
+        assert_eq!(listing.status, "not_offered");
+        assert_eq!(listing.plans.len(), 1);
+        let lines = listing.plans["plus"].as_array().unwrap();
+        // Known keys first; a value that does not fit its unit and strings are left out;
+        // unknown number/bool perks follow by name with the key as label.
+        assert_eq!(
+            Value::Array(lines.clone()),
+            serde_json::json!([
+                {"key": "webhooks", "label": "Webhooks", "value": 3, "unit": "count"},
+                {"key": "alpha", "label": "alpha", "value": 7, "unit": "count"},
+                {"key": "zeta", "label": "zeta", "value": true, "unit": "bool"}
+            ])
+        );
     }
 
     #[test]
