@@ -46,9 +46,25 @@ Phone Link reads only dialog windows for this, and only the text the phone's acc
 
 Long-press the Allternit icon for four shortcuts: **Ask a bot**, **Hand off a task**, **Needs you** and **Call main bot**. Each opens the app at that screen.
 
-To send a link or some text to a bot, tap **Share** in any app and choose **Allternit**. Text and links only; files and images are not shared.
+To send a link or some text to a bot, tap **Share** in any app and choose **Allternit**. Text and links only. To send files and photos to one of your computers, choose **Save to computer** instead (see [Your computers in the Files app](#your-computers-in-the-files-app)).
 
 Notifications appear under **Allternit**, with their action buttons, not under Chrome. On Android 13 and later the app asks for notification permission the first time the site requests it. If you turn it off, use **Settings → Apps → Allternit → Notifications**.
+
+## Your computers in the Files app
+
+Both versions put each of your Allternit computers in Android's file picker and the **Files** app, one location per computer, beside Drive and Downloads. Any app that can open or save a file can use them.
+
+1. In the picker or the **Files** app, open the menu and tap **Allternit**, then tap **Sign in**. A sign-in page opens in your browser. When it's done, tap **Return to Allternit**.
+2. Choose which computers show in Files. All of them are on at first. To change it later, tap **Share > Save to computer** in any app, then **Allternit Files settings**, or long-press a folder on a computer in the **Files** app and tap **Settings**.
+3. In any app, choose **Open** or **Save**, then pick a computer from the menu.
+
+- **Saving:** a file saved from another app is kept on the phone first, then uploads to the computer in the background, and a notification says **Saved to** the computer when it lands. If both the phone and the computer changed the same file, both are kept: yours gets a name like `Lease (conflict Pixel 9 2026-11-15 1042).pdf`.
+- **A sleeping computer:** browsing it is free and never wakes it. You see the list from its last sync. Opening or saving a file asks first: tap the **Wake** notification, then **Wake**. Tick **Wake this computer automatically from now on** if you don't want to be asked again for that computer.
+- **Offline:** files you opened stay on the phone (up to 1 GB, the oldest go first) and open without a connection. They show **On this phone**.
+- **Protected folders** such as Memory Drive ask for your fingerprint, face or screen lock each time, and stay open for five minutes.
+- **Share > Save to computer:** in any app, tap **Share**, choose **Save to computer**, pick the computer, then the folder, and tap **Save here**. The last folder you used is at the top.
+- **Ask my agent to read it:** in **Save to computer**, tick **Ask my agent to read it** and save into the computer's **Inbox**. The file waits there as a task. Your agent reads nothing until you open **Inbox tasks** (the row on the computer list in **Save to computer**) and tap **Approve**; **Reject** leaves it unread. A finished task shows an AI-generated label with the agent and who approved it. The routes are in the Files drive Inbox API page (PR 2445).
+- **Badges:** a file waiting to upload, a file waiting for its computer to wake, a failed upload, a conflict copy and a file made by an agent each get a coloured icon.
 
 ## Rating the app
 
@@ -72,3 +88,9 @@ Phone Link before version 0.4.0 was a separate app called **Allternit Phone Link
 - Shortcuts are static (`res/xml/shortcuts.xml`, in `src/main`; the Phone Link build overrides the file with the same four plus **Phone Link**). They open `https://m.allternit.com/?allternit_open=ask|handoff|inbox|call` through `LauncherActivity`.
 - The share target is the `METADATA_SHARE_TARGET` meta-data on `LauncherActivity` (JSON in the `share_target` string, GET `/share-target` with `title` and `text`) plus an `ACTION_SEND` `text/plain` intent filter. androidbrowserhelper 2.5.0 has no `url` parameter, so a shared link arrives in `text`.
 - Notification delegation is `DelegationService` plus `NotificationPermissionRequestActivity` (both from `androidbrowserhelper`) and the `POST_NOTIFICATIONS` permission, declared in `src/main`.
+- **Files drive** (both builds, `src/main/java/com/allternit/app/files/`): `AllternitDocumentsProvider` (authority `<applicationId>.files`, one root per computer) speaks [Files drive protocol v2](/api/files-drive) over the cloud relay (`POST /api/v1/runtime-devices/:id/proxy`, relay candidate from `GET /api/v1/computer-files/:id/endpoints`). Android is never the owning device and has no mesh in the Google Play build, so it always uses the relay. The contract types are compiled straight from `contracts/files-drive/gen/FilesDriveContract.gen.kt` (a Gradle source dir) and read with `WireJson`, so there is no serialization dependency.
+  - Network work never runs on a binder thread: listings answer from the cache at once and refresh off-thread, then `notifyChange` reloads the picker. A long poll on the change feed keeps an open folder current and never counts as activity.
+  - Browsing never sends a wake ticket. Opening or saving content checks the computer's wake setting: `auto` calls wake consent silently, `ask` posts the wake notification (`WakePromptActivity`), `never` fails with the setting's message.
+  - Writes go to a staging file and upload when the writer closes it, with `base_rev`, `on_conflict: keep_both`, the device name and `utc_offset_minutes`. Up to 4 MiB uses the small write; bigger files use a resumable upload session with the pinned FastCDC chunker (`Chunker.kt`, checked against `contracts/files-drive/vectors/chunker-v1.json` by `ChunkerVectorsTest`). Queued uploads survive the process being killed and retry through `FilesUploadJobService` when the network is back.
+  - Sign-in: a Keystore RSA-2048 key is made, a Custom Tab opens `m.allternit.com/files/connect-android?state&pk&alg=RSA-OAEP-SHA1&device&device_id&app`, and the page returns the cloud-api token encrypted to that key through the App Link `https://m.allternit.com/files/android-callback?state&sealed` (or `allternit-files://signin?state&sealed` for a build whose App Link is not verified, such as debug). The token is stored sealed with a Keystore AES-256-GCM key in no-backup storage. The TWA's `m.allternit.com` filter has priority -1 so the callback path goes to `FilesSignInActivity` with no chooser.
+  - Protected roots use `BiometricPrompt` (screen-lock confirmation on Android 8) and send `x-allternit-unlock` for five minutes.
