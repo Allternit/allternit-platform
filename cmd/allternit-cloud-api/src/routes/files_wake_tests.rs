@@ -555,3 +555,65 @@ fn asleep_requests_are_sorted_into_snapshot_metadata_and_content() {
         assert_eq!(classify(method, path, b""), A::Content, "{method} {path}");
     }
 }
+
+/// The iPhone's File Provider extension has no Clerk session. It sends the
+/// `compute`-scoped API key the app mints for it ("Files on <device>",
+/// iOS step 19, #2449), the same kind of key the relay already takes. Every
+/// owner route under `/api/v1/computer-files/:id/*` takes it with the same
+/// ownership checks; a key without `compute` is refused, and another user's
+/// computer stays "not found".
+#[tokio::test]
+#[serial_test::serial]
+async fn the_phones_compute_api_key_works_on_the_owner_routes_with_the_same_checks() {
+    use crate::services::api_keys::{create_api_key, CreateApiKeyInput};
+    use tower::ServiceExt;
+    let state = test_state(Arc::new(MockGateway::new(None, vec![]))).await;
+    crate::routes::test_support::events_backbone_schema(&state.db).await;
+    computer(&state, "rt_key", DEV_USER, "running").await;
+    seed_runtime_device(&state.db, "rt_key_b", "user_b").await;
+    apply_migration_143(&state.db).await;
+    files_on(Arc::new(MemoryStore::default()));
+    let mint = |scopes: Vec<&str>| {
+        let db = state.db.clone();
+        let scopes: Vec<String> = scopes.into_iter().map(str::to_string).collect();
+        async move {
+            create_api_key(&db, CreateApiKeyInput { user_id: DEV_USER.into(), organization_id: None, name: "Files on iPhone".into(), scopes })
+                .await
+                .unwrap()
+                .token
+        }
+    };
+    let compute = mint(vec!["compute"]).await;
+    let inference_only = mint(vec!["inference"]).await;
+    let call_as = |method: &'static str, path: String, body: &'static str, key: String| {
+        let state = state.clone();
+        async move {
+            let req = axum::http::Request::builder()
+                .method(method)
+                .uri(path)
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {key}"))
+                .body(axum::body::Body::from(body))
+                .unwrap();
+            let response = cf::routes().with_state(state).oneshot(req).await.unwrap();
+            let status = response.status();
+            let bytes = http_body_util::BodyExt::collect(response.into_body()).await.unwrap().to_bytes();
+            (status, serde_json::from_slice::<serde_json::Value>(&bytes).unwrap_or_default())
+        }
+    };
+    let _conn = register_test_connection("rt_key").await;
+    let consent = r#"{"reason":"open_file","device_id":"dev_iphone"}"#;
+    for (method, rest, body) in [("GET", "endpoints", ""), ("GET", "wake-settings", ""), ("POST", "wake-consent", consent)] {
+        let path = format!("/api/v1/computer-files/rt_key/{rest}");
+        let (status, answer) = call_as(method, path.clone(), body, compute.clone()).await;
+        assert_eq!(status, StatusCode::OK, "{path}: {answer}");
+        let (status, _) = call_as(method, path.clone(), body, inference_only.clone()).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{path}: a key without `compute` is refused");
+        let theirs = format!("/api/v1/computer-files/rt_key_b/{rest}");
+        assert_eq!(call_as(method, theirs, body, compute.clone()).await.0, StatusCode::NOT_FOUND, "{rest}: same ownership check");
+    }
+    // Authenticated with the key; the storage report just isn't there yet.
+    let (status, answer) = call_as("GET", "/api/v1/computer-files/rt_key/storage".into(), "", compute.clone()).await;
+    assert_eq!((status, answer["code"].as_str()), (StatusCode::NOT_FOUND, Some("not_found")), "{answer}");
+    files_off();
+}
