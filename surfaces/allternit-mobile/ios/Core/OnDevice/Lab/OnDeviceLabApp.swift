@@ -11,6 +11,8 @@
 //   --fm       Apple Foundation Models reply (iOS 26+ with Apple Intelligence on)
 //   --tts      Kokoro synthesis smoke (KokoroKit on the shared mlx-swift)
 // Background the app afterwards (e.g. launch Settings) to see the unload.
+// Tapped from the home screen (no flags) it runs --mlx. Every line is also
+// appended to Documents/lab.log (airplane-mode runs the Mac cannot watch).
 
 import Combine
 import KokoroSwift
@@ -68,10 +70,36 @@ final class Lab: ObservableObject {
         print(line)
         fflush(stdout)
         log += line + "\n"
+        Self.appendToFile(line)
     }
 
-    func run(_ args: [String]) async {
+    /// Every line also goes to Documents/lab.log, so a run started by tapping
+    /// the icon (e.g. in airplane mode, when the Mac cannot reach the phone)
+    /// can be read afterwards with `devicectl device copy from`.
+    nonisolated private static func appendToFile(_ line: String) {
+        let url = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("lab.log")
+        let stamped = ISO8601DateFormatter().string(from: Date()) + " " + line + "\n"
+        if let h = try? FileHandle(forWritingTo: url) {
+            h.seekToEndOfFile(); h.write(Data(stamped.utf8)); try? h.close()
+        } else {
+            try? Data(stamped.utf8).write(to: url)
+        }
+    }
+
+    func run(_ launchArgs: [String]) async {
         let rt = OnDeviceRuntime.shared
+        // Tapping the icon passes no flags: run the MLX chat, which uses the
+        // installed model with no network once it is downloaded.
+        let args = launchArgs.contains(where: { $0.hasPrefix("--") }) ? launchArgs : launchArgs + ["--mlx"]
+        say("run \(args.dropFirst().joined(separator: " "))")
+        // Shows the lifecycle unloads (background, memory warning, idle).
+        rt.$loaded.dropFirst().removeDuplicates().sink { [weak self] l in
+            MainActor.assumeIsolated {
+                let state = UIApplication.shared.applicationState == .background ? "background" : "active"
+                self?.say(l == nil ? "runtime unloaded (app \(state)), footprint \(OnDeviceBudget.footprintBytes() / 1_000_000) MB"
+                                   : "runtime loaded \(l!.install?.id ?? "apple-fm") (+\(l!.memBytes / 1_000_000) MB)")
+            }
+        }.store(in: &bag)
         say("device \(UIDevice.current.model) iOS \(UIDevice.current.systemVersion), physical \(ProcessInfo.processInfo.physicalMemory / 1_000_000) MB")
         say("cold available \(OnDeviceBudget.coldAvailableBytes() / 1_000_000) MB, budget \(Int64(rt.budget.fastBytes) / 1_000_000) MB (0.75x)")
         for r in rt.runtimes { say("runtime \(r.id.rawValue): \(r.state.rawValue) \(r.version ?? "") \(r.note ?? "")") }
