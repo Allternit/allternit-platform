@@ -6,7 +6,9 @@ description: "gizzi files lists, copies, shares and mounts the files on your com
 `gizzi files` works with the Files drive: the folders on each of your Allternit computers (Inbox, Shared, Agent Output, Downloads, Meetings, Scans, Memory Drive, Code, Models and folders you added). It uses the same Files protocol as the web app, the phone apps and Finder or Explorer, so a change made here shows everywhere.
 
 <Note>
-The Files drive is in preview and is off by default. It is turned on per account with the `files_drive` flag. Until Gizzi reads that flag from your account, turn it on in the terminal with `ALLTERNIT_FILES_DRIVE=1` (the same switch the computer's runtime uses).
+The Files drive is in preview and is off by default. It is turned on per account with the `files_drive` flag, which gizzi reads from your account (`flags.files_drive` on `GET /api/v1/me/flags`) with the same sign-in it uses for other cloud calls: `ALLTERNIT_API_TOKEN`, or this machine's pairing from `gizzi login`. The answer is kept for 10 minutes in `~/.allternit/state/files-drive-flag.json`. If gizzi can't read it (signed out, offline), the drive counts as off. `ALLTERNIT_FILES_DRIVE=1` turns it on regardless, for development.
+
+The TUI checks the saved answer when it builds its command list and refreshes it in the background each time it starts, so after the flag is turned on, `/files` appears in the next session.
 
 While it is off:
 

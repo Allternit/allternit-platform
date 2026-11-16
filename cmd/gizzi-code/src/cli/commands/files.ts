@@ -17,8 +17,9 @@
  * computer's wake setting to auto. `--json` never prompts: it prints the
  * `wake_consent_required` error for scripts to handle.
  *
- * Off unless the files_drive flag is on (ALLTERNIT_FILES_DRIVE=1): every verb
- * then prints "Files drive is not on for this account yet" and exits 2.
+ * Off unless the account's files_drive flag is on (cloud-api /me/flags, cached
+ * 10 min; ALLTERNIT_FILES_DRIVE=1 forces it): every verb then prints
+ * "Files drive is not on for this account yet" and exits 2.
  */
 import type { Argv } from "yargs"
 import fs from "node:fs"
@@ -71,7 +72,7 @@ function out(args: Common, json: unknown, text: string) {
 /** Run one verb: plain error lines (or the ErrorBody as JSON) and exit 1 on failure. */
 async function run(args: Common, fn: () => Promise<void>): Promise<void> {
   // Dark behind the files_drive flag (PLAN D10): one line, exit 2.
-  if (!filesDriveEnabled()) {
+  if (!(await filesDriveEnabled())) {
     if (args.json) process.stdout.write(JSON.stringify({ error: { code: "flag_off", message: FILES_DRIVE_OFF, flag: "files_drive" } }) + "\n")
     else process.stderr.write(FILES_DRIVE_OFF + "\n")
     process.exitCode = 2
