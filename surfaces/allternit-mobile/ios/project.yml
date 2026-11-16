@@ -428,7 +428,7 @@ targets:
       base:
         INFOPLIST_FILE: AllternitFileProviderUI/Info.plist
         CODE_SIGN_ENTITLEMENTS: AllternitFileProviderUI/AllternitFileProviderUI.entitlements
-        PRODUCT_BUNDLE_IDENTIFIER: com.allternit.mobile.files.ui
+        PRODUCT_BUNDLE_IDENTIFIER: com.allternit.mobile.filesui
         PRODUCT_NAME: AllternitFileProviderUI
         # Same mode as AllternitFileProvider and the package.
         SWIFT_VERSION: "5.0"
