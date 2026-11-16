@@ -30,7 +30,14 @@ enum OnDeviceBudget {
             let avail = Int64(os_proc_available_memory())
             let value = avail > 0 ? avail + max(0, footprintBytes() - modelBytesHeld) : 0
             #else
-            let value: Int64 = 0
+            var value: Int64 = 0
+            #if DEBUG
+            // `-ondevice-cold-mb 3063` (DEBUG, simulator only): use a measured
+            // iPhone number (S2: iPhone 15 = 3,063 MB) so simulator screens
+            // show phone fits instead of half the Mac's memory.
+            let mb = UserDefaults.standard.integer(forKey: "ondevice-cold-mb")
+            if mb > 0 { value = Int64(mb) * 1_000_000 }
+            #endif
             #endif
             cached = value
             return value

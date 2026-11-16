@@ -59,9 +59,15 @@ struct FreeweightsCatalogRow: Codable, Sendable, Equatable {
     let formats: [String]?
     let tasks: [String]?
     let note: String?
+    /// Model family ("qwen"): the identity face's two dot letters.
+    var family: String? = nil
+    var addedAt: String? = nil
+    var whatChanged: String? = nil
 
     enum CodingKeys: String, CodingKey {
-        case id, kind, section, redistribution, params, formats, tasks, note
+        case id, kind, section, redistribution, params, formats, tasks, note, family
+        case addedAt = "added_at"
+        case whatChanged = "what_changed"
         case displayName = "display_name"
         case licenseId = "license_id"
         case licenseClass = "license_class"
@@ -126,6 +132,70 @@ struct FreeweightsModelDetail: Codable, Sendable, Equatable {
 
     var isLinkOnly: Bool { catalog?.isLinkOnly ?? (manifestUrl ?? "").isEmpty }
     var filesCount: Int { siblings?.count ?? 0 }
+}
+
+// MARK: - On-device data (C2: catalog/overlay/device.json)
+
+/// `GET /api/device/index`: every model with device data, as compact rows
+/// `[engine, quant name, size, ram_est|null, best_for mask]`, plus the
+/// recommended lists per device class. No file lists: the per-model route
+/// has those (`FreeweightsDeviceData`).
+struct FreeweightsDeviceIndex: Sendable, Equatable {
+    let generatedAt: String?
+    let models: [String: [Quant]]
+    /// "phone", "laptop", "workstation", "browser", … → model ids.
+    let recommended: [String: [String]]
+
+    /// Decodes the compact row form. Unknown engines and malformed rows are dropped.
+    static func decode(_ data: Data) throws -> FreeweightsDeviceIndex {
+        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let rows = root["models"] as? [String: Any] else {
+            throw DecodingError.dataCorrupted(.init(codingPath: [], debugDescription: "No models table"))
+        }
+        var models: [String: [Quant]] = [:]
+        for (id, value) in rows {
+            guard let list = value as? [[Any]] else { continue }
+            let quants: [Quant] = list.compactMap { row in
+                guard row.count >= 3, let e = row[0] as? String, let engine = QuantEngine(rawValue: e),
+                      let name = row[1] as? String, let size = (row[2] as? NSNumber)?.doubleValue else { return nil }
+                let ram = row.count > 3 ? (row[3] as? NSNumber)?.doubleValue : nil
+                let format = engine == .mlx ? "mlx" : engine == .webgpu ? "onnx" : "gguf"
+                return Quant(name: name, format: format, engine: engine, size: size, ramEst: ram)
+            }
+            if !quants.isEmpty { models[id] = quants }
+        }
+        var recommended: [String: [String]] = [:]
+        for (k, v) in (root["recommended"] as? [String: Any]) ?? [:] {
+            if let ids = v as? [String] { recommended[k] = ids }
+        }
+        return FreeweightsDeviceIndex(generatedAt: root["generated_at"] as? String, models: models, recommended: recommended)
+    }
+}
+
+/// `GET /api/models/{org}/{repo}/device`: the model's builds with their
+/// files and the repo that holds each (the signed manifest a download
+/// checks against).
+struct FreeweightsDeviceData: Codable, Sendable, Equatable {
+    struct Manifest: Codable, Sendable, Equatable {
+        let url: String?
+        let sigUrl: String?
+        let signed: Bool?
+        enum CodingKeys: String, CodingKey {
+            case url, signed
+            case sigUrl = "sig_url"
+        }
+    }
+    let id: String
+    let quants: [Quant]
+    let deviceFormats: [String]?
+    let manifest: Manifest?
+    let generatedAt: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id, quants, manifest
+        case deviceFormats = "device_formats"
+        case generatedAt = "generated_at"
+    }
 }
 
 /// One page of search results plus the next cursor from the `Link` header.
@@ -238,8 +308,56 @@ final class FreeweightsClient: @unchecked Sendable {
     /// for list rows (`/api/models` rows carry none of these).
     func catalogRows() async -> FreeweightsLoad<[String: FreeweightsCatalogRow]> {
         await load(baseURL.appendingPathComponent("api/catalog")) { data, _ in
-            let rows = try JSONDecoder().decode(FreeweightsCatalogResponse.self, from: data).models
+            let rows = try Self.fastCatalogRows(data)
             return Dictionary(rows.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        }
+    }
+
+    /// `GET /api/device/index`: fit data for every model, cached on disk like
+    /// the catalog so fit labels still show offline.
+    func deviceIndex() async -> FreeweightsLoad<FreeweightsDeviceIndex> {
+        await load(baseURL.appendingPathComponent("api/device/index")) { data, _ in
+            try FreeweightsDeviceIndex.decode(data)
+        }
+    }
+
+    /// `GET /api/models/{org}/{repo}/device`. `.catalogDown("Not in the
+    /// catalog")` when the model has no device data (404 `no_device_data`).
+    func deviceData(id: String) async -> FreeweightsLoad<FreeweightsDeviceData> {
+        var url = baseURL.appendingPathComponent("api/models")
+        for part in id.split(separator: "/") { url.appendPathComponent(String(part)) }
+        url.appendPathComponent("device")
+        return await load(url) { data, _ in
+            try JSONDecoder().decode(FreeweightsDeviceData.self, from: data)
+        }
+    }
+
+    /// `GET /api/catalog` in the catalog's own order (same request and
+    /// cache as `catalogRows`).
+    func catalogRowList() async -> FreeweightsLoad<[FreeweightsCatalogRow]> {
+        await load(baseURL.appendingPathComponent("api/catalog")) { data, _ in
+            try Self.fastCatalogRows(data)
+        }
+    }
+
+    /// The catalog is ~8 MB and ~9,000 rows: JSONSerialization plus a hand
+    /// mapping is several times faster than Codable for it.
+    static func fastCatalogRows(_ data: Data) throws -> [FreeweightsCatalogRow] {
+        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let rows = root["models"] as? [[String: Any]] else {
+            throw DecodingError.dataCorrupted(.init(codingPath: [], debugDescription: "No models array"))
+        }
+        func str(_ d: [String: Any], _ k: String) -> String? { d[k] as? String }
+        func int(_ d: [String: Any], _ k: String) -> Int64? { (d[k] as? NSNumber)?.int64Value }
+        return rows.compactMap { d in
+            guard let id = d["id"] as? String else { return nil }
+            return FreeweightsCatalogRow(
+                id: id, displayName: str(d, "display_name"), kind: str(d, "kind"), section: str(d, "section"),
+                licenseId: str(d, "license_id"), licenseClass: str(d, "license_class"), licenseUrl: str(d, "license_url"),
+                redistribution: str(d, "redistribution"), requiresTerms: d["requires_terms"] as? Bool,
+                manifestUrl: str(d, "manifest_url"), upstreamUrl: str(d, "upstream_url"), totalSize: int(d, "total_size"),
+                params: int(d, "params"), formats: d["formats"] as? [String], tasks: d["tasks"] as? [String],
+                note: str(d, "note"), family: str(d, "family"), addedAt: str(d, "added_at"), whatChanged: str(d, "what_changed"))
         }
     }
 
