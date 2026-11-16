@@ -12,16 +12,23 @@ android {
         applicationId = "com.allternit.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 14
-        versionName = "0.5.4"
+        // One versionCode for both builds (same app ID): the Play bundle and the
+        // sideloaded APK move together.
+        versionCode = 15
+        versionName = "0.6.0"
     }
 
     // Two builds of the same app ID:
     //  - phonelink: the sideloaded APK Allternit Desktop installs (allternit.com/android).
-    //    The Allternit app plus Phone Link (src/phonelink: code, mesh library,
-    //    accessibility service, services, receivers, permissions).
-    //  - play: the Google Play bundle. Only the Allternit app (src/main). No
-    //    Phone Link code, library or permission is packaged.
+    //    The Allternit app plus Phone Link (src/phonelink: local server, mesh
+    //    library, adb shell server for scrcpy, services, receivers, permissions)
+    //    plus the screen-share lane (src/phoneshare) as the fallback when the
+    //    scrcpy shell server isn't running.
+    //  - play: the Google Play bundle. The Allternit app (src/main) plus the
+    //    screen-share lane (src/phoneshare: claim code + owner pairing, MediaProjection
+    //    capture, the Accessibility service for a viewer's taps). None of the adb
+    //    pieces (ShellServerLauncher, ShellServerMain, AdbClient/AdbCert/AdbKeyBox,
+    //    WRITE_SECURE_SETTINGS, KILL_BACKGROUND_PROCESSES), no local server, no mesh.
     flavorDimensions += "dist"
     productFlavors {
         create("phonelink") {
@@ -38,6 +45,23 @@ android {
             // sheet before opening the TWA (src/play/java/.../ReviewLauncherActivity.kt).
             manifestPlaceholders["launcherActivity"] = "com.allternit.app.ReviewLauncherActivity"
         }
+    }
+
+    // src/phoneshare is compiled into both flavors (no third flavor, no library
+    // module: its classes keep the com.allternit.phonelink package and app R).
+    // Each flavor's manifest declares the components (an Android source set has
+    // one manifest); FlavorAccessibility is defined once per flavor.
+    sourceSets {
+        getByName("phonelink") {
+            java.srcDir("src/phoneshare/java")
+            res.srcDir("src/phoneshare/res")
+        }
+        getByName("play") {
+            java.srcDir("src/phoneshare/java")
+            res.srcDir("src/phoneshare/res")
+        }
+        getByName("testPhonelink") { java.srcDir("src/testPhoneshare/java") }
+        getByName("testPlay") { java.srcDir("src/testPhoneshare/java") }
     }
 
     buildTypes {
@@ -83,8 +107,10 @@ android {
 }
 
 dependencies {
-    // No runtime dependencies beyond the Kotlin stdlib: the HTTP server, the
-    // envelope crypto and X25519 are in-tree (see README "Dependencies").
+    // The HTTP server, the envelope crypto and X25519 are in-tree (see README
+    // "Dependencies"). The screen-share lane dials out over HTTPS/WebSockets
+    // with OkHttp (Apache-2.0, Square), both builds.
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
     // The mesh node is the gomobile-bound tsnet wrapper from
     // infrastructure/mesh/tsnet-ios — build it first:
     //   infrastructure/mesh/tsnet-ios/build-android.sh   (output: Mesh.aar,

@@ -233,7 +233,7 @@ object ServerController {
             scheduler.schedule({ stopByUser(app) }, 1, TimeUnit.SECONDS)
         }
 
-        override fun screenService() = shell.status()
+        override fun screenService() = shell.status().copy(projection = AppLink.report())
 
         override fun shell(command: String): String {
             val launcher = this@ServerController.shell

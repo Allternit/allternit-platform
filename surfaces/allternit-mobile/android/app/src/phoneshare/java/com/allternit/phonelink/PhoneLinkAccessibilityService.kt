@@ -29,8 +29,6 @@ import com.allternit.phonelink.core.AppInfo
 import com.allternit.phonelink.core.Bounds
 import com.allternit.phonelink.core.DeviceOps
 import com.allternit.phonelink.core.GlobalAction
-import com.allternit.phonelink.core.PetNotice
-import com.allternit.phonelink.core.PetNoticeGate
 import com.allternit.phonelink.core.RpcException
 import com.allternit.phonelink.core.Screenshot
 import com.allternit.phonelink.core.UiNode
@@ -43,125 +41,59 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 
 /**
- * The phone's hands and eyes. Enabled once over adb (see README); the system
- * rebinds it after every reboot by itself, which also restarts the server.
+ * The phone's hands and eyes, in both builds (src/phoneshare). The sideloaded
+ * build enables it once over adb (see README); the Google Play build has the
+ * person turn it on after the in-app disclosure (ScreenShareActivity). The
+ * system rebinds it after every reboot by itself.
  */
 class PhoneLinkAccessibilityService : AccessibilityService(), DeviceOps {
     @Volatile private var lastEventAt = SystemClock.uptimeMillis()
     @Volatile private var lastWindowPackage: String? = null
     private val main = Handler(Looper.getMainLooper())
     private val shotExecutor = Executors.newSingleThreadExecutor()
-    /** Pet offers read and match off the main thread, one dialog at a time. */
-    private val petExecutor = Executors.newSingleThreadExecutor()
-    private val petGate by lazy { PetNoticeGate(PetOfferPrefs.settings(this), ownPackage = packageName) }
+    /**
+     * What this build adds on top of the shared service (FlavorAccessibility is
+     * defined once per flavor): the sideloaded build wires it to its local
+     * server and error-help offers; the Google Play build has no extras.
+     */
+    private val flavor by lazy { FlavorAccessibility(this) }
 
     companion object {
         private const val MAX_NODES = 6000
         private const val MAX_DEPTH = 120
-        /** A paired computer that sent a command this recently is driving the phone: pet offers stay quiet. */
-        private const val REMOTE_DRIVING_MS = 60_000L
-        /** Android's own crash and not-responding dialogs come from this package. */
-        private const val SYSTEM_PACKAGE = "android"
-        /** Never read here (same screens Phone Link never acts on), besides the block list. */
-        private val PET_SKIP_PACKAGES = setOf(
-            "com.android.settings",
-            "com.android.permissioncontroller",
-            "com.google.android.permissioncontroller",
-            "com.android.packageinstaller",
-            "com.google.android.packageinstaller",
-            "com.android.systemui",
-        )
     }
 
     // ── Lifecycle ───────────────────────────────────────────────────────────
 
     override fun onServiceConnected() {
         super.onServiceConnected()
-        ServerController.onAccessibilityConnected(this, this)
+        flavor.connected()
+        // The screen-share lane (both builds): taps for viewers, and the
+        // control socket stays up while Android keeps this service bound.
+        AppLink.onAccessibility(this, this, connected = true)
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         lastEventAt = SystemClock.uptimeMillis()
         if (event?.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
             event.packageName?.toString()?.let { lastWindowPackage = it }
-            try { maybeOfferHelp(event) } catch (_: Exception) {}
+            try { flavor.onWindowStateChanged(event) } catch (_: Exception) {}
         }
-    }
-
-    // ── Pet offers ──────────────────────────────────────────────────────────
-
-    /**
-     * An app shows an error dialog: read it (password and editable fields never), match it against the
-     * contract rules and post the "Error help" notification. Order: the switch, lock screen, a paired
-     * computer driving the phone, the block list and mute (before any read), the 30 s re-read skip, then
-     * the read, the match and the cooldown. Screen text is never logged.
-     */
-    private fun maybeOfferHelp(event: AccessibilityEvent) {
-        val className = event.className?.toString()
-        if (!PetNotice.isDialogClass(className)) return
-        val settings = PetOfferPrefs.settings(this)
-        if (!settings.watching) return
-        if (isScreenLocked() || isRemoteDriving()) return
-        val pkg = event.packageName?.toString() ?: return
-        if (pkg in PET_SKIP_PACKAGES) return
-        val system = pkg == SYSTEM_PACKAGE
-        val label = if (system) null else appLabel(pkg)
-        if (!system && petGate.blockReason(label, pkg) != null) return
-        if (!petGate.shouldRead("$pkg|$className|${event.windowId}", SystemClock.uptimeMillis())) return
-        // The event is recycled when this returns: take the dialog's root node now.
-        val source = event.source
-        val windowId = event.windowId
-        petExecutor.execute {
-            try { readAndOffer(source, windowId, pkg, label, className!!, system, settings.maxTextChars) } catch (_: Exception) {}
-        }
-    }
-
-    private fun readAndOffer(source: AccessibilityNodeInfo?, windowId: Int, pkg: String, label: String?, className: String, system: Boolean, maxTextChars: Int) {
-        // Re-check on this thread: a command could have arrived since the event.
-        if (isRemoteDriving()) return
-        // The whole dialog window; the event's own node when the window list doesn't have it.
-        val root = (try { windows } catch (e: Exception) { emptyList<AccessibilityWindowInfo>() }).firstOrNull { it.id == windowId }?.root
-            ?: source
-            ?: return
-        val nodes = ArrayList<UiNode>()
-        walk(root, 1, nodes)
-        val text = PetNotice.textOf(nodes, maxTextChars)
-        val trigger = PetNotice.match(text, dialog = true, maxTextChars = maxTextChars) ?: return
-        // A system crash dialog is about the app it names ("Chrome keeps stopping"): check that name too.
-        val app = if (system) PetNotice.systemDialogApp(trigger.line) else label
-        val appId = if (system) null else pkg
-        if (system && petGate.blockReason(app, null) != null) return
-        val muteEntry = appId ?: app ?: return
-        val windowKey = "${muteEntry.lowercase()}|$className"
-        if (!petGate.allowOffer(windowKey, trigger.line, System.currentTimeMillis())) return
-        val settings = PetOfferPrefs.settings(this)
-        if (!settings.watching) return
-        Notifications.showPetOffer(this, PetNotice.fixItUrl(app, appId, trigger, text), muteEntry, settings.cooldownMs)
-    }
-
-    private fun appLabel(pkg: String): String? = try {
-        packageManager.getApplicationLabel(packageManager.getApplicationInfo(pkg, 0)).toString()
-    } catch (e: Exception) { null }
-
-    /** True while a paired computer is using the phone (any session sent a command in the last minute). */
-    private fun isRemoteDriving(): Boolean = try {
-        val now = System.currentTimeMillis()
-        ServerController.auth.activeSessions.any { now - it.lastActiveAtMs < REMOTE_DRIVING_MS }
-    } catch (e: UninitializedPropertyAccessException) {
-        false
     }
 
     override fun onInterrupt() {}
 
     override fun onUnbind(intent: Intent?): Boolean {
-        ServerController.onAccessibilityDisconnected(this)
+        flavor.disconnected()
+        AppLink.onAccessibility(this, this, connected = false)
         return super.onUnbind(intent)
     }
 
     override fun onDestroy() {
-        ServerController.onAccessibilityDisconnected(this)
+        flavor.disconnected()
+        AppLink.onAccessibility(this, this, connected = false)
+        flavor.shutdown()
         shotExecutor.shutdownNow()
-        petExecutor.shutdownNow()
         super.onDestroy()
     }
 
@@ -191,7 +123,7 @@ class PhoneLinkAccessibilityService : AccessibilityService(), DeviceOps {
 
     override fun snapshot(): List<UiNode> {
         val out = ArrayList<UiNode>()
-        val screenH = ServerController.staticInfo().heightPx
+        val screenH = flavor.screenHeightPx()
         val wins = try { windows } catch (e: Exception) { emptyList<AccessibilityWindowInfo>() }
         val roots = ArrayList<Pair<AccessibilityNodeInfo, Pair<String, Rect>>>()
         if (wins.isEmpty()) {
@@ -218,7 +150,7 @@ class PhoneLinkAccessibilityService : AccessibilityService(), DeviceOps {
         return out
     }
 
-    private fun walk(root: AccessibilityNodeInfo, startDepth: Int, out: MutableList<UiNode>) {
+    internal fun walk(root: AccessibilityNodeInfo, startDepth: Int, out: MutableList<UiNode>) {
         val stack = ArrayDeque<Pair<AccessibilityNodeInfo, Int>>()
         stack.addLast(root to startDepth)
         while (stack.isNotEmpty() && out.size < MAX_NODES) {
@@ -393,7 +325,13 @@ class PhoneLinkAccessibilityService : AccessibilityService(), DeviceOps {
             performGlobalAction(AccessibilityService.GLOBAL_ACTION_HOME)
             SystemClock.sleep(500)
         }
-        getSystemService(ActivityManager::class.java).killBackgroundProcesses(packageName)
+        // KILL_BACKGROUND_PROCESSES is declared only in the sideloaded build; the
+        // Google Play build leaves the app in the background instead.
+        if (checkSelfPermission(android.Manifest.permission.KILL_BACKGROUND_PROCESSES) == PackageManager.PERMISSION_GRANTED) {
+            getSystemService(ActivityManager::class.java).killBackgroundProcesses(packageName)
+        } else if (!wasFront) {
+            return "Left $packageName as it is (this build cannot end other apps)"
+        }
         return if (wasFront) "Left $packageName (Home) and asked Android to kill its background process"
         else "Asked Android to kill $packageName's background process"
     }

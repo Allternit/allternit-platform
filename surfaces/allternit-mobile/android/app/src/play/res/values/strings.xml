@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Google Play build: the Accessibility service only carries out a viewer's
+     taps and typing while the person shares their screen. Keep
+     share_a11y_disclosure in step with what PhoneLinkAccessibilityService and
+     play/res/xml/accessibility_service_config.xml actually do (Google Play's
+     Accessibility API policy: prominent disclosure). -->
+<resources>
+    <string name="accessibility_label">Allternit screen share taps</string>
+    <string name="accessibility_summary">Lets a viewer you allow in your Allternit account tap and type on this phone while you share your screen.</string>
+    <string name="accessibility_description">Allternit uses this to carry out taps, swipes and typing from a viewer you allow in your own Allternit account, while you share this phone\'s screen. It reads only the text box you are typing in (to put the viewer\'s text there) and the name of the app on screen. It keeps none of it and sends none of it. Turn it off here any time.</string>
+    <string name="share_a11y_disclosure">Allternit uses Android\'s Accessibility service so that a viewer you allow in your own Allternit account can tap and type on this phone.\n\nWhat it does: while you share your screen, it carries out the viewer\'s taps, swipes and typing, and presses Back, Home and Recent apps for them.\n\nWhat it reads: only the text box you are typing in, so it can put the viewer\'s text there, and the name of the app on screen. It does not save this, does not send it anywhere and does not read anything else.\n\nWhat is sent: the picture of your screen, and only while you share it after you say yes to Android\'s screen-share prompt. It goes to your own Allternit account over an encrypted connection. We do not sell it or share it with anyone else.\n\nYou can turn taps off any time in Settings › Accessibility › Allternit screen share taps.</string>
+    <string name="shortcut_share_screen_short">Share screen</string>
+    <string name="shortcut_share_screen_long">Share this phone\'s screen</string>
+</resources>
