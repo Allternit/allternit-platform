@@ -6,6 +6,9 @@ import UIKit
 #endif
 import UserNotifications
 
+// Lives in Core/, not Core/OnDevice/: the OnDeviceLab target compiles every
+// file in Core/OnDevice and has none of the app types used here.
+
 // W8 glue between the W7 runtime and the app's screens and chat:
 // chat model ids for on-device and other-device models, the on-phone reply
 // stream, the downloads the Models screens start, and "My other devices"
