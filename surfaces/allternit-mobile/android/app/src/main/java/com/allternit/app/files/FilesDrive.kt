@@ -19,6 +19,7 @@ import com.allternit.files.contract.Item
 import com.allternit.files.contract.ListResponse
 import com.allternit.files.contract.OnConflict
 import com.allternit.files.contract.Root
+import com.allternit.files.contract.RootKind
 import com.allternit.files.contract.RootsResponse
 import com.allternit.files.contract.SmallWriteQuery
 import com.allternit.files.contract.TransportKind
