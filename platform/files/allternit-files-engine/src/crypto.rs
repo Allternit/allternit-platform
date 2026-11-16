@@ -2,7 +2,7 @@
 //!
 //! FRK (32 bytes) -> HKDF-SHA256 subkeys:
 //! - `files-cache/1/<device_id>`: one device's offline cache ([`EncryptedCache`])
-//! - `files-replica/1/<replica_id>`: replica chunks (step 15)
+//! - `files-replica/1/<replica_id>`: replica chunks (`replica.rs`)
 //! - `files-snapshot/1`: reserved
 //!
 //! A sealed chunk is XChaCha20-Poly1305 with a random 24-byte nonce and an
@@ -62,6 +62,11 @@ impl FilesRootKey {
 
     pub fn key_id(&self) -> &str {
         &self.key_id
+    }
+
+    /// The raw key, for wrapping it to another device (`replica::wrap_root_key`).
+    pub(crate) fn secret(&self) -> &[u8; 32] {
+        &self.key
     }
 
     /// HKDF-SHA256 (no salt) with `info` as the label.

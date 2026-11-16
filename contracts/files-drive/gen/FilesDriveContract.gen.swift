@@ -313,13 +313,19 @@ public struct CopyRequest: Codable, Hashable, Sendable {
     public var destParentId: ItemId
     /// Set for a cross-computer copy; returns a job.
     public var destComputerId: ComputerId?
+    /// With dest_computer_id: the destination's loopback or mesh URL prefix ending in /api/v1/files/v2. The source runtime pushes the copy there (have/need, upload session) with its runtime device token.
+    public var destBaseUrl: String?
+    /// With dest_computer_id: a cross-computer move. The source item goes to the trash only after the destination committed it with the same content hash. The job kind is move.
+    public var deleteSource: Bool?
     public var newName: String?
     public var onConflict: OnConflict
 
-    public init(itemId: ItemId, destParentId: ItemId, destComputerId: ComputerId? = nil, newName: String? = nil, onConflict: OnConflict) {
+    public init(itemId: ItemId, destParentId: ItemId, destComputerId: ComputerId? = nil, destBaseUrl: String? = nil, deleteSource: Bool? = nil, newName: String? = nil, onConflict: OnConflict) {
         self.itemId = itemId
         self.destParentId = destParentId
         self.destComputerId = destComputerId
+        self.destBaseUrl = destBaseUrl
+        self.deleteSource = deleteSource
         self.newName = newName
         self.onConflict = onConflict
     }
@@ -328,6 +334,8 @@ public struct CopyRequest: Codable, Hashable, Sendable {
         case itemId = "item_id"
         case destParentId = "dest_parent_id"
         case destComputerId = "dest_computer_id"
+        case destBaseUrl = "dest_base_url"
+        case deleteSource = "delete_source"
         case newName = "new_name"
         case onConflict = "on_conflict"
     }
@@ -356,12 +364,15 @@ public struct CreateReplicaRequest: Codable, Hashable, Sendable {
     public var rootId: RootId
     public var hostDeviceId: DeviceId
     public var mode: CreateReplicaRequestMode
+    /// Send only to the source computer: the host's loopback or mesh URL prefix ending in /api/v1/files/v2 (from the host's endpoints). The source pushes sealed chunks there with its runtime device token. Never a relay URL.
+    public var hostBaseUrl: String?
 
-    public init(sourceComputerId: ComputerId, rootId: RootId, hostDeviceId: DeviceId, mode: CreateReplicaRequestMode) {
+    public init(sourceComputerId: ComputerId, rootId: RootId, hostDeviceId: DeviceId, mode: CreateReplicaRequestMode, hostBaseUrl: String? = nil) {
         self.sourceComputerId = sourceComputerId
         self.rootId = rootId
         self.hostDeviceId = hostDeviceId
         self.mode = mode
+        self.hostBaseUrl = hostBaseUrl
     }
 
     enum CodingKeys: String, CodingKey {
@@ -369,6 +380,7 @@ public struct CreateReplicaRequest: Codable, Hashable, Sendable {
         case rootId = "root_id"
         case hostDeviceId = "host_device_id"
         case mode
+        case hostBaseUrl = "host_base_url"
     }
 }
 
@@ -485,15 +497,18 @@ public struct EndpointsResponse: Codable, Hashable, Sendable {
     public var candidates: [TransportCandidate]
     /// Only for own_device hosts on the mesh.
     public var meshHostname: String?
+    /// Replicas of this computer's roots on the user's other devices, from their last heartbeats. A client uses one (state current) when the computer is asleep or offline: it asks the host device's endpoints and reads the sealed copy (served_by replica, SPEC section 10).
+    public var replicas: [Replica]?
     /// cloud_computer = provisioned by cloud-api (Incus/Contabo/Orgo). These computers do not join the mesh, so the server never lists a mesh candidate for them: relay only.
     public var host: EndpointsResponseHost
 
-    public init(computerId: ComputerId, computerState: ComputerState, wake: WakeSetting, candidates: [TransportCandidate], meshHostname: String? = nil, host: EndpointsResponseHost) {
+    public init(computerId: ComputerId, computerState: ComputerState, wake: WakeSetting, candidates: [TransportCandidate], meshHostname: String? = nil, replicas: [Replica]? = nil, host: EndpointsResponseHost) {
         self.computerId = computerId
         self.computerState = computerState
         self.wake = wake
         self.candidates = candidates
         self.meshHostname = meshHostname
+        self.replicas = replicas
         self.host = host
     }
 
@@ -503,6 +518,7 @@ public struct EndpointsResponse: Codable, Hashable, Sendable {
         case wake
         case candidates
         case meshHostname = "mesh_hostname"
+        case replicas
         case host
     }
 }
@@ -1418,6 +1434,62 @@ public struct PinResponse: Codable, Hashable, Sendable {
     enum CodingKeys: String, CodingKey {
         case itemId = "item_id"
         case pinnedOn = "pinned_on"
+    }
+}
+
+/// One candidate replica host, ranked by rules over capacity, sensitivity and availability (plan D16). The user confirms the pick.
+public struct PlacementOption: Codable, Hashable, Sendable {
+    public var deviceId: DeviceId
+    public var label: String
+    /// Higher is better. 0 when not eligible.
+    public var score: UInt64
+    public var eligible: Bool
+    /// One plain sentence the picker shows next to the device.
+    public var reason: String
+    public var freeBytes: UInt64
+    public var computerState: ComputerState
+
+    public init(deviceId: DeviceId, label: String, score: UInt64, eligible: Bool, reason: String, freeBytes: UInt64, computerState: ComputerState) {
+        self.deviceId = deviceId
+        self.label = label
+        self.score = score
+        self.eligible = eligible
+        self.reason = reason
+        self.freeBytes = freeBytes
+        self.computerState = computerState
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case deviceId = "device_id"
+        case label
+        case score
+        case eligible
+        case reason
+        case freeBytes = "free_bytes"
+        case computerState = "computer_state"
+    }
+}
+
+/// GET /api/v1/computer-files/:computer_id/placement?root_id=...: where to put a replica of one root.
+public struct PlacementResponse: Codable, Hashable, Sendable {
+    public var computerId: ComputerId
+    public var rootId: RootId
+    public var neededBytes: UInt64
+    /// Best first. The first eligible option is the suggestion.
+    public var options: [PlacementOption]
+
+    public init(computerId: ComputerId, rootId: RootId, neededBytes: UInt64, options: [PlacementOption]) {
+        self.computerId = computerId
+        self.rootId = rootId
+        self.neededBytes = neededBytes
+        self.options = options
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case computerId = "computer_id"
+        case rootId = "root_id"
+        case neededBytes = "needed_bytes"
+        case options
     }
 }
 

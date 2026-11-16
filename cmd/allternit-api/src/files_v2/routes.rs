@@ -66,11 +66,10 @@ pub fn routes<S: Clone + Send + Sync + 'static>(files: Arc<FilesV2>) -> Router<S
         .route("/subscribe", get(feed::subscribe))
         .route("/jobs/:job_id", get(job))
         .route("/storage", get(super::storage::storage))
-        .route("/replicas", get(replicas).post(replicas))
-        .route("/replicas/restore", post(replicas))
+        .merge(super::replicas::routes())
         // Guests (`Files-Guest`) pass the token, computer, route and role
         // checks here before any handler runs. Inside the Extension layer,
-        // which it reads.
+        // which it reads. Every route merged above is covered.
         .layer(axum::middleware::from_fn(shares::gate))
         .layer(DefaultBodyLimit::max(BODY_LIMIT))
         .layer(Extension(files));
@@ -555,10 +554,10 @@ async fn move_item(Extension(files): Files, req: Req, body: Result<Json<MoveRequ
 
 async fn copy(Extension(files): Files, req: Req, body: Result<Json<CopyRequest>, JsonRejection>) -> Res<CopyResponse> {
     let body = json(body)?;
+    if body.dest_computer_id.as_deref().is_some_and(|c| c != files.cfg.computer_id) {
+        return super::sync::copy_to_computer(files.clone(), req, body).await.map(Json);
+    }
     run(&files, move |v| {
-        if body.dest_computer_id.as_deref().is_some_and(|c| c != v.cfg.computer_id) {
-            return Err(ApiError::unsupported("Copies to another computer are not available on this runtime yet.").into());
-        }
         v.guard_item(&req, &body.item_id, Need::Read)?;
         let (dest, _) = v.guard_item(&req, &body.dest_parent_id, Need::Write)?;
         if memory::is_memory(&dest) {
@@ -738,14 +737,7 @@ async fn add_comment(Extension(files): Files, req: Req, body: Result<Json<Commen
     .await
 }
 
-/// Copies run synchronously on this runtime, so no job is ever open here.
-async fn job(Extension(files): Files, _req: Req, Path(_job_id): Path<String>) -> Res<JobRef> {
-    files.inner().await?;
-    Err(ApiError::new(ErrorCode::NotFound, "No such job on this computer."))
-}
-
-/// Replicas are step 15 of the Files drive plan; these routes belong to it.
-async fn replicas(Extension(files): Files, _req: Req) -> Result<Response, ApiError> {
-    files.inner().await?;
-    Err(ApiError::unsupported("Replicas are not available on this runtime yet."))
+/// Cross-computer copies and moves, replica syncs (`sync.rs`).
+async fn job(Extension(files): Files, _req: Req, Path(job_id): Path<String>) -> Res<JobRef> {
+    super::sync::job(&files, job_id).await
 }

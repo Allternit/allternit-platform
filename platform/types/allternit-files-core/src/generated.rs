@@ -195,6 +195,12 @@ pub struct CopyRequest {
     /// Set for a cross-computer copy; returns a job.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dest_computer_id: Option<ComputerId>,
+    /// With dest_computer_id: the destination's loopback or mesh URL prefix ending in /api/v1/files/v2. The source runtime pushes the copy there (have/need, upload session) with its runtime device token.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dest_base_url: Option<String>,
+    /// With dest_computer_id: a cross-computer move. The source item goes to the trash only after the destination committed it with the same content hash. The job kind is move.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delete_source: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub new_name: Option<String>,
     pub on_conflict: OnConflict,
@@ -216,6 +222,9 @@ pub struct CreateReplicaRequest {
     pub root_id: RootId,
     pub host_device_id: DeviceId,
     pub mode: CreateReplicaRequestMode,
+    /// Send only to the source computer: the host's loopback or mesh URL prefix ending in /api/v1/files/v2 (from the host's endpoints). The source pushes sealed chunks there with its runtime device token. Never a relay URL.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host_base_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -295,6 +304,9 @@ pub struct EndpointsResponse {
     /// Only for own_device hosts on the mesh.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mesh_hostname: Option<String>,
+    /// Replicas of this computer's roots on the user's other devices, from their last heartbeats. A client uses one (state current) when the computer is asleep or offline: it asks the host device's endpoints and reads the sealed copy (served_by replica, SPEC section 10).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replicas: Option<Vec<Replica>>,
     /// cloud_computer = provisioned by cloud-api (Incus/Contabo/Orgo). These computers do not join the mesh, so the server never lists a mesh candidate for them: relay only.
     pub host: EndpointsResponseHost,
 }
@@ -961,6 +973,30 @@ pub struct PinRequest {
 pub struct PinResponse {
     pub item_id: ItemId,
     pub pinned_on: Vec<DeviceId>,
+}
+
+/// One candidate replica host, ranked by rules over capacity, sensitivity and availability (plan D16). The user confirms the pick.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PlacementOption {
+    pub device_id: DeviceId,
+    pub label: String,
+    /// Higher is better. 0 when not eligible.
+    pub score: u64,
+    pub eligible: bool,
+    /// One plain sentence the picker shows next to the device.
+    pub reason: String,
+    pub free_bytes: u64,
+    pub computer_state: ComputerState,
+}
+
+/// GET /api/v1/computer-files/:computer_id/placement?root_id=...: where to put a replica of one root.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PlacementResponse {
+    pub computer_id: ComputerId,
+    pub root_id: RootId,
+    pub needed_bytes: u64,
+    /// Best first. The first eligible option is the suggestion.
+    pub options: Vec<PlacementOption>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
