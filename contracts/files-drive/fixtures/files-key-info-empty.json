@@ -1,0 +1,11 @@
+{
+  "type": "FilesKeyInfo",
+  "valid": true,
+  "case": "No key yet: the first device makes it.",
+  "message": {
+    "device_ids": [],
+    "devices": [],
+    "pending_requests": [],
+    "rotation_needed": false
+  }
+}
