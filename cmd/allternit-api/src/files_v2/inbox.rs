@@ -802,13 +802,18 @@ fn finish(v: &Inner, task_id: &str, outcome: Result<Vec<String>, ApiError>) -> R
     let task = {
         let c = v.meta.lock().expect("meta lock");
         finish_row(&c, task_id, state, &ids, error.as_deref(), &now)?;
-        get(&c, task_id)?.ok_or_else(not_found)?
+        let task = get(&c, task_id)?.ok_or_else(not_found)?;
+        // Still under the meta lock (readers of the task take it): whoever
+        // sees the task done also finds its files.task.result event and its
+        // Automation Tasks history row. Both write through memory_db, never
+        // the meta lock.
+        let agent = task.grant.as_ref().map(|g| g.agent_id.clone()).unwrap_or_else(|| INBOX_AGENT.to_string());
+        publish_result(v, &task, &agent);
+        if let Some(rule_id) = &task.rule_id {
+            rules::record_run(v, rule_id, &task);
+        }
+        task
     };
-    let agent = task.grant.as_ref().map(|g| g.agent_id.clone()).unwrap_or_else(|| INBOX_AGENT.to_string());
-    publish_result(v, &task, &agent);
-    if let Some(rule_id) = &task.rule_id {
-        rules::record_run(v, rule_id, &task);
-    }
     Ok(task)
 }
 
