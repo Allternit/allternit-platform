@@ -24,6 +24,8 @@ struct SettingsView: View {
     @ObservedObject private var appPhone = AppPhoneService.shared
     /// The Meetings row shows with the `meetings` account flag.
     @ObservedObject private var meetings = MeetingsStore.shared
+    /// The Files row shows when the Files drive is set up on this phone.
+    @ObservedObject private var filesDrive = FilesDrive.shared
 
     static func meetingsRuleLabel(_ rule: String?) -> String? {
         switch rule {
@@ -213,6 +215,16 @@ struct SettingsView: View {
                         ) { PhoneRowChevron() }
                     }
                     .buttonStyle(PhoneRowButtonStyle())
+                    if filesDrive.isEnabled {
+                        // Files drive dashboard: devices + wake setting, shares, audit.
+                        PhoneCardDivider()
+                        NavigationLink { FilesDashboardView() } label: {
+                            PhoneSettingsRowContent(title: "Files", systemImage: "folder",
+                                                    value: filesDrive.computers.count == 1 ? "1 computer" : "\(filesDrive.computers.count) computers") { PhoneRowChevron() }
+                        }
+                        .buttonStyle(PhoneRowButtonStyle())
+                        .accessibilityIdentifier("settingsFilesRow")
+                    }
                 default:
                     EmptyView()
                 }

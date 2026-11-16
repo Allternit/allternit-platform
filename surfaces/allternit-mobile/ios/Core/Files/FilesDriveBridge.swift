@@ -51,6 +51,7 @@ final class FilesDriveBridge {
                 .filter { !Self.phoneRuntimeTypes.contains($0.runtimeType) }
                 .map { FilesSharedComputer(id: $0.id, name: $0.displayName, runtimeType: $0.runtimeType) }
             store.computers = computers
+            NotificationCenter.default.post(name: .filesDriveDidSync, object: nil)
             try await FilesDomains.sync(computers)
             await FilesPinKeeper.materialize(store: store)
         } catch {
@@ -68,6 +69,7 @@ final class FilesDriveBridge {
     func clearLocal() {
         let store = store
         store.clearAccount()
+        NotificationCenter.default.post(name: .filesDriveDidSync, object: nil)
         Task { await FilesDomains.removeAll() }
     }
 
@@ -79,6 +81,7 @@ final class FilesDriveBridge {
     private func turnOff() async {
         await willSignOut()
         store.clearAccount()
+        NotificationCenter.default.post(name: .filesDriveDidSync, object: nil)
         await FilesDomains.removeAll()
     }
 
