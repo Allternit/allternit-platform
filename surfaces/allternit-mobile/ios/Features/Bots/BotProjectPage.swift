@@ -44,14 +44,20 @@ struct BotProjectPage: View {
     @State private var statusRecord: ProjectStatusRecord?
     @State private var showMore = false
     @StateObject private var looks: ProjectLookStore
+    // The project pad (tab card, Pad | List, edit sheet). `looks` stays for
+    // projects that still draw an old Style.
+    @StateObject private var padStore: ProjectPadStore
+    @ObservedObject private var padTemplates = PadTemplatesStore.shared
+    @State private var folderAppearance: Appearance? = nil
 
     private enum PageSheet: Identifiable {
-        case customize, settings, edit, template, graph, memory, needsYou, addBot, statusPage
+        case customize, padEdit, settings, edit, template, graph, memory, needsYou, addBot, statusPage
         case artifact(ArtifactV2Summary)
 
         var id: String {
             switch self {
             case .customize: return "customize"
+            case .padEdit: return "padEdit"
             case .settings: return "settings"
             case .edit: return "edit"
             case .template: return "template"
@@ -68,6 +74,11 @@ struct BotProjectPage: View {
     init(project: BotProjectSummary) {
         projectId = project.id
         _looks = StateObject(wrappedValue: ProjectLookStore(scope: "project:bot:\(project.id)"))
+        // Same scope and mode string as the web bot project page (projectMode="bot"); an old local look under this scope is converted.
+        _padStore = StateObject(wrappedValue: ProjectPadStore(
+            scope: ProjectPadStore.scope(mode: "bot", id: project.id),
+            mode: .bot,
+            defaultTemplate: PadTemplatesStore.shared.loaded ? PadTemplatesStore.shared.defaultTemplate(for: .bot) : nil))
         _title = State(initialValue: project.title)
         _details = State(initialValue: project.description)
         _favorite = State(initialValue: project.favorite)
@@ -93,7 +104,7 @@ struct BotProjectPage: View {
                 VStack(alignment: .leading, spacing: 16) {
                     breadcrumb
                     header
-                    ProjectDashboardView(layout: looks.look.layout, look: looks.look, data: boardData, title: title) { sheet = .statusPage }
+                    projectPadCard
                     threadsCard
                     conversation
                         .id("conversation")
@@ -142,6 +153,15 @@ struct BotProjectPage: View {
             if UserDefaults.standard.bool(forKey: "open-project-customize") { sheet = .customize }
         }
         #endif
+        .task {
+            padStore.load()
+            if !padTemplates.loaded && !padTemplates.loading { padTemplates.load() }
+            folderAppearance = try? await AppearanceClient(client: .shared).appearance(key: AppearanceClient.projectKey(mode: "bot", id: projectId))
+        }
+        .onChange(of: padTemplates.doc) { _, _ in
+            padStore.setDefaultTemplate(padTemplates.loaded ? padTemplates.defaultTemplate(for: .bot) : nil)
+        }
+        .onDisappear { Task { await padStore.flush() } }
         .task(id: sheet?.id) { await loadStatus() }
         .task(id: sessionKey) { await loadArtifacts() }
         .onChange(of: dictation.transcript) { _, transcript in
@@ -228,6 +248,28 @@ struct BotProjectPage: View {
         }
     }
 
+    private var projectPadCard: some View {
+        let data = boardData
+        return ProjectPadCard(
+            store: padStore,
+            looks: looks,
+            data: data,
+            threads: padThreads,
+            title: title,
+            modeLabel: "Bot project",
+            colorHex: folderAppearance?.color ?? Appearance.defaultColor,
+            onEdit: { sheet = .padEdit },
+            onNeeds: { if waiting.isEmpty { (data.needsYou.first?.open ?? { sheet = .statusPage })() } else { openWaiting() } },
+            onStatus: { sheet = .statusPage }
+        )
+    }
+
+    private var padThreads: [PadThread] {
+        threads.filter { !$0.incognito }.map { t in
+            PadThread(id: t.id, title: t.displayTitle, at: ProjectBoardData.date(t.lastActivityAt), open: { navigator.openThread(t) })
+        }
+    }
+
     private var boardData: ProjectBoardData {
         let columns: [String: ProjectBoardWork.Column] = ["waiting": .needsYou, "working": .working, "queued": .queued, "idle": .queued, "resolved": .done]
         let visible = threads.filter { !$0.incognito }
@@ -259,22 +301,6 @@ struct BotProjectPage: View {
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
             .overlay(Capsule().stroke(Color("BorderSubtle"), lineWidth: 1))
-            if !waiting.isEmpty {
-                Button { openWaiting() } label: {
-                    HStack(spacing: 6) {
-                        Circle().fill(Theme.statusWarning).frame(width: 6, height: 6)
-                        Text("Needs you · \(waiting.count)")
-                    }
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(Color("TextPrimary"))
-                    .padding(.horizontal, 12)
-                    .frame(minHeight: 44)
-                    .background(Capsule().fill(Color("BgPanel")))
-                    .overlay(Capsule().stroke(Color("BorderSubtle"), lineWidth: 1))
-                    .contentShape(Capsule())
-                }
-                .buttonStyle(.plain)
-            }
         }
     }
 
@@ -428,15 +454,20 @@ struct BotProjectPage: View {
     private func sheetContent(_ which: PageSheet) -> some View {
         switch which {
         case .customize:
-            ProjectCustomizeSheet(store: looks, data: boardData, title: title, scope: scope,
-                                  backdropColors: botIds.map { botColors.hex(for: store.bot($0)) }) {
+            FolderLookSheet(
+                title: title, mode: "bot",
+                key: AppearanceClient.projectKey(mode: "bot", id: projectId),
+                initial: folderAppearance,
+                onSaved: { folderAppearance = $0 }
+            ) {
                 Button("Project settings") { sheet = .settings }.frame(minHeight: 44)
-            } manage: {
                 Button("Edit details") { sheet = .edit }.frame(minHeight: 44)
                 Button(archived ? "Unarchive" : "Archive") { toggleArchived() }.frame(minHeight: 44)
                 Button("Save as template") { sheet = .template }.frame(minHeight: 44)
                 Button("Delete", role: .destructive) { sheet = nil; confirmDelete = true }.frame(minHeight: 44)
             }
+        case .padEdit:
+            PadEditSheet(store: padStore, templates: padTemplates, isStyle: padStore.pad.layout.style != nil)
         case .settings:
             ProjectSettingsSheet(projectId: projectId, scope: scope,
                                  colors: botIds.map { botColors.hex(for: store.bot($0)) },

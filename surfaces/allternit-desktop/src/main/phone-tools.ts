@@ -12,6 +12,7 @@
 
 import { createHash } from 'node:crypto';
 import type { PhoneLinkHealth } from './phone-link-health.js';
+import type { AppPhoneDevice } from './phone-app-store.js';
 import { appHints, catalogApp, catalogAppByName } from './phone-app-catalog.js';
 import { elementAt, parseUiText, PhoneApiUnavailable, type PhoneApi, type PhoneRunRecorder, type UiLine } from './phone-runs.js';
 import type { GuardAnswer, GuardCheckBody, GuardCtx, GuardElement, PhoneHoldClient } from './phone-hold-client.js';
@@ -63,13 +64,14 @@ export interface UsbPhoneBackend {
 }
 
 /**
- * iPhones connected with the Allternit App Store app (phone-app-store.ts).
- * Serials start with "app:". The screen and the app's own browser only.
+ * Phones connected with the Allternit app (phone-app-store.ts): iPhones from
+ * the App Store and Android phones (screen share, Allow taps). Serials start
+ * with "app:". The screen and the app's own browser only.
  */
 export interface AppPhoneLane extends UsbPhoneBackend {
   /** Re-reads the node's phone list when stale. Never throws. */
   refresh(): Promise<void>;
-  devices(): Array<{ serial: string; platform: 'ios'; via: 'allternit-app'; route: 'iphone-app-store'; name: string; screen: boolean; note: string }>;
+  devices(): AppPhoneDevice[];
 }
 
 /** A Phone-Linked phone as phone.devices lists it, health included. */
