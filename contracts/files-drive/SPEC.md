@@ -89,6 +89,7 @@ Body limits on the runtime: axum's default body limit is 2 MB, so the chunk and 
 | `POST /api/v1/computer-files/:computer_id/wake-consent` | `WakeConsentRequest` | `WakeConsentResponse` |
 | `GET` / `PUT /api/v1/computer-files/:computer_id/wake-settings` | `UpdateWakeSettingsRequest` | `WakeSettings` |
 | `GET /api/v1/computer-files/:computer_id/storage` | | `StorageDiscovery` (last heartbeat report) |
+| `POST /api/v1/computer-files/:computer_id/unlock` | `UnlockRequest` (`{device_id}`) | `UnlockResponse` (`{token, expires_at}`): a 5-minute `fut1` unlock token for protected roots (section 12). Owner session; the computer must be the caller's; at most 30 per user per 10 minutes (`rate_limited`); writes `audit_log` `files.unlock.issued` |
 | `GET /api/v1/computer-files/:computer_id/placement?root_id=` | | `PlacementResponse` (where to keep a replica of that root, section 10) |
 | `GET` / `PUT /api/v1/computer-files/peer/:host_device_id/replicas/:replica_id/head`, `POST …/have-need`, `GET` / `PUT …/blobs/:locator` | the replica host routes' bodies | the host's answer, raw (runtime-to-runtime relay, runtime device token, section 10) |
 | `GET /api/v1/computer-files/drops` | | `QueuedDropsResponse` (signed by the computer, like its heartbeat) |
@@ -205,11 +206,11 @@ Default roots, created on first use of the drive:
 
 ## 8. Capability tokens
 
-Wake tickets (`WakeTicketClaims`, `typ: "wake"`) and guest tokens (`GuestCapabilityClaims`, `typ: "files_guest"`) share one format:
+Wake tickets (`WakeTicketClaims`, `typ: "wake"`), guest tokens (`GuestCapabilityClaims`, `typ: "files_guest"`) and owner unlock tokens (`FilesUnlockClaims`, `typ: "files_unlock"`, section 12) share one format:
 
 ```
 <prefix>.<base64url(claims JSON)>.<base64url(Ed25519 signature over "<prefix>." + payload part)>
-prefix: awt1 (wake ticket) or fgt1 (guest token); the schemas pin these.
+prefix: awt1 (wake ticket), fgt1 (guest token) or fut1 (unlock token); the schemas pin these.
 ```
 
 - Signed by cloud-api with the key named by `kid`. Runtimes fetch public keys from `GET /api/v1/computer-files/token-keys` and verify offline.
@@ -292,6 +293,17 @@ The legacy `/api/v1/files/*` routes are being scoped by step 3 (`files_scope.rs`
 - `POST /roots` (add a user folder) takes `local_path`. The runtime canonicalizes it, resolves symlinks, requires it to be inside the home folder, and refuses the secrets deny-list (`.ssh`, keychains, token stores, the Allternit data dir) with `scope_violation`. A root added over the relay starts with `shareable: false` and `agent_process: false` until the owner changes them.
 - Inside a root, a symlink that resolves outside that root is not followed (listed as a file with no content; reads return `scope_violation`).
 - `protected` roots need a fresh device unlock (Face ID, biometrics) on the client; the runtime answers `protected_root_locked` until the client sends the unlock proof.
+- **Unlock proof.** The proof is a signed, short-lived unlock token in `x-allternit-unlock`:
+
+  ```
+  fut1.<base64url(FilesUnlockClaims JSON)>.<base64url(Ed25519 signature over "fut1." + payload part)>
+  claims: {v: 1, typ: "files_unlock", user_id, device_id, computer_id, iat, exp, kid}
+  ```
+
+  1. Right after a successful local check (Face ID / Touch ID / fingerprint on iOS and Android, an explicit click on the web, a confirmation in Gizzi), the client calls `POST /api/v1/computer-files/:computer_id/unlock` with `{device_id}` (its own `x-allternit-device-id`). Clients never mint without that local step.
+  2. cloud-api checks the owner session and that the computer is the caller's, then signs the claims with the Files token key (the same key and `kid` as wake tickets and guest tokens, published at `GET /api/v1/computer-files/token-keys`). `exp - iat` is 300 s. It writes `audit_log` `files.unlock.issued` and answers `rate_limited` past 30 tokens per user in 10 minutes. A computer paired by code only (`pc_…`, no runtime device) has no runtime id to sign for: `invalid_request` (409).
+  3. The client caches the token until `expires_at` and sends it as `x-allternit-unlock` on protected-root requests and on `PUT /replicas/key` that replaces a different key. After that it asks for a new local check.
+  4. The runtime verifies offline with the cached `token-keys` (no new fetcher): prefix `fut1`, signature under `kid`, `typ`, `v`, `exp - iat` at most 300 s, `iat` at most 30 s in the future, `exp` not more than 30 s in the past, `computer_id` equals this runtime, `user_id` equals the signed-in user, and `device_id` equals `x-allternit-device-id` when the request sends one. Anything else (including the old placeholder values such as `owner-approved` or unsigned `bio1.…`) leaves the request locked: `protected_root_locked`, never a different error. Guests never unlock.
 - Agents reach only what their `AgentGrant` names (`scope_violation` otherwise).
 
 ## 13. Files key hierarchy

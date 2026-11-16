@@ -95,6 +95,8 @@ fn fixtures_round_trip() {
     round_trip::<StorageDiscovery>("storage.json", include_str!("../../../../contracts/files-drive/fixtures/storage.json"));
     round_trip::<SubscribeMessage>("subscribe.json", include_str!("../../../../contracts/files-drive/fixtures/subscribe.json"));
     round_trip::<TrashListResponse>("trash-list.json", include_str!("../../../../contracts/files-drive/fixtures/trash-list.json"));
+    round_trip::<FilesUnlockClaims>("unlock-claims.json", include_str!("../../../../contracts/files-drive/fixtures/unlock-claims.json"));
+    round_trip::<UnlockResponse>("unlock-response.json", include_str!("../../../../contracts/files-drive/fixtures/unlock-response.json"));
     round_trip::<UploadCommitResponse>("upload-commit.json", include_str!("../../../../contracts/files-drive/fixtures/upload-commit.json"));
     round_trip::<UploadCreateRequest>("upload-create.json", include_str!("../../../../contracts/files-drive/fixtures/upload-create.json"));
     round_trip::<UploadStatus>("upload-status-open.json", include_str!("../../../../contracts/files-drive/fixtures/upload-status-open.json"));

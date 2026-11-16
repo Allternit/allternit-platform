@@ -171,6 +171,27 @@ cloud-api accepts a grant only for a waiting, unexpired request with the same co
 These routes answer `403 feature_disabled` until migration 145 is applied and the owner's `files_drive` flag is on. They need a signed-in session or a `compute` key, like the other owner routes.
 </Note>
 
+## Protected-root unlock
+
+Protected roots (Memory Drive, and any root with `policy.protected`) need a fresh unlock on the device. Right after the local check passes (Face ID, Touch ID or fingerprint on a phone, a click on the web), the app asks cloud-api for a short-lived token:
+
+```http
+POST /api/v1/computer-files/{computer_id}/unlock
+Content-Type: application/json
+
+{"device_id": "dev_iphone15"}
+```
+
+```json
+{"token": "fut1.eyJ2Ijox....", "expires_at": "2026-11-16T18:05:00Z"}
+```
+
+- **Who.** The owner's session only, and only for a computer the owner has. `device_id` is the app's own `X-Allternit-Device-Id`.
+- **Token.** `fut1.` + base64url claims + `.` + base64url Ed25519 signature over `fut1.` and the claims part. The claims are `{v: 1, typ: "files_unlock", user_id, device_id, computer_id, iat, exp, kid}`, and `exp` is 300 seconds after `iat`. It is signed with the same key as wake tickets and guest tokens, so the runtime checks it offline with `GET /api/v1/computer-files/token-keys`.
+- **Use.** The app keeps the token until `expires_at` and sends it as `X-Allternit-Unlock` (also over the relay). After that, it asks for the local check again.
+- **Limits.** At most 30 tokens per user every 10 minutes (`429 rate_limited`). Each token writes an `audit_log` row, `files.unlock.issued`. A computer paired by code only has no runtime id to sign for and answers `409 invalid_request`. With no token key configured the route answers `503 key_unavailable`.
+- **Runtime check.** Signature and `kid`, `typ`, `v`, a lifetime of at most 5 minutes, 30 seconds of clock skew, this computer, the signed-in user, and the device when the request names one. Anything else stays `403 protected_root_locked`.
+
 ## Guest drops while a computer sleeps
 
 When a guest drops a file into an upload-only link while the computer sleeps, the [sharing gateway](/guides/files-sharing) keeps it in the owner's own storage. The computer collects these drops itself once it is awake, about 20 s after its runtime starts and then every 5 minutes (`ALLTERNIT_FILES_DROPS_EVERY_S`). Each call is signed like its heartbeat, so a computer reads only its own drops:

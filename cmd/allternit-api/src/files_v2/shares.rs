@@ -25,6 +25,12 @@
 //!   owner permissions, and never send the protected-root unlock.
 //! - **Audit.** Every guest request with a verified token emits
 //!   `files.share.accessed` (allowed or denied) on [`super::FilesV2::events`].
+//! - **Owner unlock** (SPEC section 12). For an owner request, [`gate`] also
+//!   checks `x-allternit-unlock`: a `fut1` token cloud-api signed with the same
+//!   key, at most 5 minutes long, for this computer. A valid one becomes an
+//!   [`Unlock`] extension; [`super::Req::extract`] then requires its `user_id`
+//!   to be the signed-in user and its `device_id` to match
+//!   `x-allternit-device-id` when that is sent. Anything else stays locked.
 //!
 //! Guest routes: `GET /ping`, `GET /whoami`, `GET /roots/:root_id/list`,
 //! `GET /items/:item_id`, `GET /items/:item_id/content`,
@@ -37,7 +43,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use allternit_files_core::{
-    ErrorBody, ErrorCode, FilesEvent, GuestCapabilityClaims, ItemKind, Permissions, PrincipalKind, PrincipalRef,
+    ErrorBody, ErrorCode, FilesEvent, FilesUnlockClaims, GuestCapabilityClaims, ItemKind, Permissions, PrincipalKind, PrincipalRef,
     RootGrant, ShareAccess, ShareAccessAction, ShareAccessResult, ShareAccessed, ShareRole, WhoAmIResponse,
 };
 use allternit_files_engine::{ItemRecord, RootRecord};
@@ -64,6 +70,12 @@ const DEFAULT_KEYS_URL: &str = "https://api.allternit.com/api/v1/computer-files/
 pub const MAX_TOKEN_SECS: u64 = 3600;
 /// Clock skew allowed on `iat`.
 const SKEW_SECS: u64 = 60;
+/// Owner unlock token prefix (SPEC section 12).
+pub const UNLOCK_TOKEN_PREFIX: &str = "fut1";
+/// An unlock token lives at most 5 minutes.
+pub const MAX_UNLOCK_SECS: u64 = 300;
+/// Clock skew allowed on an unlock token's `iat` and `exp`.
+const UNLOCK_SKEW_SECS: u64 = 30;
 const KEYS_TTL: Duration = Duration::from_secs(3600);
 /// Lower bound between two key fetches (unknown `kid`s, fetch failures).
 const MIN_REFETCH: Duration = Duration::from_secs(30);
@@ -206,6 +218,37 @@ impl GuestAuth {
             return Err(bad());
         }
         Ok(claims)
+    }
+
+    /// An owner unlock token (`fut1`): format, `typ`, `v`, the time window,
+    /// then `kid` and signature. `None` for anything else, including the old
+    /// placeholder values (`owner-approved`, `bio1.…`). Cheap checks run
+    /// first, so junk never triggers a key fetch. Scope is the caller's.
+    pub async fn verify_unlock(&self, token: &str, now: u64) -> Option<FilesUnlockClaims> {
+        let mut parts = token.trim().split('.');
+        let (Some(prefix), Some(payload), Some(sig), None) = (parts.next(), parts.next(), parts.next(), parts.next())
+        else {
+            return None;
+        };
+        if prefix != UNLOCK_TOKEN_PREFIX {
+            return None;
+        }
+        let claims: FilesUnlockClaims =
+            URL_SAFE_NO_PAD.decode(payload).ok().and_then(|b| serde_json::from_slice(&b).ok())?;
+        let sig = URL_SAFE_NO_PAD.decode(sig).ok().and_then(|b| Signature::from_slice(&b).ok())?;
+        if claims.typ != "files_unlock" || claims.v != 1 {
+            return None;
+        }
+        if claims.exp <= claims.iat
+            || claims.exp - claims.iat > MAX_UNLOCK_SECS
+            || claims.iat > now + UNLOCK_SKEW_SECS
+            || claims.exp + UNLOCK_SKEW_SECS <= now
+        {
+            return None;
+        }
+        let key = self.key(&claims.kid).await?;
+        key.verify_strict(format!("{prefix}.{payload}").as_bytes(), &sig).ok()?;
+        Some(claims)
     }
 
     pub(crate) fn remember_session(&self, session_id: &str, guest_id: &str) {
@@ -359,6 +402,7 @@ fn stamp() -> String {
 /// computer, route and role checks, and audits it. Owner requests pass through.
 pub(crate) async fn gate(mut req: Request, next: Next) -> Response {
     if !has_guest_scheme(req.headers()) {
+        owner_unlock(&mut req).await;
         return next.run(req).await;
     }
     let Some(files) = req.extensions().get::<Arc<FilesV2>>().cloned() else {
@@ -402,6 +446,29 @@ pub(crate) async fn gate(mut req: Request, next: Next) -> Response {
     let (res, error) = error_code(res).await;
     files.share_accessed(&claims, action, item_id, error);
     res
+}
+
+/// A verified owner unlock token for this computer (SPEC section 12).
+#[derive(Debug)]
+pub(crate) struct Unlock(pub FilesUnlockClaims);
+
+/// Checks `x-allternit-unlock` on an owner request and, when it is a valid
+/// token for this computer, attaches [`Unlock`]. The user and device checks
+/// happen in [`Req::extract`], which has the signed-in user.
+async fn owner_unlock(req: &mut Request) {
+    req.extensions_mut().remove::<Arc<Unlock>>();
+    let Some(token) = super::header(req.headers(), super::UNLOCK_HEADER) else {
+        return;
+    };
+    let Some(files) = req.extensions().get::<Arc<FilesV2>>().cloned() else {
+        return;
+    };
+    match files.guests.verify_unlock(&token, now_secs()).await {
+        Some(claims) if claims.computer_id == files.cfg.computer_id => {
+            req.extensions_mut().insert(Arc::new(Unlock(claims)));
+        }
+        _ => tracing::debug!("files v2: unlock token refused; protected roots stay locked"),
+    }
 }
 
 /// For a 4xx/5xx, the `ErrorBody` code, with the response rebuilt.

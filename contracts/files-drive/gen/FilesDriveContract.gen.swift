@@ -842,6 +842,41 @@ public struct FilesKeyInfo: Codable, Hashable, Sendable {
     }
 }
 
+/// Decoded body of an unlock token (fut1). Ed25519-signed by cloud-api with the Files token key.
+public struct FilesUnlockClaims: Codable, Hashable, Sendable {
+    public var v: UInt64
+    public var typ: String
+    public var userId: String
+    public var deviceId: String
+    public var computerId: ComputerId
+    public var iat: UInt64
+    /// At most iat + 300.
+    public var exp: UInt64
+    public var kid: String
+
+    public init(v: UInt64, typ: String, userId: String, deviceId: String, computerId: ComputerId, iat: UInt64, exp: UInt64, kid: String) {
+        self.v = v
+        self.typ = typ
+        self.userId = userId
+        self.deviceId = deviceId
+        self.computerId = computerId
+        self.iat = iat
+        self.exp = exp
+        self.kid = kid
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case v
+        case typ
+        case userId = "user_id"
+        case deviceId = "device_id"
+        case computerId = "computer_id"
+        case iat
+        case exp
+        case kid
+    }
+}
+
 /// Every read response says where it came from and the computer state. Clients show "asleep" from this, never guess.
 public struct Freshness: Codable, Hashable, Sendable {
     public var servedBy: ServedBy
@@ -2694,6 +2729,36 @@ public struct TrashListResponse: Codable, Hashable, Sendable {
         case entries
         case nextPageToken = "next_page_token"
         case freshness
+    }
+}
+
+/// Body of POST /api/v1/computer-files/:computer_id/unlock. Sent only right after a successful local biometric check or an explicit user click (section 12).
+public struct UnlockRequest: Codable, Hashable, Sendable {
+    /// The x-allternit-device-id of the device that just unlocked. The runtime refuses the token on a request whose x-allternit-device-id differs.
+    public var deviceId: String
+
+    public init(deviceId: String) {
+        self.deviceId = deviceId
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case deviceId = "device_id"
+    }
+}
+
+/// A short-lived protected-root unlock token. Send it as x-allternit-unlock until expires_at.
+public struct UnlockResponse: Codable, Hashable, Sendable {
+    public var token: String
+    public var expiresAt: Timestamp
+
+    public init(token: String, expiresAt: Timestamp) {
+        self.token = token
+        self.expiresAt = expiresAt
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case token
+        case expiresAt = "expires_at"
     }
 }
 

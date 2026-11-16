@@ -325,6 +325,21 @@ export interface FilesKeyInfo {
 }
 
 /**
+ * Decoded body of an unlock token (fut1). Ed25519-signed by cloud-api with the Files token key.
+ */
+export interface FilesUnlockClaims {
+  v: number;
+  typ: "files_unlock";
+  user_id: string;
+  device_id: string;
+  computer_id: ComputerId;
+  iat: number;
+  /** At most iat + 300. */
+  exp: number;
+  kid: string;
+}
+
+/**
  * Every read response says where it came from and the computer state. Clients show "asleep" from this, never guess.
  */
 export interface Freshness {
@@ -1086,6 +1101,22 @@ export interface TrashListResponse {
   entries: TrashEntry[];
   next_page_token?: PageToken;
   freshness: Freshness;
+}
+
+/**
+ * Body of POST /api/v1/computer-files/:computer_id/unlock. Sent only right after a successful local biometric check or an explicit user click (section 12).
+ */
+export interface UnlockRequest {
+  /** The x-allternit-device-id of the device that just unlocked. The runtime refuses the token on a request whose x-allternit-device-id differs. */
+  device_id: string;
+}
+
+/**
+ * A short-lived protected-root unlock token. Send it as x-allternit-unlock until expires_at.
+ */
+export interface UnlockResponse {
+  token: string;
+  expires_at: Timestamp;
 }
 
 export interface UpdateRootRequest {

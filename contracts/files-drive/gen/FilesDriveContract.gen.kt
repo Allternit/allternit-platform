@@ -397,6 +397,20 @@ data class FilesKeyInfo(
 )
 
 /**
+ * Decoded body of an unlock token (fut1). Ed25519-signed by cloud-api with the Files token key.
+ */
+data class FilesUnlockClaims(
+    @Wire("v") val v: Long,
+    @Wire("typ") val typ: String,
+    @Wire("user_id") val userId: String,
+    @Wire("device_id") val deviceId: String,
+    @Wire("computer_id") val computerId: ComputerId,
+    @Wire("iat") val iat: Long,
+    @Wire("exp") val exp: Long,
+    @Wire("kid") val kid: String
+)
+
+/**
  * Every read response says where it came from and the computer state. Clients show "asleep" from this, never guess.
  */
 data class Freshness(
@@ -1272,6 +1286,21 @@ data class TrashListResponse(
     @Wire("entries") val entries: List<TrashEntry>,
     @Wire("next_page_token") val nextPageToken: PageToken? = null,
     @Wire("freshness") val freshness: Freshness
+)
+
+/**
+ * Body of POST /api/v1/computer-files/:computer_id/unlock. Sent only right after a successful local biometric check or an explicit user click (section 12).
+ */
+data class UnlockRequest(
+    @Wire("device_id") val deviceId: String
+)
+
+/**
+ * A short-lived protected-root unlock token. Send it as x-allternit-unlock until expires_at.
+ */
+data class UnlockResponse(
+    @Wire("token") val token: String,
+    @Wire("expires_at") val expiresAt: Timestamp
 )
 
 data class UpdateRootRequest(

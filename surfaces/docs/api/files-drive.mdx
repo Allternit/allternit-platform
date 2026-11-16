@@ -36,7 +36,7 @@ A request replayed by the relay (it carries `x-allternit-relayed`), forwarded by
 Two more headers matter:
 
 - `X-Allternit-Device-Name` names the device in conflict-copy names when the request does not say.
-- `X-Allternit-Unlock` is the proof of a fresh device unlock (Face ID, Windows Hello). Protected roots answer `403 protected_root_locked` without it. Today any non-empty value is accepted; a signed unlock assertion replaces it before the drive leaves the flag.
+- `X-Allternit-Unlock` is the proof of a fresh device unlock (Face ID, Touch ID, fingerprint, or a click on the web). It is a 5-minute `fut1` token from cloud-api's `POST /api/v1/computer-files/{computer_id}/unlock` (see [Files drive on cloud-api](/api/files-drive-cloud#protected-root-unlock)). The runtime checks its signature offline with the token keys, and that it names this computer, the signed-in user and, when `X-Allternit-Device-Id` is sent, that device. Protected roots, and replacing a computer's Files key with `PUT /replicas/key`, answer `403 protected_root_locked` without a valid token. Any other value, such as an old placeholder, is ignored.
 
 Files traffic never counts as activity: no v2 request, long poll or socket resets the computer's idle timer or keeps it awake.
 

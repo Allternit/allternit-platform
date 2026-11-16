@@ -35,7 +35,7 @@ use allternit_files_engine::FilesError;
 use axum::body::Bytes;
 use axum::extract::rejection::{BytesRejection, JsonRejection};
 use axum::extract::{DefaultBodyLimit, Path as UrlPath};
-use axum::http::{header, HeaderMap, StatusCode};
+use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post};
 use axum::{Extension, Json, Router};
@@ -46,7 +46,7 @@ use rand::RngCore;
 use rusqlite::{params, Connection, OptionalExtension};
 
 use super::routes::run;
-use super::{ApiError, Fail, FilesV2, Inner, Need, Req, BIG_BODY_LIMIT, UNLOCK_HEADER};
+use super::{ApiError, Fail, FilesV2, Inner, Need, Req, BIG_BODY_LIMIT};
 
 type Files = Extension<Arc<FilesV2>>;
 
@@ -531,12 +531,12 @@ async fn key_request(Extension(files): Files, req: Req) -> Result<Json<KeyShareR
 
 async fn install_key(
     Extension(files): Files,
-    _req: Req,
-    headers: HeaderMap,
+    req: Req,
     body: Result<Json<KeyEnvelope>, JsonRejection>,
 ) -> Result<StatusCode, ApiError> {
     let Json(env) = body?;
-    let unlocked = headers.get(UNLOCK_HEADER).and_then(|h| h.to_str().ok()).is_some_and(|s| !s.trim().is_empty());
+    // A verified `x-allternit-unlock` token (section 12), never just the header.
+    let unlocked = req.unlocked;
     run(&files, move |v| {
         // Proves the envelope is for this computer before anything is stored.
         let frk = open_envelope(&v.cfg.data_dir, &v.cfg.computer_id, &env)?;

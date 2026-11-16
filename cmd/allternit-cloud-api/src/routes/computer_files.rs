@@ -40,9 +40,9 @@
 use std::sync::Arc;
 
 use allternit_files_core::{
-    ComputerState, EndpointsResponse, EndpointsResponseHost, ErrorBody, ErrorCode,
+    ComputerState, EndpointsResponse, EndpointsResponseHost, ErrorBody, ErrorCode, FilesUnlockClaims,
     SnapshotManifest, SnapshotRootFile, StorageDiscovery, TransportCandidate, TransportKind,
-    UpdateWakeSettingsRequest, WakeConsentRequest, WakeConsentResponse,
+    UnlockRequest, UnlockResponse, UpdateWakeSettingsRequest, WakeConsentRequest, WakeConsentResponse,
     WakeConsentResponseComputerState, WakeHint, WakeSetting, WakeSettings, WakeTicketClaims,
 };
 use axum::{
@@ -63,6 +63,13 @@ use crate::ApiState;
 pub const WAKE_TICKET_PREFIX: &str = "awt1";
 pub const WAKE_TICKET_TTL_SECS: u64 = 120;
 pub const WAKE_TICKET_HEADER: &str = "x-allternit-wake-ticket";
+/// Protected-root unlock token prefix (SPEC section 12).
+pub const UNLOCK_TOKEN_PREFIX: &str = "fut1";
+/// An unlock token lives 5 minutes; the runtime refuses longer ones.
+pub const UNLOCK_TOKEN_TTL_SECS: u64 = 300;
+/// Unlock tokens one user may mint in [`UNLOCK_WINDOW_MINS`].
+const UNLOCK_MAX_PER_WINDOW: i64 = 30;
+const UNLOCK_WINDOW_MINS: i64 = 10;
 pub const SNAPSHOT_MANIFEST_PATH: &str = "/api/v1/computer-files/snapshot/manifest";
 pub const SNAPSHOT_ROOT_PATH_PREFIX: &str = "/api/v1/computer-files/snapshot/roots/";
 /// The relay's decoded body cap (runtime_relay `MAX_RELAY_BODY_BYTES`).
@@ -387,6 +394,7 @@ pub fn routes() -> Router<Arc<ApiState>> {
         .route("/api/v1/computer-files/:id/wake-settings", get(get_wake_settings).put(put_wake_settings))
         .route("/api/v1/computer-files/:id/endpoints", get(endpoints))
         .route("/api/v1/computer-files/:id/storage", get(storage))
+        .route("/api/v1/computer-files/:id/unlock", post(unlock))
         // Step 15: replica placement and the no-wake peer relay.
         .merge(super::computer_files_replicas::routes())
         // Step 17: guest drops kept while the computer slept, pulled on wake.
@@ -511,6 +519,84 @@ async fn wake_consent(
         }
     }
     Json(consent_response(ticket, &claims, awake)).into_response()
+}
+
+pub fn mint_unlock_token(key: &FilesTokenKey, user_id: &str, device_id: &str, computer_id: &str, now: u64) -> (String, FilesUnlockClaims) {
+    let claims = FilesUnlockClaims {
+        v: 1,
+        typ: "files_unlock".to_string(),
+        user_id: user_id.to_string(),
+        device_id: device_id.to_string(),
+        computer_id: computer_id.to_string(),
+        iat: now,
+        exp: now + UNLOCK_TOKEN_TTL_SECS,
+        kid: key.kid().to_string(),
+    };
+    (key.sign(UNLOCK_TOKEN_PREFIX, &claims), claims)
+}
+
+/// `POST /api/v1/computer-files/:id/unlock` (SPEC section 12): a 5-minute
+/// `fut1` token the owner's device sends as `x-allternit-unlock` to open
+/// protected roots and to replace a computer's Files key. Clients call it
+/// only right after a local biometric check or an explicit click. The
+/// runtime checks it offline with the `token-keys` key.
+async fn unlock(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(request): Json<UnlockRequest>,
+) -> Response {
+    let (user_id, computer) = match owner_gate(&state, &headers, &id).await {
+        Ok(v) => v,
+        Err(response) => return response,
+    };
+    let device_id = request.device_id.trim();
+    if device_id.is_empty() || device_id.len() > 128 || device_id.chars().any(|c| c.is_control() || c.is_whitespace()) {
+        return files_error(StatusCode::BAD_REQUEST, ErrorCode::InvalidRequest, "device_id is required", None, None, None);
+    }
+    let ResolvedComputer::Runtime { runtime_id: computer_id } = computer else {
+        // No runtime device in cloud-api, so no runtime id to sign for.
+        return files_error(StatusCode::CONFLICT, ErrorCode::InvalidRequest, "This computer is paired by code. Unlock it on the computer itself.", None, None, None);
+    };
+    let Some(key) = wake_key() else {
+        return files_error(StatusCode::SERVICE_UNAVAILABLE, ErrorCode::KeyUnavailable, "Files token key is not configured", None, None, None);
+    };
+    let recent: i64 = match sqlx::query_scalar(
+        "SELECT COUNT(*) FROM audit_log WHERE user_id = $1 AND action = 'files.unlock.issued' \
+         AND \"timestamp\" > NOW() - make_interval(mins => $2::int)",
+    )
+    .bind(&user_id)
+    .bind(UNLOCK_WINDOW_MINS as i32)
+    .fetch_one(&state.db)
+    .await
+    {
+        Ok(n) => n,
+        Err(error) => return internal("unlock rate", error),
+    };
+    if recent >= UNLOCK_MAX_PER_WINDOW {
+        return files_error(StatusCode::TOO_MANY_REQUESTS, ErrorCode::RateLimited, "Too many unlocks. Try again in a few minutes.", None, None, Some(60));
+    }
+    let (token, claims) = mint_unlock_token(key, &user_id, device_id, &computer_id, now_secs());
+    crate::services::audit::write_audit_log(
+        &state.db,
+        crate::services::audit::AuditEvent {
+            action: "files.unlock.issued".to_string(),
+            resource_type: "computer".to_string(),
+            resource_id: Some(computer_id.clone()),
+            user_id: Some(user_id.clone()),
+            user_email: None,
+            details: Some(serde_json::json!({ "device_id": claims.device_id, "exp": claims.exp, "kid": claims.kid })),
+            success: true,
+        },
+    )
+    .await;
+    Json(UnlockResponse {
+        token,
+        expires_at: chrono::DateTime::from_timestamp(claims.exp as i64, 0)
+            .map(|t| t.to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
+            .unwrap_or_default(),
+    })
+    .into_response()
 }
 
 fn consent_response(ticket: String, claims: &WakeTicketClaims, awake: bool) -> WakeConsentResponse {
@@ -772,5 +858,24 @@ mod tests {
         let other = FilesTokenKey::from_seed(&[9u8; 32]);
         let (foreign, _) = mint_wake_ticket(&other, "user_a", "rt_a", &consent(), now);
         assert_eq!(verify_wake_ticket(key, &foreign, "user_a", "rt_a", now), Err(TicketError::Invalid));
+    }
+
+    #[test]
+    fn unlock_token_is_signed_by_the_files_key_and_lives_five_minutes() {
+        let key = wake_key().expect("test key");
+        let now = now_secs();
+        let (token, claims) = mint_unlock_token(key, "user_a", "dev_phone", "rt_a", now);
+        assert_eq!((claims.typ.as_str(), claims.v, claims.exp - claims.iat), ("files_unlock", 1, UNLOCK_TOKEN_TTL_SECS));
+        assert_eq!((claims.user_id.as_str(), claims.device_id.as_str(), claims.computer_id.as_str()), ("user_a", "dev_phone", "rt_a"));
+        assert_eq!(claims.kid, key.kid());
+        let mut parts = token.split('.');
+        let (prefix, payload, sig) = (parts.next().unwrap(), parts.next().unwrap(), parts.next().unwrap());
+        assert_eq!((prefix, parts.next()), ("fut1", None));
+        let decoded: FilesUnlockClaims = serde_json::from_slice(&URL_SAFE_NO_PAD.decode(payload).unwrap()).unwrap();
+        assert_eq!(decoded, claims);
+        // The public key the runtime fetches from token-keys verifies it.
+        let public: [u8; 32] = URL_SAFE_NO_PAD.decode(key.public_key_b64url()).unwrap().try_into().unwrap();
+        let sig = Signature::from_slice(&URL_SAFE_NO_PAD.decode(sig).unwrap()).unwrap();
+        assert!(VerifyingKey::from_bytes(&public).unwrap().verify_strict(format!("fut1.{payload}").as_bytes(), &sig).is_ok());
     }
 }

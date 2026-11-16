@@ -601,6 +601,20 @@ pub struct FilesKeyInfo {
     pub rotation_needed: bool,
 }
 
+/// Decoded body of an unlock token (fut1). Ed25519-signed by cloud-api with the Files token key.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FilesUnlockClaims {
+    pub v: u64,
+    pub typ: String,
+    pub user_id: String,
+    pub device_id: String,
+    pub computer_id: ComputerId,
+    pub iat: u64,
+    /// At most iat + 300.
+    pub exp: u64,
+    pub kid: String,
+}
+
 /// Every read response says where it came from and the computer state. Clients show "asleep" from this, never guess.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Freshness {
@@ -1887,6 +1901,20 @@ pub struct TrashListResponse {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub next_page_token: Option<PageToken>,
     pub freshness: Freshness,
+}
+
+/// Body of POST /api/v1/computer-files/:computer_id/unlock. Sent only right after a successful local biometric check or an explicit user click (section 12).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UnlockRequest {
+    /// The x-allternit-device-id of the device that just unlocked. The runtime refuses the token on a request whose x-allternit-device-id differs.
+    pub device_id: String,
+}
+
+/// A short-lived protected-root unlock token. Send it as x-allternit-unlock until expires_at.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UnlockResponse {
+    pub token: String,
+    pub expires_at: Timestamp,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

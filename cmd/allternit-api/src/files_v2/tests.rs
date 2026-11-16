@@ -15,11 +15,50 @@ use http_body_util::BodyExt;
 use serde_json::{json, Value};
 use tower::ServiceExt;
 
-use super::{routes, Config, FilesV2};
+use super::{routes, Config, FilesV2, GuestAuth};
 use crate::auth::AuthUser;
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+use ed25519_dalek::{Signer, SigningKey};
 
 const RELAYED: (&str, &str) = ("x-allternit-relayed", "1");
-const UNLOCK: (&str, &str) = ("x-allternit-unlock", "face-id");
+const UNLOCK_H: &str = "x-allternit-unlock";
+const DEVICE_H: &str = "x-allternit-device-id";
+/// The test stand-in for cloud-api's Files token key.
+const KID: &str = "ft-test";
+
+fn signer() -> SigningKey {
+    SigningKey::from_bytes(&[7u8; 32])
+}
+
+fn now_secs() -> u64 {
+    chrono::Utc::now().timestamp() as u64
+}
+
+/// What `POST /computer-files/:id/unlock` mints for user u1, phone dev_phone1, computer rd_test.
+fn unlock_claims() -> FilesUnlockClaims {
+    let now = now_secs();
+    FilesUnlockClaims {
+        v: 1,
+        typ: "files_unlock".into(),
+        user_id: "u1".into(),
+        device_id: "dev_phone1".into(),
+        computer_id: "rd_test".into(),
+        iat: now,
+        exp: now + 300,
+        kid: KID.into(),
+    }
+}
+
+fn mint_unlock(key: &SigningKey, c: &FilesUnlockClaims) -> String {
+    let signed = format!("fut1.{}", URL_SAFE_NO_PAD.encode(serde_json::to_vec(c).unwrap()));
+    let sig = URL_SAFE_NO_PAD.encode(key.sign(signed.as_bytes()).to_bytes());
+    format!("{signed}.{sig}")
+}
+
+/// A valid unlock header (no device header needed).
+fn unlock() -> (&'static str, &'static str) {
+    (UNLOCK_H, Box::leak(mint_unlock(&signer(), &unlock_claims()).into_boxed_str()))
+}
 
 struct Env {
     _tmp: tempfile::TempDir,
@@ -62,7 +101,8 @@ fn env_with(f: impl FnOnce(&mut Config)) -> Env {
     std::fs::create_dir_all(base.join("outside")).unwrap();
     let mut cfg = config(&base);
     f(&mut cfg);
-    let app = routes::<()>(Arc::new(FilesV2::new(cfg))).layer(Extension(user()));
+    let guests = GuestAuth::with_keys(vec![(KID.into(), signer().verifying_key().to_bytes())]);
+    let app = routes::<()>(Arc::new(FilesV2::with_guests(cfg, guests))).layer(Extension(user()));
     Env { home: base.join("home"), outside: base.join("outside"), _tmp: tmp, app }
 }
 
@@ -393,7 +433,7 @@ async fn contract_fixtures_round_trip_through_the_handlers() {
     let memory = roots.roots.iter().find(|r| r.kind == RootKind::MemoryDrive).unwrap();
     let r = e.get(&format!("/roots/{}/list?parent_id={}", memory.id, memory.root_item_id), &[]).await;
     assert_eq!(r.error().code, ErrorCode::ProtectedRootLocked);
-    let r = e.get(&format!("/roots/{}/list?parent_id={}", memory.id, memory.root_item_id), &[UNLOCK]).await;
+    let r = e.get(&format!("/roots/{}/list?parent_id={}", memory.id, memory.root_item_id), &[unlock()]).await;
     assert_eq!(r.status, 200);
     assert_eq!(e.get("/items/it_nope", &[]).await.error().code, ErrorCode::NotFound);
     let _: ReplicasResponse = e.get("/replicas", &[]).await.typed();
@@ -448,19 +488,113 @@ async fn memory_drive_writes_become_git_commits_and_need_the_unlock() {
     // Locked without the unlock proof, for reads and writes.
     let r = e.put(&mem, "name=notes.md", &[], b"# Notes\n".to_vec()).await;
     assert_eq!(r.error().code, ErrorCode::ProtectedRootLocked);
-    let r = e.put(&mem, "name=notes.md", &[UNLOCK], b"# Notes\n".to_vec()).await;
+    let r = e.put(&mem, "name=notes.md", &[unlock()], b"# Notes\n".to_vec()).await;
     assert_eq!(r.status, 200, "{}", String::from_utf8_lossy(&r.body));
     let w: MutationResponse = r.typed();
     assert_eq!(commits(&db), before + 1, "a Files write is one Memory Drive commit");
     let files = service::resolve(&db, "u1").unwrap().storage().unwrap().snapshot(None).unwrap().files;
     assert_eq!(files.get("notes.md").map(String::as_str), Some("# Notes\n"));
     // A stale base_rev fails closed (no conflict copies in Memory Drive).
-    let r = e.put(&mem, "name=notes.md&base_rev=1-dir", &[UNLOCK], b"# x\n".to_vec()).await;
+    let r = e.put(&mem, "name=notes.md&base_rev=1-dir", &[unlock()], b"# x\n".to_vec()).await;
     assert_eq!(r.error().code, ErrorCode::RevMismatch);
-    let r = e.post("/mkdir", &[UNLOCK], json!({"parent_id": mem.root_item_id, "name": "x", "on_conflict": "fail"})).await;
+    let r = e.post("/mkdir", &[unlock()], json!({"parent_id": mem.root_item_id, "name": "x", "on_conflict": "fail"})).await;
     assert_eq!(r.error().code, ErrorCode::Forbidden);
-    let r = e.post("/delete", &[UNLOCK], json!({"item_id": w.item.id, "base_rev": w.item.rev, "permanent": false})).await;
+    let r = e.post("/delete", &[unlock()], json!({"item_id": w.item.id, "base_rev": w.item.rev, "permanent": false})).await;
     assert_eq!(r.status, 200, "{}", String::from_utf8_lossy(&r.body));
     assert_eq!(commits(&db), before + 2);
     assert!(!service::resolve(&db, "u1").unwrap().storage().unwrap().snapshot(None).unwrap().files.contains_key("notes.md"));
+}
+
+// ---- protected-root unlock tokens (SPEC section 12) ----
+
+/// The Memory Drive root (protected) and its list URI.
+async fn protected_list_uri(e: &Env) -> String {
+    let roots = e.roots().await;
+    let m = roots.roots.iter().find(|r| r.kind == RootKind::MemoryDrive).unwrap();
+    assert!(m.policy.protected);
+    format!("/roots/{}/list?parent_id={}", m.id, m.root_item_id)
+}
+
+async fn assert_locked(e: &Env, uri: &str, headers: &[(&str, &str)], case: &str) {
+    let r = e.get(uri, headers).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN, "{case}");
+    assert_eq!(r.error().code, ErrorCode::ProtectedRootLocked, "{case}");
+}
+
+#[tokio::test]
+async fn unlock_valid_token_opens_protected_root() {
+    let e = env();
+    let uri = protected_list_uri(&e).await;
+    assert_locked(&e, &uri, &[], "no token").await;
+    let good = mint_unlock(&signer(), &unlock_claims());
+    assert_eq!(e.get(&uri, &[(UNLOCK_H, good.as_str())]).await.status, 200);
+    assert_eq!(e.get(&uri, &[(UNLOCK_H, good.as_str()), (DEVICE_H, "dev_phone1")]).await.status, 200);
+    // A little clock skew is fine.
+    let now = now_secs();
+    let skewed = mint_unlock(&signer(), &FilesUnlockClaims { iat: now + 20, exp: now + 120, ..unlock_claims() });
+    assert_eq!(e.get(&uri, &[(UNLOCK_H, skewed.as_str())]).await.status, 200);
+}
+
+#[tokio::test]
+async fn unlock_old_placeholder_values_stay_locked() {
+    let e = env();
+    let uri = protected_list_uri(&e).await;
+    let bio = format!("bio1.dev_phone1.{}", now_secs() * 1000);
+    for v in ["owner-approved", "face-id", "1", bio.as_str()] {
+        assert_locked(&e, &uri, &[(UNLOCK_H, v)], v).await;
+    }
+}
+
+#[tokio::test]
+async fn unlock_forged_or_tampered_token_stays_locked() {
+    let e = env();
+    let uri = protected_list_uri(&e).await;
+    let good = mint_unlock(&signer(), &unlock_claims());
+    let forged = mint_unlock(&SigningKey::from_bytes(&[8u8; 32]), &unlock_claims());
+    // Valid signature, other claims swapped in.
+    let other = mint_unlock(&signer(), &FilesUnlockClaims { user_id: "u2".into(), ..unlock_claims() });
+    let (sig, payload) = (good.rsplit('.').next().unwrap(), other.split('.').nth(1).unwrap());
+    let tampered = format!("fut1.{payload}.{sig}");
+    let guest_typ = mint_unlock(&signer(), &FilesUnlockClaims { typ: "files_guest".into(), ..unlock_claims() });
+    let wrong_v = mint_unlock(&signer(), &FilesUnlockClaims { v: 2, ..unlock_claims() });
+    let unknown_kid = mint_unlock(&signer(), &FilesUnlockClaims { kid: "ft-nope".into(), ..unlock_claims() });
+    let cases = [
+        ("forged signature", forged),
+        ("tampered claims", tampered),
+        ("wrong prefix", good.replacen("fut1.", "fgt1.", 1)),
+        ("guest typ", guest_typ),
+        ("wrong version", wrong_v),
+        ("unknown kid", unknown_kid),
+    ];
+    for (case, token) in &cases {
+        assert_locked(&e, &uri, &[(UNLOCK_H, token.as_str())], case).await;
+    }
+}
+
+#[tokio::test]
+async fn unlock_expired_or_too_long_token_stays_locked() {
+    let e = env();
+    let uri = protected_list_uri(&e).await;
+    let now = now_secs();
+    let cases = [
+        ("expired", FilesUnlockClaims { iat: now - 400, exp: now - 100, ..unlock_claims() }),
+        ("longer than 5 minutes", FilesUnlockClaims { iat: now, exp: now + 3600, ..unlock_claims() }),
+        ("issued in the future", FilesUnlockClaims { iat: now + 120, exp: now + 300, ..unlock_claims() }),
+        ("exp before iat", FilesUnlockClaims { iat: now, exp: now - 1, ..unlock_claims() }),
+    ];
+    for (case, c) in &cases {
+        assert_locked(&e, &uri, &[(UNLOCK_H, mint_unlock(&signer(), c).as_str())], case).await;
+    }
+}
+
+#[tokio::test]
+async fn unlock_token_for_another_computer_user_or_device_stays_locked() {
+    let e = env();
+    let uri = protected_list_uri(&e).await;
+    let computer = mint_unlock(&signer(), &FilesUnlockClaims { computer_id: "rd_other".into(), ..unlock_claims() });
+    assert_locked(&e, &uri, &[(UNLOCK_H, computer.as_str())], "wrong computer").await;
+    let user = mint_unlock(&signer(), &FilesUnlockClaims { user_id: "u2".into(), ..unlock_claims() });
+    assert_locked(&e, &uri, &[(UNLOCK_H, user.as_str())], "wrong user").await;
+    let good = mint_unlock(&signer(), &unlock_claims());
+    assert_locked(&e, &uri, &[(UNLOCK_H, good.as_str()), (DEVICE_H, "dev_laptop1")], "wrong device").await;
 }
