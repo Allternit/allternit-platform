@@ -17,7 +17,9 @@
 //! - **Not automatic.** Summaries and transcripts are explicit actions or a
 //!   folder rule the owner created. Transcription has no local model on this
 //!   runtime, so it answers `unsupported`.
-//! - **Text only.** Plain text and code are indexed (a file that is UTF-8 with
+//! - **What is read.** Plain text and code (UTF-8, no NUL bytes in the first
+//!   8 KiB), PDF (20 MiB, 50 pages, 5 s) and docx text. Other Office files and
+//!   audio are not read yet. Images get a thumbnail only.
 
 
 pub mod budget;
