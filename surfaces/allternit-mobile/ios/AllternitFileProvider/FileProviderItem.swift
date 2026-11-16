@@ -79,9 +79,17 @@ struct ItemMapper {
 
     private var rootsById: [RootId: Root] { Dictionary(roots.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a }) }
 
-    /// Content can be read and written only from the live computer. A
-    /// snapshot (asleep) is metadata only: listing works, writing doesn't,
-    /// and opening a file asks for a wake.
+    /// Content is read only from the live computer: from a snapshot (asleep)
+    /// listing works and opening a file asks for a wake.
+    ///
+    /// Saving still works while it sleeps (plan step 15, queued offline
+    /// writes): new content and new files are accepted, the upload fails with
+    /// `.serverUnreachable` (`FileProviderErrors.map`), and the system keeps
+    /// the edit on this device as a pending upload, retried when the computer
+    /// is on (`FilesDomains.signalChanges`). It never wakes the computer. The
+    /// edit carries the rev it was made against, so a file that changed there
+    /// meanwhile is kept twice. Rename, move and delete stay live only: a
+    /// stale rev has no keep-both form for them (SPEC section 4).
     private var isLive: Bool { freshness == nil || freshness?.servedBy == .live }
 
     /// The computer itself.
@@ -105,7 +113,8 @@ struct ItemMapper {
             parent = .rootContainer
         }
         var caps: NSFileProviderItemCapabilities = [.allowsReading, .allowsContentEnumerating]
-        if isLive && root.policy.write { caps.insert(.allowsAddingSubItems) }
+        // Asleep too: new items queue on this device (step 15).
+        if root.policy.write { caps.insert(.allowsAddingSubItems) }
         let folder = FileProviderItem(identifier: NSFileProviderItemIdentifier(root.rootItemId), parent: parent, name: root.name,
                                       isFolder: true, item: nil, rootId: root.id, rev: "root-\(root.cursor)",
                                       contentVersion: "root", capabilities: caps, pinned: false)
@@ -141,7 +150,11 @@ struct ItemMapper {
         } else if p.read {
             caps.insert(.allowsReading)
         }
-        guard isLive else { return caps }
+        guard isLive else {
+            // Asleep: saves queue on this device (see isLive).
+            if p.write { caps.insert(item.kind == .folder ? .allowsAddingSubItems : .allowsWriting) }
+            return caps
+        }
         if p.write {
             caps.insert(.allowsRenaming)
             caps.insert(.allowsReparenting)

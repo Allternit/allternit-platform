@@ -290,7 +290,7 @@ class AllternitDocumentsProvider : DocumentsProvider() {
         val summary = when (rec.state) {
             "writing" -> "Saving…"
             "queued", "uploading" -> "Uploading to ${drive.computerName(rec.computerId)}"
-            "waiting_wake" -> "Waiting for ${drive.computerName(rec.computerId)} to wake"
+            "waiting_wake" -> "Waiting to send: goes when ${drive.computerName(rec.computerId)} is on"
             "failed" -> "Couldn't upload: ${rec.error ?: "error"}"
             else -> null
         }

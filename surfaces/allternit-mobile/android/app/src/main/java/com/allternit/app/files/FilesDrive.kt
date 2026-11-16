@@ -41,7 +41,7 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
 /** Thrown when content needs a wake the user has not agreed to yet; the prompt is already posted. */
-internal class WakeNeeded(val computerName: String) : java.io.IOException("$computerName is asleep. Tap the notification to wake it.")
+internal class WakeNeeded(val computerName: String) : java.io.IOException("Waiting to send: $computerName is asleep. It goes when $computerName is on, or tap the notification to wake it now.")
 
 /**
  * The process-wide Files drive for Android: computers, routes, the offline cache, the
@@ -445,6 +445,10 @@ internal class FilesDrive private constructor(val context: Context) {
                     cursors[k] = res.cursor
                     if (res.changes.isNotEmpty() && root(cid, rid)?.kind == RootKind.INBOX) notifyNewInboxTasks(cid)
                     touched.forEach { notifyChildren(it) }
+                    if (res.freshness.computerState == ComputerState.AWAKE && hasWaiting(cid)) {
+                        routes.remove(cid) // it is on: let runUploads see that and send what waited
+                        kickUploads()
+                    }
                     if (res.freshness.computerState != ComputerState.AWAKE) {
                         Thread.sleep(60_000) // a sleeping computer's snapshot changes at most every 5 minutes
                     } else if (!res.hasMore && System.currentTimeMillis() - started < 5_000) {
@@ -555,16 +559,49 @@ internal class FilesDrive private constructor(val context: Context) {
         }
     }
 
-    /** Runs every queued upload once. True when some still wait for the network. */
+    /**
+     * Is the computer on right now? Asks cloud-api's endpoints (never the computer, so it
+     * never wakes it). Used to send writes that waited while it slept (plan step 15).
+     */
+    private fun awakeNow(cid: String): Boolean = try {
+        endpoints(cid, 30_000).computerState == ComputerState.AWAKE
+    } catch (e: Exception) {
+        false
+    }
+
+    /** Some write is waiting for `cid` to be on. */
+    fun hasWaiting(cid: String): Boolean = cache.records().any { it.computerId == cid && it.state == "waiting_wake" }
+
+    /**
+     * Runs every queued upload once. True when some still wait (for the network, or for a
+     * sleeping computer to be on).
+     *
+     * Queued offline writes (plan step 15): a write made while the computer sleeps, with no
+     * wake consent, stays on the phone as `waiting_wake`. It is sent the next time the
+     * computer is on (for any reason) or a wake ticket is in hand; nothing here wakes it.
+     * The record keeps the `base_rev` the edit was made against, so if the file changed on
+     * the computer meanwhile the computer keeps both (SPEC section 4); if it is gone,
+     * keep-both creates it again.
+     */
     @Synchronized
     fun runUploads(): Boolean {
         if (!auth.signedIn()) return false
         cache.pruneRecords()
         var retry = false
         val blocked = HashSet<String>() // computers waiting for a wake this round
+        val awake = HashMap<String, Boolean>()
         for (rec in cache.records()) {
-            val ready = rec.state == "queued" || rec.state == "uploading" || (rec.state == "waiting_wake" && hasTicket(rec.computerId))
-            if (!ready || rec.computerId in blocked) continue
+            if (rec.state == "waiting_wake" && rec.computerId !in blocked &&
+                !hasTicket(rec.computerId) && !awake.getOrPut(rec.computerId) { awakeNow(rec.computerId) }
+            ) {
+                blocked.add(rec.computerId)
+            }
+            val ready = rec.state == "queued" || rec.state == "uploading" || rec.state == "waiting_wake"
+            if (!ready) continue
+            if (rec.computerId in blocked) {
+                retry = true // still asleep: the job looks again later (backoff)
+                continue
+            }
             try {
                 rec.state = "uploading"
                 rec.attempts += 1
@@ -575,7 +612,17 @@ internal class FilesDrive private constructor(val context: Context) {
                 rec.error = e.message
                 cache.save(rec)
                 blocked.add(rec.computerId)
+                retry = true
             } catch (e: FilesException) {
+                if (e.code == ErrorCode.WAKE_DENIED || e.code == ErrorCode.WAKE_CONSENT_REQUIRED || e.code == ErrorCode.ASLEEP) {
+                    // Waking is off (or it fell asleep mid-send): wait for it to be on.
+                    rec.state = "waiting_wake"
+                    rec.error = "Waiting to send: ${computerName(rec.computerId)} is asleep. It goes when it is on."
+                    cache.save(rec)
+                    blocked.add(rec.computerId)
+                    retry = true
+                    continue
+                }
                 val transient = e.status == 0 || e.status >= 500 || e.code == ErrorCode.RATE_LIMITED
                 rec.state = if (transient) "queued" else "failed"
                 rec.error = e.message

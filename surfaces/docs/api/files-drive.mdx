@@ -80,6 +80,18 @@ Small writes, upload commits, moves, deletes and version restores carry `base_re
 
 The conflict copy is named `<stem> (conflict <device name> <YYYY-MM-DD HHmm>).<ext>`, for example `Lease (conflict iPhone 2026-11-15 1042).pdf`. If that name exists, ` 2`, ` 3` and so on is added before the closing parenthesis. A create with no `base_rev` whose name exists lands as `<stem> (2).<ext>` with `keep_both`, or returns `already_exists` with `fail`. Move, delete, trash and version restore with a stale `base_rev` always return `rev_mismatch`.
 
+### Writes queued on the device
+
+A client never wakes a computer to save a file unless the user agreed (or the wake setting is `auto`). A write made while the computer is asleep or unreachable waits on the device and is sent the next time the computer answers. It keeps the `base_rev` it was made against, so the rules above apply when it lands: if the file changed meanwhile it becomes a conflict copy, and if the file is gone `keep_both` creates it again. The codes that mean "wait" are `wake_consent_required`, `wake_denied`, `asleep`, `waking` and `offline` (including a network failure).
+
+| Client | Where the write waits | When it is sent |
+|---|---|---|
+| Web, phone layout, PWA (`src/lib/files-drive/outbox.ts` in allternit-ai) | IndexedDB on the device, "Waiting to send" in the upload list; memory only when storage is blocked | when the Files tab for that computer is open and the computer is awake (checked every minute and when the device comes back online, without waking it) |
+| iOS (`AllternitFileProvider`) | the system's pending upload (the extension answers `serverUnreachable`) | the system's retry, and at once on each app foreground (`signalErrorResolved`) |
+| Android (`FilesDrive` upload queue) | the upload record, state `waiting_wake`, "Waiting to send" in Files | when cloud-api's endpoints say the computer is awake (upload job with backoff, and the change poll) |
+
+Rename, move and delete are not queued: a stale `base_rev` has no keep-both form for them.
+
 ## Chunked upload
 
 A file of 4 MiB or less can use the small write. Larger files, and any file that must resume, use an upload session.
