@@ -496,6 +496,9 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         // Compute gate (which computer the account has, chat-only choice);
         // Clerk session or `account` API token per-request.
         .merge(routes::account_compute::routes())
+        // Account preferences (project pad templates + per-mode default);
+        // Clerk session or `account` API token per-request, never gated on compute.
+        .merge(routes::account_prefs::routes())
         .merge(routes::web_search::routes())
         // Setup checklist: live checks for account, brain, computers, channels.
         .merge(routes::setup_checks::routes())
