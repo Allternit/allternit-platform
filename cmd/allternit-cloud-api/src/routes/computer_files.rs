@@ -17,6 +17,11 @@
 //!   its asleep snapshot (signed like the presence heartbeat); cloud-api keeps
 //!   it in the user's R2 space ([`super::computer_files_snapshot`]).
 //!
+//! - `GET /api/v1/computer-files/:id/placement`, the no-wake peer relay
+//!   `/api/v1/computer-files/peer/:host_id/replicas/...` and the queued-drop
+//!   routes `/api/v1/computer-files/drops...` live in
+//!   [`super::computer_files_replicas`].
+//!
 //! `GET /api/v1/computer-files/token-keys` belongs to the sharing gateway
 //! (`files_gateway`, step 14): one key ([`crate::services::files_tokens`])
 //! signs both wake tickets and guest tokens, so it is registered once there.
@@ -228,15 +233,15 @@ pub fn files_error(
     response
 }
 
-fn disabled() -> Response {
+pub(crate) fn disabled() -> Response {
     files_error(StatusCode::FORBIDDEN, ErrorCode::FeatureDisabled, "The Files drive is not turned on for this account.", None, None, None)
 }
 
-fn not_found() -> Response {
+pub(crate) fn not_found() -> Response {
     files_error(StatusCode::NOT_FOUND, ErrorCode::NotFound, "Computer not found", None, None, None)
 }
 
-fn internal(context: &str, error: impl std::fmt::Display) -> Response {
+pub(crate) fn internal(context: &str, error: impl std::fmt::Display) -> Response {
     tracing::error!("computer files {context}: {error}");
     files_error(StatusCode::INTERNAL_SERVER_ERROR, ErrorCode::Internal, "Something went wrong. Try again.", None, None, None)
 }
@@ -287,7 +292,7 @@ impl ResolvedComputer {
     }
 }
 
-async fn owned_runtime(db: &sqlx::PgPool, user_id: &str, runtime_id: &str) -> Result<bool, sqlx::Error> {
+pub(crate) async fn owned_runtime(db: &sqlx::PgPool, user_id: &str, runtime_id: &str) -> Result<bool, sqlx::Error> {
     Ok(sqlx::query_scalar::<_, String>(
         "SELECT id FROM runtime_devices WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL",
     )
@@ -336,7 +341,7 @@ pub async fn resolve_computer(db: &sqlx::PgPool, user_id: &str, id: &str) -> Res
 }
 
 /// Auth, flag, tables and ownership, in that order, for every owner route.
-async fn owner_gate(state: &ApiState, headers: &HeaderMap, id: &str) -> Result<(String, ResolvedComputer), Response> {
+pub(crate) async fn owner_gate(state: &ApiState, headers: &HeaderMap, id: &str) -> Result<(String, ResolvedComputer), Response> {
     let user_id = crate::auth::resolve_user_scoped(&state.db, headers, "compute")
         .await
         .map_err(IntoResponse::into_response)?
@@ -352,7 +357,7 @@ async fn owner_gate(state: &ApiState, headers: &HeaderMap, id: &str) -> Result<(
 }
 
 /// `cloud_computer` when cloud-api provisioned it (free/credit/paid/hosted).
-async fn is_cloud_computer(db: &sqlx::PgPool, runtime_id: &str) -> bool {
+pub(crate) async fn is_cloud_computer(db: &sqlx::PgPool, runtime_id: &str) -> bool {
     let provisioned: Option<i64> = sqlx::query_scalar(
         "SELECT 1::bigint FROM provisioned_instances WHERE device_id = $1 AND status <> 'deleted' LIMIT 1",
     )
@@ -381,6 +386,8 @@ pub fn routes() -> Router<Arc<ApiState>> {
         .route("/api/v1/computer-files/:id/wake-settings", get(get_wake_settings).put(put_wake_settings))
         .route("/api/v1/computer-files/:id/endpoints", get(endpoints))
         .route("/api/v1/computer-files/:id/storage", get(storage))
+        // Step 15: replica placement and the no-wake peer relay; step 17: queued drops.
+        .merge(super::computer_files_replicas::routes())
         .route(
             SNAPSHOT_MANIFEST_PATH,
             put(put_snapshot_manifest).layer(DefaultBodyLimit::max(SNAPSHOT_MANIFEST_MAX_BYTES)),

@@ -12,8 +12,12 @@
 //! - **Transport.** Direct to the host's loopback or mesh URL (`host_base_url`)
 //!   with this runtime's device token (the host's auth middleware introspects it
 //!   against cloud-api and sees the same owner). A host reachable only through
-//!   the cloud relay needs a no-wake, no-touch runtime-to-runtime relay entry in
-//!   cloud-api first; until then such a replica stays `behind` with a message.
+//!   the cloud relay (a cloud computer: no mesh) is registered without
+//!   `host_base_url`; the source then pushes through cloud-api's peer relay,
+//!   `{cloud}/api/v1/computer-files/peer/<host>/replicas/...` ([`peer_base`]),
+//!   with the same device token. cloud-api forwards only to a host that is
+//!   already connected and never wakes or touches either computer; an asleep
+//!   host answers 503 and the replica stays `behind`.
 //! - **Bandwidth.** `ALLTERNIT_FILES_UPLOAD_KBPS` (KiB/s, unset or 0 = no limit)
 //!   paces every byte this runtime pushes to another computer: replica blobs and
 //!   cross-computer copies share one budget.
@@ -154,7 +158,10 @@ impl HttpTarget {
         let body: Option<ErrorBody> = resp.json().await.ok();
         let code = body.as_ref().map(|b| b.code).unwrap_or(ErrorCode::Internal);
         let msg = body.map(|b| b.message).unwrap_or_else(|| format!("HTTP {status}"));
-        if status.as_u16() == 503 || matches!(code, ErrorCode::Asleep | ErrorCode::Offline | ErrorCode::Waking) {
+        // `wake_consent_required`: the relay saw the host go to sleep mid-pass. Never asked for, never woken.
+        if status.as_u16() == 503
+            || matches!(code, ErrorCode::Asleep | ErrorCode::Offline | ErrorCode::Waking | ErrorCode::WakeConsentRequired)
+        {
             Err(TargetError::Unavailable(msg))
         } else {
             Err(TargetError::Refused(code, msg))
@@ -257,11 +264,23 @@ fn locate<'a>(v: &Inner, rt: &'a Handle, replica_id: &str) -> Result<Dest<'a>, F
         if let Some(base) = row.host_base_url {
             return Ok(Dest::Http { target: HttpTarget::new(&base), rt, replica_id: replica_id.to_string() });
         }
+        // Registered without an address: a relay-only host (a cloud computer).
+        if row.replica.host_device_id != v.cfg.computer_id {
+            let base = peer_base(&row.replica.host_device_id);
+            return Ok(Dest::Http { target: HttpTarget::new(&base), rt, replica_id: replica_id.to_string() });
+        }
     }
     if replicas::get(&c, replica_id, Role::Host)?.is_some() {
         return Ok(Dest::Local(HostStore::open(v.cfg.data_dir.join("replica-host").join(replica_id))?));
     }
     Err(ApiError::new(ErrorCode::NotFound, "This computer does not know where that replica is.").into())
+}
+
+/// cloud-api's no-wake peer relay to `host_device_id`. [`HttpTarget`] appends
+/// `/replicas/<id>/...`, which cloud-api forwards to the host's
+/// `/api/v1/files/v2/replicas/<id>/...` only while the host is connected.
+pub(crate) fn peer_base(host_device_id: &str) -> String {
+    format!("{}/api/v1/computer-files/peer/{}", crate::phone_sync::cloud_base(), urlencoding::encode(host_device_id))
 }
 
 /// The principal replication, restore and the snapshot writer act as on this computer.

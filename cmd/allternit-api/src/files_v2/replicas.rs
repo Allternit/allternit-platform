@@ -5,7 +5,9 @@
 //!   derived from (source, root, host) (`replica::replica_id`), so the client
 //!   sends the same body to the host and to the source and both agree without
 //!   talking. On the host it opens an empty sealed store; on the source it records
-//!   where to push (`host_base_url`, loopback or mesh).
+//!   where to push (`host_base_url`, loopback or mesh). Without `host_base_url`
+//!   the host is relay-only (a cloud computer) and the source pushes through
+//!   cloud-api's no-wake peer relay (`sync::peer_base`).
 //! - **Host role.** `PUT/GET /replicas/:id/blobs/:locator`, `POST
 //!   /replicas/:id/have-need`, `PUT/GET /replicas/:id/head`. The host keeps
 //!   ciphertext named by locator and checks only what it can without a key
@@ -311,9 +313,9 @@ async fn create(Extension(files): Files, _req: Req, body: Result<Json<CreateRepl
             if !root.policy.replica {
                 return Err(ApiError::forbidden("This folder's policy does not allow replicas.").into());
             }
-            if !is_host && base_url.is_none() {
-                return Err(ApiError::invalid("host_base_url is required on the source computer.").into());
-            }
+            // No host_base_url on another computer's replica: the host is
+            // reachable only through the cloud relay (a cloud computer), and
+            // passes go through cloud-api's peer relay (`sync::peer_base`).
             c.execute(
                 "INSERT INTO replicas(replica_id, role, source_computer_id, root_id, host_device_id, mode, state, host_base_url, created_at) \
                  VALUES(?1,'source',?2,?3,?4,?5,'syncing',?6,?7) \

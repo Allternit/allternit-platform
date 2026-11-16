@@ -151,7 +151,7 @@ export interface CreateReplicaRequest {
   root_id: RootId;
   host_device_id: DeviceId;
   mode: CreateReplicaRequestMode;
-  /** Send only to the source computer: the host's loopback or mesh URL prefix ending in /api/v1/files/v2 (from the host's endpoints). The source pushes sealed chunks there with its runtime device token. Never a relay URL. */
+  /** Send only to the source computer: the host's loopback or mesh URL prefix ending in /api/v1/files/v2 (from the host's endpoints). The source pushes sealed chunks there with its runtime device token. Never a relay URL. Leave it out for a host reachable only through the cloud relay (a cloud computer, endpoints host cloud_computer): the source then pushes through cloud-api's no-wake peer relay (/api/v1/computer-files/peer/:host_device_id/replicas/...), which forwards only while the host is already awake. */
   host_base_url?: string;
 }
 
