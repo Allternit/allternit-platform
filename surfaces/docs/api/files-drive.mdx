@@ -7,7 +7,7 @@ description: 'Files drive protocol v2 (files/2): browse, read, write and sync th
 
 The Files drive serves the files on one computer to the owner's other devices. Every request names roots and items by opaque ID, never by path. Writes carry the revision the client last saw, so a stale write becomes a conflict copy instead of an overwrite. Big files move as content-defined chunks that resume after a dropped connection.
 
-The full contract lives in the platform repo at `contracts/files-drive/SPEC.md`, with JSON schemas in `contracts/files-drive/schema/` and generated Rust, TypeScript, Swift and Kotlin types. This page covers the **runtime** side: the routes `allternit-api` answers on the computer that owns the files. The cloud-api routes (wake consent, endpoints, shares and the guest gateway) are documented with their own release.
+The full contract lives in the platform repo at `contracts/files-drive/SPEC.md`, with JSON schemas in `contracts/files-drive/schema/` and generated Rust, TypeScript, Swift and Kotlin types. This page covers the **runtime** side: the routes `allternit-api` answers on the computer that owns the files, plus the cloud-api sharing routes and guest gateway in [Sharing and the guest gateway](#sharing-and-the-guest-gateway). The other cloud-api routes (wake consent, endpoints) are documented with their own release.
 
 <Note>
 The Files drive ships dark. On the runtime it is off unless the process runs with `ALLTERNIT_FILES_DRIVE=1`. While it is off, every route answers `403 feature_disabled` and nothing is created on disk. The per-user `files_drive` flag is held by cloud-api.
@@ -29,6 +29,7 @@ Requests go through the platform auth middleware like every other runtime route.
 |---|---|---|
 | `owner` | the signed-in user, no device header | every root |
 | `own_device` | the owner's token plus `X-Allternit-Device-Id` | every root; pins are per device |
+| `guest` | `Authorization: Files-Guest <token>`, sent only by the cloud-api gateway | one shared folder or file, one role |
 
 A request replayed by the relay (it carries `x-allternit-relayed`), forwarded by a proxy, or sent from a non-loopback peer is a **relayed caller**. Relayed callers reach registered roots only, which is all v2 exposes, and a folder they add starts with sharing and agent access turned off.
 
@@ -159,14 +160,70 @@ Every error is an `ErrorBody`: `{error, code, message}` plus Files fields (`curr
 | HTTP | Codes |
 |---|---|
 | 400 | `invalid_request`, `invalid_name`, `manifest_invalid`, `chunk_hash_mismatch` |
-| 401 | `unauthorized` |
-| 403 | `forbidden`, `feature_disabled`, `scope_violation`, `protected_root_locked` |
+| 401 | `unauthorized`, `passcode_required`, `passcode_invalid` |
+| 403 | `forbidden`, `feature_disabled`, `scope_violation`, `protected_root_locked`, `guest_wake_not_allowed` |
 | 404 | `not_found`, `root_not_found`, `upload_session_not_found` |
 | 409 | `already_exists`, `rev_mismatch`, `chunk_missing` |
-| 410 | `upload_session_expired`, `cursor_expired` |
+| 410 | `share_expired`, `share_revoked`, `upload_session_expired`, `cursor_expired` |
 | 413 | `payload_too_large` |
 | 422 | `integrity_failed` |
+| 429 | `rate_limited` |
+| 503 | `asleep`, `waking` |
+| 507 | `quota_exceeded` |
 | 501 | `unsupported` |
 | 500 | `internal` |
 
 The full table, including the cloud-api and guest codes, is in section 16 of `contracts/files-drive/SPEC.md`.
+
+## Sharing and the guest gateway
+
+A share gives one folder or file to someone without an account, with one role: `view_download`, `comment`, `edit` or `upload_only`. User guide: [Share a folder from your computer](/guides/files-sharing).
+
+Guests are checked twice on every request. cloud-api checks the token and the share's state, then relays to the owner's runtime, which checks the scope again.
+
+### Owner routes (cloud-api)
+
+Each needs the owner's session. `{computer_id}` is the runtime device id; another user's id answers `404 not_found`. All answer `403 feature_disabled` while the owner's `files_drive` flag is off or no signing key is configured.
+
+| Method and path | Body | Answer |
+|---|---|---|
+| `POST /api/v1/computer-files/{computer_id}/shares` | `CreateShareRequest` | `ShareResponse` |
+| `GET /api/v1/computer-files/{computer_id}/shares` | | `SharesResponse` (turned-off links included, with `revoked_at`) |
+| `DELETE /api/v1/computer-files/shares/{share_id}` | | `204`. The next guest request fails with `410 share_revoked`. |
+| `DELETE /api/v1/computer-files/shares/{share_id}/guests/{guest_id}` | | `204`. Stops that guest only. |
+| `GET /api/v1/computer-files/shares/{share_id}/access` | | `ShareAccess[]`, newest first, at most 500 |
+
+Creating a share asks the computer to confirm the item, that it is in `root_id`, and that the root is shareable. A sleeping computer answers `503 asleep`; creating a share never wakes it. `passcode` (4 to 64 characters) is stored as a PBKDF2-SHA256 hash. `invite_emails` is accepted and not sent.
+
+```bash
+curl -X POST https://api.allternit.com/api/v1/computer-files/$COMPUTER_ID/shares \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"root_id":"rt_…","item_id":"it_…","role":"view_download","expires_at":"2026-11-22T14:00:00Z","passcode":"4417","guest_wake":false}'
+```
+
+### Public routes (cloud-api)
+
+| Method and path | Body | Answer |
+|---|---|---|
+| `GET /api/v1/computer-files/token-keys` | | `{keys: [{kid, alg: "Ed25519", public_key}]}` |
+| `GET /api/v1/files-gateway/summary?link=…` | | `ShareSummary`: folder name, owner display name, role, expiry, `can_wake`, `computer_state` |
+| `POST /api/v1/files-gateway/redeem` | `GuestRedeemRequest` | `GuestSessionResponse` with an `fgt1` token |
+| any `/api/v1/files-gateway/v2/...` | as the runtime route | as the runtime route |
+
+- **Redeem.** A link with a passcode answers `401 passcode_required` without one and `401 passcode_invalid` (with `retry_after_s: 30`) for a wrong one. Ten wrong passcodes in 15 minutes answer `429 rate_limited`. A token lives at most 1 hour and never past the share's `expires_at`. Sending a still-valid token in `Authorization: Files-Guest` on redeem renews it as the same guest without the passcode.
+- **Token.** `fgt1.<base64url claims>.<base64url Ed25519 signature over "fgt1." + claims>`. The claims are `GuestCapabilityClaims` (`share_id`, `guest_id`, `computer_id`, `root_id`, `item_id`, `role`, `iat`, `exp`, `kid`). Runtimes verify it offline with the key from `token-keys`.
+- **Gateway.** Send the token as `Authorization: Files-Guest <token>` and use the runtime paths below `/api/v1/files-gateway/v2/`. Open to guests: `GET ping`, `GET whoami`, `GET roots/{root_id}/list`, `GET items/{item_id}`, `GET items/{item_id}/content`, `GET items/{item_id}/comments`, `POST comments`, `PUT roots/{root_id}/content`, `POST mkdir`, and the upload session routes. Everything else answers `403 forbidden`. `upload_only` cannot list, stat or download (`403 forbidden`, "This link only allows uploads.").
+- **Every request** checks the signature, `exp`, whether the share or guest was turned off (`410 share_revoked`), the share's expiry (`410 share_expired`), the computer, and the role.
+- **Sleeping computer.** A guest never wakes it: the answer is `403 guest_wake_not_allowed` with `computer_state: asleep`. With `guest_wake: true` the gateway starts a wake and answers `503 waking` with `retry_after_s`. An `upload_only` small write into the shared folder itself is kept in the owner's R2 space and answers `202` with a `QueuedDrop` (`r2_key` = `files-drops/{computer_id}/{drop_id}`), up to 100 waiting per share.
+- **Audit.** Every guest access, allowed or denied, writes a `ShareAccess` row. The runtime also emits `files.share.accessed`.
+
+### On the runtime
+
+The runtime accepts `Files-Guest` only on `/api/v1/files/v2/*`. It verifies the token offline with cloud-api's public key (`ALLTERNIT_FILES_TOKEN_KEYS_URL`, else `ALLTERNIT_CLOUD_API_URL` plus `/api/v1/computer-files/token-keys`), cached for an hour and refetched when a token names an unknown `kid`. Then on every request: `computer_id` must be this computer, the item must be the shared item or inside it, the root must be shareable and not protected, and the role must allow the route. A guest gets `principal.kind: guest`, its role's permissions on each item, and no `pinned_on` or local paths. An upload session can be used only by the guest that opened it.
+
+| Setting | Where | Meaning |
+|---|---|---|
+| `ALLTERNIT_FILES_TOKEN_SEED` | cloud-api | base64 32-byte Ed25519 seed from the secret store. Unset: sharing answers `feature_disabled`. |
+| `ALLTERNIT_FILES_DRIVE_ENABLED`, `ALLTERNIT_FILES_DRIVE_USER_IDS` | cloud-api | the `files_drive` flag: everyone, or a comma-separated list of user ids (admins always) |
+| `ALLTERNIT_FILES_SHARE_BASE_URL` | cloud-api | the host in `link_url` (default `https://ai.allternit.com`) |
+| `ALLTERNIT_FILES_TOKEN_KEYS_URL` | runtime | where to fetch the public key |

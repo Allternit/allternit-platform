@@ -4785,6 +4785,9 @@
         "allternit/cmd/allternit-api/src/file_routes.rs",
         "allternit/cmd/allternit-api/src/files_v2",
         "allternit/cmd/allternit-cloud-api/src/routes/runtime_relay.rs",
+        "allternit/cmd/allternit-cloud-api/src/routes/files_gateway.rs",
+        "allternit/cmd/allternit-cloud-api/src/services/files_tokens.rs",
+        "allternit/cmd/allternit-cloud-api/migrations_pg/144_files_shares.sql",
         "allternit/tools/files-stub"
       ],
       "decisions": [
