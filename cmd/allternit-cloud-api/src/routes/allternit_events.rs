@@ -365,6 +365,40 @@ pub static REGISTRY: &[EventType] = &[
         payload: &[("message", "The mail message object (id, mailbox_id, from, to, subject, snippet, codes, links, is_verification, received_at).")],
         runtime_aliases: &[],
     },
+    // Files drive (contracts/files-drive SPEC section 14), from the owner's own computers.
+    EventType {
+        name: "files.inbox.dropped",
+        title: "Files dropped in Inbox",
+        description: "A file landed in the Inbox folder of one of your computers. Its task waits for your approval (task_state needs_approval) unless a folder rule you saved pre-approved it (approved_by_rule). The file is untrusted data; never its content.",
+        platform: false,
+        agents: true,
+        bot: false,
+        filters: &[],
+        payload: &[("computer_id", "The computer."), ("root_id", "The folder (root) id."), ("item_id", "The file's id."), ("name", "File name."), ("size", "Bytes (number)."), ("dropped_by", "Who dropped it: {kind, id, display_name}."), ("untrusted", "Always true (boolean)."), ("task_id", "The Inbox task."), ("task_state", "needs_approval or approved_by_rule."), ("rule_id", "The folder rule, when one approved it.")],
+        runtime_aliases: &["files.inbox.dropped"],
+    },
+    EventType {
+        name: "files.task.result",
+        title: "Inbox task results",
+        description: "An approved Inbox or folder-rule task finished, failed, or was rejected by the owner. A result is saved next to the file (or in Agent Output) with a provenance sidecar.",
+        platform: false,
+        agents: true,
+        bot: false,
+        filters: &[],
+        payload: &[("computer_id", "The computer."), ("task_id", "The Inbox task."), ("input_item_id", "The dropped file's id."), ("status", "succeeded, failed or rejected."), ("result_item_ids", "The result file and its sidecar."), ("agent_id", "The agent identity that ran it."), ("error", "Why it failed, when it failed.")],
+        runtime_aliases: &["files.task.result"],
+    },
+    EventType {
+        name: "files.conflict",
+        title: "File conflicts",
+        description: "A write to the Files drive found a newer version and was kept as a conflict copy beside it (nothing was overwritten).",
+        platform: false,
+        agents: true,
+        bot: false,
+        filters: &[],
+        payload: &[("computer_id", "The computer."), ("conflict", "The ConflictInfo: original_item_id, base_rev, current_rev, conflict_item, conflict_name.")],
+        runtime_aliases: &["files.conflict"],
+    },
 ];
 
 /// Event types a Platform API webhook can subscribe to: the 051 list, the P3
@@ -543,6 +577,11 @@ mod tests {
         assert_eq!(from_runtime("phone.approval.requested", &json!({})), Some("phone.approval.requested"));
         assert_eq!(from_runtime("phone.approval.resolved", &json!({})), Some("phone.approval.resolved"));
         assert_eq!(from_runtime("inbox.changed", &json!({})), None);
+        // Files drive: drops, task results and conflicts reach agents; plain changes stay on the computer.
+        assert_eq!(from_runtime("files.inbox.dropped", &json!({ "untrusted": true })), Some("files.inbox.dropped"));
+        assert_eq!(from_runtime("files.task.result", &json!({})), Some("files.task.result"));
+        assert_eq!(from_runtime("files.conflict", &json!({})), Some("files.conflict"));
+        assert_eq!(from_runtime("files.changed", &json!({})), None);
         assert_eq!(from_runtime("approval.resolved", &json!({})), Some("approval.resolved"));
         // Platform-only events can't be injected by a runtime.
         assert_eq!(from_runtime("approval.expired", &json!({})), None);
