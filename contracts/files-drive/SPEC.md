@@ -89,6 +89,11 @@ Body limits on the runtime: axum's default body limit is 2 MB, so the chunk and 
 | `POST /api/v1/computer-files/:computer_id/wake-consent` | `WakeConsentRequest` | `WakeConsentResponse` |
 | `GET` / `PUT /api/v1/computer-files/:computer_id/wake-settings` | `UpdateWakeSettingsRequest` | `WakeSettings` |
 | `GET /api/v1/computer-files/:computer_id/storage` | | `StorageDiscovery` (last heartbeat report) |
+| `GET /api/v1/computer-files/:computer_id/placement?root_id=` | | `PlacementResponse` (where to keep a replica of that root, section 10) |
+| `GET` / `PUT /api/v1/computer-files/peer/:host_device_id/replicas/:replica_id/head`, `POST …/have-need`, `GET` / `PUT …/blobs/:locator` | the replica host routes' bodies | the host's answer, raw (runtime-to-runtime relay, runtime device token, section 10) |
+| `GET /api/v1/computer-files/drops` | | `QueuedDropsResponse` (signed by the computer, like its heartbeat) |
+| `GET /api/v1/computer-files/drops/:drop_id/content` | | the drop's bytes (signed by the computer) |
+| `POST /api/v1/computer-files/drops/:drop_id/ack` | `QueuedDropAck` | 204 (signed by the computer; deletes the R2 copy) |
 | `POST /api/v1/computer-files/:computer_id/shares` | `CreateShareRequest` | `ShareResponse` |
 | `GET /api/v1/computer-files/:computer_id/shares` | | `SharesResponse` |
 | `DELETE /api/v1/computer-files/shares/:share_id` | | 204 (revoke; applies on the guest's next request) |
@@ -224,7 +229,7 @@ Today `connect_or_wake_runtime` (`runtime_relay.rs`) wakes a stopped computer on
    - `never`: `wake_denied`.
    It returns `{ticket, expires_at, computer_state: waking|awake, estimated_wake_s}`. Requests carrying the ticket wait for the runtime (up to the relay's 30 s wake wait) instead of failing.
 5. **The idle timer.** The consent call is a user action, not Files traffic. It records exactly one activity touch at wake time. This is needed because the free-tier sleep sweep uses `COALESCE(last_activity_at, last_started_at, created_at)` (`provisioning_free.rs`): an old `last_activity_at` would otherwise put the computer back to sleep right after the wake. A transfer that outlasts the idle window asks for a new ticket (silently under `auto`), which records one more touch. Nothing else in Files resets idle.
-6. **Guests** never wake the owner's computer unless the share has `guest_wake: true` (`guest_wake_not_allowed`). An `upload_only` drop to a sleeping computer is stored in the owner's own R2 bucket as a `QueuedDrop` and pulled into Inbox on the next wake.
+6. **Guests** never wake the owner's computer unless the share has `guest_wake: true` (`guest_wake_not_allowed`). An `upload_only` drop to a sleeping computer is stored in the owner's own R2 bucket as a `QueuedDrop` and pulled into Inbox on the next wake. About 20 s after the runtime starts, and every 5 minutes after that, the computer lists its drops (`GET /computer-files/drops`, signed like its heartbeat). It checks each one's size and blake3 `content_hash`; a mismatch is acked `rejected` and never written. Each good drop is written into the **Inbox root** by the guest (`PrincipalKind::guest`, keep-both on a name clash). Leading dots are removed from the name, and a name ending in `.provenance.json` gets `.dropped` added. The drop then becomes an untrusted `needs_approval` task like any other Inbox drop (section 7). After that the runtime acks the drop `delivered` with the item id, and cloud-api deletes the R2 copy. The runtime keeps delivered drop ids, so a lost ack is sent again without writing a second copy.
 
 Errors: `asleep` (no snapshot yet), `waking` (with `retry_after_s`), `offline` (an own device that is not reachable; it cannot be woken).
 
@@ -252,9 +257,19 @@ Clients pick the source of an answer in this order:
 
 Only step 3 with a wake ticket ever wakes a computer. Replication itself never wakes one: a replica catches up the next time the primary is awake for another reason.
 
+**Replica hosts reachable only through the relay.** A cloud computer is relay only, so it can't be pushed to over the mesh. Register it as a replica host on the source computer without `host_base_url`. The source then pushes through cloud-api's peer relay, `/api/v1/computer-files/peer/:host_device_id/replicas/:replica_id/{have-need,head,blobs/:locator}`, with its runtime device token, the same token it sends a host over the mesh. cloud-api checks that the host belongs to the same user and forwards only the replica host routes, only while the host is already connected. It never wakes the host or the source, and it doesn't touch either idle clock, because the relayed path is under `/api/v1/files/v2/`. An asleep host answers `503 asleep`, and the replica stays `behind` until both computers are on.
+
+**Placement.** `GET /computer-files/:computer_id/placement?root_id=` ranks the user's other computers that sent a storage report (section 15). The rules (plan D16) are explainable and free; no model picks the device, and the user confirms the pick:
+- **Capacity.** The freest volume, capped by the host's replica capacity, must fit the root's bytes plus 10%.
+- **Sensitivity.** A `protected` root never goes to a cloud computer. A root whose policy has `replica: false` is refused (`forbidden`).
+- **Availability.** Online now ranks above asleep (a cloud computer catches up when it is next on), which ranks above offline. A report older than 7 days isn't eligible.
+- **Other rules.** A computer with hosting turned off isn't eligible. A computer whose only disk is removable ranks lower.
+
+Every option carries one plain `reason`. Ineligible options come last with `score: 0`.
+
 ## 11. Asleep snapshot
 
-The runtime writes file names, sizes and revisions (never contents) to the **user's own R2 bucket**, the same place and trust class as files the user uploads. It writes only while it is awake: on sleep notice, and at most every 5 minutes while changes are pending.
+The runtime writes file names, sizes and revisions (never contents) to the **user's own R2 bucket**, the same place and trust class as files the user uploads. It writes only while it is awake: on sleep notice, and at most every 5 minutes while changes are pending. In allternit-api the sleep notice is SIGTERM, which is what a cloud computer being stopped or Desktop quitting sends. The write gets a 5 s budget. The interval is `ALLTERNIT_FILES_SNAPSHOT_EVERY_S` (default 300). A pass sends the manifest only when a root or a cursor changed, then only the root files whose cursor moved, so an unchanged drive sends nothing.
 
 ```
 files-snapshots/<computer_id>/v1/manifest.json          SnapshotManifest (root list)
@@ -264,6 +279,8 @@ files-snapshots/<computer_id>/v1/roots/<root_id>.json   SnapshotRootFile (items 
 **Decided (Eoj 2026-11-15): plain names.** v2 writers always write `encryption: "none"` and `names_encrypted: false`. The format keeps `names_encrypted`, `ciphertext`, `nonce` and `key_id` (a reference to the Files key in section 13, snapshot subkey) as **reserved, not used in v2**, so encrypted names can be added later without a format break. A v2 reader that meets `names_encrypted: true` shows the folder as "names unavailable" instead of failing.
 
 Snapshots exclude roots whose policy is `protected` (Memory Drive), and never include `path_hint` or local paths.
+
+**How it gets to R2.** The runtime never holds R2 credentials. It sends the files through cloud-api, signed like the presence heartbeat (`runtime_events` signature headers): `PUT /api/v1/computer-files/snapshot/manifest` (`SnapshotManifest`, at most 1 MiB), then `PUT /api/v1/computer-files/snapshot/roots/:root_id` (`SnapshotRootFile`, at most 8 MiB) for each root. cloud-api stores them under the keys above in the user-files bucket, refuses a manifest for another computer, drops `protected` roots and `path_hint`, and refuses a root file for a root the stored manifest does not list. While the computer has no relay connection, the relay answers `roots`, `list`, `stat`, `changes` (empty at the snapshot's cursor, `reset_required` for any other cursor) and name `search` from these files (section 9 item 2). The live change-feed socket is not offered for a sleeping computer; clients poll `changes`.
 
 ## 12. Scoping (same rules as the legacy routes)
 
@@ -305,7 +322,7 @@ Published on the existing events system, all with `event_id`, `at`, `computer_id
 
 ## 15. Storage discovery
 
-The runtime reports `StorageDiscovery` (volumes with kind, total and free bytes, removable, encrypted; bytes per root; replica-host capacity) in its heartbeat. cloud-api keeps the last report and serves it while the computer sleeps. Smart placement and the replica picker read it. Heartbeats do not count as activity.
+The runtime reports `StorageDiscovery` (volumes with kind, total and free bytes, removable, encrypted; bytes per root; replica-host capacity) in its presence heartbeat (`POST /api/v1/runtime-presence/heartbeat`, key `filesStorage`; cloud-api stores it under the signing runtime's id, whatever `computer_id` says). cloud-api keeps the last report and serves it while the computer sleeps. Smart placement and the replica picker read it. Heartbeats do not count as activity.
 
 ## 16. Errors
 

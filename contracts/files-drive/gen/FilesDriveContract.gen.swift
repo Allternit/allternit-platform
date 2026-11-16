@@ -364,7 +364,7 @@ public struct CreateReplicaRequest: Codable, Hashable, Sendable {
     public var rootId: RootId
     public var hostDeviceId: DeviceId
     public var mode: CreateReplicaRequestMode
-    /// Send only to the source computer: the host's loopback or mesh URL prefix ending in /api/v1/files/v2 (from the host's endpoints). The source pushes sealed chunks there with its runtime device token. Never a relay URL.
+    /// Send only to the source computer: the host's loopback or mesh URL prefix ending in /api/v1/files/v2 (from the host's endpoints). The source pushes sealed chunks there with its runtime device token. Never a relay URL. Leave it out for a host reachable only through the cloud relay (a cloud computer, endpoints host cloud_computer): the source then pushes through cloud-api's no-wake peer relay (/api/v1/computer-files/peer/:host_device_id/replicas/...), which forwards only while the host is already awake.
     public var hostBaseUrl: String?
 
     public init(sourceComputerId: ComputerId, rootId: RootId, hostDeviceId: DeviceId, mode: CreateReplicaRequestMode, hostBaseUrl: String? = nil) {
@@ -1589,6 +1589,43 @@ public struct QueuedDrop: Codable, Hashable, Sendable {
         case r2Key = "r2_key"
         case receivedAt = "received_at"
         case state
+    }
+}
+
+/// POST /api/v1/computer-files/drops/:drop_id/ack (runtime-signed). delivered: the file is in Inbox as item_id; rejected: it failed its size or content_hash check, or its name could not be used. Either way cloud-api deletes the R2 copy.
+public struct QueuedDropAck: Codable, Hashable, Sendable {
+    public var state: QueuedDropAckState
+    public var itemId: ItemId?
+    public var reason: String?
+
+    public init(state: QueuedDropAckState, itemId: ItemId? = nil, reason: String? = nil) {
+        self.state = state
+        self.itemId = itemId
+        self.reason = reason
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case state
+        case itemId = "item_id"
+        case reason
+    }
+}
+
+public enum QueuedDropAckState: String, Codable, Hashable, Sendable, CaseIterable {
+    case delivered = "delivered"
+    case rejected = "rejected"
+}
+
+/// GET /api/v1/computer-files/drops, signed by the computer itself (like its presence heartbeat): the drops cloud-api kept while it slept, oldest first, at most 100. The runtime pulls each one into its Inbox root as an untrusted file from that guest, then acks it.
+public struct QueuedDropsResponse: Codable, Hashable, Sendable {
+    public var drops: [QueuedDrop]
+
+    public init(drops: [QueuedDrop]) {
+        self.drops = drops
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case drops
     }
 }
 

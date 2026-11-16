@@ -109,14 +109,35 @@ A relayed caller may not turn sharing or agent access on, or protection off, wit
 | `GET` | `/storage` | | `StorageDiscovery` |
 | `GET` | `/items/{item_id}/comments` | | `Comment` list |
 | `POST` | `/comments` | `CommentCreateRequest` | `Comment` |
-| `GET`, `POST` | `/replicas` | | `501 unsupported` on this release |
-| `POST` | `/replicas/restore` | | `501 unsupported` on this release |
+| `GET` | `/replicas` | | `ReplicasResponse` |
+| `POST` | `/replicas` | `CreateReplicaRequest` | `ReplicasResponse` (send the same body to the host and to the source) |
+| `DELETE` | `/replicas/{replica_id}` | | 204 |
+| `POST` | `/replicas/{replica_id}/sync` | | `JobRef` (one pass now) |
+| `POST` | `/replicas/restore` | `ReplicaRestoreRequest` | `ReplicaRestoreReport` (every hash checked) |
+| `GET`, `PUT` | `/replicas/key` | `KeyEnvelope` on `PUT` | `KeyShareRequest` on `GET`, 204 on `PUT` |
+| `POST` | `/replicas/{replica_id}/have-need` | `HaveNeedRequest` | `HaveNeedResponse` (host role) |
+| `GET`, `PUT` | `/replicas/{replica_id}/head` | sealed head | host role |
+| `GET`, `PUT` | `/replicas/{replica_id}/blobs/{locator}` | sealed blob | host role |
 
 What this release does not do yet, each with a clear error:
 
 - `POST /search` supports `mode: "name"` only. `full_text` and `semantic` return `501 unsupported`.
-- `POST /copy` to another computer (`dest_computer_id` set to a different computer) returns `501 unsupported`. Copies on one computer finish in the request, so `GET /jobs/{job_id}` always returns `404 not_found`.
-- Replicas return `501 unsupported`.
+
+`POST /copy` to another computer (`dest_computer_id` set to a different computer) runs as a job: the answer carries a `JobRef`, and `GET /jobs/{job_id}` follows it.
+
+### Replicas
+
+A replica is a sealed copy of one root on another of the owner's computers. The host holds ciphertext only. Replication never wakes a computer: a pass runs only while the source is already on, and a host that is asleep leaves the replica `behind`. Register the replica on the host and on the source with the same `CreateReplicaRequest`. On the source, `host_base_url` is the host's loopback or mesh address. Leave it out for a cloud computer, which is reachable only through the relay. The source then pushes through cloud-api's [peer relay](/api/files-drive-cloud#peer-relay), which never wakes anything. `GET /api/v1/computer-files/{id}/placement` in cloud-api suggests a host. `ALLTERNIT_FILES_UPLOAD_KBPS` limits upload speed, and `ALLTERNIT_FILES_REPLICA_EVERY_S` sets how often a pass runs (default 300).
+
+### What the runtime sends to cloud-api
+
+While the drive is on and the computer is paired, the runtime also:
+
+- adds its `StorageDiscovery` to the presence heartbeat as `filesStorage`;
+- writes the [asleep snapshot](/api/files-drive-cloud#how-the-snapshot-gets-there) on the sleep notice (SIGTERM) and at most every 5 minutes while changes are pending;
+- collects [guest drops kept while it slept](/api/files-drive-cloud#guest-drops-while-a-computer-sleeps) into Inbox.
+
+None of these count as activity.
 
 ## Writing files
 

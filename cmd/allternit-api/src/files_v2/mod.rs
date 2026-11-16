@@ -25,7 +25,15 @@
 //!   gateway. [`shares::gate`] verifies the token offline and the role per
 //!   route; [`Inner::guard`] and [`Inner::guard_item`] then hold the guest to
 //!   its shared item on every request (SPEC section 8, the second check).
+//! - **Asleep snapshot** (`snapshot.rs`): names, sizes and revisions of every
+//!   non-protected root go to cloud-api while awake, so a sleeping computer
+//!   still lists. **Queued drops** (`drops.rs`): guest drops cloud-api kept
+//!   while this computer slept land in Inbox as untrusted tasks on wake.
 
+mod cloud;
+mod drops;
+#[cfg(test)]
+mod drops_tests;
 mod errors;
 mod events;
 mod feed;
@@ -42,6 +50,9 @@ mod routes;
 pub mod routing;
 mod rules;
 pub(crate) mod shares;
+mod snapshot;
+#[cfg(test)]
+mod snapshot_tests;
 mod storage;
 mod sync;
 #[cfg(test)]
@@ -128,11 +139,24 @@ pub fn router<S: Clone + Send + Sync + 'static>(app_data_dir: &Path, db: DbHandl
     // replica passes only while this runtime runs anyway.
     sync::register_process(&files);
     sync::spawn_replicator(files.clone());
+    // Step 13: the asleep snapshot, written while awake (SPEC section 11).
+    snapshot::spawn(files.clone());
+    // Step 17: guest drops queued while this computer slept go to Inbox.
+    drops::spawn(files.clone());
     routes::routes(files)
 }
 
 pub use routes::routes;
 pub use sync::heartbeat_report;
+
+/// The presence heartbeat's key for [`heartbeat_report`] (SPEC section 15).
+pub const HEARTBEAT_KEY: &str = "filesStorage";
+
+/// The sleep notice (SIGTERM): write the asleep snapshot before the process
+/// goes, within a few seconds (SPEC section 11).
+pub async fn before_sleep() {
+    snapshot::before_sleep().await;
+}
 
 /// Shared state for every v2 route. The drive opens on first use.
 pub struct FilesV2 {

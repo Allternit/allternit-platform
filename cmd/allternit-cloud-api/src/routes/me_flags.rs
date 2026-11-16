@@ -121,10 +121,25 @@ fn with_features(mut flags: Value, user_id: &str) -> Value {
     );
     if let Some(map) = flags.get_mut("flags").and_then(Value::as_object_mut) {
         map.insert("meetings".to_string(), Value::Bool(meetings));
-        // Same check the sharing gateway makes on the owner.
-        map.insert("files_drive".to_string(), Value::Bool(super::files_gateway::files_drive_on(user_id)));
+        // The one Files drive check: the relay, wake consent, snapshot
+        // ingest, the sharing gateway and this answer all call it.
+        map.insert("files_drive".to_string(), Value::Bool(files_drive_on(user_id)));
     }
     flags
+}
+
+/// The owner's `files_drive` flag (Files drive plan D10): on for everyone
+/// with `ALLTERNIT_FILES_DRIVE_ENABLED`, else for the ids in
+/// `ALLTERNIT_FILES_DRIVE_USER_IDS`, and for admins. The only definition:
+/// `computer_files` (relay, wake consent, snapshot ingest, queued drops) and
+/// `files_gateway` (sharing) call this one.
+pub fn files_drive_on(user_id: &str) -> bool {
+    feature_on(
+        std::env::var("ALLTERNIT_FILES_DRIVE_ENABLED").ok().as_deref(),
+        std::env::var("ALLTERNIT_FILES_DRIVE_USER_IDS").ok().as_deref(),
+        user_id,
+        auth::is_admin_user(user_id),
+    )
 }
 
 /// A default-off server feature: on for everyone when `all` is truthy,

@@ -381,3 +381,80 @@ async fn a_pass_sends_no_wake_ticket_and_an_unreachable_host_leaves_the_replica_
     assert_eq!(listed.replicas[0].state, ReplicaState::Behind);
     assert_eq!(p.seen.lock().unwrap().len(), before, "nothing reached the sleeping host");
 }
+
+/// cloud-api's peer relay, faked at the network edge: forwards
+/// `/api/v1/computer-files/peer/<host>/replicas/...` to the host's
+/// `/api/v1/files/v2/replicas/...` while `awake`, else answers 503 `asleep`
+/// the way cloud-api does for a host with no relay connection.
+async fn fake_peer_relay(host: Router, awake: Arc<std::sync::atomic::AtomicBool>, seen: Arc<Mutex<Vec<String>>>) -> (String, tokio::task::JoinHandle<()>) {
+    use axum::extract::{Path as UrlPath, Request as AxReq};
+    use axum::response::IntoResponse;
+    let app = Router::new().route(
+        "/api/v1/computer-files/peer/:host/replicas/*rest",
+        axum::routing::any(move |UrlPath((host_id, rest)): UrlPath<(String, String)>, req: AxReq| {
+            let (host, awake, seen) = (host.clone(), awake.clone(), seen.clone());
+            async move {
+                assert!(req.headers().get("x-allternit-wake-ticket").is_none(), "replication never carries a wake ticket");
+                seen.lock().unwrap().push(format!("{} {host_id} {rest}", req.method()));
+                if !awake.load(std::sync::atomic::Ordering::SeqCst) {
+                    let body = json!({"code": "asleep", "message": "The computer is asleep.", "retryable": true});
+                    return (StatusCode::SERVICE_UNAVAILABLE, axum::Json(body)).into_response();
+                }
+                let (parts, body) = req.into_parts();
+                let mut b = Request::builder().method(parts.method).uri(format!("/api/v1/files/v2/replicas/{rest}"));
+                if let Some(ct) = parts.headers.get("content-type") {
+                    b = b.header("content-type", ct);
+                }
+                host.oneshot(b.body(body).unwrap()).await.unwrap().into_response()
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let handle = tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+    (base, handle)
+}
+
+/// Step 15: a cloud computer is relay-only (no mesh), so it is registered with
+/// no `host_base_url` and the source pushes through cloud-api's peer relay.
+/// While the host sleeps the pass records `behind`, never an error, and no
+/// request ever asks for a wake.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_relay_only_host_takes_a_replica_through_the_peer_relay_and_an_asleep_host_stays_behind() {
+    let source = node("rd_mac");
+    let host = node("rd_cloud");
+    give_key(&source, "rd_mac").await;
+    let inbox = source.inbox().await;
+    source.write(&inbox, "notes.txt", b"kept on the cloud computer, sealed".to_vec()).await;
+
+    let awake = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let (cloud, _server) = fake_peer_relay(host.app.clone(), awake.clone(), seen.clone()).await;
+    let _cloud_url = crate::test_helpers::cloud_url_env(Some(&cloud));
+
+    let create = json!({"source_computer_id": "rd_mac", "root_id": inbox.id, "host_device_id": "rd_cloud", "mode": "full"});
+    let on_host: ReplicasResponse = host.post("/replicas", create.clone()).await.typed();
+    // No host_base_url: accepted on the source (it used to be refused).
+    let on_source: ReplicasResponse = source.post("/replicas", create).await.typed();
+    let replica_id = on_host.replicas[0].replica_id.clone();
+    assert_eq!(replica_id, on_source.replicas[0].replica_id);
+
+    let job: JobRef = source.post(&format!("/replicas/{replica_id}/sync"), json!({})).await.typed();
+    assert_eq!(job.state, JobRefState::Done, "{job:?}");
+    let listed: ReplicasResponse = source.get("/replicas").await.typed();
+    assert_eq!(listed.replicas[0].state, ReplicaState::Current);
+    let hosted: ReplicasResponse = host.get("/replicas").await.typed();
+    assert_eq!(hosted.replicas[0].state, ReplicaState::Current);
+    let relayed = seen.lock().unwrap().clone();
+    assert!(relayed.iter().any(|r| r.starts_with("PUT rd_cloud ") && r.contains("/blobs/")), "{relayed:?}");
+    assert!(relayed.iter().any(|r| r == &format!("PUT rd_cloud {replica_id}/head")), "{relayed:?}");
+
+    // The host goes to sleep; a new file waits for it instead of waking it.
+    awake.store(false, std::sync::atomic::Ordering::SeqCst);
+    source.write(&inbox, "later.txt", b"written while the cloud computer slept".to_vec()).await;
+    let _ = source.post(&format!("/replicas/{replica_id}/sync"), json!({})).await;
+    let listed: ReplicasResponse = source.get("/replicas").await.typed();
+    assert_eq!(listed.replicas[0].state, ReplicaState::Behind, "an asleep host is behind, not an error");
+}

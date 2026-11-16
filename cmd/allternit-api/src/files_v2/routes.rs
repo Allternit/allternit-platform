@@ -70,7 +70,7 @@ pub fn routes<S: Clone + Send + Sync + 'static>(files: Arc<FilesV2>) -> Router<S
         .merge(super::inbox::routes())
         // Guests (`Files-Guest`) pass the token, computer, route and role
         // checks here before any handler runs. Inside the Extension layer,
-        // which it reads.
+        // which it reads. Every route merged above is covered.
         .layer(axum::middleware::from_fn(shares::gate))
         .layer(DefaultBodyLimit::max(BODY_LIMIT))
         .layer(Extension(files));
@@ -115,7 +115,8 @@ pub(crate) fn mutation_as(v: &Inner, req: &Req, m: &Mutation) -> Result<Mutation
     let Some(g) = &req.guest else { return mutation(v, m) };
     let root = v.drive.root(&m.item.root_id)?;
     // The event goes to the owner, so it carries the owner's permissions; the
-    // response carries the guest's.
+    // response carries the guest's. A guest's conflict copy is still a
+    // conflict on the owner's drive.
     if let Some(c) = &m.conflict {
         super::events::conflict(v, &c.to_info(permissions(&root, &c.conflict_item)));
     }

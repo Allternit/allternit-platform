@@ -4,7 +4,7 @@
 //! (which is awake when this computer is not) can tell the owner when a
 //! scheduled run is missed because this computer is asleep. It also carries the
 //! live agent sessions on this computer (`sessions`, contract C6/C7), and the
-//! Files drive's storage discovery and replicas (`files`, Files SPEC section 15).
+//! Files drive's storage discovery (`filesStorage`, Files SPEC section 15).
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -230,9 +230,9 @@ pub async fn beat_once(state: &AppState, sink: &dyn EventSink, cloud: &str) -> R
         .map_err(|e| e.to_string())?;
     body["sessions"] = live_sessions(&runtime_id).await;
     body["runtimeId"] = json!(runtime_id);
-    // Files drive (SPEC section 15): storage and replicas, kept by the cloud while this computer sleeps.
-    if let Some(files) = crate::files_v2::heartbeat_report().await {
-        body["files"] = files;
+    // Files drive (SPEC section 15): storage discovery, kept by the cloud while this computer sleeps.
+    if let Some(storage) = crate::files_v2::heartbeat_report().await {
+        body[crate::files_v2::HEARTBEAT_KEY] = storage;
     }
     let bytes = serde_json::to_vec(&body).map_err(|e| e.to_string())?;
     let headers = sign(&token, &owner, &runtime_id, &bytes);
@@ -269,9 +269,9 @@ async fn beat_and_reconcile(state: &AppState, cloud: &str) -> Result<bool, Strin
         .map_err(|e| e.to_string())?;
     body["sessions"] = live_sessions(&runtime_id).await;
     body["runtimeId"] = json!(runtime_id);
-    // Files drive (SPEC section 15): storage and replicas, kept by the cloud while this computer sleeps.
-    if let Some(files) = crate::files_v2::heartbeat_report().await {
-        body["files"] = files;
+    // Files drive (SPEC section 15): storage discovery, kept by the cloud while this computer sleeps.
+    if let Some(storage) = crate::files_v2::heartbeat_report().await {
+        body[crate::files_v2::HEARTBEAT_KEY] = storage;
     }
     let bytes = serde_json::to_vec(&body).map_err(|e| e.to_string())?;
     let mut req = crate::net_client::client().post(format!("{cloud}{HEARTBEAT_PATH}")).timeout(Duration::from_secs(20)).header("content-type", "application/json");

@@ -66,6 +66,7 @@ fn fixtures_round_trip() {
     round_trip::<PinResponse>("pin-response.json", include_str!("../../../../contracts/files-drive/fixtures/pin-response.json"));
     round_trip::<PinRequest>("pin.json", include_str!("../../../../contracts/files-drive/fixtures/pin.json"));
     round_trip::<PingResponse>("ping.json", include_str!("../../../../contracts/files-drive/fixtures/ping.json"));
+    round_trip::<QueuedDropAck>("queued-drop-ack.json", include_str!("../../../../contracts/files-drive/fixtures/queued-drop-ack.json"));
     round_trip::<EncryptedChunkHeader>("replica-chunk-header.json", include_str!("../../../../contracts/files-drive/fixtures/replica-chunk-header.json"));
     round_trip::<ReplicaRestoreReport>("replica-restore-ok.json", include_str!("../../../../contracts/files-drive/fixtures/replica-restore-ok.json"));
     round_trip::<ReplicaRestoreReport>("replica-restore-tampered.json", include_str!("../../../../contracts/files-drive/fixtures/replica-restore-tampered.json"));

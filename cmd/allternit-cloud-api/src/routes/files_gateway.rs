@@ -65,6 +65,7 @@ use chrono::{DateTime, SecondsFormat, TimeZone, Utc};
 use rand::RngCore;
 use serde::Deserialize;
 
+use crate::routes::me_flags::files_drive_on;
 use crate::routes::runtime_relay::{self, RelayRequest};
 use crate::services::files_tokens::{self, FilesTokenKey, TokenError, GUEST_TOKEN_MAX_SECS, GUEST_TOKEN_PREFIX};
 use crate::ApiState;
@@ -156,15 +157,6 @@ fn disabled() -> Response {
     files_error(ErrorCode::FeatureDisabled, "Sharing from the Files drive is not turned on.")
 }
 
-/// The owner's `files_drive` flag.
-pub fn files_drive_on(user_id: &str) -> bool {
-    crate::routes::me_flags::feature_on(
-        std::env::var("ALLTERNIT_FILES_DRIVE_ENABLED").ok().as_deref(),
-        std::env::var("ALLTERNIT_FILES_DRIVE_USER_IDS").ok().as_deref(),
-        user_id,
-        crate::auth::is_admin_user(user_id),
-    )
-}
 
 fn key() -> Result<&'static FilesTokenKey, Response> {
     files_tokens::token_key().ok_or_else(disabled)
@@ -1154,8 +1146,9 @@ async fn guest_wake(state: &ApiState, share: &ShareRow, claims: &GuestCapability
 }
 
 /// SPEC section 9.6: an `upload_only` small write to a sleeping computer is
-/// kept in the owner's R2 space as a `QueuedDrop`, pulled into the shared
-/// folder on the next wake.
+/// kept in the owner's R2 space as a `QueuedDrop`. The computer pulls it into
+/// its Inbox (untrusted, needs approval) on the next wake
+/// (`computer_files_drops`).
 async fn queue_drop(
     state: &ApiState,
     share: &ShareRow,

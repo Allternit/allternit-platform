@@ -151,7 +151,7 @@ export interface CreateReplicaRequest {
   root_id: RootId;
   host_device_id: DeviceId;
   mode: CreateReplicaRequestMode;
-  /** Send only to the source computer: the host's loopback or mesh URL prefix ending in /api/v1/files/v2 (from the host's endpoints). The source pushes sealed chunks there with its runtime device token. Never a relay URL. */
+  /** Send only to the source computer: the host's loopback or mesh URL prefix ending in /api/v1/files/v2 (from the host's endpoints). The source pushes sealed chunks there with its runtime device token. Never a relay URL. Leave it out for a host reachable only through the cloud relay (a cloud computer, endpoints host cloud_computer): the source then pushes through cloud-api's no-wake peer relay (/api/v1/computer-files/peer/:host_device_id/replicas/...), which forwards only while the host is already awake. */
   host_base_url?: string;
 }
 
@@ -619,6 +619,25 @@ export interface QueuedDrop {
   r2_key: string;
   received_at: Timestamp;
   state: QueuedDropState;
+}
+
+/**
+ * POST /api/v1/computer-files/drops/:drop_id/ack (runtime-signed). delivered: the file is in Inbox as item_id; rejected: it failed its size or content_hash check, or its name could not be used. Either way cloud-api deletes the R2 copy.
+ */
+export interface QueuedDropAck {
+  state: QueuedDropAckState;
+  item_id?: ItemId;
+  reason?: string;
+}
+
+export type QueuedDropAckState = "delivered" | "rejected";
+export const QUEUED_DROP_ACK_STATE_VALUES: readonly QueuedDropAckState[] = ["delivered", "rejected"];
+
+/**
+ * GET /api/v1/computer-files/drops, signed by the computer itself (like its presence heartbeat): the drops cloud-api kept while it slept, oldest first, at most 100. The runtime pulls each one into its Inbox root as an untrusted file from that guest, then acks it.
+ */
+export interface QueuedDropsResponse {
+  drops: QueuedDrop[];
 }
 
 export type QueuedDropState = "queued" | "delivered" | "rejected";
