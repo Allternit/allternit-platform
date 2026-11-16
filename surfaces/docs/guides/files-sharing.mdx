@@ -1,0 +1,84 @@
+---
+title: 'Share files'
+description: 'Share a folder or file from an Allternit computer with a link, set what guests can do, and take access back.'
+---
+
+You can share a folder or a file from one of your computers with someone who does not have an Allternit account. They get a link. What they can do depends on the role you pick.
+
+Sharing is part of the Files drive and rolls out behind the same account setting. See [Files drive](/guides/files-drive).
+
+## Make a link
+
+1. Open the folder or file in the Files tab and choose Share. One form opens.
+2. Optional: type a guest email, or several. Allternit then sends the invite. With no email, you get a link to send yourself.
+3. Pick what they can do (the role), when access ends (24 hours, 7 days, 30 days or until revoked), and whether to require a passcode. A passcode is 4 to 64 characters. You tell it to the guest yourself. It is not in the link or the invite.
+4. Choose whether the guest may wake your computer. It is off by default.
+5. Choose Create link, or Send invite when you typed an email, then Copy link.
+
+A box under the form, What this means, says in plain words what the link allows before you create it. A single file has no Upload only role, because there is nothing to upload into.
+
+**Let an agent process files in this folder** sits in the same form but is not part of the link. It changes the folder's setting for everyone, not just this link. Files a guest uploads are untrusted: each one waits for your approval unless you set a rule.
+
+You can only share a folder that has sharing turned on. If it is off, the form shows Allow sharing. A protected folder cannot be shared. The Shared folder has sharing on by default. Folders added from another device start with it off.
+
+## Roles
+
+| Role | What a guest can do |
+| --- | --- |
+| View and download | See the files in the shared folder and download them. |
+| Upload only | Drop files in. They cannot see what is in the folder. |
+| Edit | View, download, upload, rename and delete in the shared folder. |
+| Comment | View and download, and add comments. |
+
+A guest sees only the one folder or file you shared. They cannot reach the rest of the computer.
+
+## What the guest sees
+
+A guest opens the link at `ai.allternit.com/s/` followed by the link token. They do not need an account.
+
+- **Passcode.** If you set one, the page asks for it before anything opens. A wrong passcode shows "That passcode isn't right", and too many tries show "Too many tries. Wait a minute, then try again."
+- **Expired or revoked.** An expired link shows "This link has expired". A revoked link shows "This link was turned off". A link that was copied wrong shows "This link doesn't work".
+- **Sleeping computer.** The page says the computer is asleep and shows the last saved list. Downloads work when it is awake. If you allowed guest wake, a Wake it button appears. If not, the guest is told to try again later.
+- **Upload only.** The guest sees a drop area and no file list. Each file shows Sending, then Sent. If the computer sleeps, it shows "Sent, waiting for the computer". The file is safe in your storage and moves to Inbox when the computer wakes.
+- **Long visits.** A guest session lasts one hour. The page renews it a minute before it ends, so a long visit or a big download keeps working without asking for the passcode again.
+
+## Your links: Files tab and dashboard
+
+In the Files tab, the Versions, Trash and Sharing tabs sit next to Files. Sharing lists your links with their role, end date and guest count.
+
+Each link has Copy link and Revoke. Revoke takes two clicks: the first shows Keep and Revoke link, and the second turns the link off. Revoked and expired links move under Show ended links.
+
+The sharing dashboard has three tabs.
+
+- **Sharing.** Every link on this computer.
+- **Devices.** Whether the computer is awake, asleep or offline, when it may be woken (Ask first, Automatically or Never), storage by disk and folder, and replicas.
+- **Audit.** Every time a guest opened a link, listed, downloaded or uploaded, including what was refused.
+
+## Versions and trash
+
+Select a file in Files and choose Versions to see its earlier versions. Restore puts one back as the current file, and the version it replaced is kept too. The folder's setting decides how many versions are kept and for how long.
+
+Trash lists deleted files with who deleted them and how many days are left. Restore brings a file back. If another file now has its name, both are kept and the restored one gets a new name. The page tells you the name.
+
+If the computer is asleep, Versions and Trash show a Wake card instead of the list, because they need the computer awake.
+
+Two limits for now:
+
+- You cannot download an old version. You can only restore it.
+- You cannot empty the trash. Files leave it when their days run out.
+
+## Revoke access
+
+Revoking takes effect on the guest's next request. A page that was already open stops working the next time it asks for a file, and no new files are served. The link page then says the link was turned off. Revoke from the share dialog, the Sharing tab or the dashboard.
+
+## See who opened what
+
+The dashboard Audit tab lists guest activity: who opened the link, which file, when, and whether it was allowed or denied. Denied tries are recorded too.
+
+## What sharing does not do
+
+- A shared folder is not open to bots. Sharing and bot access are separate settings. A file a guest uploads is treated as untrusted and waits in Inbox for your approval.
+- A link grants access to whoever holds it, unless you set a passcode. Send it only to people you mean to give access.
+- Sharing does not change the Memory Drive.
+
+For the developer reference, see the [Files drive API](/api/files-drive).

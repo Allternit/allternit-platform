@@ -152,6 +152,8 @@
               "guides/code-linked-prs",
               "guides/motion",
               "guides/computers-and-apps",
+              "guides/files-drive",
+              "guides/files-sharing",
               "guides/phone-for-your-bot",
               "guides/phone-skills",
               "guides/phone-approvals",
@@ -794,6 +796,7 @@
                 "pages": [
                   "api/files",
                   "api/files-drive",
+                  "api/files-drive-runtime",
                   "api/workspace-files",
                   "api/webhooks",
                   "api/webhook-subscriptions",

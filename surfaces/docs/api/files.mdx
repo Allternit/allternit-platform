@@ -7,6 +7,8 @@ description: 'Upload, download and delete your files in private Allternit Cloud 
 
 Files you attach in Allternit are stored in the private R2 bucket `allternit-user-files` at `u/<userId>/<fileId>/<name>`. The cloud API never streams file bytes: it checks your plan, hands you a presigned URL, and verifies the result. All routes need a Clerk session and only ever touch your own files.
 
+This page covers cloud file storage and attachments. To browse and sync the files on your own computers (Inbox, Shared, Memory Drive and more), see the [Files drive API](/api/files-drive) and the [Files drive guide](/guides/files-drive). The two systems are separate: the Files drive keeps files on the computer that owns them.
+
 ## Plan limits
 
 | Plan | Total storage | Largest file |
