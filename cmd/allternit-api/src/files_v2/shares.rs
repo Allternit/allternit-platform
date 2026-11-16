@@ -105,9 +105,16 @@ pub struct GuestAuth {
 
 impl GuestAuth {
     pub fn from_env() -> Self {
+        // The explicit URL, else the paired cloud-api's, else production.
         let url = std::env::var(KEYS_URL_ENV)
             .ok()
             .filter(|v| !v.trim().is_empty())
+            .or_else(|| {
+                std::env::var("ALLTERNIT_CLOUD_API_URL")
+                    .ok()
+                    .filter(|v| !v.trim().is_empty())
+                    .map(|base| format!("{}/api/v1/computer-files/token-keys", base.trim().trim_end_matches('/')))
+            })
             .unwrap_or_else(|| DEFAULT_KEYS_URL.to_string());
         Self::build(Some(url), HashMap::new(), false)
     }
@@ -246,7 +253,6 @@ impl Op {
 #[derive(Clone, Debug)]
 pub(crate) struct Guest {
     pub claims: GuestCapabilityClaims,
-    pub op: Op,
 }
 
 impl Guest {
@@ -390,7 +396,7 @@ pub(crate) async fn gate(mut req: Request, next: Next) -> Response {
         files.share_accessed(&claims, action, item_id, Some(e.body.code.clone()));
         return e.into_response();
     }
-    let guest = Guest { claims: claims.clone(), op: op.expect("checked above") };
+    let guest = Guest { claims: claims.clone() };
     req.extensions_mut().insert(Arc::new(guest));
     let res = next.run(req).await;
     let (res, error) = error_code(res).await;
@@ -849,7 +855,7 @@ mod tests {
         other.guest_id = "gst_other".into();
         let b = mint(&other);
         let data = b"session bytes".to_vec();
-        let hash = blake3::hash(&data).to_hex().to_string();
+        let hash = allternit_files_engine::chunker::hash_bytes(&data);
         let create = json!({
             "root_id": t.root.id, "parent_id": t.shared, "name": "big.bin", "size": data.len(),
             "content_hash": hash, "chunker": {"algo": "fastcdc-v2020", "min": 262144, "avg": 1048576, "max": 4194304},

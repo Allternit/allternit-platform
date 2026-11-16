@@ -742,6 +742,13 @@ pub fn ensure_user_in_db(db: &DbHandle, user: &AuthUser) -> Result<Option<String
 // ─── Axum Middleware ────────────────────────────────────────────────────────
 
 /// Extract Bearer token from Authorization header
+/// A Files drive guest request: `Authorization: Files-Guest …` on a
+/// `/api/v1/files/v2/` path. See step 0 of [`auth_middleware`].
+fn is_files_guest_request(request: &Request) -> bool {
+    request.uri().path().starts_with("/api/v1/files/v2/")
+        && crate::files_v2::shares::has_guest_scheme(request.headers())
+}
+
 fn extract_bearer_token(headers: &HeaderMap) -> Option<String> {
     let auth_header = headers.get(axum::http::header::AUTHORIZATION)?;
     let auth_str = auth_header.to_str().ok()?;
@@ -926,6 +933,27 @@ pub async fn auth_middleware(
     mut request: Request,
     next: Next,
 ) -> Response {
+    // 0. Files drive guests (contracts/files-drive SPEC section 8): the
+    // cloud-api gateway relays a share-link guest's request with
+    // `Authorization: Files-Guest <fgt1 token>` and no user session. Only on
+    // `/api/v1/files/v2/*`, and with no signed-in user: the v2 router's
+    // `files_v2::shares::gate` verifies the Ed25519 token offline and refuses
+    // anything else, and every v2 handler then scopes the guest to its share.
+    if is_files_guest_request(&request) {
+        for name in [
+            USER_ID_HEADER,
+            USER_EMAIL_HEADER,
+            USER_NAME_HEADER,
+            "x-allternit-tenant-id",
+            ORGANIZATION_ID_HEADER,
+            ORGANIZATION_ROLE_HEADER,
+            ORGANIZATION_SLUG_HEADER,
+        ] {
+            request.headers_mut().remove(name);
+        }
+        return next.run(request).await;
+    }
+
     // 1. Desktop bootstrap shared-secret (signed desktop process or trusted peer).
     if let Some(mut user) = extract_desktop_bootstrap_user(request.headers(), &state.config) {
         match ensure_user_in_db(&state.db, &user) {
