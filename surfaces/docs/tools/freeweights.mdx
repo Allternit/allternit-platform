@@ -93,6 +93,26 @@ gizzi models verify Qwen/Qwen3-Embedding-0.6B
 
 `pull` accepts `--quant` and `--allow-unverified`, and exits with code 2 when the result is `unverified`. See [Models and providers](/cli/models#pull-and-verify-local-models).
 
+## Uploads
+
+Signed-in people can publish their own models to Freeweights. Community uploads are listed apart from the signed catalog: they are scanned for malware and unsafe file formats before anyone can download them, but Allternit does not review or sign them. A pull of a community repo shows that notice and ends as `unverified` unless you pass `--allow-unverified`.
+
+1. Create a key at [platform.allternit.com/api-keys](https://platform.allternit.com/api-keys?create=freeweights) with the `freeweights.write` scope. To limit a key to one repo, give it the repo id (`rp_...`) instead; the console builds the `freeweights.repo:<id>` scope for you. `?create=freeweights&repo=rp_...` opens the form with that repo filled in.
+2. Publish a folder:
+
+```bash
+export FREEWEIGHTS_TOKEN=alt_...
+gizzi models publish ./my-model eoj/my-model
+```
+
+`gizzi models publish` creates the repo if it is new, asks Freeweights which files go through Git LFS, uploads each file (in parts when it is large), and makes one commit. The repo shows as scanning until every file is clean. Executables and archives are refused, and a held file keeps the repo from being served.
+
+The upload API is compatible with Hugging Face clients. With `HF_HUB_DISABLE_XET=1` and `HF_ENDPOINT=https://freeweights.allternit.com`, `hf upload` works with an `alt_` key too. Hugging Face tokens (`hf_...`) are refused.
+
+Storage, file size, repo count and rate limits are set by Freeweights and can change without a release. Read the current limits at `https://freeweights.allternit.com/api/fw/v1/limits`. `gizzi usage` prints your Freeweights storage next to your Cloud usage. If uploads are paused, or storage is full, the commands say so and nothing is sent.
+
+Plan perks for Freeweights are not offered yet. The plan pickers in the console and the apps show no Freeweights lines until they are.
+
 ## Accounts
 
 Freeweights accounts are Allternit accounts. Every public read and download stays anonymous. To write or read private repos, the site, apps and the `fw` CLI send a Clerk session or an Allternit `alt_` key with a `freeweights.*` scope. The Freeweights Worker reads the plan, orgs and perks from a signed claim that the Cloud API issues. See [Freeweights entitlement](/api/cloud-billing#freeweights-entitlement).

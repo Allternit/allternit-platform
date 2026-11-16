@@ -1685,6 +1685,15 @@
         "allternit-ai/src/lib/model-host/host-client.ts",
         "allternit/surfaces/docs/api/model-host-relay.mdx"
       ]
+    },
+    {
+      "source": "allternit/cmd/gizzi-code/src/runtime/services",
+      "target": "external:freeweights",
+      "kind": "HTTPS: gizzi models publish uploads (preupload, LFS batch, commit) and GET /api/fw/v1/limits for gizzi usage; community repo check on pull",
+      "evidence": [
+        "allternit/cmd/gizzi-code/src/runtime/services/freeweightsUpload.ts",
+        "allternit/cmd/gizzi-code/src/cli/commands/models.ts"
+      ]
     }
   ]
 }

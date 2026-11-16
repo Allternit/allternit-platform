@@ -4885,6 +4885,35 @@
         "allternit/surfaces/docs/api/model-host-relay.mdx",
         "allternit/cmd/allternit-cloud-api/src/routes/model_hosts.rs"
       ]
+    },
+    {
+      "id": "feature:freeweights-accounts",
+      "label": "Freeweights accounts: community uploads, keys, plan perks (console, gizzi CLI, docs)",
+      "product": "product:cloud-api",
+      "status": "building",
+      "description": "People publish models to Freeweights with an Allternit key. cloud-api signs the entitlement claim and lists plan perks in GET /api/v1/billing/plans under a freeweights block whose status stays not_offered until FREEWEIGHTS_PERKS_ENABLED=1. The console API keys page creates keys with freeweights.read, freeweights.write or freeweights.repo:<rp_id> scopes (/api-keys?create=freeweights[&repo=rp_...]); the console plan picker renders the perk lines only when status reads offered. `gizzi models publish <path> <handle/name>` uploads through the Freeweights Hugging Face compatible API (preupload, LFS batch, PUT or multipart, verify, commit); `gizzi models pull` checks community repos first; `gizzi usage` prints one Freeweights storage line from GET /api/fw/v1/limits. Caps live only in the Freeweights limits table.",
+      "touches": [
+        "allternit/cmd/allternit-cloud-api/src/routes/freeweights.rs",
+        "allternit/cmd/allternit-cloud-api/src/routes/billing_subscriptions.rs",
+        "allternit/surfaces/platform.allternit.com/src/pages/ApiKeysPage.tsx",
+        "allternit/surfaces/platform.allternit.com/src/components/PlanPicker.tsx",
+        "allternit/surfaces/platform.allternit.com/src/pages/BillingPage.tsx",
+        "allternit/cmd/gizzi-code/src/runtime/services/freeweightsUpload.ts",
+        "allternit/cmd/gizzi-code/src/cli/commands/models.ts",
+        "allternit/cmd/gizzi-code/src/cli/commands/models-pull.ts",
+        "allternit/cmd/gizzi-code/src/cli/commands/usage.ts",
+        "allternit/surfaces/docs/tools/freeweights.mdx"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-15",
+          "note": "Uploads plan U14: purchase surfaces (console PlanPicker, AI billing, iOS plan tickets) get the perk rendering now, driven by the status field, and show nothing while it reads not_offered. gizzi usage gets a storage line only. Numbers are never fixed in code or docs; they are read from the limits route."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/platform.allternit.com/src/pages/ApiKeysPage.tsx",
+        "allternit/cmd/gizzi-code/src/runtime/services/freeweightsUpload.ts"
+      ]
     }
   ],
   "journeys": [

@@ -52,6 +52,15 @@ These commands use the Local Engine and the [Freeweights](/tools/freeweights) ca
 
 `pull` exits with code 2 when the result is `unverified`. Add `--allow-unverified` to accept files that have no hash anywhere. `--download` and `--run` work as before.
 
+### Publish a model to Freeweights
+
+```bash
+export FREEWEIGHTS_TOKEN=alt_...
+gizzi models publish ./my-model eoj/my-model
+```
+
+Uploads a folder to your Freeweights namespace with an Allternit key that has the `freeweights.write` scope (`ALLTERNIT_API_KEY` works if it is an `alt_` key). Large files go in parts and the command prints each step. Files are scanned before they are served, so the repo reads "scanning" at first. `gizzi models pull` on a community repo prints a notice that it is a community upload and ends as `unverified` unless you pass `--allow-unverified`. `gizzi usage` shows your Freeweights storage. See [Uploads](/tools/freeweights#uploads).
+
 ## Default model
 
 Gizzi picks the model for a turn in this order:
