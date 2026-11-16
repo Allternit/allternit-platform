@@ -173,18 +173,9 @@ pub fn verify_wake_ticket(
 
 // ------------------------------------------------------ flag and tables ----
 
-/// The owner's `files_drive` flag: `ALLTERNIT_FILES_DRIVE_ENABLED` (everyone)
-/// or `ALLTERNIT_FILES_DRIVE_USER_IDS`, plus admins. Same check and env vars
-/// as the sharing gateway (`files_gateway::files_drive_on`, step 14) and
-/// `/me/flags`.
-pub fn files_drive_on(user_id: &str) -> bool {
-    crate::routes::me_flags::feature_on(
-        std::env::var("ALLTERNIT_FILES_DRIVE_ENABLED").ok().as_deref(),
-        std::env::var("ALLTERNIT_FILES_DRIVE_USER_IDS").ok().as_deref(),
-        user_id,
-        crate::auth::is_admin_user(user_id),
-    )
-}
+/// The owner's `files_drive` flag. One definition, in `me_flags`, shared
+/// with the sharing gateway and `/me/flags`.
+pub use crate::routes::me_flags::files_drive_on;
 
 /// Migration 143 is applied. Checked per request (cheap catalog lookup, not
 /// cached) so applying it by hand on prod turns the routes on without a
