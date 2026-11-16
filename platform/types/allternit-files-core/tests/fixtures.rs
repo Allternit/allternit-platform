@@ -46,6 +46,8 @@ fn fixtures_round_trip() {
     round_trip::<FeedMessage>("feed-changes.json", include_str!("../../../../contracts/files-drive/fixtures/feed-changes.json"));
     round_trip::<FeedMessage>("feed-heartbeat.json", include_str!("../../../../contracts/files-drive/fixtures/feed-heartbeat.json"));
     round_trip::<FeedMessage>("feed-state-asleep.json", include_str!("../../../../contracts/files-drive/fixtures/feed-state-asleep.json"));
+    round_trip::<FilesKeyInfo>("files-key-info-empty.json", include_str!("../../../../contracts/files-drive/fixtures/files-key-info-empty.json"));
+    round_trip::<FilesKeyInfo>("files-key-info.json", include_str!("../../../../contracts/files-drive/fixtures/files-key-info.json"));
     round_trip::<GuestCapabilityClaims>("guest-claims-comment.json", include_str!("../../../../contracts/files-drive/fixtures/guest-claims-comment.json"));
     round_trip::<GuestCapabilityClaims>("guest-claims-edit.json", include_str!("../../../../contracts/files-drive/fixtures/guest-claims-edit.json"));
     round_trip::<GuestCapabilityClaims>("guest-claims-upload.json", include_str!("../../../../contracts/files-drive/fixtures/guest-claims-upload.json"));
@@ -57,6 +59,8 @@ fn fixtures_round_trip() {
     round_trip::<QueuedDrop>("guest-upload-drop-queued.json", include_str!("../../../../contracts/files-drive/fixtures/guest-upload-drop-queued.json"));
     round_trip::<HaveNeedResponse>("have-need.json", include_str!("../../../../contracts/files-drive/fixtures/have-need.json"));
     round_trip::<KeyShareGrant>("key-envelope.json", include_str!("../../../../contracts/files-drive/fixtures/key-envelope.json"));
+    round_trip::<PendingKeyRequest>("key-request-pending.json", include_str!("../../../../contracts/files-drive/fixtures/key-request-pending.json"));
+    round_trip::<KeyRotation>("key-rotation.json", include_str!("../../../../contracts/files-drive/fixtures/key-rotation.json"));
     round_trip::<KeyShareRequest>("key-share-request.json", include_str!("../../../../contracts/files-drive/fixtures/key-share-request.json"));
     round_trip::<ListResponse>("list-asleep.json", include_str!("../../../../contracts/files-drive/fixtures/list-asleep.json"));
     round_trip::<ListResponse>("list-home.json", include_str!("../../../../contracts/files-drive/fixtures/list-home.json"));

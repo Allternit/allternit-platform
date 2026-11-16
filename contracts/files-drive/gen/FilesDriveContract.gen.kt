@@ -208,7 +208,7 @@ data class DeleteResponse(
 )
 
 /**
- * One of the user's own devices (phone, Mac, PC, browser profile).
+ * One of the user's own devices: a phone, Mac, PC or browser profile (dev_...), or a computer under its cloud-api runtime device id (rt_...), which is how a computer appears in the Files key device list and in placement.
  */
 typealias DeviceId = String
 
@@ -371,11 +371,29 @@ sealed interface FilesEvent {
     val wireTag: String
 }
 
+/**
+ * One device that holds (or held) the Files key.
+ */
+data class FilesKeyDevice(
+    @Wire("device_id") val deviceId: DeviceId,
+    @Wire("device_name") val deviceName: String,
+    @Wire("device_pub") val devicePub: String,
+    @Wire("has_current_key") val hasCurrentKey: Boolean,
+    @Wire("added_at") val addedAt: Timestamp,
+    @Wire("approved_by_device_id") val approvedByDeviceId: DeviceId? = null
+)
+
+/**
+ * GET /api/v1/files-keys. Before the first device makes the key, key_id and created_at are absent and device_ids is empty.
+ */
 data class FilesKeyInfo(
-    @Wire("key_id") val keyId: String,
-    @Wire("created_at") val createdAt: Timestamp,
+    @Wire("key_id") val keyId: String? = null,
+    @Wire("created_at") val createdAt: Timestamp? = null,
     @Wire("device_ids") val deviceIds: List<DeviceId>,
-    @Wire("rotated_from") val rotatedFrom: String? = null
+    @Wire("rotated_from") val rotatedFrom: String? = null,
+    @Wire("devices") val devices: List<FilesKeyDevice>,
+    @Wire("pending_requests") val pendingRequests: List<PendingKeyRequest>,
+    @Wire("rotation_needed") val rotationNeeded: Boolean
 )
 
 /**
@@ -541,11 +559,28 @@ data class KeyEnvelope(
     @Wire("created_at") val createdAt: Timestamp
 )
 
-data class KeyShareGrant(
-    @Wire("envelope") val envelope: KeyEnvelope,
-    @Wire("approved_by_device_id") val approvedByDeviceId: DeviceId
+/**
+ * POST /files-keys/rotations: a device holding the current key makes a new FRK and seals it to every device in the list (all of FilesKeyInfo.devices, itself included, exactly once). The old key and its envelopes stay so replicas sealed with it still open until they are re-sealed.
+ */
+data class KeyRotation(
+    @Wire("key_id") val keyId: String,
+    @Wire("rotated_from") val rotatedFrom: String,
+    @Wire("rotated_by_device_id") val rotatedByDeviceId: DeviceId,
+    @Wire("envelopes") val envelopes: List<KeyEnvelope>
 )
 
+/**
+ * An existing device approves one pending request: it checked the code, wrapped the FRK to the request's device_pub and sends the envelope. The very first device of a user grants its own request (approved_by_device_id = envelope.device_id) to create the key.
+ */
+data class KeyShareGrant(
+    @Wire("envelope") val envelope: KeyEnvelope,
+    @Wire("approved_by_device_id") val approvedByDeviceId: DeviceId,
+    @Wire("confirm_code") val confirmCode: String
+)
+
+/**
+ * A device (or a computer, from its GET /replicas/key) asks for the Files key. cloud-api keeps it pending for 10 minutes.
+ */
 data class KeyShareRequest(
     @Wire("device_id") val deviceId: DeviceId,
     @Wire("device_pub") val devicePub: String,
@@ -629,6 +664,19 @@ enum class OnConflict(val wire: String) {
  * Opaque page token.
  */
 typealias PageToken = String
+
+/**
+ * A KeyShareRequest waiting for approval (POST /files-keys/requests answers it with 202; FilesKeyInfo.pending_requests lists them).
+ */
+data class PendingKeyRequest(
+    @Wire("request_id") val requestId: String,
+    @Wire("device_id") val deviceId: DeviceId,
+    @Wire("device_pub") val devicePub: String,
+    @Wire("device_name") val deviceName: String,
+    @Wire("confirm_code") val confirmCode: String,
+    @Wire("created_at") val createdAt: Timestamp,
+    @Wire("expires_at") val expiresAt: Timestamp
+)
 
 /**
  * What the calling principal may do. Computed by the runtime per request.

@@ -91,7 +91,7 @@ export function createStub(opts = {}) {
       scenario: cfg.scenario, wakeSetting: 'ask', touches: 0, errCycle: 0,
       items: new Map(), roots: new Map(), chunks: new Map(), uploads: new Map(), trash: new Map(), versions: new Map(),
       comments: new Map(), logs: new Map(), shares: new Map(), links: new Map(), guests: new Map(), audit: [], events: [], jobs: new Map(),
-      replicas: clone(fx('replicas').replicas), envelopes: new Map(), drops: [], snap: null, vSeq: 1,
+      replicas: clone(fx('replicas').replicas), envelopes: new Map(), keyDevices: new Map(), keyRequests: new Map(), key: null, drops: [], snap: null, vSeq: 1,
     };
     for (const r of clone(fx('roots-awake').roots)) S.roots.set(r.id, r);
     S.roots.set('rt_shared', { id: 'rt_shared', kind: 'shared', name: 'Shared', path_hint: '~/Allternit/Shared', policy: { ...clone(S.roots.get('rt_inbox').policy), agent_process: false }, root_item_id: 'it_sharedrt0', parent_root_id: 'rt_home', cursor: 'c1.rt_shared.000000', provider_ready: true });
@@ -127,7 +127,11 @@ export function createStub(opts = {}) {
     extra('sh_revoked', 'revoked0stub', { revoked_at: '2026-11-14T00:00:00Z' });
     extra('sh_open', 'view_downloadopen', { expires_at: undefined });
     delete S.shares.get('sh_open').expires_at;
-    S.envelopes.set('dev_pixel900', clone(fx('key-envelope').envelope));
+    // Files key (SPEC 13): fk_1 held by the iPhone and the Pixel.
+    S.key = { key_id: 'fk_1', created_at: '2026-11-15T14:00:00Z', rotation_needed: false };
+    for (const [id, name] of [['dev_iphone16', 'iPhone'], ['dev_pixel900', 'Pixel']]) S.keyDevices.set(id, { device_id: id, device_name: name, device_pub: 'cHViLWtleS1ieXRlcw', added_at: '2026-11-15T14:00:00Z' });
+    S.envelopes.set('fk_1|dev_pixel900', clone(fx('key-envelope').envelope));
+    S.envelopes.set('fk_1|dev_iphone16', { ...clone(fx('key-envelope').envelope), device_id: 'dev_iphone16' });
     takeSnapshot();
   }
   function base(id, root, parent, name, kind, size) {
@@ -815,7 +819,6 @@ export function createStub(opts = {}) {
   });
 
   // ---- cloud-api
-  const keyInfo = () => ({ key_id: 'fk_1', created_at: '2026-11-15T14:00:00Z', device_ids: ['dev_iphone16', ...S.envelopes.keys()] });
   const ownerOnly = (ctx) => { if (ctx.guest) throw E('forbidden', 'Owner only.'); };
   cloud('GET', 'computer-files/([^/]+)/endpoints', (ctx, p) => {
     ownerOnly(ctx);
@@ -850,10 +853,67 @@ export function createStub(opts = {}) {
   cloud('DELETE', 'computer-files/shares/([^/]+)', (ctx, p) => { ownerOnly(ctx); const s = S.shares.get(p[0]); if (!s) throw E('not_found', `No share ${p[0]}.`); s.revoked_at = nowIso(); return R(204); });
   cloud('GET', 'computer-files/shares/([^/]+)/access', (ctx, p) => { ownerOnly(ctx); if (!S.shares.get(p[0])) throw E('not_found', `No share ${p[0]}.`); const rows = S.audit.filter((a) => a.share_id === p[0]); for (const r of rows) { const e = validateType('ShareAccess', r); if (e.length) throw new Error(e.join()); } return R(200, rows); });
   cloud('GET', 'computer-files/token-keys', () => R(200, { keys: [{ kid: KID, alg: 'Ed25519', public_key: pubJwk.x }] }));
-  cloud('GET', 'files-keys', () => R(200, keyInfo(), 'FilesKeyInfo'));
-  cloud('POST', 'files-keys/requests', (ctx, _p, body) => { parseBody(ctx, body, 'KeyShareRequest'); return R(202); });
-  cloud('POST', 'files-keys/grants', (ctx, _p, body) => { const g = parseBody(ctx, body, 'KeyShareGrant'); S.envelopes.set(g.envelope.device_id, g.envelope); return R(204); });
-  cloud('GET', 'files-keys/envelopes/([^/]+)', (ctx, p) => { const e = S.envelopes.get(p[0]); if (!e) throw E('not_found', `No envelope for ${p[0]}.`); return R(200, e, 'KeyEnvelope'); });
+  // Files key mailbox (SPEC 13). Same rules as cloud-api, minus crypto: the stub trusts confirm_code as sent.
+  const livePending = () => [...S.keyRequests.values()].filter((r) => Date.parse(r.expires_at) > Date.now());
+  const holds = (id) => !!S.key && S.keyDevices.has(id) && S.envelopes.has(`${S.key.key_id}|${id}`);
+  const keyInfo = () => {
+    const devices = [...S.keyDevices.values()].map((d) => ({ ...d, has_current_key: holds(d.device_id) }));
+    const out = { device_ids: devices.filter((d) => d.has_current_key).map((d) => d.device_id), devices, pending_requests: livePending(), rotation_needed: !!S.key?.rotation_needed };
+    if (S.key) Object.assign(out, { key_id: S.key.key_id, created_at: S.key.created_at }, S.key.rotated_from ? { rotated_from: S.key.rotated_from } : {});
+    return out;
+  };
+  cloud('GET', 'files-keys', (ctx) => { ownerOnly(ctx); return R(200, keyInfo(), 'FilesKeyInfo'); });
+  cloud('POST', 'files-keys/requests', (ctx, _p, body) => {
+    ownerOnly(ctx); const rq = parseBody(ctx, body, 'KeyShareRequest');
+    if (livePending().some((r) => r.confirm_code === rq.confirm_code && r.device_pub !== rq.device_pub)) throw E('already_exists', 'Another device is waiting with the same code.');
+    const now = Date.now();
+    const pending = { request_id: `fkr_${rid(12)}`, device_id: rq.device_id, device_pub: rq.device_pub, device_name: rq.device_name || 'Device', confirm_code: rq.confirm_code, created_at: nowIso(now), expires_at: nowIso(now + 600_000) };
+    S.keyRequests.set(rq.device_id, pending);
+    return R(202, pending, 'PendingKeyRequest');
+  });
+  cloud('POST', 'files-keys/grants', (ctx, _p, body) => {
+    ownerOnly(ctx); const g = parseBody(ctx, body, 'KeyShareGrant'); const env = g.envelope;
+    const rq = livePending().find((r) => r.device_id === env.device_id);
+    if (!rq) throw E('not_found', 'That device has no waiting request.');
+    if (rq.confirm_code !== g.confirm_code) throw E('forbidden', "The code does not match that device's request.");
+    if (S.key) {
+      if (env.key_id !== S.key.key_id) throw E('rev_mismatch', 'Your Files key changed.');
+      if (g.approved_by_device_id === env.device_id || !holds(g.approved_by_device_id)) throw E('forbidden', 'That device does not hold your Files key.');
+    } else {
+      if (g.approved_by_device_id !== env.device_id) throw E('key_unavailable', 'There is no Files key yet.');
+      S.key = { key_id: env.key_id, created_at: nowIso(), rotation_needed: false };
+    }
+    S.keyDevices.set(env.device_id, { device_id: env.device_id, device_name: rq.device_name, device_pub: rq.device_pub, added_at: nowIso(), ...(g.approved_by_device_id !== env.device_id ? { approved_by_device_id: g.approved_by_device_id } : {}) });
+    S.envelopes.set(`${env.key_id}|${env.device_id}`, env);
+    S.keyRequests.delete(env.device_id);
+    return R(204);
+  });
+  cloud('POST', 'files-keys/rotations', (ctx, _p, body) => {
+    ownerOnly(ctx); const r = parseBody(ctx, body, 'KeyRotation');
+    if (!S.key || r.rotated_from !== S.key.key_id) throw E('rev_mismatch', 'Your Files key changed.');
+    if (!holds(r.rotated_by_device_id)) throw E('forbidden', 'That device does not hold your Files key.');
+    const ids = r.envelopes.map((e) => e.device_id);
+    if (new Set(ids).size !== ids.length || ids.length !== S.keyDevices.size || !ids.every((id) => S.keyDevices.has(id)) || r.envelopes.some((e) => e.key_id !== r.key_id)) throw E('rev_mismatch', 'Your device list changed.');
+    S.key = { key_id: r.key_id, created_at: nowIso(), rotated_from: r.rotated_from, rotation_needed: false };
+    for (const e of r.envelopes) S.envelopes.set(`${r.key_id}|${e.device_id}`, e);
+    return R(204);
+  });
+  cloud('GET', 'files-keys/envelopes/([^/]+)', (ctx, p) => {
+    ownerOnly(ctx);
+    const keyId = ctx.q.get('key_id') || S.key?.key_id;
+    const e = S.keyDevices.has(p[0]) && S.envelopes.get(`${keyId}|${p[0]}`);
+    if (!e) throw E('not_found', `No Files key for ${p[0]} yet.`);
+    return R(200, e, 'KeyEnvelope');
+  });
+  cloud('DELETE', 'files-keys/devices/([^/]+)', (ctx, p) => {
+    ownerOnly(ctx);
+    if (!S.keyDevices.has(p[0])) throw E('not_found', 'That device does not have your Files key.');
+    const held = holds(p[0]);
+    S.keyDevices.delete(p[0]); S.keyRequests.delete(p[0]);
+    for (const k of [...S.envelopes.keys()]) if (k.endsWith(`|${p[0]}`)) S.envelopes.delete(k);
+    if (held && S.key) { if ([...S.keyDevices.keys()].some(holds)) S.key.rotation_needed = true; else S.key = null; }
+    return R(204);
+  });
   const shareFor = (tok) => {
     const l = S.links.get(tok); const s = l && S.shares.get(l.share_id);
     if (!s) throw E('not_found', 'No such share link.');

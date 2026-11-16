@@ -100,10 +100,12 @@ Body limits on the runtime: axum's default body limit is 2 MB, so the chunk and 
 | `DELETE /api/v1/computer-files/shares/:share_id/guests/:guest_id` | | 204 (revoke one guest; applies on that guest's next request) |
 | `GET /api/v1/computer-files/shares/:share_id/access` | | `ShareAccess[]` (audit) |
 | `GET /api/v1/computer-files/token-keys` | | `{keys: [{kid, alg: "Ed25519", public_key (base64url, 32 bytes)}]}`, so runtimes verify tokens offline |
-| `GET /api/v1/files-keys` | | `FilesKeyInfo` |
-| `POST /api/v1/files-keys/requests` | `KeyShareRequest` | 202 |
-| `POST /api/v1/files-keys/grants` | `KeyShareGrant` | 204 |
-| `GET /api/v1/files-keys/envelopes/:device_id` | | `KeyEnvelope` |
+| `GET /api/v1/files-keys` | | `FilesKeyInfo` (current key, devices with their public keys, waiting requests, `rotation_needed`) |
+| `POST /api/v1/files-keys/requests` | `KeyShareRequest` | 202 `PendingKeyRequest` (waits 10 minutes) |
+| `POST /api/v1/files-keys/grants` | `KeyShareGrant` (with the request's `confirm_code`) | 204 |
+| `POST /api/v1/files-keys/rotations` | `KeyRotation` | 204 |
+| `GET /api/v1/files-keys/envelopes/:device_id` | query `key_id` (default: the current key) | `KeyEnvelope` |
+| `DELETE /api/v1/files-keys/devices/:device_id` | | 204 (marks the key for rotation, section 13) |
 | `GET /api/v1/files-gateway/summary?link=<token>` | | `ShareSummary` (public, no auth) |
 | `POST /api/v1/files-gateway/redeem` | `GuestRedeemRequest` | `GuestSessionResponse` |
 | `/api/v1/files-gateway/v2/*` | same shapes as the runtime routes, guest subset | same |
@@ -295,7 +297,16 @@ The legacy `/api/v1/files/*` routes are being scoped by step 3 (`files_scope.rs`
 ## 13. Files key hierarchy
 
 - **Files root key (FRK):** 32 random bytes per user, made on the user's first device. It never leaves a device unwrapped. cloud-api stores only wrapped copies and cannot open them.
-- **Device envelopes:** `KeyEnvelope` wraps the FRK to one device's X25519 key (`x25519-hkdf-sha256-xchacha20poly1305`). A new device sends `KeyShareRequest` (with a short `confirm_code`); an existing device shows the code, the user approves, and that device posts a `KeyShareGrant`.
+- **Device keys.** Each device (phone, browser profile, Desktop) has its own X25519 key pair; the secret never leaves it (the web keeps a non-extractable WebCrypto key in IndexedDB). A computer's runtime has one too (`data_dir/files-key/device.x25519`), and joins the key under its runtime device id (`rt_…`).
+- **Device envelopes:** `KeyEnvelope` wraps the FRK to one device's X25519 key (`x25519-hkdf-sha256-xchacha20poly1305`): a fresh ephemeral X25519 key per envelope; `shared = X25519(ephemeral secret, device_pub)`; KEK = HKDF-SHA256(salt = `ephemeral_pub || device_pub`, ikm = `shared`, info = `files-envelope/1/<device_id>`, 32 bytes); the FRK is sealed with XChaCha20-Poly1305 under the KEK with a random 24-byte nonce and AAD `afe1|<key_id>|<device_id>`. `ephemeral_pub`, `nonce` and `wrapped_key` (48 bytes) are base64url without padding. Vectors: `vectors/keys-v1.json`.
+- **Confirm code.** Derived, never chosen: `u32_be(blake3("files-key-confirm/1|" || device_pub raw bytes)[0..4]) % 1000000`, zero-padded to 6 digits. The new device shows it; the approving device recomputes it from the request's `device_pub` and shows it next to the request; the user clicks Approve only when the two match. cloud-api refuses a request whose code is not the derived one, and a second waiting request with the same code from another key, so two waiting devices never show one code.
+- **Sharing flow.**
+  1. *First device.* `GET /files-keys` has no `key_id`. The device makes 32 random bytes and a `key_id` (`fk_` + random), posts its own `KeyShareRequest`, wraps the FRK to itself and posts a `KeyShareGrant` with `approved_by_device_id` = its own id. That creates the key. If two first devices race, the second gets `409 already_exists` and asks the first instead.
+  2. *New device.* Posts a `KeyShareRequest` (202 `PendingKeyRequest`, waits 10 minutes), shows the code, and polls `GET /files-keys/envelopes/<own id>` until it answers 200, then opens the envelope with its own secret.
+  3. *Approving device* (holds the current key). Lists `pending_requests`, shows each device name and the recomputed code (a request whose code does not match its `device_pub` is shown as invalid and can't be approved). Approve wraps the FRK to that `device_pub` and posts `KeyShareGrant` with that request's `confirm_code`.
+  4. *A computer.* The owner's app reads the runtime's `GET /replicas/key` (its `KeyShareRequest`) over the relay, posts it to `/files-keys/requests`, grants it like step 3, and delivers the envelope with `PUT /replicas/key` (replacing a different key needs `x-allternit-unlock`).
+- **cloud-api checks a grant** (one transaction): a waiting, unexpired request exists for `envelope.device_id` and its `confirm_code` matches; the envelope's shape is valid (wrap_alg, 32-byte non-zero `ephemeral_pub`, 24-byte nonce, 48-byte `wrapped_key`); with a current key, `envelope.key_id` is it, the approver is another device that holds it; with no key, the approver is the requesting device itself. The request is used up. Every grant, refused grant, rotation and removal is written to `audit_log` (`files_key.create`, `files_key.grant`, `files_key.rotate`, `files_key.device_removed`). Rate limits: 20 requests per user per hour, 5 other devices waiting at once (`429 rate_limited`). A request under an `rt_…` id must name one of the user's runtime devices.
+- **Threat model.** The FRK keeps replica hosts and cloud-api's storage from reading replicas: cloud-api holds only public keys and envelopes it cannot open. A stolen owner session is out of scope (it can already read files through the relay). The 6-digit code stops the user approving the wrong waiting device; it does not stop an actively malicious cloud-api, which could grind a key whose code matches.
 - **Subkeys** via HKDF-SHA256 from the FRK:
   - `files-replica/1/<replica_id>`: replica chunks (`EncryptedChunkHeader`, XChaCha20-Poly1305). A replica host stores ciphertext it cannot read.
     - **Locator** (the name a sealed chunk is stored under): `blake3::keyed_hash(subkey, raw)` where `raw` is the 32 **raw bytes** of the plaintext blake3 hash (hex-decoded, not the hex string), written as lower-case hex.
@@ -303,7 +314,8 @@ The legacy `/api/v1/files/*` routes are being scoped by step 3 (`files_scope.rs`
     - **Blob layout on the host:** `u32 big-endian header length | header JSON | ciphertext`, file name = locator.
   - `files-cache/1/<device_id>`: the device's offline cache.
   - `files-snapshot/1`: reserved for encrypted snapshot names (section 11).
-- **Rotation:** a new `key_id` with `rotated_from`; old envelopes stay until every replica is re-sealed. Removing a device rotates the key.
+- **Rotation:** a new `key_id` with `rotated_from`; old envelopes stay until every replica is re-sealed (`GET /files-keys/envelopes/:device_id?key_id=<old>`). Removing a device (`DELETE /files-keys/devices/:device_id`, or the device's computer being revoked, noticed on the next `GET /files-keys`) deletes its envelopes and sets `rotation_needed`; removing the last holder retires the key, so the next device starts a new one. The next device with the key that sees `rotation_needed` makes a new FRK, wraps it to every device in `devices` (each exactly once, itself included; the removed one is no longer listed) and posts `KeyRotation`; cloud-api refuses a rotation whose envelopes do not match the device list exactly (`409 rev_mismatch`, reload and retry).
+- **Reading a replica** (a client, while the primary sleeps): candidate hosts come from `GET /computer-files/:id/placement?root_id=`; for an awake option the client derives `replica_id` (section 10, `rp_` + 24 hex of `blake3("files-replica-id/1|<source>|<root>|<host>")`), reads `GET /replicas/:replica_id/head` from that host over the relay, opens the head (subkey `files-replica/1/<replica_id>/head`, AAD `afh1|1|<replica_id>|<key_id>`, same `u32 | JSON {v, key_id, nonce} | ciphertext` layout), then the catalog parts (the head's `parts`, joined, must hash to `catalog_hash`) and the file's chunks by locator, re-hashing every chunk and the whole file. The catalog is JSON `{replica_id, source_computer_id, root_id, root_item_id, cursor, synced_at, items: [{item_id, parent_id, name, kind, size, content_hash, rev, modified_at, chunks: ChunkRef[]}]}` (engine `replica::Catalog`); `item_id`s are the source's. A head sealed with an older `key_id` opens with `envelopes/:device_id?key_id=`.
 - Restoring from a replica re-checks every chunk hash; a tampered chunk fails (`integrity_failed`) and the report lists it.
 
 ## 14. Events

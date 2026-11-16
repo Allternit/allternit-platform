@@ -278,7 +278,7 @@ pub struct DeleteResponse {
     pub cursor: Cursor,
 }
 
-/// One of the user's own devices (phone, Mac, PC, browser profile).
+/// One of the user's own devices: a phone, Mac, PC or browser profile (dev_...), or a computer under its cloud-api runtime device id (rt_...), which is how a computer appears in the Files key device list and in placement.
 pub type DeviceId = String;
 
 /// Sealed with XChaCha20-Poly1305. AAD is the UTF-8 string "afc1|<v>|<cipher>|<key_id>|<locator>|<plaintext_size>" (decimal integers), so changing any header field fails to open.
@@ -567,13 +567,38 @@ pub enum FilesEvent {
     ConflictCreated(ConflictCreated),
 }
 
+/// One device that holds (or held) the Files key.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FilesKeyDevice {
+    pub device_id: DeviceId,
+    pub device_name: String,
+    /// base64url X25519 public key; a rotation seals the new key to it.
+    pub device_pub: String,
+    /// An envelope for FilesKeyInfo.key_id exists for this device.
+    pub has_current_key: bool,
+    pub added_at: Timestamp,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approved_by_device_id: Option<DeviceId>,
+}
+
+/// GET /api/v1/files-keys. Before the first device makes the key, key_id and created_at are absent and device_ids is empty.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FilesKeyInfo {
-    pub key_id: String,
-    pub created_at: Timestamp,
+    /// The current key. Absent until a first device creates it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<Timestamp>,
+    /// Devices with an envelope for the current key.
     pub device_ids: Vec<DeviceId>,
+    /// The key this one replaced.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rotated_from: Option<String>,
+    pub devices: Vec<FilesKeyDevice>,
+    /// Unexpired requests, oldest first.
+    pub pending_requests: Vec<PendingKeyRequest>,
+    /// A device was removed (or its computer was revoked) since the key was made: the next device with the key should POST /files-keys/rotations.
+    pub rotation_needed: bool,
 }
 
 /// Every read response says where it came from and the computer state. Clients show "asleep" from this, never guess.
@@ -803,29 +828,46 @@ impl JobRefState {
 /// The Files root key wrapped to one device. cloud-api stores envelopes; it cannot open them.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct KeyEnvelope {
+    /// The FRK this envelope wraps (FilesKeyInfo.key_id).
     pub key_id: String,
     pub device_id: DeviceId,
     pub wrap_alg: String,
-    /// base64url X25519 public key.
+    /// base64url (no padding) X25519 public key, 32 bytes, fresh for every envelope.
     pub ephemeral_pub: String,
+    /// base64url (no padding), 24 bytes.
     pub nonce: String,
+    /// base64url (no padding): the 32-byte FRK sealed with XChaCha20-Poly1305 (48 bytes with the tag). KEK = HKDF-SHA256(salt = ephemeral_pub || device_pub, ikm = X25519 shared secret, info = "files-envelope/1/<device_id>", 32 bytes); AAD = "afe1|<key_id>|<device_id>".
     pub wrapped_key: String,
     pub created_at: Timestamp,
 }
 
+/// POST /files-keys/rotations: a device holding the current key makes a new FRK and seals it to every device in the list (all of FilesKeyInfo.devices, itself included, exactly once). The old key and its envelopes stay so replicas sealed with it still open until they are re-sealed.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct KeyRotation {
+    pub key_id: String,
+    /// Must be the current key_id.
+    pub rotated_from: String,
+    pub rotated_by_device_id: DeviceId,
+    pub envelopes: Vec<KeyEnvelope>,
+}
+
+/// An existing device approves one pending request: it checked the code, wrapped the FRK to the request's device_pub and sends the envelope. The very first device of a user grants its own request (approved_by_device_id = envelope.device_id) to create the key.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct KeyShareGrant {
     pub envelope: KeyEnvelope,
     pub approved_by_device_id: DeviceId,
+    /// The confirm_code of the pending request this grant answers. Must match it.
+    pub confirm_code: String,
 }
 
+/// A device (or a computer, from its GET /replicas/key) asks for the Files key. cloud-api keeps it pending for 10 minutes.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct KeyShareRequest {
     pub device_id: DeviceId,
-    /// base64url X25519.
+    /// base64url (no padding) X25519 public key, 32 bytes.
     pub device_pub: String,
     pub device_name: String,
-    /// Shown on both devices; the user compares them.
+    /// Derived from device_pub, never chosen: u32_be(blake3("files-key-confirm/1|" || device_pub raw bytes)[0..4]) % 1000000, zero-padded to 6 digits. The new device shows it; the approving device recomputes it from the request's device_pub and shows it; the user compares the two. cloud-api refuses a code that does not match device_pub, and a second pending request with the same code.
     pub confirm_code: String,
 }
 
@@ -936,6 +978,19 @@ impl OnConflict {
 
 /// Opaque page token.
 pub type PageToken = String;
+
+/// A KeyShareRequest waiting for approval (POST /files-keys/requests answers it with 202; FilesKeyInfo.pending_requests lists them).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PendingKeyRequest {
+    pub request_id: String,
+    pub device_id: DeviceId,
+    /// base64url X25519 public key.
+    pub device_pub: String,
+    pub device_name: String,
+    pub confirm_code: String,
+    pub created_at: Timestamp,
+    pub expires_at: Timestamp,
+}
 
 /// What the calling principal may do. Computed by the runtime per request.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

@@ -1,6 +1,6 @@
 ---
 title: 'Files Drive: Cloud API'
-description: 'cloud-api routes for the Files drive: wake consent and wake tickets, per-computer wake settings, transport endpoints, storage discovery, replica placement and the no-wake peer relay, guest drops kept while a computer sleeps, and the asleep snapshot that answers browsing while a computer sleeps.'
+description: 'cloud-api routes for the Files drive: wake consent and wake tickets, per-computer wake settings, transport endpoints, storage discovery, replica placement and the no-wake peer relay, sharing the Files key between your own devices, guest drops kept while a computer sleeps, and the asleep snapshot that answers browsing while a computer sleeps.'
 ---
 
 ## Overview
@@ -140,6 +140,36 @@ A cloud computer is reachable only through the relay, so it can't be pushed to o
 | `GET` or `PUT /api/v1/computer-files/peer/{host_id}/replicas/{replica_id}/blobs/{locator}` | sealed blob (at most 5 MiB) | the host's answer |
 
 The caller is a runtime, authenticated with its own device token. The host must belong to the same user. No other path goes through: anything but these replica host routes answers `403`. cloud-api forwards only while the host is already connected. **It never wakes either computer and never touches either idle timer.** An asleep host answers `503 asleep` (a computer that isn't a cloud computer answers `503 offline`), and the replica stays `behind` until both computers are on.
+
+## Files key
+
+Replicas are sealed with your **Files key**, 32 random bytes made on your first device. It never leaves a device unwrapped. cloud-api only keeps each device's public key and a copy of the Files key sealed to that device (a `KeyEnvelope`), and it cannot open any of them. The full construction, the confirm code and the vectors are in the contract, `contracts/files-drive/SPEC.md` section 13.
+
+| Method + path | Body | Answer |
+|---|---|---|
+| `GET /api/v1/files-keys` | | `FilesKeyInfo`: the current `key_id` (absent before the first device makes it), `devices` with their public keys, `pending_requests`, `rotation_needed` |
+| `POST /api/v1/files-keys/requests` | `KeyShareRequest` | `202` with a `PendingKeyRequest`. It waits 10 minutes |
+| `POST /api/v1/files-keys/grants` | `KeyShareGrant`: the envelope, `approved_by_device_id` and the request's `confirm_code` | `204` |
+| `POST /api/v1/files-keys/rotations` | `KeyRotation` | `204` |
+| `GET /api/v1/files-keys/envelopes/{device_id}?key_id=` | | `KeyEnvelope` for the current key, or for `key_id` |
+| `DELETE /api/v1/files-keys/devices/{device_id}` | | `204`. The key is marked for rotation |
+
+How a device gets the key:
+
+1. **The first device** finds no `key_id`. It makes the key, posts its own request, and grants it to itself. That creates the key. If another first device got there a moment earlier, the grant answers `409 already_exists` and this device asks for the key instead.
+2. **A new device** posts a request and shows its 6-digit code. The code comes from the device's public key, so it can't be chosen.
+3. **A device that has the key** lists the waiting requests and shows each code, worked out again from the request's public key. You click **Approve** when it matches the code on the new device. The approving device seals the key to the new device and posts the grant.
+4. **A computer** gets the key the same way, from your app: the app reads the computer's request (`GET /api/v1/files/v2/replicas/key` on the computer), approves it, and hands the computer its envelope with `PUT /replicas/key`.
+
+cloud-api accepts a grant only for a waiting, unexpired request with the same code, from a device that holds the current key (or, for the first key, from the requesting device itself), and only once. Requests are limited to 20 an hour per account and 5 waiting devices at a time (`429 rate_limited`). Two waiting devices never show the same code. Every grant, refused grant, rotation and removal is written to the audit log (`files_key.*`).
+
+**Removing a device** (`DELETE …/devices/{id}`, or revoking a computer) deletes its envelopes and sets `rotation_needed`. The next device that has the key makes a new one, seals it to every device still listed, and posts a `KeyRotation`. A rotation that leaves a device out, or includes the removed one, answers `409 rev_mismatch`. The old key's envelopes stay, so replicas sealed with it still open until they are sealed again. Removing the last device that holds the key retires it, and the next device starts a new one.
+
+**Reading a replica while the computer sleeps.** The client asks `placement` for your other computers, works out the replica id for each awake one, and reads the sealed head, catalog and chunks from it over the relay. It checks every chunk and the whole file against their hashes before showing anything. The replica host never reads them.
+
+<Note>
+These routes answer `403 feature_disabled` until migration 145 is applied and the owner's `files_drive` flag is on. They need a signed-in session or a `compute` key, like the other owner routes.
+</Note>
 
 ## Guest drops while a computer sleeps
 
