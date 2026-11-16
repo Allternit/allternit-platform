@@ -3,6 +3,8 @@ import {
   APP_SHARE_SCREEN_MESSAGE,
   AppPhoneBackend,
   AppPhoneViewerSession,
+  ANDROID_APP_ROUTE,
+  appWaitMessage,
   type AppPhoneNode,
   type AppRpcResult,
   type AppViewerSocket,
@@ -136,5 +138,38 @@ describe('iPhones with the Allternit app', () => {
   it('rejects a non-web address for phone.web.open', async () => {
     const { runner } = setup();
     expect(await runner.call('phone.web.open', { serial: SERIAL, url: 'file:///etc/passwd' })).toMatchObject({ ok: false, error: 'invalid_args' });
+  });
+
+  it('lists an Android app phone as Android with its taps and screen state', async () => {
+    const node: AppPhoneNode = {
+      listPhones: async () => [
+        { serial: 'app:android-1', name: 'Pixel', model: 'Pixel 9', online: false, platform: 'android', canTap: true, consent: 'needed' },
+        { serial: SERIAL, name: 'Eoj iPhone', model: 'iPhone', online: true },
+      ],
+      rpc: async () => ({ ok: true, result: {} }),
+      openViewer: async () => fakeSocket().socket,
+      decidePair: async () => ({ ok: true }),
+    };
+    const apps = new AppPhoneBackend({ node, streams: {} as never, decodeStill: async () => ({ jpeg: Buffer.alloc(0), width: 1, height: 1 }) });
+    await apps.refresh(true);
+    const [android, ios] = apps.devices();
+    expect(android).toMatchObject({ platform: 'android', route: ANDROID_APP_ROUTE, canTap: true, screen: false });
+    expect(android.note).toContain('Tap Start on Pixel');
+    expect(ios).toMatchObject({ platform: 'ios', canTap: false, screen: true });
+    expect(appWaitMessage('android', 'Pixel')).toBe('Tap Start on Pixel to share its screen.');
+  });
+
+  it('forwards viewer taps for an Android phone only while taps are on; iPhones stay refused', () => {
+    const sent: string[] = [];
+    const socket = { ...fakeSocket().socket, send: (d: string) => void sent.push(d) };
+    let canTap = true;
+    const android = new AppPhoneViewerSession({ open: async () => socket, deviceName: 'Pixel', platform: 'android', canTap: () => canTap });
+    // Not started yet: no socket, so the tap is refused.
+    expect(android.sendControl([{ type: 'text', text: 'a' } as never]).ok).toBe(false);
+    const ios = new AppPhoneViewerSession({ open: async () => socket, deviceName: 'iPhone' });
+    expect(ios.sendControl([]).message).toContain('Bluetooth board');
+    canTap = false;
+    expect(android.sendControl([]).message).toContain('Accessibility');
+    expect(sent).toEqual([]);
   });
 });

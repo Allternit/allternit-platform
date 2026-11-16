@@ -32,6 +32,13 @@ import { canonicalHash, type ApprovalGate, type ToolErrorCode, type ToolResult, 
 
 export const APP_SERIAL_PREFIX = 'app:';
 export const APP_PHONE_ROUTE = 'iphone-app-store';
+/** Listing route of an Android phone on the app-phone lane (the Allternit Android app). */
+export const ANDROID_APP_ROUTE = 'android-app';
+export type AppPlatform = 'ios' | 'android';
+
+/** What to tell the person while an app phone is not sharing its screen. */
+export const appWaitMessage = (platform: AppPlatform | undefined, name: string): string =>
+  platform === 'android' ? `Tap Start on ${name || 'your phone'} to share its screen.` : APP_SHARE_SCREEN_MESSAGE;
 export const APP_TAPS_MESSAGE = 'Taps on native apps need the Bluetooth board';
 export const APP_SHARE_SCREEN_MESSAGE = 'Open the Allternit app on your iPhone and tap Share screen.';
 export const APP_NOT_OPEN_MESSAGE = 'Open the Allternit app on the iPhone. The bot can use its browser only while the app is open.';
@@ -65,6 +72,8 @@ const RPC_TIMEOUT_MS = 20_000;
 const MAX_GOP_UNITS = 240;
 const MAX_GOP_BYTES = 24 * 1024 * 1024;
 
+/** Reads a row's platform: only `android` is Android; everything else is an iPhone (older nodes send none). */
+export const appPlatformOf = (row: { platform?: unknown } | undefined): AppPlatform => (row?.platform === 'android' ? 'android' : 'ios');
 export const isAppSerial = (serial: unknown): boolean => typeof serial === 'string' && serial.startsWith(APP_SERIAL_PREFIX);
 export const appPhoneId = (serial: string): string => serial.slice(APP_SERIAL_PREFIX.length);
 
@@ -77,6 +86,12 @@ export interface AppPhoneRow {
   model: string;
   /** The broadcast extension's ingest socket is open (the screen is shared). */
   online: boolean;
+  /** `ios` (default for older nodes) or `android`. */
+  platform?: AppPlatform;
+  /** Android with Accessibility on and the app connected: viewer taps are accepted. */
+  canTap?: boolean;
+  /** Android screen-share consent as the app last reported it. */
+  consent?: string;
 }
 
 export type AppRpcResult =
@@ -98,7 +113,7 @@ export interface AppPhoneNode {
   /** `POST /api/v1/phones/app/:id/rpc` with `{method, params}`. */
   rpc(phoneId: string, method: string, params: Record<string, unknown>, timeoutMs: number): Promise<AppRpcResult>;
   /** Mints a read-only ws-token and opens `/ws/phones/:serial/stream`. */
-  openViewer(serial: string): Promise<AppViewerSocket>;
+  openViewer(serial: string, opts?: { readOnly?: boolean }): Promise<AppViewerSocket>;
   /** `POST /api/v1/phones/app/pair/:phoneId/decision` with `{approve}`. */
   decidePair(phoneId: string, approve: boolean): Promise<{ ok: boolean; message?: string }>;
 }
@@ -117,6 +132,9 @@ interface ViewerEvents {
 export interface AppViewerDeps {
   open: () => Promise<AppViewerSocket>;
   deviceName: string;
+  /** `android` phones take the owner's taps while `canTap()` is true; iPhones never do. */
+  platform?: AppPlatform;
+  canTap?: () => boolean;
   log?: (message: string) => void;
   startTimeoutMs?: number;
 }
@@ -163,7 +181,7 @@ export class AppPhoneViewerSession implements StreamSessionHandle {
         this.rejectLive = reject;
       });
       void live.catch(() => undefined);
-      this.timer = setTimeout(() => this.fail(new Error(APP_SHARE_SCREEN_MESSAGE)), this.deps.startTimeoutMs ?? APP_START_TIMEOUT_MS);
+      this.timer = setTimeout(() => this.fail(new Error(appWaitMessage(this.deps.platform, this.deps.deviceName))), this.deps.startTimeoutMs ?? APP_START_TIMEOUT_MS);
       const socket = await this.deps.open();
       if (this.ended) {
         socket.close();
@@ -190,7 +208,7 @@ export class AppPhoneViewerSession implements StreamSessionHandle {
       } catch {
         return;
       }
-      if (frame?.type === 'end') this.finish(typeof frame.reason === 'string' && frame.reason ? endReason(frame.reason) : 'the stream ended');
+      if (frame?.type === 'end') this.finish(typeof frame.reason === 'string' && frame.reason ? endReason(frame.reason, this.deps.platform, this.deps.deviceName) : 'the stream ended');
       else if (frame?.type === 'ping') this.socket?.send(JSON.stringify({ type: 'pong' }));
       return;
     }
@@ -257,7 +275,14 @@ export class AppPhoneViewerSession implements StreamSessionHandle {
     this.emit('ended', { reason });
   }
 
-  sendControl(_events: PhoneInputEvent[]): { ok: boolean; message?: string } {
+  sendControl(events: PhoneInputEvent[]): { ok: boolean; message?: string } {
+    if (this.deps.platform === 'android') {
+      if (!this.deps.canTap?.()) return { ok: false, message: `Turn on Allternit Accessibility on ${this.deps.deviceName || 'your phone'} to allow taps.` };
+      if (!this.socket || this.ended) return { ok: false, message: 'The stream is not live.' };
+      // The node seals this as input.events for the Android app (full-control viewers only).
+      this.socket.send(JSON.stringify({ type: 'input', events }));
+      return { ok: true };
+    }
     return { ok: false, message: `${APP_TAPS_MESSAGE}. This iPhone shares its screen only.` };
   }
 
@@ -271,8 +296,8 @@ export class AppPhoneViewerSession implements StreamSessionHandle {
 }
 
 /** The relay's end reasons in plain words. */
-function endReason(reason: string): string {
-  if (reason === 'desktop_offline' || reason === 'phone_offline') return APP_SHARE_SCREEN_MESSAGE;
+function endReason(reason: string, platform?: AppPlatform, name = ''): string {
+  if (reason === 'desktop_offline' || reason === 'phone_offline') return appWaitMessage(platform, name);
   if (reason === 'token_expired') return 'The stream token expired.';
   return reason;
 }
@@ -407,10 +432,12 @@ export interface AppPhoneBackendDeps {
 /** One app phone as phone.devices lists it. */
 export interface AppPhoneDevice {
   serial: string;
-  platform: 'ios';
+  platform: AppPlatform;
   via: 'allternit-app';
-  route: typeof APP_PHONE_ROUTE;
+  route: typeof APP_PHONE_ROUTE | typeof ANDROID_APP_ROUTE;
   name: string;
+  /** Owner taps are accepted (Android with Accessibility on). Bots still go through the guard. */
+  canTap: boolean;
   /** The screen is shared right now. */
   screen: boolean;
   /** What a bot can do here, in plain words. */
@@ -635,17 +662,36 @@ export class AppPhoneBackend implements UsbPhoneBackend {
   }
 
   devices(): AppPhoneDevice[] {
-    return this.rows.map((r) => ({
+    return this.rows.map((r): AppPhoneDevice => {
+      const platform = appPlatformOf(r);
+      const name = r.name || (platform === 'android' ? 'Android phone' : 'iPhone');
+      if (platform === 'android') {
+        return {
+          serial: r.serial,
+          platform,
+          via: 'allternit-app',
+          route: ANDROID_APP_ROUTE,
+          name,
+          canTap: r.canTap === true,
+          screen: r.online,
+          note: r.online
+            ? `Screen live: phone.screenshot and phone.web.* work; ${r.canTap ? 'taps are on for the live view' : 'taps are off until Accessibility is on'}.`
+            : `${appWaitMessage(platform, name)} phone.web.* work while the Allternit app is open.`,
+        };
+      }
+      return {
       serial: r.serial,
-      platform: 'ios',
+      platform,
       via: 'allternit-app',
       route: APP_PHONE_ROUTE,
-      name: r.name || 'iPhone',
+      name,
+      canTap: false,
       screen: r.online,
       note: r.online
         ? `Screen only: phone.screenshot and phone.web.* work; ${APP_TAPS_MESSAGE.toLowerCase()}.`
         : `${APP_SHARE_SCREEN_MESSAGE} phone.web.* work while the Allternit app is open.`,
-    }));
+      };
+    });
   }
 
   decidePair(phoneId: string, approve: boolean): Promise<{ ok: boolean; message?: string }> {
@@ -822,13 +868,16 @@ export function httpAppPhoneNode(deps: HttpAppPhoneNodeDeps): AppPhoneNode {
       const json = (await res.json().catch(() => ({}))) as { phones?: unknown };
       const rows = Array.isArray(json.phones) ? json.phones : [];
       return rows.flatMap((row): AppPhoneRow[] => {
-        const r = row as { serial?: unknown; name?: unknown; model?: unknown; online?: unknown; screen?: unknown; route?: unknown };
+        const r = row as { serial?: unknown; name?: unknown; model?: unknown; online?: unknown; screen?: unknown; route?: unknown; platform?: unknown; canTap?: unknown; consent?: unknown };
         if (!isAppSerial(r.serial)) return [];
-        if (r.route !== undefined && r.route !== APP_PHONE_ROUTE) return [];
+        if (r.route !== undefined && r.route !== APP_PHONE_ROUTE && r.route !== ANDROID_APP_ROUTE) return [];
         return [{
           serial: r.serial as string,
-          name: typeof r.name === 'string' && r.name ? r.name : 'iPhone',
+          name: typeof r.name === 'string' && r.name ? r.name : r.platform === 'android' ? 'Android phone' : 'iPhone',
           model: typeof r.model === 'string' ? r.model : 'iPhone',
+          platform: r.platform === 'android' ? 'android' : 'ios',
+          canTap: r.platform === 'android' && r.canTap === true,
+          ...(typeof r.consent === 'string' ? { consent: r.consent } : {}),
           // `screen` is the ingest socket; older rows only carry `online`.
           online: r.screen === undefined ? r.online === true : r.screen === true && r.online !== false,
         }];
@@ -849,8 +898,8 @@ export function httpAppPhoneNode(deps: HttpAppPhoneNodeDeps): AppPhoneNode {
       const result = body.result && typeof body.result === 'object' && !Array.isArray(body.result) ? (body.result as Record<string, unknown>) : body;
       return { ok: true, result };
     },
-    async openViewer(serial) {
-      const res = await post(`/api/v1/phones/${encodeURIComponent(serial)}/ws-token`, { readOnly: true });
+    async openViewer(serial, opts) {
+      const res = await post(`/api/v1/phones/${encodeURIComponent(serial)}/ws-token`, { readOnly: opts?.readOnly !== false });
       if (!res.ok) {
         const { message } = await errorOf(res);
         throw new Error(res.status === 404 || res.status === 409 ? APP_SHARE_SCREEN_MESSAGE : message || `The phone stream token was refused (${res.status}).`);

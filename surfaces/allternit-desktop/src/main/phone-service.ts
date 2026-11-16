@@ -35,7 +35,7 @@ import {
   type PhoneStreamStatus,
 } from './phone-scrcpy.js';
 import { PhoneStreamManager, type StreamConsumer } from './phone-stream.js';
-import { AppPhoneBackend, AppPhoneViewerSession, APP_SHARE_SCREEN_MESSAGE, httpAppPhoneNode, isAppSerial, type AppPhoneDevice } from './phone-app-store.js';
+import { AppPhoneBackend, AppPhoneViewerSession, APP_SHARE_SCREEN_MESSAGE, appPlatformOf, httpAppPhoneNode, isAppSerial, type AppPhoneDevice } from './phone-app-store.js';
 import { decodeStillInWindow } from './phone-app-still.js';
 import { IosVideoSession } from './phone-ios-video.js';
 import { PhoneUserComms, type CallStateName, type CommsResult, type PhoneAppInfo, type PhoneSmsMessage, type PhoneSmsThread } from './phone-user-comms.js';
@@ -959,9 +959,13 @@ class PhoneService {
 
   private createAppViewerSession(serial: string): AppPhoneViewerSession {
     const backend = this.ensureAppBackend();
+    const platform = appPlatformOf(backend.row(serial));
     return new AppPhoneViewerSession({
-      open: () => httpAppPhoneNode({ apiUrl: () => phoneLinkApiUrl(backendManager.getUrl()), headers: () => this.nodeHeaders() }).openViewer(serial),
-      deviceName: backend.row(serial)?.name || 'iPhone',
+      // Android phones take the owner's taps, so their viewer is full-control; iPhones stay read-only.
+      open: () => httpAppPhoneNode({ apiUrl: () => phoneLinkApiUrl(backendManager.getUrl()), headers: () => this.nodeHeaders() }).openViewer(serial, { readOnly: platform !== 'android' }),
+      deviceName: backend.row(serial)?.name || (platform === 'android' ? 'Android phone' : 'iPhone'),
+      platform,
+      canTap: () => backend.row(serial)?.canTap === true,
       log: (message) => log.info('[PhoneStream]', message),
     });
   }
@@ -1009,8 +1013,12 @@ class PhoneService {
       // The node relays it: no adb, no Phone Link. Only while the iPhone shares its screen.
       const apps = this.ensureAppBackend();
       await apps.refresh(true);
-      if (!apps.row(serial)) return { ok: false, message: 'That iPhone is not paired with this computer.' };
-      if (!apps.row(serial)?.online) return { ok: false, message: APP_SHARE_SCREEN_MESSAGE };
+      const appRow = apps.row(serial);
+      const appPlatform = appPlatformOf(appRow);
+      if (!appRow) return { ok: false, message: 'That phone is not paired with this computer.' };
+      // An iPhone must already share its screen. An Android phone is asked to (the node sends the request
+      // while a viewer waits), so its viewer starts and shows "Tap Start on <phone>" until the screen is live.
+      if (!appRow.online && appPlatform !== 'android') return { ok: false, message: APP_SHARE_SCREEN_MESSAGE };
       return this.ensureStreamManager().start(serial, opts ?? {});
     }
     if (serial.startsWith(LINK_SERIAL_PREFIX)) {
