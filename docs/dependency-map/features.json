@@ -4802,7 +4802,10 @@
         "allternit-ai/src/components/computers/files/useFilesShares.ts",
         "allternit-ai/src/lib/files-drive/guest.ts",
         "allternit-ai/src/lib/files-drive/sharing.ts",
-        "allternit-ai/src/pages/FilesGuestPage.tsx"
+        "allternit-ai/src/pages/FilesGuestPage.tsx",
+        "allternit/cmd/allternit-cloud-api/src/routes/files_gateway.rs",
+        "allternit/cmd/allternit-cloud-api/src/services/files_tokens.rs",
+        "allternit/cmd/allternit-cloud-api/migrations_pg/144_files_shares.sql"
       ],
       "decisions": [
         {

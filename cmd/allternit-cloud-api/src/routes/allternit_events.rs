@@ -355,6 +355,17 @@ pub static REGISTRY: &[EventType] = &[
         runtime_aliases: &["phone.approval.resolved"],
     },
     EventType {
+        name: "files.share.accessed",
+        title: "Files share access",
+        description: "A guest opened, listed, downloaded from, uploaded to, commented on or woke the computer through a Files drive share, or was denied. One event per audit row (contracts/files-drive/schema/events.json, ShareAccessed). Guests only ever see the folder they were given; names are not in the event.",
+        platform: false,
+        agents: true,
+        bot: false,
+        filters: &[("computer_id", "Only shares on this computer.")],
+        payload: &[("computer_id", "The runtime device id the shared folder lives on."), ("access", "The audit row: share_id, guest_id, action (redeem, list, download, upload, comment, wake), item_id when there is one, result (allowed or denied), error code when denied, at.")],
+        runtime_aliases: &[],
+    },
+    EventType {
         name: "mail.received",
         title: "Mail received",
         description: "An email arrived at one of the project's mailboxes (/v1/mailboxes). Carries any one-time codes and sign-in links found in it; the full body is in GET /v1/mailboxes/{id}/messages/{message_id}.",

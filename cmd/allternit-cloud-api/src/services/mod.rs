@@ -13,6 +13,7 @@ pub mod customer_emails;
 pub mod event_store;
 pub mod fabric_ledger;
 pub mod executor_service;
+pub mod files_tokens;
 pub mod hosted_runtime_lifecycle;
 pub mod inference_keys;
 pub mod connections;

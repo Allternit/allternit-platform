@@ -431,6 +431,9 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         // User file uploads to R2 with per-plan caps (presigned PUT/GET); 503 when ALLTERNIT_R2_* is unset.
         .merge(routes::files::routes())
         .merge(routes::runtime_files::routes())
+        // Files drive sharing (contracts/files-drive): owner share routes check the Clerk session per request;
+        // token-keys, files-gateway summary/redeem and the guest gateway are public (Files-Guest tokens).
+        .merge(routes::files_gateway::routes())
         // Artifacts v2 (docs/design/artifacts-v2.md): every handler resolves
         // the caller itself (Clerk session or scoped token); the public link
         // route /api/v2/public/artifacts/:id takes no auth.

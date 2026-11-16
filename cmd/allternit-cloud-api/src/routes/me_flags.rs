@@ -18,7 +18,15 @@
 //! everyone with
 //! `ALLTERNIT_MEETINGS_ENABLED=1`, else for the user ids in
 //! `ALLTERNIT_MEETINGS_USER_IDS` (comma-separated) and for admins
-//! (`ALLTERNIT_ADMIN_USER_IDS`).
+//! (`ALLTERNIT_ADMIN_USER_IDS`). `flags.files_drive` gates the Files drive
+//! (Files tab, sharing) and works the same way with
+//! `ALLTERNIT_FILES_DRIVE_ENABLED` / `ALLTERNIT_FILES_DRIVE_USER_IDS`.
+//!
+//! GET also accepts a paired computer's runtime device credential
+//! (`allternit_runtime_…`) and answers as the device's owner, so a gizzi that
+//! is only paired can read `files_drive`. Read only: a PUT with a device
+//! credential is a 403. This route sits outside `auth_middleware`, so this is
+//! the one place that grant lives; no other route gains device access.
 
 use axum::{
     extract::State,
@@ -29,7 +37,13 @@ use axum::{
 use serde_json::{json, Map, Value};
 use std::sync::Arc;
 
-use crate::{auth, error::ApiError, services::user_trust::TrustConfig, ApiState};
+use crate::{
+    auth,
+    error::ApiError,
+    routes::runtime_pairing::{device_token_from_headers, runtime_device_for_token},
+    services::user_trust::TrustConfig,
+    ApiState,
+};
 
 /// Flags a caller may read or write. Anything else in a PUT body is a 400.
 pub(crate) const ALLOWED_FLAGS: &[&str] = &["botsIntroSeenAt"];
@@ -46,9 +60,7 @@ async fn get_my_flags(
     State(state): State<Arc<ApiState>>,
     headers: HeaderMap,
 ) -> Result<Json<Value>, ApiError> {
-    let user = auth::resolve_user_scoped(&state.db, &headers, "account").await?;
-    let flags = read_flags_with(&TrustConfig::from_env(), &user.id).await?;
-    Ok(Json(with_features(flags, &user.id)))
+    get_flags_for(&state.db, &headers, &TrustConfig::from_env()).await.map(Json)
 }
 
 async fn put_my_flags(
@@ -56,10 +68,47 @@ async fn put_my_flags(
     headers: HeaderMap,
     Json(body): Json<Value>,
 ) -> Result<Json<Value>, ApiError> {
-    let user = auth::resolve_user_scoped(&state.db, &headers, "account").await?;
-    let updates = validate_updates(&body)?;
-    let flags = write_flags_with(&TrustConfig::from_env(), &user.id, updates).await?;
-    Ok(Json(with_features(flags, &user.id)))
+    put_flags_for(&state.db, &headers, &TrustConfig::from_env(), &body).await.map(Json)
+}
+
+/// The account a flags read answers for: a Clerk session or an `account`
+/// API token, else a valid (unexpired, unrevoked) runtime device credential,
+/// which reads as the device's owner. Only the GET calls this.
+pub(crate) async fn flags_reader_id(db: &sqlx::PgPool, headers: &HeaderMap) -> Result<String, ApiError> {
+    match auth::resolve_user_scoped(db, headers, "account").await {
+        Ok(user) => Ok(user.id),
+        Err(primary) => {
+            let Some(token) = device_token_from_headers(headers) else {
+                return Err(primary);
+            };
+            Ok(runtime_device_for_token(db, token, None).await?.user_id)
+        }
+    }
+}
+
+pub(crate) async fn get_flags_for(db: &sqlx::PgPool, headers: &HeaderMap, config: &TrustConfig) -> Result<Value, ApiError> {
+    let user_id = flags_reader_id(db, headers).await?;
+    let flags = read_flags_with(config, &user_id).await?;
+    Ok(with_features(flags, &user_id))
+}
+
+/// Writes need a Clerk session or an `account` API token. A runtime device
+/// credential is refused before anything else runs: devices only read.
+pub(crate) async fn put_flags_for(
+    db: &sqlx::PgPool,
+    headers: &HeaderMap,
+    config: &TrustConfig,
+    body: &Value,
+) -> Result<Value, ApiError> {
+    if device_token_from_headers(headers).is_some() {
+        return Err(ApiError::Forbidden(
+            "A paired computer's device credential can read account flags but not change them".to_string(),
+        ));
+    }
+    let user = auth::resolve_user_scoped(db, headers, "account").await?;
+    let updates = validate_updates(body)?;
+    let flags = write_flags_with(config, &user.id, updates).await?;
+    Ok(with_features(flags, &user.id))
 }
 
 /// Server feature flags for `user_id`, added to the `flags` object.
@@ -72,6 +121,8 @@ fn with_features(mut flags: Value, user_id: &str) -> Value {
     );
     if let Some(map) = flags.get_mut("flags").and_then(Value::as_object_mut) {
         map.insert("meetings".to_string(), Value::Bool(meetings));
+        // Same check the sharing gateway makes on the owner.
+        map.insert("files_drive".to_string(), Value::Bool(super::files_gateway::files_drive_on(user_id)));
     }
     flags
 }
@@ -349,6 +400,11 @@ mod tests {
         let flags = with_features(json!({ "flags": { "botsIntroSeenAt": null } }), "nobody-listed");
         assert_eq!(flags["flags"]["botsIntroSeenAt"], Value::Null, "stored flags untouched");
         assert!(flags["flags"]["meetings"].is_boolean());
+        assert!(flags["flags"]["files_drive"].is_boolean());
+        assert!(matches!(
+            validate_updates(&json!({ "files_drive": "2026-11-15T00:00:00Z" })),
+            Err(ApiError::BadRequest(_))
+        ));
         // Read-only: a client can't switch its own feature on.
         assert!(matches!(
             validate_updates(&json!({ "meetings": "2026-11-13T00:00:00Z" })),
@@ -456,5 +512,127 @@ mod tests {
             assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{method} /api/v1/me/flags");
         }
         assert!(gateway.recorded().is_empty(), "never relayed to a runtime");
+    }
+
+    // A paired computer's runtime device credential: GET only, as its owner.
+
+    const DEVICE_TOKEN: &str = "allternit_runtime_me_flags_device_test";
+    const EXPIRED_TOKEN: &str = "allternit_runtime_me_flags_expired_test";
+    const REVOKED_TOKEN: &str = "allternit_runtime_me_flags_revoked_test";
+
+    /// The minimal test `runtime_devices` plus the grace-window columns the
+    /// credential lookup reads, with three devices owned by `user_1`: one
+    /// valid, one expired, one revoked.
+    async fn seed_devices(db: &sqlx::PgPool) {
+        sqlx::query(
+            "ALTER TABLE runtime_devices ADD COLUMN IF NOT EXISTS previous_credential_hash TEXT, \
+             ADD COLUMN IF NOT EXISTS previous_credential_expires_at TIMESTAMPTZ",
+        )
+        .execute(db)
+        .await
+        .unwrap();
+        for (id, token, expires, revoked) in [
+            ("rt_ok", DEVICE_TOKEN, "2999-01-01", None),
+            ("rt_expired", EXPIRED_TOKEN, "2000-01-01", None),
+            ("rt_revoked", REVOKED_TOKEN, "2999-01-01", Some("2026-01-01")),
+        ] {
+            sqlx::query(
+                "INSERT INTO runtime_devices (id, user_id, name, status, credential_expires_at, credential_hash, revoked_at) \
+                 VALUES ($1, 'user_1', 'paired gizzi', 'online', $2::timestamptz, $3, $4::timestamptz)",
+            )
+            .bind(id)
+            .bind(expires)
+            .bind(crate::routes::runtime_pairing::sha256_hex(token.as_bytes()))
+            .bind(revoked)
+            .execute(db)
+            .await
+            .unwrap();
+        }
+    }
+
+    fn bearer(token: &str) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        headers.insert(axum::http::header::AUTHORIZATION, format!("Bearer {token}").parse().unwrap());
+        headers
+    }
+
+    #[tokio::test]
+    async fn a_device_token_reads_its_owners_flags() {
+        let db = crate::routes::test_support::test_pool().await;
+        seed_devices(&db).await;
+        let (base, calls) = spawn_mock_clerk(json!({ "botsIntroSeenAt": "2026-10-20T12:00:00Z" }), false).await;
+
+        let flags = get_flags_for(&db, &bearer(DEVICE_TOKEN), &config(&base)).await.unwrap();
+        assert_eq!(flags["flags"]["botsIntroSeenAt"], "2026-10-20T12:00:00Z");
+        assert!(flags["flags"]["files_drive"].is_boolean(), "gizzi reads files_drive here");
+        assert!(flags["flags"]["meetings"].is_boolean());
+
+        let calls = calls.lock().unwrap().clone();
+        assert_eq!(calls.len(), 1);
+        assert_eq!((calls[0].0.as_str(), calls[0].1.as_str()), ("GET", "/v1/users/user_1"), "read as the device's owner");
+    }
+
+    #[tokio::test]
+    async fn a_device_token_cannot_put_flags() {
+        let db = crate::routes::test_support::test_pool().await;
+        seed_devices(&db).await;
+        let (base, calls) = spawn_mock_clerk(json!({}), false).await;
+
+        let error = put_flags_for(
+            &db,
+            &bearer(DEVICE_TOKEN),
+            &config(&base),
+            &json!({ "botsIntroSeenAt": "2026-10-20T12:00:00Z" }),
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(error, ApiError::Forbidden(_)), "device PUT must be a 403, got {error:?}");
+        assert!(calls.lock().unwrap().is_empty(), "nothing reaches Clerk");
+    }
+
+    #[tokio::test]
+    async fn expired_revoked_or_unknown_device_tokens_cannot_read_flags() {
+        let db = crate::routes::test_support::test_pool().await;
+        seed_devices(&db).await;
+        let (base, calls) = spawn_mock_clerk(json!({}), false).await;
+        let cfg = config(&base);
+
+        let expired = get_flags_for(&db, &bearer(EXPIRED_TOKEN), &cfg).await.unwrap_err();
+        assert!(matches!(expired, ApiError::TokenExpired(_)), "expired: {expired:?}");
+        for token in [REVOKED_TOKEN, "allternit_runtime_never_paired"] {
+            let error = get_flags_for(&db, &bearer(token), &cfg).await.unwrap_err();
+            assert!(matches!(error, ApiError::Unauthorized(_)), "{token}: {error:?}");
+        }
+        assert!(calls.lock().unwrap().is_empty(), "nothing reaches Clerk");
+    }
+
+    /// Through the full router: the device token's PUT on /me/flags is a
+    /// 403, and the same token still gets a 401 on other protected routes
+    /// (auth_middleware is unchanged).
+    #[tokio::test]
+    async fn full_router_device_token_is_read_only_and_gains_no_other_route() {
+        use crate::routes::test_support::{test_state, MockGateway};
+        use axum::{body::Body, http::Request, http::StatusCode};
+        use tower::ServiceExt;
+
+        let gateway = Arc::new(MockGateway::new(Some(MockGateway::healthy_node()), vec![]));
+        let state = test_state(gateway.clone()).await;
+        seed_devices(&state.db).await;
+        let app = crate::create_router(state);
+        for (method, uri, expected) in [
+            ("PUT", "/api/v1/me/flags", StatusCode::FORBIDDEN),
+            ("GET", "/api/v1/deployments", StatusCode::UNAUTHORIZED),
+            ("POST", "/api/v1/deployments", StatusCode::UNAUTHORIZED),
+        ] {
+            let request = Request::builder()
+                .method(method)
+                .uri(uri)
+                .header("authorization", format!("Bearer {DEVICE_TOKEN}"))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"botsIntroSeenAt":"2026-10-20T12:00:00Z"}"#))
+                .unwrap();
+            let response = app.clone().oneshot(request).await.unwrap();
+            assert_eq!(response.status(), expected, "{method} {uri} with a device token");
+        }
     }
 }
