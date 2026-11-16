@@ -30,7 +30,7 @@ use std::time::{Duration, Instant};
 use allternit_files_core::{
     ChunkRef, CopyRequest, CopyResponse, ErrorBody, ErrorCode, HaveNeedRequest, HaveNeedResponse, ItemKind, JobRef,
     JobRefKind, JobRefState, MkdirRequest, MutationResponse, OnConflict, PrincipalKind, PrincipalRef, ReplicaMode,
-    ReplicaRestoreReport, ReplicaRestoreRequest, ReplicaState, Replica, StatResponse, StorageDiscovery,
+    ReplicaRestoreReport, ReplicaRestoreRequest, ReplicaState, StatResponse, StorageDiscovery,
     UploadChunksAppend, UploadCommitResponse, UploadCreateRequest, UploadStatus,
 };
 use allternit_files_engine::crypto::{ChunkSealer, FilesRootKey};
@@ -264,8 +264,8 @@ fn locate<'a>(v: &Inner, rt: &'a Handle, replica_id: &str) -> Result<Dest<'a>, F
     Err(ApiError::new(ErrorCode::NotFound, "This computer does not know where that replica is.").into())
 }
 
-/// The principal replication and restore act as on this computer.
-fn system_req() -> Req {
+/// The principal replication, restore and the snapshot writer act as on this computer.
+pub(crate) fn system_req() -> Req {
     Req {
         principal: PrincipalRef { kind: PrincipalKind::Owner, id: "files-replicator".into(), display_name: Some("Replica sync".into()) },
         user_id: String::new(),
@@ -825,20 +825,16 @@ pub(crate) fn register_process(files: &Arc<FilesV2>) {
     let _ = PROCESS.set(files.clone());
 }
 
-/// What the presence heartbeat carries for the Files drive:
-/// `{"storage": StorageDiscovery, "replicas": [Replica]}`, or `None` when the
-/// drive is off. Heartbeats never count as activity.
+/// What the presence heartbeat carries for the Files drive under
+/// `filesStorage` (SPEC section 15): this computer's `StorageDiscovery`
+/// (volumes, bytes per root, replica-host capacity), or `None` when the drive
+/// is off. cloud-api keeps the last one for the replica picker and placement.
+/// Heartbeats never count as activity.
 pub async fn heartbeat_report() -> Option<serde_json::Value> {
     let files = PROCESS.get()?.clone();
     if !files.cfg.enabled {
         return None;
     }
-    let (storage, replicas): (StorageDiscovery, Vec<Replica>) = run(&files, |v| {
-        let storage = super::storage::discovery(v)?;
-        let c = replicas::db(&v.cfg.data_dir)?;
-        Ok((storage, replicas::rows(&c, None)?.into_iter().map(|r| r.replica).collect()))
-    })
-    .await
-    .ok()?;
-    Some(serde_json::json!({ "storage": storage, "replicas": replicas }))
+    let storage: StorageDiscovery = run(&files, |v| super::storage::discovery(v)).await.ok()?;
+    serde_json::to_value(storage).ok()
 }
