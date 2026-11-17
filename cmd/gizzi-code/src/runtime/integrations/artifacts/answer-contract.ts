@@ -221,5 +221,27 @@ Use only real data with its source. Empty arrays are allowed for empty data. Cha
 Example: {"version":1,"template":"decision","title":"Choose a format","data":{"question":"Which format?","options":["PDF","DOCX"]}}
 If a card is not needed, write the answer in Markdown. The app renders prose through its fixed text template. Invalid cards fall back to readable text; they never execute model-written layouts.
 
+Fact cards (weather, time-zones, conversion, places, link-preview, image-gallery): fill them only from a tool result in this turn, never from memory. When the lookup tool already returned the card, do not write it again; the app draws it from the tool result. One card per fact. The reply text must stand alone, because some apps show text only: state the fact in words ("It's 14 °C and cloudy in Oslo"). Always show the credit: every fact card carries its provider credit, and each image keeps its credit, licence and source link. For "here" or "near me", use the shared location only when this turn includes one; otherwise ask for a place.
+Writing: use writing for a draft the user will send or keep (email, text message, social post, document, note). Body is the draft itself; add to and subject when known and at most 2 labelled alternatives. At most 3 writing cards per reply. The app offers Copy, Edit, Open in Mail or Messages and Save as doc. There is no send action, so never say a draft was sent.
+When not to use a card: decision and option-grid only when the user must pick between real options this turn, not to list ideas, steps or a single recommendation. Calculator only when the user will change inputs to explore results; for one fixed computation state the result in words, and use conversion for units and currencies.
+
 Additional catalog templates (same envelope and validation rules; examples in UI Forge are synthetic):
 ${catalogManual()}`;
+
+/** A complete, valid writing envelope; the widgets manual shows it and the tests parse it. */
+export const WRITING_EXAMPLE = { version: 1, template: 'writing', title: 'Reply to Sam', data: { variant: 'email', to: 'Sam', subject: 'Friday works', body: 'Hi Sam,\n\nFriday at 2 works for me. See you then.\n\nThanks', alternatives: [{ label: 'Shorter', body: 'Friday at 2 works. See you then!' }] } } as const;
+
+/**
+ * The short manual for clients that draw no catalog cards (iOS, the Ink
+ * REPL). They send the turn hint `answer_cards: "widgets"` and the runtime
+ * adds this instead of the full manual. It covers writing only: lookup fact
+ * cards reach those clients as tool results, never as model-written fences.
+ * It never contains the "## Enforced answer templates" heading, so the turn
+ * guard does not force a template on these clients.
+ */
+export const ANSWER_WIDGETS_MANUAL = `## Draft blocks
+This app draws one kind of card: a writing draft. When the user asks you to write something they will send or keep (an email, text message, social post, document or note), put the draft in a fenced code block tagged \`openui\` containing only a JSON object like:
+${JSON.stringify(WRITING_EXAMPLE)}
+variant is one of email, text_message, social_post, document, note. to and subject are optional; alternatives is optional, at most 2, each with a label and body. At most 3 drafts per reply. Add one plain sentence outside the block saying what the draft is for. No other templates, components or HTML.
+The app offers Copy, Edit, Open in Mail or Messages and Save as doc. It never sends anything, so never say a draft was sent.
+Fact cards from the lookup tool appear on their own; still state the fact in words and name its source.`;
