@@ -49,6 +49,8 @@
 //!   - `{"type":"screen_request","serial"}`: a viewer is waiting and no ingest
 //!     is open; the app asks the person to start sharing (at most one per
 //!     phone every 10 s).
+//!   - `hid.*` through the rpc route below (Phone Use `bt-android`): the
+//!     Android app sends them to the iPhone as Bluetooth keyboard/mouse reports.
 //!
 //! # Listing (`GET /api/v1/phones`, see [`decorate_listing`])
 //!
@@ -194,6 +196,15 @@ const RPC_METHODS: &[&str] = &[
     "device.home.set",
     "device.home.scene",
     "device.screen.read",
+    // Phone Use `bt-android` (contract §9.2): the Android app as the iPhone's
+    // Bluetooth keyboard and mouse. Desktop's guard runs before any of these.
+    "hid.pair.status",
+    "hid.pointer.move",
+    "hid.pointer.click",
+    "hid.pointer.reset",
+    "hid.key",
+    "hid.type",
+    "hid.scroll",
 ];
 /// Phone Use methods. Their waiting calls outlive the socket the request went
 /// out on: running a shortcut brings Shortcuts to the front, which closes the

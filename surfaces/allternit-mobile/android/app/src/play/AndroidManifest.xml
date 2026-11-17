@@ -9,6 +9,17 @@
          Keep the components below in step with src/phonelink/AndroidManifest.xml. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+    <!-- Control my iPhone by Bluetooth (Phone Use `bt-android`, BluetoothRemote):
+         this phone as a Bluetooth keyboard and mouse (BluetoothHidDevice) for
+         the person's own iPhone. No BLUETOOTH_SCAN: nothing here scans, the
+         iPhone starts the pairing. Bluetooth is optional so Play does not
+         filter out phones without it. -->
+    <uses-feature android:name="android.hardware.bluetooth" android:required="false" />
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
 
     <application>
         <!-- Share screen: claim code, pairing, Share / Stop, taps (with the
@@ -39,6 +50,13 @@
             android:name="com.allternit.phonelink.ProjectionService"
             android:exported="false"
             android:foregroundServiceType="mediaProjection" />
+
+        <!-- Keeps Control my iPhone by Bluetooth on while the app is in the background.
+             Started only from the person's tap in Share screen. -->
+        <service
+            android:name="com.allternit.phonelink.BluetoothRemoteService"
+            android:exported="false"
+            android:foregroundServiceType="connectedDevice" />
 
         <!-- A viewer's taps and typing while the person shares (turned on by the
              person in Accessibility settings, after the in-app disclosure). -->
