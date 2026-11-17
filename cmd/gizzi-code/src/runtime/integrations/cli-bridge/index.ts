@@ -11,6 +11,7 @@ import { RunCodeTool } from "@/runtime/tools/builtins/run_code"
 import { SendUserMessageTool } from "@/runtime/tools/builtins/send-user-message"
 import { CurrentTimeTool } from "@/runtime/tools/builtins/current-time"
 import { AutomationTool } from "@/runtime/tools/builtins/automation"
+import { FolderAccessTool } from "@/runtime/tools/builtins/folder-access"
 import { ARTIFACT_TOOLS } from "@/runtime/tools/builtins/artifact"
 import { QuestionTool } from "@/runtime/tools/builtins/question"
 import { TodoWriteTool } from "@/runtime/tools/builtins/todo"
@@ -45,7 +46,9 @@ export namespace CliBridge {
   // which the delegation rule tells the CLI to load (agents/builtin-catalog.ts).
   // run_code: Python on the chat's attachments in gizzi's OS sandbox (Analyze);
   // its result metadata (files[]) reaches the session part via CliBridgeResults.
-  export const TOOLS: Tool.Info[] = [PaneArtifactTool, PaneBrowserTool, MediaGenerateTool, TodoWriteTool, GlanceTool, BuiltinSkillTool(), ...ARTIFACT_TOOLS, ArtifactCheckTool, RunCodeTool, SendUserMessageTool, CurrentTimeTool, AutomationTool]
+  // folder_access: the person's grant for folders outside the project (always
+  // asks). It governs gizzi's own tools; the CLI's own file tools follow the CLI.
+  export const TOOLS: Tool.Info[] = [PaneArtifactTool, PaneBrowserTool, MediaGenerateTool, TodoWriteTool, GlanceTool, BuiltinSkillTool(), ...ARTIFACT_TOOLS, ArtifactCheckTool, RunCodeTool, SendUserMessageTool, CurrentTimeTool, AutomationTool, FolderAccessTool]
 
   /** gizzi's id for a bridged tool reported under a CLI's vendor name (run_code only; see CliBridgeResults). */
   export const canonicalTool = CliBridgeResults.canonicalTool

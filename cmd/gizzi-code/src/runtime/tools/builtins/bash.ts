@@ -2,6 +2,7 @@ import z from "zod/v4"
 import { spawn } from "child_process"
 import { Tool } from "@/runtime/tools/builtins/tool"
 import path from "path"
+import os from "os"
 import DESCRIPTION from "@/runtime/tools/builtins/bash.txt"
 import { Log } from "@/shared/util/log"
 import { Instance } from "@/runtime/context/project/instance"
@@ -223,6 +224,25 @@ export const BashTool = Tool.define("bash", async () => {
             metadata: { output, exit: redirect.exit, description: params.description },
             output,
           }
+        }
+        // The sandbox may write in a granted folder, so a delete the parser
+        // above can't see (an interpreter's remove call, rsync --delete, a
+        // move to /dev/null) would skip _to_delete. When the command reaches
+        // such a folder and names a delete-class verb anywhere, the person
+        // approves it first: `folder_delete` is a permanent-delete class
+        // (confirm_now), asked in every mode, never remembered.
+        const reached = disguisedDelete(params.command, cwd, ctx.sessionID)
+        if (reached) {
+          await ctx.ask({
+            permission: FOLDER_DELETE_PERMISSION,
+            patterns: [params.command],
+            always: [],
+            metadata: {
+              summary: `Run a command that may delete files for good in ${reached.map((r) => path.basename(r) || r).join(", ")}`,
+              command: params.command,
+              folders: reached,
+            },
+          })
         }
       }
 
@@ -859,6 +879,57 @@ export function trashRedirect(root: ShellNode, cwd: string, sessionID: string): 
     `Tell the person the files are in ${roots.map((r) => path.join(r, FolderGrants.TRASH_DIR)).join(", ")}. To delete for real, call folder_access with action request_delete for the folder.`,
   )
   return { output: lines.join("\n"), exit }
+}
+
+/**
+ * Permission class of the ask for a command that may delete in a folder
+ * granted without request_delete in a way trashRedirect can't see. The
+ * action reviewer classifies the name as a permanent delete (confirm_now).
+ */
+export const FOLDER_DELETE_PERMISSION = "folder_delete"
+
+/** A delete-class verb anywhere in the text: programs, interpreter calls, flags. */
+const DISGUISED_DELETE =
+  /(^|[^\w-])(rm|rmdir|unlink|unlinkSync|rmSync|rmdirSync|rmtree|removedirs|remove_tree|rm_rf|rm_r|rimraf|del|delete|deleteSync|remove|trash|send2trash|shred|srm|truncate)([^\w-]|$)|-delete\b|\bmv\b[^;&|\n]*\s\/dev\/null\b/
+
+/**
+ * The folders granted without request_delete that a command may delete in
+ * without trashRedirect seeing it: it names a delete-class verb (see
+ * DISGUISED_DELETE) and runs in such a folder, names a path in one, or starts
+ * an argument with an expansion that could point anywhere. Undefined when
+ * there is nothing to ask. Paths built at run time inside a script, or a
+ * script file run from disk, are not seen.
+ */
+export function disguisedDelete(command: string, cwd: string, sessionID: string): string[] | undefined {
+  if (!DISGUISED_DELETE.test(command)) return undefined
+  const roots = FolderGrants.list(sessionID)
+    .filter((g) => !g.delete)
+    .map((g) => g.root)
+  if (!roots.length) return undefined
+  const touched = new Set<string>()
+  const trashRoot = (target: string) => {
+    const d = FolderGrants.disposition(sessionID, target)
+    if (d.kind === "trash") touched.add(d.grant.root)
+  }
+  trashRoot(cwd)
+  for (const root of roots) if (command.includes(root)) touched.add(root)
+  const home = os.homedir()
+  const tokens = command.split(/[\s'"`;|&()<>,=]+/).filter(Boolean).slice(0, 400)
+  for (const token of tokens) {
+    if (token.startsWith("-")) continue
+    const expanded = token.replace(/^\$\{?HOME\}?(?=\/|$)/, home)
+    if (expanded.startsWith("$")) {
+      for (const r of roots) touched.add(r)
+      continue
+    }
+    if (/[$*?[\]{}]/.test(expanded)) {
+      const prefix = expanded.split(/[$*?[\]{}]/)[0] ?? ""
+      trashRoot(FolderGrants.absolute(prefix || ".", cwd))
+      continue
+    }
+    trashRoot(FolderGrants.absolute(expanded, cwd))
+  }
+  return touched.size ? [...touched] : undefined
 }
 
 function emptyDir(p: string): boolean {

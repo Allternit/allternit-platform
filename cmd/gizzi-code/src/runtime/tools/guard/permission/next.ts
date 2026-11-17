@@ -117,8 +117,17 @@ export namespace PermissionNext {
    *
    * `project_send` gates a bot's main chat sending work into another project:
    * the person approves every send, with the project and full message on the card.
+   *
+   * `folder_access` gates a grant to folders outside the project (and
+   * `request_delete`, real deletes there); builtins/folder-access.ts.
+   *
+   * `computer.access` gates a computer access tier for an app (request_access,
+   * or the ask an access_required step raises); computer-toolset/index.ts.
+   *
+   * Listed here, not added by the tool modules when they load, so the class
+   * always asks whichever modules a process happens to import.
    */
-  export const ALWAYS_ASK = new Set(["subscription", "mcp_app", "project_send"])
+  export const ALWAYS_ASK = new Set(["subscription", "mcp_app", "project_send", "folder_access", "computer.access"])
 
   /**
    * Classes a one-task grant ("Allow for this task") never covers: money,
