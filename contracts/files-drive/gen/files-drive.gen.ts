@@ -186,7 +186,7 @@ export interface DeleteResponse {
 }
 
 /**
- * One of the user's own devices (phone, Mac, PC, browser profile).
+ * One of the user's own devices: a phone, Mac, PC or browser profile (dev_...), or a computer under its cloud-api runtime device id (rt_...), which is how a computer appears in the Files key device list and in placement.
  */
 export type DeviceId = string;
 
@@ -292,11 +292,51 @@ export interface FilesChanged {
 
 export type FilesEvent = FilesChanged | InboxDropped | TaskResult | ShareAccessed | ConflictCreated;
 
+/**
+ * One device that holds (or held) the Files key.
+ */
+export interface FilesKeyDevice {
+  device_id: DeviceId;
+  device_name: string;
+  /** base64url X25519 public key; a rotation seals the new key to it. */
+  device_pub: string;
+  /** An envelope for FilesKeyInfo.key_id exists for this device. */
+  has_current_key: boolean;
+  added_at: Timestamp;
+  approved_by_device_id?: DeviceId;
+}
+
+/**
+ * GET /api/v1/files-keys. Before the first device makes the key, key_id and created_at are absent and device_ids is empty.
+ */
 export interface FilesKeyInfo {
-  key_id: string;
-  created_at: Timestamp;
+  /** The current key. Absent until a first device creates it. */
+  key_id?: string;
+  created_at?: Timestamp;
+  /** Devices with an envelope for the current key. */
   device_ids: DeviceId[];
+  /** The key this one replaced. */
   rotated_from?: string;
+  devices: FilesKeyDevice[];
+  /** Unexpired requests, oldest first. */
+  pending_requests: PendingKeyRequest[];
+  /** A device was removed (or its computer was revoked) since the key was made: the next device with the key should POST /files-keys/rotations. */
+  rotation_needed: boolean;
+}
+
+/**
+ * Decoded body of an unlock token (fut1). Ed25519-signed by cloud-api with the Files token key.
+ */
+export interface FilesUnlockClaims {
+  v: number;
+  typ: "files_unlock";
+  user_id: string;
+  device_id: string;
+  computer_id: ComputerId;
+  iat: number;
+  /** At most iat + 300. */
+  exp: number;
+  kid: string;
 }
 
 /**
@@ -433,27 +473,49 @@ export const JOB_REF_STATE_VALUES: readonly JobRefState[] = ["queued", "running"
  * The Files root key wrapped to one device. cloud-api stores envelopes; it cannot open them.
  */
 export interface KeyEnvelope {
+  /** The FRK this envelope wraps (FilesKeyInfo.key_id). */
   key_id: string;
   device_id: DeviceId;
   wrap_alg: "x25519-hkdf-sha256-xchacha20poly1305";
-  /** base64url X25519 public key. */
+  /** base64url (no padding) X25519 public key, 32 bytes, fresh for every envelope. */
   ephemeral_pub: string;
+  /** base64url (no padding), 24 bytes. */
   nonce: string;
+  /** base64url (no padding): the 32-byte FRK sealed with XChaCha20-Poly1305 (48 bytes with the tag). KEK = HKDF-SHA256(salt = ephemeral_pub || device_pub, ikm = X25519 shared secret, info = "files-envelope/1/<device_id>", 32 bytes); AAD = "afe1|<key_id>|<device_id>". */
   wrapped_key: string;
   created_at: Timestamp;
 }
 
+/**
+ * POST /files-keys/rotations: a device holding the current key makes a new FRK and seals it to every device in the list (all of FilesKeyInfo.devices, itself included, exactly once). The old key and its envelopes stay so replicas sealed with it still open until they are re-sealed.
+ */
+export interface KeyRotation {
+  key_id: string;
+  /** Must be the current key_id. */
+  rotated_from: string;
+  rotated_by_device_id: DeviceId;
+  envelopes: KeyEnvelope[];
+}
+
+/**
+ * An existing device approves one pending request: it checked the code, wrapped the FRK to the request's device_pub and sends the envelope. The very first device of a user grants its own request (approved_by_device_id = envelope.device_id) to create the key.
+ */
 export interface KeyShareGrant {
   envelope: KeyEnvelope;
   approved_by_device_id: DeviceId;
+  /** The confirm_code of the pending request this grant answers. Must match it. */
+  confirm_code: string;
 }
 
+/**
+ * A device (or a computer, from its GET /replicas/key) asks for the Files key. cloud-api keeps it pending for 10 minutes.
+ */
 export interface KeyShareRequest {
   device_id: DeviceId;
-  /** base64url X25519. */
+  /** base64url (no padding) X25519 public key, 32 bytes. */
   device_pub: string;
   device_name: string;
-  /** Shown on both devices; the user compares them. */
+  /** Derived from device_pub, never chosen: u32_be(blake3("files-key-confirm/1|" || device_pub raw bytes)[0..4]) % 1000000, zero-padded to 6 digits. The new device shows it; the approving device recomputes it from the request's device_pub and shows it; the user compares the two. cloud-api refuses a code that does not match device_pub, and a second pending request with the same code. */
   confirm_code: string;
 }
 
@@ -520,6 +582,20 @@ export const ON_CONFLICT_VALUES: readonly OnConflict[] = ["fail", "keep_both", "
  * Opaque page token.
  */
 export type PageToken = string;
+
+/**
+ * A KeyShareRequest waiting for approval (POST /files-keys/requests answers it with 202; FilesKeyInfo.pending_requests lists them).
+ */
+export interface PendingKeyRequest {
+  request_id: string;
+  device_id: DeviceId;
+  /** base64url X25519 public key. */
+  device_pub: string;
+  device_name: string;
+  confirm_code: string;
+  created_at: Timestamp;
+  expires_at: Timestamp;
+}
 
 /**
  * What the calling principal may do. Computed by the runtime per request.
@@ -1025,6 +1101,22 @@ export interface TrashListResponse {
   entries: TrashEntry[];
   next_page_token?: PageToken;
   freshness: Freshness;
+}
+
+/**
+ * Body of POST /api/v1/computer-files/:computer_id/unlock. Sent only right after a successful local biometric check or an explicit user click (section 12).
+ */
+export interface UnlockRequest {
+  /** The x-allternit-device-id of the device that just unlocked. The runtime refuses the token on a request whose x-allternit-device-id differs. */
+  device_id: string;
+}
+
+/**
+ * A short-lived protected-root unlock token. Send it as x-allternit-unlock until expires_at.
+ */
+export interface UnlockResponse {
+  token: string;
+  expires_at: Timestamp;
 }
 
 export interface UpdateRootRequest {

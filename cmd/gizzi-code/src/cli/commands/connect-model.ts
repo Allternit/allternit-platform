@@ -62,6 +62,7 @@ export const CATALOG: Entry[] = [
 
   e("phone", "phones", "Your phone", "iPhone or Android"),
   e("phone-control", "phones", "Let Allternit use your phone", "Taps and types in your phone apps for you"),
+  e("android-screen", "phones", "Android phone (screen share)", "See and tap your Android from any device"),
 
   e("gizzi", "tools", "Gizzi Code"),
   e("claude-code", "tools", "Claude Code"),

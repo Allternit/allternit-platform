@@ -413,6 +413,45 @@ private extension Array where Element: Hashable {
     }
 }
 
+// MARK: - Folder look cache
+
+/// In-memory folder looks for the cards, loaded lazily per visible card.
+/// A missing record, a failed request or no paired computer all leave nil and
+/// the card keeps the default palette cover; nothing here blocks the list.
+@MainActor
+final class ProjectLooksCache: ObservableObject {
+    static let shared = ProjectLooksCache()
+
+    private var looks: [String: Appearance] = [:]
+    private var settled: Set<String> = []
+    private var inFlight: [String: Task<Appearance?, Never>] = [:]
+    private let client = AppearanceClient()
+
+    /// The web's key for the same project: `["project", <mode>, <id>]`, where
+    /// chat projects keep their pre-fold `cowork` mode (web
+    /// `projectWorkspaceMode`) so iOS reads the look the web saved.
+    static func key(for project: LibraryProject) -> [String] {
+        let mode = project.mode == .chat ? "cowork" : project.mode.rawValue
+        return AppearanceClient.projectKey(mode: mode, id: project.nativeId)
+    }
+
+    func cached(_ key: [String]) -> Appearance? { looks[AppearanceClient.keyString(key)] }
+
+    func appearance(for key: [String]) async -> Appearance? {
+        let id = AppearanceClient.keyString(key)
+        if settled.contains(id) { return looks[id] }
+        if let task = inFlight[id] { return await task.value }
+        let client = self.client
+        let task = Task { try? await client.appearance(key: key) }
+        inFlight[id] = task
+        let result = await task.value
+        inFlight[id] = nil
+        // A failed request is not cached, so the next visible pass retries it.
+        if result != nil { looks[id] = result; settled.insert(id) }
+        return result
+    }
+}
+
 // MARK: - Card
 
 /// One project on the overview (SessionOverview OverviewCard, phone sizes):
@@ -422,6 +461,9 @@ private struct ProjectOverviewCard<Menu: View>: View {
     let variant: LibraryLayout
     @ViewBuilder let menu: () -> Menu
     let onOpen: () -> Void
+
+    @State private var appearance: Appearance?
+    @ScaledMetric(relativeTo: .body) private var listCoverWidth: CGFloat = 30
 
     private var icon: String {
         switch project.mode {
@@ -493,7 +535,13 @@ private struct ProjectOverviewCard<Menu: View>: View {
         }
         .buttonStyle(.plain)
         .contextMenu { menu() }
-        .accessibilityLabel(project.title + (tone.map { ", \($0.label)" } ?? ""))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(project.title + ", \(modeLabel) project" + (tone.map { ", \($0.label)" } ?? ""))
+        .task(id: project.id) {
+            let key = ProjectLooksCache.key(for: project)
+            if let hit = ProjectLooksCache.shared.cached(key) { appearance = hit; return }
+            appearance = await ProjectLooksCache.shared.appearance(for: key)
+        }
     }
 
     private var moreButton: some View {
@@ -505,14 +553,6 @@ private struct ProjectOverviewCard<Menu: View>: View {
                 .contentShape(Rectangle())
         }
         .accessibilityLabel("More for \(project.title)")
-    }
-
-    private var iconView: some View {
-        Image(systemName: icon)
-            .font(.system(size: 15))
-            .foregroundColor(Color("TextSecondary"))
-            .frame(width: 24, height: 24)
-            .padding(.trailing, 4)
     }
 
     private var note: some View {
@@ -535,7 +575,7 @@ private struct ProjectOverviewCard<Menu: View>: View {
                     .lineLimit(1)
             }
         }
-        .font(.system(size: 12.5))
+        .font(.caption)
         .foregroundColor(Color("TextTertiary"))
     }
 
@@ -548,7 +588,7 @@ private struct ProjectOverviewCard<Menu: View>: View {
                 }
                 Text(tone.label).lineLimit(1)
             }
-            .font(.system(size: 11.5, weight: .semibold))
+            .font(.caption2.weight(.semibold))
             .foregroundColor(tone.color)
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
@@ -558,7 +598,7 @@ private struct ProjectOverviewCard<Menu: View>: View {
 
     private var meta: some View {
         Text(libraryShortAgo(project.updatedAt))
-            .font(.system(size: 12).monospacedDigit())
+            .font(.caption.monospacedDigit())
             .foregroundColor(Color("TextTertiary"))
     }
 
@@ -566,15 +606,17 @@ private struct ProjectOverviewCard<Menu: View>: View {
         HStack(alignment: .top, spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 8) {
-                    iconView
+                    FolderCoverView(title: project.title, mode: project.mode.rawValue,
+                                    appearance: appearance, width: listCoverWidth, flat: true)
+                        .accessibilityHidden(true)
                     Text(project.title)
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(.subheadline.weight(.semibold))
                         .foregroundColor(Color("TextPrimary"))
                         .lineLimit(1)
                 }
                 note
                 Text(preview)
-                    .font(.system(size: 12.5))
+                    .font(.footnote)
                     .foregroundColor(Color("TextSecondary"))
                     .lineLimit(1)
             }
@@ -591,26 +633,32 @@ private struct ProjectOverviewCard<Menu: View>: View {
         .frame(minHeight: 60)
     }
 
+    /// Folder cover on top, then the title, note, preview line and status.
     private var tile: some View {
         let deck = variant == .deck
         return VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .center, spacing: 4) {
-                iconView
-                Text(project.title)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(Color("TextPrimary"))
-                    .lineLimit(2)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+            HStack(alignment: .top, spacing: 4) {
+                Spacer(minLength: 0)
+                FolderCoverView(title: project.title, mode: project.mode.rawValue,
+                                appearance: appearance, width: deck ? 132 : 100)
+                    .accessibilityHidden(true)
+                Spacer(minLength: 0)
                 moreButton
+                    .padding(.trailing, -4)
             }
+            Text(project.title)
+                .font(deck ? .headline : .subheadline.weight(.semibold))
+                .foregroundColor(Color("TextPrimary"))
+                .lineLimit(2)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, 8)
             note.padding(.top, 2)
             Text(preview)
-                .font(.system(size: 14))
-                .lineSpacing(3)
+                .font(deck ? .subheadline : .footnote)
                 .foregroundColor(Color("TextSecondary"))
+                .lineLimit(deck ? 3 : 2)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                .clipped()
-                .padding(.top, 6)
+                .padding(.top, 4)
             HStack(spacing: 6) {
                 pill
                 Spacer(minLength: 0)
@@ -619,7 +667,8 @@ private struct ProjectOverviewCard<Menu: View>: View {
             .padding(.top, 4)
         }
         .padding(variant == .grid ? 12 : 16)
-        .frame(width: deck ? OverviewDeck.width : nil, height: deck ? OverviewDeck.height : 200)
+        .frame(width: deck ? OverviewDeck.width : nil, height: deck ? OverviewDeck.height : nil)
+        .frame(minHeight: deck ? nil : 250, alignment: .top)
     }
 }
 

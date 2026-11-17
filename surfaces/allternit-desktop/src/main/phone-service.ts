@@ -35,7 +35,7 @@ import {
   type PhoneStreamStatus,
 } from './phone-scrcpy.js';
 import { PhoneStreamManager, type StreamConsumer } from './phone-stream.js';
-import { AppPhoneBackend, AppPhoneViewerSession, APP_SHARE_SCREEN_MESSAGE, httpAppPhoneNode, isAppSerial, type AppPhoneDevice } from './phone-app-store.js';
+import { AppPhoneBackend, AppPhoneViewerSession, APP_SHARE_SCREEN_MESSAGE, appPlatformOf, httpAppPhoneNode, isAppSerial, type AppPhoneDevice } from './phone-app-store.js';
 import { decodeStillInWindow } from './phone-app-still.js';
 import { IosVideoSession } from './phone-ios-video.js';
 import { PhoneUserComms, type CallStateName, type CommsResult, type PhoneAppInfo, type PhoneSmsMessage, type PhoneSmsThread } from './phone-user-comms.js';
@@ -959,9 +959,16 @@ class PhoneService {
 
   private createAppViewerSession(serial: string): AppPhoneViewerSession {
     const backend = this.ensureAppBackend();
+    const platform = appPlatformOf(backend.row(serial));
+    const node = () => httpAppPhoneNode({ apiUrl: () => phoneLinkApiUrl(backendManager.getUrl()), headers: () => this.nodeHeaders() });
     return new AppPhoneViewerSession({
-      open: () => httpAppPhoneNode({ apiUrl: () => phoneLinkApiUrl(backendManager.getUrl()), headers: () => this.nodeHeaders() }).openViewer(serial),
-      deviceName: backend.row(serial)?.name || 'iPhone',
+      // Every viewer starts read-only. An Android phone takes the owner's taps only after the
+      // "Allow taps" click, which approves the runtime's confirmation grant and swaps in a full-control socket.
+      open: () => node().openViewer(serial, { readOnly: true }),
+      ...(platform === 'android' ? { openControl: () => node().openViewer(serial, { readOnly: false, approve: true }) } : {}),
+      deviceName: backend.row(serial)?.name || (platform === 'android' ? 'Android phone' : 'iPhone'),
+      platform,
+      canTap: () => backend.row(serial)?.canTap === true,
       log: (message) => log.info('[PhoneStream]', message),
     });
   }
@@ -1009,8 +1016,12 @@ class PhoneService {
       // The node relays it: no adb, no Phone Link. Only while the iPhone shares its screen.
       const apps = this.ensureAppBackend();
       await apps.refresh(true);
-      if (!apps.row(serial)) return { ok: false, message: 'That iPhone is not paired with this computer.' };
-      if (!apps.row(serial)?.online) return { ok: false, message: APP_SHARE_SCREEN_MESSAGE };
+      const appRow = apps.row(serial);
+      const appPlatform = appPlatformOf(appRow);
+      if (!appRow) return { ok: false, message: 'That phone is not paired with this computer.' };
+      // An iPhone must already share its screen. An Android phone is asked to (the node sends the request
+      // while a viewer waits), so its viewer starts and shows "Tap Start on <phone>" until the screen is live.
+      if (!appRow.online && appPlatform !== 'android') return { ok: false, message: APP_SHARE_SCREEN_MESSAGE };
       return this.ensureStreamManager().start(serial, opts ?? {});
     }
     if (serial.startsWith(LINK_SERIAL_PREFIX)) {
@@ -1049,6 +1060,11 @@ class PhoneService {
     if (!Array.isArray(events) || events.length === 0) return { ok: false, message: 'No input events.' };
     // encodeControlMessage validates every event; invalid ones fail as { ok: false }.
     return this.streams?.sendInput(serial, events as PhoneInputEvent[]) ?? { ok: false, message: 'The stream is not live.' };
+  }
+
+  /** phone:stream-request-control: the owner clicked "Allow taps" on an Android app phone's viewer. */
+  async requestStreamControl(serial: string): Promise<{ ok: boolean; message?: string }> {
+    return (await this.streams?.requestControl(serial)) ?? { ok: false, message: 'The stream is not live.' };
   }
 
   setStreamDisplayPower(serial: string, on: boolean): { ok: boolean; message?: string } {

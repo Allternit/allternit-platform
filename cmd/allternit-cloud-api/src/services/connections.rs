@@ -16,6 +16,7 @@
 //!   (`runtime_type` `desktop` / `vps`) that no provisioned computer owns.
 //! - `phone`: `apns_device_tokens`, `runtime_devices` of type `ios`.
 //! - `phone-control`: `app_phones`, `registered_phones`.
+//! - `android-screen`: always listed (no platform in the account data); live state comes from the runtime's phones list.
 //! - `slack`: `slack_installs`. `discord`: `discord_installs`. `whatsapp`:
 //!   `whatsapp_es_accounts`. `telegram`: `telegram_onboarding`.
 //! - `gmail`, `drive`, `github`, `notion`: no cloud record; their connectors
@@ -475,6 +476,10 @@ pub fn build_rows(facts: &Facts, aliases_for: &dyn Fn(&str) -> Vec<String>) -> V
         [one] => control.on(one.clone()),
         many => control.on(format!("{} phones", many.len())),
     });
+    // Android screen share: the cloud keeps no per-phone platform (`app_phones` has no such column),
+    // so the row is always offered, never "on" here. The live state is the phones list from the
+    // runtime (`GET /api/v1/phones`, rows with `platform: "android"`).
+    rows.push(Row::new("android-screen", "phones", "device"));
 
     // Coding tools: live state comes from the runtime (left out when online).
     if !online {
@@ -757,6 +762,8 @@ mod tests {
             assert_eq!((tool.available, tool.unavailable_reason), (false, Some("Runs on a computer.")), "{id}");
         }
         // Every row uses one of the four words, and ids are unique.
+        let android = row(&rows, "android-screen");
+        assert_eq!((android.group, android.found.as_deref()), ("phones", None));
         let ids: HashSet<&str> = rows.iter().map(|row| row.id.as_str()).collect();
         assert_eq!(ids.len(), rows.len());
     }

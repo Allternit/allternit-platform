@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { followTask, formatStep, resolveHold, describeOutcome, choosePhone, type HoldIO, type Hold, type RunRow } from "@/cli/commands/phone"
+import { followTask, formatStep, resolveHold, describeOutcome, choosePhone, formatPhones, type HoldIO, type Hold, type RunRow } from "@/cli/commands/phone"
 
 const hold: Hold = {
   approvalId: "a1",
@@ -112,5 +112,23 @@ describe("choosePhone", () => {
   test("by name, and the only online phone by default", () => {
     expect(choosePhone([p("Pixel"), p("iPhone")], "iph").name).toBe("iPhone")
     expect(choosePhone([p("Pixel", false), p("iPhone")]).name).toBe("iPhone")
+  })
+})
+
+describe("formatPhones", () => {
+  test("shows Android app phones with screen state and taps", () => {
+    const out = formatPhones([
+      { serial: "app:a1", name: "Pixel", online: false, platform: "android", route: "android-app", canTap: true },
+      { serial: "app:a2", name: "Galaxy", online: true, platform: "android", route: "android-app", canTap: false },
+      { serial: "app:i1", name: "Eoj iPhone", online: true, platform: "ios" },
+    ])
+    const lines = out.split("\n")
+    expect(lines[0]).toContain("Android")
+    expect(lines[0]).toContain("waiting for Start")
+    expect(lines[0]).toContain("taps on")
+    expect(lines[1]).toContain("screen live")
+    expect(lines[1]).toContain("taps off")
+    expect(lines[2]).toContain("iPhone")
+    expect(lines[2]).not.toContain("taps")
   })
 })

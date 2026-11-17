@@ -1,0 +1,113 @@
+---
+title: The project pad
+description: A free grid of tiles for each project. Move, resize and add tiles, start from a template, and keep it in sync across your devices.
+---
+
+The pad is the page a project opens on. It is a grid of tiles: your decisions, deadlines, notes, links and threads in one place. Each project keeps its own pad.
+
+## Open a project
+
+Projects show as folders in the Projects hub. Choose **Grid**, **Deck** or **List** at the top. In **List**, a preview pane on the right shows the project under your pointer or keyboard focus. The pane appears at 1024 pixels wide and above.
+
+Open a folder and it opens like a real one, then settles into a tab card at the top of the project: the folder color, the title and a short status line. Under the card, **Pad | List** switches the view.
+
+- **Pad** is the grid of tiles.
+- **List** groups the same project as **Needs you**, **Threads** and **Files**.
+
+The switch is remembered for each project. The folder opening is skipped if your device is set to reduce motion.
+
+A project that has no saved layout opens on the default template for its mode. A project with a saved layout keeps it as a [Style](/guides/project-layouts).
+
+## Edit the pad
+
+Open **Customize** and choose **Edit pad**. In edit mode every tile shows these buttons:
+
+- **Move earlier** and **Move later**
+- **Size**, which cycles **S**, **M**, **L** and **W**
+- **Remove**
+
+You can also drag a tile. From the keyboard, focus a tile, press Space to lift it, use the arrow keys to move it, and press Space again to drop it. A live announcement tells screen readers where it landed.
+
+**Add tile** lists the tiles that are not on the pad. A pad holds up to 24 tiles.
+
+| Size | Space on desktop |
+|---|---|
+| S | 1 column, 1 row |
+| M | 2 columns, 1 row |
+| L | 2 columns, 2 rows |
+| W | 4 columns, 1 row |
+
+Desktop has four columns. Phones have two, and **M** and **W** take the full width.
+
+Editing the pad switches the project from a Style to the free grid.
+
+## The 13 tiles
+
+| Tile | What it shows |
+|---|---|
+| Your decision | What is waiting on you |
+| Countdown | Days to the next deadline |
+| Progress | Threads, tasks or sessions done |
+| Team | The bots working on the project |
+| Activity | Changes per day, last 14 days |
+| Schedule | Dated lines from the [status page](/guides/project-status) |
+| Files | What the project made |
+| Latest changes | A stream of recent changes |
+| Quick actions | Up to 12 buttons that open a thread or a link |
+| Links | Up to 20 links. Only `http` and `https` links work |
+| Notes | Free text, up to 4,000 characters |
+| Checklist | Up to 50 items you can tick off |
+| Threads | The latest threads in the project |
+
+Notes, links, checklist items and quick actions are edited on the tile itself. Links open in a new tab. Notes are plain text.
+
+## Templates
+
+A template is a starting set of tiles. Pick one under **Customize → Templates**. Allternit has five:
+
+| Template | Tiles |
+|---|---|
+| Launch | Decision, countdown, progress, checklist, schedule, quick actions |
+| Client work | Decision, progress, schedule, files, notes, links |
+| Build | Decision, quick actions, activity, team, progress, Activity chart |
+| Research | Notes, threads, links, files |
+| Launchpad | Quick actions, links, notes, threads |
+
+Applying a template replaces the tiles and keeps your notes, links and checklist.
+
+**Make one** builds a pad from a sentence, such as "just decisions and dates".
+
+**Save as template** stores the current tiles and quick actions under a name of up to 40 characters. You can keep 24 of your own. Your templates are saved to your account, so they show up on every device you sign in on.
+
+**New projects start with** sets the default template for each mode: Chat, Code, Design and Bot. The defaults are Research, Build, Client work and Launchpad.
+
+## Styles
+
+The ten dashboard layouts are now called **Styles**. They are under **Customize → Styles**. See [Project dashboards and layouts](/guides/project-layouts). Colors, **Background** and **Tiles** work the same way.
+
+## Sync and messages
+
+A pad is saved on your connected computer, next to the project. Devices that use the same computer and account show the same pad. Your templates and per-mode defaults are saved to your account.
+
+| Message | What it means |
+|---|---|
+| Saved on this device only. Connect a computer to sync. | No computer is reachable. Your edits are kept in this browser or app and upload when a computer connects. |
+| Update your computer to sync pads. | The computer runs an older Allternit that has no pad support. Update it. |
+| Could not load your templates | The five starter templates still work. Choose **Retry** to load your own. |
+| Sign in to customize | You are signed out. You see the default pad and cannot change it. |
+
+If two devices edit the same pad within a second, the last save wins.
+
+## Phone and iPhone
+
+On ai.allternit.com and the m.allternit.com app the pad has two columns, and controls are at least 44 pixels tall. **Customize** opens as a bottom sheet. There is no preview pane in **List**. Edit buttons stay on each tile.
+
+The iPhone app shows the same covers and pad inside a project. **Edit** opens a sheet with a list: move, delete and a size picker for each tile. It does not use free drag. The iPhone app adds no new tab. Project folder looks are set from the project's menu.
+
+The Android app is the m.allternit.com app, so it matches the phone layout.
+
+## Gizzi Code
+
+A terminal has no tiles. `/projects` in Gizzi Code opens a project and prints its notes, checklist, links and latest thread titles as text. A project with no pad prints "No pad yet". Covers do not apply.
+
+See [Customize project and folder icons](/guides/project-appearance) for covers and [Project appearance contracts](/architecture/project-appearance) for the API.

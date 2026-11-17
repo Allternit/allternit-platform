@@ -456,7 +456,7 @@ public struct DeleteResponse: Codable, Hashable, Sendable {
     }
 }
 
-/// One of the user's own devices (phone, Mac, PC, browser profile).
+/// One of the user's own devices: a phone, Mac, PC or browser profile (dev_...), or a computer under its cloud-api runtime device id (rt_...), which is how a computer appears in the Files key device list and in placement.
 public typealias DeviceId = String
 
 /// Sealed with XChaCha20-Poly1305. AAD is the UTF-8 string "afc1|<v>|<cipher>|<key_id>|<locator>|<plaintext_size>" (decimal integers), so changing any header field fails to open.
@@ -776,17 +776,59 @@ public enum FilesEvent: Codable, Hashable, Sendable {
     }
 }
 
-public struct FilesKeyInfo: Codable, Hashable, Sendable {
-    public var keyId: String
-    public var createdAt: Timestamp
-    public var deviceIds: [DeviceId]
-    public var rotatedFrom: String?
+/// One device that holds (or held) the Files key.
+public struct FilesKeyDevice: Codable, Hashable, Sendable {
+    public var deviceId: DeviceId
+    public var deviceName: String
+    /// base64url X25519 public key; a rotation seals the new key to it.
+    public var devicePub: String
+    /// An envelope for FilesKeyInfo.key_id exists for this device.
+    public var hasCurrentKey: Bool
+    public var addedAt: Timestamp
+    public var approvedByDeviceId: DeviceId?
 
-    public init(keyId: String, createdAt: Timestamp, deviceIds: [DeviceId], rotatedFrom: String? = nil) {
+    public init(deviceId: DeviceId, deviceName: String, devicePub: String, hasCurrentKey: Bool, addedAt: Timestamp, approvedByDeviceId: DeviceId? = nil) {
+        self.deviceId = deviceId
+        self.deviceName = deviceName
+        self.devicePub = devicePub
+        self.hasCurrentKey = hasCurrentKey
+        self.addedAt = addedAt
+        self.approvedByDeviceId = approvedByDeviceId
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case deviceId = "device_id"
+        case deviceName = "device_name"
+        case devicePub = "device_pub"
+        case hasCurrentKey = "has_current_key"
+        case addedAt = "added_at"
+        case approvedByDeviceId = "approved_by_device_id"
+    }
+}
+
+/// GET /api/v1/files-keys. Before the first device makes the key, key_id and created_at are absent and device_ids is empty.
+public struct FilesKeyInfo: Codable, Hashable, Sendable {
+    /// The current key. Absent until a first device creates it.
+    public var keyId: String?
+    public var createdAt: Timestamp?
+    /// Devices with an envelope for the current key.
+    public var deviceIds: [DeviceId]
+    /// The key this one replaced.
+    public var rotatedFrom: String?
+    public var devices: [FilesKeyDevice]
+    /// Unexpired requests, oldest first.
+    public var pendingRequests: [PendingKeyRequest]
+    /// A device was removed (or its computer was revoked) since the key was made: the next device with the key should POST /files-keys/rotations.
+    public var rotationNeeded: Bool
+
+    public init(keyId: String? = nil, createdAt: Timestamp? = nil, deviceIds: [DeviceId], rotatedFrom: String? = nil, devices: [FilesKeyDevice], pendingRequests: [PendingKeyRequest], rotationNeeded: Bool) {
         self.keyId = keyId
         self.createdAt = createdAt
         self.deviceIds = deviceIds
         self.rotatedFrom = rotatedFrom
+        self.devices = devices
+        self.pendingRequests = pendingRequests
+        self.rotationNeeded = rotationNeeded
     }
 
     enum CodingKeys: String, CodingKey {
@@ -794,6 +836,44 @@ public struct FilesKeyInfo: Codable, Hashable, Sendable {
         case createdAt = "created_at"
         case deviceIds = "device_ids"
         case rotatedFrom = "rotated_from"
+        case devices
+        case pendingRequests = "pending_requests"
+        case rotationNeeded = "rotation_needed"
+    }
+}
+
+/// Decoded body of an unlock token (fut1). Ed25519-signed by cloud-api with the Files token key.
+public struct FilesUnlockClaims: Codable, Hashable, Sendable {
+    public var v: UInt64
+    public var typ: String
+    public var userId: String
+    public var deviceId: String
+    public var computerId: ComputerId
+    public var iat: UInt64
+    /// At most iat + 300.
+    public var exp: UInt64
+    public var kid: String
+
+    public init(v: UInt64, typ: String, userId: String, deviceId: String, computerId: ComputerId, iat: UInt64, exp: UInt64, kid: String) {
+        self.v = v
+        self.typ = typ
+        self.userId = userId
+        self.deviceId = deviceId
+        self.computerId = computerId
+        self.iat = iat
+        self.exp = exp
+        self.kid = kid
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case v
+        case typ
+        case userId = "user_id"
+        case deviceId = "device_id"
+        case computerId = "computer_id"
+        case iat
+        case exp
+        case kid
     }
 }
 
@@ -1119,12 +1199,15 @@ public enum JobRefState: String, Codable, Hashable, Sendable, CaseIterable {
 
 /// The Files root key wrapped to one device. cloud-api stores envelopes; it cannot open them.
 public struct KeyEnvelope: Codable, Hashable, Sendable {
+    /// The FRK this envelope wraps (FilesKeyInfo.key_id).
     public var keyId: String
     public var deviceId: DeviceId
     public var wrapAlg: String
-    /// base64url X25519 public key.
+    /// base64url (no padding) X25519 public key, 32 bytes, fresh for every envelope.
     public var ephemeralPub: String
+    /// base64url (no padding), 24 bytes.
     public var nonce: String
+    /// base64url (no padding): the 32-byte FRK sealed with XChaCha20-Poly1305 (48 bytes with the tag). KEK = HKDF-SHA256(salt = ephemeral_pub || device_pub, ikm = X25519 shared secret, info = "files-envelope/1/<device_id>", 32 bytes); AAD = "afe1|<key_id>|<device_id>".
     public var wrappedKey: String
     public var createdAt: Timestamp
 
@@ -1149,27 +1232,56 @@ public struct KeyEnvelope: Codable, Hashable, Sendable {
     }
 }
 
+/// POST /files-keys/rotations: a device holding the current key makes a new FRK and seals it to every device in the list (all of FilesKeyInfo.devices, itself included, exactly once). The old key and its envelopes stay so replicas sealed with it still open until they are re-sealed.
+public struct KeyRotation: Codable, Hashable, Sendable {
+    public var keyId: String
+    /// Must be the current key_id.
+    public var rotatedFrom: String
+    public var rotatedByDeviceId: DeviceId
+    public var envelopes: [KeyEnvelope]
+
+    public init(keyId: String, rotatedFrom: String, rotatedByDeviceId: DeviceId, envelopes: [KeyEnvelope]) {
+        self.keyId = keyId
+        self.rotatedFrom = rotatedFrom
+        self.rotatedByDeviceId = rotatedByDeviceId
+        self.envelopes = envelopes
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case keyId = "key_id"
+        case rotatedFrom = "rotated_from"
+        case rotatedByDeviceId = "rotated_by_device_id"
+        case envelopes
+    }
+}
+
+/// An existing device approves one pending request: it checked the code, wrapped the FRK to the request's device_pub and sends the envelope. The very first device of a user grants its own request (approved_by_device_id = envelope.device_id) to create the key.
 public struct KeyShareGrant: Codable, Hashable, Sendable {
     public var envelope: KeyEnvelope
     public var approvedByDeviceId: DeviceId
+    /// The confirm_code of the pending request this grant answers. Must match it.
+    public var confirmCode: String
 
-    public init(envelope: KeyEnvelope, approvedByDeviceId: DeviceId) {
+    public init(envelope: KeyEnvelope, approvedByDeviceId: DeviceId, confirmCode: String) {
         self.envelope = envelope
         self.approvedByDeviceId = approvedByDeviceId
+        self.confirmCode = confirmCode
     }
 
     enum CodingKeys: String, CodingKey {
         case envelope
         case approvedByDeviceId = "approved_by_device_id"
+        case confirmCode = "confirm_code"
     }
 }
 
+/// A device (or a computer, from its GET /replicas/key) asks for the Files key. cloud-api keeps it pending for 10 minutes.
 public struct KeyShareRequest: Codable, Hashable, Sendable {
     public var deviceId: DeviceId
-    /// base64url X25519.
+    /// base64url (no padding) X25519 public key, 32 bytes.
     public var devicePub: String
     public var deviceName: String
-    /// Shown on both devices; the user compares them.
+    /// Derived from device_pub, never chosen: u32_be(blake3("files-key-confirm/1|" || device_pub raw bytes)[0..4]) % 1000000, zero-padded to 6 digits. The new device shows it; the approving device recomputes it from the request's device_pub and shows it; the user compares the two. cloud-api refuses a code that does not match device_pub, and a second pending request with the same code.
     public var confirmCode: String
 
     public init(deviceId: DeviceId, devicePub: String, deviceName: String, confirmCode: String) {
@@ -1342,6 +1454,38 @@ public enum OnConflict: String, Codable, Hashable, Sendable, CaseIterable {
 
 /// Opaque page token.
 public typealias PageToken = String
+
+/// A KeyShareRequest waiting for approval (POST /files-keys/requests answers it with 202; FilesKeyInfo.pending_requests lists them).
+public struct PendingKeyRequest: Codable, Hashable, Sendable {
+    public var requestId: String
+    public var deviceId: DeviceId
+    /// base64url X25519 public key.
+    public var devicePub: String
+    public var deviceName: String
+    public var confirmCode: String
+    public var createdAt: Timestamp
+    public var expiresAt: Timestamp
+
+    public init(requestId: String, deviceId: DeviceId, devicePub: String, deviceName: String, confirmCode: String, createdAt: Timestamp, expiresAt: Timestamp) {
+        self.requestId = requestId
+        self.deviceId = deviceId
+        self.devicePub = devicePub
+        self.deviceName = deviceName
+        self.confirmCode = confirmCode
+        self.createdAt = createdAt
+        self.expiresAt = expiresAt
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case requestId = "request_id"
+        case deviceId = "device_id"
+        case devicePub = "device_pub"
+        case deviceName = "device_name"
+        case confirmCode = "confirm_code"
+        case createdAt = "created_at"
+        case expiresAt = "expires_at"
+    }
+}
 
 /// What the calling principal may do. Computed by the runtime per request.
 public struct Permissions: Codable, Hashable, Sendable {
@@ -2585,6 +2729,36 @@ public struct TrashListResponse: Codable, Hashable, Sendable {
         case entries
         case nextPageToken = "next_page_token"
         case freshness
+    }
+}
+
+/// Body of POST /api/v1/computer-files/:computer_id/unlock. Sent only right after a successful local biometric check or an explicit user click (section 12).
+public struct UnlockRequest: Codable, Hashable, Sendable {
+    /// The x-allternit-device-id of the device that just unlocked. The runtime refuses the token on a request whose x-allternit-device-id differs.
+    public var deviceId: String
+
+    public init(deviceId: String) {
+        self.deviceId = deviceId
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case deviceId = "device_id"
+    }
+}
+
+/// A short-lived protected-root unlock token. Send it as x-allternit-unlock until expires_at.
+public struct UnlockResponse: Codable, Hashable, Sendable {
+    public var token: String
+    public var expiresAt: Timestamp
+
+    public init(token: String, expiresAt: Timestamp) {
+        self.token = token
+        self.expiresAt = expiresAt
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case token
+        case expiresAt = "expires_at"
     }
 }
 

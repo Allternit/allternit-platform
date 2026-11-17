@@ -82,7 +82,9 @@ pub use shares::GuestAuth;
 
 /// Env switch for the whole drive (off by default).
 pub const FLAG_ENV: &str = "ALLTERNIT_FILES_DRIVE";
-/// Proof of a fresh device unlock for protected roots (section 12).
+/// Proof of a fresh device unlock for protected roots (section 12): a `fut1`
+/// token from `POST /api/v1/computer-files/:computer_id/unlock`, checked by
+/// [`shares::gate`] and [`Req::extract`].
 pub const UNLOCK_HEADER: &str = "x-allternit-unlock";
 pub const DEVICE_NAME_HEADER: &str = "x-allternit-device-name";
 /// Small write and chunk PUT body limit (section 2).
@@ -441,7 +443,8 @@ pub(crate) struct Req {
     pub user_id: String,
     /// Replayed by a relay, forwarded, or a non-loopback peer (`files_scope::caller`).
     pub relayed: bool,
-    /// Sent `x-allternit-unlock` (section 12).
+    /// Sent a valid `x-allternit-unlock` token for this computer, this user
+    /// and (when sent) this device (section 12).
     pub unlocked: bool,
     pub device_name: Option<String>,
     /// Set by [`shares::gate`] for a verified `Files-Guest` request.
@@ -477,7 +480,13 @@ impl Req {
         let peer = parts.extensions.get::<ConnectInfo<std::net::SocketAddr>>().map(|c| c.0);
         let relayed = crate::files_scope::caller(headers, peer) == crate::files_scope::Caller::Remote;
         let device_name = header(headers, DEVICE_NAME_HEADER);
-        let principal = match header(headers, crate::cowork_devices_routes::DEVICE_ID_HEADER) {
+        let device_id = header(headers, crate::cowork_devices_routes::DEVICE_ID_HEADER);
+        // `shares::gate` verified the token's signature, time and computer.
+        // Here: it must name this user, and this device when one is sent.
+        let unlocked = parts.extensions.get::<Arc<shares::Unlock>>().is_some_and(|u| {
+            u.0.user_id == user.user_id && device_id.as_deref().map_or(true, |d| d == u.0.device_id)
+        });
+        let principal = match device_id {
             Some(device_id) => PrincipalRef {
                 kind: PrincipalKind::OwnDevice,
                 id: device_id,
@@ -485,10 +494,6 @@ impl Req {
             },
             None => PrincipalRef { kind: PrincipalKind::Owner, id: user.user_id.clone(), display_name: user.name.clone() },
         };
-        // SPEC section 12 names the proof but not its format. Until the client
-        // unlock flow lands, any non-empty value counts as the fresh unlock.
-        // TODO(files-drive): verify a signed, short-lived unlock assertion here.
-        let unlocked = header(headers, UNLOCK_HEADER).is_some();
         Ok(Self { principal, user_id: user.user_id.clone(), relayed, unlocked, device_name, guest: None })
     }
 

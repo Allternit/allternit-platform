@@ -50,6 +50,11 @@ struct ProjectDetailView: View {
     @State private var statusRecord: ProjectStatusRecord? = nil
     @StateObject private var looks: ProjectLookStore
     @ObservedObject private var backdrops = StageBackdropStore.shared
+    // The project pad (tab card, Pad | List, edit sheet). `looks` stays for
+    // projects that still draw an old Style, and for the Customize sheet.
+    @StateObject private var padStore: ProjectPadStore
+    @ObservedObject private var padTemplates = PadTemplatesStore.shared
+    @State private var folderAppearance: Appearance? = nil
 
     // The project's coordinator (project-workspaces): registered on first use.
     @State private var coordinatorId: String? = nil
@@ -77,7 +82,7 @@ struct ProjectDetailView: View {
     }
 
     private enum DetailSheet: String, Identifiable {
-        case customize, settings, edit, memory, status
+        case customize, settings, edit, memory, status, padEdit
         var id: String { rawValue }
     }
 
@@ -89,6 +94,13 @@ struct ProjectDetailView: View {
          onOpenChat: @escaping (AgentSession) -> Void) {
         self.project = project
         _looks = StateObject(wrappedValue: ProjectLookStore(scope: "project:chat:\(project.id)"))
+        // Chat projects are the web's cowork projects (`project:cowork:<id>`);
+        // a look an older build saved under `project:chat:<id>` is converted once.
+        _padStore = StateObject(wrappedValue: ProjectPadStore(
+            scope: ProjectPadStore.scope(mode: "cowork", id: project.id),
+            mode: .chat,
+            legacyLookScopes: ["project:chat:\(project.id)"],
+            defaultTemplate: PadTemplatesStore.shared.loaded ? PadTemplatesStore.shared.defaultTemplate(for: .chat) : nil))
         self.onNewChat = onNewChat
         self.onOpenChat = onOpenChat
         _instructions = State(initialValue: project.instructions ?? "")
@@ -123,7 +135,7 @@ struct ProjectDetailView: View {
                                 .foregroundColor(Theme.statusWarning)
                         }
                         if section == .overview {
-                            ProjectDashboardView(layout: looks.look.layout, look: looks.look, data: boardData, title: liveProject.title) { sheet = .status }
+                            projectPadCard
                             if chats.isEmpty && serverThreads.isEmpty { overviewIntro }
                             if !messages.isEmpty {
                                 ProjectConversationView(
@@ -208,6 +220,15 @@ struct ProjectDetailView: View {
             selectedPhotoItems = []
         }
         .task {
+            padStore.load()
+            if !padTemplates.loaded && !padTemplates.loading { padTemplates.load() }
+            folderAppearance = try? await AppearanceClient(client: .shared).appearance(key: AppearanceClient.projectKey(mode: "cowork", id: project.id))
+        }
+        .onChange(of: padTemplates.doc) { _, _ in
+            padStore.setDefaultTemplate(padTemplates.loaded ? padTemplates.defaultTemplate(for: .chat) : nil)
+        }
+        .onDisappear { Task { await padStore.flush() } }
+        .task {
             await loadFiles()
             await loadChats()
             coordinatorId = try? await BotProjectClient.shared.workspaceProjectId(key: workspaceKey)
@@ -225,10 +246,13 @@ struct ProjectDetailView: View {
     private func sheetContent(_ which: DetailSheet) -> some View {
         switch which {
         case .customize:
-            ProjectCustomizeSheet(store: looks, data: boardData, title: liveProject.title, scope: scope,
-                                  backdropColors: StageBackdrops.sampleColors) {
+            FolderLookSheet(
+                title: liveProject.title, mode: "chat",
+                key: AppearanceClient.projectKey(mode: "cowork", id: project.id),
+                initial: folderAppearance,
+                onSaved: { folderAppearance = $0 }
+            ) {
                 Button("Project settings") { sheet = .settings }.frame(minHeight: 44)
-            } manage: {
                 Button("Edit details") { sheet = .edit }.frame(minHeight: 44)
                 if let libraryRow {
                     Button(libraryRow.isArchived ? "Unarchive" : "Archive") { library.toggleArchive(libraryRow) }.frame(minHeight: 44)
@@ -247,6 +271,8 @@ struct ProjectDetailView: View {
             }
         case .memory:
             ProjectMemorySheet(sessionIds: memorySessionIds)
+        case .padEdit:
+            PadEditSheet(store: padStore, templates: padTemplates, isStyle: padStore.pad.layout.style != nil)
         case .status:
             ProjectStatusSheet(projectId: coordinatorId ?? project.id) { projectStore.fetchProjectsIfNeeded(force: true) }
         }
@@ -366,6 +392,35 @@ struct ProjectDetailView: View {
             .buttonStyle(.plain)
             .accessibilityLabel("Customize")
         }
+    }
+
+    // MARK: - Pad
+
+    private var padThreads: [PadThread] {
+        let fromChats = chats.map { chat in
+            PadThread(id: chat.id, title: chat.name ?? "Chat", at: ProjectBoardData.date(chat.updatedAt), open: { onOpenChat(chat) })
+        }
+        let fromBot = serverThreads.filter { !$0.incognito }.map { t in
+            PadThread(id: t.id, title: t.title, at: ProjectBoardData.date(t.lastActivityAt), open: { navigator.openThread(t) })
+        }
+        return fromChats + fromBot
+    }
+
+    /// The tab card (folder tab, mode, Needs-you bar, Pad | List, Edit).
+    private var projectPadCard: some View {
+        let data = boardData
+        return ProjectPadCard(
+            store: padStore,
+            looks: looks,
+            data: data,
+            threads: padThreads,
+            title: liveProject.title,
+            modeLabel: "Chat project",
+            colorHex: folderAppearance?.color ?? Appearance.defaultColor,
+            onEdit: { sheet = .padEdit },
+            onNeeds: { (data.needsYou.first?.open ?? { sheet = .status })() },
+            onStatus: { sheet = .status }
+        )
     }
 
     private var boardData: ProjectBoardData {
