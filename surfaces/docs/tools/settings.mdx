@@ -1,0 +1,75 @@
+---
+title: 'Settings tool'
+description: 'settings: how an agent reads and changes the user''s Allternit settings, and which ones it may not'
+---
+
+## Overview
+
+The `settings` tool reads or changes the user's own settings from a chat: theme, chat font, answer style, browser, notifications, model and more. When the user asks for a change, the agent makes it instead of explaining where the setting is. Definitions are read on demand with `action: read`, not added to every turn.
+
+A call takes up to 5 changes. Whose settings they are comes from the session, never from the model.
+
+## Risk classes
+
+Every key has a class, defined in one file (`contracts/settings/definitions.json`) and enforced on the server.
+
+| Class | What happens |
+|---|---|
+| `safe` | The agent applies it and the user sees a card with Undo. Device keys are applied by the app on the device that sent the turn, once per tool call; other devices show a one-tap Apply. Runtime keys (Gizzi Code) are applied by the runtime. |
+| `confirm` | Security, privacy and instructions. The agent can't apply it. The card shows the change and the user taps Confirm, under their own sign-in. |
+| `locked` | Money and account. Never changed from a chat. The card links to Settings. |
+
+Each change comes back as `applied`, `apply_on_device`, `needs_confirmation`, `locked` or `invalid` (unknown key or a value it doesn't take).
+
+Writes are refused in plan mode. Scheduled runs and other automation-started runs can't touch `confirm` keys; they are refused.
+
+In Gizzi Code the tool replaces the old config tool. A terminal theme change applies after Gizzi Code restarts.
+
+## Keys
+
+### Safe
+
+| Key | Scope | Values | Setting |
+|---|---|---|---|
+| `appearance.theme` | device | system / light / dark | Theme |
+| `appearance.chat_font` | device | default / serif / system | Chat font |
+| `appearance.reduce_motion` | device | boolean | Reduce motion |
+| `notifications.response` | device | boolean | Notify when a reply is ready |
+| `notifications.approvals` | device | boolean | Notify when an approval is needed |
+| `notifications.scheduled` | device | boolean | Notify about scheduled tasks |
+| `notifications.handoffs` | device | boolean | Notify about handoffs |
+| `notifications.sound` | device | boolean | Notification sound |
+| `chat.answer_style` | account | concise / balanced / detailed / custom | Answer style |
+| `browser.preferred` | account | built-in / chrome | Browser for agents |
+| `browser.open_links_in_app` | account | boolean | Open links in the app |
+| `gizzi.tui_theme` | runtime | string | Terminal theme |
+| `gizzi.model` | runtime | string | Model |
+| `gizzi.verbose` | runtime | boolean | Verbose output |
+
+### Confirm
+
+| Key | Scope | Values | Setting |
+|---|---|---|---|
+| `instructions.global` | account | string | Global instructions |
+| `instructions.custom` | account | string | Custom instructions |
+| `memory.capture.channels` | account | boolean | Remember from channels |
+| `memory.capture.gizzi` | account | boolean | Remember from Gizzi Code |
+| `memory.capture.agent_folders` | account | boolean | Remember from agent folders |
+| `memory.capture.vendors` | account | boolean | Remember from assistant logins |
+| `memory.dreaming` | account | boolean | Memory dreaming |
+| `security.require_trusted_devices` | account | boolean | Require trusted devices |
+| `files.trusted_folders` | account | list | Trusted folders |
+| `browser.allowed_sites` | account | list | Allowed sites |
+| `gizzi.permission_mode` | runtime | default / acceptEdits / plan / auto / dontAsk | Permission mode |
+
+### Locked
+
+| Key | Scope | Values | Setting |
+|---|---|---|---|
+| `account.plan` | account | string | Plan |
+| `account.billing` | account | string | Billing |
+| `account.email` | account | string | Email |
+| `account.password` | account | string | Password |
+| `account.keys` | account | list | API keys |
+
+See also [Connector tools](/tools/connectors) and [Automation](/tools/automation).

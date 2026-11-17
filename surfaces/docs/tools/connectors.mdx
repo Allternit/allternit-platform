@@ -1,0 +1,41 @@
+---
+title: 'Connector tools'
+description: 'connector_search and connector_suggest: how an agent finds the user''s connectors, loads their tools on demand and offers to connect one'
+---
+
+## Overview
+
+These tools let an agent reach outside apps such as Gmail, Calendar, Slack, Linear and Drive without carrying every connector tool in every turn.
+
+| Tool | Use |
+|---|---|
+| `connector_search` | Find connectors by the job ("calendar", "send a message to the team"). Optionally mount the tools of connected ones. |
+| `connector_suggest` | Show a card that offers to connect 1 to 3 connectors that are not connected yet. |
+
+## connector_search
+
+Each hit has an `id`, `name`, `group` and `state`:
+
+| State | Meaning |
+|---|---|
+| `connected` | Usable now. |
+| `available` | Not connected, but the user can connect it here. `reason` says when an old connection needs signing in again. |
+| `unavailable` | Can't be connected here. `reason` says why. |
+
+Search takes a `query` and a `limit` of up to 10. Whose connectors they are comes from the session, never from the model. No token, link or code is returned.
+
+### Loading on demand
+
+When more than 30 connector tools would be mounted in a turn, none are mounted until a search loads them. Passing `load: true` mounts the tools of up to 3 connected hits for the rest of the session. They are callable from the agent's next step and keep their normal permissions. A connected hit that mounts no tools is reached through `execute_action`. With 30 or fewer connector tools, everything is mounted as before and search is only for finding.
+
+## connector_suggest
+
+Shows the user a card for a connector that is not connected. The ids must come from a `connector_search` made in this session. Ids that were not searched, are already connected or can't be connected here are left off the card; if none is left, the call is refused. `reason` is one line, up to 200 characters, saying what connecting lets the agent do.
+
+The card is a Connect kit component. It opens the Connect kit when the user taps Connect, and the user signs in to the app themselves. It never connects anything by itself and carries no link or code. The agent doesn't say a connector is connected until a later search shows it connected.
+
+## Where it works
+
+Desktop, ai.allternit.com and the phone layout, the m.allternit.com app and iOS show the card. In Gizzi Code the tool rows appear in the terminal.
+
+See also [MCP](/tools/mcp) and [Settings tools](/tools/settings).
