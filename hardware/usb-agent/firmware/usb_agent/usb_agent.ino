@@ -21,6 +21,16 @@
 // connection. K is written over USB serial at setup (see `prov` below) and
 // never leaves the board.
 //
+// Bluetooth mode (firmware 1.1.0): instead of the USB cable to the phone, the board
+// pairs with the iPhone as a Bluetooth LE keyboard + mouse ("Allternit Keyboard"),
+// so no cable to the phone is needed. The Wi-Fi link, the authentication, the arm
+// button, the lease and auto-disarm are unchanged: only where the reports go changes.
+//   desk → c <seq> mode <cable|bt> …   stored; the board disarms and restarts into the mode
+//   desk → c <seq> bt pair …           open a 2-minute window for a NEW iPhone to pair
+//   desk → c <seq> bt forget …         remove the bonded iPhone
+//   board → s armed=<0|1> usb=<…> mode=<cable|bt> bt=<off|pairing|bonded|connected>
+// Mode and pairing commands move no input, so they work while disarmed.
+//
 // Safety, in firmware:
 //   - Boots disarmed. Only the button arms it; Desktop can disarm but never arm.
 //   - Disarmed, link lost, or no authenticated traffic for LEASE_MS: release
@@ -45,8 +55,9 @@
 #include "USBHIDMouse.h"
 #include "USBHIDKeyboard.h"
 #include "tusb.h"
+#include "bt_hid.h"
 
-#define FIRMWARE_VERSION "1.0.0"
+#define FIRMWARE_VERSION "1.1.0"
 
 #ifndef ARM_BUTTON_PIN
 #define ARM_BUTTON_PIN 0   // BOOT button on the XIAO ESP32S3 and most S3 boards
@@ -70,6 +81,8 @@ const uint32_t HANDSHAKE_MS = 5000;
 const uint32_t ARM_IDLE_MS = 30UL * 60 * 1000;  // armed but unused for 30 min: disarm
 const uint32_t UNLINKED_DISARM_MS = 60000;     // armed with no session for a minute: disarm
 const uint16_t DEFAULT_PORT = 7300;
+const uint32_t PAIRING_WINDOW_MS = 120000;     // `bt pair` lets a new iPhone bond for this long
+const char *BT_NAME = "Allternit Keyboard";
 
 USBHIDMouse mouse;
 USBHIDKeyboard keyboard;
@@ -97,6 +110,9 @@ String boardNonce;
 uint32_t helloAt = 0, lastAuthedAt = 0, lastInputAt = 0, lastSessionAt = 0;
 String lastUsb = "";
 bool lastArmedSent = false;
+bool btMode = false;               // stored in prefs; takes effect after a restart
+String lastBt = "";
+uint32_t restartAt = 0;            // nonzero: restart then (after the reply is out)
 
 // ── helpers ─────────────────────────────────────────────────────────────────
 
@@ -159,10 +175,21 @@ void setLed(bool on) {
   digitalWrite(ARM_LED_PIN, (on ^ ARM_LED_ACTIVE_LOW) ? HIGH : LOW);
 }
 
+// One place per output, so the cable and Bluetooth paths stay in step. Bluetooth
+// reports only flow while an iPhone is bonded and connected (btConnected()).
 void releaseAll() {
   mouse.release(MOUSE_LEFT);
   keyboard.releaseAll();
+  if (btMode) btReleaseAll();
 }
+
+void outMove(int dx, int dy) { if (btMode) btMouseMove(dx, dy, 0); else mouse.move(dx, dy); }
+void outButton(bool down) {
+  if (btMode) btMouseButtons(down ? 1 : 0);
+  else if (down) mouse.press(MOUSE_LEFT);
+  else mouse.release(MOUSE_LEFT);
+}
+void outScroll(long v, long h) { if (btMode) btMouseMove(0, 0, v); else mouse.move(0, 0, v, h); }  // the Bluetooth map has no horizontal wheel
 
 void setArmed(bool on) {
   armed = on;
@@ -179,10 +206,12 @@ const char *usbState() {
 void sendState(bool force) {
   if (!authed || !deskLink.connected()) return;
   String usb = usbState();
-  if (!force && usb == lastUsb && armed == lastArmedSent) return;
+  String bt = btStateName();
+  if (!force && usb == lastUsb && armed == lastArmedSent && bt == lastBt) return;
+  lastBt = bt;
   lastUsb = usb;
   lastArmedSent = armed;
-  deskLink.printf("s armed=%d usb=%s\n", armed ? 1 : 0, usb.c_str());
+  deskLink.printf("s armed=%d usb=%s mode=%s bt=%s\n", armed ? 1 : 0, usb.c_str(), btMode ? "bt" : "cable", btStateName());
 }
 
 // A locked or sleeping phone suspends USB; sending HID reports then can stall.
@@ -216,7 +245,7 @@ bool movePaced(long dx, long dy) {
   while (dx || dy) {
     if (stoppedByButton()) return false;
     int sx = constrain(dx, -STEP, STEP), sy = constrain(dy, -STEP, STEP);
-    mouse.move(sx, sy);
+    outMove(sx, sy);
     dx -= sx;
     dy -= sy;
     delay(STEP_MS);
@@ -260,6 +289,59 @@ bool pressCombo(String combo) {
   return true;
 }
 
+// Same names as keyCode(), as HID usages: modifier bit or key usage.
+bool btKeyOf(const String &k, uint8_t *mod, uint8_t *usage) {
+  *mod = 0;
+  *usage = 0;
+  if (k == "cmd") *mod = 0x08;
+  else if (k == "ctrl") *mod = 0x01;
+  else if (k == "alt") *mod = 0x04;
+  else if (k == "shift") *mod = 0x02;
+  else if (k == "enter") *usage = 0x28;
+  else if (k == "esc") *usage = 0x29;
+  else if (k == "backspace") *usage = 0x2A;
+  else if (k == "tab") *usage = 0x2B;
+  else if (k == "space") *usage = 0x2C;
+  else if (k == "right") *usage = 0x4F;
+  else if (k == "left") *usage = 0x50;
+  else if (k == "down") *usage = 0x51;
+  else if (k == "up") *usage = 0x52;
+  else if (k.length() == 1 && ((k[0] >= 'a' && k[0] <= 'z') || (k[0] >= '0' && k[0] <= '9'))) {
+    uint8_t m;
+    return btAsciiToHid(k[0], &m, usage);
+  } else return false;
+  return true;
+}
+
+bool btCombo(String combo) {
+  uint8_t keys[4], mods = 0;
+  int n = 0, count = 0;
+  combo += '+';
+  for (int i; (i = combo.indexOf('+')) >= 0; combo = combo.substring(i + 1)) {
+    if (++count > 4) return false;
+    uint8_t m, u;
+    if (!btKeyOf(combo.substring(0, i), &m, &u)) return false;
+    mods |= m;
+    if (u) keys[n++] = u;
+  }
+  if (count == 0) return false;
+  btKeys(mods, keys, n);
+  delay(30);
+  btKeys(0, nullptr, 0);
+  return true;
+}
+
+// Types one printable ASCII character over Bluetooth: key down, then up.
+bool btTypeChar(char c) {
+  uint8_t m, u;
+  if (!btAsciiToHid(c, &m, &u)) return false;
+  btKeys(m, &u, 1);
+  delay(12);
+  btKeys(0, nullptr, 0);
+  delay(12);
+  return true;
+}
+
 bool parseLong(const String &s, long *out) {
   if (!s.length() || s.length() > 6) return false;
   char *end;
@@ -278,24 +360,43 @@ String run(const String &command) {
     setArmed(false);
     return "ok";
   }
+  // Mode and pairing move no input, so they work disarmed. A mode change restarts the
+  // board (it comes back disarmed in the new mode), after this reply is out.
+  if (op == "mode") {
+    if (arg != "cable" && arg != "bt") return "err bad mode";
+    setArmed(false);
+    prefs.begin("usba", false);
+    prefs.putBool("bt", arg == "bt");
+    prefs.end();
+    restartAt = millis() + 400;
+    return "ok";
+  }
+  if (op == "bt") {
+    if (!btMode) return "err not in bluetooth mode";
+    if (arg == "pair") { btOpenPairing(PAIRING_WINDOW_MS); return "ok"; }
+    if (arg == "forget") { setArmed(false); btForget(); return "ok"; }
+    return "err unknown command";
+  }
   if (!armed) {
     releaseAll();
     return "err disarmed";
   }
-  if (!usbReady()) return "err phone usb asleep";
+  if (btMode) {
+    if (!btConnected()) return "err bt not connected";
+  } else if (!usbReady()) return "err phone usb asleep";
   lastInputAt = millis();
 
   if (op == "home") {
     for (int i = 0; i < HOME_REPORTS; i++) {
       if (stoppedByButton()) return "err disarmed";
-      mouse.move(-127, -127);
+      outMove(-127, -127);
       delay(2);
     }
     return "ok";
   }
-  if (op == "press") { mouse.press(MOUSE_LEFT); return "ok"; }
-  if (op == "release") { mouse.release(MOUSE_LEFT); return "ok"; }
-  if (op == "click") { mouse.press(MOUSE_LEFT); delay(60); mouse.release(MOUSE_LEFT); return "ok"; }
+  if (op == "press") { outButton(true); return "ok"; }
+  if (op == "release") { outButton(false); return "ok"; }
+  if (op == "click") { outButton(true); delay(60); outButton(false); return "ok"; }
   if (op == "move" || op == "scroll") {
     int sp2 = arg.indexOf(' ');
     long a, b;
@@ -305,7 +406,7 @@ String run(const String &command) {
       if (!movePaced(a, b)) return "err disarmed";
     } else {
       if (labs(a) > 50 || labs(b) > 50) return "err out of bounds";
-      mouse.move(0, 0, a, b);
+      outScroll(a, b);
     }
     return "ok";
   }
@@ -316,12 +417,14 @@ String run(const String &command) {
     for (size_t i = 0; i < n; i++) if (buf[i] < 0x20 || buf[i] > 0x7e) return "err bad text";
     for (size_t i = 0; i < n; i++) {
       if (stoppedByButton()) return "err disarmed";
-      keyboard.write(buf[i]);
+      if (btMode) {
+        if (!btTypeChar((char)buf[i])) return "err bad text";
+      } else keyboard.write(buf[i]);
       esp_task_wdt_reset();
     }
     return "ok";
   }
-  if (op == "key") return pressCombo(arg) ? "ok" : "err unknown key";
+  if (op == "key") return (btMode ? btCombo(arg) : pressCombo(arg)) ? "ok" : "err unknown key";
   return "err unknown command";
 }
 
@@ -605,6 +708,10 @@ void setup() {
 
   loadConfig();
   if (!cfg.provisioned) return;  // waits for `prov` over USB
+  prefs.begin("usba", true);
+  btMode = prefs.getBool("bt", false);
+  prefs.end();
+  if (btMode) btStart(BT_NAME);
   WiFi.setHostname(boardId.c_str());
   WiFi.setSleep(false);  // modem sleep adds ~100 ms per command
   WiFi.setAutoReconnect(true);
@@ -621,6 +728,11 @@ void loop() {
     return;
   }
   serviceLink();
+  if (btMode) btService();
+  if (restartAt && (int32_t)(millis() - restartAt) >= 0) {
+    deskLink.flush();
+    ESP.restart();
+  }
 
   uint32_t now = millis();
   // Lease: no authenticated traffic for a while means nobody is driving; let go.

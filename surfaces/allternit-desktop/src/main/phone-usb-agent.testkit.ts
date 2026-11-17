@@ -170,12 +170,12 @@ export class SimBoard {
   /** Simulates pressing the arm button. */
   arm(armed = true): void {
     this.ref.armed = armed;
-    this.socket?.write(`s armed=${armed ? 1 : 0} usb=${this.ref.usb}\n`);
+    this.socket?.write(`${this.ref.stateLine()}\n`);
   }
 
   setUsb(usb: 'mounted' | 'asleep' | 'none'): void {
     this.ref.usb = usb;
-    this.socket?.write(`s armed=${this.ref.armed ? 1 : 0} usb=${usb}\n`);
+    this.socket?.write(`${this.ref.stateLine()}\n`);
   }
 
   close(): void {

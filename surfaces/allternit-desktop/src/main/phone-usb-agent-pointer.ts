@@ -23,6 +23,11 @@ export interface PointerDeps {
   linkGeneration: () => number;
   /** The board's Wi-Fi link is up. A cable needs no pairing, so `paired` is always true. Defaults to connected. */
   connected?: () => boolean;
+  /**
+   * Bluetooth mode only: the board's Bluetooth side. Returns null in cable mode (a cable needs no
+   * pairing). `paired` = a host is bonded; `connected` = that host is connected now.
+   */
+  bluetooth?: () => { paired: boolean; connected: boolean } | null;
   sleep?: (ms: number) => Promise<void>;
   now?: () => number;
 }
@@ -35,7 +40,7 @@ export class BoardError extends Error {
 }
 
 /** The board as a HidSender: one USBA/1 command per send. Failures throw BoardError. */
-export function boardSender(deps: Pick<PointerDeps, 'send' | 'linkGeneration' | 'connected'>): HidSender {
+export function boardSender(deps: Pick<PointerDeps, 'send' | 'linkGeneration' | 'connected' | 'bluetooth'>): HidSender {
   const run = async (cmd: BoardCommand): Promise<void> => {
     const res = await deps.send(cmd);
     if (!res.ok) throw new BoardError(res);
@@ -44,7 +49,12 @@ export function boardSender(deps: Pick<PointerDeps, 'send' | 'linkGeneration' | 
     id: 'usb-agent',
     maxStep: MOVE_LIMIT,
     linkGeneration: deps.linkGeneration,
-    status: async (): Promise<HidLinkStatus> => ({ paired: true, connected: deps.connected?.() ?? true, name: 'USB Agent' }),
+    status: async (): Promise<HidLinkStatus> => {
+      const wifi = deps.connected?.() ?? true;
+      const bt = deps.bluetooth?.() ?? null;
+      // Cable: always paired. Bluetooth: needs a bonded, connected iPhone, so BT_NOT_PAIRED shows until it is.
+      return bt ? { paired: bt.paired, connected: wifi && bt.connected, name: 'USB Agent (Bluetooth)' } : { paired: true, connected: wifi, name: 'USB Agent' };
+    },
     pointerMove: (dx, dy) => run({ op: 'move', dx, dy }),
     pointerButton: (action) => run({ op: action }),
     pointerReset: () => run({ op: 'home' }),

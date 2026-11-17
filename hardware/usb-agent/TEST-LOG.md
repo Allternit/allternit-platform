@@ -65,3 +65,15 @@ Measurements to record:
 |---|---|---|---|
 | 7.1 | The AssistiveTouch pointer moves over Bluetooth, armed | not run | |
 | 7.2 | Disarmed, the pointer does not move | not run | |
+
+## Step 11: Bluetooth mode (firmware 1.1.0)
+
+| # | Case | Result | Evidence |
+|---|---|---|---|
+| 11.1 | Bluetooth mode: the board appears as "Allternit Keyboard" and pairs with an iPhone | not run | |
+| 11.2 | Armed and paired, the AssistiveTouch pointer moves, taps and scrolls; keys and text arrive | not run | |
+| 11.3 | Disarmed, no Bluetooth report is sent | not run | |
+| 11.4 | After a power cycle the bonded iPhone reconnects without pairing again | not run | |
+| 11.5 | A second iPhone cannot pair outside the `bt pair` window | not run | |
+| 11.6 | `bt forget` removes the bond; the iPhone must pair again | not run | |
+| 11.7 | The board still works with Wi-Fi + Bluetooth together (no drops over 10 min) | not run | |
