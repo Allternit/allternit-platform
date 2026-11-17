@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(LocalAuthentication)
+import LocalAuthentication
+#endif
 
 /// Settings shared by every `FilesClient`.
 public struct FilesClientConfiguration: Sendable {
@@ -71,6 +74,7 @@ public final class FilesClient: @unchecked Sendable {
     private let lock = NSLock()
     private var cachedEndpoints: (EndpointsResponse, Date)?
     private var memoryTicket: (String, Date)?
+    private var memoryUnlock: (String, Date)?
 
     private static let endpointsTTL: TimeInterval = 300
 
@@ -147,6 +151,49 @@ public final class FilesClient: @unchecked Sendable {
     public func currentWakeTicket() -> String? {
         if let (ticket, expiry) = lock.withLock({ memoryTicket }), expiry.timeIntervalSinceNow > 5 { return ticket }
         return configuration.sharedStore?.wakeTicket(computerId: computerId)
+    }
+
+    // MARK: Protected-root unlock (cloud-api, SPEC section 12)
+
+    #if canImport(LocalAuthentication)
+    /// Face ID / Touch ID (or the passcode), then a signed 5-minute unlock
+    /// token for this computer and this device. Content requests send it as
+    /// `X-Allternit-Unlock` until it lapses; then call this again. Throws when
+    /// the user cancels or the check fails, and nothing is minted.
+    @discardableResult
+    public func unlock(reason: String) async throws -> String {
+        let context = LAContext()
+        _ = try await context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: reason)
+        return try await mintUnlock()
+    }
+    #endif
+
+    /// `POST /api/v1/computer-files/:id/unlock`. Call only right after a
+    /// successful local check (``unlock(reason:)``, or the File Provider UI
+    /// unlock sheet's own Face ID prompt). Never call it without one.
+    @discardableResult
+    public func mintUnlock() async throws -> String {
+        var request = URLRequest(url: cloudURL("api/v1/computer-files/\(Self.escape(computerId))/unlock"))
+        request.httpMethod = "POST"
+        request.timeoutInterval = configuration.requestTimeout
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.httpBody = try JSONEncoder().encode(["device_id": configuration.deviceId])
+        let (data, response) = try await cloud(request)
+        let minted: UnlockResponse = try decode(data, status: response.statusCode)
+        let cap = Date().addingTimeInterval(300)
+        let expiry = min(Self.parseDate(minted.expiresAt) ?? Date().addingTimeInterval(60), cap)
+        lock.withLock { memoryUnlock = (minted.token, expiry) }
+        // The app and the File Provider extension share it (app-group keychain).
+        configuration.sharedStore?.storeUnlock(token: minted.token, expiresAt: expiry, computerId: computerId)
+        return minted.token
+    }
+
+    /// The unlock token while it is still good, if any: this client's copy,
+    /// else the one the app or the extension stored in the shared keychain.
+    public func currentUnlock() -> String? {
+        if let (token, expiry) = lock.withLock({ memoryUnlock }), expiry.timeIntervalSinceNow > 5 { return token }
+        return configuration.sharedStore?.unlockToken(computerId: computerId)
     }
 
     // MARK: Metadata (answered from the asleep snapshot when asleep)
@@ -286,11 +333,9 @@ public final class FilesClient: @unchecked Sendable {
         request.headers["X-Allternit-Device-Name"] = configuration.deviceName
         request.headers["X-Allternit-Device-Platform"] = configuration.devicePlatform
         if let ticket = currentWakeTicket() { request.headers["X-Allternit-Wake-Ticket"] = ticket }
-        // Protected roots (Memory Drive) open only after a fresh Face ID
-        // unlock on this device (SPEC section 12, the File Provider UI sheet).
-        if let proof = configuration.sharedStore?.unlockProof(computerId: computerId) {
-            request.headers["X-Allternit-Unlock"] = proof
-        }
+        // Protected roots (Memory Drive): the signed fut1 token from a fresh
+        // local unlock (SPEC section 12), shared with the File Provider extension.
+        if let unlock = currentUnlock() { request.headers["X-Allternit-Unlock"] = unlock }
         let transport = try await transport()
         return try transport.prepare(request, bearer: token, scratch: configuration.scratchDirectory,
                                      timeout: timeout ?? configuration.requestTimeout)

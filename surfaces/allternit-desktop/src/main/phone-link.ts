@@ -41,7 +41,17 @@ export interface PhoneLinkDeps {
   ios?: () => Promise<IosDriverDeps>;
   sleep?: (ms: number) => Promise<void>;
   logger?: (message: string) => void;
+  /**
+   * The iCTRL iPhone helper is retired for new setups (Phone Use plan, step 4):
+   * iPhone setup runs only when this says the computer already has a linked
+   * iPhone (re-pairing and repair keep working). Left out = allowed (tests).
+   */
+  iosHelperSetupAllowed?: () => boolean;
 }
+
+/** Shown when someone without a linked iPhone starts the retired helper setup. */
+export const IOS_HELPER_RETIRED_INSTRUCTION =
+  'The iPhone helper is no longer set up on new phones. Install Allternit from the App Store on your iPhone and connect it in Settings > Connections instead.';
 
 const IDLE: PhoneLinkStatus = { platform: null, state: 'idle', instruction: 'Choose your phone to start.' };
 
@@ -76,6 +86,9 @@ export class PhoneLinkManager extends EventEmitter {
         state: 'not_supported',
         instruction: 'iPhone setup needs Allternit Desktop on a Mac.',
       });
+    }
+    if (platform === 'ios' && this.deps.iosHelperSetupAllowed && !this.deps.iosHelperSetupAllowed()) {
+      return this.update(platform, runId, { state: 'not_supported', instruction: IOS_HELPER_RETIRED_INSTRUCTION });
     }
     const driver = platform === 'android' ? new LazyAndroidDriver(this.deps.android, this.lastTarget) : new LazyIosDriver(this.deps.ios);
     this.driver = driver;

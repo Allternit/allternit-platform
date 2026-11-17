@@ -12,6 +12,8 @@
 //!   a computer, from the runtime's `GET /replicas/key`) asks for the key.
 //!   202 + `PendingKeyRequest`. The `confirm_code` must be the one derived from
 //!   `device_pub`; pending for [`REQUEST_TTL_SECS`]; rate limited.
+//! - `DELETE /api/v1/files-keys/requests/:device_id?declined_by_device_id=`:
+//!   a device that holds the current key declines a waiting request.
 //! - `POST /api/v1/files-keys/grants`: an existing device answers one pending
 //!   request with its `confirm_code` and the envelope. The first device of a
 //!   user answers its own request, which creates the key.
@@ -22,7 +24,8 @@
 //!   marks the key for rotation. A revoked computer is removed the same way
 //!   the next time the list is read.
 //!
-//! Every grant, rotation and removal (and every refused grant) is written to
+//! Every grant, decline, rotation and removal (and every refused grant or
+//! decline) is written to
 //! `audit_log` (`files_key.*`).
 //!
 //! **Fail safe.** Owner only (`compute` scope, like the other Files owner
@@ -77,6 +80,7 @@ pub fn routes() -> Router<Arc<ApiState>> {
     Router::new()
         .route("/api/v1/files-keys", get(info))
         .route("/api/v1/files-keys/requests", post(request))
+        .route("/api/v1/files-keys/requests/:device_id", delete(decline))
         .route("/api/v1/files-keys/grants", post(grant))
         .route("/api/v1/files-keys/rotations", post(rotate))
         .route("/api/v1/files-keys/envelopes/:device_id", get(envelope))
@@ -480,6 +484,90 @@ async fn request_inner(state: &ApiState, headers: &HeaderMap, b: Result<Json<Key
     .map_err(db_err("insert request"))?;
     tx.commit().await.map_err(db_err("commit"))?;
     Ok((StatusCode::ACCEPTED, Json(pending_of(row))).into_response())
+}
+
+#[derive(Debug, Deserialize)]
+struct DeclineQuery {
+    declined_by_device_id: Option<String>,
+}
+
+async fn decline(State(state): State<Arc<ApiState>>, headers: HeaderMap, Path(device_id): Path<String>, Query(q): Query<DeclineQuery>) -> Response {
+    match decline_inner(&state, &headers, &device_id, q).await {
+        Ok(r) | Err(r) => r,
+    }
+}
+
+/// A device that holds the current key declines `device_id`'s waiting
+/// request. The request ends (state `replaced`, `declined_at`/`declined_by`
+/// set, migration 147), so it no longer shows on any device; the declined
+/// device can ask again (its requests stay rate limited). Refused: a decliner
+/// that does not hold the current key (403), no waiting request (404), more
+/// than [`MAX_REQUESTS_PER_HOUR`] declines in an hour (429).
+async fn decline_inner(state: &ApiState, headers: &HeaderMap, device_id: &str, q: DeclineQuery) -> Res {
+    let user_id = gate(state, headers).await?;
+    let by = q.declined_by_device_id.unwrap_or_default();
+    if !device_id_ok(device_id) || !device_id_ok(&by) {
+        return Err(bad("device_id and declined_by_device_id must look like dev_… or rt_…."));
+    }
+    let db = &state.db;
+    let details = |outcome: &str| serde_json::json!({ "device_id": device_id, "declined_by_device_id": by, "outcome": outcome });
+
+    let recent: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM files_key_requests WHERE user_id = $1 AND declined_at > NOW() - INTERVAL '1 hour'",
+    )
+    .bind(&user_id)
+    .fetch_one(db)
+    .await
+    .map_err(db_err("rate"))?;
+    if recent >= MAX_REQUESTS_PER_HOUR {
+        return Err(files_error(StatusCode::TOO_MANY_REQUESTS, ErrorCode::RateLimited, "Too many declined requests. Try again in an hour.", None, None, Some(3600)));
+    }
+
+    let mut tx = db.begin().await.map_err(db_err("begin"))?;
+    let current: Option<String> =
+        sqlx::query_scalar("SELECT key_id FROM files_keys WHERE user_id = $1 AND retired_at IS NULL FOR UPDATE")
+            .bind(&user_id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(db_err("current"))?;
+    let holds: Option<i64> = match &current {
+        Some(k) => sqlx::query_scalar(
+            "SELECT 1::bigint FROM files_key_envelopes e JOIN files_key_devices d \
+               ON d.user_id = e.user_id AND d.device_id = e.device_id \
+             WHERE e.user_id = $1 AND e.key_id = $2 AND e.device_id = $3",
+        )
+        .bind(&user_id)
+        .bind(k)
+        .bind(&by)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(db_err("holder"))?,
+        None => None,
+    };
+    if holds.is_none() {
+        drop(tx);
+        audit(db, &user_id, "files_key.request_declined", current.as_deref(), details("not_a_holder"), false).await;
+        return Err(err(StatusCode::FORBIDDEN, ErrorCode::Forbidden, "Only a device that has your Files key can decline a request."));
+    }
+    let ended = sqlx::query(
+        "UPDATE files_key_requests SET state = 'replaced', declined_at = NOW(), declined_by = $3 \
+         WHERE user_id = $1 AND device_id = $2 AND state = 'pending' AND expires_at > NOW()",
+    )
+    .bind(&user_id)
+    .bind(device_id)
+    .bind(&by)
+    .execute(&mut *tx)
+    .await
+    .map_err(db_err("decline"))?
+    .rows_affected();
+    if ended == 0 {
+        drop(tx);
+        audit(db, &user_id, "files_key.request_declined", current.as_deref(), details("no_pending_request"), false).await;
+        return Err(err(StatusCode::NOT_FOUND, ErrorCode::NotFound, "That device has no waiting request. It may have expired."));
+    }
+    tx.commit().await.map_err(db_err("commit"))?;
+    audit(db, &user_id, "files_key.request_declined", current.as_deref(), details("declined"), true).await;
+    Ok(StatusCode::NO_CONTENT.into_response())
 }
 
 async fn grant(State(state): State<Arc<ApiState>>, headers: HeaderMap, b: Result<Json<KeyShareGrant>, JsonRejection>) -> Response {

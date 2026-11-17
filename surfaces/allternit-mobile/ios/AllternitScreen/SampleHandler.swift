@@ -2,8 +2,9 @@
 // Copyright iCTRL authors. Licensed under the Apache License, Version 2.0;
 // see http://www.apache.org/licenses/LICENSE-2.0. Modified for Allternit:
 // the loopback IngestLink is replaced by an outbound WebSocket to the user's
-// Desktop through the cloud relay, every packet is sealed, and controls
-// arrive as JSON text frames instead of single bytes.
+// Desktop through the cloud relay, every packet is sealed, controls
+// arrive as JSON text frames instead of single bytes, and a sealed
+// `device.screen.read` request reads one frame on the phone (ScreenReader).
 
 import CoreMedia
 import Foundation
@@ -24,6 +25,8 @@ final class SampleHandler: RPBroadcastSampleHandler {
     private lazy var link = IngestSocket(queue: queue)
     private let encoder = H264Encoder()
     private let audioEncoder = AACEncoder()
+    /// `device.screen.read`: one frame on request, never continuously.
+    private let reader = ScreenReader()
 
     private struct Config: Equatable {
         var width: Int
@@ -72,6 +75,7 @@ final class SampleHandler: RPBroadcastSampleHandler {
             self.link.onReady = { [weak self] in self?.linkReady() }
             self.link.onClosed = { [weak self] in self?.setPaused(true) }
             self.link.onControl = { [weak self] type in self?.control(type) }
+            self.link.onRequest = { [weak self] request in self?.request(request) }
             self.link.onFatal = { [weak self] message in self?.finish(message) }
             self.link.start(credentials: credentials, key: key)
             self.startHeartbeat()
@@ -239,6 +243,53 @@ final class SampleHandler: RPBroadcastSampleHandler {
         default:
             break
         }
+    }
+
+    // MARK: - Requests (device.screen.read)
+
+    /// A sealed request on the ingest socket. Contract §9.1: answer with the
+    /// envelope; out of memory, refuse with `unavailable` and send the frame
+    /// so the receiver reads it instead.
+    private func request(_ request: [String: Any]) {
+        guard let id = request["id"] as? String, let type = request["type"] as? String else { return }
+        guard type == "device.screen.read" else {
+            reply(id, type, PhoneUseEnvelope.failure("unknown_method", "The screen broadcast answers only device.screen.read."))
+            return
+        }
+        guard let pixels = lastFrame, let c = config else {
+            reply(id, type, PhoneUseEnvelope.failure("no_frame", "The broadcast has no picture yet. Try again in a moment."))
+            return
+        }
+        guard !reader.isReading else {
+            reply(id, type, PhoneUseEnvelope.failure("busy", "The iPhone is still reading the last frame. Try again in a moment."))
+            return
+        }
+        guard ScreenReader.hasHeadroom else {
+            let sent = sendFrameForReceiver()
+            reply(id, type, PhoneUseEnvelope.failure(
+                "unavailable", "Not enough memory to read the screen on the iPhone. Read the latest frame on the computer instead.",
+                extra: ["fallback": sent ? "frame_sent" : "runtime_reads_frames",
+                        "available_mb": ScreenReader.availableMemory >> 20]))
+            return
+        }
+        reader.read(pixels, rotation: c.rotation, encoded: (c.width, c.height),
+                    filter: ScreenReader.Filter(request["filter"]), replyQueue: queue) { [weak self] envelope in
+            self?.reply(id, type, envelope)
+        }
+    }
+
+    private func reply(_ id: String, _ type: String, _ envelope: [String: Any]) {
+        link.send(LiveScreenPacket.json(.reply, ["type": "\(type).result", "id": id, "result": envelope]))
+    }
+
+    /// Encodes the last screen as a keyframe now, even with no viewer, so
+    /// the receiver has a current frame to read. False when it couldn't.
+    private func sendFrameForReceiver() -> Bool {
+        forceKeyframe = true
+        guard link.isReady, let source = lastFrame, link.inFlight < Self.maxInFlight else { return false }
+        sendConfigIfNeeded()
+        encode(source, pts: CMClockGetTime(CMClockGetHostTimeClock()))
+        return true
     }
 
     private func setPaused(_ value: Bool) {

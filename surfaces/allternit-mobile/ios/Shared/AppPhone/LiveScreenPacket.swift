@@ -37,6 +37,11 @@ enum LiveScreenPacket {
         /// One raw AAC-LC access unit (no ADTS header). On /video, only after
         /// the client has had its first IDR, so sound never runs ahead of picture.
         case audio = 5
+        /// `{"type":"<request>.result","id":string,"result":{ok,route,verified,detail,needs_you?}}`:
+        /// the extension's answer to a request on the ingest socket
+        /// (`device.screen.read`, contract §9.1). Allternit addition; viewers
+        /// skip kinds they don't know.
+        case reply = 6
     }
 
     static let headerLength = 5

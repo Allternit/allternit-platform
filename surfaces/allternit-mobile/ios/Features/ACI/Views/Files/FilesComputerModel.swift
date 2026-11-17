@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import LocalAuthentication
 import AllternitFilesKit
 
 /// State behind one computer's in-app Files screens (design 4A: a Files row
@@ -130,9 +131,31 @@ final class FilesComputerModel: ObservableObject {
                     await self?.needingWake(reason, action)
                 }
             }
+        } catch let error as FilesError where error.code == .protectedRootLocked {
+            // The user's tap started this, so Face ID asks right away, then
+            // the action runs once more with the signed unlock token.
+            if await unlock("Open protected files on \(name)") {
+                do { try await action() } catch { notice = Self.message(error) }
+            }
         } catch is CancellationError {
         } catch {
             notice = Self.message(error)
+        }
+    }
+
+    /// Protected roots (Memory Drive, SPEC section 12): Face ID / Touch ID or
+    /// the passcode, then a signed 5-minute unlock token from cloud-api that
+    /// this app and the File Provider extension send. False when the user
+    /// cancels; a failure shows as a notice.
+    func unlock(_ reason: String) async -> Bool {
+        do {
+            try await client.unlock(reason: reason)
+            return true
+        } catch let error as LAError where [.userCancel, .appCancel, .systemCancel].contains(error.code) {
+            return false
+        } catch {
+            notice = Self.message(error)
+            return false
         }
     }
 
@@ -165,7 +188,7 @@ final class FilesComputerModel: ObservableObject {
         transfers.append(transfer)
         defer { transfers.removeAll { $0.id == transfer.id } }
         try await client.download(itemId: item.id, rev: item.rev, size: item.size, contentHash: item.contentHash,
-                                  to: url, wake: .whenAutomatic) { [weak self] done, _ in
+                                  rootId: item.rootId, to: url, wake: .whenAutomatic) { [weak self] done, _ in
             Task { @MainActor in
                 guard let self, let index = self.transfers.firstIndex(where: { $0.id == transfer.id }) else { return }
                 self.transfers[index].done = done

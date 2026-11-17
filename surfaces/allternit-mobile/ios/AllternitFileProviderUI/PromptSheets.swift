@@ -98,7 +98,8 @@ struct WakeSheet: View {
 
 /// Face ID (or Touch ID, or the passcode) for a protected root. A success
 /// opens protected roots on this computer for five minutes: requests carry
-/// `X-Allternit-Unlock` (`FilesSharedStore.markUnlocked`).
+/// `X-Allternit-Unlock`: the signed `fut1` token cloud-api mints right after
+/// the check (`FilesClient.mintUnlock`, kept in the app-group keychain).
 struct UnlockSheet: View {
     let context: SheetContext
     @State private var failure: String?
@@ -141,7 +142,11 @@ struct UnlockSheet: View {
     }
 
     private func unlock() async {
-        guard !busy, !unlocked, let computerId = context.computerId else { return }
+        guard !busy, !unlocked, context.computerId != nil else { return }
+        guard let client = context.client else {
+            failure = "Sign in to the Allternit app first."
+            return
+        }
         busy = true
         defer { busy = false }
         let auth = LAContext()
@@ -155,7 +160,12 @@ struct UnlockSheet: View {
             let ok = try await auth.evaluatePolicy(.deviceOwnerAuthentication,
                                                    localizedReason: "Unlock \(rootName) on \(context.computerName)")
             guard ok else { return }
-            context.store.markUnlocked(computerId: computerId)
+            do {
+                try await client.mintUnlock()
+            } catch {
+                failure = "Couldn't reach Allternit to unlock. Check your connection and try again."
+                return
+            }
             unlocked = true
             context.signalChanges()
             try? await Task.sleep(nanoseconds: 700_000_000)

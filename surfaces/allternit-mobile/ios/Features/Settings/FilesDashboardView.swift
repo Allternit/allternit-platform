@@ -6,7 +6,9 @@ import AllternitFilesKit
 ///
 /// - Devices: each computer's state, its wake setting for Files (Ask first,
 ///   Automatically, Never; `PUT /computer-files/:id/wake-settings`) and its
-///   disks; then this iPhone (files kept offline).
+///   disks; then this iPhone (files kept offline), then the Files key
+///   (`FilesKeysSection`: this iPhone's key, approve or decline waiting
+///   devices, remove devices, make a new key, give a computer the key).
 /// - Sharing: every live share on every computer, with Copy link and Turn off.
 /// - Audit: what guests did with those shares, newest first.
 struct FilesDashboardView: View {
@@ -147,6 +149,7 @@ struct FilesDashboardView: View {
             LabeledContent("Kept offline", value: Self.count(files.store.pins.count, "file"))
         }
         .listRowBackground(Color("FillNeutral"))
+        FilesKeysSection()
     }
 
     private func wakeBinding(_ computerId: ComputerId) -> Binding<WakeSetting> {

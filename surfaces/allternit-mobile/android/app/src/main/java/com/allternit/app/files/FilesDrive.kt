@@ -157,15 +157,26 @@ internal class FilesDrive private constructor(val context: Context) {
     // ------------------------------------------------------------------ tickets and unlocks
 
     private val tickets = ConcurrentHashMap<String, Pair<String, Long>>()
-    private val unlocks = ConcurrentHashMap<String, Long>()
+    /** Computer id -> (signed unlock token, expiry ms). */
+    private val unlocks = ConcurrentHashMap<String, Pair<String, Long>>()
 
     fun hasTicket(cid: String): Boolean = (tickets[cid]?.second ?: 0L) > System.currentTimeMillis() + 2_000
 
-    fun isUnlocked(cid: String): Boolean = (unlocks[cid] ?: 0L) > System.currentTimeMillis()
+    fun isUnlocked(cid: String): Boolean = (unlocks[cid]?.second ?: 0L) > System.currentTimeMillis() + 2_000
 
-    /** After a BiometricPrompt success (section 12). Valid [UNLOCK_MS]. */
+    /**
+     * After a BiometricPrompt success (section 12): mint a signed unlock token from cloud-api
+     * (at most [UNLOCK_MS]) and keep it until it lapses. Network: never on the main thread.
+     */
     fun markUnlocked(cid: String) {
-        unlocks[cid] = System.currentTimeMillis() + UNLOCK_MS
+        val (token, expiresAt) = api().unlock(cid, auth.deviceId)
+        val now = System.currentTimeMillis()
+        val exp = try {
+            Instant.parse(expiresAt).toEpochMilli()
+        } catch (e: Exception) {
+            now + UNLOCK_MS - 10_000
+        }
+        unlocks[cid] = token to minOf(exp, now + UNLOCK_MS)
     }
 
     private fun headersFor(cid: String): Map<String, String> {
@@ -175,11 +186,8 @@ internal class FilesDrive private constructor(val context: Context) {
         h["x-allternit-device-name"] = auth.deviceName
         h["x-allternit-device-platform"] = "android"
         tickets[cid]?.takeIf { it.second > System.currentTimeMillis() }?.let { h["x-allternit-wake-ticket"] = it.first }
-        // The runtime checks the header is present (files_v2 Req::extract); the value says
-        // which device unlocked and when, for its audit.
-        unlocks[cid]?.takeIf { it > System.currentTimeMillis() }?.let {
-            h["x-allternit-unlock"] = "bio1.${auth.deviceId}.${(it - UNLOCK_MS) / 1000}"
-        }
+        // The signed token from markUnlocked; the runtime checks it offline (section 12).
+        unlocks[cid]?.takeIf { it.second > System.currentTimeMillis() }?.let { h["x-allternit-unlock"] = it.first }
         return h
     }
 

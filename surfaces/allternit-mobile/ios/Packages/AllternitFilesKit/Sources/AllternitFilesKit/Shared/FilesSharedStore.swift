@@ -71,11 +71,14 @@ public final class FilesSharedStore: @unchecked Sendable {
         static let pendingWake = "files.pendingWake.v1"
         static let meshProxies = "files.meshProxies.v1"
         static let pendingUnlock = "files.pendingUnlock.v1"
+        static let keyRequest = "files.keyRequest.v1"
     }
 
     private static let keychainService = "com.allternit.mobile.files"
     private static let tokenAccount = "files-token"
     private static let tokenKeyIdAccount = "files-token-key-id"
+    private static let deviceKeyAccount = "files-device-x25519"
+    private static let envelopesAccount = "files-key-envelopes"
 
     /// `keychainGroup` is the full access group with the team prefix
     /// (Info.plist `AllternitSharedKeychainGroup`).
@@ -250,27 +253,27 @@ public final class FilesSharedStore: @unchecked Sendable {
 
     // MARK: Device unlock (protected roots, SPEC section 12)
 
-    /// How long one Face ID unlock opens protected roots on a computer.
-    public static let unlockWindow: TimeInterval = 300
-
-    /// Records a fresh device unlock (Face ID, Touch ID or the passcode) for
-    /// `computerId`. Requests to that computer then carry
-    /// `X-Allternit-Unlock` for `unlockWindow` seconds.
-    public func markUnlocked(computerId: ComputerId, at date: Date = Date()) {
-        writeSecret(String(Int(date.timeIntervalSince1970)), account: "unlock.\(computerId)")
+    /// Stores the signed `fut1` unlock token cloud-api minted right after a
+    /// fresh Face ID / Touch ID / passcode check, so the app and the File
+    /// Provider extension both send it as `X-Allternit-Unlock` until it lapses.
+    /// Kept in the app-group keychain (this device only), never in defaults.
+    public func storeUnlock(token: String, expiresAt: Date, computerId: ComputerId) {
+        writeSecret("\(Int(expiresAt.timeIntervalSince1970))|\(token)", account: "unlock.\(computerId)")
         clearPendingUnlock(computerId: computerId)
     }
 
-    /// The `X-Allternit-Unlock` value while an unlock is fresh, else nil:
-    /// `bio1.<device id>.<unix seconds of the unlock>`, the same proof the
-    /// Android app sends.
-    public func unlockProof(computerId: ComputerId, now: Date = Date()) -> String? {
-        guard let stored = readSecret("unlock.\(computerId)"), let at = TimeInterval(stored) else { return nil }
-        guard now.timeIntervalSince1970 - at < Self.unlockWindow, now.timeIntervalSince1970 >= at - 60 else {
+    /// The unlock token for `computerId` while it has more than 5 seconds
+    /// left, else nil (an expired one is deleted). Anything that isn't a
+    /// stored `fut1` token (an old `bio1` timestamp) reads as no unlock.
+    public func unlockToken(computerId: ComputerId, now: Date = Date()) -> String? {
+        guard let stored = readSecret("unlock.\(computerId)") else { return nil }
+        let parts = stored.split(separator: "|", maxSplits: 1).map(String.init)
+        guard parts.count == 2, let exp = TimeInterval(parts[0]), parts[1].hasPrefix("fut1."),
+              exp - now.timeIntervalSince1970 > 5 else {
             deleteSecret("unlock.\(computerId)")
             return nil
         }
-        return "bio1.\(deviceId ?? "dev_unknown").\(Int(at))"
+        return parts[1]
     }
 
     public func clearUnlock(computerId: ComputerId) {
@@ -315,10 +318,53 @@ public final class FilesSharedStore: @unchecked Sendable {
         writeSecret("\(expiresAt.timeIntervalSince1970) \(ticket)", account: "wake.\(computerId)")
     }
 
+    // MARK: Files key (SPEC section 13)
+
+    /// This device's X25519 secret (32 bytes). CryptoKit's Secure Enclave
+    /// keys are P-256 only, so the X25519 key lives in the shared keychain
+    /// group, after first unlock, this device only (never backed up or
+    /// synced), where the File Provider extension can read it to open
+    /// replicas.
+    public func filesDeviceSecret() -> Data? {
+        readSecret(Self.deviceKeyAccount).flatMap { Data(base64Encoded: $0) }.flatMap { $0.count == 32 ? $0 : nil }
+    }
+
+    @discardableResult
+    public func setFilesDeviceSecret(_ secret: Data) -> Bool {
+        writeSecret(secret.base64EncodedString(), account: Self.deviceKeyAccount)
+    }
+
+    /// The Files key envelopes wrapped to this device, newest first. Wrapped
+    /// only: the FRK is opened in memory when a replica is read. Older keys
+    /// stay after a rotation until every replica is re-sealed (SPEC 13).
+    public func filesKeyEnvelopes() -> [KeyEnvelope] {
+        guard let text = readSecret(Self.envelopesAccount) else { return [] }
+        return (try? JSONDecoder().decode([KeyEnvelope].self, from: Data(text.utf8))) ?? []
+    }
+
+    @discardableResult
+    public func setFilesKeyEnvelopes(_ envelopes: [KeyEnvelope]) -> Bool {
+        guard let data = try? JSONEncoder().encode(envelopes) else { return false }
+        return writeSecret(String(decoding: data, as: UTF8.self), account: Self.envelopesAccount)
+    }
+
+    /// The request this device sent and is waiting on (its code is shown
+    /// until another device approves).
+    public var pendingKeyRequest: KeyShareRequest? {
+        get { defaults?.data(forKey: Key.keyRequest).flatMap { try? JSONDecoder().decode(KeyShareRequest.self, from: $0) } }
+        set {
+            if let newValue { defaults?.set(try? JSONEncoder().encode(newValue), forKey: Key.keyRequest) }
+            else { defaults?.removeObject(forKey: Key.keyRequest) }
+        }
+    }
+
     /// Sign-out: drops every account-bound value. Config (the cloud URL, the
     /// device id and name) stays.
     public func clearAccount() {
         clearToken()
+        deleteSecret(Self.envelopesAccount)
+        deleteSecret(Self.deviceKeyAccount)
+        pendingKeyRequest = nil
         for computer in computers {
             deleteSecret("wake.\(computer.id)")
             deleteSecret("unlock.\(computer.id)")
@@ -352,6 +398,11 @@ public final class FilesSharedStore: @unchecked Sendable {
         #endif
     }
 
+    /// Tests only (`@testable`): secrets kept in memory instead of the
+    /// keychain, which a `swift test` host can't reach with an access group.
+    var memorySecrets: [String: String]?
+    private let secretsLock = NSLock()
+
     private func query(_ account: String) -> [CFString: Any] {
         var q: [CFString: Any] = [
             kSecClass: kSecClassGenericPassword,
@@ -363,6 +414,7 @@ public final class FilesSharedStore: @unchecked Sendable {
     }
 
     private func readSecret(_ account: String) -> String? {
+        if memorySecrets != nil { return secretsLock.withLock { memorySecrets?[account] } }
         if let secretFile { return secretFile.read(account) }
         var q = query(account)
         q[kSecReturnData] = true
@@ -375,6 +427,7 @@ public final class FilesSharedStore: @unchecked Sendable {
 
     @discardableResult
     private func writeSecret(_ value: String, account: String) -> Bool {
+        if memorySecrets != nil { secretsLock.withLock { memorySecrets?[account] = value }; return true }
         if let secretFile { return secretFile.write(value, account: account) }
         let data = Data(value.utf8)
         let q = query(account)
@@ -388,6 +441,7 @@ public final class FilesSharedStore: @unchecked Sendable {
     }
 
     private func deleteSecret(_ account: String) {
+        if memorySecrets != nil { secretsLock.withLock { _ = memorySecrets?.removeValue(forKey: account) }; return }
         if let secretFile { return secretFile.delete(account) }
         SecItemDelete(query(account) as CFDictionary)
     }

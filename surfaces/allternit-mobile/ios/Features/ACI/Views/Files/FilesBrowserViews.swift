@@ -171,6 +171,7 @@ struct FilesFolderScreen: View {
     @State private var items: [Item] = []
     @State private var isLoading = true
     @State private var error: String?
+    @State private var isLocked = false
     @State private var selected: FilesSelection?
     @State private var isAddOpen = false
     @State private var isDropTargeted = false
@@ -195,6 +196,11 @@ struct FilesFolderScreen: View {
             }
             if isLoading && items.isEmpty {
                 Section { ProgressView().frame(maxWidth: .infinity) }.listRowBackground(Color.clear)
+            } else if isLocked, items.isEmpty {
+                FriendlyStateView(style: .empty, icon: "lock.fill", title: "\(title) is protected",
+                                  message: "Unlock it with Face ID, Touch ID or your passcode. It stays open on this iPhone for 5 minutes.",
+                                  actionTitle: "Unlock", action: { Task { if await model.unlock("Unlock \(title) on \(model.name)") { await reload() } } })
+                    .listRowBackground(Color.clear)
             } else if let error, items.isEmpty {
                 FriendlyStateView(style: .error, icon: "exclamationmark.triangle", title: "Couldn't open \(title)",
                                   message: error, actionTitle: "Retry", action: { Task { await reload() } })
@@ -282,6 +288,10 @@ struct FilesFolderScreen: View {
         do {
             items = try await model.list(rootId: rootId, parentId: parentId).items
             error = nil
+            isLocked = false
+        } catch let failure as FilesError where failure.code == .protectedRootLocked {
+            isLocked = true
+            error = nil
         } catch is CancellationError {
         } catch {
             self.error = FilesComputerModel.message(error)
@@ -330,7 +340,7 @@ extension FilesComputerModel {
                     try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
                     let url = folder.appendingPathComponent(safeName(item.name))
                     try await client.download(itemId: item.id, rev: item.rev, size: item.size, contentHash: item.contentHash,
-                                              to: url, wake: .whenAutomatic) { done, _ in
+                                              rootId: item.rootId, to: url, wake: .whenAutomatic) { done, _ in
                         progress.completedUnitCount = Int64(clamping: done)
                     }
                     completion(url, false, nil)

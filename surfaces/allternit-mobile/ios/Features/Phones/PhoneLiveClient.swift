@@ -39,6 +39,8 @@ enum LivePacket: Equatable {
         case .ended: return .ended(reason: object()["reason"] as? String ?? "")
         case .audioConfig: return .audioConfig
         case .audio: return .audio
+        // Phone Use answers to ingest-socket requests (contract §9.1); viewers skip them.
+        case .reply: return nil
         }
     }
 }
