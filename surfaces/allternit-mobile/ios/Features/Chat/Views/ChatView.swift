@@ -17,6 +17,9 @@ struct ChatView: View {
     @ObservedObject private var brain = BrainStore.shared
     @State private var isShareLinkPresented = false
     /// The chat ⋯ menu (phone calm pass step 22; web PhoneChatMenu).
+    /// Scroll-to-bottom button: the transcript is more than one screen above its end.
+    @State private var jumpFar = false
+    @ReducedMotion private var reducedMotion
     @State private var isChatMenuOpen = false
     /// A ⋯ row that opens a sheet waits for the menu to close first.
     @State private var pendingMenuItem: ChatMenuItem?
@@ -522,6 +525,39 @@ struct ChatContentView: View {
 
     // MARK: Session
 
+    private var showJumpButton: Bool {
+        guard !viewModel.messages.isEmpty else { return false }
+        #if DEBUG
+        if launchArgumentEnabled(LaunchArgument.calmJumpButton) { return true }
+        #endif
+        return jumpFar
+    }
+
+    /// The 40 pt glass scroll-to-bottom button. Smooth scroll, instant under reduced motion.
+    private func jumpButton(_ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: "arrow.down")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundColor(Color("TextPrimary"))
+                .frame(width: 40, height: 40)
+                .glassSurface(cornerRadius: 20)
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Scroll to latest message")
+        .accessibilityIdentifier("chatJumpToBottom")
+    }
+
+    private func scrollToBottom(_ proxy: ScrollViewProxy) {
+        Haptics.light()
+        guard let lastId = viewModel.messages.last?.id else { return }
+        if reducedMotion {
+            proxy.scrollTo(lastId, anchor: .bottom)
+        } else {
+            withAnimation(.easeInOut(duration: 0.35)) { proxy.scrollTo(lastId, anchor: .bottom) }
+        }
+    }
+
     private var sessionLayout: some View {
         VStack(spacing: 0) {
             // Transient load/send failure banner (dismissible).
@@ -560,10 +596,26 @@ struct ChatContentView: View {
                             PhoneTaskCardsSection(sessionId: viewModel.currentSessionId, bot: chatBot,
                                                   hostedRunIds: Set(runHosts.values.map(\.runId)))
                         }
+                        // iOS 17 has no scroll geometry callback: this marker leaving the
+                        // lazy stack's window means the end is far away.
+                        if #unavailable(iOS 18) {
+                            Color.clear.frame(height: 1)
+                                .onAppear { jumpFar = false }
+                                .onDisappear { jumpFar = true }
+                        }
                     }
                     .padding(.vertical, 16)
                 }
                 .scrollDismissesKeyboard(.interactively)
+                .modifier(JumpDistanceTracker(far: $jumpFar))
+                .overlay(alignment: .bottom) {
+                    if showJumpButton {
+                        jumpButton { scrollToBottom(scrollProxy) }
+                            .padding(.bottom, 12)
+                            .transition(reducedMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.85)))
+                    }
+                }
+                .animation(Motion.pick(Motion.deck, reduced: reducedMotion), value: showJumpButton)
                 .onChange(of: viewModel.messages.last) { _, _ in
                     // Fires on new messages AND on streamed content changes;
                     // the view model's ~50ms flush coalescing bounds the rate.
@@ -1355,5 +1407,23 @@ private struct TerminalQuestionCards: View {
             }
         }
         return list.filter { !asks.isResolved($0.id) || message.questions.contains($0) }
+    }
+}
+
+/// Reports whether the transcript's end is more than one screen below the
+/// visible area (iOS 18 and later; iOS 17 uses the end marker in the stack).
+private struct JumpDistanceTracker: ViewModifier {
+    @Binding var far: Bool
+
+    func body(content: Content) -> some View {
+        if #available(iOS 18.0, *) {
+            content.onScrollGeometryChange(for: Bool.self) { geometry in
+                geometry.contentSize.height - geometry.contentOffset.y - geometry.containerSize.height > geometry.containerSize.height
+            } action: { _, isFar in
+                far = isFar
+            }
+        } else {
+            content
+        }
     }
 }

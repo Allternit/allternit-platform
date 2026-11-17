@@ -61,6 +61,20 @@ enum LaunchArgument {
     /// `-sample-workspace` for sample bots.
     static let calmShelf = "calm-shelf"
 
+    /// `-calm-recents-select` (DEBUG only): open the session overview in select
+    /// mode with the first two rows ticked (phone calm step 25).
+    static let calmRecentsSelect = "calm-recents-select"
+
+    /// `-calm-overview-menu` (DEBUG only): open the session overview with its
+    /// ⋯ "Recents options" popover showing.
+    static let calmOverviewMenu = "calm-overview-menu"
+
+    /// `-calm-search` (DEBUG only): open the Search chats and projects screen.
+    static let calmSearch = "calm-search"
+
+    /// `-calm-jump-button` (DEBUG only): show the chat's scroll-to-bottom button.
+    static let calmJumpButton = "calm-jump-button"
+
     /// `-calm-gallery` (DEBUG only): show `CalmGalleryView`.
     static let calmGallery = "calm-gallery"
 

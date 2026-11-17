@@ -198,7 +198,13 @@ struct HistorySidebarView: View {
                 isMeetingsPresented = true
             }
             if launchArgumentEnabled("open-connectors-meetings") { isConnectorsPresented = true }
-            if launchArgumentEnabled("open-search") { isSearchPresented = true }
+            if launchArgumentEnabled("open-search") || launchArgumentEnabled(LaunchArgument.calmSearch) { isSearchPresented = true }
+            if launchArgumentEnabled(LaunchArgument.calmRecentsSelect) || launchArgumentEnabled(LaunchArgument.calmOverviewMenu) {
+                // The shell presents the overview; give it a beat to subscribe.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                    NotificationCenter.default.post(name: .shellOpenOverview, object: nil)
+                }
+            }
             if launchArgumentEnabled("open-quick-task") { isQuickTaskPresented = true }
             #endif
         }
@@ -471,15 +477,21 @@ struct HistorySidebarView: View {
     /// Recents (a tap opens every Home session as List · Grid · Deck) · filter.
     private var recentsLabel: some View {
         HStack(spacing: 2) {
+            Text("Recents")
+                .frame(maxWidth: .infinity, minHeight: 32, alignment: .leading)
+                .accessibilityAddTraits(.isHeader)
+            // "View all ›" opens the existing session overview (D7), whose ⋯
+            // menu holds Select chats and the All / Pinned / Archived views.
             Button {
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                Haptics.light()
                 NotificationCenter.default.post(name: .shellOpenOverview, object: nil)
             } label: {
-                HStack(spacing: 4) {
-                    Text("Recents")
+                HStack(spacing: 3) {
+                    Text("View all")
                     Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold))
                 }
-                .frame(maxWidth: .infinity, minHeight: 32, alignment: .leading)
+                .frame(minHeight: 32)
+                .padding(.horizontal, 6)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -662,10 +674,11 @@ struct HistorySidebarView: View {
                             .accessibilityLabel("Terminal session")
                     }
                     if working {
-                        // .phone-rail-working: 11.5px/500, coral.
-                        Text("Working")
-                            .font(.system(size: 11.5, weight: .medium))
-                            .foregroundColor(Self.workingCoral)
+                        // .phone-rail-spinner: a small coral spinner while a reply runs.
+                        ProgressView()
+                            .controlSize(.mini)
+                            .tint(Self.workingCoral)
+                            .accessibilityLabel("Working")
                     } else if !time.isEmpty {
                         Text(time)
                             .font(.system(size: 12))
@@ -686,9 +699,9 @@ struct HistorySidebarView: View {
                 }
             }
             if !working && unread {
-                // .phone-rail-dot: 8px, the accent.
+                // .phone-rail-dot-new: 8px, blue (new reply).
                 Circle()
-                    .fill(Color("AccentPrimary"))
+                    .fill(Color.blue)
                     .frame(width: 8, height: 8)
                     .accessibilityLabel("Unread")
             }
@@ -868,11 +881,10 @@ struct HistorySidebarView: View {
             .foregroundColor(Color("TextPrimary"))
             .padding(.horizontal, 18)
             .frame(height: 44)
-            .background(Capsule().fill(Color("BgPanel")))
-            .overlay(Capsule().stroke(Color("BorderSubtle"), lineWidth: 0.5))
-            .shadow(color: Color.black.opacity(0.14), radius: 8, x: 0, y: 4)
+            .glassSurface(cornerRadius: 22)
+            .shadow(color: Color.black.opacity(0.10), radius: 8, x: 0, y: 4)
         } primaryAction: {
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            Haptics.light()
             newItem()
         }
         .accessibilityLabel("\(newLabel). Press and hold for more ways to start")
