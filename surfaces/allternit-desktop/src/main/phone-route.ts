@@ -150,7 +150,9 @@ export interface PhoneLane {
 const NOT_BUILT: Partial<Record<RouteId, string>> = {
   official: 'Shortcuts, actions and Home need the next version of Allternit Desktop.',
   mirror: 'iPhone Mirroring is not available in this version of Allternit Desktop.',
-  'bt-mac': 'Bluetooth keyboard and mouse from this Mac is not available in this version of Allternit Desktop.',
+  // Plan step 10 finding (2026-11-17): macOS has no supported public API for an app to act as a
+  // Bluetooth keyboard/mouse (classic HID PSMs and the HID GATT service 0x1812 are reserved).
+  'bt-mac': 'Your Mac can’t act as a Bluetooth keyboard and mouse for your iPhone: macOS has no supported way for apps to do that. Use iPhone Mirroring, the Allternit Android app or the USB Agent instead.',
   'bt-apple': 'Bluetooth keyboard and mouse from a second iPhone or iPad is not available yet.',
   'bt-android': 'Bluetooth keyboard and mouse from the Allternit Android app is not available yet.',
 };

@@ -3,7 +3,9 @@ Allternit USB Agent includes code adapted from esp32-iphone-agent
 
   - firmware/usb_agent/usb_agent.ino   (from hardware/hid_bridge/hid_bridge.ino: paced pointer
                                         moves, key combos, USB wake handling, watchdog)
-  - surfaces/allternit-desktop/src/main/phone-usb-agent-pointer.ts   (from server/hidagent/phone.py)
+  - surfaces/allternit-desktop/src/main/phone-hid-core.ts           (from server/hidagent/phone.py; the
+                                        shared keyboard/mouse core, with phone-usb-agent-pointer.ts
+                                        as the board's sender)
   - surfaces/allternit-desktop/src/main/phone-usb-agent-vision.ts    (from server/hidagent/vision.py)
   - surfaces/allternit-desktop/src/main/phone-airplay.ts             (approach of server/hidagent/screen.py)
 
