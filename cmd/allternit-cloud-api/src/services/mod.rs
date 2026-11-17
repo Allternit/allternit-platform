@@ -34,6 +34,7 @@ pub mod quota_service;
 pub mod r2;
 pub mod run_service;
 pub mod scheduler_service;
+pub mod store_apple;
 pub mod store_billing;
 pub mod task_service;
 pub mod hard_line;

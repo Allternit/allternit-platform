@@ -340,14 +340,36 @@ async fn run_all(db: &PgPool, statements: &[&str], user_id: &str) -> Result<(), 
 
 /// Cancels the user's Stripe subscriptions at once, with no final invoice. The
 /// mirror can miss one, so each known customer is also asked what it has.
+///
+/// Plans billed by Apple or Google (`provider` `apple` / `google`, keys
+/// `apple:…` / `google:…`) cannot be cancelled by the server: only the person
+/// can, in their App Store or Play subscriptions. They are marked canceled
+/// locally, logged, and never sent to Stripe, and an account with only store
+/// plans needs no Stripe key.
 pub(crate) async fn cancel_stripe(
     db: &PgPool,
     stripe: &dyn StripeCheckout,
     secret: Option<&str>,
     user_id: &str,
 ) -> Result<(), ApiError> {
+    let store_plans: Vec<String> = sqlx::query_scalar(
+        "UPDATE billing_subscriptions SET status = 'canceled', updated_at = CURRENT_TIMESTAMP \
+         WHERE user_id = $1 AND COALESCE(provider, 'stripe') <> 'stripe' AND status <> 'canceled' \
+         RETURNING stripe_subscription_id",
+    )
+    .bind(user_id)
+    .fetch_all(db)
+    .await?;
+    for key in &store_plans {
+        tracing::warn!(
+            %user_id,
+            subscription = %key,
+            "account erase: store-billed plan marked canceled locally; the store keeps billing until the person cancels it in App Store / Play subscriptions"
+        );
+    }
     let mut subscriptions: Vec<String> = sqlx::query_scalar(
-        "SELECT stripe_subscription_id FROM billing_subscriptions WHERE user_id = $1 AND status <> 'canceled' \
+        "SELECT stripe_subscription_id FROM billing_subscriptions \
+         WHERE user_id = $1 AND status <> 'canceled' AND COALESCE(provider, 'stripe') = 'stripe' \
          UNION SELECT stripe_subscription_id FROM platform_projects WHERE owner_user_id = $1 AND stripe_subscription_id IS NOT NULL",
     )
     .bind(user_id)
@@ -831,6 +853,22 @@ mod tests {
         stripe.status.lock().unwrap().remove("sub_p_user_gone");
         cancel_stripe(&db, &stripe, Some("sk_test"), "user_gone").await.unwrap();
         assert_eq!(stripe.deleted.lock().unwrap().len(), 3);
+
+        // Store-billed plans (migration 148): never sent to Stripe, marked
+        // canceled locally, and an account with only those needs no Stripe key.
+        db.execute(
+            "INSERT INTO users (id, email, name) VALUES ('user_store', 'user_store@example.com', 'Name');
+             INSERT INTO billing_subscriptions (stripe_subscription_id, user_id, plan_id, plan_tier, status, provider)
+               VALUES ('apple:2000000999', 'user_store', 'plus', 'pro', 'active', 'apple');",
+        )
+        .await
+        .unwrap();
+        cancel_stripe(&db, &stripe, None, "user_store").await.expect("store-only account needs no Stripe key");
+        assert_eq!(stripe.deleted.lock().unwrap().len(), 3, "a store plan is never sent to Stripe");
+        assert_eq!(
+            count(&db, "SELECT COUNT(*) FROM billing_subscriptions WHERE user_id = 'user_store' AND status = 'canceled'").await,
+            1
+        );
 
         // Objects: a failure keeps the rows for the retry.
         let failing = FakeStore { fail: true, ..Default::default() };

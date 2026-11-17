@@ -16,7 +16,9 @@
 //! - `GET /api/v1/billing/subscription` (Clerk session or API token): the caller's
 //!   current Free / Plus / Max / Ultra plan (open row, else Free), with
 //!   `billing_provider` (`stripe` / `apple` / `google` / null), `manage_url` and
-//!   `conflict` (more than one open plan).
+//!   `conflict` (more than one open plan). First re-reads an App Store plan
+//!   whose period end has passed (at most once per 10 minutes per row; plan
+//!   D13, `services::store_apple`).
 //! - `POST /api/v1/billing/subscribe` (Clerk session or API token): Checkout Session `mode=subscription` whose
 //!   `subscription_data[metadata]` carries `clerk_user_id` / `allternit_plan_tier` /
 //!   `allternit_plan_id` — the contract `routes::billing_webhooks` consumes. 409
@@ -183,9 +185,19 @@ async fn get_current_subscription(
     let user_id = crate::auth::resolve_user_scoped(&state.db, &headers, "billing")
         .await?
         .id;
+    let admin = crate::auth::is_admin_user(&user_id);
+    if !admin {
+        // Plan D13 (no scheduled job): an App Store plan whose period end has
+        // passed is re-read from Apple, at most once per 10 minutes per row,
+        // which heals a missed renewal or expiry notification. Never fails
+        // this read.
+        let suspend =
+            crate::services::store_apple::refresh_due_plans_from_env(&state.db, &user_id).await;
+        super::billing_store::run_suspensions(&state, &suspend);
+    }
     let plan = current_subscription_for(&state.db, &user_id).await?;
     // Admins read as Ultra without a row; they have no provider.
-    let open = if crate::auth::is_admin_user(&user_id) {
+    let open = if admin {
         Vec::new()
     } else {
         open_subscriptions(&state.db, &user_id).await?
