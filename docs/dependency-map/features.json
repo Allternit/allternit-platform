@@ -2385,6 +2385,37 @@
       ]
     },
     {
+      "id": "feature:phone-use",
+      "label": "Phone Use: your assistant acts on your own iPhone (routes)",
+      "product": "product:computer-use",
+      "status": "building",
+      "description": "Route-based control of a user's own iPhone from the App Store Allternit app and the user's computer: official (Shortcuts, Home, screen read through the app), mirror (iPhone Mirroring on the Mac), bt-mac, bt-android and bt-apple (a Bluetooth keyboard and mouse), usb-agent, and the retiring legacy-helper. A router picks the first healthy route; every send is approved on the user's computer. The connect kit (Settings > Computers > Phones, the connect sheet's phone step, the phone layout's phones list) shows per-route health, the route in use, needs-you lines, the Control my iPhone by Bluetooth row (Desktop on a Mac), Keyboard for <name> for a second device, and a retirement notice for the old helper. Contract: docs/contracts/CONTRACT-phone-use-2026-11-16.md.",
+      "touches": [
+        "allternit/surfaces/allternit-desktop",
+        "allternit/cmd/allternit-api/src/phone_app.rs",
+        "allternit/cmd/allternit-api/src/phone_guard.rs",
+        "allternit/surfaces/allternit-mobile/android",
+        "allternit-ai/src/components/phones",
+        "allternit-ai/src/components/computers",
+        "allternit-ai/src/fabric-session"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-16",
+          "note": "Eoj approved the Phone Use plan: no iCTRL helper for new setups, routes chosen by health in a fixed order, every send approved on the user's computer. Web, the phone layout and the PWA have no Desktop bridge, so the Mac Bluetooth row there says Available in Allternit Desktop for Mac and route health comes from the runtime's phone listing when it sends one."
+        },
+        {
+          "on": "2026-11-17",
+          "note": "Eoj accepted the undocumented CoreBluetooth HID service (128-bit Base UUID) for bt-mac and bt-apple. Apple may stop allowing it; the settings row and the router fall back to another route."
+        }
+      ],
+      "evidence": [
+        "allternit/docs/contracts/CONTRACT-phone-use-2026-11-16.md",
+        "allternit/surfaces/docs/guides/iphone-routes.mdx",
+        "allternit/surfaces/docs/guides/iphone-bridge-shortcuts.mdx"
+      ]
+    },
+    {
       "id": "feature:local-vendor-bots",
       "label": "Local vendor bot adapters",
       "product": "product:digital-twin",

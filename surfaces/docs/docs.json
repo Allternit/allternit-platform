@@ -168,6 +168,8 @@
               "guides/android-app",
               "guides/device-access",
               "guides/phone-link",
+              "guides/iphone-routes",
+              "guides/iphone-bridge-shortcuts",
               "guides/android-live-view",
               "guides/cloud-phones",
               "guides/bot-voice-on-linked-phone",
