@@ -72,6 +72,9 @@ async fn setup() -> Arc<ApiState> {
     let state = test_state(Arc::new(MockGateway::new(None, vec![]))).await;
     let sql = include_str!("../../migrations_pg/146_files_keys.sql").replace("public.", "");
     sqlx::raw_sql(&sql).execute(&state.db).await.expect("migration 145");
+    // 147 before the test audit_log exists: its audit_log index is skipped here.
+    let decline_sql = include_str!("../../migrations_pg/147_files_keys_decline.sql").replace("public.", "");
+    sqlx::raw_sql(&decline_sql).execute(&state.db).await.expect("migration 147");
     sqlx::raw_sql(
         "CREATE TABLE IF NOT EXISTS audit_log (id TEXT PRIMARY KEY, action TEXT, resource_type TEXT, resource_id TEXT, \
          user_id TEXT, user_email TEXT, details TEXT, success BOOLEAN, organization_id TEXT, project_id TEXT, ip_address TEXT)",
@@ -272,4 +275,43 @@ async fn removing_a_device_marks_rotation_and_the_rotation_reaches_everyone_left
     assert_eq!(call(&state, "DELETE", "/api/v1/files-keys/devices/dev_phone01", serde_json::Value::Null).await.0, StatusCode::NO_CONTENT);
     let (_, info) = call(&state, "GET", "/api/v1/files-keys", serde_json::Value::Null).await;
     assert!(info.get("key_id").is_none(), "{info}");
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn only_a_key_holder_declines_and_only_a_waiting_request() {
+    let _g = on();
+    let state = setup().await;
+    let (_, _, phone_code) = ask(&state, "dev_phone01", 3).await;
+    assert_eq!(give(&state, "fk_first", "dev_phone01", "dev_phone01", &phone_code).await.0, StatusCode::NO_CONTENT);
+    let (s, _, laptop_code) = ask(&state, "dev_laptop1", 4).await;
+    assert_eq!(s, StatusCode::ACCEPTED);
+    let decline = |who: &str, by: &str| format!("/api/v1/files-keys/requests/{who}?declined_by_device_id={by}");
+
+    // A device without the key can't decline, and the request stays.
+    let (s, b) = call(&state, "DELETE", &decline("dev_laptop1", "dev_stranger"), serde_json::Value::Null).await;
+    assert_eq!((s, b["code"].as_str()), (StatusCode::FORBIDDEN, Some("forbidden")), "{b}");
+    assert_eq!(audit_rows(&state, "files_key.request_declined", false).await, 1);
+    // The waiting device can't decline itself out either: it has no key.
+    assert_eq!(call(&state, "DELETE", &decline("dev_laptop1", "dev_laptop1"), serde_json::Value::Null).await.0, StatusCode::FORBIDDEN);
+    // Missing or malformed decliner.
+    assert_eq!(call(&state, "DELETE", "/api/v1/files-keys/requests/dev_laptop1", serde_json::Value::Null).await.0, StatusCode::BAD_REQUEST);
+
+    // A device with no waiting request: not found.
+    let (s, b) = call(&state, "DELETE", &decline("dev_nobody1", "dev_phone01"), serde_json::Value::Null).await;
+    assert_eq!((s, b["code"].as_str()), (StatusCode::NOT_FOUND, Some("not_found")), "{b}");
+
+    let (_, info) = call(&state, "GET", "/api/v1/files-keys", serde_json::Value::Null).await;
+    assert_eq!(info["pending_requests"].as_array().unwrap().len(), 1, "{info}");
+
+    // The holder declines: the request is gone everywhere and can't be granted.
+    assert_eq!(call(&state, "DELETE", &decline("dev_laptop1", "dev_phone01"), serde_json::Value::Null).await.0, StatusCode::NO_CONTENT);
+    assert_eq!(audit_rows(&state, "files_key.request_declined", true).await, 1);
+    let (_, info) = call(&state, "GET", "/api/v1/files-keys", serde_json::Value::Null).await;
+    assert!(info["pending_requests"].as_array().unwrap().is_empty(), "{info}");
+    assert_eq!(give(&state, "fk_first", "dev_laptop1", "dev_phone01", &laptop_code).await.0, StatusCode::NOT_FOUND);
+    // Declining it again finds nothing waiting.
+    assert_eq!(call(&state, "DELETE", &decline("dev_laptop1", "dev_phone01"), serde_json::Value::Null).await.0, StatusCode::NOT_FOUND);
+    // The declined device may ask again.
+    assert_eq!(ask(&state, "dev_laptop1", 4).await.0, StatusCode::ACCEPTED);
 }

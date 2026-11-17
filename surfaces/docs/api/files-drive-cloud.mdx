@@ -149,6 +149,7 @@ Replicas are sealed with your **Files key**, 32 random bytes made on your first 
 |---|---|---|
 | `GET /api/v1/files-keys` | | `FilesKeyInfo`: the current `key_id` (absent before the first device makes it), `devices` with their public keys, `pending_requests`, `rotation_needed` |
 | `POST /api/v1/files-keys/requests` | `KeyShareRequest` | `202` with a `PendingKeyRequest`. It waits 10 minutes |
+| `DELETE /api/v1/files-keys/requests/{device_id}?declined_by_device_id=` | | `204`. A device that holds the current key declines a waiting request; it no longer shows anywhere and is audited as `files_key.request_declined`. `403` when `declined_by_device_id` does not hold the key, `404` when nothing waits, `429` past 20 declines an hour |
 | `POST /api/v1/files-keys/grants` | `KeyShareGrant`: the envelope, `approved_by_device_id` and the request's `confirm_code` | `204` |
 | `POST /api/v1/files-keys/rotations` | `KeyRotation` | `204` |
 | `GET /api/v1/files-keys/envelopes/{device_id}?key_id=` | | `KeyEnvelope` for the current key, or for `key_id` |
