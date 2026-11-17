@@ -165,15 +165,7 @@ struct AccountProfileView: View {
         errorMessage = nil
         defer { switchingTo = nil }
         do {
-            try await Clerk.shared.auth.setActive(sessionId: sessionId, organizationId: orgId)
-            activeOrgId = Clerk.shared.session?.lastActiveOrganizationId ?? orgId
-            authManager.refreshAuthState()
-            // Everything account-scoped reloads for the new account.
-            AccountPlanStore.shared.reset()
-            AccountPlanStore.shared.load(force: true)
-            UsageStore.shared.refresh()
-            NotificationCenter.default.post(name: .historyMutated, object: nil)
-            UISelectionFeedbackGenerator().selectionChanged()
+            activeOrgId = try await AccountSwitch.activate(sessionId: sessionId, orgId: orgId, authManager: authManager)
         } catch {
             errorMessage = "Couldn't switch accounts. \(FriendlyErrorMessage.from(error.localizedDescription))"
         }
@@ -188,6 +180,25 @@ struct AccountProfileView: View {
         } catch {
             errorMessage = "Couldn't log out. \(FriendlyErrorMessage.from(error.localizedDescription))"
         }
+    }
+}
+
+/// Switches the active account (personal or one Clerk organization) and
+/// reloads everything account-scoped. Used by this page and the Settings
+/// root's Accounts card.
+@MainActor
+enum AccountSwitch {
+    /// Returns the organization id now active (nil = personal).
+    static func activate(sessionId: String, orgId: String?, authManager: AuthManager) async throws -> String? {
+        try await Clerk.shared.auth.setActive(sessionId: sessionId, organizationId: orgId)
+        authManager.refreshAuthState()
+        // Everything account-scoped reloads for the new account.
+        AccountPlanStore.shared.reset()
+        AccountPlanStore.shared.load(force: true)
+        UsageStore.shared.refresh()
+        NotificationCenter.default.post(name: .historyMutated, object: nil)
+        Haptics.selection()
+        return Clerk.shared.session?.lastActiveOrganizationId ?? orgId
     }
 }
 

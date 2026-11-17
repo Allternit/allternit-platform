@@ -82,6 +82,8 @@ struct AllternitApp: App {
                 #endif
             }
             .environmentObject(authManager)
+            // Settings → App → Open links in: one openURL handler for the whole app.
+            .openLinksHandler()
             .reviewPrompt()
             .sheet(isPresented: $authManager.isPresentingAuth, onDismiss: {
                 authManager.refreshAuthState()
@@ -220,6 +222,9 @@ struct AllternitApp: App {
             || launchArgumentEnabled("open-settings-platform")
             || launchArgumentEnabled("open-settings-data")
             || launchArgumentEnabled("open-settings-brain-spike")
+            || launchArgumentEnabled(LaunchArgument.calmSettings)
+            || launchArgumentEnabled(LaunchArgument.calmSettingsAdvanced)
+            || launchArgumentEnabled(LaunchArgument.calmSettingsInfo)
             || launchArgumentEnabled("open-plus-sheet")
             || launchArgumentEnabled("open-plus-permission")
             || launchArgumentEnabled("open-plus-computer")

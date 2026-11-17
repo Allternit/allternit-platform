@@ -990,7 +990,7 @@ struct AllternitMobileSettingsPage: View {
 /// Settings → About (SettingsView.tsx renderAboutPanel): the tile mark,
 /// "Allternit & Coffee", the build, and Terms · Privacy · GitHub.
 struct AboutSettingsPage: View {
-    @State private var safariURL: IdentifiableURL? = nil
+    /// Links follow Settings → App → Open links in (the root handler).
     @Environment(\.openURL) private var openURL
 
     static var versionString: String {
@@ -1051,13 +1051,35 @@ struct AboutSettingsPage: View {
                 .frame(maxWidth: .infinity)
             #endif
         }
-        .sheet(item: $safariURL) { item in SafariView(url: item.url) }
     }
 
     private func link(_ title: String, _ raw: String) -> some View {
-        Button(title) { if let url = URL(string: raw) { safariURL = IdentifiableURL(url: url) } }
+        Button(title) { if let url = URL(string: raw) { openURL(url) } }
             .font(.system(size: 13, weight: .medium))
             .foregroundColor(Color("TextSecondary"))
             .buttonStyle(.plain)
+    }
+}
+
+// MARK: - Open links in
+
+/// Settings → App → Open links in: In app or Safari
+/// (`SettingsStore.openLinksIn`, applied by `View.openLinksHandler()`).
+struct OpenLinksSettingsPage: View {
+    @ObservedObject private var settings = SettingsStore.shared
+
+    var body: some View {
+        PhoneSettingsPage(title: "Open links in") {
+            SettingsDescription(text: "Where web pages open when you tap a link. App Store pages and buying on the web always open outside the app.")
+            VStack(spacing: 8) {
+                ForEach(OpenLinksPreference.allCases, id: \.self) { option in
+                    SettingsRadioCard(title: option.label, detail: option.detail,
+                                      isSelected: settings.openLinksIn == option) {
+                        Haptics.selection()
+                        settings.openLinksIn = option
+                    }
+                }
+            }
+        }
     }
 }

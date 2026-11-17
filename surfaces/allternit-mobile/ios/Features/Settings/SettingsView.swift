@@ -1,18 +1,20 @@
 import SwiftUI
+import ClerkKit
 
-/// Settings, the PWA's phone Settings sheet (allternit-ai
-/// src/fabric-session/phone/screens/SettingsScreen.tsx + settings.config.ts
-/// `PHONE_SETTINGS_GROUPS`): ✕ and ⓘ, an account card (plan and usage left),
-/// then Account · Assistant · Appearance · Bots & agents · Computers ·
-/// Advanced as grouped cards, and Log out at the bottom. Operator pages sit
-/// behind the collapsed "Advanced" row, as on the PWA. Each row pushes its
-/// page (`SettingsPageID`) with a plain ‹ back.
+/// Settings (phone calm I13; web PR #1159 `PHONE_SETTINGS_ROOT`): ✕ and an ⓘ
+/// menu, then about 17 rows in the Claude iOS order. The Accounts card, then
+/// Account · Assistant · Bots and computers · App, the Appearance tiles, one
+/// Advanced row and Log out. `SettingsRoot` holds the list. Every other page
+/// sits on the pushed Advanced screen in its section, so nothing is lost.
+/// Each row pushes its page (`SettingsPageID`) with a plain ‹ back.
 ///
-/// Native-only, kept for the App Store: "Let your bots use this iPhone"
-/// (Computers), Delete account (Account page), the notifications permission
-/// (Notifications page).
+/// Native-only, kept for the App Store: Open links in (App), "Let your bots
+/// use this iPhone" and Files (Advanced › Computers and devices), Waiting
+/// games (Advanced › Assistant), Delete account (Account page), the
+/// notifications permission (Notifications page).
 struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.openURL) private var openURL
     @EnvironmentObject private var authManager: AuthManager
     @EnvironmentObject private var modeStore: AppModeStore
     @ObservedObject private var settings = SettingsStore.shared
@@ -20,6 +22,7 @@ struct SettingsView: View {
     @ObservedObject private var plan = AccountPlanStore.shared
     @ObservedObject private var appearance = AppearanceStore.shared
     @AppStorage(WaitingGamesStore.enabledKey) private var waitingGames = true
+    @AppStorage(Haptics.enabledKey) private var hapticsOn = true
     /// "Let your bots use this iPhone" status ("Paired · <computer>").
     @ObservedObject private var appPhone = AppPhoneService.shared
     /// The Meetings row shows with the `meetings` account flag.
@@ -37,14 +40,17 @@ struct SettingsView: View {
     }
 
     @State private var path = NavigationPath()
-    /// Operator pages (models, infrastructure…) behind the Advanced row.
-    @State private var showOperator = false
     @State private var isCustomizePresented = false
     @State private var isConnectorsPresented = false
-    @State private var safariURL: IdentifiableURL? = nil
+    @State private var isInfoOpen = false
     @State private var signOutError: String? = nil
     /// Live status line for the System status row; nil until fetched or on failure.
     @State private var systemStatus: SystemStatusLevel? = nil
+    /// Accounts card: the person's Clerk organizations and which is active.
+    @State private var memberships: [OrganizationMembership] = []
+    @State private var activeOrgId: String? = nil
+    @State private var switchingTo: String?? = nil
+    @State private var accountError: String? = nil
 
     #if DEBUG
     @State private var isPlatformPresented = false
@@ -54,68 +60,70 @@ struct SettingsView: View {
 
     var body: some View {
         NavigationStack(path: $path) {
-            ScrollViewReader { proxy in
-                ScrollView {
-                    VStack(spacing: 4) {
-                        accountCard
-                        card(.account, label: "Account")
-                        card(.assistant, label: "Assistant")
-                        appearanceCard
-                        card(.bots, label: "Bots & agents")
-                        card(.computers, label: "Computers")
-                        advancedCard
-                            .id("aboutSection")
-                        signOutButton
-                    }
-                    .padding(EdgeInsets(top: 8, leading: 16, bottom: 32, trailing: 16))
-                }
-                .background(Color("BgPrimary").ignoresSafeArea())
-                .navigationTitle("Settings")
-                .navigationBarTitleDisplayMode(.inline)
-                // The sheet's root has ✕ only, never a ‹ (the PWA's SettingsHome).
-                .navigationBarBackButtonHidden(true)
-                // Pushed pages show a bare ‹ like the PWA's CaretLeft, not "‹ Settings".
-                .toolbarRole(.editor)
-                .toolbar {
-                    ToolbarItem(placement: .topBarLeading) {
-                        roundButton("xmark", label: "Close settings") { dismiss() }
-                    }
-                    ToolbarItem(placement: .topBarTrailing) {
-                        roundButton("info.circle", label: "About Allternit") { path.append(SettingsPageID.about) }
+            ScrollView {
+                VStack(spacing: 4) {
+                    ForEach(Array(SettingsRoot.entries.enumerated()), id: \.offset) { _, entry in
+                        entryView(entry)
                     }
                 }
-                .navigationDestination(for: SettingsPageID.self) { page in
-                    destination(page)
+                .padding(EdgeInsets(top: 8, leading: 16, bottom: 32, trailing: 16))
+            }
+            .background(Color("BgPrimary").ignoresSafeArea())
+            .navigationTitle("Settings")
+            .navigationBarTitleDisplayMode(.inline)
+            // The sheet's root has ✕ only, never a ‹ (the PWA's SettingsHome).
+            .navigationBarBackButtonHidden(true)
+            // Pushed pages show a bare ‹ like the PWA's CaretLeft, not "‹ Settings".
+            .toolbarRole(.editor)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    roundButton("xmark", label: "Close settings") { dismiss() }
                 }
+                ToolbarItem(placement: .topBarTrailing) {
+                    infoButton
+                }
+            }
+            .navigationDestination(for: SettingsPageID.self) { page in
+                destination(page)
+            }
+            .navigationDestination(for: SettingsRoute.self) { route in
+                switch route {
+                case .advanced: advancedScreen
+                case .openLinks: OpenLinksSettingsPage()
+                }
+            }
+            #if DEBUG
+            .navigationDestination(isPresented: $isPlatformPresented) { PlatformSettingsView() }
+            .navigationDestination(isPresented: $isBrainSpikePresented) { BrainSpikeView() }
+            .navigationDestination(isPresented: $isMeetingsPresented) { MeetingsSettingsView() }
+            #endif
+            .sheet(isPresented: $isCustomizePresented) { CustomizeSheet() }
+            .sheet(isPresented: $isConnectorsPresented) { ConnectorsListView() }
+            .task {
+                PreferencesStore.shared.fetchIfNeeded()
+                await meetings.refreshFlag()
+                if meetings.isEnabled { await meetings.loadSettings() }
+                UsageStore.shared.fetchUsageIfNeeded()
+                if authManager.isSignedIn { AccountPlanStore.shared.load() }
+                await loadOrganizations()
+            }
+            .onAppear {
                 #if DEBUG
-                .navigationDestination(isPresented: $isPlatformPresented) { PlatformSettingsView() }
-                .navigationDestination(isPresented: $isBrainSpikePresented) { BrainSpikeView() }
-                .navigationDestination(isPresented: $isMeetingsPresented) { MeetingsSettingsView() }
+                if launchArgumentEnabled("open-settings-memory") { path.append(SettingsPageID.memory) }
+                if launchArgumentEnabled("open-settings-connections") { path.append(SettingsPageID.subscriptions) }
+                if launchArgumentEnabled("open-settings-platform") { isPlatformPresented = true }
+                // The old About section now lives on Advanced.
+                if launchArgumentEnabled("open-settings-data")
+                    || launchArgumentEnabled(LaunchArgument.calmSettingsAdvanced) {
+                    path.append(SettingsRoute.advanced)
+                }
+                if launchArgumentEnabled("open-settings-brain-spike") { isBrainSpikePresented = true }
+                if launchArgumentEnabled("open-settings-meetings") { isMeetingsPresented = true }
+                if launchArgumentEnabled(LaunchArgument.calmSettingsInfo) {
+                    // The popover needs the toolbar laid out first.
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { isInfoOpen = true }
+                }
                 #endif
-                .sheet(item: $safariURL) { item in SafariView(url: item.url) }
-                .sheet(isPresented: $isCustomizePresented) { CustomizeSheet() }
-                .sheet(isPresented: $isConnectorsPresented) { ConnectorsListView() }
-                .task {
-                    PreferencesStore.shared.fetchIfNeeded()
-                    await meetings.refreshFlag()
-                    if meetings.isEnabled { await meetings.loadSettings() }
-                    UsageStore.shared.fetchUsageIfNeeded()
-                    if authManager.isSignedIn { AccountPlanStore.shared.load() }
-                }
-                .onAppear {
-                    #if DEBUG
-                    if launchArgumentEnabled("open-settings-memory") { path.append(SettingsPageID.memory) }
-                    if launchArgumentEnabled("open-settings-connections") { path.append(SettingsPageID.subscriptions) }
-                    if launchArgumentEnabled("open-settings-platform") { isPlatformPresented = true }
-                    if launchArgumentEnabled("open-settings-data") {
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
-                            withAnimation { proxy.scrollTo("aboutSection", anchor: .bottom) }
-                        }
-                    }
-                    if launchArgumentEnabled("open-settings-brain-spike") { isBrainSpikePresented = true }
-                    if launchArgumentEnabled("open-settings-meetings") { isMeetingsPresented = true }
-                    #endif
-                }
             }
         }
     }
@@ -135,100 +143,113 @@ struct SettingsView: View {
         .accessibilityLabel(label)
     }
 
-    // MARK: - Account card
+    // MARK: - ⓘ menu
 
-    /// Signed-in person, plan and how much of it is left; opens Profile.
-    private var accountCard: some View {
-        NavigationLink(value: SettingsPageID.profile) {
-            HStack(spacing: 12) {
-                AccountAvatar(size: 40)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(accountName)
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundColor(Color("TextPrimary"))
-                        .lineLimit(1)
-                    Text(accountDetail)
-                        .font(.system(size: 13))
-                        .foregroundColor(Color("TextSecondary"))
-                        .lineLimit(1)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                PhoneRowChevron()
+    /// ⓘ: the version (opens About), Terms, Privacy Policy, Help and
+    /// support, Status (web `InfoMenu`). Opens on tap.
+    private var infoButton: some View {
+        roundButton("info.circle", label: "About Allternit") {
+            Haptics.light()
+            isInfoOpen = true
+        }
+        .accessibilityIdentifier("settingsInfoMenu")
+        .popover(isPresented: $isInfoOpen) {
+            infoMenu.presentationCompactAdaptation(.popover)
+        }
+    }
+
+    private var infoMenu: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            infoRow("Allternit \(AboutSettingsPage.versionString)", systemImage: "info.circle") {
+                path.append(SettingsPageID.about)
             }
-            .padding(14)
+            Divider().padding(.vertical, 4)
+            infoRow("Terms", systemImage: "arrow.up.right.square") { openURL(SettingsInfoLinks.terms) }
+            infoRow("Privacy Policy", systemImage: "arrow.up.right.square") { openURL(SettingsInfoLinks.privacy) }
+            infoRow("Help and support", systemImage: "arrow.up.right.square") { openURL(SettingsInfoLinks.support) }
+            infoRow("Status", systemImage: "arrow.up.right.square") { openURL(SettingsInfoLinks.status) }
+        }
+        .padding(8)
+        .frame(width: 240)
+    }
+
+    private func infoRow(_ text: String, systemImage: String, action: @escaping () -> Void) -> some View {
+        Button {
+            Haptics.selection()
+            isInfoOpen = false
+            // Let the popover close before a page opens over it.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { action() }
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: systemImage).frame(width: 20).accessibilityHidden(true)
+                Text(text).lineLimit(1)
+                Spacer(minLength: 0)
+            }
+            .font(.system(size: 16))
+            .foregroundColor(Color("TextPrimary"))
+            .frame(minHeight: 44)
+            .padding(.horizontal, 8)
             .contentShape(Rectangle())
         }
-        .buttonStyle(AccountCardButtonStyle())
+        .buttonStyle(.plain)
     }
 
-    private var accountName: String {
-        guard authManager.isSignedIn else { return "Account" }
-        return authManager.accountName
-    }
+    // MARK: - Root entries
 
-    private var accountDetail: String {
-        var parts: [String] = []
-        if authManager.isSignedIn {
-            if let name = plan.planName ?? usageStore.planLabel { parts.append(name) }
-            if let percent = usageStore.percentUsed {
-                let left = max(0, 100 - Int(percent.rounded()))
-                parts.append("\(left)% left · \(usageStore.periodLabel.lowercased())")
+    @ViewBuilder
+    private func entryView(_ entry: SettingsRootEntry) -> some View {
+        switch entry {
+        case .accounts:
+            accountsCard
+        case .group(let label, let rows):
+            VStack(spacing: 0) {
+                PhoneSettingsLabel(text: label)
+                PhoneSettingsCard {
+                    ForEach(Array(rows.enumerated()), id: \.element) { index, row in
+                        if index > 0 { PhoneCardDivider() }
+                        rootRow(row)
+                    }
+                }
             }
-            if parts.isEmpty, let email = authManager.accountEmail { parts.append(email) }
-        }
-        return parts.isEmpty ? "Sign in to sync across devices" : parts.joined(separator: " · ")
-    }
-
-    // MARK: - Cards
-
-    private func card(_ group: SettingsPageID.Group, label: String) -> some View {
-        VStack(spacing: 0) {
-            PhoneSettingsLabel(text: label)
+        case .appearance:
+            VStack(spacing: 0) {
+                PhoneSettingsLabel(text: "Appearance")
+                PhoneSettingsCard { AppearanceTiles() }
+            }
+        case .advanced:
             PhoneSettingsCard {
-                if group == .assistant {
-                    // Customize (skills, connectors, plugins) is its own screen on the phone.
-                    actionRow("Customize", systemImage: "slider.horizontal.3") { isCustomizePresented = true }
-                    PhoneCardDivider()
-                    if meetings.isEnabled {
-                        NavigationLink { MeetingsSettingsView() } label: {
-                            PhoneSettingsRowContent(title: "Meetings", systemImage: "video",
-                                                    value: Self.meetingsRuleLabel(meetings.settings?.autoJoin)) { PhoneRowChevron() }
-                        }
-                        .buttonStyle(PhoneRowButtonStyle())
-                        .accessibilityIdentifier("settingsMeetingsRow")
-                        PhoneCardDivider()
-                    }
+                NavigationLink(value: SettingsRoute.advanced) {
+                    PhoneSettingsRowContent(title: "Advanced", systemImage: "wrench",
+                                            value: "\(SettingsRoot.advancedPageCount()) pages") { PhoneRowChevron() }
                 }
-                rows(SettingsPageID.items(group))
-                switch group {
-                case .assistant:
-                    PhoneCardDivider()
-                    PhoneToggleRow(title: "Save chat drafts", systemImage: "square.and.arrow.down", isOn: $settings.autoSave)
-                case .computers:
-                    // Native: the iPhone app's own phone link (App Store build).
-                    PhoneCardDivider()
-                    NavigationLink { AppPhonesSettingsView() } label: {
-                        PhoneSettingsRowContent(
-                            title: "Let your bots use this iPhone",
-                            systemImage: "iphone.gen3",
-                            value: appPhone.credentials == nil ? "Off" : "Paired"
-                        ) { PhoneRowChevron() }
-                    }
-                    .buttonStyle(PhoneRowButtonStyle())
-                    if filesDrive.isEnabled {
-                        // Files drive dashboard: devices + wake setting, shares, audit.
-                        PhoneCardDivider()
-                        NavigationLink { FilesDashboardView() } label: {
-                            PhoneSettingsRowContent(title: "Files", systemImage: "folder",
-                                                    value: filesDrive.computers.count == 1 ? "1 computer" : "\(filesDrive.computers.count) computers") { PhoneRowChevron() }
-                        }
-                        .buttonStyle(PhoneRowButtonStyle())
-                        .accessibilityIdentifier("settingsFilesRow")
-                    }
-                default:
-                    EmptyView()
-                }
+                .buttonStyle(PhoneRowButtonStyle())
+                .accessibilityIdentifier("settingsAdvancedRow")
             }
+            .padding(.top, 18)
+        case .logout:
+            signOutButton
+        }
+    }
+
+    @ViewBuilder
+    private func rootRow(_ row: SettingsRootRow) -> some View {
+        switch row {
+        case .page(let page, _):
+            pageRow(page, title: row.title)
+        case .customize:
+            // Customize (skills, connectors, plugins) is its own screen on the phone.
+            actionRow(row.title, systemImage: "slider.horizontal.3") { isCustomizePresented = true }
+        case .openLinks:
+            NavigationLink(value: SettingsRoute.openLinks) {
+                PhoneSettingsRowContent(title: row.title, systemImage: "safari",
+                                        value: settings.openLinksIn.label) { PhoneRowChevron() }
+            }
+            .buttonStyle(PhoneRowButtonStyle())
+        case .haptics:
+            PhoneToggleRow(title: row.title, systemImage: "iphone.radiowaves.left.and.right", isOn: $hapticsOn)
+                .onChange(of: hapticsOn) { _, on in if on { Haptics.light() } }
+        case .reduceMotion:
+            PhoneToggleRow(title: row.title, systemImage: "figure.walk.motion", isOn: $appearance.reduceMotion)
         }
     }
 
@@ -236,18 +257,18 @@ struct SettingsView: View {
     private func rows(_ pages: [SettingsPageID]) -> some View {
         ForEach(Array(pages.enumerated()), id: \.element) { index, page in
             if index > 0 { PhoneCardDivider() }
-            pageRow(page)
+            pageRow(page, title: SettingsRoot.label(for: page))
         }
     }
 
     /// `RowButton`: icon, label, value, ›. Connectors opens its sheet.
     @ViewBuilder
-    private func pageRow(_ page: SettingsPageID) -> some View {
+    private func pageRow(_ page: SettingsPageID, title: String) -> some View {
         if page == .connectors {
-            actionRow(page.label, systemImage: page.systemImage) { isConnectorsPresented = true }
+            actionRow(title, systemImage: page.systemImage) { isConnectorsPresented = true }
         } else {
             NavigationLink(value: page) {
-                PhoneSettingsRowContent(title: page.label, systemImage: page.systemImage, value: value(for: page)) {
+                PhoneSettingsRowContent(title: title, systemImage: page.systemImage, value: value(for: page)) {
                     PhoneRowChevron()
                 }
             }
@@ -262,10 +283,263 @@ struct SettingsView: View {
         .buttonStyle(PhoneRowButtonStyle())
     }
 
+    /// Row values: the version on About, the plan on Billing, "N% used" on
+    /// Usage only when the usage store already has a number.
+    private func value(for page: SettingsPageID) -> String? {
+        switch page {
+        case .about:
+            return Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+        case .billing:
+            return plan.planName ?? usageStore.planLabel
+        case .usage:
+            guard authManager.isSignedIn, let percent = usageStore.percentUsed else { return nil }
+            return "\(min(100, max(0, Int(percent.rounded()))))% used"
+        default:
+            return nil
+        }
+    }
+
+    // MARK: - Accounts card
+
+    /// The signed-in person and their organizations. The active one has a ✓
+    /// and opens Profile; tapping another switches to it (Clerk `setActive`,
+    /// `AccountSwitch`). Signed out: one row that opens Profile.
+    private var accountsCard: some View {
+        VStack(spacing: 0) {
+            PhoneSettingsCard {
+                if authManager.isSignedIn {
+                    accountRow(orgId: nil, name: accountName, detail: personDetail) {
+                        AccountAvatar(size: 36)
+                    }
+                    ForEach(memberships, id: \.id) { membership in
+                        PhoneCardDivider()
+                        accountRow(orgId: membership.organization.id,
+                                   name: membership.organization.name,
+                                   detail: "Organization") {
+                            orgBadge(membership.organization.name)
+                        }
+                    }
+                    // Step 31 (I14, contract C7) adds here: other signed-in
+                    // people (Clerk multi-session, cached plan label per D14)
+                    // and the "Add account" row.
+                } else {
+                    NavigationLink(value: SettingsPageID.profile) {
+                        HStack(spacing: 12) {
+                            AccountAvatar(size: 36)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Account")
+                                    .font(.system(size: 16, weight: .semibold))
+                                    .foregroundColor(Color("TextPrimary"))
+                                Text("Sign in to sync across devices")
+                                    .font(.system(size: 13))
+                                    .foregroundColor(Color("TextSecondary"))
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            PhoneRowChevron()
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(PhoneRowButtonStyle())
+                }
+            }
+            if let accountError {
+                Text(accountError)
+                    .font(.system(size: 13))
+                    .foregroundColor(Color("TextSecondary"))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(EdgeInsets(top: 6, leading: 6, bottom: 0, trailing: 6))
+            }
+        }
+    }
+
+    private func accountRow<Avatar: View>(orgId: String?, name: String, detail: String?,
+                                          @ViewBuilder avatar: () -> Avatar) -> some View {
+        let active = activeOrgId == orgId
+        return Button(action: {
+            if active {
+                path.append(SettingsPageID.profile)
+            } else {
+                Task { await switchAccount(to: orgId) }
+            }
+        }) {
+            HStack(spacing: 12) {
+                avatar()
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(name)
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(Color("TextPrimary"))
+                        .lineLimit(1)
+                    if let detail, !detail.isEmpty {
+                        Text(detail)
+                            .font(.system(size: 13))
+                            .foregroundColor(Color("TextSecondary"))
+                            .lineLimit(1)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                if switchingTo == .some(orgId) {
+                    ProgressView()
+                } else if active {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(Color("BrandAccent"))
+                        .accessibilityHidden(true)
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .frame(minHeight: 56)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(PhoneRowButtonStyle())
+        .disabled(switchingTo != nil)
+        .accessibilityAddTraits(active ? .isSelected : [])
+        .accessibilityHint(active ? "Opens your profile" : "Switches to this account")
+    }
+
+    /// An organization's initial on a graphite disc.
+    private func orgBadge(_ name: String) -> some View {
+        Text(String(name.prefix(1)).uppercased())
+            .font(.system(size: 15, weight: .semibold))
+            .foregroundColor(Color("BgPrimary"))
+            .frame(width: 36, height: 36)
+            .background(Circle().fill(Color("TextPrimary")))
+            .accessibilityHidden(true)
+    }
+
+    private var accountName: String {
+        guard authManager.isSignedIn else { return "Account" }
+        return authManager.accountName
+    }
+
+    /// "Personal · <plan>", else the email.
+    private var personDetail: String {
+        var parts = ["Personal"]
+        if let name = plan.planName ?? usageStore.planLabel { parts.append(name) }
+        else if let email = authManager.accountEmail { parts.append(email) }
+        return parts.joined(separator: " · ")
+    }
+
+    @MainActor
+    private func loadOrganizations() async {
+        guard authManager.isSignedIn, authManager.isClerkConfigured, let user = Clerk.shared.user else { return }
+        activeOrgId = Clerk.shared.session?.lastActiveOrganizationId
+        if let cached = user.organizationMemberships, !cached.isEmpty { memberships = cached }
+        // A failed refresh keeps the cached list; the person row still shows.
+        if let fresh = try? await user.getOrganizationMemberships(page: 1, pageSize: 50).data {
+            memberships = fresh
+        }
+    }
+
+    @MainActor
+    private func switchAccount(to orgId: String?) async {
+        guard authManager.isClerkConfigured, orgId != activeOrgId,
+              let sessionId = Clerk.shared.session?.id else { return }
+        switchingTo = .some(orgId)
+        accountError = nil
+        defer { switchingTo = nil }
+        do {
+            activeOrgId = try await AccountSwitch.activate(sessionId: sessionId, orgId: orgId, authManager: authManager)
+        } catch {
+            accountError = "Couldn't switch accounts. \(plainErrorText(error))"
+        }
+    }
+
+    // MARK: - Advanced
+
+    /// Advanced ›: every page that is not on the root, in the web's
+    /// sections, plus the native rows that used to sit on the root.
+    private var advancedScreen: some View {
+        ScrollView {
+            VStack(spacing: 4) {
+                ForEach(SettingsAdvancedSection.allCases, id: \.self) { section in
+                    VStack(spacing: 0) {
+                        PhoneSettingsLabel(text: section.label)
+                        PhoneSettingsCard {
+                            rows(SettingsRoot.advancedItems(section))
+                            advancedExtras(section)
+                        }
+                    }
+                }
+                PhoneSettingsCard {
+                    actionRow("Open on the web", systemImage: "arrow.up.right.square") {
+                        openURL(URL(string: "https://ai.allternit.com")!)
+                    }
+                    PhoneCardDivider()
+                    actionRow("Courses", systemImage: "graduationcap") {
+                        openURL(URL(string: "https://labs.allternit.com")!)
+                    }
+                }
+                .padding(.top, 18)
+            }
+            .padding(EdgeInsets(top: 8, leading: 16, bottom: 32, trailing: 16))
+        }
+        .background(Color("BgPrimary").ignoresSafeArea())
+        .navigationTitle("Advanced")
+        .navigationBarTitleDisplayMode(.inline)
+        .accessibilityIdentifier("settingsAdvanced")
+    }
+
+    /// Rows that are not `SettingsPageID` pages, kept from the old root.
+    @ViewBuilder
+    private func advancedExtras(_ section: SettingsAdvancedSection) -> some View {
+        switch section {
+        case .assistant:
+            if meetings.isEnabled {
+                PhoneCardDivider()
+                NavigationLink { MeetingsSettingsView() } label: {
+                    PhoneSettingsRowContent(title: "Meetings", systemImage: "video",
+                                            value: Self.meetingsRuleLabel(meetings.settings?.autoJoin)) { PhoneRowChevron() }
+                }
+                .buttonStyle(PhoneRowButtonStyle())
+                .accessibilityIdentifier("settingsMeetingsRow")
+            }
+            PhoneCardDivider()
+            PhoneToggleRow(title: "Save chat drafts", systemImage: "square.and.arrow.down", isOn: $settings.autoSave)
+            PhoneCardDivider()
+            PhoneToggleRow(title: "Waiting games", systemImage: "gamecontroller", isOn: $waitingGames)
+        case .computers:
+            // Native: the iPhone app's own phone link (App Store build).
+            PhoneCardDivider()
+            NavigationLink { AppPhonesSettingsView() } label: {
+                PhoneSettingsRowContent(
+                    title: "Let your bots use this iPhone",
+                    systemImage: "iphone.gen3",
+                    value: appPhone.credentials == nil ? "Off" : "Paired"
+                ) { PhoneRowChevron() }
+            }
+            .buttonStyle(PhoneRowButtonStyle())
+            if filesDrive.isEnabled {
+                // Files drive dashboard: devices + wake setting, shares, audit.
+                PhoneCardDivider()
+                NavigationLink { FilesDashboardView() } label: {
+                    PhoneSettingsRowContent(title: "Files", systemImage: "folder",
+                                            value: filesDrive.computers.count == 1 ? "1 computer" : "\(filesDrive.computers.count) computers") { PhoneRowChevron() }
+                }
+                .buttonStyle(PhoneRowButtonStyle())
+                .accessibilityIdentifier("settingsFilesRow")
+            }
+        case .developer:
+            #if DEBUG
+            PhoneCardDivider()
+            actionRow("Brain Spike (debug)", systemImage: "arrow.triangle.branch") { isBrainSpikePresented = true }
+            #else
+            EmptyView()
+            #endif
+        case .about:
+            PhoneCardDivider()
+            systemStatusRow
+        default:
+            EmptyView()
+        }
+    }
+
     /// "System status": opens status.allternit.com; a small live line sits
     /// under the title when the fetch worked, nothing when it didn't.
     private var systemStatusRow: some View {
-        Button(action: { safariURL = IdentifiableURL(url: SystemStatusClient.pageURL) }) {
+        Button(action: { openURL(SystemStatusClient.pageURL) }) {
             HStack(spacing: 14) {
                 Image(systemName: "waveform.path.ecg")
                     .font(.system(size: 19, weight: .regular))
@@ -300,76 +574,6 @@ struct SettingsView: View {
         .accessibilityValue(systemStatus?.line ?? "")
         .accessibilityHint("Opens status.allternit.com")
         .task { systemStatus = await SystemStatusClient.fetch() }
-    }
-
-    /// Row values: the app version on About, the plan on Billing.
-    private func value(for page: SettingsPageID) -> String? {
-        switch page {
-        case .about:
-            return Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
-        case .billing:
-            return plan.planName
-        default:
-            return nil
-        }
-    }
-
-    private var appearanceCard: some View {
-        VStack(spacing: 0) {
-            PhoneSettingsLabel(text: "Appearance")
-            PhoneSettingsCard {
-                AppearanceTiles()
-                PhoneCardDivider()
-                PhoneToggleRow(title: "Reduce motion", systemImage: "pause",
-                               isOn: $appearance.reduceMotion)
-                PhoneCardDivider()
-                PhoneToggleRow(title: "Waiting games", systemImage: "gamecontroller",
-                               isOn: $waitingGames)
-            }
-        }
-    }
-
-    /// Advanced card: the everyday pages, the operator pages behind an
-    /// "Advanced" row, then About and Open on the web.
-    private var advancedCard: some View {
-        let pages = SettingsPageID.items(.advanced)
-        return VStack(spacing: 0) {
-            PhoneSettingsLabel(text: "Advanced")
-            PhoneSettingsCard {
-                rows(pages.filter { $0.phone.order < 9 })
-                PhoneCardDivider()
-                Button(action: { withAnimation(.easeOut(duration: 0.2)) { showOperator.toggle() } }) {
-                    PhoneSettingsRowContent(title: "Advanced", systemImage: "wrench") {
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundColor(Color("TextSecondary"))
-                            .rotationEffect(.degrees(showOperator ? 90 : 0))
-                    }
-                }
-                .buttonStyle(PhoneRowButtonStyle())
-                .accessibilityValue(showOperator ? "Expanded" : "Collapsed")
-                if showOperator {
-                    PhoneCardDivider()
-                    rows(SettingsPageID.items(.operatorPages))
-                    #if DEBUG
-                    PhoneCardDivider()
-                    actionRow("Brain Spike (debug)", systemImage: "arrow.triangle.branch") { isBrainSpikePresented = true }
-                    #endif
-                }
-                PhoneCardDivider()
-                rows(pages.filter { $0.phone.order >= 9 })
-                PhoneCardDivider()
-                systemStatusRow
-                PhoneCardDivider()
-                actionRow("Open on the web", systemImage: "arrow.up.right.square") {
-                    safariURL = IdentifiableURL(url: URL(string: "https://ai.allternit.com")!)
-                }
-                PhoneCardDivider()
-                actionRow("Courses", systemImage: "graduationcap") {
-                    safariURL = IdentifiableURL(url: URL(string: "https://labs.allternit.com")!)
-                }
-            }
-        }
     }
 
     // MARK: - Log out
@@ -503,14 +707,5 @@ struct SettingsView: View {
             }
             .buttonStyle(SettingsQuietButtonStyle())
         }
-    }
-}
-
-/// `.phone-account-card`: 18pt rounded neutral card, stronger when pressed.
-private struct AccountCardButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .background(configuration.isPressed ? Color("TextPrimary").opacity(0.09) : Color("FillNeutral"))
-            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
 }
