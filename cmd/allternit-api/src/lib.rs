@@ -200,6 +200,7 @@ pub mod computer_transfer;
 pub mod computer_parallel;
 pub mod computer_subtask;
 pub mod computer_safety;
+pub mod computer_access;
 pub mod computer_ocr;
 pub mod computer_v2;
 pub mod guest_driver;

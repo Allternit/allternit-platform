@@ -1930,7 +1930,9 @@ pub async fn execute(state: &Arc<AppState>, user: &AuthUser, id: &str, headers: 
     };
     // 3b. Pixel members: coordinates into screen px now, so the safety layer
     // can hit-test the element under the point (the screen size is cached).
-    let v2 = crate::computer_v2::is_v2_member(&req.member);
+    // Access members (resolve_access, request_access) take the v2 path too:
+    // no screenshot, no coordinate scaling.
+    let v2 = crate::computer_v2::is_v2_member(&req.member) || crate::computer_access::is_access_member(&req.member);
     let screen_key = match &target {
         Target::Browser { session_id, .. } => format!("browser:{session_id}"),
         _ => computer.id.clone(),
@@ -1971,7 +1973,16 @@ pub async fn execute(state: &Arc<AppState>, user: &AuthUser, id: &str, headers: 
             settle(false);
             let _ = audit(user, &computer, &target, spec, &req, &policy_desc, verdict.as_ref(), Some(&safety));
             crate::computer_safety::emit(&computer.id, "denied", Some(&safety), &req.member, req.run_id.as_deref(), json!({}));
-            return respond(StatusCode::FORBIDDEN, error_result("safety_denied", reason.clone(), map.as_ref()));
+            // access_required carries the app in front and the tier it needs,
+            // so the runtime can ask the person (resolve_access entries shape).
+            let code = safety.code.unwrap_or("safety_denied");
+            let (status, mut body) = respond(StatusCode::FORBIDDEN, error_result(code, reason.clone(), map.as_ref()));
+            if code == "access_required" {
+                if let Some(check) = &safety.access {
+                    body["access"] = crate::computer_access::access_required_payload(check);
+                }
+            }
+            return (status, body);
         }
         crate::computer_safety::Verdict::Pause(reason) => {
             settle(false);
@@ -1995,8 +2006,12 @@ pub async fn execute(state: &Arc<AppState>, user: &AuthUser, id: &str, headers: 
     // person approved the bounded goal and its literal inputs once, and the
     // loop can only type those inputs. Lease, policy and audit still run.
     // Irreversible, watch-mode and monitor confirmations always ask.
+    // request_access on a sandbox/cloud computer has nothing to grant, so it
+    // doesn't ask.
+    let access_exempt = crate::computer_access::approval_exempt(&req.member, crate::computer_access::exempt(&target));
     if safety_confirm
         || (req.within_subtask.is_none()
+            && !access_exempt
             && (needs_approval(spec, target.sandboxed())
                 || crate::computer_v2::v2_member_needs_approval(&req.member, &req.input, target.sandboxed())))
     {
@@ -2040,6 +2055,10 @@ pub async fn execute(state: &Arc<AppState>, user: &AuthUser, id: &str, headers: 
             body["safety"] = serde_json::to_value(&safety).unwrap_or_default();
             body["content"] = json!([text(format!("{} needs a person's approval before it runs{why}.", req.member))]);
             body["screen"] = serde_json::to_value(screen_info(None)).unwrap_or_default();
+            if req.member == "request_access" {
+                // What the person is asked to grant (apps, tiers, reason).
+                body["access"] = crate::computer_access::request_payload(&req.input, crate::computer_access::exempt(&target));
+            }
             return (status, body);
         }
     }
@@ -2329,7 +2348,7 @@ pub(crate) async fn execute_step(
     let safety = crate::computer_safety::assess(state, user, computer, target, Toolset::Computer, spec, &req.input, Some(run_id), project_scope.as_deref()).await;
     let watching = crate::computer_safety::watch_note(&computer.id, &safety, spec);
     let refusal = match &safety.verdict {
-        crate::computer_safety::Verdict::Deny(r) => Some(("safety_denied", "denied", r.clone())),
+        crate::computer_safety::Verdict::Deny(r) => Some((safety.code.unwrap_or("safety_denied"), "denied", r.clone())),
         crate::computer_safety::Verdict::Pause(r) => Some(("safety_paused", "paused", r.clone())),
         crate::computer_safety::Verdict::Confirm(r) => Some(("needs_confirmation", "confirm", r.clone())),
         crate::computer_safety::Verdict::Allow => None,
@@ -2379,6 +2398,7 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/computers/:id/human-done", post(post_human_done))
         .route("/computers/:id/secret", post(post_secret).get(get_secret))
         .route("/computers/:id/safety", get(crate::computer_safety::get_safety).put(crate::computer_safety::put_safety))
+        .route("/computers/:id/access", get(crate::computer_access::get_access).delete(crate::computer_access::delete_access))
         .route(
             "/projects/:project_id/safety",
             get(crate::computer_safety::get_project_safety).put(crate::computer_safety::put_project_safety),
@@ -2626,7 +2646,9 @@ mod tests {
     #[test]
     fn contracts_load_with_anthropic_member_sets() {
         assert_eq!(contract(Toolset::Computer).id, "allternit.computer.v2");
-        assert_eq!(contract(Toolset::Computer).members.len(), 27);
+        assert_eq!(contract(Toolset::Computer).members.len(), 29);
+        assert!(contract(Toolset::Computer).member("resolve_access").is_some_and(|m| !needs_approval(m, false)));
+        assert!(contract(Toolset::Computer).member("request_access").is_some_and(|m| needs_approval(m, false) && needs_approval(m, true)));
         assert_eq!(contract(Toolset::Browser).members.len(), 31);
         assert!(contract(Toolset::Computer).member("read_ui").is_some());
         assert!(contract(Toolset::Computer).member("use_credential").is_some());

@@ -179,7 +179,7 @@ pub fn classify_label(label: &str) -> Option<Irreversible> {
 
 /// Roles whose label is something a person reads, not something they press
 /// (text, fields, headings): never classified.
-fn passive_role(role: &str) -> bool {
+pub(crate) fn passive_role(role: &str) -> bool {
     let r = role.strip_prefix("AX").unwrap_or(role).to_lowercase();
     matches!(
         r.as_str(),
@@ -688,7 +688,7 @@ pub fn domain_matches(pattern: &str, host: &str) -> bool {
     h == p || h.ends_with(&format!(".{p}"))
 }
 
-fn app_matches(pattern: &str, ctx: &Context) -> bool {
+pub(crate) fn app_matches(pattern: &str, ctx: &Context) -> bool {
     ctx.app_names().iter().any(|a| glob(pattern, a))
 }
 
@@ -904,6 +904,10 @@ pub struct Assessment {
     pub watch: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub monitor: Option<MonitorAnswer>,
+    /// The access-tier check against the app in front (this device only;
+    /// `computer_access`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub access: Option<crate::computer_access::AccessCheck>,
     pub context: Context,
     #[serde(skip)]
     pub snapshot: bool,
@@ -913,6 +917,10 @@ pub struct Assessment {
     /// a project context (never serialized to the model; in the audit note).
     #[serde(skip)]
     pub project_id: Option<String>,
+    /// The error code a Deny answers with when it isn't `safety_denied`:
+    /// `access_required` (tier check) or `tier_exceeded` (request_access).
+    #[serde(skip)]
+    pub code: Option<&'static str>,
 }
 
 impl Assessment {
@@ -933,6 +941,9 @@ impl Assessment {
         }
         if let Some(m) = &self.monitor {
             s.push_str(&format!(" monitor={}", m.verdict));
+        }
+        if let Some(x) = &self.access {
+            s.push_str(&format!(" tier={}/{}", x.required.as_str(), x.granted.as_str()));
         }
         if let Some(p) = &self.project_id {
             s.push_str(&format!(" project={p}"));
@@ -1045,9 +1056,43 @@ pub async fn assess(
     let member = spec.name.as_str();
     let mutating = !read_only(spec);
     let settings = load_settings(state, &user.user_id, &computer.id, project_id).await;
+
+    // 0. The access members look up and grant tiers; they don't act in an
+    // app, so there is nothing on screen to check. request_access is checked
+    // against the category ceilings and the deny lists here, before anyone
+    // is asked to approve it.
+    if toolset == Toolset::Computer && crate::computer_access::is_access_member(member) {
+        let mut a = Assessment {
+            verdict: Verdict::Allow,
+            step: member.replace('_', " "),
+            irreversible: None,
+            watch: None,
+            monitor: None,
+            access: None,
+            context: Context::default(),
+            snapshot: false,
+            settings,
+            project_id: project_id.map(str::to_string),
+            code: None,
+        };
+        if member == "request_access" {
+            let exempt = crate::computer_access::exempt(target);
+            if let Err((code, why)) = crate::computer_access::check_request(scaled, &a.settings, exempt) {
+                a.verdict = Verdict::Deny(why);
+                a.code = (code != "safety_denied").then_some(code);
+            }
+        }
+        return a;
+    }
+
     let secrets = crate::aci_credentials::CREDENTIALS.screening_secrets(&user.user_id);
     let texts = typed_texts(member, scaled);
-    let needs_context = mutating || settings.lists_set() || matches!(target, Target::Browser { .. });
+    // Access tiers (this device only): a step above read needs to know the
+    // app in front, even when it is read-only by risk (scroll, mouse_move).
+    let exempt = crate::computer_access::exempt(target);
+    let required_tier = if toolset == Toolset::Computer { crate::computer_access::required_tier(member, scaled) } else { None };
+    let tier_gate = !exempt && required_tier.is_some_and(|t| t > crate::computer_access::Tier::Read);
+    let needs_context = mutating || tier_gate || settings.lists_set() || matches!(target, Target::Browser { .. });
     let ctx = if needs_context && !matches!(member, "wait" | "cursor_position" | "request_human") {
         observe(target, toolset, member, scaled).await
     } else {
@@ -1060,10 +1105,12 @@ pub async fn assess(
         irreversible: None,
         watch: None,
         monitor: None,
+        access: None,
         context: ctx,
         snapshot: false,
         settings,
         project_id: project_id.map(str::to_string),
+        code: None,
     };
 
     // 1. Lists, host policy, secret binding: deny.
@@ -1088,6 +1135,25 @@ pub async fn assess(
                     return a;
                 }
             }
+        }
+    }
+
+    // 1b. Access tiers: the call's tier against the app actually in front
+    // (session grant or standing allow_apps grant, capped at the category
+    // ceiling; deny lists win; an unknown app is read only).
+    if let Some(required) = required_tier {
+        let grants = crate::computer_access::session_grants(
+            &user.user_id,
+            &computer.id,
+            &crate::computer_access::session_key(run_id),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0),
+        );
+        let (check, outcome) = crate::computer_access::decide(&a.context, &a.settings, &grants, required, exempt);
+        a.access = Some(check);
+        if let Err(why) = outcome {
+            a.verdict = Verdict::Deny(why);
+            a.code = Some("access_required");
+            return a;
         }
     }
 
