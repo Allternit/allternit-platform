@@ -13,33 +13,43 @@ public enum FilesKeyState: Sendable, Equatable {
     case noKey
 }
 
-/// A key-share request from another device, with the code computed here
-/// from its public key (never the code the request carries: a swapped key
-/// would show a different code than the new device does).
+/// A waiting key-share request from another device, with the code computed
+/// here from its public key (never the code the request carries: a swapped
+/// key would show a different code than the new device does).
 public struct FilesKeyApproval: Sendable, Hashable, Identifiable {
-    public var request: KeyShareRequest
+    public var request: PendingKeyRequest
     /// Computed from `request.devicePub` on this device.
     public var code: String
-    /// The code the request carries matches `code`. A mismatch is refused.
+    /// The code the request carries matches `code`. A mismatch is never approvable.
     public var codeMatches: Bool
     public var id: String { request.deviceId }
+
+    public init(request: PendingKeyRequest) {
+        self.request = request
+        if let pub = FilesKeyCrypto.fromBase64url(request.devicePub), pub.count == 32 {
+            code = FilesKeyCrypto.confirmCode(devicePub: pub)
+            codeMatches = code == request.confirmCode
+        } else {
+            code = request.confirmCode
+            codeMatches = false
+        }
+    }
 }
 
 /// cloud-api's Files key routes (SPEC section 2, "cloud-api"; section 13)
 /// and this device's key ring:
 ///
-/// - `GET  /api/v1/files-keys`: `FilesKeyInfo` (404 while the account has none)
-/// - `POST /api/v1/files-keys/requests`: `KeyShareRequest`, 202
-/// - `POST /api/v1/files-keys/grants`: `KeyShareGrant`, 204
-/// - `GET  /api/v1/files-keys/envelopes/:device_id`: `KeyEnvelope` (404 until approved)
-/// - `GET  /api/v1/files-keys/requests`: `{requests: [KeyShareRequest]}`, the
-///   open requests an approving device lists. **Not in SPEC section 2 yet**
-///   (the four routes above are); the approve screen needs it, so the
-///   cloud-api route and the SPEC row must land with it.
+/// - `GET    /api/v1/files-keys`: `FilesKeyInfo` (no `key_id` while the account has none)
+/// - `POST   /api/v1/files-keys/requests`: `KeyShareRequest`, 202 `PendingKeyRequest`
+/// - `DELETE /api/v1/files-keys/requests/:device_id`: decline a waiting request
+/// - `POST   /api/v1/files-keys/grants`: `KeyShareGrant` (with the request's code), 204
+/// - `POST   /api/v1/files-keys/rotations`: `KeyRotation`, 204
+/// - `GET    /api/v1/files-keys/envelopes/:device_id`: `KeyEnvelope` (404 until approved)
+/// - `DELETE /api/v1/files-keys/devices/:device_id`: remove a device, 204
 ///
-/// The app (sign-in, Settings > Files > Devices) uses all of it; the File
-/// Provider extension only calls `rootKey(store:keyId:)`, which reads the
-/// shared keychain and never touches the network.
+/// The app (Settings > Files > Devices) uses all of it; the File Provider
+/// extension only calls `rootKey(store:keyId:)`, which reads the shared
+/// keychain and never touches the network.
 public final class FilesKeyService: @unchecked Sendable {
     public let store: FilesSharedStore
     private let http: FilesHTTP
@@ -98,24 +108,36 @@ public final class FilesKeyService: @unchecked Sendable {
     /// Asks cloud-api and settles this device's state: picks up an envelope
     /// another device granted (also after a key rotation) and clears the
     /// pending request once it opens.
-    public func state() async throws -> FilesKeyState {
-        guard let info = try await keyInfo() else { return .noKey }
-        if store.filesKeyEnvelopes().contains(where: { $0.keyId == info.keyId }),
-           (try? Self.rootKey(store: store, keyId: info.keyId)) != nil {
+    public func state(_ known: FilesKeyInfo? = nil) async throws -> FilesKeyState {
+        let fetched: FilesKeyInfo?
+        if let known { fetched = known } else { fetched = try await keyInfo() }
+        guard let info = fetched, let keyId = info.keyId else {
             store.pendingKeyRequest = nil
-            return .ready(keyId: info.keyId)
+            return .noKey
         }
-        if let envelope = try await envelope(), envelope.keyId == info.keyId,
+        if store.filesKeyEnvelopes().contains(where: { $0.keyId == keyId }),
+           (try? Self.rootKey(store: store, keyId: keyId)) != nil {
+            store.pendingKeyRequest = nil
+            return .ready(keyId: keyId)
+        }
+        if let envelope = try await envelope(), envelope.keyId == keyId,
            (try? FilesKeyCrypto.unwrap(envelope, deviceSecret: try deviceKey())) != nil {
             keep(envelope)
             store.pendingKeyRequest = nil
-            return .ready(keyId: info.keyId)
+            return .ready(keyId: keyId)
         }
-        if let pending = store.pendingKeyRequest { return .waiting(code: pending.confirmCode) }
+        // Still waiting only while cloud-api lists this device's request with
+        // this device's key (it lapses after 10 minutes).
+        let me = try deviceId
+        let pub = FilesKeyCrypto.base64url(try deviceKey().publicKey.rawRepresentation)
+        if let mine = info.pendingRequests.first(where: { $0.deviceId == me && $0.devicePub == pub }) {
+            return .waiting(code: mine.confirmCode)
+        }
+        store.pendingKeyRequest = nil
         return .needsRequest
     }
 
-    /// `GET /api/v1/files-keys`; nil while the account has no key.
+    /// `GET /api/v1/files-keys`; nil only when the route is missing (404).
     public func keyInfo() async throws -> FilesKeyInfo? {
         let (data, status) = try await call("GET", "api/v1/files-keys")
         if status == 404 { return nil }
@@ -129,20 +151,35 @@ public final class FilesKeyService: @unchecked Sendable {
         return try decode(data, status)
     }
 
+    /// This device's own request (its public key and the derived code).
+    func ownRequest(deviceName: String) throws -> KeyShareRequest {
+        let pub = try deviceKey().publicKey.rawRepresentation
+        return KeyShareRequest(deviceId: try deviceId, devicePub: FilesKeyCrypto.base64url(pub),
+                               deviceName: deviceName, confirmCode: FilesKeyCrypto.confirmCode(devicePub: pub))
+    }
+
+    private func post(_ request: KeyShareRequest) async throws -> PendingKeyRequest {
+        let (data, status) = try await call("POST", "api/v1/files-keys/requests", body: try JSONEncoder().encode(request))
+        return try decode(data, status)
+    }
+
     // MARK: First device
 
     /// Makes the account's Files key on this device (only while the account
-    /// has none) and grants it to this device itself.
+    /// has none): posts this device's own request and grants it to itself.
+    /// When another device made the key first, cloud-api answers
+    /// `already_exists`: ask that device instead.
     @discardableResult
-    public func createFirstKey() async throws -> String {
-        if let info = try await keyInfo() {
-            throw FilesError.keyUnavailable("Your account already has a Files key (\(info.keyId)). Approve this device from another one.")
+    public func createFirstKey(deviceName: String) async throws -> String {
+        if let keyId = try await keyInfo()?.keyId {
+            throw FilesError.keyUnavailable("Your account already has a Files key (\(keyId)). Approve this device from another one.")
         }
         let me = try deviceId
+        let pending = try await post(try ownRequest(deviceName: deviceName))
         let frk = FilesRootKey.generate()
         let envelope = try FilesKeyCrypto.wrap(frk, toDevicePub: try deviceKey().publicKey.rawRepresentation,
                                                deviceId: me, createdAt: Self.now())
-        try await grant(KeyShareGrant(envelope: envelope, approvedByDeviceId: me))
+        try await grant(KeyShareGrant(envelope: envelope, approvedByDeviceId: me, confirmCode: pending.confirmCode))
         keep(envelope)
         store.pendingKeyRequest = nil
         return frk.keyId
@@ -151,47 +188,110 @@ public final class FilesKeyService: @unchecked Sendable {
     // MARK: New device
 
     /// Sends this device's `KeyShareRequest` and returns the 6-digit code to
-    /// show until another device approves. Sending again is safe.
+    /// show until another device approves. Sending again is safe (it
+    /// replaces the earlier request and restarts the 10 minutes).
     @discardableResult
     public func requestAccess(deviceName: String) async throws -> String {
-        let pub = try deviceKey().publicKey.rawRepresentation
-        let request = KeyShareRequest(deviceId: try deviceId, devicePub: FilesKeyCrypto.base64url(pub),
-                                      deviceName: deviceName, confirmCode: FilesKeyCrypto.confirmCode(devicePub: pub))
-        let (data, status) = try await call("POST", "api/v1/files-keys/requests", body: try JSONEncoder().encode(request))
-        guard (200..<300).contains(status) else { throw ErrorDecoding.error(status: status, data: data) }
+        let request = try ownRequest(deviceName: deviceName)
+        let pending = try await post(request)
         store.pendingKeyRequest = request
-        return request.confirmCode
+        return pending.confirmCode
     }
 
     // MARK: Approving device
 
-    /// Open requests from the user's other devices (route not in SPEC yet,
-    /// see the type comment). An empty list when the route is missing (404).
-    public func pendingRequests() async throws -> [FilesKeyApproval] {
-        let (data, status) = try await call("GET", "api/v1/files-keys/requests")
-        if status == 404 { return [] }
-        guard (200..<300).contains(status) else { throw ErrorDecoding.error(status: status, data: data) }
-        struct Listing: Decodable { var requests: [KeyShareRequest] }
-        let requests = (try? JSONDecoder().decode(Listing.self, from: data).requests)
-            ?? (try? JSONDecoder().decode([KeyShareRequest].self, from: data)) ?? []
+    /// Waiting requests from the user's other devices, each with the code
+    /// recomputed here. This device's own request is left out.
+    public func approvals(_ info: FilesKeyInfo) -> [FilesKeyApproval] {
         let me = store.deviceId
-        return requests.filter { $0.deviceId != me }.compactMap { request in
-            guard let pub = FilesKeyCrypto.fromBase64url(request.devicePub), pub.count == 32 else { return nil }
-            let code = FilesKeyCrypto.confirmCode(devicePub: pub)
-            return FilesKeyApproval(request: request, code: code, codeMatches: code == request.confirmCode)
-        }
+        return info.pendingRequests.filter { $0.deviceId != me }.map(FilesKeyApproval.init(request:))
     }
 
     /// Wraps the current key to the requesting device and posts the grant.
     /// Call only after the user saw the same code on both devices.
     public func approve(_ approval: FilesKeyApproval) async throws {
         guard approval.codeMatches, let pub = FilesKeyCrypto.fromBase64url(approval.request.devicePub), pub.count == 32 else {
-            throw FilesError.keyUnavailable("The code from \(approval.request.deviceName) doesn't match its key. Ask it to request again.")
+            throw FilesError.keyUnavailable("The code from \(approval.request.deviceName) doesn't match its key. Don't approve it; ask it to request again.")
         }
-        let current = try await keyInfo()?.keyId
+        guard let current = try await keyInfo()?.keyId else {
+            throw FilesError.keyUnavailable("There is no Files key yet.")
+        }
         let frk = try Self.rootKey(store: store, keyId: current)
         let envelope = try FilesKeyCrypto.wrap(frk, toDevicePub: pub, deviceId: approval.request.deviceId, createdAt: Self.now())
-        try await grant(KeyShareGrant(envelope: envelope, approvedByDeviceId: try deviceId))
+        try await grant(KeyShareGrant(envelope: envelope, approvedByDeviceId: try deviceId,
+                                      confirmCode: approval.request.confirmCode))
+    }
+
+    /// Declines a waiting request (`DELETE /files-keys/requests/:device_id`).
+    /// Only a device that holds the key may; cloud-api checks it.
+    public func decline(_ approval: FilesKeyApproval) async throws {
+        let me = try deviceId
+        let path = "api/v1/files-keys/requests/\(FilesClient.escape(approval.request.deviceId))"
+            + "?declined_by_device_id=\(FilesClient.escape(me))"
+        let (data, status) = try await call("DELETE", path)
+        guard (200..<300).contains(status) else { throw ErrorDecoding.error(status: status, data: data) }
+    }
+
+    /// Removes a device from the Files key; the key then needs rotating.
+    public func removeDevice(_ deviceId: DeviceId) async throws {
+        let (data, status) = try await call("DELETE", "api/v1/files-keys/devices/\(FilesClient.escape(deviceId))")
+        guard (200..<300).contains(status) else { throw ErrorDecoding.error(status: status, data: data) }
+        if deviceId == store.deviceId { store.setFilesKeyEnvelopes([]) }
+    }
+
+    /// Makes a new Files key and seals it to every device still listed (this
+    /// one included), after a device was removed (`rotation_needed`). The
+    /// removed device is no longer listed, so it never gets the new key.
+    /// cloud-api answers `rev_mismatch` when the list changed: reload, retry.
+    @discardableResult
+    public func rotate(_ info: FilesKeyInfo) async throws -> String {
+        guard let current = info.keyId else { throw FilesError.keyUnavailable("There is no Files key yet.") }
+        _ = try Self.rootKey(store: store, keyId: current) // this device must hold it
+        let me = try deviceId
+        let frk = FilesRootKey.generate()
+        var envelopes: [KeyEnvelope] = []
+        for device in info.devices {
+            guard let pub = FilesKeyCrypto.fromBase64url(device.devicePub), pub.count == 32 else {
+                throw FilesError.invalidResponse("\(device.deviceName) has a bad public key")
+            }
+            envelopes.append(try FilesKeyCrypto.wrap(frk, toDevicePub: pub, deviceId: device.deviceId, createdAt: Self.now()))
+        }
+        let rotation = KeyRotation(keyId: frk.keyId, rotatedFrom: current, rotatedByDeviceId: me, envelopes: envelopes)
+        let (data, status) = try await call("POST", "api/v1/files-keys/rotations", body: try JSONEncoder().encode(rotation))
+        guard (200..<300).contains(status) else { throw ErrorDecoding.error(status: status, data: data) }
+        if let mine = envelopes.first(where: { $0.deviceId == me }) { keep(mine) }
+        return frk.keyId
+    }
+
+    // MARK: Computers
+
+    /// Gives a computer the Files key: reads its request from its runtime
+    /// (`GET /replicas/key` over the owner's relay), posts it, approves it
+    /// (the code is checked here: the request came over the owner's own
+    /// relay, so there is no second screen), then delivers the envelope.
+    public func giveComputer(_ client: FilesClient) async throws {
+        let (data, response) = try await client.send(FilesRequest(path: "/replicas/key"))
+        guard response.statusCode == 200 else { throw ErrorDecoding.error(status: response.statusCode, data: data) }
+        let request: KeyShareRequest
+        do { request = try JSONDecoder().decode(KeyShareRequest.self, from: data) } catch {
+            throw FilesError.invalidResponse("KeyShareRequest: \(error)")
+        }
+        let pending = try await post(request)
+        try await approve(FilesKeyApproval(request: pending))
+        try await deliver(to: client, deviceId: request.deviceId)
+    }
+
+    /// `PUT /replicas/key` with the computer's current envelope. Replacing a
+    /// different key on the computer needs the signed unlock token; the
+    /// client sends it when one is held (`FilesClient.unlock(reason:)`).
+    public func deliver(to client: FilesClient, deviceId: DeviceId) async throws {
+        let (envData, status) = try await call("GET", "api/v1/files-keys/envelopes/\(FilesClient.escape(deviceId))")
+        let envelope: KeyEnvelope = try decode(envData, status)
+        let body = try JSONEncoder().encode(envelope)
+        let (data, response) = try await client.send(FilesRequest(method: "PUT", path: "/replicas/key",
+                                                                  headers: ["Content-Type": "application/json"],
+                                                                  body: .json(body)))
+        guard (200..<300).contains(response.statusCode) else { throw ErrorDecoding.error(status: response.statusCode, data: data) }
     }
 
     private func grant(_ grant: KeyShareGrant) async throws {
