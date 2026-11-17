@@ -15,6 +15,7 @@ import { TaskTool } from "@/runtime/tools/builtins/task"
 import { TodoWriteTool } from "@/runtime/tools/builtins/todo"
 import { GlanceTool } from "@/runtime/tools/builtins/glance"
 import { CurrentTimeTool } from "@/runtime/tools/builtins/current-time"
+import { LookupTool } from "@/runtime/tools/builtins/lookup"
 import { SendUserMessageTool } from "@/runtime/tools/builtins/send-user-message"
 import { AutomationTool } from "@/runtime/tools/builtins/automation"
 import { AskUserLaterTool } from "@/runtime/tools/builtins/ask-user-later"
@@ -213,6 +214,10 @@ export namespace ToolRegistry {
       GlanceTool,
       // The time where the user is: every client (not bot-gated).
       CurrentTimeTool,
+      // One fact as text plus a card (weather, time, convert, link, places,
+      // images): every client. Time and unit conversion are local; network
+      // kinds ask under websearch/webfetch.
+      LookupTool,
       // A message (files, optional push) to the session's own user: every client, not bot-gated.
       SendUserMessageTool,
       // The user's scheduled tasks: every client, not bot-gated (list allowed, writes ask).

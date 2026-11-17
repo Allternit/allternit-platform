@@ -45,6 +45,7 @@ describe("CliBridge MCP server", () => {
       "run_code",
       "send_user_message",
       "current_time",
+      "lookup",
       "automation",
       "get_context_remaining",
       "history_recall",

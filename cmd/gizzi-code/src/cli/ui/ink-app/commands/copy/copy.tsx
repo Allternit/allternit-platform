@@ -20,12 +20,15 @@ import { getGlobalConfig, saveGlobalConfig } from '../../utils/config';
 import { extractTextContent } from '../../utils/messages';
 import { stripPromptXMLTags } from '../../utils/syntheticMessages.js';
 import { countCharInString } from '../../utils/stringUtils';
+import { parseWritingDraft, writingCopyText } from '../../tools/LookupTool/WritingDraft';
 const COPY_DIR = join(tmpdir(), 'claude');
 const RESPONSE_FILENAME = 'response.md';
 const MAX_LOOKBACK = 20;
 type CodeBlock = {
   code: string;
   lang: string | undefined;
+  /** Set for a writing draft: the picker shows this instead of the code's first line. */
+  label?: string;
 };
 function extractCodeBlocks(markdown: string): CodeBlock[] {
   const tokens = marked.lexer(stripPromptXMLTags(markdown));
@@ -33,13 +36,34 @@ function extractCodeBlocks(markdown: string): CodeBlock[] {
   for (const token of tokens) {
     if (token.type === 'code') {
       const codeToken = token as Tokens.Code;
-      blocks.push({
+      // A writing answer card copies as readable text (To, Subject, body, alternatives), never its JSON.
+      const draft = parseWritingDraft(codeToken.lang, codeToken.text);
+      blocks.push(draft ? {
+        code: writingCopyText(draft),
+        lang: undefined,
+        label: `Draft: ${draft.title}`
+      } : {
         code: codeToken.text,
         lang: codeToken.lang
       });
     }
   }
   return blocks;
+}
+
+/** The response with each writing draft fence replaced by its readable text; unchanged when it has none. */
+function readableResponse(markdown: string): string {
+  const tokens = marked.lexer(stripPromptXMLTags(markdown));
+  let changed = false;
+  const parts = tokens.map(token => {
+    if (token.type !== 'code') return token.raw;
+    const draft = parseWritingDraft((token as Tokens.Code).lang, (token as Tokens.Code).text);
+    if (!draft) return token.raw;
+    changed = true;
+    const trailing = /\n*$/.exec(token.raw)?.[0] ?? '';
+    return writingCopyText(draft) + trailing;
+  });
+  return changed ? parts.join('') : markdown;
 }
 
 /**
@@ -239,9 +263,9 @@ function _temp2(c) {
 function _temp(block, index) {
   const blockLines = countCharInString(block.code, "\n") + 1;
   return {
-    label: truncateLine(block.code, 60),
+    label: block.label ? truncateLine(block.label, 60) : truncateLine(block.code, 60),
     value: index,
-    description: [block.lang, blockLines > 1 ? `${blockLines} lines` : undefined].filter(Boolean).join(", ") || undefined
+    description: [block.label ? 'writing draft' : block.lang, blockLines > 1 ? `${blockLines} lines` : undefined].filter(Boolean).join(", ") || undefined
   };
 }
 export const call: LocalJSXCommandCall = async (onDone, context, args) => {
@@ -266,8 +290,8 @@ export const call: LocalJSXCommandCall = async (onDone, context, args) => {
     }
     age = n - 1;
   }
-  const text = texts[age]!;
-  const codeBlocks = extractCodeBlocks(text);
+  const codeBlocks = extractCodeBlocks(texts[age]!);
+  const text = readableResponse(texts[age]!);
   const config = getGlobalConfig();
   if (codeBlocks.length === 0 || config.copyFullResponse) {
     logEvent('tengu_copy', {

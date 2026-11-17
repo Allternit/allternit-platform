@@ -10,6 +10,8 @@ import Foundation
 //   {"type":"message_start", messageId, modelId, runtimeModelId}
 //   {"type":"content_block_delta", messageId, partId, delta:{type:"text_delta", text}}
 //   {"type":"finish", messageId, status:"complete"|"error", metadata:{status, error?}}
+//   {"type":"tool_result", toolCallId, toolName, result, metadata?}  — metadata
+//     only for card tools (send_user_message, lookup: `{kind, card?, credit?}`)
 //
 // Additional frames TOLERATED (mirroring the web parser,
 // native-agent-api.ts:661-807, which accepts them for other Gizzi daemon
@@ -108,6 +110,8 @@ enum AgentChatEvent: Decodable, Sendable {
         var userMessage: AgentUserMessage? = nil
         /// automation: the scheduled-task card (the tool part's `metadata`).
         var automation: AgentAutomationResult? = nil
+        /// lookup: the answer card from the tool part's `metadata.card`.
+        var lookupCard: AnswerCardEnvelope? = nil
     }
 
     struct ToolCall: Sendable {
@@ -289,12 +293,18 @@ enum AgentChatEvent: Decodable, Sendable {
             let automation = toolName == AgentAutomationResult.toolName
                 ? ((try? container.decodeIfPresent(AgentAutomationResult.self, forKey: .metadata)) ?? nil)
                 : nil
+            // lookup: the fact card (`metadata.card`), drawn under the reply.
+            let lookupCard = toolName == LookupToolMetadata.toolName
+                ? ((try? container.decodeIfPresent(LookupToolMetadata.self, forKey: .metadata)) ?? nil)?.card
+                : nil
+            var detail: ToolDetail? = nil
+            if userMessage != nil || automation != nil || lookupCard != nil {
+                detail = ToolDetail(userMessage: userMessage, automation: automation, lookupCard: lookupCard)
+            }
             self = .toolResult(ToolResult(
                 toolCallId: try container.decodeIfPresent(String.self, forKey: .toolCallId) ?? "",
                 toolName: toolName,
-                detail: (userMessage != nil || automation != nil)
-                    ? ToolDetail(userMessage: userMessage, automation: automation)
-                    : nil,
+                detail: detail,
                 runCode: (try? RunCodeKeys(from: decoder))?.result
             ))
 

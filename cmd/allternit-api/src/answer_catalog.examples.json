@@ -398,13 +398,24 @@
   {
     "version": 1,
     "template": "image-gallery",
-    "title": "Image gallery",
+    "title": "Lakefront reference images",
     "data": {
       "images": [
         {
-          "url": "https://example.com/example.png",
-          "alt": "Example image",
-          "caption": "Synthetic example; replace with verified data"
+          "url": "https://example.com/lakefront-1.jpg",
+          "alt": "A city skyline over a lake at dusk",
+          "caption": "Skyline at dusk · synthetic",
+          "credit": "Example Photographer",
+          "license": "CC BY 4.0",
+          "sourceUrl": "https://example.com/source/lakefront-1"
+        },
+        {
+          "url": "https://example.com/lakefront-2.jpg",
+          "alt": "A pier reaching into calm water",
+          "caption": "Morning pier · synthetic",
+          "credit": "Example Archive",
+          "license": "Public domain",
+          "sourceUrl": "https://example.com/source/lakefront-2"
         }
       ]
     }
@@ -495,7 +506,31 @@
       "conditions": "Partly cloudy",
       "humidity": 46,
       "wind": "NE · 11 km/h",
-      "source": "Synthetic demonstration data · not a connected account"
+      "source": "Synthetic demonstration data · not a connected account",
+      "forecast": [
+        {
+          "day": "Mon",
+          "high": 23,
+          "low": 14,
+          "conditions": "Sunny",
+          "precipitation": "0 mm"
+        },
+        {
+          "day": "Tue",
+          "high": 19,
+          "low": 12,
+          "conditions": "Showers",
+          "precipitation": "4 mm"
+        },
+        {
+          "day": "Wed",
+          "high": 17,
+          "low": 10,
+          "conditions": "Cloudy",
+          "precipitation": "1 mm"
+        }
+      ],
+      "credit": "Synthetic forecast · real cards credit MET Norway (CC BY 4.0)"
     }
   },
   {
@@ -1800,6 +1835,133 @@
       ],
       "timezone": "America/Chicago",
       "source": "Synthetic demonstration data · not a connected account"
+    }
+  },
+  {
+    "version": 1,
+    "template": "time-zones",
+    "title": "Your 9 AM call, around the world",
+    "data": {
+      "reference": "When it is 9:00 AM in Chicago · synthetic",
+      "zones": [
+        {
+          "place": "Chicago",
+          "zone": "America/Chicago",
+          "time": "9:00 AM",
+          "date": "Tue, Nov 17",
+          "offset": "UTC−06:00"
+        },
+        {
+          "place": "London",
+          "zone": "Europe/London",
+          "time": "3:00 PM",
+          "date": "Tue, Nov 17",
+          "offset": "UTC+00:00"
+        },
+        {
+          "place": "Tokyo",
+          "zone": "Asia/Tokyo",
+          "time": "12:00 AM",
+          "date": "Wed, Nov 18",
+          "offset": "UTC+09:00"
+        }
+      ],
+      "credit": "Synthetic example · real cards use the IANA time zone database"
+    }
+  },
+  {
+    "version": 1,
+    "template": "conversion",
+    "title": "100 US dollars in euros",
+    "data": {
+      "kind": "currency",
+      "from": {
+        "value": 100,
+        "unit": "USD"
+      },
+      "to": {
+        "value": 92.4,
+        "unit": "EUR"
+      },
+      "rate": 0.924,
+      "asOf": "Nov 16, 2026 · synthetic rate",
+      "also": [
+        {
+          "value": 78.9,
+          "unit": "GBP"
+        },
+        {
+          "value": 15410,
+          "unit": "JPY"
+        }
+      ],
+      "credit": "Synthetic rates · real cards credit Frankfurter (ECB reference rates)"
+    }
+  },
+  {
+    "version": 1,
+    "template": "link-preview",
+    "title": "A shared article",
+    "data": {
+      "url": "https://example.com/field-notes",
+      "title": "Field notes on calmer software",
+      "siteName": "Example Journal",
+      "description": "A synthetic preview of a page: its title, site and the summary the page publishes about itself.",
+      "published": "Nov 12, 2026",
+      "credit": "Preview from example.com · synthetic"
+    }
+  },
+  {
+    "version": 1,
+    "template": "places",
+    "title": "Coffee near the river",
+    "data": {
+      "query": "Coffee",
+      "near": "Riverwalk, Chicago · synthetic",
+      "places": [
+        {
+          "name": "Harbor Beans",
+          "address": "120 Example Ave",
+          "category": "Cafe",
+          "distance": "250 m",
+          "url": "https://example.com/map/harbor-beans"
+        },
+        {
+          "name": "Pine Street Roasters",
+          "address": "44 Pine St",
+          "category": "Cafe",
+          "distance": "600 m",
+          "url": "https://example.com/map/pine-street"
+        },
+        {
+          "name": "Alder Coffee Bar",
+          "address": "9 Alder Ct",
+          "category": "Cafe",
+          "distance": "1.1 km"
+        }
+      ],
+      "credit": "Synthetic places · real cards credit © OpenStreetMap contributors"
+    }
+  },
+  {
+    "version": 1,
+    "template": "writing",
+    "title": "Reply to Maya about Friday",
+    "data": {
+      "variant": "email",
+      "to": "Maya Chen",
+      "subject": "Re: Friday walkthrough",
+      "body": "Hi Maya,\n\nFriday at 2 PM works for me. I will bring the reviewed build and the release notes.\n\nThanks,\nJordan",
+      "alternatives": [
+        {
+          "label": "Shorter",
+          "body": "Friday at 2 works. I will bring the reviewed build."
+        },
+        {
+          "label": "Warmer",
+          "body": "Hi Maya, thanks for setting this up! Friday at 2 is perfect, and I will bring the reviewed build and notes."
+        }
+      ]
     }
   }
 ]

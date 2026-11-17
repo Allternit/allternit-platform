@@ -276,8 +276,11 @@ final class AgentChatClient: ObservableObject, @unchecked Sendable {
     private struct AgentChatRequest: Encodable {
         /// `form_factor: "phone"` tells the runtime to add its small-screen reply block.
         /// `time_zone` (IANA name) lets the runtime answer in the user's local time.
+        /// `answer_cards: "widgets"` says this app draws the `writing` draft card
+        /// (and lookup cards from tool results), so the runtime adds only that
+        /// short card manual instead of the full answer catalog.
         /// Optional fields are omitted when nil.
-        struct Metadata: Encodable { let tools: ToolOptions?; let form_factor: String?; let time_zone: String? }
+        struct Metadata: Encodable { let tools: ToolOptions?; let form_factor: String?; let time_zone: String?; let answer_cards: String? }
         let chatId: String
         let message: String
         let agentId: String?
@@ -329,7 +332,7 @@ final class AgentChatClient: ObservableObject, @unchecked Sendable {
                         effort: effort,
                         fast: UserDefaults.standard.bool(forKey: "allternit-model-fast") ? true : nil,
                         attachments: attachments,
-                        metadata: AgentChatRequest.Metadata(tools: tools, form_factor: formFactor, time_zone: TimeZone.current.identifier),
+                        metadata: AgentChatRequest.Metadata(tools: tools, form_factor: formFactor, time_zone: TimeZone.current.identifier, answer_cards: "widgets"),
                         workdir: workdir
                     ))
 

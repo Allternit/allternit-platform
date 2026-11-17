@@ -134,6 +134,10 @@ export namespace Agent {
       task_stop: "ask",
       goal_budget: "allow",
       current_time: "allow",
+      // The tool itself is free; its network kinds (weather, places, currency,
+      // link, images) ask under websearch/webfetch inside the tool, so they
+      // follow the rules the user already set for the web.
+      lookup: "allow",
       // Reaches only the session's owner; push is opt-in per call and rate-limited server side.
       send_user_message: "allow",
       // Scheduled tasks: the action is the pattern. Reading the list is free;

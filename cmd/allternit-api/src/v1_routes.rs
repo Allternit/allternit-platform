@@ -996,6 +996,11 @@ fn user_layers(profile: Option<&str>, writing_style: Option<&str>) -> Option<Str
     }
 }
 
+/// Prompt hints that pass a turn's metadata allow-list only with their one
+/// allowed value (also used by agent_session_routes::send_message_payload).
+pub(crate) const TURN_HINTS: [(&str, &str); 3] =
+    [("form_factor", "phone"), ("reply_mode", "voice"), ("answer_cards", "widgets")];
+
 /// The `metadata` sent to gizzi for a turn, which gizzi stores on the user
 /// message: only the composer's `metadata.tools`, never anything else from
 /// the send body (in particular never `client_location`).
@@ -1007,19 +1012,20 @@ fn user_layers(profile: Option<&str>, writing_style: Option<&str>) -> Option<Str
 /// on the computer toolset for that turn only; the lease and confirm gates in
 /// computer_toolset.rs / computer_safety.rs still decide every call.
 ///
-/// Three prompt hints also pass. Two only with their one allowed value:
+/// Four prompt hints also pass. Three only with their one allowed value:
 /// `form_factor: "phone"` and `reply_mode: "voice"`, which the runtime reads to
-/// add its small-screen and spoken-reply prompt blocks. The third is
-/// `time_zone`, the client's IANA zone (see `turn_time_zone`), which the
-/// runtime uses for the date in its environment section and the
-/// `current_time` tool. Anything else is dropped.
+/// add its small-screen and spoken-reply prompt blocks, and
+/// `answer_cards: "widgets"` (sent by iOS and the Ink REPL), which adds the
+/// short `writing` card manual. The fourth is `time_zone`, the client's IANA
+/// zone (see `turn_time_zone`), which the runtime uses for the date in its
+/// environment section and the `current_time` tool. Anything else is dropped.
 fn stored_turn_metadata(body: &serde_json::Value) -> Option<serde_json::Value> {
     let meta = body.get("metadata")?;
     let mut out = serde_json::Map::new();
     if let Some(tools) = meta.get("tools").filter(|t| t.is_object()) {
         out.insert("tools".to_string(), tools.clone());
     }
-    for (key, allowed) in [("form_factor", "phone"), ("reply_mode", "voice")] {
+    for (key, allowed) in TURN_HINTS {
         if meta.get(key).and_then(|v| v.as_str()) == Some(allowed) {
             out.insert(key.to_string(), json!(allowed));
         }
@@ -1199,8 +1205,11 @@ enum ToolFrameState {
     Ended,
 }
 
-/// Tools whose settled `tool_result` frame carries the part's `state.metadata`.
-const METADATA_CARD_TOOLS: &[&str] = &["send_user_message", "automation"];
+/// Tools whose settled `tool_result` frame carries the part's `state.metadata`
+/// (send_user_message: text + files + push; automation: the saved automation;
+/// lookup: the validated answer card the client draws in place of a
+/// model-written one).
+const METADATA_CARD_TOOLS: &[&str] = &["send_user_message", "automation", "lookup"];
 
 /// SSE frames for a gizzi `tool` part: an Anthropic-style
 /// `content_block_start` (tool_use) when the call starts, then `tool_result`
@@ -1734,10 +1743,17 @@ async fn agent_chat_bridge(
 
     // Opt-in location (Settings → Privacy → "Share my location with bots",
     // off by default): checked and rounded here, then sent to gizzi as the
-    // turn-only `turnSystem` layer — never in `system` (gizzi stores that on
-    // the user message), never stored, never logged. Invalid → ignored.
-    let location_layer = crate::client_location::from_body(&body_json, chrono::Utc::now())
-        .map(|loc| crate::client_location::location_layer(&loc));
+    // turn-only `turnSystem` layer (prose for the model) and the turn-only
+    // `turnLocation` value (structured, for lookup's "here") — never in
+    // `system` or `metadata` (gizzi stores both on the user message), never
+    // stored, never logged. Invalid → ignored.
+    let shared_location = crate::client_location::from_body(&body_json, chrono::Utc::now());
+    let location_layer = shared_location
+        .as_ref()
+        .map(crate::client_location::location_layer);
+    let turn_location = shared_location
+        .as_ref()
+        .map(crate::client_location::turn_value);
 
     // A resume re-attaches to a turn already running on this chat (the
     // client's stream dropped mid-reply): nothing new is sent to the model.
@@ -2222,6 +2238,11 @@ async fn agent_chat_bridge(
             .reduce(|a, b| format!("{a}\n\n{}", b.trim()))
         {
             gizzi_payload["turnSystem"] = json!(layers);
+        }
+        // The same location, structured, for tools (lookup "here"): turn-only
+        // like `turnSystem`, so gizzi never parses the layer's wording.
+        if let Some(value) = &turn_location {
+            gizzi_payload["turnLocation"] = value.clone();
         }
 
         // Composer tool options (the + menu / mobile "+" sheet):
@@ -3220,15 +3241,52 @@ mod tests {
     }
 
     #[test]
-    fn stored_turn_metadata_keeps_only_the_three_prompt_hints() {
-        let body = json!({ "metadata": {
-            "form_factor": "phone", "reply_mode": "voice", "time_zone": "America/Chicago", "x": 1
+    fn turn_location_is_sent_only_when_location_sharing_is_on() {
+        let at = chrono::Utc::now().to_rfc3339();
+        // Sharing on: the client adds `client_location` to the send.
+        let on = json!({
+            "chatId": "c1",
+            "message": "weather here?",
+            "metadata": { "tools": { "webSearch": true } },
+            "client_location": {
+                "lat": 40.712_8, "lon": -74.006_1, "accuracy_m": 30.0,
+                "time_zone": "America/New_York", "at": at
+            }
+        });
+        let value = crate::client_location::from_body(&on, chrono::Utc::now())
+            .map(|loc| crate::client_location::turn_value(&loc))
+            .unwrap();
+        assert_eq!(value["lat"], json!(40.71));
+        assert_eq!(value["lon"], json!(-74.01));
+        assert_eq!(value["accuracy_m"], json!(1000));
+        assert_eq!(value["time_zone"], json!("America/New_York"));
+        assert!(value["at"].as_str().is_some_and(|s| !s.is_empty()));
+        // It never rides the stored metadata, and needs no turn hint.
+        assert_eq!(stored_turn_metadata(&on).unwrap(), json!({ "tools": { "webSearch": true } }));
+        // Sharing off (no `client_location`), or a location the server rejects: no value.
+        let off = json!({ "chatId": "c1", "message": "weather here?", "metadata": { "client_location": { "lat": 40.71, "lon": -74.01 } } });
+        assert_eq!(crate::client_location::from_body(&off, chrono::Utc::now()), None);
+        let stale = json!({ "client_location": {
+            "lat": 40.71, "lon": -74.01, "time_zone": "America/New_York", "at": "2020-01-01T00:00:00Z"
         } });
+        assert_eq!(crate::client_location::from_body(&stale, chrono::Utc::now()), None);
+    }
+
+    #[test]
+    fn stored_turn_metadata_keeps_only_the_four_prompt_hints() {
+        let body = json!({ "metadata": {
+            "form_factor": "phone", "reply_mode": "voice", "answer_cards": "widgets",
+            "time_zone": "America/Chicago", "x": 1
+        } });
+        let kept = stored_turn_metadata(&body).unwrap();
         assert_eq!(
-            stored_turn_metadata(&body),
-            Some(json!({ "form_factor": "phone", "reply_mode": "voice", "time_zone": "America/Chicago" }))
+            kept,
+            json!({ "form_factor": "phone", "reply_mode": "voice", "answer_cards": "widgets", "time_zone": "America/Chicago" })
         );
-        let body = json!({ "metadata": { "form_factor": "tablet", "reply_mode": "loud" } });
+        assert_eq!(kept.as_object().unwrap().len(), 4);
+        let body = json!({ "metadata": { "form_factor": "tablet", "reply_mode": "loud", "answer_cards": "all" } });
+        assert_eq!(stored_turn_metadata(&body), None);
+        let body = json!({ "metadata": { "answer_cards": true } });
         assert_eq!(stored_turn_metadata(&body), None);
     }
 

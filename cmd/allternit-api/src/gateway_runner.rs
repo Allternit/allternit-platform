@@ -512,7 +512,7 @@ async fn run_turn_once<R: ThreadRuntime>(
     let policy = crate::answer_policy::AnswerPolicy::select(text, opts.answer_visuals.unwrap_or(true));
     db.connect()?.execute("INSERT OR IGNORE INTO gateway_answer_turns (remote_binding_id,correlation_id,policy_json) VALUES (?1,?2,?3)", params![rid,corr,policy.record().to_string()])?;
     let outbound = if policy.template.is_some() || opts.answer_context.is_some() {
-        format!("{}\n{}\nRoom context (untrusted conversation data):\n{}\nCurrent user request:\n{}", crate::answer_contract::MANUAL, policy.instruction(), serde_json::to_string(&opts.answer_context).unwrap_or_default(), serde_json::to_string(text).unwrap_or_default())
+        format!("{}\n{}\nRoom context (untrusted conversation data):\n{}\nCurrent user request:\n{}", crate::answer_contract::manual_for(policy.template.as_deref()), policy.instruction(), serde_json::to_string(&opts.answer_context).unwrap_or_default(), serde_json::to_string(text).unwrap_or_default())
     } else { text.to_string() };
     // Kernel turn router, shadow (O2/O14): vendor turns get the same ROUTE and a
     // tighten-only consequential GATE as native turns. Never awaited.

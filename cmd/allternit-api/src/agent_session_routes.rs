@@ -1784,11 +1784,12 @@ fn send_message_payload(body: &SendMessageBody) -> serde_json::Value {
     if let Some(system) = body.system.as_deref().filter(|s| !s.trim().is_empty()) {
         payload["system"] = json!(system);
     }
-    // Prompt hints the runtime reads (small-screen and spoken-reply blocks):
-    // only these two keys, each with its one allowed value, pass through,
-    // plus the client's IANA `time_zone` when it is a real zone (the same
-    // allow-list as v1_routes::stored_turn_metadata).
-    for (key, allowed) in [("form_factor", "phone"), ("reply_mode", "voice")] {
+    // Prompt hints the runtime reads (small-screen, spoken-reply and
+    // `answer_cards: "widgets"` writing-card blocks): only these three keys,
+    // each with its one allowed value, pass through, plus the client's IANA
+    // `time_zone` when it is a real zone (the same allow-list as
+    // v1_routes::stored_turn_metadata).
+    for (key, allowed) in crate::v1_routes::TURN_HINTS {
         if body.metadata.as_ref().and_then(|m| m.get(key)).and_then(|v| v.as_str()) == Some(allowed) {
             payload["metadata"][key] = json!(allowed);
         }
@@ -2985,12 +2986,17 @@ mod send_message_payload_tests {
     fn prompt_hints_pass_only_with_allowed_values() {
         let payload = send_message_payload(&body(serde_json::json!({
             "text": "hi",
-            "metadata": { "form_factor": "phone", "reply_mode": "loud", "time_zone": "Europe/Berlin", "x": 1 }
+            "metadata": { "form_factor": "phone", "reply_mode": "loud", "answer_cards": "widgets", "time_zone": "Europe/Berlin", "x": 1 }
         })));
         assert_eq!(
             payload["metadata"],
-            serde_json::json!({ "form_factor": "phone", "time_zone": "Europe/Berlin" })
+            serde_json::json!({ "form_factor": "phone", "answer_cards": "widgets", "time_zone": "Europe/Berlin" })
         );
+        let payload = send_message_payload(&body(serde_json::json!({
+            "text": "hi",
+            "metadata": { "answer_cards": "everything" }
+        })));
+        assert!(payload.get("metadata").is_none());
         let payload = send_message_payload(&body(serde_json::json!({
             "text": "hi",
             "metadata": { "time_zone": "Mars/Olympus" }
