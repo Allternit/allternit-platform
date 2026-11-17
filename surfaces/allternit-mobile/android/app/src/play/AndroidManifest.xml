@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Google Play build: merged on top of src/main. Adds the screen-share
+         lane (src/phoneshare): claim + share screen, MediaProjection capture,
+         and the Accessibility service for a viewer's taps. Nothing from the
+         sideloaded build's adb lane (no shell server, no adb keys, no
+         WRITE_SECURE_SETTINGS, no KILL_BACKGROUND_PROCESSES, no local server).
+         Keep the components below in step with src/phonelink/AndroidManifest.xml. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+
+    <application>
+        <!-- Share screen: claim code, pairing, Share / Stop, taps (with the
+             Accessibility disclosure). Opened from the "Share screen" shortcut,
+             the request notification and allternit://phone-share?code=… -->
+        <activity
+            android:name="com.allternit.phonelink.ScreenShareActivity"
+            android:exported="true"
+            android:label="Share screen"
+            android:launchMode="singleTop">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="allternit" android:host="phone-share" />
+            </intent-filter>
+        </activity>
+
+        <!-- Android's screen-share prompt; only this app's own buttons and notification open it. -->
+        <activity
+            android:name="com.allternit.phonelink.ProjectionConsentActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
+        <!-- Holds one screen share, started only after the person accepts the prompt. -->
+        <service
+            android:name="com.allternit.phonelink.ProjectionService"
+            android:exported="false"
+            android:foregroundServiceType="mediaProjection" />
+
+        <!-- A viewer's taps and typing while the person shares (turned on by the
+             person in Accessibility settings, after the in-app disclosure). -->
+        <service
+            android:name="com.allternit.phonelink.PhoneLinkAccessibilityService"
+            android:exported="true"
+            android:label="@string/accessibility_label"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/accessibility_service_config" />
+        </service>
+    </application>
+</manifest>

@@ -19,7 +19,9 @@
       ],
       "properties": {
         "key_id": {
-          "type": "string"
+          "type": "string",
+          "description": "The FRK this envelope wraps (FilesKeyInfo.key_id).",
+          "pattern": "^fk_[A-Za-z0-9_-]{1,64}$"
         },
         "device_id": {
           "$ref": "common.json#/$defs/DeviceId"
@@ -30,13 +32,15 @@
         },
         "ephemeral_pub": {
           "type": "string",
-          "description": "base64url X25519 public key."
+          "description": "base64url (no padding) X25519 public key, 32 bytes, fresh for every envelope."
         },
         "nonce": {
-          "type": "string"
+          "type": "string",
+          "description": "base64url (no padding), 24 bytes."
         },
         "wrapped_key": {
-          "type": "string"
+          "type": "string",
+          "description": "base64url (no padding): the 32-byte FRK sealed with XChaCha20-Poly1305 (48 bytes with the tag). KEK = HKDF-SHA256(salt = ephemeral_pub || device_pub, ikm = X25519 shared secret, info = \"files-envelope/1/<device_id>\", 32 bytes); AAD = \"afe1|<key_id>|<device_id>\"."
         },
         "created_at": {
           "$ref": "common.json#/$defs/Timestamp"
@@ -58,24 +62,27 @@
         },
         "device_pub": {
           "type": "string",
-          "description": "base64url X25519."
+          "description": "base64url (no padding) X25519 public key, 32 bytes."
         },
         "device_name": {
-          "type": "string"
+          "type": "string",
+          "maxLength": 80
         },
         "confirm_code": {
           "type": "string",
-          "description": "Shown on both devices; the user compares them.",
+          "description": "Derived from device_pub, never chosen: u32_be(blake3(\"files-key-confirm/1|\" || device_pub raw bytes)[0..4]) % 1000000, zero-padded to 6 digits. The new device shows it; the approving device recomputes it from the request's device_pub and shows it; the user compares the two. cloud-api refuses a code that does not match device_pub, and a second pending request with the same code.",
           "pattern": "^[0-9]{6}$"
         }
-      }
+      },
+      "description": "A device (or a computer, from its GET /replicas/key) asks for the Files key. cloud-api keeps it pending for 10 minutes."
     },
     "KeyShareGrant": {
       "type": "object",
       "additionalProperties": false,
       "required": [
         "envelope",
-        "approved_by_device_id"
+        "approved_by_device_id",
+        "confirm_code"
       ],
       "properties": {
         "envelope": {
@@ -83,20 +90,28 @@
         },
         "approved_by_device_id": {
           "$ref": "common.json#/$defs/DeviceId"
+        },
+        "confirm_code": {
+          "type": "string",
+          "description": "The confirm_code of the pending request this grant answers. Must match it.",
+          "pattern": "^[0-9]{6}$"
         }
-      }
+      },
+      "description": "An existing device approves one pending request: it checked the code, wrapped the FRK to the request's device_pub and sends the envelope. The very first device of a user grants its own request (approved_by_device_id = envelope.device_id) to create the key."
     },
     "FilesKeyInfo": {
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "key_id",
-        "created_at",
-        "device_ids"
+        "device_ids",
+        "devices",
+        "pending_requests",
+        "rotation_needed"
       ],
       "properties": {
         "key_id": {
-          "type": "string"
+          "type": "string",
+          "description": "The current key. Absent until a first device creates it."
         },
         "created_at": {
           "$ref": "common.json#/$defs/Timestamp"
@@ -105,10 +120,135 @@
           "type": "array",
           "items": {
             "$ref": "common.json#/$defs/DeviceId"
-          }
+          },
+          "description": "Devices with an envelope for the current key."
         },
         "rotated_from": {
+          "type": "string",
+          "description": "The key this one replaced."
+        },
+        "devices": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/FilesKeyDevice"
+          }
+        },
+        "pending_requests": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PendingKeyRequest"
+          },
+          "description": "Unexpired requests, oldest first."
+        },
+        "rotation_needed": {
+          "type": "boolean",
+          "description": "A device was removed (or its computer was revoked) since the key was made: the next device with the key should POST /files-keys/rotations."
+        }
+      },
+      "description": "GET /api/v1/files-keys. Before the first device makes the key, key_id and created_at are absent and device_ids is empty."
+    },
+    "PendingKeyRequest": {
+      "type": "object",
+      "description": "A KeyShareRequest waiting for approval (POST /files-keys/requests answers it with 202; FilesKeyInfo.pending_requests lists them).",
+      "additionalProperties": false,
+      "required": [
+        "request_id",
+        "device_id",
+        "device_pub",
+        "device_name",
+        "confirm_code",
+        "created_at",
+        "expires_at"
+      ],
+      "properties": {
+        "request_id": {
           "type": "string"
+        },
+        "device_id": {
+          "$ref": "common.json#/$defs/DeviceId"
+        },
+        "device_pub": {
+          "type": "string",
+          "description": "base64url X25519 public key."
+        },
+        "device_name": {
+          "type": "string"
+        },
+        "confirm_code": {
+          "type": "string",
+          "pattern": "^[0-9]{6}$"
+        },
+        "created_at": {
+          "$ref": "common.json#/$defs/Timestamp"
+        },
+        "expires_at": {
+          "$ref": "common.json#/$defs/Timestamp"
+        }
+      }
+    },
+    "FilesKeyDevice": {
+      "type": "object",
+      "description": "One device that holds (or held) the Files key.",
+      "additionalProperties": false,
+      "required": [
+        "device_id",
+        "device_name",
+        "device_pub",
+        "has_current_key",
+        "added_at"
+      ],
+      "properties": {
+        "device_id": {
+          "$ref": "common.json#/$defs/DeviceId"
+        },
+        "device_name": {
+          "type": "string"
+        },
+        "device_pub": {
+          "type": "string",
+          "description": "base64url X25519 public key; a rotation seals the new key to it."
+        },
+        "has_current_key": {
+          "type": "boolean",
+          "description": "An envelope for FilesKeyInfo.key_id exists for this device."
+        },
+        "added_at": {
+          "$ref": "common.json#/$defs/Timestamp"
+        },
+        "approved_by_device_id": {
+          "$ref": "common.json#/$defs/DeviceId"
+        }
+      }
+    },
+    "KeyRotation": {
+      "type": "object",
+      "description": "POST /files-keys/rotations: a device holding the current key makes a new FRK and seals it to every device in the list (all of FilesKeyInfo.devices, itself included, exactly once). The old key and its envelopes stay so replicas sealed with it still open until they are re-sealed.",
+      "additionalProperties": false,
+      "required": [
+        "key_id",
+        "rotated_from",
+        "rotated_by_device_id",
+        "envelopes"
+      ],
+      "properties": {
+        "key_id": {
+          "type": "string",
+          "pattern": "^fk_[A-Za-z0-9_-]{1,64}$"
+        },
+        "rotated_from": {
+          "type": "string",
+          "description": "Must be the current key_id."
+        },
+        "rotated_by_device_id": {
+          "$ref": "common.json#/$defs/DeviceId"
+        },
+        "envelopes": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 200,
+          "items": {
+            "$ref": "#/$defs/KeyEnvelope"
+          }
         }
       }
     }

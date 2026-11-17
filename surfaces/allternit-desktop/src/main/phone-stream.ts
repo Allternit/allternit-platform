@@ -33,6 +33,8 @@ export interface StreamSessionHandle {
   on(event: 'deviceMessage', cb: (message: ScrcpyDeviceMessage) => void): () => void;
   on(event: 'ended', cb: (info: { reason: string }) => void): () => void;
   sendControl(events: PhoneInputEvent[]): { ok: boolean; message?: string };
+  /** App phones (Android): swap to a full-control socket after the owner's "Allow taps" click. */
+  requestControl?(): Promise<{ ok: boolean; message?: string }>;
   setDisplayPower(on: boolean): { ok: boolean; message?: string };
   close(reason?: string): void;
 }
@@ -196,6 +198,12 @@ export class PhoneStreamManager {
     const rec = this.streams.get(serial);
     if (!rec?.session || rec.status.state !== 'live') return { ok: false, message: 'The stream is not live.' };
     return rec.session.sendControl(events);
+  }
+
+  async requestControl(serial: string): Promise<{ ok: boolean; message?: string }> {
+    const rec = this.streams.get(serial);
+    if (!rec?.session || rec.status.state !== 'live') return { ok: false, message: 'The stream is not live.' };
+    return rec.session.requestControl ? rec.session.requestControl() : { ok: false, message: 'Taps are not available for this phone.' };
   }
 
   setDisplayPower(serial: string, on: boolean): { ok: boolean; message?: string } {

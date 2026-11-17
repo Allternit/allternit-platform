@@ -130,6 +130,41 @@ struct ProjectLook: Codable, Equatable {
     }
 }
 
+extension ProjectLook {
+    /// Where a project's look is saved on this device: `project.look.for.<scope>`.
+    /// The project pad (ProjectPadStore) reads it once to convert an old look
+    /// and leaves it in place for older builds.
+    static func storageKey(scope: String) -> String { "project.look.for.\(scope)" }
+
+    /// A saved look read leniently, the way the web's `normalizeProjectLook`
+    /// reads one: unknown tiles are dropped, an unknown layout or colors fall
+    /// back to Pulse / Quiet orange, and "Make one" without tiles is Pulse.
+    /// Takes this app's shape (`customTiles`, `customPrompt`) and the web's
+    /// (`custom: { prompt, tiles }`). Nil when the data is not a JSON object.
+    static func decodeSaved(_ data: Data) -> ProjectLook? {
+        guard let raw = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return nil }
+        func tiles(_ value: Any?) -> [ProjectTile]? {
+            (value as? [Any])?.compactMap { ($0 as? String).flatMap(ProjectTile.init(rawValue:)) }
+        }
+        let web = raw["custom"] as? [String: Any]
+        let customTiles = tiles(raw["customTiles"]) ?? tiles(web?["tiles"])
+        var look = ProjectLook()
+        let layout = raw["layout"] as? String
+        if layout == ProjectLayoutKind.custom.rawValue {
+            if customTiles != nil { look.layout = .custom }
+        } else if let kind = layout.flatMap(ProjectLayoutKind.init(rawValue:)) {
+            look.layout = kind
+        }
+        if let colors = raw["colors"] as? String, ProjectColorSet.all.contains(where: { $0.id == colors }) {
+            look.colors = colors
+        }
+        look.hidden = tiles(raw["hidden"]) ?? []
+        look.customTiles = customTiles
+        look.customPrompt = (raw["customPrompt"] as? String) ?? (web?["prompt"] as? String)
+        return look
+    }
+}
+
 /// The tiles "Make one" shows for a description (project-look.ts tilesForPrompt).
 func projectTiles(forPrompt prompt: String) -> [ProjectTile] {
     let s = prompt.lowercased()
@@ -154,7 +189,7 @@ final class ProjectLookStore: ObservableObject {
     private let key: String
 
     init(scope: String) {
-        key = "project.look.for.\(scope)"
+        key = ProjectLook.storageKey(scope: scope)
         if let data = UserDefaults.standard.data(forKey: key),
            let saved = try? JSONDecoder().decode(ProjectLook.self, from: data) {
             look = saved
@@ -1071,162 +1106,6 @@ struct ProjectDashboardView: View {
                         .buttonStyle(.plain)
                     }
                 }
-            }
-        }
-    }
-}
-
-// MARK: - Customize
-
-/// The one place for a project's look and settings. A sheet at half height, so
-/// the dashboard behind it is the preview.
-struct ProjectCustomizeSheet<Details: View, Manage: View>: View {
-    @ObservedObject var store: ProjectLookStore
-    let data: ProjectBoardData
-    let title: String
-    let scope: BackdropScope
-    let backdropColors: [String?]
-    @ViewBuilder var details: () -> Details
-    @ViewBuilder var manage: () -> Manage
-
-    private enum Tab: String, CaseIterable { case layout = "Layout", colors = "Colors", background = "Background", tiles = "Tiles", details = "Details", manage = "Manage" }
-    @State private var tab: Tab = .layout
-    @State private var prompt = ""
-    @State private var pickingBackground = false
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        NavigationStack {
-            VStack(spacing: 10) {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 6) {
-                        ForEach(Tab.allCases, id: \.self) { t in
-                            Button { tab = t } label: {
-                                Text(t.rawValue)
-                                    .font(.system(size: 13, weight: tab == t ? .semibold : .medium))
-                                    .foregroundColor(tab == t ? Color("BgPanel") : Color("TextPrimary"))
-                                    .padding(.horizontal, 13)
-                                    .frame(minHeight: 44)
-                                    .background(Capsule().fill(tab == t ? Color("TextPrimary") : Color("FillNeutral")))
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                    .padding(.horizontal, 16)
-                }
-                ScrollView { content.padding(.horizontal, 16).padding(.bottom, 20) }
-            }
-            .navigationTitle("Customize")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
-        }
-        .presentationDetents([.medium, .large])
-        .presentationBackgroundInteraction(.enabled(upThrough: .medium))
-        .sheet(isPresented: $pickingBackground) {
-            StageBackdropScopeSheet(scope: scope, title: "Background", colors: backdropColors)
-        }
-    }
-
-    @ViewBuilder private var content: some View {
-        switch tab {
-        case .layout: layouts
-        case .colors: colors
-        case .background:
-            VStack(alignment: .leading, spacing: 8) {
-                Text("The background fills the page behind every layout.").font(.system(size: 13)).foregroundColor(Color("TextSecondary"))
-                Button("Choose a background") { pickingBackground = true }
-                    .frame(minHeight: 44)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-        case .tiles: tiles
-        case .details: VStack(alignment: .leading, spacing: 8) { details() }.frame(maxWidth: .infinity, alignment: .leading)
-        case .manage: VStack(alignment: .leading, spacing: 8) { manage() }.frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
-
-    private var layouts: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            VStack(alignment: .leading, spacing: 6) {
-                Label("Make one", systemImage: "sparkle").font(.system(size: 13, weight: .semibold))
-                HStack {
-                    TextField("Just decisions and dates", text: $prompt)
-                        .textFieldStyle(.roundedBorder)
-                    Button("Build it") {
-                        let words = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
-                        guard !words.isEmpty else { return }
-                        store.look.customPrompt = words
-                        store.look.customTiles = projectTiles(forPrompt: words)
-                        store.look.layout = .custom
-                    }
-                    .disabled(prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    .frame(minHeight: 44)
-                }
-            }
-            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 14) {
-                if store.look.customTiles != nil { layoutCell(.custom) }
-                ForEach(ProjectLayoutKind.builtIn) { layoutCell($0) }
-            }
-        }
-    }
-
-    private func layoutCell(_ kind: ProjectLayoutKind) -> some View {
-        let selected = store.look.layout == kind
-        return Button { store.look.layout = kind } label: {
-            VStack(alignment: .leading, spacing: 5) {
-                ProjectDashboardView(layout: kind, look: store.look, data: data, title: title)
-                    .frame(width: 390, height: 640, alignment: .top)
-                    .padding(10)
-                    .background(Color("FillNeutral"))
-                    .scaleEffect(0.36, anchor: .topLeading)
-                    .frame(width: 148, height: 238, alignment: .topLeading)
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
-                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(selected ? Color("TextPrimary") : Color("BorderSubtle"), lineWidth: selected ? 2.5 : 1))
-                    .allowsHitTesting(false)
-                    .accessibilityHidden(true)
-                HStack(spacing: 4) {
-                    if selected { Image(systemName: "checkmark").font(.system(size: 11, weight: .bold)) }
-                    Text(kind.name).font(.system(size: 12.5, weight: selected ? .bold : .medium))
-                }
-                .foregroundColor(Color("TextPrimary"))
-            }
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("\(kind.name) layout")
-        .accessibilityAddTraits(selected ? .isSelected : [])
-    }
-
-    private var colors: some View {
-        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
-            ForEach(ProjectColorSet.all) { set in
-                let selected = store.look.colors == set.id
-                let palette = ProjectPalette(set: set, dark: false)
-                Button { store.look.colors = set.id } label: {
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack(spacing: 2) {
-                            ForEach(0..<5, id: \.self) { palette.slot($0).fill.frame(height: 40) }
-                        }
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
-                        Text(set.name).font(.system(size: 13, weight: .semibold)).foregroundColor(Color("TextPrimary"))
-                    }
-                    .padding(10)
-                    .overlay(RoundedRectangle(cornerRadius: 14).stroke(selected ? Color("TextPrimary") : Color("BorderSubtle"), lineWidth: selected ? 2.5 : 1))
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("\(set.name) colors")
-                .accessibilityAddTraits(selected ? .isSelected : [])
-            }
-        }
-    }
-
-    private var tiles: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text("Show on this layout:").font(.system(size: 13)).foregroundColor(Color("TextSecondary"))
-            ForEach(store.look.layout.tiles) { tile in
-                Toggle(tile.name, isOn: Binding(get: { store.look.isOn(tile) }, set: { _ in store.toggle(tile) }))
-                    .font(.system(size: 14))
-                    .frame(minHeight: 44)
             }
         }
     }
