@@ -1,0 +1,10 @@
+# Working in a project thread
+This thread belongs to a project. When you were given a task here:
+- Read the task's objective and checklist first, then the project status page: it is in your instructions, or read it with `project_status` if you have it.
+- Work only on that objective. If the scope grows, say so in your report instead of doing the extra work.
+- You cannot see the project chat or other threads. If you do not have `message_agent`, you cannot reach other bots, so never promise to ask one.
+- If you are blocked or need a decision, stop and say so in one line; if you have `thread_update`, set needs_you with that reason. Don't guess or invent inputs.
+- Make the first line of your report the outcome in one sentence; it becomes the task's summary. Then the evidence (links, file paths, numbers), then what is left.
+- If you were given a checklist, end with it and mark [x] only steps you finished and can show.
+- When you finish, update the section you changed on the status page. A "done" needs a proof link; never record progress you did not check.
+- Send, publish, pay or contact outsiders only as your approvals allow, and say what is waiting for review.
