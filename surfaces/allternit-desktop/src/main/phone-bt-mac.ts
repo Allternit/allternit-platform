@@ -460,6 +460,33 @@ export function btMacHealth(i: BtMacHealthInput): RouteHealth {
 }
 
 /** The "Control my iPhone by Bluetooth" row in Settings → Computers → Phones. */
+/**
+ * At Desktop launch: if the person left "Control my iPhone by Bluetooth" on,
+ * start the helper and publish "Allternit Keyboard" now, so the iPhone can
+ * reconnect before the first call (it reconnects to a bonded keyboard only
+ * while that keyboard advertises). Mac only; never throws. Turning it on the
+ * first time is still the person's Pair click, which is when macOS asks for
+ * Bluetooth.
+ */
+export async function resumeBtMacAtLaunch(i: {
+  platform: NodeJS.Platform;
+  enabled: boolean;
+  client: () => Pick<BtHidClient, 'pair'> | null;
+  log?: (message: string) => void;
+}): Promise<'started' | 'off' | 'unavailable' | 'failed'> {
+  if (i.platform !== 'darwin') return 'unavailable';
+  if (!i.enabled) return 'off';
+  const client = i.client();
+  if (!client) return 'unavailable';
+  try {
+    await client.pair();
+    return 'started';
+  } catch (error) {
+    i.log?.(`Bluetooth keyboard did not start at launch: ${error instanceof Error ? error.message : String(error)}`);
+    return 'failed';
+  }
+}
+
 export interface BtMacSettings {
   /** This Mac and this build can do it; when false, the row shows `message` and no buttons. */
   available: boolean;

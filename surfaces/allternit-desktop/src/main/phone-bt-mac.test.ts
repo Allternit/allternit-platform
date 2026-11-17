@@ -13,6 +13,7 @@ import {
   btMacSettings,
   btMacTransport,
   readBtHidState,
+  resumeBtMacAtLaunch,
   type BtHidProcess,
   type BtHidState,
 } from './phone-bt-mac.js';
@@ -243,5 +244,34 @@ describe('the lane', () => {
   it('refuses text the keyboard cannot type before sending anything', async () => {
     const res = await lane().act('phone.type', 'app:ip1', { text: 'café' });
     expect(res).toMatchObject({ ok: false, error: 'invalid_args' });
+  });
+});
+
+describe('Control my iPhone by Bluetooth at launch', () => {
+  it('publishes the keyboard at launch when the person left it on, so the iPhone can reconnect', async () => {
+    const bin = fakeBinary(() => STATE_ON);
+    const client = new BtHidClient({ binary: () => '/bin/allternit-bthid', spawn: bin.spawn, wanted: true });
+    expect(await resumeBtMacAtLaunch({ platform: 'darwin', enabled: true, client: () => client })).toBe('started');
+    expect(bin.spawned).toHaveLength(1);
+    expect(bin.spawned[0]!.requests.map((r) => r.cmd)).toContain('pair');
+    client.close();
+  });
+
+  it('starts nothing when it is off, off a Mac, or not in this build', async () => {
+    const bin = fakeBinary(() => STATE_ON);
+    const client = new BtHidClient({ binary: () => '/bin/allternit-bthid', spawn: bin.spawn });
+    expect(await resumeBtMacAtLaunch({ platform: 'darwin', enabled: false, client: () => client })).toBe('off');
+    expect(await resumeBtMacAtLaunch({ platform: 'win32', enabled: true, client: () => client })).toBe('unavailable');
+    expect(await resumeBtMacAtLaunch({ platform: 'darwin', enabled: true, client: () => null })).toBe('unavailable');
+    expect(bin.spawned).toHaveLength(0);
+  });
+
+  it('logs and carries on when the helper refuses at launch', async () => {
+    const bin = fakeBinary(() => ({ ok: false, error: 'unauthorized', message: 'Bluetooth is not allowed.' }));
+    const client = new BtHidClient({ binary: () => '/bin/allternit-bthid', spawn: bin.spawn, wanted: true });
+    const logged: string[] = [];
+    expect(await resumeBtMacAtLaunch({ platform: 'darwin', enabled: true, client: () => client, log: (m) => logged.push(m) })).toBe('failed');
+    expect(logged[0]).toContain('Bluetooth is not allowed.');
+    client.close();
   });
 });

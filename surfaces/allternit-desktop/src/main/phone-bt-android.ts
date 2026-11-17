@@ -20,11 +20,13 @@
  * iPhone's name. With one iPhone (the setup this route is for) that is exact.
  */
 
-import { HidCore, HidError, hidRouteHealth, senderFromTransport, type Calibration, type HidLinkStatus, type HidTransport, type Point, type PointerScreen } from './phone-hid-core.js';
+import { APP_PREFIX, AppSenderError, appSenderTransport, pointerMissing, senderAct, type AppSenderRpc, type AppSenderRpcResult, type SenderStatus } from './phone-bt-app-sender.js';
+import { BroadcastStills } from './phone-broadcast-stills.js';
+import { HidCore, HidError, hidRouteHealth, senderFromTransport, type Calibration, type HidLinkStatus, type Point } from './phone-hid-core.js';
 import { needsYou, type RouteHealth } from './phone-link-health.js';
 import type { Capability, LaneContext, LaneTool, PhoneLane } from './phone-route.js';
 import type { ToolErrorCode, ToolResult } from './phone-tools.js';
-import { changed, type Gray } from './phone-usb-agent-vision.js';
+import type { Gray } from './phone-usb-agent-vision.js';
 import { frameOf, type VerifyFrame } from './phone-verify.js';
 
 /** What the lane needs from the app-phone backend (AppPhoneBackend satisfies it). */
@@ -37,12 +39,12 @@ export interface BtAndroidPhones {
   call(name: string, serial: string, args: Record<string, unknown>): Promise<ToolResult>;
 }
 
-export type BtRpcResult = { ok: true; result: Record<string, unknown> } | { ok: false; status: number; code: string; message: string };
+export type BtRpcResult = AppSenderRpcResult;
 
 export interface BtAndroidDeps {
   phones: () => BtAndroidPhones | null;
   /** The node's app-phone rpc (`AppPhoneNode.rpc`), by phone id (the serial without `app:`). */
-  rpc: (phoneId: string, method: string, params: Record<string, unknown>, timeoutMs: number) => Promise<BtRpcResult>;
+  rpc: AppSenderRpc;
   /** JPEG → grayscale at about `width` px wide. */
   decode: (jpeg: Buffer, width: number) => Gray | null;
   /** Pointer calibration per iPhone serial. */
@@ -54,13 +56,6 @@ export interface BtAndroidDeps {
 
 const COVERS: readonly Capability[] = ['tap', 'type', 'swipe', 'key'];
 const DECODE_WIDTH = 360;
-const STATUS_TIMEOUT_MS = 5_000;
-const HID_TIMEOUT_MS = 15_000;
-/** hid.pointer.reset sweeps ~158 reports on the phone. */
-const RESET_TIMEOUT_MS = 20_000;
-/** hid.type text per message (contract §9.2: max 500). */
-const TYPE_CHUNK = 200;
-const APP_PREFIX = 'app:';
 /**
  * After calibration missed the pointer, health says ASSISTIVETOUCH_OFF for
  * this long, then lets the next tap look again (the router only calls act on
@@ -69,57 +64,6 @@ const APP_PREFIX = 'app:';
 export const POINTER_RECHECK_MS = 30_000;
 
 const fail = (error: ToolErrorCode, message: string): ToolResult => ({ ok: false, error, message });
-
-/** A failure the Android app (or the node) answered. */
-export class BtAndroidError extends Error {
-  constructor(
-    readonly code: string,
-    message: string,
-  ) {
-    super(message);
-  }
-}
-
-/** The Android app's answer to hid.pair.status. */
-interface SenderStatus extends HidLinkStatus {
-  available: boolean;
-  message?: string;
-}
-
-/** The contract's §6 transport over the Android phone's app-phone rpc. */
-export function rpcTransport(rpc: BtAndroidDeps['rpc'], phoneId: () => string): HidTransport {
-  const call = async (method: string, params: Record<string, unknown>, timeoutMs = HID_TIMEOUT_MS): Promise<Record<string, unknown>> => {
-    let res: BtRpcResult;
-    try {
-      res = await rpc(phoneId(), method, params, timeoutMs);
-    } catch (error) {
-      throw new BtAndroidError('device_offline', `Allternit Desktop's local API didn't answer (${error instanceof Error ? error.message : String(error)}).`);
-    }
-    if (!res.ok) throw new BtAndroidError(res.code, res.message);
-    return res.result;
-  };
-  return {
-    status: async () => readStatus(await call('hid.pair.status', {}, STATUS_TIMEOUT_MS)),
-    pointerMove: async (dx, dy) => void (await call('hid.pointer.move', { dx, dy })),
-    pointerClick: async (button, down = true, up = true) => void (await call('hid.pointer.click', { button, down, up })),
-    pointerReset: async () => void (await call('hid.pointer.reset', {}, RESET_TIMEOUT_MS)),
-    key: async (usage, modifiers, down) => void (await call('hid.key', { usage, modifiers, down })),
-    typeText: async (text) => {
-      for (let i = 0; i < text.length; i += TYPE_CHUNK) await call('hid.type', { text: text.slice(i, i + TYPE_CHUNK) });
-    },
-    scroll: async (lines) => void (await call('hid.scroll', { lines })),
-  };
-}
-
-function readStatus(r: Record<string, unknown>): SenderStatus {
-  return {
-    paired: r.paired === true,
-    connected: r.connected === true,
-    available: r.available === true,
-    ...(typeof r.name === 'string' && r.name ? { name: r.name } : {}),
-    ...(typeof r.message === 'string' && r.message ? { message: r.message } : {}),
-  };
-}
 
 /** What the lane knows about one iPhone. */
 interface IphoneState {
@@ -137,76 +81,12 @@ interface IphoneState {
   size: { width: number; height: number } | null;
 }
 
-/** The phone's broadcast as the core needs it: stills pulled on demand and kept as grayscale. */
-export class BroadcastScreen implements PointerScreen {
-  private gray: Gray | null = null;
-  private at: number | null = null;
-  private readonly now: () => number;
-  private readonly sleep: (ms: number) => Promise<void>;
-
-  constructor(
-    private readonly grab: () => Promise<{ jpeg: Buffer; ageMs: number; width: number; height: number } | null>,
-    private readonly isLive: () => boolean,
-    private readonly decode: (jpeg: Buffer) => Gray | null,
-    opts: { now?: () => number; sleep?: (ms: number) => Promise<void> } = {},
-  ) {
-    this.now = opts.now ?? Date.now;
-    this.sleep = opts.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
-  }
-
-  live(): boolean {
-    return this.isLive();
-  }
-
-  latestAt(): number | null {
-    return this.at;
-  }
-
-  latestGray(): Gray | null {
-    return this.gray;
-  }
-
-  /** Pulls a still; true when it is newer than the one kept. */
-  async pull(): Promise<boolean> {
-    const shot = await this.grab();
-    if (!shot) return false;
-    const at = this.now() - Math.max(0, shot.ageMs);
-    if (this.at !== null && at <= this.at) return false;
-    this.gray = this.decode(shot.jpeg);
-    this.at = at;
-    return true;
-  }
-
-  async nextGray(since: number, timeoutMs: number): Promise<Gray | null> {
-    const deadline = this.now() + timeoutMs;
-    for (;;) {
-      await this.pull();
-      if (this.at !== null && this.at > since) return this.gray;
-      if (this.now() >= deadline) return null;
-      await this.sleep(100);
-    }
-  }
-
-  /** Waits at least `leastMs`, then until two stills `quietMs` apart match, or `mostMs`. */
-  async settled(quietMs: number, leastMs: number, mostMs: number): Promise<void> {
-    const deadline = this.now() + mostMs;
-    await this.sleep(leastMs);
-    await this.pull();
-    while (this.now() < deadline) {
-      const before = this.gray;
-      await this.sleep(quietMs);
-      await this.pull();
-      if (before && this.gray && !changed(before, this.gray)) return;
-    }
-  }
-}
-
 export class BtAndroidLane implements PhoneLane {
   readonly id = 'bt-android' as const;
   readonly covers = COVERS;
   readonly verify = 'router' as const;
   private readonly iphones = new Map<string, IphoneState>();
-  private readonly screens = new Map<string, BroadcastScreen>();
+  private readonly screens = new Map<string, BroadcastStills>();
   private readonly now: () => number;
 
   constructor(private readonly deps: BtAndroidDeps) {
@@ -254,9 +134,9 @@ export class BtAndroidLane implements PhoneLane {
       androids.map(async (d) => {
         const id = d.serial.slice(APP_PREFIX.length);
         try {
-          return { id, status: (await rpcTransport(this.deps.rpc, () => id).status()) as SenderStatus, error: null };
+          return { id, status: (await appSenderTransport(this.deps.rpc, () => id).status()), error: null };
         } catch (error) {
-          return { id, status: null, error: error instanceof BtAndroidError ? error : new BtAndroidError('phone_failed', String(error)) };
+          return { id, status: null, error: error instanceof AppSenderError ? error : new AppSenderError('phone_failed', String(error)) };
         }
       }),
     );
@@ -284,56 +164,11 @@ export class BtAndroidLane implements PhoneLane {
       if (h.state === 'needs_you') return { ok: false, error: 'needs_you', message: h.needsYou.message, needs_you: h.needsYou } as ToolResult;
       if (h.state === 'unavailable') return fail('route_unavailable', h.reason);
     }
-    try {
-      switch (tool) {
-        case 'phone.tap': {
-          const p = await this.fraction(serial, a.x, a.y);
-          const blocked = await this.calibrated(serial);
-          if (blocked) return blocked;
-          await st.core.tap(p[0], p[1]);
-          return { ok: true };
-        }
-        case 'phone.swipe': {
-          let pts: Point[];
-          if (a.direction !== undefined) {
-            const d = ({ up: [[0.5, 0.7], [0.5, 0.3]], down: [[0.5, 0.3], [0.5, 0.7]], left: [[0.8, 0.5], [0.2, 0.5]], right: [[0.2, 0.5], [0.8, 0.5]] } as Record<string, Point[]>)[String(a.direction)];
-            if (!d) return fail('invalid_args', 'direction must be up, down, left or right.');
-            pts = d;
-          } else {
-            pts = [await this.fraction(serial, a.x1, a.y1), await this.fraction(serial, a.x2, a.y2)];
-          }
-          const blocked = await this.calibrated(serial);
-          if (blocked) return blocked;
-          await st.core.drag(pts);
-          return { ok: true };
-        }
-        case 'phone.type':
-          if (typeof a.text !== 'string' || !a.text.length || a.text.length > 500) return fail('invalid_args', 'text must be 1–500 characters.');
-          await st.core.type(a.text);
-          return { ok: true };
-        case 'phone.key':
-          if (typeof a.combo !== 'string') return fail('invalid_args', 'combo is required, e.g. "enter" or "cmd+space".');
-          await st.core.key(a.combo);
-          return { ok: true };
-        case 'phone.home':
-          await st.core.pressHome();
-          return { ok: true };
-        case 'phone.back': {
-          const blocked = await this.calibrated(serial);
-          if (blocked) return blocked;
-          await st.core.goBack();
-          return { ok: true };
-        }
-        case 'phone.open_app':
-          if (typeof a.app !== 'string' || !a.app.trim() || a.app.length > 60) return fail('invalid_args', 'app must be an app name, e.g. "Notes".');
-          await st.core.openApp(a.app.trim());
-          return { ok: true };
-        default:
-          return fail('not_supported', `${tool} does not run on the bt-android route.`);
-      }
-    } catch (error) {
-      return this.failure(error);
-    }
+    return senderAct('bt-android', tool, a, {
+      core: st.core,
+      fraction: (x, y) => this.fraction(serial, x, y),
+      calibrated: () => this.calibrated(serial),
+    });
   }
 
   /** One still of the iPhone for act-then-verify (and the size taps are measured against). */
@@ -353,8 +188,8 @@ export class BtAndroidLane implements PhoneLane {
     let st = this.iphones.get(serial);
     if (st) return st;
     const holder = { gen: 0, sender: null as string | null };
-    const transport = rpcTransport(this.deps.rpc, () => {
-      if (!holder.sender) throw new BtAndroidError('route_unavailable', 'No Android phone is connected to this iPhone by Bluetooth.');
+    const transport = appSenderTransport(this.deps.rpc, () => {
+      if (!holder.sender) throw new AppSenderError('route_unavailable', 'No Android phone is connected to this iPhone by Bluetooth.');
       return holder.sender;
     });
     const core = new HidCore({
@@ -371,10 +206,10 @@ export class BtAndroidLane implements PhoneLane {
     return st;
   }
 
-  private screen(serial: string): BroadcastScreen {
+  private screen(serial: string): BroadcastStills {
     let s = this.screens.get(serial);
     if (s) return s;
-    s = new BroadcastScreen(
+    s = new BroadcastStills(
       () => this.still(serial),
       () => this.deps.phones()?.devices().find((d) => d.serial === serial)?.screen === true,
       (jpeg) => this.deps.decode(jpeg, DECODE_WIDTH),
@@ -399,7 +234,7 @@ export class BtAndroidLane implements PhoneLane {
     const isCoord = (v: unknown): v is number => Number.isInteger(v) && (v as number) >= 0 && (v as number) <= 20_000;
     if (!isCoord(x) || !isCoord(y)) throw new HidError('bad_params', 'Coordinates must be non-negative integers from phone.screenshot.');
     const size = this.state(serial).size ?? ((await this.still(serial)) && this.state(serial).size);
-    if (!size) throw new BtAndroidError('no_screen', needsYou('BROADCAST_STOPPED').message);
+    if (!size) throw new AppSenderError('no_screen', needsYou('BROADCAST_STOPPED').message);
     if (x >= size.width || y >= size.height) throw new HidError('bad_params', `Coordinates are outside the ${size.width}×${size.height} screenshot.`);
     return [(x + 0.5) / size.width, (y + 0.5) / size.height];
   }
@@ -412,32 +247,7 @@ export class BtAndroidLane implements PhoneLane {
     st.pointerSeen = ok;
     if (ok) return null;
     st.missedAt = this.now();
-    const need = needsYou('ASSISTIVETOUCH_OFF');
-    return { ok: false, error: 'needs_you', message: need.message, needs_you: need } as ToolResult;
-  }
-
-  private failure(error: unknown): ToolResult {
-    if (error instanceof HidError) {
-      const map: Record<HidError['code'], ToolErrorCode> = { bad_params: 'invalid_args', not_calibrated: 'not_calibrated', unsupported: 'unsupported' };
-      return fail(map[error.code], error.message);
-    }
-    if (error instanceof BtAndroidError) {
-      if (error.code === 'bt_not_paired') {
-        const need = needsYou('BT_NOT_PAIRED');
-        return { ok: false, error: 'needs_you', message: need.message, needs_you: need } as ToolResult;
-      }
-      const map: Record<string, ToolErrorCode> = {
-        bad_params: 'invalid_args',
-        invalid_params: 'invalid_args',
-        app_not_open: 'device_offline',
-        device_offline: 'device_offline',
-        no_screen: 'no_screen',
-        route_unavailable: 'route_unavailable',
-        unknown_method: 'not_supported',
-      };
-      return fail(map[error.code] ?? 'phone_failed', error.message);
-    }
-    return fail('phone_failed', error instanceof Error ? error.message : String(error));
+    return pointerMissing();
   }
 }
 

@@ -3,9 +3,8 @@
  * (phone-hid-core.ts `PointerScreen`) needs it: stills pulled on demand from
  * the app-phone backend (`phone.screenshot` on an `app:` iPhone) and kept as
  * grayscale. Shared by the Bluetooth lanes that see through the broadcast:
- * `bt-mac` (phone-bt-mac.ts) and `bt-apple` (phone-bt-apple.ts). `bt-android`
- * (PR #2490) has its own copy, `BroadcastScreen`; once both are on main it
- * should import this one.
+ * `bt-mac` (phone-bt-mac.ts), `bt-apple` (phone-bt-apple.ts) and `bt-android`
+ * (phone-bt-android.ts).
  */
 
 import type { PointerScreen } from './phone-hid-core.js';

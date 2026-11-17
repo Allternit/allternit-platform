@@ -35,6 +35,7 @@ For actions that only tap and type, Allternit tries the tap routes in the order 
 1. On a Mac with macOS 15 or newer, set up Apple's iPhone Mirroring with the same Apple Account as your iPhone.
 2. Keep iPhone Mirroring open and its window showing.
 3. Keep your Mac unlocked.
+4. When your Mac asks, allow Allternit in **System Settings > Privacy & Security > Screen & System Audio Recording** (to see the window) and **Accessibility** (to click and type in it).
 
 ### Bluetooth from this Mac
 
@@ -46,7 +47,7 @@ Available in Allternit Desktop for Mac only.
 4. On your iPhone, turn on AssistiveTouch (**Settings > Accessibility > Touch**). The pointer must show.
 5. Keep the Allternit screen broadcast running so the assistant can see the result.
 
-To stop, choose **Disconnect** on the same row.
+To stop, choose **Disconnect** on the same row. While it is on, Allternit Desktop turns the keyboard on again each time it starts, so your iPhone can reconnect by itself.
 
 This route uses a Bluetooth service that Apple does not document. Apple may stop allowing it in a macOS update. If your Mac refuses it, the row says so and Allternit uses another route.
 
@@ -56,7 +57,7 @@ This route uses a Bluetooth service that Apple does not document. Apple may stop
 2. On your main iPhone, open **Settings > Bluetooth** and tap **Allternit Keyboard**.
 3. On your main iPhone, turn on AssistiveTouch and keep the screen broadcast running.
 
-The second device shows in your phone list as **Keyboard for** and your iPhone's name. It is a keyboard, not another phone. A banner with **Stop** shows on it while it runs.
+The second device shows in your phone list as **Keyboard for** and your iPhone's name. It is a keyboard, not another phone. A banner with **Stop** shows on it while it runs. Keep the Allternit app open on the second device: it keeps its screen on while it is a keyboard, and the keyboard stops if you leave the app. If more than one other iPhone is connected, the list says **Keyboard for your iPhone**, because a Bluetooth keyboard is not told which iPhone it is paired with.
 
 ### Bluetooth from an Android phone
 
@@ -79,6 +80,7 @@ See [USB Agent](/guides/usb-agent) for the board, the cable and the calibration.
 - **US keyboard layout first.** Typing over Bluetooth assumes a US layout. Other layouts can type the wrong characters.
 - **Your iPhone must be unlocked** for most routes. Allternit does not enter your passcode.
 - **Every send is approved by you** on your computer before it goes out. This does not change on any route.
+- **Reading the screen.** The Allternit app reads the text on your iPhone's screen itself. When the broadcast is short on memory, Allternit Desktop on a Mac reads the latest frame instead. On Windows and Linux the assistant then works from the screenshot.
 
 ## "Needs you" messages
 
@@ -89,13 +91,15 @@ When no route is ready, or the route you picked needs something from you, Allter
 | Unlock your Mac so I can use your iPhone through it. | Unlock your Mac. |
 | Open iPhone Mirroring on your Mac and keep its window showing. | Open the iPhone Mirroring app and leave its window visible. |
 | Your iPhone is in use right now. Lock it, or I can use another way if you let me. | Lock your iPhone, or allow another route. |
-| Start the broadcast in the Allternit app on your iPhone. | Open the app and start the screen broadcast. |
+| Start the screen broadcast in the Allternit app on your iPhone. | Open the app and start the screen broadcast. |
 | Pair your iPhone with this Bluetooth keyboard and mouse in Settings > Bluetooth. | Pair "Allternit Keyboard" in your iPhone's Bluetooth settings. |
 | Turn on AssistiveTouch on your iPhone (Settings > Accessibility > Touch). | Turn it on. The pointer has to show on the screen. |
 | Turn on Full Keyboard Access on your iPhone (Settings > Accessibility > Keyboards). | Turn it on. |
 | Open the Allternit app on your iPhone. | Open the app so it is in front. |
 | Add the Allternit Actions shortcut in Allternit Settings > Device Access > iPhone actions. | See [iPhone shortcuts for your assistant](/guides/iphone-bridge-shortcuts). |
 | The old Allternit helper is being retired. Switch to the app and set up a new route. | Set up one of the routes above. |
+| Allow Allternit in System Settings > Privacy & Security > Screen & System Audio Recording (or Accessibility) on your Mac. | Open that pane on your Mac and turn on Allternit. iPhone Mirroring needs both. |
+| Turn on Shortcuts (or Home) in the Allternit app on your iPhone (Settings > Device Access). | Turn on that switch in the app. Allternit does not try another route for it. |
 
 Allternit finds out about AssistiveTouch and Full Keyboard Access by watching the screen. It can only tell when the pointer or keyboard does not respond, so a message may show a moment after you turn the setting off.
 

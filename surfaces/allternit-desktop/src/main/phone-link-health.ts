@@ -354,6 +354,8 @@ export const NEEDS_YOU_CODES = [
   'APP_NOT_FOREGROUND',
   'SHORTCUT_NOT_INSTALLED',
   'HELPER_RETIRING',
+  'MAC_PERMISSION_MISSING',
+  'DEVICE_ACCESS_OFF',
 ] as const;
 
 export type NeedsYouCode = (typeof NEEDS_YOU_CODES)[number];
@@ -373,6 +375,8 @@ export const NEEDS_YOU_SENTENCES: Readonly<Record<NeedsYouCode, string>> = {
   APP_NOT_FOREGROUND: 'Open the Allternit app on your iPhone.',
   SHORTCUT_NOT_INSTALLED: 'Add the "<name>" shortcut in Allternit Settings > Device Access > iPhone actions.',
   HELPER_RETIRING: 'The old Allternit helper is being retired. Switch to the app and set up a new route before <date>.',
+  MAC_PERMISSION_MISSING: 'Allow Allternit in System Settings > Privacy & Security > <name> on your Mac.',
+  DEVICE_ACCESS_OFF: 'Turn on <name> in the Allternit app on your iPhone (Settings > Device Access).',
 };
 
 export interface NeedsYou {

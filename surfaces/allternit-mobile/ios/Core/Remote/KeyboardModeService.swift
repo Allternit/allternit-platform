@@ -34,8 +34,13 @@ final class KeyboardModeService: ObservableObject, KeyboardLink {
     static let shared = KeyboardModeService()
     static let localName = "Allternit Keyboard"
 
-    @Published private(set) var mode: KeyboardMode = .off
-    @Published private(set) var status = HIDPeripheralStatus()
+    @Published private(set) var mode: KeyboardMode = .off {
+        // The node lists this device as a keyboard (`keyboard_for`) from the app's state frame.
+        didSet { if Self.running(oldValue) != isRunning { AppPhoneService.shared.keyboardModeChanged() } }
+    }
+    @Published private(set) var status = HIDPeripheralStatus() {
+        didSet { if oldValue.connected != status.connected { AppPhoneService.shared.keyboardModeChanged() } }
+    }
 
     /// Created on first Start, so the Bluetooth permission prompt appears only then.
     private var peripheral: HIDPeripheral?
@@ -50,12 +55,17 @@ final class KeyboardModeService: ObservableObject, KeyboardLink {
     private init() {}
 
     /// Started (or starting) by the person.
-    var isRunning: Bool {
+    var isRunning: Bool { Self.running(mode) }
+
+    private static func running(_ mode: KeyboardMode) -> Bool {
         switch mode {
         case .on, .starting: return true
         case .off, .failed: return false
         }
     }
+
+    /// For the app's `state` frame: keyboard mode on, and an iPhone connected to it.
+    var stateSnapshot: [String: Bool] { ["on": isRunning, "connected": isRunning && status.connected] }
 
     var linkState: KeyboardLinkState { .from(mode: mode, status: status) }
 

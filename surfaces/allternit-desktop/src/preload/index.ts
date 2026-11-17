@@ -969,6 +969,8 @@ const phonesAPI = {
   channelSend: (app: string, conversation: unknown, text: string): Promise<unknown> => ipcRenderer.invoke('phone:channel-send', app, conversation, text),
   channelClip: (app: string, conversation: unknown): Promise<unknown> => ipcRenderer.invoke('phone:channel-clip', app, conversation),
   channelCachedClip: (app: string, conversationId: string): Promise<unknown> => ipcRenderer.invoke('phone:channel-cached-clip', app, conversationId),
+  // Phone Use (CONTRACT-phone-use-2026-11-16 §3.1): { routes: [{ route, healthy, available, needs_you?, message?, needsYou?, covers }], chosen } or null.
+  phoneRoutes: (serial: string): Promise<unknown> => ipcRenderer.invoke('phone:routes', serial),
   // "Control my iPhone by Bluetooth" (macOS): this Mac as a Bluetooth keyboard and mouse ("Allternit Keyboard").
   // Each returns { available, enabled, status: 'unavailable'|'off'|'blocked'|'refused'|'waiting'|'connected', connected, deviceName, message }.
   btMacStatus: (): Promise<unknown> => ipcRenderer.invoke('phone:bt-mac-status'),
