@@ -43,6 +43,8 @@ struct MessageRow: View {
 
     /// In a bot's chat your bubbles wear the bot's colour (30% over the card).
     @Environment(\.botTint) private var botTint
+    /// The chat's bot, which names the screen in a screen context reply.
+    @Environment(\.chatBot) private var chatBot
 
     var body: some View {
         // Voice-mode summary card (Phase 7b): a centered card row with no
@@ -90,6 +92,19 @@ struct MessageRow: View {
                     case .draft(let draft): MessageDraftCard(draft: draft)
                     case .held(let inboxId): MessageHeldLine(inboxId: inboxId)
                     case nil: EmptyView()
+                    }
+                }
+
+                // capture_screen_context: the agent looked at the screen.
+                if message.role == "assistant", let looked = lookedAtScreen {
+                    ScreenContextChip(label: looked)
+                }
+
+                // browser_tasks: one card per call (status, result, final page).
+                ForEach(message.toolCalls) { call in
+                    if call.toolName == "browser_tasks", let output = call.output {
+                        let tasks = BrowserTaskResult.parse(output)
+                        if !tasks.isEmpty { BrowserTasksCard(tasks: tasks) }
                     }
                 }
 
@@ -193,6 +208,11 @@ struct MessageRow: View {
                    alignment: message.role == "user" ? .trailing : .leading)
         }
         .padding(.horizontal, 16)
+        // What's on screen, for capture_screen_context (ScreenContextResponder).
+        .onAppear { reportOnScreen() }
+        .onChange(of: message.content) { _, _ in reportOnScreen() }
+        .onChange(of: sessionId) { _, _ in reportOnScreen() }
+        .onDisappear { ScreenContextResponder.shared.hide(messageId: message.id) }
         .sheet(isPresented: $showsRunTree) {
             AgentRunTreeSheet(
                 steps: message.toolCalls,
@@ -209,6 +229,36 @@ struct MessageRow: View {
             guard message.role == "assistant", isLastAssistant, let sessionId else { return }
             await asks.refresh(sessionId: sessionId)
         }
+    }
+
+    // MARK: - Screen context
+
+    private func reportOnScreen() {
+        let title: String
+        if let chatBot, !chatBot.isPrimaryTemplateBot {
+            title = "Chat with \(chatBot.name)"
+        } else {
+            title = "Chat"
+        }
+        ScreenContextResponder.shared.show(
+            messageId: message.id,
+            sessionId: sessionId,
+            role: message.role,
+            text: message.role == "user" ? ToolOptionsStore.shared.strippedText(message.content) : message.content,
+            createdAt: message.createdAt,
+            title: title
+        )
+    }
+
+    /// "Looked at your screen" when a capture_screen_context call on this
+    /// reply got a capture (a capture's output is spotlighted; a miss is the
+    /// runtime's plain "didn't answer" text).
+    private var lookedAtScreen: String? {
+        let looked = message.toolCalls.contains { call in
+            call.toolName == "capture_screen_context" && call.state == .done
+                && (call.output?.contains("<<untrusted") ?? false)
+        }
+        return looked ? "Looked at your screen" : nil
     }
 
     // MARK: - Agent asks
@@ -438,6 +488,181 @@ struct MessageRow: View {
             )
         }
         .transition(.slide)
+    }
+}
+
+// MARK: - Screen context chip (capture_screen_context)
+
+/// A small chip on a reply whose agent looked at the screen.
+struct ScreenContextChip: View {
+    let label: String
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Image(systemName: "eye")
+                .accessibilityHidden(true)
+            Text(label)
+        }
+        .font(.system(size: 11, weight: .medium))
+        .foregroundColor(Color("TextSecondary"))
+        .padding(.horizontal, 8)
+        .padding(.vertical, 3)
+        .background(Capsule().fill(Color("FillNeutral")))
+        .accessibilityElement(children: .combine)
+    }
+}
+
+// MARK: - Hidden browser tasks (browser_tasks)
+
+/// One task's outcome from a browser_tasks call:
+/// `{id, status: done|needs_login|needs_user|failed, result, final_url}`.
+struct BrowserTaskResult: Identifiable, Equatable, Sendable {
+    let id: String
+    let status: String
+    let result: String
+    let finalURL: URL?
+
+    /// Reads the tool's output: an array of results, `{results|tasks: […]}`,
+    /// or one result; JSON found inside surrounding text (a spotlight
+    /// wrapper) is read too. Empty when the output isn't task results.
+    static func parse(_ output: String) -> [BrowserTaskResult] {
+        guard let json = jsonValue(output) else { return [] }
+        let items: [Any]
+        if let list = json as? [Any] {
+            items = list
+        } else if let object = json as? [String: Any] {
+            if let list = (object["results"] ?? object["tasks"]) as? [Any] {
+                items = list
+            } else {
+                items = [object]
+            }
+        } else {
+            return []
+        }
+        return items.enumerated().compactMap { index, item in
+            guard let object = item as? [String: Any], let status = object["status"] as? String else { return nil }
+            let id = (object["id"] as? String) ?? "task-\(index + 1)"
+            let result: String
+            if let text = object["result"] as? String {
+                result = text
+            } else if let value = object["result"], !(value is NSNull),
+                      let data = try? JSONSerialization.data(withJSONObject: value, options: [.fragmentsAllowed]),
+                      let text = String(data: data, encoding: .utf8) {
+                result = text
+            } else {
+                result = ""
+            }
+            let raw = (object["final_url"] ?? object["finalUrl"]) as? String
+            let url = raw.flatMap { URL(string: $0) }.flatMap { ["http", "https"].contains($0.scheme?.lowercased() ?? "") ? $0 : nil }
+            return BrowserTaskResult(id: id, status: status, result: result, finalURL: url)
+        }
+    }
+
+    private static func jsonValue(_ text: String) -> Any? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let value = try? JSONSerialization.jsonObject(with: Data(trimmed.utf8)) { return value }
+        guard let start = trimmed.firstIndex(where: { $0 == "[" || $0 == "{" }),
+              let end = trimmed.lastIndex(where: { $0 == "]" || $0 == "}" }),
+              start < end else { return nil }
+        return try? JSONSerialization.jsonObject(with: Data(trimmed[start...end].utf8))
+    }
+
+    var statusLabel: String {
+        switch status {
+        case "done": return "Done"
+        case "needs_login": return "Needs you to sign in"
+        case "needs_user": return "Needs you"
+        case "failed": return "Failed"
+        default: return status.replacingOccurrences(of: "_", with: " ").capitalized
+        }
+    }
+
+    var statusSymbol: String {
+        switch status {
+        case "done": return "checkmark.circle.fill"
+        case "needs_login": return "person.badge.key"
+        case "needs_user": return "hand.raised"
+        case "failed": return "exclamationmark.triangle.fill"
+        default: return "circle"
+        }
+    }
+}
+
+/// The card for a browser_tasks call: one row per task with its status,
+/// a short result, and the page it ended on (opens in Safari, where a
+/// sign-in or a step the agent left for you can be finished).
+struct BrowserTasksCard: View {
+    let tasks: [BrowserTaskResult]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 6) {
+                Image(systemName: "globe")
+                    .foregroundColor(Color("AccentPrimary"))
+                    .accessibilityHidden(true)
+                Text(tasks.count == 1 ? "Browser task" : "Browser tasks · \(tasks.count)")
+                    .foregroundColor(Color("TextSecondary"))
+            }
+            .font(.caption.weight(.semibold))
+            .accessibilityAddTraits(.isHeader)
+
+            ForEach(tasks) { task in
+                row(task)
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color("BgPrimary"))
+        .cornerRadius(12)
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(Color("BorderSubtle"), lineWidth: 1)
+        )
+        .accessibilityElement(children: .contain)
+    }
+
+    private func row(_ task: BrowserTaskResult) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: task.statusSymbol)
+                    .foregroundColor(task.status == "failed" ? .orange : Color("AccentPrimary"))
+                    .accessibilityHidden(true)
+                Text(task.statusLabel)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundColor(Color("TextPrimary"))
+                if let host = task.finalURL?.host() {
+                    Text("· \(host)")
+                        .font(.caption)
+                        .foregroundColor(Color("TextSecondary"))
+                        .lineLimit(1)
+                }
+            }
+            .accessibilityElement(children: .combine)
+
+            if !task.result.isEmpty {
+                Text(task.result)
+                    .font(.footnote)
+                    .foregroundColor(Color("TextSecondary"))
+                    .lineLimit(4)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
+            }
+
+            if let url = task.finalURL {
+                Button {
+                    // Safari itself, not an in-app view: the user's own sign-ins live there.
+                    UIApplication.shared.open(url)
+                } label: {
+                    Label("Open in Safari", systemImage: "safari")
+                        .font(.caption.weight(.semibold))
+                }
+                .buttonStyle(.borderless)
+                .accessibilityHint("Opens \(url.host() ?? "the page") in Safari")
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color("FillNeutral")))
     }
 }
 
