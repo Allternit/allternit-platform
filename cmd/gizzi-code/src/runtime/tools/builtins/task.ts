@@ -339,8 +339,8 @@ export const TaskTool = Tool.define<typeof parameters, TaskMetadata>("task", asy
           },
           async (error) => {
             const message = error instanceof Error ? error.message : String(error)
-            await BackgroundTask.fail(backgroundTaskID, error)
-            await notify("failed", message)
+            const settled = await BackgroundTask.fail(backgroundTaskID, error)
+            if (settled.status === "failed") await notify("failed", message)
           },
         ).catch((error) => {
           log.error("background task settlement failed", { taskID: backgroundTaskID, error })
