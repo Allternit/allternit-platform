@@ -99,6 +99,16 @@ enum LaunchArgument {
     /// connect sheet (Allternit Desktop and terminal pair paths).
     static let calmCodeConnect = "calm-code-connect"
 
+    /// `-calm-projects-pill` (DEBUG only): Projects with the search field open
+    /// (phone calm step 27). Combine with `-open-projects`.
+    static let calmProjectsPill = "calm-projects-pill"
+
+    /// `-calm-projects-explainer` (DEBUG only): Projects with the one-time explainer shown.
+    static let calmProjectsExplainer = "calm-projects-explainer"
+
+    /// `-calm-new-project` (DEBUG only): Projects with the New project sheet open.
+    static let calmNewProject = "calm-new-project"
+
     /// `-calm-gallery` (DEBUG only): show `CalmGalleryView`.
     static let calmGallery = "calm-gallery"
 

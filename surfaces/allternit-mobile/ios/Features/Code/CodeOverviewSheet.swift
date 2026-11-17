@@ -370,6 +370,9 @@ struct CodeSessionsView: View {
     let onArchive: (AgentSession) -> Void
     let onStart: (String) -> Void
     let onRefresh: () async -> Void
+    /// Opens the card overview (Grid / Deck cards), still reachable from the
+    /// new list (step 27 carry-over from step 26).
+    var onOpenCards: (() -> Void)? = nil
 
     @ObservedObject private var relay = RuntimeRelayStore.shared
     @ObservedObject private var shellSessions = ShellSessionsStore.shared
@@ -532,6 +535,21 @@ struct CodeSessionsView: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Scheduled")
+                if let onOpenCards {
+                    Button {
+                        Haptics.light()
+                        onOpenCards()
+                    } label: {
+                        Image(systemName: "square.grid.2x2")
+                            .font(.system(size: 15))
+                            .foregroundColor(Color("TextPrimary"))
+                            .frame(width: 44, height: 40)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Cards")
+                    .accessibilityHint("Opens the card overview with Grid and Deck layouts")
+                }
                 Button(action: toggleMenu) {
                     Image(systemName: "line.3.horizontal.decrease")
                         .font(.system(size: 15, weight: filter == .all ? .regular : .semibold))
