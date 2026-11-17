@@ -616,6 +616,9 @@
 		B7D315D25CFA7F8A704C5C52 /* Badges.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A0861BF56C474393676779A3 /* Badges.xcassets */; };
 		B803A889B3E3EEE3788714B2 /* ControlIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2EDB46F04BBA1DCA3AFA758 /* ControlIntents.swift */; };
 		B8278779EFC1ECFD24FF4771 /* VendorGroupTurn.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA96AABEE5F2FA1A61A5217C /* VendorGroupTurn.swift */; };
+		5FF293490FD5FDE948FD2882 /* ConnectSuggestCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B08564C124554F5AED561608 /* ConnectSuggestCardView.swift */; };
+		001AE433D5E34CF7D7C81F1D /* SettingsChangeCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C7EDF1DB5103853A62CD6833 /* SettingsChangeCardView.swift */; };
+		66A9C6379998B1159BF5F139 /* AgentSettingsApplier.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7F396EAE7C81C1E80D8179E /* AgentSettingsApplier.swift */; };
 		B842E0C5E32B2123AFDDE5F8 /* UploadFileCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6EF648AD74000037845D08B2 /* UploadFileCard.swift */; };
 		B8675C090F860A11FFE2F7D7 /* TwinClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F376799D58D9D63E5B96B1F /* TwinClient.swift */; };
 		B87CA5FA8D5058713E8EAF49 /* PlanUsageViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1BBC678E465D3B17E1016460 /* PlanUsageViews.swift */; };
@@ -1316,6 +1319,9 @@
 		6EAEC6D9AE3CFE074D9C99F6 /* CapabilitiesClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CapabilitiesClient.swift; sourceTree = "<group>"; };
 		6EC14184651C88DA2CFE1D7D /* AllternitFileProvider.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = AllternitFileProvider.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		6ED0467CDCC375B49C1F17BA /* StudioJobsSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioJobsSection.swift; sourceTree = "<group>"; };
+		B08564C124554F5AED561608 /* ConnectSuggestCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectSuggestCardView.swift; sourceTree = "<group>"; };
+		C7EDF1DB5103853A62CD6833 /* SettingsChangeCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsChangeCardView.swift; sourceTree = "<group>"; };
+		D7F396EAE7C81C1E80D8179E /* AgentSettingsApplier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentSettingsApplier.swift; sourceTree = "<group>"; };
 		6EF648AD74000037845D08B2 /* UploadFileCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UploadFileCard.swift; sourceTree = "<group>"; };
 		6F371585A2078EFEDAFD8714 /* ReviewPromptPolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewPromptPolicyTests.swift; sourceTree = "<group>"; };
 		6FF93BF3011FB990CFCC5926 /* PreferencesClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreferencesClient.swift; sourceTree = "<group>"; };
@@ -3234,9 +3240,11 @@
 				F8DD653029C2B3BF8282DF08 /* FormSurfacesView.swift */,
 				C391FEC5AE3DBB58A5866E03 /* MessageActionBar.swift */,
 				9AC5DA69A46A6B20CD3FB8BF /* MessageRow.swift */,
+				B08564C124554F5AED561608 /* ConnectSuggestCardView.swift */,
 				633FE6BD8A7B1B4D43EF53AF /* ModelPickerSheet.swift */,
 				BE3CC250492B1313864FA19D /* PermissionPrimingSheet.swift */,
 				3FF19BAB118D5ED3FB1033F8 /* RunCodeFilesView.swift */,
+				C7EDF1DB5103853A62CD6833 /* SettingsChangeCardView.swift */,
 				789BAD46979B02B1781A9877 /* SketchSheet.swift */,
 				51ED218D5981C21CBFF76A8A /* ThinkingSliderView.swift */,
 				928652EEB4E5F6F29C2706F6 /* ThreadShareSheet.swift */,
@@ -3357,6 +3365,7 @@
 			children = (
 				5B0065E7EBFC9CF076C7C77C /* AttachmentStore.swift */,
 				9A74A8A29D50F0BE64114352 /* DictationController.swift */,
+				D7F396EAE7C81C1E80D8179E /* AgentSettingsApplier.swift */,
 				AC759A283B3A7CA4AE285758 /* NotificationService.swift */,
 			);
 			path = Services;
@@ -4671,6 +4680,9 @@
 				2D730B78F2D9F3C134683690 /* ToolOptionsStore.swift in Sources */,
 				B8675C090F860A11FFE2F7D7 /* TwinClient.swift in Sources */,
 				9198E0324C3EA5D3E36CB1E3 /* TwinSettingsView.swift in Sources */,
+				5FF293490FD5FDE948FD2882 /* ConnectSuggestCardView.swift in Sources */,
+				001AE433D5E34CF7D7C81F1D /* SettingsChangeCardView.swift in Sources */,
+				66A9C6379998B1159BF5F139 /* AgentSettingsApplier.swift in Sources */,
 				B842E0C5E32B2123AFDDE5F8 /* UploadFileCard.swift in Sources */,
 				B7AA169C1521A363602A7F1D /* UsageStore.swift in Sources */,
 				C762FDB225391FC20AA2B55C /* UserProfile.swift in Sources */,
