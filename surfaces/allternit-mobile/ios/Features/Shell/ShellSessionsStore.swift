@@ -62,12 +62,12 @@ final class ShellSessionsStore: ObservableObject {
         }
     }
 
-    /// True when the failure only means "this account has no reachable
-    /// computer": cloud-api answers 428 (Precondition Required) to a relayed
-    /// call with no computer to relay to. Plan chats still work then.
+    /// True when the failure only means "this account has no computer":
+    /// cloud-api answers 428 (Precondition Required) to a relayed call with
+    /// no computer to relay to, and the compute gate answers 409
+    /// `compute_required`. Plan chats still work then (contract C5).
     static func isNoComputer(_ error: Error) -> Bool {
-        if case APIError.httpError(let status, _) = error { return status == 428 }
-        return false
+        isComputeGateRefusal(error)
     }
 
     /// Computer sessions and cloud plan chats load independently: a computer
@@ -113,8 +113,17 @@ final class ShellSessionsStore: ObservableObject {
         else if computerBroken && merged.isEmpty { showError = true }
         else { showError = false }
 
+        // The no-computer chip reads the refusal; a computer that answered
+        // clears a stale one.
+        if let computerError, Self.isNoComputer(computerError) {
+            ComputeReadState.shared.noteRefused()
+        } else if computerError == nil {
+            ComputeReadState.shared.clear()
+        }
+
         if showError {
-            loadError = ((computerError.flatMap { Self.isNoComputer($0) ? nil : $0 }) ?? planError ?? computerError)?.localizedDescription
+            let shown = (computerError.flatMap { Self.isNoComputer($0) ? nil : $0 }) ?? planError ?? computerError
+            loadError = plainErrorText(shown)
         } else {
             sessions = merged.sorted { Self.timestamp(of: $0) > Self.timestamp(of: $1) }
             // First sighting is the baseline: only activity after it counts
