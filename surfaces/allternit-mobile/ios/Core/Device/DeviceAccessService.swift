@@ -228,8 +228,16 @@ enum DeviceAccessService {
                 "id": app.id,
                 "name": app.name,
                 "category": app.category,
+                // Counts stay for Desktops from before `action_list`.
                 "actions": app.intents.count,
                 "web_actions": app.web.count,
+                // Every action this app's shortcut can run (contract §7.2), so phone.actions.list
+                // is full and phone.actions.run can check the id. Widget-only intents are not in the catalog.
+                "action_list": app.intents.map { i in
+                    ["id": i.id, "title": i.title, "kind": i.kind, "params": i.params, "opens_app": i.opensApp, "source": "app_intent"] as [String: Any]
+                } + app.web.map { w in
+                    ["id": w.action, "title": w.action, "kind": w.kind, "params": w.params, "confidence": w.confidence, "source": "web_research"] as [String: Any]
+                },
                 "shortcut": app.shortcut,
                 "shortcut_known": known.contains(app.shortcut),
                 "shortcut_link": app.link ?? NSNull(),
@@ -250,6 +258,9 @@ enum DeviceAccessService {
                     "known": known.contains(catalog.actions.name),
                     "link": catalog.actions.link ?? NSNull(),
                     "actions": catalog.actions.actions.map(\.id),
+                    "action_list": catalog.actions.actions.map { a in
+                        ["id": a.id, "title": a.title, "kind": a.kind, "params": a.params] as [String: Any]
+                    },
                 ] as [String: Any],
                 "apps": apps,
             ] as [String: Any],

@@ -1262,6 +1262,7 @@ async fn list_phones(
         }
         phones.push(phone);
     }
+    crate::phone_app::mark_phone_use(&mut phones);
     Json(json!({ "phones": phones })).into_response()
 }
 

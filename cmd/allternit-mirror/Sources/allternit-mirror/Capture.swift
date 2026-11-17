@@ -65,6 +65,15 @@ enum Capture {
         return (w, h, Data(bytes: base, count: w * h))
     }
 
+    /// A JPEG or PNG Desktop sent (read_image).
+    static func decode(_ data: Data) throws -> CGImage {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
+            throw MirrorError("bad_request", "The image could not be read.")
+        }
+        return image
+    }
+
     static func text(_ image: CGImage, fast: Bool) throws -> [TextLine] {
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = fast ? .fast : .accurate

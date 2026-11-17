@@ -59,13 +59,18 @@ public struct WindowGeometry: Equatable, Sendable {
 
     /// A Vision bounding box (normalized, bottom-left origin) → [x1, y1, x2, y2] in capture pixels.
     public func pixelBox(normalized r: CGRect) -> [Int] {
-        let w = Double(pixelWidth), h = Double(pixelHeight)
-        let x1 = Double(r.minX) * w, x2 = Double(r.maxX) * w
-        let y1 = (1 - Double(r.maxY)) * h, y2 = (1 - Double(r.minY)) * h
-        func clampX(_ v: Double) -> Int { Int(min(max(v, 0), w).rounded()) }
-        func clampY(_ v: Double) -> Int { Int(min(max(v, 0), h).rounded()) }
-        return [clampX(x1), clampY(y1), clampX(x2), clampY(y2)]
+        MirrorCore.pixelBox(normalized: r, width: pixelWidth, height: pixelHeight)
     }
+}
+
+/// A Vision box (normalized, bottom-left origin) as [x1,y1,x2,y2] pixels of a `width`×`height` image, top-left origin.
+public func pixelBox(normalized r: CGRect, width: Int, height: Int) -> [Int] {
+    let w = Double(width), h = Double(height)
+    let x1 = Double(r.minX) * w, x2 = Double(r.maxX) * w
+    let y1 = (1 - Double(r.maxY)) * h, y2 = (1 - Double(r.minY)) * h
+    func clampX(_ v: Double) -> Int { Int(min(max(v, 0), w).rounded()) }
+    func clampY(_ v: Double) -> Int { Int(min(max(v, 0), h).rounded()) }
+    return [clampX(x1), clampY(y1), clampX(x2), clampY(y2)]
 }
 
 /// Another window that sits above the Mirroring window at a point (from CGWindowList, front to back).
