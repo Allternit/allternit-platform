@@ -21,6 +21,32 @@ Every key has a class, defined in one file (`contracts/settings/definitions.json
 
 Each change comes back as `applied`, `apply_on_device`, `needs_confirmation`, `locked` or `invalid` (unknown key or a value it doesn't take).
 
+## Scopes
+
+| Scope | Who applies a safe change |
+|---|---|
+| `account` | allternit-api, through the same preference endpoints Settings uses. The result carries `previous` (the value before), which the card's Undo writes back. |
+| `device` | The Allternit app on the device that sent the turn, once per tool call id. Other devices show Apply here. |
+| `runtime` | Gizzi Code's own config (`gizzi.*` keys), applied by Gizzi Code. Other apps show "Applies in Gizzi Code". |
+
+## Result
+
+A write's results ride in the tool result's metadata, one per change, in the order asked:
+
+```json
+{
+  "action": "write",
+  "toolCallId": "call_123",
+  "changes": [
+    { "key": "appearance.theme", "label": "Theme", "scope": "device", "outcome": "apply_on_device", "value": "dark" },
+    { "key": "chat.answer_style", "label": "Answer style", "scope": "account", "outcome": "applied", "value": "concise", "previous": "balanced" },
+    { "key": "account.password", "label": "Password", "scope": "account", "outcome": "locked", "settings_path": "settings/signin" }
+  ]
+}
+```
+
+`settings_path` is the Settings screen the card's Open Settings button opens. `code: "automation_run"` marks a confirm key refused because a scheduled run asked for it.
+
 Writes are refused in plan mode. Scheduled runs and other automation-started runs can't touch `confirm` keys; they are refused.
 
 In Gizzi Code the tool replaces the old config tool. A terminal theme change applies after Gizzi Code restarts.

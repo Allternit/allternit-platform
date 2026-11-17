@@ -108,6 +108,9 @@ enum AgentChatEvent: Decodable, Sendable {
         var userMessage: AgentUserMessage? = nil
         /// automation: the scheduled-task card (the tool part's `metadata`).
         var automation: AgentAutomationResult? = nil
+        /// The tool part's `metadata` object as raw JSON text (connector_suggest
+        /// and settings cards ride there; v1_routes.rs METADATA_CARD_TOOLS).
+        var metadata: String? = nil
     }
 
     struct ToolCall: Sendable {
@@ -291,15 +294,18 @@ enum AgentChatEvent: Decodable, Sendable {
             let automation = toolName == AgentAutomationResult.toolName
                 ? ((try? container.decodeIfPresent(AgentAutomationResult.self, forKey: .metadata)) ?? nil)
                 : nil
-            // connector_suggest / settings: the card data (the part's `metadata`,
-            // v1_routes.rs METADATA_CARD_TOOLS) rides in `output` as JSON, the
-            // field the record keeps; the cards parse it (AgentToolCards).
-            let cardOutput = AgentToolCards.isCardTool(toolName) ? Self.cardOutput(container) : nil
+            // The part's `metadata` as raw JSON (connector_suggest and settings
+            // cards read it; v1_routes.rs METADATA_CARD_TOOLS). The card tools
+            // also keep their result text as a fallback.
+            let metadata = AgentToolCards.jsonText((try? container.decodeIfPresent(AnyCodable.self, forKey: .metadata)) ?? nil)
+            let cardOutput = AgentToolCards.isCardTool(toolName)
+                ? ((try? container.decodeIfPresent(String.self, forKey: .output)) ?? nil)
+                : nil
             self = .toolResult(ToolResult(
                 toolCallId: try container.decodeIfPresent(String.self, forKey: .toolCallId) ?? "",
                 toolName: toolName,
-                detail: (userMessage != nil || automation != nil || cardOutput != nil)
-                    ? ToolDetail(output: cardOutput, userMessage: userMessage, automation: automation)
+                detail: (userMessage != nil || automation != nil || cardOutput != nil || metadata != nil)
+                    ? ToolDetail(output: cardOutput, userMessage: userMessage, automation: automation, metadata: metadata)
                     : nil,
                 runCode: (try? RunCodeKeys(from: decoder))?.result
             ))
@@ -351,20 +357,6 @@ enum AgentChatEvent: Decodable, Sendable {
             // Unknown frame — skip-and-continue (web parser tolerance).
             self = .ignored
         }
-    }
-
-    // MARK: - Card tool payloads (connector_suggest, settings)
-
-    /// The frame's `metadata` as a JSON string, else its `output` text.
-    private static func cardOutput(_ container: KeyedDecodingContainer<CodingKeys>) -> String? {
-        if let meta = (try? container.decodeIfPresent(AnyCodable.self, forKey: .metadata)) ?? nil,
-           meta.value is [String: Any],
-           JSONSerialization.isValidJSONObject(meta.value),
-           let data = try? JSONSerialization.data(withJSONObject: meta.value),
-           let text = String(data: data, encoding: .utf8) {
-            return text
-        }
-        return (try? container.decodeIfPresent(String.self, forKey: .output)) ?? nil
     }
 
     // MARK: - Chunk tool payloads (web `tryParseChunkPayload`)
@@ -445,11 +437,11 @@ enum AgentChatEvent: Decodable, Sendable {
 
 // MARK: - connector_suggest and settings cards (Primitives Wave D, D2)
 
-/// Reads the card data of the `connector_suggest` and `settings` tools from
-/// a tool call's `output`. That text is the tool part's `metadata` JSON on a
-/// live agent-chat frame (`cardOutput` above), or the tool's own result JSON
-/// on the session-worker stream and a reloaded chat (gizzi
-/// runtime/tools/builtins/connector.ts and settings.ts). Both shapes parse.
+/// Reads the card data of the `connector_suggest` and `settings` tools. The
+/// card rides in the tool part's `metadata` (ToolCallRecord.metadata: live
+/// agent-chat frames, session-worker parts and reloaded chats); the tool's
+/// own result text (`output`, gizzi runtime/tools/builtins/connector.ts and
+/// settings.ts) is the fallback for runtimes that don't send metadata.
 enum AgentToolCards {
     static func isCardTool(_ name: String) -> Bool {
         let n = ToolDescriber.normalized(name)
@@ -465,6 +457,31 @@ enum AgentToolCards {
         guard let s = value as? String else { return nil }
         let t = s.trimmingCharacters(in: .whitespacesAndNewlines)
         return t.isEmpty ? nil : t
+    }
+
+    /// A decoded `metadata` object as raw JSON text; nil when it isn't an object.
+    static func jsonText(_ value: AnyCodable?) -> String? {
+        guard let object = value?.value as? [String: Any] else { return nil }
+        let clean = plain(object)
+        guard JSONSerialization.isValidJSONObject(clean),
+              let data = try? JSONSerialization.data(withJSONObject: clean) else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    /// AnyCodable keeps JSON null as a sentinel; JSONSerialization needs NSNull.
+    private static func plain(_ value: Any) -> Any {
+        switch value {
+        case let d as [String: Any]: return d.mapValues(plain)
+        case let a as [Any]: return a.map(plain)
+        case is String, is Bool, is Int, is Double, is NSNumber: return value
+        default: return NSNull()
+        }
+    }
+
+    /// The card's JSON: the metadata when it has the card, else the result text.
+    static func source(metadata: String?, output: String?, has: ([String: Any]) -> Bool) -> [String: Any]? {
+        if let meta = json(metadata), has(meta) { return meta }
+        return json(output)
     }
 }
 
@@ -487,11 +504,16 @@ struct AgentConnectorSuggestion: Equatable, Sendable {
 
     static func isTool(_ name: String) -> Bool { ToolDescriber.normalized(name) == "connectorsuggest" }
 
-    /// `output` is the card metadata (`{shown, reason, card}`) or the tool's
-    /// result (`{shown, dropped?}`); `input` is the call's string input
-    /// (`reason`), `title` the call title ("Suggested Gmail, Slack").
-    static func parse(toolName: String, output: String?, input: [String: String] = [:], title: String? = nil) -> AgentConnectorSuggestion? {
-        guard isTool(toolName), let json = AgentToolCards.json(output) else { return nil }
+    /// `metadata` is the part's metadata (`{shown, reason, card}`); `output`
+    /// the tool's result text (`{shown, dropped?}`), the fallback; `input` is
+    /// the call's string input (`reason`), `title` the call title
+    /// ("Suggested Gmail, Slack").
+    static func parse(
+        toolName: String, metadata: String? = nil, output: String?, input: [String: String] = [:], title: String? = nil
+    ) -> AgentConnectorSuggestion? {
+        guard isTool(toolName),
+              let json = AgentToolCards.source(metadata: metadata, output: output, has: { $0["card"] is [String: Any] })
+        else { return nil }
         let card = (json["card"] as? [String: Any]) ?? json
         var connectors: [Connector] = []
         if let list = card["connectors"] as? [[String: Any]] {
@@ -575,9 +597,10 @@ enum AgentSettingValue: Equatable, Sendable {
 
 /// What a `settings` write did, one row per change (gizzi
 /// primitives/settings.ts `ChangeResult`; allternit-api
-/// `/bot-routing/settings/write`): `{key, outcome|status, value?, previous?,
-/// reason?, settings_path|link?, label?, scope?}`. Keys and labels:
-/// contracts/settings/definitions.json.
+/// `/bot-routing/settings/write`): `{key, outcome, label?, scope?, value?,
+/// previous?, reason?, code?, settings_path?}`. Scopes: account (the server
+/// applies it), device (the app that sent the turn), runtime (gizzi.* keys,
+/// Gizzi Code applies them). Keys and labels: contracts/settings/definitions.json.
 struct AgentSettingsResult: Equatable, Sendable {
     enum Status: String, Sendable {
         case applied
@@ -587,9 +610,17 @@ struct AgentSettingsResult: Equatable, Sendable {
         case invalid
     }
 
+    enum Scope: String, Sendable {
+        case account
+        case device
+        case runtime
+    }
+
     struct Change: Equatable, Sendable, Identifiable {
         let key: String
         let label: String
+        /// Nil when the result didn't say; runtime keys (gizzi.*) are Gizzi Code's.
+        var scope: Scope? = nil
         let value: AgentSettingValue?
         let previous: AgentSettingValue?
         let status: Status
@@ -603,20 +634,26 @@ struct AgentSettingsResult: Equatable, Sendable {
 
     static func isTool(_ name: String) -> Bool { ToolDescriber.normalized(name) == "settings" }
 
-    static func parse(toolName: String, output: String?) -> AgentSettingsResult? {
-        guard isTool(toolName), let json = AgentToolCards.json(output),
+    /// `metadata` is the part's metadata (`{action, toolCallId, changes}`);
+    /// `output` the tool's result text (`{action, changes}`), the fallback.
+    static func parse(toolName: String, metadata: String? = nil, output: String?) -> AgentSettingsResult? {
+        guard isTool(toolName),
+              let json = AgentToolCards.source(metadata: metadata, output: output, has: { $0["changes"] is [[String: Any]] }),
+              json["action"] as? String != "read",
               let list = json["changes"] as? [[String: Any]] else { return nil }
         let changes: [Change] = list.compactMap { item in
             guard let key = AgentToolCards.string(item["key"]),
-                  let raw = AgentToolCards.string(item["status"]) ?? AgentToolCards.string(item["outcome"]),
+                  let raw = AgentToolCards.string(item["outcome"]),
                   let status = Status(rawValue: raw) else { return nil }
             return Change(
                 key: key,
                 label: AgentToolCards.string(item["label"]) ?? labels[key] ?? key,
+                scope: AgentToolCards.string(item["scope"]).flatMap(Scope.init(rawValue:))
+                    ?? (key.hasPrefix("gizzi.") ? .runtime : nil),
                 value: AgentSettingValue(json: item["value"]),
                 previous: AgentSettingValue(json: item["previous"]),
                 status: status,
-                link: AgentToolCards.string(item["link"]) ?? AgentToolCards.string(item["settings_path"]),
+                link: AgentToolCards.string(item["settings_path"]),
                 reason: AgentToolCards.string(item["reason"])
             )
         }

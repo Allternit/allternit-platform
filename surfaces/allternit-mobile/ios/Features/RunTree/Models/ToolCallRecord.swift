@@ -28,6 +28,9 @@ struct ToolCallRecord: Identifiable, Equatable, Sendable {
     var userMessage: AgentUserMessage? = nil
     /// automation: the scheduled task the call made or changed.
     var automation: AgentAutomationResult? = nil
+    /// The tool part's `metadata` object as raw JSON text (nil when none).
+    /// connector_suggest and settings read their cards from it.
+    var metadata: String? = nil
 
     /// How long the call ran; live calls count up to `now`.
     func elapsed(now: Date = Date()) -> TimeInterval? {
@@ -89,7 +92,8 @@ extension ToolCallRecord {
                 output: part.state?.output?.value as? String,
                 runCode: name == "run_code" ? RunCodeResult(files: part.files, run: part.run) : nil,
                 userMessage: name == AgentUserMessage.toolName ? part.state?.userMessage : nil,
-                automation: name == AgentAutomationResult.toolName ? part.state?.automation : nil
+                automation: name == AgentAutomationResult.toolName ? part.state?.automation : nil,
+                metadata: part.state?.metadata
             )
         }
     }
@@ -113,6 +117,7 @@ extension MessageRecord {
                 call.finishedAt = detail.finishedAt ?? call.finishedAt
                 if let message = detail.userMessage { call.userMessage = message }
                 if let automation = detail.automation { call.automation = automation }
+                if let metadata = detail.metadata { call.metadata = metadata }
             }
             if state != .running, call.finishedAt == nil { call.finishedAt = now }
             if let runCode { call.runCode = runCode }
@@ -127,9 +132,11 @@ extension MessageRecord {
                 error: detail?.error,
                 startedAt: detail?.startedAt ?? now,
                 finishedAt: detail?.finishedAt ?? (state == .running ? nil : now),
+                output: detail?.output,
                 runCode: runCode,
                 userMessage: detail?.userMessage,
-                automation: detail?.automation
+                automation: detail?.automation,
+                metadata: detail?.metadata
             ))
         }
     }

@@ -4,9 +4,12 @@
  * the shared core (runtime/primitives/connectors.ts), the same one the
  * runtime builtins use (runtime/tools/builtins/connector.ts).
  *
- * The TUI has no Connect kit, so a suggestion is a text card:
- * "Connect <name> in Allternit → Settings → Connections". It carries no link
- * or code and connects nothing; the user connects in the app themselves.
+ * The TUI has no Connect kit, so a suggestion is a text card built from the
+ * core's `card` ({type: "connector_suggest", connectors: [{id, name, group}],
+ * reason}): "Connect <name> in Allternit → Settings → Connections". It
+ * carries no link or code and connects nothing; the user connects in the app
+ * themselves. Search hits carry the contract's states: connected, available
+ * (`reason` says when a connection needs signing in again), unavailable.
  */
 import { z } from 'zod/v4'
 import { Connectors } from '@/runtime/primitives/connectors'
@@ -46,8 +49,8 @@ function mapResult(output: Output, toolUseID: string) {
 /** Names from this process's searches, so the card can say "Slack" rather than an id. */
 const names = new Map<string, string>()
 
-export function cardLine(id: string): string {
-  return `Connect ${names.get(id) ?? id} in ${CONNECTIONS_PATH}`
+export function cardLine(id: string, name?: string): string {
+  return `Connect ${name ?? names.get(id) ?? id} in ${CONNECTIONS_PATH}`
 }
 
 const searchSchema = lazySchema(() => Connectors.SearchInput)
@@ -121,7 +124,8 @@ export const ConnectorSuggestTool = buildTool({
   async call(input, context) {
     try {
       const r = await Connectors.suggest(getSessionId(), input)
-      if (!r.shown.length) {
+      const shown = r.card?.connectors ?? []
+      if (!shown.length) {
         return {
           data: {
             summary: 'No connector to suggest',
@@ -129,17 +133,23 @@ export const ConnectorSuggestTool = buildTool({
           },
         }
       }
-      const card = r.shown.map(cardLine)
+      const card = shown.map(c => cardLine(c.id, c.name))
+      const { card: _card, ...forModel } = r
       return {
         data: {
-          summary: `Suggested ${r.shown.map(id => names.get(id) ?? id).join(', ')}`,
-          text: `${JSON.stringify(r)}\nThe user was shown:\n${card.join('\n')}\nNothing is connected until a later connector_search shows it connected.`,
+          summary: `Suggested ${shown.map(c => c.name).join(', ')}`,
+          text: `${JSON.stringify(forModel)}\nThe user was shown:\n${card.join('\n')}\nNothing is connected until a later connector_search shows it connected.`,
           card,
-          reason: input.reason,
+          reason: r.card?.reason ?? input.reason,
         },
       }
     } catch (error) {
-      return { data: { summary: 'Connector suggestion unavailable', text: messageOf(error) } }
+      return {
+        data: {
+          summary: error instanceof Connectors.RefusedError ? 'Connector suggestion refused' : 'Connector suggestion unavailable',
+          text: messageOf(error),
+        },
+      }
     }
   },
 } satisfies ToolDef<any, Output>)

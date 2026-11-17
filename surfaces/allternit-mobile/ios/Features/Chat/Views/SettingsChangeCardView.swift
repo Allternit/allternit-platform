@@ -6,7 +6,8 @@ import SwiftUI
 ///   can write the key.
 /// - apply_on_device: this iPhone applies it once per tool-call id while the
 ///   reply streams here ("Applied on this iPhone", Undo); on a reloaded chat
-///   it offers Apply instead.
+///   it offers Apply instead. Runtime keys (scope `runtime`, gizzi.*) are
+///   Gizzi Code's: the row says so and offers nothing here.
 /// - needs_confirmation: Confirm writes it under the person's own sign-in.
 /// - locked: Open Settings only.
 /// - invalid: the reason.
@@ -111,6 +112,7 @@ struct SettingsChangeCardView: View {
         }
         switch change.status {
         case .applied: return "Changed"
+        case .applyOnDevice where change.scope == .runtime: return "In Gizzi Code"
         case .applyOnDevice: return "For each device"
         case .needsConfirmation: return "Needs your OK"
         case .locked: return "In Settings only"
@@ -142,6 +144,8 @@ struct SettingsChangeCardView: View {
             return change.reason ?? "Change this in Settings."
         case .needsConfirmation where rowState[change.key] == nil:
             return change.reason
+        case .applyOnDevice where change.scope == .runtime:
+            return "Gizzi Code applies this on the computer it runs on."
         case .applyOnDevice where !AgentSettingsApplier.canApplyOnDevice(change.key):
             return "This iPhone doesn't keep this setting. Change it in Settings."
         default:
@@ -164,7 +168,9 @@ struct SettingsChangeCardView: View {
                     settingsButton(change)
                 }
             case .applyOnDevice:
-                if !AgentSettingsApplier.canApplyOnDevice(change.key) {
+                if change.scope == .runtime {
+                    EmptyView()
+                } else if !AgentSettingsApplier.canApplyOnDevice(change.key) {
                     settingsButton(change)
                 } else if case .appliedHere(let previous) = state {
                     if let previous, previous != change.value {

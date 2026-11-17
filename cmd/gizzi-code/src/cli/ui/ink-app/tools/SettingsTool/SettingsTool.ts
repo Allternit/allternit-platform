@@ -4,10 +4,14 @@
  * over the shared core (runtime/primitives/settings.ts), the same one the
  * runtime builtin uses (runtime/tools/builtins/settings.ts).
  *
- * - Device scope = the TUI's own settings (gizzi.tui_theme, gizzi.model,
- *   gizzi.verbose), read and written here (./local.ts).
+ * - Scopes come from contracts/settings/definitions.json: "account" keys
+ *   are applied by allternit-api; "runtime" keys (gizzi.tui_theme,
+ *   gizzi.model, gizzi.verbose) are Gizzi Code's own config, read and written
+ *   here (./local.ts); "device" keys belong to the Allternit apps.
  * - Every other key goes through the core; the server enforces the risk
  *   class. An apply_on_device appearance.theme is applied to the TUI theme.
+ * - Outcomes: applied | apply_on_device | needs_confirmation | locked |
+ *   invalid. `previous` (when known) is shown so the user can undo.
  * - The TUI has no settings card, so confirm and locked keys print what the
  *   user must do themselves; nothing here confirms on their behalf.
  * - write is refused in plan mode, as in the runtime (plan agent denies it).
@@ -65,7 +69,7 @@ function userStep(r: Settings.ChangeResult): string | undefined {
 function line(r: Settings.ChangeResult): string {
   switch (r.outcome) {
     case 'applied':
-      return `${r.key}: ${JSON.stringify(r.previous)} → ${JSON.stringify(r.value)}${r.reason ? ` (${r.reason})` : ''}`
+      return `${r.key}: ${r.previous === undefined ? '' : `${JSON.stringify(r.previous)} → `}${JSON.stringify(r.value)}${r.reason ? ` (${r.reason})` : ''}`
     case 'apply_on_device':
       return `${r.key}: ${r.reason ?? 'applies in the Allternit app on the user’s devices'}`
     case 'invalid':

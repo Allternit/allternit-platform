@@ -118,10 +118,12 @@ struct MessageRow: View {
                 // settings: what changed, with Undo / Confirm / Open Settings.
                 ForEach(message.toolCalls) { call in
                     if let suggestion = AgentConnectorSuggestion.parse(
-                        toolName: call.toolName, output: call.output, input: call.input, title: call.title
+                        toolName: call.toolName, metadata: call.metadata, output: call.output, input: call.input, title: call.title
                     ) {
                         ConnectSuggestCardView(suggestion: suggestion)
-                    } else if let settingsResult = AgentSettingsResult.parse(toolName: call.toolName, output: call.output) {
+                    } else if let settingsResult = AgentSettingsResult.parse(
+                        toolName: call.toolName, metadata: call.metadata, output: call.output
+                    ) {
                         SettingsChangeCardView(result: settingsResult, toolCallId: call.id, autoApply: message.isStreaming)
                     }
                 }

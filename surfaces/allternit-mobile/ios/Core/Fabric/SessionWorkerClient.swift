@@ -66,6 +66,8 @@ enum SessionWorkerEvent: Decodable, Sendable {
             let userMessage: AgentUserMessage?
             /// `metadata` read as an automation result (nil otherwise).
             let automation: AgentAutomationResult?
+            /// `metadata` as raw JSON text (connector_suggest and settings cards).
+            let metadata: String?
 
             private enum CodingKeys: String, CodingKey { case status, input, title, error, time, output, metadata }
             private struct Time: Decodable { let start: Double?; let end: Double? }
@@ -78,6 +80,7 @@ enum SessionWorkerEvent: Decodable, Sendable {
                 output = (try? c.decodeIfPresent(String.self, forKey: .output)) ?? nil
                 userMessage = (try? c.decodeIfPresent(AgentUserMessage.self, forKey: .metadata)) ?? nil
                 automation = (try? c.decodeIfPresent(AgentAutomationResult.self, forKey: .metadata)) ?? nil
+                metadata = AgentToolCards.jsonText((try? c.decodeIfPresent(AnyCodable.self, forKey: .metadata)) ?? nil)
                 let raw = (try? c.decodeIfPresent([String: AnyCodable].self, forKey: .input)) ?? nil
                 input = PartState.flatten(raw)
                 let time = (try? c.decodeIfPresent(Time.self, forKey: .time)) ?? nil
@@ -116,7 +119,8 @@ enum SessionWorkerEvent: Decodable, Sendable {
                 finishedAt: state.finishedAt,
                 output: state.output,
                 userMessage: tool == AgentUserMessage.toolName ? state.userMessage : nil,
-                automation: tool == AgentAutomationResult.toolName ? state.automation : nil
+                automation: tool == AgentAutomationResult.toolName ? state.automation : nil,
+                metadata: state.metadata
             )
         }
     }

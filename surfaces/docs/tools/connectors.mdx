@@ -32,10 +32,26 @@ When more than 30 connector tools would be mounted in a turn, none are mounted u
 
 Shows the user a card for a connector that is not connected. The ids must come from a `connector_search` made in this session. Ids that were not searched, are already connected or can't be connected here are left off the card; if none is left, the call is refused. `reason` is one line, up to 200 characters, saying what connecting lets the agent do.
 
+The card data rides in the tool result's metadata as `card`, so every surface draws the same card:
+
+```json
+{
+  "shown": ["google_calendar"],
+  "reason": "Connecting Calendar lets me check your free times.",
+  "card": {
+    "type": "connector_suggest",
+    "connectors": [{ "id": "google_calendar", "name": "Google Calendar", "group": "Calendar" }],
+    "reason": "Connecting Calendar lets me check your free times."
+  }
+}
+```
+
+A refused suggestion has no `card` and shows as an ordinary tool row.
+
 The card is a Connect kit component. It opens the Connect kit when the user taps Connect, and the user signs in to the app themselves. It never connects anything by itself and carries no link or code. The agent doesn't say a connector is connected until a later search shows it connected.
 
 ## Where it works
 
-Desktop, ai.allternit.com and the phone layout, the m.allternit.com app and iOS show the card. In Gizzi Code the tool rows appear in the terminal.
+Desktop, ai.allternit.com and the phone layout, the m.allternit.com app and iOS show the card. In Gizzi Code the suggestion is a text card ("Connect Google Calendar in Allternit → Settings → Connections") with no link or code.
 
 See also [MCP](/tools/mcp) and [Settings tools](/tools/settings).

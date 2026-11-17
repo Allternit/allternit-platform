@@ -1,7 +1,10 @@
 import Foundation
 
 /// The iPhone side of the `settings` tool (Primitives Wave D, D2;
-/// contracts/settings/README.md). Device keys come back `apply_on_device`:
+/// contracts/settings/README.md). Scopes: `account` keys are applied by the
+/// server (this applier writes them only for Confirm and Undo), `device`
+/// keys by the app that sent the turn, `runtime` keys (gizzi.*) by Gizzi Code
+/// and never here. Device keys come back `apply_on_device`:
 /// the client that sent the turn applies them once per tool-call id. This
 /// applier keeps them where this app already does (AppearanceStore,
 /// NotificationPrefs), records each call id it applied with the value it

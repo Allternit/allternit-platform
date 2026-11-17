@@ -1,10 +1,12 @@
 // @ts-nocheck
 /**
- * The TUI's own settings, the device scope of the `settings` tool in Gizzi
+ * The TUI's own settings, the "runtime" scope of the `settings` tool in Gizzi
  * Code: gizzi.tui_theme, gizzi.model, gizzi.verbose (keys from
  * contracts/settings/definitions.json, class safe). The TUI reads and writes
  * them here, in its own config; every other key goes through the shared core
  * (runtime/primitives/settings.ts) and the server's risk gate.
+ * gizzi.permission_mode is runtime too but class confirm: it goes to the
+ * server and comes back needs_confirmation; the user changes it themselves.
  */
 import { feature } from 'bun:bundle'
 import type { Settings } from '@/runtime/primitives/settings'
@@ -97,7 +99,19 @@ export function tuiThemeFor(appearance: unknown): string | undefined {
   return undefined
 }
 
+const LABELS: Record<string, string> = {
+  [TUI_THEME]: 'Gizzi Code theme',
+  [TUI_MODEL]: 'Gizzi Code model',
+  [TUI_VERBOSE]: 'Gizzi Code verbose output',
+}
+
+/** A local change's result, with the label and scope every surface's card reads. */
 export async function writeLocal(change: Settings.Change, setAppState: SetAppState): Promise<Settings.ChangeResult> {
+  const r = await writeLocalRaw(change, setAppState)
+  return { ...r, label: LABELS[r.key] ?? r.label, scope: 'runtime' }
+}
+
+async function writeLocalRaw(change: Settings.Change, setAppState: SetAppState): Promise<Settings.ChangeResult> {
   const { key, value } = change
   try {
     if (key === TUI_THEME) return saveTheme(key, String(value))
