@@ -46,9 +46,14 @@ describe("CliBridge MCP server", () => {
       "send_user_message",
       "current_time",
       "automation",
+      "thread_read",
+      "thread_recent",
+      "resource",
+      "memory_list",
       "question",
     ])
     const question = list.result.tools.find((t: any) => t.name === "question")
+    expect(names).not.toContain("thread_wait")
     expect(question.description).toContain("no AskUserQuestion")
     expect(question.inputSchema.properties.questions).toBeDefined()
     const media = list.result.tools.find((t: any) => t.name === "media_generate")

@@ -1,0 +1,7 @@
+Look at large tool output and MCP resources by ref, without loading the whole thing.
+
+Refs look like `out:<id>` (a tool output too large to show in full; the truncation notice names its ref) or `mcp:<server>:<uri>`. Refs belong to this session.
+
+- list: the refs this session has
+- read: a window of lines (offset, limit up to 400)
+- find: lines matching a pattern, with up to 5 lines of context

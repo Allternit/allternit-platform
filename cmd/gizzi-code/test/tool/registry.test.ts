@@ -6,7 +6,6 @@ import { tmpdir } from "../fixture/fixture"
 import { Instance } from "../../src/project/instance"
 import { ToolRegistry } from "../../src/runtime/tools/builtins/registry"
 import { Flag } from "../../src/runtime/context/flag/flag"
-import { THREAD_TOOL_IDS } from "../../src/runtime/tools/builtins/thread-tools"
 import { WORKER_BOT_TOOL_IDS } from "../../src/runtime/tools/builtins/worker-bot-tools"
 import { PROJECT_SEND_TOOL_IDS } from "../../src/runtime/tools/builtins/project-send"
 
@@ -157,7 +156,7 @@ describe("tool.registry", () => {
   test("current_time and send_user_message reach every client, not only bot chats", async () => {
     // Primitives Wave A: Gizzi Code and plain app chats need both. The bot-only
     // lists are what SessionPrompt.resolveTools deletes outside an app bot's chat.
-    const botOnly = new Set<string>([...THREAD_TOOL_IDS, ...WORKER_BOT_TOOL_IDS, ...PROJECT_SEND_TOOL_IDS, "message_agent", "suggest_task", "grant_task_permission"])
+    const botOnly = new Set<string>([...ToolRegistry.BOT_THREAD_TOOL_IDS, ...WORKER_BOT_TOOL_IDS, ...PROJECT_SEND_TOOL_IDS, "message_agent", "suggest_task", "grant_task_permission"])
     const prev = process.env.GIZZI_CLIENT
     await using tmp = await tmpdir()
     try {
@@ -168,6 +167,34 @@ describe("tool.registry", () => {
           fn: async () => {
             const ids = await ToolRegistry.ids()
             for (const id of ["current_time", "send_user_message"]) {
+              expect(ids).toContain(id)
+              expect(botOnly.has(id)).toBe(false)
+            }
+          },
+        })
+      }
+    } finally {
+      if (prev === undefined) delete process.env.GIZZI_CLIENT
+      else process.env.GIZZI_CLIENT = prev
+    }
+  })
+
+  test("Wave D recall tools and thread_search reach every client; only thread_update / thread_close stay bot-only", async () => {
+    // resolveTools deletes ToolRegistry.BOT_THREAD_TOOL_IDS outside an app bot's
+    // chat, so a plain chat or Gizzi Code session keeps thread_search (decision 8).
+    const recall = ["memory_list", "thread_search", "thread_read", "thread_recent", "thread_wait", "resource"]
+    expect([...ToolRegistry.BOT_THREAD_TOOL_IDS].sort()).toEqual(["thread_close", "thread_update"])
+    const botOnly = new Set<string>([...ToolRegistry.BOT_THREAD_TOOL_IDS, ...WORKER_BOT_TOOL_IDS, ...PROJECT_SEND_TOOL_IDS, "message_agent", "suggest_task", "grant_task_permission"])
+    const prev = process.env.GIZZI_CLIENT
+    await using tmp = await tmpdir()
+    try {
+      for (const client of ["app", "cli", "desktop"]) {
+        process.env.GIZZI_CLIENT = client
+        await Instance.provide({
+          directory: tmp.path,
+          fn: async () => {
+            const ids = await ToolRegistry.ids()
+            for (const id of recall) {
               expect(ids).toContain(id)
               expect(botOnly.has(id)).toBe(false)
             }

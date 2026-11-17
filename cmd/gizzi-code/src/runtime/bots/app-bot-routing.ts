@@ -110,6 +110,17 @@ async function post<T>(path: string, body: unknown, timeoutMs: number, extra?: R
   return JSON.parse(text) as T
 }
 
+/**
+ * POST to an allternit-api `/api/v1/bot-routing/...` route with this runtime's
+ * credential (internal service token or the user's platform token). Throws
+ * AppRoutingError with the API's status, message and `code`. For the
+ * per-feature route clients in `runtime/bots/routing/*` (Wave D: threads).
+ * `path` starts after `/api/v1`, e.g. "/bot-routing/thread/recent".
+ */
+export function botRoutingPost<T>(path: string, body: unknown, timeoutMs: number, extra?: Record<string, string>): Promise<T> {
+  return post<T>(path, body, timeoutMs, extra)
+}
+
 /** The calling app bot and its teammates, or null when the session isn't an app bot's chat. */
 export async function fetchAppRoster(sessionID: string, timeoutMs = 3_000): Promise<AppRoster | null> {
   if (!sessionID) return null

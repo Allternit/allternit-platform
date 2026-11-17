@@ -49,6 +49,9 @@ import { NotebookEditTool } from "@/runtime/tools/builtins/notebook"
 import { MemoryWriteTool } from "@/runtime/tools/builtins/memory-write"
 import { ProjectStatusTool } from "@/runtime/tools/builtins/project-status"
 import { MemoryRecallTool } from "@/runtime/tools/builtins/memory-recall"
+import { MemoryListTool } from "@/runtime/tools/builtins/memory-list"
+import { ThreadReadTool, ThreadRecentTool, ThreadWaitTool } from "@/runtime/tools/builtins/thread-read"
+import { ResourceTool } from "@/runtime/tools/builtins/resource"
 import { VaultQueryTool } from "@/runtime/tools/builtins/vault-query"
 import { VaultWriteTool } from "@/runtime/tools/builtins/vault-write"
 import { Glob } from "@/shared/util/glob"
@@ -85,6 +88,13 @@ import { subscriptionCapabilityTools } from "@/runtime/tools/builtins/subscripti
 
 export namespace ToolRegistry {
   const log = Log.create({ service: "tool.registry" })
+
+  /**
+   * Thread tools that steer the calling chat's own thread: SessionPrompt.resolveTools
+   * deletes them outside an app bot's chat. thread_search and the past-chat tools
+   * (thread_read, thread_recent, thread_wait) are not here: every session gets them.
+   */
+  export const BOT_THREAD_TOOL_IDS = [ThreadUpdateTool.id, ThreadCloseTool.id] as const
 
   export const state = Instance.state(async () => {
     const custom = [] as Tool.Info[]
@@ -227,6 +237,13 @@ export namespace ToolRegistry {
       MemoryWriteTool,
       ProjectStatusTool,
       MemoryRecallTool,
+      // Wave D recall: memory topics/entries with versions, windowed reads of
+      // past chats, and id-based views of large output. Every client, not bot-gated.
+      MemoryListTool,
+      ThreadReadTool,
+      ThreadRecentTool,
+      ThreadWaitTool,
+      ResourceTool,
       VaultQueryTool,
       VaultWriteTool,
       SendAgentEmailTool,
@@ -237,7 +254,9 @@ export namespace ToolRegistry {
       MessageAgentTool,
       SuggestTaskTool,
       GrantTaskPermissionTool,
-      // Thread tools (W3): gated like suggest_task (app bot chats only).
+      // Thread tools (W3): thread_update / thread_close are gated like
+      // suggest_task (app bot chats only). thread_search reaches every session
+      // (Wave D decision 8, with the past-chat tools above).
       ThreadUpdateTool,
       ThreadCloseTool,
       ThreadSearchTool,

@@ -1,0 +1,3 @@
+List the user's Memory Drive: topics with their entry counts, or the entries in one topic.
+
+Each entry comes back with its id, version, text and date. Pass the version as if_version to memory_write when you change or delete an entry. Pages hold 200 entries; pass `after` to get the next page.
