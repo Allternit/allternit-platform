@@ -506,6 +506,8 @@
               "tools/sandbox",
               "tools/server-tools",
               "tools/agent-swarm",
+              "tools/agent-batch",
+              "tools/sleep",
               "tools/gateway",
               "tools/etrid",
               "tools/local-engine",

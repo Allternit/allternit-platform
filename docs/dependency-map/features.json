@@ -5004,6 +5004,22 @@
         "allternit/surfaces/platform.allternit.com/src/pages/ApiKeysPage.tsx",
         "allternit/cmd/gizzi-code/src/runtime/services/freeweightsUpload.ts"
       ]
+    },
+    {
+      "id": "feature:agent-batch-sleep",
+      "label": "agent_batch and sleep",
+      "product": "product:gizzi-code",
+      "status": "building",
+      "description": "agent_batch runs one worker per CSV row with a flat output schema, sample mode first, resumable through a progress sidecar. sleep waits 1-900 s and wakes on a user message or cancel.",
+      "touches": [
+        "allternit/cmd/gizzi-code/src/runtime/primitives/batch",
+        "allternit/cmd/gizzi-code/src/runtime/primitives/sleep.ts"
+      ],
+      "decisions": [],
+      "evidence": [
+        "allternit/surfaces/docs/tools/agent-batch.mdx",
+        "allternit/surfaces/docs/tools/sleep.mdx"
+      ]
     }
   ],
   "journeys": [
