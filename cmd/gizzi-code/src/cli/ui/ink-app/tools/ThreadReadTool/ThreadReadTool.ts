@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * thread_read / thread_recent / thread_wait in the Gizzi TUI: thin adapters
  * over the shared past-chats core (runtime/primitives/past-chats.ts), the same
@@ -39,7 +38,7 @@ function asRecord(result: unknown): string {
 }
 
 function mapResult(output: Output, toolUseID: string) {
-  return { tool_use_id: toolUseID, type: 'tool_result', content: output.text }
+  return { tool_use_id: toolUseID, type: 'tool_result' as const, content: output.text }
 }
 
 const readSchema = lazySchema(() => PastChats.ReadInput)

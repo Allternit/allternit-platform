@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * agent_control in the Gizzi TUI (Primitives Wave B, lane L6): the runtime
  * tool id and result shapes over Ink's own background agents.
@@ -124,7 +123,7 @@ export const AgentControlTool = buildTool({
       const parent = getSessionId()
       const agents: (AgentNode & { activity?: string })[] = agentTasks(state)
         .map(task => {
-          const activity = isAgentRunning(task) ? agentActivity(task) : undefined
+          const activity = isAgentRunning(task as never) ? agentActivity(task) : undefined
           return {
             ...agentRef(state, task.id),
             status: agentStatus(task),
@@ -144,14 +143,14 @@ export const AgentControlTool = buildTool({
     const task = state.tasks[id]
 
     if (input.action === 'interrupt') {
-      if (!isAgentRunning(task)) return { data: { action: 'interrupt', target, outcome: 'not_running' } }
+      if (!isAgentRunning(task as never)) return { data: { action: 'interrupt', target, outcome: 'not_running' } }
       markInterrupted(id)
       killAsyncAgent(id, setAppState)
       return { data: { action: 'interrupt', target, outcome: 'interrupted' } }
     }
 
     const message = input.action === 'resume' ? RESUME_MESSAGE : input.message!.trim()
-    if (isAgentRunning(task)) {
+    if (isAgentRunning(task as never)) {
       if (input.action === 'resume') return { data: { action: 'resume', target, outcome: 'already_running' } }
       queuePendingMessage(id, message, setAppState)
       appendMessageToLocalAgent(id, createUserMessage({ content: message }), setAppState)

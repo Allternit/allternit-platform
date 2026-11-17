@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Deletes in a granted outside folder (Ink side of folder_access rule 10).
  *

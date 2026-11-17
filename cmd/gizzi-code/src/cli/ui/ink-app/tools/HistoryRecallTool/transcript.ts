@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * The terminal's compacted history (Primitives Wave B, lane L6).
  *

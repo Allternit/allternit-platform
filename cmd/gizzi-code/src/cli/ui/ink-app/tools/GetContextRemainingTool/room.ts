@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Context room in the terminal (Primitives Wave B, lane L6), shared by the
  * get_context_remaining tool and the context notice (utils/attachments.ts).

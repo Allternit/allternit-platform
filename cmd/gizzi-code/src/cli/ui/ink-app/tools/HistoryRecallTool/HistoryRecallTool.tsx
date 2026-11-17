@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * history_recall in the Gizzi TUI (Primitives Wave B, lane L6): the runtime
  * tool id, parameters and result shapes, over this session's JSONL

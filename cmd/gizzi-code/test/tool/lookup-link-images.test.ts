@@ -21,7 +21,7 @@ const html = `<html><head><title>Fallback</title>
 describe("lookup link", () => {
   test("refuses private and local addresses without fetching", async () => {
     let called = false
-    transport.fetch = (async () => ((called = true), new Response("x"))) as typeof fetch
+    transport.fetch = (async () => ((called = true), new Response("x"))) as unknown as typeof fetch
     for (const u of ["http://127.0.0.1/a", "http://localhost:3000", "http://169.254.169.254/latest", "http://10.0.0.5/", "http://192.168.1.1/", "http://[::1]/"]) {
       await expect(lookupLink({ url: u }, ctx)).rejects.toThrow(/private or local/)
     }
@@ -41,7 +41,7 @@ describe("lookup link", () => {
 
   test("returns a link-preview card", async () => {
     transport.fetch = (async () =>
-      new Response(html, { headers: { "content-type": "text/html" } })) as typeof fetch
+      new Response(html, { headers: { "content-type": "text/html" } })) as unknown as typeof fetch
     const r = await lookupLink({ url: "https://example.com/post" }, ctx)
     expect(r.card?.template).toBe("link-preview")
     expect(r.credit).toBe("Preview from example.com")
@@ -92,7 +92,7 @@ describe("lookup images", () => {
     transport.fetch = (async (_u: unknown, init?: RequestInit) => {
       ua = String((init?.headers as Record<string, string>)["User-Agent"])
       return new Response(JSON.stringify(response), { headers: { "content-type": "application/json" } })
-    }) as typeof fetch
+    }) as unknown as typeof fetch
     const r = await lookupImages({ query: "cat" }, ctx)
     expect(ua).toContain("+https://allternit.com")
     expect(r.card?.template).toBe("image-gallery")

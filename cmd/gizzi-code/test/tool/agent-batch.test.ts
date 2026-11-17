@@ -115,7 +115,7 @@ describe("schema", () => {
     expect(validateReply(fields, '```json\n{"category":"question","score":1,"note":"x"}\n```').ok).toBe(true)
     const bad = validateReply(fields, '{"category":"feature","score":"3"}')
     expect(bad.ok).toBe(false)
-    if (!bad.ok) {
+    if (bad.ok === false) {
       expect(bad.error).toContain('"category" must be one of "bug", "question"')
       expect(bad.error).toContain('"score" must be a number')
     }

@@ -77,7 +77,7 @@ export namespace CliBridge {
   // connector_search / connector_suggest / settings (Wave D connect and
   // settings): find the user's connectors and offer one to connect through the
   // Connect kit card, and read or change their Allternit settings.
-  export const TOOLS: Tool.Info[] = [PaneArtifactTool, PaneBrowserTool, MediaGenerateTool, TodoWriteTool, GlanceTool, BuiltinSkillTool(), ...ARTIFACT_TOOLS, ArtifactCheckTool, RunCodeTool, SendUserMessageTool, CurrentTimeTool, AutomationTool, GetContextRemainingTool, HistoryRecallTool, LookupTool, ThreadReadTool, ThreadRecentTool, ResourceTool, MemoryListTool, SleepTool, FolderAccessTool, ConnectorSearchTool, ConnectorSuggestTool, SettingsTool]
+  export const TOOLS: Tool.Info[] = [PaneArtifactTool, PaneBrowserTool, MediaGenerateTool, TodoWriteTool, GlanceTool, BuiltinSkillTool(), ...ARTIFACT_TOOLS, ArtifactCheckTool, RunCodeTool, SendUserMessageTool, CurrentTimeTool, LookupTool, AutomationTool, GetContextRemainingTool, HistoryRecallTool, ThreadReadTool, ThreadRecentTool, ResourceTool, MemoryListTool, SleepTool, FolderAccessTool, ConnectorSearchTool, ConnectorSuggestTool, SettingsTool]
 
   /** gizzi's id for a bridged tool reported under a CLI's vendor name (run_code only; see CliBridgeResults). */
   export const canonicalTool = CliBridgeResults.canonicalTool

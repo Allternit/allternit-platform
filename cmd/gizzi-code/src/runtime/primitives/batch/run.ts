@@ -402,11 +402,11 @@ async function runRows(
         try {
           const first = context.retryRunID && handle.retry ? handle.retry() : handle.send(rowPrompt(plan, row))
           let check = validateReply(plan.fields, take(await abortable(first, context.signal)))
-          if (!check.ok) {
+          if (check.ok === false) {
             const again = validateReply(plan.fields, take(await abortable(handle.send(retryInstructions(check.error)), context.signal)))
-            check = again.ok ? again : { ok: false, error: `${again.error} (still wrong after one retry)` }
+            check = again.ok === true ? again : { ok: false, error: `${again.error} (still wrong after one retry)` }
           }
-          outcome = check.ok
+          outcome = check.ok === true
             ? { row, status: "ok", values: check.values, tokens, cost, ms: Date.now() - startedAt, runID: handle.runID }
             : { row, status: "failed", error: `Output didn't match the schema: ${check.error}`, tokens, cost, ms: Date.now() - startedAt, runID: handle.runID }
         } catch (error) {

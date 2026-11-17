@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * ask_user_later in the Gizzi TUI: a thin adapter over the shared runtime
  * logic (Question.askLater in runtime/integrations/question, the same store

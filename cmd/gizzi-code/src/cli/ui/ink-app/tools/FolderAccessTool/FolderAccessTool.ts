@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * folder_access in the Gizzi TUI: the Ink adapter for the runtime builtin of the
  * same name (contract: {action: request|request_delete, paths[1..5], reason} →

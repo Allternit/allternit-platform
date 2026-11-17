@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * lookup in the Gizzi TUI: a thin adapter over the shared lookup core
  * (runtime/primitives/lookup), the same one the runtime builtin uses
@@ -114,7 +113,7 @@ export const LookupTool = buildTool({
     }
   },
   extractSearchText(output) {
-    return output.card ? cardSearchText(output.card) : output.text
+    return output.card ? cardSearchText(output.card as Parameters<typeof cardSearchText>[0]) : output.text
   },
   renderToolUseMessage,
   renderToolResultMessage,

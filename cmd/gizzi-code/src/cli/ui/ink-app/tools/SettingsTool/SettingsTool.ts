@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * settings in the Gizzi TUI: replaces the old Ink ConfigTool. A thin adapter
  * over the shared core (runtime/primitives/settings.ts), the same one the

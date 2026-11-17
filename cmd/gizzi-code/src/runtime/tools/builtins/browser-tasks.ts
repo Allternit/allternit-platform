@@ -204,7 +204,7 @@ export const BrowserTasksTool = Tool.define<typeof BrowserTasks.Input, Metadata>
     if (params.action === "open") return open(params, ctx)
 
     const available = await browserTasksAvailable({ fresh: true })
-    if (!available.ok) throw new Error(available.reason)
+    if (available.ok === false) throw new Error(available.reason)
 
     const model = ctx.extra?.model as Provider.Model | undefined
     if (!model) throw new Error("browser_tasks needs the turn's model to run its tasks; it wasn't given one.")

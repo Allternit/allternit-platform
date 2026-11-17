@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * The terminal's view of "my agents" for wait_agents and agent_control
  * (Primitives Wave B, lane L6). Ink keeps its background agents as

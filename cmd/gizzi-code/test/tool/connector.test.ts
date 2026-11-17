@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { afterAll, beforeEach, describe, expect, test } from "bun:test"
 
 /**

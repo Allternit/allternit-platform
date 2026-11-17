@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * sleep in the Gizzi TUI: a thin adapter over the shared core
  * (runtime/primitives/sleep.ts), the same one the runtime builtin uses, with
@@ -84,7 +83,7 @@ export const SleepTool = buildTool({
       agentId ? cmd.agentId === agentId : cmd.agentId === undefined && (cmd.mode === 'prompt' || cmd.mode === 'bash')
     // Commands already waiting when the sleep starts don't wake it.
     const known = new Set(getCommandQueue())
-    onProgress?.({ toolUseID: `sleep-${Date.now()}`, data: { type: 'sleep_progress', seconds: Sleep.clampSeconds(seconds), reason } })
+    onProgress?.({ toolUseID: `sleep-${Date.now()}`, data: { type: 'sleep_progress', seconds: Sleep.clampSeconds(seconds), reason } as never })
     const result = await Sleep.wait({
       seconds,
       abort: context.abortController.signal,

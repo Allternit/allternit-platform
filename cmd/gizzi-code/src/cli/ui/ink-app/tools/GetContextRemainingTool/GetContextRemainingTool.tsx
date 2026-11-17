@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * get_context_remaining in the Gizzi TUI (Primitives Wave B, lane L6): the
  * runtime tool id and result shape, measured the way Ink's own auto-compact

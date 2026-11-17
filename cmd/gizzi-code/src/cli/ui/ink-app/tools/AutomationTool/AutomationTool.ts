@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * automation in the Gizzi TUI: a thin adapter over the shared core
  * (runtime/primitives/automation.ts), the same one the runtime builtin uses,
@@ -91,7 +90,7 @@ function fromAutomation(): boolean {
 }
 
 /** A message for this thread stays in the terminal; everything else goes to the shared core. */
-function goesToSessionQueue(built: Automation.Built): boolean {
+function goesToSessionQueue(built: Automation.Built): built is Extract<Automation.Built, { action: 'create' }> {
   return built.action === 'create' && built.request.kind === 'message' && built.request.target === 'this_thread'
 }
 

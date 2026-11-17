@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * The TUI's own settings, the "runtime" scope of the `settings` tool in Gizzi
  * Code: gizzi.tui_theme, gizzi.model, gizzi.verbose (keys from
@@ -82,7 +81,7 @@ export function saveTheme(key: string, theme: string): Settings.ChangeResult {
   const values = themeValues()
   if (!values.includes(theme)) return invalid(key, `Theme "${theme}" is not one of: ${values.join(', ')}`)
   const previous = getGlobalConfig().theme
-  saveGlobalConfig(prev => (prev.theme === theme ? prev : { ...prev, theme }))
+  saveGlobalConfig(prev => (prev.theme === theme ? prev : { ...prev, theme: theme as typeof prev.theme }))
   return {
     key,
     outcome: 'applied',

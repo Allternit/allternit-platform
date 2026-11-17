@@ -113,7 +113,7 @@ describe("tool.current_time", () => {
     // The model reads the same object the metadata carries (Tool.define adds only `truncated`).
     const shown = JSON.parse(result.output.split("\n").slice(0, 7).join("\n"))
     expect(Object.keys(shown).sort()).toEqual(["iso", "source", "time_zone", "utc_offset", "weekday"])
-    const { truncated: _truncated, ...metadata } = result.metadata
+    const { truncated: _truncated, ...metadata } = result.metadata as typeof result.metadata & { truncated?: boolean }
     expect(shown).toEqual(metadata)
     expect(result.output).not.toContain(PROCESS_ZONE_NOTE)
   })

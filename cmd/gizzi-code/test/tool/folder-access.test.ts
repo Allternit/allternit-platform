@@ -1,4 +1,3 @@
-// @ts-nocheck
 // Wave C lane C: folder_access grants, the _to_delete redirect for deletes in
 // granted outside folders, and the computer access ask + retry round trip.
 import { describe, expect, test } from "bun:test"

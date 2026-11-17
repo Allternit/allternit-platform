@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * current_time in the Gizzi TUI: a thin adapter over the shared clock core
  * (runtime/primitives/clock.ts), the same one the runtime builtin uses. The

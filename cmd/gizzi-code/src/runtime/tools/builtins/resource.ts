@@ -23,6 +23,7 @@ export const ResourceTool = Tool.define("resource", {
         output: r.text ?? "",
         metadata: {
           ...base,
+          error: false,
           entries: r.entries?.length,
           total_lines: r.total_lines,
           next_offset: r.next_offset,
@@ -33,7 +34,13 @@ export const ResourceTool = Tool.define("resource", {
       return {
         title: "Resource not read",
         output: error instanceof Error ? error.message : String(error),
-        metadata: { ...base, error: true },
+        metadata: {
+          ...base,
+          error: true,
+          entries: undefined as number | undefined,
+          total_lines: undefined as number | undefined,
+          next_offset: undefined as number | undefined,
+        },
       }
     }
   },

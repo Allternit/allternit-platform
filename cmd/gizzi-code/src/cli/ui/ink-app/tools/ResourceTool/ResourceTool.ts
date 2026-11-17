@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * resource in the Gizzi TUI: a thin adapter over the shared core
  * (runtime/primitives/resource.ts), the same one the runtime builtin uses.

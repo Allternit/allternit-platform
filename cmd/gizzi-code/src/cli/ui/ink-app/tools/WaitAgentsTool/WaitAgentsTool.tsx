@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * wait_agents in the Gizzi TUI (Primitives Wave B, lane L6): the same tool
  * id, parameters and result shape as the runtime builtin, over Ink's own
@@ -121,13 +120,13 @@ export const WaitAgentsTool = buildTool({
       return {
         id,
         name: agentRef(getAppState(), id).name,
-        status: task ? agentStatus(task) : 'cancelled',
-        summary: task ? agentSummary(task) : 'No longer tracked.',
+        status: task ? agentStatus(task as never) : 'cancelled',
+        summary: task ? agentSummary(task as never) : 'No longer tracked.',
       }
     }
     const runningRefs = (list: string[]) => list.map(id => agentRef(getAppState(), id))
 
-    const watched = ids.filter(id => isAgentRunning(start.tasks[id]))
+    const watched = ids.filter(id => isAgentRunning(start.tasks[id] as never))
     if (watched.length === 0) {
       const result: Output = { woke: 'settled', settled: explicit ? ids.map(settledOf) : [], running: [] }
       return { data: result }
@@ -161,7 +160,7 @@ export const WaitAgentsTool = buildTool({
         for (const id of watched) {
           const task = state.tasks[id]
           if (task) lastSeen.set(id, task)
-          if (task && isAgentRunning(task)) running.push(id)
+          if (task && isAgentRunning(task as never)) running.push(id)
           else settled.push(id)
         }
         if (settled.length) finish({ woke: 'settled', settled: settled.map(settledOf), running: runningRefs(running) })

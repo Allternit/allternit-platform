@@ -11,6 +11,10 @@ function imageMime(dataUrl: string): string | undefined {
   return match?.[1]
 }
 
+/** One shape for both returns: gizzi compiles without strict null checks, so
+ * two differently shaped object literals would not unify. */
+type CaptureMetadata = { ok: boolean; kind?: "app_view" | "window"; app?: string; title?: string; image?: boolean }
+
 export const CaptureScreenContextTool = Tool.define("capture_screen_context", {
   description: DESCRIPTION,
   parameters: z.object({
@@ -40,11 +44,11 @@ export const CaptureScreenContextTool = Tool.define("capture_screen_context", {
       { abort: ctx.abort },
     )
 
-    if (!result.ok) {
+    if (result.ok === false) {
       return {
         title: "Screen context: no capture",
         output: result.error,
-        metadata: { ok: false },
+        metadata: { ok: false } as CaptureMetadata,
       }
     }
 
@@ -62,7 +66,7 @@ export const CaptureScreenContextTool = Tool.define("capture_screen_context", {
     return {
       title: `Screen context: ${capture.app}${capture.title ? ` — ${capture.title}` : ""}`,
       output: ScreenContext.spotlight(`${header}\n\n${text || "(no readable text)"}`, SOURCE),
-      metadata: { ok: true, kind: capture.kind, app: capture.app, title: capture.title, image: !!mime },
+      metadata: { ok: true, kind: capture.kind, app: capture.app, title: capture.title, image: !!mime } as CaptureMetadata,
       ...(capture.image && mime
         ? { attachments: [{ type: "file" as const, mime, url: capture.image, filename: "screen.png" }] }
         : {}),

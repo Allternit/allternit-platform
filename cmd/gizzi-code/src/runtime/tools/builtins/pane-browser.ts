@@ -103,7 +103,7 @@ export const PaneBrowserTool = Tool.define("pane_browser", {
     let ref: (PaneBrowser.Ref & { url?: string }) | undefined
     if (params.ref && (action === "click" || action === "fill")) {
       const found = await PaneBrowser.lookupRef(ctx.sessionID, params.ref, params.tab_id)
-      if (!found.ok) return fail(action, found.error, { code: found.code, ref: params.ref })
+      if (found.ok === false) return fail(action, found.error, { code: found.code, ref: params.ref })
       ref = found.ref
     }
 

@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * connector_search / connector_suggest in the Gizzi TUI: thin adapters over
  * the shared core (runtime/primitives/connectors.ts), the same one the
@@ -43,7 +42,7 @@ function messageOf(error: unknown): string {
 }
 
 function mapResult(output: Output, toolUseID: string) {
-  return { tool_use_id: toolUseID, type: 'tool_result', content: output.text }
+  return { tool_use_id: toolUseID, type: 'tool_result' as const, content: output.text }
 }
 
 /** Names from this process's searches, so the card can say "Slack" rather than an id. */

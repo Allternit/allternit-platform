@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * send_user_message in the Gizzi TUI: a thin adapter over the shared core
  * (runtime/primitives/user-message.ts), the same one the runtime builtin uses.

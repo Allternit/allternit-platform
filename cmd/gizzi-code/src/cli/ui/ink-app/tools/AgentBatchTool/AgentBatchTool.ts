@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * agent_batch in the Gizzi TUI: a thin adapter over the shared core
  * (runtime/primitives/batch), the same one the runtime builtin uses, with the
@@ -275,7 +274,7 @@ export const AgentBatchTool = buildTool({
     const report = () =>
       onProgress?.({
         toolUseID: `agent-batch-${tick++}`,
-        data: { type: 'agent_batch_progress', mode: input.mode, ...counts, running, total: rows, output_csv_path: outputPath },
+        data: { type: 'agent_batch_progress', mode: input.mode, ...counts, running, total: rows, output_csv_path: outputPath } as never,
       })
 
     const worker: BatchWorker = {
