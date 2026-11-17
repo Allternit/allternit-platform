@@ -1297,6 +1297,8 @@
         "allternit-ai/scripts/sync-answer-contract.ts",
         "allternit/cmd/gizzi-code/src/runtime/session/answer-policy.ts",
         "allternit/cmd/gizzi-code/src/runtime/session/prompt.ts",
+        "allternit/cmd/gizzi-code/src/runtime/session/system.ts",
+        "allternit/cmd/gizzi-code/src/runtime/session/prompt",
         "allternit/cmd/gizzi-code/src/runtime/session/processor.ts"
       ]
     },
