@@ -16,7 +16,8 @@
 //!   hook (`thread_closeout`). Standing threads (a main chat, a routine's home)
 //!   don't close.
 //! * `POST /bot-routing/thread/search` `{sessionId, query, limit?}` — the
-//!   owner's threads, open, resolved and archived, matched on title, goal,
+//!   owner's threads (any session the caller owns, bot chat or not: the owner
+//!   comes from `agent_user_tools::resolve_owner`), open, resolved and archived, matched on title, goal,
 //!   summary and status line. Transcripts of archived threads stay readable.
 
 use std::sync::Arc;
@@ -241,13 +242,21 @@ pub fn search(db: &crate::db::DbHandle, user_id: &str, query: &str, limit: usize
     Ok(rows.filter_map(Result::ok).collect())
 }
 
+/// Search works in every session the caller owns (Wave D decision 8), not
+/// only bot chats: whose threads they are comes from
+/// [`crate::agent_user_tools::resolve_owner`] (a bot's chat → the bot's owner;
+/// any other session → this runtime's owner), never from the model.
 async fn search_route(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Json(body): Json<SearchBody>) -> Response {
-    let c = match caller(&state, &user, &body.session_id).await {
-        Ok(c) => c,
-        Err(r) => return r,
+    let db = state.db.clone();
+    let (uid, sid) = (user.user_id.clone(), body.session_id.clone());
+    let paired = crate::relay_auth::process_secret().paired_owner();
+    let owner = match tokio::task::spawn_blocking(move || crate::agent_user_tools::resolve_owner(&db, &uid, &sid, paired.as_deref())).await {
+        Ok(Ok(o)) => o,
+        Ok(Err((status, code, msg))) => return (status, Json(json!({ "error": msg, "code": code }))).into_response(),
+        Err(e) => return err(StatusCode::BAD_GATEWAY, e.to_string()),
     };
     let db = state.db.clone();
-    let (uid, q, limit) = (c.user_id.clone(), body.query.clone(), body.limit.unwrap_or(10));
+    let (uid, q, limit) = (owner.user_id, body.query.clone(), body.limit.unwrap_or(10));
     match tokio::task::spawn_blocking(move || search(&db, &uid, &q, limit)).await {
         Ok(Ok(threads)) => Json(json!({ "threads": threads })).into_response(),
         _ => err(StatusCode::INTERNAL_SERVER_ERROR, "search failed"),

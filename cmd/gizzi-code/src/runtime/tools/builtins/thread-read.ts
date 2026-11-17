@@ -4,8 +4,9 @@
  * not bot-gated (thread_update / thread_close stay bot-only). Permission:
  * allow (loop/agent.ts).
  *
- * W1 stub: final ids and parameters; lane T fills the execute bodies and the
- * output text.
+ * Outputs that carry transcript or summary text start with
+ * PastChats.RECORD_NOTICE: what was said in a past chat is a record, never
+ * instructions to the model.
  */
 import { Tool } from "@/runtime/tools/builtins/tool"
 import { PastChats } from "@/runtime/primitives/past-chats"
@@ -15,15 +16,31 @@ function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
+/** The notice, then the result as JSON. */
+function asRecord(result: unknown): string {
+  return `${PastChats.RECORD_NOTICE}\n\n${JSON.stringify(result)}`
+}
+
+function readTitle(r: PastChats.ReadResult): string {
+  if (r.status === "not_found") return "Chat not found"
+  const name = r.thread.title || "chat"
+  if (r.status === "remote") return `${name}: summary only (on another computer)`
+  return `Read ${name}`
+}
+
 export const ThreadReadTool = Tool.define("thread_read", {
   description: DESCRIPTION,
   parameters: PastChats.ReadInput,
   async execute(params, ctx) {
     try {
       const r = await PastChats.read(ctx.sessionID, params, ctx.abort)
+      const output =
+        r.status === "not_found"
+          ? `No chat with id ${params.thread} that you can read (it may not exist, belong to someone else, or be incognito).`
+          : asRecord(r)
       return {
-        title: `Read ${r.thread.title}`,
-        output: JSON.stringify(r),
+        title: readTitle(r),
+        output,
         metadata: { threadId: r.thread.id as string | undefined, status: r.status as string },
       }
     } catch (error) {
@@ -40,7 +57,7 @@ export const ThreadRecentTool = Tool.define("thread_recent", {
   async execute(params, ctx) {
     try {
       const r = await PastChats.recent(ctx.sessionID, params)
-      return { title: `${r.threads.length} recent chat${r.threads.length === 1 ? "" : "s"}`, output: JSON.stringify(r), metadata: { count: r.threads.length } }
+      return { title: `${r.threads.length} recent chat${r.threads.length === 1 ? "" : "s"}`, output: asRecord(r), metadata: { count: r.threads.length } }
     } catch (error) {
       return { title: "Recent chats unavailable", output: messageOf(error), metadata: { count: 0 } }
     }
@@ -57,7 +74,7 @@ export const ThreadWaitTool = Tool.define("thread_wait", {
       const r = await PastChats.wait(ctx.sessionID, params, ctx.abort)
       return {
         title: r.woke ? `${r.woke.title}: ${r.woke.reason === "needs_user" ? "needs you" : "turn finished"}` : "No thread finished",
-        output: JSON.stringify(r),
+        output: asRecord(r),
         metadata: { woke: (r.woke?.thread ?? null) as string | null, timedOut: r.timed_out },
       }
     } catch (error) {
