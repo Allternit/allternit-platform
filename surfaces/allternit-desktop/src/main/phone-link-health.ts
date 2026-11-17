@@ -371,7 +371,7 @@ export const NEEDS_YOU_SENTENCES: Readonly<Record<NeedsYouCode, string>> = {
   ASSISTIVETOUCH_OFF: 'Turn on AssistiveTouch on your iPhone (Settings > Accessibility > Touch).',
   FULL_KEYBOARD_ACCESS_OFF: 'Turn on Full Keyboard Access on your iPhone (Settings > Accessibility > Keyboards).',
   APP_NOT_FOREGROUND: 'Open the Allternit app on your iPhone.',
-  SHORTCUT_NOT_INSTALLED: 'Add the "<name>" shortcut in Allternit Settings > Shortcuts.',
+  SHORTCUT_NOT_INSTALLED: 'Add the "<name>" shortcut in Allternit Settings > Device Access > iPhone actions.',
   HELPER_RETIRING: 'The old Allternit helper is being retired. Switch to the app and set up a new route before <date>.',
 };
 

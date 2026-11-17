@@ -28,10 +28,16 @@
 //!   frames (plaintext): `{"type":"resume"}` on the first viewer,
 //!   `{"type":"keyframe"}` on a later viewer, `{"type":"pause"}` when the last
 //!   leaves. The phone is online while this socket is open.
+//!   Requests the extension answers (`device.screen.read`) go node → app as
+//!   sealed text frames `{"type":"device.screen.read","id","filter"?}`; the
+//!   answer is a kind 6 packet (`{"type":"device.screen.read.result","id",
+//!   "result":<envelope>}`) that goes to the waiting call, not to viewers.
 //! * `WS /api/v1/phones/app/control?phone=<id>` — the foreground app. Text
 //!   frames only, sealed with the request construction both ways. Node → app:
 //!   `{"id","method","params"}`; app → node: `{"id","result"}`,
-//!   `{"id","error":{"code","message"}}` or `{"type":"state","foreground","browserOpen"}`.
+//!   `{"id","error":{"code","message"}}` or `{"type":"state","foreground","browserOpen",
+//!   "deviceAccess":{calendar,reminders,contacts,shortcuts,home}}`. Phone Use
+//!   replies also carry `"type":"<method>.result"`.
 //!   Android adds to its `state` frame `canTap` (Accessibility on) and
 //!   `consent` (`"granted"` | `"needed"` | `"denied"`: screen-share consent).
 //!   Android only, node → app:
@@ -64,7 +70,17 @@
 //!   Access) are refused here with `{"error":{"code":"device_access_off"}}` unless
 //!   the app's last `state` frame (`deviceAccess:{calendar,reminders,contacts}`)
 //!   has that type on; the app checks again and answers `permission_denied` when
-//!   iOS access is denied. The call key is `(account, phone)`: another account's
+//!   iOS access is denied. Phone Use (contract §9.1): `device.shortcuts.run` and
+//!   `device.home.*` need the `shortcuts` / `home` switch the same way;
+//!   `device.describe` and `device.screen.read` are reads with no switch. Their
+//!   result is the phone's envelope `{ok,route,verified,detail,needs_you?}`. They
+//!   wait `timeout_s` (1-120, default 30) plus 5 s, and their waiting call is kept
+//!   per phone, not per socket: running a shortcut brings Shortcuts to the front,
+//!   which closes the control socket, and the app sends the answer on the next
+//!   one. `device.screen.read` goes to the broadcast extension's ingest socket;
+//!   with no broadcast the result is `needs_you: BROADCAST_STOPPED`. Other calls
+//!   still fail with `app_not_open` when their socket closes. At most 64 calls
+//!   wait per phone (429 `busy`). The call key is `(account, phone)`: another account's
 //!   phone is never reachable. `input.events` is refused here with 403
 //!   `viewer_only`: bots drive phones through the guard/hold path, and only a
 //!   full-control viewer's own taps become `input.events`.
@@ -126,6 +142,18 @@ const PAIR_DECISION_TIMEOUT: Duration = Duration::from_secs(120);
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
 const HEARTBEAT_DEAD: Duration = Duration::from_secs(90);
 const RPC_TIMEOUT: Duration = Duration::from_secs(30);
+/// Phone Use calls wait `timeout_s` (1-120, default 30, contract §3.1/§9)
+/// plus this margin: the phone answers at its own timeout first, so the bot
+/// gets the phone's plain sentence rather than the runtime's `app_timeout`.
+const PHONE_USE_DEFAULT_TIMEOUT_S: u64 = 30;
+const PHONE_USE_MAX_TIMEOUT_S: u64 = 120;
+const PHONE_USE_TIMEOUT_MARGIN: Duration = Duration::from_secs(5);
+/// Calls waiting for one phone at once (a stuck bot cannot grow the map).
+const MAX_WAITING_PER_PHONE: usize = 64;
+/// LiveScreenPacket kind 6: the broadcast extension's answer to a request on
+/// the ingest socket (`device.screen.read`).
+const PACKET_REPLY: u8 = 6;
+const PACKET_HEADER: usize = 5;
 const MAX_WEB_WAIT_MS: u64 = 10_000;
 /// Consecutive packets that fail to open before the ingest gives up (a
 /// rotated key: the phone has to pair again).
@@ -157,7 +185,32 @@ const RPC_METHODS: &[&str] = &[
     "device.reminders.list",
     "device.reminders.create",
     "device.contacts.search",
+    // Phone Use, `official` route (contract §9.1). describe and screen.read
+    // are reads with no switch; shortcuts and home need their switch on.
+    // screen.read is answered by the broadcast extension on the ingest socket.
+    "device.describe",
+    "device.shortcuts.run",
+    "device.home.list",
+    "device.home.set",
+    "device.home.scene",
+    "device.screen.read",
 ];
+/// Phone Use methods. Their waiting calls outlive the socket the request went
+/// out on: running a shortcut brings Shortcuts to the front, which closes the
+/// control socket, and the app sends the answer on its next one.
+const PHONE_USE_METHODS: &[&str] = &[
+    "device.describe",
+    "device.shortcuts.run",
+    "device.home.list",
+    "device.home.set",
+    "device.home.scene",
+    "device.screen.read",
+];
+const SCREEN_READ: &str = "device.screen.read";
+/// Device Access kinds the app reports in its `state` frame (`deviceAccess`).
+const DEVICE_ACCESS_KINDS: &[&str] = &["calendar", "reminders", "contacts", "shortcuts", "home"];
+/// `device.*` kinds that are reads with no switch.
+const OPEN_DEVICE_KINDS: &[&str] = &["describe", "screen"];
 
 fn now_secs() -> i64 {
     chrono::Utc::now().timestamp()
@@ -219,8 +272,26 @@ struct ControlConn {
     platform: AppPlatform,
     /// Plaintext JSON requests; the control pump seals them.
     to_app: mpsc::Sender<String>,
-    pending: Mutex<HashMap<String, oneshot::Sender<Value>>>,
     state: RwLock<Value>,
+}
+
+/// The broadcast extension's ingest socket, for requests it answers
+/// (`device.screen.read`). Plaintext JSON; the ingest pump seals them.
+struct IngestConn {
+    id: u64,
+    to_ext: mpsc::Sender<String>,
+}
+
+/// One rpc call waiting for its answer. Kept per phone, not per socket, so a
+/// reply that arrives on the phone's next socket still reaches it.
+struct Waiter {
+    /// The socket the request went out on.
+    conn: u64,
+    /// Phone Use calls survive that socket closing; others fail at once.
+    survives: bool,
+    /// Dropped after this even if nobody collects it.
+    deadline: tokio::time::Instant,
+    reply: oneshot::Sender<Value>,
 }
 
 type PhoneKey = (String, String);
@@ -228,6 +299,9 @@ type PhoneKey = (String, String);
 struct Hub {
     pairs: Mutex<HashMap<PhoneKey, PendingPair>>,
     controls: RwLock<HashMap<PhoneKey, Arc<ControlConn>>>,
+    ingests: RwLock<HashMap<PhoneKey, Arc<IngestConn>>>,
+    /// Waiting rpc calls per phone, by request id.
+    waiting: Mutex<HashMap<PhoneKey, HashMap<String, Waiter>>>,
     /// One replay window per phone key, shared by its ingest and control
     /// sockets (both seal requests under the same key).
     replay: Mutex<HashMap<PhoneKey, Arc<std::sync::Mutex<ReplayGuard>>>>,
@@ -245,6 +319,8 @@ fn hub() -> &'static Hub {
     HUB.get_or_init(|| Hub {
         pairs: Mutex::new(HashMap::new()),
         controls: RwLock::new(HashMap::new()),
+        ingests: RwLock::new(HashMap::new()),
+        waiting: Mutex::new(HashMap::new()),
         replay: Mutex::new(HashMap::new()),
         events: broadcast::channel(64).0,
         next_id: AtomicU64::new(1),
@@ -273,6 +349,115 @@ async fn replay_guard(key: &PhoneKey) -> Arc<std::sync::Mutex<ReplayGuard>> {
         .entry(key.clone())
         .or_default()
         .clone()
+}
+
+/// Register a waiting call for `key`. Expired waiters of this phone are
+/// dropped first; `None` when the phone already has too many waiting.
+async fn wait_for(key: &PhoneKey, id: &str, conn: u64, survives: bool, timeout: Duration) -> Option<oneshot::Receiver<Value>> {
+    let now = tokio::time::Instant::now();
+    let mut waiting = hub().waiting.lock().await;
+    let calls = waiting.entry(key.clone()).or_default();
+    calls.retain(|_, w| w.deadline > now && !w.reply.is_closed());
+    if calls.len() >= MAX_WAITING_PER_PHONE {
+        return None;
+    }
+    let (reply, rx) = oneshot::channel();
+    calls.insert(id.to_string(), Waiter { conn, survives, deadline: now + timeout, reply });
+    Some(rx)
+}
+
+/// Hand a reply (`{"id",...}`) to the call waiting for it on this phone,
+/// whichever socket it came in on. False when nobody waits for that id.
+async fn deliver(key: &PhoneKey, reply: Value) -> bool {
+    let Some(id) = reply["id"].as_str().map(str::to_string) else { return false };
+    let waiter = {
+        let mut waiting = hub().waiting.lock().await;
+        let Some(calls) = waiting.get_mut(key) else { return false };
+        let waiter = calls.remove(&id);
+        if calls.is_empty() {
+            waiting.remove(key);
+        }
+        waiter
+    };
+    match waiter {
+        Some(w) => w.reply.send(reply).is_ok(),
+        None => false,
+    }
+}
+
+async fn forget(key: &PhoneKey, id: &str) {
+    let mut waiting = hub().waiting.lock().await;
+    if let Some(calls) = waiting.get_mut(key) {
+        calls.remove(id);
+        if calls.is_empty() {
+            waiting.remove(key);
+        }
+    }
+}
+
+/// A socket closed: its calls that cannot survive that fail now (dropping the
+/// sender answers them `app_not_open`); Phone Use calls keep waiting for the
+/// phone's next socket until their deadline.
+async fn drop_socket_waiters(key: &PhoneKey, conn: u64) {
+    let mut waiting = hub().waiting.lock().await;
+    if let Some(calls) = waiting.get_mut(key) {
+        calls.retain(|_, w| w.survives || w.conn != conn);
+        if calls.is_empty() {
+            waiting.remove(key);
+        }
+    }
+}
+
+/// How long the runtime waits for the phone on this call.
+fn rpc_timeout(method: &str, params: &Value) -> Duration {
+    if !PHONE_USE_METHODS.contains(&method) {
+        return RPC_TIMEOUT;
+    }
+    let secs = params["timeout_s"]
+        .as_u64()
+        .filter(|s| (1..=PHONE_USE_MAX_TIMEOUT_S).contains(s))
+        .unwrap_or(PHONE_USE_DEFAULT_TIMEOUT_S);
+    Duration::from_secs(secs) + PHONE_USE_TIMEOUT_MARGIN
+}
+
+/// The contract envelope for a phone whose broadcast is not running (§5).
+fn broadcast_stopped() -> Value {
+    let message = "Start the screen broadcast in the Allternit app on your iPhone.";
+    json!({
+        "ok": false,
+        "route": "official",
+        "verified": false,
+        "detail": { "error": "broadcast_stopped", "message": message },
+        "needs_you": { "code": "BROADCAST_STOPPED", "message": message },
+    })
+}
+
+/// A kind 6 LiveScreenPacket (`u8 kind | u32 BE length | JSON`) as its JSON,
+/// or `None` for every other packet (video, sound, status go to viewers).
+fn reply_packet(packet: &[u8]) -> Option<Value> {
+    if packet.len() < PACKET_HEADER || packet[0] != PACKET_REPLY {
+        return None;
+    }
+    let len = u32::from_be_bytes([packet[1], packet[2], packet[3], packet[4]]) as usize;
+    let body = packet.get(PACKET_HEADER..PACKET_HEADER.checked_add(len)?)?;
+    let value: Value = serde_json::from_slice(body).ok()?;
+    value["id"].is_string().then_some(value)
+}
+
+/// The control socket's last `state` frame, as the hub keeps it.
+fn control_state(value: &Value) -> Value {
+    let access: serde_json::Map<String, Value> = DEVICE_ACCESS_KINDS
+        .iter()
+        .map(|kind| (kind.to_string(), json!(value["deviceAccess"][*kind].as_bool().unwrap_or(false))))
+        .collect();
+    json!({
+        "foreground": value["foreground"].as_bool().unwrap_or(false),
+        "browserOpen": value["browserOpen"].as_bool().unwrap_or(false),
+        // Android: Accessibility on, screen-share consent.
+        "canTap": value["canTap"].as_bool().unwrap_or(false),
+        "consent": value["consent"].as_str().filter(|c| matches!(*c, "granted" | "needed" | "denied")),
+        "deviceAccess": access,
+    })
 }
 
 /// True while the iOS app holds its control socket for this phone.
@@ -325,6 +510,9 @@ fn listing_fields(platform: AppPlatform, control_state: Option<&Value>) -> Value
         "appOpen": control_state.is_some(),
         "foreground": state.get("foreground").cloned().unwrap_or(json!(false)),
         "browserOpen": state.get("browserOpen").cloned().unwrap_or(json!(false)),
+        // Device Access switches from the app's last `state` frame (Phone Use
+        // health on the Desktop); null while the app is not connected.
+        "deviceAccess": control_state.and_then(|s| s.get("deviceAccess").cloned()).unwrap_or(Value::Null),
     })
 }
 
@@ -834,6 +1022,11 @@ async fn run_ingest<T: FrameTransport>(mut transport: T, state: Arc<AppState>, a
     let phone_key = (account.clone(), phone_id.clone());
     remember_platform(&phone_key, stored.platform).await;
     let replay = replay_guard(&phone_key).await;
+    // Requests the extension answers itself (device.screen.read), sealed
+    // below: the extension never takes a request from a plain frame.
+    let (to_ext, mut requests) = mpsc::channel::<String>(8);
+    let ingest = Arc::new(IngestConn { id: hub().next_id.fetch_add(1, Ordering::Relaxed), to_ext });
+    hub().ingests.write().await.insert(phone_key.clone(), ingest.clone());
     // The extension starts paused; a viewer that was already waiting attaches
     // as soon as the session registers and its `viewer_attached` resumes it.
     let mut paused = true;
@@ -847,6 +1040,16 @@ async fn run_ingest<T: FrameTransport>(mut transport: T, state: Arc<AppState>, a
         tokio::select! {
             _ = heartbeat.tick() => {
                 if !transport.send(Message::Ping(Vec::new())).await || last_inbound.elapsed() > HEARTBEAT_DEAD {
+                    break;
+                }
+            }
+            request = requests.recv() => {
+                let Some(plain) = request else { break };
+                let sealed = {
+                    let mut guard = replay.lock().unwrap_or_else(|p| p.into_inner());
+                    stored.key.seal(&plain, now_secs(), &mut guard)
+                };
+                if !transport.send(Message::Text(sealed)).await {
                     break;
                 }
             }
@@ -889,6 +1092,13 @@ async fn run_ingest<T: FrameTransport>(mut transport: T, state: Arc<AppState>, a
                     match opened {
                         Ok(packet) => {
                             bad_packets = 0;
+                            // A reply (kind 6) goes to its waiting call, never to viewers.
+                            if let Some(reply) = reply_packet(&packet) {
+                                if !deliver(&phone_key, reply).await {
+                                    debug!(phone = %phone_id, "broadcast reply with no waiting call");
+                                }
+                                continue;
+                            }
                             fan_out_to_viewers(&session, Message::Binary(packet)).await;
                         }
                         Err(e) => {
@@ -916,6 +1126,13 @@ async fn run_ingest<T: FrameTransport>(mut transport: T, state: Arc<AppState>, a
         }
     }
 
+    {
+        let mut ingests = hub().ingests.write().await;
+        if ingests.get(&phone_key).is_some_and(|c| c.id == ingest.id) {
+            ingests.remove(&phone_key);
+        }
+    }
+    drop_socket_waiters(&phone_key, ingest.id).await;
     registry.unregister_session(&session).await;
     registry.cloud_upsert_phones(std::slice::from_ref(&phone)).await;
     info!(phone = %phone_id, "app phone broadcast detached");
@@ -948,7 +1165,6 @@ async fn run_control<T: FrameTransport>(mut transport: T, state: Arc<AppState>, 
         id: hub().next_id.fetch_add(1, Ordering::Relaxed),
         platform: stored.platform,
         to_app,
-        pending: Mutex::new(HashMap::new()),
         state: RwLock::new(json!({ "foreground": true, "browserOpen": false })),
     });
     hub().controls.write().await.insert(key.clone(), conn.clone());
@@ -993,21 +1209,12 @@ async fn run_control<T: FrameTransport>(mut transport: T, state: Arc<AppState>, 
                     };
                     let Ok(value) = serde_json::from_str::<Value>(&plain) else { continue };
                     if value["type"].as_str() == Some("state") {
-                        *conn.state.write().await = json!({
-                            "foreground": value["foreground"].as_bool().unwrap_or(false),
-                            "browserOpen": value["browserOpen"].as_bool().unwrap_or(false),
-                            // Android: Accessibility on, screen-share consent.
-                            "canTap": value["canTap"].as_bool().unwrap_or(false),
-                            "consent": value["consent"].as_str().filter(|c| matches!(*c, "granted" | "needed" | "denied")),
-                            "deviceAccess": {
-                                "calendar": value["deviceAccess"]["calendar"].as_bool().unwrap_or(false),
-                                "reminders": value["deviceAccess"]["reminders"].as_bool().unwrap_or(false),
-                                "contacts": value["deviceAccess"]["contacts"].as_bool().unwrap_or(false),
-                            },
-                        });
-                    } else if let Some(id) = value["id"].as_str() {
-                        if let Some(waiter) = conn.pending.lock().await.remove(id) {
-                            let _ = waiter.send(value);
+                        *conn.state.write().await = control_state(&value);
+                    } else if value["id"].is_string() {
+                        // Any socket of this phone: a reply may come in on the
+                        // socket after the one its request went out on.
+                        if !deliver(&key, value).await {
+                            debug!(phone = %phone_id, "app phone reply with no waiting call");
                         }
                     }
                 }
@@ -1029,8 +1236,8 @@ async fn run_control<T: FrameTransport>(mut transport: T, state: Arc<AppState>, 
             controls.remove(&key);
         }
     }
-    // Dropping the waiters answers their rpc calls with app_not_open.
-    conn.pending.lock().await.clear();
+    // Calls that cannot outlive this socket answer app_not_open now.
+    drop_socket_waiters(&key, conn.id).await;
     info!(phone = %phone_id, "app phone control detached");
 }
 
@@ -1056,7 +1263,20 @@ fn validate_rpc(method: &str, params: &Value) -> Result<(), &'static str> {
     {
         return Err("device.contacts.search needs a query");
     }
-    Ok(())
+    if PHONE_USE_METHODS.contains(&method)
+        && params.get("timeout_s").is_some_and(|t| !t.as_u64().is_some_and(|s| (1..=PHONE_USE_MAX_TIMEOUT_S).contains(&s)))
+    {
+        return Err("timeout_s must be a whole number of seconds, 1-120");
+    }
+    let text = |field: &str, max: usize| params[field].as_str().is_some_and(|v| !v.trim().is_empty() && v.len() <= max);
+    match method {
+        "device.shortcuts.run" if !text("name", 200) => Err("device.shortcuts.run needs a name (up to 200 characters)"),
+        "device.home.set" if !text("device_id", 200) || !params["state"].is_object() => Err("device.home.set needs device_id and a state object"),
+        "device.home.scene" if !text("scene_id", 200) => Err("device.home.scene needs a scene_id"),
+        "device.home.list" if !(params["kind"].is_null() || params["kind"].is_string()) => Err("kind must be a string"),
+        SCREEN_READ if !(params["filter"].is_null() || params["filter"].is_object()) => Err("filter must be an object"),
+        _ => Ok(()),
+    }
 }
 
 /// Device Access gate on the server path: the app reports which types the
@@ -1065,6 +1285,10 @@ fn validate_rpc(method: &str, params: &Value) -> Result<(), &'static str> {
 fn device_gate(state: &Value, method: &str) -> Result<(), &'static str> {
     let Some(rest) = method.strip_prefix("device.") else { return Ok(()) };
     let kind = rest.split('.').next().unwrap_or("");
+    // What the phone can do, and the screen: reads with no switch.
+    if OPEN_DEVICE_KINDS.contains(&kind) {
+        return Ok(());
+    }
     if state["deviceAccess"][kind].as_bool() == Some(true) {
         Ok(())
     } else {
@@ -1098,12 +1322,12 @@ async fn rpc(
     if let Err(message) = validate_rpc(&body.method, &params) {
         return err(StatusCode::BAD_REQUEST, "bad_request", message);
     }
-    let conn = hub()
-        .controls
-        .read()
-        .await
-        .get(&(user.user_id.clone(), phone_id.clone()))
-        .cloned();
+    let key = (user.user_id.clone(), phone_id);
+    let timeout = rpc_timeout(&body.method, &params);
+    if body.method == SCREEN_READ {
+        return screen_read(&key, &params, timeout).await;
+    }
+    let conn = hub().controls.read().await.get(&key).cloned();
     let not_open = || err(StatusCode::CONFLICT, "app_not_open", "Open the Allternit app on the iPhone");
     let Some(conn) = conn else { return not_open() };
     if let Err(code) = device_gate(&*conn.state.read().await, &body.method) {
@@ -1115,25 +1339,62 @@ async fn rpc(
     }
 
     let id = uuid::Uuid::new_v4().to_string();
-    let (tx, rx) = oneshot::channel();
-    conn.pending.lock().await.insert(id.clone(), tx);
+    let survives = PHONE_USE_METHODS.contains(&body.method.as_str());
+    let Some(rx) = wait_for(&key, &id, conn.id, survives, timeout).await else {
+        return err(StatusCode::TOO_MANY_REQUESTS, "busy", "Too many calls are waiting for this iPhone");
+    };
     let request = json!({ "id": id, "method": body.method, "params": params }).to_string();
     if tokio::time::timeout(Duration::from_secs(5), conn.to_app.send(request))
         .await
         .map_or(true, |sent| sent.is_err())
     {
-        conn.pending.lock().await.remove(&id);
+        forget(&key, &id).await;
         return not_open();
     }
-    match tokio::time::timeout(RPC_TIMEOUT, rx).await {
-        Ok(Ok(answer)) => match answer.get("error").filter(|e| !e.is_null()) {
-            Some(error) => Json(json!({ "error": error })).into_response(),
-            None => Json(json!({ "result": answer.get("result").cloned().unwrap_or(Value::Null) })).into_response(),
-        },
+    match tokio::time::timeout(timeout, rx).await {
+        Ok(Ok(answer)) => answer_response(answer),
         Ok(Err(_)) => not_open(),
         Err(_) => {
-            conn.pending.lock().await.remove(&id);
+            forget(&key, &id).await;
             err(StatusCode::GATEWAY_TIMEOUT, "app_timeout", "The iPhone app did not answer in time")
+        }
+    }
+}
+
+fn answer_response(answer: Value) -> Response {
+    match answer.get("error").filter(|e| !e.is_null()) {
+        Some(error) => Json(json!({ "error": error })).into_response(),
+        None => Json(json!({ "result": answer.get("result").cloned().unwrap_or(Value::Null) })).into_response(),
+    }
+}
+
+/// `device.screen.read` goes to the broadcast extension (it holds the frames),
+/// sealed like every request; its kind 6 packet carries the answer. No
+/// broadcast, or it ends before answering: `BROADCAST_STOPPED`.
+async fn screen_read(key: &PhoneKey, params: &Value, timeout: Duration) -> Response {
+    let stopped = || Json(json!({ "result": broadcast_stopped() })).into_response();
+    let Some(ingest) = hub().ingests.read().await.get(key).cloned() else { return stopped() };
+    let id = uuid::Uuid::new_v4().to_string();
+    let Some(rx) = wait_for(key, &id, ingest.id, false, timeout).await else {
+        return err(StatusCode::TOO_MANY_REQUESTS, "busy", "Too many calls are waiting for this iPhone");
+    };
+    let mut request = json!({ "type": SCREEN_READ, "id": id });
+    if params["filter"].is_object() {
+        request["filter"] = params["filter"].clone();
+    }
+    if tokio::time::timeout(Duration::from_secs(5), ingest.to_ext.send(request.to_string()))
+        .await
+        .map_or(true, |sent| sent.is_err())
+    {
+        forget(key, &id).await;
+        return stopped();
+    }
+    match tokio::time::timeout(timeout, rx).await {
+        Ok(Ok(answer)) => answer_response(answer),
+        Ok(Err(_)) => stopped(),
+        Err(_) => {
+            forget(key, &id).await;
+            err(StatusCode::GATEWAY_TIMEOUT, "app_timeout", "The iPhone broadcast did not answer in time")
         }
     }
 }
@@ -1228,7 +1489,6 @@ mod tests {
             id: u64::MAX,
             platform: AppPlatform::Ios,
             to_app,
-            pending: Mutex::new(HashMap::new()),
             state: RwLock::new(json!({})),
         });
         hub().controls.write().await.insert(("owner".to_string(), phone.clone()), conn);
@@ -1267,7 +1527,6 @@ mod tests {
             id: u64::MAX - 1,
             platform,
             to_app,
-            pending: Mutex::new(HashMap::new()),
             state: RwLock::new(json!({})),
         });
         (conn, rx)
@@ -1536,6 +1795,195 @@ mod tests {
         assert!(validate_rpc("web.wait", &json!({ "ms": 10_001 })).is_err());
         assert!(validate_rpc("web.wait", &json!({})).is_err());
         assert!(validate_rpc("web.eval", &json!({ "js": "1" })).is_err());
+    }
+
+    // ── Phone Use (official route) ───────────────────────────────────────────
+
+    async fn paired_phone(state: &AppState, account: &str, secret: &EnvelopeKey) -> String {
+        state
+            .db
+            .connect()
+            .unwrap()
+            .execute("INSERT OR IGNORE INTO users (id, email) VALUES (?1, ?1 || '@test.local')", [account])
+            .unwrap();
+        let phone = uuid::Uuid::new_v4().to_string();
+        assert!(store_phone(state, &user(account), &phone, secret, &None, &None, AppPlatform::Ios).await);
+        phone
+    }
+
+    /// The control socket id for this phone once it differs from `old`.
+    async fn control_id(key: &PhoneKey, old: Option<u64>) -> u64 {
+        for _ in 0..200 {
+            if let Some(conn) = hub().controls.read().await.get(key) {
+                if Some(conn.id) != old {
+                    return conn.id;
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        panic!("control socket never attached");
+    }
+
+    /// Regression: waiting calls lived on the control socket, so a shortcut
+    /// that brought Shortcuts to the front (closing the socket) lost its
+    /// answer, which the app sends on its next socket.
+    #[tokio::test]
+    async fn a_phone_use_reply_on_the_next_control_socket_reaches_the_waiting_call() {
+        let temp = tempfile::tempdir().unwrap();
+        let state = crate::test_helpers::app_state(temp.path()).await;
+        let secret = EnvelopeKey::from_hex(&"ef".repeat(32)).unwrap();
+        let phone = paired_phone(&state, "user-late", &secret).await;
+        let key = ("user-late".to_string(), phone.clone());
+
+        let ((first_in, _first_out), first) = chan_pair();
+        tokio::spawn(run_control(first, state.clone(), "user-late".to_string(), phone.clone()));
+        let first_id = control_id(&key, None).await;
+        let shortcut = wait_for(&key, "run-1", first_id, true, Duration::from_secs(10)).await.unwrap();
+        let web = wait_for(&key, "web-1", first_id, false, Duration::from_secs(10)).await.unwrap();
+
+        // Shortcuts comes to the front: the socket closes. A web call fails now.
+        drop(first_in);
+        assert!(tokio::time::timeout(Duration::from_secs(2), web).await.unwrap().is_err());
+
+        // The app is back on a new socket and sends the late answer there.
+        let ((second_in, _second_out), second) = chan_pair();
+        tokio::spawn(run_control(second, state.clone(), "user-late".to_string(), phone.clone()));
+        control_id(&key, Some(first_id)).await;
+        let reply = json!({
+            "id": "run-1",
+            "type": "device.shortcuts.run.result",
+            "result": { "ok": true, "route": "official", "verified": true, "detail": { "output": "done", "returned_via": "x_callback" } },
+        })
+        .to_string();
+        let mut app_replay = ReplayGuard::default();
+        second_in.send(Message::Text(secret.seal(&reply, now_secs(), &mut app_replay))).await.unwrap();
+        let answer = tokio::time::timeout(Duration::from_secs(2), shortcut).await.unwrap().unwrap();
+        assert_eq!(answer_response(answer).status(), StatusCode::OK);
+        drop(second_in);
+    }
+
+    #[tokio::test]
+    async fn waiting_calls_are_bounded_per_phone_and_expire() {
+        let key = ("user-bound".to_string(), uuid::Uuid::new_v4().to_string());
+        let mut held = Vec::new();
+        for i in 0..MAX_WAITING_PER_PHONE {
+            held.push(wait_for(&key, &format!("c{i}"), 1, true, Duration::from_secs(60)).await.unwrap());
+        }
+        assert!(wait_for(&key, "one-too-many", 1, true, Duration::from_secs(60)).await.is_none());
+        // Calls whose caller went away are dropped on the next insert.
+        drop(held);
+        let expired = wait_for(&key, "short", 1, true, Duration::ZERO).await.unwrap();
+        let _later = wait_for(&key, "later", 1, true, Duration::from_secs(60)).await.unwrap();
+        assert!(expired.await.is_err(), "an expired call is dropped, not kept forever");
+        assert!(!deliver(&key, json!({ "id": "short" })).await);
+        assert!(deliver(&key, json!({ "id": "later" })).await);
+    }
+
+    #[test]
+    fn phone_use_calls_wait_their_timeout_s_plus_a_margin() {
+        let secs = |method: &str, params: Value| rpc_timeout(method, &params).as_secs();
+        assert_eq!(secs("device.shortcuts.run", json!({ "name": "x" })), 35);
+        assert_eq!(secs("device.shortcuts.run", json!({ "name": "x", "timeout_s": 90 })), 95);
+        assert_eq!(secs("device.shortcuts.run", json!({ "name": "x", "timeout_s": 120 })), 125);
+        assert_eq!(secs("device.screen.read", json!({})), 35);
+        assert_eq!(rpc_timeout("web.snapshot", &json!({ "timeout_s": 90 })), RPC_TIMEOUT);
+        for bad in [json!(0), json!(121), json!("5"), json!(1.5), json!(-1)] {
+            assert!(validate_rpc("device.shortcuts.run", &json!({ "name": "x", "timeout_s": bad })).is_err(), "{bad}");
+        }
+        assert!(validate_rpc("device.shortcuts.run", &json!({})).is_err());
+        assert!(validate_rpc("device.home.set", &json!({ "device_id": "a", "state": { "on": true } })).is_ok());
+        assert!(validate_rpc("device.home.set", &json!({ "id": "a", "state": { "on": true } })).is_err());
+        assert!(validate_rpc("device.home.scene", &json!({ "scene_id": "s" })).is_ok());
+        assert!(validate_rpc("device.home.list", &json!({ "kind": "lock" })).is_ok());
+        assert!(validate_rpc("device.describe", &json!({})).is_ok());
+        assert!(validate_rpc("device.screen.read", &json!({ "filter": { "label": "Send" } })).is_ok());
+        assert!(validate_rpc("device.screen.read", &json!({ "filter": "Send" })).is_err());
+        assert!(validate_rpc("device.actions.run", &json!({})).is_err(), "not answered by the iPhone app yet");
+    }
+
+    /// Regression: the state frame kept only calendar, reminders and contacts,
+    /// so every shortcut and Home call was refused as device_access_off.
+    #[test]
+    fn the_state_frame_keeps_the_phone_use_switches() {
+        let frame = json!({ "type": "state", "foreground": true,
+            "deviceAccess": { "calendar": false, "contacts": true, "shortcuts": true, "home": false, "health": true } });
+        let state = control_state(&frame);
+        assert!(device_gate(&state, "device.shortcuts.run").is_ok());
+        assert!(device_gate(&state, "device.contacts.search").is_ok());
+        assert_eq!(device_gate(&state, "device.home.set"), Err("device_access_off"));
+        assert_eq!(device_gate(&state, "device.home.list"), Err("device_access_off"));
+        assert_eq!(device_gate(&state, "device.calendar.list"), Err("device_access_off"));
+        assert!(state["deviceAccess"].get("health").is_none(), "only known switches are kept");
+        // What the phone can do, and the screen, need no switch.
+        assert!(device_gate(&json!({}), "device.describe").is_ok());
+        assert!(device_gate(&json!({}), "device.screen.read").is_ok());
+        // The Desktop reads the switches from the listing (Phone Use health).
+        assert_eq!(listing_fields(AppPlatform::Ios, Some(&state))["deviceAccess"]["shortcuts"], true);
+        assert!(listing_fields(AppPlatform::Ios, None)["deviceAccess"].is_null());
+    }
+
+    fn reply_packet_bytes(body: Value) -> Vec<u8> {
+        let mut body = body.to_string();
+        // The test seals text, so keep the length bytes ASCII.
+        while (body.len() as u32).to_be_bytes().iter().any(|b| *b >= 0x80) {
+            body.push(' ');
+        }
+        let mut packet = vec![PACKET_REPLY];
+        packet.extend((body.len() as u32).to_be_bytes());
+        packet.extend(body.as_bytes());
+        packet
+    }
+
+    #[tokio::test]
+    async fn screen_read_goes_sealed_to_the_broadcast_and_its_reply_packet_answers_it() {
+        let temp = tempfile::tempdir().unwrap();
+        let state = crate::test_helpers::app_state(temp.path()).await;
+        let secret = EnvelopeKey::from_hex(&"a1".repeat(32)).unwrap();
+        let phone = paired_phone(&state, "user-read", &secret).await;
+        let key = ("user-read".to_string(), phone.clone());
+
+        // No broadcast: the phone has to start it.
+        let resp = screen_read(&key, &json!({}), Duration::from_secs(1)).await;
+        let body: Value = serde_json::from_slice(&axum::body::to_bytes(resp.into_body(), 4096).await.unwrap()).unwrap();
+        assert_eq!(body["result"]["needs_you"]["code"], "BROADCAST_STOPPED");
+
+        let ((ingest_in, mut ingest_out), ingest) = chan_pair();
+        tokio::spawn(run_ingest(ingest, state.clone(), "user-read".to_string(), phone.clone()));
+        for _ in 0..200 {
+            if hub().ingests.read().await.contains_key(&key) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        let call_key = key.clone();
+        let call = tokio::spawn(async move { screen_read(&call_key, &json!({ "filter": { "label": "Send" } }), Duration::from_secs(5)).await });
+
+        // The request reaches the extension sealed (it ignores plain requests).
+        let request = loop {
+            let Message::Text(text) = tokio::time::timeout(Duration::from_secs(2), ingest_out.recv()).await.unwrap().unwrap() else { continue };
+            if let Ok(plain) = secret.open_text(&text, now_secs(), &mut ReplayGuard::default()) {
+                break serde_json::from_str::<Value>(&plain).unwrap();
+            }
+        };
+        assert_eq!(request["type"], SCREEN_READ);
+        assert_eq!(request["filter"]["label"], "Send");
+        let id = request["id"].as_str().unwrap().to_string();
+
+        // Its kind 6 packet answers the call.
+        let packet = reply_packet_bytes(json!({ "type": "device.screen.read.result", "id": id,
+            "result": { "ok": true, "route": "official", "verified": true, "detail": { "text": "Send" } } }));
+        assert!(reply_packet(&packet).is_some());
+        let sealed = secret.seal(std::str::from_utf8(&packet).unwrap(), now_secs(), &mut ReplayGuard::default());
+        ingest_in.send(Message::Binary(sealed.into_bytes())).await.unwrap();
+        let resp = tokio::time::timeout(Duration::from_secs(2), call).await.unwrap().unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body: Value = serde_json::from_slice(&axum::body::to_bytes(resp.into_body(), 4096).await.unwrap()).unwrap();
+        assert_eq!(body["result"]["detail"]["text"], "Send");
+
+        // Video and status packets are not replies.
+        assert!(reply_packet(&[2, 0, 0, 0, 1, 0]).is_none());
+        assert!(reply_packet(&[PACKET_REPLY, 0, 0, 0, 9, b'{']).is_none());
+        drop(ingest_in);
     }
 
     /// `/phones/app:<id>/ws-token` (the viewer route) must still reach

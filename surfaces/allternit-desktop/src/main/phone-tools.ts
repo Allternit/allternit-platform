@@ -15,7 +15,7 @@
 
 import { createHash } from 'node:crypto';
 import type { PhoneLinkHealth } from './phone-link-health.js';
-import type { AppPhoneDevice } from './phone-app-store.js';
+import type { AppOfficialState, AppPhoneDevice, AppRpcResult } from './phone-app-store.js';
 import { appHints, catalogApp, catalogAppByName } from './phone-app-catalog.js';
 import { elementAt, parseUiText, PhoneApiUnavailable, type PhoneApi, type PhoneRunRecorder, type UiLine } from './phone-runs.js';
 import type { GuardAnswer, GuardCheckBody, GuardCtx, GuardElement, PhoneHoldClient } from './phone-hold-client.js';
@@ -27,6 +27,7 @@ import {
   isRouteId,
   isTapTool,
   legacyHelperLane,
+  officialLane,
   PhoneRouter,
   ROUTE_IDS,
   usbAgentLane,
@@ -88,9 +89,13 @@ export interface UsbPhoneBackend {
  * with "app:". The screen and the app's own browser only.
  */
 export interface AppPhoneLane extends UsbPhoneBackend {
-  /** Re-reads the node's phone list when stale. Never throws. */
-  refresh(): Promise<void>;
+  /** Re-reads the node's phone list when stale (or now, with force). Never throws. */
+  refresh(force?: boolean): Promise<void>;
   devices(): AppPhoneDevice[];
+  /** Phone Use official route (phone-route.ts officialLane): the app's last state frame, null when not listed. */
+  officialState?(serial: string): AppOfficialState | null;
+  /** Phone Use official route: `POST /api/v1/phones/app/:id/rpc`. Absent = the official route is unavailable. */
+  rpc?(serial: string, method: string, params: Record<string, unknown>, timeoutMs: number): Promise<AppRpcResult>;
 }
 
 /** A Phone-Linked phone as phone.devices lists it, health included. */
@@ -956,6 +961,7 @@ export class PhoneToolRunner {
     this.now = deps.now ?? Date.now;
     this.router = new PhoneRouter({
       lanes: {
+        official: officialLane(() => deps.apps?.() ?? null, deps.now),
         'usb-agent': usbAgentLane(() => deps.usb?.() ?? null),
         'legacy-helper': legacyHelperLane(() => deps.links?.() ?? null, () => deps.helperRetiresAt?.() ?? null),
         ...deps.lanes,
@@ -1134,9 +1140,11 @@ export class PhoneToolRunner {
   /**
    * Contract §8 for the new tools: sends, purchases and security changes need
    * the owner. The runtime guard is asked first (it can hold or refuse); an
-   * approved hold (`_hold`) is enough. Otherwise this computer's own approval
-   * dialog asks too, as the App Store lane does for calendar writes, because
-   * the runtime has no rule for these tool names until plan step 14.
+   * approved hold (`_hold`) is enough. The runtime holds these tool names by
+   * the class named here (phone_guard.rs phone_use_effect), so the owner
+   * approves a send once, on the hold. When the guard lets a call through
+   * without a hold (an older runtime, or no guard wired), this computer's own
+   * approval dialog asks, as the App Store lane does for calendar writes.
    */
   private async phoneUseApproval(name: string, serial: string, a: Record<string, unknown>, args: Record<string, unknown>): Promise<ToolResult | null> {
     const cls = approvalClass(name, args, this.router.hints(serial, name, args));
