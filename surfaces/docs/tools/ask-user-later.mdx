@@ -35,6 +35,10 @@ A new ask marks the thread as needing you (`thread.needs_user`) and sends a push
 | iOS | The Decisions deck. |
 | Gizzi terminal | A block in the thread. Reply with `/answer <id>`. |
 
+Every device lists every pending ask on the runtime, whatever project the thread is in. A live terminal session sits in the default project, and its asks still show everywhere.
+
+When the terminal is attached to an engine as a live session, it files the ask through the engine (`POST /api/v1/questions/async` with `sessionID`, `questions` and `assumption`). The engine saves it, sends `question.asked` to every connected device at once, and pushes it. The route answers `429` when the thread already has 3 asks waiting and `404` for a session the engine does not store. When no engine runs, the terminal saves the ask itself and you answer it there.
+
 ## Difference from `question`
 
 | | `question` | `ask_user_later` |

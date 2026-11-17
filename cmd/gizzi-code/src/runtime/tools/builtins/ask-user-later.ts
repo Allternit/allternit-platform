@@ -44,6 +44,34 @@ function pushOf(result: { pushed?: boolean; reason?: string }): UserMessage.Push
   return "unavailable"
 }
 
+/**
+ * Files an ask: persists it and publishes `question.asked` (Question.askLater),
+ * then pushes it to the user's devices. The one path behind the tool and the
+ * engine route (POST /api/v1/questions/async) the Gizzi TUI calls, so a
+ * terminal ask reaches every device live. Throws Question.AsyncLimitError.
+ */
+export async function fileAsk(input: {
+  sessionID: string
+  questions: Question.Info[]
+  assumption: string
+}): Promise<{ request: Question.Request; push: UserMessage.Push }> {
+  const request = await Question.askLater(input)
+  let push: UserMessage.Push
+  try {
+    const result = await notifyUser(request.sessionID, {
+      kind: "question",
+      level: "needs_you",
+      preview: UserMessage.preview(input.questions[0]!.question),
+      ref: request.id,
+    })
+    push = pushOf(result)
+  } catch {
+    // No platform credential, API not running, timeout: the card is still in the thread.
+    push = "unavailable"
+  }
+  return { request, push }
+}
+
 export const AskUserLaterTool = Tool.define("ask_user_later", {
   description: DESCRIPTION,
   parameters,
@@ -54,30 +82,14 @@ export const AskUserLaterTool = Tool.define("ask_user_later", {
       always: ["*"],
       metadata: { questions: params.questions.length },
     })
-    let request: Question.Request
-    try {
-      request = await Question.askLater({
-        sessionID: ctx.sessionID,
-        questions: params.questions,
-        assumption: params.assumption,
-      })
-    } catch (error) {
+    const { request, push } = await fileAsk({
+      sessionID: ctx.sessionID,
+      questions: params.questions,
+      assumption: params.assumption,
+    }).catch((error) => {
       if (error instanceof Question.AsyncLimitError) throw new Error(error.message)
       throw error
-    }
-    let push: UserMessage.Push
-    try {
-      const result = await notifyUser(request.sessionID, {
-        kind: "question",
-        level: "needs_you",
-        preview: UserMessage.preview(params.questions[0]!.question),
-        ref: request.id,
-      })
-      push = pushOf(result)
-    } catch {
-      // No platform credential, API not running, timeout: the card is still in the thread.
-      push = "unavailable"
-    }
+    })
     const metadata: Metadata = {
       ask_id: request.id,
       sessionID: request.sessionID,

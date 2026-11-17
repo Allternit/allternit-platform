@@ -21,6 +21,7 @@ const { Agent } = await import("../../src/runtime/loop/agent")
 const { PermissionNext } = await import("../../src/permission/next")
 const { ToolRegistry } = await import("../../src/runtime/tools/builtins/registry")
 const { AskUserLaterTool } = await import("../../src/runtime/tools/builtins/ask-user-later")
+const { AgentCompatRoutes } = await import("../../src/runtime/server/routes/agent-compat")
 
 type Call = { path: string; body: any }
 let calls: Call[] = []
@@ -176,10 +177,11 @@ describe("tool.ask_user_later", () => {
           rejected.push(event.properties.requestID)
         })
         try {
-          expect(await Question.expireDue(Date.now() + 6 * 24 * 60 * 60 * 1000)).toEqual([])
-          expect(await Question.expireDue(Date.now() + Question.ASYNC_EXPIRY_MS + 1000)).toEqual([id])
+          // The sweep covers the whole runtime, so other tests' asks may expire with it.
+          expect(await Question.expireDue(Date.now() + 6 * 24 * 60 * 60 * 1000)).not.toContain(id)
+          expect(await Question.expireDue(Date.now() + Question.ASYNC_EXPIRY_MS + 1000)).toContain(id)
           await settle()
-          expect(rejected).toEqual([id])
+          expect(rejected).toContain(id)
           expect((await Question.list()).some((q) => q.id === id)).toBe(false)
 
           // A late answer starts nothing.
@@ -209,6 +211,71 @@ describe("tool.ask_user_later", () => {
         await Question.reply({ requestID: result.metadata.ask_id, answers: [["us-east"]] })
         await settle()
         expect(turns[0].sessionID).toBe(root.id)
+      },
+    })
+  })
+
+  test("an ask filed through the engine route (the Gizzi TUI) publishes question.asked live and pushes", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const session = await Session.create({})
+        const asked: any[] = []
+        const unsubscribe = Bus.subscribe(Question.Event.Asked, (event) => {
+          asked.push(event.properties)
+        })
+        const post = (body: unknown) =>
+          AgentCompatRoutes().request("/v1/questions/async", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(body),
+          })
+        try {
+          const res = await post({ sessionID: session.id, questions: [question], assumption: "Using us-east for now" })
+          expect(res.status).toBe(200)
+          const body = await res.json()
+          expect(body.push).toBe("sent")
+          await settle()
+          expect(asked).toEqual([
+            expect.objectContaining({ id: body.request.id, sessionID: session.id, async: true, assumption: "Using us-east for now" }),
+          ])
+          expect(calls.find((c) => c.path.endsWith("/user/notify")).body).toMatchObject({ sessionId: session.id, ref: body.request.id })
+          expect((await Question.list()).some((q) => q.id === body.request.id)).toBe(true)
+
+          // The limit comes back as 429 so the terminal reports it instead of writing the ask itself.
+          for (let i = 0; i < 2; i++) await post({ sessionID: session.id, questions: [question], assumption: "x" })
+          const refused = await post({ sessionID: session.id, questions: [question], assumption: "x" })
+          expect(refused.status).toBe(429)
+          expect((await refused.json()).error).toContain("the limit is 3")
+
+          // A session the engine doesn't store is refused (the terminal then files it locally).
+          expect((await post({ sessionID: "ses_missing", questions: [question], assumption: "x" })).status).toBe(404)
+        } finally {
+          unsubscribe()
+        }
+      },
+    })
+  })
+
+  test("pending asks list and expire across every project on the runtime (a terminal session sits in the default project)", async () => {
+    await using terminal = await tmpdir()
+    await using project = await tmpdir({ git: true })
+    let id = ""
+    let sessionID = ""
+    await Instance.provide({
+      directory: terminal.path,
+      fn: async () => {
+        sessionID = (await Session.create({})).id
+        id = (await ask(sessionID)).metadata.ask_id
+      },
+    })
+    await Instance.provide({
+      directory: project.path,
+      fn: async () => {
+        expect((await Question.list()).find((q) => q.id === id)).toMatchObject({ sessionID, async: true })
+        expect(await Question.expireDue(Date.now() + Question.ASYNC_EXPIRY_MS + 1000)).toContain(id)
+        expect((await Question.list()).some((q) => q.id === id)).toBe(false)
       },
     })
   })

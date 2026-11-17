@@ -362,12 +362,19 @@ export namespace Question {
     return now - ASYNC_EXPIRY_MS
   }
 
-  /** Root sessions of this instance's project: asks are listed and expired per project, like blocking questions. */
-  function projectSessions(db: Database.TxOrDb) {
-    return db.select({ id: SessionTable.id }).from(SessionTable).where(eq(SessionTable.project_id, Instance.project.id))
+  /**
+   * Every session this runtime stores, in any project. A live terminal session
+   * sits in the default project while Desktop or a phone may ask through
+   * another project's instance, so asks are listed runtime-wide: every device
+   * sees every pending ask. A row whose root is not a stored session (a
+   * terminal ask with no engine attached, answered there with /answer) has no
+   * thread an answer could start a turn in, so it is not listed.
+   */
+  function runtimeSessions(db: Database.TxOrDb) {
+    return db.select({ id: SessionTable.id }).from(SessionTable)
   }
 
-  /** Pending, unexpired asks: of one thread when `rootSessionID` is given, else of this instance's project. */
+  /** Pending, unexpired asks: of one thread when `rootSessionID` is given, else of every session on this runtime. */
   function listAsync(rootSessionID?: string): Request[] {
     try {
       const rows = Database.use((db) =>
@@ -380,7 +387,7 @@ export namespace Question {
               gte(QuestionAsyncTable.created_at, expiryCutoff()),
               rootSessionID
                 ? eq(QuestionAsyncTable.root_session_id, rootSessionID)
-                : inArray(QuestionAsyncTable.root_session_id, projectSessions(db)),
+                : inArray(QuestionAsyncTable.root_session_id, runtimeSessions(db)),
             ),
           )
           .orderBy(QuestionAsyncTable.created_at)
@@ -503,10 +510,12 @@ export namespace Question {
   }
 
   /**
-   * Expires this project's asks older than ASYNC_EXPIRY_MS: status expired
-   * and `question.rejected` on this instance's bus, no turn (silent to the
-   * model). Returns the ids. Listing and replying ignore an expired ask even
-   * before its project's sweep runs.
+   * Expires every ask on this runtime older than ASYNC_EXPIRY_MS, whatever
+   * its project (terminal asks included): status expired and
+   * `question.rejected` on the sweeping instance's bus, no turn (silent to the
+   * model). Returns the ids. The status guard makes a sweep from a second
+   * instance a no-op. Listing and replying ignore an expired ask even before a
+   * sweep runs.
    */
   export async function expireDue(now = Date.now()): Promise<string[]> {
     const rows = Database.use((db) =>
@@ -517,7 +526,6 @@ export namespace Question {
           and(
             eq(QuestionAsyncTable.status, "pending"),
             lt(QuestionAsyncTable.created_at, expiryCutoff(now)),
-            inArray(QuestionAsyncTable.root_session_id, projectSessions(db)),
           ),
         )
         .returning()

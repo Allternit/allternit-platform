@@ -6,9 +6,12 @@
  * uses). The ask is persisted and the tool returns at once; the REPL shows
  * the question as a block with "answer later with /answer <id>".
  *
- * When this terminal is a live engine session the ask is filed under that
- * session, so the user's other devices show the card and get the push, and
- * their answer comes back through the live inbox as the next prompt. Otherwise
+ * When this terminal is a live engine session the ask is filed by the engine
+ * (POST /api/v1/questions/async) under that session: `question.asked` goes
+ * out live, the user's other devices show the card and get the push, and
+ * their answer comes back through the live inbox as the next prompt. If the
+ * engine can't take it the ask is written here and devices see it on their
+ * next /v1/questions poll. Otherwise
  * it is filed under this terminal's session and answered with /answer, which
  * the REPL hook (hooks/useAskUserLaterAnswers.ts) turns into the next turn.
  */
@@ -17,6 +20,8 @@ import { parameters } from '@/runtime/tools/builtins/ask-user-later'
 import { buildTool, type ToolDef } from '../../Tool.js'
 import { lazySchema } from '../../utils/lazySchema.js'
 import { ASK_USER_LATER_TOOL_NAME, DESCRIPTION, PROMPT } from './prompt.js'
+import { getLiveSession } from '../../services/liveSession.js'
+import { logForDebugging } from '../../utils/debug.js'
 import { askIsLive, askSessionID, withRuntime } from './session.js'
 import { renderToolResultMessage, renderToolUseMessage } from './UI.js'
 
@@ -37,6 +42,9 @@ type OutputSchema = ReturnType<typeof outputSchema>
 
 export type Output = z.infer<OutputSchema>
 
+const ENGINE_TIMEOUT_MS = 5_000
+const PUSH_VALUES = new Set<Output['push']>(['sent', 'not_requested', 'rate_limited', 'unpaired', 'unavailable'])
+
 /** Same mapping as the runtime builtin. */
 function pushOf(result: { pushed?: boolean; reason?: string }): Output['push'] {
   if (result.pushed) return 'sent'
@@ -44,6 +52,78 @@ function pushOf(result: { pushed?: boolean; reason?: string }): Output['push'] {
   if (result.reason === 'unpaired') return 'unpaired'
   if (result.reason === 'incognito') return 'not_requested'
   return 'unavailable'
+}
+
+/**
+ * Files the ask through the attached engine (POST /api/v1/questions/async,
+ * the same path as the runtime tool: persist, publish `question.asked`, push).
+ * Undefined when the engine can't take it (not running, an older engine
+ * without the route, a session it doesn't know), so the caller writes it here.
+ * The pending-ask limit is the engine's answer, so it is thrown, not retried.
+ */
+async function askThroughEngine(input: {
+  sessionID: string
+  questions: unknown[]
+  assumption: string
+}): Promise<{ request: { id: string; sessionID: string; assumption?: string }; push: Output['push'] } | undefined> {
+  let res: Response
+  try {
+    res = await fetch(`${getLiveSession().engineURL}/api/v1/questions/async`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(input),
+      signal: AbortSignal.timeout(ENGINE_TIMEOUT_MS),
+    })
+  } catch (error) {
+    logForDebugging(`[ask_user_later] engine unreachable, filing the ask here: ${error}`)
+    return undefined
+  }
+  const body = (await res.json().catch(() => ({}))) as any
+  if (res.status === 429) throw new Error(String(body?.error ?? 'Too many questions are waiting for the user.'))
+  if (!res.ok || !body?.request?.id) {
+    logForDebugging(`[ask_user_later] engine refused the ask (${res.status}), filing it here`)
+    return undefined
+  }
+  return { request: body.request, push: PUSH_VALUES.has(body.push) ? body.push : 'unavailable' }
+}
+
+/** No engine: the ask goes straight into this runtime's store (answered here with /answer). */
+async function askHere(input: {
+  sessionID: string
+  questions: any[]
+  assumption: string
+  live: boolean
+}): Promise<{ request: { id: string; sessionID: string; assumption?: string }; push: Output['push'] }> {
+  const { Question } = await import('@/runtime/integrations/question')
+  let request
+  try {
+    request = await withRuntime(() =>
+      Question.askLater({ sessionID: input.sessionID, questions: input.questions, assumption: input.assumption }),
+    )
+  } catch (error) {
+    if (error instanceof Question.AsyncLimitError) throw new Error(error.message)
+    throw error
+  }
+  // A push only helps when the user can open the thread elsewhere (a live engine session).
+  let push: Output['push'] = 'unavailable'
+  if (input.live) {
+    try {
+      const { notifyUser } = await import('@/runtime/bots/app-bot-routing')
+      const { UserMessage } = await import('@/runtime/primitives/user-message')
+      push = pushOf(
+        await notifyUser(request.sessionID, {
+          kind: 'question',
+          level: 'needs_you',
+          preview: UserMessage.preview(input.questions[0].question),
+          ref: request.id,
+        }),
+      )
+    } catch {
+      // No platform credential, API not running, timeout: the block is still in the terminal.
+      push = 'unavailable'
+    }
+  }
+  return { request, push }
 }
 
 export const AskUserLaterTool = buildTool({
@@ -79,34 +159,12 @@ export const AskUserLaterTool = buildTool({
   renderToolUseMessage,
   renderToolResultMessage,
   async call({ questions, assumption }) {
-    const { Question } = await import('@/runtime/integrations/question')
     const live = askIsLive()
-    let request
-    try {
-      request = await withRuntime(() => Question.askLater({ sessionID: askSessionID(), questions, assumption }))
-    } catch (error) {
-      if (error instanceof Question.AsyncLimitError) throw new Error(error.message)
-      throw error
-    }
-    // A push only helps when the user can open the thread elsewhere (a live engine session).
-    let push: Output['push'] = 'unavailable'
-    if (live) {
-      try {
-        const { notifyUser } = await import('@/runtime/bots/app-bot-routing')
-        const { UserMessage } = await import('@/runtime/primitives/user-message')
-        push = pushOf(
-          await notifyUser(request.sessionID, {
-            kind: 'question',
-            level: 'needs_you',
-            preview: UserMessage.preview(questions[0].question),
-            ref: request.id,
-          }),
-        )
-      } catch {
-        // No platform credential, API not running, timeout: the block is still in the terminal.
-        push = 'unavailable'
-      }
-    }
+    const sessionID = askSessionID()
+    // Attached to an engine: file the ask there, so `question.asked` reaches every device live.
+    const { request, push } =
+      (live && (await askThroughEngine({ sessionID, questions, assumption }))) ||
+      (await askHere({ sessionID, questions, assumption, live }))
     return {
       data: {
         ask_id: request.id,

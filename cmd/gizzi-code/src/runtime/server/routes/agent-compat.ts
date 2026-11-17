@@ -67,6 +67,8 @@ import { Bus } from "@/shared/bus"
 import { Log } from "@/shared/util/log"
 import { PermissionNext } from "@/runtime/tools/guard/permission/next"
 import { Question } from "@/runtime/integrations/question"
+import { fileAsk, parameters as askUserLaterParameters } from "@/runtime/tools/builtins/ask-user-later"
+import z from "zod/v4"
 import { TerminalLive } from "@/runtime/session/terminal-live"
 import { SessionStatus } from "@/runtime/session/status"
 import { fileFrameForPart, toolFramesForPart, usageFromMessageInfo } from "./tool-frames"
@@ -506,6 +508,26 @@ export const AgentCompatRoutes = () =>
       // `assumption`), so a card shows on an idle session and after a restart.
       const all = await Question.list()
       return c.json({ questions: all.filter((r) => !sessionId || r.sessionID === sessionId) })
+    })
+    // ask_user_later asked in another process (the Gizzi TUI attached as a live
+    // session): the same path as the runtime tool, so the ask is persisted,
+    // `question.asked` goes out live and the user's devices get the push.
+    .post("/v1/questions/async", async (c) => {
+      const body = await c.req.json().catch(() => undefined)
+      const parsed = z
+        .object({ sessionID: z.string().min(1) })
+        .extend(askUserLaterParameters.shape)
+        .safeParse(body)
+      if (!parsed.success) return c.json({ error: "invalid ask", issues: parsed.error.issues }, 400)
+      const { sessionID, questions, assumption } = parsed.data
+      if (!(await Session.get(sessionID).catch(() => undefined))) return c.json({ error: "unknown session" }, 404)
+      try {
+        const { request, push } = await fileAsk({ sessionID, questions, assumption })
+        return c.json({ request, push })
+      } catch (error) {
+        if (error instanceof Question.AsyncLimitError) return c.json({ error: error.message, pending: error.pending }, 429)
+        throw error
+      }
     })
     .post("/v1/questions/:requestID/reply", async (c) => {
       const body = await c.req.json().catch(() => ({}))
