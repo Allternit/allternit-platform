@@ -228,7 +228,7 @@ export type ToolErrorCode =
   | 'accessibility_off'
   // element lookup (phone.find_and_tap)
   | 'not_found'
-  // iPhone with the Allternit app (app:…): no taps on native apps without the Bluetooth board
+  // iPhone with the Allternit app (app:…): no taps on other apps until a Phone Use tap route is set up
   | 'not_supported'
   // phone.web.* / phone.calendar.* ...: the Allternit app is not open on the iPhone
   | 'app_not_open'

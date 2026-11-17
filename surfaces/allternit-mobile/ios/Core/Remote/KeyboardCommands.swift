@@ -53,6 +53,10 @@ struct KeyboardLinkState: Equatable, Sendable {
     var advertising: Bool
     /// Why it can't send, for every availability but `ready`.
     var message: String?
+    /// The serial (`app:<id>`) of the iPhone the person said this is the
+    /// keyboard for (KeyboardTarget). A peripheral is never told its host, so
+    /// Desktop uses this to pick the right second device.
+    var keyboardFor: String? = nil
 
     static let notPairedMessage = "Your iPhone is not connected to the Allternit Keyboard on your other device."
     static let offMessage = "Turn on Be a keyboard for another iPhone in the Allternit app on your other iPhone or iPad (Settings > Device Access)."
@@ -110,6 +114,7 @@ struct KeyboardLinkState: Equatable, Sendable {
         ]
         if let needsYou { out["needs_you"] = needsYou }
         if let message { out["message"] = message }
+        if let keyboardFor { out["keyboard_for"] = keyboardFor }
         return out
     }
 }

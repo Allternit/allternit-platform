@@ -44,6 +44,8 @@ export class AppSenderError extends Error {
 export interface SenderStatus extends HidLinkStatus {
   available: boolean;
   message?: string;
+  /** bt-apple: the serial of the iPhone the person said this keyboard is for (iOS keyboard-mode settings). */
+  keyboardFor?: string;
 }
 
 export function readSenderStatus(r: Record<string, unknown>): SenderStatus {
@@ -53,6 +55,7 @@ export function readSenderStatus(r: Record<string, unknown>): SenderStatus {
     available: r.available === true,
     ...(typeof r.name === 'string' && r.name ? { name: r.name } : {}),
     ...(typeof r.message === 'string' && r.message ? { message: r.message } : {}),
+    ...(typeof r.keyboard_for === 'string' && r.keyboard_for ? { keyboardFor: r.keyboard_for } : {}),
   };
 }
 

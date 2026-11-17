@@ -18,9 +18,11 @@
  * the serial asked for; it is never its own sender (an app never sends input
  * to its own device). Senders are the account's other iOS app phones whose
  * keyboard mode answers `available`. A Bluetooth peripheral is not told its
- * host's name, so with several broadcasting iPhones or several connected
- * keyboards the lane can't tell who is paired with whom and says so instead
- * of guessing.
+ * host's name, so the person picks the iPhone once in the second device's
+ * keyboard-mode settings and `hid.pair.status` carries it (`keyboard_for`, a
+ * serial): a keyboard picked for another iPhone is never used here. Without a
+ * pick, with several broadcasting iPhones or several connected keyboards the
+ * lane can't tell who is paired with whom and says so instead of guessing.
  *
  * Starting keyboard mode is the person's tap on the second device; Desktop
  * can't start it (there is no `hid.pair`). Every acting call has already
@@ -78,6 +80,7 @@ export const BT_APPLE_NO_SECOND_DEVICE = 'No second iPhone or iPad with the Allt
 export const BT_APPLE_UPDATE_APP = 'Update the Allternit app on your other iPhone or iPad to use it as a Bluetooth keyboard and mouse.';
 export const BT_APPLE_OPEN_APP = 'Open the Allternit app on your other iPhone or iPad and start Be a keyboard for another iPhone (Settings > Device Access).';
 export const BT_APPLE_SEVERAL_KEYBOARDS = 'More than one iPhone or iPad is acting as Allternit Keyboard. Stop it on all but one.';
+export const BT_APPLE_PICKED_ANOTHER = 'Your Allternit Keyboard is set up for another iPhone. To use it here, change "Keyboard for" in the Allternit app on that iPhone or iPad (Settings > Device Access).';
 export const BT_APPLE_SEVERAL_TARGETS = 'More than one iPhone is sharing its screen with Allternit, and the Allternit Keyboard can’t tell which one it is paired with. Stop sharing on the other one.';
 
 const fail = (error: ToolErrorCode, message: string): ToolResult => ({ ok: false, error, message });
@@ -157,14 +160,20 @@ export class BtAppleLane implements PhoneLane {
       }),
     );
     const ok = answers.filter((a): a is { serial: string; id: string; status: SenderStatus; error: null } => a.status !== null);
-    const keyboards = ok.filter((a) => a.status.available);
+    const on = ok.filter((a) => a.status.available);
+    // A keyboard the person picked for another iPhone is not this one's.
+    const keyboards = on.filter((a) => a.status.keyboardFor === undefined || a.status.keyboardFor === target);
+    if (on.length > 0 && keyboards.length === 0) return { reason: BT_APPLE_PICKED_ANOTHER };
+    const picked = keyboards.filter((a) => a.status.keyboardFor === target);
     const connected = keyboards.filter((a) => a.status.connected);
+    const pickedConnected = picked.filter((a) => a.status.connected);
+    if (pickedConnected.length === 1) return { sender: { id: pickedConnected[0].id, status: pickedConnected[0].status }, reason: '' };
     if (connected.length > 1) return { reason: BT_APPLE_SEVERAL_KEYBOARDS };
     if (keyboards.length > 0) {
-      // Another broadcasting iPhone that is not a keyboard could be the one paired.
-      const senders = new Set(keyboards.map((k) => k.serial));
-      if (ios.some((d) => d.serial !== target && d.screen && !senders.has(d.serial))) return { reason: BT_APPLE_SEVERAL_TARGETS };
-      const pick = connected[0] ?? keyboards[0];
+      const pick = connected[0] ?? picked[0] ?? keyboards[0];
+      // Without the person's pick, another broadcasting iPhone that is not a keyboard could be the one paired.
+      const senders = new Set(on.map((k) => k.serial));
+      if (pick.status.keyboardFor !== target && ios.some((d) => d.serial !== target && d.screen && !senders.has(d.serial))) return { reason: BT_APPLE_SEVERAL_TARGETS };
       return { sender: { id: pick.id, status: pick.status }, reason: '' };
     }
     const said = ok.find((a) => a.status.message)?.status.message;

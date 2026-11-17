@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   APP_SHARE_SCREEN_MESSAGE,
+  APP_TAPS_MESSAGE,
+  IPHONE_LIVE_VIEW_MESSAGE,
   AppPhoneBackend,
   AppPhoneViewerSession,
   ANDROID_APP_ROUTE,
@@ -105,11 +107,13 @@ describe('iPhones with the Allternit app', () => {
     expect((res as { message: string }).message.startsWith(APP_SHARE_SCREEN_MESSAGE)).toBe(true);
   });
 
-  it('refuses taps with the Bluetooth board message', async () => {
+  it('refuses taps with the Phone Use tap routes, not the old board-only line', async () => {
     const { runner } = setup();
     const res = await runner.call('phone.tap', { serial: SERIAL, x: 10, y: 10 });
     expect(res).toMatchObject({ ok: false, error: 'not_supported' });
-    expect((res as { message: string }).message).toMatch(/^Taps on native apps need the Bluetooth board/);
+    const message = (res as { message: string }).message;
+    expect(message.startsWith(APP_TAPS_MESSAGE)).toBe(true);
+    for (const route of ['iPhone Mirroring', 'Android phone', 'second iPhone or iPad', 'USB Agent board']) expect(message).toContain(route);
   });
 
   it('phone.web.* tell the bot to open the app when it is closed', async () => {
@@ -168,7 +172,7 @@ describe('iPhones with the Allternit app', () => {
     // Not started yet: no socket, so the tap is refused.
     expect(android.sendControl([{ type: 'text', text: 'a' } as never]).ok).toBe(false);
     const ios = new AppPhoneViewerSession({ open: async () => socket, deviceName: 'iPhone' });
-    expect(ios.sendControl([]).message).toContain('Bluetooth board');
+    expect(ios.sendControl([]).message).toBe(IPHONE_LIVE_VIEW_MESSAGE);
     canTap = false;
     expect(android.sendControl([]).message).toContain('Accessibility');
     expect(sent).toEqual([]);

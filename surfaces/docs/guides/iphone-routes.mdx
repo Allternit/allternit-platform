@@ -49,15 +49,18 @@ Available in Allternit Desktop for Mac only.
 
 To stop, choose **Disconnect** on the same row. While it is on, Allternit Desktop turns the keyboard on again each time it starts, so your iPhone can reconnect by itself.
 
+If you said no to Bluetooth before, macOS does not ask again. The row then says to allow Allternit in **System Settings > Privacy & Security > Bluetooth**, and **Pair** opens that pane.
+
 This route uses a Bluetooth service that Apple does not document. Apple may stop allowing it in a macOS update. If your Mac refuses it, the row says so and Allternit uses another route.
 
 ### Bluetooth from another iPhone or iPad
 
 1. On the second device, open the Allternit app and go to **Settings → Device Access → Be a keyboard for another iPhone**. Choose **Start**.
-2. On your main iPhone, open **Settings > Bluetooth** and tap **Allternit Keyboard**.
-3. On your main iPhone, turn on AssistiveTouch and keep the screen broadcast running.
+2. If your account has more than one iPhone, the same page asks **Which iPhone is this the keyboard for?** Choose your main iPhone. With one iPhone, Allternit picks it for you. You can change it later with **Change**.
+3. On your main iPhone, open **Settings > Bluetooth** and tap **Allternit Keyboard**.
+4. On your main iPhone, turn on AssistiveTouch and keep the screen broadcast running.
 
-The second device shows in your phone list as **Keyboard for** and your iPhone's name. It is a keyboard, not another phone. A banner with **Stop** shows on it while it runs. Keep the Allternit app open on the second device: it keeps its screen on while it is a keyboard, and the keyboard stops if you leave the app. If more than one other iPhone is connected, the list says **Keyboard for your iPhone**, because a Bluetooth keyboard is not told which iPhone it is paired with.
+The second device shows in your phone list as **Keyboard for** and your iPhone's name. It is a keyboard, not another phone. A banner with **Stop** shows on it while it runs. Keep the Allternit app open on the second device: it keeps its screen on while it is a keyboard, and the keyboard stops if you leave the app. A Bluetooth keyboard is not told which iPhone it is paired with, so Allternit uses the iPhone you chose. Until you choose, the list says **Keyboard for your iPhone** and the route shows as not set up.
 
 ### Bluetooth from an Android phone
 
@@ -65,6 +68,8 @@ The second device shows in your phone list as **Keyboard for** and your iPhone's
 2. Turn it on and allow **Nearby devices**.
 3. Make the phone visible for pairing, then on your iPhone open **Settings > Bluetooth** and tap the Android phone.
 4. Turn on AssistiveTouch on your iPhone and keep the screen broadcast running.
+
+The Android app tells Allternit which iPhone it is connected to, by that iPhone's Bluetooth name. The route then shows under that iPhone in your phone list on the web, the phone app and Desktop. If you have more than one iPhone, keep each iPhone's name in **Settings > General > About** the same as its name in Allternit.
 
 ### USB Agent
 
@@ -98,7 +103,7 @@ When no route is ready, or the route you picked needs something from you, Allter
 | Open the Allternit app on your iPhone. | Open the app so it is in front. |
 | Add the Allternit Actions shortcut in Allternit Settings > Device Access > iPhone actions. | See [iPhone shortcuts for your assistant](/guides/iphone-bridge-shortcuts). |
 | The old Allternit helper is being retired. Switch to the app and set up a new route. | Set up one of the routes above. |
-| Allow Allternit in System Settings > Privacy & Security > Screen & System Audio Recording (or Accessibility) on your Mac. | Open that pane on your Mac and turn on Allternit. iPhone Mirroring needs both. |
+| Allow Allternit in System Settings > Privacy & Security > Screen & System Audio Recording (or Accessibility, or Bluetooth) on your Mac. | Open that pane on your Mac and turn on Allternit. iPhone Mirroring needs Screen & System Audio Recording and Accessibility. Bluetooth from this Mac needs Bluetooth. |
 | Turn on Shortcuts (or Home) in the Allternit app on your iPhone (Settings > Device Access). | Turn on that switch in the app. Allternit does not try another route for it. |
 
 Allternit finds out about AssistiveTouch and Full Keyboard Access by watching the screen. It can only tell when the pointer or keyboard does not respond, so a message may show a moment after you turn the setting off.
