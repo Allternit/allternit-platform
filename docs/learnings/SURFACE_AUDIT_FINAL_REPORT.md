@@ -191,7 +191,6 @@ CLI is exactly where an engineering capability plausibly belongs.
 | Marketplace (top-level) | Marketplace/Plugins | Missing — Connectors is narrower in scope | Partial — plugin marketplace exists, different content | PARTIAL | |
 | Plugin Registry / Plugin Marketplace (480-file built-in catalog) | Marketplace/Plugins | Missing | Partial — `plugin` command + plugin marketplace, npm-package skill plugins, differently scoped than web's consumer app catalog | PARTIAL | |
 | Team Skills panel (org-level shared skills) | Marketplace/Plugins | Missing | Partial — `skills`/agent-hub manage skills but not explicitly at an org-shared level | GAP | |
-| MiroFish simulation engine | Marketplace/Plugins | Missing | Missing | GAP | A genuinely distinct product feature with no equivalent elsewhere; no fundamental blocker to at least a text-based CLI version. |
 
 ### Products / Discovery / Learning
 
@@ -434,8 +433,6 @@ the "read this and go" version.
 - **Discovery/marketing features**: Products Discovery, A://Labs, Udemy
   Catalog, Discovery Feed — content-discovery surfaces with no
   cross-surface equivalent, lowest product-priority of the set.
-- **MiroFish simulation engine** — a genuinely distinct feature with no
-  equivalent, but a niche one.
 - **Admin/billing panels**: Organization Access, Compute Billing,
   Settings > Products, Settings > Infrastructure — low day-to-day
   visibility for most users even though technically absent elsewhere.

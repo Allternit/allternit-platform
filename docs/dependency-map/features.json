@@ -55,6 +55,10 @@
         {
           "on": "2026-11-17",
           "note": "Bot prompt blocks by signal: suggestions (duet.txt), delegation, project-thread and computer-use blocks join bot.txt from the turn's tool set; server hint project_role thread stamped by allternit-api agent_session_routes.rs from the session bag's projectRole; server-started bot turns keep the bot's own prompt first and the thread prompt under This thread. Docs: core/system-prompts.mdx, guides/project-delegate.mdx, guides/bot-threads.mdx."
+        },
+        {
+          "on": "2026-11-17",
+          "note": "System prompts wave 3: the TUI prompt (cli/ui/ink-app/constants/prompts.ts) starts from the runtime base-code and safety text and keeps only TUI sections; built-in agent prompts (explore, plan, verification; runtime and TUI copies), the built-in catalog, both coordinator prompts, mission orchestrator and design critique prompts are rewritten as rules; the voice call persona is Gizzi (cloud-api voice_calls_cloud.rs) with a rewritten call summary prompt and coordinator worker prompts. Chat manuals load per turn (ai withInteractiveAnswers; gateway manual_for loads one template line). Guard: test/session/system-prompt-guard.test.ts. Docs: core/system-prompts.mdx."
         }
       ],
       "evidence": [
@@ -68,6 +72,13 @@
         "allternit/cmd/gizzi-code/src/runtime/session/system.ts",
         "allternit/cmd/gizzi-code/src/runtime/session/prompt",
         "allternit/cmd/gizzi-code/src/runtime/loop/prompts",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/constants/prompts.ts",
+        "allternit/cmd/gizzi-code/src/runtime/agents/builtin-catalog.ts",
+        "allternit/cmd/gizzi-code/src/runtime/tools/builtins/AgentTool/built-in",
+        "allternit/cmd/gizzi-code/src/coordinator/coordinatorMode.ts",
+        "allternit/cmd/gizzi-code/src/cli/mission/orchestrator.ts",
+        "allternit/cmd/gizzi-code/src/runtime/server/routes/critique.ts",
+        "allternit/cmd/gizzi-code/test/session/system-prompt-guard.test.ts",
         "allternit/surfaces/docs/core/system-prompts.mdx"
       ]
     },
@@ -168,6 +179,10 @@
         {
           "on": "2026-11-03",
           "note": "Eoj approved the live CI reference and interaction polish. Added an identity-only pull-request template backed by authenticated GitHub facts, reviewed revision/run-bound rerun and merge, same-card polling and repair handoff. Vendor/group responses are admitted before publication with durable turn policies; group and vendor skins render validated cards and retain complete envelopes in bounded projections. Source remains unshipped pending verification and release approval."
+        },
+        {
+          "on": "2026-11-17",
+          "note": "Chat manuals load per turn (system prompts wave 3): withInteractiveAnswers takes the turn; answer shapes always, the artifacts, app-screen, inline-app, dashboard, ops, motion and design manuals only when the turn signals call for them (plain question 36,242 to 16,590 bytes). The gateway (answer_contract.rs manual_for) sends the core manual plus the one template line it picked (14,308 to 2,846 bytes plus a line). Template schemas unchanged. Docs: core/system-prompts.mdx."
         }
       ],
       "evidence": [

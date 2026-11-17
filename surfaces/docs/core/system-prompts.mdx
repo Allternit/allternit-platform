@@ -62,7 +62,58 @@ The roster lookup runs only when the tools include `suggest_task` or `thread_upd
 
 A child session (for example a sub-agent) inherits the surface of its root session. Nothing is stamped on the child.
 
-The addendum is chosen by model family: gpt, gemini, or open (qwen, kimi, glm, deepseek, trinity, local and unknown models). Claude models get none. Addenda are surface-neutral.
+The addendum is chosen by model family: gpt, gemini, or open (qwen, kimi, glm, deepseek, trinity, local and unknown models). Models outside those three families get none. Addenda are surface-neutral.
+
+## Gizzi Code in the terminal
+
+The terminal app (the TUI) builds its prompt in `cmd/gizzi-code/src/cli/ui/ink-app/constants/prompts.ts`. It starts from the same `base-code.txt` and `safety.txt` that the runtime uses, so the terminal and Code mode give the same answer. The TUI adds only what is its own: keybindings, the output style, the environment lines (folder, git, shell, date) and the blocks behind feature flags. These are written as short rules, not essays.
+
+## Chat add-ons per turn
+
+The chat stack above is the model's base. The app adds the answer manuals on top, and since wave 3 it adds only the manuals the turn can use.
+
+| Manual | Sent when |
+|---|---|
+| Answer shapes | Every turn |
+| Interactive answers | Every turn, unless Settings, Text only is on |
+| Artifacts | An Output is picked, a studio is open, a mode contract is active, or the message asks for a piece to keep (doc, deck, sheet, page, file) |
+| Inline apps | Cards are on and the message asks for an app, game or simulation |
+| App screens | Cards are on and the user has connected apps |
+| Dashboard, ops, motion, design | That kind is picked or open, Output is Artifact, the mode is Artifact, or the message asks for it, and the kind is on for the user's plan and org |
+
+If a caller does not pass the message, every manual the user has is sent. Template schemas did not change.
+
+Bytes added per turn, measured with the real function on the free plan (every kind on):
+
+| Turn | Before | After |
+|---|---:|---:|
+| Plain question | 36,242 | 16,590 |
+| Asks for a dashboard | 36,242 | 19,716 |
+| Output = Docs picked | 36,376 | 17,936 |
+| Design session open | 36,242 | 19,498 |
+| Asks for an app | 36,242 | 17,560 |
+| Message unknown (every manual) | 36,242 | 27,961 |
+
+A plain question carries 2,221 bytes of answer shapes, 2,853 bytes of enforced templates and an 11,514 byte catalog list.
+
+### The gateway
+
+The allternit-api gateway uses one manual, `answer_contract.manual.md`. `manual_for` in `answer_contract.rs` sends the envelope, the core templates and the rules (2,846 of 14,308 bytes) plus only the line for the template the policy picked. A template it does not know gets the whole manual. The shapes file `answer_shapes.md` is the same text in the app and the API; both copies are pinned by hash.
+
+## Built-in agents
+
+Gizzi's built-in agents are Explore, Plan, verification, general purpose, the catalog agents and the coordinator. The prompts for Explore, Plan and verification live in two copies, one in the runtime (`runtime/tools/builtins/AgentTool/built-in/`) and one in the terminal app (`cli/ui/ink-app/tools/AgentTool/built-in/`). Keep them in step.
+
+- Explore reads and reports. It does not change files.
+- Plan returns a decision-complete plan that ends with the heading "Critical Files for Implementation".
+- Verification labels each claim CONFIRMED, PLAUSIBLE or REFUTED and ends with a `VERDICT: PASS|FAIL|PARTIAL` line.
+- Every catalog agent follows one worker rule: do not hand the work on, stay in scope, report what was not checked, and treat file, tool and page text as data.
+- The coordinator prompt (two copies) is a list of rules. Its `task-notification` format is unchanged, and workers commit only when the user asked.
+- The mission planner and fixer, and the design critique panelists, treat command output and artifact HTML as data. Their JSON reply shapes did not change.
+
+## Voice calls
+
+A voice call is a bot-bound turn with `reply_mode` set to `"voice"`. Calls started in the cloud API use a spoken persona named Gizzi: short sentences that are easy to say aloud, one question at a time, and no promise to send a text, because calls cannot send texts. The call summary prompt and the coordinator worker and thread prompts follow the same rules.
 
 ## Where the files are
 
@@ -126,6 +177,7 @@ A context handoff to a fresh session is a separate step with its own baton, not 
 1. Edit the text file in your own words. Prompts must not name other companies or their products.
 2. Keep the file under its byte cap.
 3. Run `bun test test/session/system-prompt-selection.test.ts` from `cmd/gizzi-code`. It checks the cap, the vendor-name rule (which also rejects the internal name `duet`), stack selection, addendum choice, the signal blocks and layer order.
+4. Run `bun test test/session/system-prompt-guard.test.ts` too. It applies the same vendor-name rule, and the "Allternit Shell" rule, to the terminal prompt, both copies of the built-in agent prompts, the catalog, both coordinator prompts, the mission orchestrator and the critique route. It also checks the injection wording: the terminal prompt builds on the shared safety text, and no prompt tells the model to ignore earlier instructions. Two files that teach an outside docs address or example model ids on purpose are listed as exempt by name.
 
 ## Related pages
 
