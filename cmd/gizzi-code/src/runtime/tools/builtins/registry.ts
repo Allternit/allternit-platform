@@ -16,6 +16,7 @@ import { TodoWriteTool } from "@/runtime/tools/builtins/todo"
 import { GlanceTool } from "@/runtime/tools/builtins/glance"
 import { CurrentTimeTool } from "@/runtime/tools/builtins/current-time"
 import { SendUserMessageTool } from "@/runtime/tools/builtins/send-user-message"
+import { AutomationTool } from "@/runtime/tools/builtins/automation"
 import { WebFetchTool } from "@/runtime/tools/builtins/webfetch"
 import { WriteTool } from "@/runtime/tools/builtins/write"
 import { InvalidTool } from "@/runtime/tools/builtins/invalid"
@@ -200,6 +201,8 @@ export namespace ToolRegistry {
       CurrentTimeTool,
       // A message (files, optional push) to the session's own user: every client, not bot-gated.
       SendUserMessageTool,
+      // The user's scheduled tasks: every client, not bot-gated (list allowed, writes ask).
+      AutomationTool,
       CreateGoalTool,
       GetGoalTool,
       SetGoalBudgetTool,
