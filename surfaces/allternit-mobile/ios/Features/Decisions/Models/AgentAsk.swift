@@ -175,13 +175,55 @@ struct AgentPermissionAsk: Decodable, Sendable, Equatable, Identifiable, Hashabl
     let code: String?
     let language: String?
     let files: [String]
+    /// metadata.review: class hand_off | confirm_now | confirm_unless_named | free.
+    let reviewClass: String?
+    let reviewRisk: String?
+    let reviewAuthorized: Bool?
+    let reviewReason: String?
+    /// computer.access: apps + their tiers + why.
+    let apps: [String]
+    let tiers: [String]
+    let accessReason: String?
+    /// folder_access: paths + action (request | request_delete).
+    let paths: [String]
+    let folderAction: String?
 
     private enum CodingKeys: String, CodingKey { case id, sessionID, sessionId, session_id, permission, patterns, tool, metadata }
+    private struct Review: Decodable {
+        let `class`: String?
+        let risk: String?
+        let authorized: Bool?
+        let reason: String?
+    }
+    /// A string, or an object with a name-ish field.
+    private struct Loose: Decodable {
+        let value: String
+        init(from decoder: Decoder) throws {
+            if let s = try? decoder.singleValueContainer().decode(String.self) { value = s; return }
+            let o = try decoder.container(keyedBy: AnyKey.self)
+            for k in ["name", "app", "bundleId", "path", "tier"] {
+                if let s = try? o.decodeIfPresent(String.self, forKey: AnyKey(k)) { value = s; return }
+            }
+            value = ""
+        }
+    }
+    private struct AnyKey: CodingKey {
+        var stringValue: String; var intValue: Int? { nil }
+        init(_ s: String) { stringValue = s }
+        init?(stringValue: String) { self.stringValue = stringValue }
+        init?(intValue: Int) { return nil }
+    }
     private struct ToolRef: Decodable { let callID: String? }
     private struct Meta: Decodable {
         let code: String?
         let language: String?
         let files: [String]?
+        let review: Review?
+        let apps: [Loose]?
+        let tiers: [Loose]?
+        let reason: String?
+        let paths: [Loose]?
+        let action: String?
     }
 
     init(from decoder: Decoder) throws {
@@ -198,6 +240,15 @@ struct AgentPermissionAsk: Decodable, Sendable, Equatable, Identifiable, Hashabl
         code = meta?.code
         language = meta?.language
         files = meta?.files ?? []
+        reviewClass = meta?.review?.class
+        reviewRisk = meta?.review?.risk
+        reviewAuthorized = meta?.review?.authorized
+        reviewReason = meta?.review?.reason
+        apps = (meta?.apps ?? []).map(\.value).filter { !$0.isEmpty }
+        tiers = (meta?.tiers ?? []).map(\.value).filter { !$0.isEmpty }
+        accessReason = meta?.reason
+        paths = (meta?.paths ?? []).map(\.value).filter { !$0.isEmpty }
+        folderAction = meta?.action
     }
 
     /// "Run a command", "Edit files" — what the agent wants to do.
@@ -209,6 +260,8 @@ struct AgentPermissionAsk: Decodable, Sendable, Equatable, Identifiable, Hashabl
         case "webfetch", "fetch": return "Open a web page"
         case "run_code": return "Run Python code"
         case "external_directory": return "Work outside the project folder"
+        case "computer.access": return "Use apps on your computer"
+        case "folder_access": return folderAction == "request_delete" ? "Delete from a folder" : "Open a folder"
         default: return "Use \(permission)"
         }
     }
@@ -216,5 +269,28 @@ struct AgentPermissionAsk: Decodable, Sendable, Equatable, Identifiable, Hashabl
     /// The first pattern, as a short detail line ("rm -rf build", "src/App.swift").
     var detail: String? {
         patterns.first(where: { !$0.isEmpty && $0 != "*" })
+    }
+
+    var isComputerAccess: Bool { permission.lowercased() == "computer.access" }
+    var isFolderAccess: Bool { permission.lowercased() == "folder_access" }
+    /// confirm_now asks never offer "Always".
+    var allowsAlways: Bool { reviewClass != "confirm_now" }
+
+    /// One line on why this ask is shown, from metadata.review.
+    var reviewLine: String? {
+        guard let cls = reviewClass, cls != "free" else { return nil }
+        let label: String
+        switch cls {
+        case "hand_off": label = "Hand-off"
+        case "confirm_now": label = "Confirm now"
+        case "confirm_unless_named": label = "Confirm unless named"
+        default: label = cls
+        }
+        var parts = [label]
+        if let r = reviewRisk, !r.isEmpty { parts.append("\(r) risk") }
+        if reviewAuthorized == true { parts.append("authorized") }
+        var line = parts.joined(separator: " · ")
+        if let r = reviewReason, !r.isEmpty { line += ". " + r }
+        return line
     }
 }
