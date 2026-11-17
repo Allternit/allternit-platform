@@ -20,7 +20,8 @@ enum RecentsDateFilter: String, CaseIterable {
 }
 
 /// The phone drawer (allternit-ai src/fabric-session/phone/PhoneDrawer.tsx):
-/// the active mode's rail, laid out like Claude iOS. Top line: the mode dial,
+/// the active mode's rail, laid out like Claude iOS. Top line: the mode dial
+/// (tap closes the drawer and fans the modes out of ☰, D4),
 /// the mode's wordmark, Inbox and a round search button. Then the mode's rail
 /// rows (Projects, Artifacts, Automation Tasks, Customize, More), Teammates,
 /// Pinned, and Recents with See all + a filter — swipe a recent left to
@@ -66,7 +67,6 @@ struct HistorySidebarView: View {
         statusFilter != .all || dateFilter != .all || !typeFilter.isEmpty
     }
 
-    @State private var isDialExpanded = false
     @State private var isSettingsPresented = false
     @State private var isSearchPresented = false
     @State private var isQuickTaskPresented = false
@@ -106,19 +106,6 @@ struct HistorySidebarView: View {
                 }
 
                 footer
-            }
-
-            if isDialExpanded {
-                // Tap away closes the quarter-moon.
-                Color.black.opacity(0.001)
-                    .ignoresSafeArea()
-                    .onTapGesture {
-                        withAnimation(spring) { isDialExpanded = false }
-                    }
-                    .accessibilityHidden(true)
-                ModeDialMenu(isExpanded: $isDialExpanded)
-                    .padding(.leading, 12)
-                    .padding(.top, 6)
             }
         }
         .frame(width: width)
@@ -213,17 +200,13 @@ struct HistorySidebarView: View {
             if launchArgumentEnabled("open-connectors-meetings") { isConnectorsPresented = true }
             if launchArgumentEnabled("open-search") { isSearchPresented = true }
             if launchArgumentEnabled("open-quick-task") { isQuickTaskPresented = true }
-            if launchArgumentEnabled("open-mode-dial") { isDialExpanded = true }
             #endif
         }
         .onChange(of: isSidebarOpen) { _, isOpen in
-            // Refresh each time the drawer is revealed so new chats show up;
-            // a closing drawer folds the dial.
+            // Refresh each time the drawer is revealed so new chats show up.
             if isOpen {
                 Task { await store.load() }
                 Task { await phones.refresh() }
-            } else {
-                isDialExpanded = false
             }
         }
         .onChange(of: modeStore.shellMode) { _, _ in
@@ -242,7 +225,8 @@ struct HistorySidebarView: View {
     /// `phone-drawer-top-modes`: dial · wordmark · Inbox · search.
     private var header: some View {
         HStack(spacing: 8) {
-            ModeDialButton(isExpanded: $isDialExpanded)
+            // D4: tap closes the drawer, then the mode fan opens out of ☰.
+            ModeDialButton()
             ShellWordmark(mode: modeStore.shellMode)
                 .padding(.leading, 6)
                 .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)

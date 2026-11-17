@@ -51,6 +51,16 @@ enum LaunchArgument {
     /// pushed right, scaled, rounded) for screenshots.
     static let calmDrawerOpen = "calm-drawer-open"
 
+    /// `-calm-fan` (DEBUG only): open the ☰ mode fan (Home · Bots · Code ·
+    /// ACI) on launch, with the Code card under a pretend finger (grown).
+    /// `-open-mode-dial` does the same (older name).
+    static let calmFan = "calm-fan"
+
+    /// `-calm-shelf` (DEBUG only): open the bots shelf on launch with the
+    /// second bot magnified and its "Name · 2 of n" label. Combine with
+    /// `-sample-workspace` for sample bots.
+    static let calmShelf = "calm-shelf"
+
     /// `-calm-gallery` (DEBUG only): show `CalmGalleryView`.
     static let calmGallery = "calm-gallery"
 

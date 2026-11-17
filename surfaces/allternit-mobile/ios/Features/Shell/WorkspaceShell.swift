@@ -9,8 +9,9 @@ import SwiftUI
 /// Arc drawer (HistorySidebarView): min(80% of the screen, 360) wide (D5). It
 /// springs in from the left edge and the page pushes right with it, scaled to
 /// 0.94 with ~36 pt corners (the menu button rides on the page). It closes
-/// with a tap on the visible page strip or a drag/flick back to the edge. Cowork is NOT a
-/// mode; it's a composer-level toggle inside Home.
+/// with a tap on the visible page strip or a drag/flick back to the edge. Holding ☰
+/// fans the modes out over everything (MenuOverlayHost); the fan and the drawer
+/// are never open together. Cowork is NOT a mode; it's a composer-level toggle inside Home.
 struct MainWorkspaceView: View {
     @EnvironmentObject private var modeStore: AppModeStore
     @ObservedObject private var botColors = BotColorStore.shared
@@ -95,6 +96,24 @@ struct MainWorkspaceView: View {
                     .onChange(of: proxy.size.width) { _, width in screenWidth = width }
             }
         )
+        // ☰ hold: the mode fan and the bots shelf, over the page and the
+        // drawer so the header can't clip them (C8, MenuOverlayHost).
+        .overlay { MenuOverlayHost() }
+        .onAppear {
+            MenuHoldController.shared.install(
+                modeStore: modeStore,
+                isDrawerOpen: { isSidebarOpen },
+                openDrawer: { setSidebar(true) },
+                closeDrawer: { setSidebar(false) }
+            )
+        }
+        // Opening the drawer closes the fan; the two are never open together.
+        // The light haptic plays here so every way of opening (☰ on any
+        // screen, edge pan, a binding) gets exactly one.
+        .onChange(of: isSidebarOpen) { _, open in
+            if open { Haptics.light() }
+            MenuHoldController.shared.dispatch(open ? .drawerOpened : .drawerClosed)
+        }
         // The waiting games window, over every mode (WaitingGamesLayer).
         .overlay { WaitingGamesLayer() }
         // Pet offers: the bot offers help when a run fails off-screen.
@@ -142,6 +161,8 @@ struct MainWorkspaceView: View {
                 }
             )
             .environmentObject(modeStore)
+            // The shell's fan draws under this cover: ☰ here is tap only.
+            .environment(\.menuHoldEnabled, false)
         }
         .onReceive(NotificationCenter.default.publisher(for: .shellOpenOverview)) { _ in
             Task { await ShellSessionsStore.shared.load() }
@@ -389,7 +410,6 @@ struct MainWorkspaceView: View {
     }
 
     private func setSidebar(_ open: Bool) {
-        if open && !isSidebarOpen { Haptics.light() }
         withAnimation(drawerAnimation) {
             isSidebarOpen = open
             dragOffset = 0

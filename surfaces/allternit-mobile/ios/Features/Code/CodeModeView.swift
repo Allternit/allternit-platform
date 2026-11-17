@@ -214,13 +214,8 @@ struct CodeModeView: View {
     private var header: some View {
         let ink = darkChrome ? TerminalPalette.foreground : Color("TextPrimary")
         return HStack(spacing: 0) {
-            Button(action: openDrawer) {
-                Image(systemName: "line.3.horizontal")
-                    .font(.system(size: 19, weight: .regular))
-                    .foregroundColor(ink)
-                    .frame(width: 44, height: 44)
-            }
-            .accessibilityLabel("Open menu")
+            // Tap opens the drawer; hold fans the modes out (C8).
+            PhoneMenuButton(tint: ink, glyphSize: 19, onOpen: openDrawer)
 
             Spacer(minLength: 4)
 
