@@ -37,6 +37,7 @@ import {
 import { PhoneStreamManager, type StreamConsumer } from './phone-stream.js';
 import { AppPhoneBackend, AppPhoneViewerSession, APP_SHARE_SCREEN_MESSAGE, appPlatformOf, httpAppPhoneNode, isAppSerial, type AppPhoneDevice } from './phone-app-store.js';
 import { decodeStillInWindow } from './phone-app-still.js';
+import { BtHidClient, btHidBinaryPath, btMacLane, btMacSettings, type BtMacSettings } from './phone-bt-mac.js';
 import { IosVideoSession } from './phone-ios-video.js';
 import { PhoneUserComms, type CallStateName, type CommsResult, type PhoneAppInfo, type PhoneSmsMessage, type PhoneSmsThread } from './phone-user-comms.js';
 import { PhoneLinkPhoneSocket, phoneLinkApiUrl } from './phone-link-cloud.js';
@@ -298,6 +299,8 @@ class PhoneService {
   private usbAgents: UsbAgentManager | null = null;
   private artemis: ArtemisManager | null = null;
   private runner: PhoneToolRunner | null = null;
+  /** The Mac Bluetooth keyboard helper (macOS; phone-bt-mac.ts). Started on first use, kept while turned on. */
+  private btHid: BtHidClient | null = null;
   private linkedBackend: PhoneLinkBackend | null = null;
   private appBackend: AppPhoneBackend | null = null;
   private appPhoneTimer: ReturnType<typeof setInterval> | null = null;
@@ -768,6 +771,18 @@ class PhoneService {
           onError: (error) => log.debug(`[Phone] run history step not recorded: ${error instanceof Error ? error.message : String(error)}`),
         }),
         api: () => phoneApi,
+        // Phone Use route 2b: this Mac as the iPhone's Bluetooth keyboard and mouse (phone-bt-mac.ts).
+        // Health comes from the helper's state; on Windows/Linux it is unavailable.
+        lanes: {
+          'bt-mac': btMacLane({
+            client: () => this.ensureBtHidClient(),
+            enabled: () => this.btMacEnabled(),
+            phones: () => this.ensureAppBackend(),
+            decode: decodeGray,
+            load: (serial) => readJson<Calibration | null>(this.btMacCalibrationFile(serial), null),
+            save: (serial, c) => writeJson(this.btMacCalibrationFile(serial), c),
+          }),
+        },
         guard: () => holds,
         // The owner's dialog here, and "waiting for approval" on the driven Android phone.
         onHold: phoneHoldHandler({
@@ -1838,11 +1853,75 @@ class PhoneService {
     return this.runner?.call('phone.screenshot', { serial }) ?? { ok: false, error: 'device_offline', message: 'Phones are not set up yet.' };
   }
 
+  // ── Control my iPhone by Bluetooth (bt-mac; Settings → Computers → Phones) ──
+
+  /** The allternit-bthid client, or null when this build has no binary (and on Windows/Linux). */
+  private ensureBtHidClient(): BtHidClient | null {
+    if (this.btHid) return this.btHid;
+    const binary = btHidBinaryPath({ packaged: app.isPackaged, resourcesPath: process.resourcesPath, appPath: app.getAppPath() });
+    if (!binary) return null;
+    this.btHid = new BtHidClient({ binary: () => binary, wanted: this.btMacEnabled() });
+    return this.btHid;
+  }
+
+  private btMacFile(): string {
+    return path.join(this.dir(), 'bt-mac.json');
+  }
+
+  /** The person turned the keyboard on (Pair) and has not turned it off (Disconnect). */
+  private btMacEnabled(): boolean {
+    return readJson<{ enabled?: boolean }>(this.btMacFile(), {}).enabled === true;
+  }
+
+  /** Pointer calibration for one iPhone on the bt-mac route. */
+  private btMacCalibrationFile(serial: string): string {
+    return path.join(this.dir(), `bt-mac-calibration-${serial.replace(/[^a-zA-Z0-9-]/g, '')}.json`);
+  }
+
+  /** The settings row: available, on or off, and one sentence of status. Starts the helper only when turned on. */
+  async btMacStatus(): Promise<BtMacSettings> {
+    const client = this.ensureBtHidClient();
+    const enabled = this.btMacEnabled();
+    if (!client || !enabled) return btMacSettings({ platform: process.platform, hasBinary: !!client, enabled, state: null });
+    try {
+      return btMacSettings({ platform: process.platform, hasBinary: true, enabled, state: await client.status() });
+    } catch (error) {
+      return btMacSettings({ platform: process.platform, hasBinary: true, enabled, state: null, error: error instanceof Error ? error.message : String(error) });
+    }
+  }
+
+  /** Pair: publish "Allternit Keyboard" and keep it published (asks for Bluetooth permission the first time). */
+  async btMacPair(): Promise<BtMacSettings> {
+    const client = this.ensureBtHidClient();
+    if (!client) return btMacSettings({ platform: process.platform, hasBinary: false, enabled: false, state: null });
+    writeJson(this.btMacFile(), { enabled: true });
+    try {
+      return btMacSettings({ platform: process.platform, hasBinary: true, enabled: true, state: await client.pair() });
+    } catch (error) {
+      return btMacSettings({ platform: process.platform, hasBinary: true, enabled: true, state: client.lastState(), error: error instanceof Error ? error.message : String(error) });
+    }
+  }
+
+  /** Disconnect: stop the keyboard; the iPhone drops the link (its pairing stays until the person forgets it there). */
+  async btMacDisconnect(): Promise<BtMacSettings> {
+    writeJson(this.btMacFile(), { enabled: false });
+    const client = this.ensureBtHidClient();
+    try {
+      await client?.unpair();
+    } catch (error) {
+      log.debug(`[Phone] Bluetooth keyboard did not stop cleanly: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    return btMacSettings({ platform: process.platform, hasBinary: !!client, enabled: false, state: null });
+  }
+
   async tryHome(serial: string) {
     return this.runner?.call('phone.home', { serial }) ?? { ok: false, error: 'device_offline', message: 'Phones are not set up yet.' };
   }
 
   shutdown(): void {
+    // Closing stdin lets the helper release every key and remove the keyboard before it exits.
+    this.btHid?.close();
+    this.btHid = null;
     this.callBridge?.stop();
     this.callBridgeWindow?.destroy();
     this.callBridge = null;

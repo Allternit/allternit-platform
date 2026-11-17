@@ -370,6 +370,19 @@ jobs:
           chmod +x surfaces/allternit-desktop/resources/bin/allternit-sideload
           lipo -info surfaces/allternit-desktop/resources/bin/allternit-sideload
 
+      # ── Step 3e5: Build the Mac Bluetooth keyboard helper ───────────────────
+      - name: Build allternit-bthid (universal)
+        # The `bt-mac` Phone Use route (src/main/phone-bt-mac.ts): this Mac as
+        # a Bluetooth keyboard and mouse for the person's own iPhone. SwiftPM,
+        # public CoreBluetooth only, macOS 14+. One universal binary serves
+        # both DMGs; prepare-bthid.cjs then finds it already staged.
+        run: |
+          swift build -c release --arch arm64 --arch x86_64 --package-path cmd/allternit-bthid
+          mkdir -p surfaces/allternit-desktop/resources/bin
+          cp cmd/allternit-bthid/.build/apple/Products/Release/allternit-bthid surfaces/allternit-desktop/resources/bin/allternit-bthid
+          chmod +x surfaces/allternit-desktop/resources/bin/allternit-bthid
+          lipo -info surfaces/allternit-desktop/resources/bin/allternit-bthid
+
       # ── Step 3f: Stage CUA Lume (Apple Virtualization) ──────────────────────
       - name: Stage Lume virtualization helper
         # allternit-api looks for Resources/bin/lume next to itself. The CUA
