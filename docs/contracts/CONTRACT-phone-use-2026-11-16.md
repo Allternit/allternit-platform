@@ -27,8 +27,8 @@ Route ids are lowercase strings. They appear in `route` in every result (section
 |---|---|---|---|
 | 2a | `mirror` | phone locked, Mac unlocked, same Apple Account, not EU | 1.5 s |
 | 2b | `bt-mac` | phone unlocked or in use, a Mac is linked | 3 s |
-| 2c | `bt-android` | no Mac, or `bt-mac` unhealthy | 4 s |
-| 2d | `bt-apple` | P5 and D1 pass; second device paired | 4 s |
+| 2c | `bt-apple` | second iPhone/iPad paired (MAIN route per D1; needs P5 to pass) | 4 s |
+| 2d | `bt-android` | no Mac or second Apple device, or those unhealthy | 4 s |
 | 2e | `usb-agent` | any Desktop OS, board attached | 3 s |
 | last | `legacy-helper` | already-linked users only, until removal | unchanged |
 
