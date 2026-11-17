@@ -199,6 +199,29 @@ pub fn as_text(code: &str) -> String {
             Err("Result is outside the supported numeric range")
         }
     }
+    /// A number as people write it: `21`, not `21.0`.
+    fn num(v: &Value) -> String {
+        match v.as_f64() {
+            Some(n) if n.fract() == 0.0 && n.abs() < 1e15 => format!("{}", n as i64),
+            Some(n) => format!("{n}"),
+            None => scalar(v),
+        }
+    }
+    /// `Credit: …`, with the credit link when the card has one.
+    fn credit(d: &Value) -> Option<String> {
+        let text = d["credit"].as_str()?;
+        Some(match d["creditUrl"].as_str() {
+            Some(url) => format!("Credit: {text} ({url})"),
+            None => format!("Credit: {text}"),
+        })
+    }
+    /// The present string fields of `v`, in order, joined with ` · `.
+    fn joined(v: &Value, keys: &[&str]) -> String {
+        keys.iter()
+            .filter_map(|k| v[*k].as_str().filter(|s| !s.is_empty()))
+            .collect::<Vec<_>>()
+            .join(" · ")
+    }
     let d = &answer["data"];
     let mut out = vec![scalar(&answer["title"])];
     if let Some(s) = answer["summary"].as_str() {
@@ -347,6 +370,147 @@ pub fn as_text(code: &str) -> String {
                 ));
             }
         }
+        "weather" => {
+            let unit = d["unit"].as_str().unwrap_or("C");
+            out.push(format!("{} · {}", scalar(&d["location"]), scalar(&d["observedAt"])));
+            out.push(format!("{}°{unit}, {}", num(&d["temperature"]), scalar(&d["conditions"])));
+            out.push(format!("Humidity {}% · Wind {}", num(&d["humidity"]), scalar(&d["wind"])));
+            let forecast = d["forecast"].as_array().into_iter().flatten().collect::<Vec<_>>();
+            if !forecast.is_empty() {
+                out.push("Forecast:".into());
+                for day in forecast {
+                    let mut row = format!(
+                        "- {}: {}°/{}°{unit}, {}",
+                        scalar(&day["day"]),
+                        num(&day["high"]),
+                        num(&day["low"]),
+                        scalar(&day["conditions"])
+                    );
+                    if let Some(p) = day["precipitation"].as_str() {
+                        row.push_str(&format!(", {p}"));
+                    }
+                    out.push(row);
+                }
+            }
+            out.push(format!("Source: {}", scalar(&d["source"])));
+            out.extend(credit(d));
+        }
+        "image-gallery" => {
+            for image in d["images"].as_array().into_iter().flatten() {
+                let label = image["caption"]
+                    .as_str()
+                    .filter(|s| !s.trim().is_empty())
+                    .unwrap_or_else(|| image["alt"].as_str().unwrap_or_default());
+                out.push(format!("- {label}: {}", scalar(&image["url"])));
+                let mut about = Vec::new();
+                if let Some(c) = image["credit"].as_str() {
+                    about.push(format!("Credit: {c}"));
+                }
+                if let Some(l) = image["license"].as_str() {
+                    about.push(format!("License: {l}"));
+                }
+                if let Some(u) = image["sourceUrl"].as_str() {
+                    about.push(format!("Source: {u}"));
+                }
+                if !about.is_empty() {
+                    out.push(format!("  {}", about.join(" · ")));
+                }
+            }
+        }
+        "time-zones" => {
+            out.push(scalar(&d["reference"]));
+            for zone in d["zones"].as_array().into_iter().flatten() {
+                out.push(format!(
+                    "- {} ({}): {}, {} · {}",
+                    scalar(&zone["place"]),
+                    scalar(&zone["zone"]),
+                    scalar(&zone["time"]),
+                    scalar(&zone["date"]),
+                    scalar(&zone["offset"])
+                ));
+            }
+            out.extend(credit(d));
+        }
+        "conversion" => {
+            let (from, to) = (&d["from"], &d["to"]);
+            out.push(format!(
+                "{} {} = {} {}",
+                num(&from["value"]),
+                scalar(&from["unit"]),
+                num(&to["value"]),
+                scalar(&to["unit"])
+            ));
+            let mut rate = Vec::new();
+            if d.get("rate").is_some() {
+                rate.push(format!(
+                    "Rate: 1 {} = {} {}",
+                    scalar(&from["unit"]),
+                    num(&d["rate"]),
+                    scalar(&to["unit"])
+                ));
+            }
+            if let Some(as_of) = d["asOf"].as_str() {
+                rate.push(format!("As of {as_of}"));
+            }
+            if !rate.is_empty() {
+                out.push(rate.join(" · "));
+            }
+            let also = d["also"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|v| format!("{} {}", num(&v["value"]), scalar(&v["unit"])))
+                .collect::<Vec<_>>();
+            if !also.is_empty() {
+                out.push(format!("Also: {}", also.join(", ")));
+            }
+            out.extend(credit(d));
+        }
+        "link-preview" => {
+            let head = joined(d, &["title", "siteName"]);
+            out.push(head);
+            if let Some(desc) = d["description"].as_str().filter(|s| !s.trim().is_empty()) {
+                out.push(desc.into());
+            }
+            out.push(scalar(&d["url"]));
+            if let Some(p) = d["published"].as_str() {
+                out.push(format!("Published: {p}"));
+            }
+            out.extend(credit(d));
+        }
+        "places" => {
+            let near = d["near"].as_str().map(|n| format!(" near {n}")).unwrap_or_default();
+            out.push(format!("{}{near}", scalar(&d["query"])));
+            let places = d["places"].as_array().into_iter().flatten().collect::<Vec<_>>();
+            if places.is_empty() {
+                out.push("No places found.".into());
+            }
+            for place in places {
+                let mut row = format!("- {}", joined(place, &["name", "address", "category", "distance"]));
+                if let Some(url) = place["url"].as_str() {
+                    row.push_str(&format!(" ({url})"));
+                }
+                out.push(row);
+            }
+            out.extend(credit(d));
+        }
+        // A draft to read and copy. It never tells the reader to send anything:
+        // the card has no send action, and neither does its channel text.
+        "writing" => {
+            if let Some(to) = d["to"].as_str() {
+                out.push(format!("To: {to}"));
+            }
+            if let Some(subject) = d["subject"].as_str() {
+                out.push(format!("Subject: {subject}"));
+            }
+            out.push(String::new());
+            out.push(scalar(&d["body"]));
+            for alt in d["alternatives"].as_array().into_iter().flatten() {
+                out.push(String::new());
+                out.push(format!("{}:", scalar(&alt["label"])));
+                out.push(scalar(&alt["body"]));
+            }
+        }
         _ => {
             fn lines(value: &Value, prefix: &str, out: &mut Vec<String>) {
                 match value {
@@ -440,5 +604,87 @@ mod tests {
         let text = as_text(&answer.to_string());
         assert!(text.contains("Name: Eoj"));
         assert!(!text.contains("private_id"));
+    }
+
+    #[test]
+    fn channel_weather_shows_the_forecast_and_credit() {
+        let answer = json!({"version":1,"template":"weather","title":"Chicago now","data":{"location":"Chicago, IL","observedAt":"2:00 PM","temperature":21,"unit":"C","conditions":"Partly cloudy","humidity":46,"wind":"NE 11 km/h","source":"MET Norway","forecast":[{"day":"Mon","high":23,"low":14,"conditions":"Sunny","precipitation":"0 mm"},{"day":"Tue","high":19.5,"low":12,"conditions":"Showers"}],"credit":"MET Norway (CC BY 4.0)","creditUrl":"https://api.met.no/"}});
+        let text = as_text(&answer.to_string());
+        assert!(text.contains("21°C, Partly cloudy"), "{text}");
+        assert!(text.contains("Humidity 46% · Wind NE 11 km/h"), "{text}");
+        assert!(text.contains("- Mon: 23°/14°C, Sunny, 0 mm"), "{text}");
+        assert!(text.contains("- Tue: 19.5°/12°C, Showers"), "{text}");
+        assert!(text.contains("Credit: MET Norway (CC BY 4.0) (https://api.met.no/)"), "{text}");
+        // Without a forecast there is no empty "Forecast:" heading.
+        let mut bare = answer.clone();
+        bare["data"].as_object_mut().unwrap().remove("forecast");
+        assert!(!as_text(&bare.to_string()).contains("Forecast:"));
+    }
+
+    #[test]
+    fn channel_image_gallery_keeps_credit_license_and_source() {
+        let answer = json!({"version":1,"template":"image-gallery","title":"Lake","data":{"images":[{"url":"https://img.example/1.jpg","alt":"A pier","caption":"Morning pier","credit":"Jane Doe","license":"CC BY 4.0","sourceUrl":"https://commons.example/1"},{"url":"https://img.example/2.jpg","alt":"A skyline","caption":""}]}});
+        let text = as_text(&answer.to_string());
+        assert!(text.contains("- Morning pier: https://img.example/1.jpg"), "{text}");
+        assert!(text.contains("  Credit: Jane Doe · License: CC BY 4.0 · Source: https://commons.example/1"), "{text}");
+        assert!(text.contains("- A skyline: https://img.example/2.jpg"), "{text}");
+    }
+
+    #[test]
+    fn channel_time_zones_list_every_zone() {
+        let answer = json!({"version":1,"template":"time-zones","title":"Your call","data":{"reference":"When it is 9:00 AM in Chicago","zones":[{"place":"Chicago","zone":"America/Chicago","time":"9:00 AM","date":"Tue, Nov 17","offset":"UTC-06:00"},{"place":"Tokyo","zone":"Asia/Tokyo","time":"12:00 AM","date":"Wed, Nov 18","offset":"UTC+09:00"}],"credit":"IANA time zone database"}});
+        let text = as_text(&answer.to_string());
+        assert!(text.contains("When it is 9:00 AM in Chicago"), "{text}");
+        assert!(text.contains("- Tokyo (Asia/Tokyo): 12:00 AM, Wed, Nov 18 · UTC+09:00"), "{text}");
+        assert!(text.contains("Credit: IANA time zone database"), "{text}");
+    }
+
+    #[test]
+    fn channel_conversion_states_the_result_rate_and_credit() {
+        let answer = json!({"version":1,"template":"conversion","title":"USD to EUR","data":{"kind":"currency","from":{"value":100,"unit":"USD"},"to":{"value":92.4,"unit":"EUR"},"rate":0.924,"asOf":"Nov 16, 2026","also":[{"value":78.9,"unit":"GBP"},{"value":15410,"unit":"JPY"}],"credit":"Frankfurter (ECB)"}});
+        let text = as_text(&answer.to_string());
+        assert!(text.contains("100 USD = 92.4 EUR"), "{text}");
+        assert!(text.contains("Rate: 1 USD = 0.924 EUR · As of Nov 16, 2026"), "{text}");
+        assert!(text.contains("Also: 78.9 GBP, 15410 JPY"), "{text}");
+        assert!(text.contains("Credit: Frankfurter (ECB)"), "{text}");
+        let unit = json!({"version":1,"template":"conversion","title":"Miles","data":{"kind":"unit","from":{"value":5,"unit":"mi"},"to":{"value":8.04672,"unit":"km"},"credit":"Local maths"}});
+        let text = as_text(&unit.to_string());
+        assert!(text.contains("5 mi = 8.04672 km") && !text.contains("Rate:"), "{text}");
+    }
+
+    #[test]
+    fn channel_link_preview_shows_the_page_and_its_url() {
+        let answer = json!({"version":1,"template":"link-preview","title":"Shared article","data":{"url":"https://example.com/notes","title":"Field notes","siteName":"Example Journal","description":"A calm summary.","published":"Nov 12, 2026","credit":"Preview from example.com"}});
+        let text = as_text(&answer.to_string());
+        assert!(text.contains("Field notes · Example Journal"), "{text}");
+        assert!(text.contains("A calm summary."), "{text}");
+        assert!(text.contains("https://example.com/notes"), "{text}");
+        assert!(text.contains("Published: Nov 12, 2026"), "{text}");
+        assert!(text.contains("Credit: Preview from example.com"), "{text}");
+    }
+
+    #[test]
+    fn channel_places_list_name_address_and_link() {
+        let answer = json!({"version":1,"template":"places","title":"Coffee","data":{"query":"Coffee","near":"Riverwalk","places":[{"name":"Harbor Beans","address":"120 Example Ave","category":"Cafe","distance":"250 m","url":"https://example.com/map/1"},{"name":"Alder","address":"9 Alder Ct"}],"credit":"© OpenStreetMap contributors","creditUrl":"https://www.openstreetmap.org/copyright"}});
+        let text = as_text(&answer.to_string());
+        assert!(text.contains("Coffee near Riverwalk"), "{text}");
+        assert!(text.contains("- Harbor Beans · 120 Example Ave · Cafe · 250 m (https://example.com/map/1)"), "{text}");
+        assert!(text.contains("- Alder · 9 Alder Ct"), "{text}");
+        assert!(text.contains("Credit: © OpenStreetMap contributors (https://www.openstreetmap.org/copyright)"), "{text}");
+        let empty = json!({"version":1,"template":"places","title":"Coffee","data":{"query":"Coffee","places":[],"credit":"OSM"}});
+        assert!(as_text(&empty.to_string()).contains("No places found."));
+    }
+
+    #[test]
+    fn channel_writing_is_the_draft_with_subject_and_to_and_never_a_send_instruction() {
+        let answer = json!({"version":1,"template":"writing","title":"Reply to Maya","data":{"variant":"email","to":"Maya Chen","subject":"Re: Friday","body":"Hi Maya,\n\nFriday at 2 PM works.\n\nThanks,\nJordan","alternatives":[{"label":"Shorter","body":"Friday at 2 works."}]}});
+        let text = as_text(&answer.to_string());
+        assert!(text.contains("To: Maya Chen\nSubject: Re: Friday\n\nHi Maya,\n\nFriday at 2 PM works."), "{text}");
+        assert!(text.contains("Shorter:\nFriday at 2 works."), "{text}");
+        assert!(!text.to_lowercase().contains("send"), "{text}");
+        let note = json!({"version":1,"template":"writing","title":"Note","data":{"variant":"note","body":"Buy milk."}});
+        let text = as_text(&note.to_string());
+        assert!(text.contains("Buy milk.") && !text.contains("To:") && !text.contains("Subject:"), "{text}");
+        assert!(!text.to_lowercase().contains("send"), "{text}");
     }
 }
