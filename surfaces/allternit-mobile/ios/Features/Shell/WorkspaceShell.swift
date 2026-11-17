@@ -217,7 +217,8 @@ struct MainWorkspaceView: View {
                 || launchArgumentEnabled("calm-projects-explainer") || launchArgumentEnabled("calm-new-project") {
                 modeStore.selectBarItem(.projects)
             }
-            if launchArgumentEnabled("open-artifacts") {
+            if launchArgumentEnabled("open-artifacts") || launchArgumentValue("calm-artifacts-filter") != nil
+                || launchArgumentEnabled("calm-artifacts-list") {
                 modeStore.selectBarItem(.artifacts)
             }
             if launchArgumentEnabled("open-automation") {

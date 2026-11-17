@@ -24,6 +24,7 @@ enum ProjectsExplainer {
 struct ProjectsPill<FilterContent: View>: View {
     @Binding var searching: Bool
     var filtersActive: Bool
+    var searchLabel = "Search projects"
     @ViewBuilder var filterContent: () -> FilterContent
 
     @State private var filterOpen = false
@@ -41,7 +42,7 @@ struct ProjectsPill<FilterContent: View>: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Search projects")
+            .accessibilityLabel(searchLabel)
             .accessibilityAddTraits(searching ? .isSelected : [])
 
             Button {
@@ -72,6 +73,7 @@ struct ProjectsPill<FilterContent: View>: View {
 /// Inline glass search field shown under the header while searching.
 struct ProjectsSearchField: View {
     @Binding var query: String
+    var placeholder = "Search projects"
     @FocusState private var focused: Bool
 
     var body: some View {
@@ -79,7 +81,7 @@ struct ProjectsSearchField: View {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 14))
                 .foregroundColor(Color("TextTertiary"))
-            TextField("Search projects", text: $query)
+            TextField(placeholder, text: $query)
                 .font(.system(size: 15))
                 .focused($focused)
                 .submitLabel(.search)
@@ -100,25 +102,36 @@ struct ProjectsSearchField: View {
     }
 }
 
+/// The glass "+ New …" capsule label (Projects and Artifacts share it).
+struct ProjectsNewLabel: View {
+    var title = "New project"
+    var busy = false
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "plus").font(.system(size: 15, weight: .semibold))
+            Text(busy ? "Creating…" : title).font(.system(size: 16, weight: .semibold))
+        }
+        .foregroundColor(Color("TextPrimary"))
+        .padding(.horizontal, 22)
+        .frame(height: 50)
+        .glassSurface(cornerRadius: 25)
+    }
+}
+
 /// Floating glass "+ New project".
 struct ProjectsNewButton: View {
     var busy = false
+    var title = "New project"
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 8) {
-                Image(systemName: "plus").font(.system(size: 15, weight: .semibold))
-                Text(busy ? "Creating…" : "New project").font(.system(size: 16, weight: .semibold))
-            }
-            .foregroundColor(Color("TextPrimary"))
-            .padding(.horizontal, 22)
-            .frame(height: 50)
-            .glassSurface(cornerRadius: 25)
+            ProjectsNewLabel(title: title, busy: busy)
         }
         .buttonStyle(.plain)
         .disabled(busy)
-        .accessibilityLabel("New project")
+        .accessibilityLabel(title)
     }
 }
 
