@@ -7,6 +7,30 @@ pub const BODY_FORMAT: &str = "application/vnd.allternit.answer+json";
 pub const MAX_BYTES: usize = 65536;
 pub const SCHEMA: &str = include_str!("answer_contract.schema.json");
 pub const MANUAL: &str = include_str!("answer_contract.manual.md");
+/// Where the catalog part of MANUAL starts (allternit-ai `CATALOG_MANUAL_HEADING`).
+const CATALOG_HEADING: &str = "\n### Catalog templates";
+
+/// The manual for one gateway turn: the envelope, core templates and rules
+/// always; from the catalog only the line for the template the policy picked.
+/// When the manual has no catalog heading, or the picked template has no line
+/// in either part, the whole manual goes (never a turn missing its template).
+pub fn manual_for(template: Option<&str>) -> std::borrow::Cow<'static, str> {
+    let Some((core, catalog)) = MANUAL.split_once(CATALOG_HEADING) else {
+        return MANUAL.into();
+    };
+    let core = core.trim_end();
+    let Some(id) = template else {
+        return core.into();
+    };
+    let mut lines = catalog.lines();
+    let heading = lines.next().unwrap_or_default();
+    let prefix = format!("{id}: ");
+    match lines.find(|line| line.starts_with(&prefix)) {
+        Some(line) => format!("{core}\n\n{}{heading}\n{line}", CATALOG_HEADING.trim_start()).into(),
+        None if core.contains(&format!("{id}: {{")) => core.into(),
+        None => MANUAL.into(),
+    }
+}
 
 /// The persistence boundary knows the artifact kind even when the caller
 /// deliberately sends the old MIME type or omits the template entirely.
@@ -532,6 +556,29 @@ pub fn as_text(code: &str) -> String {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn gateway_manual_carries_only_the_picked_template() {
+        let core = manual_for(None);
+        assert!(core.starts_with("## Enforced answer templates"));
+        assert!(core.contains("tagged `openui`"));
+        assert!(core.contains("calculator: {inputs:"));
+        assert!(!core.contains("### Catalog templates"));
+        assert!(core.len() < MANUAL.len() / 2);
+        assert_eq!(manual_for(Some("comparison")), core);
+        let weather = manual_for(Some("weather"));
+        assert!(weather.starts_with(&*core));
+        assert!(weather.contains("\nweather: "));
+        assert!(!weather.contains("\nfaq: "));
+        // Unknown template: the whole manual, never a turn without its template.
+        assert_eq!(manual_for(Some("no-such-template")), MANUAL);
+        // Every catalog template has its own line (the split never falls back for a real one).
+        let examples: Vec<Value> = serde_json::from_str(include_str!("answer_catalog.examples.json")).unwrap();
+        for example in examples {
+            let id = example["template"].as_str().unwrap();
+            assert_ne!(manual_for(Some(id)), MANUAL, "{id}");
+        }
+    }
 
     #[test]
     fn every_catalog_example_passes_server_validation_and_has_readable_channel_content() {

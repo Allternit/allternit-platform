@@ -166,7 +166,7 @@ mod tests {
     /// SHA-256 of the two shared files. allternit-ai's answer-shapes.test.ts
     /// pins the same values: change a file in both repos, then both pins.
     const SHAPES_MD_SHA256: &str =
-        "a86b51013dc56df0331fe655aec1005e06bf827f63de75319c5e1582ed216a42";
+        "0ba5f5658691bce65fa741123d81a750bbb3b78b70ed537dd77f21683518a04a";
     const TEMPLATES_JSON_SHA256: &str =
         "a92ff59eff6128c314c65d224ac64016a7134b404849d0bb3c1d69fd20dbdd7f";
 

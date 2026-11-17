@@ -381,12 +381,19 @@ for (const entry of CATALOG_TEMPLATES) {
 }
 export const CATALOG_BY_ID = new Map<string, CatalogEntry>(CATALOG_TEMPLATES.map(t=>[t.id,t]));
 export const CatalogAnswerContract = z.union(CATALOG_TEMPLATES.map(t=>z.strictObject({version:z.literal(1),template:z.literal(t.id),title:word,summary:text.optional(),data:t.schema})) as unknown as [z.ZodType,...z.ZodType[]]) as z.ZodType<CatalogEnvelope>;
-function shape(schema: Record<string, any>, depth = 0): unknown {
-  if (depth > 4) return schema.type ?? 'value';
-  if (schema.enum) return schema.enum;
-  if (schema.anyOf) return schema.anyOf.map((s: Record<string, any>) => shape(s,depth+1));
-  if (schema.type === 'array') return [shape(schema.items,depth+1)];
-  if (schema.properties) return Object.fromEntries(Object.entries(schema.properties).map(([k,v])=>[k+(schema.required?.includes(k)?'':'?'),shape(v as Record<string, any>,depth+1)]));
+/** A JSON Schema as the manual's compact notation: {key,count:number,tags:[string],kind:a|b,note?}. Strings are implied. */
+function shape(schema: Record<string, any>, depth = 0): string {
+  if (depth > 6) return schema.type ?? 'value';
+  if (schema.enum) return schema.enum.join('|');
+  if (schema.anyOf) return schema.anyOf.map((s: Record<string, any>) => shape(s, depth + 1)).join('|');
+  if (schema.type === 'array') return `[${shape(schema.items, depth + 1)}]`;
+  if (schema.properties) {
+    return `{${Object.entries(schema.properties).map(([k, v]) => {
+      const key = k + (schema.required?.includes(k) ? '' : '?');
+      const type = shape(v as Record<string, any>, depth + 1);
+      return type === 'string' ? key : `${key}:${type}`;
+    }).join(',')}}`;
+  }
   return schema.type ?? 'value';
 }
-export const catalogManual = () => CATALOG_TEMPLATES.map(t=>`${t.id}: ${t.description} Data: ${JSON.stringify(shape(z.toJSONSchema(t.schema)))}`).join('\n');
+export const catalogManual = () => CATALOG_TEMPLATES.map(t=>`${t.id}: ${t.description} Data: ${shape(z.toJSONSchema(t.schema))}`).join('\n');
