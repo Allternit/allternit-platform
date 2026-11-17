@@ -14,4 +14,6 @@ await esbuild.build({ entryPoints: ['entry.ts'], bundle: true, platform: 'node',
   tsconfig: AI + '/tsconfig.json', absWorkingDir: process.cwd(),
   nodePaths: [AI + '/node_modules'],
   jsx: 'automatic', loader: { '.svg': 'empty', '.css': 'empty', '.png': 'empty', '.md': 'text', '.json': 'json', '.woff2': 'empty', '.jpg':'empty','.webp':'empty','.mp3':'empty','.wasm':'empty' },
-  define: { 'process.env.NODE_ENV': '"production"', 'import.meta.env': '{}' }, packages: 'external', logLevel: 'error', plugins: [raw] });
+  // import.meta.glob is Vite-only (app-screens/client.ts calls it at load); the catalog needs none of those files.
+  banner: { js: 'const __viteGlob = () => ({});' },
+  define: { 'process.env.NODE_ENV': '"production"', 'import.meta.env': '{}', 'import.meta.glob': '__viteGlob' }, packages: 'external', logLevel: 'error', plugins: [raw] });
