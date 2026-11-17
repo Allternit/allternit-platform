@@ -80,6 +80,8 @@ object AppLink : ScreenHost, LinkListener {
             hid = BluetoothRemote.also { it.init(app) }.commands,
         )
         initialized = true
+        // The node lists this phone's Bluetooth link on the iPhone's routes (`bt-android`).
+        BluetoothRemote.addListener { linkImpl.stateChanged() }
     }
 
     val isPaired: Boolean get() = initialized && linkImpl.isPaired
@@ -153,6 +155,16 @@ object AppLink : ScreenHost, LinkListener {
     override fun canTap(): Boolean = ops != null
 
     override fun consent(): Consent = session.consent()
+
+    override fun keyboard(): JSONObject {
+        val on = BluetoothRemote.isOn
+        val s = BluetoothRemote.state()
+        return JSONObject()
+            .put("on", on)
+            .put("paired", on && s.paired)
+            .put("connected", on && s.connected)
+            .apply { if (on) s.name?.trim()?.takeIf { it.isNotEmpty() }?.let { put("host", it) } }
+    }
 
     override fun foreground(): Boolean = try {
         val info = ActivityManager.RunningAppProcessInfo()

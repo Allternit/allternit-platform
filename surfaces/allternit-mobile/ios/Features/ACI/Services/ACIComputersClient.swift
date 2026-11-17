@@ -50,8 +50,30 @@ final class ACIComputersClient: Sendable {
         let platform: String?
         let canTap: Bool?
         let consent: String?
+        /// Phone Use: set on a second iPhone or iPad in keyboard mode (the
+        /// name of the iPhone it types for, "" when not known). Wire name kept.
+        let keyboard_for: String?
+        /// Phone Use routes the node lists for an app iPhone (contract §9.3).
+        let routes: [RouteRow]?
+
+        struct RouteRow: Decodable, Sendable, Equatable {
+            let route: String?
+            let healthy: Bool?
+        }
 
         var id: String { serial }
+
+        /// A second iPhone or iPad acting as a Bluetooth keyboard: not a phone to act on.
+        var isKeyboard: Bool { keyboard_for != nil }
+
+        /// "Keyboard for Sam's iPhone" (the web's keyboardLabel).
+        var keyboardLabel: String {
+            let name = (keyboard_for ?? "").trimmingCharacters(in: .whitespaces)
+            return name.isEmpty ? "Keyboard for your iPhone" : "Keyboard for \(name)"
+        }
+
+        /// A way to tap is ready for this iPhone (a Bluetooth keyboard the node can see).
+        var tapRouteReady: Bool { routes?.contains { $0.healthy == true && $0.route != "official" } == true }
 
         /// The Allternit Android app sharing its screen (live view opens; no cable bridge).
         var isAndroidApp: Bool {

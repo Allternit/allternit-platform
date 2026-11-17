@@ -81,8 +81,11 @@ describe('state → route health', () => {
   });
 
   it('names the permission pane and the radio', () => {
-    const denied = health({ state: state({ authorization: 'denied' }) });
-    expect(denied.state === 'unavailable' && denied.reason).toContain('Privacy & Security > Bluetooth');
+    // The Bluetooth permission is the person's to give: MAC_PERMISSION_MISSING with the Bluetooth pane.
+    const need = { state: 'needs_you', needsYou: { code: 'MAC_PERMISSION_MISSING', message: 'Allow Allternit in System Settings > Privacy & Security > Bluetooth on your Mac.' } };
+    expect(health({ state: state({ authorization: 'denied' }) })).toEqual(need);
+    expect(health({ state: state({ authorization: 'restricted' }) })).toEqual(need);
+    expect(health({ state: state({ bluetooth: 'unauthorized', connected: false }) })).toEqual(need);
     expect(health({ state: state({ bluetooth: 'off', connected: false }) })).toEqual({ state: 'unavailable', reason: 'Turn on Bluetooth on this Mac.' });
     expect(health({ state: null, reason: 'helper crashed' })).toEqual({ state: 'unavailable', reason: 'helper crashed' });
   });
@@ -121,6 +124,20 @@ describe('the settings row', () => {
     expect(row({ platform: 'win32' })).toMatchObject({ available: false, status: 'unavailable', message: BT_MAC_NOT_ON_THIS_OS });
     expect(row({ hasBinary: false })).toMatchObject({ available: false, message: BT_MAC_NOT_IN_BUILD });
     expect(row({ state: state({ refused: true }) })).toMatchObject({ status: 'refused', message: BT_MAC_REFUSED });
+  });
+
+  it('says which System Settings pane gives the Bluetooth permission', () => {
+    expect(row({ state: state({ authorization: 'denied', connected: false }) })).toEqual({
+      available: true,
+      enabled: true,
+      status: 'blocked',
+      connected: false,
+      deviceName: 'Allternit Keyboard',
+      message: 'Allow Allternit in System Settings > Privacy & Security > Bluetooth on your Mac.',
+      needs_you: 'MAC_PERMISSION_MISSING',
+      settingsUrl: 'x-apple.systempreferences:com.apple.preference.security?Privacy_Bluetooth',
+    });
+    expect(row({ state: state({ bluetooth: 'off', connected: false }) }).needs_you).toBeUndefined();
   });
 });
 

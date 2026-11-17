@@ -461,12 +461,17 @@ struct ACILinkedPhonesSection: View {
                         .frame(width: 8, height: 8)
                     Text(phone.isAndroidApp
                          ? (phone.online ? (phone.canTap == true ? "Screen and taps" : "Screen only") : "Phone app offline")
-                         : phone.isAppPhone ? "Screen only" : phone.online ? "Online" : "Desktop offline")
+                         : phone.isKeyboard ? phone.keyboardLabel
+                         : phone.isAppPhone ? (phone.tapRouteReady ? "Screen and taps" : "Screen") : phone.online ? "Online" : "Desktop offline")
                         .font(.system(size: 14))
                         .foregroundColor(Color("TextPrimary"))
                 }
                 if phone.isAndroidApp && !phone.online {
                     Text("Open the Allternit app on the phone")
+                        .font(.system(size: 13))
+                        .foregroundColor(Color("TextSecondary"))
+                } else if phone.isKeyboard {
+                    Text("A Bluetooth keyboard and mouse, not another phone")
                         .font(.system(size: 13))
                         .foregroundColor(Color("TextSecondary"))
                 } else if phone.isAppPhone && !phone.isLive {

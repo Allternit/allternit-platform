@@ -17,8 +17,10 @@
  *   `POST /api/v1/phones/app/:id/rpc`, which forwards them to the app's control
  *   socket while the app is open. 409 `app_not_open` when it isn't.
  *
- * Taps and swipes on other apps are not possible yet ("Taps on native apps
- * need the Bluetooth board"), so those tools answer `not_supported`.
+ * Taps and swipes on other apps go through a Phone Use tap route
+ * (phone-route.ts: iPhone Mirroring, or a Bluetooth keyboard from the Mac, an
+ * Android phone, a second iPhone/iPad or the USB Agent board). This lane has
+ * none of its own, so those tools answer `not_supported` here (APP_TAPS_MESSAGE).
  *
  * Everything that talks to the node is injected (AppPhoneNode), so the lane is
  * unit-tested with no phone and no node.
@@ -39,7 +41,11 @@ export type AppPlatform = 'ios' | 'android';
 /** What to tell the person while an app phone is not sharing its screen. */
 export const appWaitMessage = (platform: AppPlatform | undefined, name: string): string =>
   platform === 'android' ? `Tap Start on ${name || 'your phone'} to share its screen.` : APP_SHARE_SCREEN_MESSAGE;
-export const APP_TAPS_MESSAGE = 'Taps on native apps need the Bluetooth board';
+/** The Desktop live view of an iPhone is watch-only (no viewer input on that lane). */
+export const IPHONE_LIVE_VIEW_MESSAGE = 'The live view of an iPhone is watch-only. Your assistant taps it through iPhone Mirroring or a Bluetooth keyboard (Settings > Computers > Phones).';
+/** Phone Use tap routes (contract §1), for the answer when none is set up. */
+export const APP_TAPS_MESSAGE =
+  'Taps in other apps need iPhone Mirroring on a Mac, or a Bluetooth keyboard from the Mac, an Android phone, a second iPhone or iPad, or the USB Agent board (Settings > Computers > Phones)';
 export const APP_SHARE_SCREEN_MESSAGE = 'Open the Allternit app on your iPhone and tap Share screen.';
 export const APP_NOT_OPEN_MESSAGE = 'Open the Allternit app on the iPhone. The bot can use its browser only while the app is open.';
 
@@ -167,8 +173,8 @@ export interface AppViewerDeps {
  * shape. Binary frames are plaintext iCTRL packets; CONFIG becomes the
  * stream meta (again on every change: rotation), FRAME the video chunks,
  * AUDIO_CONFIG/AUDIO the sound. ENDED (the person stopped sharing) and a
- * relay `{"type":"end"}` end the session. Input is refused: taps on other
- * apps need the Bluetooth board.
+ * relay `{"type":"end"}` end the session. Input from the iPhone live view is
+ * refused (IPHONE_LIVE_VIEW_MESSAGE): taps go through a Phone Use route.
  */
 export class AppPhoneViewerSession implements StreamSessionHandle {
   private listeners: { [K in keyof ViewerEvents]?: Array<ViewerEvents[K]> } = {};
@@ -236,7 +242,7 @@ export class AppPhoneViewerSession implements StreamSessionHandle {
    * grant needs). The old socket closes only after the new one is open.
    */
   async requestControl(): Promise<{ ok: boolean; message?: string }> {
-    if (this.deps.platform !== 'android') return { ok: false, message: `${APP_TAPS_MESSAGE}. This iPhone shares its screen only.` };
+    if (this.deps.platform !== 'android') return { ok: false, message: IPHONE_LIVE_VIEW_MESSAGE };
     if (this.controlOn) return { ok: true };
     if (!this.socket || this.ended) return { ok: false, message: 'The stream is not live.' };
     if (!this.deps.openControl) return { ok: false, message: 'Taps are not available here.' };
@@ -341,7 +347,7 @@ export class AppPhoneViewerSession implements StreamSessionHandle {
       this.socket.send(JSON.stringify({ type: 'input', events }));
       return { ok: true };
     }
-    return { ok: false, message: `${APP_TAPS_MESSAGE}. This iPhone shares its screen only.` };
+    return { ok: false, message: IPHONE_LIVE_VIEW_MESSAGE };
   }
 
   setDisplayPower(_on: boolean): { ok: boolean; message?: string } {
@@ -657,13 +663,13 @@ function notOnAppPhone(name: string): string | null {
     case 'phone.key':
     case 'phone.type':
     case 'phone.open_app':
-      return `${APP_TAPS_MESSAGE}. On this iPhone a bot can see the screen (phone.screenshot) and use the Allternit app's browser (phone.web.*).`;
+      return `${APP_TAPS_MESSAGE}. Until one is set up, a bot can see the screen (phone.screenshot) and use the Allternit app's browser (phone.web.*).`;
     case 'phone.read_ui':
     case 'phone.screen_text':
-      return 'Reading other apps as text needs the Bluetooth board. Use phone.screenshot to see the screen, or phone.web.snapshot for the Allternit app\'s browser.';
+      return 'Reading the screen as text needs the Allternit screen broadcast running on the iPhone. Use phone.screenshot to see the screen, or phone.web.snapshot for the Allternit app\'s browser.';
     case 'phone.task':
     case 'phone.run_skill':
-      return `${APP_TAPS_MESSAGE}, so plain-English tasks and skills can't run on this iPhone yet. Use phone.web.* for web tasks in the Allternit app's browser.`;
+      return `${APP_TAPS_MESSAGE}, so plain-English tasks and skills can't run on this iPhone until one is set up. Use phone.web.* for web tasks in the Allternit app's browser.`;
     case 'phone.sms.send':
     case 'phone.sms.read':
     case 'phone.call.dial':
@@ -764,7 +770,7 @@ export class AppPhoneBackend implements UsbPhoneBackend {
         note: r.keyboardFor !== undefined
           ? `Bluetooth keyboard and mouse for ${r.keyboardFor || 'another iPhone'} (route bt-apple). Not a phone to act on: use the iPhone's own serial.`
           : r.online
-            ? `Screen only: phone.screenshot and phone.web.* work; ${APP_TAPS_MESSAGE.toLowerCase()}.`
+            ? `Screen and the Allternit app's browser here: phone.screenshot and phone.web.* work. ${APP_TAPS_MESSAGE}.`
             : `${APP_SHARE_SCREEN_MESSAGE} phone.web.* work while the Allternit app is open.`,
         ...(r.keyboardFor !== undefined ? { keyboard_for: r.keyboardFor } : {}),
         ...(r.routes ? { routes: r.routes } : {}),
@@ -883,7 +889,7 @@ export class AppPhoneBackend implements UsbPhoneBackend {
         height: still.height,
         ageMs: Math.max(0, this.now() - snap.at),
         coordinate_space: 'none',
-        note: `Screen only. ${APP_TAPS_MESSAGE}; use phone.web.* for the Allternit app's browser.`,
+        note: `Screen only. ${APP_TAPS_MESSAGE}. Use phone.web.* for the Allternit app's browser.`,
       };
     } catch (error) {
       return fail('no_screen', `Couldn't turn the iPhone's video into a picture (${error instanceof Error ? error.message : String(error)}).`);

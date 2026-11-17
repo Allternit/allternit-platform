@@ -77,7 +77,7 @@ struct AppPhonesSettingsView: View {
         } header: {
             Text("Let your bots use this iPhone")
         } footer: {
-            Text("Pair this iPhone with one of your Desktops. Your bots can then see the screen while you share it and use the ACI browser in this app. Taps on other apps aren't supported.")
+            Text("Pair this iPhone with one of your Desktops. Your bots can then see the screen while you share it and use the ACI browser in this app. To tap in other apps, use iPhone Mirroring on a Mac, or a Bluetooth keyboard from the Mac, an Android phone, a second iPhone or iPad, or the USB Agent board.")
         }
     }
 

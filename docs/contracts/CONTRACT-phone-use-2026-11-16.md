@@ -191,7 +191,7 @@ Health is evaluated before each tap action and reported by `phone.describe`. Eac
 | `APP_NOT_FOREGROUND` | a shortcut needs Allternit in front and no tap route can open it | Open the Allternit app on your iPhone. |
 | `SHORTCUT_NOT_INSTALLED` | `official` shortcut name not found | Add the "<name>" shortcut in Allternit Settings > Device Access > iPhone actions. |
 | `HELPER_RETIRING` | `legacy-helper` selected | The old Allternit helper is being retired. Switch to the app and set up a new route before <date>. |
-| `MAC_PERMISSION_MISSING` | `mirror` needs a macOS permission Allternit does not have (Screen & System Audio Recording, Accessibility) | Allow Allternit in System Settings > Privacy & Security > <name> on your Mac. |
+| `MAC_PERMISSION_MISSING` | `mirror` or `bt-mac` needs a macOS permission Allternit does not have (Screen & System Audio Recording, Accessibility; Bluetooth for `bt-mac`) | Allow Allternit in System Settings > Privacy & Security > <name> on your Mac. |
 | `DEVICE_ACCESS_OFF` | an `official` call needs a Device Access switch (Shortcuts, Home) that is off in the Allternit app | Turn on <name> in the Allternit app on your iPhone (Settings > Device Access). |
 
 `<name>` and `<date>` are filled by the runtime (for `MAC_PERMISSION_MISSING` the pane name, for `DEVICE_ACCESS_OFF` the switch name). `MIRROR_PHONE_IN_USE`, `BT_NOT_PAIRED`, `ASSISTIVETOUCH_OFF`, `FULL_KEYBOARD_ACCESS_OFF`, `MAC_PERMISSION_MISSING` have no `official` equivalent. `DEVICE_ACCESS_OFF` ends the call (`detail.error:"device_access_off"`): no other route has that switch. A `needs_you` for a route the router could skip is only returned when no other healthy route exists (section 1.1 step 4).
@@ -307,7 +307,7 @@ Common reply: `{ "type":"<req>.result", "id": string, "ok": boolean, "route": "o
 | `device.home.list` | `id`, `kind?:string` | `{ devices:[...], scenes:[...] }` |
 | `device.home.set` | `id`, `device_id:string`, `state:object` | `{ id, state:object }` |
 | `device.home.scene` | `id`, `scene_id:string` | `{ id, ran:boolean }` |
-| `device.screen.read` | `id`, `filter?:{label?:string,type?:string}` | `{ elements:Element[], text:string, width:int, height:int }` (on-phone OCR of the latest broadcast frame; may be refused when the extension has no memory: `error:"unavailable"` with `fallback:"frame_sent"` (a fresh keyframe is on its way) or `"runtime_reads_frames"`; Desktop then OCRs the latest broadcast still itself and answers with the same fields plus `read_by:"desktop"`, on a Mac only) |
+| `device.screen.read` | `id`, `filter?:{label?:string,type?:string}` | `{ elements:Element[], text:string, width:int, height:int }` (on-phone OCR of the latest broadcast frame; may be refused when the extension has no memory: `error:"unavailable"` with `fallback:"frame_sent"` (a fresh keyframe is on its way) or `"runtime_reads_frames"`; Desktop then OCRs a broadcast still itself and answers with the same fields plus `read_by:"desktop"`, on a Mac only. After `frame_sent` Desktop waits up to 3 s for a still taken after the request and refuses an older one (`error:"no_screen"`, `detail.error:"stale_frame"`); after `runtime_reads_frames` it reads the newest still, since the broadcast sends a frame on every screen change) |
 
 ### 9.2 HID sender messages (Android `bt-android`, second Apple device `bt-apple`)
 
@@ -315,7 +315,7 @@ The sending device receives these and drives its Bluetooth HID link to the targe
 
 | type | Fields | Result `detail` |
 |---|---|---|
-| `hid.pair.status` | `id`, `reply`: `{ paired:boolean, connected:boolean, name?:string }` | (this one is also sent phone to runtime unprompted when state changes, without `id`) |
+| `hid.pair.status` | `id`, `reply`: `{ paired:boolean, connected:boolean, name?:string, keyboard_for?:string }` (`keyboard_for`, `bt-apple` only: the serial of the iPhone the person picked in keyboard-mode settings; Desktop never uses that keyboard for another iPhone) | (this one is also sent phone to runtime unprompted when state changes, without `id`) |
 | `hid.pointer.move` | `id`, `dx:int`, `dy:int` (relative, -127..127 per message, sender splits larger) | `{}` |
 | `hid.pointer.click` | `id`, `button:"left"\|"right"`, `down?:boolean`, `up?:boolean` (both default true) | `{}` |
 | `hid.pointer.reset` | `id` (drive to the corner) | `{}` |
@@ -331,7 +331,9 @@ The Mac sender and the board are not on this lane (local to Desktop), but implem
 
 ### 9.3 Phone listing
 
-`GET /api/v1/phones` adds to app iPhone rows: on a second iPhone or iPad in keyboard mode (its `state` frame carries `keyboard:{on,connected}`), `keyboard_for`: the name of the one other app iPhone it can be typing for, or `""` when there is more than one; on every other app iPhone, `routes`: the rows the node can see (`official`, and `bt-apple` when a keyboard device is listed) in the `phone.describe` row shape. Desktop answers the full list for the connect kit (`phones.phoneRoutes(serial)`: `{ routes, chosen }`, `chosen` = the route a tap would use now).
+The app's `state` frame carries `keyboard` while it can be a Bluetooth keyboard and mouse: iOS keyboard mode `{ on, connected, keyboard_for? }` (`keyboard_for` = the serial of the iPhone the person picked, "Which iPhone is this the keyboard for?"; picked for them when the account has one other iPhone), Android `{ on, paired, connected, host? }` (`host` = the connected iPhone's Bluetooth name). The node keeps it with the rest of the state frame.
+
+`GET /api/v1/phones` adds to app iPhone rows: each keyboard is matched to one iPhone (iOS: the picked serial when listed; Android: the iPhone whose name equals `host`, ignoring case and curly apostrophes; else the only other app iPhone). A second iPhone or iPad in keyboard mode gets `keyboard_for`: the matched iPhone's name, or `""` when unmatched (an Android phone stays a phone and gets none). Every other app iPhone gets `routes`: the rows the node can see in the `phone.describe` row shape: `official`, then `bt-apple` / `bt-android` when a keyboard is matched to it (connected and broadcasting: healthy; not connected: `BT_NOT_PAIRED`; broadcast off: `BROADCAST_STOPPED`; two connected: not set up) or an unmatched one could be (not set up). Desktop answers the full list for the connect kit (`phones.phoneRoutes(serial)`: `{ routes, chosen }`, `chosen` = the route a tap would use now); web, the phone layout and the PWA merge it over the listed rows (Desktop's row wins per route), so every route shows on Desktop and the node's rows show everywhere.
 
 ## 10. Licensing
 

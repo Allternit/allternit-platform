@@ -8,7 +8,7 @@
  * and adb is only fetched the first time an Android phone is used.
  */
 
-import { app, dialog, nativeImage, Notification } from 'electron';
+import { app, dialog, nativeImage, Notification, shell } from 'electron';
 import log from 'electron-log';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
@@ -1950,16 +1950,25 @@ class PhoneService {
     }
   }
 
-  /** Pair: publish "Allternit Keyboard" and keep it published (asks for Bluetooth permission the first time). */
+  /**
+   * Pair: publish "Allternit Keyboard" and keep it published (asks for Bluetooth
+   * permission the first time). macOS never asks again after a denial, so when
+   * the permission is missing this click opens Privacy & Security > Bluetooth.
+   */
   async btMacPair(): Promise<BtMacSettings> {
     const client = this.ensureBtHidClient();
     if (!client) return btMacSettings({ platform: process.platform, hasBinary: false, enabled: false, state: null });
     writeJson(this.btMacFile(), { enabled: true });
+    let row: BtMacSettings;
     try {
-      return btMacSettings({ platform: process.platform, hasBinary: true, enabled: true, state: await client.pair() });
+      row = btMacSettings({ platform: process.platform, hasBinary: true, enabled: true, state: await client.pair() });
     } catch (error) {
-      return btMacSettings({ platform: process.platform, hasBinary: true, enabled: true, state: client.lastState(), error: error instanceof Error ? error.message : String(error) });
+      row = btMacSettings({ platform: process.platform, hasBinary: true, enabled: true, state: client.lastState(), error: error instanceof Error ? error.message : String(error) });
     }
+    if (row.needs_you === 'MAC_PERMISSION_MISSING' && row.settingsUrl) {
+      shell.openExternal(row.settingsUrl).catch((error) => log.debug(`[Phone] Could not open Bluetooth settings: ${error instanceof Error ? error.message : String(error)}`));
+    }
+    return row;
   }
 
   /** Disconnect: stop the keyboard; the iPhone drops the link (its pairing stays until the person forgets it there). */
