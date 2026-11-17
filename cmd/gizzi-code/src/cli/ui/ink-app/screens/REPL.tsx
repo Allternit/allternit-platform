@@ -48,6 +48,7 @@ import { endInteractionSpan } from '../utils/telemetry/sessionTracing';
 import { useLogMessages } from '../hooks/useLogMessages';
 import { useReplBridge } from '../hooks/useReplBridge';
 import { useLiveSession } from '../hooks/useLiveSession';
+import { useAskUserLaterAnswers } from '../hooks/useAskUserLaterAnswers';
 import { type Command, type CommandResultDisplay, type ResumeEntrypoint, getCommandName, isCommandEnabled } from '../commands';
 import type { PromptInputMode, QueuedCommand, VimMode } from '../types/textInputTypes';
 import { MessageSelector, selectableUserMessagesFilter, messagesAfterAreOnlySynthetic } from '../components/MessageSelector';
@@ -4400,6 +4401,8 @@ export function REPL({
   sendBridgeResultRef.current = sendBridgeResult;
   // Live session: this terminal as an engine session every surface can watch and steer.
   useLiveSession(messages, isLoading, abortControllerRef, mainLoopModel);
+  // ask_user_later answered here (/answer): the answer becomes the next turn.
+  useAskUserLaterAnswers();
   useAfterFirstRender();
 
   // Track prompt queue usage for analytics. Fire once per transition from

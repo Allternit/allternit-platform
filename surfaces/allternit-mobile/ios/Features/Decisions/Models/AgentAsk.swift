@@ -114,15 +114,31 @@ struct AgentQuestionRequest: Decodable, Sendable, Equatable, Identifiable, Hasha
     let questions: [AgentQuestionInfo]
     /// The `question` tool call this request belongs to, when known.
     let toolCallId: String?
+    /// Non-blocking ask: no turn waits on it (no `tool` field). It can arrive
+    /// while the session is idle; answering starts a new turn.
+    let isAsync: Bool
+    /// What the agent assumed and went on with, for async asks.
+    let assumption: String?
+    /// `time.created`, epoch milliseconds.
+    let created: Double?
 
-    private enum CodingKeys: String, CodingKey { case id, sessionID, sessionId, session_id, questions, tool }
+    private enum CodingKeys: String, CodingKey {
+        case id, sessionID, sessionId, session_id, questions, tool, time
+        case isAsync = "async"
+        case assumption
+    }
     private struct ToolRef: Decodable { let callID: String? }
+    private struct TimeRef: Decodable { let created: Double? }
 
-    init(id: String, sessionID: String, questions: [AgentQuestionInfo], toolCallId: String? = nil) {
+    init(id: String, sessionID: String, questions: [AgentQuestionInfo], toolCallId: String? = nil,
+         isAsync: Bool = false, assumption: String? = nil, created: Double? = nil) {
         self.id = id
         self.sessionID = sessionID
         self.questions = questions
         self.toolCallId = toolCallId
+        self.isAsync = isAsync
+        self.assumption = assumption
+        self.created = created
     }
 
     init(from decoder: Decoder) throws {
@@ -135,6 +151,11 @@ struct AgentQuestionRequest: Decodable, Sendable, Equatable, Identifiable, Hasha
         questions = ((try? c.decodeIfPresent([AgentQuestionInfo].self, forKey: .questions)) ?? nil)?
             .filter { !$0.question.isEmpty } ?? []
         toolCallId = ((try? c.decodeIfPresent(ToolRef.self, forKey: .tool)) ?? nil)?.callID
+        isAsync = ((try? c.decodeIfPresent(Bool.self, forKey: .isAsync)) ?? nil) ?? false
+        let a = ((try? c.decodeIfPresent(String.self, forKey: .assumption)) ?? nil)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        assumption = (a?.isEmpty == false) ? a : nil
+        created = ((try? c.decodeIfPresent(TimeRef.self, forKey: .time)) ?? nil)?.created
     }
 }
 
