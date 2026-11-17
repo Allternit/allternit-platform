@@ -745,6 +745,9 @@ const message = await createUserMessage(input)
       | { to: { providerID: string; modelID: string }; from: string; refusedID: string }
       | undefined
     const session = await Session.get(sessionID)
+    // The prompt stack follows the session's surface; a child session (task,
+    // subagent) uses its root's. Resolved once per turn: surfaces don't change mid-turn.
+    const promptSurface = await SystemPrompt.effectiveSurface(session, (id) => Session.get(id))
     // Usage-limit wrap-up: set once a step crosses land_at mid-turn.
     let wrapUp:
       | { left: number; done: boolean; providerID: string; window: QuotaWindow & { resetAt: string; source: string } }
@@ -1377,6 +1380,7 @@ const message = await createUserMessage(input)
         model,
         toolChoice: answerGuard.needsRepair ? "none" : format.type === "json_schema" ? "required" : undefined,
         plan,
+        surface: promptSurface,
       }).finally(() => {
         if (deadlineTimer !== undefined) clearTimeout(deadlineTimer)
       })
@@ -3341,6 +3345,7 @@ Build the plan incrementally in this file. It is the only file you may edit.
       sessionID: input.session.id,
       retries: 2,
       callType: "title",
+      surface: await SystemPrompt.effectiveSurface(input.session, (id) => Session.get(id)),
       messages: [
         {
           role: "user",

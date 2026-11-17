@@ -775,7 +775,10 @@ export const AgentCompatRoutes = () =>
       try {
         if (!sessionID) {
           const existing = await findSession(chatID)
-          sessionID = existing?.id ?? (await Session.create({ title: `Allternit chat ${chatID}` })).id
+          // `surface: "chat"` as the Rust bridge sets it (create_gizzi_chat_session):
+          // an app session for PermissionNext.isAppSession, and the chat prompt stack.
+          sessionID =
+            existing?.id ?? (await Session.create({ title: `Allternit chat ${chatID}`, surface: "chat" })).id
           chatSessions.set(chatID, sessionID)
         }
       } catch (err) {
