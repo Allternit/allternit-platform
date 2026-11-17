@@ -651,6 +651,9 @@ struct HistorySidebarView: View {
         let working = store.isStreaming(session.id)
         let unread = store.isUnread(session)
         let time = ShellSessionsStore.relativeTime(ShellSessionsStore.timestamp(of: session))
+        // C6 (9a server flags): Needs input / Ready for review ride on the row.
+        let codeStatus = codeSessionFilterStatus(session, streaming: working)
+        let asks = codeStatus.asksForUser
         return HStack(spacing: 14) {
             Image(systemName: ShellSearchView.icon(for: session))
                 .font(.system(size: 16))
@@ -679,6 +682,10 @@ struct HistorySidebarView: View {
                             .controlSize(.mini)
                             .tint(Self.workingCoral)
                             .accessibilityLabel("Working")
+                    } else if asks {
+                        CodeSessionStatusIcon(status: codeStatus)
+                            .imageScale(.small)
+                            .accessibilityLabel(codeStatus.label)
                     } else if !time.isEmpty {
                         Text(time)
                             .font(.system(size: 12))
@@ -686,7 +693,12 @@ struct HistorySidebarView: View {
                             .foregroundColor(Color("TextSecondary"))
                     }
                 }
-                if let mission = session.missionLabel {
+                if asks {
+                    Text(codeStatus.label)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(Color("TextSecondary"))
+                        .lineLimit(1)
+                } else if let mission = session.missionLabel {
                     Text(mission)
                         .font(.system(size: 13, weight: .medium))
                         .foregroundColor(Color("AccentPrimary"))

@@ -235,6 +235,12 @@ struct AllternitApp: App {
             || launchArgumentEnabled("calm-overview-menu")
             || launchArgumentEnabled("calm-search")
             || launchArgumentEnabled("calm-jump-button")
+            || launchArgumentEnabled("calm-code-sessions")
+            || launchArgumentValue("calm-code-filter") != nil
+            || launchArgumentEnabled("calm-code-scheduled")
+            || launchArgumentEnabled("calm-code-start")
+            || launchArgumentEnabled("calm-code-device")
+            || launchArgumentEnabled("calm-code-connect")
             || launchArgumentEnabled("open-mode-dial")
             || launchArgumentEnabled("open-incognito")
             || launchArgumentEnabled("enable-agent-mode")

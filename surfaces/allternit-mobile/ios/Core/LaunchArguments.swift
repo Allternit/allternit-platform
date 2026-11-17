@@ -75,6 +75,30 @@ enum LaunchArgument {
     /// `-calm-jump-button` (DEBUG only): show the chat's scroll-to-bottom button.
     static let calmJumpButton = "calm-jump-button"
 
+    /// `-calm-code-sessions` (DEBUG only): open the Code sessions view
+    /// (phone calm step 26). Combine with `-code`; `-sample-workspace` gives
+    /// it computers and sessions.
+    static let calmCodeSessions = "calm-code-sessions"
+
+    /// `-calm-code-filter=<all|needs_input|ready_for_review|working|done|archived>`
+    /// (DEBUG only): open the Code sessions view with that filter on.
+    static let calmCodeFilter = "calm-code-filter"
+
+    /// `-calm-code-scheduled` (DEBUG only): open the Code sessions view on Scheduled.
+    static let calmCodeScheduled = "calm-code-scheduled"
+
+    /// `-calm-code-start` (DEBUG only): open the Code sessions view's New
+    /// session start screen.
+    static let calmCodeStart = "calm-code-start"
+
+    /// `-calm-code-device` (DEBUG only): open the Code sessions view with the
+    /// computer Code runs on (else the first one) in its device sheet.
+    static let calmCodeDevice = "calm-code-device"
+
+    /// `-calm-code-connect` (DEBUG only): open the Code sessions view's
+    /// connect sheet (Allternit Desktop and terminal pair paths).
+    static let calmCodeConnect = "calm-code-connect"
+
     /// `-calm-gallery` (DEBUG only): show `CalmGalleryView`.
     static let calmGallery = "calm-gallery"
 
