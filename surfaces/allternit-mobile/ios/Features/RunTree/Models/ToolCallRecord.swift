@@ -211,6 +211,12 @@ enum ToolDescriber {
         if name.contains("glob") || name.contains("findfiles") || name.contains("listfiles") || name == "ls" || name == "list" {
             return ToolDescription(verb: running ? "Finding files" : "Found files", detail: query.isEmpty ? path : query, symbol: "folder")
         }
+        if name == "agentbatch" {
+            return ToolDescription(verb: running ? "Running a batch over a spreadsheet" : "Ran a batch over a spreadsheet", detail: "", symbol: "tablecells")
+        }
+        if name == "sleep" {
+            return ToolDescription(verb: running ? "Waiting" : "Waited", detail: s("reason"), symbol: "hourglass")
+        }
         if name.contains("memory") {
             return ToolDescription(verb: running ? "Using Memory Drive" : "Used Memory Drive", detail: s("query", "text"), symbol: "brain")
         }
