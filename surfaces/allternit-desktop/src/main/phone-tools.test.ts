@@ -8,6 +8,7 @@ import {
   isEmergencyNumber,
   parseSmsRows,
   normalizeNumber,
+  PHONE_TOOLS,
   PhoneToolRunner,
   resolveApp,
   SMS_LIMITS,
@@ -15,8 +16,11 @@ import {
   type AdbCall,
   type ApprovalDecision,
   type ApprovalRequest,
+  type AppPhoneLane,
   type RateStore,
+  type ToolResult,
 } from './phone-tools.js';
+import type { PhoneLane } from './phone-route.js';
 import { PhoneApiUnavailable, type PhoneApi } from './phone-runs.js';
 
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
@@ -575,5 +579,135 @@ describe('phone.sms.read', () => {
     const { r, calls } = runner({ decision: 'denied', handler: (a) => (a.includes('content') ? { stdout: raw } : {}) });
     expect(await r.call('phone.sms.read', { bot_id: 'bot-1' })).toMatchObject({ error: 'approval_denied' });
     expect(calls.some((c) => c.includes('content'))).toBe(false);
+  });
+});
+
+describe('Phone Use tools (contract §3)', () => {
+  const NEW_TOOLS = ['phone.describe', 'phone.shortcuts.run', 'phone.actions.list', 'phone.actions.run', 'phone.home.list', 'phone.home.set', 'phone.home.scene'];
+  const tool = (name: string) => PHONE_TOOLS.find((t) => t.name === name) as unknown as { inputSchema: { properties: Record<string, any>; required?: string[]; additionalProperties: boolean } };
+
+  it('advertises the new tools with closed schemas and the contract\'s required fields', () => {
+    for (const name of NEW_TOOLS) expect(tool(name)?.inputSchema.additionalProperties).toBe(false);
+    expect(tool('phone.shortcuts.run').inputSchema.required).toEqual(['name']);
+    expect(tool('phone.shortcuts.run').inputSchema.properties.timeout_s).toMatchObject({ minimum: 1, maximum: 120, default: 30 });
+    expect(tool('phone.actions.run').inputSchema.required).toEqual(['app', 'action']);
+    expect(tool('phone.actions.list').inputSchema.properties.kind.enum).toEqual(['create', 'send', 'open', 'search', 'read', 'control', 'other']);
+    expect(tool('phone.home.set').inputSchema.required).toEqual(['id', 'state']);
+    expect(tool('phone.home.scene').inputSchema.required).toEqual(['id']);
+    expect(Object.keys(tool('phone.describe').inputSchema.properties)).toEqual(['serial']);
+  });
+
+  it('adds an optional route to every tap tool, with the seven route ids', () => {
+    for (const name of ['phone.screenshot', 'phone.tap', 'phone.type', 'phone.read_ui', 'phone.find_and_tap', 'phone.swipe', 'phone.home', 'phone.back', 'phone.key', 'phone.open_app']) {
+      expect(tool(name).inputSchema.properties.route.enum).toEqual(['official', 'mirror', 'bt-mac', 'bt-android', 'bt-apple', 'usb-agent', 'legacy-helper']);
+      expect(tool(name).inputSchema.required ?? []).not.toContain('route');
+    }
+  });
+
+  const IPHONE = 'app:iphone-1';
+  function appPhones(platform: 'ios' | 'android' = 'ios'): AppPhoneLane & { calls: string[] } {
+    const calls: string[] = [];
+    return {
+      calls,
+      has: (s) => s === IPHONE,
+      serials: () => [IPHONE],
+      call: async (name) => (calls.push(name), { ok: false, error: 'not_supported', message: 'no taps here' }),
+      refresh: async () => {},
+      devices: () => [{ serial: IPHONE, platform, via: 'allternit-app', route: 'iphone-app-store', name: 'iPhone', canTap: false, screen: true, note: '' }] as never,
+    };
+  }
+  function officialLane(result: ToolResult = { ok: true, detail: { output: 'done', returned_via: 'app_intent' } }) {
+    const calls: Array<{ tool: string; args: Record<string, unknown> }> = [];
+    const lane: PhoneLane = {
+      id: 'official',
+      covers: ['shortcuts', 'actions', 'home'],
+      verify: 'self',
+      health: async () => ({ state: 'healthy' }),
+      act: async (t, _s, args) => (calls.push({ tool: t, args }), result),
+    };
+    return { lane, calls };
+  }
+  function iphoneRunner(opts: { decision?: ApprovalDecision; lanes?: Record<string, PhoneLane>; platform?: 'ios' | 'android' } = {}) {
+    const { adb, calls: adbCalls } = makeAdb();
+    const asked: ApprovalRequest[] = [];
+    const apps = appPhones(opts.platform);
+    const r = new PhoneToolRunner({
+      adb,
+      gate: { request: async (req) => (asked.push(req), opts.decision ?? 'approved') },
+      rates: memoryRates(),
+      artemis: () => null,
+      onlineSerials: () => [],
+      apps: () => apps,
+      lanes: opts.lanes,
+    });
+    return { r, asked, apps, adbCalls };
+  }
+
+  it('runs a shortcut on the official route after the owner approves it', async () => {
+    const official = officialLane();
+    const { r, asked } = iphoneRunner({ lanes: { official: official.lane } });
+    const res = await r.call('phone.shortcuts.run', { name: 'Send standup', input: { text: 'hi' } });
+    expect(res).toMatchObject({ ok: true, route: 'official', detail: { output: 'done', returned_via: 'app_intent' } });
+    expect(official.calls).toEqual([{ tool: 'phone.shortcuts.run', args: { name: 'Send standup', input: { text: 'hi' } } }]);
+    expect(asked).toHaveLength(1);
+    expect(asked[0]).toMatchObject({ kind: 'device_write', serial: IPHONE });
+    expect(asked[0].summary).toContain('Send standup');
+  });
+
+  it('a denied send never reaches the phone and says denied', async () => {
+    const official = officialLane();
+    const { r } = iphoneRunner({ decision: 'denied', lanes: { official: official.lane } });
+    const res = await r.call('phone.actions.run', { app: 'slack', action: 'SendMessageIntent', params: { text: 'hi' } });
+    expect(res).toMatchObject({ ok: false, error: 'approval_denied', route: 'official', detail: { error: 'denied' } });
+    expect(official.calls).toHaveLength(0);
+  });
+
+  it('turning on a light runs without asking', async () => {
+    const official = officialLane({ ok: true, detail: { id: 'lamp', state: { on: true } } });
+    const { r, asked } = iphoneRunner({ lanes: { official: official.lane } });
+    expect(await r.call('phone.home.set', { id: 'lamp', state: { on: true } })).toMatchObject({ ok: true, route: 'official', detail: { state: { on: true } } });
+    expect(asked).toHaveLength(0);
+  });
+
+  it('checks the new tools\' arguments before routing', async () => {
+    const official = officialLane();
+    const { r } = iphoneRunner({ lanes: { official: official.lane } });
+    expect(await r.call('phone.shortcuts.run', { name: '' })).toMatchObject({ ok: false, error: 'invalid_args', route: 'official' });
+    expect(await r.call('phone.home.set', { id: 'lamp', state: 'on' })).toMatchObject({ ok: false, error: 'invalid_args' });
+    expect(await r.call('phone.actions.run', { app: 'slack', action: 'x', timeout_s: 500 })).toMatchObject({ ok: false, error: 'invalid_args' });
+    expect(await r.call('phone.tap', { x: 1, y: 2, route: 'teleport' })).toMatchObject({ ok: false, error: 'invalid_args' });
+    expect(official.calls).toHaveLength(0);
+  });
+
+  it('says the official route is not available yet when the app cannot run it', async () => {
+    const { r, asked } = iphoneRunner();
+    const res = await r.call('phone.shortcuts.run', { name: 'Note' });
+    expect(res).toMatchObject({ ok: false, error: 'route_unavailable', route: 'official', verified: false });
+    expect(asked).toHaveLength(0);
+  });
+
+  it('phone.describe reports every route for an App Store iPhone', async () => {
+    const { r } = iphoneRunner();
+    const res = await r.call('phone.describe', {});
+    expect(res).toMatchObject({ ok: true, verified: true, detail: { locked: null, foreground_app: null } });
+    expect(((res as unknown as { detail: { routes: Array<{ route: string }> } }).detail.routes).map((x) => x.route)).toEqual(['official', 'mirror', 'bt-mac', 'bt-apple', 'bt-android', 'usb-agent', 'legacy-helper']);
+  });
+
+  it('an App Store iPhone with no tap route keeps its own screen path', async () => {
+    const { r, apps } = iphoneRunner();
+    expect(await r.call('phone.tap', { x: 1, y: 2 })).toMatchObject({ ok: false, error: 'not_supported', message: 'no taps here' });
+    expect(apps.calls).toEqual(['phone.tap']);
+  });
+
+  it('Android is untouched: the new tools are refused, route is refused, taps go to adb as before', async () => {
+    const { r, calls } = runner();
+    expect(await r.call('phone.describe', {})).toMatchObject({ ok: false, error: 'not_supported' });
+    expect(await r.call('phone.home.list', {})).toMatchObject({ ok: false, error: 'not_supported' });
+    expect(await r.call('phone.tap', { x: 3, y: 4, route: 'mirror' })).toMatchObject({ ok: false, error: 'invalid_args' });
+    expect(calls).toHaveLength(0);
+    expect(await r.call('phone.tap', { x: 3, y: 4 })).toEqual({ ok: true });
+
+    const android = iphoneRunner({ platform: 'android' });
+    expect(await android.r.call('phone.shortcuts.run', { name: 'x' })).toMatchObject({ ok: false, error: 'not_supported' });
   });
 });
