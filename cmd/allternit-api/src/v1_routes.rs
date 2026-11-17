@@ -1200,7 +1200,7 @@ enum ToolFrameState {
 }
 
 /// Tools whose settled `tool_result` frame carries the part's `state.metadata`.
-const METADATA_CARD_TOOLS: &[&str] = &["send_user_message", "automation"];
+const METADATA_CARD_TOOLS: &[&str] = &["send_user_message", "automation", "connector_suggest", "settings"];
 
 /// SSE frames for a gizzi `tool` part: an Anthropic-style
 /// `content_block_start` (tool_use) when the call starts, then `tool_result`
