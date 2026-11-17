@@ -108,7 +108,7 @@ export const AutomationTool = Tool.define("automation", {
       metadata.automations = outcome.automations
     } else if (outcome.action === "delete") {
       metadata.id = outcome.id
-    } else {
+    } else if ("run" in outcome) {
       metadata.id = outcome.run.id
       metadata.run = outcome.run
     }

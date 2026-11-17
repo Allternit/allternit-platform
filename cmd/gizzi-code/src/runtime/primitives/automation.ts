@@ -209,7 +209,7 @@ export namespace Automation {
     if (input.at !== undefined) {
       const at = input.at.trim()
       const instant = RRule.localToInstant(at, zone)
-      if (!instant.ok) {
+      if ("error" in instant) {
         throw new AutomationError(instant.code === "nonexistent" ? "nonexistent_time" : "invalid", instant.error)
       }
       return oneShot(instant.at, { at })

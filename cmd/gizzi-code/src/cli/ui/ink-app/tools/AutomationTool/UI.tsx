@@ -40,7 +40,10 @@ function Cell({ width, children, dim }: { width: number; children: React.ReactNo
     </Box>;
 }
 
-function Table({ rows, zone }: { rows: Row[]; zone: string }): React.ReactNode {
+/** Rows from the tool output: the schema keeps nextRunAt optional, Row keeps it nullable. */
+type TableRow = Omit<Row, 'nextRunAt'> & { nextRunAt?: string | null };
+
+function Table({ rows, zone }: { rows: TableRow[]; zone: string }): React.ReactNode {
   return <Box flexDirection="column">
       <Box flexDirection="row">
         <Cell width={32} dim>Title</Cell>

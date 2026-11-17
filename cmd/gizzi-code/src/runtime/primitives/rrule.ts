@@ -108,7 +108,7 @@ export namespace RRule {
       return at.toISOString()
     }
     const instant = localToInstant(local, timezone)
-    if (!instant.ok) throw new RRuleError("invalid", `UNTIL=${value}: ${instant.error}`)
+    if ("error" in instant) throw new RRuleError("invalid", `UNTIL=${value}: ${instant.error}`)
     const seconds = h ? Number(s) : 59
     return new Date(instant.at.getTime() + seconds * 1000).toISOString()
   }
