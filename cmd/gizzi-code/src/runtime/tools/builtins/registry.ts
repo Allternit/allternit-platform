@@ -55,6 +55,8 @@ import { VaultWriteTool } from "@/runtime/tools/builtins/vault-write"
 import { Glob } from "@/shared/util/glob"
 import { CreateGoalTool, GetGoalTool, SetGoalBudgetTool, UpdateGoalTool } from "@/runtime/tools/builtins/goal"
 import { AgentSwarmTool } from "@/runtime/tools/builtins/agent-swarm"
+import { AgentBatchTool } from "@/runtime/tools/builtins/agent-batch"
+import { SleepTool } from "@/runtime/tools/builtins/sleep"
 import {
   BackgroundTaskListTool,
   BackgroundTaskOutputTool,
@@ -190,6 +192,10 @@ export namespace ToolRegistry {
       WriteTool,
       TaskTool,
       AgentSwarmTool,
+      // One worker per CSV row with an output schema (sample first, resumable):
+      // every client, not bot-gated. Asks with the row count, concurrency and
+      // model; its workers get no task/agent_swarm/agent_batch (WORKER_DENIED_TOOLS).
+      AgentBatchTool,
       BackgroundTaskListTool,
       BackgroundTaskOutputTool,
       BackgroundTaskStopTool,
@@ -212,6 +218,8 @@ export namespace ToolRegistry {
       // A question that doesn't stop the turn; the answer starts a new one.
       // Every client, not bot-gated (routines, workers and subagents ask too).
       AskUserLaterTool,
+      // A short in-turn wait that wakes on the user's next message: every client, not bot-gated.
+      SleepTool,
       CreateGoalTool,
       GetGoalTool,
       SetGoalBudgetTool,

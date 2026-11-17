@@ -12,6 +12,7 @@ import { SendUserMessageTool } from "@/runtime/tools/builtins/send-user-message"
 import { CurrentTimeTool } from "@/runtime/tools/builtins/current-time"
 import { AutomationTool } from "@/runtime/tools/builtins/automation"
 import { LookupTool } from "@/runtime/tools/builtins/lookup"
+import { SleepTool } from "@/runtime/tools/builtins/sleep"
 import { ARTIFACT_TOOLS } from "@/runtime/tools/builtins/artifact"
 import { QuestionTool } from "@/runtime/tools/builtins/question"
 import { TodoWriteTool } from "@/runtime/tools/builtins/todo"
@@ -46,7 +47,13 @@ export namespace CliBridge {
   // which the delegation rule tells the CLI to load (agents/builtin-catalog.ts).
   // run_code: Python on the chat's attachments in gizzi's OS sandbox (Analyze);
   // its result metadata (files[]) reaches the session part via CliBridgeResults.
-  export const TOOLS: Tool.Info[] = [PaneArtifactTool, PaneBrowserTool, MediaGenerateTool, TodoWriteTool, GlanceTool, BuiltinSkillTool(), ...ARTIFACT_TOOLS, ArtifactCheckTool, RunCodeTool, SendUserMessageTool, CurrentTimeTool, LookupTool, AutomationTool]
+  // sleep: a wait that ends early when the user writes in Allternit, which the
+  // CLI's own shell `sleep` can't see.
+  // Not agent_batch: CLI brains (Claude Code, Codex…) run their own subagents
+  // in their own process, on the user's own plan; a gizzi batch would start
+  // gizzi workers on another model behind the CLI's back, and a CLI gives up on
+  // a tool call long before a batch of rows finishes.
+  export const TOOLS: Tool.Info[] = [PaneArtifactTool, PaneBrowserTool, MediaGenerateTool, TodoWriteTool, GlanceTool, BuiltinSkillTool(), ...ARTIFACT_TOOLS, ArtifactCheckTool, RunCodeTool, SendUserMessageTool, CurrentTimeTool, LookupTool, AutomationTool, SleepTool]
 
   /** gizzi's id for a bridged tool reported under a CLI's vendor name (run_code only; see CliBridgeResults). */
   export const canonicalTool = CliBridgeResults.canonicalTool
@@ -289,8 +296,9 @@ export namespace CliBridge {
     const callID = `cli_${randomBytes(6).toString("hex")}`
     // run_code stages the latest user message's attachments, so it needs the
     // conversation (oldest first: filterCompacted reverses the newest-first stream).
+    // sleep needs it too: a user message already in the session must not wake it.
     const messages =
-      tool.id === RunCodeTool.id
+      tool.id === RunCodeTool.id || tool.id === SleepTool.id
         ? await import("@/runtime/session/message-v2").then(({ MessageV2 }) => MessageV2.filterCompacted(MessageV2.stream(sessionID)))
         : []
     const ctx: Tool.Context = {
@@ -306,6 +314,8 @@ export namespace CliBridge {
         if (req.permission === "todowrite") return
         // gizzi's built-in skills are instructions only; loading one never prompts.
         if (req.permission === "skill") return
+        // A wait is allowed for every agent (loop/agent.ts); never prompt for it.
+        if (req.permission === "sleep") return
         return await PermissionNext.ask({ ...req, sessionID, ruleset: session.permission ?? [] })
       },
     }
@@ -348,7 +358,7 @@ export namespace CliBridge {
           capabilities: { tools: { listChanged: false } },
           serverInfo: { name: SERVER_NAME, version: "1.0.0" },
           instructions:
-            "Allternit session tools: the document open beside the chat (pane_artifact), the pane's browser (pane_browser), image/video generation rendered in the user's app (media_generate), the user's Artifacts (artifact_create, artifact_update, artifact_read, artifact_suggest; artifact_claim and artifact_release for one frame of a design canvas; artifact_check to look at a page or design at phone, tablet and laptop widths, optionally against a reference picture), Python on the files the user attached in this chat, run in Allternit's sandbox with the charts and files it saves shown to the user (run_code: use it to analyze attachments, not your own shell, which cannot see them), the task list shown as the session's Progress (todowrite), the one-line status on the session's sidebar row (glance), gizzi's built-in skills (skill), a finished file or important update handed to the user in this chat, with an optional push to their phone (send_user_message), the user's current time and time zone (current_time), one fact shown as a card in the user's app: weather, the time in other places, a unit or currency conversion, a link preview, places or credited images (lookup), scheduled tasks — reminders, recurring runs and quiet checks (automation), and multiple-choice questions to the user (question). To ask the user anything, use question: the CLI's own ask-the-user tools (AskUserQuestion, request_user_input) never reach them.",
+            "Allternit session tools: the document open beside the chat (pane_artifact), the pane's browser (pane_browser), image/video generation rendered in the user's app (media_generate), the user's Artifacts (artifact_create, artifact_update, artifact_read, artifact_suggest; artifact_claim and artifact_release for one frame of a design canvas; artifact_check to look at a page or design at phone, tablet and laptop widths, optionally against a reference picture), Python on the files the user attached in this chat, run in Allternit's sandbox with the charts and files it saves shown to the user (run_code: use it to analyze attachments, not your own shell, which cannot see them), the task list shown as the session's Progress (todowrite), the one-line status on the session's sidebar row (glance), gizzi's built-in skills (skill), a finished file or important update handed to the user in this chat, with an optional push to their phone (send_user_message), the user's current time and time zone (current_time), one fact shown as a card in the user's app: weather, the time in other places, a unit or currency conversion, a link preview, places or credited images (lookup), scheduled tasks — reminders, recurring runs and quiet checks (automation), a short wait that ends early when the user writes in Allternit (sleep: keep it under a minute, since longer tool calls can time out in your CLI; use automation for longer waits), and multiple-choice questions to the user (question). To ask the user anything, use question: the CLI's own ask-the-user tools (AskUserQuestion, request_user_input) never reach them.",
         })
       case "ping":
         return ok(req.id, {})

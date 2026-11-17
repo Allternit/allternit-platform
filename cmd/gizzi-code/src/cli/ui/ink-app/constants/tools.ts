@@ -31,6 +31,7 @@ import { LOOKUP_TOOL_NAME } from '../tools/LookupTool/prompt.js'
 import { SEND_USER_MESSAGE_TOOL_NAME } from '../tools/SendUserMessageTool/prompt.js'
 import { AUTOMATION_TOOL_NAME } from '../tools/AutomationTool/prompt.js'
 import { ASK_USER_LATER_TOOL_NAME } from '../tools/AskUserLaterTool/prompt.js'
+import { AGENT_BATCH_TOOL_NAME } from '../tools/AgentBatchTool/prompt.js'
 
 export const ALL_AGENT_DISALLOWED_TOOLS = new Set([
   TASK_OUTPUT_TOOL_NAME,
@@ -40,6 +41,9 @@ export const ALL_AGENT_DISALLOWED_TOOLS = new Set([
   ...(process.env.USER_TYPE === 'ant' ? [] : [AGENT_TOOL_NAME]),
   ASK_USER_QUESTION_TOOL_NAME,
   TASK_STOP_TOOL_NAME,
+  // A batch fans out one worker per row: only the main thread runs one, so a
+  // subagent (or a batch worker) never starts another batch.
+  AGENT_BATCH_TOOL_NAME,
 ])
 
 export const CUSTOM_AGENT_DISALLOWED_TOOLS = new Set([
