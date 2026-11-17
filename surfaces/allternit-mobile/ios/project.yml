@@ -78,6 +78,10 @@ targets:
       - path: Features
       - path: Assets.xcassets
       - path: Config
+        excludes:
+          # StoreKit test configuration: used by the scheme (Debug runs from
+          # Xcode) and the unit tests, never shipped in the app.
+          - "*.storekit"
       # App phone pairing, keychain and envelope code, also compiled into
       # AllternitScreen (the broadcast extension) so the two can't drift.
       - path: Shared
@@ -91,6 +95,14 @@ targets:
     configFiles:
       Debug: Config/Secrets.xcconfig
       Release: Config/Secrets.xcconfig
+    # Shared "Allternit" scheme: runs from Xcode buy against the local
+    # StoreKit configuration (the 7 products from App Store Connect, US
+    # storefront; change it under Editor > Default Storefront). TestFlight
+    # and App Store builds ignore it and use the real App Store.
+    scheme:
+      testTargets:
+        - AllternitTests
+      storeKitConfiguration: Config/Allternit.storekit
     settings:
       base:
         INFOPLIST_FILE: Info.plist
@@ -466,8 +478,13 @@ targets:
       # bundle copy is byte-identical (Tests/OnDevice/FitVectorTests.swift).
       - path: ../../../spec/on-device/fit-vectors.json
         buildPhase: resources
+      # StoreKitTest session products (Tests/StorePurchaseTests.swift).
+      - path: Config/Allternit.storekit
+        buildPhase: resources
     dependencies:
       - target: Allternit
+      # SKTestSession for the In-App Purchase tests.
+      - sdk: StoreKitTest.framework
       # Keyboard mode tests build HID reports and peripheral states (pure, no CoreBluetooth).
       - package: AllternitBTHID
         product: BTHIDCore
