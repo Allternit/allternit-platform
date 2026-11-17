@@ -132,3 +132,34 @@ phone layout and the PWA. If the session is missing or not the viewer's, show
 - Bot and project drives: `memory.md` is the bot's/project's memory (canonical; cowork rows are its index).
   `cowork/` is no longer used or guarded. Entry metadata: `owner`, `grants` (comma list), `cowork_type`, `tags`,
   `cowork_source`, `project`, `session`.
+
+## Wave D — versioned edits, list, safe replay (2026-11-17)
+
+- **Entry version.** The first 12 hex characters of SHA-256 over the entry's line exactly as
+  stored (UTF-8, no trailing newline). Any change to its text or metadata changes it. gizzi:
+  `entryVersion` in `cmd/gizzi-code/src/runtime/memory/drive/format.ts`. Clients that show or
+  edit entries compute it the same way.
+- **`memory_write`** (gizzi tool) actions: `save {text, id?}`, `append {id, text}` (text is added
+  exactly as given, then whitespace is collapsed), `replace {id, old, new}` (`old` must occur
+  exactly once), `delete {id}`. Changing or deleting an existing entry needs `if_version`. The
+  check runs inside the checkout's write lock, after sync, against the latest head. A stale or
+  missing version returns `{refused: true, current: <text>, version: <current version>}` and
+  writes nothing. Results carry the new `version`. Saving over an entry drops `conflict_of`.
+- **Secret gate on the result.** The scanner runs on the whole resulting line (and file), not on
+  the fragment sent, so appends or replaces that only form a credential together are refused.
+- **`memory_list {drive?, topic?, after?}`**: no topic → topics with entry counts plus the
+  entries that need a look; with a topic → entries `{id, version, text, added}` in file order,
+  200 per page, `after` = the last id of the previous page. `drive` is a ref or a mounted
+  drive's name.
+- **`memory_recall`** hits carry `version`.
+- **Replay merge.** After a rejected push (and on the first-login merge), gizzi replays its
+  local work per entry, three ways (`mergeOperations`), instead of re-applying its upserts over
+  the newer head:
+  - only we changed it → ours applies; both made the same text → theirs stays as is
+  - both changed it differently → theirs keeps the id; ours is kept as a sibling entry with id
+    `<id>-conflict-<8 hex>` and metadata `conflict_of: <id>`
+  - we edited, they deleted → the edit comes back; we deleted, they edited → their edit stays
+- **"N memories need a look"** = the number of entries with `conflict_of`. gizzi shows it in the
+  session's Memory Drive context block (`DriveStatus.needsLook`) and in `memory_list`. The
+  server accepts `conflict_of` as an ordinary identifier-safe metadata key; no API change.
+  Settle one by keeping the right text on the original id and deleting the sibling.
