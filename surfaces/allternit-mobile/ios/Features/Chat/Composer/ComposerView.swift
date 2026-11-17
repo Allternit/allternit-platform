@@ -93,6 +93,8 @@ struct ComposerView: View {
     @State private var isFocused = false
     @State private var placeholderIndex = 0
     @State private var upgradeURL: IdentifiableURL? = nil
+    /// The In-App Purchase sheet, where the App Store sells plans.
+    @State private var isStoreSheetPresented = false
 
     private var mode: AppMode { artifactKind != nil ? .chat : modeStore.mode }
     private var agentOn: Bool { agentModeStore.isAgentEnabled(for: mode) }
@@ -157,6 +159,9 @@ struct ComposerView: View {
         }
         .sheet(item: $upgradeURL) { item in
             SafariView(url: item.url)
+        }
+        .sheet(isPresented: $isStoreSheetPresented) {
+            StorePurchaseSheet(focus: .plan)
         }
         .onAppear {
             modelStore.fetchModelsIfNeeded()
@@ -393,9 +398,15 @@ struct ComposerView: View {
                     .foregroundColor(Color("TextPrimary"))
                     .lineLimit(2)
                 Spacer(minLength: 4)
-                if storefront.allowsPurchaseLinks {
+                // The App Store sheet where it sells plans (it carries the web
+                // link on the US storefront), else the web on the US storefront.
+                if storefront.canBuy(.plan) {
                     Button("Upgrade") {
-                        upgradeURL = IdentifiableURL(url: AccountPlanStore.shared.upgradeURL)
+                        if storefront.showsStoreButtons(for: .plan) {
+                            isStoreSheetPresented = true
+                        } else {
+                            upgradeURL = IdentifiableURL(url: AccountPlanStore.shared.upgradeURL)
+                        }
                     }
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundColor(Color("TextPrimary"))

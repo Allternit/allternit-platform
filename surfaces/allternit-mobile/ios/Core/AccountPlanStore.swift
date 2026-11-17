@@ -79,6 +79,14 @@ struct BillingSubscription: Decodable, Equatable, Sendable {
     let status: String
     /// When the plan renews (RFC 3339), once Stripe has reported it.
     var renewsAt: String? = nil
+    /// Who bills the plan: `stripe`, `apple`, `google`, or nil on Free and on
+    /// servers from before store billing.
+    var billingProvider: String? = nil
+    /// Where to change or cancel it (App Store / Play subscriptions, or the
+    /// web billing page).
+    var manageUrl: String? = nil
+    /// The account has two open plans (e.g. web and App Store): "Cancel one".
+    var conflict: Bool = false
 
     enum CodingKeys: String, CodingKey {
         case planId = "plan_id"
@@ -86,11 +94,49 @@ struct BillingSubscription: Decodable, Equatable, Sendable {
         case planTier = "plan_tier"
         case status
         case renewsAt = "renews_at"
+        case billingProvider = "billing_provider"
+        case manageUrl = "manage_url"
+        case conflict
+    }
+
+    init(planId: String, label: String, planTier: String, status: String, renewsAt: String? = nil,
+         billingProvider: String? = nil, manageUrl: String? = nil, conflict: Bool = false) {
+        self.planId = planId
+        self.label = label
+        self.planTier = planTier
+        self.status = status
+        self.renewsAt = renewsAt
+        self.billingProvider = billingProvider
+        self.manageUrl = manageUrl
+        self.conflict = conflict
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        planId = try c.decode(String.self, forKey: .planId)
+        label = try c.decode(String.self, forKey: .label)
+        planTier = try c.decode(String.self, forKey: .planTier)
+        status = try c.decode(String.self, forKey: .status)
+        renewsAt = try c.decodeIfPresent(String.self, forKey: .renewsAt)
+        billingProvider = try c.decodeIfPresent(String.self, forKey: .billingProvider)
+        manageUrl = try c.decodeIfPresent(String.self, forKey: .manageUrl)
+        conflict = try c.decodeIfPresent(Bool.self, forKey: .conflict) ?? false
     }
 
     /// A paid plan that still bills (or is trying to).
     var isPaid: Bool {
         planId != "free" && ["active", "trialing", "past_due", "unpaid"].contains(status)
+    }
+
+    /// "Billed by Apple. Manage in App Store." for the plan card; nil on Free.
+    var billedByLine: String? {
+        guard isPaid else { return nil }
+        switch billingProvider {
+        case "apple": return "Billed by Apple. Manage it in App Store subscriptions."
+        case "google": return "Billed by Google Play. Manage it in Play Store subscriptions."
+        case "stripe": return "Billed on the web."
+        default: return nil
+        }
     }
 }
 

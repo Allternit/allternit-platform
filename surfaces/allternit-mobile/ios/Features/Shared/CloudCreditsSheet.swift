@@ -4,14 +4,19 @@ import UIKit
 // "Allternit Cloud models need credits" on the phone
 // (CONTRACT-cloud-credits-2026-11-15). Opened from a locked row in the model
 // picker, from a send on a locked model (D9) and from a 402 refusal.
-// No StoreKit. On the US storefront the sheet links out to the web to buy
-// (StorefrontGate); on any other storefront, or while it is unknown, it shows
-// the title, one line and OK, with no price and no link (D12).
+// Where the App Store sells credit packs (server `store.apple.enabled` and
+// StoreKit products, any storefront) the packs are In-App Purchase buttons
+// priced by the App Store. On the US storefront the sheet also links out to
+// the web to buy (StorefrontGate). With neither, it shows the title, one
+// line and OK, with no price and no link (D12).
 
 enum CloudCreditsCopy {
     static let titleRequired = "Allternit Cloud models need credits"
     static let titleExhausted = "Your Cloud credits are used up"
     static let body = "Free accounts don't include Cloud usage. $1 buys $1 of credit. Plans and API keys you connect still work without credits."
+    /// With App Store packs: store prices are higher than the credits, so no "$1 buys $1".
+    static let bodyStore = "Free accounts don't include Cloud usage. Credits work on all your devices. Plans and API keys you connect still work without credits."
+    static let buyWeb = "Buy on allternit.com"
     /// The one line shown where purchase links aren't allowed: no price, no link.
     static let lineRequired = "Free accounts don't include Cloud usage."
     static let lineExhausted = "Plans and API keys you connect still work without credits."
@@ -108,10 +113,15 @@ struct CloudCreditsSheet: View {
     var allowsPurchaseLinksOverride: Bool? = nil
 
     @ObservedObject private var storefront = StorefrontGate.shared
+    @ObservedObject private var store = StorePurchaseManager.shared
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
+    @State private var showStorePlans = false
 
     private var allowsLinks: Bool { allowsPurchaseLinksOverride ?? storefront.allowsPurchaseLinks }
+    /// App Store packs can be bought here.
+    private var storePacks: Bool { storefront.showsStoreButtons(for: .pack) }
+    private var canBuy: Bool { allowsLinks || storePacks }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -126,7 +136,7 @@ struct CloudCreditsSheet: View {
                 .foregroundStyle(SetupPalette.ink)
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityAddTraits(.isHeader)
-            if allowsLinks {
+            if canBuy {
                 purchaseContent
             } else {
                 Text(CloudCreditsCopy.line(request.reason))
@@ -143,14 +153,21 @@ struct CloudCreditsSheet: View {
         .padding(.bottom, 12)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .presentationBackground(SetupPalette.bg)
-        .presentationDetents(allowsLinks ? [.medium, .large] : [.height(250)])
+        .presentationDetents(canBuy ? [.medium, .large] : [.height(250)])
         .presentationDragIndicator(.visible)
         .onAppear { if !allowsLinks { storefront.refresh() } }
+        .task { await store.loadCatalog() }
+        .sheet(isPresented: $showStorePlans) { StorePurchaseSheet(focus: .plan) }
+    }
+
+    /// Plans through the App Store: on, and no plan billed elsewhere.
+    private var storePlans: Bool {
+        storefront.showsStoreButtons(for: .plan) && StorePurchaseManager.planPurchaseAllowed(AccountPlanStore.shared.subscription)
     }
 
     @ViewBuilder
     private var purchaseContent: some View {
-        Text(CloudCreditsCopy.body)
+        Text(storePacks ? CloudCreditsCopy.bodyStore : CloudCreditsCopy.body)
             .font(.subheadline)
             .foregroundStyle(SetupPalette.sub)
             .fixedSize(horizontal: false, vertical: true)
@@ -160,34 +177,60 @@ struct CloudCreditsSheet: View {
                 .foregroundStyle(SetupPalette.ink)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        HStack(spacing: 8) {
-            ForEach(CloudCreditsCopy.packs, id: \.self) { pack in
-                Text(pack)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(SetupPalette.ink)
-                    .frame(maxWidth: .infinity, minHeight: 40)
-                    .background(SetupPalette.fill, in: RoundedRectangle(cornerRadius: 10))
-                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(SetupPalette.line, lineWidth: 1))
+        if storePacks {
+            StorePackGrid(store: store)
+            StorePurchaseNoticeView(store: store)
+        } else {
+            HStack(spacing: 8) {
+                ForEach(CloudCreditsCopy.packs, id: \.self) { pack in
+                    Text(pack)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(SetupPalette.ink)
+                        .frame(maxWidth: .infinity, minHeight: 40)
+                        .background(SetupPalette.fill, in: RoundedRectangle(cornerRadius: 10))
+                        .overlay(RoundedRectangle(cornerRadius: 10).stroke(SetupPalette.line, lineWidth: 1))
+                }
             }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Credit packs: \(CloudCreditsCopy.packs.joined(separator: ", "))")
         }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Credit packs: \(CloudCreditsCopy.packs.joined(separator: ", "))")
         VStack(spacing: 8) {
-            Button { openURL(StorefrontGate.creditsURL) } label: {
-                Label(CloudCreditsCopy.buy, systemImage: "arrow.up.right")
-                    .labelStyle(TrailingIconLabelStyle())
+            if allowsLinks && storePacks {
+                // The App Store packs lead; the web link is the second way.
+                Button { openURL(StorefrontGate.creditsURL) } label: {
+                    Label(CloudCreditsCopy.buyWeb, systemImage: "arrow.up.right")
+                        .labelStyle(TrailingIconLabelStyle())
+                }
+                .buttonStyle(OutlineButtonStyle())
+                .accessibilityHint("Opens billing in your browser")
+            } else if allowsLinks {
+                Button { openURL(StorefrontGate.creditsURL) } label: {
+                    Label(CloudCreditsCopy.buy, systemImage: "arrow.up.right")
+                        .labelStyle(TrailingIconLabelStyle())
+                }
+                .buttonStyle(SetupPrimaryButtonStyle())
+                .accessibilityHint("Opens billing in your browser")
             }
-            .buttonStyle(SetupPrimaryButtonStyle())
-            .accessibilityHint("Opens billing in your browser")
-            Button { openURL(AccountPlanStore.shared.upgradeURL) } label: {
-                Label(CloudCreditsCopy.plan, systemImage: "arrow.up.right")
-                    .labelStyle(TrailingIconLabelStyle())
+            if storePlans {
+                Button(CloudCreditsCopy.plan) { showStorePlans = true }
+                    .buttonStyle(OutlineButtonStyle())
+                    .accessibilityHint("Shows the plans")
+            } else if allowsLinks {
+                Button { openURL(AccountPlanStore.shared.upgradeURL) } label: {
+                    Label(CloudCreditsCopy.plan, systemImage: "arrow.up.right")
+                        .labelStyle(TrailingIconLabelStyle())
+                }
+                .buttonStyle(OutlineButtonStyle())
+                .accessibilityHint("Opens the plans in your browser")
             }
-            .buttonStyle(OutlineButtonStyle())
-            .accessibilityHint("Opens the plans in your browser")
-            Text(CloudCreditsCopy.planNote)
-                .font(.caption)
-                .foregroundStyle(SetupPalette.mut)
+            if storePlans || allowsLinks {
+                Text(CloudCreditsCopy.planNote)
+                    .font(.caption)
+                    .foregroundStyle(SetupPalette.mut)
+            }
+            if storePacks {
+                StoreRestoreButton(store: store)
+            }
             Button(CloudCreditsCopy.notNow) {
                 CloudCreditsGate.clearPending()
                 dismiss()

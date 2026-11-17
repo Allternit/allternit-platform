@@ -456,6 +456,7 @@ private struct MeetingsSkeleton: View {
 struct MeetingsPaidPlanCard: View {
     @ObservedObject private var storefront = StorefrontGate.shared
     @State private var safariURL: IdentifiableURL?
+    @State private var isStoreSheetPresented = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -465,20 +466,30 @@ struct MeetingsPaidPlanCard: View {
                     .font(.system(size: 17, weight: .semibold))
                     .foregroundColor(Color("TextPrimary"))
             }
-            Text("Meetings is part of the Plus, Super and Ultra plans. Gizzi joins your Meet, Zoom and Teams calls, writes the transcript, answers in the chat and sends a recap.")
+            Text("Meetings is part of the Plus, Max and Ultra plans. Gizzi joins your Meet, Zoom and Teams calls, writes the transcript, answers in the chat and sends a recap.")
                 .font(.system(size: 14))
                 .foregroundColor(Color("TextSecondary"))
                 .fixedSize(horizontal: false, vertical: true)
-            if storefront.allowsPurchaseLinks {
-                Button("Choose a plan") { safariURL = IdentifiableURL(url: StorefrontGate.upgradeURL) }
-                    .buttonStyle(SettingsPrimaryButtonStyle())
-                    .padding(.top, 4)
+            // The App Store sheet where it sells plans (with the web link on
+            // the US storefront), else the web on the US storefront.
+            if storefront.canBuy(.plan) {
+                Button("Choose a plan") {
+                    if storefront.showsStoreButtons(for: .plan) {
+                        isStoreSheetPresented = true
+                    } else {
+                        safariURL = IdentifiableURL(url: StorefrontGate.upgradeURL)
+                    }
+                }
+                .buttonStyle(SettingsPrimaryButtonStyle())
+                .padding(.top, 4)
             }
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color("FillNeutral")))
         .sheet(item: $safariURL) { item in SafariView(url: item.url) }
+        .sheet(isPresented: $isStoreSheetPresented) { StorePurchaseSheet(focus: .plan) }
+        .task { await StorePurchaseManager.shared.loadCatalog() }
     }
 }
 

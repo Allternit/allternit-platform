@@ -4,7 +4,8 @@ import UIKit
 // The compute gate on the phone (contract: CONTRACT-compute-gate-2026-11-13.md).
 // "Agents need a computer": three paths (own Desktop, subscribe, credits) and
 // a chat-only confirmation. Copy strings are the contract's, verbatim.
-// Plans and credits open the web only where StorefrontGate allows purchase
+// Plans and credits open the In-App Purchase sheet where the App Store sells
+// them (StorePurchaseSheet), and the web only where StorefrontGate allows purchase
 // links (US storefront); elsewhere card A plus "Manage your plan on the web."
 
 enum ComputeGateCopy {
@@ -64,6 +65,19 @@ enum ComputeGateCopy {
         default: list = parts.dropLast().joined(separator: ", ") + " or " + parts[parts.count - 1]
         }
         return "\(list) a month. Includes one hosted computer. " + planExplainer(plans)
+    }
+
+    /// The same card when the App Store sells the plans: no web prices
+    /// (the App Store shows its own in the purchase sheet).
+    static func cardBCostStore(_ plans: [ComputeStatus.PlanOption]) -> String {
+        let names = plans.map(\.name)
+        let list: String
+        switch names.count {
+        case 0: return "Includes one hosted computer."
+        case 1: list = names[0]
+        default: list = names.dropLast().joined(separator: ", ") + " or " + names[names.count - 1]
+        }
+        return "\(list), billed monthly. Includes one hosted computer. " + planExplainer(plans)
     }
 
     static func cardCCost(_ price: Double) -> String {
@@ -149,6 +163,8 @@ struct ComputeGateView: View {
     @ObservedObject private var storefront = StorefrontGate.shared
 
     @State private var showExplainer = false
+    /// In-App Purchase sheet (plans or packs), where the App Store sells them.
+    @State private var storeSheet: StoreKind?
     @State private var working = false
     @State private var linking = false
     @State private var copied = false
@@ -167,7 +183,13 @@ struct ComputeGateView: View {
                     .accessibilityLabel("Checking your computer")
             }
         }
-        .task { await store.refreshIfNeeded() }
+        .task {
+            await store.refreshIfNeeded()
+            await StorePurchaseManager.shared.loadCatalog()
+        }
+        .sheet(item: $storeSheet) { kind in
+            StorePurchaseSheet(focus: kind)
+        }
         .sheet(isPresented: $showExplainer) {
             ComputeExplainerSheet(status: store.status, confirmTitle: ComputeGateCopy.laterContinue) {
                 working = true
@@ -231,9 +253,11 @@ struct ComputeGateView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             cardA(s)
-            if storefront.allowsPurchaseLinks {
-                if let plans = s.paths?.plan?.plans, !plans.isEmpty { cardB(plans) }
-                if let credits = s.paths?.credits { cardC(credits) }
+            // Plans and credits: through the App Store where it sells them
+            // (any storefront), and the web link on the US storefront.
+            if storefront.canBuy(.plan) || storefront.canBuy(.pack) {
+                if let plans = s.paths?.plan?.plans, !plans.isEmpty, storefront.canBuy(.plan) { cardB(plans) }
+                if let credits = s.paths?.credits, storefront.canBuy(.pack) { cardC(credits) }
             } else {
                 Text(ComputeGateCopy.manageOnWeb)
                     .font(.footnote)
@@ -305,12 +329,17 @@ struct ComputeGateView: View {
     }
 
     private func cardB(_ plans: [ComputeStatus.PlanOption]) -> some View {
-        card(ComputeGateCopy.cardBTitle, cost: ComputeGateCopy.cardBCost(plans)) {
+        let inApp = storefront.showsStoreButtons(for: .plan)
+        return card(ComputeGateCopy.cardBTitle, cost: inApp ? ComputeGateCopy.cardBCostStore(plans) : ComputeGateCopy.cardBCost(plans)) {
             Button(ComputeGateCopy.cardBButton) {
-                UIApplication.shared.open(AccountPlanStore.shared.upgradeURL)
+                if inApp {
+                    storeSheet = .plan
+                } else {
+                    UIApplication.shared.open(AccountPlanStore.shared.upgradeURL)
+                }
             }
             .buttonStyle(SetupPrimaryButtonStyle())
-            .accessibilityHint("Opens the plans in your browser")
+            .accessibilityHint(inApp ? "Shows the plans" : "Opens the plans in your browser")
         }
     }
 
@@ -328,9 +357,16 @@ struct ComputeGateView: View {
             } else {
                 Text(ComputeGateCopy.insufficient(credits.minStartUsd))
                     .font(.footnote).foregroundStyle(SetupPalette.sub)
-                Button(ComputeGateCopy.cardCButton) { UIApplication.shared.open(StorefrontGate.creditsURL) }
-                    .buttonStyle(SetupPrimaryButtonStyle())
-                    .accessibilityHint("Opens billing in your browser")
+                let inApp = storefront.showsStoreButtons(for: .pack)
+                Button(ComputeGateCopy.cardCButton) {
+                    if inApp {
+                        storeSheet = .pack
+                    } else {
+                        UIApplication.shared.open(StorefrontGate.creditsURL)
+                    }
+                }
+                .buttonStyle(SetupPrimaryButtonStyle())
+                .accessibilityHint(inApp ? "Shows the credit packs" : "Opens billing in your browser")
             }
             if let startError {
                 Text(startError).font(.footnote).foregroundStyle(.red)

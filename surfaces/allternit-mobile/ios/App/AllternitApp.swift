@@ -23,6 +23,9 @@ struct AllternitApp: App {
 
     init() {
         AuthManager.shared.configure(publishableKey: AppConfig.clerkPublishableKey)
+        // In-App Purchase: listen for transactions (renewals, Ask to Buy,
+        // refunds) from launch and post any left unfinished (StoreKit 2).
+        StorePurchaseManager.shared.start()
         // Must register before this initializer returns — BGTaskScheduler
         // requires the handler in place before app launch completes.
         BackgroundRefreshManager.register()
