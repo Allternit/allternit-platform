@@ -69,6 +69,21 @@ struct AgentSession: Decodable, Sendable, Identifiable {
     /// `metadata.glance.text` — a one-line glance summary. nil when absent
     /// or malformed.
     let glanceText: String?
+    /// `metadata.needsInput` — server-owned (code_session_status.rs): the
+    /// agent is waiting on the user (a permission prompt or a question).
+    /// Missing = false.
+    let needsInput: Bool
+    /// `metadata.needsInputKind` — "permission" | "question" while
+    /// `needsInput`; nil otherwise.
+    let needsInputKind: String?
+    /// `metadata.needsInputAt` — ISO 8601 time the wait started.
+    let needsInputAt: String?
+    /// `metadata.readyForReview` — server-owned: the last run changed files
+    /// or made an artifact and nobody has opened the session since. Cleared
+    /// by `CodeSessionsClient.markReviewed`. Missing = false.
+    let readyForReview: Bool
+    /// `metadata.readyForReviewAt` — ISO 8601 time the run ended.
+    let readyForReviewAt: String?
     // The rest of `metadata` (directory, version, permission, …) stays
     // skipped — not rendered anywhere on iOS.
 
@@ -96,6 +111,11 @@ struct AgentSession: Decodable, Sendable, Identifiable {
         case sourceRef
         case mission
         case glance
+        case needsInput
+        case needsInputKind
+        case needsInputAt
+        case readyForReview
+        case readyForReviewAt
     }
 
     private struct ArtifactSessionTag: Decodable { let kind: String? }
@@ -134,6 +154,11 @@ struct AgentSession: Decodable, Sendable, Identifiable {
             isTerminal = ((try? metadata.decodeIfPresent(SourceRefTag.self, forKey: .sourceRef)) ?? nil)?.harness == "gizzi-tui"
             missionLabel = Self.clean(((try? metadata.decodeIfPresent(MissionTag.self, forKey: .mission)) ?? nil)?.label)
             glanceText = Self.clean(((try? metadata.decodeIfPresent(GlanceTag.self, forKey: .glance)) ?? nil)?.text)
+            needsInput = ((try? metadata.decodeIfPresent(Bool.self, forKey: .needsInput)) ?? nil) ?? false
+            needsInputKind = needsInput ? Self.clean((try? metadata.decodeIfPresent(String.self, forKey: .needsInputKind)) ?? nil) : nil
+            needsInputAt = needsInput ? ((try? metadata.decodeIfPresent(String.self, forKey: .needsInputAt)) ?? nil) : nil
+            readyForReview = ((try? metadata.decodeIfPresent(Bool.self, forKey: .readyForReview)) ?? nil) ?? false
+            readyForReviewAt = readyForReview ? ((try? metadata.decodeIfPresent(String.self, forKey: .readyForReviewAt)) ?? nil) : nil
             // The backend emits a bool; the create path carries the flag as
             // the string "true" inside the metadata bag.
             if let flag = try metadata.decodeIfPresent(Bool.self, forKey: .ephemeral) {
@@ -151,6 +176,11 @@ struct AgentSession: Decodable, Sendable, Identifiable {
             isTerminal = false
             missionLabel = nil
             glanceText = nil
+            needsInput = false
+            needsInputKind = nil
+            needsInputAt = nil
+            readyForReview = false
+            readyForReviewAt = nil
             ephemeral = false
         }
     }
