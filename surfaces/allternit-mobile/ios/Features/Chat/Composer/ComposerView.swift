@@ -1,4 +1,5 @@
 import SwiftUI
+import Speech
 
 import UIKit
 // MARK: - Composer
@@ -98,6 +99,17 @@ struct ComposerView: View {
     @State private var upgradeURL: IdentifiableURL? = nil
     /// The In-App Purchase sheet, where the App Store sells plans.
     @State private var isStoreSheetPresented = false
+    /// Deck fold (C1): swiped up and not yet swiped down or blurred empty.
+    @State private var swipedOpen = false
+    /// One of the deck's sheets is up: keeps the band open under it.
+    @State private var deckSheetActive = false
+    /// The once card for the swipe (C1 tip).
+    @State private var swipeTipSeen = UserDefaults.standard.bool(forKey: ComposerSwipeTipState.defaultsKey)
+    /// Dictation (C3): the mic left of the voice button.
+    @StateObject private var dictation = DictationController()
+    @State private var dictationBase = ""
+    @ObservedObject private var chipStore = ComputerChipStore.shared
+    @ReducedMotion private var reduceMotion
 
     private var mode: AppMode { artifactKind != nil ? .chat : modeStore.mode }
     private var agentOn: Bool { agentModeStore.isAgentEnabled(for: mode) }
@@ -107,6 +119,45 @@ struct ComposerView: View {
 
     private var hasDraft: Bool {
         !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachmentStore.attachments.isEmpty
+    }
+
+    /// The deck band shows (it is folded at rest). Hosts with no deck never.
+    private var deckBandOpen: Bool {
+        deckOpen(focused: isFocused || deckSheetActive, hasDraft: hasDraft, swipedOpen: swipedOpen, modeArmed: agentOn)
+    }
+
+    private var forcedDeckOpen: Bool {
+        #if DEBUG
+        return launchArgumentEnabled("calm-deck-open")
+        #else
+        return false
+        #endif
+    }
+
+    private var forcedSwipeTip: Bool {
+        #if DEBUG
+        return launchArgumentEnabled("calm-swipe-tip")
+        #else
+        return false
+        #endif
+    }
+
+    /// The computer chip is on screen (the swipe tip yields to it).
+    private var chipVisible: Bool {
+        showsComputerChip && chipStore.state.kind != .none && !(showsAttach && chipStore.showsDot)
+    }
+
+    private var showsSwipeTip: Bool {
+        if forcedSwipeTip { return deck != .none && !isTerminal }
+        return ComposerSwipeTipState.shouldShow(
+            seen: swipeTipSeen, deckIsOpen: deckBandOpen || forcedDeckOpen, chipVisible: chipVisible,
+            hasDeck: deck != .none && !isTerminal
+        )
+    }
+
+    /// Dictation needs a speech recognizer for the current language.
+    private var dictationAvailable: Bool {
+        SFSpeechRecognizer()?.isAvailable ?? false
     }
 
     private var canSend: Bool {
@@ -148,16 +199,62 @@ struct ComposerView: View {
                     .zIndex(1)
             }
 
+            if showsSwipeTip {
+                ComposerSwipeTip { dismissSwipeTip() }
+                    .zIndex(1)
+                    .transition(.opacity)
+            }
+
+            // One calm line when dictation can't start.
+            if let dictationError = dictation.errorMessage {
+                Text(plainErrorText(message: dictationError))
+                    .font(.system(size: 13))
+                    .foregroundColor(Color("TextSecondary"))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 6)
+                    .accessibilityAddTraits(.updatesFrequently)
+                    .task(id: dictationError) {
+                        try? await Task.sleep(for: .seconds(5))
+                        if !Task.isCancelled { dictation.errorMessage = nil }
+                    }
+            }
+
             card
                 .zIndex(1)
+                .simultaneousGesture(
+                    DragGesture(minimumDistance: 12)
+                        .onEnded { value in
+                            guard deck != .none, !isTerminal else { return }
+                            let next = nextSwipedOpen(current: swipedOpen, startY: value.startLocation.y, endY: value.location.y)
+                            guard next != swipedOpen else { return }
+                            swipedOpen = next
+                            if next { markSwipeTipSeen() }
+                        }
+                )
 
-            if deck != .none, !isTerminal {
-                ComposerDeckBand(variant: deck, inputText: $inputText, sessionKind: artifactKind, onAllArtifacts: onAllArtifacts)
+            if deck != .none, !isTerminal, deckBandOpen || forcedDeckOpen {
+                ComposerDeckBand(
+                    variant: deck, inputText: $inputText, sessionKind: artifactKind,
+                    onAllArtifacts: onAllArtifacts, onSheetActive: { deckSheetActive = $0 }
+                )
                     .zIndex(0)
-                    .transition(.move(edge: .top).combined(with: .opacity))
+                    .transition(reduceMotion ? .identity : .move(edge: .top).combined(with: .opacity))
             }
         }
+        .animation(reduceMotion ? nil : Motion.deck, value: deckBandOpen || forcedDeckOpen)
         .animation(DeckMotion.animation, value: deck)
+        .onChange(of: deckBandOpen) { _, open in
+            if open { Haptics.selection() }
+        }
+        .onChange(of: isFocused) { _, focused in
+            // Blur with an empty draft folds a swiped-open band.
+            if !focused, !hasDraft, !deckSheetActive { swipedOpen = false }
+        }
+        .onChange(of: dictation.transcript) { _, transcript in
+            guard dictation.isRecording || !transcript.isEmpty else { return }
+            inputText = dictationBase + transcript
+        }
         .sheet(isPresented: $isPlusSheetPresented) {
             ComposerPlusSheet(attachmentStore: attachmentStore, sessionId: sessionId, allowsPhoneRun: allowsPhoneRun)
         }
@@ -343,6 +440,9 @@ struct ComposerView: View {
     private var sendSlot: some View {
         HStack(spacing: 8) {
             WaitingGamesPlayButton(busy: isStreaming, anytime: playGamesAnytime, hidden: hasDraft)
+            // Dictation fills the draft, which swaps voice for Send: keep the
+            // mic here while recording so it can be stopped.
+            if dictation.isRecording, hasDraft, !isStreaming, !isTerminal { micButton }
             sendButton
         }
     }
@@ -383,6 +483,34 @@ struct ComposerView: View {
             .disabled(!canSend)
             .accessibilityLabel("Send message")
         } else {
+            HStack(spacing: 0) {
+                if showsMic { micButton }
+                voiceButton
+            }
+        }
+    }
+
+    /// The mic shows beside voice mode (no draft) and while recording, so it
+    /// can always be stopped. Hidden where dictation isn't available.
+    private var showsMic: Bool {
+        showsVoice && !isTerminal && (dictationAvailable || dictation.isRecording)
+    }
+
+    private var micButton: some View {
+        Button(action: toggleDictation) {
+            Image(systemName: dictation.isRecording ? "mic.fill" : "mic")
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundColor(dictation.isRecording ? Color("AccentPrimary") : Color("TextSecondary"))
+                .frame(width: 44, height: 44)
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Dictate")
+        .accessibilityValue(dictation.isRecording ? "Recording" : "")
+    }
+
+    private var voiceButton: some View {
+        Group {
             Button(action: voiceModeTapped) {
                 Image(systemName: "waveform")
                     .font(.system(size: 17, weight: .bold))
@@ -468,8 +596,30 @@ struct ComposerView: View {
             isModelPickerPresented = true
             return
         }
+        dictation.stop()
         onSend(attachmentStore.attachments)
         attachmentStore.clear()
+    }
+
+    private func toggleDictation() {
+        Haptics.light()
+        if dictation.isRecording {
+            dictation.stop()
+        } else {
+            dictationBase = inputText.isEmpty || inputText.hasSuffix(" ") ? inputText : inputText + " "
+            Task { await dictation.start() }
+        }
+    }
+
+    /// The swipe tip is a once card: any dismissal, or a first swipe, retires it.
+    private func markSwipeTipSeen() {
+        swipeTipSeen = true
+        UserDefaults.standard.set(true, forKey: ComposerSwipeTipState.defaultsKey)
+    }
+
+    private func dismissSwipeTip() {
+        Haptics.light()
+        withAnimation(reduceMotion ? nil : Motion.deck) { markSwipeTipSeen() }
     }
 
     /// One staged attachment: image thumbnail or a file chip, X to unstage.
