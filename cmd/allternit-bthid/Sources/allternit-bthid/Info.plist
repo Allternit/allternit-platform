@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleIdentifier</key>
+  <string>com.allternit.bthid</string>
+  <key>CFBundleName</key>
+  <string>allternit-bthid</string>
+  <key>CFBundleShortVersionString</key>
+  <string>0.1.0</string>
+  <key>NSBluetoothAlwaysUsageDescription</key>
+  <string>Allternit uses Bluetooth so this Mac can act as a keyboard and mouse for your own iPhone, after you pair them.</string>
+</dict>
+</plist>
