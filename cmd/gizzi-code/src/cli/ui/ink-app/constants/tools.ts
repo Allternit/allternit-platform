@@ -27,6 +27,8 @@ import { SYNTHETIC_OUTPUT_TOOL_NAME } from '../tools/SyntheticOutputTool/Synthet
 import { ENTER_WORKTREE_TOOL_NAME } from '../tools/EnterWorktreeTool/constants.js'
 import { EXIT_WORKTREE_TOOL_NAME } from '../tools/ExitWorktreeTool/constants.js'
 import { CURRENT_TIME_TOOL_NAME } from '../tools/CurrentTimeTool/prompt.js'
+import { THREAD_READ_TOOL_NAME, THREAD_RECENT_TOOL_NAME, THREAD_WAIT_TOOL_NAME } from '../tools/ThreadReadTool/prompt.js'
+import { RESOURCE_TOOL_NAME } from '../tools/ResourceTool/prompt.js'
 import { SEND_USER_MESSAGE_TOOL_NAME } from '../tools/SendUserMessageTool/prompt.js'
 import { AUTOMATION_TOOL_NAME } from '../tools/AutomationTool/prompt.js'
 import { ASK_USER_LATER_TOOL_NAME } from '../tools/AskUserLaterTool/prompt.js'
@@ -66,6 +68,10 @@ export const ASYNC_AGENT_ALLOWED_TOOLS = new Set([
   EXIT_WORKTREE_TOOL_NAME,
   // Workers and background agents can read the user's clock and hand the user a deliverable.
   CURRENT_TIME_TOOL_NAME,
+  THREAD_READ_TOOL_NAME,
+  THREAD_RECENT_TOOL_NAME,
+  THREAD_WAIT_TOOL_NAME,
+  RESOURCE_TOOL_NAME,
   SEND_USER_MESSAGE_TOOL_NAME,
   // A question that doesn't block: a worker's ask lands in the main session's thread.
   ASK_USER_LATER_TOOL_NAME,
