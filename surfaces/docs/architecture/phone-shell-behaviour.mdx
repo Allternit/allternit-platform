@@ -1,0 +1,46 @@
+---
+title: 'Phone shell behaviour'
+description: 'The rules the phone layout and the iPhone app share: composer deck, permission, mic, computer chip, calm errors, Code status signals, accounts and the menu hold.'
+---
+
+The phone layout (`allternit-ai`, `src/fabric-session/phone/`) and the iPhone app follow one contract. This page is for developers. For the user view, see [Composer](/guides/chat-composer#on-a-phone) and [Code session list](/guides/code-session-list).
+
+## Contract
+
+| Id | Rule |
+| --- | --- |
+| C1 | The deck band is folded at rest. It is open when focus is within the composer, deck or their menus; the draft has text or attachments; the user swiped up 24 px; or a mode is armed. |
+| C2 | The permission pill is removed. **+** shows Permission and a page with Auto, Ask, Read-only, from the same store. |
+| C3 | The mic sits left of the voice button and toggles dictation. A failure shows one calm line. |
+| C4 | The computer chip sits above the composer in Chat, Bots and Code. **✕** shrinks it to a dot on **+**. |
+| C5 | No status number or code in UI text. |
+| C6 | Code status order: Archived, Needs input, Working, Ready for review, Done. |
+| C7 | An account row is a person or one of their orgs. Tap switches with Clerk `setActive`. |
+| C8 | Menu hold: tap opens the drawer, hold 0.35 s opens the fan, a further 0.4 s on Bots opens the shelf. |
+
+## Deck open rules
+
+`src/components/composer-deck/deck-open.ts` exports `deckOpen({ focused, hasDraft, swipedOpen, modeArmed })`, `nextSwipedOpen(current, startY, endY)` and `DECK_SWIPE_PX` (24). `ComposerDeck` takes `bandOpen` and `onFocusWithinChange`. Hosts with no deck are unchanged.
+
+## Code status signals (C6)
+
+The node owns the signals, in `cmd/allternit-api/src/code_session_status.rs`. They are session metadata keys that clients cannot write: `needsInput`, `needsInputAt`, `needsInputKind` (`permission` or `question`), `readyForReview`, `readyForReviewAt`. Absent means false.
+
+- `needsInput` is set when a permission or question is asked, and cleared when no ask is pending, on error, on idle and on run start.
+- `readyForReview` is set on idle when the run sent `file.edited` or finished an edit, write, patch or artifact tool. It clears on run start or on `PATCH { markReviewed: true }`.
+- Clients send `markReviewed` when a session is opened. The web does so only while the Code screen is visible: `markSessionReviewed(id)`, `registerCodeViewOpen()`, `sessionApi.markReviewed(id)`.
+- An always-on watcher reads the gizzi `/v1/global/event` stream, so flags update with no client connected. Open clients get `session_flags` events on `/agent-sessions/sync`. The sync stream closes when the gizzi stream ends so clients reconnect.
+- Web helpers: `codeSessionFilterStatus`, `isNeedsInput`, `needsInputKind`, `isReadyForReview` in `src/lib/code-session-status.ts`. Filters live in `components/session-overview/code-session-filter.ts`.
+- Known limits: events while the node is disconnected are missed, and a thread placed on another server takes its flags from that server.
+
+## Menu hold state machine
+
+`src/fabric-session/phone/menu-hold.ts` is a pure reducer: `reduceMenuHold(state, event)` returns `{ state, effects }`. Constants: `HOLD_MS` 350, `BOTS_HOLD_MS` 400, `HOLD_SLOP_PX` 12. State is `{ overlay: 'none' | 'fan' | 'shelf', pressing, held, target, drawerOpen, lockedMode, openedByAction }`. Events: `press`, `release`, `cancel`, `holdTimer`, `botsHoldTimer`, `move`, `pick`, `openFan`, `drawerOpened`, `drawerClosed`, `outsideTap`, `setLocked`. `menuOverlayVisible` never reports the fan or shelf while the drawer is open. `menu-hold.test.ts` includes a random-walk test of that rule. `phone-nav.ts` routes events through `dispatchMenuHold`. With `lockedMode` (the Bots app), a hold goes straight to the shelf.
+
+## Calm errors
+
+`src/lib/errors/plain-error.ts` exports `plainErrorText(err, fallback)`, `stripStatusText`, `statusSentence` and `isComputeGateRefusal`. Use `plainErrorText` for any text shown to a person. A 409 `compute_required` or 428 on a read shows no error: the list shows its empty state and the chip shows. On an action the compute gate sheet opens as before. Chip state comes from `useComputerChip()` in `PhoneNoComputer.tsx`.
+
+## Haptics and accounts
+
+`src/lib/haptics.ts` exports `light`, `medium`, `soft`, `selection`, `setHapticsEnabled` and `isHapticsEnabled`; the setting key is `allternit.haptics`. `src/lib/accounts/switch-account.ts` holds `switchAccount` and `switchAccountCleanup`. Clerk single-session mode is still on for the instance, so session rows and Add account are not built.
