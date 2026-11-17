@@ -4824,7 +4824,21 @@
         "allternit/surfaces/allternit-desktop/src/main/files-drive-win-manager.ts",
         "allternit/surfaces/allternit-desktop/build/installer.nsh",
         "allternit/.github/workflows/files-win-helper.yml",
-        "allternit/surfaces/docs/guides/files-windows.mdx"
+        "allternit/surfaces/docs/guides/files-windows.mdx",
+        "allternit/cmd/allternit-cloud-api/src/routes/files_keys.rs",
+        "allternit/cmd/allternit-cloud-api/src/routes/files.rs",
+        "allternit/cmd/allternit-cloud-api/migrations_pg/143_computer_files_wake.sql",
+        "allternit/cmd/allternit-cloud-api/migrations_pg/145_account_prefs.sql",
+        "allternit/cmd/allternit-cloud-api/migrations_pg/146_files_keys.sql",
+        "allternit/cmd/allternit-api/src/files_v2/shares.rs",
+        "allternit/cmd/allternit-api/src/files_v2/mod.rs",
+        "allternit/surfaces/allternit-mobile/ios/Packages/AllternitFilesKit",
+        "allternit/surfaces/allternit-mobile/ios/AllternitFileProvider",
+        "allternit/surfaces/allternit-mobile/ios/Core/Files",
+        "allternit/surfaces/allternit-mobile/android/app/src/main/java/com/allternit/app/files",
+        "allternit/surfaces/docs/guides/files-keys.mdx",
+        "allternit-ai/src/lib/files-drive",
+        "allternit-ai/src/components/computers/files"
       ],
       "decisions": [
         {
