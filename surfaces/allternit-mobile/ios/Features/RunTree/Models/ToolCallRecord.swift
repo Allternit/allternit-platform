@@ -28,6 +28,8 @@ struct ToolCallRecord: Identifiable, Equatable, Sendable {
     var userMessage: AgentUserMessage? = nil
     /// automation: the scheduled task the call made or changed.
     var automation: AgentAutomationResult? = nil
+    /// lookup: the fact card (weather, time zones, conversion, …) drawn under the reply.
+    var lookupCard: AnswerCardEnvelope? = nil
 
     /// How long the call ran; live calls count up to `now`.
     func elapsed(now: Date = Date()) -> TimeInterval? {
@@ -89,7 +91,8 @@ extension ToolCallRecord {
                 output: part.state?.output?.value as? String,
                 runCode: name == "run_code" ? RunCodeResult(files: part.files, run: part.run) : nil,
                 userMessage: name == AgentUserMessage.toolName ? part.state?.userMessage : nil,
-                automation: name == AgentAutomationResult.toolName ? part.state?.automation : nil
+                automation: name == AgentAutomationResult.toolName ? part.state?.automation : nil,
+                lookupCard: name == LookupToolMetadata.toolName ? part.state?.lookup?.card : nil
             )
         }
     }
@@ -113,6 +116,7 @@ extension MessageRecord {
                 call.finishedAt = detail.finishedAt ?? call.finishedAt
                 if let message = detail.userMessage { call.userMessage = message }
                 if let automation = detail.automation { call.automation = automation }
+                if let card = detail.lookupCard { call.lookupCard = card }
             }
             if state != .running, call.finishedAt == nil { call.finishedAt = now }
             if let runCode { call.runCode = runCode }
@@ -129,7 +133,8 @@ extension MessageRecord {
                 finishedAt: detail?.finishedAt ?? (state == .running ? nil : now),
                 runCode: runCode,
                 userMessage: detail?.userMessage,
-                automation: detail?.automation
+                automation: detail?.automation,
+                lookupCard: detail?.lookupCard
             ))
         }
     }

@@ -114,6 +114,14 @@ struct MessageRow: View {
                     }
                 }
 
+                // lookup: the fact card (weather, time zones, conversion, link,
+                // places, images) drawn from the tool part, never retyped by the model.
+                ForEach(message.toolCalls) { call in
+                    if call.toolName == LookupToolMetadata.toolName, let card = call.lookupCard {
+                        AnswerCardView(card: card, fallbackText: call.output)
+                    }
+                }
+
                 // Message Bubble — markdown for the assistant, plain text for the user.
                 // Skipped when the message is nothing but an error card.
                 if let run = hostedRun, message.role == "assistant" {
@@ -287,7 +295,7 @@ struct MessageRow: View {
             .accessibilityElement(children: .combine)
         } else {
             VStack(alignment: .leading, spacing: 10) {
-                AssistantMarkdown(content: message.content, isStreaming: message.isStreaming)
+                AssistantContent(content: message.content, isStreaming: message.isStreaming)
                     .font(.system(size: 15))
                     .foregroundColor(Color("TextPrimary"))
                     .contextMenu { bubbleContextMenu }
@@ -717,6 +725,40 @@ struct AgentAutomationCard: View {
         formatter.timeZone = zone.flatMap { TimeZone(identifier: $0) } ?? .current
         formatter.setLocalizedDateFormatFromTemplate("EEE MMM d jmm zzz")
         return formatter.string(from: date)
+    }
+}
+
+/// An assistant reply with its ```openui blocks drawn as cards (a `writing`
+/// draft, or text for a template this app has no view for). A reply with no
+/// block goes straight to the streaming markdown reader.
+private struct AssistantContent: View {
+    let content: String
+    let isStreaming: Bool
+
+    var body: some View {
+        if AnswerTextSplitter.containsCards(content) {
+            let segments = AnswerTextSplitter.split(content, isStreaming: isStreaming)
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach(Array(segments.enumerated()), id: \.offset) { index, segment in
+                    switch segment {
+                    case .markdown(let text):
+                        AssistantMarkdown(content: text, isStreaming: isStreaming && index == segments.count - 1)
+                    case .card(let card):
+                        AnswerCardView(card: card)
+                    case .pendingCard:
+                        HStack(spacing: 8) {
+                            ProgressView().controlSize(.small)
+                            Text("Writing a draft…")
+                                .font(.footnote)
+                                .foregroundColor(Color("TextSecondary"))
+                        }
+                        .accessibilityElement(children: .combine)
+                    }
+                }
+            }
+        } else {
+            AssistantMarkdown(content: content, isStreaming: isStreaming)
+        }
     }
 }
 
