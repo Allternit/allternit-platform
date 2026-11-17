@@ -35,10 +35,13 @@ export function parseWritingDraft(lang: string | undefined, code: string): Writi
   return answer as unknown as WritingDraftCard;
 }
 
-/** The plain text a copy of this draft should put on the clipboard. */
+/** The readable text /copy puts on the clipboard: To and Subject lines, the body, then each alternative under its label. */
 export function writingCopyText(card: WritingDraftCard): string {
-  const { to, subject, body } = card.data;
-  return [...(to ? [`To: ${to}`] : []), ...(subject ? [`Subject: ${subject}`] : []), ...(to || subject ? [''] : []), body].join('\n');
+  const { to, subject, body, alternatives } = card.data;
+  const head = [...(to ? [`To: ${to}`] : []), ...(subject ? [`Subject: ${subject}`] : [])];
+  const parts = [head.length ? `${head.join('\n')}\n\n${body}` : body];
+  for (const alt of alternatives ?? []) parts.push(`Alternative (${alt.label}):\n${alt.body}`);
+  return parts.join('\n\n');
 }
 
 export function WritingDraft({ card }: { card: WritingDraftCard }): React.ReactNode {
@@ -59,6 +62,6 @@ export function WritingDraft({ card }: { card: WritingDraftCard }): React.ReactN
           <Text dimColor>Alternative: {alt.label}</Text>
           <Text>{alt.body}</Text>
         </Box>)}
-      <Text dimColor>Draft only, not sent · /copy to copy it</Text>
+      <Text dimColor>Draft only, not sent · /copy to copy it as text</Text>
     </Box>;
 }
