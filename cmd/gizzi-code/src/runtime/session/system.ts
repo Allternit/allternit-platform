@@ -14,6 +14,10 @@ import PROMPT_PLAN_MODE from "@/runtime/session/prompt/plan-mode.txt"
 import PROMPT_BUILD_MODE from "@/runtime/session/prompt/build-mode.txt"
 import PROMPT_MDX_GRAPHS from "@/runtime/session/prompt/mdx-graphs.txt"
 import PROMPT_BOT from "@/runtime/session/prompt/bot.txt"
+import PROMPT_DUET from "@/runtime/session/prompt/duet.txt"
+import PROMPT_DELEGATION from "@/runtime/session/prompt/delegation.txt"
+import PROMPT_PROJECT_THREAD from "@/runtime/session/prompt/project-thread.txt"
+import PROMPT_COMPUTER_USE from "@/runtime/session/prompt/computer-use.txt"
 import type { Provider } from "@/runtime/providers/provider"
 import type { Session } from "@/runtime/session"
 
@@ -25,7 +29,18 @@ import type { Session } from "@/runtime/session"
  *
  *   chat, cowork, browser, design → base-chat, capabilities, safety
  *   code or unset (gizzi CLI)     → base-code, safety
- *   then: addendum (gpt | gemini | open; none for claude ids), mode, voice, phone
+ *   then: addendum (gpt | gemini | open; none for claude ids), mode,
+ *         project-thread, computer-use, voice, phone
+ *
+ * Bot turns (`bot`): mode, bot, duet, delegation, project-thread,
+ * capabilities (chat surfaces), safety, computer-use, voice, phone.
+ *
+ * The tool-signal blocks come from the turn's resolved tool set (already
+ * gated in prompt.ts resolveTools), so a block is sent only when the model
+ * has the tools it talks about: duet (`suggest_task` / `grant_task_permission`,
+ * bot turns only), delegation (`project_send`, bot turns only),
+ * project-thread (a project task thread) and computer-use (a browser or
+ * computer tool).
  */
 export namespace SystemPrompt {
   export type Mode = "plan" | "build"
@@ -36,6 +51,19 @@ export namespace SystemPrompt {
     replyMode?: "voice"
     /** The user is on a phone (user metadata `form_factor: "phone"`). */
     formFactor?: "phone"
+    /** An app bot's chat: the turn has `suggest_task` or `grant_task_permission` (duet.txt, bot turns only). */
+    appBot?: boolean
+    /** A bot's main chat that can send work to projects: the turn has `project_send` (delegation.txt, bot turns only). */
+    projectSend?: boolean
+    /** A project task thread (project-thread.txt). */
+    projectThread?: boolean
+    /** The turn has a browser or computer tool (computer-use.txt). */
+    computerUse?: boolean
+  }
+  /** What the turn knows beyond its metadata: its resolved tool ids and the app bot caller (roster). */
+  export type TurnSignals = {
+    toolIds?: readonly string[]
+    caller?: { projectId?: string | null; mainChat?: boolean } | null
   }
   export type Family = "gpt" | "gemini" | "open"
 
@@ -67,12 +95,42 @@ export namespace SystemPrompt {
     return "open"
   }
 
-  /** The turn's prompt context from the session surface and the user message's metadata. */
-  export function context(surface: Session.Info["surface"], metadata?: Record<string, unknown>): PromptContext {
+  /** Suggestions and grants (duet.txt): an app bot's own chat (prompt.ts gates both on isAppBotSession). */
+  export const APP_BOT_TOOL_IDS: readonly string[] = ["suggest_task", "grant_task_permission"]
+  /** Sending work to a project (delegation.txt): a bot's main chat (gated on isAppBotMainChat). */
+  export const PROJECT_SEND_TOOL_ID = "project_send"
+  /**
+   * Browser and computer tools (computer-use.txt), by exact id. The computer,
+   * computer_v2 and browser toolsets are one function tool each (members are
+   * the `action` field, never their own tool id; computer-toolset/index.ts).
+   */
+  export const COMPUTER_TOOL_IDS: readonly string[] = ["pane_browser", "browser", "computer", "computer_v2", "computers"]
+
+  /**
+   * The turn's prompt context from the session surface, the user message's
+   * metadata and the turn's signals: its resolved tool ids and, for app bot
+   * chats, the roster caller (`appBotCaller`). A project thread is either a
+   * caller with a project that is not a main chat, or the server's hint
+   * `metadata.project_role: "thread"` (the internal project worker).
+   */
+  export function context(
+    surface: Session.Info["surface"],
+    metadata?: Record<string, unknown>,
+    turn: TurnSignals = {},
+  ): PromptContext {
+    const ids = new Set(turn.toolIds ?? [])
+    const has = (list: readonly string[]) => list.some((id) => ids.has(id))
+    const caller = turn.caller
+    const inThread =
+      metadata?.["project_role"] === "thread" || (!!caller?.projectId && caller.mainChat !== true)
     return {
       surface,
       ...(metadata?.["reply_mode"] === "voice" ? { replyMode: "voice" as const } : {}),
       ...(metadata?.["form_factor"] === "phone" ? { formFactor: "phone" as const } : {}),
+      ...(has(APP_BOT_TOOL_IDS) ? { appBot: true } : {}),
+      ...(ids.has(PROJECT_SEND_TOOL_ID) ? { projectSend: true } : {}),
+      ...(inThread ? { projectThread: true } : {}),
+      ...(has(COMPUTER_TOOL_IDS) ? { computerUse: true } : {}),
     }
   }
 
@@ -89,13 +147,31 @@ export namespace SystemPrompt {
     ]
   }
 
-  /** Header for a normal (non-bot) turn. */
+  function projectThread(ctx: PromptContext): string[] {
+    return ctx.projectThread ? [PROMPT_PROJECT_THREAD] : []
+  }
+
+  function computerUse(ctx: PromptContext): string[] {
+    return ctx.computerUse ? [PROMPT_COMPUTER_USE] : []
+  }
+
+  /**
+   * Header for a normal (non-bot) turn. Never the duet or delegation blocks:
+   * those are bot rules, even when a normal turn has the tools.
+   */
   export function provider(model: { api: { id: string } }, mode?: Mode, ctx: PromptContext = {}): string[] {
     const base = isChatSurface(ctx.surface)
       ? [PROMPT_BASE_CHAT, PROMPT_CAPABILITIES, PROMPT_SAFETY]
       : [PROMPT_BASE_CODE, PROMPT_SAFETY]
     const fam = family(model)
-    return [...base, ...(fam ? [ADDENDA[fam]] : []), ...modePrompt(mode), ...signals(ctx)]
+    return [
+      ...base,
+      ...(fam ? [ADDENDA[fam]] : []),
+      ...modePrompt(mode),
+      ...projectThread(ctx),
+      ...computerUse(ctx),
+      ...signals(ctx),
+    ]
   }
 
   /**
@@ -107,8 +183,12 @@ export namespace SystemPrompt {
     return [
       ...modePrompt(mode),
       PROMPT_BOT,
+      ...(ctx.appBot ? [PROMPT_DUET] : []),
+      ...(ctx.projectSend ? [PROMPT_DELEGATION] : []),
+      ...projectThread(ctx),
       ...(isChatSurface(ctx.surface) ? [PROMPT_CAPABILITIES] : []),
       PROMPT_SAFETY,
+      ...computerUse(ctx),
       ...signals(ctx),
     ]
   }

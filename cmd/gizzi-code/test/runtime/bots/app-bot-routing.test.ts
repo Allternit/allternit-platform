@@ -13,7 +13,9 @@ import { join } from "node:path"
 
 process.env.ALLTERNIT_INTERNAL_SERVICE_TOKEN = "internal-test"
 process.env.GIZZI_CONFIG_DIR = mkdtempSync(join(tmpdir(), "gizzi-app-routing-"))
-const { isAppBotSession, resetAppBotSessionCache } = await import("../../../src/runtime/bots/app-bot-routing")
+const { appBotCaller, isAppBotMainChat, isAppBotSession, resetAppBotSessionCache } = await import(
+  "../../../src/runtime/bots/app-bot-routing"
+)
 const { MessageAgentTool, isMessageAgentSession } = await import("../../../src/runtime/tools/builtins/message-agent")
 
 type Call = { path: string; body: any; headers: Record<string, string> }
@@ -69,6 +71,30 @@ describe("availability for app bots", () => {
   test("the gating answer is cached per session", async () => {
     await isAppBotSession("ses_app_main")
     await isAppBotSession("ses_app_main")
+    expect(calls.length).toBe(1)
+  })
+
+  test("isAppBotSession, isAppBotMainChat and appBotCaller share one roster read", async () => {
+    expect(await isAppBotSession("ses_app_main")).toBe(true)
+    expect(await isAppBotMainChat("ses_app_main")).toBe(false)
+    expect(await appBotCaller("ses_app_main")).toMatchObject({ id: "main", projectId: "p1" })
+    expect(await appBotCaller("ses_regular")).toBeNull()
+    expect(await isAppBotMainChat("ses_regular")).toBe(false)
+    expect(calls.map((c) => c.body.sessionId)).toEqual(["ses_app_main", "ses_regular"])
+  })
+
+  test("resetAppBotSessionCache clears the shared cache", async () => {
+    await appBotCaller("ses_app_main")
+    resetAppBotSessionCache()
+    route = (path) => (path.endsWith("/roster") ? Response.json({ ...ROSTER, caller: { ...ROSTER.caller, mainChat: true } }) : Response.json({}))
+    expect(await isAppBotMainChat("ses_app_main")).toBe(true)
+    expect(calls.length).toBe(2)
+  })
+
+  test("a failed roster read is never thrown and caches as not an app bot", async () => {
+    route = () => new Response("boom", { status: 500 })
+    expect(await appBotCaller("ses_app_main")).toBeNull()
+    expect(await isAppBotSession("ses_app_main")).toBe(false)
     expect(calls.length).toBe(1)
   })
 })
