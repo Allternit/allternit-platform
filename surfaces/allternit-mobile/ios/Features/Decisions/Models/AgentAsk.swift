@@ -180,11 +180,13 @@ struct AgentPermissionAsk: Decodable, Sendable, Equatable, Identifiable, Hashabl
     let reviewRisk: String?
     let reviewAuthorized: Bool?
     let reviewReason: String?
-    /// computer.access: apps + their tiers + why.
+    /// computer.access (`metadata.access`, computer-toolset/index.ts): one
+    /// app name and its asked tier per entry, in the same order, plus why.
     let apps: [String]
     let tiers: [String]
     let accessReason: String?
-    /// folder_access: paths + action (request | request_delete).
+    /// folder_access (`metadata.folderAccess`, builtins/folder-access.ts):
+    /// the outside folders and action (request | request_delete).
     let paths: [String]
     let folderAction: String?
 
@@ -195,23 +197,22 @@ struct AgentPermissionAsk: Decodable, Sendable, Equatable, Identifiable, Hashabl
         let authorized: Bool?
         let reason: String?
     }
-    /// A string, or an object with a name-ish field.
-    private struct Loose: Decodable {
-        let value: String
-        init(from decoder: Decoder) throws {
-            if let s = try? decoder.singleValueContainer().decode(String.self) { value = s; return }
-            let o = try decoder.container(keyedBy: AnyKey.self)
-            for k in ["name", "app", "bundleId", "path", "tier"] {
-                if let s = try? o.decodeIfPresent(String.self, forKey: AnyKey(k)) { value = s; return }
-            }
-            value = ""
-        }
+    /// metadata.access.entries[]: {name, bundle_id, category?, max_tier?, tier}.
+    private struct AccessEntry: Decodable {
+        let name: String?
+        let bundle_id: String?
+        let tier: String?
     }
-    private struct AnyKey: CodingKey {
-        var stringValue: String; var intValue: Int? { nil }
-        init(_ s: String) { stringValue = s }
-        init?(stringValue: String) { self.stringValue = stringValue }
-        init?(intValue: Int) { return nil }
+    /// metadata.access: {entries, reason, needed_tier?, granted_tier?, expires_in_secs?}.
+    private struct Access: Decodable {
+        let entries: [AccessEntry]?
+        let reason: String?
+    }
+    /// metadata.folderAccess: {action, paths, reason, scope}.
+    private struct FolderAccess: Decodable {
+        let action: String?
+        let paths: [String]?
+        let reason: String?
     }
     private struct ToolRef: Decodable { let callID: String? }
     private struct Meta: Decodable {
@@ -219,11 +220,8 @@ struct AgentPermissionAsk: Decodable, Sendable, Equatable, Identifiable, Hashabl
         let language: String?
         let files: [String]?
         let review: Review?
-        let apps: [Loose]?
-        let tiers: [Loose]?
-        let reason: String?
-        let paths: [Loose]?
-        let action: String?
+        let access: Access?
+        let folderAccess: FolderAccess?
     }
 
     init(from decoder: Decoder) throws {
@@ -244,11 +242,12 @@ struct AgentPermissionAsk: Decodable, Sendable, Equatable, Identifiable, Hashabl
         reviewRisk = meta?.review?.risk
         reviewAuthorized = meta?.review?.authorized
         reviewReason = meta?.review?.reason
-        apps = (meta?.apps ?? []).map(\.value).filter { !$0.isEmpty }
-        tiers = (meta?.tiers ?? []).map(\.value).filter { !$0.isEmpty }
-        accessReason = meta?.reason
-        paths = (meta?.paths ?? []).map(\.value).filter { !$0.isEmpty }
-        folderAction = meta?.action
+        let entries = (meta?.access?.entries ?? []).filter { !($0.name ?? $0.bundle_id ?? "").isEmpty }
+        apps = entries.map { ($0.name?.isEmpty == false ? $0.name : $0.bundle_id) ?? "" }
+        tiers = entries.map { $0.tier ?? "read" }
+        accessReason = meta?.access?.reason ?? meta?.folderAccess?.reason
+        paths = (meta?.folderAccess?.paths ?? []).filter { !$0.isEmpty }
+        folderAction = meta?.folderAccess?.action
     }
 
     /// "Run a command", "Edit files" — what the agent wants to do.
