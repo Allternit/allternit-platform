@@ -18,10 +18,13 @@
  *      to another route;
  *   5. a pinned route (`route` arg) never falls back: unhealthy = its needs_you.
  *
- * Routes not built yet (official, mirror, bt-*) are stubs that report
+ * Routes not built yet (official, bt-*) are stubs that report
  * "unavailable", so the router skips them; later plan steps register real
- * lanes in their place. The USB Agent and the old iCTRL helper are wrapped
- * as the `usb-agent` and `legacy-helper` lanes without changing them.
+ * lanes in their place. `mirror` is phone-mirror.ts (iPhone Mirroring on a
+ * Mac), registered by phone-service.ts through PhoneToolDeps.lanes; the stub
+ * remains for runners built without it. The USB Agent and the old iCTRL
+ * helper are wrapped as the `usb-agent` and `legacy-helper` lanes without
+ * changing them.
  */
 
 import { legacyHelperRouteHealth, type NeedsYou, type NeedsYouCode, type RouteHealth } from './phone-link-health.js';
